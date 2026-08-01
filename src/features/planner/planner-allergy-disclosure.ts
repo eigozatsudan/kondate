@@ -39,8 +39,9 @@ export function resolvePlannerAllergyDisclosure(
       allergyLabel: hasUnresolved
         ? `${allergyNames.join("・")}（ほか名前を表示できない項目あり）`
         : allergyNames.join("・"),
-      // 一部解決時は label で under-disclosure を明示し、選択は維持（サーバは allergen id で照合）
-      allergyBlockedReason: null,
+      // 一部解決+未解決は見える名前だけが条件だと誤認し得るため選択不可（安全側）。
+      // サーバは allergen id で照合するが、§7.1 開示 UX は under-disclosure を許さない。
+      allergyBlockedReason: hasUnresolved ? unresolvedBlockReason : null,
     };
   }
 

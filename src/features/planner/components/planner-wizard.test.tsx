@@ -69,6 +69,7 @@ function Harness({
   shortWindowRetryAt = null,
   autosaveState = "idle" as const,
   onRetryAutosave,
+  hasResumablePendingGeneration = false,
 }: {
   initialStep?: PlannerStep;
   initialDraft?: PlannerDraftInput;
@@ -96,6 +97,7 @@ function Harness({
   shortWindowRetryAt?: string | null;
   autosaveState?: "idle" | "saving" | "saved" | "error";
   onRetryAutosave?: () => void;
+  hasResumablePendingGeneration?: boolean;
 }) {
   const [step, setStep] = useState<PlannerStep>(initialStep);
   const [draft, setDraft] = useState<PlannerDraftInput>(initialDraft);
@@ -130,6 +132,7 @@ function Harness({
           globalAvailable={globalAvailable}
           shortWindowRetryAt={shortWindowRetryAt}
           autosaveState={autosaveState}
+          hasResumablePendingGeneration={hasResumablePendingGeneration}
           {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
           {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
           {...(onReset !== undefined ? { onReset } : {})}
@@ -762,6 +765,22 @@ describe("PlannerWizard review step", () => {
     expect(select).toHaveValue("auto");
     // ヒントが accessible description に載る
     expect(select).toHaveAccessibleDescription(/調味料の基本/);
+  });
+
+  it("進行中 pending がある確認画面では新条件破棄の再開注意を出す (P2)", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        hasResumablePendingGeneration
+      />,
+    );
+    // 生成押下前に「新条件では作り直さない」ことを明示（generation resumed 案内と同趣旨）
+    const notice = screen.getByText(/すでに作成中の献立があります。「献立を作る」を押すと/u);
+    expect(notice).toBeVisible();
+    expect(notice).toHaveAttribute("role", "status");
+    expect(notice).toHaveTextContent(/いま入力した条件では新しく作り直さず/u);
+    expect(notice).toHaveTextContent(/入力をリセット/u);
   });
 
   it("privacy未確認では説明ボタンを表示し、生成押下でダイアログへ誘導する", async () => {

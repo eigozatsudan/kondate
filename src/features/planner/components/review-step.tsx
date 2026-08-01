@@ -128,11 +128,23 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
    * 生成の権威ある季節はサーバー側プロンプトのみ。
    */
   seasonContext?: SeasonContext;
+  /**
+   * 進行中の generation pending があるとき true。
+   * 「献立を作る」は新条件を捨てて再開するだけなので、押下前に明示する（P2）。
+   */
+  hasResumablePendingGeneration?: boolean;
 };
 
 /** privacy 未確認のまま生成を押したときのダイアログ本文 */
 export const privacyNoticeRequiredMessage =
   "献立を作る前に、AI情報の説明を確認してください。「AI情報の説明を見る」を押してください。";
+
+/**
+ * 進行中 pending がある確認画面向け。C2 で新条件を送らず再開する前提を、
+ * 生成画面の resumed 案内と同趣旨で押下前に明示する（P2）。
+ */
+export const pendingResumeBeforeGenerateMessage =
+  "すでに作成中の献立があります。「献立を作る」を押すと、いま入力した条件では新しく作り直さず、進行中の作成を再開します。今の条件で作り直すには、先に「入力をリセット」で進行中の作成を破棄してください。";
 
 /**
  * 任意条件（時間・予算・材料の使い方・避ける食材・memo・pantry選択）をdetailsから開き、
@@ -164,6 +176,7 @@ export function ReviewStep({
   shortWindowRetryAt = null,
   onEditStep,
   seasonContext = getJstSeasonContext(new Date()),
+  hasResumablePendingGeneration = false,
 }: ReviewStepProps) {
   // 残数行用の plan。未取得なら free 接頭を避けず free として扱う（usage 未取得では行自体非表示）。
   const quotaPlan: PlanCode = plan ?? "free";
@@ -569,6 +582,12 @@ export function ReviewStep({
         </p>
       )}
       {medicalBlocked && <p role="alert">{medicalRequestBlockedMessage}</p>}
+      {/* P2: 新条件は送らず再開のみ。生成画面 resumed 案内に加え、確認画面でも押下前に明示する */}
+      {hasResumablePendingGeneration ? (
+        <p role="status" className="review-pending-resume-notice">
+          {pendingResumeBeforeGenerateMessage}
+        </p>
+      ) : null}
       {!hasAcceptedOrDeclinedPrivacy && (
         <div className="stack privacy-notice-gate">
           <p>AI情報の説明をまだ確認していません。献立を作る前に説明を確認してください。</p>

@@ -37,7 +37,7 @@ it("解決名があれば status=none でも具体名を出し選択可 (H2)", (
   });
 });
 
-it("一部解決+未解決は under-disclosure を label に載せ選択維持", () => {
+it("一部解決+未解決は under-disclosure を label に載せ選択不可 (P1)", () => {
   const result = resolvePlannerAllergyDisclosure({
     allergyStatus: "registered",
     allergyNames: ["卵"],
@@ -45,7 +45,8 @@ it("一部解決+未解決は under-disclosure を label に載せ選択維持",
   });
   expect(result.allergyLabel).toContain("卵");
   expect(result.allergyLabel).toContain("名前を表示できない項目あり");
-  expect(result.allergyBlockedReason).toBeNull();
+  // 見える名前だけが条件だと誤認させない（安全側で選択を塞ぐ）
+  expect(result.allergyBlockedReason).toMatch(/アレルギー名を確認できない/);
 });
 
 it("registered で名前 0 件は選択不可", () => {

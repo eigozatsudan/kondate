@@ -206,7 +206,7 @@ async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData>
       ageBandLabel:
         member.age_band === null ? "年齢未確認" : (ageLabels[member.age_band] ?? "年齢未確認"),
       allergyLabel: disclosure.allergyLabel,
-      // カタログ解決不能・none+未解決残存は選択不可。一部解決時は label 明示のみで選択維持
+      // カタログ解決不能・none+未解決・一部解決+未解決は allergyBlockedReason で選択不可
       blockedReason: blockedReason ?? disclosure.allergyBlockedReason,
       safetyLabels: member.required_safety_constraints.map(
         (constraint) => safetyLabels[constraint] ?? "安全上の個別対応",
@@ -254,7 +254,7 @@ export function PlannerRoutePage() {
       // （期限確認など）が回転して捨てられる。
       if (readPendingGeneration(userId, new Date()) !== null) {
         if (signal.aborted) return Promise.resolve(false);
-        // 新規条件は送っていないことを /generation で明示する
+        // 新規条件は送っていない。review の pending 注意文 + /generation?resumed=1 で明示する
         void navigate("/generation?resumed=1");
         return Promise.resolve(false);
       }
@@ -645,6 +645,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         usage.isSuccess && usage.data.shortWindow.remaining === 0
           ? usage.data.shortWindow.retryAt
           : null
+      }
+      // P2: 進行中 pending があれば「献立を作る」は再開のみ。確認画面で新条件破棄を押下前に示す
+      hasResumablePendingGeneration={
+        userId !== undefined && readPendingGeneration(userId, new Date()) !== null
       }
       autosaveState={autosave.state}
       onRetryAutosave={() => {

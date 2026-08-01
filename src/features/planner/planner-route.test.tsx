@@ -249,6 +249,8 @@ type WizardMockProps = {
   onOpenEmergencyMenus?: () => void;
   /** 入力内容を空に戻し step を meal へ戻す。route が draft / autosave を所有する */
   onReset?: () => void;
+  /** P2: 進行中 pending があるとき true（確認画面の再開注意用） */
+  hasResumablePendingGeneration?: boolean;
 };
 const wizardPropsSpy = vi.hoisted(() => vi.fn());
 vi.mock("./components/planner-wizard", () => ({
@@ -259,6 +261,9 @@ vi.mock("./components/planner-wizard", () => ({
         <output aria-label="wizard step">{props.step}</output>
         <output aria-label="wizard saving">{String(props.isSaving)}</output>
         <output aria-label="wizard error">{props.error ?? ""}</output>
+        <output aria-label="has resumable pending">
+          {String(props.hasResumablePendingGeneration ?? false)}
+        </output>
         {props.error !== null && props.error !== "" ? <p role="alert">{props.error}</p> : null}
         <output aria-label="pantry status">{props.pantryItemsStatus}</output>
         <output aria-label="pantry names">
@@ -1031,6 +1036,8 @@ describe("PlannerRoutePage", () => {
     });
     const user = userEvent.setup();
     render(<PlannerRoutePage />);
+    // P2: 確認画面向けに pending 再開注意フラグを渡す（新条件破棄の押下前明示）
+    expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     expect(screen.getByLabelText("check count")).toHaveTextContent("1");

@@ -71,6 +71,11 @@ export type PlannerWizardExtraProps = {
   /** autosave 失敗時の再試行（flush） */
   onRetryAutosave?: () => void;
   /**
+   * 進行中 generation pending があるとき true。
+   * review で「新条件は送らず再開」を押下前に明示する（P2）。
+   */
+  hasResumablePendingGeneration?: boolean;
+  /**
    * 各 step の page-frame 末尾に置く追加 UI（L10-3 チラシ入口など）。
    * page-frame 外に置くと幅・余白が崩れるため、main 内に描画する。
    */
@@ -150,6 +155,7 @@ export function PlannerWizard({
   shortWindowRetryAt = null,
   autosaveState = "idle",
   onRetryAutosave,
+  hasResumablePendingGeneration = false,
   footer = null,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
@@ -528,6 +534,7 @@ export function PlannerWizard({
         attemptsRemaining={attemptsRemaining}
         globalAvailable={globalAvailable}
         shortWindowRetryAt={shortWindowRetryAt}
+        hasResumablePendingGeneration={hasResumablePendingGeneration}
         onSubmit={() => {
           void onSubmit();
         }}
