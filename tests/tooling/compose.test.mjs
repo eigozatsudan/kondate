@@ -278,8 +278,17 @@ test("keeps deploy CLIs on profile deploy and out of the default stack", async (
   );
   assert.match(netlifyCli, /^ {4}user: "0:0"$/mu);
   assert.match(supabaseCli, /^ {4}user: "0:0"$/mu);
-  assert.match(netlifyCli, /NETLIFY_AUTH_TOKEN: \$\{NETLIFY_AUTH_TOKEN:-\}/u);
-  assert.match(supabaseCli, /SUPABASE_ACCESS_TOKEN: \$\{SUPABASE_ACCESS_TOKEN:-\}/u);
+  // deploy CLI はローカル .env を注入せず、.deploy.env だけを env_file で読む
+  assert.match(netlifyCli, /^ {4}env_file:\n {6}- \.\/\.deploy\.env$/mu);
+  assert.match(supabaseCli, /^ {4}env_file:\n {6}- \.\/\.deploy\.env$/mu);
+  // netlify deploy --build 時に Vite がローカル .env を読まないよう上書きマウント
+  assert.match(netlifyCli, /\.\/\.deploy\.env:\/workspace\/\.env:ro/u);
+  assert.doesNotMatch(supabaseCli, /\.\/\.deploy\.env:\/workspace\/\.env:ro/u);
+  assert.doesNotMatch(netlifyCli, /NETLIFY_AUTH_TOKEN: \$\{NETLIFY_AUTH_TOKEN:-\}/u);
+  assert.doesNotMatch(netlifyCli, /NETLIFY_SITE_ID: \$\{NETLIFY_SITE_ID:-\}/u);
+  assert.doesNotMatch(supabaseCli, /SUPABASE_ACCESS_TOKEN: \$\{SUPABASE_ACCESS_TOKEN:-\}/u);
+  assert.doesNotMatch(supabaseCli, /SUPABASE_DB_PASSWORD: \$\{SUPABASE_DB_PASSWORD:-\}/u);
+  assert.doesNotMatch(supabaseCli, /SUPABASE_PROJECT_ID: \$\{SUPABASE_PROJECT_ID:-\}/u);
   // ローカル mock スタックへの depends_on は付けない（本番 API 向けワンショット）
   assert.doesNotMatch(netlifyCli, /^ {4}depends_on:/mu);
   assert.doesNotMatch(supabaseCli, /^ {4}depends_on:/mu);

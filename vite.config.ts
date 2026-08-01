@@ -66,5 +66,11 @@ export default defineConfig({
       ? { proxy: { "/api": { target: "http://127.0.0.1:5174", changeOrigin: true } } }
       : {}),
   },
+  // fontsource の unicode-range スライスは 4KiB 未満が多く、既定の
+  // assetsInlineLimit だと data:font に潰れる。CSP は font-src 'self' のみ
+  // （data: 不可）なので、フォントは常に同一オリジンのファイル URL にする。
+  build: {
+    assetsInlineLimit: 0,
+  },
   cacheDir: "/tmp/vite",
 });

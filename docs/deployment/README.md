@@ -72,13 +72,33 @@ docker compose up -d --wait
 | `SUPABASE_DB_PASSWORD` | プロジェクト作成時の DB パスワード | `link` / 一部 DB 操作 |
 | `SUPABASE_PROJECT_ID` | プロジェクト Settings → General の **Reference ID**（20 文字） | `link` 等 |
 
-シェルに export するか、**git 管理外**の `.env` にだけ書いて Compose に渡します。
+**`netlify-cli` / `supabase-cli` は git 管理外の `.deploy.env` だけを `env_file` で読む。**
+ローカル開発用 `.env` の秘密は注入しない。CLI 用トークンは **`.deploy.env` にだけ**書く。
+
+さらに `netlify-cli` は Vite が dotenv で読む `/workspace/.env` を
+**`.deploy.env` で上書きマウント**する。ローカル `.env` の
+`VITE_OAUTH_MOCK_ORIGIN` 等が production バンドルに焼けると
+`getPublicEnv` が throw し、本番 SPA が白画面になる。
+
+`.deploy.env` に **置いてはいけない**（ブラウザ公開設定）:
+- `VITE_OAUTH_MOCK_ORIGIN`（本番では未設定。空文字も Netlify サイト env 禁止）
+
 本番サイトの **Functions 用秘密**（Supabase Secret / service_role 等）を、CLI 用 PAT と混同しないこと。
 
 ```bash
-export NETLIFY_AUTH_TOKEN='...'          # 履歴に残さない入力方法を使う
-export SUPABASE_ACCESS_TOKEN='...'
-# 以降の docker compose --profile deploy run が読み取る
+# リポジトリルートに .deploy.env を用意（chmod 600 推奨・コミット禁止）
+# 例:
+#   NETLIFY_AUTH_TOKEN=...
+#   NETLIFY_SITE_ID=...
+#   SUPABASE_ACCESS_TOKEN=...
+#   SUPABASE_DB_PASSWORD=...
+#   SUPABASE_PROJECT_ID=...
+#   VITE_SUPABASE_URL=https://<20文字ref>.supabase.co
+#   VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+#   VITE_AUTH_PROVIDER_MODE=supabase
+#   VITE_MAGIC_LINK_RESEND_SECONDS=60
+#   VITE_AUTH_CONTINUATION_TTL_MS=300000
+# （VITE_OAUTH_MOCK_ORIGIN は書かない）
 ```
 
 ---
@@ -302,6 +322,13 @@ docker compose --profile deploy run --rm netlify-cli deploy --build
 # 内容を確認したうえで本番公開
 docker compose --profile deploy run --rm netlify-cli deploy --build --prod
 ```
+
+**CLI ローカルビルドの注意**: 上記はコンテナ内で `npm run build` 相当を走らせる。
+`.deploy.env` が無い／`VITE_OAUTH_MOCK_ORIGIN` が混入していると production の
+`getPublicEnv` が失敗し、デプロイ後に真っ白になる（Netlify UI ビルドでは
+サイト env だけが使われるため再現しないことが多い）。失敗時は
+Dashboard の **Clear cache and deploy**、または `.deploy.env` を直してから
+CLI で再 `deploy --build --prod`。
 
 #### Function `memory` と無料プラン（422）
 
