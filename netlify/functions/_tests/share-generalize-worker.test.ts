@@ -6,16 +6,27 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ValidatedMenu } from "../../../shared/contracts/generation.js";
 import { makeValidatedMenu } from "../../../shared/testing/factories.js";
 import type { ShareClaimedJob } from "../_shared/share-claim.js";
+import { HttpError } from "../_shared/http.js";
 import type { ShareFreeTextPatch } from "../_shared/share-openrouter.js";
 import { extractShareFreeTextForPrompt } from "../_shared/share-openrouter.js";
 import type { ProcessShareGeneralizationJobDeps } from "../share-generalize-worker.js";
 
 const claimShareGeneralizationJobs = vi.fn();
 const getSupabaseAdmin = vi.fn(() => ({ rpc: vi.fn(), from: vi.fn() }));
+const loadStoredMenu = vi.fn();
 const logLines: string[] = [];
 
 vi.mock("../_shared/share-claim.js", () => ({ claimShareGeneralizationJobs }));
 vi.mock("../_shared/supabase-admin.js", () => ({ getSupabaseAdmin }));
+vi.mock("../_shared/stored-menu-loader.js", async () => {
+  const actual = await vi.importActual<typeof import("../_shared/stored-menu-loader.js")>(
+    "../_shared/stored-menu-loader.js",
+  );
+  return {
+    ...actual,
+    loadStoredMenu: (...args: unknown[]) => loadStoredMenu(...args),
+  };
+});
 vi.mock("../_shared/logger.js", async () => {
   const actual =
     await vi.importActual<typeof import("../_shared/logger.js")>("../_shared/logger.js");
@@ -50,6 +61,7 @@ const {
   authorizeShareGeneralizeWorker,
   processShareGeneralizationJob,
   buildSharePublishAllergenCatalog,
+  defaultLoadSourceMenu,
 } = await import("../share-generalize-worker.js");
 
 const VALID_SECRET = "share-worker-cron-secret-32ch!!";
@@ -156,6 +168,7 @@ function createRpcAdmin(
 
 afterEach(() => {
   vi.clearAllMocks();
+  loadStoredMenu.mockReset();
   logLines.length = 0;
   delete process.env.SHARE_WORKER_CRON_SECRET;
 });
@@ -183,6 +196,10 @@ describe("share-generalize-worker auth / schedule", () => {
     );
     expect(response.status).toBe(204);
     expect(claimShareGeneralizationJobs).toHaveBeenCalledTimes(1);
+    // 2×24s OpenRouter が Netlify 60s 壁に収まるよう 1 件 claim
+    expect(claimShareGeneralizationJobs).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 1 }),
+    );
   });
 
   it("exports schedule-only config without path", () => {
@@ -404,6 +421,9 @@ describe("processShareGeneralizationJob pipeline", () => {
     const response = await shareGeneralizeWorker(authorizedRequest());
     expect(response.status).toBe(204);
     expect(claimShareGeneralizationJobs).toHaveBeenCalledTimes(1);
+    expect(claimShareGeneralizationJobs).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 1 }),
+    );
 
     const parsed = JSON.parse(logLines[0]!) as Record<string, unknown>;
     expect(parsed).toMatchObject({
@@ -415,3 +435,31 @@ describe("processShareGeneralizationJob pipeline", () => {
     expect(JSON.stringify(parsed)).not.toContain("肉じゃが");
   });
 });
+
+describe("defaultLoadSourceMenu failure classification", () => {
+  const loadInput = {
+    admin: { from: vi.fn() } as unknown as ProcessShareGeneralizationJobDeps["admin"],
+    userId: CONTRIBUTOR_ID,
+    menuId: SOURCE_MENU_ID,
+  };
+
+  it("returns null on 404 menu_not_found so job can skip", async () => {
+    loadStoredMenu.mockRejectedValue(
+      new HttpError(404, "menu_not_found", "献立が見つかりません"),
+    );
+    await expect(defaultLoadSourceMenu(loadInput)).resolves.toBeNull();
+  });
+
+  it("rethrows 503 menu_load_failed so job stays running for reaper", async () => {
+    const transient = new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
+    loadStoredMenu.mockRejectedValue(transient);
+    await expect(defaultLoadSourceMenu(loadInput)).rejects.toBe(transient);
+  });
+
+  it("rethrows non-HttpError failures without finishing as skip", async () => {
+    const boom = new Error("network_blip");
+    loadStoredMenu.mockRejectedValue(boom);
+    await expect(defaultLoadSourceMenu(loadInput)).rejects.toBe(boom);
+  });
+});
+

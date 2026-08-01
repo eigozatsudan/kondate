@@ -32,6 +32,7 @@ import {
   captureShareIngredientGraphLock,
   runShareServerGate,
 } from "./_shared/share-server-gate.js";
+import { HttpError } from "./_shared/http.js";
 import { loadStoredMenu } from "./_shared/stored-menu-loader.js";
 import { getSupabaseAdmin, type AdminSupabaseClient } from "./_shared/supabase-admin.js";
 
@@ -157,7 +158,11 @@ export type ProcessShareGeneralizationJobDeps = {
   allergenCatalog?: SharePublishAllergenCatalog;
 };
 
-/** service_role で所有者境界をクエリし、欠損は null（throw しない） */
+/**
+ * service_role で所有者境界をクエリする。
+ * 欠損（404 menu_not_found）のみ null → skipped。
+ * 503 / 一過性障害は throw し job を running のまま残して reaper 回収に委ねる。
+ */
 export async function defaultLoadSourceMenu(input: {
   admin: Pick<AdminSupabaseClient, "from">;
   userId: string;
@@ -170,8 +175,12 @@ export async function defaultLoadSourceMenu(input: {
       input.menuId,
     );
     return aggregate.menu;
-  } catch {
-    return null;
+  } catch (error) {
+    // 404 欠損だけ skip。それ以外（503 menu_load_failed 等）は再 throw
+    if (error instanceof HttpError && error.status === 404) {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -416,7 +425,8 @@ export default async function shareGeneralizeWorker(request?: Request): Promise<
 
   try {
     const admin = getSupabaseAdmin();
-    const jobs = await claimShareGeneralizationJobs({ admin });
+    // 1 job = Pass1+Pass2 各 OPENROUTER_TIMEOUT(24s)。2 件 claim すると 2×48s で Netlify 60s 壁を超える
+    const jobs = await claimShareGeneralizationJobs({ admin, limit: 1 });
     safeLog({
       level: "info",
       requestId,
