@@ -148,6 +148,10 @@ Dashboard: **Authentication → SMTP**（または Project の Auth SMTP 設定�
 クリーンなタグ付きコミットから:
 
 ```bash
+# 推奨（Compose profile deploy。.deploy.env の SUPABASE_DB_URL を wrapper が渡す）
+docker compose --profile deploy run --rm supabase-cli db push --include-all
+
+# ホストに Node がある場合の同等（URL は自分で渡す）
 npm exec --offline supabase -- db push --db-url "$SUPABASE_DB_URL" --include-all
 ```
 

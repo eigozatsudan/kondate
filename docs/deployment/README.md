@@ -71,6 +71,7 @@ docker compose up -d --wait
 | `SUPABASE_ACCESS_TOKEN` | Supabase → Account → Access Tokens | CLI 認証 |
 | `SUPABASE_DB_PASSWORD` | プロジェクト作成時の DB パスワード | `link` / 一部 DB 操作 |
 | `SUPABASE_PROJECT_ID` | プロジェクト Settings → General の **Reference ID**（20 文字） | `link` 等 |
+| `SUPABASE_DB_URL` | Dashboard の接続文字列（**Shared Session pooler / 5432** 推奨） | `db push` / `migration list`（wrapper が注入） |
 
 **`netlify-cli` / `supabase-cli` は git 管理外の `.deploy.env` だけを `env_file` で読む。**
 ローカル開発用 `.env` の秘密は注入しない。CLI 用トークンは **`.deploy.env` にだけ**書く。
@@ -93,6 +94,7 @@ docker compose up -d --wait
 #   SUPABASE_ACCESS_TOKEN=...
 #   SUPABASE_DB_PASSWORD=...
 #   SUPABASE_PROJECT_ID=...
+#   SUPABASE_DB_URL=postgresql://postgres.<ref>:...@aws-0-...pooler.supabase.com:5432/postgres
 #   VITE_SUPABASE_URL=https://<20文字ref>.supabase.co
 #   VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 #   VITE_AUTH_PROVIDER_MODE=supabase
@@ -196,15 +198,17 @@ docker compose --profile deploy run --rm -it supabase-cli link \
 
 ### 3.2 マイグレーション適用
 
-クリーンなタグ付きコミット上で、**管理者用 DB URL** をシークレットマネージャから一時的にだけ注入する:
+クリーンなタグ付きコミット上で、**管理者用 DB URL** を `.deploy.env` の `SUPABASE_DB_URL` に置く
+（Session pooler 推奨。例の文字列をコピペ運用・履歴に残さない）。
+
+`supabase-cli` の wrapper が `db push` / `migration list` でコンテナ内の
+`SUPABASE_DB_URL` を `--db-url` に渡す。ホストで `export` や `"$SUPABASE_DB_URL"` は不要。
 
 ```bash
-# SUPABASE_DB_URL は履歴に残さない。例の文字列をコピペ運用しない。
-# 形式は Dashboard の接続文字列（直接または Session プール）に従う。
-docker compose --profile deploy run --rm supabase-cli db push \
-  --db-url "$SUPABASE_DB_URL" \
-  --include-all
+docker compose --profile deploy run --rm supabase-cli db push --include-all
 ```
+
+明示したいときだけ従来どおり `--db-url` / `--linked` / `--local` を付ける（その場合は wrapper は上書きしない）。
 
 - マイグレーションは前方のみ。失敗したら新しいマイグレーションで直す（`db reset` や破壊的巻き戻しは本番で使わない）。
 - **未適用分をすべて**載せる（Plan 7 / アカウント削除 / メンテナンスに加え identity 枠・Billing 系も。正本: [supabase.md](./supabase.md) §3）。
@@ -399,9 +403,7 @@ env だけ変えた場合も、Functions が新しい値を読むには **再デ
 2. **本番トラフィック前**にマイグレーションを適用する:
 
 ```bash
-docker compose --profile deploy run --rm supabase-cli db push \
-  --db-url "$SUPABASE_DB_URL" \
-  --include-all
+docker compose --profile deploy run --rm supabase-cli db push --include-all
 ```
 
 3. 続けて Netlify をデプロイする（古いフロントが新スキーマ前提 API を叩かない順を守る）。
@@ -439,8 +441,8 @@ docker compose --profile deploy run --rm supabase-cli db push \
 | `env:set` が `missing required argument 'key'` | `--context production KEY` で KEY が context に飲まれている。**`--context=production`** を使う |
 | `env:set --secret` が context エラー | `--secret` 時は **`--context=production`**（non-dev）必須 |
 | Supabase 認証エラー | `SUPABASE_ACCESS_TOKEN`。組織の権限 |
-| `db push` が Unix ソケット / 空 URL | ホストで `"$SUPABASE_DB_URL"` が空。export するかコンテナ内で展開。§3.2 |
-| `db push` が `db.<ref>.supabase.co` no such host | Direct は IPv6 のみになりがち。**Shared Session pooler（5432）** を使う。Dedicated IPv4 add-on は必須ではない。[supabase.md](./supabase.md) |
+| `db push` が Unix ソケット / 空 URL | `.deploy.env` に `SUPABASE_DB_URL` が無い／空。§3.2。ホストの `"$…"` 展開に頼らない |
+| `db push` が `db.<ref>.supabase.co` no such host | Direct / link 先は IPv6 のみになりがち。`.deploy.env` の **Shared Session pooler（5432）** を使う。Dedicated IPv4 add-on は必須ではない。[supabase.md](./supabase.md) |
 | `db push` 失敗（その他） | DB パスワード、ネットワーク、既適用 checksum との食い違い（手編集 migration 禁止） |
 | production ビルドで OpenRouter 検証失敗 | 有料 allowlist・`OPENROUTER_API_KEY`・`OPENROUTER_BASE_URL` が production env にあるか。`OPENROUTER_MODELS` の空要素・末尾カンマ禁止 |
 | deploy が memory 422 で post-build 失敗 | Free では Function **memory 指定禁止**。`netlify.toml` と `flyer-weekly.ts` の **両方**から外す。§4.3 |
@@ -483,10 +485,10 @@ docker compose --profile deploy run --rm netlify-cli env:set --secret --context=
 docker compose --profile deploy run --rm netlify-cli deploy --build
 docker compose --profile deploy run --rm netlify-cli deploy --build --prod
 
-# Supabase（$SUPABASE_DB_URL はホストで export。Direct ではなく Session pooler 推奨）
+# Supabase（SUPABASE_DB_URL は .deploy.env。Direct ではなく Session pooler 推奨）
 docker compose --profile deploy run --rm supabase-cli projects list
 docker compose --profile deploy run --rm -it supabase-cli link --project-ref "$SUPABASE_PROJECT_ID"
-docker compose --profile deploy run --rm supabase-cli db push --db-url "$SUPABASE_DB_URL" --include-all
+docker compose --profile deploy run --rm supabase-cli db push --include-all
 docker compose --profile deploy run --rm supabase-cli migration list
 ```
 

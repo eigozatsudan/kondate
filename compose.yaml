@@ -234,8 +234,9 @@ services:
     restart: "no"
 
   # 本番/ステージング向け Supabase CLI（既定の up には載せない。profile deploy のみ）。
-  # 認証は SUPABASE_ACCESS_TOKEN。DB 操作は対話パスワードまたは SUPABASE_DB_PASSWORD /
-  # --db-url（URL を履歴・ログに残さないこと。正本: docs/deployment/supabase.md）。
+  # 認証は SUPABASE_ACCESS_TOKEN。DB 操作は .deploy.env の SUPABASE_DB_URL を
+  # scripts/supabase-cli-wrapper.sh が db push / migration list に自動注入する
+  # （ホストの "$SUPABASE_DB_URL" 展開に依存しない。正本: docs/deployment/supabase.md）。
   # コンテナ env は .deploy.env のみ（ローカル開発用 .env の秘密を注入しない）。
   supabase-cli:
     profiles: ["deploy"]
@@ -254,7 +255,13 @@ services:
     volumes:
       - .:/workspace
       - node_modules:/workspace/node_modules
-    entrypoint: ["/usr/local/bin/app-entrypoint.sh", "npx", "supabase"]
+    # wrapper は workspace マウント上のスクリプト（再ビルド不要）。sh 経由で実行ビット非依存。
+    entrypoint:
+      [
+        "/usr/local/bin/app-entrypoint.sh",
+        "sh",
+        "/workspace/scripts/supabase-cli-wrapper.sh",
+      ]
     restart: "no"
 
 volumes:

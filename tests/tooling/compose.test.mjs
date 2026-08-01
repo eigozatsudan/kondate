@@ -272,10 +272,9 @@ test("keeps deploy CLIs on profile deploy and out of the default stack", async (
     netlifyCli,
     /^ {4}entrypoint: \["\/usr\/local\/bin\/app-entrypoint\.sh", "npx", "netlify"\]$/mu,
   );
-  assert.match(
-    supabaseCli,
-    /^ {4}entrypoint: \["\/usr\/local\/bin\/app-entrypoint\.sh", "npx", "supabase"\]$/mu,
-  );
+  // db push 等で .deploy.env の SUPABASE_DB_URL をホスト展開なしに渡す wrapper
+  assert.match(supabaseCli, /supabase-cli-wrapper\.sh/u);
+  assert.match(supabaseCli, /\/usr\/local\/bin\/app-entrypoint\.sh/u);
   assert.match(netlifyCli, /^ {4}user: "0:0"$/mu);
   assert.match(supabaseCli, /^ {4}user: "0:0"$/mu);
   // deploy CLI はローカル .env を注入せず、.deploy.env だけを env_file で読む
