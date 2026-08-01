@@ -30,6 +30,7 @@ function completeEnv(overrides = {}) {
     SUPABASE_PUBLISHABLE_KEY: "publishable-key-value",
     SUPABASE_SERVICE_ROLE_KEY: "service-role-key-at-least-twenty-characters",
     SUPABASE_MAINTENANCE_DB_URL: `postgresql://kondate_maintenance_login:${password}@db.${projectRef}.supabase.co:5432/postgres?sslmode=require`,
+    MAINTENANCE_CRON_SECRET: "maintenance-cron-secret-32chars!!",
     SERVER_SITE_ORIGIN: "https://kondate.example.com",
     AUTH_CONTINUATION_ENCRYPTION_KEY: encKey,
     GENERATION_REQUEST_HMAC_KEY: hmacKey,

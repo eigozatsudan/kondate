@@ -177,6 +177,7 @@ CANDIDATE_SHA=... RELEASE_TAG=... PRODUCTION_DEPLOY_ID=... PRODUCTION_ORIGIN=...
 | --- | --- |
 | スケジュール | `@hourly`（`path` なし。**URL では呼べない**） |
 | 実行環境 | **published production のみ**（deploy preview / branch では動かない） |
+| 認証 | アプリ層 `MAINTENANCE_CRON_SECRET`（16 文字以上）必須。schedule 起動は `x-netlify-event: schedule` + env secret 二重化。手動は `x-maintenance-cron-secret` ヘッダ（または Bearer）が secret と一致。無/誤は 401/403 |
 | バッチ | 4 カテゴリ各最大 250 行（stale 予約 → 終端生成台帳 → shopping mutation → auth continuation） |
 | 保持 | 終端生成台帳・shopping mutation は厳密 30 日未満削除 |
 | 第 5 カテゴリ | なし。`generation_regeneration_snapshots` は終端台帳 CASCADE のみ |
@@ -186,7 +187,7 @@ CANDIDATE_SHA=... RELEASE_TAG=... PRODUCTION_DEPLOY_ID=... PRODUCTION_ORIGIN=...
 
 初回 production デプロイ後:
 
-1. Functions に `SUPABASE_MAINTENANCE_DB_URL` が入っていること。
+1. Functions に `SUPABASE_MAINTENANCE_DB_URL` と `MAINTENANCE_CRON_SECRET` が入っていること。
 2. Netlify の Scheduled Functions / ログで `maintenance_cleanup` が hourly に載ること
    （プレビューではなく **production publish** 後）。
 3. 失敗時は閉じた `maintenance_cleanup_failed` と集計のみ。接続 URL を印刷して調査しない。
@@ -196,8 +197,8 @@ CANDIDATE_SHA=... RELEASE_TAG=... PRODUCTION_DEPLOY_ID=... PRODUCTION_ORIGIN=...
 1. `./scripts/provision-maintenance-role.sh` で ephemeral login を用意する。
 2. `docker compose run --rm --no-deps app npm exec --offline netlify -- dev` を `dev` コンテキストで起動（生成済み `.env` の local-mode を尊重）。
 3. 別端末で
-   `docker compose run --rm --no-deps app npm exec --offline netlify -- functions:invoke maintenance-cleanup`
-   URL プローブは試みない。
+   `docker compose run --rm --no-deps app npm exec --offline netlify -- functions:invoke maintenance-cleanup --header "x-maintenance-cron-secret: $MAINTENANCE_CRON_SECRET"`
+   （`.env` の `MAINTENANCE_CRON_SECRET` を使う）。URL プローブは試みない。
 
 ### タイムアウト時
 

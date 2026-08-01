@@ -158,6 +158,7 @@ const REQUIRED_KEYS = [
   "SUPABASE_PUBLISHABLE_KEY",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_MAINTENANCE_DB_URL",
+  "MAINTENANCE_CRON_SECRET",
   "SERVER_SITE_ORIGIN",
   "AUTH_CONTINUATION_ENCRYPTION_KEY",
   "GENERATION_REQUEST_HMAC_KEY",
@@ -183,6 +184,7 @@ const FORBIDDEN_VITE_ALIASES = [
   "VITE_QUOTA_IDENTITY_HMAC_KEY",
   "VITE_AI_QUOTA_DISABLED",
   "VITE_SUPABASE_MAINTENANCE_DB_URL",
+  "VITE_MAINTENANCE_CRON_SECRET",
   // Vite は VITE_ をブラウザへ公開し得るため、continuation 暗号鍵 alias も拒否する
   "VITE_AUTH_CONTINUATION_ENCRYPTION_KEY",
 ];
@@ -231,6 +233,11 @@ export function validateProductionEnv(env) {
     if (!Object.hasOwn(env, key) || env[key] === undefined || env[key] === "") {
       throw new Error(key);
     }
+  }
+
+  // maintenance-cleanup アプリ層 secret: 16 文字未満は設定漏れとして拒否
+  if (String(env.MAINTENANCE_CRON_SECRET).trim().length < 16) {
+    throw new Error("MAINTENANCE_CRON_SECRET_invalid");
   }
 
   if (Object.hasOwn(env, "VITE_OAUTH_MOCK_ORIGIN")) {

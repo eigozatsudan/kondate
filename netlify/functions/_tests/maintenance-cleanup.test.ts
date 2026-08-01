@@ -25,7 +25,25 @@ vi.mock("../_shared/logger.js", async () => {
   };
 });
 
-const { default: maintenanceCleanup, config } = await import("../maintenance-cleanup.js");
+const {
+  default: maintenanceCleanup,
+  config,
+  MAINTENANCE_CRON_SECRET_ENV,
+  MAINTENANCE_CRON_SECRET_HEADER,
+  authorizeMaintenanceCleanup,
+} = await import("../maintenance-cleanup.js");
+
+const VALID_SECRET = "maintenance-cron-secret-32chars!!";
+
+function authorizedRequest(overrides: HeadersInit = {}): Request {
+  return new Request("http://127.0.0.1/.netlify/functions/maintenance-cleanup", {
+    method: "POST",
+    headers: {
+      [MAINTENANCE_CRON_SECRET_HEADER]: VALID_SECRET,
+      ...overrides,
+    },
+  });
+}
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -34,10 +52,12 @@ afterEach(() => {
   delete process.env.SUPABASE_MAINTENANCE_DB_URL;
   delete process.env.CONTEXT;
   delete process.env.KONDATE_MAINTENANCE_ENV;
+  delete process.env[MAINTENANCE_CRON_SECRET_ENV];
 });
 
 describe("maintenance-cleanup scheduled function", () => {
   it("returns 204 and logs eight snake_case aggregates only on success", async () => {
+    process.env[MAINTENANCE_CRON_SECRET_ENV] = VALID_SECRET;
     selectMaintenanceEnvironmentMode.mockReturnValue("local");
     parseMaintenanceDatabaseEnv.mockReturnValue("postgresql://opaque");
     runMaintenance.mockResolvedValue({
@@ -51,7 +71,7 @@ describe("maintenance-cleanup scheduled function", () => {
       flyerLedgersDeleted: 8,
     });
 
-    const response = await maintenanceCleanup();
+    const response = await maintenanceCleanup(authorizedRequest());
     expect(response.status).toBe(204);
     expect(runMaintenance).toHaveBeenCalledTimes(1);
     expect(runMaintenance.mock.calls[0]?.[0]).toMatchObject({
@@ -92,6 +112,7 @@ describe("maintenance-cleanup scheduled function", () => {
   });
 
   it("returns 500 and logs closed failure without counts or driver text", async () => {
+    process.env[MAINTENANCE_CRON_SECRET_ENV] = VALID_SECRET;
     selectMaintenanceEnvironmentMode.mockReturnValue("production");
     parseManagedSupabaseProjectRef.mockReturnValue("abcdefghijklmnopqrst");
     parseMaintenanceDatabaseEnv.mockReturnValue("postgresql://opaque");
@@ -99,7 +120,7 @@ describe("maintenance-cleanup scheduled function", () => {
       new Error("password=supersecret host=db.abcdefghijklmnopqrst.supabase.co"),
     );
 
-    const response = await maintenanceCleanup();
+    const response = await maintenanceCleanup(authorizedRequest());
     expect(response.status).toBe(500);
     expect(logLines).toHaveLength(1);
     const parsed = JSON.parse(logLines[0]!) as Record<string, unknown>;
@@ -114,6 +135,7 @@ describe("maintenance-cleanup scheduled function", () => {
   });
 
   it("uses production project-ref binding when not in local mode", async () => {
+    process.env[MAINTENANCE_CRON_SECRET_ENV] = VALID_SECRET;
     process.env.SUPABASE_URL = "https://abcdefghijklmnopqrst.supabase.co";
     selectMaintenanceEnvironmentMode.mockReturnValue("production");
     parseManagedSupabaseProjectRef.mockReturnValue("abcdefghijklmnopqrst");
@@ -128,7 +150,7 @@ describe("maintenance-cleanup scheduled function", () => {
       identityLedgersDeleted: 0,
       flyerLedgersDeleted: 0,
     });
-    await maintenanceCleanup();
+    await maintenanceCleanup(authorizedRequest());
     expect(parseManagedSupabaseProjectRef).toHaveBeenCalled();
     expect(parseMaintenanceDatabaseEnv).toHaveBeenCalledWith(
       process.env,
@@ -154,5 +176,77 @@ describe("maintenance-cleanup scheduled function", () => {
     expect(source).not.toMatch(/createClient/u);
     // Scheduled Function は published production のみ。ローカルは netlify functions:invoke。
     expect(source).toContain('schedule: "@hourly"');
+  });
+
+  it("returns 401 when secret header and schedule event are both missing (S3)", async () => {
+    process.env[MAINTENANCE_CRON_SECRET_ENV] = VALID_SECRET;
+    const response = await maintenanceCleanup(
+      new Request("http://127.0.0.1/.netlify/functions/maintenance-cleanup", {
+        method: "POST",
+      }),
+    );
+    expect(response.status).toBe(401);
+    expect(runMaintenance).not.toHaveBeenCalled();
+    const parsed = JSON.parse(logLines[0]!) as Record<string, unknown>;
+    expect(parsed).toMatchObject({
+      level: "warn",
+      code: "maintenance_cleanup_unauthorized",
+    });
+  });
+
+  it("returns 403 when secret header is wrong (S3)", async () => {
+    process.env[MAINTENANCE_CRON_SECRET_ENV] = VALID_SECRET;
+    const response = await maintenanceCleanup(
+      new Request("http://127.0.0.1/.netlify/functions/maintenance-cleanup", {
+        method: "POST",
+        headers: { [MAINTENANCE_CRON_SECRET_HEADER]: "wrong-secret-value-xxxxx" },
+      }),
+    );
+    expect(response.status).toBe(403);
+    expect(runMaintenance).not.toHaveBeenCalled();
+    const parsed = JSON.parse(logLines[0]!) as Record<string, unknown>;
+    expect(parsed).toMatchObject({
+      level: "warn",
+      code: "maintenance_cleanup_forbidden",
+    });
+  });
+
+  it("returns 403 when MAINTENANCE_CRON_SECRET env is missing (S3 fail-closed)", async () => {
+    delete process.env[MAINTENANCE_CRON_SECRET_ENV];
+    const response = await maintenanceCleanup(authorizedRequest());
+    expect(response.status).toBe(403);
+    expect(runMaintenance).not.toHaveBeenCalled();
+  });
+
+  it("accepts Netlify schedule event when env secret is configured (S3 dual)", async () => {
+    process.env[MAINTENANCE_CRON_SECRET_ENV] = VALID_SECRET;
+    selectMaintenanceEnvironmentMode.mockReturnValue("local");
+    parseMaintenanceDatabaseEnv.mockReturnValue("postgresql://opaque");
+    runMaintenance.mockResolvedValue({
+      staleReservationsFinalized: 0,
+      generationLedgersDeleted: 0,
+      shoppingMutationsDeleted: 0,
+      authContinuationsDeleted: 0,
+      userFeedbackDeleted: 0,
+      draftSubmissionsDeleted: 0,
+      identityLedgersDeleted: 0,
+      flyerLedgersDeleted: 0,
+    });
+    const response = await maintenanceCleanup(
+      new Request("http://127.0.0.1/.netlify/functions/maintenance-cleanup", {
+        method: "POST",
+        headers: { "x-netlify-event": "schedule" },
+      }),
+    );
+    expect(response.status).toBe(204);
+    expect(runMaintenance).toHaveBeenCalledTimes(1);
+  });
+
+  it("authorizeMaintenanceCleanup rejects short secrets", () => {
+    expect(
+      authorizeMaintenanceCleanup(authorizedRequest(), {
+        [MAINTENANCE_CRON_SECRET_ENV]: "tooshort",
+      }),
+    ).toBe("forbidden");
   });
 });
