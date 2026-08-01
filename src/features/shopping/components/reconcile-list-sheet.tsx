@@ -20,31 +20,23 @@ export function ReconcileListSheet({
   onApply,
   onCancel,
 }: ReconcileListSheetProps) {
-  // 追加・数量変更は既定で確認対象。削除候補は無断削除を防ぐため既定オフ（D-C2 / §9.2）。
-  const [addKeys, setAddKeys] = useState(() => new Set(diff.add.map((item) => item.key)));
-  const [replaceIds, setReplaceIds] = useState(
-    () => new Set(diff.replace.map((item) => item.itemId)),
-  );
+  // SHOP2: 追加・数量変更はサーバが完全承認を要求するため常に全選択（外さない）。
+  // 削除候補だけ無断削除を防ぐため既定オフで選べる（D-C2 / §9.2）。
+  const addKeys = diff.add.map((item) => item.key);
+  const replaceIds = diff.replace.map((item) => item.itemId);
   const [removeIds, setRemoveIds] = useState(() => new Set<string>());
   // 2回目以降のプレビューでは差分そのものが差し替わる。初期化子は初回マウントでしか
-  // 走らないため、新しい差分が来たら選択状態を必ず作り直す（前回の選択を承認しない）。
+  // 走らないため、新しい差分が来たら削除選択だけ作り直す（前回の選択を承認しない）。
   const [seededDiff, setSeededDiff] = useState(diff);
   if (seededDiff !== diff) {
     setSeededDiff(diff);
-    setAddKeys(new Set(diff.add.map((item) => item.key)));
-    setReplaceIds(new Set(diff.replace.map((item) => item.itemId)));
     setRemoveIds(new Set());
   }
-  const toggle = (
-    current: Set<string>,
-    value: string,
-    checked: boolean,
-    setter: (next: Set<string>) => void,
-  ) => {
-    const next = new Set(current);
+  const toggleRemove = (value: string, checked: boolean) => {
+    const next = new Set(removeIds);
     if (checked) next.add(value);
     else next.delete(value);
-    setter(next);
+    setRemoveIds(next);
   };
   const warnings = (
     items: readonly {
@@ -62,18 +54,14 @@ export function ReconcileListSheet({
   return (
     <section className="card stack" aria-labelledby="diff-title">
       <h2 id="diff-title">献立変更の差分</h2>
-      <p>内容を確認し、反映する項目だけ選んでください。</p>
+      <p>
+        追加と数量変更はすべて反映します。リストから外す候補だけ、反映するかどうかを選んでください。
+      </p>
       <fieldset>
         <legend>追加 {diff.add.length}件</legend>
         {diff.add.map((item) => (
           <label className="flex min-h-11 items-start gap-3" key={item.key}>
-            <input
-              type="checkbox"
-              checked={addKeys.has(item.key)}
-              onChange={(event) => {
-                toggle(addKeys, item.key, event.target.checked, setAddKeys);
-              }}
-            />
+            <input type="checkbox" checked readOnly disabled aria-readonly="true" />
             <span>
               <strong>
                 {item.displayName} {item.quantityText}
@@ -94,13 +82,7 @@ export function ReconcileListSheet({
         <legend>数量・内容変更 {diff.replace.length}件</legend>
         {diff.replace.map((item) => (
           <label className="flex min-h-11 items-start gap-3" key={item.itemId}>
-            <input
-              type="checkbox"
-              checked={replaceIds.has(item.itemId)}
-              onChange={(event) => {
-                toggle(replaceIds, item.itemId, event.target.checked, setReplaceIds);
-              }}
-            />
+            <input type="checkbox" checked readOnly disabled aria-readonly="true" />
             <span>
               <strong>{item.current.displayName}</strong>：{item.current.quantityText} →{" "}
               {item.next.quantityText}
@@ -125,7 +107,7 @@ export function ReconcileListSheet({
               type="checkbox"
               checked={removeIds.has(item.itemId)}
               onChange={(event) => {
-                toggle(removeIds, item.itemId, event.target.checked, setRemoveIds);
+                toggleRemove(item.itemId, event.target.checked);
               }}
             />
             <span>

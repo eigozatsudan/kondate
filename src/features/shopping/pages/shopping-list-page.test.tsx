@@ -1195,7 +1195,8 @@ describe("ReconcileListSheet", () => {
     expect(screen.getByText("原材料表示を確認：デミグラスソース・乳・はなこ")).toBeInTheDocument();
   });
 
-  it("omits only the deselected operation and approves keys and ids only", async () => {
+  it("always approves add and replace, and only optional remove selection", async () => {
+    // SHOP2: 追加・数量変更は固定承認。削除だけ任意（D-C2 既定オフ）。
     const onApply = vi.fn();
     render(
       <ReconcileListSheet
@@ -1207,16 +1208,19 @@ describe("ReconcileListSheet", () => {
       />,
     );
     const checkboxes = screen.getAllByRole("checkbox");
-    await user.click(checkboxes[0] as HTMLElement);
+    // 先頭2つは add/replace（disabled）。末尾の remove だけ操作できる。
+    expect(checkboxes[0]).toBeDisabled();
+    expect(checkboxes[1]).toBeDisabled();
+    expect(checkboxes[2]).not.toBeDisabled();
+    await user.click(checkboxes[2] as HTMLElement);
     await user.click(screen.getByRole("button", { name: "選んだ変更を反映" }));
     expect(onApply).toHaveBeenCalledTimes(1);
     const approval = onApply.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(Object.keys(approval).sort()).toEqual(["addKeys", "removeItemIds", "replaceItemIds"]);
-    // D-C2: 削除候補は既定オフ。先頭の追加だけ外すと、数量変更のみ承認される。
     expect(approval).toEqual({
-      addKeys: [],
+      addKeys: ["add-key-1"],
       replaceItemIds: [ITEM_ID],
-      removeItemIds: [],
+      removeItemIds: [OTHER_ITEM_ID],
     });
   });
 
@@ -1267,9 +1271,10 @@ describe("ReconcileListSheet", () => {
       />,
     );
 
-    // 2回目のプレビューでは、新しい行が既定で選択され、前回の選択は残らない。
+    // 2回目のプレビューでは追加が固定選択され、前回の削除選択は残らない。
     expect(screen.getAllByRole("checkbox")).toHaveLength(1);
     expect(screen.getByRole("checkbox")).toBeChecked();
+    expect(screen.getByRole("checkbox")).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "選んだ変更を反映" }));
     expect(onApply).toHaveBeenCalledWith({
       addKeys: ["add-key-2"],

@@ -1168,6 +1168,60 @@ describe("previewShoppingListDiff", () => {
     ).rejects.toMatchObject({ status: 409, code: "source_menu_version_conflict" });
     expect(loadActiveList).not.toHaveBeenCalled();
   });
+
+  it("revalidates all active list sources before returning a preview (SHOP1)", async () => {
+    const OTHER_MENU = "52000000-0000-4000-8000-000000000099";
+    const revalidate = vi.fn<ShoppingDependencies["revalidate"]>().mockImplementation((menuId) => {
+      if (menuId === OTHER_MENU) {
+        return Promise.resolve(
+          makeRevalidation({
+            status: "invalid",
+            issues: [{ code: "direct_allergen_match", path: "x", message: "だめ" }],
+          }),
+        );
+      }
+      return Promise.resolve(makeRevalidation());
+    });
+    const loadMenuIdentity = vi
+      .fn<ShoppingDependencies["loadMenuIdentity"]>()
+      .mockImplementation((menuId) =>
+        Promise.resolve({
+          id: menuId,
+          userId: USER_ID,
+          version: 1,
+          targetMode: "household" as const,
+        }),
+      );
+    const deps = makeShoppingDependencies({
+      revalidate,
+      loadMenuIdentity,
+      loadActiveListSources: vi.fn().mockResolvedValue([
+        makeSource({
+          menuId: MENU_ID,
+          sourceMenuIdSnapshot: MENU_ID,
+          sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        }),
+        makeSource({
+          menuId: OTHER_MENU,
+          sourceMenuIdSnapshot: OTHER_MENU,
+          sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000099",
+        }),
+      ]),
+    });
+    await expect(
+      previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 3,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "current_safety_revalidation_required",
+    });
+    expect(revalidate).toHaveBeenCalledWith(OTHER_MENU);
+  });
 });
 
 describe("reconcileShoppingList", () => {
@@ -1369,6 +1423,109 @@ describe("reconcileShoppingList", () => {
       status: 422,
       code: "empty_approval",
       message: "反映する変更がありません",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+  });
+
+  it("revalidates all active list sources before reconcile apply (SHOP1)", async () => {
+    const OTHER_MENU = "52000000-0000-4000-8000-000000000099";
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const revalidate = vi.fn<ShoppingDependencies["revalidate"]>().mockImplementation((menuId) => {
+      if (menuId === OTHER_MENU) {
+        return Promise.resolve(
+          makeRevalidation({
+            status: "invalid",
+            issues: [{ code: "direct_allergen_match", path: "x", message: "だめ" }],
+          }),
+        );
+      }
+      return Promise.resolve(makeRevalidation());
+    });
+    const loadMenuIdentity = vi
+      .fn<ShoppingDependencies["loadMenuIdentity"]>()
+      .mockImplementation((menuId) =>
+        Promise.resolve({
+          id: menuId,
+          userId: USER_ID,
+          version: 1,
+          targetMode: "household" as const,
+        }),
+      );
+    const deps = makeShoppingDependencies({
+      revalidate,
+      loadMenuIdentity,
+      applyReconciliation,
+      loadActiveListSources: vi.fn().mockResolvedValue([
+        makeSource({
+          menuId: MENU_ID,
+          sourceMenuIdSnapshot: MENU_ID,
+          sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        }),
+        makeSource({
+          menuId: OTHER_MENU,
+          sourceMenuIdSnapshot: OTHER_MENU,
+          sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000099",
+        }),
+      ]),
+    });
+    await expect(reconcileShoppingList(deps, reconcileCommand)).rejects.toMatchObject({
+      status: 409,
+      code: "current_safety_revalidation_required",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+    expect(revalidate).toHaveBeenCalledWith(OTHER_MENU);
+  });
+
+  it("rejects partial add approval that would stamp menu version (SHOP2)", async () => {
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    // 2 件の pure add を作り、1 件だけ承認すると部分承認になる
+    const deps = makeShoppingDependencies({
+      applyReconciliation,
+      loadMenu: vi.fn<ShoppingDependencies["loadMenu"]>().mockResolvedValue(
+        makeMenu({
+          ingredients: [
+            {
+              ingredientId: INGREDIENT_A,
+              dishId: DISH_ID,
+              dishName: "料理",
+              name: "にんじん",
+              quantityValue: 1,
+              quantityText: "1本",
+              unit: "本",
+              storeSection: "produce",
+            },
+            {
+              ingredientId: INGREDIENT_B,
+              dishId: DISH_ID,
+              dishName: "料理",
+              name: "じゃがいも",
+              quantityValue: 2,
+              quantityText: "2個",
+              unit: "個",
+              storeSection: "produce",
+            },
+          ],
+        }),
+      ),
+    });
+    const diff = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    expect(diff.add.length).toBeGreaterThanOrEqual(2);
+    const onlyFirst = diff.add[0]?.key;
+    expect(onlyFirst).toBeDefined();
+    await expect(
+      reconcileShoppingList(deps, {
+        ...reconcileCommand,
+        approval: { addKeys: [onlyFirst!], replaceItemIds: [], removeItemIds: [] },
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "partial_approval_not_allowed",
     });
     expect(applyReconciliation).not.toHaveBeenCalled();
   });

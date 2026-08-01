@@ -268,6 +268,9 @@ export async function previewShoppingListDiff(
     throw new HttpError(404, "shopping_list_not_found", "買い物リストが見つかりません");
   if (list.version !== command.expectedListVersion)
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
+  // SHOP1: append と同様、active list の他 live source も現行 safety で止める。
+  // 対象 menu だけ valid でも他 source invalid のまま diff を返さない。
+  await assertActiveListSourcesCurrentlySafe(deps, command.listId);
   if (
     !(await hasSourceLineageOnList(
       deps,
@@ -554,6 +557,9 @@ export async function reconcileShoppingList(
   if (list.version !== command.expectedListVersion) {
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
   }
+  // SHOP1: append と同様、全 live source の現行 safety を apply 前に確認する。
+  // 単一 source fingerprint だけ見ると、他 source invalid でも reconcile 200 になり得る。
+  await assertActiveListSourcesCurrentlySafe(deps, command.listId);
   // SHOP3: items 空でも lineage 無し reconcile は拒否（create append が multi-source 入口）
   if (
     !(await hasSourceLineageOnList(
@@ -586,6 +592,24 @@ export async function reconcileShoppingList(
     // U5-002: サーバ diff があるのに承認がすべて空だと版だけ登録され再 reconcile 不能になる。
     if (!hasApproval) {
       throw new HttpError(422, "empty_approval", "反映する変更を1つ以上選んでください");
+    }
+    // SHOP2: 追加・数量変更の部分集合承認は menu version 刻印後に残り差分を
+    // menu_version_already_in_list で閉塞する。外す候補だけ任意（D-C2）とし、
+    // add/replace はサーバ diff と完全一致を要求して一回で閉じる。
+    const approvedAddKeys = new Set(command.approval.addKeys);
+    const approvedReplaceIds = new Set(command.approval.replaceItemIds);
+    const addFullyApproved =
+      approvedAddKeys.size === diff.add.length &&
+      diff.add.every((item) => approvedAddKeys.has(item.key));
+    const replaceFullyApproved =
+      approvedReplaceIds.size === diff.replace.length &&
+      diff.replace.every((item) => approvedReplaceIds.has(item.itemId));
+    if (!addFullyApproved || !replaceFullyApproved) {
+      throw new HttpError(
+        422,
+        "partial_approval_not_allowed",
+        "追加と数量変更はすべて選んで反映してください。外す候補だけ選べます",
+      );
     }
     resolved = resolveApprovedDiff(diff, command.approval);
   } catch (error: unknown) {
