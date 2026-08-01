@@ -408,12 +408,12 @@ describe("MenuResultPage", () => {
 
     renderPage(`/menus/${VALID_MENU_ID}`);
 
-    const create = await screen.findByRole("button", { name: "買い物リストを作る" });
+    const create = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
       expect(shoppingApi.revalidateActiveShoppingList).toHaveBeenCalledWith(SHOPPING_LIST_ID);
     });
     expect(create).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "買い物リストの差分を見る" })).toBeNull();
   });
 
   it("auto-opens create sheet when for=shopping and can create", async () => {
@@ -457,7 +457,7 @@ describe("MenuResultPage", () => {
       }),
     );
     renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
-    await screen.findByRole("button", { name: "買い物リストを作る" });
+    await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     expect(screen.queryByRole("heading", { name: "買い物リストを作る" })).toBeNull();
   });
 
@@ -494,7 +494,7 @@ describe("MenuResultPage", () => {
 
     const router = renderPage(`/menus/${VALID_MENU_ID}`);
 
-    const create = await screen.findByRole("button", { name: "買い物リストを作る" });
+    const create = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
       expect(create).toBeEnabled();
     });
@@ -538,7 +538,7 @@ describe("MenuResultPage", () => {
 
     renderPage(`/menus/${VALID_MENU_ID}`);
 
-    const create = await screen.findByRole("button", { name: "買い物リストを作る" });
+    const create = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
       expect(create).toBeEnabled();
     });
@@ -567,7 +567,7 @@ describe("MenuResultPage", () => {
 
     renderPage(`/menus/${VALID_MENU_ID}`);
 
-    const reconcile = await screen.findByRole("button", { name: "買い物リストとの差分を確認" });
+    const reconcile = await screen.findByRole("button", { name: "買い物リストの差分を見る" });
     await waitFor(() => {
       expect(reconcile).toBeEnabled();
     });
@@ -595,7 +595,7 @@ describe("MenuResultPage", () => {
 
     renderPage(`/menus/${VALID_MENU_ID}`);
 
-    const reconcile = await screen.findByRole("button", { name: "買い物リストとの差分を確認" });
+    const reconcile = await screen.findByRole("button", { name: "買い物リストの差分を見る" });
     await waitFor(() => {
       expect(reconcile).toBeEnabled();
     });
@@ -644,12 +644,12 @@ describe("MenuResultPage", () => {
       expect(revalidateMenuMock).not.toHaveBeenCalled();
       expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
       expect(shoppingApi.fetchReconcilableMenuSource).not.toHaveBeenCalled();
-      expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "材料の買い物リストを作る" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "買い物リストの差分を見る" })).toBeNull();
       // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成
       expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
-      expect(screen.getByRole("button", { name: "これに決めた" })).toBeEnabled();
-      expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "お気に入りに追加" })).toBeEnabled();
       // idea では sessionStorage に再送用の shopping 記録を一切作らない
@@ -662,7 +662,7 @@ describe("MenuResultPage", () => {
       getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
       renderPage(`/menus/${VALID_MENU_ID}`);
       await userEvent.click(
-        await screen.findByRole("button", { name: "献立をまるごと別案にする" }),
+        await screen.findByRole("button", { name: "別の献立を作り直す" }),
       );
       const dialog = screen.getByRole("dialog", { name: "どのように変えますか？" });
       expect(dialog).toBeVisible();
@@ -676,7 +676,7 @@ describe("MenuResultPage", () => {
       );
       renderPage(`/menus/${VALID_MENU_ID}`);
       expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
-      expect(screen.queryByRole("button", { name: "対象を変えて新しく作る" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "条件を変えて作り直す" })).toBeNull();
     });
 
     it("shows retarget when sourceSubmission is valid", async () => {
@@ -700,7 +700,7 @@ describe("MenuResultPage", () => {
         }),
       );
       renderPage(`/menus/${VALID_MENU_ID}`);
-      expect(await screen.findByRole("button", { name: "対象を変えて新しく作る" })).toBeEnabled();
+      expect(await screen.findByRole("button", { name: "条件を変えて作り直す" })).toBeEnabled();
     });
 
     it("applies the guided-planner-theme class to the idea body root", async () => {

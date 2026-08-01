@@ -28,7 +28,7 @@ test("regenerates whole menu, groups versions, and marks the chosen menu", async
     timeout: 60_000,
   });
   await expect(page.getByText("献立ができました")).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "これに決めた" }).click();
+  await page.getByRole("button", { name: "この献立にする" }).click();
   await page.goto("/history");
   await expect(page.getByText("2案")).toBeVisible({ timeout: 15_000 });
 });
@@ -72,12 +72,12 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
 
   // 結果画面: 短い注意喚起 + 許可操作、買い物なし
   await expectIdeaResultSurface(page);
-  await expect(page.getByRole("button", { name: "これに決めた" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "この献立にする" })).toBeVisible();
   await expect(page.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
   // used pantry が無い idea fixture では在庫更新 CTA 自体を出さない
   await expect(page.getByRole("button", { name: "使った食材の在庫を更新" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
 
   // 一品再生成シート: idea では child_friendly が無い
   await page.getByRole("button", { name: "この一品だけ別案にする" }).click();
@@ -91,7 +91,7 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   });
 
   // 採用
-  await page.getByRole("button", { name: "これに決めた" }).click();
+  await page.getByRole("button", { name: "この献立にする" }).click();
 
   // 履歴: idea badge + お気に入りだけ表示
   await page.goto("/history");
@@ -104,7 +104,7 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   // 詳細: 短い注意喚起 + child_friendly 不在
   await page.goto(`/history/${sourceMenuId}`);
   await expectIdeaResultSurface(page, { timeout: 15_000 });
-  await page.getByRole("button", { name: "献立をまるごと別案にする" }).click();
+  await page.getByRole("button", { name: "別の献立を作り直す" }).click();
   await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
   await page.getByRole("button", { name: "やめる" }).click();
 
@@ -115,7 +115,7 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
     timeout: 60_000,
   });
   await expectIdeaResultSurface(page, { timeout: 30_000 });
-  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
   // 置換後の主菜名が表示される（dish-replacement 系 fixture）。tab と h2 の両方に出るため heading で一意化。
   await expect(page.getByRole("heading", { name: "鶏肉のさっぱり煮" })).toBeVisible({
     timeout: 15_000,
@@ -140,7 +140,7 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
     timeout: 60_000,
   });
   await expectIdeaResultSurface(page, { timeout: 30_000 });
-  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
 
   const newMenuId = /\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1];
   if (newMenuId === undefined) throw new Error("regenerated menu id missing");

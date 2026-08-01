@@ -102,7 +102,7 @@ export async function generateShoppingMenu(page: Page): Promise<string> {
 export async function createListFromMenu(page: Page, menuId: string): Promise<void> {
   await page.goto(`/menus/${menuId}`);
   // 献立再検証と買い物安全ゲートが開くまで待つ（disabled のまま click すると 180s タイムアウトする）
-  const createButton = page.getByRole("button", { name: "買い物リストを作る" });
+  const createButton = page.getByRole("button", { name: "材料の買い物リストを作る" });
   await expect(createButton).toBeEnabled({ timeout: 60_000 });
   await createButton.click();
   const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
@@ -160,10 +160,10 @@ export async function regenerateWholeMenu(page: Page, menuId: string): Promise<s
   await setMockScenario(page, "alternate-menu");
   await page.goto(`/history/${menuId}`);
   await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled({
+  await expect(page.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled({
     timeout: 15_000,
   });
-  await page.getByRole("button", { name: "献立をまるごと別案にする" }).click();
+  await page.getByRole("button", { name: "別の献立を作り直す" }).click();
   await page.getByRole("radio", { name: "別の味に" }).check();
   await page.getByRole("button", { name: "別案を作る" }).click();
   await expect(page).toHaveURL(new RegExp(`/menus/(?!${menuId})[0-9a-f-]{36}`, "iu"), {

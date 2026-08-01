@@ -1727,6 +1727,57 @@ dialog:not([open]) {
   line-height: 1.5;
 }
 
+/*
+ * 献立結果・履歴詳細の操作帯。
+ * 主操作を上段フル幅、作り直し系は下段に分け、wrap で散らばるフラット列をやめる。
+ * 採用後の notice で「次にやること」を明示する（メッセージだけで終わらせない）。
+ */
+.menu-result-actions {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.menu-result-actions-notice {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--notice);
+  padding: 14px 16px;
+}
+
+.menu-result-actions-notice-title {
+  margin: 0;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.menu-result-actions-notice-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: 1.6;
+}
+
+.menu-result-actions-primary,
+.menu-result-actions-aux {
+  display: grid;
+  gap: 8px;
+}
+
+.menu-result-actions .primary-button,
+.menu-result-actions .secondary-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.menu-result-actions-aux-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: 1.5;
+}
+
 .cook-timeline {
   display: grid;
   margin: 14px 0 0;

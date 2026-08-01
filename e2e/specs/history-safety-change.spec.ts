@@ -20,8 +20,8 @@ test("automatically revalidates on mount and blocks stale history after safety c
   await expect(page.getByRole("alert")).toContainText(/現在の(家族設定|安全条件)/u, {
     timeout: 30_000,
   });
-  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
 });
 
 /** POST /api/menus/:menuId/revalidate の 200 応答を待つ（signal 単位で独立に張る） */
@@ -123,10 +123,10 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
   ).toBe(true);
 
   // invalid 中は調理・再生成・買い物操作を止める
-  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled({
+  await expect(page.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled({
     timeout: 15_000,
   });
-  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
 
   // issue 文言が画面に出る（非 vacuous な invalid 表示）
   const issueMessage = firstBody.data.issues[0]?.message ?? "";
@@ -213,5 +213,5 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
   const pollBody = invalidRevalidationSchema.parse(await (await pollRevalidate).json());
   expect(pollBody.data.issues.length).toBeGreaterThan(0);
 
-  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
 });

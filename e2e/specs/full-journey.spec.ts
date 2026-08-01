@@ -91,10 +91,10 @@ test("household journey: welcome through shopping create and alternate reconcile
   await labelConfirm.click();
 
   // 先に source から買い物リストを作成し、後段の新案 reconcile の土台にする
-  const acceptSource = page.getByRole("button", { name: "これに決めた" });
+  const acceptSource = page.getByRole("button", { name: "この献立にする" });
   await expect(acceptSource).toBeEnabled({ timeout: 30_000 });
   await acceptSource.click();
-  const shopCreate = page.getByRole("button", { name: "買い物リストを作る" });
+  const shopCreate = page.getByRole("button", { name: "材料の買い物リストを作る" });
   await expect(shopCreate).toBeEnabled({ timeout: 60_000 });
   await shopCreate.click();
   const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
@@ -145,11 +145,11 @@ test("household journey: welcome through shopping create and alternate reconcile
   await expect(page.getByRole("heading", { name: "鶏肉のさっぱり煮" })).toBeVisible({
     timeout: 15_000,
   });
-  const acceptAlternate = page.getByRole("button", { name: "これに決めた" });
+  const acceptAlternate = page.getByRole("button", { name: "この献立にする" });
   await expect(acceptAlternate).toBeEnabled({ timeout: 30_000 });
   await acceptAlternate.click();
 
-  const reconcileCta = page.getByRole("button", { name: "買い物リストとの差分を確認" });
+  const reconcileCta = page.getByRole("button", { name: "買い物リストの差分を見る" });
   await expect(reconcileCta).toBeEnabled({ timeout: 60_000 });
   await reconcileCta.click();
   await expect(page.getByText("購入済み・手動変更の項目はそのまま残します。")).toBeVisible({
@@ -235,7 +235,7 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
     /\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1],
   );
 
-  await page.getByRole("button", { name: "献立をまるごと別案にする" }).click();
+  await page.getByRole("button", { name: "別の献立を作り直す" }).click();
   await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
   await page.getByRole("button", { name: "やめる" }).click();
 

@@ -38,7 +38,7 @@ test("shows server-owned diff and preserves protected rows", async ({
   const checked = await markFirstItemPurchased(page);
   const nextMenuId = await regenerateWholeMenu(page, shoppingMenuId);
   await page.goto(`/menus/${nextMenuId}`);
-  await page.getByRole("button", { name: "買い物リストとの差分を確認" }).click();
+  await page.getByRole("button", { name: "買い物リストの差分を見る" }).click();
   await expect(page.getByText("購入済み・手動変更の項目はそのまま残します。")).toBeVisible();
   await page.getByRole("button", { name: "選んだ変更を反映" }).click();
   await page.goto("/shopping");

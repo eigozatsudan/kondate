@@ -639,8 +639,8 @@ describe("generation and result accessibility", () => {
     expect(await screen.findByText("ご確認ください")).toBeVisible();
     expect(screen.getByRole("button", { name: "注意事項を見る" })).toBeVisible();
     await expectAccessible(container);
-    expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "材料の買い物リストを作る" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "買い物リストの差分を見る" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
     expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
     expect(screen.queryByText("加工品は原材料表示を確認してください")).toBeNull();

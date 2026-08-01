@@ -51,7 +51,7 @@ test("rejects creation after current household safety changes", async ({
   await expect(page.getByRole("alert")).toContainText(/現在の(家族設定|安全条件)/u, {
     timeout: 30_000,
   });
-  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
 });
 
 test("disables shopping actions immediately after member or allergy mutation", async ({
@@ -139,10 +139,10 @@ test("replays reconciliation after the committed response is lost", async ({
   await createListFromMenu(page, shoppingMenuId);
   const nextMenuId = await regenerateWholeMenu(page, shoppingMenuId);
   await page.goto(`/menus/${nextMenuId}`);
-  await expect(page.getByRole("button", { name: "買い物リストとの差分を確認" })).toBeEnabled({
+  await expect(page.getByRole("button", { name: "買い物リストの差分を見る" })).toBeEnabled({
     timeout: 60_000,
   });
-  await page.getByRole("button", { name: "買い物リストとの差分を確認" }).click();
+  await page.getByRole("button", { name: "買い物リストの差分を見る" }).click();
   const bodies: string[] = [];
   let first = true;
   await page.route("**/api/shopping-lists/*/reconcile", async (route) => {
@@ -195,7 +195,7 @@ test("pending create envelope does not create a list after household safety chan
   });
 
   await page.goto(`/menus/${shoppingMenuId}`);
-  const createButton = page.getByRole("button", { name: "買い物リストを作る" });
+  const createButton = page.getByRole("button", { name: "材料の買い物リストを作る" });
   await expect(createButton).toBeEnabled({ timeout: 60_000 });
   await createButton.click();
   const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
@@ -236,7 +236,7 @@ test("pending create envelope does not create a list after household safety chan
   await expect(page.getByRole("alert")).toContainText(/現在の(家族設定|安全条件)/u, {
     timeout: 30_000,
   });
-  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled({
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled({
     timeout: 30_000,
   });
 

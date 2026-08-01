@@ -158,7 +158,7 @@ for (const width of [320, 375, 430]) {
     await answerAudienceAndReview(page, "household");
     await ensurePrivacyThenGenerate(page, { needsPrivacyHop: false });
     await assertNoHorizontalScroll(page);
-    await assertMajorActionHeights(page, { これに決めた: 1 });
+    await assertMajorActionHeights(page, { この献立にする: 1 });
   });
 
   test(`the start screen fits ${String(width)}px with usable targets`, async ({
@@ -185,7 +185,7 @@ for (const width of [320, 375, 430]) {
     });
     await expectIdeaResultSurface(page);
     await assertNoHorizontalScroll(page);
-    await assertMajorActionHeights(page, { これに決めた: 1, 注意事項を見る: 1 });
+    await assertMajorActionHeights(page, { この献立にする: 1, 注意事項を見る: 1 });
   });
 
   // Global Constraints require 375/430 coverage beyond wizard: shell routes + both history modes.

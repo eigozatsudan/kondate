@@ -15,6 +15,7 @@ import {
   EASE_SOFT_NOT_SWALLOW_DISCLAIMER,
   MENU_LABEL_DISCLAIMER,
 } from "@/features/generation/components/idea-menu-safety-notice";
+import { MenuResultActionBar } from "@/features/generation/components/menu-result-action-bar";
 import { useAuth } from "@/features/auth/use-auth";
 import { confirmLabelConfirmation } from "@/features/generation/api/confirm-label-api";
 import { getMenuResult } from "@/features/generation/api/menu-result-api";
@@ -238,7 +239,8 @@ function IdeaDetailBody({
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   // DB hydrate: query の isFavorite を初期値にし、同一 route での再取得も useEffect で同期する
   const [isFavorite, setIsFavorite] = useState(result.isFavorite);
-  const [acceptFeedback, setAcceptFeedback] = useState<string | null>(null);
+  /** 採用成功後は「作った献立を見る」を主操作にする。 */
+  const [accepted, setAccepted] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
@@ -355,11 +357,6 @@ function IdeaDetailBody({
           regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
         />
       )}
-      {acceptFeedback !== null && (
-        <p className="mt-2" role="status">
-          {acceptFeedback}
-        </p>
-      )}
       {acceptError !== null && (
         <p className="mt-2" role="alert">
           {acceptError}
@@ -376,85 +373,118 @@ function IdeaDetailBody({
         </p>
       )}
 
-      <div className="mt-6 flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={!pantryGateReady}
-          onClick={() => {
-            if (!pantryGateReady) return;
-            setSheetMode("whole");
-          }}
-        >
-          献立をまるごと別案にする
-        </button>
-        {canUpdatePostCook && (
-          <button
-            type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            onClick={() => {
-              setPostCookOpen(true);
-            }}
-          >
-            使った食材の在庫を更新
-          </button>
-        )}
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={favorite.isPending}
-          aria-pressed={isFavorite}
-          aria-label={isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
-          onClick={() => {
-            const next = !isFavorite;
-            setFavoriteError(null);
-            favorite.mutate(
-              { menuId, isFavorite: next },
-              {
-                onSuccess: () => {
-                  setIsFavorite(next);
-                },
-                onError: () => {
-                  setFavoriteError("お気に入りを更新できませんでした");
-                },
-              },
-            );
-          }}
-        >
-          {isFavorite ? "★ お気に入り" : "☆ お気に入り"}
-        </button>
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
-          disabled={accept.isPending}
-          onClick={() => {
-            setAcceptFeedback(null);
-            setAcceptError(null);
-            accept.mutate(menuId, {
-              onSuccess: () => {
-                setAcceptFeedback("この案を採用しました");
-              },
-              onError: () => {
-                setAcceptError("採用を保存できませんでした。もう一度お試しください");
-              },
-            });
-          }}
-        >
-          これに決めた
-        </button>
-        {result.sourceSubmission !== null && (
-          <button
-            type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            disabled={retargetPending}
-            onClick={() => {
-              void onRetarget();
-            }}
-          >
-            対象を変えて新しく作る
-          </button>
-        )}
-      </div>
+      <MenuResultActionBar
+        notice={
+          accepted ? (
+            <div role="status">
+              <p className="menu-result-actions-notice-title">この献立にしました</p>
+              <p className="menu-result-actions-notice-hint">
+                履歴の「作った献立」からいつでも見返せます。下のボタンから履歴一覧を開けます。
+              </p>
+            </div>
+          ) : null
+        }
+        primary={
+          accepted ? (
+            <button
+              type="button"
+              className="secondary-button min-h-11"
+              disabled
+              aria-pressed="true"
+            >
+              この献立にしました
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="primary-button min-h-11"
+              disabled={accept.isPending}
+              onClick={() => {
+                setAcceptError(null);
+                accept.mutate(menuId, {
+                  onSuccess: () => {
+                    setAccepted(true);
+                  },
+                  onError: () => {
+                    setAcceptError("採用を保存できませんでした。もう一度お試しください");
+                  },
+                });
+              }}
+            >
+              この献立にする
+            </button>
+          )
+        }
+        next={
+          accepted ? (
+            <Link className="primary-button min-h-11" to="/history">
+              作った献立を見る
+            </Link>
+          ) : null
+        }
+        auxiliaries={
+          <>
+            <button
+              type="button"
+              className="secondary-button min-h-11"
+              disabled={!pantryGateReady}
+              onClick={() => {
+                if (!pantryGateReady) return;
+                setSheetMode("whole");
+              }}
+            >
+              別の献立を作り直す
+            </button>
+            {canUpdatePostCook ? (
+              <button
+                type="button"
+                className="secondary-button min-h-11"
+                onClick={() => {
+                  setPostCookOpen(true);
+                }}
+              >
+                使った食材の在庫を更新
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="secondary-button min-h-11"
+              disabled={favorite.isPending}
+              aria-pressed={isFavorite}
+              aria-label={isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
+              onClick={() => {
+                const nextFavorite = !isFavorite;
+                setFavoriteError(null);
+                favorite.mutate(
+                  { menuId, isFavorite: nextFavorite },
+                  {
+                    onSuccess: () => {
+                      setIsFavorite(nextFavorite);
+                    },
+                    onError: () => {
+                      setFavoriteError("お気に入りを更新できませんでした");
+                    },
+                  },
+                );
+              }}
+            >
+              {isFavorite ? "★ お気に入り" : "☆ お気に入り"}
+            </button>
+            {result.sourceSubmission !== null ? (
+              <button
+                type="button"
+                className="secondary-button min-h-11"
+                disabled={retargetPending}
+                onClick={() => {
+                  void onRetarget();
+                }}
+              >
+                条件を変えて作り直す
+              </button>
+            ) : null}
+          </>
+        }
+      />
 
       {retargetError !== null && (
         <p role="alert" className="mt-4">
@@ -545,7 +575,8 @@ function HouseholdDetailBody({
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
   const [postCookOpen, setPostCookOpen] = useState(false);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
-  const [acceptFeedback, setAcceptFeedback] = useState<string | null>(null);
+  /** 採用成功後は買い物リスト作成を主操作に昇格する。 */
+  const [accepted, setAccepted] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
@@ -892,11 +923,6 @@ function HouseholdDetailBody({
               regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
             />
           )}
-          {acceptFeedback !== null && (
-            <p className="mt-2" role="status">
-              {acceptFeedback}
-            </p>
-          )}
           {acceptError !== null && (
             <p className="mt-2" role="alert">
               {acceptError}
@@ -910,98 +936,126 @@ function HouseholdDetailBody({
         </>
       )}
 
-      <div className="mt-6 flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={!actionsEnabled || !pantryGateReady}
-          onClick={() => {
-            if (!pantryGateReady) return;
-            setSheetMode("whole");
-          }}
-        >
-          献立をまるごと別案にする
-        </button>
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-          disabled={!canCreateShoppingList}
-          onClick={() => {
-            setShoppingError(null);
-            setShoppingSheet("create");
-          }}
-        >
-          買い物リストを作る
-        </button>
-        {reconcileTarget.data !== null && reconcileTarget.data !== undefined && (
-          <button
-            type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            disabled={shoppingMutateBlocked || reconcileList.isPending}
-            onClick={() => {
-              const target = reconcileTarget.data;
-              if (activeList === null || target === null) return;
-              setShoppingError(null);
-              previewShoppingDiff(menuId, target.sourceMenuVersion, activeList)
-                .then((diff) => {
-                  setShoppingDiff(diff);
-                  setShoppingSheet("reconcile");
-                })
-                .catch(() => {
-                  setShoppingError("差分を確認できませんでした");
+      <MenuResultActionBar
+        notice={
+          accepted ? (
+            <div role="status">
+              <p className="menu-result-actions-notice-title">この献立にしました</p>
+              <p className="menu-result-actions-notice-hint">
+                次は材料の買い物リストを作ると、買うものがまとまります。
+              </p>
+            </div>
+          ) : null
+        }
+        primary={
+          accepted ? (
+            <button
+              type="button"
+              className="secondary-button min-h-11"
+              disabled
+              aria-pressed="true"
+            >
+              この献立にしました
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="primary-button min-h-11"
+              disabled={!actionsEnabled || accept.isPending}
+              onClick={() => {
+                // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
+                if (!actionsEnabled) return;
+                setAcceptError(null);
+                accept.mutate(menuId, {
+                  onSuccess: () => {
+                    setAccepted(true);
+                  },
+                  onError: () => {
+                    setAcceptError("採用を保存できませんでした。もう一度お試しください");
+                  },
                 });
-            }}
-          >
-            買い物リストとの差分を確認
-          </button>
-        )}
-        {canUpdatePostCook && (
+              }}
+            >
+              この献立にする
+            </button>
+          )
+        }
+        next={
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            disabled={!actionsEnabled}
+            className={accepted ? "primary-button min-h-11" : "secondary-button min-h-11"}
+            disabled={!canCreateShoppingList}
             onClick={() => {
-              setPostCookOpen(true);
+              setShoppingError(null);
+              setShoppingSheet("create");
             }}
           >
-            使った食材の在庫を更新
+            材料の買い物リストを作る
           </button>
-        )}
-        <button
-          type="button"
-          className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
-          disabled={!actionsEnabled || accept.isPending}
-          onClick={() => {
-            // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
-            if (!actionsEnabled) return;
-            setAcceptFeedback(null);
-            setAcceptError(null);
-            accept.mutate(menuId, {
-              onSuccess: () => {
-                setAcceptFeedback("この案を採用しました");
-              },
-              onError: () => {
-                setAcceptError("採用を保存できませんでした。もう一度お試しください");
-              },
-            });
-          }}
-        >
-          これに決めた
-        </button>
-        {result.sourceSubmission !== null && (
-          <button
-            type="button"
-            className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            disabled={!retargetEnabled || retargetPending}
-            onClick={() => {
-              if (!retargetEnabled) return;
-              void onRetarget();
-            }}
-          >
-            対象を変えて新しく作る
-          </button>
-        )}
-      </div>
+        }
+        auxiliaries={
+          <>
+            <button
+              type="button"
+              className="secondary-button min-h-11"
+              disabled={!actionsEnabled || !pantryGateReady}
+              onClick={() => {
+                if (!pantryGateReady) return;
+                setSheetMode("whole");
+              }}
+            >
+              別の献立を作り直す
+            </button>
+            {reconcileTarget.data !== null && reconcileTarget.data !== undefined ? (
+              <button
+                type="button"
+                className="secondary-button min-h-11"
+                disabled={shoppingMutateBlocked || reconcileList.isPending}
+                onClick={() => {
+                  const target = reconcileTarget.data;
+                  if (activeList === null || target === null) return;
+                  setShoppingError(null);
+                  previewShoppingDiff(menuId, target.sourceMenuVersion, activeList)
+                    .then((diff) => {
+                      setShoppingDiff(diff);
+                      setShoppingSheet("reconcile");
+                    })
+                    .catch(() => {
+                      setShoppingError("差分を確認できませんでした");
+                    });
+                }}
+              >
+                買い物リストの差分を見る
+              </button>
+            ) : null}
+            {canUpdatePostCook ? (
+              <button
+                type="button"
+                className="secondary-button min-h-11"
+                disabled={!actionsEnabled}
+                onClick={() => {
+                  setPostCookOpen(true);
+                }}
+              >
+                使った食材の在庫を更新
+              </button>
+            ) : null}
+            {result.sourceSubmission !== null ? (
+              <button
+                type="button"
+                className="secondary-button min-h-11"
+                disabled={!retargetEnabled || retargetPending}
+                onClick={() => {
+                  if (!retargetEnabled) return;
+                  void onRetarget();
+                }}
+              >
+                条件を変えて作り直す
+              </button>
+            ) : null}
+          </>
+        }
+      />
 
       {retargetError !== null && (
         <p role="alert" className="mt-4">

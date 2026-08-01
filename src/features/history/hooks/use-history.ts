@@ -38,7 +38,7 @@ export function useToggleFavorite() {
   });
 }
 
-/** 「これに決めた」採用版切替。詳細画面からも再利用する。 */
+/** 「この献立にする」採用版切替。詳細画面からも再利用する。 */
 export function useAcceptMenuVersion() {
   const queryClient = useQueryClient();
   const userId = useAuth().session?.user.id;

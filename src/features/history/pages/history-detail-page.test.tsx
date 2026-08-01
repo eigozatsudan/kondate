@@ -428,8 +428,8 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
     expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
     expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
     act(() => {
       revalidate.resolve(validRevalidation);
     });
@@ -452,32 +452,45 @@ describe("HistoryDetailPage safety gate", () => {
     expect(
       await screen.findByText("現在の家族設定で確認しました。作成時から条件が変わっています"),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled();
   });
 
-  it("disables これに決めた while checking and enables when revalidation is actionable", async () => {
+  it("disables この献立にする while checking and enables when revalidation is actionable", async () => {
     const revalidate = deferredPromise<RevalidationResult>();
     renderHistoryDetail({ revalidate: () => revalidate.promise });
-    expect(await screen.findByRole("button", { name: "これに決めた" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "この献立にする" })).toBeDisabled();
     act(() => {
       revalidate.resolve(validRevalidation);
     });
-    expect(await screen.findByRole("button", { name: "これに決めた" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "この献立にする" })).toBeEnabled();
   });
 
-  it("calls acceptMenuVersion when これに決めた is clicked while actionable", async () => {
+  it("calls acceptMenuVersion when この献立にする is clicked while actionable", async () => {
     const user = userEvent.setup();
     renderHistoryDetail({
       revalidation: { phase: "checked", result: validRevalidation },
     });
-    const button = await screen.findByRole("button", { name: "これに決めた" });
+    const button = await screen.findByRole("button", { name: "この献立にする" });
     expect(button).toBeEnabled();
     await user.click(button);
     expect(acceptMenuVersionMock).toHaveBeenCalledTimes(1);
     expect(acceptMenuVersionMock).toHaveBeenCalledWith(MENU_ID);
   });
 
-  it("keeps これに決めた disabled when revalidation is invalid", async () => {
+  it("after accept, promotes shopping list as the primary next step", async () => {
+    const user = userEvent.setup();
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    await user.click(await screen.findByRole("button", { name: "この献立にする" }));
+    // 見出しと disabled ボタンの両方に同文言があるため、次の一手の文言で完了を確認する
+    expect(await screen.findByText(/材料の買い物リストを作ると/u)).toBeVisible();
+    expect(screen.getByRole("button", { name: "この献立にしました" })).toBeDisabled();
+    const shopping = screen.getByRole("button", { name: "材料の買い物リストを作る" });
+    expect(shopping).toHaveClass("primary-button");
+  });
+
+  it("keeps この献立にする disabled when revalidation is invalid", async () => {
     renderHistoryDetail({
       revalidation: {
         phase: "checked",
@@ -490,7 +503,7 @@ describe("HistoryDetailPage safety gate", () => {
         },
       },
     });
-    expect(await screen.findByRole("button", { name: "これに決めた" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "この献立にする" })).toBeDisabled();
     expect(acceptMenuVersionMock).not.toHaveBeenCalled();
   });
 
@@ -517,7 +530,7 @@ describe("HistoryDetailPage safety gate", () => {
     renderHistoryDetail({
       revalidation: { phase: "checking" },
     });
-    expect(await screen.findByRole("button", { name: "対象を変えて新しく作る" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "条件を変えて作り直す" })).toBeDisabled();
   });
 
   it("enables retarget when revalidation is checked even if invalid (HR4 escape hatch)", async () => {
@@ -552,9 +565,9 @@ describe("HistoryDetailPage safety gate", () => {
         },
       },
     });
-    expect(await screen.findByRole("button", { name: "対象を変えて新しく作る" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "条件を変えて作り直す" })).toBeEnabled();
     // accept は invalid で閉じたまま
-    expect(screen.getByRole("button", { name: "これに決めた" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
   });
 
   it("wires shopping create sheet and fridge tip when household actions are enabled", async () => {
@@ -564,7 +577,7 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
-    const shopping = await screen.findByRole("button", { name: "買い物リストを作る" });
+    const shopping = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
       expect(shopping).toBeEnabled();
     });
@@ -585,7 +598,7 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
-    const shopping = await screen.findByRole("button", { name: "買い物リストを作る" });
+    const shopping = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
       expect(shopping).toBeEnabled();
     });
@@ -626,7 +639,7 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
-    const shopping = await screen.findByRole("button", { name: "買い物リストを作る" });
+    const shopping = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
       expect(shopping).toBeEnabled();
     });
@@ -681,13 +694,13 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
-    const create = await screen.findByRole("button", { name: "買い物リストを作る" });
+    const create = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
     await waitFor(() => {
       expect(shoppingApi.revalidateActiveShoppingList).toHaveBeenCalledWith(SHOPPING_LIST_ID);
     });
     // D-C1: 新規リスト作成は gate blocked でも可能なまま。差分確認は隠す。
     expect(create).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "買い物リストの差分を見る" })).toBeNull();
   });
 
   it("invokes pantry delete through MenuResult actions on household history detail", async () => {
@@ -770,7 +783,7 @@ describe("HistoryDetailPage safety gate", () => {
       revalidation: { phase: "checked", result: validRevalidation },
     });
 
-    const reconcile = await screen.findByRole("button", { name: "買い物リストとの差分を確認" });
+    const reconcile = await screen.findByRole("button", { name: "買い物リストの差分を見る" });
     await waitFor(() => {
       expect(reconcile).toBeEnabled();
     });
@@ -863,11 +876,11 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
     expect(revalidateMenuMock).not.toHaveBeenCalled();
     expect(shoppingApi.fetchActiveShoppingList).not.toHaveBeenCalled();
     expect(shoppingApi.fetchReconcilableMenuSource).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "買い物リストを作る" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "買い物リストとの差分を確認" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "材料の買い物リストを作る" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "買い物リストの差分を見る" })).toBeNull();
     // 許可操作: 採用・お気に入り・冷蔵庫・whole/dish 再生成
-    expect(screen.getByRole("button", { name: "これに決めた" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "お気に入りに追加" })).toBeEnabled();
@@ -892,7 +905,7 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
   it("hides child_friendly in idea regeneration dialog", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
     renderHistoryDetail();
-    await userEvent.click(await screen.findByRole("button", { name: "献立をまるごと別案にする" }));
+    await userEvent.click(await screen.findByRole("button", { name: "別の献立を作り直す" }));
     expect(screen.getByRole("dialog", { name: "どのように変えますか？" })).toBeVisible();
     expect(screen.queryByRole("radio", { name: "子どもが食べやすく" })).not.toBeInTheDocument();
   });
@@ -1037,7 +1050,7 @@ describe("MenuResultPage shared revalidation gate", () => {
     renderMenuResultPage({});
     expect(await screen.findByText("アレルゲンが含まれます")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "献立をまるごと別案にする" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "別の献立を作り直す" })).toBeDisabled();
   });
 
   it("shows もう一度確認 on network failure without a manual-success escape", async () => {

@@ -300,10 +300,10 @@ export async function requestWholeRegeneration(
   const targetMode = options.targetMode ?? "household";
   // 結果画面の再生成コントロールを使う（履歴詳細と同等の UI）
   await openMenuResultForRegeneration(page, menuId, targetMode);
-  await expect(page.getByRole("button", { name: "献立をまるごと別案にする" })).toBeEnabled({
+  await expect(page.getByRole("button", { name: "別の献立を作り直す" })).toBeEnabled({
     timeout: 15_000,
   });
-  await page.getByRole("button", { name: "献立をまるごと別案にする" }).click();
+  await page.getByRole("button", { name: "別の献立を作り直す" }).click();
   await submitRegenerationSheet(page, menuId, reason, targetMode);
 }
 
