@@ -25,6 +25,11 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `private.generation_draft_submission_versions` | postgres | none | none | none | off (not exposed) | private ledger; no Data API; service via SECURITY DEFINER only |
 | `private.generation_regeneration_snapshots` | postgres | none | none | none | off (not exposed) | private ledger; no Data API; service via SECURITY DEFINER only |
 | `private.shopping_mutations` | postgres | none | none | none | off (not exposed) | private ledger; no Data API; service via SECURITY DEFINER only |
+| `private.share_app_daily_usage` | postgres | none | none | none | off (not exposed) | share AI/success daily ledger; no Data API; service via SECURITY DEFINER only |
+| `private.share_generalization_jobs` | postgres | none | none | none | off (not exposed) | share generalization jobs; no Data API; service via SECURITY DEFINER only |
+| `private.share_user_daily_usage` | postgres | none | none | none | off (not exposed) | share per-user daily attempt/success ledger; no Data API; service via SECURITY DEFINER only |
+| `private.shared_emergency_recipe_origins` | postgres | none | none | none | off (not exposed) | pool origin unlink map (`contributor_user_id`); no Data API; service via SECURITY DEFINER only |
+| `private.shared_emergency_recipes` | postgres | none | none | none | off (not exposed) | anonymous emergency pool body; no Data API; service via SECURITY DEFINER only |
 | `public.allergen_aliases` | postgres | none | SELECT | ALL | on + policies | shared safety catalog; authenticated SELECT only |
 | `public.allergen_catalog` | postgres | none | SELECT | ALL | on + policies | shared safety catalog; authenticated SELECT only |
 | `public.dish_ingredients` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
@@ -53,6 +58,7 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `public.shopping_list_sources` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.shopping_lists` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.user_feedback` | postgres | none | none | ALL | on + deny-all policy | Function+service_role only; free-form body rate-limited via SECURITY DEFINER RPC; 30-day retention |
+| `public.user_share_consents` | postgres | none | none | ALL | on + deny-all policy | share consent ledger; browser via SECURITY DEFINER RPC only (`upsert_my_share_consent` / `get_my_share_consent`); CASCADE on auth delete |
 
 ## Column write grants (browser roles)
 
@@ -234,6 +240,16 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.shopping_list_safety_fingerprint(p_user_id uuid, p_list_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.shopping_safety_fingerprint(p_user_id uuid, p_menu_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.start_household_onboarding(p_sort_order integer)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC |
+| `public.upsert_my_share_consent(p_version text, p_accept boolean)` | postgres | none | EXECUTE | none | n/a (function) | authenticated-only SECURITY DEFINER RPC; share consent on/off |
+| `public.get_my_share_consent()` | postgres | none | EXECUTE | none | n/a (function) | authenticated-only SECURITY DEFINER RPC; own share consent state |
+| `public.list_my_shared_emergency_recipes()` | postgres | none | EXECUTE | none | n/a (function) | authenticated-only SECURITY DEFINER RPC; own shared titles+dates via `auth.uid()` |
+| `public.try_enqueue_share_job(p_menu_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; consent/caps/lottery/unique job/attempt |
+| `public.claim_share_generalization_jobs(p_limit integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; pending→running with concurrent caps |
+| `public.heartbeat_share_generalization_job(p_job_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; lease heartbeat |
+| `public.finish_share_generalization_job(p_job_id uuid, p_status text, p_code text, p_ai_call_count integer, p_pass1_model text, p_pass2_model text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; failed/skipped terminal + AI call ledger |
+| `public.publish_shared_emergency_recipe(p_job_id uuid, p_payload jsonb, p_meal_type text, p_total_elapsed integer, p_standard_allergen_ids text[], p_eligible_age_bands text[], p_ai_call_count integer, p_pass1_model text, p_pass2_model text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; atomic consent recheck + pool + origin + success |
+| `public.list_active_shared_emergency_recipes(p_meal_type text, p_limit integer, p_salt text)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; bound active pool fetch (hash order) |
+| `public.reap_stale_share_jobs(p_now timestamp with time zone, p_limit integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; lease-expired running → failed; also called from `run_kondate_maintenance` |
 
 ## Policies
 
@@ -279,6 +295,7 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.shopping_list_sources` | `shopping_list_sources_select_own` | SELECT |
 | `public.shopping_lists` | `shopping_lists_select_own` | SELECT |
 | `public.user_feedback` | `user_feedback_deny_all` | ALL |
+| `public.user_share_consents` | `user_share_consents_deny_all` | ALL |
 
 ## Notes
 

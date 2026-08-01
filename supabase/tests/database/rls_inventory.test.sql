@@ -300,7 +300,17 @@ select is_empty(
   ('public.shopping_safety_fingerprint(p_user_id uuid, p_menu_id uuid)', 'service_role', 'EXECUTE'),
   ('public.start_household_onboarding(p_sort_order integer)', 'authenticated', 'EXECUTE'),
   ('public.start_household_onboarding(p_sort_order integer)', 'service_role', 'EXECUTE'),
-  ('public.upsert_billing_subscription_from_stripe(p_payload jsonb)', 'service_role', 'EXECUTE')
+  ('public.upsert_billing_subscription_from_stripe(p_payload jsonb)', 'service_role', 'EXECUTE'),
+  ('public.upsert_my_share_consent(p_version text, p_accept boolean)', 'authenticated', 'EXECUTE'),
+  ('public.get_my_share_consent()', 'authenticated', 'EXECUTE'),
+  ('public.list_my_shared_emergency_recipes()', 'authenticated', 'EXECUTE'),
+  ('public.try_enqueue_share_job(p_menu_id uuid)', 'service_role', 'EXECUTE'),
+  ('public.claim_share_generalization_jobs(p_limit integer)', 'service_role', 'EXECUTE'),
+  ('public.heartbeat_share_generalization_job(p_job_id uuid)', 'service_role', 'EXECUTE'),
+  ('public.finish_share_generalization_job(p_job_id uuid, p_status text, p_code text, p_ai_call_count integer, p_pass1_model text, p_pass2_model text)', 'service_role', 'EXECUTE'),
+  ('public.publish_shared_emergency_recipe(p_job_id uuid, p_payload jsonb, p_meal_type text, p_total_elapsed integer, p_standard_allergen_ids text[], p_eligible_age_bands text[], p_ai_call_count integer, p_pass1_model text, p_pass2_model text)', 'service_role', 'EXECUTE'),
+  ('public.list_active_shared_emergency_recipes(p_meal_type text, p_limit integer, p_salt text)', 'service_role', 'EXECUTE'),
+  ('public.reap_stale_share_jobs(p_now timestamp with time zone, p_limit integer)', 'service_role', 'EXECUTE')
     ),
     live as (
       select n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' as object,
@@ -356,6 +366,7 @@ select is_empty(
   ('public.pantry_items', 'pantry_items_owner_update', 'UPDATE'),
   ('public.privacy_consents', 'consents_insert_own', 'INSERT'),
   ('public.privacy_consents', 'consents_select_own', 'SELECT'),
+  ('public.user_share_consents', 'user_share_consents_deny_all', 'ALL'),
   ('public.profiles', 'profiles_select_own', 'SELECT'),
   ('public.recipe_steps', 'recipe_steps_owner_select', 'SELECT'),
   ('public.shopping_current_label_warnings', 'shopping_current_labels_select_own', 'SELECT'),
@@ -424,7 +435,8 @@ select is_empty(
       ('public.shopping_label_confirmations'),
       ('public.shopping_list_sources'),
       ('public.shopping_lists'),
-      ('public.user_feedback')
+      ('public.user_feedback'),
+      ('public.user_share_consents')
     ),
     need(priv) as (values
       ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),

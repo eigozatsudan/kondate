@@ -5,7 +5,7 @@ select is_empty(
   $$
     with expected(table_name) as (values
       ('profiles'),('household_members'),('member_allergies'),('member_dislikes'),
-      ('privacy_consents'),('pantry_items'),('generation_drafts'),('menus'),
+      ('privacy_consents'),('user_share_consents'),('pantry_items'),('generation_drafts'),('menus'),
       ('menu_target_members'),('generation_pantry_selections'),('dishes'),
       ('dish_ingredients'),('recipe_steps'),('menu_timeline_steps'),
       ('menu_member_adaptations'),('menu_safety_actions'),('menu_label_confirmations'),('menu_revalidations'),
@@ -30,7 +30,7 @@ select is_empty(
   $$
     with expected(table_name) as (values
       ('profiles'),('household_members'),('member_allergies'),('member_dislikes'),
-      ('privacy_consents'),('pantry_items'),('generation_drafts'),('menus'),
+      ('privacy_consents'),('user_share_consents'),('pantry_items'),('generation_drafts'),('menus'),
       ('menu_target_members'),('generation_pantry_selections'),('dishes'),
       ('dish_ingredients'),('recipe_steps'),('menu_timeline_steps'),
       ('menu_member_adaptations'),('menu_safety_actions'),('menu_label_confirmations'),('menu_revalidations'),

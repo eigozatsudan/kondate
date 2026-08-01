@@ -29,6 +29,11 @@
    - **いずれか 1 件でも cancel 失敗したら Auth 削除しない**（請求 orphan を優先して防ぐ）
 5. Auth Admin hard delete（CASCADE で user 所有行・billing_customers/subscriptions 削除）。
    identity 日次表と `billing_trial_history`（identity_key）は user_id 無しのため残る。
+   **共有（方針 B）**: `public.user_share_consents` は CASCADE 削除。
+   `private.share_generalization_jobs` / `private.shared_emergency_recipe_origins` の
+   `contributor_user_id` は **ON DELETE SET NULL**（列名は `user_id` ではない）。
+   `private.shared_emergency_recipes` の匿名本文は**残す**（status は変更しない）。
+   ユーザー向け privacy-copy に「匿名一般化済みの緊急候補本文は削除後も残ることがある」を明記する。
 6. 防御第2経路: `private.ai_generation_requests` の BEFORE DELETE トリガでも reserved を解放する
   （RPC スキップや運用の直削除でも reserved 孤児を防ぐ。二重解放は flags 下ろし後 no-op）。
 

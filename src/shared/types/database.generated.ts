@@ -676,6 +676,158 @@ export type Database = {
           },
         ]
       }
+      share_app_daily_usage: {
+        Row: {
+          ai_call_count: number
+          success_count: number
+          updated_at: string
+          usage_day: string
+        }
+        Insert: {
+          ai_call_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_day: string
+        }
+        Update: {
+          ai_call_count?: number
+          success_count?: number
+          updated_at?: string
+          usage_day?: string
+        }
+        Relationships: []
+      }
+      share_generalization_jobs: {
+        Row: {
+          claimed_at: string | null
+          contributor_user_id: string | null
+          created_at: string
+          failure_code: string | null
+          finished_at: string | null
+          heartbeat_at: string | null
+          id: string
+          pass1_model: string | null
+          pass2_model: string | null
+          skip_reason: string | null
+          source_menu_id: string | null
+          status: string
+        }
+        Insert: {
+          claimed_at?: string | null
+          contributor_user_id?: string | null
+          created_at?: string
+          failure_code?: string | null
+          finished_at?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          pass1_model?: string | null
+          pass2_model?: string | null
+          skip_reason?: string | null
+          source_menu_id?: string | null
+          status: string
+        }
+        Update: {
+          claimed_at?: string | null
+          contributor_user_id?: string | null
+          created_at?: string
+          failure_code?: string | null
+          finished_at?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          pass1_model?: string | null
+          pass2_model?: string | null
+          skip_reason?: string | null
+          source_menu_id?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      share_user_daily_usage: {
+        Row: {
+          attempt_count: number
+          contributor_user_id: string
+          success_count: number
+          updated_at: string
+          usage_day: string
+        }
+        Insert: {
+          attempt_count?: number
+          contributor_user_id: string
+          success_count?: number
+          updated_at?: string
+          usage_day: string
+        }
+        Update: {
+          attempt_count?: number
+          contributor_user_id?: string
+          success_count?: number
+          updated_at?: string
+          usage_day?: string
+        }
+        Relationships: []
+      }
+      shared_emergency_recipe_origins: {
+        Row: {
+          contributor_user_id: string | null
+          created_at: string
+          recipe_id: string
+          source_menu_id: string | null
+        }
+        Insert: {
+          contributor_user_id?: string | null
+          created_at?: string
+          recipe_id: string
+          source_menu_id?: string | null
+        }
+        Update: {
+          contributor_user_id?: string | null
+          created_at?: string
+          recipe_id?: string
+          source_menu_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_emergency_recipe_origins_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: true
+            referencedRelation: "shared_emergency_recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_emergency_recipes: {
+        Row: {
+          created_at: string
+          eligible_age_bands: string[]
+          id: string
+          meal_type: string
+          menu_payload: Json
+          standard_allergen_ids: string[]
+          status: string
+          total_elapsed_minutes: number
+        }
+        Insert: {
+          created_at?: string
+          eligible_age_bands: string[]
+          id?: string
+          meal_type: string
+          menu_payload: Json
+          standard_allergen_ids?: string[]
+          status?: string
+          total_elapsed_minutes: number
+        }
+        Update: {
+          created_at?: string
+          eligible_age_bands?: string[]
+          id?: string
+          meal_type?: string
+          menu_payload?: Json
+          standard_allergen_ids?: string[]
+          status?: string
+          total_elapsed_minutes?: number
+        }
+        Relationships: []
+      }
       shopping_mutations: {
         Row: {
           created_at: string
@@ -865,6 +1017,16 @@ export type Database = {
           p_request: Database["private"]["Tables"]["ai_generation_requests"]["Row"]
         }
         Returns: undefined
+      }
+      share_consent_is_valid: { Args: { p_user_id: string }; Returns: boolean }
+      share_current_consent_version: { Args: never; Returns: string }
+      share_increment_ai_calls: {
+        Args: { p_ai_call_count: number; p_usage_day: string }
+        Returns: undefined
+      }
+      share_recipe_title_from_payload: {
+        Args: { p_payload: Json }
+        Returns: string
       }
       soft_delete_generation_draft: {
         Args: {
@@ -2387,6 +2549,33 @@ export type Database = {
         }
         Relationships: []
       }
+      user_share_consents: {
+        Row: {
+          accepted_at: string
+          consent_version: string
+          created_at: string
+          revoked_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          accepted_at: string
+          consent_version: string
+          created_at?: string
+          revoked_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          accepted_at?: string
+          consent_version?: string
+          created_at?: string
+          revoked_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -2469,6 +2658,10 @@ export type Database = {
           encrypted_code: string
           return_to: string
         }[]
+      }
+      claim_share_generalization_jobs: {
+        Args: { p_limit: number }
+        Returns: Json
       }
       cleanup_ai_generation_requests: {
         Args: { p_before: string; p_user_id?: string }
@@ -2660,6 +2853,17 @@ export type Database = {
         Args: { p_now?: string; p_request_id: string; p_result: Json }
         Returns: Json
       }
+      finish_share_generalization_job: {
+        Args: {
+          p_ai_call_count?: number
+          p_code?: string
+          p_job_id: string
+          p_pass1_model?: string
+          p_pass2_model?: string
+          p_status: string
+        }
+        Returns: Json
+      }
       get_ai_generation_regeneration_snapshot: {
         Args: { p_request_id: string; p_user_id: string }
         Returns: {
@@ -2739,6 +2943,7 @@ export type Database = {
         Args: { p_menu_id: string }
         Returns: string
       }
+      get_my_share_consent: { Args: never; Returns: Json }
       get_shopping_mutation_replay: {
         Args: {
           p_idempotency_key: string
@@ -2750,6 +2955,10 @@ export type Database = {
       has_billing_trial_history: {
         Args: { p_identity_key: string }
         Returns: boolean
+      }
+      heartbeat_share_generalization_job: {
+        Args: { p_job_id: string }
+        Returns: Json
       }
       insert_billing_trial_history: {
         Args: { p_identity_key: string }
@@ -2766,6 +2975,11 @@ export type Database = {
         }
         Returns: Json
       }
+      list_active_shared_emergency_recipes: {
+        Args: { p_limit: number; p_meal_type: string; p_salt: string }
+        Returns: Json
+      }
+      list_my_shared_emergency_recipes: { Args: never; Returns: Json }
       lookup_ai_generation_request: {
         Args: { p_idempotency_key: string; p_user_id: string }
         Returns: Json
@@ -2795,6 +3009,24 @@ export type Database = {
         Returns: Json
       }
       process_billing_stripe_event: { Args: { p_payload: Json }; Returns: Json }
+      publish_shared_emergency_recipe: {
+        Args: {
+          p_ai_call_count?: number
+          p_eligible_age_bands: string[]
+          p_job_id: string
+          p_meal_type: string
+          p_pass1_model?: string
+          p_pass2_model?: string
+          p_payload: Json
+          p_standard_allergen_ids: string[]
+          p_total_elapsed: number
+        }
+        Returns: Json
+      }
+      reap_stale_share_jobs: {
+        Args: { p_limit?: number; p_now?: string }
+        Returns: number
+      }
       reconcile_menu_label_confirmations: {
         Args: {
           p_expected_safety_fingerprint: string
@@ -3000,8 +3232,13 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      try_enqueue_share_job: { Args: { p_menu_id: string }; Returns: Json }
       upsert_billing_subscription_from_stripe: {
         Args: { p_payload: Json }
+        Returns: Json
+      }
+      upsert_my_share_consent: {
+        Args: { p_accept: boolean; p_version: string }
         Returns: Json
       }
     }
