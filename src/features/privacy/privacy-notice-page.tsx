@@ -5,8 +5,15 @@ import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { sanitizeReturnPath } from "@/features/auth/auth-flow";
 import { acceptCurrentPrivacyConsent } from "./privacy-api";
-import { privacySections, providerExplanation } from "./privacy-copy";
+import { privacySections, providerExplanation, shareConsentSection } from "./privacy-copy";
 import { privacyKeys } from "./privacy-queries";
+import { upsertMyShareConsent } from "./share-consent-api";
+import { shareConsentKeys } from "./share-consent-queries";
+
+export type PrivacyAcceptInput = {
+  /** 共有任意チェック。true のときだけ upsert_my_share_consent(accept=true) を呼ぶ */
+  shareConsentAccepted: boolean;
+};
 
 export function PrivacyNoticePage() {
   const auth = useAuth();
@@ -16,10 +23,16 @@ export function PrivacyNoticePage() {
   const userId = auth.session?.user.id;
   const returnTo = sanitizeReturnPath(params.get("returnTo"));
   const mutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (input: PrivacyAcceptInput) => {
       if (userId === undefined) throw new Error("ログインが必要です");
       const client = getBrowserSupabaseClient();
-      return acceptCurrentPrivacyConsent(client, userId);
+      // privacy は必須。共有は任意チェック時のみ別 RPC で保存する
+      const consent = await acceptCurrentPrivacyConsent(client, userId);
+      if (input.shareConsentAccepted) {
+        const share = await upsertMyShareConsent(client, true);
+        queryClient.setQueryData(shareConsentKeys.current(userId), share);
+      }
+      return consent;
     },
     onSuccess: (consent) => {
       queryClient.setQueryData(privacyKeys.current(consent.user_id), consent);
@@ -33,8 +46,8 @@ export function PrivacyNoticePage() {
       error={
         mutation.isError ? "確認状態を保存できませんでした。通信を確認してください。" : undefined
       }
-      onAccept={() => {
-        mutation.mutate();
+      onAccept={(input) => {
+        mutation.mutate(input);
       }}
       onSkip={() => {
         void navigate(returnTo, { replace: true });
@@ -51,10 +64,12 @@ export function PrivacyNoticeContent({
 }: {
   saving: boolean;
   error?: string | undefined;
-  onAccept: () => void;
+  onAccept: (input: PrivacyAcceptInput) => void;
   onSkip: () => void;
 }) {
+  // 共有は既定 unchecked。primary の enable 条件には使わない
   const [checked, setChecked] = useState(false);
+  const [shareChecked, setShareChecked] = useState(false);
   return (
     <main className="page-frame stack">
       <div>
@@ -86,6 +101,21 @@ export function PrivacyNoticeContent({
         />
         説明を確認しました
       </label>
+      {/* 共有は必須 AI 同意と視覚的に分離した別カード。推奨トーンや既定オンにしない */}
+      <section className="card" aria-labelledby="share-consent-heading">
+        <h2 id="share-consent-heading">{shareConsentSection.title}</h2>
+        <p>{shareConsentSection.body}</p>
+        <label className="control-label">
+          <input
+            type="checkbox"
+            checked={shareChecked}
+            onChange={(event) => {
+              setShareChecked(event.target.checked);
+            }}
+          />
+          {shareConsentSection.checkboxLabel}
+        </label>
+      </section>
       {error !== undefined && (
         <p className="error-message" role="alert">
           {error}
@@ -95,7 +125,9 @@ export function PrivacyNoticeContent({
         className="primary-button"
         type="button"
         disabled={!checked || saving}
-        onClick={onAccept}
+        onClick={() => {
+          onAccept({ shareConsentAccepted: shareChecked });
+        }}
       >
         {saving ? "保存中…" : "確認して進む"}
       </button>
