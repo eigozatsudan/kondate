@@ -1,7 +1,7 @@
 # Netlify 本番デプロイ手順
 
 ブラウザ安全変数とサーバ専用変数の境界、protected release runner、デプロイ後検証、
-`maintenance-cleanup` Scheduled Function の正本。
+`maintenance-cleanup` Function（secret 付き HTTP + 外部 cron）の正本。
 
 アカウント作成直後からの **CLI 初回デプロイと更新の手順**は
 [README.md](./README.md)（Compose profile `deploy` の `netlify-cli`）を先に読む。
@@ -169,27 +169,26 @@ CANDIDATE_SHA=... RELEASE_TAG=... PRODUCTION_DEPLOY_ID=... PRODUCTION_ORIGIN=...
 
 ブラウザ・ログ・チケットへ鍵や identity_key を載せない。
 
-## `maintenance-cleanup` Scheduled Function
+## `maintenance-cleanup` Function
 
 `netlify/functions/maintenance-cleanup.ts`。DB 側 LOGIN の用意は [supabase.md](./supabase.md) §4–6。
 
 | 項目 | 値 |
 | --- | --- |
-| スケジュール | `@hourly`（`path` なし。**URL では呼べない**） |
-| 実行環境 | **published production のみ**（deploy preview / branch では動かない） |
-| 認証 | アプリ層 `MAINTENANCE_CRON_SECRET`（16 文字以上）必須。schedule 起動は `x-netlify-event: schedule` + env secret 二重化。手動は `x-maintenance-cron-secret` ヘッダ（または Bearer）が secret と一致。無/誤は 401/403 |
+| 公開 path | `POST /api/maintenance/cleanup`（function config） |
+| スケジュール | **Netlify schedule は使わない**。GitHub Actions `maintenance-cleanup.yml`（毎時）または同等の secret 付き cron |
+| 認証 | 提示 secret が無い（両ヘッダ空）→ **常に 401**（env 有無をオラクルにしない）。提示あり + env 未設定/短すぎ → 403。提示あり + env あり → カスタムヘッダと Bearer の**いずれか**が一致すれば 204、両方不一致は 403。空文字ヘッダは未提示扱い |
 | バッチ | 4 カテゴリ各最大 250 行（stale 予約 → 終端生成台帳 → shopping mutation → auth continuation） |
 | 保持 | 終端生成台帳・shopping mutation は厳密 30 日未満削除 |
 | 第 5 カテゴリ | なし。`generation_regeneration_snapshots` は終端台帳 CASCADE のみ |
 | DB | dedicated LOGIN `kondate_maintenance_login`、role 既定と transaction-local `statement_timeout=20s` |
-| クライアント | 25 秒、プラットフォーム Scheduled 上限 30 秒の下 |
-| 監視 | 4 集計件数 + duration + 閉じたエラーコードのみ（URL・行 ID・PII 禁止） |
+| クライアント | 25 秒ハード締切 |
+| 監視 | 8 集計件数 + duration + 閉じたエラーコードのみ（URL・行 ID・PII 禁止） |
 
 初回 production デプロイ後:
 
 1. Functions に `SUPABASE_MAINTENANCE_DB_URL` と `MAINTENANCE_CRON_SECRET` が入っていること。
-2. Netlify の Scheduled Functions / ログで `maintenance_cleanup` が hourly に載ること
-   （プレビューではなく **production publish** 後）。
+2. GitHub repository secrets に `MAINTENANCE_CLEANUP_URL`（本番 origin + `/api/maintenance/cleanup`）と `MAINTENANCE_CRON_SECRET`（Netlify と同値）を設定し、`maintenance-cleanup` workflow が 204 を返すこと。
 3. 失敗時は閉じた `maintenance_cleanup_failed` と集計のみ。接続 URL を印刷して調査しない。
 
 ### ローカル診断
@@ -197,8 +196,8 @@ CANDIDATE_SHA=... RELEASE_TAG=... PRODUCTION_DEPLOY_ID=... PRODUCTION_ORIGIN=...
 1. `./scripts/provision-maintenance-role.sh` で ephemeral login を用意する。
 2. `docker compose run --rm --no-deps app npm exec --offline netlify -- dev` を `dev` コンテキストで起動（生成済み `.env` の local-mode を尊重）。
 3. 別端末で
-   `docker compose run --rm --no-deps app npm exec --offline netlify -- functions:invoke maintenance-cleanup --header "x-maintenance-cron-secret: $MAINTENANCE_CRON_SECRET"`
-   （`.env` の `MAINTENANCE_CRON_SECRET` を使う）。URL プローブは試みない。
+   `curl -X POST -H "x-maintenance-cron-secret: $MAINTENANCE_CRON_SECRET" http://127.0.0.1:5173/api/maintenance/cleanup -w '%{http_code}\n' -o /dev/null`
+   （`.env` の `MAINTENANCE_CRON_SECRET` を使う）。secret なしのプローブは **env の有無に関わらず 401** になること。
 
 ### タイムアウト時
 

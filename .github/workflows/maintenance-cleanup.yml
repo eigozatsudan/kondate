@@ -1,0 +1,58 @@
+# 本番 maintenance-cleanup を secret 付き POST で毎時起動する。
+# Netlify schedule はクライアント偽装可能なヘッダに依存するため使わない（H1）。
+#
+# 必要な GitHub Secrets（repository）:
+#   MAINTENANCE_CLEANUP_URL   例: https://<site>/.netlify/functions/maintenance-cleanup
+#                             または https://<site>/api/maintenance/cleanup
+#   MAINTENANCE_CRON_SECRET   Netlify の同名 env と同一（16 文字以上）
+name: Maintenance cleanup
+
+on:
+  schedule:
+    # 毎時 17 分（UTC）。負荷ピークを避けるオフセット。
+    # - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-cleanup
+  cancel-in-progress: false
+
+jobs:
+  invoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST maintenance cleanup with cron secret
+        env:
+          MAINTENANCE_CLEANUP_URL: ${{ secrets.MAINTENANCE_CLEANUP_URL }}
+          MAINTENANCE_CRON_SECRET: ${{ secrets.MAINTENANCE_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          # GitHub Secrets UI の末尾改行を落とす（サーバ側 trim と揃える — 敵対的 C5）
+          url="$(printf '%s' "${MAINTENANCE_CLEANUP_URL:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          secret="$(printf '%s' "${MAINTENANCE_CRON_SECRET:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          if [ -z "${url}" ] || [ -z "${secret}" ]; then
+            echo "MAINTENANCE_CLEANUP_URL and MAINTENANCE_CRON_SECRET secrets are required" >&2
+            exit 1
+          fi
+          # 誤設定による secret 外送を抑止（https + 本番 origin 想定の path のみ）
+          case "${url}" in
+            https://*/api/maintenance/cleanup|https://*/.netlify/functions/maintenance-cleanup) ;;
+            *)
+              echo "MAINTENANCE_CLEANUP_URL must be https .../api/maintenance/cleanup (or function path)" >&2
+              exit 1
+              ;;
+          esac
+          # 本文・URL・secret をログに出さない。HTTP ステータスのみ。
+          code="$(
+            curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --request POST \
+              --header "x-maintenance-cron-secret: ${secret}" \
+              --max-time 40 \
+              "${url}"
+          )"
+          echo "http_status=${code}"
+          test "${code}" = "204"

@@ -153,9 +153,9 @@ docker compose up -d --force-recreate --no-deps app
 
 3 / 6 / 20 / 4 / 600 をレビューなしに運用で変えない。
 
-## `maintenance-cleanup` Scheduled Function
+## `maintenance-cleanup` Function
 
 定期掃除の契約・ローカル診断・タイムアウト手順の **正本は**
-[docs/deployment/netlify.md](../deployment/netlify.md) の「`maintenance-cleanup` Scheduled Function」。
+[docs/deployment/netlify.md](../deployment/netlify.md) の「`maintenance-cleanup` Function」。
 DB LOGIN の用意は [docs/deployment/supabase.md](../deployment/supabase.md)。
-（本 runbook は OpenRouter 運用専用。重複を避けるため詳細は deployment 側へ寄せた。）
+（secret 付き HTTP + 外部 cron。本 runbook は OpenRouter 運用専用のため詳細は deployment 側。）

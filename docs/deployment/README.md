@@ -369,7 +369,7 @@ Git 継続デプロイを主にする場合:
 3. **Google**: 同じ origin でコールバック完了。
 4. Functions が 5xx の嵐にならない（例: `/api/` 配下の公開ヘルス相当があれば）。
 5. Netlify の Function ログに PII・プロンプト・生 AI 出力が出ていない。
-6. **`maintenance-cleanup`**: production publish 後に Scheduled が載り、`SUPABASE_MAINTENANCE_DB_URL` があること（[netlify.md](./netlify.md)）。
+6. **`maintenance-cleanup`**: Netlify に `SUPABASE_MAINTENANCE_DB_URL` と `MAINTENANCE_CRON_SECRET`。GitHub に `MAINTENANCE_CLEANUP_URL` / `MAINTENANCE_CRON_SECRET` があり hourly workflow が 204 になること（[netlify.md](./netlify.md)。Netlify schedule は使わない）。
 7. Plus を使うなら Stripe Webhook が `https://<origin>/api/billing/webhook` に届くこと。
 
 ---
@@ -452,7 +452,7 @@ docker compose --profile deploy run --rm supabase-cli db push --include-all
 | マジックリンクは届くがログインできない | Site URL / Redirect / リンク内 origin のずれ |
 | CSP で Supabase が弾かれる | `VITE_SUPABASE_URL` の exact origin。ref 変更時は URL 系を同時更新 |
 | preflight が `QUOTA_IDENTITY_HMAC_KEY` で失敗 | Functions に別鍵の canonical base64 32 バイトがあるか。`VITE_` 別名は禁止 |
-| `maintenance-cleanup` が動かない | production publish か、`SUPABASE_MAINTENANCE_DB_URL` の有無（preview では動かない） |
+| `maintenance-cleanup` が動かない | Netlify `SUPABASE_MAINTENANCE_DB_URL` / `MAINTENANCE_CRON_SECRET`、GitHub secrets と `maintenance-cleanup` workflow、URL path が `/api/maintenance/cleanup` か（[netlify.md](./netlify.md)） |
 | Stripe が Plus にならない | Webhook URL `…/api/billing/webhook`・`whsec_`・`BILLING_ENABLED`（[billing-reconcile.md](../runbooks/billing-reconcile.md)） |
 
 ---
