@@ -1007,6 +1007,20 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+/*
+ * AppShell がルート遷移後に h1 へプログラムフォーカスする（a11y 契約）。
+ * マウス／タッチ遷移後もブラウザ既定の :focus 枠が残ると邪魔なので、
+ * プログラムフォーカスでは枠を消し、キーボード操作時の :focus-visible だけ出す。
+ */
+:is(h1, h2, h3):focus:not(:focus-visible) {
+  outline: none;
+}
+
+:is(h1, h2, h3):focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .page-frame {
   width: min(100% - 32px, 680px);
   margin-inline: auto;

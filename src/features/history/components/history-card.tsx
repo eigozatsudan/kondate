@@ -12,8 +12,8 @@ type HistoryCardProps = {
 
 /**
  * 派生グループ1件分の履歴カード。
- * - 代表タイトルへ /menus/:id で遷移（詳細の安全再検査は結果画面側）
- * - 44px タッチターゲットのお気に入り／削除
+ * - 代表タイトルと「詳細を見る」で /menus/:id へ遷移（詳細の安全再検査は結果画面側）
+ * - 44px タッチターゲットの詳細／お気に入り／削除
  * - 削除は native dialog で確認し、失敗時はカードを残して再試行可能
  */
 export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps) {
@@ -109,6 +109,9 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
             買い物リストを作る
           </Link>
         ) : null}
+        <Link to={menuPath} className="secondary-button min-h-11">
+          詳細を見る
+        </Link>
         <button
           type="button"
           className="secondary-button min-h-11"

@@ -152,6 +152,33 @@ describe("HistoryCard shopping CTA", () => {
   });
 });
 
+describe("HistoryCard detail CTA", () => {
+  it("shows detail link next to favorite and delete for idea cards", () => {
+    renderCard(ideaGroup());
+    const detail = screen.getByRole("link", { name: "詳細を見る" });
+    expect(detail).toHaveAttribute("href", "/menus/menu-idea");
+    expect(detail).toHaveClass("min-h-11", "secondary-button");
+    expect(screen.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "この履歴を削除" })).toBeVisible();
+  });
+
+  it("uses the same path as the title for household cards", () => {
+    renderCard(householdGroup());
+    expect(screen.getByRole("link", { name: "詳細を見る" })).toHaveAttribute(
+      "href",
+      "/menus/menu-household",
+    );
+  });
+
+  it("uses shopping path on detail when shoppingIntent", () => {
+    renderCard(householdGroup(), true);
+    expect(screen.getByRole("link", { name: "詳細を見る" })).toHaveAttribute(
+      "href",
+      menusPathForShopping("menu-household"),
+    );
+  });
+});
+
 describe("HistoryCard delete dialog", () => {
   it("blocks Escape close while delete is pending", async () => {
     let resolveDelete: (() => void) | undefined;
