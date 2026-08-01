@@ -3,7 +3,9 @@ import {
   flyerWeeklyIssueMessages,
   type WeeklyFlyerMenu,
 } from "../../../shared/contracts/flyer-weekly.js";
+import { makeCurrentSafetyContext } from "../../../shared/testing/factories.js";
 import {
+  assertFlyerMenuAgainstSafety,
   assertFlyerMenuSafe,
   assertFlyerPrivacyConsent,
   jstWeekStartMonday,
@@ -175,6 +177,100 @@ describe("assertFlyerMenuSafe", () => {
   it("accepts safe menu without banned needles", () => {
     expect(() => {
       assertFlyerMenuSafe(sampleMenu(), ["えび", "牛乳"]);
+    }).not.toThrow();
+  });
+
+  it("PE2: does not false-positive 豆乳 for 乳 needle via foodTextContainsAlias", () => {
+    // 素の includes だと「乳⊂豆乳」で誤検知する。evaluateAllergens 同型マッチャでは除外。
+    expect(() => {
+      assertFlyerMenuSafe(sampleMenu({ ingredients: ["豆乳"] }), ["乳"]);
+    }).not.toThrow();
+  });
+});
+
+describe("assertFlyerMenuAgainstSafety", () => {
+  it("PE2: rejects catalog allergen via dictionary aliases", () => {
+    const base = makeCurrentSafetyContext();
+    const safety = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          allergyStatus: "registered",
+          allergenIds: ["egg"],
+        },
+      ],
+      allergenDictionary: {
+        version: "jp-caa-2026-04.v1",
+        catalog: [{ id: "egg", displayName: "卵", catalogVersion: "jp-caa-2026-04.v1" }],
+        aliases: [
+          {
+            allergenId: "egg",
+            alias: "卵",
+            normalizedAlias: "卵",
+            aliasKind: "direct",
+            requiresLabelConfirmation: false,
+            dictionaryVersion: "jp-caa-2026-04.v1",
+          },
+          {
+            allergenId: "egg",
+            alias: "たまご",
+            normalizedAlias: "たまご",
+            aliasKind: "direct",
+            requiresLabelConfirmation: false,
+            dictionaryVersion: "jp-caa-2026-04.v1",
+          },
+        ],
+      },
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "たまご焼き" }), safety);
+    }).toThrow(HttpError);
+  });
+
+  it("PE2: rejects confirmed custom allergy needles", () => {
+    const base = makeCurrentSafetyContext();
+    const safety = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          allergyStatus: "registered",
+          allergenIds: [],
+          customAllergies: [{ name: "パクチー", aliases: ["香菜"] }],
+        },
+      ],
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ ingredients: ["香菜"] }), safety);
+    }).toThrow(HttpError);
+  });
+
+  it("accepts menu free of registered allergens", () => {
+    const base = makeCurrentSafetyContext();
+    const safety = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          allergyStatus: "registered",
+          allergenIds: ["egg"],
+        },
+      ],
+      allergenDictionary: {
+        version: "jp-caa-2026-04.v1",
+        catalog: [{ id: "egg", displayName: "卵", catalogVersion: "jp-caa-2026-04.v1" }],
+        aliases: [
+          {
+            allergenId: "egg",
+            alias: "卵",
+            normalizedAlias: "卵",
+            aliasKind: "direct",
+            requiresLabelConfirmation: false,
+            dictionaryVersion: "jp-caa-2026-04.v1",
+          },
+        ],
+      },
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu(), safety);
     }).not.toThrow();
   });
 });

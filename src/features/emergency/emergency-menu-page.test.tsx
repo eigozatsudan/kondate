@@ -717,6 +717,9 @@ it("shows idea intro and hides household intro", () => {
   const ideaIntro =
     "個人向けの固定候補です。家族のアレルギー・年齢条件は適用していません。AI利用回数は消費しません。調理前に原材料表示と家庭内の混入を確認してください。";
   expect(screen.getByRole("status")).toHaveTextContent(ideaIntro);
+  expect(screen.getByTestId("idea-allergy-not-applied-note")).toHaveTextContent(
+    "この一覧はご家庭のアレルギー登録を見ていません。家族の制限がある場合は献立画面で「家族向け」に切り替えてください。",
+  );
   expect(
     screen.queryByText(
       "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。",

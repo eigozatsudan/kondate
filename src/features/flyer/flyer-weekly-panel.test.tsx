@@ -84,4 +84,25 @@ describe("FlyerWeeklyPanel", () => {
       expect(screen.getByText("チラシ献立を作成できませんでした。")).toBeVisible();
     });
   });
+
+  it("PE3: Free panel notes server plan check", () => {
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("flyer-weekly-plus-server-note")).toBeVisible();
+  });
+
+  it("PE11: Plus upload discloses email identity count reset residual", () => {
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("flyer-weekly-identity-note")).toHaveTextContent(
+      "ログインに使うメールアドレスを変更すると、週あたりの作成回数の数え方が変わる場合があります。",
+    );
+  });
+
 });

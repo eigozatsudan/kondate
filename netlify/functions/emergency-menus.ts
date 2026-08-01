@@ -298,6 +298,8 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
       }
 
       // household: 既存 loadContext 経路
+      // PE9: targetMemberIds 改ざん・順序不一致は loadEmergencyCurrentSafety/validateSnapshot が
+      // safetyUnavailable で閉じ、候補を偽 valid にしない（防衛確認・挙動変更なし）。
       const loaded = await deps.loadContext(userId, resolved.targetMemberIds);
       const filtered = filterEmergencyMenus({
         mealType: resolved.meal,
@@ -314,9 +316,12 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
         }),
       );
       // household 専用のサーバ message 行列（UI banner の safety_only 文言は Task 5 で別）
+      // PE6: emptyReason に応じて wire message を分岐（custom/unconfirmed を汎用 empty に溶かさない）
       const message =
         candidates.length === 0
-          ? "条件に合う緊急献立がありません"
+          ? filtered.emptyReason === "current_safety_unavailable"
+            ? "アレルギー確認や食事条件のため、候補を表示できません"
+            : "条件に合う緊急献立がありません"
           : filtered.matchMode === "safety_only"
             ? "メイン食材は一致しませんでした。安全条件に合う固定候補を表示しています"
             : "AIを使わない15分緊急献立です";
@@ -362,7 +367,8 @@ const handler = createEmergencyMenusHandler({
       .select("name")
       .eq("user_id", userId)
       .in("id", [...ids]);
-    if (error !== null || data.length !== new Set(ids).size) return [];
+    // PE8: 1 件不正混入で正当 ID 分まで捨てない。error のみ空。見つからない ID は黙って落とす。
+    if (error !== null || data === null) return [];
     return data.map((row) => row.name);
   },
 });

@@ -220,15 +220,25 @@ export function filterEmergencyMenus(input: {
     // 自由文の手順や説明ではなく、料理名と材料名だけをメイン食材との対応根拠にする。
     // 候補がユーザー指定を含む方向だけを見る。
     // 逆方向（"塩鮭".includes("塩")）は調味料・短い総称語で過剰マッチするため使わない。
-    const mainMatched = safetyCompatibleMenus.filter((menu) => {
-      const candidateNames = menu.dishes.flatMap((dish) => [
-        normalizeMainIngredientForMatch(dish.name),
-        ...dish.ingredients.map((ingredient) => normalizeMainIngredientForMatch(ingredient.name)),
-      ]);
-      return mainIngredients.every((mainIngredient) =>
-        candidateNames.some((candidateName) => candidateName.includes(mainIngredient)),
-      );
-    });
+    // PE12: 1 文字の調味・汎用語は過剰ヒットしやすいので Stage M から除外（「鶏」等の蛋白 1 字は残す）。
+    const stageMGenericSingletons = new Set(["塩", "油", "酢", "糖", "水", "酒", "粉", "湯", "味"]);
+    const matchableMains = mainIngredients.filter(
+      (main) => !(main.length === 1 && stageMGenericSingletons.has(main)),
+    );
+    const mainMatched =
+      matchableMains.length === 0
+        ? []
+        : safetyCompatibleMenus.filter((menu) => {
+            const candidateNames = menu.dishes.flatMap((dish) => [
+              normalizeMainIngredientForMatch(dish.name),
+              ...dish.ingredients.map((ingredient) =>
+                normalizeMainIngredientForMatch(ingredient.name),
+              ),
+            ]);
+            return matchableMains.every((mainIngredient) =>
+              candidateNames.some((candidateName) => candidateName.includes(mainIngredient)),
+            );
+          });
     if (mainMatched.length > 0) {
       selected = mainMatched;
       matchMode = "main_ingredient";

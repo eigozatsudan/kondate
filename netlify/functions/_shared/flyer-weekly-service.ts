@@ -18,7 +18,11 @@ import {
 import { issueMessages } from "../../../shared/contracts/generation.js";
 import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
 import { planQuota } from "../../../shared/contracts/plan-quota.js";
-import { normalizeFoodText } from "../../../shared/safety/allergens.js";
+import {
+  foodTextContainsAlias,
+  normalizeFoodText,
+} from "../../../shared/safety/allergens.js";
+import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import {
   applyQuotaPlan,
   BillingEntitlementUnavailableError,
@@ -183,13 +187,31 @@ function mapFailureHttp(code: string, retryAt: string | null = null): never {
           ? 429
           : code === "model_unavailable" || code === "generation_timeout"
             ? 503
-            : 400;
+            : code === "allergy_unconfirmed" ||
+                code === "allergen_missing" ||
+                code === "unsupported_diet_unconfirmed" ||
+                code === "unsupported_diet" ||
+                code === "current_target_member_required" ||
+                code === "consent_required"
+              ? 422
+              : 400;
   throw new HttpError(status, code, message, retryAt ? { retryAt } : undefined);
 }
 
+function flyerDayTextFields(day: WeeklyFlyerMenu["days"][number]): readonly string[] {
+  return [
+    day.label,
+    day.mainName,
+    day.sideName ?? "",
+    day.notes ?? "",
+    ...day.ingredients,
+  ].filter((text) => text.trim() !== "");
+}
+
 /**
- * 表示・保持フィールド全体が現行 safety の禁止アレルゲンに触れていないか（全通 or fail）。
- * label / notes も検査対象。NFKC・全角・zero-width 等は normalizeFoodText で寄せる。
+ * 表示・保持フィールド全体が禁止アレルゲン針に触れていないか。
+ * PE2: 素の includes ではなく evaluateAllergens と同型の foodTextContainsAlias を使う
+ *（区切り跨ぎ誤検知の除外・トークン境界）。
  */
 export function assertFlyerMenuSafe(
   menu: WeeklyFlyerMenu,
@@ -202,17 +224,59 @@ export function assertFlyerMenuSafe(
   if (needles.length === 0) return;
 
   for (const day of menu.days) {
-    // UI に出る可能性のある全フィールドを検査（main/side/ingredients だけだと provider が回避できる）
-    const corpus = normalizeFoodText(
-      [day.label, day.mainName, day.sideName ?? "", day.notes ?? "", ...day.ingredients].join(" "),
-    );
-    for (const needle of needles) {
-      if (corpus.includes(needle)) {
-        throw new HttpError(
-          400,
-          "flyer_invalid_ai_response",
-          flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+    for (const field of flyerDayTextFields(day)) {
+      for (const needle of needles) {
+        if (foodTextContainsAlias(field, needle)) {
+          throw new HttpError(
+            400,
+            "flyer_invalid_ai_response",
+            flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+          );
+        }
+      }
+    }
+  }
+}
+
+/**
+ * PE2: current safety の辞書 alias + 確認済み custom を evaluateAllergens と同型マッチャで検査。
+ * チラシ結果画面にラベル確認 UI が無いため requiresLabelConfirmation も拒否（fail-closed）。
+ * 年齢帯 food rules / requiredSafetyConstraints は献立構造が generation 形ではないため未適用
+ *（残差は fix-report）。
+ */
+export function assertFlyerMenuAgainstSafety(
+  menu: WeeklyFlyerMenu,
+  safety: CurrentSafetyContext,
+): void {
+  for (const day of menu.days) {
+    const fields = flyerDayTextFields(day);
+    for (const member of safety.members) {
+      for (const allergenId of member.allergenIds) {
+        const aliases = safety.allergenDictionary.aliases.filter(
+          (alias) => alias.allergenId === allergenId,
         );
+        for (const field of fields) {
+          if (aliases.some((alias) => foodTextContainsAlias(field, alias.normalizedAlias))) {
+            throw new HttpError(
+              400,
+              "flyer_invalid_ai_response",
+              flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+            );
+          }
+        }
+      }
+      for (const custom of member.customAllergies) {
+        const needles = [custom.name, ...custom.aliases].filter((value) => value.trim() !== "");
+        if (needles.length === 0) continue;
+        for (const field of fields) {
+          if (needles.some((needle) => foodTextContainsAlias(field, needle))) {
+            throw new HttpError(
+              400,
+              "flyer_invalid_ai_response",
+              flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+            );
+          }
+        }
       }
     }
   }
@@ -350,7 +414,8 @@ export async function runFlyerWeekly(
     throw new HttpError(500, "internal_error", issueMessages.internal_error);
   }
 
-  // mark 前に 24s+2s の残りが無ければ sent 化せず timeout（generation-service と同契約）
+  // PE5: mark 前ゲート（generation-service failBeforeSend と同型）。
+  // model 欠落・timeout は try/attempt を焼かず p_sent:false で閉じる。
   if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
     await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
       p_request_id: requestId,
@@ -358,6 +423,61 @@ export async function runFlyerWeekly(
       p_sent: false,
     });
     mapFailureHttp("generation_timeout");
+  }
+
+  const flyerModels =
+    env.openRouter.flyerModels.length > 0 ? env.openRouter.flyerModels : env.openRouter.plusModels;
+  if (flyerModels.length === 0) {
+    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+      p_request_id: requestId,
+      p_failure_code: "model_unavailable",
+      p_sent: false,
+    });
+    mapFailureHttp("model_unavailable");
+  }
+
+  const attemptTimeoutMs = Math.min(
+    env.openRouter.timeoutMs,
+    Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
+  );
+  if (attemptTimeoutMs <= 0) {
+    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+      p_request_id: requestId,
+      p_failure_code: "generation_timeout",
+      p_sent: false,
+    });
+    mapFailureHttp("generation_timeout");
+  }
+
+  // PE1 pre-mark: complete 0 人は OpenRouter 前に fail-closed（try を sent 化しない）
+  {
+    const { data: preMemberRows, error: preMemberError } = await admin
+      .from("household_members")
+      .select("id")
+      .eq("user_id", deps.user.userId)
+      .eq("status", "complete")
+      .limit(1);
+    if (preMemberError !== null) {
+      await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+        p_request_id: requestId,
+        p_failure_code: "internal_error",
+        p_sent: false,
+      });
+      throw new HttpError(500, "internal_error", issueMessages.internal_error);
+    }
+    const preCount = Array.isArray(preMemberRows) ? preMemberRows.length : 0;
+    if (preCount === 0) {
+      await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+        p_request_id: requestId,
+        p_failure_code: "current_target_member_required",
+        p_sent: false,
+      });
+      throw new HttpError(
+        422,
+        "current_target_member_required",
+        issueMessages.current_target_member_required,
+      );
+    }
   }
 
   // mark sent（short + try→sent + attempt/global）
@@ -378,17 +498,6 @@ export async function runFlyerWeekly(
     mapFailureHttp(code, mark.retry_at ?? null);
   }
 
-  const flyerModels =
-    env.openRouter.flyerModels.length > 0 ? env.openRouter.flyerModels : env.openRouter.plusModels;
-  if (flyerModels.length === 0) {
-    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
-      p_request_id: requestId,
-      p_failure_code: "model_unavailable",
-      p_sent: true,
-    });
-    mapFailureHttp("model_unavailable");
-  }
-
   const sender =
     deps.openRouterSender ??
     (async (messages, timeoutMs) => {
@@ -400,20 +509,6 @@ export async function runFlyerWeekly(
       });
       return send({ messages, timeoutMs, mode: "flyer_weekly" });
     });
-
-  // 試行 timeout は 24s と「残り − finalize 予約」の小さい方
-  const attemptTimeoutMs = Math.min(
-    env.openRouter.timeoutMs,
-    Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
-  );
-  if (attemptTimeoutMs <= 0) {
-    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
-      p_request_id: requestId,
-      p_failure_code: "generation_timeout",
-      p_sent: true,
-    });
-    mapFailureHttp("generation_timeout");
-  }
 
   let aiResult: OpenRouterGenerationResult;
   try {
@@ -453,7 +548,7 @@ export async function runFlyerWeekly(
 
   // server current safety only（クライアント allergy は信頼しない）
   try {
-    // 世帯の全メンバー ID をサーバ側で読み、current safety を組み立てる
+    // 世帯の complete メンバー ID をサーバ側で読み、current safety を組み立てる
     const { data: memberRows, error: memberError } = await admin
       .from("household_members")
       .select("id")
@@ -470,52 +565,41 @@ export async function runFlyerWeekly(
     const memberIds = (Array.isArray(memberRows) ? memberRows : []).map(
       (row: { id: string }) => row.id,
     );
-    // メンバー 0 人（idea 世帯）でも Zod 通過後の構造は受理。banned は空。
-    if (memberIds.length > 0) {
-      const safety = await loadCurrentSafetyContext(admin, deps.user.userId, memberIds);
-      // U6-001: unconfirmed / allergen_missing を generation と同型で fail-closed。
-      // 未確認世帯で banned=[] のまま受理するとアレルゲン検査が実質スキップされる。
-      for (const member of safety.members) {
-        if (member.allergyStatus === "unconfirmed") {
-          throw new HttpError(422, "allergy_unconfirmed", issueMessages.allergy_unconfirmed);
-        }
-        if (
-          member.allergyStatus === "registered" &&
-          member.allergenIds.length === 0 &&
-          member.customAllergies.length === 0
-        ) {
-          throw new HttpError(422, "allergen_missing", issueMessages.allergen_missing);
-        }
-        if (member.unsupportedDietStatus === "unconfirmed") {
-          throw new HttpError(
-            422,
-            "unsupported_diet_unconfirmed",
-            issueMessages.unsupported_diet_unconfirmed,
-          );
-        }
-        if (member.unsupportedDietStatus === "present") {
-          throw new HttpError(422, "unsupported_diet", issueMessages.unsupported_diet);
-        }
-      }
-      const banned: string[] = [];
-      const catalogById = new Map(
-        safety.allergenDictionary.catalog.map((entry) => [entry.id, entry.displayName] as const),
+    // PE1: complete 0 人では banned 空のまま検査スキップして成功させない（false-safe 禁止）。
+    // incomplete のみ世帯・未設定世帯は fail-closed。成功確定前に枠は mark 済み（残差は PE5 後段）。
+    if (memberIds.length === 0) {
+      throw new HttpError(
+        422,
+        "current_target_member_required",
+        issueMessages.current_target_member_required,
       );
-      for (const member of safety.members) {
-        for (const allergenId of member.allergenIds) {
-          const display = catalogById.get(allergenId);
-          if (display) banned.push(display);
-          for (const alias of safety.allergenDictionary.aliases) {
-            if (alias.allergenId === allergenId) banned.push(alias.alias);
-          }
-        }
-        for (const custom of member.customAllergies) {
-          banned.push(custom.name);
-          for (const alias of custom.aliases) banned.push(alias);
-        }
-      }
-      assertFlyerMenuSafe(parsedMenu.data, banned);
     }
+    const safety = await loadCurrentSafetyContext(admin, deps.user.userId, memberIds);
+    // U6-001: unconfirmed / allergen_missing を generation と同型で fail-closed。
+    for (const member of safety.members) {
+      if (member.allergyStatus === "unconfirmed") {
+        throw new HttpError(422, "allergy_unconfirmed", issueMessages.allergy_unconfirmed);
+      }
+      if (
+        member.allergyStatus === "registered" &&
+        member.allergenIds.length === 0 &&
+        member.customAllergies.length === 0
+      ) {
+        throw new HttpError(422, "allergen_missing", issueMessages.allergen_missing);
+      }
+      if (member.unsupportedDietStatus === "unconfirmed") {
+        throw new HttpError(
+          422,
+          "unsupported_diet_unconfirmed",
+          issueMessages.unsupported_diet_unconfirmed,
+        );
+      }
+      if (member.unsupportedDietStatus === "present") {
+        throw new HttpError(422, "unsupported_diet", issueMessages.unsupported_diet);
+      }
+    }
+    // PE2: 辞書 alias + custom を foodTextContainsAlias（evaluateAllergens 同型）で検査
+    assertFlyerMenuAgainstSafety(parsedMenu.data, safety);
   } catch (error: unknown) {
     if (error instanceof HttpError) {
       await rpcUntyped(admin, "finalize_flyer_weekly_failure", {

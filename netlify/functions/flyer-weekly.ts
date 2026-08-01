@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { Config } from "@netlify/functions";
 import { flyerWeeklyIssueMessages } from "../../shared/contracts/flyer-weekly.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
@@ -18,8 +17,9 @@ const IDEMPOTENCY_KEY_MAX = 128;
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{1,128}$/u;
 
 /**
- * クライアントの Idempotency-Key / form を受理する。不正・欠落時はサーバー採番。
- * allergy 等の自由文は無視（image + キー以外を信頼しない）。
+ * クライアントの Idempotency-Key / form を受理する。
+ * PE4: 不正・欠落時に server randomUUID を採番しない（毎回新規 key → try 焼失を防ぐ）。
+ * クライアント sticky キー必須。allergy 等の自由文は無視。
  */
 export function resolveFlyerIdempotencyKey(request: Request, form: FormData): string {
   const header = request.headers.get("idempotency-key")?.trim() ?? "";
@@ -33,13 +33,17 @@ export function resolveFlyerIdempotencyKey(request: Request, form: FormData): st
   ) {
     return candidate;
   }
-  return randomUUID();
+  throw new HttpError(
+    400,
+    "invalid_request",
+    "操作を確認してもう一度お試しください。",
+  );
 }
 
 /**
  * POST /api/flyer-weekly
  * multipart/form-data の image フィールドを受理（クライアント safety 禁止）。
- * 任意で Idempotency-Key ヘッダまたは form idempotencyKey（UUID）を受け取る。
+ * Idempotency-Key ヘッダまたは form idempotencyKey は必須（欠落は 400・台帳非接触）。
  */
 export default async function flyerWeekly(request: Request): Promise<Response> {
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
@@ -74,6 +78,7 @@ export default async function flyerWeekly(request: Request): Promise<Response> {
     }
     const blob = image as Blob;
     const buffer = new Uint8Array(await blob.arrayBuffer());
+    // PE4: キー解決は reserve 前。不正は 400 で台帳非接触
     const idempotencyKey = resolveFlyerIdempotencyKey(request, form);
 
     const result = await runFlyerWeekly(

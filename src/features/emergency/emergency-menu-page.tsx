@@ -35,6 +35,9 @@ const householdIntroText =
   "現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます。AI利用回数は消費しません。";
 const ideaIntroText =
   "個人向けの固定候補です。家族のアレルギー・年齢条件は適用していません。AI利用回数は消費しません。調理前に原材料表示と家庭内の混入を確認してください。";
+/** PE7: idea 候補表示時の追加開示（intro 設計文は変更せず、誤用を抑える） */
+const ideaHouseholdNotAppliedNote =
+  "この一覧はご家庭のアレルギー登録を見ていません。家族の制限がある場合は献立画面で「家族向け」に切り替えてください。";
 
 /** 設計 §5 path 条件付き safety_only バナー（exact plain JP） */
 const householdSafetyOnlyBannerText =
@@ -447,6 +450,14 @@ export function EmergencyMenuContent({
       {loading && <p>候補を確認中…</p>}
       {displayError !== null && <p role="alert">{displayError}</p>}
       {showSafetyOnlyBanner && <p role="note">{safetyOnlyBannerText}</p>}
+      {/* PE7: idea で候補が出ているときも家族非適用を再掲（false household safe と誤認させない） */}
+      {chromePath === "idea" &&
+        visibleResponse !== null &&
+        visibleResponse.candidates.length > 0 && (
+          <p role="note" data-testid="idea-allergy-not-applied-note">
+            {ideaHouseholdNotAppliedNote}
+          </p>
+        )}
       {visibleResponse?.candidates.length === 0 && (
         <section className="card">
           <h2>{visibleResponse.message}</h2>

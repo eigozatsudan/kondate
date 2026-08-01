@@ -411,6 +411,18 @@ describe("reviewed emergency menus", () => {
     expect(shortToken.menus.length).toBeGreaterThan(0);
   });
 
+  it("PE12: drops 1-char seasoning mains into safety_only without over-matching", () => {
+    const result = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["塩"],
+      pantryNames: [],
+      context: makeCurrentSafetyContext(),
+    });
+    expect(result.emptyReason).toBeNull();
+    expect(result.matchMode).toBe("safety_only");
+    expect(result.menus.length).toBeGreaterThan(0);
+  });
+
   it.each(["鶏 肉", "鶏。肉", "\u200B"])(
     "does not over-match a main ingredient that differs after NFKC and trim: %s",
     (mainIngredient) => {

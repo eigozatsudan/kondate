@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveFlyerIdempotencyKey } from "../flyer-weekly.js";
+import { HttpError } from "../_shared/http.js";
 
 function formWith(entries: Record<string, string>): FormData {
   const form = new FormData();
@@ -31,15 +32,16 @@ describe("resolveFlyerIdempotencyKey", () => {
     expect(key).toBe("client-retry-key-01");
   });
 
-  it("server-assigns when key is missing or invalid", () => {
+  it("PE4: rejects missing or invalid key without minting a random UUID", () => {
     const request = new Request("http://127.0.0.1/api/flyer-weekly", { method: "POST" });
-    const a = resolveFlyerIdempotencyKey(request, formWith({}));
-    const b = resolveFlyerIdempotencyKey(
-      request,
-      formWith({ idempotencyKey: "bad key with spaces!!!" }),
-    );
-    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu);
-    expect(b).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu);
-    expect(a).not.toBe(b);
+    expect(() => resolveFlyerIdempotencyKey(request, formWith({}))).toThrow(HttpError);
+    expect(() =>
+      resolveFlyerIdempotencyKey(request, formWith({ idempotencyKey: "bad key with spaces!!!" })),
+    ).toThrow(HttpError);
+    try {
+      resolveFlyerIdempotencyKey(request, formWith({}));
+    } catch (error) {
+      expect(error).toMatchObject({ status: 400, code: "invalid_request" });
+    }
   });
 });

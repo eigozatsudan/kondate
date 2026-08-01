@@ -34,6 +34,7 @@ function writeRow(userId: string, input: PantryItemInput) {
   };
 }
 
+/** PE10: updated_at 楽観ロック衝突。RLS + user_id で他ユーザー横断は閉じ済み。 */
 export class PantryVersionConflictError extends Error {
   readonly code = "pantry_version_conflict" as const;
 

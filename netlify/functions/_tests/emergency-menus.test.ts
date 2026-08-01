@@ -54,7 +54,7 @@ describe("GET /api/emergency-menus", () => {
         matchMode: null,
         emptyReason: "current_safety_unavailable",
         candidates: [],
-        message: "条件に合う緊急献立がありません",
+        message: "アレルギー確認や食事条件のため、候補を表示できません",
         consumesAiQuota: false,
       },
     });
@@ -85,7 +85,7 @@ describe("GET /api/emergency-menus", () => {
         new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
       );
 
-      // 早期 safety 除外は current_safety_unavailable → 汎用空メッセージ
+      // PE6: 早期 safety 除外は current_safety_unavailable → 専用空メッセージ
       await expect(response.json()).resolves.toMatchObject({
         ok: true,
         data: {
@@ -93,7 +93,7 @@ describe("GET /api/emergency-menus", () => {
           matchMode: null,
           emptyReason: "current_safety_unavailable",
           candidates: [],
-          message: "条件に合う緊急献立がありません",
+          message: "アレルギー確認や食事条件のため、候補を表示できません",
         },
       });
     },
