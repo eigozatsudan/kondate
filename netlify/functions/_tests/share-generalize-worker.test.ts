@@ -136,6 +136,8 @@ function createRpcAdmin(
   handlers: {
     finish?: (args: RpcArgs) => Promise<{ data: unknown; error: null }>;
     publish?: (args: RpcArgs) => Promise<{ data: unknown; error: null }>;
+    /** 当日 AI 残り枠。省略時は 500（cap 未到達） */
+    aiBudgetRemaining?: number;
   } = {},
 ) {
   const finish = vi.fn(
@@ -155,11 +157,15 @@ function createRpcAdmin(
           error: null,
         })),
   );
+  const budgetRemaining = handlers.aiBudgetRemaining ?? 500;
   const from = vi.fn();
   const rpc = vi.fn((name: string, args?: RpcArgs) => {
     const payload = args ?? {};
     if (name === "finish_share_generalization_job") return finish(payload);
     if (name === "publish_shared_emergency_recipe") return publish(payload);
+    if (name === "share_app_ai_budget_remaining") {
+      return Promise.resolve({ data: budgetRemaining, error: null });
+    }
     return Promise.reject(new Error(`unexpected rpc ${name}`));
   });
   // 本番 Admin 型との差分はテスト stub として閉じる
@@ -186,13 +192,28 @@ describe("share-generalize-worker auth / schedule", () => {
     expect(claimShareGeneralizationJobs).not.toHaveBeenCalled();
   });
 
-  it("accepts Netlify schedule event when env secret is set", async () => {
+  it("rejects Netlify schedule event without secret (fail-closed)", async () => {
+    process.env[SHARE_WORKER_CRON_SECRET_ENV] = VALID_SECRET;
+    const response = await shareGeneralizeWorker(
+      new Request("http://127.0.0.1/.netlify/functions/share-generalize-worker", {
+        method: "POST",
+        headers: { "x-netlify-event": "schedule" },
+      }),
+    );
+    expect(response.status).toBe(401);
+    expect(claimShareGeneralizationJobs).not.toHaveBeenCalled();
+  });
+
+  it("accepts schedule invoke when Bearer secret matches", async () => {
     process.env[SHARE_WORKER_CRON_SECRET_ENV] = VALID_SECRET;
     claimShareGeneralizationJobs.mockResolvedValue([]);
     const response = await shareGeneralizeWorker(
       new Request("http://127.0.0.1/.netlify/functions/share-generalize-worker", {
         method: "POST",
-        headers: { "x-netlify-event": "schedule" },
+        headers: {
+          "x-netlify-event": "schedule",
+          authorization: `Bearer ${VALID_SECRET}`,
+        },
       }),
     );
     expect(response.status).toBe(204);
@@ -214,6 +235,18 @@ describe("share-generalize-worker auth / schedule", () => {
         [SHARE_WORKER_CRON_SECRET_ENV]: "tooshort",
       }),
     ).toBe("forbidden");
+  });
+
+  it("authorizeShareGeneralizeWorker rejects schedule-only without presented secret", () => {
+    expect(
+      authorizeShareGeneralizeWorker(
+        new Request("http://127.0.0.1/.netlify/functions/share-generalize-worker", {
+          method: "POST",
+          headers: { "x-netlify-event": "schedule" },
+        }),
+        { [SHARE_WORKER_CRON_SECRET_ENV]: VALID_SECRET },
+      ),
+    ).toBe("unauthorized");
   });
 
   it("returns 500 and closed failure log when claim throws", async () => {
@@ -387,6 +420,118 @@ describe("processShareGeneralizationJob pipeline", () => {
         p_ai_call_count: 0,
       }),
     );
+  });
+
+  it("skips with app_ai_cap before OpenRouter when budget remaining is 0", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
+    const { admin, finish, publish } = createRpcAdmin({ aiBudgetRemaining: 0 });
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+    });
+
+    expect(sendPass).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "skipped",
+        p_code: "app_ai_cap",
+        p_ai_call_count: 0,
+      }),
+    );
+  });
+
+  it("skips with denylist_precheck before OpenRouter when canonical hits PII denylist", async () => {
+    const base = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const source = makeValidatedMenu({
+      menuId: SOURCE_MENU_ID,
+      dishes: base.dishes.map((dish, index) =>
+        index === 0
+          ? {
+              ...dish,
+              ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+                ingredientIndex === 0
+                  ? { ...ingredient, name: "うちの冷蔵庫の残りもの" }
+                  : ingredient,
+              ),
+            }
+          : dish,
+      ),
+    });
+    const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
+    const { admin, finish, publish } = createRpcAdmin();
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+    });
+
+    expect(sendPass).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "skipped",
+        p_code: "denylist_precheck",
+        p_ai_call_count: 0,
+      }),
+    );
+  });
+
+  it("publishes allergen union of pre and post Pass ingredient names", async () => {
+    const base = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    // pre: 卵 / post Pass で材料名を鶏卵に一般化しても egg を落とさない（和集合）
+    const source = makeValidatedMenu({
+      menuId: SOURCE_MENU_ID,
+      dishes: base.dishes.map((dish, index) =>
+        index === 0
+          ? {
+              ...dish,
+              ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+                ingredientIndex === 0 ? { ...ingredient, name: "卵" } : ingredient,
+              ),
+            }
+          : dish,
+      ),
+    });
+    const { admin, publish } = createRpcAdmin();
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass: makePassSender((pass, menu) => {
+        const patch = identityPatch(menu);
+        if (pass !== "pass1") return patch;
+        return {
+          ...patch,
+          dishes: patch.dishes.map((dish, index) =>
+            index === 0
+              ? {
+                  ...dish,
+                  ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+                    ingredientIndex === 0 ? { ...ingredient, name: "鶏卵" } : ingredient,
+                  ),
+                }
+              : dish,
+          ),
+        };
+      }),
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+    });
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    const args = publish.mock.calls[0]![0] as {
+      p_standard_allergen_ids: string[];
+    };
+    expect(args.p_standard_allergen_ids).toContain("egg");
   });
 
   it("publishes with AI call count and succeeds", async () => {

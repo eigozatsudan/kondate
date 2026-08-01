@@ -71,6 +71,16 @@ describe("buildShareCanonicalMenu", () => {
     expect(result.menu.menuId).not.toBe(source.menuId);
   });
 
+  it("always sets servings to 2 regardless of source servings", () => {
+    for (const servings of [1, 3, 4, 8] as const) {
+      const source = makeValidatedMenu({ servings });
+      const result = buildShareCanonicalMenu(source, createTestIdFactory());
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.menu.servings).toBe(2);
+    }
+  });
+
   it("reassigns all entity ids so none match the source set", () => {
     const source = makeValidatedMenu({
       adaptations: [

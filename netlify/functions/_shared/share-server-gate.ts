@@ -89,7 +89,11 @@ function graphsMatch(menu: ValidatedMenu, locked: ShareIngredientGraphLock): boo
   return true;
 }
 
-function menuHitsDenylist(menu: ValidatedMenu): boolean {
+/**
+ * メニュー全文（ingredient.name / 手順 / adaptation 等）が denylist に触れるか。
+ * Pass 前 precheck と Pass 後 gate の双方で使う（自由文は返さない）。
+ */
+export function menuHitsShareDenylist(menu: ValidatedMenu): boolean {
   // collectMenuTextSources は ingredient.name / quantityText / 手順 / adaptation 等を網羅
   for (const source of collectMenuTextSources(menu)) {
     if (textHitsShareDenylist(source.text)) return true;
@@ -114,7 +118,7 @@ export function runShareServerGate(
     return { ok: false, code: "server_gate_failed" };
   }
 
-  if (menuHitsDenylist(parsed.data)) {
+  if (menuHitsShareDenylist(parsed.data)) {
     return { ok: false, code: "server_gate_failed" };
   }
 

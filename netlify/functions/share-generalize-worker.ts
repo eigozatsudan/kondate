@@ -17,6 +17,7 @@ import {
 import { buildShareCanonicalMenu } from "../../shared/emergency/share-canonical.js";
 import {
   computeSharePublishMetadata,
+  mergeSharePublishMetadata,
   type SharePublishAllergenCatalog,
 } from "../../shared/emergency/share-publish-metadata.js";
 import { currentAllergenCatalogV1 } from "../../shared/safety/current-allergen-catalog.v1.js";
@@ -30,6 +31,7 @@ import {
 import { sendShareGeneralizationPassFromEnv } from "./_shared/share-openrouter.js";
 import {
   captureShareIngredientGraphLock,
+  menuHitsShareDenylist,
   runShareServerGate,
 } from "./_shared/share-server-gate.js";
 import { HttpError } from "./_shared/http.js";
@@ -97,7 +99,10 @@ function bearerToken(authorization: string | null): string | null {
 /**
  * アプリ層認可:
  * - env SHARE_WORKER_CRON_SECRET 必須（短すぎ = 403）
- * - header / Bearer 一致、または x-netlify-event: schedule + env secret
+ * - header x-share-worker-cron-secret または Authorization: Bearer が secret と一致
+ * - x-netlify-event: schedule 単独は不可。Netlify scheduled function は
+ *   Authorization: Bearer $SHARE_WORKER_CRON_SECRET をプラットフォーム側で付与する想定
+ *  （未設定なら schedule も 401 になる fail-closed）
  */
 export function authorizeShareGeneralizeWorker(
   request: Request,
@@ -114,11 +119,6 @@ export function authorizeShareGeneralizeWorker(
 
   if (headerSecret !== null && headerSecret.length > 0) {
     return secretsEqual(headerSecret, expected) ? "ok" : "forbidden";
-  }
-
-  const netlifyEvent = request.headers.get("x-netlify-event")?.trim().toLowerCase();
-  if (netlifyEvent === "schedule") {
-    return "ok";
   }
 
   return "unauthorized";
@@ -299,7 +299,32 @@ export async function processShareGeneralizationJob(
     return;
   }
 
+  // --- 3b. Pass 前 AI 枠（0 なら OpenRouter を叩かず skip） ---
+  {
+    const { error: budgetError, data: budgetData } = await deps.admin.rpc(
+      "share_app_ai_budget_remaining",
+    );
+    if (budgetError) {
+      throw new Error("share_ai_budget_check_failed");
+    }
+    const remaining =
+      typeof budgetData === "number" && Number.isFinite(budgetData) ? budgetData : 0;
+    if (remaining <= 0) {
+      await finish("skipped", "app_ai_cap");
+      return;
+    }
+  }
+
+  // --- 3c. Pass 前 denylist（ソース残渣を AI に送らない） ---
+  if (menuHitsShareDenylist(canonical.menu)) {
+    await finish("skipped", "denylist_precheck");
+    return;
+  }
+
   const lockedGraph = captureShareIngredientGraphLock(canonical.menu);
+  const catalog = deps.allergenCatalog ?? buildSharePublishAllergenCatalog();
+  // pre-Pass 材料名由来の metadata（publish 時に post と和集合 / 積集合）
+  const metaPre = computeSharePublishMetadata(canonical.menu, catalog);
 
   // --- 4. Pass1 → Pass2（AI 台帳は injectable。generate 予約には非接触） ---
   // publish はゲート後に実 RPC するため、ここでは no-op でメニューだけ確定させる。
@@ -330,9 +355,9 @@ export async function processShareGeneralizationJob(
     return;
   }
 
-  // --- 6. publish metadata（空 eligibleAgeBands での publish 禁止） ---
-  const catalog = deps.allergenCatalog ?? buildSharePublishAllergenCatalog();
-  const metadata = computeSharePublishMetadata(aiResult.menu, catalog);
+  // --- 6. publish metadata（pre∪post allergen / pre∩post age。空帯は禁止） ---
+  const metaPost = computeSharePublishMetadata(aiResult.menu, catalog);
+  const metadata = mergeSharePublishMetadata(metaPre, metaPost, catalog);
   if (metadata.eligibleAgeBands.length < 1) {
     await finish("failed", "server_gate_failed");
     return;

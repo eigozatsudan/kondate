@@ -15,6 +15,10 @@ export const shareSkipReasons = [
   "ineligible_structure",
   /** publish 直前の user/app 日次 success 上限（pool INSERT 前に fail-closed） */
   "daily_success_cap",
+  /** worker: 日次 AI 呼び出し cap 到達（OpenRouter 前に skip） */
+  "app_ai_cap",
+  /** worker: canonical 直後・Pass 前の denylist ヒット（OpenRouter 前） */
+  "denylist_precheck",
 ] as const;
 export type ShareSkipReason = (typeof shareSkipReasons)[number];
 

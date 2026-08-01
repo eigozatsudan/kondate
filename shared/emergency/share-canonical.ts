@@ -197,7 +197,8 @@ export function buildShareCanonicalMenu(
     menuId: idFactory(),
     mealType: menu.mealType,
     cuisineGenre: menu.cuisineGenre,
-    servings: menu.servings,
+    // 共有テンプレは 2 人分固定（ソース世帯人数・個人人数をプールへ載せない）
+    servings: 2,
     totalElapsedMinutes: menu.totalElapsedMinutes,
     safetyTags: [...menu.safetyTags],
     dishes,

@@ -134,3 +134,26 @@ export function computeSharePublishMetadata(
     eligibleAgeBands: computeEligibleAgeBands(menu),
   };
 }
+
+/**
+ * Pass 前後の metadata を保守的に合成する。
+ * - standardAllergenIds: 和集合（pre または post でヒットしたら載せる。取りこぼし禁止）
+ * - eligibleAgeBands: 積集合（狭い方が勝つ。空なら publish 側で fail-closed）
+ * 並びは catalog / ageBands 順で安定。
+ */
+export function mergeSharePublishMetadata(
+  pre: SharePublishMetadata,
+  post: SharePublishMetadata,
+  allergenCatalog: SharePublishAllergenCatalog,
+): SharePublishMetadata {
+  const allergenHits = new Set([...pre.standardAllergenIds, ...post.standardAllergenIds]);
+  const postBands = new Set(post.eligibleAgeBands);
+  const preBands = new Set(pre.eligibleAgeBands);
+
+  return {
+    standardAllergenIds: allergenCatalog.catalog
+      .map((entry) => entry.id)
+      .filter((id) => allergenHits.has(id)),
+    eligibleAgeBands: ageBands.filter((band) => preBands.has(band) && postBands.has(band)),
+  };
+}

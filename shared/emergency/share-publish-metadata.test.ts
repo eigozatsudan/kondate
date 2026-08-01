@@ -6,6 +6,7 @@ import { currentAllergenCatalogV1 } from "../safety/current-allergen-catalog.v1.
 import { makeValidatedMenu } from "../testing/factories.js";
 import {
   computeSharePublishMetadata,
+  mergeSharePublishMetadata,
   type SharePublishAllergenCatalog,
 } from "./share-publish-metadata.js";
 
@@ -180,5 +181,31 @@ describe("computeSharePublishMetadata", () => {
     });
     const meta = computeSharePublishMetadata(menu, catalog);
     expect(meta.standardAllergenIds).toEqual(["egg", "chicken"]);
+  });
+
+  it("mergeSharePublishMetadata unions allergens and intersects age bands", () => {
+    const catalog = makeEggAwareCatalog();
+    const pre = {
+      standardAllergenIds: ["egg"],
+      eligibleAgeBands: ["age_6_8", "age_13_17", "adult", "senior"] as const,
+    };
+    const post = {
+      standardAllergenIds: ["chicken"],
+      eligibleAgeBands: ["age_13_17", "adult", "senior"] as const,
+    };
+    const merged = mergeSharePublishMetadata(
+      {
+        standardAllergenIds: [...pre.standardAllergenIds],
+        eligibleAgeBands: [...pre.eligibleAgeBands],
+      },
+      {
+        standardAllergenIds: [...post.standardAllergenIds],
+        eligibleAgeBands: [...post.eligibleAgeBands],
+      },
+      catalog,
+    );
+    expect(merged.standardAllergenIds).toEqual(["egg", "chicken"]);
+    expect(merged.eligibleAgeBands).toEqual(["age_13_17", "adult", "senior"]);
+    expect(merged.eligibleAgeBands).not.toContain("age_6_8");
   });
 });

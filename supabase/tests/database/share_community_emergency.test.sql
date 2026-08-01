@@ -1,7 +1,7 @@
 -- Task 3: 共有プール schema / public definer RPC / 削除 / reaper / success cap
 \ir 000_helpers.sql
 begin;
-select plan(33);
+select plan(36);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -819,6 +819,184 @@ select lives_ok(
     $maint$;
   $$,
   'run_kondate_maintenance exposes staleShareJobsReaped as dedicated count key'
+);
+
+-- ---------------------------------------------------------------------------
+-- AI call cap fail-closed: 499+2→500 pin / at-500 enqueue app_cap / inflight reserve
+-- ---------------------------------------------------------------------------
+select lives_ok(
+  $$
+    do $aic$
+    declare
+      v_day date := private.ai_jst_day(clock_timestamp());
+      v_count integer;
+      v_remaining integer;
+    begin
+      insert into private.share_app_daily_usage (usage_day, success_count, ai_call_count, updated_at)
+      values (v_day, 0, 499, clock_timestamp())
+      on conflict (usage_day) do update
+        set ai_call_count = 499,
+            success_count = 0,
+            updated_at = clock_timestamp();
+
+      -- 旧実装は 499+2>500 で silent-return し 499 に凍結していた
+      perform private.share_increment_ai_calls(v_day, 2);
+
+      select ai_call_count into v_count
+      from private.share_app_daily_usage
+      where usage_day = v_day;
+      if v_count is distinct from 500 then
+        raise exception 'expected pin to 500 after 499+2, got %', v_count;
+      end if;
+
+      -- 500 到達後は残枠 0
+      v_remaining := public.share_app_ai_budget_remaining();
+      if v_remaining is distinct from 0 then
+        raise exception 'expected remaining 0 at cap, got %', v_remaining;
+      end if;
+
+      -- さらに +2 しても 500 を超えない
+      perform private.share_increment_ai_calls(v_day, 2);
+      select ai_call_count into v_count
+      from private.share_app_daily_usage
+      where usage_day = v_day;
+      if v_count is distinct from 500 then
+        raise exception 'expected stay at 500 after further increment, got %', v_count;
+      end if;
+    end;
+    $aic$;
+  $$,
+  'share_increment_ai_calls pins 499+2 to 500 and does not freeze under cap'
+);
+
+select lives_ok(
+  $$
+    do $enqcap$
+    declare
+      v_day date := private.ai_jst_day(clock_timestamp());
+      v_enq jsonb;
+      v_user uuid := 'a1000000-0000-4000-8000-0000000000a2';
+      v_menu uuid := 'b1000000-0000-4000-8000-0000000000b5';
+    begin
+      -- a2 用メニュー + consent（a1 は既に user cap 消費済み）
+      if not exists (select 1 from auth.users where id = v_user) then
+        raise exception 'fixture user a2 missing';
+      end if;
+
+      insert into public.menus (
+        id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
+        preference_snapshot, safety_snapshot, safety_fingerprint, target_mode,
+        allergen_dictionary_version, food_safety_rule_version, output_schema_version,
+        derivation_group_id, version
+      ) values (
+        v_menu, v_user, 'dinner', 'japanese', 2, 15,
+        '{}', '{}', repeat('e', 64), 'household',
+        'allergens-v1', 'food-v1', 'menu-v1',
+        'b1000000-0000-4000-8000-0000000000c5', 1
+      )
+      on conflict (id) do nothing;
+
+      insert into public.user_share_consents (
+        user_id, consent_version, accepted_at, revoked_at, created_at, updated_at
+      ) values (
+        v_user, '2026-08-01.v1', clock_timestamp(), null, clock_timestamp(), clock_timestamp()
+      )
+      on conflict (user_id) do update
+        set consent_version = excluded.consent_version,
+            accepted_at = excluded.accepted_at,
+            revoked_at = null,
+            updated_at = excluded.updated_at;
+
+      -- a2 の user cap を空ける
+      insert into private.share_user_daily_usage (
+        contributor_user_id, usage_day, attempt_count, success_count, updated_at
+      ) values (v_user, v_day, 0, 0, clock_timestamp())
+      on conflict (contributor_user_id, usage_day) do update
+        set attempt_count = 0, success_count = 0, updated_at = clock_timestamp();
+
+      update private.share_app_daily_usage
+      set ai_call_count = 500, success_count = 0, updated_at = clock_timestamp()
+      where usage_day = v_day;
+
+      perform setseed(0.0005);
+      v_enq := public.try_enqueue_share_job(v_menu);
+      if coalesce((v_enq ->> 'enqueued')::boolean, true) then
+        raise exception 'enqueue at ai_call_count=500 must fail, got %', v_enq;
+      end if;
+      if v_enq ->> 'reason' is distinct from 'app_cap' then
+        raise exception 'expected app_cap at 500, got %', v_enq;
+      end if;
+    end;
+    $enqcap$;
+  $$,
+  'try_enqueue returns app_cap when ai_call_count is already 500'
+);
+
+select lives_ok(
+  $$
+    do $inflight$
+    declare
+      v_day date := private.ai_jst_day(clock_timestamp());
+      v_enq jsonb;
+      v_user uuid := 'a1000000-0000-4000-8000-0000000000a2';
+      v_menu uuid := 'b1000000-0000-4000-8000-0000000000b6';
+      i integer;
+    begin
+      insert into public.menus (
+        id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
+        preference_snapshot, safety_snapshot, safety_fingerprint, target_mode,
+        allergen_dictionary_version, food_safety_rule_version, output_schema_version,
+        derivation_group_id, version
+      ) values (
+        v_menu, v_user, 'lunch', 'japanese', 2, 12,
+        '{}', '{}', repeat('f', 64), 'household',
+        'allergens-v1', 'food-v1', 'menu-v1',
+        'b1000000-0000-4000-8000-0000000000c6', 1
+      )
+      on conflict (id) do nothing;
+
+      -- 実消費は低いまま、pending を大量に積んで予約枠だけで 500 超
+      update private.share_app_daily_usage
+      set ai_call_count = 0, success_count = 0, updated_at = clock_timestamp()
+      where usage_day = v_day;
+
+      delete from private.share_generalization_jobs
+      where status in ('pending', 'running')
+        and source_menu_id is null
+        and contributor_user_id is null;
+
+      -- 249 pending → 249*2 + 2 = 500 ちょうどは許容、250 pending → 502 超で app_cap
+      for i in 1..250 loop
+        insert into private.share_generalization_jobs (
+          source_menu_id, contributor_user_id, status, created_at
+        ) values (
+          null, null, 'pending', clock_timestamp()
+        );
+      end loop;
+
+      insert into private.share_user_daily_usage (
+        contributor_user_id, usage_day, attempt_count, success_count, updated_at
+      ) values (v_user, v_day, 0, 0, clock_timestamp())
+      on conflict (contributor_user_id, usage_day) do update
+        set attempt_count = 0, success_count = 0, updated_at = clock_timestamp();
+
+      perform setseed(0.0005);
+      v_enq := public.try_enqueue_share_job(v_menu);
+      if coalesce((v_enq ->> 'enqueued')::boolean, true) then
+        raise exception 'enqueue with pending backlog must fail, got %', v_enq;
+      end if;
+      if v_enq ->> 'reason' is distinct from 'app_cap' then
+        raise exception 'expected app_cap from inflight reserve, got %', v_enq;
+      end if;
+
+      delete from private.share_generalization_jobs
+      where status = 'pending'
+        and source_menu_id is null
+        and contributor_user_id is null;
+    end;
+    $inflight$;
+  $$,
+  'try_enqueue app_cap when pending backlog would exceed AI call reserve'
 );
 
 -- ---------------------------------------------------------------------------

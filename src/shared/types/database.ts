@@ -226,6 +226,11 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       insert_user_feedback_rate_limited: Omit<GeneratedInsertUserFeedback, "Args"> & {
         Args: InsertUserFeedbackArgs;
       };
+      /** 共有 worker: 当日 AI 呼び出し残り枠（service_role） */
+      share_app_ai_budget_remaining: {
+        Args: Record<string, never>;
+        Returns: number;
+      };
     };
   };
 };
