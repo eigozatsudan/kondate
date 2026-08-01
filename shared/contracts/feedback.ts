@@ -9,6 +9,7 @@ export const feedbackCategorySchema = z.enum(feedbackCategories);
 /**
  * 画面パスとして許可する clientPath。
  * UI は pathname のみ送る。改変クライアントによる scheme / ホスト / 空白 / 誘導文字列を拒否する（AP4）。
+ * ドットのみのセグメント（`.` / `..` / `....`）も拒否し運用閲覧ノイズを抑える（AP9）。
  * 例: /settings, /history/abc-123, /planner? は不可（query なし）。
  */
 export const feedbackClientPathSchema = z
@@ -16,7 +17,12 @@ export const feedbackClientPathSchema = z
   .trim()
   .min(1)
   .max(200)
-  .regex(/^\/(?:[A-Za-z0-9._~-]+\/?)*$/, "画面パスの形式が正しくありません");
+  .regex(/^\/(?:[A-Za-z0-9._~-]+\/?)*$/, "画面パスの形式が正しくありません")
+  // AP9: 文字クラスに `.` が含まれるため `/a/../b` 等を regex だけでは弾けない
+  .refine(
+    (path) => !path.split("/").filter(Boolean).some((segment) => /^\.+$/u.test(segment)),
+    "画面パスの形式が正しくありません",
+  );
 
 /**
  * フィードバック送信リクエスト。

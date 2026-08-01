@@ -21,6 +21,12 @@ describe("feedbackClientPathSchema (AP4)", () => {
       expect(feedbackClientPathSchema.safeParse(bad).success).toBe(false);
     }
   });
+
+  it("AP9: rejects dot-only segments (., .., ....)", () => {
+    for (const bad of ["/a/../b", "/..", "/.", "/....", "/foo/./bar", "/a/..../b"]) {
+      expect(feedbackClientPathSchema.safeParse(bad).success).toBe(false);
+    }
+  });
 });
 
 describe("submitFeedbackRequestSchema", () => {

@@ -32,10 +32,10 @@ describe("FlyerWeeklyPanel", () => {
     expect(plusLink).toHaveAttribute("href", "/plus");
   });
 
-  it("shows upload control for Plus", () => {
+  it("shows upload control for Plus when privacy is accepted", () => {
     render(
       <MemoryRouter>
-        <FlyerWeeklyPanel plusEntitled />
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
       </MemoryRouter>,
     );
     expect(screen.getByTestId("flyer-weekly-upload")).toBeVisible();
@@ -56,6 +56,16 @@ describe("FlyerWeeklyPanel", () => {
     expect(privacyLink).toHaveAttribute("href", "/privacy?returnTo=%2Fplanner");
   });
 
+  it("AP5: Plus with omitted hasAcceptedPrivacy is fail-closed (privacy gate, not upload)", () => {
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("flyer-weekly-privacy")).toBeVisible();
+    expect(screen.queryByTestId("flyer-weekly-upload")).toBeNull();
+  });
+
   it("F-U11-1: rejects success body that fails weeklyFlyerMenuResultSchema", async () => {
     vi.stubGlobal(
       "fetch",
@@ -73,7 +83,7 @@ describe("FlyerWeeklyPanel", () => {
     );
     render(
       <MemoryRouter>
-        <FlyerWeeklyPanel plusEntitled />
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
       </MemoryRouter>,
     );
     const input = document.querySelector('input[type="file"]');
@@ -97,7 +107,7 @@ describe("FlyerWeeklyPanel", () => {
   it("PE11: Plus upload discloses email identity count reset residual", () => {
     render(
       <MemoryRouter>
-        <FlyerWeeklyPanel plusEntitled />
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
       </MemoryRouter>,
     );
     expect(screen.getByTestId("flyer-weekly-identity-note")).toHaveTextContent(

@@ -18,6 +18,7 @@ export type FlyerWeeklyPanelProps = {
   plusEntitled: boolean;
   /**
    * 現行 privacy notice への同意済み。未同意時は AI 送信 UI を出さず /privacy へ誘導する（PRIV-1）。
+   * 省略時は false（fail-closed）。prop 脱落時にアップロード UI を出さない（AP5）。
    * サーバ側でも consent_required で閉じる。
    */
   hasAcceptedPrivacy?: boolean;
@@ -39,7 +40,8 @@ function newIdempotencyKey(): string {
  */
 export function FlyerWeeklyPanel({
   plusEntitled,
-  hasAcceptedPrivacy = true,
+  // AP5: 既定 false。呼び出し側が同意状態を渡さない限りアップロード UI を出さない
+  hasAcceptedPrivacy = false,
 }: FlyerWeeklyPanelProps) {
   const inputId = useId();
   const { session } = useAuth();

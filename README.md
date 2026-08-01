@@ -392,7 +392,7 @@ npm run preflight:production
 **5. 再有効化・事故対応**
 
 - Webhook 欠落や kill 長期後: [docs/runbooks/billing-reconcile.md](docs/runbooks/billing-reconcile.md)
-- アカウント削除時の Stripe cancel は best-effort: [docs/runbooks/account-deletion.md](docs/runbooks/account-deletion.md)
+- アカウント削除時の Stripe cancel は fail-closed（解約失敗時は Auth 削除しない）: [docs/runbooks/account-deletion.md](docs/runbooks/account-deletion.md)
 
 #### よくあるつまずき
 
