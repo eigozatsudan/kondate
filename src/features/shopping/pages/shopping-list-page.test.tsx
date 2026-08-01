@@ -360,7 +360,8 @@ describe("ShoppingListPage safety gate", () => {
       expect(screen.getByRole("checkbox", { name: /購入済みにする/u })).not.toBeDisabled();
     });
 
-    // 再開後の最初の書き込みは新しい fingerprint を運ぶ
+    // 再開後の書き込み前 revalidate も新しい fingerprint を返し、RPC に載せる（SHOP6）
+    revalidateActiveShoppingList.mockResolvedValue(validSafety(NEXT_FINGERPRINT));
     await user.click(screen.getByRole("checkbox", { name: /購入済みにする/u }));
     expect(mutateShoppingItem).toHaveBeenCalledWith(
       expect.objectContaining({ expectedSafetyFingerprint: NEXT_FINGERPRINT }),
@@ -517,7 +518,7 @@ describe("ShoppingListPage safety gate", () => {
     expect(screen.getByRole("checkbox", { name: /購入済みにする/u })).toBeDisabled();
   });
 
-  it("does not poll before 60 seconds and revalidates at 60 seconds while visible and online", async () => {
+  it("does not poll before 60 seconds and soft-revalidates at 60 seconds while visible and online", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     // shouldAdvanceTime は初回描画待ちの実時間ぶんも偽クロックを進めるため、
     // 60 秒間隔の起点（mount 時刻）から数え直して 59,999ms 丁度に合わせる。
@@ -536,11 +537,13 @@ describe("ShoppingListPage safety gate", () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(revalidateActiveShoppingList.mock.calls.length).toBe(before + 1);
-    expect(screen.getByRole("checkbox", { name: /購入済みにする/u })).toBeDisabled();
+    // SHOP6 soft poll: ready 中は checking に落とさず操作 UI を開いたまま裏で再検証
+    expect(screen.getByRole("checkbox", { name: /購入済みにする/u })).not.toBeDisabled();
     await act(async () => {
       deferred.resolve(validSafety());
       await Promise.resolve();
     });
+    expect(screen.getByRole("checkbox", { name: /購入済みにする/u })).not.toBeDisabled();
   });
 
   it("does not call the server from a hidden or offline poll interval", async () => {
@@ -603,7 +606,10 @@ describe("ShoppingListPage safety gate", () => {
 
   it("closes and reruns the gate without writing when the database reports a fingerprint conflict", async () => {
     await renderPage(makeShoppingList([makeItem()]));
+    const before = revalidateActiveShoppingList.mock.calls.length;
     // クライアント側シグナルを全て抑止した状態でも、DB の競合だけでゲートは閉じる
+    // SHOP6: 書き込み直前 preflight revalidate が先に走り、その後 RPC が競合する
+    revalidateActiveShoppingList.mockResolvedValueOnce(validSafety());
     mutateShoppingItem.mockRejectedValueOnce(
       Object.assign(new Error("家族設定が変わりました"), {
         code: "shopping_safety_fingerprint_changed",
@@ -618,7 +624,8 @@ describe("ShoppingListPage safety gate", () => {
       expect(screen.getByRole("checkbox", { name: /購入済みにする/u })).toBeDisabled();
     });
     expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
-    expect(revalidateActiveShoppingList).toHaveBeenCalledTimes(2);
+    // preflight + 競合後 hard refresh の2回が増える
+    expect(revalidateActiveShoppingList.mock.calls.length).toBe(before + 2);
     await act(async () => {
       deferred.resolve(validSafety(NEXT_FINGERPRINT));
       await Promise.resolve();

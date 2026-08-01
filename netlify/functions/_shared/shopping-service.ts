@@ -64,17 +64,26 @@ async function assertHouseholdMenuIdentity(deps: ShoppingDependencies, menuId: s
   return identity;
 }
 
+function currentSafetyRequired(): never {
+  throw new HttpError(
+    409,
+    "current_safety_revalidation_required",
+    "現在の家族設定で献立を確認してから買い物リストを作ってください",
+  );
+}
+
+async function revalidateMenuOrThrow(deps: ShoppingDependencies, menuId: string) {
+  const revalidation = await deps.revalidate(menuId);
+  if (revalidation.status === "invalid" || revalidation.issues.length > 0) {
+    currentSafetyRequired();
+  }
+  return revalidation;
+}
+
 async function validatedDraft(deps: ShoppingDependencies, menuId: string) {
   // identity で idea を先に拒否し、full aggregate・家族 revalidation へ進まない
   await assertHouseholdMenuIdentity(deps, menuId);
-  const revalidation = await deps.revalidate(menuId);
-  if (revalidation.status === "invalid" || revalidation.issues.length > 0) {
-    throw new HttpError(
-      409,
-      "current_safety_revalidation_required",
-      "現在の家族設定で献立を確認してから買い物リストを作ってください",
-    );
-  }
+  const revalidation = await revalidateMenuOrThrow(deps, menuId);
   const fingerprintBefore = await deps.getSafetyFingerprint(menuId);
   const [menu, pantry] = await Promise.all([
     deps.loadMenu(menuId, revalidation.currentLabelWarnings),
@@ -99,18 +108,79 @@ async function validatedDraft(deps: ShoppingDependencies, menuId: string) {
   return { menu, draft, safetyFingerprint: fingerprintAfter };
 }
 
+/**
+ * SHOP2: active list の既存 source を現行 safety で確認する。
+ * append が単一 menu fingerprint だけ見ると、他 source が invalid でも 200 になり得る。
+ * dead source（menu_id null）は SQL list_unverifiable と同趣旨で拒否する。
+ */
+async function assertActiveListSourcesCurrentlySafe(
+  deps: ShoppingDependencies,
+  listId: string,
+): Promise<void> {
+  const sources = await deps.loadActiveListSources(listId);
+  if (sources.some((source) => source.menuId === null)) {
+    throw new HttpError(
+      409,
+      "list_unverifiable",
+      "削除された献立が残っているため、新しい買い物リストを作り直してください",
+    );
+  }
+  const seen = new Set<string>();
+  for (const source of sources) {
+    if (source.menuId === null || seen.has(source.menuId)) continue;
+    seen.add(source.menuId);
+    await assertHouseholdMenuIdentity(deps, source.menuId);
+    await revalidateMenuOrThrow(deps, source.menuId);
+  }
+}
+
+/**
+ * SHOP1: 30 日 idempotent replay でも現行 safety を再解釈する。
+ * 保存済み {listId,version} をそのまま 200 にすると、家族条件変更後も「成功」表示になる。
+ * 対象 list が消えている／source が invalid なら fail-closed（再送成功にしない）。
+ */
+async function assertReplayStillCurrentlySafe(
+  deps: ShoppingDependencies,
+  input: { menuId: string; listId: string },
+): Promise<void> {
+  // コマンド対象 menu を live 再検証（pantry 読込・fingerprint before/after 含む）
+  await validatedDraft(deps, input.menuId);
+
+  const list = await deps.loadActiveList(input.listId);
+  if (list === null) {
+    throw new HttpError(
+      409,
+      "current_safety_revalidation_required",
+      "買い物リストの状態が変わったため、もう一度確認してください",
+    );
+  }
+  // multi-source list の他 source も閉じる（append 後の replay 含む）
+  await assertActiveListSourcesCurrentlySafe(deps, input.listId);
+}
+
 export async function createShoppingListFromMenu(
   deps: ShoppingDependencies,
   command: CreateShoppingListRequest & UserCommand,
 ): Promise<CreateShoppingListResponse> {
   const requestHash = createShoppingCommandHash(command);
-  // 有効期限内 replay を最初に read-only で返し、出典削除・mode 変化後も live を再解釈しない
+  // 有効期限内 replay を最初に read-only で拾うが、SHOP1 により現行 safety は再確認する
   const replay = await deps.findMutationReplay({
     idempotencyKey: command.idempotencyKey,
     requestHash,
   });
-  if (replay !== null) return replay;
+  if (replay !== null) {
+    await assertReplayStillCurrentlySafe(deps, {
+      menuId: command.menuId,
+      listId: replay.listId,
+    });
+    return replay;
+  }
+  // SHOP8: idea / owner は full aggregate より前（SQL の identity 優先と同順）
   const { draft, safetyFingerprint } = await validatedDraft(deps, command.menuId);
+  // SHOP2: append は active list 全 live source の現行 safety を先に確認
+  if (command.mode === "append" && command.activeListId !== null) {
+    await assertActiveListSourcesCurrentlySafe(deps, command.activeListId);
+  }
   return deps.applyDraft({ ...command, requestHash, safetyFingerprint, draft });
 }
 
@@ -134,6 +204,32 @@ async function scopeItemIdsForSourceMenu(
   return ids;
 }
 
+/**
+ * SHOP3: lineage 有無は items 件数に依存させない。
+ * sources に無い献立の reconcile は純 add 入口にせず、create append へ誘導する。
+ */
+async function hasSourceLineageOnList(
+  deps: ShoppingDependencies,
+  listId: string,
+  sourceMenuId: string,
+  sourceDerivationGroupId: string,
+): Promise<boolean> {
+  const sources = await deps.loadActiveListSources(listId);
+  return sources.some((source) => {
+    const sameMenu = source.menuId === sourceMenuId || source.sourceMenuIdSnapshot === sourceMenuId;
+    const sameGroup = source.sourceDerivationGroupId === sourceDerivationGroupId;
+    return sameMenu || sameGroup;
+  });
+}
+
+function rejectReconcileSourceNotInList(): never {
+  throw new HttpError(
+    409,
+    "reconcile_source_not_in_list",
+    "この献立は買い物リストに取り込まれていません",
+  );
+}
+
 export async function previewShoppingListDiff(
   deps: ShoppingDependencies,
   command: {
@@ -147,6 +243,7 @@ export async function previewShoppingListDiff(
   // SQL apply_shopping_reconciliation と同じ identity 優先順:
   // owner / source_menu_version / mode を list version より先に判定する。
   // preview は mutation replay なし。list 不在は引き続き 404。
+  // SHOP8: idea は list_version_conflict より先（dual-fault 契約）
   const { menu, draft } = await validatedDraft(deps, command.sourceMenuId);
   if (menu.version !== command.sourceMenuVersion)
     throw new HttpError(409, "source_menu_version_conflict", "献立が更新されました");
@@ -155,6 +252,16 @@ export async function previewShoppingListDiff(
     throw new HttpError(404, "shopping_list_not_found", "買い物リストが見つかりません");
   if (list.version !== command.expectedListVersion)
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
+  if (
+    !(await hasSourceLineageOnList(
+      deps,
+      command.listId,
+      command.sourceMenuId,
+      menu.derivationGroupId,
+    ))
+  ) {
+    rejectReconcileSourceNotInList();
+  }
   const scopeItemIds = await scopeItemIdsForSourceMenu(
     deps,
     command.listId,
@@ -405,16 +512,22 @@ export async function reconcileShoppingList(
   command: ReconcileShoppingListRequest & UserCommand & { listId: string },
 ): Promise<ReconcileShoppingListResponse> {
   const requestHash = createReconciliationRequestHash(command);
-  // create と同様、replay hit は live mode を再解釈しない
+  // create と同様、replay hit でも SHOP1 の現行 safety 再確認を行う
   const replay = await deps.findMutationReplay({
     idempotencyKey: command.idempotencyKey,
     requestHash,
   });
-  if (replay !== null) return replay;
+  if (replay !== null) {
+    await assertReplayStillCurrentlySafe(deps, {
+      menuId: command.sourceMenuId,
+      listId: replay.listId,
+    });
+    return replay;
+  }
   // SQL apply_shopping_reconciliation と同じ identity 優先順:
   // menu owner / expected source version / mode を list version より先に判定する。
   // dual-fault（idea 出典 + stale list version）では list_version_conflict ではなく
-  // idea_menu_not_supported を返す契約と一致させる。
+  // idea_menu_not_supported を返す契約と一致させる（SHOP8）。
   const { menu, draft, safetyFingerprint } = await validatedDraft(deps, command.sourceMenuId);
   if (menu.version !== command.sourceMenuVersion) {
     throw new HttpError(409, "source_menu_version_conflict", "献立が更新されました");
@@ -425,31 +538,37 @@ export async function reconcileShoppingList(
   if (list.version !== command.expectedListVersion) {
     throw new HttpError(409, "list_version_conflict", "買い物リストが更新されました");
   }
+  // SHOP3: items 空でも lineage 無し reconcile は拒否（create append が multi-source 入口）
+  if (
+    !(await hasSourceLineageOnList(
+      deps,
+      command.listId,
+      command.sourceMenuId,
+      menu.derivationGroupId,
+    ))
+  ) {
+    rejectReconcileSourceNotInList();
+  }
   const scopeItemIds = await scopeItemIdsForSourceMenu(
     deps,
     command.listId,
     command.sourceMenuId,
     menu.derivationGroupId,
   );
-  // U5-004: lineage スコープが空なのに既存行がある場合、純 add で重複登録される。
-  // 同グループ source が無い API 呼び出しを fail-closed にする（リストが空なら初回相当で許可）。
-  if (scopeItemIds.size === 0 && list.items.length > 0) {
-    throw new HttpError(
-      409,
-      "reconcile_source_not_in_list",
-      "この献立は買い物リストに取り込まれていません",
-    );
-  }
   let resolved;
   try {
     const diff = computeShoppingDiff(list, draft, { scopeItemIds });
-    // U5-002: サーバ diff があるのに承認がすべて空だと版だけ登録され再 reconcile 不能になる。
     const hasPendingDiff = diff.add.length > 0 || diff.replace.length > 0 || diff.remove.length > 0;
     const hasApproval =
       command.approval.addKeys.length > 0 ||
       command.approval.replaceItemIds.length > 0 ||
       command.approval.removeItemIds.length > 0;
-    if (hasPendingDiff && !hasApproval) {
+    // SHOP5: pending 無しの reconcile は source 刻印と version だけ進むため拒否する
+    if (!hasPendingDiff) {
+      throw new HttpError(422, "empty_approval", "反映する変更がありません");
+    }
+    // U5-002: サーバ diff があるのに承認がすべて空だと版だけ登録され再 reconcile 不能になる。
+    if (!hasApproval) {
       throw new HttpError(422, "empty_approval", "反映する変更を1つ以上選んでください");
     }
     resolved = resolveApprovedDiff(diff, command.approval);

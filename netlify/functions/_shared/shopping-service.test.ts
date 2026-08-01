@@ -172,17 +172,52 @@ describe("createShoppingListFromMenu", () => {
     vi.clearAllMocks();
   });
 
-  it("returns a saved replay before touching revalidate/menu/pantry/fingerprint/list reads", async () => {
+  it("returns a saved replay only after live safety revalidation still passes", async () => {
+    // SHOP1: 30 日 replay でも revalidate / pantry / fingerprint を再実行し、
+    // 現行 safety が通るときだけ保存済み応答を返す。
     const replay = makeResponse({ replayed: true });
     const mocks = makeMocks();
     mocks.findMutationReplay.mockResolvedValue(replay);
+    mocks.loadActiveList.mockResolvedValue({
+      id: replay.listId,
+      status: "active",
+      version: 1,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: MENU_ID,
+        sourceMenuIdSnapshot: MENU_ID,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
     const result = await createShoppingListFromMenu(toDeps(mocks), makeCommand());
     expect(result).toEqual(replay);
-    expect(mocks.revalidate).not.toHaveBeenCalled();
-    expect(mocks.loadMenu).not.toHaveBeenCalled();
-    expect(mocks.loadPantry).not.toHaveBeenCalled();
-    expect(mocks.getSafetyFingerprint).not.toHaveBeenCalled();
-    expect(mocks.loadActiveList).not.toHaveBeenCalled();
+    expect(mocks.revalidate).toHaveBeenCalled();
+    expect(mocks.loadMenu).toHaveBeenCalled();
+    expect(mocks.loadPantry).toHaveBeenCalled();
+    expect(mocks.getSafetyFingerprint).toHaveBeenCalled();
+    expect(mocks.loadActiveList).toHaveBeenCalledWith(replay.listId);
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
+  });
+
+  it("rejects a saved replay when live safety revalidation fails", async () => {
+    const replay = makeResponse({ replayed: true });
+    const mocks = makeMocks();
+    mocks.findMutationReplay.mockResolvedValue(replay);
+    mocks.revalidate.mockResolvedValue(
+      makeRevalidation({
+        status: "invalid",
+        issues: [{ code: "direct_allergen_match", path: "x", message: "だめ" }],
+      }),
+    );
+    await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).rejects.toMatchObject({
+      status: 409,
+      code: "current_safety_revalidation_required",
+    });
     expect(mocks.applyDraft).not.toHaveBeenCalled();
   });
 
@@ -442,6 +477,51 @@ describe("createShoppingListFromMenu", () => {
     await createShoppingListFromMenu(toDeps(mocks), makeCommand());
     expect(capturedDraft?.items[0]?.displayName).toBe("スナップショット食材");
   });
+
+  it("revalidates all active list sources before append (SHOP2)", async () => {
+    const OTHER_MENU = "52000000-0000-4000-8000-000000000099";
+    const mocks = makeMocks();
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: OTHER_MENU,
+        sourceMenuIdSnapshot: OTHER_MENU,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000099",
+        itemSources: [],
+      },
+    ]);
+    mocks.loadMenuIdentity.mockImplementation(async (menuId) => ({
+      id: menuId,
+      userId: USER_ID,
+      version: 1,
+      targetMode: "household" as const,
+    }));
+    // 既存 source が invalid なら append しない
+    mocks.revalidate.mockImplementation(async (menuId) => {
+      if (menuId === OTHER_MENU) {
+        return makeRevalidation({
+          status: "invalid",
+          issues: [{ code: "direct_allergen_match", path: "x", message: "だめ" }],
+        });
+      }
+      return makeRevalidation();
+    });
+    await expect(
+      createShoppingListFromMenu(
+        toDeps(mocks),
+        makeCommand({
+          mode: "append",
+          activeListId: "70000000-0000-4000-8000-000000000001",
+          expectedListVersion: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "current_safety_revalidation_required",
+    });
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
+    expect(mocks.revalidate).toHaveBeenCalledWith(OTHER_MENU);
+  });
 });
 
 // --- 設計書 Task4: preview / revalidate / reconcile ---------------------------------
@@ -529,15 +609,20 @@ function makeShoppingDependencies(
 ): ShoppingDependencies {
   return {
     ...toDeps(makeMocks()),
-    // 再照合 plumbing は承認差分が無い前提（空 draft）で RPC 契約だけを固定する。
-    // 食材あり draft + 空 approval は U5-002 で 422 empty_approval になる。
-    loadMenu: vi
-      .fn<ShoppingDependencies["loadMenu"]>()
-      .mockResolvedValue(makeMenu({ ingredients: [], labels: [] })),
+    // 既定は lineage 済み + 空 items + 食材 draft → pure add が pending。
+    // SHOP3/SHOP5 後、RPC 到達テストは approval を付ける。空系は個別で固定。
+    loadMenu: vi.fn<ShoppingDependencies["loadMenu"]>().mockResolvedValue(makeMenu()),
     loadActiveList: vi.fn<ShoppingDependencies["loadActiveList"]>().mockResolvedValue(makeList()),
     loadActiveListSources: vi
       .fn<ShoppingDependencies["loadActiveListSources"]>()
-      .mockResolvedValue([]),
+      .mockResolvedValue([
+        makeSource({
+          menuId: MENU_ID,
+          sourceMenuIdSnapshot: MENU_ID,
+          sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+          itemSources: [],
+        }),
+      ]),
     getListSafetyFingerprint: vi
       .fn<ShoppingDependencies["getListSafetyFingerprint"]>()
       .mockResolvedValue(FINGERPRINT_A),
@@ -1086,24 +1171,28 @@ describe("reconcileShoppingList", () => {
     vi.clearAllMocks();
   });
 
-  it("returns a saved reconciliation before stale-version or current-state reads", async () => {
-    const saved = { listId: crypto.randomUUID(), version: 4, replayed: true };
+  it("returns a saved reconciliation only after live safety revalidation still passes", async () => {
+    // SHOP1: reconcile replay も現行 safety 再確認後にだけ保存済み応答を返す
+    const saved = { listId: LIST_ID, version: 4, replayed: true };
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
     const deps = makeShoppingDependencies({
       findMutationReplay: vi.fn().mockResolvedValue(saved),
-      loadActiveList: vi.fn(() => {
-        throw new Error("must not load after replay");
-      }),
-      revalidate: vi.fn(() => {
-        throw new Error("must not revalidate after replay");
-      }),
+      loadActiveList: vi.fn().mockResolvedValue(makeList()),
+      loadActiveListSources: vi.fn().mockResolvedValue([
+        makeSource({
+          menuId: MENU_ID,
+          sourceMenuIdSnapshot: MENU_ID,
+          sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        }),
+      ]),
+      applyReconciliation,
     });
     await expect(reconcileShoppingList(deps, reconcileCommand)).resolves.toEqual(saved);
-    /* eslint-disable @typescript-eslint/unbound-method -- 設計書 Task4 Step1 が verbatim
-       で供給するテストは deps 経由で expect する。ShoppingDependencies の各要素は
-       this を参照しない純粋な関数プロパティなので、束縛外れの危険はない。 */
-    expect(deps.loadActiveList).not.toHaveBeenCalled();
-    expect(deps.revalidate).not.toHaveBeenCalled();
+    /* eslint-disable @typescript-eslint/unbound-method -- vi.fn プロパティは this 非依存 */
+    expect(deps.revalidate).toHaveBeenCalled();
+    expect(deps.loadActiveList).toHaveBeenCalled();
     /* eslint-enable @typescript-eslint/unbound-method */
+    expect(applyReconciliation).not.toHaveBeenCalled();
   });
 
   it("rejects a stale list version after household identity passes", async () => {
@@ -1137,7 +1226,21 @@ describe("reconcileShoppingList", () => {
       .fn<ShoppingDependencies["applyReconciliation"]>()
       .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
     const deps = makeShoppingDependencies({ applyReconciliation });
-    await reconcileShoppingList(deps, reconcileCommand);
+    // pure add が pending なので key を承認して RPC へ進める
+    const draftKey = (
+      await previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 3,
+      })
+    ).add[0]?.key;
+    expect(draftKey).toBeDefined();
+    await reconcileShoppingList(deps, {
+      ...reconcileCommand,
+      approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+    });
     expect(applyReconciliation).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: USER_ID,
@@ -1159,7 +1262,21 @@ describe("reconcileShoppingList", () => {
           new HttpError(409, "protected_item_conflict", "差分を作り直してください"),
         ),
     });
-    await expect(reconcileShoppingList(deps, reconcileCommand)).rejects.toMatchObject({
+    const draftKey = (
+      await previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 3,
+      })
+    ).add[0]?.key;
+    await expect(
+      reconcileShoppingList(deps, {
+        ...reconcileCommand,
+        approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+      }),
+    ).rejects.toMatchObject({
       status: 409,
       code: "protected_item_conflict",
     });
@@ -1179,7 +1296,7 @@ describe("reconcileShoppingList", () => {
     expect(applyReconciliation).not.toHaveBeenCalled();
   });
 
-  // U5-004: lineage スコープ空 + 既存行 → 純 add 重複を防ぐ
+  // U5-004 / SHOP3: lineage 無しは items の有無に関わらず拒否
   it("rejects reconcile when source lineage is not on the list but items exist", async () => {
     const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
     const deps = makeShoppingDependencies({
@@ -1217,6 +1334,40 @@ describe("reconcileShoppingList", () => {
     });
     expect(applyReconciliation).not.toHaveBeenCalled();
   });
+
+  it("rejects reconcile when source lineage is missing even if list items are empty", async () => {
+    // SHOP3: pantry 全差し引き等で items 0 でも、未取り込み menu の純 add を許さない
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const deps = makeShoppingDependencies({
+      loadActiveList: vi.fn<ShoppingDependencies["loadActiveList"]>().mockResolvedValue(makeList()),
+      loadActiveListSources: vi
+        .fn<ShoppingDependencies["loadActiveListSources"]>()
+        .mockResolvedValue([]),
+      applyReconciliation,
+    });
+    await expect(reconcileShoppingList(deps, reconcileCommand)).rejects.toMatchObject({
+      status: 409,
+      code: "reconcile_source_not_in_list",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+  });
+
+  it("rejects no-op reconcile with empty pending diff (SHOP5)", async () => {
+    // 空 draft + 空 list + lineage あり → pending 無し。version/source だけ進ませない
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const deps = makeShoppingDependencies({
+      loadMenu: vi
+        .fn<ShoppingDependencies["loadMenu"]>()
+        .mockResolvedValue(makeMenu({ ingredients: [], labels: [] })),
+      applyReconciliation,
+    });
+    await expect(reconcileShoppingList(deps, reconcileCommand)).rejects.toMatchObject({
+      status: 422,
+      code: "empty_approval",
+      message: "反映する変更がありません",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+  });
 });
 
 describe("idea menu shopping boundaries", () => {
@@ -1242,15 +1393,30 @@ describe("idea menu shopping boundaries", () => {
     expect(mocks.applyDraft).not.toHaveBeenCalled();
   });
 
-  it("returns saved create replay without identity or mode checks", async () => {
+  it("revalidates live identity on create replay and still skips applyDraft", async () => {
+    // SHOP1: replay でも identity / revalidate は走らせる。apply だけしない。
     const mocks = makeMocks();
-    mocks.findMutationReplay.mockResolvedValue(makeResponse({ replayed: true }));
-    mocks.loadMenuIdentity.mockRejectedValue(new Error("identity must not run on replay hit"));
+    const replay = makeResponse({ replayed: true });
+    mocks.findMutationReplay.mockResolvedValue(replay);
+    mocks.loadActiveList.mockResolvedValue({
+      id: replay.listId,
+      status: "active",
+      version: 1,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: MENU_ID,
+        sourceMenuIdSnapshot: MENU_ID,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
     const deps = toDeps(mocks);
-    await expect(createShoppingListFromMenu(deps, makeCommand())).resolves.toEqual(
-      makeResponse({ replayed: true }),
-    );
-    expect(mocks.loadMenuIdentity).not.toHaveBeenCalled();
+    await expect(createShoppingListFromMenu(deps, makeCommand())).resolves.toEqual(replay);
+    expect(mocks.loadMenuIdentity).toHaveBeenCalled();
     expect(mocks.applyDraft).not.toHaveBeenCalled();
   });
 
@@ -1315,14 +1481,29 @@ describe("idea menu shopping boundaries", () => {
     expect(mocks.replaceCurrentSafetyProjection).not.toHaveBeenCalled();
   });
 
-  it("returns saved reconcile replay without mode checks", async () => {
+  it("revalidates live identity on reconcile replay and still skips apply", async () => {
     const mocks = makeMocks();
     mocks.findMutationReplay.mockResolvedValue({
       listId: LIST_ID,
       version: 4,
       replayed: true,
     });
-    mocks.loadMenuIdentity.mockRejectedValue(new Error("identity must not run on replay hit"));
+    mocks.loadActiveList.mockResolvedValue({
+      id: LIST_ID,
+      status: "active",
+      version: 3,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: MENU_ID,
+        sourceMenuIdSnapshot: MENU_ID,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
     const deps = toDeps(mocks);
     await expect(
       reconcileShoppingList(deps, {
@@ -1335,7 +1516,7 @@ describe("idea menu shopping boundaries", () => {
         approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
       }),
     ).resolves.toEqual({ listId: LIST_ID, version: 4, replayed: true });
-    expect(mocks.loadMenuIdentity).not.toHaveBeenCalled();
+    expect(mocks.loadMenuIdentity).toHaveBeenCalled();
     expect(mocks.applyReconciliation).not.toHaveBeenCalled();
   });
 

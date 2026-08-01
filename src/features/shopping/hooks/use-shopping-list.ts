@@ -57,6 +57,32 @@ export function useShoppingSafetyGate() {
       }
     | { phase: "blocked"; message: string }
   >({ phase: "checking" });
+  const applyChecked = useCallback(
+    (
+      current: number,
+      checked: {
+        status: string;
+        safetyFingerprint: string | null;
+        currentLabelWarnings: readonly CurrentShoppingLabelWarning[];
+        issues: readonly { message: string }[];
+      },
+    ) => {
+      if (epoch.current !== current) return;
+      if (checked.status === "valid")
+        setState({
+          phase: "ready",
+          safetyFingerprint: checked.safetyFingerprint,
+          currentLabelWarnings: checked.currentLabelWarnings,
+        });
+      else
+        setState({
+          phase: "blocked",
+          message: checked.issues.map((issue) => issue.message).join("。"),
+        });
+    },
+    [],
+  );
+  /** hard: 操作を閉じてから再検証。家族変更・offline 復帰・初回。 */
   const refresh = useCallback(async () => {
     const ownerId = userId ?? "missing";
     const current = ++epoch.current;
@@ -74,23 +100,33 @@ export function useShoppingSafetyGate() {
         return;
       }
       const checked = await revalidateActiveShoppingList(list.id);
-      if (epoch.current !== current) return;
-      if (checked.status === "valid")
-        setState({
-          phase: "ready",
-          safetyFingerprint: checked.safetyFingerprint,
-          currentLabelWarnings: checked.currentLabelWarnings,
-        });
-      else
-        setState({
-          phase: "blocked",
-          message: checked.issues.map((issue) => issue.message).join("。"),
-        });
+      applyChecked(current, checked);
     } catch {
       if (epoch.current === current)
         setState({ phase: "blocked", message: "現在の家族設定を確認できませんでした" });
     }
-  }, [cache, userId]);
+  }, [applyChecked, cache, userId]);
+  /**
+   * SHOP6 soft: ready 中の poll は UI を checking に落とさず裏で再検証する。
+   * invalid / 通信失敗だけ blocked へ。Realtime 欠落後の窓を poll で閉じる。
+   */
+  const softRefresh = useCallback(async () => {
+    const ownerId = userId ?? "missing";
+    const current = epoch.current;
+    try {
+      const list = await cache.fetchQuery({
+        queryKey: shoppingKeys.active(ownerId),
+        queryFn: fetchActiveShoppingList,
+        staleTime: 0,
+      });
+      if (list === null) return;
+      const checked = await revalidateActiveShoppingList(list.id);
+      applyChecked(current, checked);
+    } catch {
+      if (epoch.current === current)
+        setState({ phase: "blocked", message: "現在の家族設定を確認できませんでした" });
+    }
+  }, [applyChecked, cache, userId]);
   useEffect(() => {
     const changed = () => {
       void refresh();
@@ -112,7 +148,8 @@ export function useShoppingSafetyGate() {
     window.addEventListener("offline", offline);
     document.addEventListener("visibilitychange", visible);
     const poll = window.setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) void refresh();
+      // SHOP6: poll は soft（ready 維持）。hard は focus/Realtime/household 側。
+      if (document.visibilityState === "visible" && navigator.onLine) void softRefresh();
     }, 60_000);
     const client = getBrowserSupabaseClient();
     let closed = false;
@@ -165,7 +202,7 @@ export function useShoppingSafetyGate() {
       document.removeEventListener("visibilitychange", visible);
       if (channel !== null) void client.removeChannel(channel);
     };
-  }, [refresh]);
+  }, [refresh, softRefresh]);
   useEffect(() => {
     void refresh();
   }, [refresh]);

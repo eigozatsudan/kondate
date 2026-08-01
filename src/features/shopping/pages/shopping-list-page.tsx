@@ -7,7 +7,7 @@ import {
 } from "@shared/contracts/shopping";
 import { normalizeIngredientName } from "@shared/shopping/normalize";
 import { reviewedShoppingAliases } from "@shared/shopping/reviewed-aliases";
-import { mutateShoppingItem } from "../api/shopping-api";
+import { mutateShoppingItem, revalidateActiveShoppingList } from "../api/shopping-api";
 import { categoryLabel } from "../category-label";
 import { ShoppingItemRow } from "../components/shopping-item-row";
 import { useShoppingList, useShoppingSafetyGate } from "../hooks/use-shopping-list";
@@ -115,6 +115,7 @@ export function ShoppingListPage() {
       ]
     : [];
   // SP-I7: 項目操作を直列化し、連打による version conflict / 見た目ロールバックを防ぐ
+  // SHOP6: 操作直前に list 単位 revalidate し、Realtime 欠落窓でも write 前に fail-closed
   const mutate = async (value: LocalShoppingItemMutation) => {
     if (safetyBlocked || safetyGate.safetyFingerprint === null) return;
     if (mutationInFlight.current) return;
@@ -122,12 +123,18 @@ export function ShoppingListPage() {
     setItemMutationPending(true);
     try {
       setMutationError(null);
+      const live = await revalidateActiveShoppingList(list.id);
+      if (live.status !== "valid" || live.safetyFingerprint === null) {
+        setMutationError("家族設定が変わりました。もう一度確認します");
+        await safetyGate.refresh();
+        return;
+      }
       await mutateShoppingItem(
         shoppingItemMutationRequestSchema.parse({
           ...value,
           listId: list.id,
           expectedListVersion: list.version,
-          expectedSafetyFingerprint: safetyGate.safetyFingerprint,
+          expectedSafetyFingerprint: live.safetyFingerprint,
           idempotencyKey: crypto.randomUUID(),
         }),
       );
