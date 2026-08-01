@@ -526,6 +526,61 @@ export async function revalidateActiveShoppingList(
   });
 }
 
+/**
+ * reconcile の承認検証と resolvedDiff 組み立て。
+ * SHOP2（add/replace 完全承認）と R1（remove 未承認時の版刻印延期）を一箇所に閉じる。
+ */
+function prepareReconcileApply(
+  list: NonNullable<Awaited<ReturnType<ShoppingDependencies["loadActiveList"]>>>,
+  draft: ReturnType<typeof buildShoppingDraft>,
+  scopeItemIds: ReadonlySet<string>,
+  approval: ReconcileShoppingListRequest["approval"],
+): {
+  resolvedDiff: ReturnType<typeof resolveApprovedDiff>;
+  stampSourceVersion: boolean;
+} {
+  const diff = computeShoppingDiff(list, draft, { scopeItemIds });
+  const hasPendingDiff = diff.add.length > 0 || diff.replace.length > 0 || diff.remove.length > 0;
+  const hasApproval =
+    approval.addKeys.length > 0 ||
+    approval.replaceItemIds.length > 0 ||
+    approval.removeItemIds.length > 0;
+  // SHOP5: pending 無しの reconcile は source 刻印と version だけ進むため拒否する
+  if (!hasPendingDiff) {
+    throw new HttpError(422, "empty_approval", "反映する変更がありません");
+  }
+  // U5-002: サーバ diff があるのに承認がすべて空だと版だけ登録され再 reconcile 不能になる。
+  if (!hasApproval) {
+    throw new HttpError(422, "empty_approval", "反映する変更を1つ以上選んでください");
+  }
+  // SHOP2: 追加・数量変更の部分集合承認は menu version 刻印後に残り差分を
+  // menu_version_already_in_list で閉塞する。外す候補だけ任意（D-C2）とし、
+  // add/replace はサーバ diff と完全一致を要求して一回で閉じる。
+  const approvedAddKeys = new Set(approval.addKeys);
+  const approvedReplaceIds = new Set(approval.replaceItemIds);
+  const addFullyApproved =
+    approvedAddKeys.size === diff.add.length &&
+    diff.add.every((item) => approvedAddKeys.has(item.key));
+  const replaceFullyApproved =
+    approvedReplaceIds.size === diff.replace.length &&
+    diff.replace.every((item) => approvedReplaceIds.has(item.itemId));
+  if (!addFullyApproved || !replaceFullyApproved) {
+    throw new HttpError(
+      422,
+      "partial_approval_not_allowed",
+      "追加と数量変更はすべて選んで反映してください。外す候補だけ選べます",
+    );
+  }
+  // R1: remove をすべて選んだ／候補が無いときだけ stamp。未承認 remove 残存時は
+  // 刻印延期 → 同 version 再 reconcile と CTA（maxRegistered < current）を維持。
+  const approvedRemoveIds = new Set(approval.removeItemIds);
+  const stampSourceVersion = diff.remove.every((item) => approvedRemoveIds.has(item.itemId));
+  return {
+    resolvedDiff: resolveApprovedDiff(diff, approval),
+    stampSourceVersion,
+  };
+}
+
 export async function reconcileShoppingList(
   deps: ShoppingDependencies,
   command: ReconcileShoppingListRequest & UserCommand & { listId: string },
@@ -577,41 +632,13 @@ export async function reconcileShoppingList(
     command.sourceMenuId,
     menu.derivationGroupId,
   );
-  let resolved;
+  // try が成功するか throw するかのどちらかなので、成功後の参照は安全。
+  let prepared!: {
+    resolvedDiff: ReturnType<typeof resolveApprovedDiff>;
+    stampSourceVersion: boolean;
+  };
   try {
-    const diff = computeShoppingDiff(list, draft, { scopeItemIds });
-    const hasPendingDiff = diff.add.length > 0 || diff.replace.length > 0 || diff.remove.length > 0;
-    const hasApproval =
-      command.approval.addKeys.length > 0 ||
-      command.approval.replaceItemIds.length > 0 ||
-      command.approval.removeItemIds.length > 0;
-    // SHOP5: pending 無しの reconcile は source 刻印と version だけ進むため拒否する
-    if (!hasPendingDiff) {
-      throw new HttpError(422, "empty_approval", "反映する変更がありません");
-    }
-    // U5-002: サーバ diff があるのに承認がすべて空だと版だけ登録され再 reconcile 不能になる。
-    if (!hasApproval) {
-      throw new HttpError(422, "empty_approval", "反映する変更を1つ以上選んでください");
-    }
-    // SHOP2: 追加・数量変更の部分集合承認は menu version 刻印後に残り差分を
-    // menu_version_already_in_list で閉塞する。外す候補だけ任意（D-C2）とし、
-    // add/replace はサーバ diff と完全一致を要求して一回で閉じる。
-    const approvedAddKeys = new Set(command.approval.addKeys);
-    const approvedReplaceIds = new Set(command.approval.replaceItemIds);
-    const addFullyApproved =
-      approvedAddKeys.size === diff.add.length &&
-      diff.add.every((item) => approvedAddKeys.has(item.key));
-    const replaceFullyApproved =
-      approvedReplaceIds.size === diff.replace.length &&
-      diff.replace.every((item) => approvedReplaceIds.has(item.itemId));
-    if (!addFullyApproved || !replaceFullyApproved) {
-      throw new HttpError(
-        422,
-        "partial_approval_not_allowed",
-        "追加と数量変更はすべて選んで反映してください。外す候補だけ選べます",
-      );
-    }
-    resolved = resolveApprovedDiff(diff, command.approval);
+    prepared = prepareReconcileApply(list, draft, scopeItemIds, command.approval);
   } catch (error: unknown) {
     if (error instanceof HttpError) throw error;
     // クライアント承認キーとサーバ再計算 diff の不一致は 4xx として閉じる（500 にしない）。
@@ -620,10 +647,23 @@ export async function reconcileShoppingList(
     }
     throw error;
   }
-  return deps.applyReconciliation({
+  const result = await deps.applyReconciliation({
     ...command,
     requestHash,
     safetyFingerprint,
-    resolvedDiff: resolved,
+    resolvedDiff: prepared.resolvedDiff,
+    stampSourceVersion: prepared.stampSourceVersion,
   });
+  // R2: SHOP7 の scoped current delete 後、対象 group の projection が空のまま残る窓を
+  // 応答前の list revalidate で閉じる。失敗しても reconcile 自体は成功済みなので握りつぶし、
+  // 買い物画面着地時の revalidate に委ねる。
+  try {
+    await revalidateActiveShoppingList(deps, {
+      userId: command.userId,
+      listId: command.listId,
+    });
+  } catch {
+    // best-effort: 投影復元の失敗で reconcile 200 を取り消さない
+  }
+  return result;
 }

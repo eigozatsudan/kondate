@@ -1308,6 +1308,8 @@ describe("reconcileShoppingList", () => {
         sourceMenuVersion: 1,
         safetyFingerprint: FINGERPRINT_A,
         requestHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown as string,
+        // remove 候補が無い pure add は版刻印する（R1）
+        stampSourceVersion: true,
       }),
     );
   });
@@ -1528,6 +1530,202 @@ describe("reconcileShoppingList", () => {
       code: "partial_approval_not_allowed",
     });
     expect(applyReconciliation).not.toHaveBeenCalled();
+  });
+
+  it("defers source version stamp when remove candidates stay unapproved (R1)", async () => {
+    // リストに旧材料、draft は別材料 → add + remove。remove 未選択のまま反映しても
+    // 版は刻印しない（同 version 再 reconcile / CTA 維持）。
+    const applyReconciliation = vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
+    const deps = makeShoppingDependencies({
+      applyReconciliation,
+      loadActiveList: vi.fn<ShoppingDependencies["loadActiveList"]>().mockResolvedValue(
+        makeList({
+          items: [
+            {
+              id: ITEM_ID,
+              listId: LIST_ID,
+              displayName: "旧材料",
+              normalizedName: "旧材料",
+              storeSection: "other",
+              quantityValue: 1,
+              quantityText: "1個",
+              unit: "個",
+              isChecked: false,
+              isManual: false,
+              isManuallyEdited: false,
+              isRemovedByUser: false,
+              pantryCheckRequired: false,
+              labelWarnings: [],
+            },
+          ],
+        }),
+      ),
+      loadActiveListSources: vi.fn().mockResolvedValue([
+        makeSource({
+          menuId: MENU_ID,
+          sourceMenuIdSnapshot: MENU_ID,
+          sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+          itemSources: [{ itemId: ITEM_ID, sourceIngredientIdSnapshot: INGREDIENT_B }],
+        }),
+      ]),
+    });
+    const diff = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    expect(diff.remove.some((item) => item.itemId === ITEM_ID)).toBe(true);
+    expect(diff.add.length).toBeGreaterThan(0);
+    await reconcileShoppingList(deps, {
+      ...reconcileCommand,
+      approval: {
+        addKeys: diff.add.map((item) => item.key),
+        replaceItemIds: diff.replace.map((item) => item.itemId),
+        removeItemIds: [],
+      },
+    });
+    expect(applyReconciliation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stampSourceVersion: false,
+        resolvedDiff: expect.objectContaining({
+          removeIds: [],
+        }) as unknown as object,
+      }),
+    );
+  });
+
+  it("stamps source version when all remove candidates are approved (R1)", async () => {
+    const applyReconciliation = vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
+    const deps = makeShoppingDependencies({
+      applyReconciliation,
+      loadActiveList: vi.fn<ShoppingDependencies["loadActiveList"]>().mockResolvedValue(
+        makeList({
+          items: [
+            {
+              id: ITEM_ID,
+              listId: LIST_ID,
+              displayName: "旧材料",
+              normalizedName: "旧材料",
+              storeSection: "other",
+              quantityValue: 1,
+              quantityText: "1個",
+              unit: "個",
+              isChecked: false,
+              isManual: false,
+              isManuallyEdited: false,
+              isRemovedByUser: false,
+              pantryCheckRequired: false,
+              labelWarnings: [],
+            },
+          ],
+        }),
+      ),
+      loadActiveListSources: vi.fn().mockResolvedValue([
+        makeSource({
+          menuId: MENU_ID,
+          sourceMenuIdSnapshot: MENU_ID,
+          sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+          itemSources: [{ itemId: ITEM_ID, sourceIngredientIdSnapshot: INGREDIENT_B }],
+        }),
+      ]),
+    });
+    const diff = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    expect(diff.remove.some((item) => item.itemId === ITEM_ID)).toBe(true);
+    await reconcileShoppingList(deps, {
+      ...reconcileCommand,
+      approval: {
+        addKeys: diff.add.map((item) => item.key),
+        replaceItemIds: diff.replace.map((item) => item.itemId),
+        removeItemIds: diff.remove.map((item) => item.itemId),
+      },
+    });
+    expect(applyReconciliation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stampSourceVersion: true,
+        resolvedDiff: expect.objectContaining({
+          removeIds: expect.arrayContaining([ITEM_ID]) as unknown as string[],
+        }) as unknown as object,
+      }),
+    );
+  });
+
+  it("revalidates list safety after successful reconcile apply (R2)", async () => {
+    // post-apply の revalidateActiveShoppingList が projection を書き戻すこと
+    const replaceCurrentSafetyProjection = vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockResolvedValue({
+        listId: LIST_ID,
+        safetyFingerprint: FINGERPRINT_A,
+        currentLabelWarnings: [],
+      });
+    const applyReconciliation = vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
+    const deps = makeShoppingDependencies({
+      applyReconciliation,
+      replaceCurrentSafetyProjection,
+    });
+    const draftKey = (
+      await previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 3,
+      })
+    ).add[0]?.key;
+    expect(draftKey).toBeDefined();
+    await reconcileShoppingList(deps, {
+      ...reconcileCommand,
+      approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+    });
+    expect(applyReconciliation).toHaveBeenCalled();
+    // apply 前の assertActiveListSourcesCurrentlySafe は revalidate のみで
+    // replaceCurrentSafetyProjection は呼ばない。post-apply revalidate の証拠。
+    expect(replaceCurrentSafetyProjection).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, listId: LIST_ID }),
+    );
+  });
+
+  it("still returns reconcile success when post-apply revalidate fails (R2)", async () => {
+    const replaceCurrentSafetyProjection = vi
+      .fn<ShoppingDependencies["replaceCurrentSafetyProjection"]>()
+      .mockRejectedValue(new Error("projection write failed"));
+    const applyReconciliation = vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
+    const deps = makeShoppingDependencies({
+      applyReconciliation,
+      replaceCurrentSafetyProjection,
+    });
+    const draftKey = (
+      await previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 3,
+      })
+    ).add[0]?.key;
+    await expect(
+      reconcileShoppingList(deps, {
+        ...reconcileCommand,
+        approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+      }),
+    ).resolves.toEqual({ listId: LIST_ID, version: 4, replayed: false });
+    expect(applyReconciliation).toHaveBeenCalled();
   });
 });
 

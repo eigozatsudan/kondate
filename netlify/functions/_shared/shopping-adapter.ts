@@ -105,6 +105,8 @@ export type ShoppingDependencies = {
     idempotencyKey: string;
     requestHash: string;
     resolvedDiff: ResolvedShoppingDiff;
+    /** false のとき SQL は source 版刻印を延期（未承認 remove 残存時。R1） */
+    stampSourceVersion: boolean;
   }): Promise<ReconcileShoppingListResponse>;
   loadActiveListSources(listId: string): Promise<ActiveShoppingSource[]>;
   getListSafetyFingerprint(listId: string): Promise<string | null>;
@@ -537,6 +539,7 @@ export function createShoppingDependencies(user: AuthenticatedUser): ShoppingDep
       return parseRpcResponse(data, createShoppingListResponseSchema);
     },
     async applyReconciliation(input) {
+      // stampSourceVersion は ResolvedShoppingDiff の公開契約外。SQL だけが読む内部フラグ。
       const { data, error } = await admin.rpc("apply_shopping_reconciliation", {
         p_user_id: input.userId,
         p_list_id: input.listId,
@@ -546,7 +549,10 @@ export function createShoppingDependencies(user: AuthenticatedUser): ShoppingDep
         p_safety_fingerprint: input.safetyFingerprint,
         p_idempotency_key: input.idempotencyKey,
         p_request_hash: input.requestHash,
-        p_resolved_diff: input.resolvedDiff,
+        p_resolved_diff: {
+          ...input.resolvedDiff,
+          stampSourceVersion: input.stampSourceVersion,
+        },
       });
       if (error !== null) mapRpcError(error);
       return parseRpcResponse(data, reconcileShoppingListResponseSchema);
