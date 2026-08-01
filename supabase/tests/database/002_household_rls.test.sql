@@ -275,11 +275,11 @@ select ok(
   'anonymous users cannot execute the allergy deletion RPC'
 );
 select ok(
-  has_function_privilege('authenticated', 'public.set_onboarding_status(text)', 'execute'),
+  has_function_privilege('authenticated', 'public.set_onboarding_status(text, text)', 'execute'),
   'authenticated users can execute set_onboarding_status'
 );
 select ok(
-  not has_function_privilege('anon', 'public.set_onboarding_status(text)', 'execute'),
+  not has_function_privilege('anon', 'public.set_onboarding_status(text, text)', 'execute'),
   'anonymous users cannot execute set_onboarding_status'
 );
 

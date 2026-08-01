@@ -273,4 +273,73 @@ describe("assertFlyerMenuAgainstSafety", () => {
       assertFlyerMenuAgainstSafety(sampleMenu(), safety);
     }).not.toThrow();
   });
+
+  it("R1: rejects age-banded forbidden food rule (mochi under 6)", () => {
+    const base = makeCurrentSafetyContext();
+    const safety = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          ageBand: "age_3_5",
+          allergyStatus: "none",
+          allergenIds: [],
+        },
+      ],
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "お雑煮（餅入り）" }), safety);
+    }).toThrow(HttpError);
+  });
+
+  it("R1: rejects age-banded requires_tag food without adaptation path (grapes)", () => {
+    // flyer は quarter_round_food 証拠を持てないため、命中は fail-closed
+    const base = makeCurrentSafetyContext();
+    const safety = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          ageBand: "post_weaning_to_2",
+          allergyStatus: "none",
+          allergenIds: [],
+        },
+      ],
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ ingredients: ["ぶどう", "ヨーグルト"] }), safety);
+    }).toThrow(HttpError);
+  });
+
+  it("R1: adult-only household accepts mochi (no age rule applies)", () => {
+    const base = makeCurrentSafetyContext();
+    const safety = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          ageBand: "adult",
+          allergyStatus: "none",
+          allergenIds: [],
+        },
+      ],
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "磯辺焼き餅" }), safety);
+    }).not.toThrow();
+  });
+
+  it("R1: rejects senior forbidden mochi rule", () => {
+    const base = makeCurrentSafetyContext();
+    const safety = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          ageBand: "senior",
+          allergyStatus: "none",
+          allergenIds: [],
+        },
+      ],
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ sideName: "おしるこ（餅）" }), safety);
+    }).toThrow(HttpError);
+  });
 });

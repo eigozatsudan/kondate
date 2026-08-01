@@ -3,6 +3,7 @@ import {
   addMemberDislike,
   addCustomMemberAllergy,
   deleteMemberAllergy,
+  setOnboardingStatus,
   startHouseholdOnboarding,
 } from "./household-api";
 
@@ -69,5 +70,28 @@ it("starts onboarding through the atomic database boundary", async () => {
 
   expect(rpc).toHaveBeenCalledWith("start_household_onboarding", {
     p_sort_order: 2,
+  });
+});
+
+it("setOnboardingStatus sends expectedStatus for welcome CAS", async () => {
+  const profile = { onboarding_status: "skipped" };
+  const rpc = vi.fn().mockResolvedValue({ data: profile, error: null });
+  const client = { rpc } as never;
+  await expect(
+    setOnboardingStatus(client, "user-1", "skipped", { expectedStatus: "not_started" }),
+  ).resolves.toBe(profile);
+  expect(rpc).toHaveBeenCalledWith("set_onboarding_status", {
+    p_status: "skipped",
+    p_expected_status: "not_started",
+  });
+});
+
+it("setOnboardingStatus omits p_expected_status when not requested", async () => {
+  const profile = { onboarding_status: "in_progress" };
+  const rpc = vi.fn().mockResolvedValue({ data: profile, error: null });
+  const client = { rpc } as never;
+  await setOnboardingStatus(client, "user-1", "in_progress");
+  expect(rpc).toHaveBeenCalledWith("set_onboarding_status", {
+    p_status: "in_progress",
   });
 });

@@ -18,10 +18,7 @@ import {
 import { issueMessages } from "../../../shared/contracts/generation.js";
 import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
 import { planQuota } from "../../../shared/contracts/plan-quota.js";
-import {
-  foodTextContainsAlias,
-  normalizeFoodText,
-} from "../../../shared/safety/allergens.js";
+import { foodTextContainsAlias, normalizeFoodText } from "../../../shared/safety/allergens.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import {
   applyQuotaPlan,
@@ -199,13 +196,9 @@ function mapFailureHttp(code: string, retryAt: string | null = null): never {
 }
 
 function flyerDayTextFields(day: WeeklyFlyerMenu["days"][number]): readonly string[] {
-  return [
-    day.label,
-    day.mainName,
-    day.sideName ?? "",
-    day.notes ?? "",
-    ...day.ingredients,
-  ].filter((text) => text.trim() !== "");
+  return [day.label, day.mainName, day.sideName ?? "", day.notes ?? "", ...day.ingredients].filter(
+    (text) => text.trim() !== "",
+  );
 }
 
 /**
@@ -241,9 +234,18 @@ export function assertFlyerMenuSafe(
 /**
  * PE2: current safety の辞書 alias + 確認済み custom を evaluateAllergens と同型マッチャで検査。
  * チラシ結果画面にラベル確認 UI が無いため requiresLabelConfirmation も拒否（fail-closed）。
- * 年齢帯 food rules / requiredSafetyConstraints は献立構造が generation 形ではないため未適用
- *（残差は fix-report）。
+ * R1: 年齢帯 food rules も適用。flyer は generation 形の adaptations / safetyActions を持たないため、
+ * forbidden・requires_tag のいずれも matchTerms が日次テキストに出たら fail-closed
+ *（requiredSafetyConstraints 証拠を付けられない経路の residual を閉じる）。
  */
+function rejectFlyerSafetyHit(): never {
+  throw new HttpError(
+    400,
+    "flyer_invalid_ai_response",
+    flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+  );
+}
+
 export function assertFlyerMenuAgainstSafety(
   menu: WeeklyFlyerMenu,
   safety: CurrentSafetyContext,
@@ -257,11 +259,7 @@ export function assertFlyerMenuAgainstSafety(
         );
         for (const field of fields) {
           if (aliases.some((alias) => foodTextContainsAlias(field, alias.normalizedAlias))) {
-            throw new HttpError(
-              400,
-              "flyer_invalid_ai_response",
-              flyerWeeklyIssueMessages.flyer_invalid_ai_response,
-            );
+            rejectFlyerSafetyHit();
           }
         }
       }
@@ -270,11 +268,16 @@ export function assertFlyerMenuAgainstSafety(
         if (needles.length === 0) continue;
         for (const field of fields) {
           if (needles.some((needle) => foodTextContainsAlias(field, needle))) {
-            throw new HttpError(
-              400,
-              "flyer_invalid_ai_response",
-              flyerWeeklyIssueMessages.flyer_invalid_ai_response,
-            );
+            rejectFlyerSafetyHit();
+          }
+        }
+      }
+      // 年齢帯ルール: flyer にタグ証拠が無いので命中即拒否（adult のみ等は appliesTo で無操作）
+      for (const rule of safety.foodSafetyRules) {
+        if (!rule.appliesToAgeBands.includes(member.ageBand)) continue;
+        for (const field of fields) {
+          if (rule.matchTerms.some((term) => foodTextContainsAlias(field, term))) {
+            rejectFlyerSafetyHit();
           }
         }
       }

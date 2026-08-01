@@ -19,8 +19,9 @@ async function withOnboardingStartLock<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /**
- * L4: 別タブが先に進めた status を尊重し、skipped ↔ in_progress の上書きレースを避ける。
- * first-writer-wins: not_started のときだけ目標 status を書き、既に進んでいればその状態へ遷移する。
+ * L4 + R1: 別タブが先に進めた status を尊重し、skipped ↔ in_progress の上書きレースを避ける。
+ * first-writer-wins: not_started のときだけ目標 status を書く（RPC CAS expected=not_started）。
+ * locks 無しでも server CAS で complete/skipped/in_progress を上書きしない。
  */
 function navigateForExistingStatus(
   status: OnboardingStatus,
@@ -35,6 +36,15 @@ function navigateForExistingStatus(
     return true;
   }
   return false;
+}
+
+/** welcome 開始: CAS 後の実 status へ遷移（書き込み成功 / first-writer 負けの両方） */
+function navigateAfterWelcomeStart(
+  status: OnboardingStatus,
+  navigate: ReturnType<typeof useNavigate>,
+): void {
+  if (navigateForExistingStatus(status, navigate)) return;
+  // not_started のまま返った場合は CAS も遷移も起きていない。再試行を促すより現状維持。
 }
 
 // router層の結線だけをここへ切り出し、WelcomePage自体はDB/APIを直接呼ばない
@@ -91,9 +101,12 @@ export function WelcomeRoutePage() {
             await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
             return;
           }
-          await setOnboardingStatus(client, userId, "skipped");
+          // R1: expected=not_started の CAS。locks 無し dual-tab でも skipped/in_progress/complete を上書きしない
+          const written = await setOnboardingStatus(client, userId, "skipped", {
+            expectedStatus: "not_started",
+          });
           await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
-          void navigate("/planner");
+          navigateAfterWelcomeStart(written.onboarding_status, navigate);
         });
       }}
       onStartHousehold={async () => {
@@ -105,9 +118,11 @@ export function WelcomeRoutePage() {
             await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
             return;
           }
-          await setOnboardingStatus(client, userId, "in_progress");
+          const written = await setOnboardingStatus(client, userId, "in_progress", {
+            expectedStatus: "not_started",
+          });
           await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
-          void navigate("/onboarding");
+          navigateAfterWelcomeStart(written.onboarding_status, navigate);
         });
       }}
     />

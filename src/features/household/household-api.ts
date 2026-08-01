@@ -131,13 +131,26 @@ export async function completeHouseholdMember(
   return data;
 }
 
+export type SetOnboardingStatusOptions = {
+  /**
+   * CAS: 現在の onboarding_status がこの値のときだけ遷移する。
+   * 不一致時は RPC が上書きせず現状を返す（welcome dual-tab first-writer-wins）。
+   */
+  expectedStatus?: OnboardingStatus;
+};
+
 export async function setOnboardingStatus(
   client: BrowserSupabaseClient,
   userId: string,
   status: OnboardingStatus,
+  options?: SetOnboardingStatusOptions,
 ): Promise<ProfileRow> {
   void userId;
-  const { data, error } = await client.rpc("set_onboarding_status", { p_status: status });
+  const { data, error } = await client.rpc("set_onboarding_status", {
+    p_status: status,
+    // undefined は送らず省略互換。expected 指定時のみ CAS 条件を付ける
+    ...(options?.expectedStatus !== undefined ? { p_expected_status: options.expectedStatus } : {}),
+  });
   if (error !== null) throw dataError("初回設定の進捗を保存できませんでした");
   return data;
 }

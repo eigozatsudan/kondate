@@ -202,7 +202,10 @@ it("set_onboarding_statusのonboarding_statusをOnboardingStatusのリテラル�
   type GeneratedSetOnboardingStatus =
     GeneratedDatabase["public"]["Functions"]["set_onboarding_status"];
 
-  expectTypeOf<AppSetOnboardingStatus["Args"]>().toEqualTypeOf<{ p_status: OnboardingStatus }>();
+  expectTypeOf<AppSetOnboardingStatus["Args"]>().toEqualTypeOf<{
+    p_status: OnboardingStatus;
+    p_expected_status?: OnboardingStatus | null;
+  }>();
   expectTypeOf<AppSetOnboardingStatus["Returns"]>().toEqualTypeOf<ProfileRow>();
   expectTypeOf<Omit<AppSetOnboardingStatus, "Args" | "Returns">>().toEqualTypeOf<
     Omit<GeneratedSetOnboardingStatus, "Args" | "Returns">

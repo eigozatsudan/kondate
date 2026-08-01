@@ -219,7 +219,8 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
         Returns: SubmissionSnapshotRow[];
       };
       set_onboarding_status: Omit<GeneratedSetOnboardingStatus, "Args" | "Returns"> & {
-        Args: { p_status: OnboardingStatus };
+        // p_expected_status: welcome CAS（not_started のみ遷移）。省略時は従来遷移表。
+        Args: { p_status: OnboardingStatus; p_expected_status?: OnboardingStatus | null };
         Returns: ProfilesRow;
       };
       insert_user_feedback_rate_limited: Omit<GeneratedInsertUserFeedback, "Args"> & {

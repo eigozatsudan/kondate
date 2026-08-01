@@ -218,5 +218,51 @@ select is(
   '失敗したcomplete試行はonboarding_statusを変更しない'
 );
 
+
+-- =============================================================================
+-- Landing R1: set_onboarding_status CAS (p_expected_status)
+-- not_started 以外へ expected を付けた更新は上書きせず現状を返す
+-- =============================================================================
+reset role;
+select tests.create_supabase_user(
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  'onboarding-cas@example.invalid'
+);
+select tests.authenticate_as('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+set local role authenticated;
+
+select lives_ok(
+  $$ select public.set_onboarding_status('skipped', 'not_started') $$,
+  'CAS: not_started から skipped へ expected 付きで遷移できる'
+);
+select is(
+  (select onboarding_status from public.profiles where user_id = auth.uid()),
+  'skipped',
+  'CAS: skipped が保存される'
+);
+
+-- 別タブ相当: expected=not_started のまま in_progress を要求しても上書きしない
+select is(
+  (select onboarding_status from public.set_onboarding_status('in_progress', 'not_started')),
+  'skipped',
+  'CAS miss: expected 不一致なら in_progress で上書きせず skipped を返す'
+);
+select is(
+  (select onboarding_status from public.profiles where user_id = auth.uid()),
+  'skipped',
+  'CAS miss: DB も skipped のまま'
+);
+
+-- expected 省略時は従来どおり skipped → in_progress を許可
+select lives_ok(
+  $$ select public.set_onboarding_status('in_progress') $$,
+  'expected 省略時は従来遷移（skipped → in_progress）を許可'
+);
+select is(
+  (select onboarding_status from public.profiles where user_id = auth.uid()),
+  'in_progress',
+  'expected 省略で in_progress に遷移する'
+);
+
 select * from finish();
 rollback;
