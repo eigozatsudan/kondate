@@ -144,11 +144,16 @@ function CurrentPath() {
 /**
  * revisionOne は4質問+household回答が完成しているため、resumeは review step に
  * 直接入る（firstIncompletePlannerStep）。conflict系テストは「自由メモ」を
- * review step 内の任意条件から編集するため、details を開いておく。
+ * review step 内の任意条件から編集するため、閉じているときだけ開く。
+ * （追加条件はデフォルト展開。再クリックで閉じないよう open を確認する）
  */
 async function openReviewOptionalDetails(): Promise<void> {
   await act(async () => Promise.resolve());
-  fireEvent.click(screen.getByText("追加条件"));
+  const summary = screen.getByText("追加条件");
+  const details = summary.closest("details");
+  if (details !== null && !details.hasAttribute("open")) {
+    fireEvent.click(summary);
+  }
 }
 
 beforeEach(() => {

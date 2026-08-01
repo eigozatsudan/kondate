@@ -147,8 +147,8 @@ export const pendingResumeBeforeGenerateMessage =
   "すでに作成中の献立があります。「献立を作る」を押すと、いま入力した条件では新しく作り直さず、進行中の作成を再開します。今の条件で作り直すには、先に「入力をリセット」で進行中の作成を破棄してください。";
 
 /**
- * 任意条件（時間・予算・材料の使い方・避ける食材・memo・pantry選択）をdetailsから開き、
- * 生成直前の最終確認と送信を担うstep。
+ * 任意条件（時間・予算・材料の使い方・避ける食材・memo・pantry選択）を
+ * 確認画面でデフォルト展開して見せ、生成直前の最終確認と送信を担うstep。
  * privacy 未確認時は「AI情報の説明を見る」を secondary ボタンで明示し、
  * 「献立を作る」押下では生成せず alertdialog で同じ操作へ誘導する
  * （disabled のままでは押下フィードバックが無いため、見た目有効＋ダイアログで案内する）。
@@ -187,6 +187,8 @@ export function ReviewStep({
   const [avoidIngredientLocalError, setAvoidIngredientLocalError] = useState<string | null>(null);
   // 生成ボタン押下時の privacy 未確認ダイアログ。同意後や閉じる操作で消す。
   const [privacyGateOpen, setPrivacyGateOpen] = useState(false);
+  // 追加条件は初期から開く。閉じたまま気づかれないため、ユーザーが明示的に閉じるまで展開する。
+  const [additionalOpen, setAdditionalOpen] = useState(true);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const privacyNoticeButtonRef = useRef<HTMLButtonElement>(null);
   const privacyGatePrimaryRef = useRef<HTMLButtonElement>(null);
@@ -222,6 +224,24 @@ export function ReviewStep({
   // Plan 2: AI 送信前のクライアント医療境界。サーバー preflight と同一 detector を使う。
   const medicalBlocked =
     detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0;
+  // C-C2: 生成を止めるエラーの直しどころが閉じた details に隠れると操作不能に見える。
+  // ブロック中はユーザーが閉じても強制で開き直す。
+  const forceAdditionalOpen =
+    hasUnavailablePantrySelections ||
+    hasUnconfirmedExpiredPantry ||
+    medicalBlocked ||
+    fieldErrors?.timeLimitMinutes != null ||
+    fieldErrors?.budgetPreference != null ||
+    fieldErrors?.ingredientPreference != null ||
+    fieldErrors?.avoidIngredients != null ||
+    avoidIngredientLocalError != null ||
+    fieldErrors?.memo != null ||
+    fieldErrors?.pantrySelections != null;
+  useEffect(() => {
+    if (forceAdditionalOpen) {
+      setAdditionalOpen(true);
+    }
+  }, [forceAdditionalOpen]);
   // privacy 未確認だけでは disabled にしない（押下で案内を出す）。
   // C-I12 residual: 成功残 0 / attempt 残 0 / global 不可で主 CTA を止める。
   // I2: shortWindowRetryAt は route が remaining===0 のときだけ渡す active blocker。
@@ -367,27 +387,28 @@ export function ReviewStep({
         </p>
       )}
       {/*
-        C-C2: 生成を止めるエラーの直しどころ（pantry 解除・医療メモ）が閉じた details 内に
-        隠れると操作不能に見える。ブロック中は open にして常に見えるようにする。
+        追加条件はデフォルト展開。ブロック中（C-C2）は閉じさせず、
+        それ以外は summary の「閉じる/開く」で折りたためる。
       */}
       <details
         className="wizard-details"
-        open={
-          hasUnavailablePantrySelections ||
-          hasUnconfirmedExpiredPantry ||
-          medicalBlocked ||
-          fieldErrors?.timeLimitMinutes != null ||
-          fieldErrors?.budgetPreference != null ||
-          fieldErrors?.ingredientPreference != null ||
-          fieldErrors?.avoidIngredients != null ||
-          avoidIngredientLocalError != null ||
-          fieldErrors?.memo != null ||
-          fieldErrors?.pantrySelections != null
-            ? true
-            : undefined
-        }
+        open={additionalOpen}
+        onToggle={(event) => {
+          if (forceAdditionalOpen) {
+            // ブラウザが閉じようとしても次の描画で開き直す
+            setAdditionalOpen(true);
+            event.currentTarget.open = true;
+            return;
+          }
+          setAdditionalOpen(event.currentTarget.open);
+        }}
       >
-        <summary className="wizard-details-summary">追加条件</summary>
+        <summary className="wizard-details-summary">
+          <span className="wizard-details-summary-label">
+            <span>追加条件</span>
+            <span className="wizard-details-summary-optional">（任意）</span>
+          </span>
+        </summary>
         {/* summary 直下に stack を置き、label/input が横に流れないよう縦積みにする */}
         <div className="stack wizard-details-body">
           <label className="field">

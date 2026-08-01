@@ -605,7 +605,7 @@ describe("PlannerWizard idea audience onIdeaAudienceConfirmed", () => {
 });
 
 describe("PlannerWizard review step", () => {
-  it("任意条件をdetailsから開いて編集できる", async () => {
+  it("任意条件はデフォルトで開き、閉じたあと再度開いて編集できる", async () => {
     const user = userEvent.setup();
     render(
       <Harness
@@ -621,7 +621,14 @@ describe("PlannerWizard review step", () => {
       />,
     );
 
-    await user.click(screen.getByText("追加条件"));
+    const summary = screen.getByText("追加条件");
+    const details = summary.closest("details");
+    expect(details).toHaveAttribute("open");
+    // 開いた状態から閉じ、再度開いても編集できる
+    await user.click(summary);
+    expect(details).not.toHaveAttribute("open");
+    await user.click(summary);
+    expect(details).toHaveAttribute("open");
     await user.selectOptions(screen.getByLabelText("献立全体の調理時間"), "30");
     expect(screen.getByLabelText("献立全体の調理時間")).toHaveValue("30");
   });
@@ -687,8 +694,7 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
   });
 
-  it("追加条件は field 縦積みで狭幅でも崩れない構造を持つ", async () => {
-    const user = userEvent.setup();
+  it("追加条件は field 縦積みで狭幅でも崩れない構造を持つ", () => {
     render(
       <Harness
         initialStep="review"
@@ -706,9 +712,11 @@ describe("PlannerWizard review step", () => {
     const summary = screen.getByText("追加条件");
     const details = summary.closest("details");
     expect(details).toHaveClass("wizard-details");
-    expect(summary).toHaveClass("wizard-details-summary");
+    expect(details).toHaveAttribute("open");
+    expect(summary.closest("summary")).toHaveClass("wizard-details-summary");
+    expect(screen.getByText("（任意）")).toBeInTheDocument();
 
-    await user.click(summary);
+    // デフォルト展開済み。クリックで閉じない前提で構造だけ確認する
     const timeSelect = screen.getByLabelText("献立全体の調理時間");
     const timeLabel = timeSelect.closest("label");
     const body = timeLabel?.parentElement;
@@ -736,7 +744,7 @@ describe("PlannerWizard review step", () => {
       />,
     );
 
-    await user.click(screen.getByText("追加条件"));
+    // デフォルトで開いているので summary クリック不要
     const select = screen.getByLabelText("材料の使い方");
     expect(select).toHaveValue("");
     // 4 値 + 指定なし。文言は planner-labels と一致させる。
@@ -1363,7 +1371,7 @@ describe("PlannerWizard review step", () => {
       />,
     );
 
-    await user.click(screen.getByText("追加条件"));
+    // 追加条件はデフォルト展開のため summary クリック不要
     expect(screen.getByLabelText("自由メモ")).toHaveValue("Aの入力");
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
