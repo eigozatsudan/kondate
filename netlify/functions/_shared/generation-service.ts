@@ -901,13 +901,10 @@ export async function runGeneration(
         await deps.repository.failBeforeSend(requestId, "generation_timeout");
         return "terminal";
       }
-      const attemptTimeout = timeoutForAttempt();
-      if (attemptTimeout <= 0) {
-        await deps.repository.failBeforeSend(requestId, "generation_timeout");
-        return "terminal";
-      }
       // G4 residual: attempt を焼く markSent より前に政策失敗を閉じる。
       // process 寿命 cache により 2 回目以降（repair）は remote を叩かない。
+      // R2: ensure は Models API 最大 5s を食うことがあるため、成功後に REQUIRED_SEND を
+      // 再ゲートし、attemptTimeout も markSent 直前に再 snapshot する（stale 上限で chat しない）。
       try {
         await ensureModelPolicy({ models: deps.models });
       } catch (error) {
@@ -916,6 +913,15 @@ export async function runGeneration(
           return "terminal";
         }
         throw error;
+      }
+      if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
+        await deps.repository.failBeforeSend(requestId, "generation_timeout");
+        return "terminal";
+      }
+      const attemptTimeout = timeoutForAttempt();
+      if (attemptTimeout <= 0) {
+        await deps.repository.failBeforeSend(requestId, "generation_timeout");
+        return "terminal";
       }
       const sent = await deps.repository.markSent(requestId);
       // 短期窓拒否は markSent 内で failed 終端化済み。再 fail せず status を読む。
