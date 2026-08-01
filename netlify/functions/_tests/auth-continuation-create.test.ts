@@ -87,6 +87,22 @@ describe("auth continuation create", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("C8: rejects returnTo with backslash or control characters", async () => {
+    const create = vi.fn();
+    const handler = createHandler({ origin: ORIGIN, ttlSeconds: 300, create });
+    for (const returnTo of ["/foo\\bar", "/planner\u0000x"]) {
+      const response = await handler(
+        new Request("https://functions.test", {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/json" },
+          body: JSON.stringify({ state: STATE, secret: SECRET, returnTo }),
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(create).not.toHaveBeenCalled();
+    }
+  });
+
   it("hashes state and secret before the create transition and never returns them", async () => {
     const create = vi.fn().mockResolvedValue({
       id: "10000000-0000-4000-8000-000000000002",

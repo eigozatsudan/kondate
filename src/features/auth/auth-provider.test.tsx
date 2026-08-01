@@ -254,6 +254,52 @@ describe("AuthProvider", () => {
     expect(recovery).not.toHaveBeenCalled();
   });
 
+  it("C4: recovery onResult error clears the terminal flow secret (fail-closed)", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    let reportResult: ((result: { kind: "error"; flowId: string }) => void) | undefined;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={(input) => {
+          reportResult = input.onResult;
+          return vi.fn();
+        }}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+
+    await act(async () => {
+      reportResult?.({ kind: "error", flowId });
+      await Promise.resolve();
+    });
+
+    expect(window.localStorage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
+  });
+
   it("C5: fails closed to unauthenticated when cold-start getSession never settles past deadline", async () => {
     vi.useFakeTimers();
     try {

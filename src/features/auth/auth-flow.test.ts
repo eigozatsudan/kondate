@@ -357,6 +357,25 @@ it("C8: claim response schema rejects protocol-relative returnTo before sanitize
   ).rejects.toThrow();
 });
 
+it("C8: claim response schema rejects backslash and control characters in returnTo", async () => {
+  for (const returnTo of ["/foo\\bar", "/planner\u0000x"]) {
+    const api = createContinuationApi(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: true, data: { code: "auth-code", returnTo } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    await expect(
+      api.claim("10000000-0000-4000-8000-000000000001", {
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+      }),
+    ).rejects.toThrow();
+  }
+});
+
 class MapStorage implements Storage {
   protected readonly values = new Map<string, string>();
 

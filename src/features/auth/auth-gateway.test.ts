@@ -621,7 +621,7 @@ it.each([
   expect(readAuthFlow(flow.id, storage)).toEqual(flow);
 });
 
-it("C1: claim 410 (post-consume decrypt failure) is terminal unbound, not awaiting", async () => {
+it("C1/C4: claim 410 (post-consume decrypt failure) is terminal and clears secret", async () => {
   const storage = new MapStorage();
   const claim = vi.fn().mockRejectedValue(new ContinuationHttpError(410));
   const api = continuationApiMock({ claim });
@@ -640,7 +640,70 @@ it("C1: claim 410 (post-consume decrypt failure) is terminal unbound, not awaiti
     kind: "error",
     code: "unbound_callback",
     returnTo: "/onboarding",
+    flowId: flow.id,
   });
+  // C4: 410 後に secret を残すと recovery が claim 連打するため消去する
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("C3: TypeError then 404 treats claim as already-consumed and drops secret", async () => {
+  const storage = new MapStorage();
+  const claim = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError("network dropped after claim"))
+    .mockRejectedValueOnce(new ContinuationHttpError(404));
+  const api = continuationApiMock({ claim });
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  // secret を捨て claim 連打を止め、completion 待ち / hangWatchdog に委ねる
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("C5: clears secret immediately after claim so exchange hang cannot re-claim", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  client.auth.exchangeCodeForSession = vi.fn().mockReturnValue(new Promise(() => undefined));
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  void gateway.resumeFlow(flow.id);
+  // claim resolve → secret 破棄まで進める
+  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+
+  expect(claim).toHaveBeenCalledOnce();
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
 
 it("C7: rejects unexpected query keys such as access_token without depositing", async () => {

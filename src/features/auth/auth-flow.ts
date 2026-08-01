@@ -1,13 +1,21 @@
 import { z } from "zod";
 
+/**
+ * returnTo の共有検証（client storage / claim 応答 / サーバ Zod と同型）。
+ * C8: `\` と制御文字も拒否し、sanitizeReturnPath より緩い経路を残さない。
+ */
+export function isSafeAuthReturnTo(value: string): boolean {
+  if (value === "/") return true;
+  if (!/^\/[^/]/u.test(value)) return false;
+  if (value.startsWith("//") || value.includes("//")) return false;
+  if (value.includes("\\")) return false;
+  // eslint-disable-next-line no-control-regex -- returnTo に制御文字を許さない（C8）
+  if (/[\u0000-\u001f\u007f]/u.test(value)) return false;
+  return true;
+}
+
 /** U1-M1: storage 改ざん時も protocol-relative `//…` や埋め込み `//` を読まない */
-const authFlowReturnToSchema = z
-  .string()
-  .refine(
-    (value) =>
-      value === "/" || (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
-    "invalid_return_to",
-  );
+const authFlowReturnToSchema = z.string().refine(isSafeAuthReturnTo, "invalid_return_to");
 
 const authFlowSchema = z
   .object({
@@ -48,6 +56,8 @@ export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.sup
 const flowPrefix = ownedAuthStoragePrefixes[0];
 const callbackOwnerPrefix = `${ownedAuthStoragePrefixes[1]}.callback-owner.`;
 const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
+/** C3: claim が TypeError で欠落したあと 404 を already-consumed 近似するための印 */
+const claimAmbiguousPrefix = `${ownedAuthStoragePrefixes[1]}.claim-ambiguous.`;
 const defaultAuthContinuationTtlMs = 300_000;
 
 function base64url(bytes: Uint8Array): string {
@@ -131,6 +141,32 @@ export function clearAuthFlow(id: string, storage: Storage = window.localStorage
 export function clearClaimedAuthFlow(id: string, storage: Storage = window.localStorage): void {
   // 勝者の完了通知まで所有証跡を残し、同時claimに敗れたタブを待機へ収束させる。
   storage.removeItem(`${flowPrefix}${id}`);
+  clearClaimAmbiguous(id, storage);
+}
+
+/** C3: claim TypeError 後の 404 を already-consumed 近似するための印を付ける */
+export function markClaimAmbiguous(id: string, storage: Storage = window.localStorage): void {
+  try {
+    storage.setItem(`${claimAmbiguousPrefix}${id}`, "1");
+  } catch {
+    // 印を書けなくても fail-open で従来の 404 リトライに落ちる（可用性優先）
+  }
+}
+
+export function isClaimAmbiguous(id: string, storage: Storage = window.localStorage): boolean {
+  try {
+    return storage.getItem(`${claimAmbiguousPrefix}${id}`) !== null;
+  } catch {
+    return false;
+  }
+}
+
+export function clearClaimAmbiguous(id: string, storage: Storage = window.localStorage): void {
+  try {
+    storage.removeItem(`${claimAmbiguousPrefix}${id}`);
+  } catch {
+    // cleanup 失敗は次回 clearAuthFlow や TTL で収束する
+  }
 }
 
 export function markAuthContinuationCallbackOwner(flowId: string, storage?: Storage): void;
@@ -372,6 +408,7 @@ function clearAuthFlowClockState(flowId: string, storage: Storage): void {
     `${flowPrefix}${flowId}`,
     `${callbackOwnerPrefix}${flowId}`,
     `${clockRebasePrefix}${flowId}`,
+    `${claimAmbiguousPrefix}${flowId}`,
   ]) {
     try {
       storage.removeItem(key);
@@ -412,19 +449,11 @@ export class ContinuationHttpError extends Error {
 const createResponseSchema = z
   .object({ id: z.uuid(), expiresAt: z.iso.datetime({ offset: true }) })
   .strict();
-/** サーバ claim 応答と同型。sanitize 前のパースで protocol-relative 等を落とす（C8） */
+/** サーバ claim 応答と同型。sanitize 前のパースで protocol-relative / `\` 等を落とす（C8） */
 const claimResponseSchema = z
   .object({
     code: z.string().min(1).max(2_048),
-    returnTo: z
-      .string()
-      .max(500)
-      .refine(
-        (value) =>
-          value === "/" ||
-          (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
-        { message: "invalid_return_to" },
-      ),
+    returnTo: z.string().max(500).refine(isSafeAuthReturnTo, { message: "invalid_return_to" }),
   })
   .strict();
 const successEnvelope = <T extends z.ZodType>(schema: T) =>

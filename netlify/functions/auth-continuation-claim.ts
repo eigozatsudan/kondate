@@ -23,13 +23,20 @@ const claimRequestSchema = z
 const claimResponseSchema = z
   .object({
     code: z.string().min(1).max(2_048),
+    // C8: client sanitize と同型で `\` / 制御文字も拒否
     returnTo: z
       .string()
       .max(500)
       .refine(
-        (value) =>
-          value === "/" ||
-          (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
+        (value) => {
+          if (value === "/") return true;
+          if (!/^\/[^/]/u.test(value)) return false;
+          if (value.startsWith("//") || value.includes("//")) return false;
+          if (value.includes("\\")) return false;
+          // eslint-disable-next-line no-control-regex -- returnTo に制御文字を許さない
+          if (/[\u0000-\u001f\u007f]/u.test(value)) return false;
+          return true;
+        },
         { message: "invalid_return_to" },
       ),
   })

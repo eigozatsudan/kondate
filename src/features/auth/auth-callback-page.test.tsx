@@ -570,6 +570,52 @@ it("fails closed when completeCallback never settles past the continuation TTL",
   }
 });
 
+it("C6: hangWatchdog fails closed at server expiresAt when shorter than local TTL", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  try {
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: "2026-07-13T00:00:00.000Z",
+        expiresAt: "2026-07-13T00:00:30.000Z",
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.callback-owner.${flowId}`,
+      "2026-07-13T00:00:00.000Z",
+    );
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
+      resumeFlow: vi.fn(),
+    };
+    const { leaveAuthCallback } = renderCallback(gateway, {
+      ttlMs: 300_000,
+      initialEntry: `/auth/callback?flow=${flowId}`,
+    });
+    await act(async () => Promise.resolve());
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    // ローカル TTL 300s より前のサーバ 30s で fail-closed
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("does not force-leave a deposited WebView at the hang watchdog TTL", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));

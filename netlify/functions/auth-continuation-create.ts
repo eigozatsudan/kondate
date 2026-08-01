@@ -17,13 +17,20 @@ const createRequestSchema = z
     state: credentialSchema,
     secret: credentialSchema,
     // B-I5: 裸 "/" は RootEntry 復帰用に許可。B-I3: "//" 始まりは拒否。
+    // C8: client sanitizeReturnPath と同型で `\` と制御文字も拒否（開リダイレクトを広げない）。
     returnTo: z
       .string()
       .max(500)
       .refine(
-        (value) =>
-          value === "/" ||
-          (/^\/[^/]/u.test(value) && !value.startsWith("//") && !value.includes("//")),
+        (value) => {
+          if (value === "/") return true;
+          if (!/^\/[^/]/u.test(value)) return false;
+          if (value.startsWith("//") || value.includes("//")) return false;
+          if (value.includes("\\")) return false;
+          // eslint-disable-next-line no-control-regex -- returnTo に制御文字を許さない
+          if (/[\u0000-\u001f\u007f]/u.test(value)) return false;
+          return true;
+        },
         { message: "invalid_return_to" },
       ),
   })

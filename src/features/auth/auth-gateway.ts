@@ -6,7 +6,9 @@ import {
   clearClaimedAuthFlow,
   ContinuationHttpError,
   createAuthFlow,
+  isClaimAmbiguous,
   listUnexpiredAuthFlows,
+  markClaimAmbiguous,
   readAuthFlow,
   sanitizeReturnPath,
   createContinuationApi,
@@ -55,6 +57,8 @@ export type AuthCallbackResult =
       kind: "error";
       code: "oauth_cancelled" | "auth_callback_failed" | "unbound_callback";
       returnTo: string;
+      /** C4: recovery onResult が当該 flow だけを焼けるよう任意で載せる */
+      flowId?: string;
     };
 
 export interface AuthGateway {
@@ -252,6 +256,9 @@ export function createAuthGateway(
           state: flow.state,
         });
         claimed = true;
+        // C5: claim 成功時点で single-use はサーバ消費済み。secret を即破棄し、
+        // exchange hang 時の recovery 再 claim（404 連打）を防ぐ。所有証跡は残す。
+        clearClaimedAuthFlow(flow.id, storage);
         const result =
           flow.sessionExchange === "oauth_mock"
             ? await (async () => {
@@ -272,7 +279,6 @@ export function createAuthGateway(
             : client.auth.exchangeCodeForSession(claimedCode.code);
         const { error } = await result;
         if (error !== null) throw new Error("provider exchange failed");
-        clearClaimedAuthFlow(flow.id, storage);
         // F-AUTH-002: claim 成功の returnTo も再 sanitize（create 経路の防御を二重化）
         const safeReturnTo = sanitizeReturnPath(claimedCode.returnTo);
         // C4: withTimeout で結果が discard されても storage 経由で recovery/listener が拾えるよう公開。
@@ -289,23 +295,53 @@ export function createAuthGateway(
           flowId: flow.id,
         };
       } catch (error) {
-        // claim 成功後の exchange 失敗は secret を破棄して terminal。
+        // claim 成功後の exchange 失敗は残存所有証跡も破棄して terminal。
         if (claimed) {
           clearAuthFlow(flow.id, storage);
-          return { kind: "error", code: "unbound_callback", returnTo: flow.returnTo };
+          return {
+            kind: "error",
+            code: "unbound_callback",
+            returnTo: flow.returnTo,
+            flowId: flow.id,
+          };
         }
         // B-I4: 404（未 deposit / 競合待ち）・429・5xx・ネットワークはリトライ可能。
         // フローと secret を残し、待機タブを /login へ落とさない。
-        // 410（claim 後 decrypt 失敗で code 焼失）は terminal unbound（C1）。
+        // 410（claim 後 decrypt 失敗で code 焼失）は terminal unbound（C1/C4）。
         if (error instanceof ContinuationHttpError) {
-          if (error.status === 404 || error.status === 429 || error.status >= 500) {
+          if (error.status === 404) {
+            // C3: 直前 claim が TypeError（応答欠落の可能性）のあと 404 なら
+            // already consumed 近似。secret を捨てて claim 連打を止め、completion 待ちへ。
+            if (isClaimAmbiguous(flow.id, storage)) {
+              clearClaimedAuthFlow(flow.id, storage);
+              return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+            }
             return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
           }
+          if (error.status === 429 || error.status >= 500) {
+            return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+          }
+          // 410 ほか非リトライ 4xx: secret を消し recovery の poll を止める（C4）
+          clearAuthFlow(flow.id, storage);
+          return {
+            kind: "error",
+            code: "unbound_callback",
+            returnTo: flow.returnTo,
+            flowId: flow.id,
+          };
         }
         if (error instanceof TypeError) {
+          // C3: 成功応答欠落の可能性を記録し、次回 404 で consumed 近似する
+          markClaimAmbiguous(flow.id, storage);
           return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
         }
-        return { kind: "error", code: "unbound_callback", returnTo: flow.returnTo };
+        clearAuthFlow(flow.id, storage);
+        return {
+          kind: "error",
+          code: "unbound_callback",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
       }
     },
   };

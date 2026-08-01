@@ -6,6 +6,7 @@ import { AuthContext, type AuthContextValue } from "./auth-context";
 import {
   startAuthContinuationRecovery,
   type AuthContinuationRecoveryGateway,
+  type RecoveryResult,
 } from "./auth-continuation-recovery";
 import {
   publishAuthContinuationCompletion,
@@ -13,6 +14,7 @@ import {
 } from "./auth-continuation-completion";
 import { withTimeout } from "./async-timeout";
 import { createAuthGateway } from "./auth-gateway";
+import { clearAuthFlow } from "./auth-flow";
 
 export type AuthProviderClient = {
   auth: Pick<BrowserSupabaseClient["auth"], "getSession" | "onAuthStateChange">;
@@ -27,6 +29,7 @@ type AuthProviderProps = {
     gateway: AuthContinuationRecoveryGateway;
     storage: Storage;
     onComplete: (result: { kind: "complete"; flowId: string; returnTo: string }) => void;
+    onResult?: (result: RecoveryResult) => void;
     ttlMs: number;
   }) => () => void;
 };
@@ -130,14 +133,28 @@ export function AuthProvider({
   useEffect(() => {
     const gateway = recoveryGateway ?? defaultRecoveryGateway;
     if (gateway === undefined || window.location.pathname === "/auth/callback") return undefined;
+    const recoveryTtlMs =
+      providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000;
+    const storage = window.localStorage;
     return startRecovery({
       gateway,
-      storage: window.localStorage,
-      ttlMs: providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000,
+      storage,
+      ttlMs: recoveryTtlMs,
       onComplete: (result) => {
         publishCompletionSafely({ flowId: result.flowId, returnTo: result.returnTo });
         void refreshSession();
         if (result.returnTo.startsWith("/")) navigateTo(result.returnTo);
+      },
+      // C4: AuthCallbackPage の onResult→failClosed と同型。terminal 結果で当該 flow を焼く
+      // （resumeFlow 側 clear の二重化。flowId 無しの error は gateway クリアに委ねる）。
+      onResult: (result) => {
+        if (result.kind !== "error" && result.kind !== "expired") return;
+        if (result.flowId === undefined) return;
+        try {
+          clearAuthFlow(result.flowId, storage);
+        } catch {
+          // storage 障害は次周期の list 失敗で自然停止する
+        }
       },
     });
   }, [

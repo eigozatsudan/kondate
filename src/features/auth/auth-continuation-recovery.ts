@@ -8,7 +8,8 @@ import { IMMEDIATE_CLAIM_TIMEOUT_MS, withTimeout } from "./async-timeout";
 
 export type RecoveryResult =
   | { kind: "complete"; flowId: string; returnTo: string }
-  | { kind: "deposited" | "awaiting_completion" | "expired" | "error" };
+  | { kind: "deposited" | "awaiting_completion"; flowId?: string; returnTo?: string }
+  | { kind: "expired" | "error"; flowId?: string; returnTo?: string };
 export type AuthContinuationRecoveryGateway = {
   resumeFlow(flowId: string): Promise<RecoveryResult>;
 };
@@ -283,8 +284,9 @@ export function startAuthContinuationRecovery(input: {
   };
   const runClaim = async (flowId: string | undefined): Promise<void> => {
     if (flowId === undefined || stopped) return;
-    // C4: claim 後 exchange hang で recovery の running を永久占有しない。
-    // timeout 時は onResult を出さず awaiting 相当のまま次周期へ（秘密は焼かない）。
+    // claim 後 exchange hang で recovery の running を永久占有しない（timeout で解放）。
+    // C5: gateway は claim 成功時点で secret を破棄するため、timeout 後の次周期は
+    // 当該 flow を選ばず claim 連打しない。裏の resumeFlow が complete すれば completion を publish する。
     let result: RecoveryResult;
     try {
       result = await withTimeout(input.gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);

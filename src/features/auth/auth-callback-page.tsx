@@ -131,7 +131,19 @@ export function AuthCallbackPage({
       ownerStartedAt !== null && Number.isFinite(new Date(ownerStartedAt).getTime())
         ? new Date(ownerStartedAt).getTime()
         : Date.now();
-    const remainingMs = Math.max(0, startedAtMs + callbackTtlMs - Date.now());
+    // C6: サーバ expiresAt が分かればローカル TTL より厳しい方で watchdog を切る
+    const flowForDeadline =
+      flowIdForWatch === null ? null : readAuthFlow(flowIdForWatch, window.localStorage);
+    const serverExpiresMs =
+      flowForDeadline?.expiresAt === undefined
+        ? null
+        : new Date(flowForDeadline.expiresAt).getTime();
+    const localDeadlineMs = startedAtMs + callbackTtlMs;
+    const deadlineMs =
+      serverExpiresMs !== null && Number.isFinite(serverExpiresMs)
+        ? Math.min(localDeadlineMs, serverExpiresMs)
+        : localDeadlineMs;
+    const remainingMs = Math.max(0, deadlineMs - Date.now());
     const hangWatchdog = window.setTimeout(() => {
       if (leftRef.current || stayOnDepositedRef.current) return;
       // storage の flow と gateway 結果の双方から returnTo を拾う（C4）

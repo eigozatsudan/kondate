@@ -44,7 +44,13 @@ export async function redirectToLoginForExpiredSession(
     (typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/");
   const returnTo = sanitizeReturnPath(rawReturnTo);
   const params = new URLSearchParams({ sessionExpired: "1" });
-  if (returnTo !== "/welcome" && returnTo !== "/login") {
+  // C7: /auth/callback を returnTo に載せると再ログイン後に code 無し callback へ戻りループする
+  if (
+    returnTo !== "/welcome" &&
+    returnTo !== "/login" &&
+    !returnTo.startsWith("/login?") &&
+    !returnTo.startsWith("/auth/callback")
+  ) {
     params.set("returnTo", returnTo);
   }
   const url = `/login?${params.toString()}`;
@@ -55,12 +61,17 @@ export async function redirectToLoginForExpiredSession(
     });
 
   try {
-    await withTimeout(clearLocalAuthAndDrafts(client), cleanupTimeoutMs);
-  } catch {
-    // timeout / storage 例外でもログイン画面へ進める
+    try {
+      await withTimeout(clearLocalAuthAndDrafts(client), cleanupTimeoutMs);
+    } catch {
+      // timeout / storage 例外でもログイン画面へ進める
+    }
+    replace(url);
+  } finally {
+    // C9: replace 成功・noop・throw のいずれでも解除。埋め込み WebView で文書が残る場合の
+    // 永久 no-op を防ぐ。並列中の 2 本目は in-flight 中のみ抑止する。
+    redirectInFlight = false;
   }
-
-  replace(url);
 }
 
 /** テスト専用: in-flight ガードを戻す */
