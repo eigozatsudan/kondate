@@ -8,6 +8,7 @@ import {
 } from "./auth-gateway";
 import {
   ContinuationHttpError,
+  ContinuationResponseLostError,
   createAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthFlow,
@@ -646,11 +647,12 @@ it("C1/C4: claim 410 (post-consume decrypt failure) is terminal and clears secre
   expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
 
-it("C3: TypeError then 404 treats claim as already-consumed and drops secret", async () => {
+it("C3: response-lost after claim success then 404 treats claim as already-consumed and drops secret", async () => {
   const storage = new MapStorage();
   const claim = vi
     .fn()
-    .mockRejectedValueOnce(new TypeError("network dropped after claim"))
+    // R1: ambiguous は HTTP 成功後の body 欠落のみ（素の TypeError ではない）
+    .mockRejectedValueOnce(new ContinuationResponseLostError())
     .mockRejectedValueOnce(new ContinuationHttpError(404));
   const api = continuationApiMock({ claim });
   const gateway = createAuthGateway(
@@ -678,6 +680,38 @@ it("C3: TypeError then 404 treats claim as already-consumed and drops secret", a
   });
   // secret を捨て claim 連打を止め、completion 待ち / hangWatchdog に委ねる
   expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("R1: TypeError then 404 keeps secret (no ambiguous mark for pre-success network blip)", async () => {
+  const storage = new MapStorage();
+  const claim = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError("network unavailable before claim reached server"))
+    .mockRejectedValueOnce(new ContinuationHttpError(404));
+  const api = continuationApiMock({ claim });
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  // 未 deposit / サーバ未到達の TypeError では secret を保持し、正当な 404 リトライを許す
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
 });
 
 it("C5: clears secret immediately after claim so exchange hang cannot re-claim", async () => {

@@ -56,7 +56,7 @@ export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.sup
 const flowPrefix = ownedAuthStoragePrefixes[0];
 const callbackOwnerPrefix = `${ownedAuthStoragePrefixes[1]}.callback-owner.`;
 const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
-/** C3: claim が TypeError で欠落したあと 404 を already-consumed 近似するための印 */
+/** C3/R1: claim 成功応答欠落後の 404 を already-consumed 近似するための印 */
 const claimAmbiguousPrefix = `${ownedAuthStoragePrefixes[1]}.claim-ambiguous.`;
 const defaultAuthContinuationTtlMs = 300_000;
 
@@ -144,7 +144,7 @@ export function clearClaimedAuthFlow(id: string, storage: Storage = window.local
   clearClaimAmbiguous(id, storage);
 }
 
-/** C3: claim TypeError 後の 404 を already-consumed 近似するための印を付ける */
+/** C3/R1: claim 成功後の応答欠落のあと 404 を already-consumed 近似するための印を付ける */
 export function markClaimAmbiguous(id: string, storage: Storage = window.localStorage): void {
   try {
     storage.setItem(`${claimAmbiguousPrefix}${id}`, "1");
@@ -446,6 +446,18 @@ export class ContinuationHttpError extends Error {
   }
 }
 
+/**
+ * HTTP 成功（2xx）を受け取ったあと body 読取が欠けたときのエラー。
+ * claim は single-use burn 済みの可能性が高いので、gateway が claim-ambiguous 印の対象にする（R1）。
+ * fetch 自体の TypeError（サーバ未到達）とは区別し、未 deposit 404 での誤 secret 破棄を狭める。
+ */
+export class ContinuationResponseLostError extends Error {
+  constructor() {
+    super("continuation_response_lost");
+    this.name = "ContinuationResponseLostError";
+  }
+}
+
 const createResponseSchema = z
   .object({ id: z.uuid(), expiresAt: z.iso.datetime({ offset: true }) })
   .strict();
@@ -467,7 +479,13 @@ export function createContinuationApi(fetchImpl: typeof fetch = fetch): Continua
       body: JSON.stringify(body),
     });
     if (!response.ok) throw new ContinuationHttpError(response.status);
-    const value: unknown = response.status === 204 ? null : await response.json();
+    // 2xx 到達後の body 欠落はサーバ処理済み（claim なら burn 済み）の可能性が高い（R1）
+    let value: unknown;
+    try {
+      value = response.status === 204 ? null : await response.json();
+    } catch {
+      throw new ContinuationResponseLostError();
+    }
     return successEnvelope(schema).parse(value).data;
   };
   return {

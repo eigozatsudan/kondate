@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clearAuthFlow,
+  ContinuationResponseLostError,
   createContinuationApi,
   createAuthFlow,
   isAuthContinuationCallbackOwned,
@@ -334,6 +335,27 @@ it("preserves an unavailable claim HTTP status without reading sensitive respons
       state: "B".repeat(43),
     }),
   ).rejects.toMatchObject({ status: 503 });
+});
+
+it("R1: claim 2xx with unreadable body surfaces ContinuationResponseLostError", async () => {
+  // HTTP 成功後の body 欠落は burn 済み近似の印対象（素の TypeError と区別）
+  const api = createContinuationApi(async () => {
+    const response = {
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new TypeError("body stream interrupted after 2xx");
+      },
+    };
+    return response as Response;
+  });
+
+  await expect(
+    api.claim("10000000-0000-4000-8000-000000000001", {
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+    }),
+  ).rejects.toBeInstanceOf(ContinuationResponseLostError);
 });
 
 it("C8: claim response schema rejects protocol-relative returnTo before sanitize", async () => {

@@ -89,6 +89,10 @@ export function startAuthContinuationCompletionWait(input: {
   flowId: string;
   startedAt: string;
   ttlMs: number;
+  /**
+   * サーバ絶対期限（flow.expiresAt）。分かればローカル TTL と min してクリップする（R3 / C6 同型）。
+   */
+  serverExpiresAt?: string;
   onComplete(completion: AuthContinuationCompletion): void;
   onExpire(): void;
 }): () => void {
@@ -108,8 +112,15 @@ export function startAuthContinuationCompletionWait(input: {
       input.onComplete(completion);
     },
   });
-  const expiresAt = new Date(input.startedAt).getTime() + input.ttlMs;
-  const remainingMs = Number.isFinite(expiresAt) ? Math.max(0, expiresAt - Date.now()) : 0;
+  // R3: hangWatchdog（C6）と同型で min(startedAt+ttl, serverExpiresAt) を deadline にする
+  const localDeadlineMs = new Date(input.startedAt).getTime() + input.ttlMs;
+  const serverExpiresMs =
+    input.serverExpiresAt === undefined ? null : new Date(input.serverExpiresAt).getTime();
+  const deadlineMs =
+    serverExpiresMs !== null && Number.isFinite(serverExpiresMs)
+      ? Math.min(localDeadlineMs, serverExpiresMs)
+      : localDeadlineMs;
+  const remainingMs = Number.isFinite(deadlineMs) ? Math.max(0, deadlineMs - Date.now()) : 0;
   const timer = window.setTimeout(() => {
     if (finished) return;
     finished = true;

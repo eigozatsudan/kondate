@@ -5,6 +5,7 @@ import {
   clearAuthFlow,
   clearClaimedAuthFlow,
   ContinuationHttpError,
+  ContinuationResponseLostError,
   createAuthFlow,
   isClaimAmbiguous,
   listUnexpiredAuthFlows,
@@ -310,8 +311,8 @@ export function createAuthGateway(
         // 410（claim 後 decrypt 失敗で code 焼失）は terminal unbound（C1/C4）。
         if (error instanceof ContinuationHttpError) {
           if (error.status === 404) {
-            // C3: 直前 claim が TypeError（応答欠落の可能性）のあと 404 なら
-            // already consumed 近似。secret を捨てて claim 連打を止め、completion 待ちへ。
+            // C3/R1: 直前 claim が「HTTP 成功後の応答欠落」印付きなら already-consumed 近似。
+            // secret を捨てて claim 連打を止め、completion 待ちへ。
             if (isClaimAmbiguous(flow.id, storage)) {
               clearClaimedAuthFlow(flow.id, storage);
               return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
@@ -330,9 +331,14 @@ export function createAuthGateway(
             flowId: flow.id,
           };
         }
-        if (error instanceof TypeError) {
-          // C3: 成功応答欠落の可能性を記録し、次回 404 で consumed 近似する
+        // R1: ambiguous 印は claim 成功（2xx）後の body 欠落に限定。
+        // 素の TypeError（サーバ未到達）では印を付けず、続く正当 404 で secret を落とさない。
+        if (error instanceof ContinuationResponseLostError) {
+          // C3: 成功応答欠落を記録し、次回 404 で consumed 近似する
           markClaimAmbiguous(flow.id, storage);
+          return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+        }
+        if (error instanceof TypeError) {
           return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
         }
         clearAuthFlow(flow.id, storage);

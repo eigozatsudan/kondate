@@ -121,6 +121,30 @@ it("expires an uncompleted handoff at the existing auth flow TTL and cleans up i
   vi.useRealTimers();
 });
 
+it("R3: completion wait expires at serverExpiresAt when shorter than local TTL", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  const onComplete = vi.fn();
+  const onExpire = vi.fn();
+  // C6 hangWatchdog と同型: expiresAt=30s / ttl=300s なら 30s で onExpire
+  const stop = startAuthContinuationCompletionWait({
+    flowId: "flow-1",
+    startedAt: "2026-07-13T00:00:00.000Z",
+    ttlMs: 300_000,
+    serverExpiresAt: "2026-07-13T00:00:30.000Z",
+    onComplete,
+    onExpire,
+  });
+
+  vi.advanceTimersByTime(29_999);
+  expect(onExpire).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(onExpire).toHaveBeenCalledOnce();
+  expect(onComplete).not.toHaveBeenCalled();
+  stop();
+  vi.useRealTimers();
+});
+
 it("cancels expiry after completion arrives before the existing flow TTL", () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
