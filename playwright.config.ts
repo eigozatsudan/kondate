@@ -7,6 +7,7 @@ export default defineConfig({
   // 非バンドルmoduleを数百件取得するため、host側のnetwork構成変更で
   // ERR_NETWORK_CHANGEDが起きるとSPAがmountできず白紙のまま落ちる。
   // 環境由来の瞬断1回でsuite全体を落とさないための保険。
+  // アプリ race / helper 非決定性を 2 回目 green で隠さないこと（テスト自体を決定論的に保つ）。
   retries: process.env.CI ? 2 : 1,
   workers: 1,
   reporter: [["list"], ["html", { open: "never" }]],

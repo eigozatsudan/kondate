@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { z } from "zod";
 import { expect, test as authTest } from "./auth";
 import { confirmAddScopeNotice } from "./household";
@@ -18,25 +18,34 @@ export const test = authTest.extend<HistoryFixtures>({
 export { expect };
 
 /**
- * wizard の「次へ」を bottom-nav に遮られず押す。
- * Playwright の pointer click は fixed bottom-nav が重なると nav 側へ吸われるため、
- * 対象 button 自身の DOM click() で React の onClick を発火させる。
+ * wizard の「次へ」を押す。
+ * fixed bottom-nav にボタンが隠れる退行を検出するため、DOM 直接 click() は使わない。
+ * scroll → ナビより上にあること → Playwright actionability click の順で、
+ * 実機タッチと同様に遮蔽されていれば失敗する。
  */
 export async function clickWizardNext(page: Page): Promise<void> {
   const next = page.getByRole("button", { name: "次へ" });
   await expect(next).toBeVisible();
   // save_generation_draft の HTTP 成功直後でも、React が isSaving を落とす前に
   // 押すと disabled のまま throw する（menu-domain-pantry 長尺で再現）。
-  // ネットワーク同期後に enabled を待ってから DOM click する。
   await expect(next).toBeEnabled({ timeout: 15_000 });
-  await next.evaluate((el: HTMLElement) => {
-    el.scrollIntoView({ block: "center", inline: "nearest" });
-    // enabled 待ち後でも別保存が割り込んだ場合は失敗させる（黙って no-op にしない）
-    if (el instanceof HTMLButtonElement && el.disabled) {
-      throw new Error("wizard next button is disabled");
+  await next.scrollIntoViewIfNeeded();
+  // 固定 bottom-nav（min-height 56px）より上にボタン下端があることを固定する
+  const clearance = await next.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const nav = document.querySelector(".bottom-nav");
+    if (!(nav instanceof HTMLElement)) {
+      return { ok: true as const, bottom: rect.bottom, navTop: null };
     }
-    el.click();
+    const navTop = nav.getBoundingClientRect().top;
+    return { ok: rect.bottom <= navTop + 1, bottom: rect.bottom, navTop };
   });
+  expect(
+    clearance.ok,
+    `wizard next is occluded by bottom-nav (button.bottom=${String(clearance.bottom)}, nav.top=${String(clearance.navTop)})`,
+  ).toBe(true);
+  // force: false（既定）: 他要素に遮られていれば click 自体が失敗する
+  await next.click();
 }
 
 /**
@@ -88,27 +97,31 @@ export async function openFirstMemberEditor(page: Page): Promise<void> {
   await expect(nameField).toBeVisible({ timeout: 15_000 });
 }
 
-/** 次の generation POST だけに mock シナリオヘッダを付ける（Compose mock 時のみサーバが尊重） */
+/**
+ * 次の generation POST だけに mock シナリオヘッダを付ける（Compose mock 時のみサーバが尊重）。
+ * GET 等で times:1 が吸われないよう、POST 成功 continue 後に handler を外す。
+ * 呼び出し側は fixture 固有の中身（料理名等）を assert し、吸込み偽 green を防ぐこと。
+ */
 export async function setMockScenario(page: Page, scenario: string): Promise<void> {
-  await page.route(
-    (url) => {
-      const path = new URL(url).pathname;
-      return path === "/api/generations/menu" || path === "/api/generations/dish";
-    },
-    async (route) => {
-      if (route.request().method() !== "POST") {
-        await route.continue();
-        return;
-      }
-      await route.continue({
-        headers: {
-          ...route.request().headers(),
-          "x-kondate-mock-scenario": scenario,
-        },
-      });
-    },
-    { times: 1 },
-  );
+  const matchGeneration = (url: URL | string): boolean => {
+    const path = new URL(url).pathname;
+    return path === "/api/generations/menu" || path === "/api/generations/dish";
+  };
+  const handler = async (route: Route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await route.continue({
+      headers: {
+        ...route.request().headers(),
+        "x-kondate-mock-scenario": scenario,
+      },
+    });
+    // POST 1 回分だけ適用。unroute は continue 後（handler 内で外してよい）
+    await page.unroute(matchGeneration, handler);
+  };
+  await page.route(matchGeneration, handler);
 }
 
 /**
@@ -364,18 +377,18 @@ export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2
   await clickWizardNext(page);
 
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  // privacy 未確認なら説明へ。returnTo=/planner?resume=review で戻ったあと、
-  // react-query の stale draft cache で step 1 へ巻き戻る既知差異を reload で回避する
-  // （generation-recovery-results の completeIdeaPlannerToReview と同手順）。
-  // privacy 未了では説明 CTA が見える（生成ボタンは案内のため有効のまま）
+  // privacy 未了では説明 CTA が見える（生成ボタンは案内のため有効のまま）。
+  // openPrivacyNotice は flushDraft + resume=review で戻る。本番はフル reload しないため
+  // SPA 復帰だけで review を維持することを主張する（巻き戻りは製品退行として失敗させる）。
   const privacyCta = page.getByRole("button", { name: "AI情報の説明を見る" });
   if (await privacyCta.isVisible().catch(() => false)) {
     await privacyCta.click();
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
-    await expect(page).toHaveURL((url) => url.pathname === "/planner");
-    await page.reload();
+    await expect(page).toHaveURL(
+      (url) => url.pathname === "/planner" && url.searchParams.get("resume") === "review",
+    );
     await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
       timeout: 15_000,
     });

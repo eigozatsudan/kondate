@@ -66,7 +66,8 @@ const ensureWheatMemberForMockSuccess = async (page: Page) => {
 
 /**
  * completedOnboardingPage は privacy 済み、ideaModePage は未。
- * privacy 復帰後は reload 必須（history.ts の seedGeneratedIdeaMenu と同じ）。
+ * privacy は openPrivacyNotice（flushDraft + resume=review）で SPA 復帰する。
+ * フル reload で draft 巻き戻りを隠さない（製品退行を検出する）。
  * idea 生成前は setMockScenario が必要。
  */
 const ensurePrivacyThenGenerate = async (
@@ -84,8 +85,9 @@ const ensurePrivacyThenGenerate = async (
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
-    await expect(page).toHaveURL((url) => url.pathname === "/planner");
-    await page.reload();
+    await expect(page).toHaveURL(
+      (url) => url.pathname === "/planner" && url.searchParams.get("resume") === "review",
+    );
     await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
       timeout: 15_000,
     });

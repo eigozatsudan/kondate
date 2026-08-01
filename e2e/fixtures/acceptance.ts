@@ -104,6 +104,9 @@ export const requiredNonEmptyFamilies = new Set([
 /**
  * UI 経路で埋まらない必須ファミリーを service DB（pg）で埋める。
  * page / ブラウザへ secret は渡さない。既存 household 献立の FK を再利用する。
+ *
+ * 削除ゼロ化の証明用シードであり、「UI が全所有テーブルを埋められる完全グラフ」ではない。
+ * fingerprint 等は repeat('a', 64) の偽値で足りる（製品 UI 経路の完全再現ではない）。
  */
 async function seedMissingOwnedFamiliesViaPg(userId: string): Promise<void> {
   const parsedUserId = userIdSchema.parse(userId);

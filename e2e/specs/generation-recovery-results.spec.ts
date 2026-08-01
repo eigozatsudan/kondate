@@ -85,15 +85,12 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
   await page.getByRole("button", { name: "確認して進む" }).click();
 
-  // returnTo=/planner?resume=reviewでreview stepへ戻る。
-  await expect(page).toHaveURL((url) => url.pathname === "/planner");
-  // 既知の問題: useDraftAutosaveの通常保存はReact Queryのcacheへ反映されず
-  // （flushDraftのみsetQueryDataを呼ぶ）、react-query defaultOptionsの
-  // staleTime=30_000内にSPA navigationで/plannerへ戻ると、初回mount時に
-  // キャッシュされたnull（またはservings未確定時点）のdraftがそのまま
-  // 再利用され、step 1へ巻き戻ってしまう（本サブパスのソース変更範囲外の
-  // 既存差異のためテスト側では reload で回避する。詳細はreportに記載）。
-  await page.reload();
+  // returnTo=/planner?resume=review で review step へ戻る。
+  // openPrivacyNotice は flushDraft + setQueryData 済み。本番はフル reload しないため
+  // SPA 復帰だけで「5. 確認」を維持することを主張する（巻き戻りは製品退行）。
+  await expect(page).toHaveURL(
+    (url) => url.pathname === "/planner" && url.searchParams.get("resume") === "review",
+  );
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 }
@@ -206,7 +203,7 @@ async function expectScrollableTablistContent(tablist: Locator): Promise<void> {
   }
 }
 
-test("resends the same key after the first POST is lost before acceptance", async ({
+test("resends the same key after the first POST is aborted before server acceptance (connectionreset, no handler completion)", async ({
   completedOnboardingPage: page,
 }) => {
   await completeMinimumPlanner(page);
@@ -240,7 +237,7 @@ test("resends the same key after the first POST is lost before acceptance", asyn
   expect(postedKeys[0]).toBe(postedKeys[1]);
 });
 
-test("recovers a persisted result when only the POST response is lost", async ({
+test("recovers a persisted result when handler completes but response is dropped (X-Kondate-E2E-Drop-Response after-handler)", async ({
   completedOnboardingPage: page,
   context,
 }) => {

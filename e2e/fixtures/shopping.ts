@@ -129,26 +129,29 @@ export async function addManualItem(page: Page, name: string): Promise<void> {
  * history.ts の setMockScenario と同型。再生成が success fixture と material 重複しない
  * alternate-menu を返すために必要（重複は「ほぼ同じ案」で失敗終端になる）。
  */
+/**
+ * 次の generation POST だけに mock シナリオを付ける。
+ * GET で times が吸われないよう POST 後に unroute（history.setMockScenario と同型）。
+ */
 async function setMockScenario(page: Page, scenario: string): Promise<void> {
-  await page.route(
-    (url) => {
-      const path = new URL(url).pathname;
-      return path === "/api/generations/menu" || path === "/api/generations/dish";
-    },
-    async (route) => {
-      if (route.request().method() !== "POST") {
-        await route.continue();
-        return;
-      }
-      await route.continue({
-        headers: {
-          ...route.request().headers(),
-          "x-kondate-mock-scenario": scenario,
-        },
-      });
-    },
-    { times: 1 },
-  );
+  const matchGeneration = (url: URL | string): boolean => {
+    const path = new URL(url).pathname;
+    return path === "/api/generations/menu" || path === "/api/generations/dish";
+  };
+  const handler = async (route: Route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await route.continue({
+      headers: {
+        ...route.request().headers(),
+        "x-kondate-mock-scenario": scenario,
+      },
+    });
+    await page.unroute(matchGeneration, handler);
+  };
+  await page.route(matchGeneration, handler);
 }
 
 /** 履歴詳細から献立まるごとの別案を作り、新しい menuId を返す */
@@ -225,8 +228,10 @@ export async function deferMatchingRequest(
     try {
       if (!released) await gate;
       await route.continue();
-    } catch {
-      // unroute 直後の競合で既に settle 済みなら無視する
+    } catch (error) {
+      // unroute 直後の競合で既に settle 済みなら無視する。
+      // release 前の continue 失敗は観測したいので、released 前は再 throw する。
+      if (!released) throw error;
     } finally {
       inFlight -= 1;
       markIdleIfNeeded();

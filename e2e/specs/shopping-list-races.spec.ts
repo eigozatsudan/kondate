@@ -161,3 +161,89 @@ test("replays reconciliation after the committed response is lost", async ({
   const commands = bodies.map((body) => reconcileShoppingListRequestSchema.parse(JSON.parse(body)));
   expect(new Set(commands.map((command) => command.idempotencyKey)).size).toBe(1);
 });
+
+/**
+ * Cross-unit: shopping create の sessionStorage pending が残った状態で
+ * household safety を崩し、その後に届いた create がリストを立てないことを固定する。
+ * 単機能の create 冪等（fetch 後 abort）や settings+list ゲートとは別経路。
+ *
+ * 1通目を safety 変更までサーバに渡さず保留し、pending envelope だけ先に残す。
+ * 解放後の POST は current_safety 再検証で拒否され、使用中リストはできない。
+ */
+test("pending create envelope does not create a list after household safety changes", async ({
+  authenticatedPage: page,
+  shoppingMenuId,
+}) => {
+  let createPosts = 0;
+  const createStatuses: number[] = [];
+  let releaseCreates: () => void = () => undefined;
+  const createsReleased = new Promise<void>((resolve) => {
+    releaseCreates = resolve;
+  });
+  let released = false;
+
+  await page.route("**/api/shopping-lists/from-menu", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    createPosts += 1;
+    if (!released) await createsReleased;
+    const response = await route.fetch();
+    createStatuses.push(response.status());
+    await route.fulfill({ response });
+  });
+
+  await page.goto(`/menus/${shoppingMenuId}`);
+  const createButton = page.getByRole("button", { name: "買い物リストを作る" });
+  await expect(createButton).toBeEnabled({ timeout: 60_000 });
+  await createButton.click();
+  const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
+  if (await newChoice.isVisible()) await newChoice.check();
+  await page.getByRole("button", { name: "作成する" }).click();
+
+  // pending create envelope が sessionStorage に残ること（POST 保留中）
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(
+          (menuId) =>
+            Object.keys(sessionStorage).some(
+              (key) => key.startsWith("kondate:shopping:create:") && key.includes(menuId),
+            ),
+          shoppingMenuId,
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  expect(createPosts).toBeGreaterThanOrEqual(1);
+
+  // 横断: safety を崩してから保留中の create を解放する
+  await markFirstMemberAllergyUnconfirmed(page);
+  released = true;
+  releaseCreates();
+
+  // 解放後の create は 4xx（current_safety_revalidation_required 等）で終わる
+  await expect.poll(() => createStatuses.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  for (const status of createStatuses) {
+    expect(
+      status,
+      `create after safety change must not succeed (got ${String(status)})`,
+    ).toBeGreaterThanOrEqual(400);
+  }
+
+  // メニュー結果は安全条件変更で fail closed。作成 CTA は disabled。
+  await expect(page.getByRole("alert")).toContainText(/現在の(家族設定|安全条件)/u, {
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("button", { name: "買い物リストを作る" })).toBeDisabled({
+    timeout: 30_000,
+  });
+
+  // /shopping に使用中リストの操作可能 checkbox が無いこと
+  await page.goto("/shopping");
+  await expect(page.getByRole("heading", { name: "買い物リスト" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("checkbox", { name: /を購入済みにする/u })).toHaveCount(0);
+});
