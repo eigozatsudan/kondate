@@ -353,15 +353,18 @@ v1 では **除外しない**（プロダクト好み。必須ではない）。
 
 ### 11.1 権限マトリクス（必須）
 
+本リポジトリ不変条件: **private 表に service_role / authenticated の TABLE GRANT を付けない**（`rls_inventory`）。操作はすべて **public SECURITY DEFINER RPC**（PostgREST 経由）。private 関数を Data API に直接出さない。
+
 | オブジェクト | anon/authenticated 直 | 許可 |
 | --- | --- | --- |
-| `user_share_consents` | 本人 RLS | 本人 CRUD 相当 |
-| `private.share_generalization_jobs` | 不可 | service_role / definer |
-| `private.shared_emergency_recipes` | 不可 | service_role / definer（緊急 Function） |
-| `private.shared_emergency_recipe_origins` | 不可 | service_role / definer（管理 RPC は本人分のみ） |
-| 台帳 | 不可 | private RPC |
+| `user_share_consents` | 本人 RLS または definer upsert/get | 本人のみ |
+| `private.share_generalization_jobs` | 不可（TABLE GRANT なし） | public definer（enqueue/claim/finish/reap）service_role |
+| `private.shared_emergency_recipes` | 不可 | public definer publish / list_active（service_role） |
+| `private.shared_emergency_recipe_origins` | 不可 | publish 内 INSERT；list_my は authenticated definer + `auth.uid()` |
+| 台帳 | 不可 | 上記 definer 内のみ |
 
-管理 RPC: `security definer` + `auth.uid()` 固定。`p_user_id` 引数で他人を指定不可。
+管理 RPC: `security definer` + `auth.uid()` 固定。`p_user_id` 引数で他人を指定不可。  
+`publish_*` は **同一トランザクション**で consent 再確認 + pool INSERT（revoke との TOCTOU 禁止）。
 
 ### 11.2 アカウント削除
 
