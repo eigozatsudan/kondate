@@ -10,7 +10,11 @@ import {
   emergencyFixtureVersion,
   emergencyMenuFixturesV1,
 } from "./fixtures.v1.js";
-import { filterEmergencyMenus } from "./filter-emergency-menus.js";
+import {
+  filterEmergencyMenuCandidates,
+  filterEmergencyMenus,
+  type EmergencySourceCandidate,
+} from "./filter-emergency-menus.js";
 
 // shared から src を import しない（tsconfig 境界）。
 // household-defaults の年齢帯 defaults と一致させる固定値。
@@ -628,5 +632,209 @@ describe("reviewed emergency menus", () => {
         }
       }
     }
+  });
+
+  it("existing fixture-only wrapper still passes prior tests", () => {
+    // ラッパが多ソースコアへ委譲しても Stage S/M の従来結果形を保つ
+    const result = filterEmergencyMenus({
+      mealType: "dinner",
+      pantryNames: [],
+      context: adultContext([]),
+    });
+    expect(result.emptyReason).toBeNull();
+    expect(result.matchMode).toBe("none");
+    expect(result.menus.length).toBeGreaterThan(0);
+    expect(result).not.toHaveProperty("sourceCounts");
+  });
+});
+
+describe("filterEmergencyMenuCandidates multi-source", () => {
+  const allAgeBands = [
+    "post_weaning_to_2",
+    "age_3_5",
+    "age_6_8",
+    "age_9_12",
+    "age_13_17",
+    "adult",
+    "senior",
+  ] as const satisfies readonly AgeBand[];
+
+  const adultContext = (allergenIds: readonly string[] = []) =>
+    makeCurrentSafetyContext({
+      members: [
+        {
+          ...makeCurrentSafetyContext().members[0]!,
+          ageBand: "adult",
+          allergenIds: [...allergenIds],
+          allergyStatus: allergenIds.length === 0 ? "none" : "registered",
+          requiredSafetyConstraints: [],
+          unsupportedDietStatus: "none",
+          hasUnmappedCustomAllergy: false,
+          customAllergies: [],
+        },
+      ],
+      foodSafetyRules: currentFoodSafetyRulesV1,
+    });
+
+  function fixtureCandidatesForMeal(
+    mealType: "breakfast" | "lunch" | "dinner",
+  ): EmergencySourceCandidate[] {
+    return emergencyMenuFixturesV1
+      .filter((menu) => menu.mealType === mealType)
+      .flatMap((menu) => {
+        const metadata = emergencyFixtureMetadataV1[menu.menuId];
+        if (metadata === undefined) return [];
+        return [
+          {
+            menu,
+            metadata: {
+              eligibleAgeBands: metadata.eligibleAgeBands,
+              standardAllergenIds: metadata.standardAllergenIds,
+            },
+            source: "fixture" as const,
+          },
+        ];
+      });
+  }
+
+  function communityFromFixture(
+    mealType: "breakfast" | "lunch" | "dinner",
+    options?: {
+      menuId?: string;
+      adaptations?: "keep" | "empty";
+      eligibleAgeBands?: readonly AgeBand[];
+    },
+  ): EmergencySourceCandidate {
+    const source = emergencyMenuFixturesV1.find((menu) => menu.mealType === mealType);
+    if (source === undefined) {
+      throw new Error(`no fixture for ${mealType}`);
+    }
+    const metadata = emergencyFixtureMetadataV1[source.menuId]!;
+    const menuId = options?.menuId ?? "86000000-0000-4000-8000-000000000001";
+    return {
+      menu: {
+        ...source,
+        menuId,
+        // 空 adaptation 経路: テンプレ無しのコミュニティ候補を模す
+        adaptations: options?.adaptations === "empty" ? [] : source.adaptations,
+      },
+      metadata: {
+        eligibleAgeBands: options?.eligibleAgeBands ?? metadata.eligibleAgeBands,
+        standardAllergenIds: metadata.standardAllergenIds,
+      },
+      source: "community",
+    };
+  }
+
+  it("prefers fixture slots before community", () => {
+    const fixtures = fixtureCandidatesForMeal("dinner");
+    const community: EmergencySourceCandidate[] = [
+      communityFromFixture("dinner", {
+        menuId: "86000000-0000-4000-8000-000000000101",
+      }),
+      communityFromFixture("dinner", {
+        menuId: "86000000-0000-4000-8000-000000000102",
+      }),
+    ];
+    // community を先に並べても採用は fixture 優先（一括 merge 後ソートだけにしない）
+    const result = filterEmergencyMenuCandidates({
+      mealType: "dinner",
+      pantryNames: [],
+      context: adultContext(),
+      candidates: [...community, ...fixtures],
+      maxCandidates: fixtures.length + 1,
+    });
+
+    expect(result.emptyReason).toBeNull();
+    expect(result.menus.length).toBe(fixtures.length + 1);
+    expect(result.sourceCounts).toEqual({
+      fixture: fixtures.length,
+      community: 1,
+    });
+    const fixtureIds = new Set(fixtures.map((item) => item.menu.menuId));
+    // 返却順: 全 fixture 採用分が community より前
+    const firstCommunityIndex = result.menus.findIndex((menu) => !fixtureIds.has(menu.menuId));
+    expect(firstCommunityIndex).toBe(fixtures.length);
+    for (let index = 0; index < fixtures.length; index += 1) {
+      expect(fixtureIds.has(result.menus[index]!.menuId)).toBe(true);
+    }
+  });
+
+  it("stops at maxCandidates", () => {
+    const fixtures = fixtureCandidatesForMeal("dinner");
+    expect(fixtures.length).toBeGreaterThanOrEqual(2);
+    const community = [
+      communityFromFixture("dinner", { menuId: "86000000-0000-4000-8000-000000000201" }),
+      communityFromFixture("dinner", { menuId: "86000000-0000-4000-8000-000000000202" }),
+    ];
+    const result = filterEmergencyMenuCandidates({
+      mealType: "dinner",
+      pantryNames: [],
+      context: adultContext(),
+      candidates: [...fixtures, ...community],
+      maxCandidates: 2,
+    });
+
+    expect(result.menus).toHaveLength(2);
+    expect(result.sourceCounts).toEqual({ fixture: 2, community: 0 });
+    // max が fixture で埋まるときは community を Stage S 採用しない
+    const fixtureIds = new Set(fixtures.map((item) => item.menu.menuId));
+    expect(result.menus.every((menu) => fixtureIds.has(menu.menuId))).toBe(true);
+  });
+
+  it("drops community with empty adaptations", () => {
+    const emptyCommunity = communityFromFixture("dinner", {
+      menuId: "86000000-0000-4000-8000-000000000301",
+      adaptations: "empty",
+    });
+    const result = filterEmergencyMenuCandidates({
+      mealType: "dinner",
+      pantryNames: [],
+      context: adultContext(),
+      // fixture 無し・空 adaptation の community のみ
+      candidates: [emptyCommunity],
+      maxCandidates: 5,
+    });
+
+    expect(result.menus).toEqual([]);
+    expect(result.emptyReason).toBe("no_matching_fixture");
+    expect(result.matchMode).toBeNull();
+    expect(result.sourceCounts).toEqual({ fixture: 0, community: 0 });
+  });
+
+  it("does not return unconstrained community for post_weaning_to_2 requiredSafetyConstraints", () => {
+    const requiredSafetyConstraints = requiredSafetyConstraintsForAgeBand("post_weaning_to_2");
+    const underSixContext = makeCurrentSafetyContext({
+      members: [
+        {
+          ...makeCurrentSafetyContext().members[0]!,
+          ageBand: "post_weaning_to_2",
+          requiredSafetyConstraints: [...requiredSafetyConstraints],
+          allergenIds: [],
+          allergyStatus: "none",
+          unsupportedDietStatus: "none",
+          hasUnmappedCustomAllergy: false,
+          customAllergies: [],
+        },
+      ],
+      foodSafetyRules: currentFoodSafetyRulesV1,
+    });
+    // 空 adaptation = under-six 制約を満たさない unconstrained community
+    const unconstrained = communityFromFixture("breakfast", {
+      menuId: "86000000-0000-4000-8000-000000000401",
+      adaptations: "empty",
+      eligibleAgeBands: allAgeBands,
+    });
+    const result = filterEmergencyMenuCandidates({
+      mealType: "breakfast",
+      pantryNames: [],
+      context: underSixContext,
+      candidates: [unconstrained],
+      maxCandidates: 5,
+    });
+
+    expect(result.menus).toEqual([]);
+    expect(result.emptyReason).toBe("no_matching_fixture");
+    expect(result.sourceCounts.community).toBe(0);
   });
 });

@@ -96,6 +96,8 @@ export const emergencyMenuCandidateSchema = z
   });
 
 export const emergencyMatchModes = ["none", "main_ingredient", "safety_only"] as const;
+// no_matching_fixture は歴史的名称。意味は S1（fixture）∪S2（community）を通しても
+// Stage S 通過候補がゼロのとき（wire 互換のため値は変えない）。
 export const emergencyEmptyReasons = ["current_safety_unavailable", "no_matching_fixture"] as const;
 export const emergencyPaths = ["household", "idea"] as const;
 

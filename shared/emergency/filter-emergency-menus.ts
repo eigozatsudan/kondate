@@ -1,4 +1,4 @@
-import type { MealType } from "../contracts/domain.js";
+import type { AgeBand, MealType } from "../contracts/domain.js";
 import { validatedMenuSchema, type ValidatedMenu } from "../contracts/generation.js";
 import type { CurrentSafetyContext, CurrentSafetyMember } from "../safety/context.js";
 import type { GenerationContext } from "../safety/generation-context.js";
@@ -22,6 +22,27 @@ export type EmergencyFilterResult = {
   menus: readonly ValidatedMenu[];
   emptyReason: EmergencyEmptyReason | null;
   matchMode: EmergencyMatchMode | null;
+};
+
+export type EmergencySourceMetadata = {
+  eligibleAgeBands: readonly AgeBand[];
+  standardAllergenIds: readonly string[];
+};
+
+/** S1 fixture / S2 community 共通の Stage S 入力候補 */
+export type EmergencySourceCandidate = {
+  menu: ValidatedMenu;
+  metadata: EmergencySourceMetadata;
+  source: "fixture" | "community";
+};
+
+export type EmergencyMultiSourceFilterResult = EmergencyFilterResult & {
+  sourceCounts: { fixture: number; community: number };
+};
+
+type StagedMenu = {
+  menu: ValidatedMenu;
+  source: "fixture" | "community";
 };
 
 export function buildEmergencyMenuCandidate(input: {
@@ -73,7 +94,11 @@ function remapUuidForMember(id: string, memberIndex: number): string {
   return `${id.slice(0, -12)}${remapped.toString(16).padStart(12, "0")}`;
 }
 
-function remapFixtureForMembers(
+/**
+ * 配信時 remap: テンプレ adaptations を閲覧者メンバー数へ展開する。
+ * S1 fixture / S2 community の両方で同一経路を使う。
+ */
+export function remapFixtureForMembers(
   menu: ValidatedMenu,
   members: readonly CurrentSafetyMember[],
 ): ValidatedMenu {
@@ -153,69 +178,123 @@ function normalizeMainIngredientForMatch(value: string): string {
   return value.normalize("NFKC").trim();
 }
 
-export function filterEmergencyMenus(input: {
-  mealType: MealType;
-  mainIngredients?: readonly string[];
-  pantryNames: readonly string[];
-  context: CurrentSafetyContext;
-  memberLabels?: Readonly<Record<string, string>>;
-}): EmergencyFilterResult {
-  const mainIngredients = (input.mainIngredients ?? []).map(normalizeMainIngredientForMatch);
-
-  // 1) Stage S 前ゲート
-  if (
-    input.context.members.length === 0 ||
-    input.context.members.some(
+function isCurrentSafetyUnavailable(context: CurrentSafetyContext): boolean {
+  return (
+    context.members.length === 0 ||
+    context.members.some(
       (member) =>
         member.allergyStatus === "unconfirmed" ||
         member.hasUnmappedCustomAllergy ||
         member.unsupportedDietStatus !== "none",
     )
+  );
+}
+
+/**
+ * 1 候補の Stage S（metadata ゲート → remap → validate）。
+ * community で remap 後 adaptations が空なら fail-closed（空 adaptation での通過禁止）。
+ */
+function stageSSourceCandidate(
+  candidate: EmergencySourceCandidate,
+  input: {
+    mealType: MealType;
+    context: CurrentSafetyContext;
+    memberLabels: Readonly<Record<string, string>>;
+  },
+): ValidatedMenu | null {
+  if (candidate.menu.mealType !== input.mealType) {
+    return null;
+  }
+  const { metadata } = candidate;
+  if (
+    input.context.members.some(
+      (member) =>
+        !metadata.eligibleAgeBands.includes(member.ageBand) ||
+        member.allergenIds.some((allergenId) => metadata.standardAllergenIds.includes(allergenId)),
+    )
   ) {
+    return null;
+  }
+  const remapped = remapFixtureForMembers(candidate.menu, input.context.members);
+  // S2: 空 adaptations は under-six 向けに「通したように見せる」抜け道になるため明示 drop。
+  // 成人でもコミュニティ候補はテンプレ必須方針に合わせ、空は載せない。
+  if (candidate.source === "community" && remapped.adaptations.length === 0) {
+    return null;
+  }
+  const validated = validateGeneratedMenu(
+    remapped,
+    emergencyGenerationContext(remapped, input.context, input.memberLabels),
+  );
+  return validated.ok ? validated.menu : null;
+}
+
+/**
+ * 多ソース緊急フィルタの純粋コア。
+ * S1（fixture）を先に Stage S し max まで採用 → 空き枠だけ S2（community）。
+ * 一括 merge 後の source ソートだけに頼らない（採用順そのものが S1 優先）。
+ */
+export function filterEmergencyMenuCandidates(input: {
+  mealType: MealType;
+  mainIngredients?: readonly string[];
+  pantryNames: readonly string[];
+  context: CurrentSafetyContext;
+  memberLabels?: Readonly<Record<string, string>>;
+  candidates: readonly EmergencySourceCandidate[];
+  maxCandidates: number;
+}): EmergencyMultiSourceFilterResult {
+  const mainIngredients = (input.mainIngredients ?? []).map(normalizeMainIngredientForMatch);
+  const memberLabels = input.memberLabels ?? {};
+  const emptyCounts = { fixture: 0, community: 0 } as const;
+
+  // 1) Stage S 前ゲート
+  if (isCurrentSafetyUnavailable(input.context)) {
     return {
       menus: [],
-      // 安全条件未充足が原因。メイン食材の有無で理由をすり替えない。
       emptyReason: "current_safety_unavailable",
       matchMode: null,
+      sourceCounts: { ...emptyCounts },
     };
+  }
+
+  const maxCandidates = Math.max(0, Math.trunc(input.maxCandidates));
+  const stageInput = {
+    mealType: input.mealType,
+    context: input.context,
+    memberLabels,
+  };
+
+  // 2) Stage S — fixture を先に max まで、空きだけ community
+  const staged: StagedMenu[] = [];
+  for (const candidate of input.candidates) {
+    if (candidate.source !== "fixture") continue;
+    if (staged.length >= maxCandidates) break;
+    const menu = stageSSourceCandidate(candidate, stageInput);
+    if (menu !== null) {
+      staged.push({ menu, source: "fixture" });
+    }
+  }
+  if (staged.length < maxCandidates) {
+    for (const candidate of input.candidates) {
+      if (candidate.source !== "community") continue;
+      if (staged.length >= maxCandidates) break;
+      const menu = stageSSourceCandidate(candidate, stageInput);
+      if (menu !== null) {
+        staged.push({ menu, source: "community" });
+      }
+    }
   }
 
   const pantry = input.pantryNames.map(normalizeFoodText).filter((name) => name !== "");
 
-  // 2) Stage S（validation は常に HouseholdGenerationContext — targetMode: "household"）
-  const safetyCompatibleMenus = emergencyMenuFixturesV1
-    .filter((menu) => menu.mealType === input.mealType)
-    .flatMap((menu) => {
-      const metadata = emergencyFixtureMetadataV1[menu.menuId];
-      if (
-        metadata === undefined ||
-        input.context.members.some(
-          (member) =>
-            !metadata.eligibleAgeBands.includes(member.ageBand) ||
-            member.allergenIds.some((allergenId) =>
-              metadata.standardAllergenIds.includes(allergenId),
-            ),
-        )
-      ) {
-        return [];
-      }
-      const remapped = remapFixtureForMembers(menu, input.context.members);
-      const validated = validateGeneratedMenu(
-        remapped,
-        emergencyGenerationContext(remapped, input.context, input.memberLabels ?? {}),
-      );
-      return validated.ok ? [validated.menu] : [];
-    });
-
-  // 3) Stage M
-  let selected: readonly ValidatedMenu[];
+  // 3) Stage M（既存と同じ。通過集合は Stage S 採用分に限定）
+  let selected: StagedMenu[];
   let matchMode: EmergencyMatchMode | null;
   let emptyReason: EmergencyEmptyReason | null;
 
   if (mainIngredients.length === 0) {
-    selected = safetyCompatibleMenus;
-    matchMode = safetyCompatibleMenus.length > 0 ? "none" : null;
-    emptyReason = safetyCompatibleMenus.length > 0 ? null : "no_matching_fixture";
+    selected = staged;
+    matchMode = staged.length > 0 ? "none" : null;
+    emptyReason = staged.length > 0 ? null : "no_matching_fixture";
   } else {
     // 自由文の手順や説明ではなく、料理名と材料名だけをメイン食材との対応根拠にする。
     // 候補がユーザー指定を含む方向だけを見る。
@@ -228,8 +307,8 @@ export function filterEmergencyMenus(input: {
     const mainMatched =
       matchableMains.length === 0
         ? []
-        : safetyCompatibleMenus.filter((menu) => {
-            const candidateNames = menu.dishes.flatMap((dish) => [
+        : staged.filter((item) => {
+            const candidateNames = item.menu.dishes.flatMap((dish) => [
               normalizeMainIngredientForMatch(dish.name),
               ...dish.ingredients.map((ingredient) =>
                 normalizeMainIngredientForMatch(ingredient.name),
@@ -243,9 +322,9 @@ export function filterEmergencyMenus(input: {
       selected = mainMatched;
       matchMode = "main_ingredient";
       emptyReason = null;
-    } else if (safetyCompatibleMenus.length > 0) {
+    } else if (staged.length > 0) {
       // メイン不一致でも Stage S 通過候補を safety_only で返す（空にしない）
-      selected = safetyCompatibleMenus;
+      selected = staged;
       matchMode = "safety_only";
       emptyReason = null;
     } else {
@@ -255,14 +334,64 @@ export function filterEmergencyMenus(input: {
     }
   }
 
-  // 4) pantry sort（既存）
-  const menus = [...selected].sort((left, right) => {
-    const score = (menu: ValidatedMenu) =>
-      collectMenuTextSources(menu).filter((source) =>
-        pantry.some((name) => normalizeFoodText(source.text).includes(name)),
-      ).length;
-    return score(right) - score(left) || left.menuId.localeCompare(right.menuId);
-  });
+  // 4) 優先帯: fixture が常に community より前。帯内は pantry スコア → menuId
+  const menus = [...selected]
+    .sort((left, right) => {
+      if (left.source !== right.source) {
+        return left.source === "fixture" ? -1 : 1;
+      }
+      const score = (menu: ValidatedMenu) =>
+        collectMenuTextSources(menu).filter((source) =>
+          pantry.some((name) => normalizeFoodText(source.text).includes(name)),
+        ).length;
+      return (
+        score(right.menu) - score(left.menu) || left.menu.menuId.localeCompare(right.menu.menuId)
+      );
+    })
+    .map((item) => item.menu);
 
-  return { menus, emptyReason, matchMode };
+  const sourceCounts = {
+    fixture: selected.filter((item) => item.source === "fixture").length,
+    community: selected.filter((item) => item.source === "community").length,
+  };
+
+  return { menus, emptyReason, matchMode, sourceCounts };
+}
+
+/**
+ * fixture 専用ラッパ。既存呼び出し互換のため内部で多ソースコアに委譲する。
+ * max はカタログ全件を通し、API 側 cap は Task 9 で emergencyMaxCandidates を渡す。
+ */
+export function filterEmergencyMenus(input: {
+  mealType: MealType;
+  mainIngredients?: readonly string[];
+  pantryNames: readonly string[];
+  context: CurrentSafetyContext;
+  memberLabels?: Readonly<Record<string, string>>;
+}): EmergencyFilterResult {
+  const candidates: EmergencySourceCandidate[] = emergencyMenuFixturesV1.flatMap((menu) => {
+    const metadata = emergencyFixtureMetadataV1[menu.menuId];
+    if (metadata === undefined) return [];
+    return [
+      {
+        menu,
+        metadata: {
+          eligibleAgeBands: metadata.eligibleAgeBands,
+          standardAllergenIds: metadata.standardAllergenIds,
+        },
+        source: "fixture" as const,
+      },
+    ];
+  });
+  const multi = filterEmergencyMenuCandidates({
+    ...input,
+    candidates,
+    // 既存テスト・handler 互換: カタログ全件を Stage S 対象にする（返却 cap は呼び出し側）
+    maxCandidates: candidates.length,
+  });
+  return {
+    menus: multi.menus,
+    emptyReason: multi.emptyReason,
+    matchMode: multi.matchMode,
+  };
 }
