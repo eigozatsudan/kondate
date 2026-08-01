@@ -163,13 +163,26 @@ test("household journey: welcome through shopping create and alternate reconcile
   await expect(page.getByRole("heading", { name: "献立変更の差分" })).toBeVisible({
     timeout: 30_000,
   });
+  // E2E1: 空 diff / no-op apply の偽 green を潰す。alternate-menu は success と材料が
+  // 差し替わる（鶏むね肉・きゅうり 等）ため、追加 legend が 1 件以上かつ固有名が載る。
+  await expect(page.getByRole("group", { name: /^追加 [1-9]\d*件$/u })).toBeVisible({
+    timeout: 15_000,
+  });
+  // alternate fixture 固有の追加材料（success は「にんじん」側菜）
+  const addGroup = page.getByRole("group", { name: /^追加 [1-9]\d*件$/u });
+  await expect(addGroup.getByText("きゅうり")).toBeVisible();
+  await expect(addGroup.getByText("鶏むね肉")).toBeVisible();
   await page.getByRole("button", { name: "選んだ変更を反映" }).click();
   await expect(page).toHaveURL(/\/shopping$/u, { timeout: 60_000 });
   await expect(page.getByRole("heading", { name: "買い物リスト" })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByRole("checkbox", { name: /を購入済みにする/u }).first()).toBeEnabled({
+  // 反映後リスト上に alternate 由来 item が載ること（任意 checkbox だけだと no-op でも通る）
+  await expect(page.getByRole("checkbox", { name: "きゅうりを購入済みにする" })).toBeEnabled({
     timeout: 60_000,
+  });
+  await expect(page.getByRole("checkbox", { name: "鶏むね肉を購入済みにする" })).toBeEnabled({
+    timeout: 30_000,
   });
 
   expect(
@@ -243,7 +256,7 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
     /\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1],
   );
 
-  await page.getByRole("button", { name: "別の献立を作り直す" }).click();
+  await page.getByRole("button", { name: "この案を元に別の献立を作り直す" }).click();
   await expect(page.getByRole("radio", { name: "子どもが食べやすく" })).toHaveCount(0);
   await page.getByRole("button", { name: "やめる" }).click();
 
@@ -258,9 +271,17 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
     timeout: 30_000,
   });
 
-  const fav = page.getByRole("button", { name: /お気に入り/u });
+  // E2E3: click だけでなく状態遷移（外す CTA へ）まで固定する
+  const fav = page.getByRole("button", { name: "お気に入りに追加" });
   await expect(fav).toBeVisible();
   await fav.click();
+  await expect(page.getByRole("button", { name: "お気に入りを外す" })).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // E2E2: network/storage に加え UI 上も買い物 CTA が無いことを固定する
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "買い物リストの差分を見る" })).toHaveCount(0);
 
   expect(shoppingRequests).toEqual([]);
   // 製品の shopping intent / pending create は sessionStorage（localStorage では vacuous）
