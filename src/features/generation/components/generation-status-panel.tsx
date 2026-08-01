@@ -313,10 +313,7 @@ export function GenerationStatusPanel({
         <p>
           途中でやめる場合は下のリンクから作成中のIDを破棄できます。破棄すると、しばらく新しい作成を始められないことや、裏で完成した献立が履歴に残ることがあります。
         </p>
-        <RecoveryLinks
-          requireDiscardConfirm
-          {...(onClear === undefined ? {} : { onClear })}
-        />
+        <RecoveryLinks requireDiscardConfirm {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );
   }
@@ -332,10 +329,7 @@ export function GenerationStatusPanel({
         <p>
           やめて条件を変える場合は下のリンクから作成中のIDを破棄できます。破棄すると、しばらく新しい作成を始められないことがあります。
         </p>
-        <RecoveryLinks
-          requireDiscardConfirm
-          {...(onClear === undefined ? {} : { onClear })}
-        />
+        <RecoveryLinks requireDiscardConfirm {...(onClear === undefined ? {} : { onClear })} />
       </div>
     );
   }

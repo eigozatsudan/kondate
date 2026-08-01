@@ -331,8 +331,7 @@ describe("validateStoredMenuCurrentSafety", () => {
     expect(result.issues.some((issue) => issue.code === "direct_allergen_match")).toBe(true);
     expect(
       result.issues.some(
-        (issue) =>
-          issue.path.startsWith("pantryUsage.") && issue.message.includes("マヨネーズ"),
+        (issue) => issue.path.startsWith("pantryUsage.") && issue.message.includes("マヨネーズ"),
       ),
     ).toBe(true);
   });

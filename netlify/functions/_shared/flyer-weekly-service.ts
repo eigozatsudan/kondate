@@ -277,11 +277,7 @@ export function appendDraftMemberAllergiesForFlyerInspection(
       if (!bucket.allergenIds.includes(row.allergen_id)) {
         bucket.allergenIds.push(row.allergen_id);
       }
-    } else if (
-      row.custom_confirmed &&
-      row.custom_name !== null &&
-      row.custom_name.trim() !== ""
-    ) {
+    } else if (row.custom_confirmed && row.custom_name !== null && row.custom_name.trim() !== "") {
       // RPC と同型: custom_confirmed のみ検査針にする
       bucket.customAllergies.push({
         name: row.custom_name,

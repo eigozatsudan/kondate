@@ -663,9 +663,7 @@ describe("GenerationStatusPanel", () => {
         onClear={onClear}
       />,
     );
-    expect(
-      screen.getByText(/破棄すると、しばらく新しい作成を始められない/),
-    ).toBeVisible();
+    expect(screen.getByText(/破棄すると、しばらく新しい作成を始められない/)).toBeVisible();
     screen.getByRole("button", { name: "条件を直してやり直す" }).click();
     expect(confirmSpy).toHaveBeenCalledOnce();
     expect(onClear).toHaveBeenCalledOnce();

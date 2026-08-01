@@ -1134,9 +1134,9 @@ function HouseholdDetailBody({
               <button
                 type="button"
                 className="secondary-button min-h-11"
-                disabled={!actionsEnabled || accept.isPending}
+                // canCreateShoppingList 成立時は actionsEnabled（再 render で外れる）
+                disabled={accept.isPending}
                 onClick={() => {
-                  if (!actionsEnabled) return;
                   setAcceptError(null);
                   accept.mutate(menuId, {
                     onSuccess: () => {

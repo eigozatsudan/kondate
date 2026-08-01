@@ -147,7 +147,8 @@ describe("RootGatePage", () => {
     // lazy chunk 解決後も FreeLanding が suspend 中 → fallback が見える
     expect(await screen.findByText("読み込み中…")).toBeVisible();
     expect(screen.queryByText("ログイン状態を確認しています…")).not.toBeInTheDocument();
-    await act(async () => {
+    // finish は同期。act の戻りは void のため await しない（require-await / await-thenable）
+    act(() => {
       freeLpSuspend.finish();
     });
     expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();

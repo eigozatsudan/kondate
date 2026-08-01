@@ -167,10 +167,7 @@ describe("runBillingCheckout", () => {
   });
 
   it("returns 503 billing_disabled when upgrade COMING_SOON is true (B4)", async () => {
-    const response = await runBillingCheckout(
-      request(),
-      deps({}, { upgradeComingSoon: true }),
-    );
+    const response = await runBillingCheckout(request(), deps({}, { upgradeComingSoon: true }));
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
       error: { code: "billing_disabled" },

@@ -70,7 +70,11 @@ describe("listExpiredPantryForRegeneration", () => {
     // 欠落 ID（p-expired）は期限リストに出さない。hasMissing で別途ゲートする。
     // 残っている p-fresh が期限切れなら、それは従来どおり期限確認対象に残る。
     expect(
-      listExpiredPantryForRegeneration(submission, [item("p-fresh", "にんじん", "2026-07-01")], now),
+      listExpiredPantryForRegeneration(
+        submission,
+        [item("p-fresh", "にんじん", "2026-07-01")],
+        now,
+      ),
     ).toEqual([{ pantryItemId: "p-fresh", name: "にんじん" }]);
   });
 });
@@ -93,10 +97,7 @@ describe("hasMissingPantrySelectionsForRegeneration", () => {
     ).toBe(false);
     expect(hasMissingPantrySelectionsForRegeneration(null, [])).toBe(false);
     expect(
-      hasMissingPantrySelectionsForRegeneration(
-        { ...submission, pantrySelections: [] } as PlannerSubmission,
-        [],
-      ),
+      hasMissingPantrySelectionsForRegeneration({ ...submission, pantrySelections: [] }, []),
     ).toBe(false);
   });
 });

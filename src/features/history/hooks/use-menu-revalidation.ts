@@ -177,8 +177,7 @@ export function useMenuRevalidation(menuId: string) {
 
   // HR1: soft 飛行中（直前 checked を維持したまま isFetching）だけ true。
   // hard の forcedChecking / 初回 data なしは phase=checking 側で閉じるため false。
-  const isSoftRechecking =
-    !forcedChecking && hasData && !query.isError && query.isFetching;
+  const isSoftRechecking = !forcedChecking && hasData && !query.isError && query.isFetching;
 
   const errorMessage =
     query.error instanceof Error ? query.error.message : "現在の家族設定で確認できませんでした";

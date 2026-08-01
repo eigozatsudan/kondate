@@ -20,7 +20,11 @@ export const feedbackClientPathSchema = z
   .regex(/^\/(?:[A-Za-z0-9._~-]+\/?)*$/, "画面パスの形式が正しくありません")
   // AP9: 文字クラスに `.` が含まれるため `/a/../b` 等を regex だけでは弾けない
   .refine(
-    (path) => !path.split("/").filter(Boolean).some((segment) => /^\.+$/u.test(segment)),
+    (path) =>
+      !path
+        .split("/")
+        .filter(Boolean)
+        .some((segment) => /^\.+$/u.test(segment)),
     "画面パスの形式が正しくありません",
   );
 

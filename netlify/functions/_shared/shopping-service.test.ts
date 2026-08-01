@@ -366,9 +366,7 @@ describe("createShoppingListFromMenu", () => {
     // 並行 create: 初回 find は miss、apply が version 競合、勝者が書いた mutation を再読して 200
     const mocks = makeMocks();
     const concurrentReplay = makeResponse({ version: 4, replayed: true });
-    mocks.findMutationReplay
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(concurrentReplay);
+    mocks.findMutationReplay.mockResolvedValueOnce(null).mockResolvedValueOnce(concurrentReplay);
     mocks.applyDraft.mockRejectedValue(
       new HttpError(409, "list_version_conflict", "買い物リストが更新されました"),
     );

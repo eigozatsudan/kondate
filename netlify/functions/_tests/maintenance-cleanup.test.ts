@@ -36,12 +36,16 @@ const {
 const VALID_SECRET = "maintenance-cron-secret-32chars!!";
 
 function authorizedRequest(overrides: HeadersInit = {}): Request {
+  // HeadersInit は配列も取りうるため object spread せず Headers で合成する
+  const headers = new Headers({
+    [MAINTENANCE_CRON_SECRET_HEADER]: VALID_SECRET,
+  });
+  new Headers(overrides).forEach((value, key) => {
+    headers.set(key, value);
+  });
   return new Request("http://127.0.0.1/.netlify/functions/maintenance-cleanup", {
     method: "POST",
-    headers: {
-      [MAINTENANCE_CRON_SECRET_HEADER]: VALID_SECRET,
-      ...overrides,
-    },
+    headers,
   });
 }
 
@@ -52,7 +56,8 @@ afterEach(() => {
   delete process.env.SUPABASE_MAINTENANCE_DB_URL;
   delete process.env.CONTEXT;
   delete process.env.KONDATE_MAINTENANCE_ENV;
-  delete process.env[MAINTENANCE_CRON_SECRET_ENV];
+  // 静的キーで delete（no-dynamic-delete）。値は MAINTENANCE_CRON_SECRET_ENV と同一
+  delete process.env.MAINTENANCE_CRON_SECRET;
 });
 
 describe("maintenance-cleanup scheduled function", () => {
@@ -212,7 +217,7 @@ describe("maintenance-cleanup scheduled function", () => {
   });
 
   it("returns 403 when MAINTENANCE_CRON_SECRET env is missing (S3 fail-closed)", async () => {
-    delete process.env[MAINTENANCE_CRON_SECRET_ENV];
+    delete process.env.MAINTENANCE_CRON_SECRET;
     const response = await maintenanceCleanup(authorizedRequest());
     expect(response.status).toBe(403);
     expect(runMaintenance).not.toHaveBeenCalled();

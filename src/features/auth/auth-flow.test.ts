@@ -339,15 +339,15 @@ it("preserves an unavailable claim HTTP status without reading sensitive respons
 
 it("R1: claim 2xx with unreadable body surfaces ContinuationResponseLostError", async () => {
   // HTTP 成功後の body 欠落は burn 済み近似の印対象（素の TypeError と区別）
-  const api = createContinuationApi(async () => {
+  const api = createContinuationApi(() => {
     const response = {
       ok: true,
       status: 200,
-      json: async () => {
+      json: () => {
         throw new TypeError("body stream interrupted after 2xx");
       },
     };
-    return response as unknown as Response;
+    return Promise.resolve(response as unknown as Response);
   });
 
   await expect(

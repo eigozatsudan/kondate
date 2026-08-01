@@ -769,11 +769,7 @@ describe("PlannerWizard review step", () => {
 
   it("進行中 pending がある確認画面では新条件破棄の再開注意を出す (P2)", () => {
     render(
-      <Harness
-        initialStep="review"
-        initialDraft={reviewDraft}
-        hasResumablePendingGeneration
-      />,
+      <Harness initialStep="review" initialDraft={reviewDraft} hasResumablePendingGeneration />,
     );
     // 生成押下前に「新条件では作り直さない」ことを明示（generation resumed 案内と同趣旨）
     const notice = screen.getByText(/すでに作成中の献立があります。「献立を作る」を押すと/u);

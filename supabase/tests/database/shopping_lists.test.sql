@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(62);
+select plan(63);
 select has_table('public','shopping_lists','shopping_lists exists');
 select has_table('public','shopping_items','shopping_items exists');
 select has_table('public','shopping_list_sources','shopping_list_sources exists');

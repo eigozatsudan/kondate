@@ -27,6 +27,15 @@ function historyError(message: string): Error {
   return new Error(message);
 }
 
+/**
+ * PostgREST が error なしで data:null を返す経路でも map が TypeError にならないよう
+ * 空配列へ畳む（C10）。生成型は non-null でも実行時契約を優先する。
+ */
+function rowsOrEmpty<T>(data: T[] | null | undefined): T[] {
+  if (data == null) return [];
+  return data;
+}
+
 /** 所有者 RLS 下の menus を派生グループ単位へ畳み込む。 */
 export async function listHistoryGroups(): Promise<HistoryGroup[]> {
   const supabase = getBrowserSupabaseClient();
@@ -75,9 +84,7 @@ export async function listDerivationVersions(
     .eq("derivation_group_id", derivationGroupId)
     .order("version", { ascending: true });
   if (error !== null) throw historyError("案の一覧を読み込めませんでした");
-  // PostgREST が data:null を返す経路でも map で TypeError にしない（C10）
-  if (data === null) return [];
-  return data.map((row) => {
+  return rowsOrEmpty(data).map((row) => {
     const dishes = Array.isArray(row.dishes)
       ? row.dishes.map((dish) => ({ name: dish.name, position: dish.position }))
       : [];
