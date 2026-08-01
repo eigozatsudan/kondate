@@ -606,6 +606,10 @@ async function handleSubscriptionEvent(
 
   const clearPastDue =
     projectedStatus === "active" || projectedStatus === "trialing" || forceCanceledFromDeleted;
+  // B2: 初回 past_due の grace 起点は webhook 処理時刻ではなく Stripe event.created。
+  // SQL は既存 past_due_since を優先 coalesce するため再送・延長では伸ばさない。
+  const pastDueSinceIso =
+    !clearPastDue && projectedStatus === "past_due" ? unixToIsoZ(event.created) : null;
 
   const outcome = await processStripeEvent(deps.admin, {
     stripe_event_id: event.id,
@@ -620,6 +624,7 @@ async function handleSubscriptionEvent(
     current_period_end: projection.current_period_end,
     trial_end: projection.trial_end,
     clear_past_due_since: clearPastDue,
+    ...(pastDueSinceIso !== null ? { past_due_since: pastDueSinceIso } : {}),
     // same-second 用。RPC が created 比較後に参照。evt_ 辞書順は使わない。
     retrieved_subscription: {
       status: projectedStatus,
@@ -701,12 +706,17 @@ async function handleCheckoutSessionEvent(
     stripeCustomerId: customerId,
   });
 
-  // lock 解放は session id で（user 解決できなくても session 側で no-op になり得る）
-  if (userId !== null && typeof session.id === "string") {
+  // B12: checkout lock 解放は projection 用 user 解決と独立。
+  // map 未解決でも metadata / client_reference の user で session 紐づき lock を解放し、
+  // 最大 30m の billing_checkout_in_progress を避ける（権益投影は別経路）。
+  const lockUserId = userId ?? metadataUserId;
+  let released = false;
+  if (lockUserId !== null && typeof session.id === "string") {
     await deps.admin.rpc("release_billing_checkout_lock", {
-      p_user_id: userId,
+      p_user_id: lockUserId,
       p_stripe_checkout_session_id: session.id,
     });
+    released = true;
   }
 
   // subscription 投影は subscription イベントに寄せる。event 記録のみ。
@@ -724,7 +734,7 @@ async function handleCheckoutSessionEvent(
     code: "billing_webhook_ok",
     durationMs: Date.now() - startedAt,
   });
-  return json(200, { ok: true, data: { outcome, released: userId !== null } });
+  return json(200, { ok: true, data: { outcome, released } });
 }
 
 async function handleInvoiceEvent(
@@ -858,6 +868,9 @@ async function handleInvoiceEvent(
   const isPaid = event.type === "invoice.paid";
   const status = projection.status;
   const clearPastDueSince = isPaid && (status === "active" || status === "trialing");
+  // B2: invoice 経路でも初回 past_due は event.created を起点に載せる（処理遅延の過付与を防ぐ）
+  const pastDueSinceIso =
+    !clearPastDueSince && status === "past_due" ? unixToIsoZ(event.created) : null;
 
   const outcome = await processStripeEvent(deps.admin, {
     stripe_event_id: event.id,
@@ -872,6 +885,7 @@ async function handleInvoiceEvent(
     current_period_end: projection.current_period_end,
     trial_end: projection.trial_end,
     clear_past_due_since: clearPastDueSince,
+    ...(pastDueSinceIso !== null ? { past_due_since: pastDueSinceIso } : {}),
     retrieved_subscription: {
       status,
       stripe_price_id: projection.stripe_price_id,

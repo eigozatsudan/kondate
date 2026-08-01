@@ -446,9 +446,11 @@ describe("handleBillingWebhook", () => {
 
   it("sets past_due_since on first transition to past_due and clears on active", async () => {
     // past_due: clear_past_due_since を付けない（RPC が first transition を coalesce）
+    // B2: past_due_since は webhook 処理時刻ではなく event.created を ISO で載せる
     constructEvent.mockReturnValue(
       makeEvent("customer.subscription.updated", makeSubscription({ status: "past_due" }), {
         id: "evt_past_due",
+        created: 1_700_000_000,
       }),
     );
     retrieve.mockResolvedValue(makeSubscription({ status: "past_due" }));
@@ -460,6 +462,7 @@ describe("handleBillingWebhook", () => {
     ).p_payload;
     expect(payload.status).toBe("past_due");
     expect(payload.clear_past_due_since).toBe(false);
+    expect(payload.past_due_since).toBe(new Date(1_700_000_000 * 1000).toISOString());
 
     rpc.mockClear();
     constructEvent.mockReturnValue(
@@ -1116,6 +1119,43 @@ describe("handleBillingWebhook", () => {
       }
     ).p_payload;
     expect(processPayload.skip_subscription_projection).toBe(true);
+  });
+
+  it("B12: releases checkout lock from metadata when user map is unmapped", async () => {
+    // map 解決不能でも metadata の user で lock を解放する（最大 30m 409 回避）
+    rpc.mockImplementation(async (name: string) => {
+      if (name === "get_billing_customer_by_stripe_id") {
+        return { data: null, error: null };
+      }
+      if (name === "process_billing_stripe_event") {
+        return { data: { ok: true, outcome: "event_only" }, error: null };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: { ok: true, released: true }, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const session = {
+      id: "cs_test_unmapped_1",
+      object: "checkout.session",
+      customer: CUSTOMER_ID,
+      client_reference_id: USER_ID,
+      metadata: { supabase_user_id: USER_ID },
+    } as unknown as Stripe.Checkout.Session;
+    constructEvent.mockReturnValue(
+      makeEvent("checkout.session.completed", session, { id: "evt_cs_unmapped" }),
+    );
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; data: { released: boolean } };
+    expect(body.data.released).toBe(true);
+    expect(rpc).toHaveBeenCalledWith(
+      "release_billing_checkout_lock",
+      expect.objectContaining({
+        p_user_id: USER_ID,
+        p_stripe_checkout_session_id: "cs_test_unmapped_1",
+      }),
+    );
   });
 });
 
