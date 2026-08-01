@@ -311,6 +311,10 @@ const allowedProtectedSelectors = new Set([
   ".guided-planner-theme .wizard-details-summary::-webkit-details-marker",
   ".guided-planner-theme .wizard-details-summary::before",
   ".guided-planner-theme .wizard-details[open] > .wizard-details-summary::before",
+  ".guided-planner-theme .wizard-details-summary-label",
+  ".guided-planner-theme .wizard-details-summary-optional",
+  ".guided-planner-theme .wizard-details-summary::after",
+  ".guided-planner-theme .wizard-details[open] > .wizard-details-summary::after",
   ".guided-planner-theme .wizard-details-body",
   ".guided-planner-theme .wizard-details-body .field",
   ".guided-planner-theme .wizard-details-body .field input, .guided-planner-theme .wizard-details-body .field select, .guided-planner-theme .wizard-details-body .field textarea",
@@ -519,6 +523,30 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
   },
   ".guided-planner-theme .wizard-details[open] > .wizard-details-summary::before": {
     content: '"▾"',
+  },
+  ".guided-planner-theme .wizard-details-summary-label": {
+    display: "inline-flex",
+    "min-width": "0",
+    flex: "1 1 auto",
+    "flex-wrap": "wrap",
+    "align-items": "baseline",
+    gap: "4px",
+  },
+  ".guided-planner-theme .wizard-details-summary-optional": {
+    color: "var(--muted)",
+    "font-size": "0.875rem",
+    "font-weight": "600",
+  },
+  ".guided-planner-theme .wizard-details-summary::after": {
+    content: '"開く"',
+    flex: "0 0 auto",
+    "margin-left": "auto",
+    color: "var(--primary-strong)",
+    "font-size": "0.875rem",
+    "font-weight": "700",
+  },
+  ".guided-planner-theme .wizard-details[open] > .wizard-details-summary::after": {
+    content: '"閉じる"',
   },
   ".guided-planner-theme .wizard-details-body": {
     "min-width": "0",

@@ -503,7 +503,7 @@
   min-height: 44px;
 }
 
-/* 確認 step の任意条件。summary と本文を分離し、field が横並びで崩れないようにする */
+/* 確認 step の任意条件。デフォルト展開し、summary で開閉が分かるようにする */
 .guided-planner-theme .wizard-details {
   min-width: 0;
   overflow: hidden;
@@ -531,6 +531,7 @@
   display: none;
 }
 
+/* 左: 開閉矢印。右: 「閉じる/開く」文言で折りたためることが分かる */
 .guided-planner-theme .wizard-details-summary::before {
   content: "▸";
   flex: 0 0 auto;
@@ -539,6 +540,34 @@
 
 .guided-planner-theme .wizard-details[open] > .wizard-details-summary::before {
   content: "▾";
+}
+
+.guided-planner-theme .wizard-details-summary-label {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.guided-planner-theme .wizard-details-summary-optional {
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.guided-planner-theme .wizard-details-summary::after {
+  content: "開く";
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--primary-strong);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.guided-planner-theme .wizard-details[open] > .wizard-details-summary::after {
+  content: "閉じる";
 }
 
 .guided-planner-theme .wizard-details-body {

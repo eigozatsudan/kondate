@@ -148,9 +148,9 @@ async function advanceToReviewWithHousehold(
 
 /**
  * review step内の details を開き、pantry 選択セクションへのアクセスを確保する。
+ * - 追加条件はデフォルト展開だが、ユーザー操作や再描画で閉じている場合に備える。
  * - `getAttribute("open")` は open 時に空文字を返すため falsy 判定だと誤って閉じる。
- * - pantry 一覧のロード完了で親が再描画されると details が閉じ直すことがあるため、
- *   「冷蔵庫から使う食材」見出しが見えるまで開状態を再確認する。
+ * - controlled open 後も pantry 見出しが見えるまで開状態を再確認する。
  */
 async function openReviewOptionalDetails(page: Page): Promise<void> {
   const details = page.locator("details").filter({ hasText: "追加条件" });
