@@ -69,10 +69,7 @@ import {
   isShoppingSheetExpected,
 } from "@/features/shopping/shopping-intent";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
-import {
-  type MenuDetailRevalidationView,
-  type MenuDetailSurface,
-} from "./menu-detail-types";
+import { type MenuDetailRevalidationView, type MenuDetailSurface } from "./menu-detail-types";
 import { usageViewFromQuery } from "./usage-view-from-query";
 
 export type HouseholdMenuDetailBodyProps = {

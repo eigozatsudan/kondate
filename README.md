@@ -239,36 +239,36 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 #### 製品の要点
 
-| 項目     | 内容                                                                                                           |
-| -------- | -------------------------------------------------------------------------------------------------------------- |
-| 同意     | `/privacy` の**任意**チェック（既定オフ）。AI 説明同意とは別テーブル・別版（`shareConsentVersion`）            |
-| 蓄積     | 生成成功後のみ。適格ゲート → 日次 cap → **20% 抽選** → job。生成 UX を待たせない・失敗させない                 |
-| 一般化   | 独立 worker（Pass1 一般化 → Pass2 点検）+ サーバー関門（Zod・材料グラフ不変・denylist）。不合格は非掲載         |
-| 他者向け | 緊急候補に**混ざるだけ**。提供者名・「共有」バッジなし                                                         |
-| 自分向け | 家族設定のトグル + 提供一覧（**タイトルと日付のみ**。個別取り下げ UI はこの版のスコープ外）                    |
-| 同意オフ | **新規の共有化だけ停止**。既掲載は残る。掲載直前に consent を再確認し、revoke 済みは pool に入れない            |
+| 項目     | 内容                                                                                                                     |
+| -------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 同意     | `/privacy` の**任意**チェック（既定オフ）。AI 説明同意とは別テーブル・別版（`shareConsentVersion`）                      |
+| 蓄積     | 生成成功後のみ。適格ゲート → 日次 cap → **20% 抽選** → job。生成 UX を待たせない・失敗させない                           |
+| 一般化   | 独立 worker（Pass1 一般化 → Pass2 点検）+ サーバー関門（Zod・材料グラフ不変・denylist）。不合格は非掲載                  |
+| 他者向け | 緊急候補に**混ざるだけ**。提供者名・「共有」バッジなし                                                                   |
+| 自分向け | 家族設定のトグル + 提供一覧（**タイトルと日付のみ**。個別取り下げ UI はこの版のスコープ外）                              |
+| 同意オフ | **新規の共有化だけ停止**。既掲載は残る。掲載直前に consent を再確認し、revoke 済みは pool に入れない                     |
 | コスト   | **通常 generate 枠と完全独立**のアプリ日次 AI 呼び出し cap / 掲載 success cap（正本: `shared/contracts/share-quota.ts`） |
 
-| 項目（共有専用・generate 枠と別） | 値（契約）                          |
-| --------------------------------- | ----------------------------------- |
-| 抽選                              | 適格成功の **20%**                  |
-| attempt / ユーザー / JST 日       | **2**                              |
-| 掲載 success / ユーザー / JST 日  | **1**                              |
-| 掲載 success / アプリ / JST 日    | **200**                            |
-| OpenRouter 呼び出し / アプリ / 日 | **500**（失敗含む。LEAST pin）     |
+| 項目（共有専用・generate 枠と別） | 値（契約）                           |
+| --------------------------------- | ------------------------------------ |
+| 抽選                              | 適格成功の **20%**                   |
+| attempt / ユーザー / JST 日       | **2**                                |
+| 掲載 success / ユーザー / JST 日  | **1**                                |
+| 掲載 success / アプリ / JST 日    | **200**                              |
+| OpenRouter 呼び出し / アプリ / 日 | **500**（失敗含む。LEAST pin）       |
 | 緊急レスポンス候補上限（S1∪S2）   | **5**（S2 取得 bound は最大 **20**） |
 
 #### 起動経路（Netlify schedule は使わない）
 
 共有一般化は **secret 付き HTTP** だけです（maintenance-cleanup と同型）。
 
-| 項目        | 値                                                                                                      |
-| ----------- | ------------------------------------------------------------------------------------------------------- |
-| path        | `POST /api/share-generalize-worker`                                                                     |
+| 項目        | 値                                                                                                                 |
+| ----------- | ------------------------------------------------------------------------------------------------------------------ |
+| path        | `POST /api/share-generalize-worker`                                                                                |
 | 認証        | `x-share-worker-cron-secret` または `Authorization: Bearer` が env `SHARE_WORKER_CRON_SECRET`（16 文字以上）と一致 |
-| 定期実行    | GitHub Actions `share-generalize-worker.yml`（毎時）など。**Netlify `@hourly` schedule は使わない**     |
-| GitHub 秘密 | `SHARE_GENERALIZE_WORKER_URL` + `SHARE_WORKER_CRON_SECRET`（Netlify と同値）                            |
-| 1 起動      | claim **1** 件（Pass1+Pass2 が Netlify 60s 壁に収まるように）                                           |
+| 定期実行    | GitHub Actions `share-generalize-worker.yml`（毎時）など。**Netlify `@hourly` schedule は使わない**                |
+| GitHub 秘密 | `SHARE_GENERALIZE_WORKER_URL` + `SHARE_WORKER_CRON_SECRET`（Netlify と同値）                                       |
+| 1 起動      | claim **1** 件（Pass1+Pass2 が Netlify 60s 壁に収まるように）                                                      |
 
 ローカル診断例:
 
@@ -493,16 +493,16 @@ npm run preflight:production
 
 #### よくあるつまずき
 
-| 症状                                     | 確認すること                                                                                                                       |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 設定 / LP に Checkout が出ない           | まず `PLUS_LP_UPGRADE_COMING_SOON`（意図的クローズ）。次に `BILLING_ENABLED` と `productSurfacesOpen`                              |
-| ログインにメール欄が無い                 | 意図的。`?emailLogin=1` または `SHOW_EMAIL_LOGIN`。gateway 自体は生きている                                                        |
-| Checkout 後も Free のまま                | Webhook が届いているか、署名 secret が endpoint と一致か、`supabase_user_id` metadata / customer マップ                            |
-| 品質モードが「通信を確認」になる         | 古いクライアント。現行は `quality_mode_requires_plus` を端末失敗として表示                                                         |
-| 献立作成が「通信を確認しています」のまま | 業務エラー（同意・下書き・枠等）を offline に落としていた古いクライアント。現行は failed 画面。本当の通信断のみ offline 自動再試行 |
-| 本番起動失敗                             | `STRIPE_API_VERSION` が dahlia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か          |
-| E2E が Stripe に飛ぶ                     | E2E は mock / route 前提。実鍵と `BILLING_ENABLED=true` を E2E 用 env に載せない                                                   |
-| maintenance-cleanup が 401 / 動かない    | `MAINTENANCE_CRON_SECRET` と header。GitHub secrets と Netlify 同値。Netlify schedule は使わない                                   |
+| 症状                                     | 確認すること                                                                                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 設定 / LP に Checkout が出ない           | まず `PLUS_LP_UPGRADE_COMING_SOON`（意図的クローズ）。次に `BILLING_ENABLED` と `productSurfacesOpen`                                                                    |
+| ログインにメール欄が無い                 | 意図的。`?emailLogin=1` または `SHOW_EMAIL_LOGIN`。gateway 自体は生きている                                                                                              |
+| Checkout 後も Free のまま                | Webhook が届いているか、署名 secret が endpoint と一致か、`supabase_user_id` metadata / customer マップ                                                                  |
+| 品質モードが「通信を確認」になる         | 古いクライアント。現行は `quality_mode_requires_plus` を端末失敗として表示                                                                                               |
+| 献立作成が「通信を確認しています」のまま | 業務エラー（同意・下書き・枠等）を offline に落としていた古いクライアント。現行は failed 画面。本当の通信断のみ offline 自動再試行                                       |
+| 本番起動失敗                             | `STRIPE_API_VERSION` が dahlia 固定か、`STRIPE_MOCK_BASE_URL` が誤って本番に無いか、`BILLING_ENABLED=true` なのに鍵欠落か                                                |
+| E2E が Stripe に飛ぶ                     | E2E は mock / route 前提。実鍵と `BILLING_ENABLED=true` を E2E 用 env に載せない                                                                                         |
+| maintenance-cleanup が 401 / 動かない    | `MAINTENANCE_CRON_SECRET` と header。GitHub secrets と Netlify 同値。Netlify schedule は使わない                                                                         |
 | 共有 worker が 401 / プールが増えない    | `SHARE_WORKER_CRON_SECRET`（16 文字以上）と `x-share-worker-cron-secret`。GitHub `SHARE_GENERALIZE_WORKER_URL` が `/api/share-generalize-worker`。同意・抽選・cap も確認 |
 
 本番 CLI デプロイ（Netlify / Supabase）のつまずきは
