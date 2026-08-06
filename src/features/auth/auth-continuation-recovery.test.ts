@@ -1180,7 +1180,7 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
   const flowId = "10000000-0000-4000-8000-000000000001";
   const exchangeKey = `kondate.auth.supabase.claim-poll-exchange.${flowId}`;
   /** 逐次テストは確認遅延と locks を切り、storage 契約だけを見る。 */
-  const fastStorageOnly = { confirmDelayMs: 0, locks: null as const };
+  const fastStorageOnly = { confirmDelayMs: 0, locks: null };
 
   it("R2: second tab fails acquire while first holds the lease", async () => {
     const storage = new MapStorage();
@@ -1317,7 +1317,7 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
     const first = tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs, {
       confirmDelayMs: 1,
       sleep: blockedSleep,
-      locks,
+      locks: locks.asLocks(),
     });
     // tab-a が lock を取り sleep で臨界区間を保持するまで待つ
     for (let i = 0; i < 10; i += 1) await Promise.resolve();
@@ -1332,7 +1332,7 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
       nowMs,
       {
         confirmDelayMs: 0,
-        locks,
+        locks: locks.asLocks(),
       },
     );
     expect(second).toBe(false);
@@ -1520,15 +1520,20 @@ function flowStorage(flowIds: string[], nowMs = Date.now()): MapStorage {
   return storage;
 }
 
+/** テスト用 Web Locks モック（LockManager の 3 引数 overload を満たす） */
 class ImmediateLockManager {
   #held = false;
   readonly requests: Array<{ name: string; options: LockOptions }> = [];
 
   async request<T>(
     name: string,
-    options: LockOptions,
-    callback: (lock: Lock | null) => T | PromiseLike<T>,
+    optionsOrCallback: LockOptions | LockGrantedCallback<T>,
+    maybeCallback?: LockGrantedCallback<T>,
   ): Promise<T> {
+    const options =
+      typeof optionsOrCallback === "function" ? ({} as LockOptions) : optionsOrCallback;
+    const callback =
+      typeof optionsOrCallback === "function" ? optionsOrCallback : (maybeCallback as LockGrantedCallback<T>);
     this.requests.push({ name, options });
     if (this.#held) return await callback(null);
     this.#held = true;
@@ -1537,6 +1542,14 @@ class ImmediateLockManager {
     } finally {
       this.#held = false;
     }
+  }
+
+  async query(): Promise<LockManagerSnapshot> {
+    return { held: [], pending: [] };
+  }
+
+  asLocks(): LockManager {
+    return this as unknown as LockManager;
   }
 }
 
@@ -1550,12 +1563,26 @@ class DeferredLockManager {
 
   request(
     name: string,
-    options: LockOptions,
-    callback: (lock: Lock | null) => void | PromiseLike<void>,
+    optionsOrCallback: LockOptions | LockGrantedCallback<void>,
+    maybeCallback?: LockGrantedCallback<void>,
   ): Promise<void> {
+    const options =
+      typeof optionsOrCallback === "function" ? ({} as LockOptions) : optionsOrCallback;
+    const callback =
+      typeof optionsOrCallback === "function"
+        ? optionsOrCallback
+        : (maybeCallback as LockGrantedCallback<void>);
     this.requests.push({ name, options });
     this.#callback = callback;
     return this.#request;
+  }
+
+  async query(): Promise<LockManagerSnapshot> {
+    return { held: [], pending: [] };
+  }
+
+  asLocks(): LockManager {
+    return this as unknown as LockManager;
   }
 
   async grant(): Promise<void> {
@@ -1748,13 +1775,13 @@ class RejectingOnceLockManager extends ImmediateLockManager {
 
   override async request<T>(
     name: string,
-    options: LockOptions,
-    callback: (lock: Lock | null) => T | PromiseLike<T>,
+    optionsOrCallback: LockOptions | LockGrantedCallback<T>,
+    maybeCallback?: LockGrantedCallback<T>,
   ): Promise<T> {
     if (this.#shouldReject) {
       this.#shouldReject = false;
       throw new Error(`secret:${"A".repeat(43)}`);
     }
-    return await super.request(name, options, callback);
+    return await super.request(name, optionsOrCallback, maybeCallback);
   }
 }
