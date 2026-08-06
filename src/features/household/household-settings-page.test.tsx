@@ -561,6 +561,10 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
     display_name: null,
     sort_order: 1,
   };
+  // H9: 既存 draft があると createDraft せず再利用するため、
+  // 削除後の invalidate → listMembers では draft が消えている必要がある
+  let membersList: HouseholdMemberRow[] = [firstDraft];
+  const listMembers = vi.fn(() => Promise.resolve(membersList.map((row) => ({ ...row }))));
   let resolveCreate: ((saved: HouseholdMemberRow) => void) | undefined;
   const createDraft = vi.fn(
     () =>
@@ -568,9 +572,11 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
         resolveCreate = resolve;
       }),
   );
-  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  const deleteMember = vi.fn(async (memberId: string) => {
+    membersList = membersList.filter((row) => row.id !== memberId);
+  });
   await renderSettings({
-    listMembers: vi.fn().mockResolvedValue([firstDraft]),
+    listMembers,
     updateDraft: vi.fn().mockResolvedValue(firstDraft),
     completeMember: vi.fn().mockRejectedValue(new Error("古い下書きの完了に失敗しました")),
     createDraft,
@@ -585,6 +591,9 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
   await waitFor(() => {
     expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
   });
+  await waitFor(() => {
+    expect(deleteMember).toHaveBeenCalledWith("draft-1");
+  });
   await userEvent.click(screen.getByRole("button", { name: /^家族を追加$/u }));
   expect(createDraft).not.toHaveBeenCalled();
   await confirmAddScopeNotice();
@@ -595,6 +604,7 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
   expect(screen.queryByText("古い下書きの完了に失敗しました")).not.toBeInTheDocument();
 
   await act(async () => {
+    membersList = [nextDraft];
     resolveCreate?.(nextDraft);
     await Promise.resolve();
   });
@@ -1318,6 +1328,32 @@ it("shows add-scope notice before createDraft and cancel does not create", async
   await userEvent.click(screen.getByRole("button", { name: "やめる" }));
   expect(screen.queryByRole("dialog", { name: "登録の前に" })).not.toBeInTheDocument();
   expect(createDraft).not.toHaveBeenCalled();
+});
+
+it("reuses existing draft on add without calling createDraft (H9)", async () => {
+  // 同タブに draft があるときは INSERT せず既存を開く（RPC 再利用と揃える）
+  const existingDraft: HouseholdMemberRow = {
+    ...member,
+    id: "member-draft",
+    status: "draft",
+    display_name: "途中の家族",
+    age_band: null,
+    allergy_status: null,
+    unsupported_diet_status: null,
+    sort_order: 1,
+  };
+  const createDraft = vi.fn();
+  await renderSettings(
+    {
+      listMembers: vi.fn().mockResolvedValue([member, existingDraft]),
+      createDraft,
+    },
+    { startClosed: true },
+  );
+  await userEvent.click(await screen.findByRole("button", { name: /^家族を追加$/u }));
+  await confirmAddScopeNotice();
+  expect(createDraft).not.toHaveBeenCalled();
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("途中の家族");
 });
 
 it("does not open add-scope notice when editing an existing member", async () => {

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 import {
   unsupportedDietKinds,
   type AgeBand,
+  type OnboardingStatus,
   type UnsupportedDietStatus,
 } from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/use-auth";
@@ -25,7 +26,9 @@ import {
   updateHouseholdMemberDraft,
   type HouseholdDraftPatch,
   type HouseholdMemberRow,
+  type MemberAllergyRow,
   type ProfileRow,
+  type SetOnboardingStatusOptions,
 } from "./household-api";
 import { defaultsForAgeBand } from "./household-defaults";
 import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-queries";
@@ -127,7 +130,14 @@ export interface HouseholdOnboardingApi {
   addStandardAllergy?: (memberId: string, allergenId: string) => Promise<unknown>;
   addCustomAllergy: (memberId: string, name: string, aliases: string[]) => Promise<unknown>;
   removeAllergy?: (allergyId: string) => Promise<unknown>;
-  setProgress: (status: "in_progress" | "complete" | "skipped") => Promise<unknown>;
+  /**
+   * onboarding 進捗更新。skip/complete は welcome と同型の CAS（expectedStatus）を付け、
+   * 二重タブの last-write を閉じる（H8）。
+   */
+  setProgress: (
+    status: "in_progress" | "complete" | "skipped",
+    options?: SetOnboardingStatusOptions,
+  ) => Promise<unknown>;
 }
 
 function createHouseholdApi(userId: string): HouseholdOnboardingApi {
@@ -146,7 +156,7 @@ function createHouseholdApi(userId: string): HouseholdOnboardingApi {
     addCustomAllergy: (memberId, name, aliases) =>
       addCustomMemberAllergy(client, userId, memberId, name, aliases),
     removeAllergy: (allergyId) => deleteMemberAllergy(client, userId, allergyId),
-    setProgress: (status) => setOnboardingStatus(client, userId, status),
+    setProgress: (status, options) => setOnboardingStatus(client, userId, status, options),
   };
 }
 
@@ -186,8 +196,10 @@ export function HouseholdOnboardingForm({
   const [completeError, setCompleteError] = useState(false);
   const [skipError, setSkipError] = useState(false);
   const [skipPending, setSkipPending] = useState(false);
-  // completeMember / finish / skip 中の連打防止
+  // completeMember / finish / skip 中の連打防止（state は CTA disabled 用）
   const [actionPending, setActionPending] = useState(false);
+  // H7: complete 開始を同期で立て、re-render 前の連打・完了中 field save を閉じる
+  const actionPendingRef = useRef(false);
   // HP-I1: AllergyEditor 失敗を利用者に見せる（設定画面と同型）
   const [allergyError, setAllergyError] = useState<string | null>(null);
   // 完了押下後の fieldErrors（valid になったら clear）
@@ -346,8 +358,18 @@ export function HouseholdOnboardingForm({
     </div>
   ) : null;
 
+  const beginActionPending = () => {
+    actionPendingRef.current = true;
+    setActionPending(true);
+  };
+  const endActionPending = () => {
+    actionPendingRef.current = false;
+    setActionPending(false);
+  };
+
   const save = (patch: HouseholdDraftPatch) => {
-    if (draft === null) return Promise.resolve();
+    // H7: complete/finish/skip 中は新規 field save を積まず、DB complete との交差を防ぐ
+    if (draft === null || actionPendingRef.current) return Promise.resolve(true);
     const memberId = draft.id;
     const saveVersion = latestSaveVersion.current + 1;
     latestSaveVersion.current = saveVersion;
@@ -381,13 +403,33 @@ export function HouseholdOnboardingForm({
     return queuedSave;
   };
 
+  /**
+   * H8: skip/complete は profile の既知 status を expected にした CAS。
+   * welcome と同型。CAS miss 時 RPC は上書きせず現状を返す（例外なし）。
+   * 呼び出し側は first-writer を尊重して onDone へ進む。
+   */
+  const progressExpectedStatus = (): OnboardingStatus | undefined => {
+    if (
+      onboardingStatus === "not_started" ||
+      onboardingStatus === "in_progress" ||
+      onboardingStatus === "skipped"
+    ) {
+      return onboardingStatus;
+    }
+    return undefined;
+  };
+
   /** 献立へ進む。profile が既に complete なら setProgress を省略する。 */
   const finishOnboarding = async (): Promise<void> => {
-    setActionPending(true);
+    beginActionPending();
     setCompleteError(false);
     try {
       if (onboardingStatus !== "complete") {
-        await api.setProgress("complete");
+        const expectedStatus = progressExpectedStatus();
+        await api.setProgress(
+          "complete",
+          expectedStatus !== undefined ? { expectedStatus } : undefined,
+        );
         await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
       }
       dismissToast();
@@ -395,7 +437,7 @@ export function HouseholdOnboardingForm({
     } catch {
       setCompleteError(true);
     } finally {
-      setActionPending(false);
+      endActionPending();
     }
   };
 
@@ -403,16 +445,20 @@ export function HouseholdOnboardingForm({
   const skipOnboarding = async (): Promise<void> => {
     setSkipPending(true);
     setSkipError(false);
-    setActionPending(true);
+    beginActionPending();
     try {
-      await api.setProgress("skipped");
+      const expectedStatus = progressExpectedStatus();
+      await api.setProgress(
+        "skipped",
+        expectedStatus !== undefined ? { expectedStatus } : undefined,
+      );
       await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
       onDone();
     } catch {
       setSkipError(true);
     } finally {
       setSkipPending(false);
-      setActionPending(false);
+      endActionPending();
     }
   };
 
@@ -465,17 +511,28 @@ export function HouseholdOnboardingForm({
 
   /** incomplete 完了押下: fieldErrors + toast + focus。成功時は次アクションへ（setProgress しない） */
   const handleCompleteClick = (): void => {
-    if (draft === null) return;
+    if (draft === null || actionPendingRef.current) return;
+    // H7: 押下直後に同期ガードを立て、連打と完了中の field save チェーンを閉じる。
+    // そのうえで click 時点までの saveQueue を待ち、キャッシュ最新 draft で検証する。
+    beginActionPending();
+    setCompleteError(false);
+    const memberId = draft.id;
     void saveQueue.current.then(async (saved) => {
-      // 再試行時は前回 complete エラーを消す
-      setCompleteError(false);
       // 下書き保存失敗時は無言 return せず、失敗表示を明示して再試行可能にする。
       // ネットワーク失敗は既存 status 行のみ（toast なし）
       if (!saved) {
         setSaveState("failed");
+        endActionPending();
         return;
       }
-      const nextErrors = validateOnboardingDraft(draft, allergies.length);
+      // click 後の楽観更新を含め、キャッシュ上の最新 draft / allergies で検証する
+      const membersNow =
+        queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members(userId)) ?? [];
+      const draftNow = membersNow.find((member) => member.id === memberId) ?? draft;
+      const allergiesNow =
+        queryClient.getQueryData<MemberAllergyRow[]>(householdKeys.allergies(userId, memberId)) ??
+        allergies;
+      const nextErrors = validateOnboardingDraft(draftNow, allergiesNow.length);
       if (Object.keys(nextErrors).length > 0) {
         setFieldErrors(nextErrors);
         const lead = firstOnboardingFieldError(nextErrors);
@@ -484,19 +541,19 @@ export function HouseholdOnboardingForm({
           tone: "error",
         });
         focusFirstInvalid(nextErrors);
+        endActionPending();
         return;
       }
       setFieldErrors({});
       dismissToast();
-      setActionPending(true);
       let completed: HouseholdMemberRow;
       try {
-        completed = await api.completeMember(draft.id);
+        completed = await api.completeMember(memberId);
       } catch {
         // U3-I1: complete 失敗でも CTA を disabled にしない（再押下で再試行できる）。
         // autosave の failed 文言と混同しないよう completeError を立てる。
         setCompleteError(true);
-        setActionPending(false);
+        endActionPending();
         return;
       }
       replaceMember(completed);
@@ -506,7 +563,7 @@ export function HouseholdOnboardingForm({
       try {
         await invalidateHouseholdSafetyDependents(queryClient, userId);
       } finally {
-        setActionPending(false);
+        endActionPending();
       }
     });
   };

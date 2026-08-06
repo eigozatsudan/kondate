@@ -171,7 +171,8 @@ it("starts planner from next-action via setProgress complete then onDone", async
   await waitFor(() => {
     expect(onDone).toHaveBeenCalledOnce();
   });
-  expect(setProgress).toHaveBeenCalledWith("complete");
+  // H8: onboarding complete は CAS（expectedStatus=in_progress）
+  expect(setProgress).toHaveBeenCalledWith("complete", { expectedStatus: "in_progress" });
 });
 
 it("keeps next-action and shows error when setProgress complete fails on primary CTA", async () => {
@@ -554,7 +555,8 @@ it("shows skip on next-action when profile is in_progress and skips to onDone", 
   await waitFor(() => {
     expect(onDone).toHaveBeenCalledOnce();
   });
-  expect(setProgress).toHaveBeenCalledWith("skipped");
+  // H8: onboarding skip は CAS（expectedStatus=in_progress）
+  expect(setProgress).toHaveBeenCalledWith("skipped", { expectedStatus: "in_progress" });
 });
 
 it("adds another member from next-action and shows continue callout", async () => {
@@ -655,4 +657,47 @@ it("omits setProgress when starting planner while profile is already complete", 
     expect(onDone).toHaveBeenCalledOnce();
   });
   expect(setProgress).not.toHaveBeenCalled();
+});
+
+it("single-flights completeMember on double complete click (H7)", async () => {
+  // actionPendingRef により re-render 前の連打でも completeMember は1回
+  const completableDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const membersState = createMembersApiState([completableDraft]);
+  let resolveComplete!: (value: HouseholdMemberRow) => void;
+  const completeMember = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((resolve) => {
+        resolveComplete = resolve;
+      }),
+  );
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    completeMember,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  const completeButton = await screen.findByRole("button", {
+    name: "この家族の設定を完了する",
+  });
+  // 同一 tick の二重発火（userEvent は間に re-render を挟む）
+  fireEvent.click(completeButton);
+  fireEvent.click(completeButton);
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledTimes(1);
+  });
+  // complete 成功後の invalidate → listMembers refetch でも complete が残るように state を更新
+  const completed: HouseholdMemberRow = { ...completableDraft, status: "complete" };
+  membersState.upsert(completed);
+  resolveComplete(completed);
+  await waitFor(() => {
+    expect(
+      screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" }),
+    ).toBeInTheDocument();
+  });
 });

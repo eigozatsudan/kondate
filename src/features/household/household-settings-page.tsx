@@ -26,7 +26,6 @@ import {
   addMemberDislike,
   addStandardMemberAllergy,
   completeHouseholdMember,
-  createHouseholdMemberDraft,
   deleteHouseholdMember,
   deleteMemberAllergy,
   deleteMemberDislike,
@@ -35,6 +34,7 @@ import {
   listHouseholdMembers,
   listMemberAllergies,
   listMemberDislikes,
+  startHouseholdOnboarding,
   updateCompleteHouseholdMember,
   updateHouseholdMemberDraft,
   type AllergenCatalogRow,
@@ -190,7 +190,8 @@ function createHouseholdSettingsApi(
   const invalidateSafety = () => invalidateHouseholdSafetyDependents(queryClient, userId);
   return {
     listMembers: () => listHouseholdMembers(client, userId),
-    createDraft: (sortOrder) => createHouseholdMemberDraft(client, userId, sortOrder),
+    // H9: 無条件 INSERT ではなく onboarding と同 RPC（既存 draft 再利用・profile 直列化）
+    createDraft: (sortOrder) => startHouseholdOnboarding(client, sortOrder),
     updateDraft: (memberId, patch) => updateHouseholdMemberDraft(client, userId, memberId, patch),
     updateMember: (memberId, patch) =>
       updateCompleteHouseholdMember(client, userId, memberId, patch),
@@ -738,10 +739,12 @@ export function HouseholdSettingsForm({
       beginEditorTransition(selectedMemberIdRef.current);
     },
     onSuccess: (created) => {
-      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) => [
-        ...current,
-        created,
-      ]);
+      // RPC 再利用時は同一 id が返り得るため append せず upsert（孤児二重表示を防ぐ）
+      queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
+        current.some((member) => member.id === created.id)
+          ? current.map((member) => (member.id === created.id ? created : member))
+          : [...current, created],
+      );
       beginEditorTransition(created.id);
       setSelectedId(created.id);
       setEditorOpen(true);
@@ -756,6 +759,15 @@ export function HouseholdSettingsForm({
   });
   const requestCreateDraft = () => {
     if (savingRef.current || creatingDraftRef.current || cancellingDraftRef.current) return;
+    // 既に draft があれば新規作成せずその編集へ（同タブの二重 draft を UI 側でも閉じる）
+    const existingDraft = members.find((member) => member.status === "draft");
+    if (existingDraft !== undefined) {
+      previousSelectedIdBeforeAddRef.current = selectedMemberIdRef.current;
+      beginEditorTransition(existingDraft.id);
+      setSelectedId(existingDraft.id);
+      setEditorOpen(true);
+      return;
+    }
     creatingDraftRef.current = true;
     createDraft.mutate();
   };
