@@ -14,7 +14,7 @@ describe("auth continuation claim", () => {
     expect(config).toMatchObject({
       path: "/api/auth/continuations/:continuationId/claim",
       method: "POST",
-      rateLimit: { windowLimit: 20, windowSize: 60, aggregateBy: ["ip"] },
+      rateLimit: { windowLimit: 60, windowSize: 60, aggregateBy: ["ip"] },
     });
     const claim = vi.fn().mockResolvedValue(null);
     const handler = createHandler({

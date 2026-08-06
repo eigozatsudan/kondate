@@ -42,16 +42,57 @@ const lastMagicEmailStorageKey = "kondate.auth.lastMagicEmail";
  * リロード後も「送信済み・再送まで Ns」を復元し、無意味な再送で live secret を焼かない。
  */
 const magicSentUiStorageKey = "kondate.auth.magicSentUi";
+/**
+ * C10: 未完了マジックの PII を sessionStorage に長く残さない。
+ * continuation TTL（5 分）に揃え、共有端末でのメール露出窓を縮める。
+ */
+const MAGIC_RESIDUAL_TTL_MS = 300_000;
 
 type MagicSentUiSnapshot = {
   email: string;
   flowId: string;
   resendAvailableAt: string;
+  /** 保存時刻。無い（旧形式）は即無効として消す */
+  storedAt: string;
 };
+
+type LastMagicEmailSnapshot = {
+  email: string;
+  storedAt: string;
+};
+
+function isFreshStoredAt(storedAt: string, nowMs: number = Date.now()): boolean {
+  const storedMs = Date.parse(storedAt);
+  if (Number.isNaN(storedMs)) return false;
+  return nowMs - storedMs <= MAGIC_RESIDUAL_TTL_MS;
+}
 
 function readLastMagicEmail(): string {
   try {
-    return sessionStorage.getItem(lastMagicEmailStorageKey) ?? "";
+    const raw = sessionStorage.getItem(lastMagicEmailStorageKey);
+    if (raw === null) return "";
+    // 旧形式: 素のメール文字列。TTL が無いので共有端末リスクがあり即捨てる（C10）
+    if (!raw.startsWith("{")) {
+      sessionStorage.removeItem(lastMagicEmailStorageKey);
+      return "";
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) {
+      sessionStorage.removeItem(lastMagicEmailStorageKey);
+      return "";
+    }
+    const email = "email" in parsed ? parsed.email : null;
+    const storedAt = "storedAt" in parsed ? parsed.storedAt : null;
+    if (
+      typeof email !== "string" ||
+      email.trim() === "" ||
+      typeof storedAt !== "string" ||
+      !isFreshStoredAt(storedAt)
+    ) {
+      sessionStorage.removeItem(lastMagicEmailStorageKey);
+      return "";
+    }
+    return email.trim();
   } catch {
     return "";
   }
@@ -63,7 +104,11 @@ function rememberLastMagicEmail(email: string): void {
       sessionStorage.removeItem(lastMagicEmailStorageKey);
       return;
     }
-    sessionStorage.setItem(lastMagicEmailStorageKey, email.trim());
+    const snapshot: LastMagicEmailSnapshot = {
+      email: email.trim(),
+      storedAt: new Date().toISOString(),
+    };
+    sessionStorage.setItem(lastMagicEmailStorageKey, JSON.stringify(snapshot));
   } catch {
     // sessionStorage 拒否時は期限切れ復元を諦めるだけ
   }
@@ -78,38 +123,66 @@ function readMagicSentUi(): MagicSentUiSnapshot | null {
     const email = "email" in parsed ? parsed.email : null;
     const flowId = "flowId" in parsed ? parsed.flowId : null;
     const resendAvailableAt = "resendAvailableAt" in parsed ? parsed.resendAvailableAt : null;
+    const storedAt = "storedAt" in parsed ? parsed.storedAt : null;
     if (
       typeof email !== "string" ||
       email.trim() === "" ||
       typeof flowId !== "string" ||
       flowId.length === 0 ||
       typeof resendAvailableAt !== "string" ||
-      Number.isNaN(Date.parse(resendAvailableAt))
+      Number.isNaN(Date.parse(resendAvailableAt)) ||
+      typeof storedAt !== "string" ||
+      !isFreshStoredAt(storedAt)
     ) {
+      // C10: 期限切れ・旧形式は残さず消す
+      sessionStorage.removeItem(magicSentUiStorageKey);
       return null;
     }
-    return { email: email.trim(), flowId, resendAvailableAt };
+    return {
+      email: email.trim(),
+      flowId,
+      resendAvailableAt,
+      storedAt,
+    };
   } catch {
     return null;
   }
 }
 
-function rememberMagicSentUi(snapshot: MagicSentUiSnapshot | null): void {
+function rememberMagicSentUi(
+  snapshot: Omit<MagicSentUiSnapshot, "storedAt"> | MagicSentUiSnapshot | null,
+): void {
   try {
     if (snapshot === null) {
       sessionStorage.removeItem(magicSentUiStorageKey);
       return;
     }
-    sessionStorage.setItem(magicSentUiStorageKey, JSON.stringify(snapshot));
+    const existingStoredAt =
+      "storedAt" in snapshot && typeof snapshot.storedAt === "string" ? snapshot.storedAt : null;
+    const withTtl: MagicSentUiSnapshot = {
+      email: snapshot.email,
+      flowId: snapshot.flowId,
+      resendAvailableAt: snapshot.resendAvailableAt,
+      storedAt: existingStoredAt ?? new Date().toISOString(),
+    };
+    sessionStorage.setItem(magicSentUiStorageKey, JSON.stringify(withTtl));
   } catch {
     // sessionStorage 拒否時は sent UI 復元を諦めるだけ
   }
+}
+
+/** C10: マウント時に期限切れ residual をまとめて捨てる（読まないキーが残らないようにする） */
+function purgeExpiredMagicResiduals(): void {
+  // read* は期限切れを remove する副作用付き
+  void readLastMagicEmail();
+  void readMagicSentUi();
 }
 
 function initialMagicLinkState(
   authError: LoginLocationState["authError"],
   search: string,
 ): MagicLinkState {
+  purgeExpiredMagicResiduals();
   // マジックリンク期限切れは送信済み文脈へ戻す（再入力を強いない）
   if (authError === "magic_link_expired") {
     return { status: "expired", email: readLastMagicEmail() };
@@ -128,7 +201,13 @@ function initialMagicLinkState(
   // U1-I2: リロード後も sent UI を復元（再送クールダウン中は特に重要）
   const sent = readMagicSentUi();
   if (sent !== null) {
-    return { status: "sent", ...sent };
+    // storedAt は storage 用メタ。MagicLinkState には載せない
+    return {
+      status: "sent",
+      email: sent.email,
+      flowId: sent.flowId,
+      resendAvailableAt: sent.resendAvailableAt,
+    };
   }
   return { status: "idle", email: "" };
 }

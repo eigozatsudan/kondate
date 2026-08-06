@@ -2,7 +2,7 @@
 begin;
 -- 他のローカル実行やE2Eが残した有効なレコードに依存しないよう、テスト対象を初期化する。
 delete from private.auth_continuations;
-select plan(36);
+select plan(39);
 select has_table('private', 'auth_continuations', 'continuation ledger exists');
 select function_returns('public', 'claim_auth_continuation', array['uuid', 'bytea', 'bytea', 'text', 'timestamp with time zone'], 'setof record', 'claim has exact five-argument signature');
 select function_returns('public', 'cleanup_auth_continuations', array['timestamp with time zone'], 'bigint', 'cleanup keeps the one-argument signature');
@@ -84,12 +84,25 @@ select is(
     (select id from continuation_case), decode(repeat('00', 32), 'hex'), 'https://app.test', decode('bb', 'hex'), decode(repeat('03', 12), 'hex'), '2026-07-11T00:02:00Z'
   ),
   true,
-  'later matching deposit is accepted without replacing the first value'
+  'later matching anonymous deposit is accepted without replacing the first value'
 );
 select is(
   (select encode(encrypted_code, 'hex') from private.auth_continuations where id = (select id from continuation_case)),
   'aa',
-  'first deposit ciphertext wins'
+  'first deposit ciphertext wins for anonymous deposit'
+);
+-- C2: 所有者 secret 付き deposit は毒 first-wins を上書きできる
+select is(
+  public.deposit_auth_continuation(
+    (select id from continuation_case), decode(repeat('00', 32), 'hex'), 'https://app.test', decode('cc', 'hex'), decode(repeat('04', 12), 'hex'), '2026-07-11T00:02:30Z', decode(repeat('01', 32), 'hex')
+  ),
+  true,
+  'owner secret deposit overwrites poisoned first-wins ciphertext'
+);
+select is(
+  (select encode(encrypted_code, 'hex') from private.auth_continuations where id = (select id from continuation_case)),
+  'cc',
+  'owner deposit ciphertext replaces the first value'
 );
 -- B-I2 精緻化: deposit 前の正当ポーリングは副作用なし（空返却・行保持）
 delete from continuation_case;
@@ -110,7 +123,7 @@ select is(
   1,
   'pre-deposit claim with correct credentials preserves the row'
 );
--- deposit 前でも誤 secret は認証失敗として消去する
+-- C1: deposit 前の誤 secret は空返却するが行は消さない（UUID DoS 防止）
 select is(
   (select count(*)::integer from public.claim_auth_continuation(
     (select id from continuation_case), decode(repeat('a0', 32), 'hex'), decode(repeat('ff', 32), 'hex'), 'https://app.test', '2026-07-11T00:01:30Z'
@@ -120,10 +133,10 @@ select is(
 );
 select is(
   (select count(*)::integer from private.auth_continuations where id = (select id from continuation_case)),
-  0,
-  'pre-deposit claim with wrong secret erases the row'
+  1,
+  'pre-deposit claim with wrong secret preserves the row'
 );
--- B-I2: 失敗 claim は continuation ごと消し、以降の成功 claim も不能にする
+-- C1: 誤 state も行を消さない
 delete from continuation_case;
 insert into continuation_case
 select * from public.create_auth_continuation(
@@ -146,8 +159,8 @@ select is(
 );
 select is(
   (select count(*)::integer from private.auth_continuations where id = (select id from continuation_case)),
-  0,
-  'failed claim erases the continuation row'
+  1,
+  'failed claim with wrong state preserves the continuation row'
 );
 -- 成功経路用に別 continuation を用意する
 delete from continuation_case;
@@ -168,12 +181,12 @@ select is(
     (select id from continuation_case), decode(repeat('10', 32), 'hex'), decode(repeat('ff', 32), 'hex'), 'https://app.test', '2026-07-11T00:03:00Z'
   )),
   0,
-  'claim rejects incorrect credentials and erases'
+  'claim rejects incorrect credentials without erasing'
 );
 select is(
   (select count(*)::integer from private.auth_continuations where id = (select id from continuation_case)),
-  0,
-  'incorrect credentials erase the continuation'
+  1,
+  'incorrect credentials preserve the continuation'
 );
 delete from continuation_case;
 insert into continuation_case
@@ -193,7 +206,12 @@ select is(
     (select id from continuation_case), decode(repeat('20', 32), 'hex'), decode(repeat('21', 32), 'hex'), 'https://other.test', '2026-07-11T00:03:00Z'
   )),
   0,
-  'claim rejects an incorrect origin and erases'
+  'claim rejects an incorrect origin without erasing'
+);
+select is(
+  (select count(*)::integer from private.auth_continuations where id = (select id from continuation_case)),
+  1,
+  'incorrect origin preserves the continuation'
 );
 delete from continuation_case;
 insert into continuation_case
@@ -221,17 +239,18 @@ select ok(
     select 1 from private.auth_continuations
     where id = (select id from continuation_case)
       and claimed_at = '2026-07-11T00:03:00Z'
-      and encrypted_code is null
-      and code_iv is null
+      and encrypted_code = decode('aa', 'hex')
+      and code_iv = decode(repeat('02', 12), 'hex')
   ),
-  'claim clears stored ciphertext and IV'
+  'claim keeps stored ciphertext for idempotent re-delivery'
 );
-select is(
-  (select count(*)::integer from public.claim_auth_continuation(
-    (select id from continuation_case), decode(repeat('00', 32), 'hex'), decode(repeat('01', 32), 'hex'), 'https://app.test', '2026-07-11T00:04:00Z'
-  )),
-  0,
-  'claimed continuation cannot be replayed'
+select ok(
+  exists(
+    select 1 from public.claim_auth_continuation(
+      (select id from continuation_case), decode(repeat('00', 32), 'hex'), decode(repeat('01', 32), 'hex'), 'https://app.test', '2026-07-11T00:04:00Z'
+    ) where encrypted_code = decode('aa', 'hex') and code_iv = decode(repeat('02', 12), 'hex') and return_to = '/planner'
+  ),
+  'claimed continuation can be re-claimed idempotently within TTL'
 );
 select ok(to_regclass('private.auth_continuations_expires_at_idx') is not null, 'expiry cleanup has a supporting index');
 insert into private.auth_continuations(state_hash, secret_hash, origin, return_to, expires_at)

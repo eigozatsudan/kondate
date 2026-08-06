@@ -136,6 +136,31 @@ it("removes callback credentials from the browser URL before completing the call
   );
 });
 
+it("C5: strips unknown query keys such as access_token from the visible URL", () => {
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
+    resumeFlow: vi.fn(),
+  };
+  window.history.replaceState(
+    null,
+    "",
+    "/auth/callback?flow=flow-1&state=state-1&code=code-1&access_token=stolen&refresh_token=r",
+  );
+
+  renderCallback(gateway, { ttlMs: 300_000, initialEntry: "/auth/callback" });
+
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  expect(gateway.completeCallback).toHaveBeenCalledTimes(1);
+  // 可視 URL は flow のみ。トークン系は history 現 entry からも消える
+  expect(window.location.pathname + window.location.search + window.location.hash).toBe(
+    "/auth/callback?flow=flow-1",
+  );
+  expect(window.location.search).not.toContain("access_token");
+  expect(window.location.search).not.toContain("refresh_token");
+});
+
 it("creates the default gateway once and completes the callback once", async () => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),

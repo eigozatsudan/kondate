@@ -92,7 +92,7 @@ function fromBytea(value: string): Uint8Array | null {
 
 /**
  * RPC が 1 行返したあとの bytea を ClaimTransitionResult に落とす。
- * 形式不正 / IV 長不正は ciphertext が既に single-use で消えているため "gone"。
+ * 形式不正 / IV 長不正は payload 破損として "gone"（410）。
  * 単体テストから production 経路を再現できるように export する。
  */
 export function parseClaimedContinuationRow(row: {
@@ -102,7 +102,7 @@ export function parseClaimedContinuationRow(row: {
 }): ClaimTransitionResult | "gone" {
   const ciphertext = fromBytea(row.encrypted_code);
   const iv = fromBytea(row.code_iv);
-  // IV は AES-GCM 96-bit 固定。読めない / 長さ不正は burned 後の破損として terminal。
+  // IV は AES-GCM 96-bit 固定。読めない / 長さ不正は terminal。
   if (ciphertext === null || iv === null || iv.byteLength !== 12) return "gone";
   return { ciphertext, iv, returnTo: row.return_to };
 }
@@ -121,7 +121,7 @@ function createAdminTransition(): ClaimTransition {
     const row = data?.[0];
     // 未存在・binding 失敗・RPC エラー・行数不正は 404（リトライ可）
     if (error !== null || data === null || row === undefined || data.length !== 1) return null;
-    // ここ以降は RPC が single-use で ciphertext を焼いた後
+    // 初回/冪等 re-claim とも ciphertext 行が返る。bytea 破損は gone。
     return parseClaimedContinuationRow(row);
   };
 }
@@ -129,7 +129,8 @@ function createAdminTransition(): ClaimTransition {
 export const config: Config = {
   path: "/api/auth/continuations/:continuationId/claim",
   method: "POST",
-  rateLimit: { windowLimit: 20, windowSize: 60, aggregateBy: ["ip"] },
+  // C6: recovery poll（5s 床）と NAT 共有を想定し claim だけ 60/60 に分離
+  rateLimit: { windowLimit: 60, windowSize: 60, aggregateBy: ["ip"] },
 };
 
 export function createHandler(
@@ -158,10 +159,9 @@ export function createHandler(
       });
       // claim 前の未存在・binding 不一致・未 deposit は 404（クライアントはリトライ可）
       if (result === null) return continuationUnavailable();
-      // RPC は成功したが payload（bytea）が読めない — ciphertext は burned 済み → 410
+      // RPC は成功したが payload（bytea）が読めない — 旧 burn 行や破損 → 410
       if (result === "gone") return continuationGone();
-      // ここ以降も RPC が single-use で ciphertext を焼いた後。decrypt / 応答検証失敗は
-      // 404 だとクライアントが無限リトライするため 410 で terminal にする（C1）。
+      // decrypt / 応答検証失敗は 404 だとクライアントが無限リトライするため 410 で terminal。
       try {
         const code = await decryptContinuationCode(
           { ciphertext: result.ciphertext, iv: result.iv },

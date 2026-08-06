@@ -207,7 +207,11 @@ it("same-browser magic-link callback deposits then claims immediately", async ()
     flowId: flow.id,
     returnTo: "/onboarding",
   });
-  expect(deposit).toHaveBeenCalledWith(flow.id, { state: flow.state, code: "code-1" });
+  expect(deposit).toHaveBeenCalledWith(flow.id, {
+    state: flow.state,
+    code: "code-1",
+    secret: flow.secret,
+  });
   expect(claim).toHaveBeenCalledWith(flow.id, { secret: flow.secret, state: flow.state });
   // magic link の sessionExchange は supabase。mock exchange は使わない。
   expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("magic-code-1");
@@ -431,11 +435,16 @@ it("same-browser callback deposits then claims and exchanges immediately", async
     returnTo: "/onboarding",
     flowId: flow.id,
   });
-  expect(deposit).toHaveBeenCalledWith(flow.id, { state: flow.state, code: "code-1" });
+  // C2: 同一ブラウザは secret 付き deposit で毒 first-wins を上書きできる
+  expect(deposit).toHaveBeenCalledWith(flow.id, {
+    state: flow.state,
+    code: "code-1",
+    secret: flow.secret,
+  });
   expect(claim).toHaveBeenCalledWith(flow.id, { secret: flow.secret, state: flow.state });
   expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
   expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
-  // claim 成功後は clearClaimedAuthFlow で secret を消す
+  // exchange 成功後は clearClaimedAuthFlow で secret を消す（C4）
   expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
 
@@ -647,13 +656,13 @@ it("C1/C4: claim 410 (post-consume decrypt failure) is terminal and clears secre
   expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
 
-it("C3: response-lost after claim success then 404 treats claim as already-consumed and drops secret", async () => {
+it("C3: response-lost after claim keeps secret so idempotent re-claim can recover the code", async () => {
   const storage = new MapStorage();
   const claim = vi
     .fn()
-    // R1: ambiguous は HTTP 成功後の body 欠落のみ（素の TypeError ではない）
+    // 2xx body 欠落のあと、冪等 re-claim で code を取り直せる（C3）
     .mockRejectedValueOnce(new ContinuationResponseLostError())
-    .mockRejectedValueOnce(new ContinuationHttpError(404));
+    .mockResolvedValueOnce({ code: "auth-code-1", returnTo: "/onboarding" });
   const api = continuationApiMock({ claim });
   const gateway = createAuthGateway(
     authClientMock() as unknown as BrowserSupabaseClient,
@@ -671,14 +680,15 @@ it("C3: response-lost after claim success then 404 treats claim as already-consu
     flowId: flow.id,
     returnTo: "/onboarding",
   });
+  // secret を残し、次の claim で code を回収する
   expect(readAuthFlow(flow.id, storage)).toEqual(flow);
 
-  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
-    kind: "awaiting_completion",
+  await expect(gateway.resumeFlow(flow.id)).resolves.toMatchObject({
+    kind: "complete",
     flowId: flow.id,
     returnTo: "/onboarding",
   });
-  // secret を捨て claim 連打を止め、completion 待ち / hangWatchdog に委ねる
+  expect(claim).toHaveBeenCalledTimes(2);
   expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
 
@@ -714,7 +724,7 @@ it("R1: TypeError then 404 keeps secret (no ambiguous mark for pre-success netwo
   expect(readAuthFlow(flow.id, storage)).toEqual(flow);
 });
 
-it("C5: clears secret immediately after claim so exchange hang cannot re-claim", async () => {
+it("C4: keeps secret while exchange hangs so recovery can re-claim and retry", async () => {
   const storage = new MapStorage();
   const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
   const api = continuationApiMock({ claim });
@@ -732,12 +742,13 @@ it("C5: clears secret immediately after claim so exchange hang cannot re-claim",
   });
 
   void gateway.resumeFlow(flow.id);
-  // claim resolve → secret 破棄まで進める
+  // claim resolve → exchange 開始まで進める（secret は exchange 成功まで残す）
   for (let index = 0; index < 20; index += 1) await Promise.resolve();
 
   expect(claim).toHaveBeenCalledOnce();
   expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
-  expect(readAuthFlow(flow.id, storage)).toBeNull();
+  // hang 中も secret を残し、recovery の再 claim を可能にする（C4）
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
 });
 
 it("C7: rejects unexpected query keys such as access_token without depositing", async () => {

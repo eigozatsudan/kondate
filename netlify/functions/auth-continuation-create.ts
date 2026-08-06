@@ -100,7 +100,8 @@ function createAdminTransition(): CreateTransition {
 export const config: Config = {
   path: "/api/auth/continuations",
   method: "POST",
-  rateLimit: { windowLimit: 20, windowSize: 60, aggregateBy: ["ip"] },
+  // C6: create は開始系。claim より低く保ちつつ NAT 共有に余裕を持たせる
+  rateLimit: { windowLimit: 40, windowSize: 60, aggregateBy: ["ip"] },
 };
 
 export function createHandler(

@@ -16,7 +16,7 @@ describe("auth continuation deposit", () => {
     expect(config).toMatchObject({
       path: "/api/auth/continuations/:continuationId/callback",
       method: "POST",
-      rateLimit: { windowLimit: 20, windowSize: 60, aggregateBy: ["ip"] },
+      rateLimit: { windowLimit: 40, windowSize: 60, aggregateBy: ["ip"] },
     });
     const deposit = vi.fn().mockResolvedValue(true);
     const handler = createHandler({
@@ -118,8 +118,37 @@ describe("auth continuation deposit", () => {
         stateHash: await sha256(STATE),
       }),
     );
-    // 平文 state は transition に渡さない
+    // 平文 state は transition に渡さない。匿名 deposit は secretHash も付けない
     expect(deposit.mock.calls[0]?.[0]).not.toHaveProperty("state");
+    expect(deposit.mock.calls[0]?.[0]).not.toHaveProperty("secretHash");
+  });
+
+  it("C2: hashes optional owner secret for deposit overwrite without exposing plaintext", async () => {
+    const SECRET = "k".repeat(43);
+    const deposit = vi.fn().mockResolvedValue(true);
+    const handler = createHandler({
+      origin: ORIGIN,
+      encryptionKey: new Uint8Array(32).fill(7),
+      deposit,
+    });
+    const response = await handler(
+      new Request("https://functions.test", {
+        method: "POST",
+        headers: { origin: ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({ state: STATE, code: AUTH_CODE, secret: SECRET }),
+      }),
+      { params: { continuationId: CONTINUATION_ID } },
+    );
+    expect(response.status).toBe(204);
+    expect(deposit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: CONTINUATION_ID,
+        stateHash: await sha256(STATE),
+        secretHash: await sha256(SECRET),
+      }),
+    );
+    // 平文 secret は transition に渡さない
+    expect(deposit.mock.calls[0]?.[0]).not.toHaveProperty("secret");
   });
 
   it("encrypts the code before deposit and returns 204 without exposing ciphertext", async () => {

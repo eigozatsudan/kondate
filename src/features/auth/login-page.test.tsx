@@ -143,7 +143,10 @@ it.each([
 });
 
 it("restores sent context when magic link expired and last email is known (B-I8)", () => {
-  sessionStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
+  sessionStorage.setItem(
+    "kondate.auth.lastMagicEmail",
+    JSON.stringify({ email: "user@example.com", storedAt: new Date().toISOString() }),
+  );
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
@@ -231,6 +234,7 @@ it("U1-I2 rehydrates magic-link sent UI from sessionStorage after reload", async
       email: "user@example.com",
       flowId: "flow-rehydrate-1",
       resendAvailableAt,
+      storedAt: new Date().toISOString(),
     }),
   );
   const gateway: AuthGateway = {
@@ -345,14 +349,52 @@ it("preserves an explicit safe returnTo for Google and magic link", async () => 
   expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", "/pantry");
 });
 
+it("C10: discards stale magic-link residual sessionStorage past TTL", () => {
+  const staleAt = new Date(Date.now() - 301_000).toISOString();
+  sessionStorage.setItem(
+    "kondate.auth.lastMagicEmail",
+    JSON.stringify({ email: "stale@example.com", storedAt: staleAt }),
+  );
+  sessionStorage.setItem(
+    "kondate.auth.magicSentUi",
+    JSON.stringify({
+      email: "stale@example.com",
+      flowId: "flow-stale",
+      resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+      storedAt: staleAt,
+    }),
+  );
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter initialEntries={["/login"]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  // 期限切れ residual は復元せず、読み取り時に消す
+  expect(screen.queryByText("stale@example.com に送りました")).not.toBeInTheDocument();
+  expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
+  expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBeNull();
+});
+
 it("C9: clears magic-link residual sessionStorage when already authenticated", () => {
-  sessionStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
+  sessionStorage.setItem(
+    "kondate.auth.lastMagicEmail",
+    JSON.stringify({ email: "user@example.com", storedAt: new Date().toISOString() }),
+  );
   sessionStorage.setItem(
     "kondate.auth.magicSentUi",
     JSON.stringify({
       email: "user@example.com",
       flowId: "flow-1",
       resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+      storedAt: new Date().toISOString(),
     }),
   );
   vi.mocked(useAuth).mockReturnValue({

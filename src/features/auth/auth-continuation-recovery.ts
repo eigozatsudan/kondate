@@ -285,8 +285,8 @@ export function startAuthContinuationRecovery(input: {
   const runClaim = async (flowId: string | undefined): Promise<void> => {
     if (flowId === undefined || stopped) return;
     // claim 後 exchange hang で recovery の running を永久占有しない（timeout で解放）。
-    // C5: gateway は claim 成功時点で secret を破棄するため、timeout 後の次周期は
-    // 当該 flow を選ばず claim 連打しない。裏の resumeFlow が complete すれば completion を publish する。
+    // C4: gateway は exchange 成功まで secret を残すため、timeout 後の次周期で
+    // 冪等 re-claim → 再 exchange を試せる。裏の resumeFlow が complete すれば completion を publish する。
     let result: RecoveryResult;
     try {
       result = await withTimeout(input.gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);

@@ -89,12 +89,14 @@ export function AuthCallbackPage({
 
     if (callbackPromise.current === null) {
       const callbackUrl = new URL(window.location.href);
+      // C5: 可視 URL は flow 以外を全削除（gateway の allowlist 処理とは別層）。
+      // access_token 等の未知キーがアドレスバー／history に残らないようにする。
       const visibleUrl = new URL(callbackUrl);
-      visibleUrl.searchParams.delete("code");
-      visibleUrl.searchParams.delete("state");
-      visibleUrl.searchParams.delete("error");
-      visibleUrl.searchParams.delete("error_code");
-      visibleUrl.searchParams.delete("error_description");
+      for (const key of [...visibleUrl.searchParams.keys()]) {
+        if (key !== "flow") {
+          visibleUrl.searchParams.delete(key);
+        }
+      }
       visibleUrl.hash = "";
       window.history.replaceState(window.history.state, "", visibleUrl);
       const flowId = callbackUrl.searchParams.get("flow");

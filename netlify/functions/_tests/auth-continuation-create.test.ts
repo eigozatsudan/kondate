@@ -24,7 +24,7 @@ describe("auth continuation create", () => {
     expect(config).toMatchObject({
       path: "/api/auth/continuations",
       method: "POST",
-      rateLimit: { windowLimit: 20, windowSize: 60, aggregateBy: ["ip"] },
+      rateLimit: { windowLimit: 40, windowSize: 60, aggregateBy: ["ip"] },
     });
     const create = vi.fn().mockResolvedValue({
       id: "10000000-0000-4000-8000-000000000001",

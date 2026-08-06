@@ -254,7 +254,7 @@ select is_empty(
   ('public.delete_member_allergy(p_allergy_id uuid)', 'service_role', 'EXECUTE'),
   ('public.delete_menu_group(p_derivation_group_id uuid)', 'authenticated', 'EXECUTE'),
   ('public.delete_menu_group(p_derivation_group_id uuid)', 'service_role', 'EXECUTE'),
-  ('public.deposit_auth_continuation(p_id uuid, p_state_hash bytea, p_origin text, p_ciphertext bytea, p_iv bytea, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
+  ('public.deposit_auth_continuation(p_id uuid, p_state_hash bytea, p_origin text, p_ciphertext bytea, p_iv bytea, p_now timestamp with time zone, p_secret_hash bytea)', 'service_role', 'EXECUTE'),
   ('public.ensure_billing_customer(p_user_id uuid, p_stripe_customer_id text)', 'service_role', 'EXECUTE'),
   ('public.finalize_ai_generation_conflict(p_request_id uuid, p_conflict_codes text[], p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.finalize_ai_generation_failure(p_request_id uuid, p_failure_code text, p_retry_at timestamp with time zone, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),

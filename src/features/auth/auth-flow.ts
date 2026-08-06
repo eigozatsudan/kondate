@@ -432,7 +432,15 @@ export interface ContinuationApi {
     id: string;
     expiresAt: string;
   }>;
-  deposit(continuationId: string, input: { state: string; code: string }): Promise<void>;
+  /**
+   * code を deposit する。
+   * secret を渡すと同じブラウザ所有者として毒 first-wins を上書きできる（C2）。
+   * WebView 等 secret 無しは従来どおり first-wins。
+   */
+  deposit(
+    continuationId: string,
+    input: { state: string; code: string; secret?: string },
+  ): Promise<void>;
   claim(
     continuationId: string,
     input: { secret: string; state: string },
@@ -448,8 +456,8 @@ export class ContinuationHttpError extends Error {
 
 /**
  * HTTP 成功（2xx）を受け取ったあと body 読取が欠けたときのエラー。
- * claim は single-use burn 済みの可能性が高いので、gateway が claim-ambiguous 印の対象にする（R1）。
- * fetch 自体の TypeError（サーバ未到達）とは区別し、未 deposit 404 での誤 secret 破棄を狭める。
+ * claim はサーバ側で冪等再提示するため（C3）、gateway は secret を残して再 claim する。
+ * fetch 自体の TypeError（サーバ未到達）とは区別する。
  */
 export class ContinuationResponseLostError extends Error {
   constructor() {
