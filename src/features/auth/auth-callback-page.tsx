@@ -12,6 +12,7 @@ import {
   markAuthContinuationCallbackOwner,
   readAuthContinuationCallbackStartedAt,
   readAuthFlow,
+  isAuthSelfReturnPath,
   sanitizeReturnPath,
 } from "./auth-flow";
 
@@ -28,8 +29,8 @@ function loginErrorHref(code: AuthCallbackErrorCode, returnTo?: string): string 
   const params = new URLSearchParams({ authError: code });
   if (returnTo !== undefined && returnTo !== "") {
     const safe = sanitizeReturnPath(returnTo);
-    // /login 自身や callback を returnTo にすると認証後にループするため載せない
-    if (safe !== "/login" && !safe.startsWith("/login?") && !safe.startsWith("/auth/callback")) {
+    // /login 自身や callback を returnTo にすると認証後にループするため載せない（C1）
+    if (!isAuthSelfReturnPath(safe)) {
       params.set("returnTo", safe);
     }
   }
@@ -89,8 +90,9 @@ export function AuthCallbackPage({
 
     if (callbackPromise.current === null) {
       const callbackUrl = new URL(window.location.href);
-      // C5: 可視 URL は flow 以外を全削除（gateway の allowlist 処理とは別層）。
-      // access_token 等の未知キーがアドレスバー／history に残らないようにする。
+      // C5/C8: 可視 URL は flow 以外を全削除（gateway の allowlist 処理とは別層）。
+      // code / access_token 等がアドレスバー・history・同一タブ Referer に残らないようにする。
+      // 初回ナビゲーション URL のエッジログはインフラ管轄（アプリ JS では消せない）。
       const visibleUrl = new URL(callbackUrl);
       for (const key of [...visibleUrl.searchParams.keys()]) {
         if (key !== "flow") {

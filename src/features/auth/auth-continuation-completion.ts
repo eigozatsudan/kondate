@@ -48,11 +48,13 @@ export function publishAuthContinuationCompletion(
   completion: AuthContinuationCompletion,
   storage: Storage = window.localStorage,
 ): void {
-  clearAuthFlow(completion.flowId, storage);
   const safe = toSafeCompletion(completion);
+  // C10: completion を先に書く。setItem 失敗時は throw のまま secret を残し、
+  // 他タブが re-claim / 再 publish できる余地を残す（clear→setItem 順だと secret だけ消える）。
   storage.setItem(completionStorageKey, JSON.stringify(safe));
   // storage イベントは書き込み同一タブでは発火しない。late publish を wait/listener が拾えるよう same-tab 通知する。
   window.dispatchEvent(new CustomEvent(completionEventName, { detail: safe }));
+  clearAuthFlow(completion.flowId, storage);
 }
 
 export function startAuthContinuationCompletionListener(input: {

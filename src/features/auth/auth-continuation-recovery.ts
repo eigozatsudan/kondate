@@ -30,7 +30,18 @@ const CLAIM_POLL_DATABASE_NAME = "kondate-auth-claim-poll";
 const CLAIM_POLL_STORE_NAME = "coordination";
 const CLAIM_POLL_TRANSACTION_KEY = "reservation";
 const MIN_CLAIM_POLL_GAP_MS = 5_000;
-const TARGET_RECOVERY_LEASE_TTL_MS = MIN_CLAIM_POLL_GAP_MS * 3;
+/**
+ * C3: pre-lease / target lease の失効。即時 resume の hang 上限（30s）+ poll 床を覆い、
+ * heartbeat 停止直後に他タブが orphan 誤認して dual exchange しないようにする。
+ */
+const TARGET_RECOVERY_LEASE_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS + MIN_CLAIM_POLL_GAP_MS;
+/**
+ * C3: claim 成功後〜exchange 完了までのタブ横断排他。
+ * IdP code 単回利用のため、process 内 inflight の外側で dual exchange を抑止する。
+ * タブ死亡時は TTL 後に再 claim を許す（C3 冪等 re-claim）。
+ */
+const EXCHANGE_IN_FLIGHT_PREFIX = `${CLAIM_POLL_COORDINATION_PREFIX}-exchange.`;
+const EXCHANGE_IN_FLIGHT_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS * 4;
 /**
  * C-R5: completeCallback 即時 resume の pre-lease 窓用。
  * target recovery 開始前でも「lease 0 = orphan」にしない固定 instanceId。
@@ -45,14 +56,24 @@ type TargetRecoveryLease = {
   pending: boolean;
 };
 
+type ExchangeInFlightLease = {
+  flowId: string;
+  instanceId: string;
+  refreshedAt: number;
+};
+
 function callbackPreLeaseKey(flowId: string): string {
   return `${TARGET_RECOVERY_LEASE_PREFIX}${flowId}.${CALLBACK_PRE_LEASE_INSTANCE_ID}`;
+}
+
+function exchangeInFlightKey(flowId: string): string {
+  return `${EXCHANGE_IN_FLIGHT_PREFIX}${flowId}`;
 }
 
 /**
  * C-R5: callback 同一ブラウザの deposit/即時 resume 中に target lease 相当を立て、
  * 他タブ global recovery が orphan 扱いして dual exchange しないようにする。
- * 5s 間隔で heartbeat（lease TTL=15s）。返却関数は heartbeat のみ止める（キーは残す）。
+ * 5s 間隔で heartbeat（lease TTL は IMMEDIATE_CLAIM_TIMEOUT+床）。返却関数は heartbeat のみ止める。
  * terminal 時は releaseAuthContinuationCallbackPreLease で消す。awaiting 手渡しでは残し、
  * target recovery の自前 lease と併存させてよい。
  */
@@ -88,6 +109,77 @@ export function releaseAuthContinuationCallbackPreLease(flowId: string, storage:
   } catch {
     // cleanup 失敗時も lease は短期 TTL で失効する
   }
+}
+
+function readExchangeInFlight(
+  storage: Storage,
+  flowId: string,
+  nowMs: number,
+): ExchangeInFlightLease | null {
+  try {
+    const raw = storage.getItem(exchangeInFlightKey(flowId));
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) {
+      storage.removeItem(exchangeInFlightKey(flowId));
+      return null;
+    }
+    const id = "flowId" in parsed ? parsed.flowId : null;
+    const instanceId = "instanceId" in parsed ? parsed.instanceId : null;
+    const refreshedAt = "refreshedAt" in parsed ? parsed.refreshedAt : null;
+    if (
+      id !== flowId ||
+      typeof instanceId !== "string" ||
+      instanceId === "" ||
+      typeof refreshedAt !== "number" ||
+      !Number.isFinite(refreshedAt)
+    ) {
+      storage.removeItem(exchangeInFlightKey(flowId));
+      return null;
+    }
+    if (nowMs - refreshedAt > EXCHANGE_IN_FLIGHT_TTL_MS) {
+      storage.removeItem(exchangeInFlightKey(flowId));
+      return null;
+    }
+    return { flowId: id, instanceId, refreshedAt };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * C3: exchange 開始前にタブ横断 lease を取る。他タブが保持中なら false。
+ * 同一 instance の再取得（heartbeat 相当）は true。
+ */
+export function tryAcquireAuthContinuationExchangeInFlight(
+  flowId: string,
+  instanceId: string,
+  storage: Storage,
+  nowMs: number = Date.now(),
+): boolean {
+  const existing = readExchangeInFlight(storage, flowId, nowMs);
+  if (existing !== null && existing.instanceId !== instanceId) {
+    return false;
+  }
+  const lease: ExchangeInFlightLease = { flowId, instanceId, refreshedAt: nowMs };
+  return writeStorageValue(storage, exchangeInFlightKey(flowId), JSON.stringify(lease));
+}
+
+/** C3: exchange 完了・terminal 時に lease を解放する */
+export function releaseAuthContinuationExchangeInFlight(flowId: string, storage: Storage): void {
+  try {
+    storage.removeItem(exchangeInFlightKey(flowId));
+  } catch {
+    // TTL で収束する
+  }
+}
+
+export function isAuthContinuationExchangeInFlight(
+  flowId: string,
+  storage: Storage,
+  nowMs: number = Date.now(),
+): boolean {
+  return readExchangeInFlight(storage, flowId, nowMs) !== null;
 }
 
 function readLastPollAt(storage: Storage): number {
@@ -310,8 +402,10 @@ export function startAuthContinuationRecovery(input: {
     // AUTH-R2: callback-owner 中は target lease がある間だけ排他。
     // lease が全滅（callback タブ死亡・TTL 切れ）したら orphan として global recovery が claim できる。
     // C-R5: completeCallback 即時 resume 中は callback-prelease が立ち、pre-lease 窓の orphan 誤認を防ぐ。
+    // C3: 他タブが exchange 中の flow は claimable に入れない（dual exchange 抑止）。
     const claimableFlowIds = unexpiredFlows
       .filter((flow) => {
+        if (isAuthContinuationExchangeInFlight(flow.id, input.storage, nowMs)) return false;
         if (!callbackOwnedFlowIds.has(flow.id)) return true;
         const leases = activeTargetLeases.get(flow.id) ?? [];
         if (leases.length === 0) return true;
@@ -381,7 +475,8 @@ export function startAuthContinuationRecovery(input: {
       if (!isStopped()) refreshTargetLease(false);
     }
   };
-  // B-I1: claim の IP 上限 20/60s を超えないよう 5s 間隔（最大 12 回/分）にする。
+  // B-I1 / C12: claim の IP 上限 60/60s を超えないよう 5s 間隔（最大 12 回/分）にする。
+  // create/deposit は 40/60。CGNAT 共有で 429 になり得るが gateway は awaiting 再試行する（C17）。
   const timer = (input.setInterval ?? window.setInterval)(() => {
     void poll();
   }, 5_000);

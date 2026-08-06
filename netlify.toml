@@ -45,3 +45,10 @@
     X-Content-Type-Options = "nosniff"
     X-Frame-Options = "DENY"
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
+
+# C8: OAuth/magic の初回 URL に code が載る。callback からの Referer 中継を抑える。
+# エッジ access log の code マスクはインフラ管轄（アプリ側では除去不能）。
+[[headers]]
+  for = "/auth/callback"
+  [headers.values]
+    Referrer-Policy = "no-referrer"

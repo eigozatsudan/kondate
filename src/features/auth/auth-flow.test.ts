@@ -4,12 +4,15 @@ import {
   ContinuationResponseLostError,
   createContinuationApi,
   createAuthFlow,
+  estimateAuthClockSkewMs,
   isAuthContinuationCallbackOwned,
+  isAuthSelfReturnPath,
   listUnexpiredAuthFlows,
   markAuthContinuationCallbackOwner,
   ownedAuthStoragePrefixes,
   readAuthContinuationCallbackStartedAt,
   readAuthFlow,
+  sanitizeLoginReturnPath,
   sanitizeReturnPath,
 } from "./auth-flow";
 
@@ -49,6 +52,17 @@ describe("auth flow storage", () => {
     // B-I3: collapse 後に "//…" になる入力は拒否
     expect(sanitizeReturnPath("/planner/..//evil.example")).toBe("/planner");
     expect(sanitizeReturnPath("/x/..//evil.example")).toBe("/planner");
+  });
+
+  it("C1: login return path drops auth self-references", () => {
+    expect(isAuthSelfReturnPath("/login")).toBe(true);
+    expect(isAuthSelfReturnPath("/login?x=1")).toBe(true);
+    expect(isAuthSelfReturnPath("/auth/callback")).toBe(true);
+    expect(isAuthSelfReturnPath("/auth/callback?flow=1")).toBe(true);
+    expect(isAuthSelfReturnPath("/planner")).toBe(false);
+    expect(sanitizeLoginReturnPath("/login")).toBe("/welcome");
+    expect(sanitizeLoginReturnPath("/auth/callback?flow=1")).toBe("/welcome");
+    expect(sanitizeLoginReturnPath("/pantry")).toBe("/pantry");
   });
 
   it("U1-M1 rejects protocol-relative and embedded // when reading a tampered flow", () => {
@@ -269,6 +283,29 @@ describe("auth flow storage", () => {
     expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
   });
 
+  it("C6 keeps secret when client clock is ahead but skew-adjusted deadline remains", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    // 壁時計は 00:10。startedAt/expires は 00:00〜00:05。skew=+10m なら adjusted now=00:00 で有効。
+    const skewMs = 10 * 60 * 1_000;
+    writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z", "2026-07-13T00:05:00.000Z", skewMs);
+    expect(
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:10:00.000Z"), 300_000),
+    ).toHaveLength(1);
+    expect(readAuthFlow(flowId, storage)?.secret).toBe("A".repeat(43));
+    // skew 補正後もサーバ期限を超えたら消す
+    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:16:00.000Z"), 300_000)).toEqual(
+      [],
+    );
+  });
+
+  it("C6 estimates positive skew when client now is ahead of server implied now", () => {
+    // expiresAt = clientNow 相当だが ttl=5m なら implied server now は 5m 前 → skew ≈ +5m
+    const clientNow = Date.parse("2026-07-13T00:05:00.000Z");
+    const expiresAt = "2026-07-13T00:05:00.000Z";
+    expect(estimateAuthClockSkewMs(clientNow, expiresAt, 300_000)).toBe(300_000);
+  });
+
   it("C13 keeps full local TTL when server expiresAt is unknown", async () => {
     const storage = new MapStorage();
     const api = continuationApiMock();
@@ -376,7 +413,28 @@ it("C8: claim response schema rejects protocol-relative returnTo before sanitize
       secret: "A".repeat(43),
       state: "B".repeat(43),
     }),
-  ).rejects.toThrow();
+  ).rejects.toBeInstanceOf(ContinuationResponseLostError);
+});
+
+it("C7: claim 2xx with Zod parse failure surfaces ContinuationResponseLostError", async () => {
+  const api = createContinuationApi(() =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          data: { code: "auth-code", returnTo: "//evil.example" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ),
+  );
+
+  await expect(
+    api.claim("10000000-0000-4000-8000-000000000001", {
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+    }),
+  ).rejects.toBeInstanceOf(ContinuationResponseLostError);
 });
 
 it("C8: claim response schema rejects backslash and control characters in returnTo", async () => {
@@ -394,7 +452,7 @@ it("C8: claim response schema rejects backslash and control characters in return
         secret: "A".repeat(43),
         state: "B".repeat(43),
       }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(ContinuationResponseLostError);
   }
 });
 
@@ -437,7 +495,13 @@ class MarkerWriteFailingStorage extends MapStorage {
   }
 }
 
-function writeFlow(storage: Storage, flowId: string, startedAt: string, expiresAt?: string): void {
+function writeFlow(
+  storage: Storage,
+  flowId: string,
+  startedAt: string,
+  expiresAt?: string,
+  clockSkewMs?: number,
+): void {
   storage.setItem(
     `kondate.auth.flow.${flowId}`,
     JSON.stringify({
@@ -449,6 +513,7 @@ function writeFlow(storage: Storage, flowId: string, startedAt: string, expiresA
       sessionExchange: "supabase",
       startedAt,
       ...(expiresAt === undefined ? {} : { expiresAt }),
+      ...(clockSkewMs === undefined ? {} : { clockSkewMs }),
     }),
   );
 }

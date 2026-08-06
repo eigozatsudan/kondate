@@ -16,7 +16,9 @@ import {
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
 import {
   releaseAuthContinuationCallbackPreLease,
+  releaseAuthContinuationExchangeInFlight,
   startAuthContinuationCallbackPreLease,
+  tryAcquireAuthContinuationExchangeInFlight,
 } from "./auth-continuation-recovery";
 import { getPublicEnv, type PublicEnv } from "@/shared/config/public-env";
 import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -236,6 +238,7 @@ export function createAuthGateway(
         return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
       }
       // クロスブラウザ（secret 無し）: deposit のみ。pre-lease は立てない（元タブ global を塞がない）。
+      // C2: 匿名 deposit は未 claim なら last-wins（毒 first-wins を正当 WebView が覆せる）。
       if (stored === null) {
         try {
           await continuationApi.deposit(flowId, { state, code });
@@ -256,6 +259,8 @@ export function createAuthGateway(
       // C-R5: target recovery lease 前の pre-lease 窓で他タブ global が orphan claim → dual
       // exchange しないよう、deposit 前から pre-lease を heartbeat する。
       const stopPreLease = startAuthContinuationCallbackPreLease(flowId, storage);
+      // C3: awaiting 手渡し時は heartbeat を止めず、lease TTL 切れの orphan 誤認窓を閉じる。
+      let keepPreLeaseHeartbeat = false;
       try {
         try {
           // C2: 同一ブラウザは secret を付けて毒 first-wins を上書きできるようにする
@@ -271,13 +276,16 @@ export function createAuthGateway(
         try {
           const result = await withTimeout(gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);
           // awaiting は target recovery へ手渡しするため pre-lease を残す（TTL+recovery が引き継ぐ）。
-          if (result.kind !== "awaiting_completion") {
+          if (result.kind === "awaiting_completion") {
+            keepPreLeaseHeartbeat = true;
+          } else {
             releaseAuthContinuationCallbackPreLease(flowId, storage);
           }
           return result;
         } catch {
           // withTimeout は "timeout" Error のみ reject。下層 resumeFlow は kind で返す。
-          // hang 中も pre-lease を残し、他タブ dual exchange を抑止する。
+          // hang 中も pre-lease heartbeat を残し、他タブ dual exchange を抑止する（C3）。
+          keepPreLeaseHeartbeat = true;
           return {
             kind: "awaiting_completion",
             flowId,
@@ -285,7 +293,7 @@ export function createAuthGateway(
           };
         }
       } finally {
-        stopPreLease();
+        if (!keepPreLeaseHeartbeat) stopPreLease();
       }
     },
 
@@ -310,6 +318,9 @@ export function createAuthGateway(
     if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
     // exchange 失敗（provider 拒否）だけ terminal。claim 成功後も secret は exchange 成功まで残す（C3/C4）。
     let exchangeStarted = false;
+    // C3: タブ横断 dual exchange 抑止用。claim 成功後に取得し、完了/terminal で解放する。
+    const exchangeInstanceId = `exchange-${flow.id}-${Math.random().toString(36).slice(2, 10)}`;
+    let holdsExchangeLease = false;
     try {
       const claimedCode = await continuationApi.claim(flow.id, {
         secret: flow.secret,
@@ -317,6 +328,18 @@ export function createAuthGateway(
       });
       // C3/C4: claim はサーバ側で冪等再提示。secret は exchange 成功後に破棄し、
       // body 欠落や exchange hang でも recovery が再 claim → 再 exchange できる。
+      if (
+        !tryAcquireAuthContinuationExchangeInFlight(
+          flow.id,
+          exchangeInstanceId,
+          storage,
+          Date.now(),
+        )
+      ) {
+        // 他タブが exchange 中。secret を残し、completion / 次周期に委ねる。
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
+      holdsExchangeLease = true;
       exchangeStarted = true;
       const result =
         flow.sessionExchange === "oauth_mock"
@@ -390,7 +413,7 @@ export function createAuthGateway(
           flowId: flow.id,
         };
       }
-      // C3: 2xx body 欠落は冪等 re-claim で回復。secret を残して awaiting。
+      // C3/C7: 2xx body 欠落・Zod parse 失敗は冪等 re-claim で回復。secret を残して awaiting。
       if (error instanceof ContinuationResponseLostError) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
@@ -404,6 +427,12 @@ export function createAuthGateway(
         returnTo: flow.returnTo,
         flowId: flow.id,
       };
+    } finally {
+      // settle 時のみ解放。exchange hang 中は Promise が終わらないので lease が残り、
+      // 他タブ dual exchange を TTL まで抑止する（C3）。
+      if (holdsExchangeLease) {
+        releaseAuthContinuationExchangeInFlight(flowId, storage);
+      }
     }
   }
 

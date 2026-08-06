@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/shared/types/database";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { withTimeout } from "./async-timeout";
-import { sanitizeReturnPath } from "./auth-flow";
+import { isAuthSelfReturnPath, sanitizeReturnPath } from "./auth-flow";
 import { clearLocalAuthAndDrafts } from "./auth-cleanup";
 
 /** 二重 replace を避ける（並列 401 や POST+GET 同時失敗用） */
@@ -44,13 +44,8 @@ export async function redirectToLoginForExpiredSession(
     (typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/");
   const returnTo = sanitizeReturnPath(rawReturnTo);
   const params = new URLSearchParams({ sessionExpired: "1" });
-  // C7: /auth/callback を returnTo に載せると再ログイン後に code 無し callback へ戻りループする
-  if (
-    returnTo !== "/welcome" &&
-    returnTo !== "/login" &&
-    !returnTo.startsWith("/login?") &&
-    !returnTo.startsWith("/auth/callback")
-  ) {
+  // /login・/auth/callback 自己参照や welcome 既定は returnTo に載せない（C1 / 旧 C7）
+  if (returnTo !== "/welcome" && !isAuthSelfReturnPath(returnTo)) {
     params.set("returnTo", returnTo);
   }
   const url = `/login?${params.toString()}`;

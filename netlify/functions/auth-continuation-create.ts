@@ -100,7 +100,8 @@ function createAdminTransition(): CreateTransition {
 export const config: Config = {
   path: "/api/auth/continuations",
   method: "POST",
-  // C6: create は開始系。claim より低く保ちつつ NAT 共有に余裕を持たせる
+  // C6: create は開始系。claim より低く保ちつつ NAT 共有に余裕を持たせる。
+  // C17: aggregateBy ip は CGNAT 共有バケットを意図した fail-closed。キー緩和はしない。
   rateLimit: { windowLimit: 40, windowSize: 60, aggregateBy: ["ip"] },
 };
 

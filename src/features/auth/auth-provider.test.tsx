@@ -230,6 +230,44 @@ describe("AuthProvider", () => {
     }
   });
 
+  it("C16: completion listener navigates only on auth waiting paths", async () => {
+    window.history.replaceState(null, "", "/settings");
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    const navigateTo = vi.fn();
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        navigateTo={navigateTo}
+        startRecovery={() => vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+
+    await act(async () => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "kondate.auth.supabase.continuation-complete",
+          newValue: JSON.stringify({ flowId: "flow-1", returnTo: "/onboarding" }),
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    // 設定画面タブは session 再取得のみ。強制 navigate しない
+    expect(navigateTo).not.toHaveBeenCalled();
+    expect(getSession).toHaveBeenCalledTimes(2);
+  });
+
   it("leaves callback claim ownership to AuthCallbackPage", async () => {
     window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
     const client = {

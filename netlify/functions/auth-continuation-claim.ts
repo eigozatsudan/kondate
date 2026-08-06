@@ -129,7 +129,8 @@ function createAdminTransition(): ClaimTransition {
 export const config: Config = {
   path: "/api/auth/continuations/:continuationId/claim",
   method: "POST",
-  // C6: recovery poll（5s 床）と NAT 共有を想定し claim だけ 60/60 に分離
+  // C6: recovery poll（5s 床）と NAT 共有を想定し claim だけ 60/60 に分離。
+  // C17: IP 集約は CGNAT で 429 を出し得るが、緩めず gateway の awaiting 再試行に委ねる。
   rateLimit: { windowLimit: 60, windowSize: 60, aggregateBy: ["ip"] },
 };
 

@@ -349,8 +349,46 @@ it("preserves an explicit safe returnTo for Google and magic link", async () => 
   expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", "/pantry");
 });
 
-it("C10: discards stale magic-link residual sessionStorage past TTL", () => {
-  const staleAt = new Date(Date.now() - 301_000).toISOString();
+it("C1: drops /login and /auth/callback returnTo for Google and magic link", async () => {
+  const user = userEvent.setup();
+  const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
+  const sendMagicLink = vi.fn().mockResolvedValue({
+    flowId: "flow-1",
+    email: "user@example.com",
+    resendAvailableAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const gateway: AuthGateway = {
+    signInWithGoogle,
+    sendMagicLink,
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+  };
+
+  const { unmount } = render(
+    <MemoryRouter initialEntries={["/login?emailLogin=1&returnTo=%2Flogin"]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+  await user.click(screen.getByRole("button", { name: "Googleで続ける" }));
+  expect(signInWithGoogle).toHaveBeenCalledWith("/welcome");
+  unmount();
+
+  signInWithGoogle.mockClear();
+  render(
+    <MemoryRouter initialEntries={["/login?emailLogin=1&returnTo=%2Fauth%2Fcallback"]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+  await user.click(screen.getByRole("button", { name: "Googleで続ける" }));
+  expect(signInWithGoogle).toHaveBeenCalledWith("/welcome");
+  await user.type(screen.getByLabelText("メールアドレス"), "user@example.com");
+  await user.click(screen.getByRole("button", { name: "ログイン用メールを送る" }));
+  expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", "/welcome");
+});
+
+it("C13: discards stale magic-link residual sessionStorage past TTL", () => {
+  // residual TTL は 60s。61s 前の snapshot は捨てる
+  const staleAt = new Date(Date.now() - 61_000).toISOString();
   sessionStorage.setItem(
     "kondate.auth.lastMagicEmail",
     JSON.stringify({ email: "stale@example.com", storedAt: staleAt }),

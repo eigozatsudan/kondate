@@ -16,7 +16,7 @@ const depositRequestSchema = z
   .object({
     state: credentialSchema,
     code: z.string().min(1).max(2_048),
-    // C2: 同一ブラウザ所有者だけが渡す。無い（WebView）は匿名 first-wins。
+    // C2: 同一ブラウザ所有者だけが渡す。無い（WebView）は匿名 last-wins（未 claim）。
     secret: credentialSchema.optional(),
   })
   .strict();
@@ -29,7 +29,7 @@ type DepositTransitionInput = {
   ciphertext: Uint8Array;
   iv: Uint8Array;
   now: string;
-  /** 所有者上書き用。未指定は匿名 first-wins。 */
+  /** 所有者上書き用。未指定は匿名 last-wins（未 claim）。 */
   secretHash?: Uint8Array;
 };
 type DepositTransition = (input: DepositTransitionInput) => Promise<boolean>;
@@ -79,7 +79,9 @@ function createAdminTransition(): DepositTransition {
 export const config: Config = {
   path: "/api/auth/continuations/:continuationId/callback",
   method: "POST",
-  // C6: create/deposit/claim が同一 IP で食い合わないよう、deposit は 40/60 に余裕を持たせる
+  // C6: create/deposit/claim が同一 IP で食い合わないよう、deposit は 40/60 に余裕を持たせる。
+  // C17: IP 集約は CGNAT/法人 NAT で共有バケットになり 429 を出し得るが、
+  // クライアントは awaiting 再試行する。キーを user/secret に緩めない（ロック契約）。
   rateLimit: { windowLimit: 40, windowSize: 60, aggregateBy: ["ip"] },
 };
 
@@ -113,7 +115,7 @@ export function createHandler(
         ciphertext: encrypted.ciphertext,
         iv: encrypted.iv,
         now: new Date().toISOString(),
-        // C2: 所有者だけ上書き可。WebView は secret 無しで first-wins。
+        // C2: 所有者は secret 付き。WebView は secret 無しで未 claim なら last-wins。
         ...(body.secret === undefined ? {} : { secretHash: await sha256(body.secret) }),
       });
       // U1-004: 空 204 でも continuation 経路は no-store を揃える（json/jsonResponse と同型）

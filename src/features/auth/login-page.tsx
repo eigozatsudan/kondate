@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { Navigate, useLocation } from "react-router";
 import { createAuthGateway, type AuthGateway } from "./auth-gateway";
 import type { MagicLinkState } from "./magic-link-state";
-import { sanitizeReturnPath } from "./auth-flow";
+import { sanitizeLoginReturnPath } from "./auth-flow";
 import { useAuth } from "./use-auth";
+import { useAuthLoadingDeadline } from "./use-auth-loading-deadline";
 
 /** 低リテラシー向け：登録とログインが同じ操作であることを明示（MVP 設計の単一画面方針） */
 export const LOGIN_PAGE_LEAD =
@@ -43,10 +44,11 @@ const lastMagicEmailStorageKey = "kondate.auth.lastMagicEmail";
  */
 const magicSentUiStorageKey = "kondate.auth.magicSentUi";
 /**
- * C10: 未完了マジックの PII を sessionStorage に長く残さない。
- * continuation TTL（5 分）に揃え、共有端末でのメール露出窓を縮める。
+ * C13: 未完了マジックの PII を sessionStorage に長く残さない。
+ * 共有端末での宛先露出窓を縮めるため continuation TTL（5 分）より短い 60s にする。
+ * 認証成功時と logout cleanup でも消す。
  */
-const MAGIC_RESIDUAL_TTL_MS = 300_000;
+const MAGIC_RESIDUAL_TTL_MS = 60_000;
 
 type MagicSentUiSnapshot = {
   email: string;
@@ -248,8 +250,13 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const location = useLocation();
   const locationState = readLoginAuthError(location.state, location.search);
   const params = new URLSearchParams(location.search);
-  // 明示的な復帰先は従来どおり安全化し、指定がない初回ログインだけ使い方の案内へ導く。
-  const returnTo = params.has("returnTo") ? sanitizeReturnPath(params.get("returnTo")) : "/welcome";
+  // 明示的な復帰先は安全化し、/login・/auth/callback 自己参照は載せない（C1）。
+  // 指定がない初回ログインだけ使い方の案内へ導く。
+  const returnTo = params.has("returnTo")
+    ? sanitizeLoginReturnPath(params.get("returnTo"), "/welcome")
+    : "/welcome";
+  // C14: AuthProvider 15s 主防衛の二次防衛（RequireSession / RootGate と同型）
+  const { showLoading } = useAuthLoadingDeadline(auth.status);
   const [state, setState] = useState<MagicLinkState>(() =>
     initialMagicLinkState(locationState.authError, location.search),
   );
@@ -368,7 +375,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   if (auth.status === "authenticated") {
     return <Navigate to={returnTo} replace />;
   }
-  if (auth.status === "loading") {
+  // deadline 超過後は未ログイン UI（フォーム）へフォールスルーする
+  if (showLoading) {
     return (
       <main className="page-frame stack">
         <p>読み込み中…</p>

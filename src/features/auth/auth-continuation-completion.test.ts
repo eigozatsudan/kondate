@@ -5,7 +5,11 @@ import {
   startAuthContinuationCompletionWait,
   startAuthContinuationCompletionListener,
 } from "./auth-continuation-completion";
-import { isAuthContinuationCallbackOwned, markAuthContinuationCallbackOwner } from "./auth-flow";
+import {
+  isAuthContinuationCallbackOwned,
+  markAuthContinuationCallbackOwner,
+  readAuthFlow,
+} from "./auth-flow";
 
 it("expires callback ownership at the existing auth flow TTL", () => {
   const storage = new MapStorage();
@@ -259,4 +263,34 @@ it("publishes only a safe same-origin return path", () => {
     returnTo: "/planner",
   });
   window.localStorage.removeItem("kondate.auth.supabase.continuation-complete");
+});
+
+it("C10: keeps flow secret when completion setItem fails before clear", () => {
+  const storage = new MapStorage();
+  const flowId = "10000000-0000-4000-8000-000000000001";
+  storage.setItem(
+    `kondate.auth.flow.${flowId}`,
+    JSON.stringify({
+      id: flowId,
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+      origin: "https://app.test",
+      returnTo: "/onboarding",
+      sessionExchange: "supabase",
+      startedAt: "2026-07-13T00:00:00.000Z",
+    }),
+  );
+  const originalSetItem = storage.setItem.bind(storage);
+  storage.setItem = (key: string, value: string) => {
+    if (key === "kondate.auth.supabase.continuation-complete") {
+      throw new Error("quota exceeded");
+    }
+    originalSetItem(key, value);
+  };
+
+  expect(() => {
+    publishAuthContinuationCompletion({ flowId, returnTo: "/onboarding" }, storage);
+  }).toThrow("quota exceeded");
+  // setItem 失敗時は clear しないので secret が残る
+  expect(readAuthFlow(flowId, storage)?.secret).toBe("A".repeat(43));
 });

@@ -155,17 +155,13 @@ describe("auth continuation claim", () => {
           ) {
             return null;
           }
-          if (store.claimed) return null;
+          // C3 / C4: 本番 RPC は claimed 後も ciphertext を保持し、同一資格情報で再提示する
           store.claimed = true;
-          // claim 後は ciphertext を消去する ledger 契約を模倣
-          const result = {
+          return {
             ciphertext: store.ciphertext,
             iv: store.iv,
             returnTo: store.returnTo,
           };
-          store.ciphertext = new Uint8Array(0);
-          store.iv = new Uint8Array(0);
-          return result;
         },
       );
 
@@ -192,7 +188,7 @@ describe("auth continuation claim", () => {
     expect(raw).not.toContain(Buffer.from(encrypted.ciphertext).toString("hex"));
     expect(raw).not.toContain(Buffer.from(encrypted.iv).toString("hex"));
 
-    // 再利用 claim は失敗（single-use）
+    // C3: 再利用 claim は冪等に同じ code を返す（single-use burn ではない）
     const replay = await handler(
       new Request("https://functions.test", {
         method: "POST",
@@ -201,7 +197,12 @@ describe("auth continuation claim", () => {
       }),
       { params: { continuationId: CONTINUATION_ID } },
     );
-    expect(replay.status).toBe(404);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({
+      ok: true,
+      data: { code: AUTH_CODE, returnTo: RETURN_TO },
+    });
+    expect(claim).toHaveBeenCalledTimes(2);
   });
 
   it("rejects secret hash binding violations with a closed 404", async () => {

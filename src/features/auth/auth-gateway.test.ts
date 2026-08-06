@@ -60,7 +60,8 @@ function continuationApiMock(overrides?: {
       (() =>
         Promise.resolve({
           id: "10000000-0000-4000-8000-000000000001",
-          expiresAt: "2026-07-11T00:05:00Z",
+          // C6: create 時 now と揃えた絶対期限（過去固定日時だと巨大 skew になる）
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
         })),
     deposit: overrides?.deposit ?? (() => Promise.resolve()),
     claim: overrides?.claim ?? (() => Promise.reject(new Error("not deposited"))),
@@ -106,7 +107,8 @@ function gatewayDeps(overrides?: Partial<AuthGatewayDeps>): AuthGatewayDeps {
 
 const fixedFlowDeps = {
   randomBytes: () => new Uint8Array(32).fill(7),
-  now: () => new Date("2026-07-11T00:00:00Z"),
+  // create 応答 expiresAt（now+5m）と skew 0 近傍になるよう壁時計を共有する（C6）
+  now: () => new Date(),
 };
 
 function configurePublicEnv(): void {
@@ -292,11 +294,11 @@ it("replaces an existing local flow when a magic link is resent", async () => {
       .fn()
       .mockResolvedValueOnce({
         id: "10000000-0000-4000-8000-000000000001",
-        expiresAt: "2026-07-11T00:05:00Z",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
       })
       .mockResolvedValueOnce({
         id: "10000000-0000-4000-8000-000000000002",
-        expiresAt: "2026-07-11T00:05:00Z",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
       }),
   });
   const client = authClientMock();
@@ -324,11 +326,11 @@ it("replaces an existing local magic-link flow when switching to Google", async 
       .fn()
       .mockResolvedValueOnce({
         id: "10000000-0000-4000-8000-000000000001",
-        expiresAt: "2026-07-11T00:05:00Z",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
       })
       .mockResolvedValueOnce({
         id: "10000000-0000-4000-8000-000000000002",
-        expiresAt: "2026-07-11T00:05:00Z",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
       }),
   });
   const client = authClientMock();
@@ -780,6 +782,38 @@ it("C1/C4: claim 410 (post-consume decrypt failure) is terminal and clears secre
   });
   // C4: 410 後に secret を残すと recovery が claim 連打するため消去する
   expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("C7: Zod parse failure (ResponseLost) after claim keeps secret for re-claim", async () => {
+  const storage = new MapStorage();
+  const claim = vi
+    .fn()
+    .mockRejectedValueOnce(new ContinuationResponseLostError())
+    .mockResolvedValueOnce({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toMatchObject({
+    kind: "complete",
+    flowId: flow.id,
+  });
+  expect(claim).toHaveBeenCalledTimes(2);
 });
 
 it("C3: response-lost after claim keeps secret so idempotent re-claim can recover the code", async () => {

@@ -28,6 +28,13 @@ const authFlowSchema = z
     startedAt: z.iso.datetime({ offset: true }),
     // create 応答のサーバ絶対期限。無い（旧 storage）ならローカル TTL のみ（C13）。
     expiresAt: z.iso.datetime({ offset: true }).optional(),
+    /**
+     * C6: create 時点の clientNow − (serverExpiresAt − ttl)。
+     * 正 = クライアント時計が進みすぎ。deadline 判定で now から差し引き、早期消去を抑える。
+     * 旧 storage には無い（0 扱い）。
+     */
+    // z.number() は無限大を既定で拒否するため .finite() は不要（deprecated no-op）
+    clockSkewMs: z.number().optional(),
   })
   .strict();
 const legacyAuthFlowSchema = authFlowSchema.omit({ sessionExchange: true }).strict();
@@ -51,14 +58,19 @@ export const browserFlowDeps: FlowDeps = {
   now: () => new Date(),
 };
 
+/**
+ * C9: continuation secret は localStorage 平文（SPA+PKCE 設計のロック）。
+ * HttpOnly cookie 境界は無し。同一オリジン XSS 面は CSP（emit-deploy-headers）と
+ * 所有キーの logout clear で抑止する。完全隔離はアーキテクチャ変更が必要。
+ */
 export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.supabase"] as const;
 
 const flowPrefix = ownedAuthStoragePrefixes[0];
 const callbackOwnerPrefix = `${ownedAuthStoragePrefixes[1]}.callback-owner.`;
 const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
-/** C3/R1: claim 成功応答欠落後の 404 を already-consumed 近似するための印 */
-const claimAmbiguousPrefix = `${ownedAuthStoragePrefixes[1]}.claim-ambiguous.`;
 const defaultAuthContinuationTtlMs = 300_000;
+/** C6: create 時 skew の異常値をクリップ（手動時刻の極端なズレでも無限延命しない） */
+const MAX_ABS_CLOCK_SKEW_MS = 48 * 60 * 60 * 1_000;
 
 function base64url(bytes: Uint8Array): string {
   let binary = "";
@@ -103,6 +115,26 @@ export function sanitizeReturnPath(value: string | null | undefined): string {
   }
 }
 
+/**
+ * 認証完了後の復帰先に載せるとループや無意味な中間遷移になる自己参照パス。
+ * open redirect ではなく UX/状態機械の対称性（session-expiry / callback エラーと同型）。
+ */
+export function isAuthSelfReturnPath(path: string): boolean {
+  return path === "/login" || path.startsWith("/login?") || path.startsWith("/auth/callback");
+}
+
+/**
+ * Login happy path 用: sanitize したうえで /login・/auth/callback 自己参照を fallback へ落とす（C1）。
+ */
+export function sanitizeLoginReturnPath(
+  value: string | null | undefined,
+  fallback = "/welcome",
+): string {
+  const safe = sanitizeReturnPath(value);
+  if (isAuthSelfReturnPath(safe)) return fallback;
+  return safe;
+}
+
 export function buildAuthCallbackUrl(origin: string, flow: Pick<AuthFlow, "id" | "state">): string {
   const parsedOrigin = new URL(origin);
   if (parsedOrigin.origin !== origin) throw new Error("invalid app origin");
@@ -141,32 +173,6 @@ export function clearAuthFlow(id: string, storage: Storage = window.localStorage
 export function clearClaimedAuthFlow(id: string, storage: Storage = window.localStorage): void {
   // 勝者の完了通知まで所有証跡を残し、同時claimに敗れたタブを待機へ収束させる。
   storage.removeItem(`${flowPrefix}${id}`);
-  clearClaimAmbiguous(id, storage);
-}
-
-/** C3/R1: claim 成功後の応答欠落のあと 404 を already-consumed 近似するための印を付ける */
-export function markClaimAmbiguous(id: string, storage: Storage = window.localStorage): void {
-  try {
-    storage.setItem(`${claimAmbiguousPrefix}${id}`, "1");
-  } catch {
-    // 印を書けなくても fail-open で従来の 404 リトライに落ちる（可用性優先）
-  }
-}
-
-export function isClaimAmbiguous(id: string, storage: Storage = window.localStorage): boolean {
-  try {
-    return storage.getItem(`${claimAmbiguousPrefix}${id}`) !== null;
-  } catch {
-    return false;
-  }
-}
-
-export function clearClaimAmbiguous(id: string, storage: Storage = window.localStorage): void {
-  try {
-    storage.removeItem(`${claimAmbiguousPrefix}${id}`);
-  } catch {
-    // cleanup 失敗は次回 clearAuthFlow や TTL で収束する
-  }
 }
 
 export function markAuthContinuationCallbackOwner(flowId: string, storage?: Storage): void;
@@ -204,6 +210,7 @@ export function markAuthContinuationCallbackOwner(
         if (storage.getItem(ownerKey) !== null) storage.setItem(ownerKey, rebasedAt);
       },
       flow.expiresAt,
+      flow.clockSkewMs,
     );
     if (normalized === null) return false;
     storage.setItem(`${callbackOwnerPrefix}${flowId}`, normalized);
@@ -243,6 +250,7 @@ export function readAuthContinuationCallbackStartedAt(
         }
       },
       flow?.expiresAt,
+      flow?.clockSkewMs,
     );
   } catch {
     clearAuthFlowClockState(flowId, storage);
@@ -284,6 +292,7 @@ export function listUnexpiredAuthFlows(
         if (storage.getItem(ownerKey) !== null) storage.setItem(ownerKey, rebasedAt);
       },
       flow.expiresAt,
+      flow.clockSkewMs,
     );
     if (normalized !== null) result.push({ ...flow, startedAt: normalized });
   }
@@ -296,6 +305,29 @@ function parseServerExpiresMs(serverExpiresAt: string | null | undefined): numbe
   return Number.isFinite(ms) ? ms : null;
 }
 
+function clampClockSkewMs(skewMs: number | null | undefined): number {
+  if (skewMs === undefined || skewMs === null || !Number.isFinite(skewMs)) return 0;
+  if (skewMs > MAX_ABS_CLOCK_SKEW_MS) return MAX_ABS_CLOCK_SKEW_MS;
+  if (skewMs < -MAX_ABS_CLOCK_SKEW_MS) return -MAX_ABS_CLOCK_SKEW_MS;
+  return skewMs;
+}
+
+/**
+ * create 応答の expiresAt とクライアント now から skew を推定する（C6）。
+ * serverImpliedNow ≈ expiresAt − ttl。client が進みすぎなら正の skew。
+ */
+export function estimateAuthClockSkewMs(
+  clientNowMs: number,
+  serverExpiresAt: string,
+  ttlMs: number = defaultAuthContinuationTtlMs,
+): number {
+  const serverExpiresMs = new Date(serverExpiresAt).getTime();
+  if (!Number.isFinite(clientNowMs) || !Number.isFinite(serverExpiresMs) || !isValidTtl(ttlMs)) {
+    return 0;
+  }
+  return clampClockSkewMs(clientNowMs - (serverExpiresMs - ttlMs));
+}
+
 function normalizeAuthClock(
   flowId: string,
   startedAt: string,
@@ -305,14 +337,18 @@ function normalizeAuthClock(
   persistRebase: (rebasedAt: string) => void,
   /** create 応答の絶対期限。未知ならローカル TTL のみ（C13）。 */
   serverExpiresAt?: string | null,
+  /** C6: create 時に保存した client−server 推定 skew（正 = クライアント進み）。 */
+  clockSkewMs?: number | null,
 ): string | null {
   try {
-    const nowMs = now.getTime();
+    const wallNowMs = now.getTime();
     const startedAtMs = new Date(startedAt).getTime();
-    if (!Number.isFinite(nowMs) || !Number.isFinite(startedAtMs) || !isValidTtl(ttlMs)) {
+    if (!Number.isFinite(wallNowMs) || !Number.isFinite(startedAtMs) || !isValidTtl(ttlMs)) {
       clearAuthFlowClockState(flowId, storage);
       return null;
     }
+    // C6: 進みすぎクライアント時計でもサーバ期限まで claim できるよう now を補正する
+    const nowMs = wallNowMs - clampClockSkewMs(clockSkewMs);
 
     const serverExpiresMs = parseServerExpiresMs(serverExpiresAt);
 
@@ -408,7 +444,6 @@ function clearAuthFlowClockState(flowId: string, storage: Storage): void {
     `${flowPrefix}${flowId}`,
     `${callbackOwnerPrefix}${flowId}`,
     `${clockRebasePrefix}${flowId}`,
-    `${claimAmbiguousPrefix}${flowId}`,
   ]) {
     try {
       storage.removeItem(key);
@@ -487,14 +522,20 @@ export function createContinuationApi(fetchImpl: typeof fetch = fetch): Continua
       body: JSON.stringify(body),
     });
     if (!response.ok) throw new ContinuationHttpError(response.status);
-    // 2xx 到達後の body 欠落はサーバ処理済み（claim なら burn 済み）の可能性が高い（R1）
+    // 2xx 到達後の body 欠落はサーバ処理済み（claim は C3 で冪等再提示）の可能性が高い（R1）
     let value: unknown;
     try {
       value = response.status === 204 ? null : await response.json();
     } catch {
       throw new ContinuationResponseLostError();
     }
-    return successEnvelope(schema).parse(value).data;
+    try {
+      return successEnvelope(schema).parse(value).data;
+    } catch {
+      // C7: schema drift / 中間改変での Zod 失敗も terminal clear にせず、
+      // C3 冪等 re-claim で回復できるよう ResponseLost と同じく secret 保持経路へ。
+      throw new ContinuationResponseLostError();
+    }
   };
   return {
     create: (input) => post("/api/auth/continuations", input, createResponseSchema),
@@ -527,8 +568,15 @@ export async function createAuthFlow(
 ): Promise<AuthFlow> {
   const secret = base64url(deps.randomBytes(32));
   const state = base64url(deps.randomBytes(32));
-  const safeReturnTo = sanitizeReturnPath(returnTo);
+  // C1: /login・/auth/callback 自己参照は flow/DB に載せない（fallback は welcome）
+  const safeReturnTo = sanitizeLoginReturnPath(returnTo, "/welcome");
   const created = await api.create({ state, secret, returnTo: safeReturnTo });
+  const clientNow = deps.now();
+  const clockSkewMs = estimateAuthClockSkewMs(
+    clientNow.getTime(),
+    created.expiresAt,
+    defaultAuthContinuationTtlMs,
+  );
   const flow = authFlowSchema.parse({
     id: created.id,
     secret,
@@ -536,10 +584,18 @@ export async function createAuthFlow(
     origin: window.location.origin,
     returnTo: safeReturnTo,
     sessionExchange,
-    startedAt: deps.now().toISOString(),
+    startedAt: clientNow.toISOString(),
     // サーバ絶対期限を保持し、ローカル clock rebase 時にクリップする（C13）
     expiresAt: created.expiresAt,
+    // C6: 進みすぎクライアント時計での早期 secret 消去を抑える
+    ...(clockSkewMs === 0 ? {} : { clockSkewMs }),
   });
-  storage.setItem(`${flowPrefix}${flow.id}`, JSON.stringify(flow));
+  try {
+    storage.setItem(`${flowPrefix}${flow.id}`, JSON.stringify(flow));
+  } catch {
+    // C15: 永続化失敗時は秘密をメモリにも残さない（呼び出し側は開始失敗として扱う）。
+    // サーバ行の即時取消 RPC は無いため TTL 掃除に委ねる（孤児行は秘密ハッシュのみ）。
+    throw new Error("auth_flow_persist_failed");
+  }
   return flow;
 }

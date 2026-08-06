@@ -171,7 +171,12 @@ export function AuthProvider({
       startAuthContinuationCompletionListener({
         onComplete: (result) => {
           void refreshSession();
-          navigateTo(result.returnTo);
+          // C16: 認証待ち画面のタブだけ returnTo へ遷移する。
+          // 設定編集中などの他タブを強制 navigate して未保存 UI を捨てない。
+          const path = window.location.pathname;
+          if (path === "/login" || path.startsWith("/login/") || path === "/auth/callback") {
+            navigateTo(result.returnTo);
+          }
         },
       }),
     [navigateTo, refreshSession],

@@ -84,25 +84,25 @@ select is(
     (select id from continuation_case), decode(repeat('00', 32), 'hex'), 'https://app.test', decode('bb', 'hex'), decode(repeat('03', 12), 'hex'), '2026-07-11T00:02:00Z'
   ),
   true,
-  'later matching anonymous deposit is accepted without replacing the first value'
+  'later matching anonymous deposit is accepted and replaces the first value'
 );
 select is(
   (select encode(encrypted_code, 'hex') from private.auth_continuations where id = (select id from continuation_case)),
-  'aa',
-  'first deposit ciphertext wins for anonymous deposit'
+  'bb',
+  'anonymous deposit last-wins while unclaimed (C2 residual poison first-wins closed)'
 );
--- C2: 所有者 secret 付き deposit は毒 first-wins を上書きできる
+-- C2: 所有者 secret 付き deposit も未 claim なら上書きできる
 select is(
   public.deposit_auth_continuation(
     (select id from continuation_case), decode(repeat('00', 32), 'hex'), 'https://app.test', decode('cc', 'hex'), decode(repeat('04', 12), 'hex'), '2026-07-11T00:02:30Z', decode(repeat('01', 32), 'hex')
   ),
   true,
-  'owner secret deposit overwrites poisoned first-wins ciphertext'
+  'owner secret deposit overwrites anonymous ciphertext'
 );
 select is(
   (select encode(encrypted_code, 'hex') from private.auth_continuations where id = (select id from continuation_case)),
   'cc',
-  'owner deposit ciphertext replaces the first value'
+  'owner deposit ciphertext replaces the previous value'
 );
 -- B-I2 精緻化: deposit 前の正当ポーリングは副作用なし（空返却・行保持）
 delete from continuation_case;
