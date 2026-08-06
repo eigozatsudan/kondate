@@ -230,7 +230,11 @@ async function loadLivePantryQuantities(
   }
   for (const row of data) {
     const parsed = pantryLiveRowSchema.safeParse(row);
-    if (!parsed.success) continue;
+    // HR10: schema 崩れを Map 非登録のままにすると pantry_item_removed 誤誘導になる。
+    // query error と同型の 503 fail-closed（削除と区別する）。
+    if (!parsed.success) {
+      throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+    }
     map.set(parsed.data.id, parsed.data.quantity);
   }
   return map;

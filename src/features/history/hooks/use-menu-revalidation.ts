@@ -31,6 +31,8 @@ export function menuRevalidationQueryKey(menuId: string) {
  *   ただし soft 飛行中は isSoftRechecking=true を返し、呼び出し側は採用/再生成/買い物 CTA
  *   だけを閉じる（HR1: 別端末のアレルギー変更〜soft 完了までの操作窓を塞ぐ）。
  * - online 復帰は hard（offline 閉鎖のあと、成功するまで操作を再開しない）。
+ * - offline は hard と同様に世代を進め forcedChecking を立てるが、再 POST はしない
+ *   （online hard が成功するまで閉じ続ける。HR3: 飛行中 soft の finally で CTA を戻さない）。
  *
  * 飛行中の hard は常に checking。古い hard の完了で最新の閉じ状態を開けない。
  * Realtime は RLS で本人行に限定し、browser から owner ID を送らない。
@@ -94,6 +96,18 @@ export function useMenuRevalidation(menuId: string) {
   }, [cache, menuId, queryKey]);
 
   /**
+   * offline: hard と同じく世代を進めて閉じるが、offline 中は再 POST しない。
+   * online 復帰の hard 契約と衝突させない（resetQueries しない）。
+   */
+  const beginOfflineHold = useCallback(() => {
+    if (menuId.length === 0) return;
+    // HR3: 飛行中 soft の finally が generation 一致で forcedChecking を下ろすのを防ぐ
+    requestGenerationRef.current += 1;
+    setForcedChecking(true);
+    void cache.cancelQueries({ queryKey, exact: true });
+  }, [cache, menuId, queryKey]);
+
+  /**
    * 公開 API は hard（ラベル確認後・stale confirm 失敗など fail-closed が必要な呼び出し元向け）。
    */
   const beginRecheck = beginHardRecheck;
@@ -117,8 +131,7 @@ export function useMenuRevalidation(menuId: string) {
       hard();
     };
     const onOffline = () => {
-      // オフライン中は fetch が始まらないため、明示的に閉じ続ける
-      setForcedChecking(true);
+      beginOfflineHold();
     };
     const channel = getBrowserSupabaseClient()
       .channel(`menu-safety:${menuId}`)
@@ -161,7 +174,7 @@ export function useMenuRevalidation(menuId: string) {
       window.clearInterval(timer);
       void channel.unsubscribe();
     };
-  }, [beginHardRecheck, beginSoftRecheck, menuId]);
+  }, [beginHardRecheck, beginOfflineHold, beginSoftRecheck, menuId]);
 
   // hard / 初回 data なしだけ checking。soft の isFetching では直前結果を出したままにする
   // （focus 点滅防止）。soft ネットワーク失敗は isError で error へ落とし、旧 valid の CTA を開かない。

@@ -413,6 +413,83 @@ describe("useMenuRevalidation", () => {
     });
   });
 
+  it("offline during soft recheck keeps checking even when soft settles (HR3)", async () => {
+    // soft 飛行中に offline → soft が成功終端しても finally が forcedChecking を下ろさない。
+    // online hard が成功するまで CTA を再開放しない。
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const softFlight = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(softFlight.promise);
+    act(() => {
+      result.current.beginSoftRecheck();
+    });
+    expect(result.current.phase).toBe("checked");
+    await waitFor(() => {
+      expect(result.current.isSoftRechecking).toBe(true);
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+    expect(result.current.isSoftRechecking).toBe(false);
+
+    // 遅延 soft 成功でも offline hold の世代が進んでいるため checking のまま
+    act(() => {
+      softFlight.resolve(valid);
+    });
+    // マイクロタスクで finally が走っても phase が checked に戻らないこと
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+    expect(result.current.isSoftRechecking).toBe(false);
+
+    // online 復帰の hard で初めて checked へ戻る
+    const onlineFlight = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(onlineFlight.promise);
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(result.current.phase).toBe("checking");
+    act(() => {
+      onlineFlight.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    expect(result.current.result?.status).toBe("valid");
+  });
+
+  it("offline alone forces checking until online hard succeeds (HR3)", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.result).toBeUndefined();
+
+    const onlineFlight = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(onlineFlight.promise);
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(result.current.phase).toBe("checking");
+    act(() => {
+      onlineFlight.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+  });
+
   it("hard rechecks on Realtime CHANNEL_ERROR and TIMED_OUT (HR2)", async () => {
     const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
     await waitFor(() => {

@@ -410,6 +410,37 @@ describe("validateStoredMenuCurrentSafety", () => {
     ).rejects.toMatchObject({ status: 503, code: "request_failed" });
   });
 
+  it("HR10: fails closed with 503 when live pantry row schema parse fails (not pantry_item_removed)", async () => {
+    // quantity 型崩れなどを silent skip すると Map 非登録 → pantry_item_removed 誤誘導になる
+    const stored = makeStored();
+    const ownerClient = ownerClientWith({
+      pantry_items: {
+        data: [{ id: PANTRY_ITEM_ID, quantity: "not-a-number" }],
+        error: null,
+      },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    await expect(
+      validateStoredMenuCurrentSafety({
+        ownerClient: ownerClient as never,
+        admin: {} as never,
+        stored,
+        userId: USER_ID,
+      }),
+    ).rejects.toMatchObject({ status: 503, code: "request_failed" });
+  });
+
   it("fails closed with current_target_member_required when no surviving targets remain", async () => {
     const stored = makeStored({
       targetMemberIds: [],
