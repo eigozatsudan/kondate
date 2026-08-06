@@ -350,7 +350,7 @@ describe("materializeAiGeneratedMenu", () => {
     expect(menu2.dishes[0]!.ingredients.map((i) => i.name)).toEqual(["ごはん", "ごはん"]);
   });
 
-  it("R2: keeps pantry_unit_mismatch when provider unit differs (no unit overwrite)", () => {
+  it("R2: keeps pantry_unit_mismatch when provider pantryUsage unit differs (no usage unit overwrite)", () => {
     const payload = makePayload();
     payload.pantryUsage[0]!.unit = "kg";
     payload.pantryUsage[0]!.plannedQuantity = 0.3;
@@ -358,6 +358,35 @@ describe("materializeAiGeneratedMenu", () => {
       () => materializeAiGeneratedMenu(payload, makeContext(300), uuidFactory()),
       "pantry_unit_mismatch",
     );
+  });
+
+  it("G5: overwrites pantry-backed ingredient unit with trusted pantry unit", () => {
+    const payload = makePayload();
+    // AI が正当 pantryRef に在庫と違う unit を付けても materialize は成功し、dish 行は trusted に揃う。
+    // pantryUsage.unit は trusted 一致のまま（不一致は pantry_unit_mismatch）。
+    payload.dishes[0]!.ingredients[0]!.unit = "本";
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    expect(menu.dishes[0]!.ingredients[0]!.unit).toBe("g");
+    expect(menu.pantryUsage[0]!.unit).toBe("g");
+  });
+
+  it("G5: leaves non-pantry ingredient unit as provider value", () => {
+    const payload = makePayload();
+    payload.dishes[1]!.ingredients[0]!.unit = "袋";
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    expect(menu.dishes[1]!.ingredients[0]!.unit).toBe("袋");
+    expect(menu.dishes[1]!.ingredients[0]!.pantrySelectionId).toBeNull();
+  });
+
+  it("G5: overwrites pantry-backed ingredient unit to null when trusted unit is null", () => {
+    const payload = makePayload();
+    payload.dishes[0]!.ingredients[0]!.unit = "本";
+    // 在庫数量なし・unit なし。plannedQuantity も null にして usage 側の unit/数量チェックを通す。
+    payload.pantryUsage[0]!.plannedQuantity = null;
+    payload.pantryUsage[0]!.unit = null;
+    const menu = materializeAiGeneratedMenu(payload, makeContext(null), uuidFactory());
+    expect(menu.dishes[0]!.ingredients[0]!.unit).toBeNull();
+    expect(menu.pantryUsage[0]!.unit).toBeNull();
   });
 
   it.each([0.1, 0.2, 0.3, 1.001])("accepts exact thousandth quantity %s", (quantity) => {

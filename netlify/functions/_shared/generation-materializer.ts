@@ -79,7 +79,10 @@ export function materializeAiGeneratedMenu(
     }),
   );
 
-  // R2: pantryRef が正当な ingredient は name のみ trusted 上書き（unit は上書きしない）。
+  // R2/G5: pantryRef が正当な ingredient は name と unit を trusted 上書きする。
+  // unit を AI 値のまま残すと dish 行と pantryUsage/在庫単位が乖離し、買い物・分量表示が壊れる。
+  // plannedQuantity の単位整合は pantryUsage 側の pantry_unit_mismatch で fail-closed のまま
+  //（数量を trusted に寄せない／unit だけ差し替えて成功にしない）。
   // 以降の materialize / sourceByKey / label 経路はすべて working 値を使う。
   const workingDishes = menu.dishes.map((dish) => ({
     ...dish,
@@ -87,7 +90,11 @@ export function materializeAiGeneratedMenu(
       if (ingredient.pantryRef === null) return ingredient;
       const trusted = pantryByRef.get(ingredient.pantryRef);
       if (trusted === undefined) return ingredient;
-      return { ...ingredient, name: trusted.item.name };
+      return {
+        ...ingredient,
+        name: trusted.item.name,
+        unit: trusted.item.unit,
+      };
     }),
   }));
   const workingMenu = { ...menu, dishes: workingDishes };
@@ -150,7 +157,7 @@ export function materializeAiGeneratedMenu(
   );
 
   const targetMemberRefs = new Set(context.targetMembers.map((member) => member.anonymousRef));
-  // workingMenu.dishes を正本にする（R2 name 上書き後）
+  // workingMenu.dishes を正本にする（R2/G5 name・unit 上書き後）
   const materializedDishes = workingMenu.dishes.map((dish) => ({
     id: required(dishIdByRef, dish.dishRef),
     role: dish.role,
@@ -162,7 +169,7 @@ export function materializeAiGeneratedMenu(
       if (ingredient.pantryRef !== null && !usageByRef.has(ingredient.pantryRef)) {
         outputError("dangling_ref");
       }
-      // pantryRef 正当時は name を trusted 済み。不正 ref は pantryByRef 不在で mismatch。
+      // pantryRef 正当時は name/unit を trusted 済み。不正 ref は pantryByRef 不在で mismatch。
       if (ingredient.pantryRef !== null) {
         const trusted = pantryByRef.get(ingredient.pantryRef);
         if (
@@ -178,6 +185,7 @@ export function materializeAiGeneratedMenu(
         name: ingredient.name,
         quantityValue: ingredient.quantityValue,
         quantityText: ingredient.quantityText,
+        // working 上で trusted unit 済み（G5）。買い足し（pantryRef null）は AI unit のまま。
         unit: ingredient.unit,
         storeSection: ingredient.storeSection,
         pantrySelectionId:
@@ -377,7 +385,7 @@ export function materializeAiGeneratedMenu(
     if (source === undefined) outputError("label_source_invalid");
     const sourceText = source.paths.get(label.sourcePath);
     if (sourceText === undefined) outputError("label_source_invalid");
-    // ingredient.name は working 上で trusted 済み。不正 ref のみ mismatch。
+    // ingredient.name は working 上で trusted 済み（unit も G5 で trusted）。不正 ref のみ mismatch。
     if (label.sourceType === "ingredient") {
       const ingredient = required(ingredients, label.sourceRef);
       if (ingredient.pantryRef !== null) {
