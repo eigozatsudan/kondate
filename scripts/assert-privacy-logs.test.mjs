@@ -151,4 +151,54 @@ describe("assertPrivacyLogs", () => {
     });
     assert.equal(assertPrivacyLogs(`${line}\n`).generationLines, 1);
   });
+
+  // S4: createSafeLogger 拡張キー（job_id / failure_code / source_counts_* / stale_share_jobs_reaped）
+  it("allows share worker and emergency/maintenance SafeLog keys (S4)", () => {
+    const shareLine = JSON.stringify({
+      level: "info",
+      code: "share_generalize_job_skipped",
+      request_id: "share-worker",
+      duration_ms: 90,
+      job_id: "d1000000-0000-4000-8000-000000000001",
+      failure_code: "consent_revoked",
+    });
+    const emergencyLine = JSON.stringify({
+      level: "info",
+      code: "emergency_menus",
+      request_id: "emg-1",
+      duration_ms: 12,
+      path: "household",
+      source_counts_fixture: 3,
+      source_counts_community: 1,
+      candidate_count: 4,
+    });
+    const maintenanceLine = JSON.stringify({
+      level: "info",
+      code: "maintenance_cleanup",
+      request_id: "maintenance",
+      duration_ms: 50,
+      stale_share_jobs_reaped: 2,
+    });
+    assert.equal(
+      assertPrivacyLogs(`${goodLine}\n${shareLine}\n${emergencyLine}\n${maintenanceLine}\n`)
+        .generationLines,
+      1,
+    );
+  });
+
+  it("redacts job_id UUID so absence pattern does not false-positive (S4)", () => {
+    const shareOnly = JSON.stringify({
+      level: "error",
+      code: "share_generalize_job_failed",
+      request_id: "share-worker",
+      duration_ms: 10,
+      job_id: "d1000000-0000-4000-8000-000000000001",
+      failure_code: "server_gate_failed",
+    });
+    // requireGeneration:false で share 行のみを通す
+    assert.equal(
+      assertPrivacyLogs(`${shareOnly}\n`, { requireGeneration: false }).generationLines,
+      0,
+    );
+  });
 });

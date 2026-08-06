@@ -42,6 +42,8 @@ const allowedLogKeys = new Set([
   "draft_submissions_deleted",
   "identity_ledgers_deleted",
   "flyer_ledgers_deleted",
+  // maintenance reaper 件数（共有 job / lease_expired）
+  "stale_share_jobs_reaped",
   "path",
   "match_mode",
   "empty_reason",
@@ -58,6 +60,12 @@ const allowedLogKeys = new Set([
   "alert_metric",
   "generation_route",
   "http_status",
+  // 共有 worker: opaque job id + 閉じた failure/skip コード
+  "job_id",
+  "failure_code",
+  // 緊急候補ソース件数（本文・contributor 禁止）
+  "source_counts_fixture",
+  "source_counts_community",
 ]);
 
 const absencePatterns = [
@@ -91,6 +99,7 @@ const absencePatterns = [
 /**
  * 許可された opaque id キーの値は検査前に伏せる。
  * request_id は correlation 用 UUID を載せてよい契約。
+ * job_id は共有 worker の opaque UUID 契約（SafeLogEvent.jobId）。
  * stripe_customer_id / stripe_subscription_id は opaque Stripe id 契約。
  * 構造化 user_id 等の非許可キーに UUID が載った場合は bare UUID 検査で落とす。
  * @param {string} logText
@@ -98,6 +107,7 @@ const absencePatterns = [
 function redactAllowedOpaqueIds(logText) {
   return logText
     .replace(/"request_id"\s*:\s*"[^"]*"/gu, '"request_id":"<redacted>"')
+    .replace(/"job_id"\s*:\s*"[^"]*"/gu, '"job_id":"<redacted>"')
     .replace(/"stripe_customer_id"\s*:\s*"[^"]*"/gu, '"stripe_customer_id":"<redacted>"')
     .replace(/"stripe_subscription_id"\s*:\s*"[^"]*"/gu, '"stripe_subscription_id":"<redacted>"');
 }
