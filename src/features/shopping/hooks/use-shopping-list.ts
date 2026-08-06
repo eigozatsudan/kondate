@@ -256,18 +256,26 @@ export type ResumeShoppingCommandOptions<T> = {
   targetId: string | null;
   schema: z.ZodType<T>;
   submit: (command: T) => Promise<void>;
+  /**
+   * false のとき resume しない（献立 revalidation soft/checking など）。
+   * pending は残し、true に戻った effect で再試行する（HR9）。
+   * 省略時は true（従来どおり mount/focus/online で送る）。
+   */
+  enabled?: boolean;
 };
 
 /**
  * 送信済みかどうか分からない create / reconcile を、再読込・復帰・オンライン復帰の
  * いずれでも「同じバイト列・同じ idempotency key」で高々1本だけ再送する。
  * 成功（応答の parse と使用中リストの読み直し）が済むまで記録は消さない。
+ * enabled=false のあいだは送信せず pending を保持する（safety gate と dual-gate）。
  */
 export function useResumeShoppingCommand<T>({
   kind,
   targetId,
   schema,
   submit,
+  enabled = true,
 }: ResumeShoppingCommandOptions<T>) {
   const inFlight = useRef(false);
   const submitRef = useRef(submit);
@@ -277,7 +285,8 @@ export function useResumeShoppingCommand<T>({
   }, [submit]);
 
   const resume = useCallback(async () => {
-    if (inFlight.current || targetId === null) return;
+    // HR9: actionsEnabled 等が false のときは送らず pending を残す
+    if (!enabled || inFlight.current || targetId === null) return;
     const key = pendingShoppingCommandStorageKey(kind, targetId);
     const saved = sessionStorage.getItem(key);
     if (saved === null) return;
@@ -302,7 +311,7 @@ export function useResumeShoppingCommand<T>({
     } finally {
       inFlight.current = false;
     }
-  }, [kind, schema, targetId]);
+  }, [enabled, kind, schema, targetId]);
 
   useEffect(() => {
     const online = () => {

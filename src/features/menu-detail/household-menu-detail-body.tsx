@@ -107,6 +107,7 @@ export function HouseholdMenuDetailBody({
     ...(live.result !== undefined ? { result: live.result } : {}),
     ...(live.errorMessage !== undefined ? { errorMessage: live.errorMessage } : {}),
     isSoftRechecking: live.isSoftRechecking,
+    isOfflineHold: live.isOfflineHold,
     refetch: () => {
       void live.refetch();
     },
@@ -114,6 +115,7 @@ export function HouseholdMenuDetailBody({
   };
   const revalidation = injectedRevalidation ?? liveView;
   const isSoftRechecking = revalidation.isSoftRechecking ?? false;
+  const isOfflineHold = revalidation.isOfflineHold ?? false;
 
   const usage = useUsageToday(userId ?? "");
   const usageView = usageViewFromQuery(usage);
@@ -132,16 +134,21 @@ export function HouseholdMenuDetailBody({
   const missingPantrySelections =
     pantryQuery.isSuccess &&
     hasMissingPantrySelectionsForRegeneration(result.sourceSubmission, pantryQuery.data);
+  // HR5: sourceSubmission 欠落は server が envelope 422 になるため UI で先に閉じる
+  const sourceSubmissionMissing = result.sourceSubmission === null;
   // HR-I1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない
-  // HR5: 欠落 selection があるときは再生成 CTA を閉じる（server 422 を先回り）
-  const pantryGateReady = pantryQuery.isSuccess && !missingPantrySelections;
+  // HR5: 欠落 selection / null submission のときは再生成 CTA を閉じる（server 422 を先回り）
+  const pantryGateReady =
+    pantryQuery.isSuccess && !missingPantrySelections && !sourceSubmissionMissing;
   const pantryGateMessage = pantryQuery.isError
     ? "冷蔵庫を確認できません。通信を確認してから別案を作り直してください。"
     : pantryQuery.isPending
       ? "冷蔵庫を確認しています…"
-      : missingPantrySelections
-        ? "作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。"
-        : null;
+      : sourceSubmissionMissing
+        ? "作成時の条件を読み込めないため、別案を作り直せません。"
+        : missingPantrySelections
+          ? "作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。"
+          : null;
   const regeneration = useRegeneration({
     targetMode: "household",
     menuId,
@@ -294,6 +301,8 @@ export function HouseholdMenuDetailBody({
   };
 
   const submitCreate = async (command: CreateShoppingListRequest) => {
+    // HR9: soft/checking 中の resume でも mutate しない（pending は enabled 復帰で再試行）
+    if (!actionsEnabled) return;
     try {
       await createList.mutateAsync(command);
       await finishShoppingCommand("create", command.menuId);
@@ -304,6 +313,8 @@ export function HouseholdMenuDetailBody({
     }
   };
   const submitReconcile = async (listId: string, command: ReconcileShoppingListRequest) => {
+    // HR9: 献立 gate が閉じているあいだは resume も送らない
+    if (!actionsEnabled || shoppingGate.blocked) return;
     try {
       await reconcileList.mutateAsync({ listId, input: command });
       await finishShoppingCommand("reconcile", listId);
@@ -318,6 +329,8 @@ export function HouseholdMenuDetailBody({
     targetId: menuId,
     schema: createShoppingListRequestSchema,
     submit: submitCreate,
+    // HR9: soft/hard 閉じ中は focus resume を止める。true 復帰で effect が再送
+    enabled: actionsEnabled,
   });
   useResumeShoppingCommand({
     kind: "reconcile",
@@ -325,13 +338,15 @@ export function HouseholdMenuDetailBody({
     schema: reconcileShoppingListRequestSchema,
     submit: (command: ReconcileShoppingListRequest) =>
       submitReconcile(activeList?.id ?? "", command),
+    enabled: actionsEnabled && !shoppingGate.blocked,
   });
 
   const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;
 
   const actions = useMemo((): MenuResultActions | undefined => {
-    if (userId === undefined || revalidation.result === undefined) {
+    // HR2: soft 飛行中はラベル確認・在庫 mutation も閉じる（action bar と同契約）
+    if (userId === undefined || revalidation.result === undefined || isSoftRechecking) {
       return undefined;
     }
     const client = getBrowserSupabaseClient();
@@ -372,19 +387,31 @@ export function HouseholdMenuDetailBody({
         await queryClient.invalidateQueries({ queryKey });
       },
     };
-  }, [menuId, queryClient, queryKey, revalidation.beginRecheck, revalidation.result, userId]);
+  }, [
+    isSoftRechecking,
+    menuId,
+    queryClient,
+    queryKey,
+    revalidation.beginRecheck,
+    revalidation.result,
+    userId,
+  ]);
 
   const statusCopy = useMemo(() => {
+    // HR1: offline hold は shopping gate と同型の接続誘導（「確認中」で固まらない）
+    if (revalidation.phase === "checking" && isOfflineHold) {
+      return "ネット接続後に現在の家族設定を確認してください";
+    }
     if (revalidation.phase === "checking") return "現在の家族設定で確認しています";
     if (revalidation.phase === "error") return revalidation.errorMessage ?? "確認できませんでした";
-    // HR1: soft 飛行中は本文を維持しつつ「再確認中」を示し CTA だけ閉じる
+    // soft 飛行中は本文を維持しつつ「再確認中」を示し CTA だけ閉じる
     if (isSoftRechecking) return "いまの家族設定を再確認しています";
     if (revalidation.result?.status === "changed") {
       return "現在の家族設定で確認しました。作成時から条件が変わっています";
     }
     if (revalidation.result?.status === "valid") return "現在の家族設定で確認しました";
     return null;
-  }, [isSoftRechecking, revalidation]);
+  }, [isOfflineHold, isSoftRechecking, revalidation]);
 
   // HR-I2: changedDetails を日本語で明示（§9.1）。
   const changedDetailLines = useMemo(() => {
@@ -451,7 +478,12 @@ export function HouseholdMenuDetailBody({
         >
           <div className="revalidation-checking-panel">
             <div className="gen-status-indicator" aria-hidden="true" />
-            <p>現在の家族設定で確認しています</p>
+            {/* HR1: offline hold は shopping と同型の接続誘導。通常 checking は確認中 */}
+            <p>
+              {isOfflineHold
+                ? "ネット接続後に現在の家族設定を確認してください"
+                : "現在の家族設定で確認しています"}
+            </p>
           </div>
         </div>
       )}
@@ -573,7 +605,8 @@ export function HouseholdMenuDetailBody({
 
       <MenuResultActionBar
         notice={
-          accepted ? (
+          // HR12: invalid 後も「採用しました」が残ると usable 誤読になる。gate が開いているときだけ表示
+          accepted && gateOpen ? (
             <div role="status">
               <p className="menu-result-actions-notice-title">{MENU_ACCEPT_NOTICE_TITLE}</p>
               <p className="menu-result-actions-notice-hint">

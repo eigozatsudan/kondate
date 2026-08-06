@@ -90,16 +90,21 @@ export function IdeaMenuDetailBody({
   const missingPantrySelections =
     pantryQuery.isSuccess &&
     hasMissingPantrySelectionsForRegeneration(result.sourceSubmission, pantryQuery.data);
+  // HR5: sourceSubmission 欠落は server envelope 422 になるため UI で先に閉じる
+  const sourceSubmissionMissing = result.sourceSubmission === null;
   // HR-I1: 冷蔵庫未取得・失敗時は期限確認 UI を開かない（空配列 fail-open を防ぐ）
-  // HR5: 欠落 selection があるときは再生成 CTA を閉じる（server 422 を先回り）
-  const pantryGateReady = pantryQuery.isSuccess && !missingPantrySelections;
+  // HR5: 欠落 selection / null submission のときは再生成 CTA を閉じる（server 422 を先回り）
+  const pantryGateReady =
+    pantryQuery.isSuccess && !missingPantrySelections && !sourceSubmissionMissing;
   const pantryGateMessage = pantryQuery.isError
     ? "冷蔵庫を確認できません。通信を確認してから別案を作り直してください。"
     : pantryQuery.isPending
       ? "冷蔵庫を確認しています…"
-      : missingPantrySelections
-        ? "作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。"
-        : null;
+      : sourceSubmissionMissing
+        ? "作成時の条件を読み込めないため、別案を作り直せません。"
+        : missingPantrySelections
+          ? "作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。"
+          : null;
   const regeneration = useRegeneration({
     targetMode: "idea",
     menuId,

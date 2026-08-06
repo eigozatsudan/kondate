@@ -30,10 +30,11 @@ export function menuRevalidationQueryKey(menuId: string) {
  *   soft のネットワーク失敗は error へ（last-known-good valid で CTA を開かない = fail-closed）。
  *   soft 飛行中かつ直前が成功済みのときだけ checked を維持する。
  *   ただし soft 飛行中は isSoftRechecking=true を返し、呼び出し側は採用/再生成/買い物 CTA
- *   だけを閉じる（HR1: 別端末のアレルギー変更〜soft 完了までの操作窓を塞ぐ）。
+ *   と本文 mutation（ラベル確認・在庫）を閉じる（soft 完了までの操作窓を塞ぐ）。
  * - online 復帰は hard（offline 閉鎖のあと、成功するまで操作を再開しない）。
  * - offline は hard と同様に世代を進め forcedChecking を立てるが、再 POST はしない
- *   （online hard が成功するまで閉じ続ける。HR3: 飛行中 soft の finally で CTA を戻さない）。
+ *   （online hard が成功するまで閉じ続ける。飛行中 soft の finally で CTA を戻さない）。
+ *   isOfflineHold=true のあいだ UI は shopping と同型の接続誘導 copy を出す。
  *
  * 飛行中の hard は常に checking。古い hard の完了で最新の閉じ状態を開けない。
  * Realtime は RLS で本人行に限定し、browser から owner ID を送らない。
@@ -43,6 +44,8 @@ export function useMenuRevalidation(menuId: string) {
   const cache = useQueryClient();
   const userId = useAuth().session?.user.id;
   const [forcedChecking, setForcedChecking] = useState(false);
+  // HR1: offline hold 中だけ true。checking overlay を shopping と同型の offline 文言に切り替える
+  const [isOfflineHold, setIsOfflineHold] = useState(false);
   // 単調増加。完了時に最新世代だけが forcedChecking を解除する
   const requestGenerationRef = useRef(0);
 
@@ -91,6 +94,8 @@ export function useMenuRevalidation(menuId: string) {
     if (menuId.length === 0) return;
     // 進行中 soft の finally が generation 一致で forcedChecking を下ろすのを防ぐ
     requestGenerationRef.current += 1;
+    // online hard 等へ遷移したら offline 専用文言は下ろす（再 POST 中は通常 checking copy）
+    setIsOfflineHold(false);
     setForcedChecking(true);
     void cache.cancelQueries({ queryKey, exact: true });
     // data を消してから active refetch（失敗時 hasData=false → error、旧 valid に戻さない）
@@ -105,6 +110,7 @@ export function useMenuRevalidation(menuId: string) {
     if (menuId.length === 0) return;
     // HR3: 飛行中 soft の finally が generation 一致で forcedChecking を下ろすのを防ぐ
     requestGenerationRef.current += 1;
+    setIsOfflineHold(true);
     setForcedChecking(true);
     void cache.cancelQueries({ queryKey, exact: true });
   }, [cache, menuId, queryKey]);
@@ -197,16 +203,27 @@ export function useMenuRevalidation(menuId: string) {
   // hard の forcedChecking / 初回 data なしは phase=checking 側で閉じるため false。
   const isSoftRechecking = !forcedChecking && hasData && !query.isError && query.isFetching;
 
+  // マウント時から offline で初回 POST が落ちた場合も shopping と同型の誘導を出す
+  // navigator.onLine を Error.message より優先（汎用 network 文言で offline が埋もれない）
+  const offlineErrorFallback = "ネット接続後に現在の家族設定を確認してください";
   const errorMessage =
-    query.error instanceof Error ? query.error.message : "現在の家族設定で確認できませんでした";
+    typeof navigator !== "undefined" && navigator.onLine === false
+      ? offlineErrorFallback
+      : query.error instanceof Error
+        ? query.error.message
+        : "現在の家族設定で確認できませんでした";
 
   const refetch = useCallback(() => {
     // エラー画面の「もう一度確認」は hard（操作再開前に閉じたゲートを取り直す）
     requestGenerationRef.current += 1;
+    setIsOfflineHold(false);
     setForcedChecking(true);
     void cache.cancelQueries({ queryKey, exact: true });
     return cache.resetQueries({ queryKey, exact: true });
   }, [cache, queryKey]);
+
+  // offline hold 中だけ true（online hard 開始で下ろす）。テスト注入互換のため phase と独立
+  const offlineHoldActive = isOfflineHold && phase === "checking";
 
   return {
     ...query,
@@ -214,6 +231,8 @@ export function useMenuRevalidation(menuId: string) {
     result: phase === "checked" ? query.data : undefined,
     errorMessage: phase === "error" ? errorMessage : undefined,
     isSoftRechecking,
+    /** HR1: offline hold 中。UI は shopping gate と同型の接続誘導を出す */
+    isOfflineHold: offlineHoldActive,
     beginRecheck,
     beginSoftRecheck,
     beginHardRecheck,

@@ -374,6 +374,13 @@ function detectChangedDetails(
  * 履歴結果専用の subset validator。GenerationContext を mutable に渡さず、
  * 保存本文を現行安全条件だけで検査する。pantry/preference の drift は
  * invalid ではなく changedDetails に閉じる。
+ *
+ * residual-intentional (adversarial HR7): mount 再検証は allergen / food-rules /
+ * pantry 名 / member status + changedDetails の subset。再生成入口は
+ * validateGeneratedMenu full（adaptation 全員一致・portion/spice/ease hard 等）。
+ * 経路ごとにゲート集合が違う dual-validator は意図的（履歴 CTA を full まで
+ * 揃えると誤 invalid が増え、full を緩めると再生成安全性が落ちる）。
+ * subset ok でも再生成が 422 になり得る residual はサーバ fail-closed で受ける。
  */
 export async function validateStoredMenuCurrentSafety(input: {
   ownerClient: UserSupabaseClient;

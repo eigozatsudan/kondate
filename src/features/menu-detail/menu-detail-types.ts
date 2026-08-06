@@ -11,6 +11,11 @@ export type MenuDetailRevalidationView = {
   errorMessage?: string;
   /** soft 再検査飛行中。省略時は false（テスト注入互換） */
   isSoftRechecking?: boolean;
+  /**
+   * offline hold 中（再 POST せず checking を維持）。
+   * 省略時は false。UI は shopping と同型の接続誘導 copy を出す（HR1）。
+   */
+  isOfflineHold?: boolean;
   refetch?: () => void;
   /** stale confirm 失敗時などに同期的にゲートを閉じる */
   beginRecheck?: () => void;

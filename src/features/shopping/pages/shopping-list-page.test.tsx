@@ -1476,6 +1476,35 @@ describe("useResumeShoppingCommand", () => {
     expect(submit).not.toHaveBeenCalled();
     expect(sessionStorage.getItem(storageKey)).not.toBeNull();
   });
+
+  it("does not resume while enabled is false and retries when enabled becomes true (HR9)", async () => {
+    seed(Date.now());
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+
+    const { rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useResumeShoppingCommand({
+          kind: "create",
+          targetId: MENU_ID,
+          schema,
+          submit,
+          enabled,
+        }),
+      { initialProps: { enabled: false } },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(storageKey)).not.toBeNull();
+
+    rerender({ enabled: true });
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+    expect(JSON.stringify(submit.mock.calls[0]?.[0])).toBe(JSON.stringify(command));
+  });
 });
 
 describe("fetchReconcilableMenuSource", () => {

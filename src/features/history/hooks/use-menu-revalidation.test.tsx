@@ -482,12 +482,16 @@ describe("useMenuRevalidation", () => {
     });
     expect(result.current.phase).toBe("checking");
     expect(result.current.result).toBeUndefined();
+    // HR1: offline hold フラグで UI が接続誘導 copy に切り替えられる
+    expect(result.current.isOfflineHold).toBe(true);
 
     const onlineFlight = deferredPromise<RevalidationResult>();
     revalidateMenuMock.mockReturnValueOnce(onlineFlight.promise);
     act(() => {
       window.dispatchEvent(new Event("online"));
     });
+    // online hard 開始で offline 専用文言は下ろす（通常 checking へ）
+    expect(result.current.isOfflineHold).toBe(false);
     expect(result.current.phase).toBe("checking");
     act(() => {
       onlineFlight.resolve(valid);
@@ -495,6 +499,7 @@ describe("useMenuRevalidation", () => {
     await waitFor(() => {
       expect(result.current.phase).toBe("checked");
     });
+    expect(result.current.isOfflineHold).toBe(false);
   });
 
   it("hard rechecks on Realtime CHANNEL_ERROR and TIMED_OUT (HR2)", async () => {

@@ -106,7 +106,12 @@ export async function listDerivationVersions(
 /**
  * グループ内の採用版を差し替える RPC。
  * RPC 自体は所有権と is_selected 排他のみ（現行 safety は見ない）。
- * 呼び出し側（履歴詳細）が revalidation checked+actionable でゲートする（HR3）。
+ * 呼び出し側（履歴詳細）が revalidation checked+actionable+!soft でゲートする。
+ *
+ * residual-intentional (adversarial HR6): DB RPC に fingerprint / revalidate を
+ * 載せない DiD ギャップは意図的。買い物・再生成 Function は current safety で
+ * 再ゲートする。採用フラグ層だけを RPC で safety 連動させる変更は migration
+ * 契約変更になるため本パスでは行わない。
  */
 export async function acceptMenuVersion(menuId: string): Promise<void> {
   const supabase = getBrowserSupabaseClient();

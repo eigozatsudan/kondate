@@ -128,6 +128,22 @@ const SHOPPING_ITEM_ID = "32000000-0000-4000-8000-000000000002";
 const SHOPPING_FINGERPRINT = "f".repeat(64);
 const CREATE_IDEMPOTENCY_KEY = "40000000-0000-4000-8000-0000000000aa";
 
+/** HR5: 再生成 CTA を開くための最小 submission（pantry 欠落なし） */
+const regenerableSubmission = {
+  mealType: "dinner" as const,
+  mainIngredients: ["鶏肉"],
+  cuisineGenre: "japanese" as const,
+  targetMode: "household" as const,
+  targetMemberIds: ["10000000-0000-4000-8000-000000000001"],
+  servings: null,
+  timeLimitMinutes: 30 as const,
+  budgetPreference: "economy" as const,
+  ingredientPreference: null,
+  avoidIngredients: [] as string[],
+  memo: "",
+  pantrySelections: [] as { pantryItemId: string; priority: "prefer_use" | "must_use" }[],
+};
+
 const validRevalidation: RevalidationResult = {
   status: "valid",
   safetyFingerprint: "current",
@@ -445,6 +461,12 @@ describe("HistoryDetailPage safety gate", () => {
   });
 
   it("allows regeneration after a changed but valid current-safety result", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: regenerableSubmission,
+      }),
+    );
     renderHistoryDetail({
       revalidation: {
         phase: "checked",
@@ -472,12 +494,34 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByRole("button", { name: "この献立にする" })).toBeEnabled();
   });
 
-  it("disables mutation CTAs during soft recheck while keeping checked content (HR1)", async () => {
-    // soft 飛行中は phase=checked のまま本文を出し、採用/再生成/買い物だけ閉じる
+  it("disables mutation CTAs during soft recheck while keeping checked content (HR1/HR2)", async () => {
+    // soft 飛行中は phase=checked のまま本文を出し、採用/再生成/買い物とラベル mutation を閉じる
+    const view = makeMenuResultViewModel();
+    getMenuResultMock.mockResolvedValue(view);
+    const sourceId =
+      view.menu.dishes[0]?.ingredients[0]?.id ?? "53000000-0000-4000-8000-000000000001";
     renderHistoryDetail({
       revalidation: {
         phase: "checked",
-        result: validRevalidation,
+        result: {
+          ...validRevalidation,
+          // 警告を注入して soft 中でもラベル領域は出すが、確認ボタンは actions 非渡しで消える
+          currentLabelWarnings: [
+            {
+              confirmationId: "48000000-0000-4000-8000-000000000099",
+              sourceType: "ingredient",
+              sourceId,
+              sourcePath: "dishes.0.ingredients.0.name",
+              sourceText: "しょうゆ",
+              allergenId: "wheat",
+              allergenName: "小麦",
+              anonymousMemberRef: "member_2",
+              memberLabel: "大人",
+              dictionaryVersion: "jp-caa-2026-04.v1",
+              confirmationStatus: "pending",
+            },
+          ],
+        },
         isSoftRechecking: true,
       },
     });
@@ -487,6 +531,25 @@ describe("HistoryDetailPage safety gate", () => {
     expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
+    // ラベル文言は見えるが確認ボタンは出ない（HR2）。しょうゆは材料行と確認リストに重複する
+    expect((await screen.findAllByText(/しょうゆ/u)).length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+    ).toBeNull();
+  });
+
+  it("shows offline hold copy instead of generic checking (HR1)", async () => {
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checking",
+        isOfflineHold: true,
+      },
+    });
+    expect(
+      await screen.findByText("ネット接続後に現在の家族設定を確認してください"),
+    ).toBeVisible();
+    expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
+    expect(screen.queryByText("現在の家族設定で確認しています")).toBeNull();
   });
 
   it("disables regenerate when source pantry selection is missing from live (HR5)", async () => {
@@ -524,6 +587,22 @@ describe("HistoryDetailPage safety gate", () => {
     expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
   });
 
+  it("disables regenerate when sourceSubmission is null (HR5)", async () => {
+    // factory 既定は null。server envelope 422 を UI で先回りする
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "household", sourceSubmission: null }),
+    );
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    expect(
+      await screen.findByText("作成時の条件を読み込めないため、別案を作り直せません。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
+    // 採用は submission と独立
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeEnabled();
+  });
+
   it("calls acceptMenuVersion when この献立にする is clicked while actionable", async () => {
     const user = userEvent.setup();
     renderHistoryDetail({
@@ -553,6 +632,28 @@ describe("HistoryDetailPage safety gate", () => {
     const shopping = screen.getByRole("button", { name: "材料の買い物リストを作る" });
     expect(shopping).toHaveClass("primary-button");
     expect(shopping).toBeEnabled();
+  });
+
+  it("hides accept notice when revalidation is non-actionable even if isSelected (HR12)", async () => {
+    // is_selected でも invalid 時は gate 外のため「採用しました」を出さない
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "household", isSelected: true }),
+    );
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "invalid",
+          issues: [
+            { code: "allergen_present", path: "dishes.0", message: "アレルゲンが含まれます" },
+          ],
+        },
+      },
+    });
+    expect(await screen.findByText("アレルゲンが含まれます")).toBeVisible();
+    // MENU_ACCEPT_NOTICE_TITLE
+    expect(screen.queryByText("この献立にしました")).toBeNull();
   });
 
   it("keeps この献立にする disabled when revalidation is invalid", async () => {
@@ -749,6 +850,36 @@ describe("HistoryDetailPage safety gate", () => {
     expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID))).toBeNull();
   });
 
+  it("does not resume create shopping while soft rechecking (HR9)", async () => {
+    // soft 飛行中は actionsEnabled=false のため resume を止め、pending を残す
+    const pendingCommand = {
+      menuId: MENU_ID,
+      mode: "new" as const,
+      activeListId: null,
+      expectedListVersion: null,
+      idempotencyKey: CREATE_IDEMPOTENCY_KEY,
+    };
+    sessionStorage.setItem(
+      pendingShoppingCommandStorageKey("create", MENU_ID),
+      JSON.stringify({ createdAtMs: Date.now(), command: pendingCommand }),
+    );
+
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: validRevalidation,
+        isSoftRechecking: true,
+      },
+    });
+
+    await screen.findByText("いまの家族設定を再確認しています");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID))).not.toBeNull();
+  });
+
   it("disables shopping controls while safety gate is blocked", async () => {
     shoppingApi.revalidateActiveShoppingList.mockResolvedValue(invalidShoppingSafety);
 
@@ -911,7 +1042,17 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
   });
 
   it("renders a permanent notice and permitted actions without mounting revalidation or shopping", async () => {
-    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "idea",
+        sourceSubmission: {
+          ...regenerableSubmission,
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+        },
+      }),
+    );
 
     renderHistoryDetail();
 
@@ -967,7 +1108,17 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
   });
 
   it("hides child_friendly in idea regeneration dialog", async () => {
-    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "idea",
+        sourceSubmission: {
+          ...regenerableSubmission,
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+        },
+      }),
+    );
     renderHistoryDetail();
     await userEvent.click(
       await screen.findByRole("button", { name: "この案を元に別の献立を作り直す" }),
