@@ -14,6 +14,10 @@ import {
   type ContinuationApi,
 } from "./auth-flow";
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
+import {
+  releaseAuthContinuationCallbackPreLease,
+  startAuthContinuationCallbackPreLease,
+} from "./auth-continuation-recovery";
 import { getPublicEnv, type PublicEnv } from "@/shared/config/public-env";
 import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
 import { IMMEDIATE_CLAIM_TIMEOUT_MS, withTimeout } from "./async-timeout";
@@ -59,6 +63,21 @@ export type AuthCallbackResult =
       /** C4: recovery onResult が当該 flow だけを焼けるよう任意で載せる */
       flowId?: string;
     };
+
+/**
+ * C-R3 / C-R5: 同一 flow の in-flight resume をプロセス内で単一化する。
+ * createAuthGateway ごとだと callback ページと AuthProvider が別 Map を持ち、
+ * 同一タブ／同一プロセスでも dual exchange が再成立し得るためモジュール共有にする。
+ * （タブ横断は storage の callback pre-lease + AUTH-R2 が担う。）
+ * withTimeout は元 Promise を cancel しない。先着 Promise に join し、
+ * C3 冪等 re-claim は settle 後の再呼び出しで従来どおり。C4 hang 中 secret 保持も維持。
+ */
+const inflightResumeByFlowId = new Map<string, Promise<AuthCallbackResult>>();
+
+/** テスト専用: never-settle resume が Map に残ったあとの隔離用。本番コードからは呼ばない。 */
+export function resetInflightResumeForTests(): void {
+  inflightResumeByFlowId.clear();
+}
 
 export interface AuthGateway {
   signInWithGoogle(returnTo: string): Promise<void>;
@@ -106,12 +125,6 @@ export function createAuthGateway(
   deps: AuthGatewayDeps = browserAuthGatewayDeps,
 ): AuthGateway {
   const client = providedClient ?? getBrowserSupabaseClient();
-  // C-R3: 同一 flow の in-flight resume を単一化する。
-  // withTimeout は元 Promise を cancel しないため、completeCallback の即時 resume と
-  // recovery の第二 resume が並行すると二重 exchange → used-code terminal と遅延成功 session が競合し得る。
-  // 同一 gateway インスタンス上では先着の Promise を共有し、後続は join する（C3 冪等 re-claim は
-  // 先着が settle したあとの再呼び出しで従来どおり動く。C4 hang 中の secret 保持も維持）。
-  const inflightResumeByFlowId = new Map<string, Promise<AuthCallbackResult>>();
   // completeCallback から同一オブジェクトの resumeFlow を呼ぶため、先に束縛する。
   const gateway: AuthGateway = {
     async signInWithGoogle(returnTo) {
@@ -222,16 +235,13 @@ export function createAuthGateway(
       if (stored !== null && state !== stored.state) {
         return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
       }
-      try {
-        // C2: 同一ブラウザは secret を付けて毒 first-wins を上書きできるようにする
-        await continuationApi.deposit(
-          flowId,
-          stored === null ? { state, code } : { state, code, secret: stored.secret },
-        );
-      } catch {
-        return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
-      }
+      // クロスブラウザ（secret 無し）: deposit のみ。pre-lease は立てない（元タブ global を塞がない）。
       if (stored === null) {
+        try {
+          await continuationApi.deposit(flowId, { state, code });
+        } catch {
+          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+        }
         return {
           kind: "deposited",
           continuation: "original_browser",
@@ -243,15 +253,39 @@ export function createAuthGateway(
       // iOS 等で recovery の 5s poll / タイマー抑制に依存すると「確認中」が長く見える。
       // 一時失敗・timeout は awaiting を返し、AuthCallbackPage の recovery + TTL がフォールバックする。
       // claim 後 exchange が hang しても resumeFlow 側が complete 時に completion を publish する（C4）。
+      // C-R5: target recovery lease 前の pre-lease 窓で他タブ global が orphan claim → dual
+      // exchange しないよう、deposit 前から pre-lease を heartbeat する。
+      const stopPreLease = startAuthContinuationCallbackPreLease(flowId, storage);
       try {
-        return await withTimeout(gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);
-      } catch {
-        // withTimeout は "timeout" Error のみ reject。下層 resumeFlow は kind で返す。
-        return {
-          kind: "awaiting_completion",
-          flowId,
-          returnTo,
-        };
+        try {
+          // C2: 同一ブラウザは secret を付けて毒 first-wins を上書きできるようにする
+          await continuationApi.deposit(flowId, {
+            state,
+            code,
+            secret: stored.secret,
+          });
+        } catch {
+          releaseAuthContinuationCallbackPreLease(flowId, storage);
+          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+        }
+        try {
+          const result = await withTimeout(gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);
+          // awaiting は target recovery へ手渡しするため pre-lease を残す（TTL+recovery が引き継ぐ）。
+          if (result.kind !== "awaiting_completion") {
+            releaseAuthContinuationCallbackPreLease(flowId, storage);
+          }
+          return result;
+        } catch {
+          // withTimeout は "timeout" Error のみ reject。下層 resumeFlow は kind で返す。
+          // hang 中も pre-lease を残し、他タブ dual exchange を抑止する。
+          return {
+            kind: "awaiting_completion",
+            flowId,
+            returnTo,
+          };
+        }
+      } finally {
+        stopPreLease();
       }
     },
 

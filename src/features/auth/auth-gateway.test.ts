@@ -1,9 +1,10 @@
 import type { AuthError } from "@supabase/supabase-js";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
   createAuthGateway,
   IMMEDIATE_CLAIM_TIMEOUT_MS,
+  resetInflightResumeForTests,
   type AuthGatewayDeps,
 } from "./auth-gateway";
 import {
@@ -14,6 +15,11 @@ import {
   readAuthFlow,
   type ContinuationApi,
 } from "./auth-flow";
+
+afterEach(() => {
+  // モジュール共有 in-flight Map をテスト間で隔離（C4 hang 等が次ケースへ漏れないようにする）
+  resetInflightResumeForTests();
+});
 
 class MapStorage implements Storage {
   readonly #values = new Map<string, string>();
@@ -631,6 +637,95 @@ it("C-R3: delayed exchange success is shared with recovery join (no used-code te
   await expect(joined).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
   // used-code 相当の第二失敗経路は走らず、secret は成功 clear のみ
   expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("C-R5: concurrent resumeFlow across gateway instances joins the module-shared in-flight", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  let resolveExchange: ((value: { data: unknown; error: AuthError | null }) => void) | undefined;
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(
+    () =>
+      new Promise<{ data: unknown; error: AuthError | null }>((resolve) => {
+        resolveExchange = resolve;
+      }),
+  );
+  // callback 用 gateway と AuthProvider recovery 用 gateway が別インスタンスになる経路
+  const callbackGateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const providerGateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const first = callbackGateway.resumeFlow(flow.id);
+  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+  const second = providerGateway.resumeFlow(flow.id);
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+  expect(claim).toHaveBeenCalledOnce();
+
+  resolveExchange?.({ data: null, error: null });
+  await expect(first).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
+  await expect(second).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+});
+
+it("C-R5: completeCallback holds callback-prelease during same-browser exchange and releases on complete", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  let resolveExchange: ((value: { data: unknown; error: AuthError | null }) => void) | undefined;
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(
+    () =>
+      new Promise<{ data: unknown; error: AuthError | null }>((resolve) => {
+        resolveExchange = resolve;
+      }),
+  );
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+  markAuthContinuationCallbackOwner(flow.id, storage);
+
+  const callbackResultPromise = gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=auth-code-1`,
+    ),
+  );
+  for (let index = 0; index < 30; index += 1) await Promise.resolve();
+  // exchange 中は pre-lease が立ち、AUTH-R2 が orphan と誤認しない
+  expect(
+    storage.getItem(`kondate.auth.supabase.claim-poll-target-lease.${flow.id}.callback-prelease`),
+  ).not.toBeNull();
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+  resolveExchange?.({ data: null, error: null });
+  await expect(callbackResultPromise).resolves.toMatchObject({
+    kind: "complete",
+    flowId: flow.id,
+  });
+  // complete 後は pre-lease を解放する
+  expect(
+    storage.getItem(`kondate.auth.supabase.claim-poll-target-lease.${flow.id}.callback-prelease`),
+  ).toBeNull();
 });
 
 it.each([

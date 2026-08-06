@@ -31,6 +31,12 @@ const CLAIM_POLL_STORE_NAME = "coordination";
 const CLAIM_POLL_TRANSACTION_KEY = "reservation";
 const MIN_CLAIM_POLL_GAP_MS = 5_000;
 const TARGET_RECOVERY_LEASE_TTL_MS = MIN_CLAIM_POLL_GAP_MS * 3;
+/**
+ * C-R5: completeCallback 即時 resume の pre-lease 窓用。
+ * target recovery 開始前でも「lease 0 = orphan」にしない固定 instanceId。
+ * pending:false のため target recovery 開始後も claimable のまま（global だけ抑止）。
+ */
+const CALLBACK_PRE_LEASE_INSTANCE_ID = "callback-prelease";
 
 type TargetRecoveryLease = {
   flowId: string;
@@ -38,6 +44,51 @@ type TargetRecoveryLease = {
   refreshedAt: number;
   pending: boolean;
 };
+
+function callbackPreLeaseKey(flowId: string): string {
+  return `${TARGET_RECOVERY_LEASE_PREFIX}${flowId}.${CALLBACK_PRE_LEASE_INSTANCE_ID}`;
+}
+
+/**
+ * C-R5: callback 同一ブラウザの deposit/即時 resume 中に target lease 相当を立て、
+ * 他タブ global recovery が orphan 扱いして dual exchange しないようにする。
+ * 5s 間隔で heartbeat（lease TTL=15s）。返却関数は heartbeat のみ止める（キーは残す）。
+ * terminal 時は releaseAuthContinuationCallbackPreLease で消す。awaiting 手渡しでは残し、
+ * target recovery の自前 lease と併存させてよい。
+ */
+export function startAuthContinuationCallbackPreLease(
+  flowId: string,
+  storage: Storage,
+  now: () => Date = () => new Date(),
+  setIntervalFn: typeof setInterval = setInterval,
+  clearIntervalFn: typeof clearInterval = clearInterval,
+): () => void {
+  const write = (): void => {
+    const lease: TargetRecoveryLease = {
+      flowId,
+      instanceId: CALLBACK_PRE_LEASE_INSTANCE_ID,
+      refreshedAt: now().getTime(),
+      pending: false,
+    };
+    writeStorageValue(storage, callbackPreLeaseKey(flowId), JSON.stringify(lease));
+  };
+  write();
+  const timer = setIntervalFn(() => {
+    write();
+  }, MIN_CLAIM_POLL_GAP_MS);
+  return () => {
+    clearIntervalFn(timer);
+  };
+}
+
+/** C-R5: pre-lease キーを除去（complete / terminal error 時）。 */
+export function releaseAuthContinuationCallbackPreLease(flowId: string, storage: Storage): void {
+  try {
+    storage.removeItem(callbackPreLeaseKey(flowId));
+  } catch {
+    // cleanup 失敗時も lease は短期 TTL で失効する
+  }
+}
 
 function readLastPollAt(storage: Storage): number {
   const raw = storage.getItem(LAST_CLAIM_POLL_KEY);
@@ -258,6 +309,7 @@ export function startAuthContinuationRecovery(input: {
     );
     // AUTH-R2: callback-owner 中は target lease がある間だけ排他。
     // lease が全滅（callback タブ死亡・TTL 切れ）したら orphan として global recovery が claim できる。
+    // C-R5: completeCallback 即時 resume 中は callback-prelease が立ち、pre-lease 窓の orphan 誤認を防ぐ。
     const claimableFlowIds = unexpiredFlows
       .filter((flow) => {
         if (!callbackOwnedFlowIds.has(flow.id)) return true;

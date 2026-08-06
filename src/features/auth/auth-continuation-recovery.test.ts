@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IMMEDIATE_CLAIM_TIMEOUT_MS } from "./async-timeout";
-import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
+import {
+  releaseAuthContinuationCallbackPreLease,
+  startAuthContinuationCallbackPreLease,
+  startAuthContinuationRecovery,
+} from "./auth-continuation-recovery";
 
 describe("auth continuation recovery", () => {
   let originalIndexedDb: PropertyDescriptor | undefined;
@@ -281,6 +285,41 @@ describe("auth continuation recovery", () => {
     await flushPromises();
     expect(gateway.resumeFlow).toHaveBeenCalledWith(flowId);
     stop();
+  });
+
+  it("C-R5: global recovery does not claim callback-owned flow while callback-prelease is held", async () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const startedAt = new Date().toISOString();
+    storage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt,
+      }),
+    );
+    storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, startedAt);
+    // completeCallback 即時 resume 中の pre-lease（target recovery 開始前）
+    const stopPreLease = startAuthContinuationCallbackPreLease(flowId, storage);
+    const gateway = { resumeFlow: vi.fn() };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+
+    await flushPromises();
+    expect(gateway.resumeFlow).not.toHaveBeenCalled();
+    stop();
+    stopPreLease();
+    releaseAuthContinuationCallbackPreLease(flowId, storage);
   });
 
   it("claims an explicitly targeted callback flow through the shared coordinator", async () => {
