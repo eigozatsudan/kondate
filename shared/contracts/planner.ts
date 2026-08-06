@@ -13,6 +13,12 @@ export const ingredientPreferences = ["more", "less", "selected_only", "auto"] a
 export const targetModes = ["household", "idea"] as const;
 export type TargetMode = (typeof targetModes)[number];
 
+/**
+ * 1 世帯あたりの「作る相手」家族人数上限。
+ * UI の checkbox disable・hydrate sanitize・draft/submission schema で単一点定義する（P9）。
+ */
+export const PLANNER_TARGET_MEMBER_LIMIT = 20;
+
 function boundedCanonicalText(min: number, max: number) {
   return z
     .string()
@@ -29,8 +35,8 @@ function boundedCanonicalText(min: number, max: number) {
 export const targetModeSchema = z.enum(targetModes);
 
 /**
- * 家族/人数の整合を強制する。household は家族1〜20人・人数指定なし、
- * idea は家族0人・人数1〜20、未選択は両方とも空のままにする。
+ * 家族/人数の整合を強制する。household は家族1〜PLANNER_TARGET_MEMBER_LIMIT 人・人数指定なし、
+ * idea は家族0人・人数1〜PLANNER_TARGET_MEMBER_LIMIT、未選択は両方とも空のままにする。
  * ブラウザ・サーバーいずれの層でも targetMemberIds の空配列だけから
  * mode を推測しない（household + [] を一時状態としても許容しない）。
  */
@@ -65,8 +71,8 @@ const draftShape = {
   mainIngredients: z.array(boundedCanonicalText(1, 80)).max(8),
   cuisineGenre: z.enum(cuisineGenres).nullable(),
   targetMode: targetModeSchema.nullable(),
-  targetMemberIds: z.array(z.uuid()).max(20),
-  servings: z.number().int().min(1).max(20).nullable(),
+  targetMemberIds: z.array(z.uuid()).max(PLANNER_TARGET_MEMBER_LIMIT),
+  servings: z.number().int().min(1).max(PLANNER_TARGET_MEMBER_LIMIT).nullable(),
   timeLimitMinutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).nullable(),
   budgetPreference: z.enum(budgetPreferences).nullable(),
   // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
@@ -111,7 +117,7 @@ export const plannerSubmissionSchema = z.discriminatedUnion("targetMode", [
     .object({
       ...submissionCommonShape,
       targetMode: z.literal("household"),
-      targetMemberIds: z.array(z.uuid()).min(1).max(20),
+      targetMemberIds: z.array(z.uuid()).min(1).max(PLANNER_TARGET_MEMBER_LIMIT),
       servings: z.null(),
     })
     .strict(),
@@ -120,7 +126,7 @@ export const plannerSubmissionSchema = z.discriminatedUnion("targetMode", [
       ...submissionCommonShape,
       targetMode: z.literal("idea"),
       targetMemberIds: z.array(z.uuid()).max(0),
-      servings: z.number().int().min(1).max(20),
+      servings: z.number().int().min(1).max(PLANNER_TARGET_MEMBER_LIMIT),
     })
     .strict(),
 ]);

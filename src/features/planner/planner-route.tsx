@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router";
 import {
   collectPlannerRequestText,
+  PLANNER_TARGET_MEMBER_LIMIT,
   plannerSubmissionSchema,
   type PlannerDraft,
   type PlannerDraftInput,
@@ -72,8 +73,6 @@ const emptyDraft: PlannerDraftInput = {
   pantrySelections: [],
 };
 
-const targetMemberLimit = 20;
-
 const ageLabels: Readonly<Record<string, string>> = {
   post_weaning_to_2: "離乳食完了後〜2歳",
   age_3_5: "3〜5歳",
@@ -137,7 +136,7 @@ function sanitizeDraft(
   }
   const targetMemberIds = input.targetMemberIds
     .filter((id) => eligibleIds.has(id))
-    .slice(0, targetMemberLimit);
+    .slice(0, PLANNER_TARGET_MEMBER_LIMIT);
   return {
     ...input,
     targetMemberIds,
@@ -362,6 +361,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // 緊急献立遷移の single-flight と unmount 後の遅延 navigate 抑止。
   const mountedRef = useRef(true);
   const emergencyOperationIdRef = useRef(0);
+  // P8: isSubmitting の再描画前に二重 onSubmit しない同期ガード
+  const submittingRef = useRef(false);
+  // P1: 利用者 reset 直後だけ route が flush を await する印（conflict resolve の resetToken とは分離）
+  const resetFlushGenerationRef = useRef(0);
+  const pendingResetFlushRef = useRef(false);
   const startNewAttempt = useCallback(() => {
     setAttempt(createPlannerAttempt());
   }, []);
@@ -544,6 +548,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // hydrate 時の baseline ではなく、autosave が把握している現 revision を渡す。
     // 古い baseline のまま resetToken すると revisionRef が巻き戻り conflict になる。
     setBaselineRevision(autosave.revision);
+    // P1: 強制 empty の完了を後続 effect が await する（fire-and-forget 握りつぶし禁止）
+    resetFlushGenerationRef.current += 1;
+    pendingResetFlushRef.current = true;
     setResetToken((current) => current + 1);
     // 強制 empty 保存完了前の remount で旧 cache が戻らないよう、入力フィールドだけ空に揃える
     const key = plannerKeys.draft(userId ?? "missing");
@@ -552,6 +559,27 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       queryClient.setQueryData(key, { ...current, ...empty });
     }
   }, [autosave.revision, queryClient, userId]);
+
+  // P1: 利用者 reset 直後だけ強制 empty 保存を await し、失敗を submissionError で可視化する。
+  // resolveDraftConflict の resetToken バンプでは走らせない（autosave 側の force save に任せる）。
+  // flush は pending force save を await するため二重 RPC にはならない（成功時は同一結果）。
+  useEffect(() => {
+    if (!pendingResetFlushRef.current) return;
+    pendingResetFlushRef.current = false;
+    const generation = resetFlushGenerationRef.current;
+    void (async () => {
+      try {
+        await flushDraft();
+      } catch (error) {
+        if (!mountedRef.current || generation !== resetFlushGenerationRef.current) return;
+        if (error instanceof IncompleteDraftSaveError) return;
+        if (error instanceof DraftRevisionConflictError) return;
+        setSubmissionError(
+          "入力のリセットを保存できませんでした。通信を確認し、画面の再試行から保存し直すか、もう一度リセットしてください。",
+        );
+      }
+    })();
+  }, [flushDraft, resetToken]);
 
   // 同意のみが生成許可。拒否（「今はAIを使わない」）は永続化せず、毎回ゲートする。
   const hasAcceptedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);
@@ -604,7 +632,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       } catch (error) {
         if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
           // C-I14: 緊急導線の保存失敗は生成失敗と別文言（生成していないのに「生成」と言わない）。
-          // P8: idea+人数未設定の Incomplete は通信障害と誤認しない
+          // idea+人数未設定の Incomplete は通信障害と誤認しない
           setSubmissionError(
             error instanceof IncompleteDraftSaveError
               ? "人数など必要な条件が未設定のため、緊急献立を開けませんでした。確認画面で内容を見直してください。"
@@ -623,7 +651,37 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     navigate,
   ]);
 
-  if ((!initialized && draftQuery.isError) || safetyQuery.isError || pantryQuery.isError) {
+  // P5: settings 遷移も privacy/緊急と同様に flush 完了を待ってから navigate する。
+  // Link 直遷移だと unmount dirty flush の失敗が黙殺され、サーバ旧下書きが正本のまま残る。
+  const openSettings = useCallback((): void => {
+    void (async () => {
+      try {
+        await flushDraft();
+      } catch {
+        if (mountedRef.current) {
+          setSubmissionError(
+            "条件を保存できなかったため、家族設定を開けませんでした。通信を確認して再度お試しください。",
+          );
+        }
+        return;
+      }
+      if (!mountedRef.current) return;
+      void navigate("/settings");
+    })();
+  }, [flushDraft, navigate]);
+
+  // P3: 初回 data 未取得の失敗だけ全画面。init 後の背景 refetch 失敗は previous data で wizard 継続。
+  const safetyLoadFatal = safetyQuery.isError && safetyQuery.data === undefined;
+  const pantryLoadFatal = pantryQuery.isError && pantryQuery.data === undefined;
+  // 背景 refetch 失敗時のソフトエラー（wizard は破棄しない。focus 再取得や下の再試行で回復）
+  const backgroundSafetyPantryError =
+    initialized &&
+    ((safetyQuery.isError && safetyQuery.data !== undefined) ||
+      (pantryQuery.isError && pantryQuery.data !== undefined))
+      ? "家族または冷蔵庫の最新情報を再取得できませんでした。表示は直前の内容です。"
+      : null;
+
+  if ((!initialized && draftQuery.isError) || safetyLoadFatal || pantryLoadFatal) {
     return (
       <main className="page-frame stack">
         <p role="alert">献立条件を読み込めませんでした。再読み込みしてください。</p>
@@ -632,8 +690,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           type="button"
           onClick={() => {
             if (!initialized && draftQuery.isError) void draftQuery.refetch();
-            if (safetyQuery.isError) void safetyQuery.refetch();
-            if (pantryQuery.isError) void pantryQuery.refetch();
+            if (safetyLoadFatal) void safetyQuery.refetch();
+            if (pantryLoadFatal) void pantryQuery.refetch();
           }}
         >
           再試行
@@ -641,7 +699,22 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       </main>
     );
   }
-  if (draftQuery.isPending || safetyQuery.isPending || pantryQuery.isPending || !initialized) {
+  if (
+    draftQuery.isPending ||
+    (safetyQuery.isPending && safetyQuery.data === undefined) ||
+    (pantryQuery.isPending && pantryQuery.data === undefined) ||
+    !initialized
+  ) {
+    return (
+      <main className="page-frame">
+        <p>献立条件を読み込み中…</p>
+      </main>
+    );
+  }
+  // init 後は previous data がある前提（上の fatal / pending ゲートを通過済み）
+  const safetyData = safetyQuery.data;
+  const pantryData = pantryQuery.data;
+  if (safetyData === undefined || pantryData === undefined) {
     return (
       <main className="page-frame">
         <p>献立条件を読み込み中…</p>
@@ -649,209 +722,236 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     );
   }
   return (
-    <PlannerWizard
-      key={resetToken}
-      draft={value}
-      step={step}
-      eligibleMembers={safetyQuery.data.members}
-      isSaving={
-        autosave.state === "saving" || isSubmitting || hasDraftConflict || isOpeningEmergencyMenus
-      }
-      error={
-        // 競合 chrome は wizard 側の明示 UI に任せる。短時間枠・成功残数は review の生成ボタン近く
-        // （設計 §10.3）。ここでは audience skipped / submission のみ。
-        audienceStatusError ?? submissionError
-      }
-      usageRemaining={usage.isSuccess ? usage.data.success.remaining : null}
-      plan={usage.isSuccess ? usage.data.plan : null}
-      attemptsRemaining={usage.isSuccess ? usage.data.attempts.remaining : null}
-      globalAvailable={usage.isSuccess ? usage.data.globalAvailable : null}
-      shortWindowRetryAt={
-        usage.isSuccess && usage.data.shortWindow.remaining === 0
-          ? usage.data.shortWindow.retryAt
-          : null
-      }
-      // P2: 進行中 pending があれば「献立を作る」は再開のみ。確認画面で新条件破棄を押下前に示す
-      hasResumablePendingGeneration={
-        userId !== undefined && readPendingGeneration(userId, new Date()) !== null
-      }
-      autosaveState={autosave.state}
-      onRetryAutosave={() => {
-        void autosave.flush().catch(() => {
-          // flush 失敗は state=error のまま。UI の再試行で再度呼べる
-        });
-      }}
-      fieldErrors={fieldErrors}
-      onDraftChange={setValue}
-      onStepChange={setStep}
-      onIdeaAudienceConfirmed={async () => {
-        // 設計 §10: audience で idea を確定した時点で skipped を書く（主経路）。
-        // fire-and-forget 禁止。profile 取得/RPC 失敗では throw して audience に留める。
-        if (userId === undefined) {
-          throw new Error("missing_user");
+    <>
+      {backgroundSafetyPantryError !== null ? (
+        <div className="page-frame stack">
+          <p role="status">{backgroundSafetyPantryError}</p>
+          <button
+            className="secondary-button min-h-11"
+            type="button"
+            onClick={() => {
+              if (safetyQuery.isError) void safetyQuery.refetch();
+              if (pantryQuery.isError) void pantryQuery.refetch();
+            }}
+          >
+            再試行
+          </button>
+        </div>
+      ) : null}
+      <PlannerWizard
+        key={resetToken}
+        draft={value}
+        step={step}
+        eligibleMembers={safetyData.members}
+        isSaving={
+          autosave.state === "saving" || isSubmitting || hasDraftConflict || isOpeningEmergencyMenus
         }
-        setAudienceStatusError(null);
-        try {
-          await ensureIdeaOnboardingSkipped(client, userId, queryClient);
-        } catch (error) {
-          if (error instanceof IdeaOnboardingSkipError && error.code === "profile_unavailable") {
-            setAudienceStatusError(
-              "家族設定の状態を確認できませんでした。再読み込みしてください。",
-            );
-          } else {
-            setAudienceStatusError("開始状態を保存できませんでした。もう一度お試しください");
+        error={
+          // 競合 chrome は wizard 側の明示 UI に任せる。短時間枠・成功残数は review の生成ボタン近く
+          // （設計 §10.3）。ここでは audience skipped / submission のみ。
+          audienceStatusError ?? submissionError
+        }
+        usageRemaining={usage.isSuccess ? usage.data.success.remaining : null}
+        plan={usage.isSuccess ? usage.data.plan : null}
+        attemptsRemaining={usage.isSuccess ? usage.data.attempts.remaining : null}
+        globalAvailable={usage.isSuccess ? usage.data.globalAvailable : null}
+        shortWindowRetryAt={
+          usage.isSuccess && usage.data.shortWindow.remaining === 0
+            ? usage.data.shortWindow.retryAt
+            : null
+        }
+        // 進行中 pending があれば「献立を作る」は再開のみ。確認画面で新条件破棄を押下前に示す
+        hasResumablePendingGeneration={
+          userId !== undefined && readPendingGeneration(userId, new Date()) !== null
+        }
+        autosaveState={autosave.state}
+        onRetryAutosave={() => {
+          void autosave.flush().catch(() => {
+            // flush 失敗は state=error のまま。UI の再試行で再度呼べる
+          });
+        }}
+        fieldErrors={fieldErrors}
+        onDraftChange={setValue}
+        onStepChange={setStep}
+        onIdeaAudienceConfirmed={async () => {
+          // 設計 §10: audience で idea を確定した時点で skipped を書く（主経路）。
+          // P7 残差（意図的）: 生成 success より前に skipped が永続する。idea 導線で
+          // onboarding を閉じる製品契約。生成失敗・離脱後も skipped のまま戻さない。
+          // fire-and-forget 禁止。profile 取得/RPC 失敗では throw して audience に留める。
+          if (userId === undefined) {
+            throw new Error("missing_user");
           }
-          throw error instanceof Error ? error : new Error("onboarding_status_write_failed");
-        }
-      }}
-      pantryItems={pantryQuery.data}
-      pantryItemsStatus="loaded"
-      attempt={attempt}
-      onAttemptChange={setAttempt}
-      hasAcceptedOrDeclinedPrivacy={hasAcceptedPrivacy}
-      onOpenPrivacyNotice={openPrivacyNotice}
-      hasDraftConflict={hasDraftConflict}
-      draftConflictRefetchError={draftConflictRefetchError}
-      canResolveDraftConflict={latestConflictDraft !== undefined}
-      onResolveDraftConflict={resolveDraftConflict}
-      onRetryDraftConflict={() => {
-        void loadLatestConflictDraft();
-      }}
-      onOpenEmergencyMenus={openEmergencyMenus}
-      onReset={resetPlannerDraft}
-      // L10-3: チラシ入口。page-frame 内に置き幅・下余白をウィザードと揃える
-      footer={
-        <FlyerWeeklyPanel
-          plusEntitled={usage.isSuccess ? usage.data.plusEntitled : false}
-          hasAcceptedPrivacy={hasAcceptedPrivacy}
-        />
-      }
-      onSubmit={async () => {
-        setSubmissionError(null);
-        setFieldErrors({});
-        const submissionCandidate: PlannerDraftInput = {
-          mealType: value.mealType,
-          mainIngredients: value.mainIngredients,
-          cuisineGenre: value.cuisineGenre,
-          targetMode: value.targetMode,
-          targetMemberIds: value.targetMemberIds,
-          servings: value.servings,
-          timeLimitMinutes: value.timeLimitMinutes,
-          budgetPreference: value.budgetPreference,
-          ingredientPreference: value.ingredientPreference,
-          avoidIngredients: value.avoidIngredients,
-          memo: value.memo,
-          pantrySelections: value.pantrySelections,
-        };
-        const parsed = plannerSubmissionSchema.safeParse(submissionCandidate);
-        if (!parsed.success) {
-          const { fieldErrors: nextFieldErrors, firstInvalidStep } =
-            buildPlannerSubmissionFieldErrors(
-              parsed.error.issues.map((issue) => ({ path: issue.path, message: issue.message })),
-            );
-          setFieldErrors(nextFieldErrors);
-          // brief: 「保存/APIの非field errorは上部alertだけへ表示」。
-          // fieldへ正規化できたissueが1つ以上あるときはfield-local表示に委ね、
-          // 全issueが未知pathだった場合だけ上部summaryへ出す。
-          if (Object.keys(nextFieldErrors).length === 0) {
-            setSubmissionError("入力内容を確認してください。");
+          setAudienceStatusError(null);
+          try {
+            await ensureIdeaOnboardingSkipped(client, userId, queryClient);
+          } catch (error) {
+            if (error instanceof IdeaOnboardingSkipError && error.code === "profile_unavailable") {
+              setAudienceStatusError(
+                "家族設定の状態を確認できませんでした。再読み込みしてください。",
+              );
+            } else {
+              setAudienceStatusError("開始状態を保存できませんでした。もう一度お試しください");
+            }
+            throw error instanceof Error ? error : new Error("onboarding_status_write_failed");
           }
-          if (firstInvalidStep !== null) setStep(firstInvalidStep);
-          return;
+        }}
+        pantryItems={pantryData}
+        pantryItemsStatus="loaded"
+        attempt={attempt}
+        onAttemptChange={setAttempt}
+        hasAcceptedOrDeclinedPrivacy={hasAcceptedPrivacy}
+        onOpenPrivacyNotice={openPrivacyNotice}
+        onOpenSettings={openSettings}
+        hasDraftConflict={hasDraftConflict}
+        draftConflictRefetchError={draftConflictRefetchError}
+        canResolveDraftConflict={latestConflictDraft !== undefined}
+        onResolveDraftConflict={resolveDraftConflict}
+        onRetryDraftConflict={() => {
+          void loadLatestConflictDraft();
+        }}
+        onOpenEmergencyMenus={openEmergencyMenus}
+        onReset={resetPlannerDraft}
+        // L10-3: チラシ入口。page-frame 内に置き幅・下余白をウィザードと揃える
+        footer={
+          <FlyerWeeklyPanel
+            plusEntitled={usage.isSuccess ? usage.data.plusEntitled : false}
+            hasAcceptedPrivacy={hasAcceptedPrivacy}
+          />
         }
-        // Plan 2 クライアント医療境界（サーバー preflight と同 detector）。
-        // レビュー画面でも disabled にしているが、submit 経路でも再確認して AI 開始を止める。
-        if (detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0) {
-          setSubmissionError(medicalRequestBlockedMessage);
-          setStep("review");
-          return;
-        }
-        // P6: 医療と同様、期限切れ未確認・削除済み pantry を submit でも再検証する
-        // isPending 早期 return 後は data が確定している（型上も non-nullish）
-        const pantryRows = pantryQuery.data;
-        const pantryIdSet = new Set(pantryRows.map((item) => item.id));
-        if (value.pantrySelections.some((selection) => !pantryIdSet.has(selection.pantryItemId))) {
-          setSubmissionError("冷蔵庫から削除された食材の選択を解除してから献立を作ってください。");
-          setStep("review");
-          return;
-        }
-        const nowForExpiry = new Date();
-        const hasUnconfirmedExpired = value.pantrySelections.some((selection) => {
-          const item = pantryRows.find((entry) => entry.id === selection.pantryItemId);
-          if (item === undefined) return false;
-          return (
-            isPastEnteredExpiry(item, nowForExpiry) &&
-            !hasCurrentExpiredConfirmation(attempt, item.id, nowForExpiry)
-          );
-        });
-        if (hasUnconfirmedExpired) {
-          setSubmissionError(
-            "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
-          );
-          setStep("review");
-          return;
-        }
-        if (startGeneration === undefined) return;
-        setIsSubmitting(true);
-        setAudienceStatusError(null);
-        try {
-          const saved = await flushDraft();
-          if (!hasAcceptedPrivacy) {
-            openPrivacyNotice();
+        onSubmit={async () => {
+          // P8: React 再描画前の二重 click を同期 ref で抑止（idea audience の confirmingRef と同型）
+          if (submittingRef.current) return;
+          setSubmissionError(null);
+          setFieldErrors({});
+          const submissionCandidate: PlannerDraftInput = {
+            mealType: value.mealType,
+            mainIngredients: value.mainIngredients,
+            cuisineGenre: value.cuisineGenre,
+            targetMode: value.targetMode,
+            targetMemberIds: value.targetMemberIds,
+            servings: value.servings,
+            timeLimitMinutes: value.timeLimitMinutes,
+            budgetPreference: value.budgetPreference,
+            ingredientPreference: value.ingredientPreference,
+            avoidIngredients: value.avoidIngredients,
+            memo: value.memo,
+            pantrySelections: value.pantrySelections,
+          };
+          const parsed = plannerSubmissionSchema.safeParse(submissionCandidate);
+          if (!parsed.success) {
+            const { fieldErrors: nextFieldErrors, firstInvalidStep } =
+              buildPlannerSubmissionFieldErrors(
+                parsed.error.issues.map((issue) => ({ path: issue.path, message: issue.message })),
+              );
+            setFieldErrors(nextFieldErrors);
+            // brief: 「保存/APIの非field errorは上部alertだけへ表示」。
+            // fieldへ正規化できたissueが1つ以上あるときはfield-local表示に委ね、
+            // 全issueが未知pathだった場合だけ上部summaryへ出す。
+            if (Object.keys(nextFieldErrors).length === 0) {
+              setSubmissionError("入力内容を確認してください。");
+            }
+            if (firstInvalidStep !== null) setStep(firstInvalidStep);
             return;
           }
-          // resume で audience を踏まず review に着いた idea 下書きでも skipped を揃える安全網。
-          // complete|skipped は no-op。取得/書込失敗では生成を開始しない（fail-closed）。
-          if (parsed.data.targetMode === "idea" && userId !== undefined) {
-            try {
-              await ensureIdeaOnboardingSkipped(client, userId, queryClient);
-            } catch (error) {
-              if (
-                error instanceof IdeaOnboardingSkipError &&
-                error.code === "profile_unavailable"
-              ) {
-                setSubmissionError(
-                  "家族設定の状態を確認できませんでした。再読み込みしてください。",
-                );
-              } else {
-                setSubmissionError("開始状態を保存できませんでした。もう一度お試しください");
-              }
+          // Plan 2 クライアント医療境界（サーバー preflight と同 detector）。
+          // レビュー画面でも disabled にしているが、submit 経路でも再確認して AI 開始を止める。
+          if (detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0) {
+            setSubmissionError(medicalRequestBlockedMessage);
+            setStep("review");
+            return;
+          }
+          // 医療と同様、期限切れ未確認・削除済み pantry を submit でも再検証する
+          const pantryRows = pantryData;
+          const pantryIdSet = new Set(pantryRows.map((item) => item.id));
+          if (
+            value.pantrySelections.some((selection) => !pantryIdSet.has(selection.pantryItemId))
+          ) {
+            setSubmissionError(
+              "冷蔵庫から削除された食材の選択を解除してから献立を作ってください。",
+            );
+            setStep("review");
+            return;
+          }
+          const nowForExpiry = new Date();
+          const hasUnconfirmedExpired = value.pantrySelections.some((selection) => {
+            const item = pantryRows.find((entry) => entry.id === selection.pantryItemId);
+            if (item === undefined) return false;
+            return (
+              isPastEnteredExpiry(item, nowForExpiry) &&
+              !hasCurrentExpiredConfirmation(attempt, item.id, nowForExpiry)
+            );
+          });
+          if (hasUnconfirmedExpired) {
+            setSubmissionError(
+              "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
+            );
+            setStep("review");
+            return;
+          }
+          if (startGeneration === undefined) return;
+          submittingRef.current = true;
+          setIsSubmitting(true);
+          setAudienceStatusError(null);
+          try {
+            const saved = await flushDraft();
+            if (!hasAcceptedPrivacy) {
+              openPrivacyNotice();
               return;
             }
-          }
-          // P1/P2: 生成へ渡す attempt は選択中 confirmation のみ・非 Plus は qualityMode を落とす
-          const commandAttempt: PlannerAttempt = {
-            ...attempt,
-            qualityMode: planCode === "plus" && attempt.qualityMode,
-            expiredPantryChecks: filterExpiredPantryChecksForSelections(
-              attempt.expiredPantryChecks,
-              saved.pantrySelections,
-            ),
-          };
-          const controller = new AbortController();
-          generationAbortControllerRef.current?.abort();
-          generationAbortControllerRef.current = controller;
-          try {
-            const result = await startGeneration(saved, commandAttempt, controller.signal);
-            if (controller.signal.aborted || result === false) return;
-            startNewAttempt();
-          } finally {
-            if (generationAbortControllerRef.current === controller) {
-              generationAbortControllerRef.current = null;
+            // resume で audience を踏まず review に着いた idea 下書きでも skipped を揃える安全網。
+            // complete|skipped は no-op。取得/書込失敗では生成を開始しない（fail-closed）。
+            if (parsed.data.targetMode === "idea" && userId !== undefined) {
+              try {
+                await ensureIdeaOnboardingSkipped(client, userId, queryClient);
+              } catch (error) {
+                if (
+                  error instanceof IdeaOnboardingSkipError &&
+                  error.code === "profile_unavailable"
+                ) {
+                  setSubmissionError(
+                    "家族設定の状態を確認できませんでした。再読み込みしてください。",
+                  );
+                } else {
+                  setSubmissionError("開始状態を保存できませんでした。もう一度お試しください");
+                }
+                return;
+              }
             }
+            // 生成へ渡す attempt は選択中 confirmation のみ・非 Plus は qualityMode を落とす
+            const commandAttempt: PlannerAttempt = {
+              ...attempt,
+              qualityMode: planCode === "plus" && attempt.qualityMode,
+              expiredPantryChecks: filterExpiredPantryChecksForSelections(
+                attempt.expiredPantryChecks,
+                saved.pantrySelections,
+              ),
+            };
+            const controller = new AbortController();
+            generationAbortControllerRef.current?.abort();
+            generationAbortControllerRef.current = controller;
+            try {
+              const result = await startGeneration(saved, commandAttempt, controller.signal);
+              if (controller.signal.aborted || result === false) return;
+              startNewAttempt();
+            } finally {
+              if (generationAbortControllerRef.current === controller) {
+                generationAbortControllerRef.current = null;
+              }
+            }
+          } catch (error) {
+            // IncompleteDraft は通信失敗と分けて人数未設定を伝える
+            setSubmissionError(
+              error instanceof IncompleteDraftSaveError
+                ? "人数など必要な条件が未設定のため、生成を開始しませんでした。確認画面で内容を見直してください。"
+                : "献立条件を保存できなかったため、生成を開始しませんでした。",
+            );
+          } finally {
+            submittingRef.current = false;
+            setIsSubmitting(false);
           }
-        } catch (error) {
-          // P8: IncompleteDraft は通信失敗と分けて人数未設定を伝える
-          setSubmissionError(
-            error instanceof IncompleteDraftSaveError
-              ? "人数など必要な条件が未設定のため、生成を開始しませんでした。確認画面で内容を見直してください。"
-              : "献立条件を保存できなかったため、生成を開始しませんでした。",
-          );
-        } finally {
-          setIsSubmitting(false);
-        }
-      }}
-    />
+        }}
+      />
+    </>
   );
 }
 

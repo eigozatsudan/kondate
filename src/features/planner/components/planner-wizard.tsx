@@ -41,6 +41,11 @@ export type PlannerWizardExtraProps = {
   onAttemptChange: (next: PlannerAttempt) => void;
   hasAcceptedOrDeclinedPrivacy: boolean;
   onOpenPrivacyNotice: () => void;
+  /**
+   * 家族設定へ遷移する。route が flush 完了後に navigate する（P5）。
+   * 未指定時は step 内の Link 直遷移にフォールバックする。
+   */
+  onOpenSettings?: () => void;
   /** Plan 2 §5: 下書き競合中はローカル入力を保持し、明示解決UIだけを出す */
   hasDraftConflict?: boolean;
   draftConflictRefetchError?: boolean;
@@ -140,6 +145,7 @@ export function PlannerWizard({
   onAttemptChange,
   hasAcceptedOrDeclinedPrivacy,
   onOpenPrivacyNotice,
+  onOpenSettings,
   hasDraftConflict = false,
   draftConflictRefetchError = false,
   canResolveDraftConflict = false,
@@ -488,6 +494,7 @@ export function PlannerWizard({
             targetMemberIds: fieldErrors.targetMemberIds ?? null,
             servings: fieldErrors.servings ?? null,
           }}
+          {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
           {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
@@ -529,6 +536,7 @@ export function PlannerWizard({
         onOpenPrivacyNotice={onOpenPrivacyNotice}
         safetyMembers={eligibleMembers}
         {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
+        {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
         usageRemaining={usageRemaining}
         plan={plan}
         attemptsRemaining={attemptsRemaining}

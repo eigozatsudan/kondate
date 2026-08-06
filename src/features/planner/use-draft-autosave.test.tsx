@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import { DraftRevisionConflictError } from "./planner-api";
-import { useDraftAutosave } from "./use-draft-autosave";
+import { IncompleteDraftSaveError, useDraftAutosave } from "./use-draft-autosave";
 
 const base: PlannerDraftInput = {
   mealType: null,
@@ -481,6 +481,135 @@ it("P1: resetToken で空下書きを強制保存しサーバと揃える", asyn
   expect(save).toHaveBeenNthCalledWith(2, empty, 2);
   expect(result.current.revision).toBe(3);
   expect(result.current.state).toBe("saved");
+});
+
+it("P1: flush は reset 強制保存の完了を await し失敗を隠さない", async () => {
+  vi.useFakeTimers();
+  let rejectForce: ((error: Error) => void) | undefined;
+  const save = vi.fn((_value: PlannerDraftInput, _revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return Promise.resolve(saved({ ...base, mealType: "dinner" }, 2));
+    }
+    return new Promise<PlannerDraft>((_resolve, reject) => {
+      rejectForce = reject;
+    });
+  });
+  const onSaved = vi.fn();
+  const { rerender, result } = renderHook(
+    ({ value, baselineRevision, resetToken }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision,
+        resetToken,
+        save,
+        onSaved,
+      }),
+    { initialProps: { value: base, baselineRevision: 1, resetToken: 0 } },
+  );
+
+  rerender({
+    value: { ...base, mealType: "dinner" as const },
+    baselineRevision: 1,
+    resetToken: 0,
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+
+  const empty = { ...base };
+  rerender({ value: empty, baselineRevision: 2, resetToken: 1 });
+  // reset effect が force enqueue を開始するまで待つ
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenCalledTimes(2);
+
+  let flushError: unknown;
+  let flushDone = false;
+  await act(async () => {
+    const flushPromise = result.current.flush().then(
+      () => {
+        flushDone = true;
+      },
+      (error: unknown) => {
+        flushError = error;
+        flushDone = true;
+      },
+    );
+    rejectForce?.(new Error("network"));
+    await flushPromise;
+  });
+
+  expect(flushDone).toBe(true);
+  expect(flushError).toBeInstanceOf(Error);
+  expect((flushError as Error).message).toBe("network");
+  expect(result.current.state).toBe("error");
+  // 失敗時は onSaved しない（空 cache を成功扱いにしない）
+  expect(onSaved).toHaveBeenCalledTimes(1);
+});
+
+it("P2: non-persistable へ遷移したあと lastSaved を成功 return しない", async () => {
+  vi.useFakeTimers();
+  let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
+  const household = {
+    ...base,
+    mealType: "dinner" as const,
+    mainIngredients: ["鶏肉"],
+    cuisineGenre: "japanese" as const,
+    targetMode: "household" as const,
+    targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+  };
+  const incompleteIdea = {
+    ...household,
+    targetMode: "idea" as const,
+    targetMemberIds: [] as string[],
+    servings: null,
+  };
+  const save = vi.fn((_value: PlannerDraftInput, _revision: number) => {
+    return new Promise<PlannerDraft>((resolve) => {
+      resolveFirst = resolve;
+    });
+  });
+  const onSaved = vi.fn();
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 1,
+        resetToken: 0,
+        save,
+        onSaved,
+      }),
+    { initialProps: { value: base } },
+  );
+
+  rerender({ value: household });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+
+  // in-flight 中に idea + servings=null（non-persistable）へ切替
+  rerender({ value: incompleteIdea });
+
+  // 1 本目 RPC は household を commit するが、latest が incomplete のため成功 return しない
+  await act(async () => {
+    resolveFirst?.(saved(household, 2));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  // onSaved / state=saved を抑止（旧 mode を cache 成功扱いにしない）
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(result.current.state).toBe("idle");
+  // サーバ revision は学習済み（次の persistable 保存が conflict しない）
+  expect(result.current.revision).toBe(2);
+
+  // flush も Incomplete で失敗し、呼び出し元が成功扱いにできない
+  await act(async () => {
+    await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
+  });
+  expect(onSaved).not.toHaveBeenCalled();
 });
 
 it("P2: in-flight save が supersede 後も revision を引き継ぎ、後続 empty が conflict しない", async () => {

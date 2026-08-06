@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import type { TargetMode } from "@shared/contracts/planner";
+import { PLANNER_TARGET_MEMBER_LIMIT, type TargetMode } from "@shared/contracts/planner";
 import { useAppToast } from "@/shared/ui/app-toast";
 import { CurrentSafetySummary } from "../current-safety-summary";
 import { normalizeAudienceForModeChange } from "../model/planner-wizard";
 import { memberSafetyText, type PlannerSafetyMember } from "../planner-safety-member";
 import type { PlannerStepProps } from "./planner-wizard-props";
-
-const targetMemberLimit = 20;
 const ideaButtonServings = [1, 2, 3, 4, 5, 6] as const;
 /** 7〜20人。1〜6人はチップで選ぶため、プルダウンは7人以上だけを持つ。 */
 const ideaSelectServings = Array.from({ length: 14 }, (_, index) => index + 7);
@@ -50,6 +48,11 @@ export type AudienceStepProps = Omit<PlannerStepProps<AudienceValue>, "disabled"
    * wizard が autosaveState === "error" のとき渡す。
    */
   suppressValidationToast?: boolean;
+  /**
+   * 家族設定へ遷移。route が flush 後 navigate する（P5）。
+   * 未指定時は Link 直遷移。
+   */
+  onOpenSettings?: () => void;
 };
 
 /**
@@ -67,6 +70,7 @@ export function AudienceStep({
   eligibleMembers,
   fieldErrors,
   suppressValidationToast = false,
+  onOpenSettings,
   nextLabel = "次へ",
   backLabel = "戻る",
 }: AudienceStepProps) {
@@ -310,9 +314,20 @@ export function AudienceStep({
           {eligibleMembers.length === 0
             ? "家族設定がまだないため、「家族に合わせて作る」は選べません。"
             : "献立に使える家族がいないため、「家族に合わせて作る」は選べません。アレルギー確認などが未完了の家族は下の一覧で理由を確認できます。"}{" "}
-          <Link className="secondary-button min-h-11" to="/settings">
-            家族を追加する
-          </Link>
+          {onOpenSettings !== undefined ? (
+            <button
+              className="secondary-button min-h-11"
+              type="button"
+              disabled={disabled}
+              onClick={onOpenSettings}
+            >
+              家族を追加する
+            </button>
+          ) : (
+            <Link className="secondary-button min-h-11" to="/settings">
+              家族を追加する
+            </Link>
+          )}
         </p>
       )}
       {value.targetMode === "household" && (
@@ -350,7 +365,7 @@ export function AudienceStep({
                         disabled ||
                         isBlocked ||
                         (!value.targetMemberIds.includes(member.id) &&
-                          selectedSelectableCount >= targetMemberLimit)
+                          selectedSelectableCount >= PLANNER_TARGET_MEMBER_LIMIT)
                       }
                       aria-describedby={descriptionId}
                       aria-invalid={membersError != null ? "true" : undefined}
@@ -391,14 +406,28 @@ export function AudienceStep({
             <section className="card stack" aria-labelledby="current-safety-title">
               <h2 id="current-safety-title">現在の家族・安全条件</h2>
               <p>{emptySelectionSummaryBody}</p>
-              <Link className="secondary-button min-h-11" to="/settings">
-                家族設定を変更
-              </Link>
+              {onOpenSettings !== undefined ? (
+                <button
+                  className="secondary-button min-h-11"
+                  type="button"
+                  disabled={disabled}
+                  onClick={onOpenSettings}
+                >
+                  家族設定を変更
+                </button>
+              ) : (
+                <Link className="secondary-button min-h-11" to="/settings">
+                  家族設定を変更
+                </Link>
+              )}
               <p>{safetyDisclaimer}</p>
             </section>
           ) : (
             <>
-              <CurrentSafetySummary members={selectedSafetyMembers} />
+              <CurrentSafetySummary
+                members={selectedSafetyMembers}
+                {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
+              />
               <p className="wizard-option-description" role="note">
                 {selectedOnlyNote}
               </p>

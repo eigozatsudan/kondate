@@ -14,6 +14,11 @@ export type DraftAutosaveController = {
   flush: () => Promise<PlannerDraft>;
 };
 
+/** 明示 reset 直後の強制保存 Promise。flush が完了を await できるように共有する（P1）。 */
+type PendingForceSave = {
+  promise: Promise<PlannerDraft>;
+};
+
 class SupersededDraftSaveError extends Error {
   constructor() {
     super("reset 前の下書き保存は無効化されました");
@@ -106,6 +111,8 @@ export function useDraftAutosave({
   const enqueueRef = useRef<(next: PlannerDraftInput) => Promise<PlannerDraft>>(() =>
     Promise.reject(new Error("autosave enqueue is not ready")),
   );
+  // P1: reset 強制保存を fire-and-forget で握りつぶさず、flush から await 可能にする
+  const pendingForceSaveRef = useRef<PendingForceSave | null>(null);
   const onSavedRef = useRef(onSaved);
   latestRef.current = value;
   latestSerializedRef.current = serialized;
@@ -149,9 +156,22 @@ export function useDraftAutosave({
     // P1: 明示 reset 後は empty が baseline 一致扱いになり debounce が no-op になる。
     // 現行 value（route は空下書き）を強制 enqueue しサーバと揃える。
     // in-flight は generation で supersede 済み。キュー末尾の強制保存が上書きする。
+    // 失敗は enqueue 側で state=error。Promise は pendingForceSaveRef 経由で flush が await する
+    // （.catch で結果を握りつぶさない。unhandled rejection だけ派生 then で抑止）。
     baselineSerializedRef.current = "\0__reset_force_dirty__";
     if (enabledRef.current) {
-      void enqueueRef.current(latestRef.current).catch(() => undefined);
+      const promise = enqueueRef.current(latestRef.current);
+      const entry: PendingForceSave = { promise };
+      pendingForceSaveRef.current = entry;
+      void promise.then(
+        () => {
+          if (pendingForceSaveRef.current === entry) pendingForceSaveRef.current = null;
+        },
+        () => {
+          // 失敗結果は呼び出し側（flush / toast 再試行）へ残す。ここでは pending 解除のみ。
+          if (pendingForceSaveRef.current === entry) pendingForceSaveRef.current = null;
+        },
+      );
     }
   }, [resetToken]);
 
@@ -182,11 +202,8 @@ export function useDraftAutosave({
           if (existingConflict !== null) throw existingConflict;
         }
 
-        // P2/P4: キュー待ち〜in-flight 完了後に latest が変わっていれば追従する。
+        // P4: キュー待ち〜in-flight 完了後に latest が変わっていれば追従する。
         // 予約時 next へのフォールバックは mode 切替・strip 後に旧内容を書くため使わない。
-        let lastSaved: PlannerDraft | null = null;
-        let lastToSave: PlannerDraftInput | null = null;
-
         for (;;) {
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
@@ -198,41 +215,39 @@ export function useDraftAutosave({
 
           const latest = latestRef.current;
           if (!isPersistableDraft(latest)) {
-            // 途中状態へ遷移した。既にこの op で書けていればその結果を返す（baseline は後段）。
-            if (lastSaved !== null && lastToSave !== null) {
-              return {
-                saved: lastSaved,
-                toSave: lastToSave,
-                contentMatchedLatest: false,
-              };
-            }
+            // P2: 途中状態（idea+servings=null 等）へ遷移したあと、既に書いた旧 mode を
+            // 成功 return しない。onSaved / toast「保存しました」/ RQ cache が旧 household のまま
+            // 進む idea/household 混乱を防ぐ。revision は save 成功時に local へ反映済み。
+            // サーバ上の中間 revision は残り得る（P4 残差）。Incomplete で flush 呼び出し元へ通知する。
             throw new IncompleteDraftSaveError();
           }
 
           const toSave = latest;
-          // P2: ネットワーク直前にも generation を再確認（await 開始前の切替を拾う）
+          // ネットワーク直前にも generation を再確認（await 開始前の切替を拾う）
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
           }
 
           try {
+            // P4 残差: 既に飛んだ RPC のペイロードは開始時 toSave のまま commit される。
+            // キャンセル可能な transport は持たないため、成功後の追記ループで latest に収束する。
             const saved = await save(toSave, revisionRef.current);
             if (resetGeneration !== resetGenerationRef.current) {
-              // P2: 無効化後でもサーバ revision は進んでいる。後続の空保存が conflict しないよう引き継ぐ。
+              // 無効化後でもサーバ revision は進んでいる。後続の空保存が conflict しないよう引き継ぐ。
               revisionRef.current = saved.revision;
               if (mountedRef.current) setSavedRevision(saved.revision);
               throw new SupersededDraftSaveError();
             }
-            // ループ継続用にローカル revision を進める（成功ハンドラでも再設定する）
+            // ループ継続用にローカル revision を進める。
+            // P2 で Incomplete に落ちても次の persistable 保存が conflict しないよう UI revision も同期する。
             revisionRef.current = saved.revision;
-            lastSaved = saved;
-            lastToSave = toSave;
+            if (mountedRef.current) setSavedRevision(saved.revision);
 
             // P4: in-flight 中の strip / 編集があれば最新を同一キュー内で追記保存する
             if (JSON.stringify(toSave) !== latestSerializedRef.current) {
               continue;
             }
-            return { saved, toSave, contentMatchedLatest: true };
+            return { saved, toSave };
           } catch (error: unknown) {
             if (resetGeneration !== resetGenerationRef.current) {
               throw new SupersededDraftSaveError();
@@ -245,10 +260,8 @@ export function useDraftAutosave({
         (result) => {
           if (resetGeneration !== resetGenerationRef.current) return;
           revisionRef.current = result.saved.revision;
-          // 最新と一致したときだけ baseline を進め、mode 切替直後の stale 確定を「保存済み」にしない
-          if (result.contentMatchedLatest) {
-            baselineSerializedRef.current = JSON.stringify(result.toSave);
-          }
+          // 成功 return は latest 一致時のみ（P2 で non-persistable 成功経路を廃止）
+          baselineSerializedRef.current = JSON.stringify(result.toSave);
           if (mountedRef.current) {
             setSavedRevision(result.saved.revision);
             if (operationNumber === operationNumberRef.current) setState("saved");
@@ -258,9 +271,16 @@ export function useDraftAutosave({
         (error: unknown) => {
           if (
             resetGeneration !== resetGenerationRef.current ||
-            error instanceof SupersededDraftSaveError ||
-            error instanceof IncompleteDraftSaveError
+            error instanceof SupersededDraftSaveError
           ) {
+            return;
+          }
+          // P2: Incomplete は error toast にしないが、saving 固着を避け idle へ戻す
+          // （旧 lastSaved 成功 return では saved になっていた経路の代替）。
+          if (error instanceof IncompleteDraftSaveError) {
+            if (mountedRef.current && operationNumber === operationNumberRef.current) {
+              setState("idle");
+            }
             return;
           }
           if (mountedRef.current && operationNumber === operationNumberRef.current) {
@@ -319,6 +339,8 @@ export function useDraftAutosave({
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = null;
       // 画面離脱直前の編集も通常保存と同じ直列キューへ積み、完了後は UI state を更新しない。
+      // P5 残差: unmount 後は toast を出せないため失敗は握りつぶす。settings 等の明示遷移は
+      // route が await flush + submissionError で可視化する（P5 修正側）。
       void enqueueRef.current(latestRef.current).catch(() => undefined);
     };
   }, []);
@@ -329,6 +351,26 @@ export function useDraftAutosave({
       timerRef.current = null;
     }
     pendingDebounceRef.current = false;
+    // P1: reset 強制保存が走っている間はそれを await し、完了/失敗を呼び出し元へ返す。
+    // 成功後にまだ dirty（reset 直後の追記編集など）なら通常 enqueue で追従する。
+    const pending = pendingForceSaveRef.current;
+    if (pending !== null) {
+      return pending.promise.then(
+        (saved) => {
+          if (latestSerializedRef.current !== baselineSerializedRef.current) {
+            return enqueue(latestRef.current);
+          }
+          return saved;
+        },
+        (error: unknown) => {
+          // supersede された強制保存は最新でやり直す。それ以外（ネットワーク等）は失敗を隠さない。
+          if (error instanceof SupersededDraftSaveError) {
+            return enqueue(latestRef.current);
+          }
+          throw error;
+        },
+      );
+    }
     return enqueue(latestRef.current);
   }, [enqueue]);
 

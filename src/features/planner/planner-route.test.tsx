@@ -830,6 +830,27 @@ it("冷蔵庫一覧の取得失敗を planner route の読み込み失敗とし�
   expect(screen.queryByLabelText("pantry status")).not.toBeInTheDocument();
 });
 
+it("P3: init 後の pantry 背景 refetch 失敗では wizard を破棄しない", () => {
+  // 初回は data ありで初期化。その後 isError でも previous data があれば soft error。
+  queryState.pantry = { data: [pantryItem], isError: false, isPending: false };
+  const view = render(<PlannerPage />);
+  expect(screen.getByLabelText("pantry status")).toHaveTextContent("loaded");
+
+  queryState.pantry = { data: [pantryItem], isError: true, isPending: false };
+  view.rerender(<PlannerPage />);
+
+  // soft banner と wizard の status 系 output が同居するため role 単独は使わない
+  expect(
+    screen.getByText("家族または冷蔵庫の最新情報を再取得できませんでした。表示は直前の内容です。"),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "再試行" })).toBeInTheDocument();
+  // wizard は残る（全画面 error で破棄しない）
+  expect(screen.getByLabelText("pantry status")).toHaveTextContent("loaded");
+  expect(
+    screen.queryByText("献立条件を読み込めませんでした。再読み込みしてください。"),
+  ).not.toBeInTheDocument();
+});
+
 it("選択解除後も attempt に残った confirmation は生成 command から落とす (P1)", async () => {
   const user = userEvent.setup();
   const startGeneration = vi.fn();

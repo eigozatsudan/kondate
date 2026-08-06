@@ -5,6 +5,7 @@ import { formatPlanQuotaCopy } from "@shared/copy/plan-tier";
 import type { PlanCode } from "@shared/contracts/plan-quota";
 import { detectUnsupportedMedicalRequest } from "@shared/safety-pure/medical-scope";
 import { getJstSeasonContext, type SeasonContext } from "@shared/season/jst-season";
+import { getNextJstMidnight } from "@shared/time/jst";
 import { PlusHardLimitCta } from "@/features/billing/plus-cta";
 import {
   hasCurrentExpiredConfirmation,
@@ -98,6 +99,8 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
    * household / idea とも同一 secondary CTA（idea は個人固定候補パス）。
    */
   onOpenEmergencyMenus?: () => void;
+  /** P5: 家族設定へ。route が flush 後 navigate。CurrentSafetySummary へ渡す。 */
+  onOpenSettings?: () => void;
   /** GET /api/usage/today の成功残数。未取得時は null（偽の残数を出さない） */
   usageRemaining?: number | null;
   /**
@@ -169,6 +172,7 @@ export function ReviewStep({
   onSubmit,
   safetyMembers = [],
   onOpenEmergencyMenus,
+  onOpenSettings,
   usageRemaining = null,
   plan = null,
   attemptsRemaining = null,
@@ -183,12 +187,15 @@ export function ReviewStep({
   // 品質トグルは Plus 確定時のみ操作可。null（usage 未取得）も Free 同様にロック（fail-closed）。
   const qualityModeLocked = plan !== "plus";
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
-  // P4: 上限超過を silent truncate せずローカルエラーで止める（schema fieldErrors と別経路）
+  // 上限超過を silent truncate せずローカルエラーで止める（schema fieldErrors と別経路）
   const [avoidIngredientLocalError, setAvoidIngredientLocalError] = useState<string | null>(null);
   // 生成ボタン押下時の privacy 未確認ダイアログ。同意後や閉じる操作で消す。
   const [privacyGateOpen, setPrivacyGateOpen] = useState(false);
   // 追加条件は初期から開く。閉じたまま気づかれないため、ユーザーが明示的に閉じるまで展開する。
   const [additionalOpen, setAdditionalOpen] = useState(true);
+  // P6: 日跨ぎで confirmation が無効になっても再 render まで CTA が遅れないよう、
+  // 次の JST 0:00 で now を進め期限判定を再評価する（submit 再検証は従来どおり）。
+  const [expiryNow, setExpiryNow] = useState(() => new Date());
   const headingRef = useRef<HTMLHeadingElement>(null);
   const privacyNoticeButtonRef = useRef<HTMLButtonElement>(null);
   const privacyGatePrimaryRef = useRef<HTMLButtonElement>(null);
@@ -205,12 +212,29 @@ export function ReviewStep({
   useEffect(() => {
     if (privacyGateOpen) privacyGatePrimaryRef.current?.focus();
   }, [privacyGateOpen]);
+  useEffect(() => {
+    let boundaryTimer: number | undefined;
+    const armBoundary = (): void => {
+      const delay = Math.min(
+        Math.max(getNextJstMidnight(new Date()).getTime() - Date.now() + 50, 1),
+        86_400_000,
+      );
+      boundaryTimer = window.setTimeout(() => {
+        setExpiryNow(new Date());
+        armBoundary();
+      }, delay);
+    };
+    armBoundary();
+    return () => {
+      if (boundaryTimer !== undefined) window.clearTimeout(boundaryTimer);
+    };
+  }, []);
   const pantryItemIds = new Set(pantryItems.map((item) => item.id));
   const hasUnavailablePantrySelections =
     pantryItemsStatus === "loaded" &&
     value.pantrySelections.some((selection) => !pantryItemIds.has(selection.pantryItemId));
   // PLAN-1: 下書き復元・日付跨ぎで期限切れが既選択のとき、新規選択時と同じ確認が要る
-  const nowForExpiry = new Date();
+  const nowForExpiry = expiryNow;
   const hasUnconfirmedExpiredPantry =
     pantryItemsStatus === "loaded" &&
     value.pantrySelections.some((selection) => {
@@ -284,7 +308,10 @@ export function ReviewStep({
       {value.targetMode === "household" && (
         <>
           {targetSafetyMembers.length > 0 ? (
-            <CurrentSafetySummary members={targetSafetyMembers} />
+            <CurrentSafetySummary
+              members={targetSafetyMembers}
+              {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
+            />
           ) : null}
           <p>{HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY}</p>
         </>
@@ -583,6 +610,7 @@ export function ReviewStep({
             attempt={attempt}
             onAttemptChange={onAttemptChange}
             disabled={disabled}
+            now={() => expiryNow}
             onChange={(pantrySelections) => {
               onChange({ ...value, pantrySelections: [...pantrySelections] });
             }}
