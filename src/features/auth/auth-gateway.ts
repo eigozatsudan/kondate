@@ -106,6 +106,12 @@ export function createAuthGateway(
   deps: AuthGatewayDeps = browserAuthGatewayDeps,
 ): AuthGateway {
   const client = providedClient ?? getBrowserSupabaseClient();
+  // C-R3: 同一 flow の in-flight resume を単一化する。
+  // withTimeout は元 Promise を cancel しないため、completeCallback の即時 resume と
+  // recovery の第二 resume が並行すると二重 exchange → used-code terminal と遅延成功 session が競合し得る。
+  // 同一 gateway インスタンス上では先着の Promise を共有し、後続は join する（C3 冪等 re-claim は
+  // 先着が settle したあとの再呼び出しで従来どおり動く。C4 hang 中の secret 保持も維持）。
+  const inflightResumeByFlowId = new Map<string, Promise<AuthCallbackResult>>();
   // completeCallback から同一オブジェクトの resumeFlow を呼ぶため、先に束縛する。
   const gateway: AuthGateway = {
     async signInWithGoogle(returnTo) {
@@ -250,97 +256,79 @@ export function createAuthGateway(
     },
 
     async resumeFlow(flowId) {
-      const flow = readAuthFlow(flowId, storage);
-      if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
-      // exchange 失敗（provider 拒否）だけ terminal。claim 成功後も secret は exchange 成功まで残す（C3/C4）。
-      let exchangeStarted = false;
+      const existing = inflightResumeByFlowId.get(flowId);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const run = runResumeFlow(flowId).finally(() => {
+        // 自分の世代だけ消す（先着が settle 後に後続が新規起動して差し替えた場合は触らない）
+        if (inflightResumeByFlowId.get(flowId) === run) {
+          inflightResumeByFlowId.delete(flowId);
+        }
+      });
+      inflightResumeByFlowId.set(flowId, run);
+      return run;
+    },
+  };
+
+  async function runResumeFlow(flowId: string): Promise<AuthCallbackResult> {
+    const flow = readAuthFlow(flowId, storage);
+    if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+    // exchange 失敗（provider 拒否）だけ terminal。claim 成功後も secret は exchange 成功まで残す（C3/C4）。
+    let exchangeStarted = false;
+    try {
+      const claimedCode = await continuationApi.claim(flow.id, {
+        secret: flow.secret,
+        state: flow.state,
+      });
+      // C3/C4: claim はサーバ側で冪等再提示。secret は exchange 成功後に破棄し、
+      // body 欠落や exchange hang でも recovery が再 claim → 再 exchange できる。
+      exchangeStarted = true;
+      const result =
+        flow.sessionExchange === "oauth_mock"
+          ? await (async () => {
+              const provider = deps.getPublicEnv();
+              if (provider.oauthMockOrigin !== "http://127.0.0.1:8788") {
+                throw new Error("invalid mock origin");
+              }
+              const response = await deps.fetchImpl(`${provider.oauthMockOrigin}/exchange`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ code: claimedCode.code }),
+              });
+              if (!response.ok) throw new Error("mock exchange failed");
+              return client.auth.signInWithPassword(
+                localCredentialsSchema.parse(await response.json()),
+              );
+            })()
+          : client.auth.exchangeCodeForSession(claimedCode.code);
+      const { error } = await result;
+      if (error !== null) throw new Error("provider exchange failed");
+      // exchange 成功後に secret を破棄（所有証跡は clearClaimed で整理）
+      clearClaimedAuthFlow(flow.id, storage);
+      // F-AUTH-002: claim 成功の returnTo も再 sanitize（create 経路の防御を二重化）
+      const safeReturnTo = sanitizeReturnPath(claimedCode.returnTo);
+      // C4: withTimeout で結果が discard されても storage 経由で recovery/listener が拾えるよう公開。
+      // gateway に注入された storage と同じ領域へ書き、テストの MapStorage とも一致させる。
       try {
-        const claimedCode = await continuationApi.claim(flow.id, {
-          secret: flow.secret,
-          state: flow.state,
-        });
-        // C3/C4: claim はサーバ側で冪等再提示。secret は exchange 成功後に破棄し、
-        // body 欠落や exchange hang でも recovery が再 claim → 再 exchange できる。
-        exchangeStarted = true;
-        const result =
-          flow.sessionExchange === "oauth_mock"
-            ? await (async () => {
-                const provider = deps.getPublicEnv();
-                if (provider.oauthMockOrigin !== "http://127.0.0.1:8788") {
-                  throw new Error("invalid mock origin");
-                }
-                const response = await deps.fetchImpl(`${provider.oauthMockOrigin}/exchange`, {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ code: claimedCode.code }),
-                });
-                if (!response.ok) throw new Error("mock exchange failed");
-                return client.auth.signInWithPassword(
-                  localCredentialsSchema.parse(await response.json()),
-                );
-              })()
-            : client.auth.exchangeCodeForSession(claimedCode.code);
-        const { error } = await result;
-        if (error !== null) throw new Error("provider exchange failed");
-        // exchange 成功後に secret を破棄（所有証跡は clearClaimed で整理）
-        clearClaimedAuthFlow(flow.id, storage);
-        // F-AUTH-002: claim 成功の returnTo も再 sanitize（create 経路の防御を二重化）
-        const safeReturnTo = sanitizeReturnPath(claimedCode.returnTo);
-        // C4: withTimeout で結果が discard されても storage 経由で recovery/listener が拾えるよう公開。
-        // gateway に注入された storage と同じ領域へ書き、テストの MapStorage とも一致させる。
-        try {
-          publishAuthContinuationCompletion({ flowId: flow.id, returnTo: safeReturnTo }, storage);
-        } catch {
-          // localStorage 障害は complete 結果自体を妨げない
-        }
-        return {
-          kind: "complete",
-          continuation: "same_browser",
-          returnTo: safeReturnTo,
-          flowId: flow.id,
-        };
-      } catch (error) {
-        // provider exchange が明示失敗したときだけ terminal（hang/timeout は下層で kind 返却しない）
-        const isRetryableTransport =
-          error instanceof ContinuationHttpError ||
-          error instanceof ContinuationResponseLostError ||
-          error instanceof TypeError;
-        if (exchangeStarted && !isRetryableTransport) {
-          // mock/provider の失敗 Error。"timeout" は withTimeout 側で resumeFlow の外。
-          clearAuthFlow(flow.id, storage);
-          return {
-            kind: "error",
-            code: "unbound_callback",
-            returnTo: flow.returnTo,
-            flowId: flow.id,
-          };
-        }
-        // B-I4: 404（未 deposit / 競合待ち）・429・5xx・ネットワークはリトライ可能。
-        // フローと secret を残し、待機タブを /login へ落とさない。
-        // 410（decrypt 失敗）は terminal unbound。
-        if (error instanceof ContinuationHttpError) {
-          if (error.status === 404) {
-            return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
-          }
-          if (error.status === 429 || error.status >= 500) {
-            return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
-          }
-          // 410 ほか非リトライ 4xx: secret を消し recovery の poll を止める
-          clearAuthFlow(flow.id, storage);
-          return {
-            kind: "error",
-            code: "unbound_callback",
-            returnTo: flow.returnTo,
-            flowId: flow.id,
-          };
-        }
-        // C3: 2xx body 欠落は冪等 re-claim で回復。secret を残して awaiting。
-        if (error instanceof ContinuationResponseLostError) {
-          return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
-        }
-        if (error instanceof TypeError) {
-          return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
-        }
+        publishAuthContinuationCompletion({ flowId: flow.id, returnTo: safeReturnTo }, storage);
+      } catch {
+        // localStorage 障害は complete 結果自体を妨げない
+      }
+      return {
+        kind: "complete",
+        continuation: "same_browser",
+        returnTo: safeReturnTo,
+        flowId: flow.id,
+      };
+    } catch (error) {
+      // provider exchange が明示失敗したときだけ terminal（hang/timeout は下層で kind 返却しない）
+      const isRetryableTransport =
+        error instanceof ContinuationHttpError ||
+        error instanceof ContinuationResponseLostError ||
+        error instanceof TypeError;
+      if (exchangeStarted && !isRetryableTransport) {
+        // mock/provider の失敗 Error。"timeout" は withTimeout 側で resumeFlow の外。
         clearAuthFlow(flow.id, storage);
         return {
           kind: "error",
@@ -349,7 +337,41 @@ export function createAuthGateway(
           flowId: flow.id,
         };
       }
-    },
-  };
+      // B-I4: 404（未 deposit / 競合待ち）・429・5xx・ネットワークはリトライ可能。
+      // フローと secret を残し、待機タブを /login へ落とさない。
+      // 410（decrypt 失敗）は terminal unbound。
+      if (error instanceof ContinuationHttpError) {
+        if (error.status === 404) {
+          return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+        }
+        if (error.status === 429 || error.status >= 500) {
+          return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+        }
+        // 410 ほか非リトライ 4xx: secret を消し recovery の poll を止める
+        clearAuthFlow(flow.id, storage);
+        return {
+          kind: "error",
+          code: "unbound_callback",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
+      // C3: 2xx body 欠落は冪等 re-claim で回復。secret を残して awaiting。
+      if (error instanceof ContinuationResponseLostError) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
+      if (error instanceof TypeError) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
+      clearAuthFlow(flow.id, storage);
+      return {
+        kind: "error",
+        code: "unbound_callback",
+        returnTo: flow.returnTo,
+        flowId: flow.id,
+      };
+    }
+  }
+
   return gateway;
 }

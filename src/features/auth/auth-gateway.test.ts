@@ -554,24 +554,15 @@ it("AUTH-R1: stripped callback without local secret stays unbound", async () => 
   expect(result).toEqual({ kind: "error", code: "unbound_callback", returnTo: "/planner" });
 });
 
-it("waits for the winning tab when an in-flight recovery consumes the claim", async () => {
+it("C-R3: concurrent resumeFlow joins the in-flight claim/exchange (no dual exchange)", async () => {
   const storage = new MapStorage();
-  let resolveWinningClaim: ((value: { code: string; returnTo: string }) => void) | undefined;
-  let rejectLosingClaim: ((reason: Error) => void) | undefined;
-  const claim = vi
-    .fn()
-    .mockImplementationOnce(
-      () =>
-        new Promise<{ code: string; returnTo: string }>((resolve) => {
-          resolveWinningClaim = resolve;
-        }),
-    )
-    .mockImplementationOnce(
-      () =>
-        new Promise<never>((_resolve, reject) => {
-          rejectLosingClaim = reject;
-        }),
-    );
+  let resolveClaim: ((value: { code: string; returnTo: string }) => void) | undefined;
+  const claim = vi.fn().mockImplementation(
+    () =>
+      new Promise<{ code: string; returnTo: string }>((resolve) => {
+        resolveClaim = resolve;
+      }),
+  );
   const api = continuationApiMock({ claim });
   const client = authClientMock();
   const gateway = createAuthGateway(
@@ -584,21 +575,61 @@ it("waits for the winning tab when an in-flight recovery consumes the claim", as
     ...fixedFlowDeps,
     now: () => new Date(),
   });
-  const recovery = gateway.resumeFlow(flow.id);
+  // completeCallback 即時 resume と recovery の第二 resume が同一 gateway で重なるケース
+  const first = gateway.resumeFlow(flow.id);
   expect(claim).toHaveBeenCalledOnce();
   markAuthContinuationCallbackOwner(flow.id, storage);
-  const callback = gateway.resumeFlow(flow.id);
-  expect(claim).toHaveBeenCalledTimes(2);
-  resolveWinningClaim?.({ code: "auth-code-1", returnTo: "/onboarding" });
+  const second = gateway.resumeFlow(flow.id);
+  // C-R3: 後続は in-flight に join し、claim/exchange を二重起動しない
+  expect(claim).toHaveBeenCalledOnce();
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+  resolveClaim?.({ code: "auth-code-1", returnTo: "/onboarding" });
+  // claim resolve → exchange まで microtask を進める
+  for (let index = 0; index < 20; index += 1) await Promise.resolve();
 
-  await expect(recovery).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
-  rejectLosingClaim?.(new ContinuationHttpError(404));
+  await expect(first).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
+  await expect(second).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
+  expect(claim).toHaveBeenCalledOnce();
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
 
-  await expect(callback).resolves.toEqual({
-    kind: "awaiting_completion",
-    flowId: flow.id,
-    returnTo: "/onboarding",
+it("C-R3: delayed exchange success is shared with recovery join (no used-code terminal)", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  let resolveExchange: ((value: { data: unknown; error: AuthError | null }) => void) | undefined;
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(
+    () =>
+      new Promise<{ data: unknown; error: AuthError | null }>((resolve) => {
+        resolveExchange = resolve;
+      }),
+  );
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
   });
+
+  const hung = gateway.resumeFlow(flow.id);
+  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+  // recovery 相当の第二 resume は join のみ（第二 exchange を起こさない）
+  const joined = gateway.resumeFlow(flow.id);
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+  expect(claim).toHaveBeenCalledOnce();
+
+  resolveExchange?.({ data: null, error: null });
+  await expect(hung).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
+  await expect(joined).resolves.toMatchObject({ kind: "complete", flowId: flow.id });
+  // used-code 相当の第二失敗経路は走らず、secret は成功 clear のみ
   expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
 
