@@ -18,6 +18,7 @@ import {
   releaseAuthContinuationCallbackPreLease,
   releaseAuthContinuationExchangeInFlight,
   startAuthContinuationCallbackPreLease,
+  startAuthContinuationExchangeInFlightHeartbeat,
   tryAcquireAuthContinuationExchangeInFlight,
 } from "./auth-continuation-recovery";
 import { getPublicEnv, type PublicEnv } from "@/shared/config/public-env";
@@ -239,6 +240,9 @@ export function createAuthGateway(
       }
       // クロスブラウザ（secret 無し）: deposit のみ。pre-lease は立てない（元タブ global を塞がない）。
       // C2: 匿名 deposit は未 claim なら last-wins（毒 first-wins を正当 WebView が覆せる）。
+      // R1 residual-intentional: 正当 deposit 後の後着毒も last-wins で上書きし得る（可用性 DoS、
+      // アカウント奪取ではない）。first-wins に戻すと C2 が再発するため維持。deposit API は
+      // code 形式を厳格化して明らかなゴミを弾くが、形式を通る毒は閉じない。
       if (stored === null) {
         try {
           await continuationApi.deposit(flowId, { state, code });
@@ -318,9 +322,11 @@ export function createAuthGateway(
     if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
     // exchange 失敗（provider 拒否）だけ terminal。claim 成功後も secret は exchange 成功まで残す（C3/C4）。
     let exchangeStarted = false;
-    // C3: タブ横断 dual exchange 抑止用。claim 成功後に取得し、完了/terminal で解放する。
+    // C3/R2: タブ横断 dual exchange 抑止用。claim 成功後に acquire（write-then-confirm）し、
+    // 完了/terminal で解放する。R3: 生存中は heartbeat で TTL を延長する。
     const exchangeInstanceId = `exchange-${flow.id}-${Math.random().toString(36).slice(2, 10)}`;
     let holdsExchangeLease = false;
+    let stopExchangeHeartbeat: (() => void) | undefined;
     try {
       const claimedCode = await continuationApi.claim(flow.id, {
         secret: flow.secret,
@@ -340,6 +346,12 @@ export function createAuthGateway(
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       holdsExchangeLease = true;
+      // R3: exchange hang 中も lease を延命。JS 死亡時は timer 停止 → TTL 失効で他タブ回復。
+      stopExchangeHeartbeat = startAuthContinuationExchangeInFlightHeartbeat(
+        flow.id,
+        exchangeInstanceId,
+        storage,
+      );
       exchangeStarted = true;
       const result =
         flow.sessionExchange === "oauth_mock"
@@ -428,10 +440,11 @@ export function createAuthGateway(
         flowId: flow.id,
       };
     } finally {
-      // settle 時のみ解放。exchange hang 中は Promise が終わらないので lease が残り、
-      // 他タブ dual exchange を TTL まで抑止する（C3）。
+      // settle 時のみ解放。exchange hang 中は Promise が終わらないので heartbeat+lease が残り、
+      // 他タブ dual exchange を抑止する（C3/R3）。JS 死亡時は heartbeat 停止後 TTL で失効。
       if (holdsExchangeLease) {
-        releaseAuthContinuationExchangeInFlight(flowId, storage);
+        stopExchangeHeartbeat?.();
+        releaseAuthContinuationExchangeInFlight(flowId, storage, exchangeInstanceId);
       }
     }
   }

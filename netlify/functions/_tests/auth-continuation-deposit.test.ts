@@ -123,6 +123,52 @@ describe("auth continuation deposit", () => {
     expect(deposit.mock.calls[0]?.[0]).not.toHaveProperty("secretHash");
   });
 
+  it("R1: rejects obviously garbage authorization codes by length/charset", async () => {
+    const deposit = vi.fn().mockResolvedValue(true);
+    const handler = createHandler({
+      origin: ORIGIN,
+      encryptionKey: new Uint8Array(32).fill(2),
+      deposit,
+    });
+    for (const code of ["short", "x".repeat(15), "has space in code!!", "あ".repeat(20)]) {
+      const response = await handler(
+        new Request("https://functions.test", {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/json" },
+          body: JSON.stringify({ state: STATE, code }),
+        }),
+        { params: { continuationId: CONTINUATION_ID } },
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(deposit).not.toHaveBeenCalled();
+  });
+
+  it("R1: accepts gotrue-like UUID and base64url-length codes", async () => {
+    const deposit = vi.fn().mockResolvedValue(true);
+    const handler = createHandler({
+      origin: ORIGIN,
+      encryptionKey: new Uint8Array(32).fill(4),
+      deposit,
+    });
+    for (const code of [
+      "34e770dd-9ff9-416c-87fa-43b31d7ef225",
+      "A".repeat(43),
+      AUTH_CODE,
+    ]) {
+      const response = await handler(
+        new Request("https://functions.test", {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/json" },
+          body: JSON.stringify({ state: STATE, code }),
+        }),
+        { params: { continuationId: CONTINUATION_ID } },
+      );
+      expect(response.status).toBe(204);
+    }
+    expect(deposit).toHaveBeenCalledTimes(3);
+  });
+
   it("C2: hashes optional owner secret for deposit overwrite without exposing plaintext", async () => {
     const SECRET = "k".repeat(43);
     const deposit = vi.fn().mockResolvedValue(true);

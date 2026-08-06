@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IMMEDIATE_CLAIM_TIMEOUT_MS } from "./async-timeout";
 import {
+  EXCHANGE_IN_FLIGHT_TTL_MS,
+  isAuthContinuationExchangeInFlight,
   releaseAuthContinuationCallbackPreLease,
+  releaseAuthContinuationExchangeInFlight,
   startAuthContinuationCallbackPreLease,
+  startAuthContinuationExchangeInFlightHeartbeat,
   startAuthContinuationRecovery,
+  tryAcquireAuthContinuationExchangeInFlight,
 } from "./auth-continuation-recovery";
 
 describe("auth continuation recovery", () => {
@@ -1167,6 +1172,133 @@ describe("auth continuation recovery", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("auth continuation exchange in-flight lease (R2/R3)", () => {
+  const flowId = "10000000-0000-4000-8000-000000000001";
+  const exchangeKey = `kondate.auth.supabase.claim-poll-exchange.${flowId}`;
+
+  it("R2: second tab fails acquire while first holds the lease", () => {
+    const storage = new MapStorage();
+    const nowMs = 1_000;
+    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs)).toBe(
+      true,
+    );
+    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-b", storage, nowMs)).toBe(
+      false,
+    );
+    expect(isAuthContinuationExchangeInFlight(flowId, storage, nowMs)).toBe(true);
+    const raw = storage.getItem(exchangeKey);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw ?? "{}")).toMatchObject({ instanceId: "tab-a" });
+  });
+
+  it("R2: write-then-confirm loses when another writer overwrote before re-read", () => {
+    const storage = new MapStorage();
+    const nowMs = 2_000;
+    const originalSetItem = storage.setItem.bind(storage);
+    let injectOnce = true;
+    storage.setItem = (key: string, value: string) => {
+      originalSetItem(key, value);
+      // setItem 直後に他タブが上書き（TOCTOU 窓の再現）
+      if (injectOnce && key === exchangeKey) {
+        injectOnce = false;
+        originalSetItem(
+          key,
+          JSON.stringify({ flowId, instanceId: "tab-other", refreshedAt: nowMs }),
+        );
+      }
+    };
+
+    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-me", storage, nowMs)).toBe(
+      false,
+    );
+    // 勝者の lease を消さない
+    expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
+      instanceId: "tab-other",
+    });
+  });
+
+  it("R2: same instance re-acquire refreshes and stays owner", () => {
+    const storage = new MapStorage();
+    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, 1_000)).toBe(
+      true,
+    );
+    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, 5_000)).toBe(
+      true,
+    );
+    expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
+      instanceId: "tab-a",
+      refreshedAt: 5_000,
+    });
+  });
+
+  it("R2: release with instanceId does not clear another owner", () => {
+    const storage = new MapStorage();
+    // release 内の所有確認は Date.now() 基準のため、lease も実時刻で立てる
+    const nowMs = Date.now();
+    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs)).toBe(
+      true,
+    );
+    releaseAuthContinuationExchangeInFlight(flowId, storage, "tab-b");
+    expect(isAuthContinuationExchangeInFlight(flowId, storage, nowMs)).toBe(true);
+    releaseAuthContinuationExchangeInFlight(flowId, storage, "tab-a");
+    expect(isAuthContinuationExchangeInFlight(flowId, storage, nowMs)).toBe(false);
+  });
+
+  it("R3: without heartbeat lease expires after TTL", () => {
+    const storage = new MapStorage();
+    const start = 10_000;
+    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, start)).toBe(
+      true,
+    );
+    expect(
+      isAuthContinuationExchangeInFlight(flowId, storage, start + EXCHANGE_IN_FLIGHT_TTL_MS),
+    ).toBe(true);
+    expect(
+      isAuthContinuationExchangeInFlight(flowId, storage, start + EXCHANGE_IN_FLIGHT_TTL_MS + 1),
+    ).toBe(false);
+  });
+
+  it("R3: heartbeat keeps exchange lease alive past the initial refreshedAt+TTL", () => {
+    const storage = new MapStorage();
+    let nowMs = 0;
+    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs)).toBe(
+      true,
+    );
+
+    const intervalHandlers: Array<() => void> = [];
+    const setIntervalMock = ((handler: TimerHandler) => {
+      intervalHandlers.push(handler as () => void);
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof setInterval;
+    const clearIntervalMock = vi.fn() as unknown as typeof clearInterval;
+
+    const stop = startAuthContinuationExchangeInFlightHeartbeat(
+      flowId,
+      "tab-a",
+      storage,
+      () => nowMs,
+      setIntervalMock,
+      clearIntervalMock,
+    );
+
+    // 5s 間隔で心拍しながら TTL を超えて進める（初回 refreshedAt=0 のままなら 120s で失効）
+    for (let step = 0; step < 30; step += 1) {
+      nowMs += 5_000;
+      intervalHandlers[0]?.();
+    }
+    // nowMs = 150_000 > EXCHANGE_IN_FLIGHT_TTL_MS
+    expect(nowMs).toBeGreaterThan(EXCHANGE_IN_FLIGHT_TTL_MS);
+    expect(isAuthContinuationExchangeInFlight(flowId, storage, nowMs)).toBe(true);
+    expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
+      instanceId: "tab-a",
+      refreshedAt: nowMs,
+    });
+
+    stop();
+    expect(clearIntervalMock).toHaveBeenCalled();
   });
 });
 

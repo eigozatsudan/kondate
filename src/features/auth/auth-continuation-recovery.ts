@@ -39,9 +39,12 @@ const TARGET_RECOVERY_LEASE_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS + MIN_CLAIM_POLL
  * C3: claim 成功後〜exchange 完了までのタブ横断排他。
  * IdP code 単回利用のため、process 内 inflight の外側で dual exchange を抑止する。
  * タブ死亡時は TTL 後に再 claim を許す（C3 冪等 re-claim）。
+ * R3: 生存タブは heartbeat で refreshedAt を延ばし、hang 中の他タブ re-claim 窓を縮める。
+ * JS 死亡時は heartbeat 停止 → TTL 失効で回復。
  */
 const EXCHANGE_IN_FLIGHT_PREFIX = `${CLAIM_POLL_COORDINATION_PREFIX}-exchange.`;
-const EXCHANGE_IN_FLIGHT_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS * 4;
+/** テスト・心拍 TTL 検証用。IMMEDIATE_CLAIM_TIMEOUT * 4 = 120s。 */
+export const EXCHANGE_IN_FLIGHT_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS * 4;
 /**
  * C-R5: completeCallback 即時 resume の pre-lease 窓用。
  * target recovery 開始前でも「lease 0 = orphan」にしない固定 instanceId。
@@ -148,8 +151,12 @@ function readExchangeInFlight(
 }
 
 /**
- * C3: exchange 開始前にタブ横断 lease を取る。他タブが保持中なら false。
- * 同一 instance の再取得（heartbeat 相当）は true。
+ * C3/R2: exchange 開始前にタブ横断 lease を取る。他タブが保持中なら false。
+ * 同一 instance の再取得（heartbeat）は refreshedAt を更新して true。
+ *
+ * localStorage に CAS が無いため check-then-set だけでは TOCTOU で双方 true になり得る。
+ * unique instanceId を書き込んだ直後に再読し、最終 writer が自分でなければ false
+ * （他 owner のキーは消さない。last-writer-wins でも勝者は 1 のみ）。
  */
 export function tryAcquireAuthContinuationExchangeInFlight(
   flowId: string,
@@ -162,12 +169,57 @@ export function tryAcquireAuthContinuationExchangeInFlight(
     return false;
   }
   const lease: ExchangeInFlightLease = { flowId, instanceId, refreshedAt: nowMs };
-  return writeStorageValue(storage, exchangeInFlightKey(flowId), JSON.stringify(lease));
+  const key = exchangeInFlightKey(flowId);
+  if (!writeStorageValue(storage, key, JSON.stringify(lease))) {
+    return false;
+  }
+  // R2: setItem 直後に owner 一致を確認（同時書き込みの最終勝者だけ true）
+  const confirmed = readExchangeInFlight(storage, flowId, nowMs);
+  if (confirmed === null || confirmed.instanceId !== instanceId) {
+    // 他タブが後着上書き済み。自分は持たないので remove しない（勝者の lease を壊さない）
+    return false;
+  }
+  return true;
 }
 
-/** C3: exchange 完了・terminal 時に lease を解放する */
-export function releaseAuthContinuationExchangeInFlight(flowId: string, storage: Storage): void {
+/**
+ * R3: exchange 中の heartbeat。MIN_CLAIM_POLL_GAP 間隔で同一 instance の lease を延長する。
+ * 返却関数は heartbeat のみ止める（キー削除は release 側）。
+ */
+export function startAuthContinuationExchangeInFlightHeartbeat(
+  flowId: string,
+  instanceId: string,
+  storage: Storage,
+  now: () => number = () => Date.now(),
+  setIntervalFn: typeof setInterval = setInterval,
+  clearIntervalFn: typeof clearInterval = clearInterval,
+): () => void {
+  const beat = (): void => {
+    // 所有中のみ refreshedAt 更新。他 owner や失効後の奪取は tryAcquire が拒否する。
+    tryAcquireAuthContinuationExchangeInFlight(flowId, instanceId, storage, now());
+  };
+  const timer = setIntervalFn(beat, MIN_CLAIM_POLL_GAP_MS);
+  return () => {
+    clearIntervalFn(timer);
+  };
+}
+
+/**
+ * C3: exchange 完了・terminal 時に lease を解放する。
+ * instanceId 指定時は他 owner のキーを消さない（R2 並行後の安全解放）。
+ */
+export function releaseAuthContinuationExchangeInFlight(
+  flowId: string,
+  storage: Storage,
+  instanceId?: string,
+): void {
   try {
+    if (instanceId !== undefined) {
+      const existing = readExchangeInFlight(storage, flowId, Date.now());
+      if (existing !== null && existing.instanceId !== instanceId) {
+        return;
+      }
+    }
     storage.removeItem(exchangeInFlightKey(flowId));
   } catch {
     // TTL で収束する

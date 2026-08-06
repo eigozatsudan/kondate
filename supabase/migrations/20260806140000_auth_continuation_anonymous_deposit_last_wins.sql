@@ -1,6 +1,8 @@
 -- C2 residual: 匿名 deposit の毒 first-wins を閉じる。
 -- 未 claim なら秘密無し deposit も暗号文を上書きできる（正当 WebView が後着でも回復）。
 -- claim 後の上書きは引き続き不可。所有者 secret 付き上書きは従来どおり。
+-- R1 residual-intentional: 正当 deposit 後の後着毒（可用性 DoS）も last-wins 側に残る。
+-- first non-null wins に戻すと C2 が再発するため、本 RPC では last-wins を維持する。
 
 create or replace function public.deposit_auth_continuation(
   p_id uuid,
@@ -50,7 +52,7 @@ begin
     return changed_count = 1;
   end if;
 
-  -- 匿名（WebView 等）: 未 claim なら上書き可（毒 first-wins を閉じる）。
+  -- 匿名（WebView 等）: 未 claim なら上書き可（毒 first-wins を閉じる / R1 後着毒は許容）。
   -- 再送・後着の正当 code が観測者のゴミ code を覆せる。claim 後は上のガードで拒否。
   update private.auth_continuations
   set encrypted_code = p_ciphertext,
