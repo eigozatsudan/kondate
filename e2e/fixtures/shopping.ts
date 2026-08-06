@@ -102,9 +102,17 @@ export async function generateShoppingMenu(page: Page): Promise<string> {
 export async function createListFromMenu(page: Page, menuId: string): Promise<void> {
   await page.goto(`/menus/${menuId}`);
   // 献立再検証と買い物安全ゲートが開くまで待つ（disabled のまま click すると 180s タイムアウトする）
+  // soft recheck / リスト fetch 中は CTA が disabled。ready を待ってから開く。
+  await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+    timeout: 90_000,
+  });
   const createButton = page.getByRole("button", { name: "材料の買い物リストを作る" });
   await expect(createButton).toBeEnabled({ timeout: 60_000 });
-  await createButton.click();
+  const createSheetHeading = page.getByRole("heading", { name: "買い物リストを作る" });
+  if (!(await createSheetHeading.isVisible().catch(() => false))) {
+    await createButton.click();
+  }
+  await expect(createSheetHeading).toBeVisible({ timeout: 60_000 });
   const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
   if (await newChoice.isVisible()) await newChoice.check();
   await page.getByRole("button", { name: "作成する" }).click();

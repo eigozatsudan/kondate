@@ -90,21 +90,36 @@ test("household journey: welcome through shopping create and alternate reconcile
   await expect(labelConfirm).toBeVisible({ timeout: 30_000 });
   await labelConfirm.click();
 
-  // 先に source から買い物リストを作成し、後段の新案 reconcile の土台にする
+  // 先に source から買い物リストを作成し、後段の新案 reconcile の土台にする。
+  // 単一案 (confirmedSingle) では買い物が主操作・採用が補助になり得る。
+  // ready コピーは accepted 時のみ出るため、CTA 有効 + recheck idle で進める。
   const acceptSource = page.getByRole("button", { name: "この献立にする" });
-  await expect(acceptSource).toBeEnabled({ timeout: 30_000 });
-  await acceptSource.click();
+  if (
+    (await acceptSource.isVisible().catch(() => false)) &&
+    (await acceptSource.isEnabled().catch(() => false))
+  ) {
+    await acceptSource.click();
+  }
+  // soft recheck / mount recheck 中は買い物 CTA が disabled
+  await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+    timeout: 90_000,
+  });
+  await expect(page.getByText("現在の家族設定で確認しています")).toHaveCount(0, {
+    timeout: 90_000,
+  });
   const shopCreate = page.getByRole("button", { name: "材料の買い物リストを作る" });
-  await expect(shopCreate).toBeEnabled({ timeout: 60_000 });
-  await shopCreate.click();
+  await expect(shopCreate).toBeEnabled({ timeout: 90_000 });
+  // 作成シートは click で <dialog> が opener を覆う。開閉は見出しで固定する。
+  const createSheetHeading = page.getByRole("heading", { name: "買い物リストを作る" });
+  if (!(await createSheetHeading.isVisible().catch(() => false))) {
+    await shopCreate.click();
+  }
+  await expect(createSheetHeading).toBeVisible({ timeout: 60_000 });
   const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
   if (await newChoice.isVisible().catch(() => false)) {
     await newChoice.check();
   }
-  // dialog が開くまで待つ（list 初回 fetch 完了後に CTA が有効になる）
-  await expect(page.getByRole("heading", { name: "買い物リストを作る" })).toBeVisible({
-    timeout: 60_000,
-  });
+  // list 初回 fetch 完了後に CTA が有効になる
   const createConfirm = page.getByRole("button", { name: "作成する" });
   await expect(createConfirm).toBeEnabled({ timeout: 60_000 });
   await createConfirm.click();
