@@ -131,4 +131,33 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     expect(await screen.findByRole("heading", { name: "家族設定" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/onboarding");
   });
+
+  it("L1: in_progress 表示で idea は expected=in_progress の skipped CAS へ進む", async () => {
+    getProfileMock.mockResolvedValue({ onboarding_status: "in_progress" });
+    setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "skipped" });
+    const user = userEvent.setup();
+    const router = renderWelcome();
+    expect(
+      await screen.findByRole("button", { name: "設定せず献立アイデアを考える" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "設定せず献立アイデアを考える" }));
+    await waitFor(() => {
+      expect(setOnboardingStatusMock).toHaveBeenCalledWith(expect.anything(), userId, "skipped", {
+        expectedStatus: "in_progress",
+      });
+    });
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/planner");
+  });
+
+  it("L1: in_progress 表示の household は onboarding へ（書き込みなし）", async () => {
+    getProfileMock.mockResolvedValue({ onboarding_status: "in_progress" });
+    const user = userEvent.setup();
+    const router = renderWelcome();
+    expect(await screen.findByRole("button", { name: "家族設定を続ける" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "家族設定を続ける" }));
+    expect(await screen.findByRole("heading", { name: "家族設定" })).toBeVisible();
+    expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+    expect(router.state.location.pathname).toBe("/onboarding");
+  });
 });

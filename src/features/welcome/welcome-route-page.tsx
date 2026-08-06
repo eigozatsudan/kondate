@@ -4,6 +4,7 @@ import type { OnboardingStatus } from "@shared/contracts/domain";
 import { useAuth } from "@/features/auth/use-auth";
 import { getProfile, setOnboardingStatus } from "@/features/household/household-api";
 import { householdKeys } from "@/features/household/household-queries";
+import { useProfilePendingDeadline } from "@/features/household/use-profile-pending-deadline";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { WelcomePage } from "./welcome-page";
 
@@ -20,11 +21,11 @@ async function withOnboardingStartLock<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /**
- * L4 + R1: 別タブが先に進めた status を尊重し、skipped ↔ in_progress の上書きレースを避ける。
- * first-writer-wins: not_started のときだけ目標 status を書く（RPC CAS expected=not_started）。
- * locks 無しでも server CAS で complete/skipped/in_progress を上書きしない。
+ * L4 + R1: 別タブが先に進めた terminal status を尊重する。
+ * skipped/complete は /planner へ。in_progress は呼び出し側で分岐
+ * （idea の意図的 skip と household 継続 / dual-tab first-writer で扱いが異なる）。
  */
-function navigateForExistingStatus(
+function navigateForTerminalStatus(
   status: OnboardingStatus,
   navigate: ReturnType<typeof useNavigate>,
 ): boolean {
@@ -32,6 +33,18 @@ function navigateForExistingStatus(
     void navigate("/planner");
     return true;
   }
+  return false;
+}
+
+/**
+ * 家族導線: terminal は planner、in_progress は onboarding へ（書き込み不要）。
+ * dual-tab で live が in_progress になった場合も first-writer を尊重して onboarding。
+ */
+function navigateForHouseholdExistingStatus(
+  status: OnboardingStatus,
+  navigate: ReturnType<typeof useNavigate>,
+): boolean {
+  if (navigateForTerminalStatus(status, navigate)) return true;
   if (status === "in_progress") {
     void navigate("/onboarding");
     return true;
@@ -44,7 +57,11 @@ function navigateAfterWelcomeStart(
   status: OnboardingStatus,
   navigate: ReturnType<typeof useNavigate>,
 ): void {
-  if (navigateForExistingStatus(status, navigate)) return;
+  if (navigateForTerminalStatus(status, navigate)) return;
+  if (status === "in_progress") {
+    void navigate("/onboarding");
+    return;
+  }
   // not_started のまま返った場合は CAS も遷移も起きていない。再試行を促すより現状維持。
 }
 
@@ -65,11 +82,13 @@ export function WelcomeRoutePage() {
     },
     enabled: userId !== undefined,
   });
+  // L2: profile hang は isError にならない。auth C5 と同尺で pending を打ち切り再試行 UI へ。
+  const { showPending, pendingTimedOut } = useProfilePendingDeadline(profileQuery.isPending);
 
-  if (profileQuery.isPending) {
+  if (showPending) {
     return <main className="page-frame">状態を確認しています…</main>;
   }
-  if (profileQuery.isError) {
+  if (profileQuery.isError || pendingTimedOut || profileQuery.data == null) {
     return (
       <main className="page-frame stack">
         <p className="error-message" role="alert">
@@ -89,25 +108,40 @@ export function WelcomeRoutePage() {
     );
   }
 
+  // 表示中 status。L1 idea の intentional skip と dual-tab first-writer の分岐に使う
+  // （ロック内 re-read の live と一致しない場合がある）。
+  const displayStatus = profileQuery.data.onboarding_status;
+
   return (
     <WelcomePage
-      onboardingStatus={profileQuery.data.onboarding_status}
+      onboardingStatus={displayStatus}
       onStartIdea={async () => {
         if (userId === undefined) return;
         await withOnboardingStartLock(async () => {
           const client = getBrowserSupabaseClient();
           // ロック内で最新 status を再読込し、別タブの確定を上書きしない
           const latest = await getProfile(client, userId);
-          if (navigateForExistingStatus(latest.onboarding_status, navigate)) {
+          const live = latest.onboarding_status;
+          if (navigateForTerminalStatus(live, navigate)) {
             await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
             return;
           }
-          // R1: expected=not_started の CAS。locks 無し dual-tab でも skipped/in_progress/complete を上書きしない
-          const written = await setOnboardingStatus(client, userId, "skipped", {
-            expectedStatus: "not_started",
-          });
-          await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
-          navigateAfterWelcomeStart(written.onboarding_status, navigate);
+          // dual-tab first-writer: 表示は not_started のまま live が in_progress なら
+          // 家族導線の先勝ちを尊重し skipped で上書きしない（既存 L4 契約）。
+          if (displayStatus === "not_started" && live === "in_progress") {
+            void navigate("/onboarding");
+            await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+            return;
+          }
+          // L1: 表示が in_progress の「設定せず…」は expected=in_progress で skipped CAS。
+          // not_started は従来どおり expected=not_started。RPC は両遷移を合法とする。
+          if (live === "not_started" || live === "in_progress") {
+            const written = await setOnboardingStatus(client, userId, "skipped", {
+              expectedStatus: live,
+            });
+            await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+            navigateAfterWelcomeStart(written.onboarding_status, navigate);
+          }
         });
       }}
       onStartHousehold={async () => {
@@ -115,10 +149,11 @@ export function WelcomeRoutePage() {
         await withOnboardingStartLock(async () => {
           const client = getBrowserSupabaseClient();
           const latest = await getProfile(client, userId);
-          if (navigateForExistingStatus(latest.onboarding_status, navigate)) {
+          if (navigateForHouseholdExistingStatus(latest.onboarding_status, navigate)) {
             await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
             return;
           }
+          // R1: expected=not_started の CAS。locks 無し dual-tab でも skipped/in_progress/complete を上書きしない
           const written = await setOnboardingStatus(client, userId, "in_progress", {
             expectedStatus: "not_started",
           });

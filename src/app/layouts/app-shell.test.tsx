@@ -70,6 +70,12 @@ describe("AppShell section tinting", () => {
     expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "planner");
   });
 
+  it("L6: marks planner nav active on /emergency-menus", () => {
+    renderAppShellAt("/emergency-menus");
+    const planner = screen.getByRole("link", { name: /献立/u });
+    expect(planner.className).toContain("nav-item-active");
+  });
+
   it("falls back to other for routes without a section", () => {
     renderAppShellAt("/unknown-section");
     expect(document.querySelector("[data-section]")).toHaveAttribute("data-section", "other");

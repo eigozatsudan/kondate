@@ -2,6 +2,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { Navigate } from "react-router";
 import { getProfile, type ProfileRow } from "@/features/household/household-api";
 import { householdKeys } from "@/features/household/household-queries";
+import { useProfilePendingDeadline } from "@/features/household/use-profile-pending-deadline";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { useAuth } from "./use-auth";
 
@@ -12,7 +13,7 @@ function RetryableProfileAlert({ profileQuery }: { profileQuery: UseQueryResult<
         初回設定の状態を確認できませんでした。通信を確認して再読み込みしてください。
       </p>
       <button
-        className="secondary-button"
+        className="secondary-button min-h-11"
         type="button"
         onClick={() => {
           void profileQuery.refetch();
@@ -39,12 +40,14 @@ export function RootEntryPage() {
     },
     enabled: userId !== undefined,
   });
+  // L2: profile hang は isError にならない。auth C5 と同尺で pending を打ち切り再試行 UI へ。
+  const { showPending, pendingTimedOut } = useProfilePendingDeadline(profileQuery.isPending);
 
-  if (profileQuery.isPending) {
+  if (showPending) {
     return <main className="page-frame">状態を確認しています…</main>;
   }
 
-  if (profileQuery.isError) {
+  if (profileQuery.isError || pendingTimedOut) {
     return <RetryableProfileAlert profileQuery={profileQuery} />;
   }
 

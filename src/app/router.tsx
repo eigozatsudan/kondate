@@ -1,5 +1,6 @@
 import { createBrowserRouter } from "react-router";
 import { AppShell } from "./layouts/app-shell";
+import { NotFoundPage } from "./not-found-page";
 import { RouteErrorElement } from "./route-error-element";
 import { RequireSession } from "@/features/auth/protected-routes";
 import { RootGatePage } from "@/features/landing/root-gate-page";
@@ -124,6 +125,12 @@ export function createAppRouter(): AppRouter {
               ],
             },
           ],
+        },
+        {
+          // L5: 未知 path は outlet 空にせず日本語 404 + ホーム導線。
+          // RequireSession 外に置き、誤 URL だけでログイン強制しない。
+          path: "*",
+          element: <NotFoundPage />,
         },
       ],
     },

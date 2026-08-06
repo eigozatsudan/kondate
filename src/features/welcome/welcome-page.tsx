@@ -143,8 +143,9 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
       ) : null}
 
       <div className="welcome-tutorial__actions">
+        {/* L4: 主要 CTA は 44px タッチ目標（Free LP / 再試行と同型の min-h-11） */}
         <button
-          className="primary-button"
+          className="primary-button min-h-11"
           type="button"
           disabled={isPending}
           onClick={() => {
@@ -154,7 +155,7 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
           {pendingAction === "idea" ? "準備しています…" : ideaLabel}
         </button>
         <button
-          className="secondary-button"
+          className="secondary-button min-h-11"
           type="button"
           disabled={isPending}
           onClick={() => {

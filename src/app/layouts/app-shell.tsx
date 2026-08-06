@@ -160,10 +160,14 @@ export function AppShell() {
             key={item.to}
             to={item.to}
             className={({ isActive }) => {
-              // D-I19: /menus/:id や /generation は献立タブを active にする
+              // D-I19 / L6: planner section（generation・menus・emergency）は献立タブを active に
+              // sectionForPath の planner chrome と nav active を一致させる
               const sectionActive =
                 item.to === "/planner" &&
-                (location.pathname === "/generation" || location.pathname.startsWith("/menus/"));
+                (location.pathname === "/generation" ||
+                  location.pathname.startsWith("/menus/") ||
+                  location.pathname === "/emergency-menus" ||
+                  location.pathname.startsWith("/emergency-menus/"));
               const historyChild =
                 item.to === "/history" && location.pathname.startsWith("/history/");
               return isActive || sectionActive || historyChild

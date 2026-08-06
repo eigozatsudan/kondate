@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { RequireSession } from "@/features/auth/protected-routes";
 import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
 import { RootGatePage } from "@/features/landing/root-gate-page";
+import { NotFoundPage } from "./not-found-page";
 import { RouteErrorElement } from "./route-error-element";
 import { createAppRouter } from "./router";
 
@@ -119,6 +120,17 @@ describe("app router", () => {
     const slash = findRoute(router.routes, "/");
     expect(slash?.errorElement).toBeDefined();
     expect((slash?.errorElement as ReactElement).type).toBe(RouteErrorElement);
+    router.dispose();
+  });
+
+  it("L5: registers catch-all * with NotFoundPage outside RequireSession", () => {
+    const router = createAppRouter();
+    const splat = findRoute(router.routes, "*");
+    expect(splat).toBeDefined();
+    expect(splat?.element).toBeDefined();
+    expect((splat?.element as ReactElement).type).toBe(NotFoundPage);
+    const ancestors = findAncestorElementTypes(router.routes, "*");
+    expect(ancestors).not.toContain(RequireSession);
     router.dispose();
   });
 });
