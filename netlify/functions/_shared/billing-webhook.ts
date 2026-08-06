@@ -108,13 +108,18 @@ function periodUnixFromSubscription(sub: Stripe.Subscription): {
 const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete"]);
 
 /**
- * dual-sub keep 優先: entitled（trialing/active/past_due）を incomplete より常に優先。
+ * dual-sub keep 優先（数値が小さいほど keep）:
+ * - trialing|active（健全な paid/trial）を最優先
+ * - past_due は incomplete より優先するが active より下位
+ *   （新しい past_due が古い健全 active を Stripe cancel しない — B3）
+ * - incomplete は最下位
  * 同 rank 内は新しい created を keep（再 Checkout 後の誤ダウングレード残差を減らす）。
  */
 function dualSubKeepRank(status: string): number {
-  if (status === "trialing" || status === "active" || status === "past_due") return 0;
-  if (status === "incomplete") return 1;
-  return 2;
+  if (status === "trialing" || status === "active") return 0;
+  if (status === "past_due") return 1;
+  if (status === "incomplete") return 2;
+  return 3;
 }
 
 /** Checkout が使う Plus price のみを権益対象にする（Dashboard 手動・Portal 価格変更の elevation を閉じる）。 */

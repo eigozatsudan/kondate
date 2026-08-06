@@ -1005,6 +1005,61 @@ describe("handleBillingWebhook", () => {
     );
   });
 
+  // B3: active と past_due を同 rank にすると新しい past_due が古い健全 active を cancel し得る
+  it("keeps older active over newer past_due dual-sub (B3)", async () => {
+    const olderActive = makeSubscription({
+      id: "sub_active_old",
+      created: 1000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    const newerPastDue = makeSubscription({
+      id: "sub_past_due_new",
+      created: 2000,
+      status: "past_due",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", newerPastDue, { id: "evt_dual_past_due" }),
+    );
+    retrieve.mockImplementation((id: string) => {
+      if (id === "sub_past_due_new") {
+        return Promise.resolve(newerPastDue);
+      }
+      return Promise.resolve(olderActive);
+    });
+    list.mockImplementation((params: { status?: string }) => {
+      const all = [olderActive, newerPastDue];
+      const data =
+        params.status === undefined ? all : all.filter((sub) => sub.status === params.status);
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+    });
+    cancel.mockResolvedValue(
+      makeSubscription({ id: "sub_past_due_new", status: "canceled", created: 2000 }),
+    );
+
+    await handleBillingWebhook(signedRequest(), deps());
+    // 健全な active を keep し、新しい past_due だけを cancel
+    expect(cancel).toHaveBeenCalledWith("sub_past_due_new");
+    expect(cancel).not.toHaveBeenCalledWith("sub_active_old");
+    expect(rpc).toHaveBeenCalledWith(
+      "mark_billing_subscription_dual_cancel_keep",
+      expect.objectContaining({
+        p_user_id: USER_ID,
+        p_keep_stripe_subscription_id: "sub_active_old",
+      }),
+    );
+
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    // discard した past_due ではなく keep(active) を投影する
+    expect(processPayload.stripe_subscription_id).toBe("sub_active_old");
+    expect(processPayload.status).toBe("active");
+  });
+
   it("returns 500 when dual-sub mark_keep RPC fails", async () => {
     const older = makeSubscription({
       id: "sub_older",
