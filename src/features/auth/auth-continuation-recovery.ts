@@ -41,10 +41,20 @@ const TARGET_RECOVERY_LEASE_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS + MIN_CLAIM_POLL
  * タブ死亡時は TTL 後に再 claim を許す（C3 冪等 re-claim）。
  * R3: 生存タブは heartbeat で refreshedAt を延ばし、hang 中の他タブ re-claim 窓を縮める。
  * JS 死亡時は heartbeat 停止 → TTL 失効で回復。
+ * R2: acquire は Web Locks（flow 単位・ifAvailable）で臨界区間を直列化し、
+ * localStorage は write→re-read→確認遅延→再 re-read で後着 write の dual true を潰す。
  */
 const EXCHANGE_IN_FLIGHT_PREFIX = `${CLAIM_POLL_COORDINATION_PREFIX}-exchange.`;
+/** Web Locks 名（claim-poll とは別。exchange 専用の flow 単位排他）。 */
+const EXCHANGE_IN_FLIGHT_LOCK_PREFIX = "kondate.auth.exchange.";
 /** テスト・心拍 TTL 検証用。IMMEDIATE_CLAIM_TIMEOUT * 4 = 120s。 */
 export const EXCHANGE_IN_FLIGHT_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS * 4;
+/**
+ * R2: localStorage に CAS が無い前提で、write 直後 re-read だけでは
+ * 「双方 null 読取 → 交互 write → 双方 true」が残る。確認遅延後の再 re-read で
+ * 後着 owner 以外を false にする（Web Locks 非対応 UA の主防衛）。
+ */
+export const EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS = 40;
 /**
  * C-R5: completeCallback 即時 resume の pre-lease 窓用。
  * target recovery 開始前でも「lease 0 = orphan」にしない固定 instanceId。
@@ -71,6 +81,45 @@ function callbackPreLeaseKey(flowId: string): string {
 
 function exchangeInFlightKey(flowId: string): string {
   return `${EXCHANGE_IN_FLIGHT_PREFIX}${flowId}`;
+}
+
+function exchangeInFlightLockName(flowId: string): string {
+  return `${EXCHANGE_IN_FLIGHT_LOCK_PREFIX}${flowId}`;
+}
+
+/** R2 acquire の注入点（テストで delay / locks を制御する）。 */
+export type ExchangeInFlightAcquireOptions = {
+  /** 確認遅延 ms。省略時は EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS。 */
+  confirmDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  /**
+   * Web Locks。省略時は navigator.locks。
+   * `null` で明示的に storage のみ（locks 無しフォールバック経路のテスト用）。
+   */
+  locks?: LockManager | null;
+  /**
+   * テスト専用: 他 owner チェック直後・write 前に挟む await 点。
+   * 単一スレッドで「双方 null 読取 → その後に双方 write」を再現する。
+   * 本番ゲートウェイは渡さない。
+   */
+  yieldBeforeWrite?: () => Promise<void>;
+};
+
+function defaultConfirmSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function resolveExchangeLockManager(
+  locksOption: LockManager | null | undefined,
+): LockManager | undefined {
+  if (locksOption === null) return undefined;
+  if (locksOption !== undefined) return locksOption;
+  if (typeof navigator === "undefined") return undefined;
+  const locks = navigator.locks;
+  if (locks === undefined || typeof locks.request !== "function") return undefined;
+  return locks;
 }
 
 /**
@@ -151,35 +200,133 @@ function readExchangeInFlight(
 }
 
 /**
- * C3/R2: exchange 開始前にタブ横断 lease を取る。他タブが保持中なら false。
- * 同一 instance の再取得（heartbeat）は refreshedAt を更新して true。
+ * R2: storage のみの acquire（locks 臨界区間内またはフォールバックから呼ぶ）。
  *
- * localStorage に CAS が無いため check-then-set だけでは TOCTOU で双方 true になり得る。
- * unique instanceId を書き込んだ直後に再読し、最終 writer が自分でなければ false
- * （他 owner のキーは消さない。last-writer-wins でも勝者は 1 のみ）。
+ * 1. 他 owner 有効 lease → false
+ * 2. write → 直後 re-read（owner 不一致なら false。他 owner キーは消さない）
+ * 3. 既所有の refresh（heartbeat）なら遅延なしで true
+ * 4. 初期取得は確認遅延後に再 re-read。後着 write の owner 以外は false
+ *
+ * 双方 null 読取後の交互 write でも、遅延後に storage に残る owner は 1 だけなので
+ * 勝者は高々 1（last-writer-wins）。
  */
-export function tryAcquireAuthContinuationExchangeInFlight(
+async function acquireExchangeInFlightViaStorage(
   flowId: string,
   instanceId: string,
   storage: Storage,
-  nowMs: number = Date.now(),
-): boolean {
+  nowMs: number,
+  confirmDelayMs: number,
+  sleep: (ms: number) => Promise<void>,
+  yieldBeforeWrite?: () => Promise<void>,
+): Promise<boolean> {
   const existing = readExchangeInFlight(storage, flowId, nowMs);
   if (existing !== null && existing.instanceId !== instanceId) {
     return false;
+  }
+  // 既所有判定は yield 前の snapshot（heartbeat は yield を使わない）
+  const isRefresh = existing !== null && existing.instanceId === instanceId;
+  // テスト用: 双方が null を見たあとに同期して write へ進ませる
+  if (yieldBeforeWrite !== undefined) {
+    await yieldBeforeWrite();
   }
   const lease: ExchangeInFlightLease = { flowId, instanceId, refreshedAt: nowMs };
   const key = exchangeInFlightKey(flowId);
   if (!writeStorageValue(storage, key, JSON.stringify(lease))) {
     return false;
   }
-  // R2: setItem 直後に owner 一致を確認（同時書き込みの最終勝者だけ true）
+  // setItem 直後に owner 一致を確認（同時書き込みの最終 writer 以外はここで落ちる場合もある）
   const confirmed = readExchangeInFlight(storage, flowId, nowMs);
   if (confirmed === null || confirmed.instanceId !== instanceId) {
     // 他タブが後着上書き済み。自分は持たないので remove しない（勝者の lease を壊さない）
     return false;
   }
+  // heartbeat 等の既所有 refresh は確認遅延不要（初期 dual-null 競合の窓ではない）
+  if (isRefresh) {
+    return true;
+  }
+  if (confirmDelayMs > 0) {
+    await sleep(confirmDelayMs);
+  }
+  // 遅延中に他タブが上書きしていれば owner 不一致 → false（双方 true を潰す）
+  const afterDelay = readExchangeInFlight(storage, flowId, nowMs + confirmDelayMs);
+  if (afterDelay === null || afterDelay.instanceId !== instanceId) {
+    return false;
+  }
   return true;
+}
+
+/**
+ * C3/R2: exchange 開始前にタブ横断 lease を取る。他タブが保持中なら false。
+ * 同一 instance の再取得（heartbeat）は refreshedAt を更新して true。
+ *
+ * 優先: navigator.locks で flow 単位 exclusive（ifAvailable: true = 非待ち）。
+ * ロック取得中だけ storage 書き込みと確認遅延を進め、他タブの同時 acquire を弾く。
+ * ロック未対応 / 例外時は storage の write→re-read→遅延→再 re-read にフォールバック。
+ */
+export async function tryAcquireAuthContinuationExchangeInFlight(
+  flowId: string,
+  instanceId: string,
+  storage: Storage,
+  nowMs: number = Date.now(),
+  options?: ExchangeInFlightAcquireOptions,
+): Promise<boolean> {
+  const confirmDelayMs = options?.confirmDelayMs ?? EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS;
+  const sleep = options?.sleep ?? defaultConfirmSleep;
+  const yieldBeforeWrite = options?.yieldBeforeWrite;
+  const lockManager = resolveExchangeLockManager(options?.locks);
+
+  if (lockManager !== undefined) {
+    try {
+      let acquired = false;
+      await lockManager.request(
+        exchangeInFlightLockName(flowId),
+        { ifAvailable: true },
+        async (lock) => {
+          // 他タブが臨界区間保持中 → 待たずに諦める（storage フォールバックしない）
+          if (lock === null) {
+            acquired = false;
+            return;
+          }
+          acquired = await acquireExchangeInFlightViaStorage(
+            flowId,
+            instanceId,
+            storage,
+            nowMs,
+            confirmDelayMs,
+            sleep,
+            yieldBeforeWrite,
+          );
+        },
+      );
+      return acquired;
+    } catch {
+      // Web Locks 例外時のみ storage 経路へ（claim-poll と同様、ロック基盤障害で exchange を全止めしない）
+    }
+  }
+
+  return acquireExchangeInFlightViaStorage(
+    flowId,
+    instanceId,
+    storage,
+    nowMs,
+    confirmDelayMs,
+    sleep,
+    yieldBeforeWrite,
+  );
+}
+
+/**
+ * R2: 指定 instance が現在の exchange in-flight owner か。
+ * acquire 成功後〜exchange 開始直前の再確認に使う。
+ */
+export function isAuthContinuationExchangeInFlightOwner(
+  flowId: string,
+  instanceId: string,
+  storage: Storage,
+  nowMs: number = Date.now(),
+): boolean {
+  const existing = readExchangeInFlight(storage, flowId, nowMs);
+  return existing !== null && existing.instanceId === instanceId;
 }
 
 /**
@@ -196,11 +343,27 @@ export function startAuthContinuationExchangeInFlightHeartbeat(
 ): () => void {
   const beat = (): void => {
     // 所有中のみ refreshedAt 更新。他 owner や失効後の奪取は tryAcquire が拒否する。
-    tryAcquireAuthContinuationExchangeInFlight(flowId, instanceId, storage, now());
+    // async 化後も interval から fire-and-forget（失敗時は次拍 or TTL で収束）。
+    void tryAcquireAuthContinuationExchangeInFlight(flowId, instanceId, storage, now());
   };
   const timer = setIntervalFn(beat, MIN_CLAIM_POLL_GAP_MS);
+  // R2-1: バックグラウンド throttle / タブ復帰後に即座に lease を延命（poll と同様の wake）
+  const wake = (): void => {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      return;
+    }
+    beat();
+  };
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    window.addEventListener("focus", wake);
+    document.addEventListener("visibilitychange", wake);
+  }
   return () => {
     clearIntervalFn(timer);
+    if (typeof window !== "undefined" && typeof document !== "undefined") {
+      window.removeEventListener("focus", wake);
+      document.removeEventListener("visibilitychange", wake);
+    }
   };
 }
 

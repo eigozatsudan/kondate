@@ -15,6 +15,7 @@ import {
 } from "./auth-flow";
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
 import {
+  isAuthContinuationExchangeInFlightOwner,
   releaseAuthContinuationCallbackPreLease,
   releaseAuthContinuationExchangeInFlight,
   startAuthContinuationCallbackPreLease,
@@ -322,7 +323,7 @@ export function createAuthGateway(
     if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
     // exchange 失敗（provider 拒否）だけ terminal。claim 成功後も secret は exchange 成功まで残す（C3/C4）。
     let exchangeStarted = false;
-    // C3/R2: タブ横断 dual exchange 抑止用。claim 成功後に acquire（write-then-confirm）し、
+    // C3/R2: タブ横断 dual exchange 抑止用。claim 成功後に acquire（locks + 確認遅延）し、
     // 完了/terminal で解放する。R3: 生存中は heartbeat で TTL を延長する。
     const exchangeInstanceId = `exchange-${flow.id}-${Math.random().toString(36).slice(2, 10)}`;
     let holdsExchangeLease = false;
@@ -334,13 +335,14 @@ export function createAuthGateway(
       });
       // C3/C4: claim はサーバ側で冪等再提示。secret は exchange 成功後に破棄し、
       // body 欠落や exchange hang でも recovery が再 claim → 再 exchange できる。
+      // R2: Web Locks + write/re-read/確認遅延。失敗時は他タブ exchange 中とみなし待たせる。
       if (
-        !tryAcquireAuthContinuationExchangeInFlight(
+        !(await tryAcquireAuthContinuationExchangeInFlight(
           flow.id,
           exchangeInstanceId,
           storage,
           Date.now(),
-        )
+        ))
       ) {
         // 他タブが exchange 中。secret を残し、completion / 次周期に委ねる。
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
@@ -352,6 +354,21 @@ export function createAuthGateway(
         exchangeInstanceId,
         storage,
       );
+      // R2: acquire 成功後も exchange 開始直前に owner 再確認（遅延後の後着 write を検出）
+      if (
+        !isAuthContinuationExchangeInFlightOwner(
+          flow.id,
+          exchangeInstanceId,
+          storage,
+          Date.now(),
+        )
+      ) {
+        stopExchangeHeartbeat();
+        stopExchangeHeartbeat = undefined;
+        // 他 owner のキーは release しない（holds を外して finally の自 owner 解放もスキップ）
+        holdsExchangeLease = false;
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
       exchangeStarted = true;
       const result =
         flow.sessionExchange === "oauth_mock"

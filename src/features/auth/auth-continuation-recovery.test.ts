@@ -3,6 +3,7 @@ import { IMMEDIATE_CLAIM_TIMEOUT_MS } from "./async-timeout";
 import {
   EXCHANGE_IN_FLIGHT_TTL_MS,
   isAuthContinuationExchangeInFlight,
+  isAuthContinuationExchangeInFlightOwner,
   releaseAuthContinuationCallbackPreLease,
   releaseAuthContinuationExchangeInFlight,
   startAuthContinuationCallbackPreLease,
@@ -1178,23 +1179,37 @@ describe("auth continuation recovery", () => {
 describe("auth continuation exchange in-flight lease (R2/R3)", () => {
   const flowId = "10000000-0000-4000-8000-000000000001";
   const exchangeKey = `kondate.auth.supabase.claim-poll-exchange.${flowId}`;
+  /** 逐次テストは確認遅延と locks を切り、storage 契約だけを見る。 */
+  const fastStorageOnly = { confirmDelayMs: 0, locks: null as const };
 
-  it("R2: second tab fails acquire while first holds the lease", () => {
+  it("R2: second tab fails acquire while first holds the lease", async () => {
     const storage = new MapStorage();
     const nowMs = 1_000;
-    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs)).toBe(
-      true,
-    );
-    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-b", storage, nowMs)).toBe(
-      false,
-    );
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-a",
+        storage,
+        nowMs,
+        fastStorageOnly,
+      ),
+    ).toBe(true);
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-b",
+        storage,
+        nowMs,
+        fastStorageOnly,
+      ),
+    ).toBe(false);
     expect(isAuthContinuationExchangeInFlight(flowId, storage, nowMs)).toBe(true);
     const raw = storage.getItem(exchangeKey);
     expect(raw).not.toBeNull();
     expect(JSON.parse(raw ?? "{}")).toMatchObject({ instanceId: "tab-a" });
   });
 
-  it("R2: write-then-confirm loses when another writer overwrote before re-read", () => {
+  it("R2: write-then-confirm loses when another writer overwrote before re-read", async () => {
     const storage = new MapStorage();
     const nowMs = 2_000;
     const originalSetItem = storage.setItem.bind(storage);
@@ -1211,48 +1226,198 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
       }
     };
 
-    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-me", storage, nowMs)).toBe(
-      false,
-    );
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-me",
+        storage,
+        nowMs,
+        fastStorageOnly,
+      ),
+    ).toBe(false);
     // 勝者の lease を消さない
     expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
       instanceId: "tab-other",
     });
   });
 
-  it("R2: same instance re-acquire refreshes and stays owner", () => {
+  it("R2: dual null-read then alternating writes → only one winner after confirm delay", async () => {
+    // 問題シナリオ再現: 双方が null を読んだあと write 前で同期し、交互 write しても
+    // 確認遅延後の勝者は 1（旧 write→即 re-read のみだと双方 true になり得た）。
     const storage = new MapStorage();
-    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, 1_000)).toBe(
+    const nowMs = 3_000;
+    const barrier = createAsyncBarrier(2);
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    const [aWon, bWon] = await Promise.all([
+      tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs, {
+        confirmDelayMs: 20,
+        sleep,
+        locks: null,
+        yieldBeforeWrite: () => barrier.wait(),
+      }),
+      tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-b", storage, nowMs, {
+        confirmDelayMs: 20,
+        sleep,
+        locks: null,
+        yieldBeforeWrite: () => barrier.wait(),
+      }),
+    ]);
+
+    expect(Number(aWon) + Number(bWon)).toBe(1);
+    const winner = aWon ? "tab-a" : "tab-b";
+    expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
+      instanceId: winner,
+    });
+    expect(isAuthContinuationExchangeInFlightOwner(flowId, winner, storage, nowMs + 20)).toBe(
       true,
     );
-    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, 5_000)).toBe(
-      true,
+  });
+
+  it("R2: confirm delay is what collapses dual-null first-confirm both-true", async () => {
+    // 確認遅延 0 + yield 同期 write では、先着が afterDelay 再読まで完走して true、
+    // 後着も自分 write 後に true → 双方 true（旧 R2 still-open の本体）。
+    // 直前テスト（confirmDelayMs>0）が winner=1 に潰すことを対照で示す。
+    const storage = new MapStorage();
+    const nowMs = 3_500;
+    const barrier = createAsyncBarrier(2);
+
+    const [aWon, bWon] = await Promise.all([
+      tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs, {
+        confirmDelayMs: 0,
+        locks: null,
+        yieldBeforeWrite: () => barrier.wait(),
+      }),
+      tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-b", storage, nowMs, {
+        confirmDelayMs: 0,
+        locks: null,
+        yieldBeforeWrite: () => barrier.wait(),
+      }),
+    ]);
+
+    expect(aWon).toBe(true);
+    expect(bWon).toBe(true);
+    // storage 上の最終 owner は last-writer 1 のみ（双方 true でも durable lease は 1）
+    const finalOwner = JSON.parse(storage.getItem(exchangeKey) ?? "{}") as {
+      instanceId?: string;
+    };
+    expect(finalOwner.instanceId === "tab-a" || finalOwner.instanceId === "tab-b").toBe(true);
+  });
+
+  it("R2: Web Locks ifAvailable denies second acquire while first holds the critical section", async () => {
+    const storage = new MapStorage();
+    const nowMs = 4_000;
+    const locks = new ImmediateLockManager();
+    let releaseSleep: (() => void) | undefined;
+    const blockedSleep = () =>
+      new Promise<void>((resolve) => {
+        releaseSleep = resolve;
+      });
+
+    const first = tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs, {
+      confirmDelayMs: 1,
+      sleep: blockedSleep,
+      locks,
+    });
+    // tab-a が lock を取り sleep で臨界区間を保持するまで待つ
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(locks.requests).toHaveLength(1);
+    expect(locks.requests[0]?.name).toBe(`kondate.auth.exchange.${flowId}`);
+    expect(locks.requests[0]?.options.ifAvailable).toBe(true);
+
+    const second = await tryAcquireAuthContinuationExchangeInFlight(
+      flowId,
+      "tab-b",
+      storage,
+      nowMs,
+      {
+        confirmDelayMs: 0,
+        locks,
+      },
     );
+    expect(second).toBe(false);
+    expect(locks.requests).toHaveLength(2);
+
+    releaseSleep?.();
+    expect(await first).toBe(true);
+    expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
+      instanceId: "tab-a",
+    });
+  });
+
+  it("R2: same instance re-acquire refreshes and stays owner", async () => {
+    const storage = new MapStorage();
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-a",
+        storage,
+        1_000,
+        fastStorageOnly,
+      ),
+    ).toBe(true);
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-a",
+        storage,
+        5_000,
+        fastStorageOnly,
+      ),
+    ).toBe(true);
     expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
       instanceId: "tab-a",
       refreshedAt: 5_000,
     });
   });
 
-  it("R2: release with instanceId does not clear another owner", () => {
+  it("R2: release with instanceId does not clear another owner", async () => {
     const storage = new MapStorage();
     // release 内の所有確認は Date.now() 基準のため、lease も実時刻で立てる
     const nowMs = Date.now();
-    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs)).toBe(
-      true,
-    );
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-a",
+        storage,
+        nowMs,
+        fastStorageOnly,
+      ),
+    ).toBe(true);
     releaseAuthContinuationExchangeInFlight(flowId, storage, "tab-b");
     expect(isAuthContinuationExchangeInFlight(flowId, storage, nowMs)).toBe(true);
     releaseAuthContinuationExchangeInFlight(flowId, storage, "tab-a");
     expect(isAuthContinuationExchangeInFlight(flowId, storage, nowMs)).toBe(false);
   });
 
-  it("R3: without heartbeat lease expires after TTL", () => {
+  it("R2: owner helper matches acquire winner only", async () => {
+    const storage = new MapStorage();
+    const nowMs = 6_000;
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-a",
+        storage,
+        nowMs,
+        fastStorageOnly,
+      ),
+    ).toBe(true);
+    expect(isAuthContinuationExchangeInFlightOwner(flowId, "tab-a", storage, nowMs)).toBe(true);
+    expect(isAuthContinuationExchangeInFlightOwner(flowId, "tab-b", storage, nowMs)).toBe(false);
+  });
+
+  it("R3: without heartbeat lease expires after TTL", async () => {
     const storage = new MapStorage();
     const start = 10_000;
-    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, start)).toBe(
-      true,
-    );
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-a",
+        storage,
+        start,
+        fastStorageOnly,
+      ),
+    ).toBe(true);
     expect(
       isAuthContinuationExchangeInFlight(flowId, storage, start + EXCHANGE_IN_FLIGHT_TTL_MS),
     ).toBe(true);
@@ -1261,12 +1426,18 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
     ).toBe(false);
   });
 
-  it("R3: heartbeat keeps exchange lease alive past the initial refreshedAt+TTL", () => {
+  it("R3: heartbeat keeps exchange lease alive past the initial refreshedAt+TTL", async () => {
     const storage = new MapStorage();
     let nowMs = 0;
-    expect(tryAcquireAuthContinuationExchangeInFlight(flowId, "tab-a", storage, nowMs)).toBe(
-      true,
-    );
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-a",
+        storage,
+        nowMs,
+        fastStorageOnly,
+      ),
+    ).toBe(true);
 
     const intervalHandlers: Array<() => void> = [];
     const setIntervalMock = ((handler: TimerHandler) => {
@@ -1285,9 +1456,11 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
     );
 
     // 5s 間隔で心拍しながら TTL を超えて進める（初回 refreshedAt=0 のままなら 120s で失効）
+    // heartbeat の tryAcquire は async（既所有は遅延なし）。各拍の完了を待つ。
     for (let step = 0; step < 30; step += 1) {
       nowMs += 5_000;
       intervalHandlers[0]?.();
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
     }
     // nowMs = 150_000 > EXCHANGE_IN_FLIGHT_TTL_MS
     expect(nowMs).toBeGreaterThan(EXCHANGE_IN_FLIGHT_TTL_MS);
@@ -1304,6 +1477,24 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
 
 async function flushPromises(): Promise<void> {
   for (let index = 0; index < 12; index += 1) await Promise.resolve();
+}
+
+/** 指定人数が wait に揃うまで止め、揃ったら全員を同時に進める（dual-null 再現用）。 */
+function createAsyncBarrier(partySize: number): { wait: () => Promise<void> } {
+  let remaining = partySize;
+  let releaseAll: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    releaseAll = resolve;
+  });
+  return {
+    wait: async () => {
+      remaining -= 1;
+      if (remaining === 0) {
+        releaseAll();
+      }
+      await gate;
+    },
+  };
 }
 
 function addFlow(storage: Storage, flowId: string, nowMs = Date.now()): void {

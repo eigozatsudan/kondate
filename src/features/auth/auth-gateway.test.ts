@@ -15,6 +15,15 @@ import {
   readAuthFlow,
   type ContinuationApi,
 } from "./auth-flow";
+import { EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS } from "./auth-continuation-recovery";
+
+/** R2: localStorage acquire の確認遅延を超えて exchange 開始まで進める */
+async function flushResumeUntilExchange(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS + 20);
+  });
+  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+}
 
 afterEach(() => {
   // モジュール共有 in-flight Map をテスト間で隔離（C4 hang 等が次ケースへ漏れないようにする）
@@ -627,7 +636,7 @@ it("C-R3: delayed exchange success is shared with recovery join (no used-code te
   });
 
   const hung = gateway.resumeFlow(flow.id);
-  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+  await flushResumeUntilExchange();
   expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
   // recovery 相当の第二 resume は join のみ（第二 exchange を起こさない）
   const joined = gateway.resumeFlow(flow.id);
@@ -672,7 +681,7 @@ it("C-R5: concurrent resumeFlow across gateway instances joins the module-shared
   });
 
   const first = callbackGateway.resumeFlow(flow.id);
-  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+  await flushResumeUntilExchange();
   expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
   const second = providerGateway.resumeFlow(flow.id);
   expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
@@ -713,7 +722,7 @@ it("C-R5: completeCallback holds callback-prelease during same-browser exchange 
       `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=auth-code-1`,
     ),
   );
-  for (let index = 0; index < 30; index += 1) await Promise.resolve();
+  await flushResumeUntilExchange();
   // exchange 中は pre-lease が立ち、AUTH-R2 が orphan と誤認しない
   expect(
     storage.getItem(`kondate.auth.supabase.claim-poll-target-lease.${flow.id}.callback-prelease`),
@@ -902,8 +911,8 @@ it("C4: keeps secret while exchange hangs so recovery can re-claim and retry", a
   });
 
   void gateway.resumeFlow(flow.id);
-  // claim resolve → exchange 開始まで進める（secret は exchange 成功まで残す）
-  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+  // claim resolve → exchange 確認遅延 → exchange 開始まで進める（secret は成功まで残す）
+  await flushResumeUntilExchange();
 
   expect(claim).toHaveBeenCalledOnce();
   expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
