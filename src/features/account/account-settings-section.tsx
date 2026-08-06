@@ -97,15 +97,30 @@ export function AccountSettingsSection() {
   }
 
   /**
-   * AP10: 削除 API 成功後に JSON/HTTP が端末側で欠落すると dialog エラーのままになる。
-   * Auth session が既に無ければサーバ削除成功とみなし、成功同等の local cleanup へ寄せる。
-   * getSession error 時は不明扱い（誤って削除成功表示しない）。
+   * AP10/AP3: 削除 API 成功後に JSON/HTTP が端末側で欠落すると dialog エラーのままになる。
+   * Admin hard delete は他端末の local JWT を消さないため、getSession（local のみ）だけでは
+   * サーバ削除成功を検出できない。local session が null なら gone。残っていれば getUser で
+   * Auth サーバへ確認し、user 不在 / 4xx なら削除済みとみなして成功同等 cleanup へ寄せる。
+   * getSession/getUser の一時エラーや 5xx・ネットワーク系は不明扱い（誤成功・請求 fail-closed を壊さない）。
    */
   async function isAuthSessionGone(): Promise<boolean> {
     try {
-      const { data, error } = await getBrowserSupabaseClient().auth.getSession();
-      if (error !== null) return false;
-      return data.session === null;
+      const client = getBrowserSupabaseClient();
+      const sessionResult = await client.auth.getSession();
+      if (sessionResult.error !== null) return false;
+      if (sessionResult.data.session === null) return true;
+
+      // local JWT 残存: Auth サーバでユーザー実在を確認（AP3）
+      const { data, error } = await client.auth.getUser();
+      if (error !== null) {
+        // AuthApiError 等の 4xx は JWT 無効・ユーザー削除済み。status 無し / 5xx は不明
+        const status = error.status;
+        if (typeof status === "number" && status >= 400 && status < 500) {
+          return true;
+        }
+        return false;
+      }
+      return data.user == null;
     } catch {
       return false;
     }

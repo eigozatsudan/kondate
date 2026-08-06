@@ -9,6 +9,7 @@ const clearOwnedLocalDataBestEffortMock = vi.hoisted(() => vi.fn());
 const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 const getBrowserSupabaseClientMock = vi.hoisted(() => vi.fn());
 const getSessionMock = vi.hoisted(() => vi.fn());
+const getUserMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
 const locationReplaceMock = vi.hoisted(() => vi.fn());
 
@@ -43,14 +44,18 @@ beforeEach(() => {
   requireAccessTokenMock.mockReset();
   getBrowserSupabaseClientMock.mockReset();
   getSessionMock.mockReset();
+  getUserMock.mockReset();
   fetchMock.mockReset();
   locationReplaceMock.mockReset();
   localStorage.clear();
   sessionStorage.clear();
   requireAccessTokenMock.mockResolvedValue("access-token");
-  // 既定は session 残存（AP10 probe が誤って成功扱いしない）
+  // 既定は session/user 残存（AP10/AP3 probe が誤って成功扱いしない）
   getSessionMock.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
-  getBrowserSupabaseClientMock.mockReturnValue({ auth: { getSession: getSessionMock } });
+  getUserMock.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+  getBrowserSupabaseClientMock.mockReturnValue({
+    auth: { getSession: getSessionMock, getUser: getUserMock },
+  });
   // jsdom の location.replace は差し替え不能なことがあるため、defineProperty で固定する
   // Location は class instance のため spread すると prototype を失う（misused-spread）
   Object.defineProperty(window, "location", {
@@ -325,15 +330,18 @@ describe("AccountSettingsSection", () => {
 
     await waitFor(() => {
       expect(getSessionMock).toHaveBeenCalled();
+      // local session が既に null なら getUser は不要
+      expect(getUserMock).not.toHaveBeenCalled();
       expect(clearLocalAuthAndDraftsMock).toHaveBeenCalled();
       expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
     });
   });
 
-  it("AP10: keeps error when fetch fails but session remains", async () => {
+  it("AP10: keeps error when fetch fails but session and server user remain", async () => {
     const user = userEvent.setup();
     fetchMock.mockRejectedValue(new TypeError("network"));
     getSessionMock.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
+    getUserMock.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
 
     render(<AccountSettingsSection />);
     await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
@@ -344,6 +352,120 @@ describe("AccountSettingsSection", () => {
     expect(
       await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
     ).toBeVisible();
+    expect(getUserMock).toHaveBeenCalled();
+    expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
+  it("AP3: fetch reject + local JWT remains but Auth user gone → success-equivalent cleanup", async () => {
+    // Admin hard delete 成功後も local getSession は JWT を返す。getUser 4xx でサーバ削除を検出する。
+    const user = userEvent.setup();
+    seedOwnedStorage();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    getSessionMock.mockResolvedValue({
+      data: { session: { access_token: "stale-jwt" } },
+      error: null,
+    });
+    getUserMock.mockResolvedValue({
+      data: { user: null },
+      error: { message: "User from sub claim in JWT does not exist", status: 403 },
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    await waitFor(() => {
+      expect(getSessionMock).toHaveBeenCalled();
+      expect(getUserMock).toHaveBeenCalled();
+      expect(clearLocalAuthAndDraftsMock).toHaveBeenCalled();
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+    });
+  });
+
+  it("AP3: non-JSON body + local JWT remains but Auth user gone → success-equivalent cleanup", async () => {
+    const user = userEvent.setup();
+    seedOwnedStorage();
+    fetchMock.mockResolvedValue(new Response("not-json", { status: 200 }));
+    getSessionMock.mockResolvedValue({
+      data: { session: { access_token: "stale-jwt" } },
+      error: null,
+    });
+    getUserMock.mockResolvedValue({
+      data: { user: null },
+      error: { message: "invalid claim", status: 401 },
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    await waitFor(() => {
+      expect(getUserMock).toHaveBeenCalled();
+      expect(clearLocalAuthAndDraftsMock).toHaveBeenCalled();
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+    });
+  });
+
+  it("AP3: keeps error when getUser fails without 4xx (network unknown, no false success)", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
+    // status 無し = リトライ可能な fetch 失敗等。誤って削除成功表示しない
+    getUserMock.mockResolvedValue({
+      data: { user: null },
+      error: { message: "Failed to fetch" },
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    expect(
+      await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
+    ).toBeVisible();
+    expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
+  it("AP3: explicit billing_cancel_failed still skips probe (no false success)", async () => {
+    // 明示 ok:false は Auth 残存が正。local JWT 残 + getUser が 4xx でも probe しない
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "billing_cancel_failed",
+            message: "有料プランの解約が完了しませんでした",
+          },
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+    getUserMock.mockResolvedValue({
+      data: { user: null },
+      error: { message: "should not be used", status: 403 },
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    expect(
+      await screen.findByText(/請求が続く可能性があるため、アカウントは削除していません/),
+    ).toBeVisible();
+    expect(getSessionMock).not.toHaveBeenCalled();
+    expect(getUserMock).not.toHaveBeenCalled();
+    expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
     expect(locationReplaceMock).not.toHaveBeenCalled();
   });
 });
