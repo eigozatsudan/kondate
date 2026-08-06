@@ -324,7 +324,9 @@ export async function loadGenerationContext(
   );
 
   if (submission.targetMode === "idea") {
-    // idea: 家族表・dislike・現行 safety を一切読まない
+    // idea: 家族表・dislike・現行 safety を一切読まない（製品意図。H10）。
+    // household hard match / current safety 非適用。安全保証は出さず、UI 免責コピーとセット。
+    // onboarding skip 後の idea 導線も同じ契約（safety: null 固定）。
     const ideaContext: IdeaGenerationContext = {
       targetMode: "idea",
       submission,

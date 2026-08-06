@@ -52,19 +52,19 @@ export async function listHouseholdMembers(
   return data;
 }
 
+/**
+ * 家族 draft 作成。直 INSERT は複数 draft 並立を許すため、
+ * 既存 draft 再利用の原子 RPC（start_household_onboarding）に寄せる（H11）。
+ * UI 経路も同 RPC。authenticated の raw INSERT 権限自体は DB 側に残るが、
+ * アプリクライアントは本関数経由で単一化する。
+ */
 export async function createHouseholdMemberDraft(
   client: BrowserSupabaseClient,
   userId: string,
   sortOrder: number,
 ): Promise<HouseholdMemberRow> {
-  const input: TablesInsert<"household_members"> = {
-    user_id: userId,
-    status: "draft",
-    sort_order: sortOrder,
-  };
-  const { data, error } = await client.from("household_members").insert(input).select("*").single();
-  if (error !== null) throw dataError("家族の下書きを作成できませんでした");
-  return data;
+  void userId;
+  return startHouseholdOnboarding(client, sortOrder);
 }
 
 export async function startHouseholdOnboarding(
@@ -304,6 +304,12 @@ export async function deleteMemberDislike(
   if (error !== null) throw dataError("苦手食材を削除できませんでした");
 }
 
+/**
+ * アレルギー削除。RPC は所有行が無い／他人 ID でも例外を返さず void 成功する
+ * （他人の存在を応答から漏らさない・意図的 silent success。H8 / migration コメントと同契約）。
+ * 行が残るケースは fail-closed 寄り（針が残る）。呼び出し側は invalidate/refetch で一覧を DB に合わせること。
+ * 契約変更（boolean 戻り等）は行わず、クライアント確認は query 再取得に委ねる。
+ */
 export async function deleteMemberAllergy(
   client: BrowserSupabaseClient,
   _userId: string,

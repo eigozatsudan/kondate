@@ -132,12 +132,12 @@ export interface HouseholdOnboardingApi {
   removeAllergy?: (allergyId: string) => Promise<unknown>;
   /**
    * onboarding 進捗更新。skip/complete は welcome と同型の CAS（expectedStatus）を付け、
-   * 二重タブの last-write を閉じる（H8）。
+   * 二重タブの last-write を閉じる。戻り Profile の onboarding_status で CAS 成否を判定する（H7）。
    */
   setProgress: (
     status: "in_progress" | "complete" | "skipped",
     options?: SetOnboardingStatusOptions,
-  ) => Promise<unknown>;
+  ) => Promise<ProfileRow>;
 }
 
 function createHouseholdApi(userId: string): HouseholdOnboardingApi {
@@ -404,9 +404,9 @@ export function HouseholdOnboardingForm({
   };
 
   /**
-   * H8: skip/complete は profile の既知 status を expected にした CAS。
-   * welcome と同型。CAS miss 時 RPC は上書きせず現状を返す（例外なし）。
-   * 呼び出し側は first-writer を尊重して onDone へ進む。
+   * skip/complete は profile の既知 status を expected にした CAS。
+   * welcome と同型。CAS miss 時 RPC は例外なく現状行を返す（first-writer-wins）。
+   * 呼び出し側は戻り onboarding_status を検査し、希望 status でなければ onDone しない（H7）。
    */
   const progressExpectedStatus = (): OnboardingStatus | undefined => {
     if (
@@ -419,6 +419,12 @@ export function HouseholdOnboardingForm({
     return undefined;
   };
 
+  /** setProgress 戻りが希望 status か（CAS miss は fail-closed で拒否） */
+  const progressReachedStatus = (
+    profile: ProfileRow,
+    desired: "complete" | "skipped",
+  ): boolean => profile.onboarding_status === desired;
+
   /** 献立へ進む。profile が既に complete なら setProgress を省略する。 */
   const finishOnboarding = async (): Promise<void> => {
     beginActionPending();
@@ -426,11 +432,16 @@ export function HouseholdOnboardingForm({
     try {
       if (onboardingStatus !== "complete") {
         const expectedStatus = progressExpectedStatus();
-        await api.setProgress(
+        const profile = await api.setProgress(
           "complete",
           expectedStatus !== undefined ? { expectedStatus } : undefined,
         );
         await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+        // H7: CAS miss で skipped 等のまま残った場合は献立導線へ進めない
+        if (!progressReachedStatus(profile, "complete")) {
+          setCompleteError(true);
+          return;
+        }
       }
       dismissToast();
       onDone();
@@ -441,18 +452,26 @@ export function HouseholdOnboardingForm({
     }
   };
 
-  /** C-C1: 画面内から skipped へ抜け、アイデア導線へ進める */
+  /**
+   * C-C1: 画面内から skipped へ抜け、アイデア導線へ進める。
+   * idea 生成は current safety を読まない（H10・製品意図。免責コピーとセット。安全保証は出さない）。
+   */
   const skipOnboarding = async (): Promise<void> => {
     setSkipPending(true);
     setSkipError(false);
     beginActionPending();
     try {
       const expectedStatus = progressExpectedStatus();
-      await api.setProgress(
+      const profile = await api.setProgress(
         "skipped",
         expectedStatus !== undefined ? { expectedStatus } : undefined,
       );
       await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
+      // H7: CAS miss で complete 等へ進んだ他タブを尊重し、偽の skip 成功導線を出さない
+      if (!progressReachedStatus(profile, "skipped")) {
+        setSkipError(true);
+        return;
+      }
       onDone();
     } catch {
       setSkipError(true);
@@ -827,7 +846,11 @@ export function HouseholdOnboardingForm({
             catalog={catalogQuery.data ?? []}
             aliases={aliasesQuery.data ?? []}
             allergies={allergies}
+            // H6: complete/finish/skip 中は settings と同型に Editor を閉じ、allergy 境界レースを防ぐ
+            disabled={actionPending}
             addStandard={async (memberId, allergenId) => {
+              // actionPending 中は disabled だが、遅延 invoker が残っても API を叩かない
+              if (actionPendingRef.current) return;
               setAllergyError(null);
               await api.addStandardAllergy?.(memberId, allergenId);
               await queryClient.invalidateQueries({
@@ -835,6 +858,7 @@ export function HouseholdOnboardingForm({
               });
             }}
             addCustom={async (memberId, name, aliases) => {
+              if (actionPendingRef.current) return;
               setAllergyError(null);
               await api.addCustomAllergy(memberId, name, aliases);
               await queryClient.invalidateQueries({
@@ -842,6 +866,7 @@ export function HouseholdOnboardingForm({
               });
             }}
             remove={async (allergyId) => {
+              if (actionPendingRef.current) return;
               setAllergyError(null);
               await api.removeAllergy?.(allergyId);
               await queryClient.invalidateQueries({
@@ -856,13 +881,14 @@ export function HouseholdOnboardingForm({
           />
         )}
         {draft.allergy_status === "registered" && api.listCatalog === undefined && (
-          <fieldset className="stack">
+          <fieldset className="stack" disabled={actionPending}>
             <legend>登録するアレルギー</legend>
             <label className="field">
               <span>自由登録名</span>
               <input
                 value={customAllergy}
                 maxLength={80}
+                disabled={actionPending}
                 onChange={(event) => {
                   setCustomAllergy(event.target.value);
                 }}
@@ -872,6 +898,7 @@ export function HouseholdOnboardingForm({
               <input
                 type="checkbox"
                 checked={customConfirmed}
+                disabled={actionPending}
                 onChange={(event) => {
                   setCustomConfirmed(event.target.checked);
                 }}
@@ -881,8 +908,9 @@ export function HouseholdOnboardingForm({
             <button
               className="secondary-button"
               type="button"
-              disabled={!customConfirmed || customAllergy.trim() === ""}
-              onClick={() =>
+              disabled={actionPending || !customConfirmed || customAllergy.trim() === ""}
+              onClick={() => {
+                if (actionPendingRef.current) return;
                 void api
                   .addCustomAllergy(draft.id, customAllergy, [])
                   .then(() =>
@@ -902,8 +930,8 @@ export function HouseholdOnboardingForm({
                         ? error.message
                         : "アレルギー情報を更新できませんでした",
                     );
-                  })
-              }
+                  });
+              }}
             >
               アレルギーを追加
             </button>

@@ -85,7 +85,8 @@ function baseApi(overrides: Partial<HouseholdOnboardingApi> = {}): HouseholdOnbo
     completeMember: vi.fn(),
     listAllergies: vi.fn().mockResolvedValue([]),
     addCustomAllergy: vi.fn(),
-    setProgress: vi.fn().mockResolvedValue({}),
+    // H7: 戻り onboarding_status を検査するため Profile 形で返す
+    setProgress: vi.fn().mockResolvedValue(mockProfile("complete")),
     ...overrides,
   };
 }
@@ -120,7 +121,7 @@ it("completes member without setProgress or navigate, then shows next-action scr
     membersState.upsert(completed);
     return Promise.resolve(completed);
   });
-  const setProgress = vi.fn().mockResolvedValue({});
+  const setProgress = vi.fn().mockResolvedValue(mockProfile("complete"));
   const onDone = vi.fn();
   const api = baseApi({
     listMembers: membersState.listMembers,
@@ -156,7 +157,7 @@ it("completes member without setProgress or navigate, then shows next-action scr
 it("starts planner from next-action via setProgress complete then onDone", async () => {
   const user = userEvent.setup();
   const membersState = createMembersApiState([completeAdult]);
-  const setProgress = vi.fn().mockResolvedValue({});
+  const setProgress = vi.fn().mockResolvedValue(mockProfile("complete"));
   const onDone = vi.fn();
   const api = baseApi({
     listMembers: membersState.listMembers,
@@ -171,8 +172,33 @@ it("starts planner from next-action via setProgress complete then onDone", async
   await waitFor(() => {
     expect(onDone).toHaveBeenCalledOnce();
   });
-  // H8: onboarding complete は CAS（expectedStatus=in_progress）
+  // onboarding complete は CAS（expectedStatus=in_progress）
   expect(setProgress).toHaveBeenCalledWith("complete", { expectedStatus: "in_progress" });
+});
+
+it("keeps next-action and shows error when setProgress CAS miss returns non-complete (H7)", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([completeAdult]);
+  // 他タブが先に skip した想定: RPC は上書きせず skipped を返す
+  const setProgress = vi.fn().mockResolvedValue(mockProfile("skipped"));
+  const onDone = vi.fn();
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
+    setProgress,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={onDone} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "献立を始める" }));
+  expect(
+    await screen.findByText("設定を完了できませんでした。通信を確認して再試行してください。"),
+  ).toBeInTheDocument();
+  expect(onDone).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" }),
+  ).toBeInTheDocument();
 });
 
 it("keeps next-action and shows error when setProgress complete fails on primary CTA", async () => {
@@ -539,7 +565,7 @@ it("hides skip on next-action when profile is already complete", async () => {
 it("shows skip on next-action when profile is in_progress and skips to onDone", async () => {
   const user = userEvent.setup();
   const membersState = createMembersApiState([completeAdult]);
-  const setProgress = vi.fn().mockResolvedValue({});
+  const setProgress = vi.fn().mockResolvedValue(mockProfile("skipped"));
   const onDone = vi.fn();
   const api = baseApi({
     listMembers: membersState.listMembers,
@@ -555,7 +581,7 @@ it("shows skip on next-action when profile is in_progress and skips to onDone", 
   await waitFor(() => {
     expect(onDone).toHaveBeenCalledOnce();
   });
-  // H8: onboarding skip は CAS（expectedStatus=in_progress）
+  // onboarding skip は CAS（expectedStatus=in_progress）
   expect(setProgress).toHaveBeenCalledWith("skipped", { expectedStatus: "in_progress" });
 });
 
@@ -642,7 +668,7 @@ it("single-flights createDraft when confirm is invoked twice in the same turn", 
 it("omits setProgress when starting planner while profile is already complete", async () => {
   const user = userEvent.setup();
   const membersState = createMembersApiState([completeAdult]);
-  const setProgress = vi.fn().mockResolvedValue({});
+  const setProgress = vi.fn().mockResolvedValue(mockProfile("complete"));
   const onDone = vi.fn();
   const api = baseApi({
     listMembers: membersState.listMembers,
@@ -657,6 +683,72 @@ it("omits setProgress when starting planner while profile is already complete", 
     expect(onDone).toHaveBeenCalledOnce();
   });
   expect(setProgress).not.toHaveBeenCalled();
+});
+
+it("disables AllergyEditor while complete is pending (H6)", async () => {
+  // complete 押下直後も add/remove を閉じ、settings と同型の single-flight にする
+  const registeredDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "registered",
+    unsupported_diet_status: "none",
+  };
+  const eggAllergy = {
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  const membersState = createMembersApiState([registeredDraft]);
+  let resolveComplete!: (value: HouseholdMemberRow) => void;
+  const completeMember = vi.fn(
+    () =>
+      new Promise<HouseholdMemberRow>((resolve) => {
+        resolveComplete = resolve;
+      }),
+  );
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    completeMember,
+    listAllergies: vi.fn().mockResolvedValue([eggAllergy]),
+    listCatalog: vi.fn().mockResolvedValue([
+      {
+        id: "egg",
+        display_name: "卵",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]),
+    listAliases: vi.fn().mockResolvedValue([]),
+    removeAllergy,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  const removeButton = await screen.findByRole("button", { name: "卵を削除" });
+  expect(removeButton).toBeEnabled();
+  fireEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledTimes(1);
+  });
+  expect(screen.getByRole("button", { name: "卵を削除" })).toBeDisabled();
+  expect(screen.getByRole("searchbox", { name: "よくあるアレルギーを絞り込む" })).toBeDisabled();
+
+  const completed: HouseholdMemberRow = { ...registeredDraft, status: "complete" };
+  membersState.upsert(completed);
+  resolveComplete(completed);
+  await waitFor(() => {
+    expect(
+      screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" }),
+    ).toBeInTheDocument();
+  });
+  expect(removeAllergy).not.toHaveBeenCalled();
 });
 
 it("single-flights completeMember on double complete click (H7)", async () => {

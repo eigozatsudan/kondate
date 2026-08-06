@@ -9,7 +9,7 @@ import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
   householdSafetyQueryPrefixes,
-  isHouseholdSafetyRevisionStorageKey,
+  isHouseholdSafetyRevisionStorageKeyForUser,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
@@ -132,7 +132,10 @@ export function useShoppingSafetyGate() {
       void refresh();
     };
     const stored = (event: StorageEvent) => {
-      if (isHouseholdSafetyRevisionStorageKey(event.key)) void refresh();
+      // H12: 自 user の revision（+ レガシー固定キー）だけを受理し、他アカウントの誤 refresh を防ぐ
+      if (userId !== undefined && isHouseholdSafetyRevisionStorageKeyForUser(event.key, userId)) {
+        void refresh();
+      }
     };
     const visible = () => {
       if (document.visibilityState === "visible") void refresh();

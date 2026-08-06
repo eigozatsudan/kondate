@@ -5,7 +5,7 @@ import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
   invalidateHouseholdSafetyQueries,
-  isHouseholdSafetyRevisionStorageKey,
+  isHouseholdSafetyRevisionStorageKeyForUser,
 } from "@/features/household/household-queries";
 
 /** パスから配色セクションを決める。ルーティング定義は変えずに面の色だけを切り替える。 */
@@ -111,7 +111,8 @@ export function AppShell() {
     if (userId === undefined) return undefined;
     const invalidate = () => void invalidateHouseholdSafetyQueries(queryClient, userId);
     const onStorage = (event: StorageEvent) => {
-      if (isHouseholdSafetyRevisionStorageKey(event.key)) invalidate();
+      // H12: 自 user の revision キー（+ レガシー固定）だけ invalidate
+      if (isHouseholdSafetyRevisionStorageKeyForUser(event.key, userId)) invalidate();
     };
     window.addEventListener("storage", onStorage);
     window.addEventListener(householdSafetyChangedEvent, invalidate);

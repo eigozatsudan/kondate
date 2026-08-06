@@ -25,6 +25,13 @@ vi.mock("../api/revalidation-api", async (importOriginal) => {
   };
 });
 
+// H12: storage 判定が userId 束縛になったため session を供給する
+vi.mock("@/features/auth/use-auth", () => ({
+  useAuth: () => ({
+    session: { user: { id: "40000000-0000-4000-8000-000000000001" } },
+  }),
+}));
+
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({
     channel: () => {

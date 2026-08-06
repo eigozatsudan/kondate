@@ -15,7 +15,7 @@ import {
   householdSafetyChangedEvent,
   householdSafetyRevisionKey,
   householdSafetyRevisionStorageKey,
-  isHouseholdSafetyRevisionStorageKey,
+  isHouseholdSafetyRevisionStorageKeyForUser,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { emergencyMenuKeys, getEmergencyMenus } from "./emergency-menu-api";
@@ -135,7 +135,8 @@ export function EmergencyMenuPage() {
       });
     };
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === revisionKey || isHouseholdSafetyRevisionStorageKey(event.key)) {
+      // H12: 自 user key + レガシー固定のみ（他 user の prefix 一致は無視）
+      if (isHouseholdSafetyRevisionStorageKeyForUser(event.key, userId)) {
         refreshRevision();
       }
     };

@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import {
   addMemberDislike,
   addCustomMemberAllergy,
+  createHouseholdMemberDraft,
   deleteMemberAllergy,
   setOnboardingStatus,
   startHouseholdOnboarding,
@@ -51,6 +52,7 @@ it("rejects empty or oversized dislike names", async () => {
 });
 
 it("deletes an allergy through the serialized database boundary", async () => {
+  // H8: 所有行無しでも RPC は error なし（silent success）。クライアントは error のみ throw。
   const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
   const client = { rpc } as never;
 
@@ -71,6 +73,21 @@ it("starts onboarding through the atomic database boundary", async () => {
   expect(rpc).toHaveBeenCalledWith("start_household_onboarding", {
     p_sort_order: 2,
   });
+});
+
+it("createHouseholdMemberDraft reuses start_household_onboarding RPC (H11)", async () => {
+  // 直 INSERT は複数 draft 並立を許すため、原子 start RPC に寄せる
+  const created = { id: "member-1", status: "draft" };
+  const rpc = vi.fn().mockResolvedValue({ data: created, error: null });
+  const from = vi.fn();
+  const client = { rpc, from } as never;
+
+  await expect(createHouseholdMemberDraft(client, "user-1", 3)).resolves.toBe(created);
+
+  expect(rpc).toHaveBeenCalledWith("start_household_onboarding", {
+    p_sort_order: 3,
+  });
+  expect(from).not.toHaveBeenCalled();
 });
 
 it("setOnboardingStatus sends expectedStatus for welcome CAS", async () => {

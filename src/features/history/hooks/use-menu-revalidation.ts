@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
-  isHouseholdSafetyRevisionStorageKey,
+  isHouseholdSafetyRevisionStorageKeyForUser,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { revalidateMenu, type RevalidationResult } from "../api/revalidation-api";
@@ -40,6 +41,7 @@ export function menuRevalidationQueryKey(menuId: string) {
  */
 export function useMenuRevalidation(menuId: string) {
   const cache = useQueryClient();
+  const userId = useAuth().session?.user.id;
   const [forcedChecking, setForcedChecking] = useState(false);
   // 単調増加。完了時に最新世代だけが forcedChecking を解除する
   const requestGenerationRef = useRef(0);
@@ -120,7 +122,10 @@ export function useMenuRevalidation(menuId: string) {
       beginSoftRecheck();
     };
     const stored = (event: StorageEvent) => {
-      if (isHouseholdSafetyRevisionStorageKey(event.key)) hard();
+      // H12: 自 user の revision だけ hard 再検査（他アカウント共有端末の誤 invalidate を閉じる）
+      if (userId !== undefined && isHouseholdSafetyRevisionStorageKeyForUser(event.key, userId)) {
+        hard();
+      }
     };
     // マウスを画面へ戻しただけでも window focus が飛ぶため soft（裏再検査）
     const onFocus = () => {
@@ -174,7 +179,7 @@ export function useMenuRevalidation(menuId: string) {
       window.clearInterval(timer);
       void channel.unsubscribe();
     };
-  }, [beginHardRecheck, beginOfflineHold, beginSoftRecheck, menuId]);
+  }, [beginHardRecheck, beginOfflineHold, beginSoftRecheck, menuId, userId]);
 
   // hard / 初回 data なしだけ checking。soft の isFetching では直前結果を出したままにする
   // （focus 点滅防止）。soft ネットワーク失敗は isError で error へ落とし、旧 valid の CTA を開かない。

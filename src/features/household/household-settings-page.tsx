@@ -960,9 +960,18 @@ export function HouseholdSettingsForm({
       deletingMemberIdsRef.current.has(selected.id)
     )
       return;
+    // H13: schema / allergies 検証より先に同期ガードを立て、complete と allergy mutation の TOCTOU を閉じる。
+    // 検証失敗時は finally 相当で即解除し、Editor を再操作可能にする。
+    savingRef.current = true;
+    setSaving(true);
     const completingMemberId = selected.id;
+    const releaseSavingGuard = () => {
+      savingRef.current = false;
+      setSaving(false);
+    };
     const parsed = householdSettingsSchema.safeParse(values);
     if (!parsed.success) {
+      releaseSavingGuard();
       const nextErrors = toHouseholdFieldErrors(parsed.error);
       setErrors(nextErrors);
       // 必須漏れ: field error + toast（先頭 message）+ focus。
@@ -992,6 +1001,7 @@ export function HouseholdSettingsForm({
       return;
     }
     if (parsed.data.allergyStatus === "registered" && !allergiesQuery.isSuccess) {
+      releaseSavingGuard();
       // 確認中・取得失敗は既存 status 行のみ（toast なし。retry 導線を隠さない）
       setMessage(
         allergiesQuery.isError
@@ -1002,6 +1012,7 @@ export function HouseholdSettingsForm({
       return;
     }
     if (parsed.data.allergyStatus === "registered" && currentAllergies.length === 0) {
+      releaseSavingGuard();
       // 既存メッセージを field/inline に出し、同じ意味の toast（設計 §6.3 家族）
       // toast が role=status のため、autosave 側の status 行（setMessage）は消して二重を避ける
       const registeredEmptyMessage = "登録ありの場合は1つ以上選んでください";
@@ -1014,9 +1025,7 @@ export function HouseholdSettingsForm({
     // バリデーション通過後は validation toast を即 dismiss（duration 待ちしない）
     dismissToast();
     setErrors({});
-    // 完了snapshotの保存中は同じフォームから新しい書込みを開始させず、DBの後勝ち競合を防ぐ。
-    savingRef.current = true;
-    setSaving(true);
+    // savingRef は上で既に true（完了 snapshot 保存中は allergy mutation を begin させない）
     const lineage = beginSaveLineage(completingMemberId);
     const completionHasNoLaterEdits = () => isLatestSaveRevision(lineage);
     const canCloseCompletedEditor = () =>

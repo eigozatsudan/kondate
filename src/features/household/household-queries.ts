@@ -17,13 +17,29 @@ export const householdSafetyRevisionStorageKey = "kondate:household-safety-revis
 export function householdSafetyRevisionKey(userId: string): string {
   return `${householdSafetyRevisionStorageKey}:${userId}`;
 }
-/** storage イベントが安全 revision 系か（固定 or user-scoped） */
+/**
+ * storage キーが安全 revision 系か（固定 or 任意 user-scoped prefix）。
+ * ログアウト掃除など「全 user キーを対象にしたい」経路専用。
+ * 他タブの invalidate 判定には isHouseholdSafetyRevisionStorageKeyForUser を使う（H12）。
+ */
 export function isHouseholdSafetyRevisionStorageKey(key: string | null): boolean {
   if (key === null) return false;
   return (
     key === householdSafetyRevisionStorageKey ||
     key.startsWith(`${householdSafetyRevisionStorageKey}:`)
   );
+}
+
+/**
+ * 自 user の revision 書込だけを受理する（レガシー固定キーは移行互換で許可）。
+ * 共有端末で別アカウントの user-scoped キーによる誤 invalidate を防ぐ（H12）。
+ */
+export function isHouseholdSafetyRevisionStorageKeyForUser(
+  key: string | null,
+  userId: string,
+): boolean {
+  if (key === null || userId.length === 0) return false;
+  return key === householdSafetyRevisionStorageKey || key === householdSafetyRevisionKey(userId);
 }
 export const householdSafetyQueryPrefixes = {
   currentSafety: ["current-safety"],

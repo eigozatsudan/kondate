@@ -460,7 +460,13 @@ it("localStorageへ書き込めなくてもonboarding完了後の再表示で家
     }),
     listAllergies: vi.fn().mockResolvedValue([]),
     addCustomAllergy: vi.fn(),
-    setProgress: vi.fn().mockResolvedValue({}),
+    setProgress: vi.fn().mockResolvedValue({
+      user_id: eligibleMember.user_id,
+      onboarding_status: "complete",
+      onboarding_completed_at: "2026-07-11T00:00:00.000Z",
+      created_at: "2026-07-11T00:00:00.000Z",
+      updated_at: "2026-07-11T00:00:00.000Z",
+    }),
   };
   const onDone = vi.fn();
   // HouseholdOnboardingForm は useAppToast を使う。setItem 失敗は後続テストへ漏れないよう finally で戻す。
