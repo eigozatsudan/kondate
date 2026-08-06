@@ -82,8 +82,29 @@ export function materializeAiGeneratedMenu(
   // R2/G5: pantryRef が正当な ingredient は name と unit を trusted 上書きする。
   // unit を AI 値のまま残すと dish 行と pantryUsage/在庫単位が乖離し、買い物・分量表示が壊れる。
   // plannedQuantity の単位整合は pantryUsage 側の pantry_unit_mismatch で fail-closed のまま
-  //（数量を trusted に寄せない／unit だけ差し替えて成功にしない）。
+  //（unit だけ差し替えて成功にしない）。
+  // G17: quantityValue は pantryUsage.plannedQuantity を正とする片方向ルール
+  //（dish 行と planned の表示/買い物差分を閉じる。アレルギー hard は name 側）。
   // 以降の materialize / sourceByKey / label 経路はすべて working 値を使う。
+  const usageByRef = new Map<string, (typeof menu.pantryUsage)[number]>();
+  for (const usage of menu.pantryUsage) {
+    if (usageByRef.has(usage.pantryRef)) outputError("pantry_usage_duplicate");
+    usageByRef.set(usage.pantryRef, usage);
+  }
+
+  /** pantryRef 正当時: plannedQuantity → quantityValue（0 以下は契約 positive に載せられないので null） */
+  const quantityValueFromPlanned = (
+    pantryRef: string | null,
+    providerQuantity: number | null,
+  ): number | null => {
+    if (pantryRef === null) return providerQuantity;
+    const usage = usageByRef.get(pantryRef);
+    if (usage === undefined) return providerQuantity;
+    if (usage.plannedQuantity === null) return null;
+    if (usage.plannedQuantity <= 0) return null;
+    return usage.plannedQuantity;
+  };
+
   const workingDishes = menu.dishes.map((dish) => ({
     ...dish,
     ingredients: dish.ingredients.map((ingredient) => {
@@ -94,6 +115,7 @@ export function materializeAiGeneratedMenu(
         ...ingredient,
         name: trusted.item.name,
         unit: trusted.item.unit,
+        quantityValue: quantityValueFromPlanned(ingredient.pantryRef, ingredient.quantityValue),
       };
     }),
   }));
@@ -121,12 +143,6 @@ export function materializeAiGeneratedMenu(
       dish.steps.map((step) => [step.stepRef, dish.dishRef] as const),
     ),
   );
-
-  const usageByRef = new Map<string, (typeof menu.pantryUsage)[number]>();
-  for (const usage of menu.pantryUsage) {
-    if (usageByRef.has(usage.pantryRef)) outputError("pantry_usage_duplicate");
-    usageByRef.set(usage.pantryRef, usage);
-  }
   for (const ref of usageByRef.keys()) {
     if (!pantryByRef.has(ref)) outputError("unknown_pantry_ref");
   }
@@ -157,7 +173,7 @@ export function materializeAiGeneratedMenu(
   );
 
   const targetMemberRefs = new Set(context.targetMembers.map((member) => member.anonymousRef));
-  // workingMenu.dishes を正本にする（R2/G5 name・unit 上書き後）
+  // workingMenu.dishes を正本にする（R2/G5 name・unit、G17 quantityValue 上書き後）
   const materializedDishes = workingMenu.dishes.map((dish) => ({
     id: required(dishIdByRef, dish.dishRef),
     role: dish.role,
@@ -169,7 +185,7 @@ export function materializeAiGeneratedMenu(
       if (ingredient.pantryRef !== null && !usageByRef.has(ingredient.pantryRef)) {
         outputError("dangling_ref");
       }
-      // pantryRef 正当時は name/unit を trusted 済み。不正 ref は pantryByRef 不在で mismatch。
+      // pantryRef 正当時は name/unit/quantityValue を trusted 済み。不正 ref は pantryByRef 不在で mismatch。
       if (ingredient.pantryRef !== null) {
         const trusted = pantryByRef.get(ingredient.pantryRef);
         if (
@@ -183,6 +199,7 @@ export function materializeAiGeneratedMenu(
         id: required(ingredientIdByRef, ingredient.ingredientRef),
         position: ingredient.position,
         name: ingredient.name,
+        // G17: pantry 行は plannedQuantity 整合済み。買い足しは AI 値のまま。
         quantityValue: ingredient.quantityValue,
         quantityText: ingredient.quantityText,
         // working 上で trusted unit 済み（G5）。買い足し（pantryRef null）は AI unit のまま。

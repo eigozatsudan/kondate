@@ -196,7 +196,11 @@ function policyCacheKey(baseUrl: string, models: readonly string[]): string {
   return `${baseUrl}\n${models.join("\n")}`;
 }
 
-/** process 寿命の成功キャッシュ（key 一致時のみ skip）。失敗は再試行可。 */
+/**
+ * process 寿命の成功キャッシュ（key 一致時のみ skip）。失敗は再試行可。
+ * G4 residual-intentional: cold-start 最適化のため成功後は isolate 存続中 remote 再検証しない。
+ * capability 脱落・単価上昇の一時逸脱窓は残る（TTL 再検証はロック拡大になるためしない）。
+ */
 let runtimePolicyOkKey: string | null = null;
 /** 同時 cold-start を 1 本の Models API 呼び出しへ畳む */
 let runtimePolicyInflight: Promise<void> | null = null;

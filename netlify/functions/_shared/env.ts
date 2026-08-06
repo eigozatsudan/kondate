@@ -97,6 +97,8 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   // Netlify 同期 60s 硬上限: 試行 24s（primary+repair）/ 総 55s（platform headroom 5s）
   OPENROUTER_TIMEOUT_MS: releaseLockedInteger(OPENROUTER_TIMEOUT_MS, "24000"),
   FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(FUNCTION_TOTAL_BUDGET_MS, "55000"),
+  // G1 residual-intentional: processing 孤児解放までの秒数。55s/60s 実行上限より長いのは
+  // 意図的ロック（cleanup は期限前に解放しない）。値の短縮は設計改訂が必要。
   AI_PROCESSING_STALE_SECONDS: releaseLockedInteger(180, "180"),
 });
 

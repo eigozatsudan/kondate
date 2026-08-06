@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { GenerationCommand, GenerationStatusData } from "@shared/contracts/generation";
-import { generationEndpointFor, getGenerationStatus, postGeneration } from "./generation-api";
+import {
+  GENERATION_POST_CLIENT_TIMEOUT_MS,
+  generationEndpointFor,
+  getGenerationStatus,
+  postGeneration,
+} from "./generation-api";
 
 const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 
@@ -80,17 +85,53 @@ describe("generation API", () => {
     expect(generationEndpointFor(command)).toBe(endpoint);
   });
 
-  it("posts the canonical request with authentication", async () => {
+  it("posts the canonical request with authentication and a client abort budget", async () => {
     const fetchImpl = vi.fn(() => Promise.resolve(response({ ok: true, data: processing }, 202)));
     await expect(postGeneration(newMenuCommand, { fetchImpl })).resolves.toEqual(processing);
-    expect(fetchImpl).toHaveBeenCalledWith("/api/generations/menu", {
-      method: "POST",
-      body: JSON.stringify(newMenuCommand),
-      headers: {
-        Authorization: "Bearer access-token",
-        "Content-Type": "application/json",
-      },
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const call = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = call;
+    expect(url).toBe("/api/generations/menu");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify(newMenuCommand));
+    expect(init.headers).toEqual({
+      Authorization: "Bearer access-token",
+      "Content-Type": "application/json",
     });
+    // G8: サーバ 55s と整合する POST 専用 AbortSignal（既定 58s）
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBe(58_000);
+    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeLessThanOrEqual(60_000);
+    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeGreaterThan(55_000);
+  });
+
+  it("G8: aborts a hung POST when the client timeout fires", async () => {
+    const fetchImpl = vi.fn(
+      ((_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal ?? null;
+          if (signal === null) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+          if (signal.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            },
+            { once: true },
+          );
+        })) as typeof fetch,
+    );
+    // 実壁時計を短くして AbortSignal.timeout を確定させる（本番既定は 58s）
+    await expect(
+      postGeneration(newMenuCommand, { fetchImpl, postTimeoutMs: 20 }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("parses a valid envelope even when response.ok is false", async () => {

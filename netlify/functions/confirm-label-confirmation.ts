@@ -60,7 +60,9 @@ export function confirmLabelConfirmationHandler(
       }
       const rows = Array.isArray(data) ? data : [];
       if (rows.length === 0) {
-        // missing / foreign / wrong-menu / archived / stale / replay は閉じた 404
+        // G9 residual-intentional: missing / foreign / wrong-menu / archived / stale /
+        // replay は存在非漏洩のためすべて confirmation_not_found 404。current_safety
+        // 専用 code への細分化は写像拡大になるためしない。
         throw new HttpError(404, "confirmation_not_found", "確認対象が見つかりませんでした");
       }
       const parsed = confirmationRowSchema.safeParse(rows[0]);

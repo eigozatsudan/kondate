@@ -15,6 +15,7 @@ const key = "kondate:generation:v3";
 /** 旧 cutover 前キー。v3 reader が触れたタイミングで破棄する */
 const legacyV2Key = "kondate:generation:v2";
 
+/** 端末 recovery 用 TTL（30min）。G15 residual-intentional: 超過後は自動 /menus 遷移を失い履歴依存。延長は製品判断。 */
 export const PENDING_GENERATION_TTL_MS = 1_800_000 as const;
 
 const pendingGenerationMetadataSchema = {

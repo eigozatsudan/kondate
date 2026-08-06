@@ -739,6 +739,9 @@ export async function runGeneration(
     }
   };
   if (reserved.status !== "processing" || reserved.replayed === true) {
+    // G1 residual-intentional: processing 中の同一 key 再 POST は replay のみで
+    // load/OpenRouter を再開しない。孤児は AI_PROCESSING_STALE_SECONDS=180 まで占有
+    //（アプリ 55s / platform 60s より長いのはロック残差。stale 値は緩めない）。
     // generation_in_progress は台帳行を増やさない合成 failed。status(key) は
     // not_started になるため、reserve payload を GenerationStatusData へ写す。
     // 他 active 行の request_id は運用相関の誤認源なので sentinel に置換する（G6/G13）。
@@ -940,7 +943,9 @@ export async function runGeneration(
       if (!sent.sent) {
         return "terminal";
       }
-      // G5: markSent RPC 所要後に chat 上限を再 snapshot。
+      // G2 residual-intentional: markSent 後に chat 予算が尽きたら OpenRouter 未呼出でも
+      // fail（attempt 非返却）。送信予約＝消費の契約。枠返却はしない。
+      // G5 経路: markSent RPC 所要後に chat 上限を再 snapshot。
       const attemptTimeout = timeoutForAttempt();
       if (attemptTimeout <= 0) {
         // markSent 済みなので failBeforeSend 名義ではなく通常 fail（attempt は解放しない）
@@ -995,6 +1000,8 @@ export async function runGeneration(
       const code = generationFailureCodeSchema.safeParse(error.code);
       if (!code.success) return await fail("internal_error", null);
       // timeout は修理しない
+      // G3 residual-intentional: markSent 後の model_unavailable（非200/輸送）は repair せず
+      // attempt 非返却のまま fail。retryable 表示でも枠は戻さない（送信予約契約）。
       if (code.data === "generation_timeout") return await fail(code.data, error.retryAt);
       if (code.data !== "invalid_ai_response") return await fail(code.data, error.retryAt);
       firstModelId =
@@ -1019,11 +1026,14 @@ export async function runGeneration(
 
     // repair は canRepair（24s+2s 残）のときだけ。timeout 経路はここへ来ない
     // 重複も 1 回だけ repair を通し、再重複なら duplicate_output（成功消費なし）
+    // G5 residual-intentional: repair は 2 本目 markSent（attempt 二重消費）。invalid 連発で
+    // Free attempt 枠が success に届かない相互作用は仕様どおりの溶融残差。枠返却しない。
     if (!canRepair()) {
       return await fail(firstWasDuplicate ? "duplicate_output" : "invalid_ai_response", null);
     }
     // 許可リストが2本以上のときだけ失敗モデルを exclude。
-    // 1本構成では exclude すると候補0になり repair 不能になるため、同モデル再送を許す。
+    // G11 residual-intentional: 1本構成では exclude すると候補0になり repair 不能になるため、
+    // 同モデル再送を許す（運用 1 本時は invalid 再発で attempt だけ減りやすい）。
     const excludedModelIds = deps.models.length <= 1 || firstModelId === null ? [] : [firstModelId];
     const eligibleModels = deps.models.filter((model) => !excludedModelIds.includes(model));
     if (eligibleModels.length === 0) {

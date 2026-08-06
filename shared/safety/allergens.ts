@@ -309,6 +309,11 @@ export function resolveAllergenMemberLabel(
   return "ご家族";
 }
 
+/**
+ * G6 residual-intentional（生成 validate 経路と同型 H1）: hard match は辞書 alias
+ * 部分一致のみ。裸の「パン」等の辞書外表記は fail-open で valid になり得る。
+ * catalog 弱体化・無制限追加はしない。安全保証コピーは出さない。
+ */
 export function evaluateAllergens(
   menu: GeneratedMenu | ValidatedMenu,
   context: CurrentSafetyContext,

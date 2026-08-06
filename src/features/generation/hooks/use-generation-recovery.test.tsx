@@ -608,6 +608,36 @@ describe("useGenerationRecovery", () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
+  it("G14: processing poll retries status even when document.hidden", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      enumerable: true,
+      get: () => true,
+    });
+    try {
+      mockStatus.mockResolvedValue(processingA);
+      const recovery = renderRecoveryAt(processingState, pendingA);
+      // seed は初回 effect を skip するため、一度 status で poll timer を張る
+      await act(async () => {
+        await recovery.result.current.retryStatus();
+      });
+      mockStatus.mockClear();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+        await flushPromises();
+      });
+      expect(mockStatus).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        enumerable: true,
+        get: () => false,
+      });
+      vi.useRealTimers();
+    }
+  });
+
   it.each([new Error("transport"), new Error("auth")])(
     "keeps current pending offline after %s and permits later status recovery",
     async (error) => {

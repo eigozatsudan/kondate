@@ -69,6 +69,9 @@ export default async function generationStatus(
   }
 }
 
+// G16 residual-intentional: status は path/method のみ（POST の IP 40/180s と非対称）。
+// 認証必須・processing 中 2s poll・終端後停止で緩和。追加 rateLimit は契約/運用判断
+//（quota 数値は触らない）。洪水コスト残差は観測として残す。
 export const config: Config = {
   path: "/api/generations/:idempotencyKey/status",
   method: "GET",

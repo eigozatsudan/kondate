@@ -10,6 +10,14 @@ import {
 import { requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
+/**
+ * 生成 POST のクライアント abort 上限（ms）。
+ * サーバ Function 総予算 55s（FUNCTION_TOTAL_BUDGET_MS）と platform 60s の間に置き、
+ * hang 中に status poll へ戻れない窓を閉じる（adversarial G8）。
+ * Abort 時は classify が offline へ落とし pending を維持して status 回収する。
+ */
+export const GENERATION_POST_CLIENT_TIMEOUT_MS = 58_000 as const;
+
 const generationEnvelopeSchema = z.discriminatedUnion("ok", [
   z
     .object({
@@ -63,13 +71,19 @@ export function generationEndpointFor(command: GenerationCommand): string {
 
 export function postGeneration(
   commandInput: GenerationCommand,
-  deps: { fetchImpl?: typeof fetch } = {},
+  deps: { fetchImpl?: typeof fetch; postTimeoutMs?: number } = {},
 ): Promise<GenerationStatusData> {
   // wire は top-level commandVersion + qualityMode を必須とする v3 全体を送る
   const command = generationCommandV3Schema.parse(commandInput);
+  const timeoutMs = deps.postTimeoutMs ?? GENERATION_POST_CLIENT_TIMEOUT_MS;
   return call(
     generationEndpointFor(command),
-    { method: "POST", body: JSON.stringify(command) },
+    {
+      method: "POST",
+      body: JSON.stringify(command),
+      // サーバ 55s / platform 60s と独立に待つと G1 孤児窓中に破棄しやすい（G8）
+      signal: AbortSignal.timeout(timeoutMs),
+    },
     command.request.idempotencyKey,
     deps.fetchImpl ?? fetch,
   );

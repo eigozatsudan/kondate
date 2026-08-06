@@ -476,8 +476,12 @@ export function useGenerationRecovery(
     }
     if (state.effect === "status") void retryStatus();
     if (state.effect === "poll") {
+      // G14: document.hidden でも timer チェーンを切らない。
+      // 以前は hidden 時に retry を飛ばし、state 不変のまま次の setTimeout が張られず
+      // visibilitychange まで status が進まなかった。background 完了の体感遅延を縮める。
+      // （visibility 復帰時の即時 retry は下の listener が担当）
       const timer = window.setTimeout(() => {
-        if (!document.hidden) void retryStatus();
+        void retryStatus();
       }, 2_000);
       return () => {
         window.clearTimeout(timer);

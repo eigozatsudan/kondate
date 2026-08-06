@@ -9,7 +9,12 @@ vi.mock("../api/usage-today-api", () => ({
   getUsageToday: getUsageTodayMock,
 }));
 
-import { jstDayKey, usageTodayQueryKey, useUsageToday } from "./use-usage-today";
+import {
+  jstDayKey,
+  msUntilNextJstMidnight,
+  usageTodayQueryKey,
+  useUsageToday,
+} from "./use-usage-today";
 
 describe("useUsageToday", () => {
   beforeEach(() => {
@@ -53,5 +58,17 @@ describe("useUsageToday", () => {
     });
     expect(result.current.data?.success.remaining).toBe(3);
     expect(usageTodayQueryKey(userId)).toEqual(["usage-today", userId, jstDayKey()]);
+  });
+
+  it("G12: msUntilNextJstMidnight shrinks toward JST midnight and is under one day", () => {
+    // 2026-07-29 14:59:50 UTC = JST 23:59:50 → 残り約 10s
+    const nearBoundary = new Date("2026-07-29T14:59:50.000Z");
+    expect(msUntilNextJstMidnight(nearBoundary)).toBe(10_000);
+    // 2026-07-29 15:00:00 UTC = JST 0:00 ちょうど → 次の深夜まで 1 日
+    const onBoundary = new Date("2026-07-29T15:00:00.000Z");
+    expect(msUntilNextJstMidnight(onBoundary)).toBe(86_400_000);
+    // 正午 JST = 03:00 UTC → 残り 12h
+    const noonJst = new Date("2026-07-29T03:00:00.000Z");
+    expect(msUntilNextJstMidnight(noonJst)).toBe(12 * 60 * 60 * 1000);
   });
 });

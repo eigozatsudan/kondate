@@ -370,6 +370,34 @@ describe("materializeAiGeneratedMenu", () => {
     expect(menu.pantryUsage[0]!.unit).toBe("g");
   });
 
+  it("G17: overwrites pantry-backed quantityValue with pantryUsage.plannedQuantity", () => {
+    const payload = makePayload();
+    // dish 行の AI 数量と planned がずれても planned を正として揃える（片方向）
+    payload.dishes[0]!.ingredients[0]!.quantityValue = 999;
+    payload.pantryUsage[0]!.plannedQuantity = 300;
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    expect(menu.dishes[0]!.ingredients[0]!.quantityValue).toBe(300);
+    expect(menu.pantryUsage[0]!.plannedQuantity).toBe(300);
+  });
+
+  it("G17: sets pantry-backed quantityValue null when plannedQuantity is null", () => {
+    const payload = makePayload();
+    payload.dishes[0]!.ingredients[0]!.quantityValue = 120;
+    payload.pantryUsage[0]!.plannedQuantity = null;
+    payload.pantryUsage[0]!.unit = null;
+    const menu = materializeAiGeneratedMenu(payload, makeContext(null), uuidFactory());
+    expect(menu.dishes[0]!.ingredients[0]!.quantityValue).toBeNull();
+    expect(menu.pantryUsage[0]!.plannedQuantity).toBeNull();
+  });
+
+  it("G17: leaves non-pantry ingredient quantityValue as provider value", () => {
+    const payload = makePayload();
+    payload.dishes[1]!.ingredients[0]!.quantityValue = 0.5;
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    expect(menu.dishes[1]!.ingredients[0]!.quantityValue).toBe(0.5);
+    expect(menu.dishes[1]!.ingredients[0]!.pantrySelectionId).toBeNull();
+  });
+
   it("G5: leaves non-pantry ingredient unit as provider value", () => {
     const payload = makePayload();
     payload.dishes[1]!.ingredients[0]!.unit = "袋";

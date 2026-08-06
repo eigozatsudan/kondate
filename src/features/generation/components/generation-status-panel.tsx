@@ -77,6 +77,8 @@ function TerminalGenerationUsage({ userId }: { userId: string }) {
  * processing / offline からの pending 破棄確認文。
  * 端末だけ捨てるとサーバ processing が orphan 化し、最大約 3 分の枠拘束と
  * 裏成功時の history / 枠消費が起き得る（G2）。cancel RPC は無いため UI で安全側に寄せる。
+ * G10 residual-intentional: 端末 pending 破棄はサーバ processing を即解放しない
+ *（最大 ~180s stale）。cancel RPC 追加はサーバ契約拡大になるためしない。
  */
 export const PROCESSING_DISCARD_CONFIRM_MESSAGE =
   "作成中の記録をこの端末から消します。サーバー側では最大3分ほど作成中のまま残り、その間は新しい献立を始められないことがあります。裏で完成した場合は履歴に残り、作成回数が減ることがあります。よろしいですか？";
