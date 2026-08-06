@@ -465,6 +465,154 @@ describe("processShareGeneralizationJob pipeline", () => {
     expect(logs.some((l) => l.failure_code === "openrouter_failed")).toBe(false);
   });
 
+  it("PE4: finishes with known aiCallCount when load throws after no AI", async () => {
+    const { admin, finish, publish } = createRpcAdmin();
+    const loadBoom = new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.reject(loadBoom),
+      sendPass: makePassSender((_pass, menu) => identityPatch(menu)),
+    });
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "failed",
+        p_code: "server_gate_failed",
+        p_ai_call_count: 0,
+      }),
+    );
+  });
+
+  it("PE4: finishes with aiCallCount after Pass when post-AI path throws", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const { admin, finish, publish, rpc } = createRpcAdmin();
+    // Pass 成功後に publish へ入る前に budget は済んでいる。publish を throw させ finish 経路を検証。
+    // 既に createRpcAdmin の publish error 経路があるので、gate 後 metadata を壊す代わりに
+    // rpc が publish 名で reject する（error object ではなく例外）。
+    rpc.mockImplementation((name: string, args?: RpcArgs) => {
+      const payload = args ?? {};
+      if (name === "share_app_ai_budget_remaining") {
+        return Promise.resolve({ data: 500, error: null });
+      }
+      if (name === "publish_shared_emergency_recipe") {
+        return Promise.reject(new Error("publish_network_blip"));
+      }
+      if (name === "finish_share_generalization_job") {
+        return finish(payload);
+      }
+      return Promise.reject(new Error(`unexpected rpc ${name}`));
+    });
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass: makePassSender((_pass, menu) => identityPatch(menu)),
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+    });
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "failed",
+        p_code: "server_gate_failed",
+        p_ai_call_count: 2,
+      }),
+    );
+  });
+
+  it("PE4: rethrows share_job_unfinished when finish RPC fails after AI", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const finishCalls: RpcArgs[] = [];
+    const admin = {
+      rpc: vi.fn((name: string, args?: RpcArgs) => {
+        const payload = args ?? {};
+        if (name === "share_app_ai_budget_remaining") {
+          return Promise.resolve({ data: 500, error: null });
+        }
+        if (name === "publish_shared_emergency_recipe") {
+          return Promise.resolve({
+            data: null,
+            error: { message: "share_publish_failed" },
+          });
+        }
+        if (name === "finish_share_generalization_job") {
+          finishCalls.push(payload);
+          // process 内 finish は常に失敗 → PE4 rethrow で outer に委ねる
+          return Promise.resolve({ data: { ok: false, reason: "db_down" }, error: null });
+        }
+        return Promise.reject(new Error(`unexpected rpc ${name}`));
+      }),
+      from: vi.fn(),
+    } as unknown as ProcessShareGeneralizationJobDeps["admin"];
+
+    await expect(
+      processShareGeneralizationJob(makeClaimedJob(), {
+        admin,
+        loadSourceMenu: () => Promise.resolve(source),
+        sendPass: makePassSender((_pass, menu) => identityPatch(menu)),
+        idFactory: createIdFactory(),
+        allergenCatalog: buildSharePublishAllergenCatalog(),
+      }),
+    ).rejects.toThrow(/share_job_unfinished/);
+
+    expect(finishCalls.length).toBe(1);
+    expect(finishCalls[0]).toMatchObject({
+      p_status: "failed",
+      p_code: "server_gate_failed",
+      p_ai_call_count: 2,
+    });
+  });
+
+  it("PE4: handler outer finish uses max aiCallCount 2 when process rethrows unfinished", async () => {
+    process.env[SHARE_WORKER_CRON_SECRET_ENV] = VALID_SECRET;
+    const finishCalls: RpcArgs[] = [];
+    let finishAttempt = 0;
+    const admin = {
+      rpc: vi.fn((name: string, args?: RpcArgs) => {
+        const payload = args ?? {};
+        if (name === "share_app_ai_budget_remaining") {
+          return Promise.resolve({ data: 500, error: null });
+        }
+        if (name === "finish_share_generalization_job") {
+          finishAttempt += 1;
+          finishCalls.push(payload);
+          if (finishAttempt === 1) {
+            // process 内 finish 失敗 → rethrow
+            return Promise.resolve({ data: { ok: false, reason: "db_down" }, error: null });
+          }
+          // handler outer の保守 finish は成功
+          return Promise.resolve({ data: { ok: true, status: "failed" }, error: null });
+        }
+        return Promise.reject(new Error(`unexpected rpc ${name}`));
+      }),
+      from: vi.fn(),
+    } as unknown as ProcessShareGeneralizationJobDeps["admin"];
+
+    claimShareGeneralizationJobs.mockResolvedValue([makeClaimedJob()]);
+    getSupabaseAdmin.mockReturnValue(admin);
+    // Pass 前の load 503 → process catch が finish(ai=0) → 失敗 → outer finish(ai=2)
+    loadStoredMenu.mockRejectedValue(
+      new HttpError(503, "menu_load_failed", "献立を読み込めませんでした"),
+    );
+
+    const response = await shareGeneralizeWorker(authorizedRequest());
+    expect(response.status).toBe(204);
+    expect(finishCalls.length).toBe(2);
+    expect(finishCalls[0]).toMatchObject({
+      p_status: "failed",
+      p_code: "server_gate_failed",
+      p_ai_call_count: 0,
+    });
+    expect(finishCalls[1]).toMatchObject({
+      p_status: "failed",
+      p_code: "server_gate_failed",
+      p_ai_call_count: 2,
+    });
+  });
+
   it("skips with app_ai_cap before OpenRouter when budget remaining is 0", async () => {
     const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
     const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
@@ -637,7 +785,8 @@ describe("defaultLoadSourceMenu failure classification", () => {
     await expect(defaultLoadSourceMenu(loadInput)).resolves.toBeNull();
   });
 
-  it("rethrows 503 menu_load_failed so job stays running for reaper", async () => {
+  it("rethrows 503 menu_load_failed for process to finish (PE4)", async () => {
+    // loader 自体は throw。process が finish(server_gate_failed, ai=0) する（running 残留しない）
     const transient = new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
     loadStoredMenu.mockRejectedValue(transient);
     await expect(defaultLoadSourceMenu(loadInput)).rejects.toBe(transient);

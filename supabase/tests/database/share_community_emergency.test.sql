@@ -535,6 +535,15 @@ select lives_ok(
       )
       returning id into v_job;
 
+      -- PE4: reaper 前の AI 台帳を 0 に揃え、回収後 +2 を検証する
+      update private.share_app_daily_usage
+      set success_count = 0, ai_call_count = 0
+      where usage_day = private.ai_jst_day(clock_timestamp());
+      if not found then
+        insert into private.share_app_daily_usage (usage_day, success_count, ai_call_count, updated_at)
+        values (private.ai_jst_day(clock_timestamp()), 0, 0, clock_timestamp());
+      end if;
+
       v_reaped := public.reap_stale_share_jobs(clock_timestamp(), 100);
       if v_reaped < 1 then
         raise exception 'reaper reaped 0 jobs';
@@ -547,6 +556,17 @@ select lives_ok(
           and failure_code = 'lease_expired'
       ) then
         raise exception 'job not marked lease_expired';
+      end if;
+
+      -- PE4: lease_expired 1 件あたり Pass 上限 2 を保守計上
+      if (
+        select ai_call_count from private.share_app_daily_usage
+        where usage_day = private.ai_jst_day(clock_timestamp())
+      ) is distinct from (2 * v_reaped) then
+        raise exception 'reaper did not pin AI call count, reaped=% count=%',
+          v_reaped,
+          (select ai_call_count from private.share_app_daily_usage
+           where usage_day = private.ai_jst_day(clock_timestamp()));
       end if;
 
       -- 日次 cap を空けて unique(source_menu_id) だけを検証する

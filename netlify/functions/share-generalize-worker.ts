@@ -171,7 +171,8 @@ export type ProcessShareGeneralizationJobDeps = {
 /**
  * service_role で所有者境界をクエリする。
  * 欠損（404 menu_not_found）のみ null → skipped。
- * 503 / 一過性障害は throw し job を running のまま残して reaper 回収に委ねる。
+ * 503 / 一過性障害は throw。process 側が finish(server_gate_failed, ai=0) し、
+ * finish 失敗時のみ running 残留 → handler outer / reaper が回収する（PE4）。
  */
 export async function defaultLoadSourceMenu(input: {
   admin: Pick<AdminSupabaseClient, "from">;
@@ -235,6 +236,10 @@ async function finishShareJob(input: {
  * 1 claim → 2 load → 3 eligibility/canonical → 4 Pass1/2 → 5 gate → 6 metadata → 7 publish → 8 finish/台帳
  * publish RPC は success / consent_revoked / daily_success_cap で job を終端する。
  * それ以外の skip/fail は finish_share_generalization_job で AI call 台帳を計上する。
+ *
+ * PE4: 未捕捉例外で finish を呼ばず running 残留すると reaper の lease_expired が
+ * p_ai_call_count 無しで台帳 undercount（fail-open）になる。process 内 try/catch で
+ * 既知 aiCallCount 付き finish を必ず試み、finish 失敗時のみ handler outer へ再 throw する。
  */
 export async function processShareGeneralizationJob(
   job: ShareClaimedJob,
@@ -244,6 +249,10 @@ export async function processShareGeneralizationJob(
   let aiCallCount = 0;
   let pass1Model: string | null = null;
   let pass2Model: string | null = null;
+  // publish / finish で job が終端済みなら outer の二重 finish を避ける
+  let jobTerminal = false;
+  // finish RPC を試みたが失敗した（running 残留）。再 throw して handler outer に委ねる
+  let finishAttempted = false;
 
   const logTerminal = (input: {
     level: "info" | "warn" | "error";
@@ -264,6 +273,7 @@ export async function processShareGeneralizationJob(
     status: "failed" | "skipped",
     code: ShareFailureCode | ShareSkipReason,
   ): Promise<void> => {
+    finishAttempted = true;
     await finishShareJob({
       admin: deps.admin,
       jobId: job.id,
@@ -273,6 +283,7 @@ export async function processShareGeneralizationJob(
       pass1Model,
       pass2Model,
     });
+    jobTerminal = true;
     logTerminal({
       level: status === "failed" ? "error" : "info",
       code: status === "failed" ? "share_generalize_job_failed" : "share_generalize_job_skipped",
@@ -280,173 +291,185 @@ export async function processShareGeneralizationJob(
     });
   };
 
-  // --- 2. load source menu ---
-  if (job.source_menu_id === null || job.contributor_user_id === null) {
-    await finish("skipped", "ineligible_structure");
-    return;
-  }
-  const sourceMenuId = job.source_menu_id;
-  const sourceMenu = await deps.loadSourceMenu({
-    admin: deps.admin,
-    userId: job.contributor_user_id,
-    menuId: sourceMenuId,
-  });
-  if (sourceMenu === null) {
-    await finish("skipped", "ineligible_structure");
-    return;
-  }
-
-  // --- 3. eligibility + canonical（構造。全 UUID 再採番） ---
-  const idFactory = deps.idFactory ?? randomUUID;
-  const canonical = buildShareCanonicalMenu(sourceMenu, idFactory);
-  if (!canonical.ok) {
-    await finish("skipped", canonical.reason);
-    return;
-  }
-  // プール payload の menuId は source と一致させない（§9.5 / RED）
-  if (canonical.menu.menuId === sourceMenuId) {
-    await finish("failed", "server_gate_failed");
-    return;
-  }
-
-  // --- 3b. Pass 前 AI 枠（0 なら OpenRouter を叩かず skip） ---
-  {
-    const { error: budgetError, data: budgetData } = await deps.admin.rpc(
-      "share_app_ai_budget_remaining",
-    );
-    if (budgetError) {
-      throw new Error("share_ai_budget_check_failed");
-    }
-    const remaining =
-      typeof budgetData === "number" && Number.isFinite(budgetData) ? budgetData : 0;
-    if (remaining <= 0) {
-      await finish("skipped", "app_ai_cap");
+  try {
+    // --- 2. load source menu ---
+    if (job.source_menu_id === null || job.contributor_user_id === null) {
+      await finish("skipped", "ineligible_structure");
       return;
     }
-  }
-
-  // --- 3c. Pass 前 denylist（ソース残渣を AI に送らない） ---
-  if (menuHitsShareDenylist(canonical.menu)) {
-    await finish("skipped", "denylist_precheck");
-    return;
-  }
-
-  const lockedGraph = captureShareIngredientGraphLock(canonical.menu);
-  const catalog = deps.allergenCatalog ?? buildSharePublishAllergenCatalog();
-  // pre-Pass 材料名由来の metadata（publish 時に post と和集合 / 積集合）
-  const metaPre = computeSharePublishMetadata(canonical.menu, catalog);
-
-  // --- 4. Pass1 → Pass2（AI 台帳は injectable。generate 予約には非接触） ---
-  // publish はゲート後に実 RPC するため、ここでは no-op でメニューだけ確定させる。
-  const aiResult = await runShareGeneralizeAiPipeline({
-    menu: canonical.menu,
-    lockedGraph,
-    sendPass: deps.sendPass,
-    recordAiCallLedger: (delta) => {
-      aiCallCount += delta;
-    },
-    publish: async () => {
-      // Task 7d: 実 publish は gate + metadata の後
-    },
-  });
-  aiCallCount = aiResult.aiCallCount;
-  pass1Model = aiResult.pass1Model;
-  pass2Model = aiResult.pass2Model;
-
-  if (!aiResult.ok) {
-    await finish("failed", aiResult.code);
-    return;
-  }
-
-  // --- 5. server gate（Zod + グラフロック + denylist） ---
-  const gate = runShareServerGate(aiResult.menu, lockedGraph);
-  if (!gate.ok) {
-    await finish("failed", gate.code);
-    return;
-  }
-
-  // --- 6. publish metadata（pre∪post allergen / pre∩post age。空帯は禁止） ---
-  const metaPost = computeSharePublishMetadata(aiResult.menu, catalog);
-  const metadata = mergeSharePublishMetadata(metaPre, metaPost, catalog);
-  if (metadata.eligibleAgeBands.length < 1) {
-    await finish("failed", "server_gate_failed");
-    return;
-  }
-
-  // 防御: 一般化後も source menuId を payload に載せない
-  if (aiResult.menu.menuId === sourceMenuId) {
-    await finish("failed", "server_gate_failed");
-    return;
-  }
-
-  // --- 7. publish RPC（同一 TX で consent 再確認 + pool INSERT + AI 台帳） ---
-  // AI 成功後の失敗は openrouter_failed にしない（関門/台帳側。メトリクス誤分類防止）
-  let publishData: unknown;
-  try {
-    const result = await deps.admin.rpc("publish_shared_emergency_recipe", {
-      p_job_id: job.id,
-      p_payload: aiResult.menu,
-      p_meal_type: aiResult.menu.mealType,
-      p_total_elapsed: aiResult.menu.totalElapsedMinutes,
-      p_standard_allergen_ids: metadata.standardAllergenIds,
-      p_eligible_age_bands: [...metadata.eligibleAgeBands],
-      p_ai_call_count: aiCallCount,
-      ...(pass1Model !== null ? { p_pass1_model: pass1Model } : {}),
-      ...(pass2Model !== null ? { p_pass2_model: pass2Model } : {}),
+    const sourceMenuId = job.source_menu_id;
+    const sourceMenu = await deps.loadSourceMenu({
+      admin: deps.admin,
+      userId: job.contributor_user_id,
+      menuId: sourceMenuId,
     });
-    if (result.error) {
-      throw new Error("share_publish_failed");
+    if (sourceMenu === null) {
+      await finish("skipped", "ineligible_structure");
+      return;
     }
-    publishData = result.data;
-  } catch {
-    // RPC 例外時は job が running のまま残る可能性があるため finish を試みる
-    try {
-      await finish("failed", "server_gate_failed");
-    } catch {
-      logTerminal({
-        level: "error",
-        code: "share_generalize_job_failed",
-        failureCode: "server_gate_failed",
-      });
-    }
-    return;
-  }
 
-  const published = publishJobResultSchema.safeParse(publishData);
-  if (!published.success || !published.data.ok) {
-    try {
-      await finish("failed", "server_gate_failed");
-    } catch {
-      logTerminal({
-        level: "error",
-        code: "share_generalize_job_failed",
-        failureCode: "server_gate_failed",
-      });
+    // --- 3. eligibility + canonical（構造。全 UUID 再採番） ---
+    const idFactory = deps.idFactory ?? randomUUID;
+    const canonical = buildShareCanonicalMenu(sourceMenu, idFactory);
+    if (!canonical.ok) {
+      await finish("skipped", canonical.reason);
+      return;
     }
-    return;
-  }
+    // プール payload の menuId は source と一致させない（§9.5 / RED）
+    if (canonical.menu.menuId === sourceMenuId) {
+      await finish("failed", "server_gate_failed");
+      return;
+    }
 
-  if (published.data.published) {
+    // --- 3b. Pass 前 AI 枠（0 なら OpenRouter を叩かず skip） ---
+    {
+      const { error: budgetError, data: budgetData } = await deps.admin.rpc(
+        "share_app_ai_budget_remaining",
+      );
+      if (budgetError) {
+        throw new Error("share_ai_budget_check_failed");
+      }
+      const remaining =
+        typeof budgetData === "number" && Number.isFinite(budgetData) ? budgetData : 0;
+      if (remaining <= 0) {
+        await finish("skipped", "app_ai_cap");
+        return;
+      }
+    }
+
+    // --- 3c. Pass 前 denylist（ソース残渣を AI に送らない） ---
+    if (menuHitsShareDenylist(canonical.menu)) {
+      await finish("skipped", "denylist_precheck");
+      return;
+    }
+
+    const lockedGraph = captureShareIngredientGraphLock(canonical.menu);
+    const catalog = deps.allergenCatalog ?? buildSharePublishAllergenCatalog();
+    // pre-Pass 材料名由来の metadata（publish 時に post と和集合 / 積集合）
+    const metaPre = computeSharePublishMetadata(canonical.menu, catalog);
+
+    // --- 4. Pass1 → Pass2（AI 台帳は injectable。generate 予約には非接触） ---
+    // publish はゲート後に実 RPC するため、ここでは no-op でメニューだけ確定させる。
+    const aiResult = await runShareGeneralizeAiPipeline({
+      menu: canonical.menu,
+      lockedGraph,
+      sendPass: deps.sendPass,
+      recordAiCallLedger: (delta) => {
+        aiCallCount += delta;
+      },
+      publish: async () => {
+        // Task 7d: 実 publish は gate + metadata の後
+      },
+    });
+    aiCallCount = aiResult.aiCallCount;
+    pass1Model = aiResult.pass1Model;
+    pass2Model = aiResult.pass2Model;
+
+    if (!aiResult.ok) {
+      await finish("failed", aiResult.code);
+      return;
+    }
+
+    // --- 5. server gate（Zod + グラフロック + denylist） ---
+    const gate = runShareServerGate(aiResult.menu, lockedGraph);
+    if (!gate.ok) {
+      await finish("failed", gate.code);
+      return;
+    }
+
+    // --- 6. publish metadata（pre∪post allergen / pre∩post age。空帯は禁止） ---
+    const metaPost = computeSharePublishMetadata(aiResult.menu, catalog);
+    const metadata = mergeSharePublishMetadata(metaPre, metaPost, catalog);
+    if (metadata.eligibleAgeBands.length < 1) {
+      await finish("failed", "server_gate_failed");
+      return;
+    }
+
+    // 防御: 一般化後も source menuId を payload に載せない
+    if (aiResult.menu.menuId === sourceMenuId) {
+      await finish("failed", "server_gate_failed");
+      return;
+    }
+
+    // --- 7. publish RPC（同一 TX で consent 再確認 + pool INSERT + AI 台帳） ---
+    // AI 成功後の失敗は openrouter_failed にしない（関門/台帳側。メトリクス誤分類防止）
+    let publishData: unknown;
+    try {
+      const result = await deps.admin.rpc("publish_shared_emergency_recipe", {
+        p_job_id: job.id,
+        p_payload: aiResult.menu,
+        p_meal_type: aiResult.menu.mealType,
+        p_total_elapsed: aiResult.menu.totalElapsedMinutes,
+        p_standard_allergen_ids: metadata.standardAllergenIds,
+        p_eligible_age_bands: [...metadata.eligibleAgeBands],
+        p_ai_call_count: aiCallCount,
+        ...(pass1Model !== null ? { p_pass1_model: pass1Model } : {}),
+        ...(pass2Model !== null ? { p_pass2_model: pass2Model } : {}),
+      });
+      if (result.error) {
+        throw new Error("share_publish_failed");
+      }
+      publishData = result.data;
+    } catch {
+      // RPC 例外時は job が running のまま残る可能性があるため finish を試みる。
+      // finish 失敗は process 外 catch へ再 throw（PE4 undercount 防衛）。
+      await finish("failed", "server_gate_failed");
+      return;
+    }
+
+    const published = publishJobResultSchema.safeParse(publishData);
+    if (!published.success || !published.data.ok) {
+      await finish("failed", "server_gate_failed");
+      return;
+    }
+
+    if (published.data.published) {
+      // publish RPC が success + AI 台帳を同一 TX で終端済み
+      jobTerminal = true;
+      logTerminal({
+        level: "info",
+        code: "share_generalize_job_succeeded",
+      });
+      return;
+    }
+
+    // publish RPC 内で skipped（consent_revoked / daily_success_cap）。二重 finish しない。
+    // AI 台帳も publish RPC 内で計上済み。
+    jobTerminal = true;
+    const reason = published.data.reason;
+    const skipReason =
+      reason !== undefined && (shareSkipReasons as readonly string[]).includes(reason)
+        ? reason
+        : reason !== undefined && (shareFailureCodes as readonly string[]).includes(reason)
+          ? reason
+          : "consent_revoked";
     logTerminal({
       level: "info",
-      code: "share_generalize_job_succeeded",
+      code: "share_generalize_job_skipped",
+      failureCode: skipReason,
     });
-    return;
+  } catch {
+    // PE4: 未終端例外は既知 aiCallCount で finish し、日次 AI 台帳 undercount を防ぐ
+    if (jobTerminal) {
+      return;
+    }
+    if (!finishAttempted) {
+      try {
+        await finish("failed", "server_gate_failed");
+        return;
+      } catch {
+        logTerminal({
+          level: "error",
+          code: "share_generalize_job_failed",
+          failureCode: "server_gate_failed",
+        });
+        // finish 失敗 → running 残留。handler outer が保守 finish を再試行する
+        throw new Error("share_job_unfinished");
+      }
+    }
+    // finish 済み試行が失敗してここに来た場合も outer へ
+    throw new Error("share_job_unfinished");
   }
-
-  // publish RPC 内で skipped（consent_revoked / daily_success_cap）。二重 finish しない。
-  const reason = published.data.reason;
-  const skipReason =
-    reason !== undefined && (shareSkipReasons as readonly string[]).includes(reason)
-      ? reason
-      : reason !== undefined && (shareFailureCodes as readonly string[]).includes(reason)
-        ? reason
-        : "consent_revoked";
-  logTerminal({
-    level: "info",
-    code: "share_generalize_job_skipped",
-    failureCode: skipReason,
-  });
 }
 
 export default async function shareGeneralizeWorker(request?: Request): Promise<Response> {
@@ -486,8 +509,23 @@ export default async function shareGeneralizeWorker(request?: Request): Promise<
           sendPass,
         });
       } catch {
-        // 1 job の例外でバッチ全体を落とさない。running 残留は reaper が回収する。
-        // 未分類例外は openrouter 以外（load/budget RPC 等）もここに来るため閉じた server 側コードを使う。
+        // PE4: process が finish 失敗で rethrow した場合の最終防衛。
+        // process 内の正確な aiCallCount は失われているため Pass 上限 2 を保守計上（fail-closed）。
+        // 既に終端済み job への finish は not_running で no-op 相当（AI 二重加算なし）。
+        // 1 job の例外でバッチ全体を落とさない。ここでも finish 失敗時のみ reaper が回収する。
+        try {
+          await finishShareJob({
+            admin,
+            jobId: job.id,
+            status: "failed",
+            code: "server_gate_failed",
+            aiCallCount: 2,
+            pass1Model: null,
+            pass2Model: null,
+          });
+        } catch {
+          // finish も失敗 → running 残留。reaper が lease_expired + 保守 AI 計上する
+        }
         safeLog({
           level: "error",
           requestId,
