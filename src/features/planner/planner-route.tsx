@@ -332,6 +332,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     queryKey: pantryKeys.list(userId ?? "missing"),
     queryFn: () => listPantryItems(client, userId ?? ""),
     enabled: userId !== undefined,
+    // P12: default 30s だと expiresOn 変更が最大 ~30s 遅延。safety と同様 0 で即再検証。
+    staleTime: 0,
   });
   const usage = useUsageToday(userId ?? "");
   const privacyQuery = useQuery({
@@ -468,6 +470,18 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setLatestConflictDraft(undefined);
     await loadLatestConflictDraft();
   }, [loadLatestConflictDraft]);
+  // autosave 確定後に draft cache を進め、reset/離脱後の remount で旧下書きが戻らないようにする
+  const onDraftSaved = useCallback(
+    (draft: PlannerDraft) => {
+      const key = plannerKeys.draft(userId ?? "missing");
+      const current = queryClient.getQueryData<PlannerDraft | null>(key);
+      if (current !== undefined && current !== null && current.revision > draft.revision) {
+        return;
+      }
+      queryClient.setQueryData(key, draft);
+    },
+    [queryClient, userId],
+  );
   const autosave = useDraftAutosave({
     value,
     enabled: initialized && userId !== undefined,
@@ -475,6 +489,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     resetToken,
     save,
     onConflict,
+    onSaved: onDraftSaved,
   });
   const flushAutosave = autosave.flush;
   const flushDraft = useCallback(async (): Promise<PlannerDraft> => {
@@ -510,13 +525,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setDraftConflictRefetchError(false);
   }, [latestConflictDraft, safetyQuery.data]);
 
-  /** 利用者の明示操作で入力を空に戻す。autosave が空下書きを保存する。 */
+  /** 利用者の明示操作で入力を空に戻す。autosave が resetToken 経由で空下書きをサーバへ保存する（P1）。 */
   const resetPlannerDraft = useCallback((): void => {
     generationAbortControllerRef.current?.abort();
     // 進行中の作成 ID（pending）を残すと、再「献立を作る」が C2 再開専用になり
     // offline/processing から抜けられず操作不能になる。入力リセットは作成の破棄も兼ねる。
     clearPendingGeneration();
-    setValue({ ...emptyDraft });
+    const empty = { ...emptyDraft };
+    setValue(empty);
     setStep("meal");
     setFieldErrors({});
     setSubmissionError(null);
@@ -529,7 +545,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // 古い baseline のまま resetToken すると revisionRef が巻き戻り conflict になる。
     setBaselineRevision(autosave.revision);
     setResetToken((current) => current + 1);
-  }, [autosave.revision]);
+    // 強制 empty 保存完了前の remount で旧 cache が戻らないよう、入力フィールドだけ空に揃える
+    const key = plannerKeys.draft(userId ?? "missing");
+    const current = queryClient.getQueryData<PlannerDraft | null>(key);
+    if (current !== undefined && current !== null) {
+      queryClient.setQueryData(key, { ...current, ...empty });
+    }
+  }, [autosave.revision, queryClient, userId]);
 
   // 同意のみが生成許可。拒否（「今はAIを使わない」）は永続化せず、毎回ゲートする。
   const hasAcceptedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);

@@ -233,6 +233,7 @@ it("flush は途中の idea 下書きを拒否し、完了形は保存する", a
 it("resetToken と同時に baseline を現 revision へ上げると次の保存が conflict にならない", async () => {
   // planner-route の入力リセットは setBaselineRevision(autosave.revision)+setResetToken
   // をセットで行う。古い baseline のまま resetToken だけ上げると revision が巻き戻る。
+  // P1: reset 時は空下書きを強制保存するため revision が 1 進む。
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>
     Promise.resolve(saved(value, revision + 1)),
@@ -256,14 +257,24 @@ it("resetToken と同時に baseline を現 revision へ上げると次の保存
   expect(save).toHaveBeenLastCalledWith(edited, 5);
   expect(result.current.revision).toBe(6);
 
-  // リセット: 空下書き + 現 revision を baseline に渡す
+  // リセット: 空下書き + 現 revision を baseline に渡す → 空をサーバへ強制保存 (P1)
+  // route も setBaselineRevision(autosave.revision) のあと baseline を自動では上げない。
   const empty = { ...base };
   rerender({ value: empty, baselineRevision: 6, resetToken: 1 });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenLastCalledWith(empty, 6);
+  expect(result.current.revision).toBe(7);
+
+  // baseline を 7 に上げると resetBaseline が最新 value を「保存済み」扱いにし debounce が no-op になる。
+  // 実 route 同様 baseline prop は 6 のまま、内部 revisionRef が 7 の状態で次編集する。
   const afterReset = { ...base, mealType: "lunch" as const };
   rerender({ value: afterReset, baselineRevision: 6, resetToken: 1 });
   await act(async () => vi.advanceTimersByTimeAsync(600));
-  expect(save).toHaveBeenLastCalledWith(afterReset, 6);
-  expect(result.current.revision).toBe(7);
+  expect(save).toHaveBeenLastCalledWith(afterReset, 7);
+  expect(result.current.revision).toBe(8);
 });
 
 it("flush は保留中 timer を置換し最新値の DB row を返す", async () => {
@@ -321,11 +332,17 @@ it("先行保存中に600ms未満で unmount しても最新編集を同じ保�
     resolveFirst?.(saved(first, 2));
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
   });
 
-  expect(save).toHaveBeenCalledTimes(2);
+  // P3 unmount flush と P4 in-flight 追記が両方走り得るため 2〜3 回。
+  // 1 回目は先行内容、最終は離脱直前の編集が expected≥2 で届くことだけ固定する。
+  expect(save.mock.calls.length).toBeGreaterThanOrEqual(2);
+  expect(save.mock.calls.length).toBeLessThanOrEqual(3);
   expect(save).toHaveBeenNthCalledWith(1, first, 1);
-  expect(save).toHaveBeenNthCalledWith(2, edited, 2);
+  const lastCall = save.mock.calls.at(-1);
+  expect(lastCall?.[0]).toEqual(edited);
+  expect(lastCall?.[1]).toBeGreaterThanOrEqual(2);
 });
 
 it("競合発生直後は flush も新規保存も拒否する", async () => {
@@ -404,8 +421,9 @@ it("明示 reset は reset 前の保存継続を無効化し reset 後の編集�
   await act(async () => vi.advanceTimersByTimeAsync(600));
   expect(save).toHaveBeenCalledTimes(1);
 
+  // P1: reset で現行 value を強制 enqueue するため state は idle ではなく saving になる
   rerender({ value: latest, baselineRevision: 2, resetToken: 1 });
-  expect(result.current.state).toBe("idle");
+  expect(result.current.state).toBe("saving");
   expect(result.current.revision).toBe(2);
 
   await act(async () => {
@@ -413,19 +431,174 @@ it("明示 reset は reset 前の保存継続を無効化し reset 後の編集�
     await Promise.resolve();
     await Promise.resolve();
   });
-  expect(save).toHaveBeenCalledTimes(1);
+  // 先行は supersede。reset 強制保存 (latest @ rev 2) が走る
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
   expect(onConflict).not.toHaveBeenCalled();
-  expect(result.current.state).toBe("idle");
-  expect(result.current.revision).toBe(2);
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(2, latest, 2);
+  expect(result.current.revision).toBe(3);
 
+  // baseline prop を 3 に上げると resetBaseline が edited を保存済み扱いにする。
+  // route 同様 prop は 2 のまま、内部 revisionRef=3 で次編集する。
   const edited = { ...latest, budgetPreference: "economy" as const };
   rerender({ value: edited, baselineRevision: 2, resetToken: 1 });
   await act(async () => vi.advanceTimersByTimeAsync(600));
 
-  expect(save).toHaveBeenCalledTimes(2);
-  expect(save).toHaveBeenNthCalledWith(2, edited, 2);
+  expect(save).toHaveBeenCalledTimes(3);
+  expect(save).toHaveBeenNthCalledWith(3, edited, 3);
   expect(result.current.state).toBe("saved");
+  expect(result.current.revision).toBe(4);
+});
+
+it("P1: resetToken で空下書きを強制保存しサーバと揃える", async () => {
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { rerender, result } = renderHook(
+    ({ value, baselineRevision, resetToken }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision, resetToken, save }),
+    { initialProps: { value: base, baselineRevision: 1, resetToken: 0 } },
+  );
+
+  const filled = { ...base, mealType: "dinner" as const, memo: "消す内容" };
+  rerender({ value: filled, baselineRevision: 1, resetToken: 0 });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(result.current.revision).toBe(2);
+
+  const empty = { ...base };
+  rerender({ value: empty, baselineRevision: 2, resetToken: 1 });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(2, empty, 2);
   expect(result.current.revision).toBe(3);
+  expect(result.current.state).toBe("saved");
+});
+
+it("P2: in-flight save が supersede 後も revision を引き継ぎ、後続 empty が conflict しない", async () => {
+  vi.useFakeTimers();
+  let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
+  const first = { ...base, memo: "in-flight 旧内容" };
+  const empty = { ...base };
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>((resolve) => {
+        resolveFirst = resolve;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const { rerender, result } = renderHook(
+    ({ value, baselineRevision, resetToken }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision, resetToken, save }),
+    { initialProps: { value: base, baselineRevision: 1, resetToken: 0 } },
+  );
+
+  rerender({ value: first, baselineRevision: 1, resetToken: 0 });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+
+  // reset: 空 + generation bump。強制 empty がキューへ
+  rerender({ value: empty, baselineRevision: 1, resetToken: 1 });
+  expect(result.current.revision).toBe(1);
+
+  // in-flight がサーバに旧内容を書いて完了（local は supersede）
+  await act(async () => {
+    resolveFirst?.(saved(first, 2));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  // revision を 2 に学習したうえで empty が expected=2 で保存される
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(2, empty, 2);
+  expect(result.current.revision).toBe(3);
+});
+
+it("P3: autosave error 後に dirty なら unmount で再 flush する", async () => {
+  vi.useFakeTimers();
+  const save = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("network"))
+    .mockResolvedValueOnce(saved({ ...base, memo: "再試行" }, 2));
+  const edited = { ...base, memo: "再試行" };
+  const { rerender, unmount } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
+    { initialProps: { value: base } },
+  );
+
+  rerender({ value: edited });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+
+  unmount();
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(2, edited, 1);
+});
+
+it("P4: in-flight 中の strip 後は同一キューで最新 members を追記保存する", async () => {
+  vi.useFakeTimers();
+  let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>((resolve) => {
+        resolveFirst = resolve;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
+    { initialProps: { value: base } },
+  );
+
+  const staleMembers = {
+    ...base,
+    mealType: "dinner" as const,
+    mainIngredients: ["鶏肉"],
+    cuisineGenre: "japanese" as const,
+    targetMode: "household" as const,
+    targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+  };
+  const stripped = {
+    ...staleMembers,
+    targetMemberIds: [] as string[],
+    targetMode: null,
+  };
+
+  rerender({ value: staleMembers });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+
+  // in-flight 中に strip（debounce 追加なしでも同一 op が追記する）
+  rerender({ value: stripped });
+
+  await act(async () => {
+    resolveFirst?.(saved(staleMembers, 2));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(1, staleMembers, 1);
+  expect(save).toHaveBeenNthCalledWith(2, stripped, 2);
 });
 
 it("キュー待ち中に value が更新されていれば最新を保存する (P7)", async () => {
@@ -466,20 +639,19 @@ it("キュー待ち中に value が更新されていれば最新を保存する
 
   // キュー待ち中に strip（eligibility）相当の更新
   rerender({ value: stripped });
-  // 2 件目を明示 enqueue（debounce を待たず flush 相当）
-  // 先行 save 完了後に 2 件目が走る。1 件目は開始時点の latest=stale のまま。
-  // 追加の debounce 保存を起こす
+  // 追加の debounce 保存を起こす（2 件目 op）。1 件目 op 自体も P4 ループで strip 後を追記し得る。
   await act(async () => vi.advanceTimersByTimeAsync(600));
 
   await act(async () => {
     resolveFirst?.(saved(staleMembers, 2));
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
   });
 
   await act(async () => vi.runOnlyPendingTimersAsync());
 
-  // 2 件目以降は strip 後の最新を保存していること
+  // 最終的に strip 後の最新がサーバへ書かれていること
   expect(save.mock.calls.length).toBeGreaterThanOrEqual(2);
   const lastValue = save.mock.calls.at(-1)?.[0] as PlannerDraftInput;
   expect(lastValue.targetMemberIds).toEqual([]);

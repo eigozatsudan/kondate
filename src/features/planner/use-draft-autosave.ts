@@ -63,6 +63,7 @@ export function useDraftAutosave({
   resetToken,
   save,
   onConflict,
+  onSaved,
 }: {
   value: PlannerDraftInput;
   enabled: boolean;
@@ -70,6 +71,8 @@ export function useDraftAutosave({
   resetToken: number;
   save: (value: PlannerDraftInput, revision: number) => Promise<PlannerDraft>;
   onConflict?: () => void | Promise<void>;
+  /** サーバ確定後の cache 同期など。supersede で破棄した書込では呼ばない。 */
+  onSaved?: (draft: PlannerDraft) => void;
 }): DraftAutosaveController {
   const [state, setState] = useState<DraftSaveState>("idle");
   const [savedRevision, setSavedRevision] = useState(baselineRevision);
@@ -87,9 +90,17 @@ export function useDraftAutosave({
   const latestSerializedRef = useRef(serialized);
   const baselineSerializedRef = useRef(serialized);
   const wasEnabledRef = useRef(false);
+  const enabledRef = useRef(enabled);
+  const hasCompletedInitialResetEffectRef = useRef(false);
+  const enqueueRef = useRef<(next: PlannerDraftInput) => Promise<PlannerDraft>>(() =>
+    Promise.reject(new Error("autosave enqueue is not ready")),
+  );
+  const onSavedRef = useRef(onSaved);
   latestRef.current = value;
   latestSerializedRef.current = serialized;
   baselineRevisionRef.current = baselineRevision;
+  enabledRef.current = enabled;
+  onSavedRef.current = onSaved;
 
   const resetBaseline = useCallback((revision: number): void => {
     revisionRef.current = revision;
@@ -110,9 +121,28 @@ export function useDraftAutosave({
     resetGenerationRef.current += 1;
     operationNumberRef.current += 1;
     conflictRef.current = null;
-    resetBaseline(baselineRevisionRef.current);
+    revisionRef.current = baselineRevisionRef.current;
+    setSavedRevision(baselineRevisionRef.current);
+    pendingDebounceRef.current = false;
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
     if (mountedRef.current) setState("idle");
-  }, [resetBaseline, resetToken]);
+
+    // 初回 mount は hydrate 同期のみ（保存しない）。
+    if (!hasCompletedInitialResetEffectRef.current) {
+      hasCompletedInitialResetEffectRef.current = true;
+      baselineSerializedRef.current = latestSerializedRef.current;
+      return;
+    }
+
+    // P1: 明示 reset 後は empty が baseline 一致扱いになり debounce が no-op になる。
+    // 現行 value（route は空下書き）を強制 enqueue しサーバと揃える。
+    // in-flight は generation で supersede 済み。キュー末尾の強制保存が上書きする。
+    baselineSerializedRef.current = "\0__reset_force_dirty__";
+    if (enabledRef.current) {
+      void enqueueRef.current(latestRef.current).catch(() => undefined);
+    }
+  }, [resetToken]);
 
   const enqueue = useCallback(
     (next: PlannerDraftInput): Promise<PlannerDraft> => {
@@ -134,36 +164,76 @@ export function useDraftAutosave({
         }
         // 競合前に予約済みだった後続保存も、先行保存の競合判明後は実行しない。
         if (conflictRef.current !== null) throw conflictRef.current;
-        // P7: キュー待ち中に eligibility strip 等で value が更新されていれば最新を保存する。
-        // 予約時 snapshot を固定すると無効メンバーが中間 revision に残り得る。
-        // 最新が一時的に非 persistable（idea+servings null 等）なら予約時 next を使う。
-        const latest = latestRef.current;
-        const toSave = isPersistableDraft(latest) ? latest : next;
-        if (!isPersistableDraft(toSave)) {
-          throw new IncompleteDraftSaveError();
-        }
-        try {
-          const saved = await save(toSave, revisionRef.current);
+
+        // P2/P4: キュー待ち〜in-flight 完了後に latest が変わっていれば追従する。
+        // 予約時 next へのフォールバックは mode 切替・strip 後に旧内容を書くため使わない。
+        let lastSaved: PlannerDraft | null = null;
+        let lastToSave: PlannerDraftInput | null = null;
+
+        for (;;) {
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
           }
-          return { saved, toSave };
-        } catch (error: unknown) {
+          if (conflictRef.current !== null) throw conflictRef.current;
+
+          const latest = latestRef.current;
+          if (!isPersistableDraft(latest)) {
+            // 途中状態へ遷移した。既にこの op で書けていればその結果を返す（baseline は後段）。
+            if (lastSaved !== null && lastToSave !== null) {
+              return {
+                saved: lastSaved,
+                toSave: lastToSave,
+                contentMatchedLatest: false,
+              };
+            }
+            throw new IncompleteDraftSaveError();
+          }
+
+          const toSave = latest;
+          // P2: ネットワーク直前にも generation を再確認（await 開始前の切替を拾う）
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
           }
-          throw error;
+
+          try {
+            const saved = await save(toSave, revisionRef.current);
+            if (resetGeneration !== resetGenerationRef.current) {
+              // P2: 無効化後でもサーバ revision は進んでいる。後続の空保存が conflict しないよう引き継ぐ。
+              revisionRef.current = saved.revision;
+              if (mountedRef.current) setSavedRevision(saved.revision);
+              throw new SupersededDraftSaveError();
+            }
+            // ループ継続用にローカル revision を進める（成功ハンドラでも再設定する）
+            revisionRef.current = saved.revision;
+            lastSaved = saved;
+            lastToSave = toSave;
+
+            // P4: in-flight 中の strip / 編集があれば最新を同一キュー内で追記保存する
+            if (JSON.stringify(toSave) !== latestSerializedRef.current) {
+              continue;
+            }
+            return { saved, toSave, contentMatchedLatest: true };
+          } catch (error: unknown) {
+            if (resetGeneration !== resetGenerationRef.current) {
+              throw new SupersededDraftSaveError();
+            }
+            throw error;
+          }
         }
       });
       queueRef.current = operation.then(
         (result) => {
           if (resetGeneration !== resetGenerationRef.current) return;
           revisionRef.current = result.saved.revision;
-          baselineSerializedRef.current = JSON.stringify(result.toSave);
+          // 最新と一致したときだけ baseline を進め、mode 切替直後の stale 確定を「保存済み」にしない
+          if (result.contentMatchedLatest) {
+            baselineSerializedRef.current = JSON.stringify(result.toSave);
+          }
           if (mountedRef.current) {
             setSavedRevision(result.saved.revision);
             if (operationNumber === operationNumberRef.current) setState("saved");
           }
+          onSavedRef.current?.(result.saved);
         },
         (error: unknown) => {
           if (
@@ -186,6 +256,8 @@ export function useDraftAutosave({
     },
     [onConflict, save],
   );
+
+  enqueueRef.current = enqueue;
 
   useEffect(() => {
     if (!enabled) {
@@ -216,14 +288,13 @@ export function useDraftAutosave({
     };
   }, [enabled, enqueue, serialized]);
 
-  const enqueueRef = useRef(enqueue);
-  enqueueRef.current = enqueue;
-
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (!pendingDebounceRef.current) return;
+      // P3: debounce 待ちだけでなく、error 後などで dirty のまま残った編集も離脱時に再試行する
+      const dirty = latestSerializedRef.current !== baselineSerializedRef.current;
+      if (!pendingDebounceRef.current && !dirty) return;
       pendingDebounceRef.current = false;
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = null;

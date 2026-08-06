@@ -11,7 +11,7 @@ import { DraftRevisionConflictError, plannerKeys } from "./planner-api";
 const userId = "72000000-0000-4000-8000-000000000001";
 const memberId = "70000000-0000-4000-8000-000000000001";
 
-// P11: safetyQuery staleTime:0 で mount 再取得が走るため API をモックする
+// P11/P12: safety・pantry の staleTime:0 で mount 再取得が走るため API をモックする
 vi.mock("@/features/household/household-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/household/household-api")>();
   const uid = "72000000-0000-4000-8000-000000000001";
@@ -39,6 +39,13 @@ vi.mock("@/features/household/household-api", async (importOriginal) => {
     ]),
     listAllergenCatalog: vi.fn(() => []),
     listMemberAllergies: vi.fn(() => []),
+  };
+});
+vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/pantry/pantry-api")>();
+  return {
+    ...original,
+    listPantryItems: vi.fn(() => Promise.resolve([])),
   };
 });
 const revisionOne: PlannerDraft = {
@@ -168,8 +175,10 @@ it("retained cache の refetch 完了だけでは入力を置換せず明示操�
   getPlannerDraftMock.mockReturnValue(deferredRefetch.promise);
   savePlannerDraftMock
     .mockRejectedValueOnce(new DraftRevisionConflictError())
-    .mockImplementation((next: PlannerDraftInput, revision: number) =>
-      Promise.resolve({ ...revisionTwo, ...next, revision: revision + 1 }),
+    // savePlannerDraft(client, userId, input, revision) の実シグネチャに合わせる
+    .mockImplementation(
+      (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
+        Promise.resolve({ ...revisionTwo, ...next, revision: revision + 1 }),
     );
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
@@ -205,7 +214,11 @@ it("retained cache の refetch 完了だけでは入力を置換せず明示操�
   expect(resolveButton).toBeEnabled();
 
   fireEvent.click(resolveButton);
-  await act(async () => Promise.resolve());
+  // P1: resetToken 強制保存の microtask 完了まで待つ（revision 2 → 3）
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 
   expect(screen.getByLabelText("自由メモ")).toHaveValue("revision 2");
   expect(screen.getByRole("button", { name: "献立を作る" })).toBeEnabled();
@@ -216,11 +229,13 @@ it("retained cache の refetch 完了だけでは入力を置換せず明示操�
   });
   await act(async () => vi.advanceTimersByTimeAsync(600));
 
+  // resolveDraftConflict は resetToken を上げるため P1 が最新行を expected=2 で強制保存し revision が 3 へ進む。
+  // その後のユーザー編集は expected=3 で送る（旧期待 2 は P1 以前）。
   expect(savePlannerDraftMock).toHaveBeenLastCalledWith(
     {},
     userId,
     expect.objectContaining({ memo: "revision 2 から編集" }),
-    2,
+    3,
   );
 });
 
