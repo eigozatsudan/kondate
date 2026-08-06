@@ -249,10 +249,14 @@ export async function processShareGeneralizationJob(
   let aiCallCount = 0;
   let pass1Model: string | null = null;
   let pass2Model: string | null = null;
-  // publish / finish で job が終端済みなら outer の二重 finish を避ける
-  let jobTerminal = false;
-  // finish RPC を試みたが失敗した（running 残留）。再 throw して handler outer に委ねる
-  let finishAttempted = false;
+  // publish / finish で job が終端済みなら outer の二重 finish を避ける。
+  // オブジェクトに載せる: ネスト関数内代入を catch 側で読むと let だと
+  // no-unnecessary-condition が「常に false」と誤判定するため。
+  const jobLifecycle = {
+    terminal: false,
+    // finish RPC を試みたが失敗した（running 残留）。再 throw して handler outer に委ねる
+    finishAttempted: false,
+  };
 
   const logTerminal = (input: {
     level: "info" | "warn" | "error";
@@ -273,7 +277,7 @@ export async function processShareGeneralizationJob(
     status: "failed" | "skipped",
     code: ShareFailureCode | ShareSkipReason,
   ): Promise<void> => {
-    finishAttempted = true;
+    jobLifecycle.finishAttempted = true;
     await finishShareJob({
       admin: deps.admin,
       jobId: job.id,
@@ -283,7 +287,7 @@ export async function processShareGeneralizationJob(
       pass1Model,
       pass2Model,
     });
-    jobTerminal = true;
+    jobLifecycle.terminal = true;
     logTerminal({
       level: status === "failed" ? "error" : "info",
       code: status === "failed" ? "share_generalize_job_failed" : "share_generalize_job_skipped",
@@ -425,7 +429,7 @@ export async function processShareGeneralizationJob(
 
     if (published.data.published) {
       // publish RPC が success + AI 台帳を同一 TX で終端済み
-      jobTerminal = true;
+      jobLifecycle.terminal = true;
       logTerminal({
         level: "info",
         code: "share_generalize_job_succeeded",
@@ -435,7 +439,7 @@ export async function processShareGeneralizationJob(
 
     // publish RPC 内で skipped（consent_revoked / daily_success_cap）。二重 finish しない。
     // AI 台帳も publish RPC 内で計上済み。
-    jobTerminal = true;
+    jobLifecycle.terminal = true;
     const reason = published.data.reason;
     const skipReason =
       reason !== undefined && (shareSkipReasons as readonly string[]).includes(reason)
@@ -450,10 +454,10 @@ export async function processShareGeneralizationJob(
     });
   } catch {
     // PE4: 未終端例外は既知 aiCallCount で finish し、日次 AI 台帳 undercount を防ぐ
-    if (jobTerminal) {
+    if (jobLifecycle.terminal) {
       return;
     }
-    if (!finishAttempted) {
+    if (!jobLifecycle.finishAttempted) {
       try {
         await finish("failed", "server_gate_failed");
         return;

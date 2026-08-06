@@ -111,7 +111,7 @@ export function AccountSettingsSection() {
       if (sessionResult.data.session === null) return true;
 
       // local JWT 残存: Auth サーバでユーザー実在を確認（AP3）
-      const { data, error } = await client.auth.getUser();
+      const { error } = await client.auth.getUser();
       if (error !== null) {
         // AuthApiError 等の 4xx は JWT 無効・ユーザー削除済み。status 無し / 5xx は不明
         const status = error.status;
@@ -120,7 +120,8 @@ export function AccountSettingsSection() {
         }
         return false;
       }
-      return data.user == null;
+      // getUser 成功時の user は型上 non-null（成功 = セッション存続）
+      return false;
     } catch {
       return false;
     }

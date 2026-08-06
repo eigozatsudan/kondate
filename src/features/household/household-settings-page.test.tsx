@@ -572,8 +572,9 @@ it("clears an earlier completion failure as soon as a new draft is requested", a
         resolveCreate = resolve;
       }),
   );
-  const deleteMember = vi.fn(async (memberId: string) => {
+  const deleteMember = vi.fn((memberId: string): Promise<void> => {
     membersList = membersList.filter((row) => row.id !== memberId);
+    return Promise.resolve();
   });
   await renderSettings({
     listMembers,

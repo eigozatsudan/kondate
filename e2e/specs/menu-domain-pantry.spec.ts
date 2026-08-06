@@ -173,11 +173,14 @@ async function openReviewOptionalDetails(page: Page): Promise<void> {
 test("waits for the latest draft save before requesting emergency menus", async ({
   completedOnboardingPage: page,
 }) => {
+  // 設定・pantry・wizard・緊急献立まで跨ぐ長尺。既定 30s では不足。
+  test.setTimeout(180_000);
   await page.goto("/settings");
+  // settings の createDraft は insert 直叩きではなく start_household_onboarding RPC（H9）
   const memberCreated = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      new URL(response.url()).pathname.endsWith("/rest/v1/household_members"),
+      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/start_household_onboarding"),
   );
   await page.getByRole("button", { name: "家族を追加" }).click();
   await confirmAddScopeNotice(page);

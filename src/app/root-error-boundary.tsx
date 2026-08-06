@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, type ReactNode } from "react";
 
 type RootErrorBoundaryProps = {
   children: ReactNode;
@@ -23,8 +23,9 @@ export class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErr
     return { hasError: true };
   }
 
-  public componentDidCatch(_error: Error, _info: ErrorInfo): void {
+  public componentDidCatch(): void {
     // 秘密・スタックは出さない。監視連携は別経路（ここは利用者向けフォールバックのみ）。
+    // 引数は意図的に受け取らない（未使用パラメータの lint を避けつつ、ログもしない）。
   }
 
   public render(): ReactNode {

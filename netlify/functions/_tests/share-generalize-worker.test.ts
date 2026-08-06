@@ -570,6 +570,7 @@ describe("processShareGeneralizationJob pipeline", () => {
     process.env[SHARE_WORKER_CRON_SECRET_ENV] = VALID_SECRET;
     const finishCalls: RpcArgs[] = [];
     let finishAttempt = 0;
+    // mockReturnValue は vi.fn の戻り形を要求するため admin 型を ProcessDeps に寄せない
     const admin = {
       rpc: vi.fn((name: string, args?: RpcArgs) => {
         const payload = args ?? {};
@@ -589,7 +590,7 @@ describe("processShareGeneralizationJob pipeline", () => {
         return Promise.reject(new Error(`unexpected rpc ${name}`));
       }),
       from: vi.fn(),
-    } as unknown as ProcessShareGeneralizationJobDeps["admin"];
+    };
 
     claimShareGeneralizationJobs.mockResolvedValue([makeClaimedJob()]);
     getSupabaseAdmin.mockReturnValue(admin);

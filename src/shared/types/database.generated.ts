@@ -2778,6 +2778,7 @@ export type Database = {
           p_iv: string
           p_now: string
           p_origin: string
+          p_secret_hash?: string
           p_state_hash: string
         }
         Returns: boolean
@@ -3198,6 +3199,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      share_app_ai_budget_remaining: { Args: never; Returns: number }
       shopping_list_safety_fingerprint: {
         Args: { p_list_id: string; p_user_id: string }
         Returns: string

@@ -39,6 +39,17 @@ export class IncompleteDraftSaveError extends Error {
  * 永続化可能か判定する。value に id/revision 等が混ざっていても入力フィールドだけ見る
  * （hydrate 由来の余剰キーで false にしない）。
  */
+/**
+ * conflictRef.current を読む。直接比較すると await 前後で
+ * CFA が null に固定し no-unnecessary-condition / only-throw-error が誤爆するため、
+ * 関数経由で毎回読む。
+ */
+function peekDraftConflict(ref: {
+  current: DraftRevisionConflictError | null;
+}): DraftRevisionConflictError | null {
+  return ref.current;
+}
+
 function isPersistableDraft(value: PlannerDraftInput): boolean {
   return plannerDraftInputSchema.safeParse({
     mealType: value.mealType,
@@ -146,9 +157,12 @@ export function useDraftAutosave({
 
   const enqueue = useCallback(
     (next: PlannerDraftInput): Promise<PlannerDraft> => {
-      if (conflictRef.current !== null) {
-        if (mountedRef.current) setState("error");
-        return Promise.reject(conflictRef.current);
+      {
+        const existingConflict = peekDraftConflict(conflictRef);
+        if (existingConflict !== null) {
+          if (mountedRef.current) setState("error");
+          return Promise.reject(existingConflict);
+        }
       }
       // idea 選択直後など整合前の一時状態は RPC しない（CHECK 違反 → 偽の保存失敗 toast を防ぐ）。
       // state は触らない（直前の idle/saved を維持。error にもしない）。
@@ -163,7 +177,10 @@ export function useDraftAutosave({
           throw new SupersededDraftSaveError();
         }
         // 競合前に予約済みだった後続保存も、先行保存の競合判明後は実行しない。
-        if (conflictRef.current !== null) throw conflictRef.current;
+        {
+          const existingConflict = peekDraftConflict(conflictRef);
+          if (existingConflict !== null) throw existingConflict;
+        }
 
         // P2/P4: キュー待ち〜in-flight 完了後に latest が変わっていれば追従する。
         // 予約時 next へのフォールバックは mode 切替・strip 後に旧内容を書くため使わない。
@@ -174,7 +191,10 @@ export function useDraftAutosave({
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
           }
-          if (conflictRef.current !== null) throw conflictRef.current;
+          {
+            const existingConflict = peekDraftConflict(conflictRef);
+            if (existingConflict !== null) throw existingConflict;
+          }
 
           const latest = latestRef.current;
           if (!isPersistableDraft(latest)) {
