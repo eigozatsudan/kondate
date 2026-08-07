@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { EntitlementData } from "@shared/contracts/billing";
 import { createCheckoutSession, createPortalSession } from "./billing-api";
 import {
+  INCOMPLETE_COPY,
   PAST_DUE_COPY,
   PORTAL_BUTTON_LABEL,
   STRIPE_REDIRECT_NOTICE,
@@ -23,6 +24,7 @@ export {
   PORTAL_BUTTON_LABEL,
   STRIPE_REDIRECT_NOTICE,
   PAST_DUE_COPY,
+  INCOMPLETE_COPY,
   SURFACES_CLOSED_COPY,
 } from "./billing-ui-copy";
 
@@ -96,6 +98,8 @@ export function PlanSettingsSection({
   const entitled = !error && data?.plusEntitled === true;
   const isTrialing = data?.status === "trialing";
   const isPastDue = data?.status === "past_due" || data?.pastDueGrace === true;
+  // B1: incomplete は Checkout 409 が Portal 完了を指示。Checkout フォームではなく Portal CTA を出す
+  const isIncomplete = data?.status === "incomplete";
   const trialEndLabel = formatTrialEnd(data?.trialEnd ?? null);
 
   async function runPortal(): Promise<void> {
@@ -160,7 +164,26 @@ export function PlanSettingsSection({
             </div>
           ) : null}
 
-          {!entitled && surfacesOpen ? (
+          {/* B1: incomplete は LP 同様 Portal で完了。Checkout/COMING_SOON 枝に落とさない */}
+          {isIncomplete ? (
+            <div className="stack gap-2">
+              <p role="status">{INCOMPLETE_COPY}</p>
+              {surfacesOpen ? (
+                <button
+                  type="button"
+                  className="primary-button min-h-11"
+                  disabled={pending}
+                  onClick={() => {
+                    void runPortal();
+                  }}
+                >
+                  {PORTAL_BUTTON_LABEL}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {!entitled && surfacesOpen && !isIncomplete ? (
             <div className="stack gap-3">
               <p>こんだて日和 Plus なら、1 日最大 10 回まで献立を作れます。</p>
               {/* BILL-1: LP の COMING_SOON と設定の Checkout を揃える（申込不可なのに Settings だけ課金可にしない） */}
@@ -185,10 +208,20 @@ export function PlanSettingsSection({
                         const { url } = await createCheckoutSession({ interval });
                         window.location.assign(url);
                       }
-                    } catch {
-                      setActionError(
-                        "お支払い画面を開けませんでした。時間をおいてもう一度お試しください",
-                      );
+                    } catch (err) {
+                      // billing-api は envelope.error.code を Error.message に載せる
+                      const code = err instanceof Error ? err.message : "";
+                      if (code === "billing_checkout_incomplete") {
+                        setActionError(INCOMPLETE_COPY);
+                      } else if (code === "billing_checkout_use_portal") {
+                        setActionError(
+                          "お支払い管理から手続きしてください。新規のお申し込みはできません",
+                        );
+                      } else {
+                        setActionError(
+                          "お支払い画面を開けませんでした。時間をおいてもう一度お試しください",
+                        );
+                      }
                     } finally {
                       setPending(false);
                     }

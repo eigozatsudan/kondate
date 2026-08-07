@@ -77,12 +77,15 @@ export type BillingWebhookDeps = {
 /**
  * dahlia 以降は period が SubscriptionItem 側。
  * Webhook endpoint が古い API version のときや再配信で acacia 形が来る場合に備え両系統を読む。
+ * B4: 投影に使う item（allowlist 優先）の period を読む。
  */
-function periodUnixFromSubscription(sub: Stripe.Subscription): {
+function periodUnixFromSubscription(
+  sub: Stripe.Subscription,
+  item: Stripe.SubscriptionItem | undefined,
+): {
   start: number | null;
   end: number | null;
 } {
-  const item = sub.items.data[0];
   if (
     item !== undefined &&
     typeof item.current_period_start === "number" &&
@@ -120,6 +123,8 @@ const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete
  *   （新しい past_due が古い健全 sub を cancel しない — a7 B3）
  * - incomplete は最下位
  * 同 rank 内は新しい created を keep（再 Checkout 後の誤ダウングレード残差を減らす）。
+ * さらに B3: allowlist Plus price を持つ sub を非 allowlist より常に優先
+ * （新しい非 Plus active が古い Plus active を cancel しない）。
  */
 function dualSubKeepRank(status: string): number {
   if (status === "active") return 0;
@@ -171,6 +176,58 @@ export function isAllowlistedPlusPrice(
   return priceId === stripe.pricePlusMonthly || priceId === stripe.pricePlusYearly;
 }
 
+/** B3/B4: items のいずれかに Plus allowlist price があれば true。 */
+export function subscriptionHasAllowlistedPlusPrice(
+  sub: Stripe.Subscription,
+  stripe: { pricePlusMonthly: string; pricePlusYearly: string },
+): boolean {
+  for (const item of sub.items.data) {
+    const priceId = item.price?.id;
+    if (typeof priceId === "string" && isAllowlistedPlusPrice(priceId, stripe)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * B3: dual keep 比較。
+ * 1) allowlist Plus price 優先 2) status rank 3) 新しい created
+ */
+function compareDualLiveSubscriptions(
+  a: Stripe.Subscription,
+  b: Stripe.Subscription,
+  stripe: { pricePlusMonthly: string; pricePlusYearly: string } | undefined,
+): number {
+  if (stripe !== undefined) {
+    const aPlus = subscriptionHasAllowlistedPlusPrice(a, stripe) ? 0 : 1;
+    const bPlus = subscriptionHasAllowlistedPlusPrice(b, stripe) ? 0 : 1;
+    if (aPlus !== bPlus) return aPlus - bPlus;
+  }
+  const rankDiff = dualSubKeepRank(a.status) - dualSubKeepRank(b.status);
+  if (rankDiff !== 0) return rankDiff;
+  return b.created - a.created;
+}
+
+/**
+ * B4: 投影に使う item を選ぶ。Plus allowlist price を優先し、無ければ先頭 item。
+ * multi-item で非 Plus が items[0] でも Plus を見落とさない。
+ */
+export function selectSubscriptionItemForProjection(
+  sub: Stripe.Subscription,
+  stripe?: { pricePlusMonthly: string; pricePlusYearly: string },
+): Stripe.SubscriptionItem | undefined {
+  if (stripe !== undefined) {
+    for (const item of sub.items.data) {
+      const priceId = item.price?.id;
+      if (typeof priceId === "string" && isAllowlistedPlusPrice(priceId, stripe)) {
+        return item;
+      }
+    }
+  }
+  return sub.items.data[0];
+}
+
 /**
  * B1/B7: 投影直前の権益ガード。
  * - 未知 price → unpaid（status のみ Plus になる経路を閉じる）
@@ -206,15 +263,16 @@ function unixToIsoZ(seconds: number | null | undefined): string | null {
 
 /**
  * Stripe Subscription オブジェクトから投影用フィールドを取り出す。
- * items.data[0].price を正とする（設計）。
+ * B4: Plus allowlist price の item を優先（無い場合は先頭 item）。period も同 item から取る。
  */
 export function projectionFromSubscription(
   sub: Stripe.Subscription,
+  stripe?: { pricePlusMonthly: string; pricePlusYearly: string },
 ): SubscriptionProjection | null {
-  const firstItem = sub.items.data[0];
-  const priceId = firstItem?.price.id;
+  const item = selectSubscriptionItemForProjection(sub, stripe);
+  const priceId = item?.price.id;
   if (typeof priceId !== "string" || priceId.length === 0) return null;
-  const { start, end } = periodUnixFromSubscription(sub);
+  const { start, end } = periodUnixFromSubscription(sub, item);
   const periodStart = unixToIsoZ(start);
   const periodEnd = unixToIsoZ(end);
   if (periodStart === null || periodEnd === null) return null;
@@ -344,6 +402,8 @@ export async function cancelDualLiveSubscriptions(
     log: (event: SafeLogEvent) => void;
     requestId: string;
     startedAt: number;
+    /** B3: Plus price allowlist。未指定時は status/created のみ（後方互換）。 */
+    prices?: { pricePlusMonthly: string; pricePlusYearly: string };
   },
   userId: string,
   stripeCustomerId: string,
@@ -357,16 +417,46 @@ export async function cancelDualLiveSubscriptions(
     };
   }
 
-  // rank 優先 → 同 rank は新しい created を keep
-  const sorted = [...live].sort((a, b) => {
-    const rankDiff = dualSubKeepRank(a.status) - dualSubKeepRank(b.status);
-    if (rankDiff !== 0) return rankDiff;
-    // 同 rank は新しい subscription を keep（古い incomplete/残骸を誤 keep しない）
-    return b.created - a.created;
-  });
+  // B3: allowlist Plus 優先 → status rank → 新しい created
+  const sorted = [...live].sort((a, b) => compareDualLiveSubscriptions(a, b, deps.prices));
   const keep = sorted[0];
   if (keep === undefined) {
     return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
+  }
+
+  // residual-intentional (B9): mark は keep の stripe_subscription_id / updated_at のみ更新。
+  // status・period・past_due_since は直後の process 投影に委ねる。mark 成功〜process 完了前の
+  // 歪み窓は再送で修復し得るが、migration 契約変更（mark で status も写す）は本パスでしない。
+  //
+  // B10: mark 成功後に Stripe cancel。cancel 先行だと mark missing で 500 のとき discard が
+  // 既に取消不能になり、DB 未投影窓が広がる。行未作成（missing）は cancel せず process 投影へ。
+  const { data: markData, error: markError } = await deps.admin.rpc(
+    "mark_billing_subscription_dual_cancel_keep",
+    {
+      p_user_id: userId,
+      p_keep_stripe_subscription_id: keep.id,
+    },
+  );
+  if (markError !== null) {
+    throw new Error(markError.message ?? "mark_billing_subscription_dual_cancel_keep_failed");
+  }
+  if (markData !== null && typeof markData === "object") {
+    const ok = (markData as { ok?: unknown }).ok;
+    if (ok === false) {
+      const failureCode = (markData as { failure_code?: unknown }).failure_code;
+      if (failureCode === "billing_subscription_missing") {
+        // 初回 dual で行がまだ無い: cancel せず process で行を作り、再送で dual を完了させる
+        deps.log({
+          level: "warn",
+          requestId: deps.requestId,
+          code: "billing_dual_cancel_mark_missing",
+          durationMs: Date.now() - deps.startedAt,
+          stripeCustomerId,
+        });
+        return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
+      }
+      throw new Error("mark_billing_subscription_dual_cancel_keep_rejected");
+    }
   }
 
   const discardedSubscriptionIds: string[] = [];
@@ -381,27 +471,6 @@ export async function cancelDualLiveSubscriptions(
       stripeCustomerId,
       stripeSubscriptionId: other.id,
     });
-  }
-
-  // residual-intentional (B9): mark は keep の stripe_subscription_id / updated_at のみ更新。
-  // status・period・past_due_since は直後の process 投影に委ねる。mark 成功〜process 完了前の
-  // 歪み窓は再送で修復し得るが、migration 契約変更（mark で status も写す）は本パスでしない。
-  const { data: markData, error: markError } = await deps.admin.rpc(
-    "mark_billing_subscription_dual_cancel_keep",
-    {
-      p_user_id: userId,
-      p_keep_stripe_subscription_id: keep.id,
-    },
-  );
-  // keep 記録失敗は 500 で再送（discard 投影で誤 cancel 化しない）
-  if (markError !== null) {
-    throw new Error(markError.message ?? "mark_billing_subscription_dual_cancel_keep_failed");
-  }
-  if (markData !== null && typeof markData === "object") {
-    const ok = (markData as { ok?: unknown }).ok;
-    if (ok === false) {
-      throw new Error("mark_billing_subscription_dual_cancel_keep_rejected");
-    }
   }
 
   return {
@@ -420,6 +489,8 @@ export async function cancelDualLiveSubscriptions(
 export async function resolveTerminalEventDualProjection(
   deps: {
     stripe: BillingWebhookStripe;
+    /** B3: dual keep と同じ allowlist 優先比較 */
+    prices?: { pricePlusMonthly: string; pricePlusYearly: string };
   },
   stripeCustomerId: string,
   eventSubscriptionId: string,
@@ -434,12 +505,8 @@ export async function resolveTerminalEventDualProjection(
   if (live.length === 0) {
     return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
   }
-  const sorted = [...live].sort((a, b) => {
-    const rankDiff = dualSubKeepRank(a.status) - dualSubKeepRank(b.status);
-    if (rankDiff !== 0) return rankDiff;
-    // 同 rank は新しい subscription を keep（古い incomplete/残骸を誤 keep しない）
-    return b.created - a.created;
-  });
+  // B3: allowlist Plus 優先 → status rank → 新しい created（dual cancel と同順）
+  const sorted = [...live].sort((a, b) => compareDualLiveSubscriptions(a, b, deps.prices));
   const keep = sorted[0];
   if (keep === undefined) {
     return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
@@ -549,16 +616,24 @@ async function handleSubscriptionEvent(
     keepSubscriptionId: null,
     discardedSubscriptionIds: [],
   };
+  const prices = deps.env.stripe;
   if (customerId !== null && LIVE_SUB_STATUSES.has(sub.status)) {
     dualCleanup = await cancelDualLiveSubscriptions(
-      { stripe: deps.stripe, admin: deps.admin, log, requestId, startedAt },
+      {
+        stripe: deps.stripe,
+        admin: deps.admin,
+        log,
+        requestId,
+        startedAt,
+        ...(prices === undefined ? {} : { prices }),
+      },
       userId,
       customerId,
     );
   } else if (customerId !== null) {
     // 遅延 discarded cancel/deleted: live keep が残っていれば keep を投影する
     dualCleanup = await resolveTerminalEventDualProjection(
-      { stripe: deps.stripe },
+      { stripe: deps.stripe, ...(prices === undefined ? {} : { prices }) },
       customerId,
       sub.id,
     );
@@ -589,15 +664,17 @@ async function handleSubscriptionEvent(
   let retrieved: SubscriptionProjection | null = null;
   try {
     const liveSub = await deps.stripe.subscriptions.retrieve(projectSubscriptionId);
-    retrieved = projectionFromSubscription(liveSub);
+    // B4: allowlist item 優先で投影
+    retrieved = projectionFromSubscription(liveSub, prices);
   } catch {
     // discard 済みイベントで keep retrieve 失敗時は event オブジェクトで上書きしない
     if (projectSubscriptionId === sub.id) {
-      retrieved = projectionFromSubscription(sub);
+      retrieved = projectionFromSubscription(sub, prices);
     }
   }
   let projection =
-    retrieved ?? (projectSubscriptionId === sub.id ? projectionFromSubscription(sub) : null);
+    retrieved ??
+    (projectSubscriptionId === sub.id ? projectionFromSubscription(sub, prices) : null);
   if (projection === null) {
     // residual-intentional (B5): 投影不能は skip_subscription_projection で claim + event_only。
     // 再送地獄回避の 200。権益更新は後続 event / reconcile 待ち（同一 evt 再送は duplicate）。
@@ -745,14 +822,25 @@ async function handleCheckoutSessionEvent(
   // B12: checkout lock 解放は projection 用 user 解決と独立。
   // map 未解決でも metadata / client_reference の user で session 紐づき lock を解放し、
   // 最大 30m の billing_checkout_in_progress を避ける（権益投影は別経路）。
+  // B2: release の `{ error }` を検査し、失敗時は claim 前に 500 で止めて Stripe 再送させる。
+  // released:false（行なし）は既解放・未 bind の idempotent no-op として成功扱い。
   const lockUserId = userId ?? metadataUserId;
   let released = false;
   if (lockUserId !== null && typeof session.id === "string") {
-    await deps.admin.rpc("release_billing_checkout_lock", {
-      p_user_id: lockUserId,
-      p_stripe_checkout_session_id: session.id,
-    });
-    released = true;
+    const { data: releaseData, error: releaseError } = await deps.admin.rpc(
+      "release_billing_checkout_lock",
+      {
+        p_user_id: lockUserId,
+        p_stripe_checkout_session_id: session.id,
+      },
+    );
+    if (releaseError !== null) {
+      throw new Error(releaseError.message ?? "release_billing_checkout_lock_failed");
+    }
+    released =
+      releaseData !== null &&
+      typeof releaseData === "object" &&
+      (releaseData as { released?: unknown }).released === true;
   }
 
   // subscription 投影は subscription イベントに寄せる。event 記録のみ。
@@ -831,19 +919,27 @@ async function handleInvoiceEvent(
 
   // F-U05-1: invoice 経路も subscription.* と同型の dual-sub keep リダイレクトを行う。
   // discard 側の invoice.paid / payment_failed が keep を canceled 等で上書きしない。
+  const prices = deps.env.stripe;
   let dualCleanup: DualSubscriptionCleanup = {
     keepSubscriptionId: null,
     discardedSubscriptionIds: [],
   };
   if (resolvedCustomerId !== null && LIVE_SUB_STATUSES.has(sub.status)) {
     dualCleanup = await cancelDualLiveSubscriptions(
-      { stripe: deps.stripe, admin: deps.admin, log, requestId, startedAt },
+      {
+        stripe: deps.stripe,
+        admin: deps.admin,
+        log,
+        requestId,
+        startedAt,
+        ...(prices === undefined ? {} : { prices }),
+      },
       userId,
       resolvedCustomerId,
     );
   } else if (resolvedCustomerId !== null) {
     dualCleanup = await resolveTerminalEventDualProjection(
-      { stripe: deps.stripe },
+      { stripe: deps.stripe, ...(prices === undefined ? {} : { prices }) },
       resolvedCustomerId,
       sub.id,
     );
@@ -869,15 +965,16 @@ async function handleInvoiceEvent(
   let projection: SubscriptionProjection | null = null;
   try {
     const liveSub = await deps.stripe.subscriptions.retrieve(projectSubscriptionId);
-    projection = projectionFromSubscription(liveSub);
+    // B4: allowlist item 優先で投影
+    projection = projectionFromSubscription(liveSub, prices);
   } catch {
     // discard イベントで keep retrieve 失敗時は event 側 sub で上書きしない
     if (projectSubscriptionId === sub.id) {
-      projection = projectionFromSubscription(sub);
+      projection = projectionFromSubscription(sub, prices);
     }
   }
   if (projection === null && projectSubscriptionId === sub.id) {
-    projection = projectionFromSubscription(sub);
+    projection = projectionFromSubscription(sub, prices);
   }
   if (projection === null) {
     // residual-intentional (B5): subscription 経路と同型。event_only claim で再送停止。

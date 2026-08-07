@@ -5,6 +5,7 @@ import type { ComponentProps, ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { EntitlementData } from "@shared/contracts/billing";
 import {
+  INCOMPLETE_COPY,
   PAST_DUE_COPY,
   PORTAL_BUTTON_LABEL,
   PlanSettingsSection,
@@ -124,6 +125,30 @@ describe("PlanSettingsSection", () => {
     expect(screen.getByText(PAST_DUE_COPY)).toBeVisible();
     const portal = screen.getByRole("button", { name: PORTAL_BUTTON_LABEL });
     expect(portal).toBeVisible();
+    await user.click(portal);
+    await waitFor(() => {
+      expect(onPortal).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // B1: incomplete は Checkout 409 が Portal 完了を指示する。Settings も LP 同様 Portal CTA を出す
+  it("shows incomplete portal CTA and does not offer checkout (B1)", async () => {
+    const onPortal = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    const incompleteEntitlement: EntitlementData = {
+      ...freeEntitlement,
+      status: "incomplete",
+      plusEntitled: false,
+      dbPlusEntitled: false,
+      productSurfacesOpen: true,
+    };
+    renderPlan({ entitlement: incompleteEntitlement, onPortal });
+    expect(screen.getByText(INCOMPLETE_COPY)).toBeVisible();
+    const portal = screen.getByRole("button", { name: PORTAL_BUTTON_LABEL });
+    expect(portal).toBeVisible();
+    // COMING_SOON や Checkout フォームに落とさない
+    expect(screen.queryByText(PLUS_LP_COMING_SOON_BADGE)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
     await user.click(portal);
     await waitFor(() => {
       expect(onPortal).toHaveBeenCalledTimes(1);

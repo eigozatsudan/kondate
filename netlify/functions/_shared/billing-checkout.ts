@@ -122,18 +122,25 @@ async function ensureStripeCustomer(deps: BillingCheckoutDeps, userId: string): 
   return created.id;
 }
 
-/** token 付き lock 解放（失敗経路の共通後始末） */
+/**
+ * token 付き lock 解放（失敗経路の共通後始末）。
+ * B6: PostgREST は throw せず `{ error }` を返すため、error を検査して失敗を伝播する。
+ * silent fail だと token 付き lock が TTL まで残り billing_checkout_in_progress になる。
+ */
 async function releaseCheckoutLock(
   deps: BillingCheckoutDeps,
   userId: string,
   lockToken: string,
   sessionId?: string,
 ): Promise<void> {
-  await deps.admin.rpc("release_billing_checkout_lock", {
+  const { error } = await deps.admin.rpc("release_billing_checkout_lock", {
     p_user_id: userId,
     p_lock_token: lockToken,
     ...(sessionId === undefined ? {} : { p_stripe_checkout_session_id: sessionId }),
   });
+  if (error !== null) {
+    throw new Error(error.message ?? "release_billing_checkout_lock_failed");
+  }
 }
 
 async function hasUsedTrial(deps: BillingCheckoutDeps, email: string): Promise<boolean> {
@@ -212,11 +219,16 @@ export async function runBillingCheckout(
         "お支払い手続きが完了していません。設定からお支払い管理を開いてください",
       );
     }
-    if (
-      entitlement.status === "trialing" ||
-      entitlement.status === "active" ||
-      entitlement.status === "past_due"
-    ) {
+    // B5: past_due は dual 防止で Checkout 拒否するが、grace 切れは非 Plus。
+    // 「すでに Plus」コピーは権益と不一致なので Portal 誘導専用 code に分離する。
+    if (entitlement.status === "past_due") {
+      throw new HttpError(
+        409,
+        "billing_checkout_use_portal",
+        "お支払い管理から手続きしてください",
+      );
+    }
+    if (entitlement.status === "trialing" || entitlement.status === "active") {
       throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
     }
 
@@ -393,27 +405,44 @@ export async function runBillingCheckout(
     return json<CheckoutData>(200, { ok: true, data: { url: session.url } });
   } catch (error: unknown) {
     // 失敗経路: token 付き lock を必ず解放（成功時は上で null 化済み）
+    // B6: release の error も検査。失敗時はログし details.release_failed を載せる（lock 残骸の可観測性）
+    let releaseFailed = false;
     if (lockToken !== null && lockedUserId !== null) {
       try {
         await releaseCheckoutLock(deps, lockedUserId, lockToken, createdSessionId ?? undefined);
       } catch {
-        // best-effort release
+        releaseFailed = true;
+        log({
+          level: "error",
+          requestId,
+          code: "billing_checkout_release_failed",
+          durationMs: Date.now() - startedAt,
+          alertMetric: 1,
+        });
       }
     }
 
     if (error instanceof HttpError) {
+      const details: Record<string, unknown> = {
+        ...(error.details === undefined ? {} : error.details),
+        ...(releaseFailed ? { release_failed: true } : {}),
+      };
       return json(error.status, {
         ok: false,
         error: {
           code: error.code,
           message: error.message,
-          ...(error.details === undefined ? {} : { details: error.details }),
+          ...(Object.keys(details).length === 0 ? {} : { details }),
         },
       });
     }
     return json(500, {
       ok: false,
-      error: { code: "request_failed", message: "処理を完了できませんでした" },
+      error: {
+        code: "request_failed",
+        message: "処理を完了できませんでした",
+        ...(releaseFailed ? { details: { release_failed: true } } : {}),
+      },
     });
   }
 }

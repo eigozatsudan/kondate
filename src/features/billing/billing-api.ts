@@ -3,6 +3,7 @@ import {
   checkoutDataSchema,
   checkoutRequestSchema,
   entitlementDataSchema,
+  isAllowedStripeRedirectUrl,
   portalDataSchema,
   type CheckoutRequest,
   type EntitlementData,
@@ -104,7 +105,12 @@ export async function createCheckoutSession(
     },
     deps,
   );
-  return checkoutDataSchema.parse(data);
+  const session = checkoutDataSchema.parse(data);
+  // B7: 非 Stripe host への assign を防ぐ（API 応答改変・バグの DiD）
+  if (!isAllowedStripeRedirectUrl(session.url)) {
+    throw new Error("billing_redirect_url_invalid");
+  }
+  return session;
 }
 
 /** POST /api/billing/portal → Customer Portal URL。 */
@@ -118,5 +124,10 @@ export async function createPortalSession(deps: BillingApiDeps = {}): Promise<{ 
     },
     deps,
   );
-  return portalDataSchema.parse(data);
+  const session = portalDataSchema.parse(data);
+  // B7: 非 Stripe host への assign を防ぐ（API 応答改変・バグの DiD）
+  if (!isAllowedStripeRedirectUrl(session.url)) {
+    throw new Error("billing_redirect_url_invalid");
+  }
+  return session;
 }

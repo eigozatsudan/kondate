@@ -258,6 +258,26 @@ describe("runBillingCheckout", () => {
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
+  // B5: grace 切れ past_due は非 Plus でも dual 防止で拒否するが「すでに Plus」コピーは使わない
+  it("returns 409 billing_checkout_use_portal when status is past_due (B5)", async () => {
+    loadEntitlement.mockResolvedValue({
+      ...freeEntitlement,
+      status: "past_due",
+      dbPlusEntitled: false,
+      plusEntitled: false,
+      pastDueGrace: false,
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "billing_checkout_use_portal",
+        message: "お支払い管理から手続きしてください",
+      },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
   it("acquire → sessions.create → bind → returns url (happy path)", async () => {
     const response = await runBillingCheckout(request({ interval: "year" }), deps());
     expect(response.status).toBe(200);
@@ -334,6 +354,40 @@ describe("runBillingCheckout", () => {
       }),
     );
     expect(rpc.mock.calls.some(([n]) => n === "bind_billing_checkout_session")).toBe(false);
+  });
+
+  // B6: release が { error } を返しても silent fail しない（details.release_failed + ログ）
+  it("surfaces release_failed when lock release RPC errors after create failure (B6)", async () => {
+    sessionsCreate.mockRejectedValue(new Error("stripe down"));
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_user") {
+        return { data: { stripe_customer_id: "cus_existing" }, error: null };
+      }
+      if (name === "has_billing_trial_history") {
+        return { data: false, error: null };
+      }
+      if (name === "acquire_billing_checkout_lock") {
+        return { data: { ok: true, lock_token: LOCK_TOKEN }, error: null };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: null, error: { message: "db down" } };
+      }
+      return { data: null, error: null };
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "request_failed",
+        details: { release_failed: true },
+      },
+    });
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "billing_checkout_release_failed",
+        alertMetric: 1,
+      }),
+    );
   });
 
   it("expires Session and releases lock when bind fails after create", async () => {

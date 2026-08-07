@@ -6,4 +6,7 @@ export const YEARLY_CONFIRM_COPY =
 export const PORTAL_BUTTON_LABEL = "お支払い・解約の管理" as const;
 export const STRIPE_REDIRECT_NOTICE = "カード入力画面に移ります" as const;
 export const PAST_DUE_COPY = "お支払いの更新が必要です" as const;
+/** B1: incomplete は Checkout 409 が Portal 完了を指示する。Settings にも同導線を出す。 */
+export const INCOMPLETE_COPY =
+  "お支払いの手続きが完了していません。お支払い管理から手続きを続けてください" as const;
 export const SURFACES_CLOSED_COPY = "お支払い管理は現在ご利用いただけません。" as const;

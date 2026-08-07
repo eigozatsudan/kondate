@@ -6,7 +6,9 @@ import {
   guardSubscriptionProjection,
   handleBillingWebhook,
   isAllowlistedPlusPrice,
+  projectionFromSubscription,
   resolveBillingUserId,
+  subscriptionHasAllowlistedPlusPrice,
   subscriptionIdFromInvoice,
   type BillingWebhookDeps,
   type SubscriptionProjection,
@@ -1208,7 +1210,136 @@ describe("handleBillingWebhook", () => {
 
     const response = await handleBillingWebhook(signedRequest(), deps());
     expect(response.status).toBe(500);
+    // B10: mark 失敗時は cancel 前に止める（discard を不可逆にしない）
+    expect(cancel).not.toHaveBeenCalled();
     expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
+  });
+
+  // B10: mark missing は cancel せず process 投影へ（再送で dual 完了）
+  it("skips dual cancel when mark keep reports subscription missing (B10)", async () => {
+    const older = makeSubscription({
+      id: "sub_older_missing",
+      created: 1000,
+      status: "active",
+    });
+    const newer = makeSubscription({
+      id: "sub_newer_missing",
+      created: 2000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.created", newer, { id: "evt_dual_mark_missing" }),
+    );
+    list.mockImplementation((params: { status?: string }) => {
+      const data = params.status === "active" || params.status === undefined ? [older, newer] : [];
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+    });
+    retrieve.mockResolvedValue(newer);
+    rpc.mockImplementation((name: string) => {
+      if (name === "mark_billing_subscription_dual_cancel_keep") {
+        return Promise.resolve({
+          data: { ok: false, failure_code: "billing_subscription_missing" },
+          error: null,
+        });
+      }
+      if (name === "process_billing_stripe_event") {
+        return Promise.resolve({ data: { ok: true, outcome: "applied" }, error: null });
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return Promise.resolve({
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "billing_dual_cancel_mark_missing" }),
+    );
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(true);
+  });
+
+  // B3: 新しい非 allowlist active が古い Plus active を cancel しない
+  it("keeps older allowlisted Plus over newer non-allowlist active dual-sub (B3)", async () => {
+    const olderPlus = makeSubscription({
+      id: "sub_plus_old",
+      created: 1000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+      items: {
+        object: "list",
+        data: [
+          {
+            id: "si_plus",
+            object: "subscription_item",
+            current_period_start: 1_720_000_000,
+            current_period_end: 1_722_592_000,
+            price: { id: "price_m", object: "price" },
+          } as Stripe.SubscriptionItem,
+        ],
+        has_more: false,
+        url: "",
+      },
+    });
+    const newerOther = makeSubscription({
+      id: "sub_other_new",
+      created: 2000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+      items: {
+        object: "list",
+        data: [
+          {
+            id: "si_other",
+            object: "subscription_item",
+            current_period_start: 1_720_000_000,
+            current_period_end: 1_722_592_000,
+            price: { id: "price_x", object: "price" },
+          } as Stripe.SubscriptionItem,
+        ],
+        has_more: false,
+        url: "",
+      },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", newerOther, { id: "evt_dual_allowlist" }),
+    );
+    retrieve.mockImplementation((id: string) => {
+      if (id === "sub_plus_old") return Promise.resolve(olderPlus);
+      return Promise.resolve(newerOther);
+    });
+    list.mockImplementation((params: { status?: string }) => {
+      const all = [olderPlus, newerOther];
+      const data =
+        params.status === undefined ? all : all.filter((sub) => sub.status === params.status);
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+    });
+    cancel.mockResolvedValue(
+      makeSubscription({ id: "sub_other_new", status: "canceled", created: 2000 }),
+    );
+
+    await handleBillingWebhook(signedRequest(), deps());
+    expect(cancel).toHaveBeenCalledWith("sub_other_new");
+    expect(cancel).not.toHaveBeenCalledWith("sub_plus_old");
+    expect(rpc).toHaveBeenCalledWith(
+      "mark_billing_subscription_dual_cancel_keep",
+      expect.objectContaining({
+        p_keep_stripe_subscription_id: "sub_plus_old",
+      }),
+    );
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.stripe_subscription_id).toBe("sub_plus_old");
+    expect(processPayload.status).toBe("active");
+    expect(processPayload.stripe_price_id).toBe("price_m");
   });
 
   it("processes webhook when BILLING_ENABLED=false if secrets present but does not project Plus (A3/B7)", async () => {
@@ -1322,6 +1453,38 @@ describe("handleBillingWebhook", () => {
       }),
     );
   });
+
+  // B2: release error 時は claim（process）前に 500 で止める
+  it("returns 500 and does not claim when checkout lock release RPC errors (B2)", async () => {
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_stripe_id") {
+        return {
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: null, error: { message: "release failed" } };
+      }
+      if (name === "process_billing_stripe_event") {
+        return { data: { ok: true, outcome: "event_only" }, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const session = {
+      id: "cs_test_release_fail",
+      object: "checkout.session",
+      customer: CUSTOMER_ID,
+      client_reference_id: USER_ID,
+      metadata: { supabase_user_id: USER_ID },
+    } as unknown as Stripe.Checkout.Session;
+    constructEvent.mockReturnValue(
+      makeEvent("checkout.session.completed", session, { id: "evt_cs_release_fail" }),
+    );
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
+  });
 });
 
 describe("resolveBillingUserId U5-M1 / B2", () => {
@@ -1422,5 +1585,74 @@ describe("guardSubscriptionProjection B1/B7", () => {
     expect(guardSubscriptionProjection(base, { billingEnabled: true, stripe }).status).toBe(
       "active",
     );
+  });
+});
+
+describe("projectionFromSubscription multi-item (B4)", () => {
+  const stripe = { pricePlusMonthly: "price_m", pricePlusYearly: "price_y" };
+
+  it("prefers allowlisted Plus item over non-Plus items[0]", () => {
+    const sub = makeSubscription({
+      items: {
+        object: "list",
+        data: [
+          {
+            id: "si_other",
+            object: "subscription_item",
+            current_period_start: 1_700_000_000,
+            current_period_end: 1_701_000_000,
+            price: { id: "price_x", object: "price" },
+          } as Stripe.SubscriptionItem,
+          {
+            id: "si_plus",
+            object: "subscription_item",
+            current_period_start: 1_720_000_000,
+            current_period_end: 1_722_592_000,
+            price: { id: "price_m", object: "price" },
+          } as Stripe.SubscriptionItem,
+        ],
+        has_more: false,
+        url: "",
+      },
+    });
+    const projection = projectionFromSubscription(sub, stripe);
+    expect(projection).not.toBeNull();
+    expect(projection!.stripe_price_id).toBe("price_m");
+    // period も Plus item 側
+    expect(projection!.current_period_start).toBe(new Date(1_720_000_000 * 1000).toISOString());
+    expect(projection!.current_period_end).toBe(new Date(1_722_592_000 * 1000).toISOString());
+    // guard 後も Plus のまま
+    expect(
+      guardSubscriptionProjection(projection!, { billingEnabled: true, stripe }).status,
+    ).toBe("active");
+  });
+
+  it("falls back to items[0] when no allowlisted price", () => {
+    const sub = makeSubscription({
+      items: {
+        object: "list",
+        data: [
+          {
+            id: "si_a",
+            object: "subscription_item",
+            current_period_start: 1_720_000_000,
+            current_period_end: 1_722_592_000,
+            price: { id: "price_a", object: "price" },
+          } as Stripe.SubscriptionItem,
+          {
+            id: "si_b",
+            object: "subscription_item",
+            current_period_start: 1_720_000_000,
+            current_period_end: 1_722_592_000,
+            price: { id: "price_b", object: "price" },
+          } as Stripe.SubscriptionItem,
+        ],
+        has_more: false,
+        url: "",
+      },
+    });
+    const projection = projectionFromSubscription(sub, stripe);
+    expect(projection!.stripe_price_id).toBe("price_a");
+    expect(subscriptionHasAllowlistedPlusPrice(sub, stripe)).toBe(false);
   });
 });

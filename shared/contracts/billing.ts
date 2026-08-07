@@ -21,6 +21,30 @@ export const portalDataSchema = z
 
 export type PortalData = z.infer<typeof portalDataSchema>;
 
+/**
+ * B7: Checkout / Portal の redirect URL を Stripe host に限定するクライアント DiD。
+ * サーバは success/cancel/return を SERVER_SITE_ORIGIN 固定で組み立てるが、
+ * API 応答の session.url を location.assign する前に host を再検証する。
+ * - 本番: checkout.stripe.com / billing.stripe.com
+ * - ローカル mock: checkout.stripe.test / billing.stripe.test
+ */
+const STRIPE_REDIRECT_HOSTS = new Set([
+  "checkout.stripe.com",
+  "billing.stripe.com",
+  "checkout.stripe.test",
+  "billing.stripe.test",
+]);
+
+export function isAllowedStripeRedirectUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    return STRIPE_REDIRECT_HOSTS.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** GET /api/billing/entitlement の閉じたレスポンス。 */
 export const entitlementDataSchema = z
   .object({
