@@ -5,11 +5,8 @@ import {
   unsupportedDietKinds,
   type AgeBand,
   type AllergyStatus,
-  type EasePreference,
   type PortionSize,
-  type RequiredSafetyConstraint,
   type SpiceLevel,
-  type UnsupportedDietKind,
   type UnsupportedDietStatus,
 } from "@shared/contracts/domain";
 import { useSearchParams } from "react-router";
@@ -48,8 +45,10 @@ import { AllergyEditor } from "./allergy-editor";
 import { defaultsForAgeBand } from "./household-defaults";
 import {
   householdSettingsSchema,
+  householdSettingsValueFromDbRow,
   toHouseholdFieldErrors,
   type HouseholdFieldErrors,
+  type HouseholdSettingsFormValue,
   type HouseholdSettingsValue,
 } from "./household-settings-schema";
 import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-queries";
@@ -70,7 +69,7 @@ import {
 
 type PendingRegisteredIntent = {
   member: HouseholdMemberRow;
-  values: HouseholdSettingsValue;
+  values: HouseholdSettingsFormValue;
   revision: number;
   allergyRefetchPending: boolean;
   allergyRefetchStarted: boolean;
@@ -152,20 +151,9 @@ export interface HouseholdSettingsApi {
   invalidateSafety(): Promise<void>;
 }
 
-function memberValue(member: HouseholdMemberRow): HouseholdSettingsValue {
-  const ageBand = (member.age_band ?? "adult") as AgeBand;
-  const defaults = defaultsForAgeBand(ageBand);
-  return {
-    displayName: member.display_name,
-    ageBand: (member.age_band ?? "") as AgeBand,
-    allergyStatus: (member.allergy_status ?? "") as AllergyStatus,
-    unsupportedDietStatus: (member.unsupported_diet_status ?? "") as UnsupportedDietStatus,
-    unsupportedDietKinds: member.unsupported_diet_kinds as UnsupportedDietKind[],
-    requiredSafetyConstraints: member.required_safety_constraints as RequiredSafetyConstraint[],
-    portionSize: (member.portion_size ?? defaults.portion_size) as PortionSize,
-    spiceLevel: (member.spice_level ?? defaults.spice_level) as SpiceLevel,
-    easePreferences: member.ease_preferences as EasePreference[],
-  };
+/** H12: DB 行を schema 検証してフォーム初期値へ。不正 enum は空/年齢デフォルト（cast なし） */
+function memberValue(member: HouseholdMemberRow): HouseholdSettingsFormValue {
+  return householdSettingsValueFromDbRow(member);
 }
 
 function toMemberPatch(value: HouseholdSettingsValue): HouseholdMemberPatch {
@@ -249,7 +237,7 @@ export function HouseholdSettingsForm({
   // 登録済み家族がある状態でページを開き直したとき、編集フォームを自動展開しない。
   // 一覧だけ見せ、編集は「編集」／追加は「家族を追加」の明示操作でのみ開く。
   const [editorOpen, setEditorOpen] = useState(false);
-  const [values, setValues] = useState<HouseholdSettingsValue>();
+  const [values, setValues] = useState<HouseholdSettingsFormValue>();
   const [allergyRefetchEpoch, setAllergyRefetchEpoch] = useState(0);
   const [errors, setErrors] = useState<HouseholdFieldErrors>({});
   const [message, setMessage] = useState("");
@@ -274,7 +262,7 @@ export function HouseholdSettingsForm({
     };
   }, [dismissToast]);
   const saveQueue = useRef(Promise.resolve(true));
-  const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsValue>());
+  const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsFormValue>());
   const editRevisionsByMemberRef = useRef(new Map<string, number>());
   const operationTokensByMemberRef = useRef(new Map<string, number>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
@@ -467,7 +455,7 @@ export function HouseholdSettingsForm({
     };
   }, [addScopeNoticeOpen]);
 
-  const update = (patch: Partial<HouseholdSettingsValue>) => {
+  const update = (patch: Partial<HouseholdSettingsFormValue>) => {
     if (savingRef.current || selected === undefined) return undefined;
     const current = valuesByMemberRef.current.get(selected.id);
     if (current === undefined) return undefined;
@@ -483,7 +471,7 @@ export function HouseholdSettingsForm({
   const save = useCallback(
     async (
       member: HouseholdMemberRow,
-      next: HouseholdSettingsValue,
+      next: HouseholdSettingsFormValue,
       lineage: SaveLineage,
     ): Promise<boolean> => {
       const parsed = householdSettingsSchema.safeParse(next);
@@ -531,7 +519,7 @@ export function HouseholdSettingsForm({
     [api, canPublishSaveMessage, isLatestSaveRevision, membersKey, queryClient],
   );
   const beginPendingOperation = useCallback(
-    (targetMember: HouseholdMemberRow, next?: HouseholdSettingsValue) => {
+    (targetMember: HouseholdMemberRow, next?: HouseholdSettingsFormValue) => {
       const currentCount = pendingOperationCountsRef.current.get(targetMember.id) ?? 0;
       pendingOperationCountsRef.current.set(targetMember.id, currentCount + 1);
       valuesByMemberRef.current.set(
@@ -605,8 +593,8 @@ export function HouseholdSettingsForm({
   const queueSave = useCallback(
     (
       member: HouseholdMemberRow,
-      localSnapshot: HouseholdSettingsValue,
-      persistedValues: HouseholdSettingsValue = localSnapshot,
+      localSnapshot: HouseholdSettingsFormValue,
+      persistedValues: HouseholdSettingsFormValue = localSnapshot,
       shouldSave?: () => boolean,
     ) => {
       if (savingRef.current) return Promise.resolve(undefined);
@@ -1075,7 +1063,7 @@ export function HouseholdSettingsForm({
     }
   };
 
-  const updateAndSave = (patch: Partial<HouseholdSettingsValue>) => {
+  const updateAndSave = (patch: Partial<HouseholdSettingsFormValue>) => {
     if (savingRef.current) return;
     const next = update(patch);
     if (selected === undefined || next === undefined) return;
@@ -1473,9 +1461,14 @@ export function HouseholdSettingsForm({
                   const nextAge = event.target.value as AgeBand;
                   const nextDefaults = defaultsForAgeBand(nextAge);
                   // 直前の年齢デフォルトと一致する項目だけ上書きし、ユーザー編集を黙って潰さない。
+                  // 未選択 "" は ageBand デフォルト比較の対象外（H12: FormValue で空を型付け）
                   const previousAge = values.ageBand;
                   const previousDefaults =
-                    previousAge in householdAgeLabels ? defaultsForAgeBand(previousAge) : null;
+                    previousAge === ""
+                      ? null
+                      : previousAge in householdAgeLabels
+                        ? defaultsForAgeBand(previousAge)
+                        : null;
                   const stillAtPreviousDefault = <T,>(
                     current: T,
                     previousDefault: T | undefined,

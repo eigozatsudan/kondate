@@ -1292,6 +1292,32 @@ it("saves a changed safety field and invalidates dependents", async () => {
   });
 });
 
+// H12: DB の不正 enum を unchecked cast で select に載せない（空/年齢デフォルトへ）
+it("initializes form from corrupt DB enums as empty selects and age defaults", async () => {
+  const corrupt: HouseholdMemberRow = {
+    ...member,
+    age_band: "legacy_child",
+    allergy_status: "maybe",
+    unsupported_diet_status: "sometimes",
+    portion_size: "huge",
+    spice_level: "extra_hot",
+    ease_preferences: ["soft", "not_an_ease"],
+    required_safety_constraints: ["remove_bones", "bogus"],
+  };
+  await renderSettings({ listMembers: vi.fn().mockResolvedValue([corrupt]) });
+
+  expect(await screen.findByLabelText("年齢のめやす")).toHaveValue("");
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("");
+  expect(screen.getByLabelText(unsupportedDietStatusLabel)).toHaveValue("");
+  // 年齢不正時は adult 既定（regular / regular）
+  expect(screen.getByLabelText("食べる量")).toHaveValue("regular");
+  expect(screen.getByLabelText("辛さ")).toHaveValue("regular");
+  // 不正配列要素は落とす（soft の aria-label は enum キーのまま）
+  expect(screen.getByLabelText("soft")).toBeChecked();
+  expect(screen.getByLabelText("骨を除く")).toBeChecked();
+  expect(screen.getByLabelText("小さく切る")).not.toBeChecked();
+});
+
 it("shows Japanese labels for unsupported diet kinds, not English enum keys", async () => {
   // 回帰: 設定編集フォームが weaning_food 等のキーをそのまま出していた
   await renderSettings();

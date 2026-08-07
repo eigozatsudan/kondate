@@ -1,0 +1,116 @@
+import { describe, expect, it } from "vitest";
+import {
+  householdSettingsSchema,
+  householdSettingsValueFromDbRow,
+  type HouseholdMemberSettingsRow,
+} from "./household-settings-schema";
+
+const validRow: HouseholdMemberSettingsRow = {
+  display_name: "太郎",
+  age_band: "adult",
+  allergy_status: "none",
+  unsupported_diet_status: "none",
+  unsupported_diet_kinds: [],
+  required_safety_constraints: [],
+  portion_size: "regular",
+  spice_level: "regular",
+  ease_preferences: [],
+};
+
+describe("householdSettingsValueFromDbRow (H12)", () => {
+  it("returns schema-valid values for a complete member row without casts", () => {
+    const value = householdSettingsValueFromDbRow(validRow);
+    const parsed = householdSettingsSchema.safeParse(value);
+    expect(parsed.success).toBe(true);
+    expect(value).toEqual({
+      displayName: "太郎",
+      ageBand: "adult",
+      allergyStatus: "none",
+      unsupportedDietStatus: "none",
+      unsupportedDietKinds: [],
+      requiredSafetyConstraints: [],
+      portionSize: "regular",
+      spiceLevel: "regular",
+      easePreferences: [],
+    });
+  });
+
+  it("maps null required enums to empty selects and adult defaults for portion/spice", () => {
+    const value = householdSettingsValueFromDbRow({
+      ...validRow,
+      display_name: null,
+      age_band: null,
+      allergy_status: null,
+      unsupported_diet_status: null,
+      portion_size: null,
+      spice_level: null,
+    });
+    expect(value.displayName).toBeNull();
+    expect(value.ageBand).toBe("");
+    expect(value.allergyStatus).toBe("");
+    expect(value.unsupportedDietStatus).toBe("");
+    // null 年齢時の量・辛さは adult 既定（従来 memberValue と同型）
+    expect(value.portionSize).toBe("regular");
+    expect(value.spiceLevel).toBe("regular");
+  });
+
+  it("drops invalid enum scalars to empty or age defaults instead of trusting raw strings", () => {
+    const value = householdSettingsValueFromDbRow({
+      ...validRow,
+      age_band: "legacy_child",
+      allergy_status: "maybe",
+      unsupported_diet_status: "sometimes",
+      portion_size: "huge",
+      spice_level: "extra_hot",
+    });
+    expect(value.ageBand).toBe("");
+    expect(value.allergyStatus).toBe("");
+    expect(value.unsupportedDietStatus).toBe("");
+    // 年齢不正時も adult 既定で量・辛さを埋める（不正文字列を select に載せない）
+    expect(value.portionSize).toBe("regular");
+    expect(value.spiceLevel).toBe("regular");
+  });
+
+  it("uses toddler defaults when age is valid but portion/spice are corrupt", () => {
+    const value = householdSettingsValueFromDbRow({
+      ...validRow,
+      age_band: "age_3_5",
+      portion_size: "not-a-size",
+      spice_level: "not-a-spice",
+    });
+    expect(value.ageBand).toBe("age_3_5");
+    expect(value.portionSize).toBe("small");
+    expect(value.spiceLevel).toBe("none");
+  });
+
+  it("filters invalid array elements and caps to schema max", () => {
+    const value = householdSettingsValueFromDbRow({
+      ...validRow,
+      ease_preferences: ["soft", "INVALID", "boneless", "small_pieces", "soft"],
+      required_safety_constraints: ["remove_bones", "not_real", "cut_small", "extra"],
+      unsupported_diet_kinds: ["weaning_food", "bogus", "therapeutic_diet", "swallowing_concern"],
+      unsupported_diet_status: "present",
+    });
+    expect(value.easePreferences).toEqual(["soft", "boneless", "small_pieces"]);
+    expect(value.requiredSafetyConstraints).toEqual(["remove_bones", "cut_small"]);
+    // max 3: weaning + therapeutic + swallowing の順で採用し bogus は捨てる
+    expect(value.unsupportedDietKinds).toEqual([
+      "weaning_food",
+      "therapeutic_diet",
+      "swallowing_concern",
+    ]);
+    expect(value.unsupportedDietStatus).toBe("present");
+  });
+
+  it("keeps a valid portion when only age_band is corrupt", () => {
+    const value = householdSettingsValueFromDbRow({
+      ...validRow,
+      age_band: "???",
+      portion_size: "large",
+      spice_level: "mild",
+    });
+    expect(value.ageBand).toBe("");
+    expect(value.portionSize).toBe("large");
+    expect(value.spiceLevel).toBe("mild");
+  });
+});

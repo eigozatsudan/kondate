@@ -8,7 +8,16 @@ import {
   spiceLevels,
   unsupportedDietKinds,
   unsupportedDietStatuses,
+  type AgeBand,
+  type AllergyStatus,
+  type EasePreference,
+  type PortionSize,
+  type RequiredSafetyConstraint,
+  type SpiceLevel,
+  type UnsupportedDietKind,
+  type UnsupportedDietStatus,
 } from "@shared/contracts/domain";
+import { defaultsForAgeBand } from "./household-defaults";
 import {
   UNSUPPORTED_DIET_KINDS_REQUIRED,
   UNSUPPORTED_DIET_STATUS_REQUIRED,
@@ -48,6 +57,35 @@ export const householdSettingsSchema = z
 export type HouseholdSettingsValue = z.infer<typeof householdSettingsSchema>;
 export type HouseholdFieldErrors = Partial<Record<keyof HouseholdSettingsValue, string>>;
 
+/**
+ * フォーム編集中の一時値。必須 enum が未選択のときは空文字を許す。
+ * 保存時は householdSettingsSchema.safeParse で HouseholdSettingsValue に絞る。
+ */
+export type HouseholdSettingsFormValue = {
+  displayName: string | null;
+  ageBand: AgeBand | "";
+  allergyStatus: AllergyStatus | "";
+  unsupportedDietStatus: UnsupportedDietStatus | "";
+  unsupportedDietKinds: UnsupportedDietKind[];
+  requiredSafetyConstraints: RequiredSafetyConstraint[];
+  portionSize: PortionSize;
+  spiceLevel: SpiceLevel;
+  easePreferences: EasePreference[];
+};
+
+/** household_members 行のうち、フォーム初期化に使う列（string 境界の生値） */
+export type HouseholdMemberSettingsRow = {
+  display_name: string | null;
+  age_band: string | null;
+  allergy_status: string | null;
+  unsupported_diet_status: string | null;
+  unsupported_diet_kinds: string[];
+  required_safety_constraints: string[];
+  portion_size: string | null;
+  spice_level: string | null;
+  ease_preferences: string[];
+};
+
 export function toHouseholdFieldErrors(
   error: z.ZodError<HouseholdSettingsValue>,
 ): HouseholdFieldErrors {
@@ -59,4 +97,83 @@ export function toHouseholdFieldErrors(
     result[key] ??= issue.message;
   }
   return result;
+}
+
+/** 単一 enum 列を schema で検証。不正・null は undefined（呼び出し側で空/デフォルトへ） */
+function parseEnumField<T extends string>(
+  schema: z.ZodType<T>,
+  value: unknown,
+): T | undefined {
+  const parsed = schema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * 配列 enum 列を要素ごとに schema 検証し、不正要素は捨てる。
+ * max を超える分は先頭から採用（保存 schema の .max と整合）。
+ */
+function parseEnumArrayField<T extends string>(
+  itemSchema: z.ZodType<T>,
+  value: unknown,
+  max: number,
+): T[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: T[] = [];
+  for (const item of value) {
+    const parsed = itemSchema.safeParse(item);
+    if (!parsed.success) {
+      continue;
+    }
+    result.push(parsed.data);
+    if (result.length >= max) {
+      break;
+    }
+  }
+  return result;
+}
+
+/**
+ * H12: DB 行 → フォーム初期値。unchecked cast を使わず schema で検証する。
+ * - 必須選択（年齢・アレルギー・対象外事情）の不正/null は空文字（未選択 UI）
+ * - 量・辛さの不正/null は年齢デフォルト（年齢不正時は adult 相当）
+ * - 配列の不正要素は除外。完全に schema を満たす行は parse 結果を返す
+ */
+export function householdSettingsValueFromDbRow(
+  row: HouseholdMemberSettingsRow,
+): HouseholdSettingsFormValue {
+  // superRefine 後の ZodEffects に依存せず、保存 schema と同じ enum 集合で検証する
+  const ageBand = parseEnumField(z.enum(ageBands), row.age_band);
+  // デフォルト算出用。フォーム表示の ageBand 空とは分離（従来どおり null 時は adult 既定）
+  const defaults = defaultsForAgeBand(ageBand ?? "adult");
+
+  const formValue: HouseholdSettingsFormValue = {
+    displayName: row.display_name,
+    ageBand: ageBand ?? "",
+    allergyStatus: parseEnumField(z.enum(allergyStatuses), row.allergy_status) ?? "",
+    unsupportedDietStatus:
+      parseEnumField(z.enum(unsupportedDietStatuses), row.unsupported_diet_status) ?? "",
+    unsupportedDietKinds: parseEnumArrayField(
+      z.enum(unsupportedDietKinds),
+      row.unsupported_diet_kinds,
+      3,
+    ),
+    requiredSafetyConstraints: parseEnumArrayField(
+      z.enum(requiredSafetyConstraints),
+      row.required_safety_constraints,
+      2,
+    ),
+    portionSize:
+      parseEnumField(z.enum(portionSizes), row.portion_size) ?? defaults.portion_size,
+    spiceLevel: parseEnumField(z.enum(spiceLevels), row.spice_level) ?? defaults.spice_level,
+    easePreferences: parseEnumArrayField(z.enum(easePreferences), row.ease_preferences, 3),
+  };
+
+  // 完全に妥当なら superRefine 込みの schema 結果を採用（型も HouseholdSettingsValue）
+  const full = householdSettingsSchema.safeParse(formValue);
+  if (full.success) {
+    return full.data;
+  }
+  return formValue;
 }
