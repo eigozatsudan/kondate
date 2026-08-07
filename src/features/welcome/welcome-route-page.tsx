@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import type { OnboardingStatus } from "@shared/contracts/domain";
+import { withTimeout } from "@/features/auth/async-timeout";
+import { COLD_START_SESSION_DEADLINE_MS } from "@/features/auth/auth-provider";
 import { useAuth } from "@/features/auth/use-auth";
 import { getProfile, setOnboardingStatus } from "@/features/household/household-api";
 import { householdKeys } from "@/features/household/household-queries";
@@ -11,14 +13,23 @@ import { WelcomePage } from "./welcome-page";
 /** 別タブ同時開始の last-write-wins を抑える（L4）。Web Locks 未対応環境は直列フォールバックなしで実行。 */
 const ONBOARDING_START_LOCK = "kondate:welcome-onboarding-start";
 
+/**
+ * L1: lock 内 getProfile / CAS が never-settle でも auth C5 同尺で打ち切る。
+ * timeout は **lock コールバック内**でかけ、reject で lock を解放し dual-tab 閉塞を防ぐ。
+ * withTimeout は元 Promise を cancel しないが、UI pending と Web Lock 保持は解放できる。
+ */
 async function withOnboardingStartLock<T>(run: () => Promise<T>): Promise<T> {
+  const execute = (): Promise<T> => withTimeout(run(), COLD_START_SESSION_DEADLINE_MS);
   // DOM 型は locks を常置するが、未対応 UA では runtime で欠けることがある
   const locks = Reflect.get(globalThis.navigator, "locks") as LockManager | undefined;
   if (locks === undefined || typeof locks.request !== "function") {
-    return run();
+    return execute();
   }
-  return locks.request(ONBOARDING_START_LOCK, run);
+  return locks.request(ONBOARDING_START_LOCK, execute);
 }
+
+/** 開始後ナビは履歴トラップ防止のため replace（L4。terminal 直アクセス / RootEntry と同型）。 */
+const welcomeStartNavigateOptions = { replace: true } as const;
 
 /**
  * L4 + R1: 別タブが先に進めた terminal status を尊重する。
@@ -30,7 +41,7 @@ function navigateForTerminalStatus(
   navigate: ReturnType<typeof useNavigate>,
 ): boolean {
   if (status === "skipped" || status === "complete") {
-    void navigate("/planner");
+    void navigate("/planner", welcomeStartNavigateOptions);
     return true;
   }
   return false;
@@ -46,23 +57,27 @@ function navigateForHouseholdExistingStatus(
 ): boolean {
   if (navigateForTerminalStatus(status, navigate)) return true;
   if (status === "in_progress") {
-    void navigate("/onboarding");
+    void navigate("/onboarding", welcomeStartNavigateOptions);
     return true;
   }
   return false;
 }
 
-/** welcome 開始: CAS 後の実 status へ遷移（書き込み成功 / first-writer 負けの両方） */
+/**
+ * welcome 開始: CAS 後の実 status へ遷移（書き込み成功 / first-writer 負けの両方）。
+ * L5: 遷移しない経路は throw し、WelcomePage が pending を解除して再試行可能にする。
+ */
 function navigateAfterWelcomeStart(
   status: OnboardingStatus,
   navigate: ReturnType<typeof useNavigate>,
 ): void {
   if (navigateForTerminalStatus(status, navigate)) return;
   if (status === "in_progress") {
-    void navigate("/onboarding");
+    void navigate("/onboarding", welcomeStartNavigateOptions);
     return;
   }
-  // not_started のまま返った場合は CAS も遷移も起きていない。再試行を促すより現状維持。
+  // not_started のまま = CAS 未進行。成功扱いで pending を固着させない
+  throw new Error("onboarding start did not advance");
 }
 
 // router層の結線だけをここへ切り出し、WelcomePage自体はDB/APIを直接呼ばない
@@ -116,7 +131,8 @@ export function WelcomeRoutePage() {
     <WelcomePage
       onboardingStatus={displayStatus}
       onStartIdea={async () => {
-        if (userId === undefined) return;
+        // L5: 未ログインは return せず throw し、pending 解除 + 再試行 UI へ
+        if (userId === undefined) throw new Error("ログインが必要です");
         await withOnboardingStartLock(async () => {
           const client = getBrowserSupabaseClient();
           // ロック内で最新 status を再読込し、別タブの確定を上書きしない
@@ -129,7 +145,7 @@ export function WelcomeRoutePage() {
           // dual-tab first-writer: 表示は not_started のまま live が in_progress なら
           // 家族導線の先勝ちを尊重し skipped で上書きしない（既存 L4 契約）。
           if (displayStatus === "not_started" && live === "in_progress") {
-            void navigate("/onboarding");
+            void navigate("/onboarding", welcomeStartNavigateOptions);
             await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
             return;
           }
@@ -141,11 +157,14 @@ export function WelcomeRoutePage() {
             });
             await queryClient.invalidateQueries({ queryKey: householdKeys.profile(userId) });
             navigateAfterWelcomeStart(written.onboarding_status, navigate);
+            return;
           }
+          // 想定外 status: pending 固着を避け rethrow 相当で再試行可能に
+          throw new Error("onboarding start did not advance");
         });
       }}
       onStartHousehold={async () => {
-        if (userId === undefined) return;
+        if (userId === undefined) throw new Error("ログインが必要です");
         await withOnboardingStartLock(async () => {
           const client = getBrowserSupabaseClient();
           const latest = await getProfile(client, userId);

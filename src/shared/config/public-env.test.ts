@@ -142,4 +142,36 @@ describe("parsePublicEnv", () => {
       }).supabasePublishableKey,
     ).toBe("sb_publishable_abc123XYZ");
   });
+
+  it("L3: rejects service_role JWT even when three-segment shape is valid", () => {
+    // payload {"role":"service_role"} — 形式は JWT だが publishable として拒否
+    const serviceRoleJwt =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.signature";
+    expect(() =>
+      parsePublicEnv({
+        VITE_SUPABASE_URL: "http://127.0.0.1:8000",
+        VITE_SUPABASE_PUBLISHABLE_KEY: serviceRoleJwt,
+        VITE_MAGIC_LINK_RESEND_SECONDS: "60",
+        VITE_AUTH_CONTINUATION_TTL_MS: "300000",
+        VITE_AUTH_PROVIDER_MODE: "oauth_mock",
+        VITE_OAUTH_MOCK_ORIGIN: "http://127.0.0.1:8788",
+      }),
+    ).toThrow("公開設定を読み込めません");
+  });
+
+  it("L3: rejects JWT whose payload lacks role=anon", () => {
+    // payload {"sub":"x"} — role 無し
+    const noRoleJwt =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ4In0.signature";
+    expect(() =>
+      parsePublicEnv({
+        VITE_SUPABASE_URL: "http://127.0.0.1:8000",
+        VITE_SUPABASE_PUBLISHABLE_KEY: noRoleJwt,
+        VITE_MAGIC_LINK_RESEND_SECONDS: "60",
+        VITE_AUTH_CONTINUATION_TTL_MS: "300000",
+        VITE_AUTH_PROVIDER_MODE: "oauth_mock",
+        VITE_OAUTH_MOCK_ORIGIN: "http://127.0.0.1:8788",
+      }),
+    ).toThrow("公開設定を読み込めません");
+  });
 });

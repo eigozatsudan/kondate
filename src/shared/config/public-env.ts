@@ -3,16 +3,52 @@ import { z } from "zod";
 const localBrowserSupabaseUrl = "http://127.0.0.1:8000";
 const managedSupabaseOrigin = /^https:\/\/([a-z0-9]{20})\.supabase\.co$/u;
 
-// JWT anon（3 セグメント）または sb_publishable_*。min(1) だけだと誤設定の気づきが遅れる（L6）。
+/**
+ * base64url セグメントを UTF-8 文字列へ（JWT payload の role 検査用）。
+ * 署名検証はしない。Node 24 / ブラウザとも atob を使う。
+ */
+function decodeJwtPayloadSegment(segment: string): string | null {
+  try {
+    const normalized = segment.replace(/-/gu, "+").replace(/_/gu, "/");
+    const padLen = (4 - (normalized.length % 4)) % 4;
+    return globalThis.atob(normalized + "=".repeat(padLen));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * publishable として安全なキーか。
+ * - `sb_publishable_*`: 新形式（secret 系 prefix は別鍵）
+ * - JWT 三セグメント: payload.role が **anon のみ**（service_role 誤設定を fail-closed。L3）
+ * 署名検証はしない（公開設定の誤用防止が目的）。
+ */
+function isSafePublishableKey(value: string): boolean {
+  if (/^sb_publishable_[A-Za-z0-9_-]+$/u.test(value)) {
+    return true;
+  }
+  if (!/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(value)) {
+    return false;
+  }
+  const payloadSegment = value.split(".")[1];
+  if (payloadSegment === undefined) return false;
+  const json = decodeJwtPayloadSegment(payloadSegment);
+  if (json === null) return false;
+  try {
+    const payload: unknown = JSON.parse(json);
+    if (typeof payload !== "object" || payload === null) return false;
+    return Reflect.get(payload, "role") === "anon";
+  } catch {
+    return false;
+  }
+}
+
+// JWT anon（3 セグメント・payload.role=anon）または sb_publishable_*。
+// min(1) だけだと誤設定の気づきが遅れる（L6）。service_role JWT は拒否（L3）。
 const supabasePublishableKeySchema = z
   .string()
   .min(1)
-  .refine(
-    (value) =>
-      /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(value) ||
-      /^sb_publishable_[A-Za-z0-9_-]+$/u.test(value),
-    "publishable key format",
-  );
+  .refine((value) => isSafePublishableKey(value), "publishable key format");
 
 const publicEnvSchema = z.object({
   VITE_SUPABASE_URL: z.union([

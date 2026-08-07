@@ -40,6 +40,8 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
   const [actionError, setActionError] = useState<string | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const hasMounted = useRef(false);
+  // L5: state 更新前の同期連打でも第二 flight を拒否する single-flight
+  const startFlightRef = useRef(false);
 
   useEffect(() => {
     // 初期表示では自然な読み順を保ち、利用者がスライドを変えたときだけ新しい見出しを通知する。
@@ -65,15 +67,18 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
   const isPending = pendingAction !== null;
 
   async function runStart(kind: "idea" | "household", action: () => Promise<void>): Promise<void> {
-    // 同時タップで skipped ↔ in_progress が競合しないよう pending 中は拒否する。
-    if (pendingAction !== null) return;
+    // 同時タップで skipped ↔ in_progress が競合しないよう pending / flight 中は拒否する。
+    if (pendingAction !== null || startFlightRef.current) return;
+    startFlightRef.current = true;
     setPendingAction(kind);
     setActionError(null);
     try {
       await action();
+      // L5: 成功時は pending を維持し、replace navigate で unmount するまで CTA を閉じる。
+      // ルート側は遷移しない経路を throw する契約（catch で解除）。
     } catch {
       setActionError("開始できませんでした。通信を確認してもう一度お試しください。");
-    } finally {
+      startFlightRef.current = false;
       setPendingAction(null);
     }
   }

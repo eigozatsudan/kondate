@@ -154,4 +154,37 @@ describe("RootGatePage", () => {
     expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
     expect(screen.queryByText("読み込み中…")).not.toBeInTheDocument();
   });
+
+  it("L2: Free LP chunk hang past C5 deadline shows reload UI", async () => {
+    freeLpSuspend.start();
+    useAuthMock.mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+    });
+    // deadline の setTimeout を fake 下で武装させる（real で武装すると advance が効かない）
+    vi.useFakeTimers();
+    try {
+      renderGate();
+      await act(async () => {
+        // lazy import の microtask を流す（chunk 自体は mock、子は suspend 継続）
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByText("読み込み中…")).toBeVisible();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(
+        screen.getByText(
+          "読み込みに時間がかかっています。通信を確認して再読み込みしてください。",
+        ),
+      ).toBeVisible();
+      expect(screen.getByRole("button", { name: "再読み込み" })).toBeVisible();
+      expect(screen.queryByRole("heading", { name: FREE_LP_H1 })).not.toBeInTheDocument();
+    } finally {
+      freeLpSuspend.finish();
+      vi.useRealTimers();
+    }
+  });
 });

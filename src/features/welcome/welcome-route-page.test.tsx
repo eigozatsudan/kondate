@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { COLD_START_SESSION_DEADLINE_MS } from "@/features/auth/auth-provider";
 
 const getProfileMock = vi.hoisted(() => vi.fn());
 const setOnboardingStatusMock = vi.hoisted(() => vi.fn());
@@ -159,5 +160,46 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     expect(await screen.findByRole("heading", { name: "家族設定" })).toBeVisible();
     expect(setOnboardingStatusMock).not.toHaveBeenCalled();
     expect(router.state.location.pathname).toBe("/onboarding");
+  });
+
+  it("L1: start re-read hang past C5 deadline shows error and re-enables CTA", async () => {
+    // 表示用は 1 回解決、開始時 re-read 以降は never-settle → lock 内 withTimeout
+    getProfileMock
+      .mockResolvedValueOnce({ onboarding_status: "not_started" })
+      .mockReturnValue(new Promise(() => undefined));
+    // 初回 profile は real で解決。withTimeout 武装後だけ fake で 15s を進める
+    renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    vi.useFakeTimers();
+    try {
+      // userEvent は fake timer 下で delay 待ちし得るため fireEvent で即時発火
+      fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+      expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("開始できませんでした");
+      expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeEnabled();
+      expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("L4: successful idea start replaces history (back does not return to welcome)", async () => {
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "skipped" });
+    const user = userEvent.setup();
+    const router = renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/planner");
+    // replace なので stack に /welcome が残らず、戻っても welcome に着地しない
+    await act(async () => {
+      router.navigate(-1);
+    });
+    expect(router.state.location.pathname).toBe("/planner");
+    expect(screen.queryByRole("button", { name: "献立アイデアを考える" })).not.toBeInTheDocument();
   });
 });

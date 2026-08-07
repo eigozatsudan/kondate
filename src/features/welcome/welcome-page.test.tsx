@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -64,6 +64,33 @@ it("開始操作が失敗したら alert を出し、再試行できる", async 
   expect(await screen.findByRole("alert")).toHaveTextContent("開始できませんでした");
   await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
   expect(onStartIdea).toHaveBeenCalledTimes(2);
+});
+
+it("L5: successful start keeps CTA disabled (pending held until navigate unmount)", async () => {
+  const user = userEvent.setup();
+  let resolveStart: (() => void) | undefined;
+  const onStartIdea = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        resolveStart = resolve;
+      }),
+  );
+  render(
+    <WelcomePage
+      onboardingStatus="not_started"
+      onStartIdea={onStartIdea}
+      onStartHousehold={vi.fn().mockResolvedValue(undefined)}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+  expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
+  await act(async () => {
+    resolveStart?.();
+  });
+  // 成功後も pending 維持 → 第二クリックで RPC が増えない
+  expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "準備しています…" }));
+  expect(onStartIdea).toHaveBeenCalledOnce();
 });
 
 it("家族導線をクリックすると onStartHousehold を呼ぶ", async () => {
@@ -164,7 +191,13 @@ it("3枚の説明を順番に表示し、先頭と末尾では進めない向き
 it("どの説明からでも2つの開始操作を使える", async () => {
   const user = userEvent.setup();
   const onStartIdea = vi.fn().mockResolvedValue(undefined);
-  const onStartHousehold = vi.fn().mockResolvedValue(undefined);
+  const onStartHousehold = vi.fn(
+    () =>
+      new Promise<void>(() => {
+        // hang: 成功後 pending 維持（L5）でも household 単体起動を観測できるよう
+        // idea は触らず household だけ押す
+      }),
+  );
   const { container } = render(
     <WelcomePage
       onboardingStatus="not_started"
@@ -181,10 +214,11 @@ it("どの説明からでも2つの開始操作を使える", async () => {
   expect(container.querySelectorAll(".primary-button")).toHaveLength(1);
   expect(container.querySelectorAll(".secondary-button")).toHaveLength(1);
 
-  await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+  // 最終スライドから household を起動できること（idea 成功後は L5 で pending 維持のため同時起動しない）
   await user.click(screen.getByRole("button", { name: "家族情報を登録する" }));
-  expect(onStartIdea).toHaveBeenCalledOnce();
   expect(onStartHousehold).toHaveBeenCalledOnce();
+  expect(onStartIdea).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
 });
 
 it("現在位置をスクリーンリーダーへ伝え、戻る操作でも見出しへフォーカスする", async () => {
