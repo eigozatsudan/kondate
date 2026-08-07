@@ -807,7 +807,8 @@ export async function runFlyerWeeklyWithReserveStub(options: {
     return { openRouterCalls: 0 };
   }
   // PE1: 冪等 hit の processing はパイプライン再入場しない
-  if (reserve.status === "processing" && reserve.replayed === true) {
+  // failed/succeeded を上で排除済みのため status は processing に絞られる
+  if (reserve.replayed === true) {
     return { openRouterCalls: 0, errorCode: "generation_in_progress" };
   }
   openRouterCalls += 1;

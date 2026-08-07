@@ -5,6 +5,7 @@ import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
+import type { PlannerSubmission } from "@shared/contracts/planner";
 import type {
   ShoppingDiff,
   ShoppingList,
@@ -101,6 +102,22 @@ vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
 const VALID_MENU_ID = "30000000-0000-4000-8000-000000000001";
 const USER_A_ID = "31000000-0000-4000-8000-000000000001";
 const USER_B_ID = "31000000-0000-4000-8000-000000000002";
+
+/** idea 再生成 CTA を開くための最小 sourceSubmission（null だと pantryGate で disabled） */
+const ideaSourceSubmission = {
+  mealType: "dinner",
+  mainIngredients: ["鶏肉"],
+  cuisineGenre: "japanese",
+  targetMode: "idea",
+  targetMemberIds: [],
+  servings: 2,
+  timeLimitMinutes: 30,
+  budgetPreference: "economy",
+  ingredientPreference: null,
+  avoidIngredients: [],
+  memo: "",
+  pantrySelections: [],
+} satisfies PlannerSubmission;
 
 const validRevalidation: RevalidationResult = {
   status: "valid",
@@ -626,7 +643,9 @@ describe("MenuResultPage", () => {
 
   describe("idea result boundary", () => {
     it("shows permitted actions without mounting revalidation or shopping", async () => {
-      getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+      getMenuResultMock.mockResolvedValue(
+        makeMenuResultViewModel({ targetMode: "idea", sourceSubmission: ideaSourceSubmission }),
+      );
 
       renderPage(`/menus/${VALID_MENU_ID}`);
 
@@ -672,7 +691,9 @@ describe("MenuResultPage", () => {
     });
 
     it("hides child_friendly when opening idea regeneration dialog", async () => {
-      getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+      getMenuResultMock.mockResolvedValue(
+        makeMenuResultViewModel({ targetMode: "idea", sourceSubmission: ideaSourceSubmission }),
+      );
       renderPage(`/menus/${VALID_MENU_ID}`);
       await userEvent.click(
         await screen.findByRole("button", { name: "この案を元に別の献立を作り直す" }),

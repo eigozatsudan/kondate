@@ -54,7 +54,6 @@ export function RootEntryPage() {
   // getProfile は行欠損時に例外を投げ isError へ現れる契約であり、型上は
   // ここで data は必ず定義済みになるが、モック環境や将来のクエリ実装差異で
   // status が想定外に振れた場合でも not_started へ推測変換しないよう防御する。
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- 型契約より広い runtime 契約を守るための意図的な防御チェック
   if (profileQuery.data == null) {
     return <RetryableProfileAlert profileQuery={profileQuery} />;
   }

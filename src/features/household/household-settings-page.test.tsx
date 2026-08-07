@@ -39,6 +39,8 @@ vi.mock("react-router", async (importOriginal) => {
 });
 vi.mock("@/features/auth/auth-cleanup", () => ({
   clearLocalAuthAndDrafts: clearLocalAuthAndDraftsMock,
+  // AccountSettingsSection が re-export 参照する定数（部分 mock でも export を満たす）
+  SIGN_OUT_TIMEOUT_MS: 4_000,
 }));
 vi.mock("@/features/auth/session", () => ({
   requireAccessToken: requireAccessTokenMock,

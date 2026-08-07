@@ -142,7 +142,9 @@ export function AccountSettingsSection() {
         return false;
       }
       // AP8: error 無しでも user が null なら削除済み寄り（誤 residual 維持を避ける）
-      if (data.user === null) return true;
+      // getUser 成功型は user: User だが runtime 形を unknown 経由で検査する
+      const user: unknown = data.user;
+      if (user === null) return true;
       return false;
     } catch {
       // timeout / throw → 不明。finally で pending を落としダイアログを復帰させる（AP1）

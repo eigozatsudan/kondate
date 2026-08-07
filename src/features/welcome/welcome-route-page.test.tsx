@@ -197,7 +197,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     expect(router.state.location.pathname).toBe("/planner");
     // replace なので stack に /welcome が残らず、戻っても welcome に着地しない
     await act(async () => {
-      router.navigate(-1);
+      await router.navigate(-1);
     });
     expect(router.state.location.pathname).toBe("/planner");
     expect(screen.queryByRole("button", { name: "献立アイデアを考える" })).not.toBeInTheDocument();

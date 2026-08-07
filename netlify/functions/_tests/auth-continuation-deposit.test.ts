@@ -151,11 +151,7 @@ describe("auth continuation deposit", () => {
       encryptionKey: new Uint8Array(32).fill(4),
       deposit,
     });
-    for (const code of [
-      "34e770dd-9ff9-416c-87fa-43b31d7ef225",
-      "A".repeat(43),
-      AUTH_CODE,
-    ]) {
+    for (const code of ["34e770dd-9ff9-416c-87fa-43b31d7ef225", "A".repeat(43), AUTH_CODE]) {
       const response = await handler(
         new Request("https://functions.test", {
           method: "POST",

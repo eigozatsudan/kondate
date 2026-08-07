@@ -420,10 +420,8 @@ export function HouseholdOnboardingForm({
   };
 
   /** setProgress 戻りが希望 status か（CAS miss は fail-closed で拒否） */
-  const progressReachedStatus = (
-    profile: ProfileRow,
-    desired: "complete" | "skipped",
-  ): boolean => profile.onboarding_status === desired;
+  const progressReachedStatus = (profile: ProfileRow, desired: "complete" | "skipped"): boolean =>
+    profile.onboarding_status === desired;
 
   /** 献立へ進む。profile が既に complete なら setProgress を省略する。 */
   const finishOnboarding = async (): Promise<void> => {

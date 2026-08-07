@@ -1269,9 +1269,7 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
     expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
       instanceId: winner,
     });
-    expect(isAuthContinuationExchangeInFlightOwner(flowId, winner, storage, nowMs + 20)).toBe(
-      true,
-    );
+    expect(isAuthContinuationExchangeInFlightOwner(flowId, winner, storage, nowMs + 20)).toBe(true);
   });
 
   it("R2: confirm delay is what collapses dual-null first-confirm both-true", async () => {
@@ -1533,7 +1531,9 @@ class ImmediateLockManager {
     const options =
       typeof optionsOrCallback === "function" ? ({} as LockOptions) : optionsOrCallback;
     const callback =
-      typeof optionsOrCallback === "function" ? optionsOrCallback : (maybeCallback as LockGrantedCallback<T>);
+      typeof optionsOrCallback === "function"
+        ? optionsOrCallback
+        : (maybeCallback as LockGrantedCallback<T>);
     this.requests.push({ name, options });
     if (this.#held) return await callback(null);
     this.#held = true;
@@ -1544,12 +1544,12 @@ class ImmediateLockManager {
     }
   }
 
-  async query(): Promise<LockManagerSnapshot> {
-    return { held: [], pending: [] };
+  query(): Promise<LockManagerSnapshot> {
+    return Promise.resolve({ held: [], pending: [] });
   }
 
   asLocks(): LockManager {
-    return this as unknown as LockManager;
+    return this;
   }
 }
 
@@ -1577,12 +1577,12 @@ class DeferredLockManager {
     return this.#request;
   }
 
-  async query(): Promise<LockManagerSnapshot> {
-    return { held: [], pending: [] };
+  query(): Promise<LockManagerSnapshot> {
+    return Promise.resolve({ held: [], pending: [] });
   }
 
   asLocks(): LockManager {
-    return this as unknown as LockManager;
+    return this;
   }
 
   async grant(): Promise<void> {

@@ -161,8 +161,7 @@ describe("parsePublicEnv", () => {
 
   it("L3: rejects JWT whose payload lacks role=anon", () => {
     // payload {"sub":"x"} — role 無し
-    const noRoleJwt =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ4In0.signature";
+    const noRoleJwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ4In0.signature";
     expect(() =>
       parsePublicEnv({
         VITE_SUPABASE_URL: "http://127.0.0.1:8000",

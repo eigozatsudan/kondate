@@ -486,7 +486,7 @@ it("P1: resetToken で空下書きを強制保存しサーバと揃える", asyn
 it("P1: flush は reset 強制保存の完了を await し失敗を隠さない", async () => {
   vi.useFakeTimers();
   let rejectForce: ((error: Error) => void) | undefined;
-  const save = vi.fn((_value: PlannerDraftInput, _revision: number) => {
+  const save = vi.fn(() => {
     if (save.mock.calls.length === 1) {
       return Promise.resolve(saved({ ...base, mealType: "dinner" }, 2));
     }
@@ -565,7 +565,7 @@ it("P2: non-persistable へ遷移したあと lastSaved を成功 return しな�
     targetMemberIds: [] as string[],
     servings: null,
   };
-  const save = vi.fn((_value: PlannerDraftInput, _revision: number) => {
+  const save = vi.fn(() => {
     return new Promise<PlannerDraft>((resolve) => {
       resolveFirst = resolve;
     });

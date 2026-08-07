@@ -2,10 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
-import {
-  AccountSettingsSection,
-  AUTH_SESSION_PROBE_TIMEOUT_MS,
-} from "./account-settings-section";
+import { AccountSettingsSection, AUTH_SESSION_PROBE_TIMEOUT_MS } from "./account-settings-section";
 
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn());
 const clearOwnedLocalDataBestEffortMock = vi.hoisted(() => vi.fn());

@@ -117,7 +117,8 @@ function resolveExchangeLockManager(
   if (locksOption === null) return undefined;
   if (locksOption !== undefined) return locksOption;
   if (typeof navigator === "undefined") return undefined;
-  const locks = navigator.locks;
+  // DOM 型は locks を常置するが、未対応 UA では runtime で欠けることがある
+  const locks = Reflect.get(navigator, "locks") as LockManager | undefined;
   if (locks === undefined || typeof locks.request !== "function") return undefined;
   return locks;
 }

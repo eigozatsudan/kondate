@@ -584,8 +584,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // 同意のみが生成許可。拒否（「今はAIを使わない」）は永続化せず、毎回ゲートする。
   // AP9 residual-intentional: hasAcceptedOrDeclinedPrivacy 名は declined 永続を意味しない。
   // AP5: isError かつ data 無しは未同意に潰さず loadFailed としてエラー UI へ（生成は fail-closed）。
-  const privacyConsentLoadFailed =
-    privacyQuery.isError && privacyQuery.data === undefined;
+  const privacyConsentLoadFailed = privacyQuery.isError && privacyQuery.data === undefined;
   const hasAcceptedPrivacy = privacyConsentLoadFailed
     ? false
     : hasCurrentPrivacyConsent(privacyQuery.data ?? null);
@@ -708,28 +707,17 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       </main>
     );
   }
-  if (
-    draftQuery.isPending ||
-    (safetyQuery.isPending && safetyQuery.data === undefined) ||
-    (pantryQuery.isPending && pantryQuery.data === undefined) ||
-    !initialized
-  ) {
+  // isPending 中は data が常に undefined（placeholder 無し）。previous data がある背景 refetch は isPending=false。
+  if (draftQuery.isPending || safetyQuery.isPending || pantryQuery.isPending || !initialized) {
     return (
       <main className="page-frame">
         <p>献立条件を読み込み中…</p>
       </main>
     );
   }
-  // init 後は previous data がある前提（上の fatal / pending ゲートを通過済み）
+  // fatal(error かつ data 無し) と pending を通過済み → data は利用可能（型も non-null）
   const safetyData = safetyQuery.data;
   const pantryData = pantryQuery.data;
-  if (safetyData === undefined || pantryData === undefined) {
-    return (
-      <main className="page-frame">
-        <p>献立条件を読み込み中…</p>
-      </main>
-    );
-  }
   return (
     <>
       {backgroundSafetyPantryError !== null ? (

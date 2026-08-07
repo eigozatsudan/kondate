@@ -207,7 +207,7 @@ export function useMenuRevalidation(menuId: string) {
   // navigator.onLine を Error.message より優先（汎用 network 文言で offline が埋もれない）
   const offlineErrorFallback = "ネット接続後に現在の家族設定を確認してください";
   const errorMessage =
-    typeof navigator !== "undefined" && navigator.onLine === false
+    typeof navigator !== "undefined" && !navigator.onLine
       ? offlineErrorFallback
       : query.error instanceof Error
         ? query.error.message

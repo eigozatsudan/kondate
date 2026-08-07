@@ -176,9 +176,7 @@ describe("RootGatePage", () => {
         await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
       });
       expect(
-        screen.getByText(
-          "読み込みに時間がかかっています。通信を確認して再読み込みしてください。",
-        ),
+        screen.getByText("読み込みに時間がかかっています。通信を確認して再読み込みしてください。"),
       ).toBeVisible();
       expect(screen.getByRole("button", { name: "再読み込み" })).toBeVisible();
       expect(screen.queryByRole("heading", { name: FREE_LP_H1 })).not.toBeInTheDocument();

@@ -249,7 +249,8 @@ export function EmergencyMenuPage() {
     hasEligibleHouseholdMembers &&
     householdQuery.isSuccess
   ) {
-    const roster = householdQuery.data ?? [];
+    // isSuccess 後は data が定義済み（?? [] は型上不要）
+    const roster = householdQuery.data;
     const selectedIds = new Set(draft.targetMemberIds);
     const droppedOnRoster = roster.filter(
       (member) => selectedIds.has(member.id) && !isEmergencyEligibleMember(member),

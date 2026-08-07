@@ -86,6 +86,7 @@ it("L5: successful start keeps CTA disabled (pending held until navigate unmount
   expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
   await act(async () => {
     resolveStart?.();
+    await Promise.resolve();
   });
   // 成功後も pending 維持 → 第二クリックで RPC が増えない
   expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();

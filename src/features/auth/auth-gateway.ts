@@ -356,12 +356,7 @@ export function createAuthGateway(
       );
       // R2: acquire 成功後も exchange 開始直前に owner 再確認（遅延後の後着 write を検出）
       if (
-        !isAuthContinuationExchangeInFlightOwner(
-          flow.id,
-          exchangeInstanceId,
-          storage,
-          Date.now(),
-        )
+        !isAuthContinuationExchangeInFlightOwner(flow.id, exchangeInstanceId, storage, Date.now())
       ) {
         stopExchangeHeartbeat();
         stopExchangeHeartbeat = undefined;

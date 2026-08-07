@@ -107,7 +107,7 @@ describe("generation API", () => {
 
   it("G8: aborts a hung POST when the client timeout fires", async () => {
     const fetchImpl = vi.fn(
-      ((_url: string | URL | Request, init?: RequestInit) =>
+      (_url: string | URL | Request, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal ?? null;
           if (signal === null) {
@@ -125,7 +125,7 @@ describe("generation API", () => {
             },
             { once: true },
           );
-        })) as typeof fetch,
+        }),
     );
     // 実壁時計を短くして AbortSignal.timeout を確定させる（本番既定は 58s）
     await expect(

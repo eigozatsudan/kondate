@@ -545,9 +545,7 @@ describe("HistoryDetailPage safety gate", () => {
         isOfflineHold: true,
       },
     });
-    expect(
-      await screen.findByText("ネット接続後に現在の家族設定を確認してください"),
-    ).toBeVisible();
+    expect(await screen.findByText("ネット接続後に現在の家族設定を確認してください")).toBeVisible();
     expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
     expect(screen.queryByText("現在の家族設定で確認しています")).toBeNull();
   });
@@ -877,7 +875,9 @@ describe("HistoryDetailPage safety gate", () => {
       await Promise.resolve();
     });
     expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
-    expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID))).not.toBeNull();
+    expect(
+      sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID)),
+    ).not.toBeNull();
   });
 
   it("disables shopping controls while safety gate is blocked", async () => {
