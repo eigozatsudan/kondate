@@ -176,22 +176,25 @@ function mapFailureHttp(code: string, retryAt: string | null = null): never {
           code === "flyer_invalid_ai_response" ||
           code === "invalid_request"
         ? 400
-        : code === "flyer_weekly_limit" ||
-            code === "flyer_weekly_try_limit" ||
-            code === "user_attempt_limit" ||
-            code === "user_short_window_limit" ||
-            code === "global_daily_limit"
-          ? 429
-          : code === "model_unavailable" || code === "generation_timeout"
-            ? 503
-            : code === "allergy_unconfirmed" ||
-                code === "allergen_missing" ||
-                code === "unsupported_diet_unconfirmed" ||
-                code === "unsupported_diet" ||
-                code === "current_target_member_required" ||
-                code === "consent_required"
-              ? 422
-              : 400;
+        : // PE1: processing 冪等 hit / 他 key の in_progress は再試行可能（枠破壊なし）
+          code === "generation_in_progress"
+          ? 409
+          : code === "flyer_weekly_limit" ||
+              code === "flyer_weekly_try_limit" ||
+              code === "user_attempt_limit" ||
+              code === "user_short_window_limit" ||
+              code === "global_daily_limit"
+            ? 429
+            : code === "model_unavailable" || code === "generation_timeout"
+              ? 503
+              : code === "allergy_unconfirmed" ||
+                  code === "allergen_missing" ||
+                  code === "unsupported_diet_unconfirmed" ||
+                  code === "unsupported_diet" ||
+                  code === "current_target_member_required" ||
+                  code === "consent_required"
+                ? 422
+                : 400;
   throw new HttpError(status, code, message, retryAt ? { retryAt } : undefined);
 }
 
@@ -481,6 +484,14 @@ export async function runFlyerWeekly(
     return { menu, requestId: reserve.request_id ?? requestIdForLog };
   }
 
+  // PE1: 同一 key の processing 冪等 hit（replayed）はパイプライン再入場しない。
+  // generation と同様 hydrate/in-progress のみ。budget・mark 失敗枝で
+  // finalize_flyer_weekly_failure すると先着 in-flight を failed にし success 枠を解放してしまう。
+  // 新規予約（replayed でない processing）だけが mark → OpenRouter へ進む。
+  if (reserve.status === "processing" && reserve.replayed === true) {
+    mapFailureHttp("generation_in_progress", reserve.retry_at ?? null);
+  }
+
   const requestId = reserve.request_id;
   if (requestId == null) {
     throw new HttpError(500, "internal_error", issueMessages.internal_error);
@@ -762,7 +773,10 @@ export async function runFlyerWeekly(
   return { menu: resultMenu, requestId };
 }
 
-/** テスト用: reserve が flyer_weekly_limit のとき OpenRouter を呼ばないこと */
+/**
+ * テスト用: reserve 後の early 分岐を本体と同順で模倣する。
+ * PE1: processing + replayed は OpenRouter 0・finalize 無し（in-progress）。
+ */
 export async function runFlyerWeeklyWithReserveStub(options: {
   reserveResult: unknown;
   openRouterSender: (
@@ -783,8 +797,18 @@ export async function runFlyerWeeklyWithReserveStub(options: {
     return { openRouterCalls: 0, errorCode: "consent_required" };
   }
   const reserve = reservePayloadSchema.parse(options.reserveResult);
-  if (reserve.status === "failed" && reserve.failure_code === "flyer_weekly_limit") {
-    return { openRouterCalls: 0, errorCode: "flyer_weekly_limit" };
+  if (reserve.status === "failed") {
+    return {
+      openRouterCalls: 0,
+      errorCode: reserve.failure_code ?? "internal_error",
+    };
+  }
+  if (reserve.status === "succeeded") {
+    return { openRouterCalls: 0 };
+  }
+  // PE1: 冪等 hit の processing はパイプライン再入場しない
+  if (reserve.status === "processing" && reserve.replayed === true) {
+    return { openRouterCalls: 0, errorCode: "generation_in_progress" };
   }
   openRouterCalls += 1;
   await options.openRouterSender([], 1000);

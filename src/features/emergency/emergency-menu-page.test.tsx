@@ -531,21 +531,27 @@ it("household下書きは選択済みIDと現在有効な家族の積集合だ�
       data: [
         {
           id: validSelectedId,
+          display_name: "太郎",
           status: "complete",
           allergy_status: "registered",
           unsupported_diet_status: "none",
+          hasConfirmedCustomAllergy: false,
         },
         {
           id: invalidSelectedId,
+          display_name: "花子",
           status: "complete",
           allergy_status: "none",
           unsupported_diet_status: "present",
+          hasConfirmedCustomAllergy: false,
         },
         {
           id: "72000000-0000-4000-8000-000000000032",
+          display_name: "次郎",
           status: "complete",
           allergy_status: "none",
           unsupported_diet_status: "none",
+          hasConfirmedCustomAllergy: false,
         },
       ],
       isSuccess: true,
@@ -567,6 +573,11 @@ it("household下書きは選択済みIDと現在有効な家族の積集合だ�
 
   expect(getEmergencyMenusMock).toHaveBeenCalledWith(
     expect.objectContaining({ targetMode: "household", targetMemberIds: [validSelectedId] }),
+  );
+  // PE4: 適格外を silent drop せず、対象から外したことを開示する
+  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent("花子");
+  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent(
+    "対象にできた家族の条件だけを見ています",
   );
 });
 

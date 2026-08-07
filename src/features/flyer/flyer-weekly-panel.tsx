@@ -40,6 +40,36 @@ function newIdempotencyKey(): string {
 }
 
 /**
+ * PE2: sticky Idempotency-Key を画像内容に束縛するための fingerprint。
+ * 通信断後に別チラシを選んでも旧 key / 旧結果に束縛しない。
+ * 先頭 8KiB + size/type で区別（4MiB 上限の全読は避けつつ同一再送は一致）。
+ */
+async function fingerprintFlyerImage(file: File): Promise<string> {
+  // Blob.arrayBuffer が無い jsdom では size/type/name/lastModified にフォールバック
+  const meta = `${String(file.size)}:${file.type}:${file.name}:${String(file.lastModified)}`;
+  const slice = file.slice(0, 8192);
+  if (typeof slice.arrayBuffer !== "function") {
+    return meta;
+  }
+  try {
+    const headBytes = new Uint8Array(await slice.arrayBuffer());
+    let rolling = 2166136261;
+    for (const byte of headBytes) {
+      rolling ^= byte;
+      rolling = Math.imul(rolling, 16777619);
+    }
+    return `${meta}:${(rolling >>> 0).toString(16)}`;
+  } catch {
+    return meta;
+  }
+}
+
+type StickyFlyerAttempt = {
+  key: string;
+  fingerprint: string;
+};
+
+/**
  * チラシ→1 週間献立の入口。
  * Free: locked preview + Plus CTA。
  * Plus: 画像アップロード。
@@ -56,10 +86,11 @@ export function FlyerWeeklyPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<WeeklyFlyerMenuResult | null>(null);
-  // 通信断など結果不明な再試行では同一キーを使い、try 二重消費を防ぐ。
-  // 端末失敗・成功後は破棄し、次の選択で新しいキーを採番する。
-  // PE4: サーバはキー必須（欠落で random 採番しない）。常に sticky/新規を送る。
-  const stickyIdempotencyKeyRef = useRef<string | null>(null);
+  // 通信断・processing 中の再試行では同一キーを使い、try 二重消費を防ぐ。
+  // PE2: fingerprint 不一致（別画像）では sticky を捨て新 key を採番する。
+  // 成功・端末確定失敗後は破棄し、次の選択で新しいキーを採番する。
+  // サーバはキー必須（欠落で random 採番しない）。常に sticky/新規を送る。
+  const stickyAttemptRef = useRef<StickyFlyerAttempt | null>(null);
 
   if (!plusEntitled) {
     return (
@@ -130,8 +161,12 @@ export function FlyerWeeklyPanel({
     setBusy(true);
     setError(null);
     setMenu(null);
-    const attemptKey = stickyIdempotencyKeyRef.current ?? newIdempotencyKey();
-    stickyIdempotencyKeyRef.current = attemptKey;
+    // PE2: 同一画像の再送だけ sticky key を再利用。別 File は新 key。
+    const fingerprint = await fingerprintFlyerImage(file);
+    const sticky = stickyAttemptRef.current;
+    const attemptKey =
+      sticky !== null && sticky.fingerprint === fingerprint ? sticky.key : newIdempotencyKey();
+    stickyAttemptRef.current = { key: attemptKey, fingerprint };
     try {
       const form = new FormData();
       form.append("image", file);
@@ -152,13 +187,22 @@ export function FlyerWeeklyPanel({
       });
       const errorSchema = z.object({
         ok: z.literal(false).optional(),
-        error: z.object({ message: z.string().optional() }).optional(),
+        error: z
+          .object({
+            code: z.string().optional(),
+            message: z.string().optional(),
+          })
+          .optional(),
       });
       const parsed = envelopeSchema.safeParse(raw);
       if (!response.ok || !parsed.success) {
-        // 端末失敗はキーを捨て、次の選択で新規予約する（失敗行への冪等 hit を避ける）
-        stickyIdempotencyKeyRef.current = null;
         const err = errorSchema.safeParse(raw);
+        const errorCode = err.success ? err.data.error?.code : undefined;
+        // PE1: processing 中（generation_in_progress）は sticky を残し同一 key で再試行する。
+        // 確定失敗（Zod 不正・その他 !ok）だけキーを捨て、失敗行への冪等 hit を避ける。
+        if (errorCode !== "generation_in_progress") {
+          stickyAttemptRef.current = null;
+        }
         setError(
           err.success
             ? (err.data.error?.message ?? "チラシ献立を作成できませんでした。")
@@ -166,10 +210,10 @@ export function FlyerWeeklyPanel({
         );
         return;
       }
-      stickyIdempotencyKeyRef.current = null;
+      stickyAttemptRef.current = null;
       setMenu(parsed.data.data.menu);
     } catch {
-      // 通信断: sticky を残し、同じキーで再送できるようにする
+      // 通信断: sticky を残し、同じ画像・同じキーで再送できるようにする
       setError("チラシ献立を作成できませんでした。");
     } finally {
       setBusy(false);

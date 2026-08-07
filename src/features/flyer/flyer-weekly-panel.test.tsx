@@ -114,4 +114,94 @@ describe("FlyerWeeklyPanel", () => {
       "ログインに使うメールアドレスを変更すると、週あたりの作成回数の数え方が変わる場合があります。",
     );
   });
+
+  it("PE1: keeps sticky Idempotency-Key on generation_in_progress for same image retry", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "generation_in_progress",
+            message: "別の献立を作成中です。",
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const file = new File(["same-bytes"], "flyer.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(screen.getByText("別の献立を作成中です。")).toBeVisible();
+    });
+    const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    // 同一内容の再選択は sticky 再利用
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const secondKey = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(secondKey).toBe(firstKey);
+  });
+
+  it("PE2: uses a new Idempotency-Key when a different image is selected after sticky keep", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            ok: true,
+            data: {
+              menu: {
+                weekStartJst: "2026-07-27",
+                days: Array.from({ length: 7 }, (_, i) => ({
+                  dayIndex: i + 1,
+                  label: `Day${String(i + 1)}`,
+                  mainName: "野菜炒め",
+                  sideName: null,
+                  ingredients: ["キャベツ"],
+                  notes: null,
+                })),
+              },
+            },
+          }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const fileA = new File(["image-a-bytes"], "a.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [fileA] } });
+    await waitFor(() => {
+      expect(screen.getByText("チラシ献立を作成できませんでした。")).toBeVisible();
+    });
+    const keyA = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    const fileB = new File(["image-b-different"], "b.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [fileB] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const keyB = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(keyB).not.toBe(keyA);
+  });
 });

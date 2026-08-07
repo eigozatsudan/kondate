@@ -45,6 +45,17 @@ const householdSafetyOnlyBannerText =
 const ideaSafetyOnlyBannerText =
   "メイン食材は一致しませんでした。アレルギー条件は適用していません。";
 
+/**
+ * PE4: draft で選んだが緊急適格外のメンバーを silent drop しないための開示。
+ * 候補は対象にできた家族の条件だけを見ることを明示する。
+ */
+function buildIneligibleSelectedNotice(droppedDisplayNames: readonly string[]): string {
+  if (droppedDisplayNames.length > 0) {
+    return `選んだ家族のうち ${droppedDisplayNames.join("、")} さんは、アレルギー確認や設定の都合でこの一覧の対象から外しています。候補は対象にできた家族の条件だけを見ています。`;
+  }
+  return "選んだ家族のうち一部の方は、アレルギー確認や設定の都合でこの一覧の対象から外しています。候補は対象にできた家族の条件だけを見ています。";
+}
+
 /** 緊急 fixture は標準 allergen ID のみ照合。確認済み自由登録があるメンバーはサーバ Stage S 前と同様に除外。 */
 type EmergencyHouseholdMember = HouseholdMemberRow & {
   hasConfirmedCustomAllergy: boolean;
@@ -229,6 +240,31 @@ export function EmergencyMenuPage() {
             .slice(0, emergencyTargetMemberLimit)
         : [];
   const hasEligibleHouseholdMembers = targetMemberIds.length > 0;
+  // PE4: 明示 household 選択のうち適格外を落としたとき、部分集合候補であることを開示する。
+  // 未選択下書きの自動 eligible 補充は「落とした選択」ではないので対象外。
+  let ineligibleSelectedNotice: string | null = null;
+  if (
+    !isIdea &&
+    draft?.targetMode === "household" &&
+    hasEligibleHouseholdMembers &&
+    householdQuery.isSuccess
+  ) {
+    const roster = householdQuery.data ?? [];
+    const selectedIds = new Set(draft.targetMemberIds);
+    const droppedOnRoster = roster.filter(
+      (member) => selectedIds.has(member.id) && !isEmergencyEligibleMember(member),
+    );
+    const missingFromRoster = draft.targetMemberIds.filter(
+      (id) => !roster.some((member) => member.id === id),
+    ).length;
+    if (droppedOnRoster.length + missingFromRoster > 0) {
+      ineligibleSelectedNotice = buildIneligibleSelectedNotice(
+        droppedOnRoster
+          .map((member) => member.display_name?.trim() ?? "")
+          .filter((name) => name.length > 0),
+      );
+    }
+  }
 
   // EMRG-1: mealType 未選択の下書きに夕食を捏造しない（null は pre-API empty）
   const mealType = draft?.mealType ?? null;
@@ -377,6 +413,7 @@ export function EmergencyMenuPage() {
       error={error}
       expectedPath={expectedPath}
       response={loading || error !== null ? null : (query.data ?? null)}
+      ineligibleSelectedNotice={ineligibleSelectedNotice}
     />
   );
 }
@@ -401,6 +438,7 @@ export function EmergencyMenuContent({
   error,
   expectedPath,
   response,
+  ineligibleSelectedNotice = null,
 }: {
   loading: boolean;
   error: string | null;
@@ -410,6 +448,8 @@ export function EmergencyMenuContent({
    */
   expectedPath: "household" | "idea" | null;
   response: EmergencyMenusData | null;
+  /** PE4: 適格外メンバーを対象から外したときの開示。null なら出さない。 */
+  ineligibleSelectedNotice?: string | null;
 }) {
   // wire path と draft 推定が食い違うときは fail-closed（誤った家族絞り込み chrome を出さない）。
   const pathMismatch =
@@ -456,6 +496,12 @@ export function EmergencyMenuContent({
       */}
       {introText !== null &&
         (chromePath === "idea" ? <p role="status">{introText}</p> : <p>{introText}</p>)}
+      {/* PE4: 選んだ家族の一部を対象外にしたことを silent にしない（role=status で開示） */}
+      {ineligibleSelectedNotice !== null && chromePath === "household" && (
+        <p role="status" data-testid="emergency-ineligible-selected-notice">
+          {ineligibleSelectedNotice}
+        </p>
+      )}
       {loading && <p>候補を確認中…</p>}
       {displayError !== null && <p role="alert">{displayError}</p>}
       {showSafetyOnlyBanner && <p role="note">{safetyOnlyBannerText}</p>}
