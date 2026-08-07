@@ -31,6 +31,10 @@ function isOwnedBrowserStorageKey(key: string): boolean {
     key.startsWith("kondate.auth.") ||
     key.startsWith("kondate:generation:") ||
     key.startsWith("kondate:shopping:") ||
+    // PE1: チラシ sticky Idempotency-Key（local/session）
+    key.startsWith("kondate:flyer:") ||
+    // PE8: 期限切れ pantry の当日確認（緊急導線・直接 URL 共有）
+    key.startsWith("kondate:expired-pantry-confirm:") ||
     key === householdSafetyRevisionStorageKey ||
     // U4-003: user-scoped revision キーも掃除
     key.startsWith(`${householdSafetyRevisionStorageKey}:`) ||
@@ -63,6 +67,8 @@ function clearOwnedBrowserStorage(): void {
       if (
         key.startsWith("kondate:generation:") ||
         key.startsWith("kondate:shopping:") ||
+        key.startsWith("kondate:flyer:") ||
+        key.startsWith("kondate:expired-pantry-confirm:") ||
         key === householdSafetyRevisionStorageKey ||
         key.startsWith(`${householdSafetyRevisionStorageKey}:`)
       ) {

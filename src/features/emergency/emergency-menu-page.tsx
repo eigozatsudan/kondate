@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
+import type { PantryItem } from "@shared/contracts/pantry";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   listHouseholdMembers,
@@ -9,6 +10,12 @@ import {
   type HouseholdMemberRow,
   type MemberAllergyRow,
 } from "@/features/household/household-api";
+import { listPantryItems } from "@/features/pantry/pantry-api";
+import {
+  hasExpiredPantryConfirmation,
+  isPastEnteredExpiry,
+  persistSessionExpiredPantryConfirmation,
+} from "@/features/planner/expired-pantry-checks";
 import { getPlannerDraft, plannerKeys } from "@/features/planner/planner-api";
 import {
   householdKeys,
@@ -82,6 +89,17 @@ export function EmergencyMenuPage() {
   const userId = useAuth().session?.user.id;
   const draftQueryEnabled = userId !== undefined;
   const householdSafetyEventVersion = useRef(0);
+  const expiredDialogDescriptionId = useId();
+  const expiredConfirmRef = useRef<HTMLButtonElement>(null);
+  const expiredSafeRef = useRef<HTMLButtonElement>(null);
+  // PE8: 辞退した期限切れ pantry は候補スコア用 ID から外す（下書きは書き換えない）
+  const [declinedExpiredPantryIds, setDeclinedExpiredPantryIds] = useState<readonly string[]>([]);
+  // PE8: 確認直後の再レンダー用（session 書込後に hasExpired を再評価）
+  const [expiredConfirmTick, setExpiredConfirmTick] = useState(0);
+  const [pantryRows, setPantryRows] = useState<readonly PantryItem[] | null>(null);
+  const [pantryLoadState, setPantryLoadState] = useState<"idle" | "loading" | "ready" | "error">(
+    "idle",
+  );
   const [householdSafetyRevision, setHouseholdSafetyRevision] = useState(() => {
     if (userId === undefined) return "initial";
     try {
@@ -270,7 +288,67 @@ export function EmergencyMenuPage() {
   // EMRG-1: mealType 未選択の下書きに夕食を捏造しない（null は pre-API empty）
   const mealType = draft?.mealType ?? null;
   const mainIngredients = draft?.mainIngredients ?? [];
-  const pantryItemIds = draft?.pantrySelections.map((item) => item.pantryItemId) ?? [];
+  const draftPantryItemIds = draft?.pantrySelections.map((item) => item.pantryItemId) ?? [];
+  const declinedExpiredSet = useMemo(
+    () => new Set(declinedExpiredPantryIds),
+    [declinedExpiredPantryIds],
+  );
+  // PE8: 辞退分を除いた ID を候補 API に渡す（スコア対象から外す）
+  const pantryItemIds = draftPantryItemIds.filter((id) => !declinedExpiredSet.has(id));
+
+  // PE8: 下書きに pantry 選択があるときだけ実物期限を読み、未確認の期限切れを候補起動前に止める。
+  // useQuery を増やさず effect 読込にし、既存 draft/household/candidate の 3 本 mock 契約を壊さない。
+  const pantryGateNeeded = draftReady && draftPantryItemIds.length > 0;
+  const draftPantryKey = draftPantryItemIds.join(",");
+  useEffect(() => {
+    if (userId === undefined || !pantryGateNeeded) {
+      setPantryRows(null);
+      setPantryLoadState("idle");
+      return;
+    }
+    let cancelled = false;
+    setPantryLoadState("loading");
+    void listPantryItems(getBrowserSupabaseClient(), userId)
+      .then((rows) => {
+        if (cancelled) return;
+        setPantryRows(rows);
+        setPantryLoadState("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPantryRows(null);
+        setPantryLoadState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, pantryGateNeeded, draftPantryKey]);
+
+  // expiredConfirmTick を読んで確認直後に session を再評価する（eslint 未使用回避）
+  const sessionConfirmGeneration = expiredConfirmTick;
+  const nowForExpiry = new Date();
+  const unconfirmedExpiredItems: PantryItem[] =
+    pantryLoadState === "ready" && pantryRows !== null
+      ? draftPantryItemIds
+          .filter((id) => !declinedExpiredSet.has(id))
+          .map((id) => pantryRows.find((row) => row.id === id))
+          .filter((item): item is PantryItem => item !== undefined)
+          .filter((item) => {
+            // sessionConfirmGeneration 変化で再計算（hasExpired は session を都度読む）
+            void sessionConfirmGeneration;
+            return (
+              isPastEnteredExpiry(item, nowForExpiry) &&
+              !hasExpiredPantryConfirmation(null, userId, item.id, nowForExpiry)
+            );
+          })
+      : [];
+  const pendingExpiredItem = unconfirmedExpiredItems[0] ?? null;
+  const expiredPantryGateBlocks =
+    pantryGateNeeded &&
+    (pantryLoadState === "loading" ||
+      pantryLoadState === "error" ||
+      unconfirmedExpiredItems.length > 0);
+
   // 設計 §5: idea は targetMemberIds 空・targetMode idea。eligible 0 でも候補 query を起動する。
   const request =
     mealType === null
@@ -295,6 +373,7 @@ export function EmergencyMenuPage() {
     userId !== undefined &&
     draftReady &&
     request !== null &&
+    !expiredPantryGateBlocks &&
     (isIdea || (householdQueryEnabled && householdQuery.isSuccess && targetMemberIds.length > 0));
 
   const query = useQuery({
@@ -326,13 +405,28 @@ export function EmergencyMenuPage() {
   const householdInitialLoading =
     householdQueryEnabled &&
     (householdQuery.isPending || (householdQuery.isFetching && householdQuery.data === undefined));
+  const pantryInitialLoading = pantryGateNeeded && pantryLoadState === "loading";
   const candidateInitialLoading =
     candidateQueryEnabled && (query.isPending || (query.isFetching && query.data === undefined));
-  const loading = draftInitialLoading || householdInitialLoading || candidateInitialLoading;
+  const loading =
+    draftInitialLoading ||
+    householdInitialLoading ||
+    pantryInitialLoading ||
+    candidateInitialLoading;
   const error =
-    draftQuery.isError || (householdQueryEnabled && householdQuery.isError) || query.isError
-      ? "緊急献立を読み込めませんでした"
+    draftQuery.isError ||
+    (householdQueryEnabled && householdQuery.isError) ||
+    pantryLoadState === "error" ||
+    query.isError
+      ? pantryLoadState === "error"
+        ? "冷蔵庫の食材を確認できませんでした。通信を確認してから再度お試しください。"
+        : "緊急献立を読み込めませんでした"
       : null;
+
+  useEffect(() => {
+    if (pendingExpiredItem === null) return;
+    expiredSafeRef.current?.focus();
+  }, [pendingExpiredItem]);
 
   if (draftQuery.isSuccess && draftQuery.data === null) {
     return (
@@ -364,14 +458,98 @@ export function EmergencyMenuPage() {
     );
   }
 
+  // PE8: 直接 /emergency-menus で未確認の期限切れ pantry があるうちは候補を取らない。
+  // planner CTA は attempt+session に確認を載せる。ここは session 未確認の残窓を閉じる。
+  if (draftReady && !loading && error === null && pendingExpiredItem !== null) {
+    const item = pendingExpiredItem;
+    return (
+      <main className="page-frame stack emergency-menu-page">
+        <Link className="emergency-back-link" to="/planner" aria-label="献立画面へ戻る">
+          ← 献立画面へ戻る
+        </Link>
+        <h1>15分緊急献立</h1>
+        <p role="alert" data-testid="emergency-expired-pantry-gate">
+          期限切れの食材が選ばれています。冷蔵庫の食材で確認してから緊急献立を開いてください。
+        </p>
+        <div className="pantry-expired-dialog-backdrop">
+          <div
+            role="alertdialog"
+            aria-label="期限を過ぎた食材の確認"
+            aria-modal="true"
+            aria-describedby={expiredDialogDescriptionId}
+            className="card stack pantry-expired-dialog-panel"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setDeclinedExpiredPantryIds((prev) =>
+                  prev.includes(item.id) ? prev : [...prev, item.id],
+                );
+                return;
+              }
+              if (event.key !== "Tab") return;
+              event.preventDefault();
+              if (event.shiftKey) {
+                if (document.activeElement === expiredSafeRef.current) {
+                  expiredConfirmRef.current?.focus();
+                } else {
+                  expiredSafeRef.current?.focus();
+                }
+              } else if (document.activeElement === expiredSafeRef.current) {
+                expiredConfirmRef.current?.focus();
+              } else {
+                expiredSafeRef.current?.focus();
+              }
+            }}
+          >
+            <p id={expiredDialogDescriptionId}>
+              「{item.name}
+              」は入力した期限を過ぎています。アプリは食べられるか判断しません。今回、実物の状態を確認しましたか？
+            </p>
+            <button
+              ref={expiredConfirmRef}
+              className="primary-button min-h-11"
+              type="button"
+              onClick={() => {
+                const checkedAt = new Date();
+                if (userId !== undefined) {
+                  persistSessionExpiredPantryConfirmation(userId, item.id, checkedAt);
+                }
+                setExpiredConfirmTick((tick) => tick + 1);
+              }}
+            >
+              実物を確認して今回だけ使う
+            </button>
+            <button
+              ref={expiredSafeRef}
+              className="secondary-button min-h-11"
+              type="button"
+              onClick={() => {
+                setDeclinedExpiredPantryIds((prev) =>
+                  prev.includes(item.id) ? prev : [...prev, item.id],
+                );
+              }}
+            >
+              使わない
+            </button>
+          </div>
+        </div>
+        <Link className="secondary-button min-h-11" to="/planner">
+          献立画面へ戻る
+        </Link>
+      </main>
+    );
+  }
+
   // pre-API empty: candidate query が disabled のときだけ。idea は落とさない。
   // draft/household ロード中は出さない（loading 中に empty フラッシュしない）。
+  // PE8: 期限切れゲート中は empty に落とさない（確認 UI を優先）。
   const showPreApiEmpty =
     draftReady &&
     !isIdea &&
     !loading &&
     error === null &&
     !candidateQueryEnabled &&
+    !expiredPantryGateBlocks &&
     !hasEligibleHouseholdMembers;
 
   if (showPreApiEmpty) {

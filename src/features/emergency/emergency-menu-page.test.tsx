@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router";
 import { makeValidatedMenu } from "@shared/testing/factories";
 import type { ValidatedMenu } from "@shared/contracts/generation";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
+import type { PantryItem } from "@shared/contracts/pantry";
 
 function renderWithRouter(ui: React.ReactNode) {
   return render(<MemoryRouter>{ui}</MemoryRouter>);
@@ -12,6 +14,7 @@ function renderWithRouter(ui: React.ReactNode) {
 const useQueryMock = vi.hoisted(() => vi.fn());
 const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
 const channelMock = vi.hoisted(() => vi.fn());
+const listPantryItemsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({ useQuery: useQueryMock }));
 vi.mock("@/features/auth/use-auth", () => ({
@@ -32,6 +35,10 @@ vi.mock("@/shared/lib/supabase", () => ({
     };
   },
 }));
+vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/pantry/pantry-api")>();
+  return { ...original, listPantryItems: listPantryItemsMock };
+});
 vi.mock("./emergency-menu-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("./emergency-menu-api")>();
   return { ...original, getEmergencyMenus: getEmergencyMenusMock };
@@ -41,6 +48,9 @@ import { EmergencyMenuContent, EmergencyMenuPage } from "./emergency-menu-page";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStorage.clear();
+  listPantryItemsMock.mockReset();
+  listPantryItemsMock.mockResolvedValue([]);
 });
 
 it("下書きがない直接アクセスでは候補を取得せず献立画面への導線を表示する", () => {
@@ -1321,4 +1331,157 @@ it("renders complete human-labelled cooking instructions without raw identifiers
   expect(container.textContent).not.toContain("member_1");
   expect(container.textContent).not.toContain("dishes.0.ingredients.0.name");
   expect(container.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27,}/u);
+});
+
+it("PE8: direct /emergency-menus blocks candidate query for unconfirmed past-dated pantry", async () => {
+  // planner CTA を経由せず URL 直打ちしたとき、未確認の期限切れ選択があるうちは候補 API を起動しない。
+  const expiredId = "60000000-0000-4000-8000-000000000001";
+  const expiredItem: PantryItem = {
+    id: expiredId,
+    userId: "72000000-0000-4000-8000-000000000001",
+    name: "牛乳",
+    quantity: 1,
+    unit: "本",
+    expiresOn: "2020-01-01",
+    expirationType: "use_by",
+    openedState: "opened",
+    createdAt: "2020-01-01T00:00:00.000Z",
+    updatedAt: "2020-01-01T00:00:00.000Z",
+  };
+  listPantryItemsMock.mockResolvedValue([expiredItem]);
+  // pantry 読込後の再レンダーでも mock が切れないよう queryKey 分岐
+  useQueryMock.mockImplementation((opts: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    const root = opts.queryKey[0];
+    if (root === "planner") {
+      return {
+        data: {
+          id: "draft-expired",
+          userId: "72000000-0000-4000-8000-000000000001",
+          mealType: "dinner",
+          mainIngredients: ["卵"],
+          cuisineGenre: null,
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+          timeLimitMinutes: null,
+          budgetPreference: null,
+          ingredientPreference: null,
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [{ pantryItemId: expiredId, priority: "prefer_use" }],
+          revision: 1,
+          createdAt: "2026-07-11T00:00:00.000Z",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+        isSuccess: true,
+        isPending: false,
+        isFetching: false,
+        isError: false,
+      };
+    }
+    return {
+      data: undefined,
+      isSuccess: false,
+      isPending: false,
+      isFetching: false,
+      isError: false,
+    };
+  });
+
+  renderWithRouter(<EmergencyMenuPage />);
+
+  await waitFor(() => {
+    expect(screen.getByTestId("emergency-expired-pantry-gate")).toBeVisible();
+  });
+  expect(screen.getByRole("alertdialog", { name: "期限を過ぎた食材の確認" })).toBeVisible();
+  // 候補 query は expired ゲート中 enabled:false
+  expect(
+    useQueryMock.mock.calls.some(
+      (call) => call[0]?.queryKey?.[0] === "emergency-menus" && call[0]?.enabled === false,
+    ),
+  ).toBe(true);
+  expect(getEmergencyMenusMock).not.toHaveBeenCalled();
+});
+
+it("PE8: confirming expired pantry on emergency page enables candidate query", async () => {
+  const expiredId = "60000000-0000-4000-8000-000000000002";
+  const expiredItem: PantryItem = {
+    id: expiredId,
+    userId: "72000000-0000-4000-8000-000000000001",
+    name: "豆腐",
+    quantity: 1,
+    unit: "丁",
+    expiresOn: "2020-01-01",
+    expirationType: "best_before",
+    openedState: "unopened",
+    createdAt: "2020-01-01T00:00:00.000Z",
+    updatedAt: "2020-01-01T00:00:00.000Z",
+  };
+  listPantryItemsMock.mockResolvedValue([expiredItem]);
+
+  // 確認後に再レンダーされるため queryKey で draft / household / candidate を分岐する
+  useQueryMock.mockImplementation((opts: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    const root = opts.queryKey[0];
+    if (root === "planner") {
+      return {
+        data: {
+          id: "draft-expired-2",
+          userId: "72000000-0000-4000-8000-000000000001",
+          mealType: "dinner",
+          mainIngredients: [],
+          cuisineGenre: null,
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+          timeLimitMinutes: null,
+          budgetPreference: null,
+          ingredientPreference: null,
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [{ pantryItemId: expiredId, priority: "prefer_use" }],
+          revision: 1,
+          createdAt: "2026-07-11T00:00:00.000Z",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+        isSuccess: true,
+        isPending: false,
+        isFetching: false,
+        isError: false,
+      };
+    }
+    if (root === "emergency-menus" && opts.enabled === true) {
+      return {
+        data: undefined,
+        isSuccess: false,
+        isPending: true,
+        isFetching: true,
+        isError: false,
+      };
+    }
+    return {
+      data: undefined,
+      isSuccess: false,
+      isPending: false,
+      isFetching: false,
+      isError: false,
+    };
+  });
+
+  const user = userEvent.setup();
+  renderWithRouter(<EmergencyMenuPage />);
+
+  await waitFor(() => {
+    expect(screen.getByTestId("emergency-expired-pantry-gate")).toBeVisible();
+  });
+  await user.click(screen.getByRole("button", { name: "実物を確認して今回だけ使う" }));
+
+  await waitFor(() => {
+    expect(screen.queryByTestId("emergency-expired-pantry-gate")).toBeNull();
+  });
+  // ゲート解除後に emergency-menus が enabled:true で起動する
+  expect(
+    useQueryMock.mock.calls.some(
+      (call) => call[0]?.queryKey?.[0] === "emergency-menus" && call[0]?.enabled === true,
+    ),
+  ).toBe(true);
 });

@@ -21,6 +21,8 @@ function seedOwnedKeys(storage: Storage): void {
     }),
   );
   storage.setItem("kondate:shopping:list:abc", '{"items":[]}');
+  storage.setItem("kondate:flyer:sticky:v1:user-1", '{"key":"k","fingerprint":"f"}');
+  storage.setItem("kondate:expired-pantry-confirm:v1:user-1", '{"dayKey":"2026-07-11","checks":[]}');
   storage.setItem(householdSafetyRevisionStorageKey, "revision-1");
   // 無関係な設定は残す
   storage.setItem("kondate:preferences", "keep-me");
@@ -61,6 +63,8 @@ describe("clearLocalAuthAndDrafts", () => {
       expect(storage.getItem("kondate.auth.supabase-code-verifier")).toBeNull();
       expect(storage.getItem("kondate:generation:v2")).toBeNull();
       expect(storage.getItem("kondate:shopping:list:abc")).toBeNull();
+      expect(storage.getItem("kondate:flyer:sticky:v1:user-1")).toBeNull();
+      expect(storage.getItem("kondate:expired-pantry-confirm:v1:user-1")).toBeNull();
       expect(storage.getItem(householdSafetyRevisionStorageKey)).toBeNull();
       expect(storage.getItem("kondate:preferences")).toBe("keep-me");
     }

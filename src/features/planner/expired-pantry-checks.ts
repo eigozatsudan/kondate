@@ -12,6 +12,137 @@ export type PlannerAttempt = {
   qualityMode: boolean;
 };
 
+/**
+ * PE8: planner CTA で確認した期限切れ pantry を /emergency-menus 直接到達でも共有する。
+ * 当日（JST）単位。attempt は React メモリのみなので sessionStorage に当日確認を載せる。
+ */
+export function expiredPantryConfirmSessionKey(userId: string): string {
+  return `kondate:expired-pantry-confirm:v1:${userId}`;
+}
+
+type SessionExpiredConfirmEnvelope = {
+  /** JST 日付キー。日跨ぎで無効化する */
+  dayKey: string;
+  checks: readonly ExpiredPantryCheck[];
+};
+
+function readSessionExpiredEnvelope(userId: string): SessionExpiredConfirmEnvelope | null {
+  let raw: string | null;
+  try {
+    raw = sessionStorage.getItem(expiredPantryConfirmSessionKey(userId));
+  } catch {
+    return null;
+  }
+  if (raw === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("dayKey" in parsed) ||
+      !("checks" in parsed) ||
+      typeof (parsed as { dayKey: unknown }).dayKey !== "string" ||
+      !Array.isArray((parsed as { checks: unknown }).checks)
+    ) {
+      return null;
+    }
+    const checks: ExpiredPantryCheck[] = [];
+    for (const entry of (parsed as { checks: unknown[] }).checks) {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        typeof (entry as { pantryItemId?: unknown }).pantryItemId !== "string" ||
+        typeof (entry as { checkedAt?: unknown }).checkedAt !== "string"
+      ) {
+        continue;
+      }
+      checks.push({
+        pantryItemId: (entry as { pantryItemId: string }).pantryItemId,
+        checkedAt: (entry as { checkedAt: string }).checkedAt,
+      });
+    }
+    return { dayKey: (parsed as { dayKey: string }).dayKey, checks };
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionExpiredEnvelope(userId: string, envelope: SessionExpiredConfirmEnvelope): void {
+  try {
+    sessionStorage.setItem(expiredPantryConfirmSessionKey(userId), JSON.stringify(envelope));
+  } catch {
+    /* Quota / private mode — 画面内 state に委ねる */
+  }
+}
+
+/** 当日の session 確認一覧（日跨ぎ・破損は空）。 */
+export function loadSessionExpiredPantryChecks(
+  userId: string,
+  now: Date,
+): readonly ExpiredPantryCheck[] {
+  const today = getJstDateKey(now);
+  const envelope = readSessionExpiredEnvelope(userId);
+  if (envelope === null || envelope.dayKey !== today) {
+    if (envelope !== null) {
+      try {
+        sessionStorage.removeItem(expiredPantryConfirmSessionKey(userId));
+      } catch {
+        /* ignore */
+      }
+    }
+    return [];
+  }
+  return envelope.checks.filter(
+    (item) => getJstDateKey(new Date(item.checkedAt)) === today,
+  );
+}
+
+/** 1 件の当日確認を session に追記（同一 pantryItemId は上書き）。 */
+export function persistSessionExpiredPantryConfirmation(
+  userId: string,
+  pantryItemId: string,
+  now: Date,
+): void {
+  const today = getJstDateKey(now);
+  const existing = loadSessionExpiredPantryChecks(userId, now);
+  const next: SessionExpiredConfirmEnvelope = {
+    dayKey: today,
+    checks: [
+      ...existing.filter((item) => item.pantryItemId !== pantryItemId),
+      { pantryItemId, checkedAt: now.toISOString() },
+    ],
+  };
+  writeSessionExpiredEnvelope(userId, next);
+}
+
+/** planner attempt 上の当日確認をまとめて session へ（緊急 CTA 通過時）。 */
+export function persistSessionExpiredPantryChecks(
+  userId: string,
+  checks: readonly ExpiredPantryCheck[],
+  now: Date,
+): void {
+  const today = getJstDateKey(now);
+  const existing = [...loadSessionExpiredPantryChecks(userId, now)];
+  const byId = new Map(existing.map((item) => [item.pantryItemId, item]));
+  for (const check of checks) {
+    if (getJstDateKey(new Date(check.checkedAt)) !== today) continue;
+    byId.set(check.pantryItemId, check);
+  }
+  writeSessionExpiredEnvelope(userId, { dayKey: today, checks: [...byId.values()] });
+}
+
+export function hasSessionExpiredPantryConfirmation(
+  userId: string,
+  pantryItemId: string,
+  now: Date,
+): boolean {
+  const today = getJstDateKey(now);
+  return loadSessionExpiredPantryChecks(userId, now).some(
+    (item) =>
+      item.pantryItemId === pantryItemId && getJstDateKey(new Date(item.checkedAt)) === today,
+  );
+}
+
 export function createPlannerAttempt(): PlannerAttempt {
   return {
     idempotencyKey: crypto.randomUUID(),
@@ -34,6 +165,25 @@ export function hasCurrentExpiredConfirmation(
     (item) =>
       item.pantryItemId === pantryItemId && getJstDateKey(new Date(item.checkedAt)) === today,
   );
+}
+
+/**
+ * attempt メモリまたは session 当日確認のどちらかがあれば確認済み（PE8）。
+ * 緊急ページは attempt を持たないため session 側を正とする。
+ */
+export function hasExpiredPantryConfirmation(
+  attempt: PlannerAttempt | null,
+  userId: string | undefined,
+  pantryItemId: string,
+  now: Date,
+): boolean {
+  if (attempt !== null && hasCurrentExpiredConfirmation(attempt, pantryItemId, now)) {
+    return true;
+  }
+  if (userId !== undefined && hasSessionExpiredPantryConfirmation(userId, pantryItemId, now)) {
+    return true;
+  }
+  return false;
 }
 
 export function confirmExpiredPantryItem(

@@ -1,11 +1,22 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FLYER_LOCKED_PREVIEW_COPY } from "@shared/contracts/flyer-weekly";
-import { FlyerWeeklyPanel } from "./flyer-weekly-panel";
+import {
+  clearFlyerStickyAttempt,
+  FlyerWeeklyPanel,
+  flyerStickyStorageKey,
+  fingerprintFlyerImage,
+  readFlyerStickyAttempt,
+  writeFlyerStickyAttempt,
+} from "./flyer-weekly-panel";
+
+const FLYER_USER_ID = "72000000-0000-4000-8000-000000000099";
 
 vi.mock("@/features/auth/use-auth", () => ({
-  useAuth: () => ({ session: { access_token: "t" } }),
+  useAuth: () => ({
+    session: { access_token: "t", user: { id: FLYER_USER_ID } },
+  }),
 }));
 
 vi.mock("@/shared/lib/supabase", () => ({
@@ -13,8 +24,15 @@ vi.mock("@/shared/lib/supabase", () => ({
 }));
 
 describe("FlyerWeeklyPanel", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    sessionStorage.clear();
+    localStorage.clear();
   });
 
   it("shows locked preview copy for Free", () => {
@@ -316,6 +334,210 @@ describe("FlyerWeeklyPanel", () => {
     const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
       "Idempotency-Key"
     ];
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const secondKey = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(secondKey).toBe(firstKey);
+  });
+
+  it("PE1: remount reuses sticky Idempotency-Key from storage for same image", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "generation_in_progress",
+            message: "別の献立を作成中です。",
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { unmount } = render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const file = new File(["pe1-remount-bytes"], "flyer.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(screen.getByText("別の献立を作成中です。")).toBeVisible();
+    });
+    const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    // ref は消えるが local/session に sticky が残る
+    unmount();
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input2 = document.querySelector('input[type="file"]');
+    expect(input2).not.toBeNull();
+    fireEvent.change(input2!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const secondKey = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(secondKey).toBe(firstKey);
+    // 他タブ相当: session を空にしても local 正本から復元
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)?.key).toBe(firstKey);
+  });
+
+  it("PE1: multi-tab localStorage sticky is reused when session is empty", () => {
+    writeFlyerStickyAttempt(FLYER_USER_ID, {
+      key: "shared-key-uuid",
+      fingerprint: "10:image/jpeg:abc",
+    });
+    // 他タブは session が空
+    sessionStorage.removeItem(flyerStickyStorageKey(FLYER_USER_ID));
+    const restored = readFlyerStickyAttempt(FLYER_USER_ID);
+    expect(restored).toEqual({ key: "shared-key-uuid", fingerprint: "10:image/jpeg:abc" });
+    // 読取時に session へ mirror
+    expect(sessionStorage.getItem(flyerStickyStorageKey(FLYER_USER_ID))).not.toBeNull();
+    clearFlyerStickyAttempt(FLYER_USER_ID);
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)).toBeNull();
+  });
+
+  it("PE2: total content-read failure aborts without minting sticky (no size:type bind)", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const file = new File(["pe2-fail"], "flyer.jpg", { type: "image/jpeg" });
+    // 全読取経路を潰す: own arrayBuffer / Blob 原型 / FileReader / stream
+    // （arrayBuffer だけ throw しても FileReader で成功し得る — PE2 は meta-only 禁止が本質）
+    // jsdom の File は arrayBuffer 未定義のことがあり、spyOn 前にスタブを置く。
+    if (typeof file.arrayBuffer !== "function") {
+      Object.defineProperty(file, "arrayBuffer", {
+        configurable: true,
+        writable: true,
+        value: async () => new ArrayBuffer(0),
+      });
+    }
+    const ownAb = vi.spyOn(file, "arrayBuffer").mockRejectedValue(new Error("read fail"));
+    // jsdom では Blob.prototype.arrayBuffer が無い場合がある
+    const blobHadAb = typeof Blob.prototype.arrayBuffer === "function";
+    if (!blobHadAb) {
+      Object.defineProperty(Blob.prototype, "arrayBuffer", {
+        configurable: true,
+        writable: true,
+        value: async () => new ArrayBuffer(0),
+      });
+    }
+    const blobAb = vi
+      .spyOn(Blob.prototype, "arrayBuffer")
+      .mockRejectedValue(new Error("blob read fail"));
+    const readerSpy = vi
+      .spyOn(FileReader.prototype, "readAsArrayBuffer")
+      .mockImplementation(function (this: FileReader) {
+        const self = this;
+        queueMicrotask(() => {
+          Object.defineProperty(self, "error", {
+            configurable: true,
+            value: new Error("FileReader forced fail"),
+          });
+          const handler = self.onerror;
+          if (typeof handler === "function") {
+            handler.call(self, new Event("error") as ProgressEvent<FileReader>);
+          }
+        });
+      });
+    if (typeof file.stream !== "function") {
+      Object.defineProperty(file, "stream", {
+        configurable: true,
+        writable: true,
+        value: () => {
+          throw new Error("stream missing");
+        },
+      });
+    }
+    const streamSpy = vi.spyOn(file, "stream").mockImplementation(() => {
+      throw new Error("stream fail");
+    });
+    try {
+      fireEvent.change(input!, { target: { files: [file] } });
+      await waitFor(() => {
+        expect(screen.getByText("画像を読み込めませんでした。")).toBeVisible();
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(readFlyerStickyAttempt(FLYER_USER_ID)).toBeNull();
+    } finally {
+      ownAb.mockRestore();
+      blobAb.mockRestore();
+      readerSpy.mockRestore();
+      streamSpy.mockRestore();
+    }
+  });
+
+  it("PE2: fingerprintFlyerImage returns null when content cannot be read", async () => {
+    // Blob でも File でもない素オブジェクト → いずれの読取経路も使えない
+    const file = {
+      size: 12,
+      type: "image/jpeg",
+    } as File;
+    await expect(fingerprintFlyerImage(file)).resolves.toBeNull();
+  });
+
+  it("PE2: normal File fingerprints with content hash (not size:type only)", async () => {
+    const file = new File(["same-content-for-hash"], "flyer.jpg", { type: "image/jpeg" });
+    const fp = await fingerprintFlyerImage(file);
+    expect(fp).not.toBeNull();
+    // meta だけの size:type ではなく :hash が付く
+    expect(fp).toMatch(/^\d+:image\/jpeg:[0-9a-f]+$/u);
+    expect(fp).not.toBe(`${String(file.size)}:${file.type}`);
+    // 同一内容は同一 fingerprint（FileReader / arrayBuffer どちらでも）
+    const again = await fingerprintFlyerImage(
+      new File(["same-content-for-hash"], "other-name.jpg", { type: "image/jpeg" }),
+    );
+    expect(again).toBe(fp);
+  });
+
+  it("PE4: HTTP 200 with unparseable body keeps sticky for same-image retry", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          ok: true,
+          data: {
+            // menu が schema を満たさない → 成功 deterministic ではない
+            menu: {},
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const file = new File(["pe4-bytes"], "flyer.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(screen.getByText("チラシ献立を作成できませんでした。")).toBeVisible();
+    });
+    const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)?.key).toBe(firstKey);
     fireEvent.change(input!, { target: { files: [file] } });
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(2);

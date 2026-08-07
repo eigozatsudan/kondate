@@ -46,6 +46,7 @@ import {
   filterExpiredPantryChecksForSelections,
   hasCurrentExpiredConfirmation,
   isPastEnteredExpiry,
+  persistSessionExpiredPantryChecks,
   type PlannerAttempt,
 } from "./expired-pantry-checks";
 import { resolvePlannerAllergyDisclosure } from "./planner-allergy-disclosure";
@@ -727,6 +728,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       );
       return;
     }
+    // PE8: attempt メモリの当日確認を session に載せ、直接 /emergency-menus 再入場でもゲートを通す。
+    // remount 後に attempt が消えても二重確認を強いず、未確認の直接 URL は emergency 側で止める。
+    if (userId !== undefined) {
+      persistSessionExpiredPantryChecks(userId, attempt.expiredPantryChecks, nowForExpiry);
+    }
     const operationId = ++emergencyOperationIdRef.current;
     setIsOpeningEmergencyMenus(true);
     setSubmissionError(null);
@@ -766,6 +772,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     isSubmitting,
     navigate,
     pantryQuery.data,
+    userId,
     value.pantrySelections,
   ]);
 

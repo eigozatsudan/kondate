@@ -30,6 +30,112 @@ export type FlyerWeeklyPanelProps = {
   onRetryPrivacyConsent?: () => void;
 };
 
+/** PE1: remount / 他タブでも同一画像の Idempotency-Key を再利用するための TTL（24h）。 */
+export const flyerStickyTtlMs = 24 * 60 * 60 * 1_000;
+
+/** PE1: user 単位の sticky 正本キー（fingerprint→key を envelope に載せる）。 */
+export function flyerStickyStorageKey(userId: string): string {
+  return `kondate:flyer:sticky:v1:${userId}`;
+}
+
+const stickyEnvelopeSchema = z
+  .object({
+    createdAtMs: z.number().int().nonnegative(),
+    fingerprint: z.string().min(1),
+    key: z.string().min(1),
+  })
+  .strict();
+
+type StickyFlyerAttempt = {
+  key: string;
+  fingerprint: string;
+};
+
+function writeStorageBestEffort(storage: Storage, key: string, value: string): void {
+  try {
+    storage.setItem(key, value);
+  } catch {
+    /* Quota / private mode — 他方の Storage に委ねる */
+  }
+}
+
+function removeStorageBestEffort(storage: Storage, key: string): void {
+  try {
+    storage.removeItem(key);
+  } catch {
+    /* 掃除失敗は auth-cleanup が後で拾う */
+  }
+}
+
+function readStickyFromStorage(storage: Storage, storageKey: string): StickyFlyerAttempt | null {
+  let saved: string | null;
+  try {
+    saved = storage.getItem(storageKey);
+  } catch {
+    return null;
+  }
+  if (saved === null) return null;
+  try {
+    const parsed = stickyEnvelopeSchema.safeParse(JSON.parse(saved));
+    if (parsed.success) {
+      const age = Date.now() - parsed.data.createdAtMs;
+      if (age >= 0 && age <= flyerStickyTtlMs) {
+        return { key: parsed.data.key, fingerprint: parsed.data.fingerprint };
+      }
+    }
+  } catch {
+    /* 下で捨てる */
+  }
+  removeStorageBestEffort(storage, storageKey);
+  return null;
+}
+
+/**
+ * PE1: local を跨タブ正本、session を同一タブ mirror とする（SHOP4 同型）。
+ * 期限切れ・壊れた envelope は両 Storage から捨てる。
+ */
+export function readFlyerStickyAttempt(userId: string): StickyFlyerAttempt | null {
+  const storageKey = flyerStickyStorageKey(userId);
+  const fromLocal = readStickyFromStorage(localStorage, storageKey);
+  if (fromLocal !== null) {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw !== null) writeStorageBestEffort(sessionStorage, storageKey, raw);
+    } catch {
+      /* mirror optional */
+    }
+    return fromLocal;
+  }
+  const fromSession = readStickyFromStorage(sessionStorage, storageKey);
+  if (fromSession !== null) {
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      if (raw !== null) writeStorageBestEffort(localStorage, storageKey, raw);
+    } catch {
+      /* promote optional */
+    }
+    return fromSession;
+  }
+  return null;
+}
+
+export function writeFlyerStickyAttempt(userId: string, sticky: StickyFlyerAttempt): void {
+  const storageKey = flyerStickyStorageKey(userId);
+  const payload = JSON.stringify({
+    createdAtMs: Date.now(),
+    fingerprint: sticky.fingerprint,
+    key: sticky.key,
+  });
+  writeStorageBestEffort(localStorage, storageKey, payload);
+  writeStorageBestEffort(sessionStorage, storageKey, payload);
+}
+
+export function clearFlyerStickyAttempt(userId: string): void {
+  const storageKey = flyerStickyStorageKey(userId);
+  removeStorageBestEffort(localStorage, storageKey);
+  removeStorageBestEffort(sessionStorage, storageKey);
+}
+
 function newIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -40,30 +146,109 @@ function newIdempotencyKey(): string {
 }
 
 /**
+ * 画像バイト列を内容束縛用に読む。
+ * jsdom では File.arrayBuffer が欠落・未実装のことがあり、Blob.prototype / FileReader へフォールバックする。
+ * いずれでも読めないときだけ null（PE2: size:type だけでは束縛しない）。
+ */
+export async function readFlyerImageBytes(file: File): Promise<Uint8Array | null> {
+  // 1) 現代ブラウザ / Node File: 自身の arrayBuffer
+  if (typeof file.arrayBuffer === "function") {
+    try {
+      return new Uint8Array(await file.arrayBuffer());
+    } catch {
+      // 次の経路へ（一部 jsdom は method があるが throw する）
+    }
+  }
+
+  // 2) Blob 原型（File が Blob を継承するが own arrayBuffer が壊れている場合）
+  if (
+    typeof Blob !== "undefined" &&
+    typeof Blob.prototype.arrayBuffer === "function" &&
+    file instanceof Blob
+  ) {
+    try {
+      return new Uint8Array(await Blob.prototype.arrayBuffer.call(file));
+    } catch {
+      // FileReader へ
+    }
+  }
+
+  // 3) FileReader（jsdom で new File([...]) の内容を読める定番経路）
+  if (typeof FileReader !== "undefined" && file instanceof Blob) {
+    try {
+      const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (reader.result instanceof ArrayBuffer) {
+            resolve(reader.result);
+            return;
+          }
+          reject(new Error("FileReader result is not ArrayBuffer"));
+        };
+        reader.onerror = () => {
+          reject(reader.error ?? new Error("FileReader failed"));
+        };
+        reader.readAsArrayBuffer(file);
+      });
+      return new Uint8Array(buffer);
+    } catch {
+      // stream へ
+    }
+  }
+
+  // 4) ReadableStream（対応環境のみ）
+  if (typeof file.stream === "function") {
+    try {
+      const reader = file.stream().getReader();
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value !== undefined) {
+          chunks.push(value);
+          total += value.byteLength;
+        }
+      }
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
  * sticky Idempotency-Key を画像内容に束縛するための fingerprint。
  * PE1: name/lastModified は OS/ブラウザ再選択で変わり得るため使わない。
  * size:type + 全文 FNV-1a（上限 4MiB。アップロード前に既に File があるので全読でよい）。
  * 先頭 8KiB だけだと後半差分の別画像を同一 key に束縛し得る residual を閉じる。
- * arrayBuffer が無い jsdom では size:type:name:lastModified にフォールバック（テスト用）。
+ *
+ * PE2: 内容バイトが一切読めないときだけ null。size:type だけの弱 fingerprint は返さない。
+ * meta-only で sticky を束縛すると同 size/MIME の別画像が誤再利用される。
+ * 呼び出し側は null を「読込失敗」として中止する。
  */
-async function fingerprintFlyerImage(file: File): Promise<string> {
+export async function fingerprintFlyerImage(file: File): Promise<string | null> {
   // name/lastModified は再選択で変わるため fingerprint に載せない（PE1）
   const meta = `${String(file.size)}:${file.type}`;
-  if (typeof file.arrayBuffer !== "function") {
-    return meta;
+  const bytes = await readFlyerImageBytes(file);
+  if (bytes === null) {
+    // 内容を束縛できない: sticky を meta-only で発行しない（PE2）
+    return null;
   }
-  try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    let rolling = 2166136261;
-    for (const byte of bytes) {
-      rolling ^= byte;
-      rolling = Math.imul(rolling, 16777619);
-    }
-    return `${meta}:${(rolling >>> 0).toString(16)}`;
-  } catch {
-    // 読取失敗時も name に依存せず size:type のみ（再選択で key が割れない）
-    return meta;
+  let rolling = 2166136261;
+  for (const byte of bytes) {
+    rolling ^= byte;
+    rolling = Math.imul(rolling, 16777619);
   }
+  return `${meta}:${(rolling >>> 0).toString(16)}`;
 }
 
 /** PE3: 再試行で同一 key を保つエラー（finalize 成功後の 5xx 欠落・processing 等）。 */
@@ -75,11 +260,6 @@ function shouldKeepFlyerSticky(errorCode: string | undefined, status: number): b
     errorCode === "generation_timeout"
   );
 }
-
-type StickyFlyerAttempt = {
-  key: string;
-  fingerprint: string;
-};
 
 /**
  * チラシ→1 週間献立の入口。
@@ -95,10 +275,12 @@ export function FlyerWeeklyPanel({
 }: FlyerWeeklyPanelProps) {
   const inputId = useId();
   const { session } = useAuth();
+  const userId = session?.user?.id;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<WeeklyFlyerMenuResult | null>(null);
   // 通信断・processing 中の再試行では同一キーを使い、try 二重消費を防ぐ。
+  // PE1: ref に加え local/sessionStorage へ永続化し remount / 他タブでも再利用する。
   // PE2: fingerprint 不一致（別画像）では sticky を捨て新 key を採番する。
   // 成功・端末確定失敗後は破棄し、次の選択で新しいキーを採番する。
   // サーバはキー必須（欠落で random 採番しない）。常に sticky/新規を送る。
@@ -168,17 +350,49 @@ export function FlyerWeeklyPanel({
     );
   }
 
+  const persistSticky = (sticky: StickyFlyerAttempt | null): void => {
+    stickyAttemptRef.current = sticky;
+    if (userId === undefined) return;
+    if (sticky === null) {
+      clearFlyerStickyAttempt(userId);
+      return;
+    }
+    writeFlyerStickyAttempt(userId, sticky);
+  };
+
+  const resolveStickyForFingerprint = (fingerprint: string): string => {
+    // 同一マウントの ref を優先。無ければ Storage（remount / 他タブ）。
+    let sticky = stickyAttemptRef.current;
+    if (
+      (sticky === null || sticky.fingerprint !== fingerprint) &&
+      userId !== undefined
+    ) {
+      const stored = readFlyerStickyAttempt(userId);
+      if (stored !== null && stored.fingerprint === fingerprint) {
+        sticky = stored;
+        stickyAttemptRef.current = stored;
+      }
+    }
+    if (sticky !== null && sticky.fingerprint === fingerprint) {
+      return sticky.key;
+    }
+    return newIdempotencyKey();
+  };
+
   const onFile = async (file: File | null) => {
     if (!file || !session?.access_token) return;
     setBusy(true);
     setError(null);
     setMenu(null);
-    // PE2: 同一画像の再送だけ sticky key を再利用。別 File は新 key。
+    // PE2: 同一画像の再送だけ sticky key を再利用。内容を束縛できない読取失敗は中止。
     const fingerprint = await fingerprintFlyerImage(file);
-    const sticky = stickyAttemptRef.current;
-    const attemptKey =
-      sticky !== null && sticky.fingerprint === fingerprint ? sticky.key : newIdempotencyKey();
-    stickyAttemptRef.current = { key: attemptKey, fingerprint };
+    if (fingerprint === null) {
+      setError("画像を読み込めませんでした。");
+      setBusy(false);
+      return;
+    }
+    const attemptKey = resolveStickyForFingerprint(fingerprint);
+    persistSticky({ key: attemptKey, fingerprint });
     try {
       const form = new FormData();
       form.append("image", file);
@@ -212,8 +426,11 @@ export function FlyerWeeklyPanel({
         const errorCode = err.success ? err.data.error?.code : undefined;
         // PE3: 5xx / processing / timeout は sticky 維持。finalize 成功後の応答欠落で
         // 新 key にすると週次 try を二重消費する。4xx の確定失敗だけ破棄。
-        if (!shouldKeepFlyerSticky(errorCode, response.status)) {
-          stickyAttemptRef.current = null;
+        // PE4: HTTP 200 だが body が Zod で閉じられないときは成功/transport 曖昧。
+        // catch（通信断）と同様に sticky を残し、同一画像の再送で二重 try を防ぐ。
+        const ambiguousOkBody = response.ok && !parsed.success;
+        if (!ambiguousOkBody && !shouldKeepFlyerSticky(errorCode, response.status)) {
+          persistSticky(null);
         }
         setError(
           err.success
@@ -222,7 +439,7 @@ export function FlyerWeeklyPanel({
         );
         return;
       }
-      stickyAttemptRef.current = null;
+      persistSticky(null);
       setMenu(parsed.data.data.menu);
     } catch {
       // 通信断: sticky を残し、同じ画像・同じキーで再送できるようにする
