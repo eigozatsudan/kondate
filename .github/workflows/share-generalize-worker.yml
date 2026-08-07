@@ -8,9 +8,9 @@
 name: Share generalize worker
 
 on:
-  #schedule:
-  # 毎時 37 分（UTC）。maintenance(17) とずらして負荷を分散。
-  #- cron: "37 * * * *"
+  schedule:
+    # 毎時 37 分（UTC）。maintenance(17) とずらして負荷を分散。
+    - cron: "37 * * * *"
   workflow_dispatch:
 
 permissions:
