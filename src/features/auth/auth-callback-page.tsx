@@ -216,6 +216,7 @@ export function AuthCallbackPage({
           leaveLoginError(authError, next.returnTo);
         };
         // R3: hangWatchdog（C6）と同型で server expiresAt があれば wait もクリップする
+        // C4 / RR1: clockSkewMs も hangWatchdog と同型で渡し、進みすぎクライアントの早期 fail-closed を防ぐ
         // exactOptionalPropertyTypes: undefined を明示渡さない
         const flowForWait = readAuthFlow(next.flowId, window.localStorage);
         stopCompletionWait = startAuthContinuationCompletionWait({
@@ -224,6 +225,9 @@ export function AuthCallbackPage({
           ttlMs: callbackTtlMs,
           ...(flowForWait?.expiresAt !== undefined
             ? { serverExpiresAt: flowForWait.expiresAt }
+            : {}),
+          ...(flowForWait?.clockSkewMs !== undefined
+            ? { clockSkewMs: flowForWait.clockSkewMs }
             : {}),
           onComplete: (completion) => {
             if (finished) return;

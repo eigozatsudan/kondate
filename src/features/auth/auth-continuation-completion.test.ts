@@ -149,6 +149,33 @@ it("R3: completion wait expires at serverExpiresAt when shorter than local TTL",
   vi.useRealTimers();
 });
 
+it("C4/RR1: completion wait accounts for clockSkewMs so secret is not burned early", () => {
+  vi.useFakeTimers();
+  // クライアント時計が 60s 進んでいる想定（skew +60s）。サーバ期限は wall で既に過ぎている。
+  vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
+  const onComplete = vi.fn();
+  const onExpire = vi.fn();
+  // skew 非適用なら remaining=0 で即 onExpire。補正後は server 期限まで待つ（hangWatchdog C4 同型）。
+  const stop = startAuthContinuationCompletionWait({
+    flowId: "flow-1",
+    startedAt: "2026-07-13T00:00:00.000Z",
+    ttlMs: 300_000,
+    serverExpiresAt: "2026-07-13T00:00:30.000Z",
+    clockSkewMs: 60_000,
+    onComplete,
+    onExpire,
+  });
+
+  expect(onExpire).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(29_999);
+  expect(onExpire).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(onExpire).toHaveBeenCalledOnce();
+  expect(onComplete).not.toHaveBeenCalled();
+  stop();
+  vi.useRealTimers();
+});
+
 it("cancels expiry after completion arrives before the existing flow TTL", () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));

@@ -693,6 +693,72 @@ it("C4: hangWatchdog accounts for clockSkewMs so secret is not burned early", as
   }
 });
 
+it("C4/RR1: awaiting_completion wait accounts for clockSkewMs so secret is not burned early", async () => {
+  vi.useFakeTimers();
+  // hangWatchdog C4 と同型: クライアント +60s 進み。awaiting_completion 経路の wait も skew 補正する。
+  vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
+  try {
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: "2026-07-13T00:00:00.000Z",
+        expiresAt: "2026-07-13T00:00:30.000Z",
+        clockSkewMs: 60_000,
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.callback-owner.${flowId}`,
+      "2026-07-13T00:00:00.000Z",
+    );
+    // 前テストの mock 呼び出しを捨て、本ケースだけの clear 有無を見る
+    vi.mocked(clearAuthFlow).mockClear();
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId,
+        returnTo: "/onboarding",
+      }),
+      resumeFlow: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId,
+        returnTo: "/onboarding",
+      }),
+    };
+    const { leaveAuthCallback } = renderCallback(gateway, {
+      ttlMs: 300_000,
+      initialEntry: `/auth/callback?flow=${flowId}`,
+    });
+    await act(async () => Promise.resolve());
+    // skew 非適用なら completion wait が remaining=0 で即 failClosed。補正後は server 期限まで待つ。
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(29_000);
+    });
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    // failClosed → clearAuthFlow が期限前に発火していないこと（secret 焼却の代理）
+    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+    );
+    expect(vi.mocked(clearAuthFlow)).toHaveBeenCalledWith(flowId);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("C14: deposited WebView switches to expired retry UI after hang watchdog TTL", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));

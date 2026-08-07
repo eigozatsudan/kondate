@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { clearAuthFlow, sanitizeReturnPath } from "./auth-flow";
+import { adjustedAuthNowMs, clearAuthFlow, sanitizeReturnPath } from "./auth-flow";
 
 const completionStorageKey = "kondate.auth.supabase.continuation-complete";
 /** same-tab 通知用。storage イベントは書き込みタブでは発火しないため CustomEvent を併用する。 */
@@ -95,6 +95,11 @@ export function startAuthContinuationCompletionWait(input: {
    * サーバ絶対期限（flow.expiresAt）。分かればローカル TTL と min してクリップする（R3 / C6 同型）。
    */
   serverExpiresAt?: string;
+  /**
+   * C4 / RR1: hangWatchdog と同型で normalizeAuthClock 相当の skew 補正に使う。
+   * 正の skew（クライアント進み）を now から差し引き、サーバ期限前の secret 早期焼却を防ぐ。
+   */
+  clockSkewMs?: number;
   onComplete(completion: AuthContinuationCompletion): void;
   onExpire(): void;
 }): () => void {
@@ -122,7 +127,11 @@ export function startAuthContinuationCompletionWait(input: {
     serverExpiresMs !== null && Number.isFinite(serverExpiresMs)
       ? Math.min(localDeadlineMs, serverExpiresMs)
       : localDeadlineMs;
-  const remainingMs = Number.isFinite(deadlineMs) ? Math.max(0, deadlineMs - Date.now()) : 0;
+  // C4 / RR1: wall Date.now() ではなく adjustedAuthNowMs で remaining を算出し、
+  // hangWatchdog と対称に進みすぎクライアントの早期 onExpire を防ぐ。
+  const remainingMs = Number.isFinite(deadlineMs)
+    ? Math.max(0, deadlineMs - adjustedAuthNowMs(Date.now(), input.clockSkewMs))
+    : 0;
   const timer = window.setTimeout(() => {
     if (finished) return;
     finished = true;
