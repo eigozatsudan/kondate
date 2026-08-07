@@ -98,7 +98,7 @@ describe("generation API", () => {
       Authorization: "Bearer access-token",
       "Content-Type": "application/json",
     });
-    // G8: サーバ 55s と整合する POST 専用 AbortSignal（既定 58s）
+    // G8/S12: function-budget 正本から導出した POST 専用 AbortSignal
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBe(58_000);
     expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeLessThanOrEqual(60_000);

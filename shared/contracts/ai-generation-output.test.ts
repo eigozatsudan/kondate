@@ -9,6 +9,7 @@ const validPayload = {
   servings: 2,
   totalElapsedMinutes: 15,
   safetyTags: ["cut_small"],
+  // 朝食は最低 2 品（minDishCountForMealType / S11）
   dishes: [
     {
       dishRef: "dish_1",
@@ -31,6 +32,28 @@ const validPayload = {
         },
       ],
       steps: [{ stepRef: "step_1", position: 1, instruction: "握る" }],
+    },
+    {
+      dishRef: "dish_2",
+      role: "side",
+      position: 2,
+      name: "温野菜",
+      description: "加熱した野菜",
+      cookingTimeMinutes: 5,
+      ingredients: [
+        {
+          ingredientRef: "ingredient_2",
+          position: 1,
+          name: "にんじん",
+          quantityValue: 0.5,
+          quantityText: "1/2本",
+          unit: "本",
+          storeSection: "produce",
+          pantryRef: null,
+          labelConfirmationRequired: false,
+        },
+      ],
+      steps: [{ stepRef: "step_2", position: 1, instruction: "蒸す" }],
     },
   ],
   timeline: [
@@ -202,5 +225,52 @@ describe("aiGeneratedMenuPayloadSchema", () => {
     };
 
     expect(containsUuidFormat(menuResponseFormat.json_schema.schema)).toBe(false);
+  });
+
+  it("rejects unbounded quantityValue above 999_999 (S2)", () => {
+    const huge = {
+      ...validPayload,
+      dishes: [
+        {
+          ...validPayload.dishes[0],
+          ingredients: [
+            { ...validPayload.dishes[0].ingredients[0], quantityValue: 1e15 },
+          ],
+        },
+        validPayload.dishes[1],
+      ],
+    };
+    expect(aiGeneratedMenuPayloadSchema.safeParse(huge).success).toBe(false);
+    const atCeiling = {
+      ...validPayload,
+      dishes: [
+        {
+          ...validPayload.dishes[0],
+          ingredients: [
+            { ...validPayload.dishes[0].ingredients[0], quantityValue: 999_999 },
+          ],
+        },
+        validPayload.dishes[1],
+      ],
+    };
+    expect(aiGeneratedMenuPayloadSchema.safeParse(atCeiling).success).toBe(true);
+  });
+
+  it("rejects dinner with fewer dishes than mealType minimum (S11)", () => {
+    // dinner 最低 3 品。1 品は AI wire で早期拒否（後段 invalid_ai_response 前）
+    expect(
+      aiGeneratedMenuPayloadSchema.safeParse({
+        ...validPayload,
+        mealType: "dinner",
+        dishes: [validPayload.dishes[0]],
+      }).success,
+    ).toBe(false);
+    expect(
+      aiGeneratedMenuPayloadSchema.safeParse({
+        ...validPayload,
+        mealType: "breakfast",
+        dishes: [validPayload.dishes[0]],
+      }).success,
+    ).toBe(false);
   });
 });

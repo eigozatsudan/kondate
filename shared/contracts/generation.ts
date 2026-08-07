@@ -1,29 +1,22 @@
 import { z } from "zod";
 import { aiGeneratedMenuPayloadSchema } from "./ai-generation-output.js";
-import { cuisineGenres, generationStatuses, mealTypes, privacyNoticeVersion } from "./domain.js";
+import {
+  cuisineGenres,
+  generationStatuses,
+  isAllowedMenuDishCount,
+  mealTypes,
+  menuDishCountMax,
+  privacyNoticeVersion,
+} from "./domain.js";
 import { generatedPantryUsageSchema, pantryUsageSchema } from "./pantry.js";
 // planQuota 正本。releaseQuota は Free 別名（既存 import / env 検証が参照）
 import { planQuota } from "./plan-quota.js";
 export { releaseQuota, planQuota } from "./plan-quota.js";
 export type { PlanCode } from "./plan-quota.js";
+// dish 品数ヘルパの正本は domain。既存 import 互換のため re-export
+export { isAllowedMenuDishCount, menuDishCountMax, minDishCountForMealType } from "./domain.js";
 
 export const dishRoles = ["main", "side", "soup", "staple", "other"] as const;
-/**
- * 献立 dishes の契約上限（AI payload / generatedMenu 共通）。
- * mealType ごとの最低品数は minDishCountForMealType。ちょうど N ではなく下限〜上限。
- */
-export const menuDishCountMax = 5 as const;
-/** mealType ごとの最低品数。朝/昼=2・夕=3。上限は menuDishCountMax。 */
-export function minDishCountForMealType(mealType: (typeof mealTypes)[number]): number {
-  return mealType === "dinner" ? 3 : 2;
-}
-/** 最低品数以上・menuDishCountMax 以下なら構造として許容する。 */
-export function isAllowedMenuDishCount(
-  mealType: (typeof mealTypes)[number],
-  dishCount: number,
-): boolean {
-  return dishCount >= minDishCountForMealType(mealType) && dishCount <= menuDishCountMax;
-}
 export const storeSections = [
   "produce",
   "meat_fish",
@@ -77,7 +70,8 @@ export const dishIngredientSchema = z
     id: z.uuid(),
     position: z.number().int().positive(),
     name: z.string().trim().min(1).max(100),
-    quantityValue: z.number().positive().nullable(),
+    // AI wire / shopping と同一天井（S2: nullablePositiveQuantity）
+    quantityValue: z.number().positive().max(999_999).nullable(),
     quantityText: z.string().trim().min(1).max(60),
     unit: z.string().trim().min(1).max(24).nullable(),
     storeSection: z.enum(storeSections),

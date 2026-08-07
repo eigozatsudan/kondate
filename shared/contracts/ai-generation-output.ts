@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { cuisineGenres, mealTypes, pantryPriorities } from "./domain.js";
+import {
+  cuisineGenres,
+  mealTypes,
+  menuDishCountMax,
+  minDishCountForMealType,
+  pantryPriorities,
+} from "./domain.js";
 import { pantryUsageStatuses } from "./pantry.js";
 
 const dishRef = z.string().regex(/^dish_[1-9][0-9]*$/u);
@@ -10,7 +16,13 @@ const adaptationRef = z.string().regex(/^adaptation_[1-9][0-9]*$/u);
 const pantryRef = z.string().regex(/^pantry_[1-9][0-9]*$/u);
 const memberRef = z.string().regex(/^member_[1-9][0-9]*$/u);
 const safetyTag = z.string().regex(/^[a-z][a-z0-9_]*$/u);
+/** pantry plannedQuantity 用（0 許容）。ingredient quantity とは別。 */
 const nullableQuantity = z.number().min(0).max(999_999).nullable();
+/**
+ * 材料数量の正本 bound（pantry / draft と天井を揃える）。
+ * 0 は不可・上限 999_999（nullableQuantity 天井の positive 版）。
+ */
+export const nullablePositiveQuantity = z.number().positive().max(999_999).nullable();
 const nullableUnit = z.string().trim().min(1).max(24).nullable();
 const sourceRef = z.union([dishRef, ingredientRef, stepRef, timelineRef, adaptationRef]);
 
@@ -19,7 +31,7 @@ const aiIngredient = z
     ingredientRef,
     position: z.number().int().positive(),
     name: z.string().trim().min(1).max(100),
-    quantityValue: z.number().positive().nullable(),
+    quantityValue: nullablePositiveQuantity,
     quantityText: z.string().trim().min(1).max(60),
     unit: nullableUnit,
     storeSection: z.enum([
@@ -127,12 +139,24 @@ export const aiGeneratedMenuPayloadSchema = z
     servings: z.number().int().min(1).max(20),
     totalElapsedMinutes: z.number().int().min(1).max(180),
     safetyTags: z.array(safetyTag).max(32),
-    dishes: z.array(aiDish).min(1).max(5),
+    // 上限は menuDishCountMax。mealType 下限は superRefine で早期 enforce（S11）
+    dishes: z.array(aiDish).min(1).max(menuDishCountMax),
     timeline: z.array(aiTimeline).min(1).max(60),
     adaptations: z.array(aiAdaptation).max(100),
     pantryUsage: z.array(aiPantryUsage).max(50),
     labelConfirmations: z.array(aiLabel).max(200),
   })
-  .strict();
+  .strict()
+  .superRefine((payload, context) => {
+    // materialize 後段の isAllowedMenuDishCount と同一基準を AI wire で先に閉じる
+    const minDishes = minDishCountForMealType(payload.mealType);
+    if (payload.dishes.length < minDishes) {
+      context.addIssue({
+        code: "custom",
+        path: ["dishes"],
+        message: "dish_count_below_meal_type_minimum",
+      });
+    }
+  });
 
 export type AiGeneratedMenuPayload = z.infer<typeof aiGeneratedMenuPayloadSchema>;

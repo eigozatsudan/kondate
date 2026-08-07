@@ -77,7 +77,8 @@ describe("idea-bench invalid_provider_menu / invalid_menu_structure mock repro",
     expect(codes).toEqual([]);
   });
 
-  it("maps breakfast with 1 dish (common model shape) to invalid_menu_structure", () => {
+  it("maps breakfast with 1 dish (common model shape) to invalid_provider_menu", () => {
+    // S11: mealType 下限を wire schema で閉じるため materializer 前に invalid_provider_menu
     const menu = ideaServings2Menu();
     menu.dishes = [menu.dishes[0]!];
     menu.timeline = menu.timeline.filter((entry) => entry.dishRef === "dish_1");
@@ -86,8 +87,7 @@ describe("idea-bench invalid_provider_menu / invalid_menu_structure mock repro",
       ideaBenchContext(),
       uuidFactory(),
     );
-    expect(codes).toContain("invalid_menu_structure");
-    expect(codes).not.toContain("invalid_provider_menu");
+    expect(codes).toContain("invalid_provider_menu");
   });
 
   it("accepts breakfast with 3 dishes within max (no longer exact count 2)", () => {

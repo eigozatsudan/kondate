@@ -105,7 +105,8 @@
                               "anyOf": [
                                 {
                                   "type": "number",
-                                  "exclusiveMinimum": 0
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 999999
                                 },
                                 {
                                   "type": "null"

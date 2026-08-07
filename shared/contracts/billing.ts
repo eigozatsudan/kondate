@@ -62,9 +62,10 @@ export const entitlementDataSchema = z
     ]),
     plusEntitled: z.boolean(),
     pastDueGrace: z.boolean(),
-    currentPeriodEnd: z.string().nullable(),
+    // 日時 wire を ISO-8601（offset 必須）に閉じる（S18）。URL は runtime DiD 維持。
+    currentPeriodEnd: z.iso.datetime({ offset: true }).nullable(),
     cancelAtPeriodEnd: z.boolean(),
-    trialEnd: z.string().nullable(),
+    trialEnd: z.iso.datetime({ offset: true }).nullable(),
     dbPlusEntitled: z.boolean(),
     productSurfacesOpen: z.boolean(),
     quotaPlan: z.enum(["free", "plus"]),

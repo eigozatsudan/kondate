@@ -26,3 +26,16 @@ export const OPENROUTER_TIMEOUT_MS = 24_000;
 
 /** 最終化用に送信前に残す最小余裕（ms）。generation-service と一致。 */
 export const FINALIZE_RESERVE_MS = 2_000;
+
+/**
+ * 生成 POST のクライアント abort を総予算からどれだけ外側に置くか（ms）。
+ * サーバ 55s と platform 60s の間に置き、hang 中に status poll へ戻れない窓を閉じる。
+ */
+export const GENERATION_CLIENT_TIMEOUT_HEADROOM_MS = 3_000;
+
+/**
+ * 生成 POST のクライアント abort 上限（ms）。
+ * FUNCTION_TOTAL_BUDGET_MS + headroom から導出（S12: リテラルミラー禁止）。
+ */
+export const GENERATION_POST_CLIENT_TIMEOUT_MS =
+  FUNCTION_TOTAL_BUDGET_MS + GENERATION_CLIENT_TIMEOUT_HEADROOM_MS;

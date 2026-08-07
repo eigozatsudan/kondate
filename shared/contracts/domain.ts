@@ -1,6 +1,22 @@
 export const mealTypes = ["breakfast", "lunch", "dinner"] as const;
 export type MealType = (typeof mealTypes)[number];
 
+/**
+ * 献立 dishes の契約上限（AI payload / generatedMenu 共通）。
+ * mealType ごとの最低品数は minDishCountForMealType。ちょうど N ではなく下限〜上限。
+ */
+export const menuDishCountMax = 5 as const;
+
+/** mealType ごとの最低品数。朝/昼=2・夕=3。上限は menuDishCountMax。 */
+export function minDishCountForMealType(mealType: MealType): number {
+  return mealType === "dinner" ? 3 : 2;
+}
+
+/** 最低品数以上・menuDishCountMax 以下なら構造として許容する。 */
+export function isAllowedMenuDishCount(mealType: MealType, dishCount: number): boolean {
+  return dishCount >= minDishCountForMealType(mealType) && dishCount <= menuDishCountMax;
+}
+
 export const cuisineGenres = ["japanese", "western", "chinese", "any"] as const;
 export type CuisineGenre = (typeof cuisineGenres)[number];
 

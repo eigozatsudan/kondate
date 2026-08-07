@@ -57,6 +57,8 @@ export default tseslint.config(
   {
     // browser は safety 本体（allergens / fingerprint / hard gate）をバンドルしない。
     // pure UX 前チェックのみ @shared/safety-pure/* を許可（CLAUDE.md ownership）。
+    // emergency 評価モジュール（filter / idea-context / fixtures / share-*）も禁止し
+    // contracts のみ許可（S15: 間接 safety 引き込み DiD）。
     files: ["src/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
@@ -67,6 +69,11 @@ export default tseslint.config(
               group: ["@shared/safety", "@shared/safety/*"],
               message:
                 "Browser must import pure modules from @shared/safety-pure/* only; @shared/safety/* is Functions-oriented.",
+            },
+            {
+              group: ["@shared/emergency/*", "!@shared/emergency/contracts"],
+              message:
+                "Browser must import @shared/emergency/contracts only; evaluation modules (filter-emergency-menus, idea-context, fixtures, share-*) are Functions-oriented.",
             },
           ],
         },

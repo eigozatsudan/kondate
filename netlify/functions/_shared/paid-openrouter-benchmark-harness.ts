@@ -1,3 +1,4 @@
+import { FUNCTION_TOTAL_BUDGET_MS } from "../../../shared/contracts/function-budget.js";
 import {
   generationCommandVersionV3,
   type GenerationCommand,
@@ -33,8 +34,8 @@ const benchmarkMenuId = "91000000-0000-4000-8000-000000000004";
 const benchmarkUserId = "91000000-0000-4000-8000-000000000005";
 const benchmarkStartedAt = "2026-07-27T00:00:00.000Z";
 const benchmarkCompletedAt = "2026-07-27T00:00:01.000Z";
-/** FUNCTION_TOTAL_BUDGET_MS リリースロックと一致 */
-const benchmarkTotalBudgetMs = 55_000;
+/** FUNCTION_TOTAL_BUDGET_MS リリースロックと一致（S12: 定数 import） */
+const benchmarkTotalBudgetMs = FUNCTION_TOTAL_BUDGET_MS;
 
 export type PaidBenchmarkUnitResult = Readonly<{
   ok: boolean;

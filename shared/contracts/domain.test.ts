@@ -7,7 +7,10 @@ import {
   easePreferences,
   generationStatuses,
   householdMemberStatuses,
+  isAllowedMenuDishCount,
   mealTypes,
+  menuDishCountMax,
+  minDishCountForMealType,
   onboardingStatuses,
   pantryPriorities,
   portionSizes,
@@ -28,6 +31,15 @@ describe("domain contracts", () => {
     expect(generationStatuses[0]).toBe("not_started");
     expect(pantryPriorities).toEqual(["must_use", "prefer_use"]);
     expect(changeReasons).toHaveLength(5);
+  });
+
+  it("locks mealType dish count helpers (S11 SSOT)", () => {
+    expect(minDishCountForMealType("breakfast")).toBe(2);
+    expect(minDishCountForMealType("lunch")).toBe(2);
+    expect(minDishCountForMealType("dinner")).toBe(3);
+    expect(menuDishCountMax).toBe(5);
+    expect(isAllowedMenuDishCount("dinner", 1)).toBe(false);
+    expect(isAllowedMenuDishCount("dinner", 3)).toBe(true);
   });
 
   it("keeps household values aligned with database checks", () => {

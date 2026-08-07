@@ -43,3 +43,12 @@ it.each(["とろみがないスープが好き", "透析の話を聞いた", "�
     expect(detectUnsupportedMedicalRequest(requestText)).toEqual([]);
   },
 );
+
+it("detects medical keywords with Cf/ZWJ inserted after normalize (S5)", () => {
+  // 書式制御 \u200b を挟んでも normalizeFoodTextBase で除去され検出される
+  expect(detectUnsupportedMedicalRequest("治\u200b療食")).toContain("therapeutic_diet");
+  expect(detectUnsupportedMedicalRequest("嚥\u200b下調整")).toContain("swallowing_concern");
+  expect(detectUnsupportedMedicalRequest("離\u200b乳食")).toContain("weaning_food");
+  // ラテン略語は lower-case 後も検出
+  expect(detectUnsupportedMedicalRequest("CKD の食事制限に合わせて")).toContain("therapeutic_diet");
+});

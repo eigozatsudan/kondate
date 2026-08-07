@@ -36,6 +36,25 @@ describe("billing contracts", () => {
     ).toBe(false);
   });
 
+  it("rejects non-datetime entitlement period strings (S18)", () => {
+    const base = {
+      plan: "plus" as const,
+      status: "active" as const,
+      plusEntitled: true,
+      pastDueGrace: false,
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+      trialEnd: null,
+      dbPlusEntitled: true,
+      productSurfacesOpen: true,
+      quotaPlan: "plus" as const,
+    };
+    expect(
+      entitlementDataSchema.safeParse({ ...base, currentPeriodEnd: "not-a-date" }).success,
+    ).toBe(false);
+    expect(entitlementDataSchema.safeParse({ ...base, trialEnd: "soon" }).success).toBe(false);
+  });
+
   it("pins STRIPE_API_VERSION to the design-locked dahlia string", () => {
     expect(STRIPE_API_VERSION).toBe("2026-06-24.dahlia");
   });

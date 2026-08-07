@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { GENERATION_POST_CLIENT_TIMEOUT_MS } from "@shared/contracts/function-budget";
 import {
   generationCommandV3Schema,
   generationStatusDataSchema,
@@ -12,11 +13,15 @@ import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
 /**
  * 生成 POST のクライアント abort 上限（ms）。
- * サーバ Function 総予算 55s（FUNCTION_TOTAL_BUDGET_MS）と platform 60s の間に置き、
- * hang 中に status poll へ戻れない窓を閉じる（adversarial G8）。
+ * 正本は function-budget（FUNCTION_TOTAL_BUDGET_MS + headroom）。
  * Abort 時は classify が offline へ落とし pending を維持して status 回収する。
  */
-export const GENERATION_POST_CLIENT_TIMEOUT_MS = 58_000 as const;
+export { GENERATION_POST_CLIENT_TIMEOUT_MS };
+
+/** Function エラー code: SafeLog closedErrorCode と同形（S9）。 */
+const functionErrorCodeSchema = z.string().regex(/^[a-z][a-z0-9_]{0,79}$/u);
+/** 利用者向け message 天井。巨大プロキシ改変を構造拒否。 */
+const functionErrorMessageSchema = z.string().min(1).max(500);
 
 const generationEnvelopeSchema = z.discriminatedUnion("ok", [
   z
@@ -30,9 +35,10 @@ const generationEnvelopeSchema = z.discriminatedUnion("ok", [
       ok: z.literal(false),
       error: z
         .object({
-          code: z.string(),
-          message: z.string(),
-          details: z.record(z.string(), z.unknown()).optional(),
+          code: functionErrorCodeSchema,
+          message: functionErrorMessageSchema,
+          // details キーも天井を付け、無制限 string キーを拒否
+          details: z.record(z.string().max(64), z.unknown()).optional(),
         })
         .strict(),
     })

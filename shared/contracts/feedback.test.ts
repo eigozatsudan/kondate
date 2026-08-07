@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { feedbackClientPathSchema, submitFeedbackRequestSchema } from "./feedback.js";
+import {
+  feedbackClientPathSchema,
+  feedbackEnvelopeSchema,
+  submitFeedbackRequestSchema,
+} from "./feedback.js";
 
 describe("feedbackClientPathSchema (AP4)", () => {
   it("accepts app-relative pathnames", () => {
@@ -46,5 +50,28 @@ describe("submitFeedbackRequestSchema", () => {
       clientPath: "https://phish.example/x",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("feedbackEnvelopeSchema (S9)", () => {
+  it("accepts closed error codes and rejects huge/open messages", () => {
+    expect(
+      feedbackEnvelopeSchema.safeParse({
+        ok: false,
+        error: { code: "rate_limited", message: "しばらくしてから再度お試しください" },
+      }).success,
+    ).toBe(true);
+    expect(
+      feedbackEnvelopeSchema.safeParse({
+        ok: false,
+        error: { code: "RateLimited", message: "ng" },
+      }).success,
+    ).toBe(false);
+    expect(
+      feedbackEnvelopeSchema.safeParse({
+        ok: false,
+        error: { code: "request_failed", message: "x".repeat(501) },
+      }).success,
+    ).toBe(false);
   });
 });

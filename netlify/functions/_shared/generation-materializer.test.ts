@@ -489,14 +489,14 @@ describe("materializeAiGeneratedMenu", () => {
     );
   });
 
-  it("rejects meal-type dish count below minimum as invalid_menu_structure", () => {
+  it("rejects meal-type dish count below minimum as invalid_provider_menu", () => {
     const payload = makePayload();
-    // breakfast は最低 2 品。1 品は AI schema 上は合法でも内部構造として拒否する。
+    // S11: breakfast 最低 2 品を AI wire schema superRefine で先に閉じる
     payload.dishes = [payload.dishes[0]!];
     payload.timeline = payload.timeline.filter((entry) => entry.dishRef === "dish_1");
     expectOutputError(
       () => materializeAiGeneratedMenu(payload, makeContext(), uuidFactory()),
-      "invalid_menu_structure",
+      "invalid_provider_menu",
     );
   });
 

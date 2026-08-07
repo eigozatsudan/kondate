@@ -6,6 +6,7 @@ import {
 import { GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX } from "../../../shared/contracts/plan-quota.js";
 import { releaseQuota } from "../../../shared/contracts/generation.js";
 import {
+  assertReleaseLockedIntegerPair,
   parseManagedSupabaseProjectRef,
   parseOpenRouterModels,
   parseServerEnv,
@@ -313,6 +314,15 @@ describe("parseOpenRouterModels", () => {
   ] as const)("accepts exact deadline lock %s=%s", (key, value, openRouterKey, expected) => {
     const parsed = parseServerEnv({ ...validServerEnv, [key]: value });
     expect(parsed.openRouter[openRouterKey]).toBe(expected);
+  });
+
+  it("fails closed when release-locked number/text pair disagree (S1)", () => {
+    // 定数だけ改訂して text を旧値のままにする経路を構築時に拒否する
+    expect(() => assertReleaseLockedIntegerPair(50_000, "55000")).toThrow(
+      /release_locked_integer_mismatch/,
+    );
+    expect(() => assertReleaseLockedIntegerPair(55_000, "55000")).not.toThrow();
+    expect(() => assertReleaseLockedIntegerPair(24_000, "24000")).not.toThrow();
   });
 
   it.each([

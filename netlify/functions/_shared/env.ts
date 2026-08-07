@@ -40,11 +40,25 @@ export const continuationServerEnvSchema = z.object({
     .refine((value) => value === 300),
 });
 
+/**
+ * リリース固定整数の number / 十進 text 一致を fail-closed で拘束する。
+ * 不一致のまま union+transform すると旧 env 文字列が新定数へ silent map されるため禁止（S1）。
+ */
+export function assertReleaseLockedIntegerPair(value: number, text: string): void {
+  if (String(value) !== text) {
+    throw new Error(`release_locked_integer_mismatch:${String(value)}!=${text}`);
+  }
+}
+
 // リリース固定整数: 数値リテラルと十進文字列のみ受理し、未設定・近傍値・coerce を拒否する
 const releaseLockedInteger = <const Value extends number, const Text extends string>(
   value: Value,
   text: Text,
-) => z.union([z.literal(value), z.literal(text)]).transform(() => value);
+) => {
+  // schema 構築時に number/text 意味一致を強制（モジュール load で検知）
+  assertReleaseLockedIntegerPair(value, text);
+  return z.union([z.literal(value), z.literal(text)]).transform(() => value);
+};
 const globalDailyLimit = (max: number) => z.coerce.number().int().min(1).max(max).default(max);
 
 // GENERATION_REQUEST_HMAC_KEY / QUOTA_IDENTITY_HMAC_KEY 共通: canonical base64 of 32 bytes

@@ -4,13 +4,16 @@ import { labelSourceTypes, storeSections } from "./generation.js";
 const uuid = z.uuid();
 export type StoreSection = (typeof storeSections)[number];
 
+/** 材料・draft・list 応答で共有する数量天井（AI/pantry と揃える・S2） */
+const shoppingQuantityValue = z.number().positive().max(999_999).nullable();
+
 export const shoppingSourceIngredientSchema = z
   .object({
     ingredientId: uuid,
     dishId: uuid,
     dishName: z.string().trim().min(1).max(100),
     name: z.string().trim().min(1).max(100),
-    quantityValue: z.number().positive().nullable(),
+    quantityValue: shoppingQuantityValue,
     quantityText: z.string().trim().min(1).max(60),
     unit: z.string().trim().min(1).max(24).nullable(),
     storeSection: z.enum(storeSections),
@@ -43,7 +46,7 @@ export const shoppingDraftItemSchema = z
     displayName: z.string().trim().min(1).max(100),
     normalizedName: z.string().trim().min(1).max(100),
     storeSection: z.enum(storeSections),
-    quantityValue: z.number().positive().nullable(),
+    quantityValue: shoppingQuantityValue,
     quantityText: z.string().trim().min(1).max(60),
     unit: z.string().trim().min(1).max(24).nullable(),
     pantryCheckRequired: z.boolean(),
@@ -59,16 +62,17 @@ export const shoppingDraftSchema = z
   })
   .strict();
 
+// list 応答も draft 書込と同型の文字列 bound（S8: 巨大文字列の構造受理を閉じる）
 export const shoppingItemSchema = z
   .object({
     id: uuid,
     listId: uuid,
-    displayName: z.string(),
-    normalizedName: z.string(),
+    displayName: z.string().trim().min(1).max(100),
+    normalizedName: z.string().trim().min(1).max(100),
     storeSection: z.enum(storeSections),
-    quantityValue: z.number().positive().nullable(),
-    quantityText: z.string(),
-    unit: z.string().nullable(),
+    quantityValue: shoppingQuantityValue,
+    quantityText: z.string().trim().min(1).max(60),
+    unit: z.string().trim().min(1).max(24).nullable(),
     pantryCheckRequired: z.boolean(),
     isChecked: z.boolean(),
     isManual: z.boolean(),
@@ -97,8 +101,8 @@ export const shoppingDiffSchema = z
           itemId: uuid,
           current: z
             .object({
-              displayName: z.string(),
-              quantityText: z.string(),
+              displayName: z.string().trim().min(1).max(100),
+              quantityText: z.string().trim().min(1).max(60),
               storeSection: z.enum(storeSections),
             })
             .strict(),
@@ -107,7 +111,13 @@ export const shoppingDiffSchema = z
         .strict(),
     ),
     remove: z.array(
-      z.object({ itemId: uuid, displayName: z.string(), quantityText: z.string() }).strict(),
+      z
+        .object({
+          itemId: uuid,
+          displayName: z.string().trim().min(1).max(100),
+          quantityText: z.string().trim().min(1).max(60),
+        })
+        .strict(),
     ),
     protectedItemIds: z.array(uuid),
     listLabelWarnings: z.array(shoppingLabelSnapshotSchema),
@@ -262,7 +272,7 @@ export const shoppingItemMutationRequestSchema = z.discriminatedUnion("operation
           displayName: z.string().trim().min(1).max(100),
           normalizedName: z.string().trim().min(1).max(100),
           storeSection: z.enum(storeSections),
-          quantityValue: z.number().positive().nullable(),
+          quantityValue: shoppingQuantityValue,
           quantityText: z.string().trim().min(1).max(60),
           unit: z.string().trim().min(1).max(24).nullable(),
           pantryCheckRequired: z.literal(false),
@@ -288,7 +298,7 @@ export const shoppingItemMutationRequestSchema = z.discriminatedUnion("operation
           displayName: z.string().trim().min(1).max(100),
           normalizedName: z.string().trim().min(1).max(100),
           storeSection: z.enum(storeSections),
-          quantityValue: z.number().positive().nullable(),
+          quantityValue: shoppingQuantityValue,
           quantityText: z.string().trim().min(1).max(60),
           unit: z.string().trim().min(1).max(24).nullable(),
         })
