@@ -778,9 +778,6 @@ export function materializeDishRegenerationCandidate(
   const adaptationIdByRef = new Map(
     output.adaptations.map((row) => [row.adaptationRef, uuid()] as const),
   );
-  const selectionIdByRef = new Map(
-    output.pantryUsage.map((row) => [row.pantryRef, uuid()] as const),
-  );
 
   const context = execution.generationContext;
   const pantryById = new Map(context.pantryItems.map((item) => [item.id, item] as const));
@@ -799,8 +796,14 @@ export function materializeDishRegenerationCandidate(
   );
   const targetMemberRefs = new Set(context.targetMembers.map((member) => member.anonymousRef));
 
-  // full_menu materializer（R2/G5/G17/G4）と同型: pantry 連動の name/unit/quantity 整合
-  const usageByRef = new Map(output.pantryUsage.map((row) => [row.pantryRef, row] as const));
+  // full_menu materializer と同型: pantryUsage 重複は last-wins せず fail-closed（RR2）
+  const usageByRef = new Map<string, (typeof output.pantryUsage)[number]>();
+  const selectionIdByRef = new Map<string, string>();
+  for (const usage of output.pantryUsage) {
+    if (usageByRef.has(usage.pantryRef)) materializeError("pantry_usage_duplicate");
+    usageByRef.set(usage.pantryRef, usage);
+    selectionIdByRef.set(usage.pantryRef, uuid());
+  }
 
   /** pantryRef 正当時: plannedQuantity → quantityValue（0 以下は null） */
   const quantityValueFromPlanned = (
@@ -953,11 +956,34 @@ export function materializeDishRegenerationCandidate(
     return scaled;
   };
 
+  /** full_menu equalStringSets と同型（順序非依存の ref 集合一致） */
+  const equalStringSets = (left: readonly string[], right: readonly string[]): boolean => {
+    if (left.length !== right.length) return false;
+    const values = new Set(left);
+    return values.size === left.length && right.every((value) => values.has(value));
+  };
+
+  // dishRefs link 照合用: retained + replacement の AI 形（pantryRef 付き）を正とする
+  const dishesForPantryLink = [
+    ...artifacts.retainedDishes.map((dish) => ({
+      dishRef: dish.dishRef,
+      ingredients: dish.ingredients,
+    })),
+    {
+      dishRef: output.replacementDish.dishRef,
+      ingredients: output.replacementDish.ingredients,
+    },
+  ];
+
   const pantryUsage = output.pantryUsage.map((usage) => {
     const trusted = pantryByRef.get(usage.pantryRef);
     if (trusted === undefined) {
       // 現行コンテキストに無い pantryRef は拒否（スキーマ外参照）
       materializeError("unknown_pantry_ref");
+    }
+    // RR2: AI priority を信頼せず、submission の trusted priority と一致を要求
+    if (trusted.selection.priority !== usage.priority) {
+      materializeError("pantry_priority_mismatch");
     }
     // full_menu と同型: provider unit と trusted unit の不一致は fail-closed
     const providerUnit = usage.unit?.trim() ?? null;
@@ -970,6 +996,15 @@ export function materializeDishRegenerationCandidate(
       usage.plannedQuantity === null ? null : exactThousandths(usage.plannedQuantity);
     const inventoryThousandths =
       trusted.item.quantity === null ? null : exactThousandths(trusted.item.quantity);
+    // RR2: usage.dishRefs と実際に pantryRef を持つ dish 集合が一致すること
+    const actualDishRefs = dishesForPantryLink
+      .filter((dish) =>
+        dish.ingredients.some((ingredient) => ingredient.pantryRef === usage.pantryRef),
+      )
+      .map((dish) => dish.dishRef);
+    if (!equalStringSets(usage.dishRefs, actualDishRefs)) {
+      materializeError("pantry_usage_link_mismatch");
+    }
     return {
       selectionId: requiredMap(selectionIdByRef, usage.pantryRef),
       pantryItemId: trusted.item.id,

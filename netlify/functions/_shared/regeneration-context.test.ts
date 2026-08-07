@@ -1355,6 +1355,83 @@ describe("materializeDishRegenerationCandidate", () => {
     expect(candidate.safetyTags).toEqual([]);
     expect(candidate.adaptations[0]?.safetyTags).toEqual([]);
   });
+
+  // RR2: full_menu 同型の pantry integrity（duplicate / priority / dishRefs link）
+  it("RR2: rejects pantry_usage_duplicate, pantry_priority_mismatch, and pantry_usage_link_mismatch", () => {
+    const pantryItemId = "61000000-0000-4000-8000-000000000099";
+    const withPantry = () => {
+      const { execution, uuid } = makeDishRegenerationExecutionContext();
+      execution.generationContext = makeGenerationContext({
+        submission: {
+          ...makeGenerationContext().submission,
+          mainIngredients: ["豚こま肉"],
+          timeLimitMinutes: null,
+          pantrySelections: [{ pantryItemId, priority: "prefer_use" as const }],
+        },
+        pantryItems: [
+          {
+            id: pantryItemId,
+            userId: user.userId,
+            name: "豚こま肉",
+            quantity: 100,
+            unit: "g",
+            expiresOn: null,
+            expirationType: null,
+            openedState: null,
+            createdAt: "2026-07-11T00:00:00.000Z",
+            updatedAt: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+      });
+      const output = makeDishRegenerationAiOutput();
+      output.replacementDish.ingredients[0] = {
+        ...output.replacementDish.ingredients[0]!,
+        pantryRef: "pantry_1",
+      };
+      output.pantryUsage = [
+        {
+          pantryRef: "pantry_1",
+          pantryItemName: "豚こま肉",
+          priority: "prefer_use",
+          usageStatus: "used",
+          plannedQuantity: 200,
+          inventoryQuantity: 100,
+          shortageQuantity: 100,
+          unit: "g",
+          dishRefs: ["dish_1"],
+          unusedReason: null,
+        },
+      ];
+      return { execution, uuid, output };
+    };
+
+    // duplicate pantryRef — assertMaterializationRefUnion が先に fail-closed（RR2 の DiD）
+    {
+      const { execution, uuid, output } = withPantry();
+      output.pantryUsage = [...output.pantryUsage, output.pantryUsage[0]!];
+      expect(() => materializeDishRegenerationCandidate(execution, output, uuid)).toThrow(
+        /duplicate local ref declaration: pantry_1|pantry_usage_duplicate/,
+      );
+    }
+
+    // AI priority ≠ trusted selection.priority
+    {
+      const { execution, uuid, output } = withPantry();
+      output.pantryUsage[0]!.priority = "must_use";
+      expect(() => materializeDishRegenerationCandidate(execution, output, uuid)).toThrow(
+        "pantry_priority_mismatch",
+      );
+    }
+
+    // dishRefs が実際の ingredient.pantryRef 集合と不一致
+    {
+      const { execution, uuid, output } = withPantry();
+      output.pantryUsage[0]!.dishRefs = ["dish_2"];
+      expect(() => materializeDishRegenerationCandidate(execution, output, uuid)).toThrow(
+        "pantry_usage_link_mismatch",
+      );
+    }
+  });
 });
 
 describe("buildDishRegenerationPrompt label source refs", () => {

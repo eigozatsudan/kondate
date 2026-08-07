@@ -309,11 +309,18 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
     }
   };
 
+  type ResolvedPlanLimits = Awaited<ReturnType<typeof resolvePlanLimits>>;
+
+  /**
+   * reserve 引数を構築する。
+   * planLimits を渡した場合は entitlement を再読取しない（RR1: request 内 dual-read TOCTOU 防止）。
+   */
   const buildReserveArgs = async (
     command: GenerationCommandV3,
     integrity: GenerationIntegrityContextV3,
+    planLimits?: ResolvedPlanLimits,
   ) => {
-    const { limits, quotaPlan } = await resolvePlanLimits();
+    const { limits, quotaPlan } = planLimits ?? (await resolvePlanLimits());
     assertQualityModeAllowed(command, quotaPlan);
     // p_quality_mode は Plus かつ command.qualityMode のときのみ true
     const pQualityMode = command.qualityMode && quotaPlan === "plus";
@@ -368,9 +375,13 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
         // lookup hit では先に finalize failure で processing を終端し、枠を解放する。
         // 既に succeeded 等の terminal は finalize が現状を返すため壊さない。
         // HMAC / qualityMode 契約は緩めない（false へ書換えての再送は 409 のまま）。
+        //
+        // RR1: demotion 判定と buildReserveArgs で entitlement を二重読取しない。
+        // 1 回目 Plus・2 回目 Free の TOCTOU だと finalize 無し 403 + processing 孤児が再発する。
+        // request 内で resolvePlanLimits を 1 回に固定し、降格時は必ず finalize してから 403。
         if (command.qualityMode) {
-          const { quotaPlan } = await resolvePlanLimits();
-          if (quotaPlan !== "plus") {
+          const planLimits = await resolvePlanLimits();
+          if (planLimits.quotaPlan !== "plus") {
             const terminal = requestPayloadSchema.parse(
               await rpc("finalize_ai_generation_failure", {
                 p_request_id: lookup.requestId,
@@ -392,6 +403,13 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
             // 既 terminal（succeeded / 他 failed / conflict）はそのまま返す
             return terminal;
           }
+          // plus 継続: 同じ planLimits を reserve に渡し、assert / limits の再読取を避ける
+          return requestPayloadSchema.parse(
+            await rpc(
+              "reserve_ai_generation",
+              await buildReserveArgs(command, lookup.integrity, planLimits),
+            ),
+          );
         }
         return requestPayloadSchema.parse(
           await rpc("reserve_ai_generation", await buildReserveArgs(command, lookup.integrity)),

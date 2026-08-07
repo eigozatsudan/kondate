@@ -910,6 +910,44 @@ describe("createGenerationRepository regeneration reserve", () => {
     expect(rpcMock).not.toHaveBeenCalledWith("reserve_ai_generation", expect.anything());
   });
 
+  // RR1: qualityMode replay は entitlement を 1 回だけ読み、demotion と reserve に同じ plan を使う。
+  // 2 回目が Free でも再 assert 403 で processing 孤児を出さない（dual-read TOCTOU 閉鎖）。
+  it("RR1: replayExisting qualityMode uses single entitlement read for demotion and reserve", async () => {
+    loadEntitlementMock
+      .mockResolvedValueOnce(plusEntitlement)
+      .mockResolvedValueOnce(freeEntitlement);
+    getServerEnvMock.mockReturnValue({
+      openRouter: {
+        userDailyLimit: 3,
+        globalDailyLimit: 20,
+        staleAfterSeconds: 180,
+      },
+      generationIntegrity: {
+        requestHmacKey: hmacKey,
+      },
+      quotaIdentityHmacKey: identityHmacKey,
+      aiQuotaDisabled: false,
+      billingEnabled: true,
+    });
+    rpcMock.mockResolvedValueOnce({ data: publicRecord, error: null });
+    const repository = createGenerationRepository(user);
+    const qualityCommand = { ...newMenuCommand, qualityMode: true };
+    await expect(
+      repository.replayExisting(qualityCommand, {
+        kind: "hit",
+        requestId,
+        requestHmacVersion: generationRequestHmacVersion,
+        integrity: householdIntegrity,
+      }),
+    ).resolves.toMatchObject({ status: "processing" });
+    expect(loadEntitlementMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledWith(
+      "reserve_ai_generation",
+      expect.objectContaining({ p_quality_mode: true, p_user_limit: 10 }),
+    );
+    expect(rpcMock).not.toHaveBeenCalledWith("finalize_ai_generation_failure", expect.anything());
+  });
+
   it("passes p_quality_mode true when Plus and qualityMode", async () => {
     loadEntitlementMock.mockResolvedValue(plusEntitlement);
     getServerEnvMock.mockReturnValue({
