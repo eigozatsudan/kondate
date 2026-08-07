@@ -7,7 +7,14 @@ import {
 } from "@shared/contracts/shopping";
 import { normalizeIngredientName } from "@shared/shopping/normalize";
 import { reviewedShoppingAliases } from "@shared/shopping/reviewed-aliases";
-import { mutateShoppingItem, revalidateActiveShoppingList } from "../api/shopping-api";
+import {
+  clearPendingItemMutation,
+  mutateShoppingItem,
+  readPendingItemMutation,
+  revalidateActiveShoppingList,
+  writePendingItemMutation,
+  type PendingItemMutationSticky,
+} from "../api/shopping-api";
 import { categoryLabel } from "../category-label";
 import { ShoppingItemRow } from "../components/shopping-item-row";
 import { useShoppingList, useShoppingSafetyGate } from "../hooks/use-shopping-list";
@@ -51,15 +58,32 @@ export function ShoppingListPage() {
   const [pendingUndoIds, setPendingUndoIds] = useState<ReadonlySet<string>>(() => new Set());
   // SP-I7: hooks は early return より前に置く
   const mutationInFlight = useRef(false);
-  // SHOP13: 失応答後の同一操作再試行で idempotencyKey を再利用する。
+  // SHOP13 + SHOP2: 失応答後の同一操作再試行で idempotencyKey を再利用する。
   // SQL の request_hash は list version / safety fingerprint を含むため、
   // 「直前に送った完全な request」をそのまま再送し early replay で dual-apply を防ぐ。
-  // code 付き失敗（version/safety/mismatch）では未適用が確定するので sticky を捨てる。
-  const pendingItemMutationRef = useRef<{
-    intentKey: string;
-    request: ShoppingItemMutationRequest;
-  } | null>(null);
+  // sessionStorage に永続化し reload 後も dual add_manual を防ぐ（create sticky と同型）。
+  // list_version_conflict / mismatch は未適用確定なので sticky を捨てる。
+  // SHOP3: shopping_safety_fingerprint_changed は適用済み+early FP fail もあり得るため
+  // sticky を保持し、同一 intent の再送鍵を固定して dual-add に転化させない。
+  const pendingItemMutationRef = useRef<PendingItemMutationSticky | null>(null);
   const [itemMutationPending, setItemMutationPending] = useState(false);
+
+  /** ref が空なら sessionStorage から復元（SHOP2 reload 耐性）。 */
+  const loadItemMutationSticky = (listId: string): PendingItemMutationSticky | null => {
+    const fromRef = pendingItemMutationRef.current;
+    if (fromRef !== null && fromRef.request.listId === listId) return fromRef;
+    const fromStorage = readPendingItemMutation(listId);
+    if (fromStorage !== null) pendingItemMutationRef.current = fromStorage;
+    return fromStorage;
+  };
+  const saveItemMutationSticky = (sticky: PendingItemMutationSticky): void => {
+    pendingItemMutationRef.current = sticky;
+    writePendingItemMutation(sticky.request.listId, sticky);
+  };
+  const dropItemMutationSticky = (listId: string): void => {
+    pendingItemMutationRef.current = null;
+    clearPendingItemMutation(listId);
+  };
   if (query.isPending)
     return (
       <main className="page-frame">
@@ -124,9 +148,10 @@ export function ShoppingListPage() {
     : [];
   // SP-I7: 項目操作を直列化し、連打による version conflict / 見た目ロールバックを防ぐ
   // 操作直前に list 単位 revalidate し、Realtime 欠落窓でも write 前に fail-closed
-  const mutate = async (value: LocalShoppingItemMutation) => {
-    if (safetyBlocked || safetyGate.safetyFingerprint === null) return;
-    if (mutationInFlight.current) return;
+  // 戻り値 true = 成功（フォーム clear 用）。false = 失敗/中断（SHOP4 でフォーム保持）。
+  const mutate = async (value: LocalShoppingItemMutation): Promise<boolean> => {
+    if (safetyBlocked || safetyGate.safetyFingerprint === null) return false;
+    if (mutationInFlight.current) return false;
     mutationInFlight.current = true;
     setItemMutationPending(true);
     // 操作意図（key 再利用の照合）。list version / FP は含めない（それらは request 本体側）。
@@ -135,16 +160,18 @@ export function ShoppingListPage() {
       itemId: value.itemId,
       payload: value.payload,
     });
+    let succeeded = false;
     try {
       setMutationError(null);
       const live = await revalidateActiveShoppingList(list.id);
       // discriminated union: status==="valid" なら safetyFingerprint は非 null
+      // sticky は捨てない（SHOP3: 適用済みロスト後の preflight invalid でも鍵を固定）。
       if (live.status !== "valid") {
         setMutationError("家族設定が変わりました。もう一度確認します");
         await safetyGate.refresh();
-        return;
+        return false;
       }
-      const sticky = pendingItemMutationRef.current;
+      const sticky = loadItemMutationSticky(list.id);
       // SHOP13: 同一意図の失応答再試行は直前 request（同一 idempotencyKey）を再送する。
       // early replay は hash（version 込み）一致で 200 を返し add_manual の二重 INSERT を防ぐ。
       const request =
@@ -158,11 +185,12 @@ export function ShoppingListPage() {
               idempotencyKey: crypto.randomUUID(),
             });
       if (sticky === null || sticky.intentKey !== intentKey || sticky.request.listId !== list.id) {
-        pendingItemMutationRef.current = { intentKey, request };
+        saveItemMutationSticky({ intentKey, request });
       }
       await mutateShoppingItem(request);
       // 成功（replay 含む）したら sticky を捨て、次の意図的な同内容 add は新 key になる
-      pendingItemMutationRef.current = null;
+      dropItemMutationSticky(list.id);
+      succeeded = true;
       // 成功時のみ確認行用 id を更新（失敗後の refetch でも pending を汚さない）
       if (
         value.itemId !== null &&
@@ -182,22 +210,26 @@ export function ShoppingListPage() {
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "list_version_conflict") {
         // early replay は version を見ない。conflict は未適用確定 → sticky 破棄して次回は新 body
-        pendingItemMutationRef.current = null;
+        dropItemMutationSticky(list.id);
         setMutationError("別の画面で更新されました。最新の内容を読み込みました");
       } else if (
         error instanceof Error &&
         "code" in error &&
         error.code === "shopping_safety_fingerprint_changed"
       ) {
-        pendingItemMutationRef.current = null;
-        setMutationError("家族設定が変わりました。もう一度確認します");
+        // SHOP3: 適用済み + 応答ロスト後に FP が変わると early の list FP lock が
+        // fail する。sticky を捨てると次操作が新 key になり dual-add するため保持する。
+        // 同一 intent は同じ request を再送し、リスト確認を促す。
+        setMutationError(
+          "家族設定が変わりました。すでにリストへ反映済みの可能性があります。リストを確認してから操作してください",
+        );
         await safetyGate.refresh();
       } else if (
         error instanceof Error &&
         "code" in error &&
         error.code === "idempotency_payload_mismatch"
       ) {
-        pendingItemMutationRef.current = null;
+        dropItemMutationSticky(list.id);
         setMutationError("前回と異なる内容で再送できません");
       } else {
         // 通信ロスト等 code 無し: sticky を残し同一 key で再送可能にする（SHOP13）
@@ -208,6 +240,7 @@ export function ShoppingListPage() {
       setItemMutationPending(false);
     }
     await query.refetch();
+    return succeeded;
   };
   const submitManual = async (event: SyntheticEvent) => {
     event.preventDefault();
@@ -221,7 +254,9 @@ export function ShoppingListPage() {
       requestAnimationFrame(() => manualFirstField.current?.focus());
       return;
     }
-    await mutate({
+    // SHOP4: 失敗時はフォームを clear しない（再入力ゆれによる dual-add 誘発を防ぐ）。
+    // 成功時のみ clear + 追加フォームを閉じる。sticky 再利用と揃える。
+    const ok = await mutate({
       operation: "add_manual",
       itemId: null,
       payload: {
@@ -234,13 +269,13 @@ export function ShoppingListPage() {
         pantryCheckRequired: false,
       },
     });
+    if (!ok) return;
     setManualName("");
     setManualQuantity("");
     setManualQuantityText("数量未入力");
     setManualUnit("");
     setFieldError(null);
     setAdding(false);
-    await query.refetch();
   };
   // 削除済みは進捗から外す。店舗で「まだ買うもの」と「済んだもの」の比だけを見せる。
   const progressItems = list.items.filter((item) => !item.isRemovedByUser);

@@ -257,6 +257,64 @@ export const clearShoppingCommand = (kind: "create" | "reconcile", targetId: str
   sessionStorage.removeItem(pendingShoppingCommandStorageKey(kind, targetId));
 };
 
+/**
+ * SHOP2: item mutate の失応答 sticky。create/reconcile と同型の sessionStorage
+ * （24h TTL・成功時 clear）。reload / ルート再マウント後も同一 idempotencyKey を再利用し
+ * dual add_manual を防ぐ。in-memory ref だけでは消える残窓を閉じる。
+ */
+export const pendingItemMutationStorageKey = (listId: string) =>
+  `kondate:shopping:item-mutate:${listId}`;
+
+const pendingItemMutationEnvelopeSchema = z
+  .object({
+    createdAtMs: z.number().int().nonnegative(),
+    intentKey: z.string().min(1),
+    request: shoppingItemMutationRequestSchema,
+  })
+  .strict();
+
+export type PendingItemMutationSticky = {
+  intentKey: string;
+  request: ShoppingItemMutationRequest;
+};
+
+export function readPendingItemMutation(listId: string): PendingItemMutationSticky | null {
+  const key = pendingItemMutationStorageKey(listId);
+  const saved = sessionStorage.getItem(key);
+  if (saved === null) return null;
+  try {
+    const parsed = pendingItemMutationEnvelopeSchema.safeParse(JSON.parse(saved));
+    if (parsed.success) {
+      const age = Date.now() - parsed.data.createdAtMs;
+      if (age >= 0 && age <= pendingShoppingCommandTtlMs) {
+        return { intentKey: parsed.data.intentKey, request: parsed.data.request };
+      }
+    }
+  } catch {
+    /* 下の removeItem で捨てる */
+  }
+  sessionStorage.removeItem(key);
+  return null;
+}
+
+export function writePendingItemMutation(
+  listId: string,
+  sticky: PendingItemMutationSticky,
+): void {
+  sessionStorage.setItem(
+    pendingItemMutationStorageKey(listId),
+    JSON.stringify({
+      createdAtMs: Date.now(),
+      intentKey: sticky.intentKey,
+      request: sticky.request,
+    }),
+  );
+}
+
+export function clearPendingItemMutation(listId: string): void {
+  sessionStorage.removeItem(pendingItemMutationStorageKey(listId));
+}
+
 export type ReconcilableMenuSource = { sourceMenuId: string; sourceMenuVersion: number };
 
 /**

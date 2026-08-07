@@ -201,6 +201,17 @@ function mapRpcError(error: { message: string }): never {
     const [status, code, message] = match[1];
     throw new HttpError(status, code, message);
   }
+  // SHOP6: 空 active 並行 mode=new は FOR UPDATE で直列化されず、
+  // partial unique shopping_lists_one_active_per_user が二重 active を物理拒否する。
+  // 敗者を 503 ではなく list version race と同型の 409 に揃え、再試行 UX を対称にする。
+  // 他 unique（warning key 等）は 503 のまま fail-closed。
+  if (error.message.includes("shopping_lists_one_active_per_user")) {
+    throw new HttpError(
+      409,
+      "list_version_conflict",
+      "買い物リストが更新されました。再読み込みしてください",
+    );
+  }
   throw dbFailure("買い物リストを更新できませんでした");
 }
 

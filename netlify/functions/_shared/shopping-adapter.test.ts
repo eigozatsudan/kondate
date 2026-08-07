@@ -170,4 +170,65 @@ describe("createShoppingDependencies.replaceCurrentSafetyProjection", () => {
       code: "safety_fingerprint_changed",
     });
   });
+
+  it("maps one_active unique violation to list_version_conflict (SHOP6)", async () => {
+    // 空 active 並行 mode=new は partial unique で二重 active を拒否する。
+    // 敗者は 503 ではなく 409 list_version_conflict に揃え、version race と対称にする。
+    const { deps } = makeDeps({
+      data: null,
+      error: {
+        message:
+          'duplicate key value violates unique constraint "shopping_lists_one_active_per_user"',
+      },
+    });
+    await expect(
+      deps.applyDraft({
+        userId: USER_ID,
+        menuId: MENU_ID,
+        mode: "new",
+        activeListId: null,
+        expectedListVersion: null,
+        safetyFingerprint: FINGERPRINT,
+        idempotencyKey: "90000000-0000-4000-8000-000000000099",
+        requestHash: "a".repeat(64),
+        draft: {
+          items: [],
+          listLabelWarnings: [],
+        },
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "list_version_conflict",
+    });
+  });
+
+  it("keeps unrelated unique violations as shopping_unavailable (SHOP6 scope)", async () => {
+    // one_active 以外の unique は 503 のまま（契約を広げない）
+    const { deps } = makeDeps({
+      data: null,
+      error: {
+        message:
+          'duplicate key value violates unique constraint "shopping_current_label_warnings_key_unique"',
+      },
+    });
+    await expect(
+      deps.applyDraft({
+        userId: USER_ID,
+        menuId: MENU_ID,
+        mode: "new",
+        activeListId: null,
+        expectedListVersion: null,
+        safetyFingerprint: FINGERPRINT,
+        idempotencyKey: "90000000-0000-4000-8000-000000000098",
+        requestHash: "b".repeat(64),
+        draft: {
+          items: [],
+          listLabelWarnings: [],
+        },
+      }),
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "shopping_unavailable",
+    });
+  });
 });

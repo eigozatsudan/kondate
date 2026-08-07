@@ -341,7 +341,10 @@ export function HouseholdMenuDetailBody({
     // HR9: soft/hard 閉じ中は focus resume を止める。true 復帰で effect が再送。
     // SHOP8: list blocked 中は create resume 自体も止め、submit 内の append ガードと二重に閉じる。
     // mode=new の自動再開は gate 復帰後（またはシート手動送信）に委ねる。
-    enabled: actionsEnabled && !shoppingGate.blocked,
+    // SHOP1: create シート表示中は resume しない。sheet onSubmit の isReusable
+    // （mode/list/version 照合 rebuild）を focus/online がすり抜けて旧 sticky を
+    // 飛ばす dual-intent 窓を閉じる。シート閉じ後に enabled 復帰で再試行。
+    enabled: actionsEnabled && !shoppingGate.blocked && shoppingSheet !== "create",
   });
   useResumeShoppingCommand({
     kind: "reconcile",
@@ -349,7 +352,8 @@ export function HouseholdMenuDetailBody({
     schema: reconcileShoppingListRequestSchema,
     submit: (command: ReconcileShoppingListRequest) =>
       submitReconcile(activeList?.id ?? "", command),
-    enabled: actionsEnabled && !shoppingGate.blocked,
+    // SHOP1: reconcile シート表示中も同様に resume を止める（approval 選び直し中の旧 sticky 再送防止）。
+    enabled: actionsEnabled && !shoppingGate.blocked && shoppingSheet !== "reconcile",
   });
 
   const firstDishId = result.menu.dishes[0]?.id ?? null;

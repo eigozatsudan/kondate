@@ -7,14 +7,15 @@ import {
   householdSafetyChangedEvent,
   householdSafetyRevisionStorageKey,
 } from "@/features/household/household-queries";
-import type {
-  ShoppingDiff,
-  ShoppingItem,
-  ShoppingLabelSnapshot,
-  ShoppingItemMutationRequest,
-  ShoppingList,
-  ShoppingListSafetyData,
-  StoreSection,
+import {
+  shoppingItemMutationRequestSchema,
+  type ShoppingDiff,
+  type ShoppingItem,
+  type ShoppingLabelSnapshot,
+  type ShoppingItemMutationRequest,
+  type ShoppingList,
+  type ShoppingListSafetyData,
+  type StoreSection,
 } from "@shared/contracts/shopping";
 import { CreateListSheet } from "../components/create-list-sheet";
 import { ReconcileListSheet } from "../components/reconcile-list-sheet";
@@ -22,11 +23,15 @@ import { shoppingKeys, useResumeShoppingCommand } from "../hooks/use-shopping-li
 import { categoryLabel } from "../category-label";
 import { ShoppingListPage } from "./shopping-list-page";
 import {
+  clearPendingItemMutation,
   clearShoppingCommand,
   fetchReconcilableMenuSource,
+  pendingItemMutationStorageKey,
   pendingShoppingCommandStorageKey,
   pendingShoppingCommandTtlMs,
   persistedShoppingCommand,
+  readPendingItemMutation,
+  writePendingItemMutation,
 } from "../api/shopping-api";
 import { historyPathForShopping } from "../shopping-intent";
 import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
@@ -284,6 +289,8 @@ beforeEach(() => {
   // 各テストの開始時にグローバル状態だけ明示的に戻す（アサーションには影響しない）。
   onlineManager.setOnline(true);
   vi.resetAllMocks();
+  // SHOP2: item mutate sticky は sessionStorage。前テストの残滓で dual-key 偽グリーンにしない。
+  sessionStorage.clear();
   realtime.ownerId = OWNER_ID;
   realtime.getUserError = null;
   realtime.channelNames = [];
@@ -964,11 +971,9 @@ describe("ShoppingListPage mutations", () => {
     const firstKey = mutateShoppingItem.mock.calls[0]?.[0].idempotencyKey;
     expect(typeof firstKey).toBe("string");
 
-    // フォームは clear されるので同じ内容を再入力して再試行
-    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
-    await user.type(screen.getByLabelText("項目名"), "とうふ");
-    await user.clear(screen.getByLabelText("分量表記"));
-    await user.type(screen.getByLabelText("分量表記"), "1丁");
+    // SHOP4: 失敗後もフォームが残り、同じ内容のまま再送できる（表記ゆれ dual-add を誘発しない）
+    expect(screen.getByLabelText("項目名")).toHaveValue("とうふ");
+    expect(screen.getByLabelText("分量表記")).toHaveValue("1丁");
     mutateShoppingItem.mockResolvedValueOnce({
       listId: LIST_ID,
       version: 2,
@@ -981,6 +986,114 @@ describe("ShoppingListPage mutations", () => {
     });
     expect(mutateShoppingItem.mock.calls[1]?.[0].idempotencyKey).toBe(firstKey);
     expect(mutateShoppingItem.mock.calls[1]?.[0]).toEqual(mutateShoppingItem.mock.calls[0]?.[0]);
+    // 成功後だけフォームを閉じる
+    await waitFor(() => {
+      expect(screen.queryByLabelText("項目名")).toBeNull();
+    });
+  });
+
+  it("keeps manual form filled when add_manual fails (SHOP4)", async () => {
+    mutateShoppingItem.mockRejectedValueOnce(new Error("network lost"));
+    await renderPage(makeShoppingList([makeItem()]));
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "油揚げ");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "2枚");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("買い物項目を更新できませんでした");
+    });
+    expect(screen.getByLabelText("項目名")).toHaveValue("油揚げ");
+    expect(screen.getByLabelText("分量表記")).toHaveValue("2枚");
+    expect(screen.getByRole("button", { name: "追加する" })).toBeInTheDocument();
+  });
+
+  it("keeps sticky key after safety fingerprint failure so same intent does not dual-add (SHOP3)", async () => {
+    mutateShoppingItem.mockRejectedValueOnce(
+      Object.assign(new Error("fp"), { code: "shopping_safety_fingerprint_changed" }),
+    );
+    await renderPage(makeShoppingList([makeItem()]));
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "こんにゃく");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1枚");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("家族設定が変わりました");
+    });
+    expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
+    const firstKey = mutateShoppingItem.mock.calls[0]?.[0].idempotencyKey;
+    // sticky は sessionStorage に残り、フォームも保持（SHOP3+SHOP4）
+    expect(readPendingItemMutation(LIST_ID)?.request.idempotencyKey).toBe(firstKey);
+    expect(screen.getByLabelText("項目名")).toHaveValue("こんにゃく");
+
+    // gate が ready に戻ったあと同一内容再送 → 同一 key（新 UUID にしない）
+    revalidateActiveShoppingList.mockResolvedValue(validSafety());
+    mutateShoppingItem.mockResolvedValueOnce({
+      listId: LIST_ID,
+      version: 2,
+      itemId: "40000000-0000-4000-8000-0000000000bb",
+      replayed: true,
+    });
+    // safetyGate.refresh 後 blocked になり得るので ready を待ってから
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "追加する" })).not.toBeDisabled();
+    });
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(mutateShoppingItem).toHaveBeenCalledTimes(2);
+    });
+    expect(mutateShoppingItem.mock.calls[1]?.[0].idempotencyKey).toBe(firstKey);
+    expect(mutateShoppingItem.mock.calls[1]?.[0]).toEqual(mutateShoppingItem.mock.calls[0]?.[0]);
+  });
+
+  it("reuses item mutation sticky from sessionStorage after remount (SHOP2)", async () => {
+    const stickyRequest = shoppingItemMutationRequestSchema.parse({
+      operation: "add_manual",
+      itemId: null,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey: "40000000-0000-4000-8000-0000000000cc",
+      payload: {
+        displayName: "わかめ",
+        normalizedName: "わかめ",
+        storeSection: "other",
+        quantityValue: null,
+        quantityText: "1袋",
+        unit: null,
+        pantryCheckRequired: false,
+      },
+    });
+    writePendingItemMutation(LIST_ID, {
+      intentKey: JSON.stringify({
+        operation: "add_manual",
+        itemId: null,
+        payload: stickyRequest.payload,
+      }),
+      request: stickyRequest,
+    });
+    await renderPage(makeShoppingList([makeItem()]));
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "わかめ");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1袋");
+    mutateShoppingItem.mockResolvedValueOnce({
+      listId: LIST_ID,
+      version: 2,
+      itemId: "40000000-0000-4000-8000-0000000000dd",
+      replayed: true,
+    });
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
+    });
+    expect(mutateShoppingItem.mock.calls[0]?.[0].idempotencyKey).toBe(
+      stickyRequest.idempotencyKey,
+    );
+    expect(mutateShoppingItem.mock.calls[0]?.[0]).toEqual(stickyRequest);
+    // 成功後は sticky を消す
+    expect(readPendingItemMutation(LIST_ID)).toBeNull();
   });
 
   it("adds a manual item with optional quantity and unit", async () => {
@@ -1595,6 +1708,85 @@ describe("useResumeShoppingCommand", () => {
       expect(submit).toHaveBeenCalledTimes(1);
     });
     expect(JSON.stringify(submit.mock.calls[0]?.[0])).toBe(JSON.stringify(command));
+  });
+
+  it("does not resume on focus while enabled stays false (SHOP1 sheet-open suppress)", async () => {
+    // household body は shoppingSheet 表示中に enabled=false にする。
+    // focus/online が sheet の isReusable rebuild をすり抜けないことを固定する。
+    seed(Date.now());
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+
+    renderHook(() =>
+      useResumeShoppingCommand({
+        kind: "create",
+        targetId: MENU_ID,
+        schema,
+        submit,
+        enabled: false,
+      }),
+    );
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("online"));
+      await Promise.resolve();
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(storageKey)).not.toBeNull();
+  });
+});
+
+describe("pendingItemMutation sticky (SHOP2)", () => {
+  afterEach(() => {
+    sessionStorage.clear();
+    vi.useRealTimers();
+  });
+
+  it("round-trips intentKey and full request within TTL", () => {
+    const request = shoppingItemMutationRequestSchema.parse({
+      operation: "add_manual",
+      itemId: null,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey: "40000000-0000-4000-8000-0000000000ee",
+      payload: {
+        displayName: "ねぎ",
+        normalizedName: "ねぎ",
+        storeSection: "produce",
+        quantityValue: 1,
+        quantityText: "1本",
+        unit: "本",
+        pantryCheckRequired: false,
+      },
+    });
+    writePendingItemMutation(LIST_ID, { intentKey: "k1", request });
+    expect(readPendingItemMutation(LIST_ID)).toEqual({ intentKey: "k1", request });
+    expect(sessionStorage.getItem(pendingItemMutationStorageKey(LIST_ID))).not.toBeNull();
+    clearPendingItemMutation(LIST_ID);
+    expect(readPendingItemMutation(LIST_ID)).toBeNull();
+  });
+
+  it("discards expired and corrupt item mutation sticky", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
+    const request = shoppingItemMutationRequestSchema.parse({
+      operation: "set_checked",
+      itemId: ITEM_ID,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey: "40000000-0000-4000-8000-0000000000ef",
+      payload: { isChecked: true },
+    });
+    writePendingItemMutation(LIST_ID, { intentKey: "k2", request });
+    vi.setSystemTime(
+      new Date("2026-07-22T00:00:00.000Z").getTime() + pendingShoppingCommandTtlMs + 1,
+    );
+    expect(readPendingItemMutation(LIST_ID)).toBeNull();
+
+    sessionStorage.setItem(pendingItemMutationStorageKey(LIST_ID), "{ not json");
+    expect(readPendingItemMutation(LIST_ID)).toBeNull();
   });
 });
 
