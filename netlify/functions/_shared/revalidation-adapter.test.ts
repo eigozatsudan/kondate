@@ -441,6 +441,62 @@ describe("validateStoredMenuCurrentSafety", () => {
     ).rejects.toMatchObject({ status: 503, code: "request_failed" });
   });
 
+  it("HR10: fails closed with 503 when preference row schema parse fails (not preference_changed)", async () => {
+    // portion_size 等の型崩れを continue すると Map 非登録 → preference_changed 誤誘導になる
+    const stored = makeStored();
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [{ id: PANTRY_ITEM_ID, quantity: 200 }], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "not-a-valid-portion",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    await expect(
+      validateStoredMenuCurrentSafety({
+        ownerClient: ownerClient as never,
+        admin: {} as never,
+        stored,
+        userId: USER_ID,
+      }),
+    ).rejects.toMatchObject({ status: 503, code: "request_failed" });
+  });
+
+  it("HR5: skips loadCurrentSafetyContext when safety snapshot is preloaded", async () => {
+    const stored = makeStored();
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [{ id: PANTRY_ITEM_ID, quantity: 200 }], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+    const preloaded = cleanSafety();
+    const result = await validateStoredMenuCurrentSafety({
+      ownerClient: ownerClient as never,
+      admin: {} as never,
+      stored,
+      userId: USER_ID,
+      safety: preloaded,
+    });
+    expect(result.ok).toBe(true);
+    expect(loadCurrentSafetyContext).not.toHaveBeenCalled();
+  });
+
   it("fails closed with current_target_member_required when no surviving targets remain", async () => {
     const stored = makeStored({
       targetMemberIds: [],
@@ -553,6 +609,38 @@ describe("createRevalidationDeps history validator wiring", () => {
       expect.arrayContaining([DELETED_MEMBER_ID]),
     );
   });
+
+  it("HR5: loadCurrentSafety returns safety snapshot for single-read revalidate path", async () => {
+    const stored = makeStored();
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [{ id: PANTRY_ITEM_ID, quantity: 200 }], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+    vi.mocked(createUserScopedSupabase).mockReturnValue(ownerClient as never);
+    const deps = createRevalidationDeps(user);
+    const loaded = await deps.loadCurrentSafety(USER_ID, stored);
+    expect(loaded.safety).toBeDefined();
+    expect(loaded.fingerprint).toEqual(expect.any(String));
+    expect(loadCurrentSafetyContext).toHaveBeenCalledTimes(1);
+
+    // 同一 snapshot を validate に渡すと追加 load しない
+    await deps.validateStoredCurrentSafety({
+      stored,
+      userId: USER_ID,
+      safety: loaded.safety,
+    });
+    expect(loadCurrentSafetyContext).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("reconcileCurrentMenuLabelWarnings", () => {
@@ -634,6 +722,63 @@ describe("reconcileCurrentMenuLabelWarnings", () => {
       memberLabel: "子ども",
     });
     expect(warnings[0]?.sourceText).not.toBe("候補の別テキスト");
+  });
+
+  it("HR8: fails closed with 503 when allergen_catalog select errors (not generic name fallback)", async () => {
+    const stored = makeStored();
+    const candidate = makeGeneratedMenu({
+      menuId: MENU_ID,
+      labelConfirmations: [
+        {
+          sourceType: "ingredient",
+          sourceId: INGREDIENT_ID,
+          sourcePath: "dishes.0.ingredients.0.name",
+          sourceText: "ごはん",
+          allergenId: "wheat",
+          anonymousMemberRef: "member_2",
+          dictionaryVersion: "jp-caa-2026-04.v1",
+          confirmationStatus: "pending",
+        },
+      ],
+    });
+    const rpc = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: CONFIRMATION_ID,
+          source_type: "ingredient",
+          source_id: INGREDIENT_ID,
+          source_path: "dishes.0.ingredients.0.name",
+          source_text_snapshot: "ごはん",
+          allergen_id: "wheat",
+          anonymous_member_ref: "member_2",
+          dictionary_version: "jp-caa-2026-04.v1",
+          confirmation_status: "pending",
+          requirement_safety_fingerprint: "b".repeat(64),
+        },
+      ],
+      error: null,
+    });
+    const catalogSelect = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "catalog unavailable" },
+    });
+    const admin = {
+      rpc,
+      from: vi.fn((table: string) => {
+        if (table === "allergen_catalog") {
+          return { select: catalogSelect };
+        }
+        throw new Error(`unexpected table ${table}`);
+      }),
+    };
+
+    await expect(
+      reconcileCurrentMenuLabelWarnings(admin as never, user, {
+        stored,
+        candidate,
+        safetyFingerprint: "b".repeat(64),
+      }),
+    ).rejects.toMatchObject({ status: 503, code: "revalidation_unavailable" });
   });
 });
 

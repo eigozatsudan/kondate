@@ -46,6 +46,9 @@ export function useMenuRevalidation(menuId: string) {
   const [forcedChecking, setForcedChecking] = useState(false);
   // HR1: offline hold 中だけ true。checking overlay を shopping と同型の offline 文言に切り替える
   const [isOfflineHold, setIsOfflineHold] = useState(false);
+  // HR4: soft コールバックが最新 hold を見る（effect 再束縛なし / jsdom の onLine 不整合にも耐える）
+  const isOfflineHoldRef = useRef(false);
+  isOfflineHoldRef.current = isOfflineHold;
   // 単調増加。完了時に最新世代だけが forcedChecking を解除する
   const requestGenerationRef = useRef(0);
 
@@ -75,9 +78,13 @@ export function useMenuRevalidation(menuId: string) {
 
   /**
    * soft: キャッシュを残したまま再 POST。表示は直前の checked を維持する。
+   * HR4: offline hold / offline 中は no-op（poll と同型）。focus soft が generation
+   * を進めて finally で hold を崩し error CTA へ落ちる経路を閉じる。
    */
   const beginSoftRecheck = useCallback(() => {
     if (menuId.length === 0) return;
+    if (isOfflineHoldRef.current) return;
+    if (typeof navigator !== "undefined" && !navigator.onLine) return;
     void cache.invalidateQueries({
       queryKey,
       exact: true,

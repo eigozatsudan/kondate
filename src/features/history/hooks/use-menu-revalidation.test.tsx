@@ -96,6 +96,15 @@ describe("useMenuRevalidation", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    // HR4 等が document.visibilityState を上書きしたまま残さない
+    try {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "visible",
+      });
+    } catch {
+      // ignore
+    }
   });
 
   it("enters checking on mount and resolves to checked", async () => {
@@ -500,6 +509,57 @@ describe("useMenuRevalidation", () => {
       expect(result.current.phase).toBe("checked");
     });
     expect(result.current.isOfflineHold).toBe(false);
+  });
+
+  it("HR4: focus soft during offline hold does not collapse hold to error", async () => {
+    // offline hold 中に focus soft が POST を起こすと finally で forcedChecking が下り
+    // phase=error になり hold 専用 overlay 契約が崩れる。soft を no-op にして sticky に保つ。
+    const { result, unmount } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const callsAfterMount = revalidateMenuMock.mock.calls.length;
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.isOfflineHold).toBe(true);
+
+    const visibilityDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
+    act(() => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "visible",
+      });
+      window.dispatchEvent(new Event("focus"));
+    });
+    // soft は立たない（追加 POST なし）
+    expect(revalidateMenuMock.mock.calls.length).toBe(callsAfterMount);
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.isOfflineHold).toBe(true);
+    expect(result.current.errorMessage).toBeUndefined();
+
+    // beginSoftRecheck 直接呼び出しも hold 中は no-op
+    act(() => {
+      result.current.beginSoftRecheck();
+    });
+    expect(revalidateMenuMock.mock.calls.length).toBe(callsAfterMount);
+    expect(result.current.isOfflineHold).toBe(true);
+
+    // 後続ケースのマウント初期化を壊さないよう visibility / online を復元
+    act(() => {
+      if (visibilityDescriptor !== undefined) {
+        Object.defineProperty(document, "visibilityState", visibilityDescriptor);
+      } else {
+        // jsdom 既定へ戻す
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "visible",
+        });
+      }
+      window.dispatchEvent(new Event("online"));
+    });
+    unmount();
   });
 
   it("hard rechecks on Realtime CHANNEL_ERROR and TIMED_OUT (HR2)", async () => {

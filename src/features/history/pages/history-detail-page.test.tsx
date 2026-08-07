@@ -452,7 +452,9 @@ describe("HistoryDetailPage safety gate", () => {
     expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
     expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
     expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
+    // HR2: gate 未開・未採用では買い物を primary に出さない（checking 中の disabled 買い物 residual を閉じる）
+    expect(screen.queryByRole("button", { name: "材料の買い物リストを作る" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
     act(() => {
       revalidate.resolve(validRevalidation);
     });
@@ -652,6 +654,29 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByText("アレルゲンが含まれます")).toBeVisible();
     // MENU_ACCEPT_NOTICE_TITLE
     expect(screen.queryByText("この献立にしました")).toBeNull();
+  });
+
+  it("HR2: invalid after accept does not keep disabled shopping as primary", async () => {
+    // isSelected でも gate が閉じたら買い物 primary を外し、accept 主操作へ戻す
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "household", isSelected: true }),
+    );
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "invalid",
+          issues: [
+            { code: "allergen_present", path: "dishes.0", message: "アレルゲンが含まれます" },
+          ],
+        },
+      },
+    });
+    expect(await screen.findByText("アレルゲンが含まれます")).toBeVisible();
+    // 死んだ買い物 primary ではなく「この献立にする」側へ
+    expect(screen.queryByRole("button", { name: "材料の買い物リストを作る" })).toBeNull();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
   });
 
   it("keeps この献立にする disabled when revalidation is invalid", async () => {

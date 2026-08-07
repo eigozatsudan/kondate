@@ -65,6 +65,16 @@ export function useAcceptMenuVersion() {
       // 採用直後の UI は local accepted が正。menu-result を丸ごと invalidate すると
       // isSelected:false の再取得で「採用しました」が消えるため、isSelected だけ楽観更新し
       // 一覧・案バッジ用の versions/groups を先に無効化する。
+      // HR1: 同一 user の兄弟 menu-result キャッシュに residual isSelected:true が残ると
+      // 案スイッチャーで非代表案が買い物 primary に誤昇格する。先に全員 false → 採用分 true。
+      queryClient.setQueriesData(
+        { queryKey: ["menu-result", userId] },
+        (previous: { isSelected?: boolean } | undefined) => {
+          if (previous === undefined || typeof previous !== "object") return previous;
+          if (previous.isSelected !== true) return previous;
+          return { ...previous, isSelected: false };
+        },
+      );
       queryClient.setQueriesData(
         { queryKey: ["menu-result", userId, menuId] },
         (previous: { isSelected?: boolean } | undefined) => {

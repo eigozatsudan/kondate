@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import type { MenuResultViewModel } from "@shared/contracts/menu-result";
 import {
@@ -169,12 +169,12 @@ export function HouseholdMenuDetailBody({
   const [retargetError, setRetargetError] = useState<string | null>(null);
   const [retargetPending, setRetargetPending] = useState(false);
 
+  // HR1/HR2: menuId 切替と isSelected 変化の両方で accepted を同期。
+  // 兄弟案キャッシュの residual true は useAcceptMenuVersion 側で落とす（HR1）。
+  // isSelected false でも accepted を残すと invalid 後に死んだ買い物 primary になる（HR2）。
   useEffect(() => {
     setAccepted(result.isSelected);
-  }, [menuId]);
-  useEffect(() => {
-    if (result.isSelected) setAccepted(true);
-  }, [result.isSelected]);
+  }, [menuId, result.isSelected]);
 
   // gateOpen: 本文表示（soft 飛行中も直前 checked を維持 = focus 点滅防止）
   const gateOpen =
@@ -229,8 +229,21 @@ export function HouseholdMenuDetailBody({
   // （focus soft だけでシートが点滅して消えないように。送信は safetyBlocked で止める）
   const mustCloseReconcileSheet = mustCloseCreateSheet || shoppingGate.blocked;
   const canCreateShoppingList = canOpenCreateSheet;
+  // HR2: notice と同型に gateOpen を要求。invalid 後に disabled 買い物を primary に残さない。
+  // soft 中は gateOpen 維持のまま canCreate が false → shopping 枝だが disabled（一時）。
+  const shoppingAsPrimary =
+    (accepted && gateOpen) || (confirmedSingle && canCreateShoppingList);
   const nonRemovedCount =
     activeList === null ? 0 : activeList.items.filter((item) => !item.isRemovedByUser).length;
+  // HR3: preview/apply の await 後に最新 gate を読む（クロージャ stale を避ける）
+  const shoppingMutateBlockedRef = useRef(shoppingMutateBlocked);
+  shoppingMutateBlockedRef.current = shoppingMutateBlocked;
+  const revalidationFingerprintRef = useRef<string | undefined>(
+    revalidation.result?.safetyFingerprint,
+  );
+  revalidationFingerprintRef.current = revalidation.result?.safetyFingerprint;
+  // HR3: preview 開始時 FP。Apply 前に照合して hard 後の stale diff 適用を閉じる
+  const reconcileDiffFingerprintRef = useRef<string | null>(null);
 
   // 安全 fail-closed: create/reconcile シートを閉じる（isPending では閉じない）
   useEffect(() => {
@@ -240,6 +253,8 @@ export function HouseholdMenuDetailBody({
     }
     if (mustCloseReconcileSheet && shoppingSheet === "reconcile") {
       setShoppingSheet(null);
+      setShoppingDiff(null);
+      reconcileDiffFingerprintRef.current = null;
     }
   }, [mustCloseCreateSheet, mustCloseReconcileSheet, shoppingSheet, clearShoppingSheetExpected]);
 
@@ -633,8 +648,9 @@ export function HouseholdMenuDetailBody({
           ) : null
         }
         primary={
+          // HR2: invalid 後に disabled 買い物を primary に残さない（gateOpen 必須）。
           // 単一案の採用降格は買い物が作れるときだけ（C5 / 再検証中の死んだ主操作防止）
-          accepted || (confirmedSingle && canCreateShoppingList) ? (
+          shoppingAsPrimary ? (
             <button
               type="button"
               className={
@@ -672,7 +688,8 @@ export function HouseholdMenuDetailBody({
           )
         }
         next={
-          accepted || (confirmedSingle && canCreateShoppingList) ? null : (
+          // HR2: gate が閉じているあいだは secondary 買い物も出さない（死んだ CTA を残さない）
+          shoppingAsPrimary || !gateOpen ? null : (
             <button
               type="button"
               className="secondary-button min-h-11"
@@ -692,9 +709,10 @@ export function HouseholdMenuDetailBody({
               <button
                 type="button"
                 className="secondary-button min-h-11"
-                // canCreateShoppingList 成立時は actionsEnabled（再 render で外れる）
-                disabled={accept.isPending}
+                // HR6: primary accept と同型。soft 開始と click のレースで RPC を飛ばさない
+                disabled={!actionsEnabled || accept.isPending}
                 onClick={() => {
+                  if (!actionsEnabled) return;
                   setAcceptError(null);
                   accept.mutate(menuId, {
                     onSuccess: () => {
@@ -728,9 +746,26 @@ export function HouseholdMenuDetailBody({
                 onClick={() => {
                   const target = reconcileTarget.data;
                   if (activeList === null || target === null) return;
+                  if (shoppingMutateBlocked) return;
+                  // HR3: preview 開始時の FP。await 後に gate / FP を再確認してから sheet を開く
+                  const fingerprintAtPreview = revalidation.result?.safetyFingerprint;
                   setShoppingError(null);
                   previewShoppingDiff(menuId, target.sourceMenuVersion, activeList)
                     .then((diff) => {
+                      // soft/hard 飛行中や non-actionable になったら stale diff で開かない
+                      if (shoppingMutateBlockedRef.current) {
+                        setShoppingError(
+                          "家族設定の確認中です。確認が終わってから差分を開き直してください",
+                        );
+                        return;
+                      }
+                      if (fingerprintAtPreview !== revalidationFingerprintRef.current) {
+                        setShoppingError(
+                          "家族設定が変わったため、差分を開き直してください",
+                        );
+                        return;
+                      }
+                      reconcileDiffFingerprintRef.current = fingerprintAtPreview ?? null;
                       setShoppingDiff(diff);
                       setShoppingSheet("reconcile");
                     })
@@ -816,7 +851,9 @@ export function HouseholdMenuDetailBody({
 
       {shoppingSheet === "create" && (
         <CreateListSheet
-          key={`${activeList?.id ?? "none"}-${String(activeList?.version ?? 0)}`}
+          // HR9: soft/hard 後に FP/status が変わったら form を再マウントし mode を既定へ戻す
+          // （soft 開始前に選んだ mode のまま stale create しない）。list version 変化も同様。
+          key={`${activeList?.id ?? "none"}-${String(activeList?.version ?? 0)}-${revalidation.result?.safetyFingerprint ?? "none"}-${revalidation.result?.status ?? "none"}`}
           activeList={
             activeList === null
               ? null
@@ -873,7 +910,18 @@ export function HouseholdMenuDetailBody({
             safetyBlocked={shoppingMutateBlocked}
             onApply={(approval) => {
               const target = reconcileTarget.data;
+              // HR3: Apply 直前に gate と preview 時 FP を再確認（hard 後の stale diff 適用を閉じる）
               if (shoppingMutateBlocked || target === null) return;
+              if (
+                reconcileDiffFingerprintRef.current !== null &&
+                reconcileDiffFingerprintRef.current !== revalidation.result?.safetyFingerprint
+              ) {
+                setShoppingError("家族設定が変わったため、差分を開き直してください");
+                setShoppingSheet(null);
+                setShoppingDiff(null);
+                reconcileDiffFingerprintRef.current = null;
+                return;
+              }
               const listId = activeList.id;
               const command = persistedShoppingCommand(
                 "reconcile",
@@ -911,6 +959,7 @@ export function HouseholdMenuDetailBody({
             onCancel={() => {
               setShoppingSheet(null);
               setShoppingDiff(null);
+              reconcileDiffFingerprintRef.current = null;
             }}
           />
         )}

@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
-import { makeValidatedMenu } from "../../../shared/testing/factories.js";
+import { makeCurrentSafetyContext, makeValidatedMenu } from "../../../shared/testing/factories.js";
 import { revalidateStoredMenu } from "./revalidation-service.js";
+
+const safetySnapshot = makeCurrentSafetyContext();
 
 describe("revalidateStoredMenu", () => {
   it("validates historical dishes against current rather than snapshot safety", async () => {
     const validMenu = makeValidatedMenu();
     const save = vi.fn().mockResolvedValue(undefined);
+    const validate = vi.fn().mockResolvedValue({
+      ok: false,
+      candidate: validMenu,
+      changedDetails: [],
+      issues: [{ code: "allergen", path: "dishes.0", message: "くるみを含みます" }],
+    });
     const result = await revalidateStoredMenu(
       {
         loadMenu: vi.fn().mockResolvedValue({
@@ -22,13 +30,9 @@ describe("revalidateStoredMenu", () => {
           fingerprint: "current",
           allergenCatalogVersion: "allergens-v3",
           foodRuleVersion: "food-v2",
+          safety: safetySnapshot,
         }),
-        validateStoredCurrentSafety: vi.fn().mockResolvedValue({
-          ok: false,
-          candidate: validMenu,
-          changedDetails: [],
-          issues: [{ code: "allergen", path: "dishes.0", message: "くるみを含みます" }],
-        }),
+        validateStoredCurrentSafety: validate,
         reconcileCurrentLabelWarnings: vi.fn().mockResolvedValue([]),
         save,
       },
@@ -37,6 +41,10 @@ describe("revalidateStoredMenu", () => {
 
     expect(result.status).toBe("invalid");
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ safetyFingerprint: "current" }));
+    // HR5: validate に load と同じ safety snapshot を渡す
+    expect(validate).toHaveBeenCalledWith(
+      expect.objectContaining({ safety: safetySnapshot, userId: "user-1" }),
+    );
   });
 
   it("keeps confirmed provenance in storage but revalidates a pending generated projection", async () => {
@@ -79,6 +87,7 @@ describe("revalidateStoredMenu", () => {
           fingerprint: "current",
           allergenCatalogVersion: "allergens-v3",
           foodRuleVersion: "food-v2",
+          safety: safetySnapshot,
         }),
         validateStoredCurrentSafety: validate,
         reconcileCurrentLabelWarnings: vi.fn().mockResolvedValue([]),
@@ -90,8 +99,10 @@ describe("revalidateStoredMenu", () => {
     expect(validate).toHaveBeenCalledTimes(1);
     const validateArg = validate.mock.calls[0]?.[0] as {
       stored: { menu: typeof stored };
+      safety: typeof safetySnapshot;
     };
     expect(validateArg.stored.menu).toBe(stored);
+    expect(validateArg.safety).toBe(safetySnapshot);
     expect(stored.labelConfirmations[0]).toMatchObject({
       confirmationStatus: "confirmed",
       confirmedAt: "2026-07-11T01:00:00.000Z",

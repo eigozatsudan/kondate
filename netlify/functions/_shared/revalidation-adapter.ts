@@ -274,7 +274,11 @@ async function loadCurrentMemberPreferences(
   }
   for (const row of data) {
     const parsed = householdPreferenceRowSchema.safeParse(row);
-    if (!parsed.success) continue;
+    // HR10: schema 崩れを Map 非登録のままにすると preference_changed 誤誘導になる。
+    // pantry 行 parse と同型の 503 fail-closed（「好みが変わった」と見せない）。
+    if (!parsed.success) {
+      throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+    }
     map.set(parsed.data.id, {
       portionSize: parsed.data.portion_size,
       spiceLevel: parsed.data.spice_level,
@@ -293,10 +297,12 @@ async function loadCurrentMemberPreferences(
   if (Array.isArray(dislikeRows)) {
     for (const row of dislikeRows) {
       const record = row as { member_id?: unknown; ingredient_name?: unknown };
+      // HR10: 型崩れを silent skip すると dislikes 欠落のまま比較し誤誘導になる
       if (typeof record.member_id !== "string" || typeof record.ingredient_name !== "string") {
-        continue;
+        throw new HttpError(503, "request_failed", "処理を完了できませんでした");
       }
       const current = map.get(record.member_id);
+      // 対象外 member の dislike 行は無視（target 外の余剰行）
       if (current === undefined) continue;
       map.set(record.member_id, {
         ...current,
@@ -387,6 +393,11 @@ export async function validateStoredMenuCurrentSafety(input: {
   admin: AdminSupabaseClient;
   stored: StoredMenuAggregate;
   userId: string;
+  /**
+   * HR5: revalidateStoredMenu 経由では loadCurrentSafety と同一 snapshot を渡す。
+   * 省略時のみ内部で load（直接呼び出し・単体テスト互換）。
+   */
+  safety?: CurrentSafetyContext;
 }): Promise<{
   ok: boolean;
   candidate: GeneratedMenu;
@@ -401,7 +412,9 @@ export async function validateStoredMenuCurrentSafety(input: {
     throw new HttpError(422, "current_target_member_required", "現在の家族を1人以上選んでください");
   }
   // 削除済みリンクは決して現行 validator メンバーにしない
-  const renumberedSafety = await loadCurrentSafetyContext(admin, userId, stored.targetMemberIds);
+  // HR5: 渡された snapshot があれば二重読取しない
+  const renumberedSafety =
+    input.safety ?? (await loadCurrentSafetyContext(admin, userId, stored.targetMemberIds));
   const safety = withHistoricalAnonymousRefs(renumberedSafety, stored);
   const generationContext = makeRevalidationGenerationContext(stored, safety);
   const candidate = toStoredRevalidationCandidate(stored.menu, generationContext);
@@ -539,7 +552,12 @@ export async function reconcileCurrentMenuLabelWarnings(
 
   const rows = Array.isArray(data) ? data : [];
   const catalogResult = await admin.from("allergen_catalog").select("id,display_name");
-  const catalogRows = catalogResult.error !== null ? [] : catalogResult.data;
+  // HR8: catalog 読取 error を空 Map に畳むと allergenName が汎用文言になり確認判断を誤らせる。
+  // reconcile 行 parse 失敗と同型の 503 fail-closed（表示名欠落を silent にしない）。
+  if (catalogResult.error !== null) {
+    throw new HttpError(503, "revalidation_unavailable", "現在の家族設定で確認できませんでした");
+  }
+  const catalogRows = catalogResult.data ?? [];
   const catalog = new Map(catalogRows.map((row) => [row.id, row.display_name] as const));
 
   const warnings: CurrentMenuLabelWarning[] = [];
@@ -736,15 +754,24 @@ export function createRevalidationDeps(user: AuthenticatedUser): RevalidationDep
           "現在の家族を1人以上選んでください",
         );
       }
+      // HR5: 1 回だけ load し、fingerprint と validate の双方に同じ safety を渡す
       const safety = await loadCurrentSafetyContext(admin, userId, stored.targetMemberIds);
       return {
         fingerprint: createCurrentSafetyFingerprint(safety),
         allergenCatalogVersion: safety.dictionaryVersion,
         foodRuleVersion: safety.foodRuleVersion,
+        safety,
       };
     },
-    validateStoredCurrentSafety: async ({ stored, userId }) =>
-      validateStoredMenuCurrentSafety({ ownerClient, admin, stored, userId }),
+    validateStoredCurrentSafety: async ({ stored, userId, safety }) =>
+      validateStoredMenuCurrentSafety({
+        ownerClient,
+        admin,
+        stored,
+        userId,
+        // exactOptionalPropertyTypes: undefined を渡さずキーごと省略
+        ...(safety !== undefined ? { safety } : {}),
+      }),
     reconcileCurrentLabelWarnings: (input) => reconcileCurrentMenuLabelWarnings(admin, user, input),
     save: async (value) => {
       // menu_id,user_id 一意で最新 1 行を置換。マウント連打でも増殖しない。

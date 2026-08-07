@@ -1,4 +1,5 @@
 import type { GeneratedMenu, MenuValidationIssue } from "../../../shared/contracts/generation.js";
+import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import type { StoredMenuAggregate } from "./stored-menu-loader.js";
 
 export type RevalidationStatus = "valid" | "changed" | "invalid";
@@ -29,17 +30,24 @@ export type RevalidationResult = {
   currentLabelWarnings: readonly CurrentMenuLabelWarning[];
 };
 
+/** loadCurrentSafety が 1 回だけ読む現行 safety snapshot（HR5: FP と validate を同一 tick に閉じる） */
+export type LoadedCurrentSafety = {
+  fingerprint: string;
+  allergenCatalogVersion: string;
+  foodRuleVersion: string;
+  /** loadCurrentSafetyContext の生結果。validate はこれを再利用し二重読取しない */
+  safety: CurrentSafetyContext;
+};
+
 export type RevalidationDeps = {
   loadMenu(userId: string, menuId: string): Promise<StoredMenuAggregate>;
-  loadCurrentSafety(
-    userId: string,
-    stored: StoredMenuAggregate,
-  ): Promise<{
-    fingerprint: string;
-    allergenCatalogVersion: string;
-    foodRuleVersion: string;
-  }>;
-  validateStoredCurrentSafety(input: { stored: StoredMenuAggregate; userId: string }): Promise<{
+  loadCurrentSafety(userId: string, stored: StoredMenuAggregate): Promise<LoadedCurrentSafety>;
+  validateStoredCurrentSafety(input: {
+    stored: StoredMenuAggregate;
+    userId: string;
+    /** HR5: loadCurrentSafety と同一 snapshot。省略時は実装側で load（直接呼び出し互換） */
+    safety?: CurrentSafetyContext;
+  }): Promise<{
     ok: boolean;
     candidate: GeneratedMenu;
     issues: readonly MenuValidationIssue[];
@@ -57,6 +65,9 @@ export type RevalidationDeps = {
  * 履歴献立を「保存時スナップショット」ではなく現行の家族安全条件で再検証する。
  * 所有権は loadMenu が owner-scoped で先に証明し、現行 fingerprint / issues /
  * label warning を menu_revalidations に 1 行 upsert する。
+ *
+ * HR5: loadCurrentSafety を 1 回だけ呼び、返却 FP と validate の issues/ok を
+ * 同一 safety snapshot に閉じる（T1/T2 二重読取 TOCTOU を塞ぐ）。
  */
 export async function revalidateStoredMenu(
   deps: RevalidationDeps,
@@ -67,6 +78,7 @@ export async function revalidateStoredMenu(
   const validation = await deps.validateStoredCurrentSafety({
     stored: menu,
     userId: input.userId,
+    safety: current.safety,
   });
   const currentLabelWarnings = validation.ok
     ? await deps.reconcileCurrentLabelWarnings({
