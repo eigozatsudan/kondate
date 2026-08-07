@@ -7,6 +7,15 @@ export type FeedbackCategory = (typeof feedbackCategories)[number];
 export const feedbackCategorySchema = z.enum(feedbackCategories);
 
 /**
+ * 利用者あたり直近窓の送信上限（submit-feedback Function と UI の単一ソース）。
+ * AP9: 設定画面の事前説明と RPC p_limit を食い違わせない。
+ */
+export const FEEDBACK_DAILY_LIMIT = 5 as const;
+
+/** 送信上限の集計窓（時間）。RPC 既定 86400s と一致。 */
+export const FEEDBACK_RATE_WINDOW_HOURS = 24 as const;
+
+/**
  * 画面パスとして許可する clientPath。
  * UI は pathname のみ送る。改変クライアントによる scheme / ホスト / 空白 / 誘導文字列を拒否する（AP4）。
  * ドットのみのセグメント（`.` / `..` / `....`）も拒否し運用閲覧ノイズを抑える（AP9）。

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { accountDeletionAnonymousShareNote } from "@/features/privacy/privacy-copy";
 
 export type DeleteAccountDialogProps = {
   open: boolean;
@@ -44,6 +45,8 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
       <p className="mt-3">
         家族設定、冷蔵庫、献立履歴、買い物リストは削除され、元に戻せません。不正利用防止のため、メールから作った復元できない識別子や日々の利用回数、無料期間の利用履歴などの記録は残ることがあります。
       </p>
+      {/* AP4: 方針 B を削除直前に再開示（privacy 本文・runbook と一致） */}
+      <p className="mt-2">{accountDeletionAnonymousShareNote}</p>
       <p className="mt-2">
         有料プランに入っている場合は、先に解約が成功してからアカウントを削除します。解約できないときは削除を中止します（請求が続くことがあります）。請求の詳細はメール（Stripe）をご確認ください。
       </p>

@@ -1,6 +1,7 @@
 import type { Config } from "@netlify/functions";
 import { z } from "zod";
 import {
+  FEEDBACK_DAILY_LIMIT,
   submitFeedbackRequestSchema,
   type SubmitFeedbackResult,
 } from "../../shared/contracts/feedback.js";
@@ -10,10 +11,11 @@ import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
 
 /**
  * 利用者あたり直近 24 時間の送信上限（連投・スパム抑止）。
+ * 契約 FEEDBACK_DAILY_LIMIT を正とする（UI 事前説明と一致: AP9）。
  * AP11 residual-intentional: RPC は service_role 専用で p_user_id / p_limit を信頼する。
  * 通常 Function は auth.userId と本定数のみ渡す。browser 主 path は閉じている。
  */
-const feedbackDailyLimit = 5;
+const feedbackDailyLimit = FEEDBACK_DAILY_LIMIT;
 
 const rateLimitedInsertResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), id: z.uuid() }),

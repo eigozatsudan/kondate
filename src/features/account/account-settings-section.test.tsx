@@ -2,7 +2,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
-import { AccountSettingsSection, AUTH_SESSION_PROBE_TIMEOUT_MS } from "./account-settings-section";
+import {
+  ACCOUNT_DELETE_CLIENT_TIMEOUT_MS,
+  AccountSettingsSection,
+  AUTH_SESSION_PROBE_TIMEOUT_MS,
+} from "./account-settings-section";
 
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn());
 const clearOwnedLocalDataBestEffortMock = vi.hoisted(() => vi.fn());
@@ -501,6 +505,39 @@ describe("AccountSettingsSection", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("AP1: DELETE fetch never-settle is timed out so pending clears", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      // DELETE 本体が never-settle → withTimeout で pending 解除
+      fetchMock.mockReturnValue(new Promise(() => undefined));
+
+      render(<AccountSettingsSection />);
+      await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+      await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+      await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+      await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+      expect(screen.getByRole("button", { name: "削除しています" })).toBeDisabled();
+      await vi.advanceTimersByTimeAsync(ACCOUNT_DELETE_CLIENT_TIMEOUT_MS + 50);
+
+      expect(
+        await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
+      ).toBeVisible();
+      expect(screen.getByRole("button", { name: "やめる" })).not.toBeDisabled();
+      expect(locationReplaceMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP4: DangerZone discloses 方針 B anonymous share residual", async () => {
+    const user = userEvent.setup();
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    expect(screen.getAllByText(/匿名一般化済みの緊急候補本文/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("AP8: getUser user:null error:null is treated as session gone", async () => {

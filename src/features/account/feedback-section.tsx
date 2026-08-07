@@ -1,10 +1,13 @@
 import { useRef, useState, type SyntheticEvent } from "react";
 import {
+  FEEDBACK_DAILY_LIMIT,
+  FEEDBACK_RATE_WINDOW_HOURS,
   feedbackCategories,
   feedbackEnvelopeSchema,
   submitFeedbackRequestSchema,
   type FeedbackCategory,
 } from "@shared/contracts/feedback";
+import { withTimeout } from "@/features/auth/async-timeout";
 import { requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
@@ -13,6 +16,15 @@ const categoryLabels: Readonly<Record<FeedbackCategory, string>> = {
   bug_report: "不具合の報告",
   other: "その他",
 };
+
+/**
+ * AP6: POST /api/feedback のクライアント上限。
+ * insert は通常短いが、never-settle で「送信しています」固着・閉じる不能を防ぐ。
+ */
+export const FEEDBACK_POST_CLIENT_TIMEOUT_MS = 30_000;
+
+/** AP5: 曖昧失敗後の fingerprint を sessionStorage に残すキー（reload / remount 耐性）。 */
+export const FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY = "kondate:feedback:ambiguous-fingerprint";
 
 function mapError(code: string | undefined, fallback: string): string {
   if (code === "feedback_rate_limited") {
@@ -26,6 +38,28 @@ function mapError(code: string | undefined, fallback: string): string {
 /** AP10: 同一 category+body の指紋。曖昧失敗後の再送で二重 insert を抑止する。 */
 function feedbackSubmitFingerprint(category: FeedbackCategory, body: string): string {
   return `${category}\n${body.trim()}`;
+}
+
+function readAmbiguousFingerprint(): string | null {
+  try {
+    const value = sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    return value !== null && value.length > 0 ? value : null;
+  } catch {
+    // sessionStorage 拒否時は in-memory のみにフォールバック
+    return null;
+  }
+}
+
+function writeAmbiguousFingerprint(fingerprint: string | null): void {
+  try {
+    if (fingerprint === null) {
+      sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    } else {
+      sessionStorage.setItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY, fingerprint);
+    }
+  } catch {
+    // 拒否時は ref 側だけが効く
+  }
 }
 
 /**
@@ -45,16 +79,31 @@ export function FeedbackSection() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // AP10: React 再描画前の二重 submit を同期ガード（pending state だけでは足りない）
   const submitInFlightRef = useRef(false);
-  // AP10: 応答欠落など「サーバ到達済みかも」の曖昧失敗後、同一本文の再送を抑止
-  const ambiguousSubmitFingerprintRef = useRef<string | null>(null);
+  // AP10 + AP5: in-memory と sessionStorage の両方（reload / 別タブ remount でも抑止）
+  const ambiguousSubmitFingerprintRef = useRef<string | null>(readAmbiguousFingerprint());
+
+  function rememberAmbiguousFingerprint(fingerprint: string): void {
+    ambiguousSubmitFingerprintRef.current = fingerprint;
+    writeAmbiguousFingerprint(fingerprint);
+  }
+
+  function clearAmbiguousFingerprint(): void {
+    ambiguousSubmitFingerprintRef.current = null;
+    writeAmbiguousFingerprint(null);
+  }
 
   async function handleSubmit(event: SyntheticEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (pending || submitInFlightRef.current) return;
 
     const fingerprint = feedbackSubmitFingerprint(category, body);
+    // sessionStorage 再読（別タブ / 直前 remount と同期）
+    const stickyAmbiguous = ambiguousSubmitFingerprintRef.current ?? readAmbiguousFingerprint();
+    if (stickyAmbiguous !== null) {
+      ambiguousSubmitFingerprintRef.current = stickyAmbiguous;
+    }
     // 直前の送信が成功か失敗か端末側で確定できないとき、同じ内容の再送は ops 二重保管になり得る
-    if (ambiguousSubmitFingerprintRef.current === fingerprint) {
+    if (stickyAmbiguous === fingerprint) {
       setStatusMessage(null);
       setErrorMessage(
         "直前の送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",
@@ -85,21 +134,25 @@ export function FeedbackSection() {
     try {
       const accessToken = await requireAccessToken(getBrowserSupabaseClient());
       requestStarted = true;
-      const response = await fetch("/api/feedback", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(parsed.data),
-        cache: "no-store",
-      });
+      // AP6: never-settle で pending / 閉じる不能にしない
+      const response = await withTimeout(
+        fetch("/api/feedback", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(parsed.data),
+          cache: "no-store",
+        }),
+        FEEDBACK_POST_CLIENT_TIMEOUT_MS,
+      );
       let raw: unknown;
       try {
         raw = await response.json();
       } catch {
         // 到達後の非 JSON: 二重 insert を避けるため同一本文の再送を抑止
-        ambiguousSubmitFingerprintRef.current = fingerprint;
+        rememberAmbiguousFingerprint(fingerprint);
         setErrorMessage(
           "送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",
         );
@@ -107,7 +160,7 @@ export function FeedbackSection() {
       }
       const envelope = feedbackEnvelopeSchema.safeParse(raw);
       if (!envelope.success) {
-        ambiguousSubmitFingerprintRef.current = fingerprint;
+        rememberAmbiguousFingerprint(fingerprint);
         setErrorMessage(
           "送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",
         );
@@ -115,19 +168,19 @@ export function FeedbackSection() {
       }
       if (!envelope.data.ok) {
         // サーバが明示拒否したので未 insert 確定。同一本文の再試行を許可
-        ambiguousSubmitFingerprintRef.current = null;
+        clearAmbiguousFingerprint();
         setErrorMessage(
           mapError(envelope.data.error.code, envelope.data.error.message || "送信できませんでした"),
         );
         return;
       }
-      ambiguousSubmitFingerprintRef.current = null;
+      clearAmbiguousFingerprint();
       setBody("");
       setCategory("feature_request");
       setStatusMessage("ありがとうございます。フィードバックを受け付けました");
     } catch {
       if (requestStarted) {
-        ambiguousSubmitFingerprintRef.current = fingerprint;
+        rememberAmbiguousFingerprint(fingerprint);
         setErrorMessage(
           "送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",
         );
@@ -159,7 +212,9 @@ export function FeedbackSection() {
       ) : (
         <>
           <p className="type-small">
-            使っていて不便な点や、あると助かる機能があれば教えてください。不具合の報告もこちらから送れます。
+            使っていて不便な点や、あると助かる機能があれば教えてください。不具合の報告もこちらから送れます。送信は
+            {FEEDBACK_RATE_WINDOW_HOURS}時間あたり{FEEDBACK_DAILY_LIMIT}
+            件までです。上限に達したら時間をおいてお試しください。
           </p>
           <form className="stack" onSubmit={(event) => void handleSubmit(event)}>
             <fieldset className="stack" disabled={pending}>

@@ -193,4 +193,32 @@ describe("ShareConsentSettingsSection", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(shareConsentSettingsCopy.saveError);
     });
   });
+
+  it("AP12: disables toggle while pending so concurrent toggles do not race in-tab", async () => {
+    const user = userEvent.setup();
+    let resolveToggle: (() => void) | undefined;
+    const onToggle = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveToggle = resolve;
+        }),
+    );
+    renderSection({ consent: acceptedConsent, onToggle });
+
+    const toggle = screen.getByRole("switch", { name: shareConsentSettingsCopy.toggleLabel });
+    await user.click(toggle);
+    await waitFor(() => {
+      expect(onToggle).toHaveBeenCalledTimes(1);
+    });
+    expect(toggle).toBeDisabled();
+
+    // pending 中の二度目は disabled で届かない
+    await user.click(toggle);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+
+    resolveToggle?.();
+    await waitFor(() => {
+      expect(toggle).not.toBeDisabled();
+    });
+  });
 });

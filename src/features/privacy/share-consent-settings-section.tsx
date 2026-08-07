@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { shareConsentSettingsCopy } from "./privacy-copy";
 import {
@@ -12,6 +12,9 @@ import {
   type SharedEmergencyRecipeListItem,
 } from "./share-consent-api";
 import { shareConsentKeys } from "./share-consent-queries";
+
+/** AP12: 跨タブで同意 cache を invalidate するための BroadcastChannel 名 */
+export const SHARE_CONSENT_BROADCAST_CHANNEL = "kondate:share-consent";
 
 export type ShareConsentSettingsSectionProps = {
   userId: string;
@@ -42,6 +45,9 @@ function formatSharedOn(sharedOn: string): string {
  * 家族設定ページに合成する共有同意トグルと提供管理一覧。
  * トグル off → revoke（既提供分は残る文言を再表示）、on → 現行 version で reaccept。
  * 一覧は title + shared_on のみ（個別取り下げはこの版のスコープ外）。
+ *
+ * AP12: 跨タブ race の最小防衛 — 操作世代ガード + 完了後サーバ再読 + focus/Broadcast で再同期。
+ * サーバは last-write-wins のまま。UI が「止めた」表示のままサーバだけ復活するずれを縮める。
  */
 export function ShareConsentSettingsSection({
   userId,
@@ -56,6 +62,8 @@ export function ShareConsentSettingsSection({
   const queryClient = useQueryClient();
   const toggleId = useId();
   const residualId = useId();
+  // AP12: 同一タブ内の遅延応答が古い mutation 結果で cache を上書きしない
+  const mutationGenerationRef = useRef(0);
 
   const consentQuery = useQuery({
     queryKey: shareConsentKeys.current(userId),
@@ -67,6 +75,37 @@ export function ShareConsentSettingsSection({
     queryFn: () => listMySharedEmergencyRecipes(getBrowserSupabaseClient()),
     enabled: injectedList === undefined,
   });
+
+  // AP12: 他タブの完了・フォーカス復帰でサーバ正を再取得（注入モードでは no-op）
+  useEffect(() => {
+    if (injectedConsent !== undefined) return;
+    const invalidate = (): void => {
+      void queryClient.invalidateQueries({ queryKey: shareConsentKeys.current(userId) });
+    };
+    const onFocus = (): void => {
+      invalidate();
+    };
+    window.addEventListener("focus", onFocus);
+
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== "undefined") {
+      channel = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
+      channel.onmessage = (event: MessageEvent<unknown>) => {
+        const data = event.data;
+        if (data === null || typeof data !== "object" || !("userId" in data)) return;
+        // unknown 経由で userId を取り、他ユーザー向け通知は無視する
+        const messageUserId: unknown = Reflect.get(data, "userId");
+        if (messageUserId === userId) {
+          invalidate();
+        }
+      };
+    }
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      channel?.close();
+    };
+  }, [injectedConsent, queryClient, userId]);
 
   const consent = injectedConsent !== undefined ? injectedConsent : (consentQuery.data ?? null);
   const consentLoading =
@@ -87,17 +126,42 @@ export function ShareConsentSettingsSection({
 
   const toggleMutation = useMutation({
     mutationFn: async (nextEnabled: boolean) => {
+      const generation = ++mutationGenerationRef.current;
       if (onToggle !== undefined) {
         await onToggle(nextEnabled);
-        return nextEnabled;
+        return { nextEnabled, generation };
       }
       const client = getBrowserSupabaseClient();
       // off → revoke、on → 現行 version で reaccept（upsert 本体は API 側）
       const next = nextEnabled
         ? await reacceptMyShareConsent(client)
         : await revokeMyShareConsent(client);
-      queryClient.setQueryData(shareConsentKeys.current(userId), next);
-      return nextEnabled;
+      // AP12: 古い mutation の応答は捨て、最新世代だけ cache を更新する
+      if (generation !== mutationGenerationRef.current) {
+        return { nextEnabled, generation, discarded: true as const };
+      }
+      // サーバ再読で最終状態を正とする（他タブ完了分を拾う）
+      try {
+        const fresh = await getMyShareConsent(client);
+        if (generation === mutationGenerationRef.current) {
+          queryClient.setQueryData(shareConsentKeys.current(userId), fresh);
+        }
+      } catch {
+        if (generation === mutationGenerationRef.current) {
+          queryClient.setQueryData(shareConsentKeys.current(userId), next);
+        }
+      }
+      // 他タブへ invalidate 通知
+      if (typeof BroadcastChannel !== "undefined") {
+        try {
+          const channel = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
+          channel.postMessage({ userId, at: Date.now() });
+          channel.close();
+        } catch {
+          // BroadcastChannel 失敗は focus 再同期に委ねる
+        }
+      }
+      return { nextEnabled, generation };
     },
   });
 

@@ -30,12 +30,29 @@ const ACCESS_TOKEN_REFRESH_SKEW_MS = 30_000;
 export const ACCESS_TOKEN_REFRESH_TIMEOUT_MS = 5_000;
 
 /**
+ * getSession の上限（AP2）。
+ * cold-start / refresh と同窓。削除・feedback 等が getSession hang で pending 固着しないようにする。
+ */
+export const ACCESS_TOKEN_GET_SESSION_TIMEOUT_MS = 5_000;
+
+/**
  * Function / PostgREST 向けの Bearer を返す。
  * getSession はローカルキャッシュのみなので、期限切れ直前・期限切れは refreshSession で
  * サーバ側失効（他端末での強制ログアウト等）も検知する。
  */
 export async function requireAccessToken(client: BrowserSupabaseClient): Promise<string> {
-  const { data, error } = await client.auth.getSession();
+  // AP2: getSession が never-settle でも UI を止めない（AuthProvider cold-start と同型）
+  let sessionResult: Awaited<ReturnType<BrowserSupabaseClient["auth"]["getSession"]>>;
+  try {
+    sessionResult = await withTimeout(
+      client.auth.getSession(),
+      ACCESS_TOKEN_GET_SESSION_TIMEOUT_MS,
+    );
+  } catch {
+    // hang / throw → 再ログイン対象（offline 永久待ちにしない）
+    throw new AuthSessionExpiredError();
+  }
+  const { data, error } = sessionResult;
   if (error !== null || data.session === null) throw new AuthSessionRequiredError();
 
   const session = data.session;

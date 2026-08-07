@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
+import { withTimeout } from "@/features/auth/async-timeout";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { sanitizeReturnPath } from "@/features/auth/auth-flow";
@@ -9,6 +10,12 @@ import { privacySections, providerExplanation, shareConsentSection } from "./pri
 import { privacyKeys } from "./privacy-queries";
 import { upsertMyShareConsent } from "./share-consent-api";
 import { shareConsentKeys } from "./share-consent-queries";
+
+/**
+ * AP8: privacy accept（PostgREST）の上限。
+ * never-settle で saving 固着し「今はAIを使わない」も disabled のままになるのを防ぐ。
+ */
+export const PRIVACY_ACCEPT_TIMEOUT_MS = 10_000;
 
 export type PrivacyAcceptInput = {
   /** 共有任意チェック。true のときだけ upsert_my_share_consent(accept=true) を呼ぶ */
@@ -28,10 +35,17 @@ export function PrivacyNoticePage() {
       const client = getBrowserSupabaseClient();
       // privacy は必須。共有は任意チェック時のみ別 RPC で保存する。
       // 共有 RPC 失敗で必須 privacy 同意を巻き戻さない・画面遷移を止めない（設定で再同意可）。
-      const consent = await acceptCurrentPrivacyConsent(client, userId);
+      // AP8: accept 全体を withTimeout（skip 導線が永久 disabled にならないようにする）
+      const consent = await withTimeout(
+        acceptCurrentPrivacyConsent(client, userId),
+        PRIVACY_ACCEPT_TIMEOUT_MS,
+      );
       if (input.shareConsentAccepted) {
         try {
-          const share = await upsertMyShareConsent(client, true);
+          const share = await withTimeout(
+            upsertMyShareConsent(client, true),
+            PRIVACY_ACCEPT_TIMEOUT_MS,
+          );
           queryClient.setQueryData(shareConsentKeys.current(userId), share);
         } catch {
           // AP12 residual-intentional: share は無言 best-effort。

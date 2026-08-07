@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { shareConsentRequiredPhrases, shareConsentSection } from "./privacy-copy";
 
@@ -32,7 +32,11 @@ vi.mock("./share-consent-api", () => ({
 
 import { MemoryRouter } from "react-router";
 import type { ComponentProps } from "react";
-import { PrivacyNoticeContent, PrivacyNoticePage } from "./privacy-notice-page";
+import {
+  PRIVACY_ACCEPT_TIMEOUT_MS,
+  PrivacyNoticeContent,
+  PrivacyNoticePage,
+} from "./privacy-notice-page";
 
 function renderPrivacyContent(props: ComponentProps<typeof PrivacyNoticeContent>) {
   return render(
@@ -45,6 +49,10 @@ function renderPrivacyContent(props: ComponentProps<typeof PrivacyNoticeContent>
 beforeEach(() => {
   acceptConsent.mockReset();
   upsertShare.mockReset();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 it("explains sent, unsent, and stored data before accepting", async () => {
@@ -314,4 +322,39 @@ it("documents anonymized emergency body retention after account deletion", () =>
   const stored = screen.getByRole("heading", { name: "アプリに保存する情報" }).nextElementSibling;
   expect(stored?.textContent).toContain("匿名一般化済みの緊急候補本文");
   expect(stored?.textContent).toContain("削除後も他ユーザー向けに残ることがあります");
+});
+
+it("AP8: accept hang times out so skip is re-enabled", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    acceptConsent.mockReturnValue(new Promise(() => undefined));
+    const router = createMemoryRouter(
+      [
+        { path: "/privacy", element: <PrivacyNoticePage /> },
+        { path: "/planner", element: <h1>献立</h1> },
+      ],
+      { initialEntries: ["/privacy?returnTo=/planner"] },
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+    expect(screen.getByRole("button", { name: "保存中…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "今はAIを使わない" })).toBeDisabled();
+
+    await vi.advanceTimersByTimeAsync(PRIVACY_ACCEPT_TIMEOUT_MS + 50);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("確認状態を保存できませんでした");
+    expect(screen.getByRole("button", { name: "今はAIを使わない" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "確認して進む" })).not.toBeDisabled();
+  } finally {
+    vi.useRealTimers();
+  }
 });

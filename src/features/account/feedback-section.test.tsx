@@ -1,7 +1,15 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FeedbackSection } from "./feedback-section";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  FEEDBACK_DAILY_LIMIT,
+  FEEDBACK_RATE_WINDOW_HOURS,
+} from "@shared/contracts/feedback";
+import {
+  FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY,
+  FEEDBACK_POST_CLIENT_TIMEOUT_MS,
+  FeedbackSection,
+} from "./feedback-section";
 
 const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
@@ -24,7 +32,13 @@ describe("FeedbackSection", () => {
     requireAccessTokenMock.mockReset();
     fetchMock.mockReset();
     requireAccessTokenMock.mockResolvedValue("token");
+    sessionStorage.clear();
     vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    sessionStorage.clear();
   });
 
   it("starts collapsed and hides the form until expanded", () => {
@@ -153,5 +167,63 @@ describe("FeedbackSection", () => {
     await user.click(screen.getByRole("button", { name: "送信する" }));
     expect(await screen.findByRole("status")).toHaveTextContent("フィードバックを受け付けました");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("AP5: persists ambiguous fingerprint across remount via sessionStorage", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    const text = "リロード後も同じ本文の再送を抑止する内容です。";
+    const { unmount } = render(<FeedbackSection />);
+    await expandFeedback(user);
+    await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+    expect(sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toContain(text);
+
+    unmount();
+    fetchMock.mockClear();
+    render(<FeedbackSection />);
+    await expandFeedback(user);
+    await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("同じ内容を再送すると重複");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("AP6: fetch never-settle is timed out so pending clears", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      fetchMock.mockReturnValue(new Promise(() => undefined));
+      render(<FeedbackSection />);
+      await expandFeedback(user);
+      await user.type(
+        screen.getByLabelText("内容（10〜2000文字）"),
+        "送信が返らないとき閉じられるようにする本文です。",
+      );
+      await user.click(screen.getByRole("button", { name: "送信する" }));
+      expect(screen.getByRole("button", { name: "送信しています…" })).toBeDisabled();
+
+      await vi.advanceTimersByTimeAsync(FEEDBACK_POST_CLIENT_TIMEOUT_MS + 50);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+      expect(screen.getByRole("button", { name: "閉じる" })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: "送信する" })).not.toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP9: shows daily limit in the expanded form copy", async () => {
+    const user = userEvent.setup();
+    render(<FeedbackSection />);
+    await expandFeedback(user);
+    expect(
+      screen.getByText(
+        new RegExp(
+          `${String(FEEDBACK_RATE_WINDOW_HOURS)}時間あたり${String(FEEDBACK_DAILY_LIMIT)}件`,
+        ),
+      ),
+    ).toBeVisible();
   });
 });

@@ -92,6 +92,20 @@ describe("DeleteAccountDialog", () => {
     expect(screen.getByText(/解約できないときは削除を中止/)).toBeVisible();
   });
 
+  it("AP4: discloses 方針 B anonymous share residual on the dialog", () => {
+    render(
+      <DeleteAccountDialog
+        open
+        pending={false}
+        errorMessage={null}
+        onCancel={() => undefined}
+        onConfirm={() => Promise.resolve()}
+      />,
+    );
+    expect(screen.getByText(/匿名一般化済みの緊急候補本文/)).toBeVisible();
+    expect(screen.getByText(/削除後も他ユーザー向けに残る/)).toBeVisible();
+  });
+
   it("maps Escape/cancel to onCancel without confirming", () => {
     const onCancel = vi.fn();
     const onConfirm = vi.fn();

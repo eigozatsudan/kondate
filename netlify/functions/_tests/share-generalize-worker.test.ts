@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ValidatedMenu } from "../../../shared/contracts/generation.js";
+import { shareConsentVersion } from "../../../shared/contracts/share-consent.js";
 import { makeValidatedMenu } from "../../../shared/testing/factories.js";
 import type { ShareClaimedJob } from "../_shared/share-claim.js";
 import { HttpError } from "../_shared/http.js";
@@ -132,12 +133,40 @@ function makePassSender(
 
 type RpcArgs = Record<string, unknown>;
 
+/** AP7: claim 直後 consent 再確認用の user_share_consents 行 */
+type ConsentRow = {
+  consent_version: string;
+  revoked_at: string | null;
+} | null;
+
+function createConsentFrom(
+  row: ConsentRow = {
+    consent_version: shareConsentVersion,
+    revoked_at: null,
+  },
+  error: unknown = null,
+) {
+  const maybeSingle = vi.fn(() => Promise.resolve({ data: row, error }));
+  const eq = vi.fn(() => ({ maybeSingle }));
+  const select = vi.fn(() => ({ eq }));
+  const from = vi.fn((table: string) => {
+    if (table !== "user_share_consents") {
+      throw new Error(`unexpected from(${table})`);
+    }
+    return { select };
+  });
+  return { from, select, eq, maybeSingle };
+}
+
 function createRpcAdmin(
   handlers: {
     finish?: (args: RpcArgs) => Promise<{ data: unknown; error: unknown }>;
     publish?: (args: RpcArgs) => Promise<{ data: unknown; error: unknown }>;
     /** 当日 AI 残り枠。省略時は 500（cap 未到達） */
     aiBudgetRemaining?: number;
+    /** AP7: 同意行。null で未同意 / revoked 相当 */
+    consentRow?: ConsentRow;
+    consentError?: unknown;
   } = {},
 ) {
   const finish = vi.fn(
@@ -158,7 +187,13 @@ function createRpcAdmin(
         })),
   );
   const budgetRemaining = handlers.aiBudgetRemaining ?? 500;
-  const from = vi.fn();
+  const consentFrom = createConsentFrom(
+    handlers.consentRow === undefined
+      ? { consent_version: shareConsentVersion, revoked_at: null }
+      : handlers.consentRow,
+    handlers.consentError ?? null,
+  );
+  const from = consentFrom.from;
   const rpc = vi.fn((name: string, args?: RpcArgs) => {
     const payload = args ?? {};
     if (name === "finish_share_generalization_job") return finish(payload);
@@ -170,7 +205,7 @@ function createRpcAdmin(
   });
   // 本番 Admin 型との差分はテスト stub として閉じる
   const admin = { rpc, from } as unknown as ProcessShareGeneralizationJobDeps["admin"];
-  return { admin, rpc, finish, publish, from };
+  return { admin, rpc, finish, publish, from, consentFrom };
 }
 
 afterEach(() => {
@@ -275,6 +310,39 @@ describe("share-generalize-worker auth / path", () => {
 });
 
 describe("processShareGeneralizationJob pipeline", () => {
+  it("AP7: skips before AI when consent revoked after claim", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const sendPass = vi.fn(
+      makePassSender((_pass, menu) => identityPatch(menu)),
+    ) as ProcessShareGeneralizationJobDeps["sendPass"];
+    const { admin, publish, finish, from } = createRpcAdmin({
+      consentRow: {
+        consent_version: shareConsentVersion,
+        revoked_at: "2026-08-01T12:00:00.000Z",
+      },
+    });
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+    });
+
+    // revoke 後は Pass も publish も走らない（AI 台帳を消費しない）
+    expect(sendPass).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(from).toHaveBeenCalledWith("user_share_consents");
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "skipped",
+        p_code: "consent_revoked",
+        p_ai_call_count: 0,
+      }),
+    );
+  });
+
   it("skips publish when consent revoked before publish RPC", async () => {
     const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
     const { admin, publish, finish, from } = createRpcAdmin({
@@ -299,8 +367,8 @@ describe("processShareGeneralizationJob pipeline", () => {
     });
 
     expect(publish).toHaveBeenCalledTimes(1);
-    // pool は publish RPC 内のみ。worker が from().insert しない
-    expect(from).not.toHaveBeenCalled();
+    // AP7: consent 再確認で from は読む。pool insert はしない
+    expect(from).toHaveBeenCalledWith("user_share_consents");
     // RPC が skipped 終端するため finish は呼ばない（二重終端禁止）
     expect(finish).not.toHaveBeenCalled();
 
@@ -324,7 +392,9 @@ describe("processShareGeneralizationJob pipeline", () => {
     });
 
     expect(publish).not.toHaveBeenCalled();
-    expect(from).not.toHaveBeenCalled();
+    // pool insert はしない（consent 再確認の select のみ）
+    expect(from).toHaveBeenCalledWith("user_share_consents");
+    expect(from).toHaveBeenCalledTimes(1);
     expect(finish).toHaveBeenCalledTimes(1);
     expect(finish.mock.calls[0]![0]).toMatchObject({
       p_job_id: JOB_ID,
@@ -545,7 +615,7 @@ describe("processShareGeneralizationJob pipeline", () => {
         }
         return Promise.reject(new Error(`unexpected rpc ${name}`));
       }),
-      from: vi.fn(),
+      from: createConsentFrom().from,
     } as unknown as ProcessShareGeneralizationJobDeps["admin"];
 
     await expect(
@@ -589,7 +659,7 @@ describe("processShareGeneralizationJob pipeline", () => {
         }
         return Promise.reject(new Error(`unexpected rpc ${name}`));
       }),
-      from: vi.fn(),
+      from: createConsentFrom().from,
     };
 
     claimShareGeneralizationJobs.mockResolvedValue([makeClaimedJob()]);

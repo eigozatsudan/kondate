@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ACCESS_TOKEN_GET_SESSION_TIMEOUT_MS,
   ACCESS_TOKEN_REFRESH_TIMEOUT_MS,
   AuthSessionExpiredError,
   AuthSessionRequiredError,
@@ -124,6 +125,22 @@ describe("requireAccessToken", () => {
     const expectation = expect(pending).rejects.toBeInstanceOf(AuthSessionExpiredError);
     await vi.advanceTimersByTimeAsync(ACCESS_TOKEN_REFRESH_TIMEOUT_MS);
     await expectation;
+  });
+
+  it("AP2: throws AuthSessionExpiredError when getSession never settles", async () => {
+    vi.useFakeTimers();
+    const client = {
+      auth: {
+        getSession: vi.fn().mockReturnValue(new Promise(() => undefined)),
+        refreshSession: vi.fn(),
+      },
+    };
+
+    const pending = requireAccessToken(client as never);
+    const expectation = expect(pending).rejects.toBeInstanceOf(AuthSessionExpiredError);
+    await vi.advanceTimersByTimeAsync(ACCESS_TOKEN_GET_SESSION_TIMEOUT_MS);
+    await expectation;
+    expect(client.auth.refreshSession).not.toHaveBeenCalled();
   });
 
   it("C10: refreshes when expires_at is missing so a stale token is not trusted", async () => {

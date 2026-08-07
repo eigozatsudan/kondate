@@ -22,9 +22,28 @@ export const BILLING_CANCEL_BLOCKED_MESSAGE =
 /**
  * Stripe cancel 成功後に Auth deleteUser だけ失敗したときの専用文言（AP1）。
  * fail-closed（Auth 未削除）は維持しつつ、解約が進んだ可能性を伝えて再試行を促す。
+ * AP3: cancel 実副作用が無かった場合は使わない（Free / live sub 0 は汎用文言）。
  */
 export const ACCOUNT_DELETE_AFTER_BILLING_CANCEL_FAILED_MESSAGE =
   "有料プランの解約は完了した可能性がありますが、アカウント削除に失敗しました。時間をおいてもう一度削除を試してください";
+
+/** Auth 削除失敗の汎用文言（cancel 実副作用なし）。 */
+export const ACCOUNT_DELETE_FAILED_MESSAGE =
+  "削除できませんでした。時間をおいてもう一度お試しください";
+
+/**
+ * cancel 結果。AP3: live sub を 1 件でも cancel 成功したときだけ
+ * account_delete_after_billing_cancel_failed を返す根拠にする。
+ */
+export type CancelBillingResult = {
+  cancelledLiveSubscription: boolean;
+};
+
+/**
+ * AP11: Stripe list の最大ページ数。limit 100 × 本値。
+ * 病理的 has_more 永続で Function 壁時計まで回らないよう上限を置く。
+ */
+export const MAX_STRIPE_SUBSCRIPTION_LIST_PAGES = 10;
 
 export type DeleteAccountDeps = {
   authenticate: typeof requireUser;
@@ -40,8 +59,9 @@ export type DeleteAccountDeps = {
   /**
    * customer 単位で live subscription を cancel。
    * 失敗時は throw し、呼び出し側が Auth 削除を中止する（AP1 fail-closed）。
+   * 戻り値は cancel 実副作用の有無（AP3）。
    */
-  cancelBillingSubscriptions: (userId: string) => Promise<void>;
+  cancelBillingSubscriptions: (userId: string) => Promise<CancelBillingResult>;
   /** 注入時は userId のみ。本番アダプタは Admin hard delete (shouldSoftDelete=false) を渡す。 */
   deleteUser: (userId: string) => Promise<{ error: { message: string } | null }>;
 };
@@ -78,20 +98,24 @@ export const createDeleteAccountHandler =
         }
       }
       // AP1: Stripe cancel 失敗時は Auth 削除を中止（請求 orphan を優先して防ぐ）
+      let cancelResult: CancelBillingResult = { cancelledLiveSubscription: false };
       try {
-        await deps.cancelBillingSubscriptions(auth.userId);
+        cancelResult = await deps.cancelBillingSubscriptions(auth.userId);
       } catch {
         throw new HttpError(503, "billing_cancel_failed", BILLING_CANCEL_BLOCKED_MESSAGE);
       }
       const { error } = await deps.deleteUser(auth.userId);
       if (error) {
-        // AP1: cancel 成功後の Auth 失敗を汎用 account_delete_failed に潰さない。
-        // 請求 orphan は避け済みなので再試行で delete だけ通せば復旧できる。
-        throw new HttpError(
-          503,
-          "account_delete_after_billing_cancel_failed",
-          ACCOUNT_DELETE_AFTER_BILLING_CANCEL_FAILED_MESSAGE,
-        );
+        // AP3: live sub を実際に cancel したときだけ「解約は完了した可能性」文言を出す。
+        // Free / customer 無し / live sub 0 の no-op 後は汎用文言（誤認防止）。
+        if (cancelResult.cancelledLiveSubscription) {
+          throw new HttpError(
+            503,
+            "account_delete_after_billing_cancel_failed",
+            ACCOUNT_DELETE_AFTER_BILLING_CANCEL_FAILED_MESSAGE,
+          );
+        }
+        throw new HttpError(503, "account_delete_failed", ACCOUNT_DELETE_FAILED_MESSAGE);
       }
       return json<DeleteAccountResult>(200, { ok: true, data: { deleted: true } });
     } catch (error) {
@@ -111,7 +135,7 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
   log: (event: SafeLogEvent) => void;
   requestId: string;
   startedAt: number;
-}): Promise<void> {
+}): Promise<CancelBillingResult> {
   const { userId, admin, stripe, log, requestId, startedAt } = options;
 
   let data: unknown;
@@ -148,8 +172,8 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
       ? (data as { stripe_customer_id?: unknown }).stripe_customer_id
       : undefined;
   if (typeof customerId !== "string" || customerId.length === 0) {
-    // billing customer なし → Stripe 操作なし（Free 利用者）
-    return;
+    // billing customer なし → Stripe 操作なし（Free 利用者 / AP3）
+    return { cancelledLiveSubscription: false };
   }
 
   // customer があるのに Stripe クライアントが無いと live sub を触れない → fail-closed
@@ -168,9 +192,22 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
   try {
     // U1-M5: limit 100 の1ページでは取り切れない病理ケースに備え、has_more まで辿る。
     // status: "all" で terminal 含む全件を取得し、live のみ cancel（Issue 4）
+    // AP11: ページ上限を超えたら fail-closed（無限 list で Function 壁時計を食わない）
     subscriptions = [];
     let startingAfter: string | undefined;
+    let pageCount = 0;
     for (;;) {
+      pageCount += 1;
+      if (pageCount > MAX_STRIPE_SUBSCRIPTION_LIST_PAGES) {
+        log({
+          level: "warn",
+          requestId,
+          code: "billing_cancel_failed",
+          durationMs: Date.now() - startedAt,
+          stripeCustomerId: customerId,
+        });
+        throw new Error("stripe_subscription_list_page_limit");
+      }
       const listed = await stripe.subscriptions.list({
         customer: customerId,
         status: "all",
@@ -183,7 +220,10 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
       if (last === undefined) break;
       startingAfter = last.id;
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "stripe_subscription_list_page_limit") {
+      throw error;
+    }
     log({
       level: "warn",
       requestId,
@@ -195,12 +235,14 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
   }
 
   let cancelFailed = false;
+  let cancelledLiveSubscription = false;
   for (const sub of subscriptions) {
     if (TERMINAL_SUBSCRIPTION_STATUSES.has(sub.status)) {
       continue;
     }
     try {
       await stripe.subscriptions.cancel(sub.id);
+      cancelledLiveSubscription = true;
     } catch {
       // 部分失敗でも残りを試行。いずれか失敗したら最終的に throw（Auth 削除しない）
       cancelFailed = true;
@@ -217,6 +259,7 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
   if (cancelFailed) {
     throw new Error("stripe_subscription_cancel_failed");
   }
+  return { cancelledLiveSubscription };
 }
 
 /**
@@ -251,16 +294,15 @@ export default async function deleteAccount(request: Request): Promise<Response>
       return { error: error === null ? null : { message: error.message } };
     },
     releaseFlyerProcessingReservations: releaseFlyerBestEffort,
-    cancelBillingSubscriptions: async (userId) => {
-      await cancelAllLiveSubscriptionsForUser({
+    cancelBillingSubscriptions: async (userId) =>
+      cancelAllLiveSubscriptionsForUser({
         userId,
         admin: getSupabaseAdmin(),
         stripe: stripeClient,
         log,
         requestId,
         startedAt,
-      });
-    },
+      }),
     // false = hard delete（soft delete ではなく Auth ユーザーを完全削除）
     deleteUser: async (userId) => getSupabaseAdmin().auth.admin.deleteUser(userId, false),
   })(request);

@@ -7,6 +7,7 @@ import {
   SIGN_OUT_TIMEOUT_MS,
 } from "@/features/auth/auth-cleanup";
 import { requireAccessToken } from "@/features/auth/session";
+import { accountDeletionAnonymousShareNote } from "@/features/privacy/privacy-copy";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { DeleteAccountDialog } from "./delete-account-dialog";
 
@@ -15,6 +16,12 @@ import { DeleteAccountDialog } from "./delete-account-dialog";
  * Escape/やめるも効かず cleanup に進めない。signOut と同窓で切る（cancel 不能な SDK 向け）。
  */
 export const AUTH_SESSION_PROBE_TIMEOUT_MS = SIGN_OUT_TIMEOUT_MS;
+
+/**
+ * AP1: DELETE /api/account 本体のクライアント上限。
+ * Function 総予算 55s / platform 60s の内側に置き、never-settle で「削除しています」固着を防ぐ。
+ */
+export const ACCOUNT_DELETE_CLIENT_TIMEOUT_MS = 58_000;
 
 function mapDeleteError(code: string | undefined): string {
   if (code === "invalid_request") return "「削除する」と入力してください";
@@ -60,6 +67,8 @@ export function DangerZone({
           <p>
             家族設定、献立履歴、冷蔵庫の食材、買い物リストは削除され、元に戻せません。不正利用防止のため、メールから作った復元できない識別子や日々の利用回数、無料期間の利用履歴などの記録は残ることがあります。
           </p>
+          {/* AP4: 方針 B（匿名共有 pool 残存）を削除導線でも開示（privacy-copy と単一ソース） */}
+          <p>{accountDeletionAnonymousShareNote}</p>
           <button
             type="button"
             className="min-h-11 rounded-xl bg-danger-700 px-4 font-semibold text-white"
@@ -174,15 +183,19 @@ export function AccountSettingsSection() {
     try {
       const accessToken = await requireAccessToken(getBrowserSupabaseClient());
       requestStarted = true;
-      const response = await fetch("/api/account", {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ confirmation }),
-        cache: "no-store",
-      });
+      // AP1: DELETE 本体も timeout。半開き回線で pending / Escape 無効が永久化しないようにする
+      const response = await withTimeout(
+        fetch("/api/account", {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ confirmation }),
+          cache: "no-store",
+        }),
+        ACCOUNT_DELETE_CLIENT_TIMEOUT_MS,
+      );
       let raw: unknown;
       try {
         raw = await response.json();

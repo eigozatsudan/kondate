@@ -10,6 +10,7 @@ import type { Config } from "@netlify/functions";
 import { z } from "zod";
 import { OPENROUTER_TIMEOUT_MS } from "../../shared/contracts/function-budget.js";
 import type { ValidatedMenu } from "../../shared/contracts/generation.js";
+import { isCurrentShareConsent } from "../../shared/contracts/share-consent.js";
 import {
   shareFailureCodes,
   shareSkipReasons,
@@ -302,9 +303,38 @@ export async function processShareGeneralizationJob(
       return;
     }
     const sourceMenuId = job.source_menu_id;
+    const contributorUserId = job.contributor_user_id;
+
+    // --- 2b. AP7: claim 直後の同意再確認（revoke 後の in-flight AI を止める） ---
+    // private.share_consent_is_valid は service_role から直呼び不可のため、
+    // 公開表 user_share_consents を admin で読み isCurrentShareConsent と同判定する。
+    // publish 前の TOCTOU 再確認は RPC 側に残す（無断掲載防衛は intact）。
+    {
+      const consentQuery = await deps.admin
+        .from("user_share_consents")
+        .select("consent_version, revoked_at")
+        .eq("user_id", contributorUserId)
+        .maybeSingle();
+      if (consentQuery.error) {
+        throw new Error("share_consent_recheck_failed");
+      }
+      const row = consentQuery.data;
+      const consentValid =
+        row !== null &&
+        typeof row.consent_version === "string" &&
+        isCurrentShareConsent({
+          consent_version: row.consent_version,
+          revoked_at: row.revoked_at ?? null,
+        });
+      if (!consentValid) {
+        await finish("skipped", "consent_revoked");
+        return;
+      }
+    }
+
     const sourceMenu = await deps.loadSourceMenu({
       admin: deps.admin,
-      userId: job.contributor_user_id,
+      userId: contributorUserId,
       menuId: sourceMenuId,
     });
     if (sourceMenu === null) {
