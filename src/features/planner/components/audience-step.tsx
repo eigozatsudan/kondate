@@ -18,13 +18,9 @@ const servingsIncompleteMessage = "人数を選んでください";
 /** チェック一覧の判断用注記（設計 §6.2） */
 const listReferenceNote =
   "一覧の表示は選ぶときの参考です。チェックしていない人の条件は献立に入りません。";
-/** 選択 0 件の安全サマリー固定文（共有コンポーネントには埋め込まない） */
-const emptySelectionSummaryBody = "家族を選ぶと、その人の条件がここに表示されます。";
-/** 選択 1 人以上のサマリー注記 */
+/** 選択 1 人以上のサマリー注記（CurrentSafetySummary 本体には埋め込まず sibling） */
 const selectedOnlyNote =
   "ここに出ている条件だけが献立に使われます。選んでいない家族は含まれません。";
-const safetyDisclaimer =
-  "AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。";
 
 type IncompleteField = "targetMode" | "targetMemberIds" | "servings";
 
@@ -401,38 +397,20 @@ export function AudienceStep({
           <p id={listNoteId} className="wizard-option-description" role="note">
             {listReferenceNote}
           </p>
-          {/* ラジオ上の全員サマリーは削除。選択中のみ／0 件は固定文（Task 6 の helper は埋め込まない） */}
-          {selectedSafetyMembers.length === 0 ? (
-            <section className="card stack" aria-labelledby="current-safety-title">
-              <h2 id="current-safety-title">現在の家族・安全条件</h2>
-              <p>{emptySelectionSummaryBody}</p>
-              {onOpenSettings !== undefined ? (
-                <button
-                  className="secondary-button min-h-11"
-                  type="button"
-                  disabled={disabled}
-                  onClick={onOpenSettings}
-                >
-                  家族設定を変更
-                </button>
-              ) : (
-                <Link className="secondary-button min-h-11" to="/settings">
-                  家族設定を変更
-                </Link>
-              )}
-              <p>{safetyDisclaimer}</p>
-            </section>
-          ) : (
-            <>
-              <CurrentSafetySummary
-                members={selectedSafetyMembers}
-                {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
-              />
-              <p className="wizard-option-description" role="note">
-                {selectedOnlyNote}
-              </p>
-            </>
-          )}
+          {/*
+            ラジオ上の全員サマリーは削除。選択 0 件も CurrentSafetySummary の empty 本文へ寄せ、
+            CTA disabled / disclaimer の drift を防ぐ（P9/P10）。selectedOnlyNote は sibling のみ。
+          */}
+          <CurrentSafetySummary
+            members={selectedSafetyMembers}
+            disabled={disabled}
+            {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
+          />
+          {selectedSafetyMembers.length > 0 ? (
+            <p className="wizard-option-description" role="note">
+              {selectedOnlyNote}
+            </p>
+          ) : null}
         </>
       )}
       {value.targetMode === "idea" && (

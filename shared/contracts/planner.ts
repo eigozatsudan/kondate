@@ -19,6 +19,18 @@ export type TargetMode = (typeof targetModes)[number];
  */
 export const PLANNER_TARGET_MEMBER_LIMIT = 20;
 
+/**
+ * 献立下書きの件数・文字上限。
+ * schema の .max と UI ガードで単一点定義し、magic number の二重管理を避ける（adversarial P11）。
+ */
+export const PLANNER_MAIN_INGREDIENT_LIMIT = 8;
+export const PLANNER_AVOID_INGREDIENT_LIMIT = 20;
+export const PLANNER_PANTRY_SELECTION_LIMIT = 50;
+/** メイン/避ける食材 1 件あたりの code point 上限（boundedCanonicalText と UI で共有）。 */
+export const PLANNER_INGREDIENT_TEXT_MAX = 80;
+/** メモ欄の code point 上限。 */
+export const PLANNER_MEMO_TEXT_MAX = 200;
+
 function boundedCanonicalText(min: number, max: number) {
   return z
     .string()
@@ -68,7 +80,9 @@ function refineTargetAndServings(
 
 const draftShape = {
   mealType: z.enum(mealTypes).nullable(),
-  mainIngredients: z.array(boundedCanonicalText(1, 80)).max(8),
+  mainIngredients: z
+    .array(boundedCanonicalText(1, PLANNER_INGREDIENT_TEXT_MAX))
+    .max(PLANNER_MAIN_INGREDIENT_LIMIT),
   cuisineGenre: z.enum(cuisineGenres).nullable(),
   targetMode: targetModeSchema.nullable(),
   targetMemberIds: z.array(z.uuid()).max(PLANNER_TARGET_MEMBER_LIMIT),
@@ -78,9 +92,11 @@ const draftShape = {
   // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
   // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
   ingredientPreference: z.enum(ingredientPreferences).nullable().default(null),
-  avoidIngredients: z.array(boundedCanonicalText(1, 80)).max(20),
-  memo: boundedCanonicalText(0, 200),
-  pantrySelections: z.array(pantrySelectionDraftSchema).max(50),
+  avoidIngredients: z
+    .array(boundedCanonicalText(1, PLANNER_INGREDIENT_TEXT_MAX))
+    .max(PLANNER_AVOID_INGREDIENT_LIMIT),
+  memo: boundedCanonicalText(0, PLANNER_MEMO_TEXT_MAX),
+  pantrySelections: z.array(pantrySelectionDraftSchema).max(PLANNER_PANTRY_SELECTION_LIMIT),
 } satisfies z.ZodRawShape;
 
 export const plannerDraftInputSchema = z
@@ -101,15 +117,20 @@ export const plannerDraftSchema = z
 
 const submissionCommonShape = {
   mealType: z.enum(mealTypes),
-  mainIngredients: z.array(boundedCanonicalText(1, 80)).min(1).max(8),
+  mainIngredients: z
+    .array(boundedCanonicalText(1, PLANNER_INGREDIENT_TEXT_MAX))
+    .min(1)
+    .max(PLANNER_MAIN_INGREDIENT_LIMIT),
   cuisineGenre: z.enum(cuisineGenres),
   timeLimitMinutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).nullable(),
   budgetPreference: z.enum(budgetPreferences).nullable(),
   // 同上: 導入前 snapshot の欠損キーを null（未指定）へ正規化する
   ingredientPreference: z.enum(ingredientPreferences).nullable().default(null),
-  avoidIngredients: z.array(boundedCanonicalText(1, 80)).max(20),
-  memo: boundedCanonicalText(0, 200),
-  pantrySelections: z.array(pantrySelectionDraftSchema).max(50),
+  avoidIngredients: z
+    .array(boundedCanonicalText(1, PLANNER_INGREDIENT_TEXT_MAX))
+    .max(PLANNER_AVOID_INGREDIENT_LIMIT),
+  memo: boundedCanonicalText(0, PLANNER_MEMO_TEXT_MAX),
+  pantrySelections: z.array(pantrySelectionDraftSchema).max(PLANNER_PANTRY_SELECTION_LIMIT),
 } satisfies z.ZodRawShape;
 
 export const plannerSubmissionSchema = z.discriminatedUnion("targetMode", [

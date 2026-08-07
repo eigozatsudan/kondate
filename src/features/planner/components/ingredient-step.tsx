@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { PantryItem } from "@shared/contracts/pantry";
+import {
+  PLANNER_INGREDIENT_TEXT_MAX,
+  PLANNER_MAIN_INGREDIENT_LIMIT,
+} from "@shared/contracts/planner";
 import { useAppToast } from "@/shared/ui/app-toast";
 import {
   commonMainIngredients,
@@ -10,8 +14,9 @@ import {
 import type { PantryItemsStatus } from "../pantry-selector";
 import type { PlannerStepProps } from "./planner-wizard-props";
 
-const mainIngredientLimit = 8;
-const mainIngredientLengthLimit = 80;
+// schema / UI の上限は contracts の単一点定義（P11）
+const mainIngredientLimit = PLANNER_MAIN_INGREDIENT_LIMIT;
+const mainIngredientLengthLimit = PLANNER_INGREDIENT_TEXT_MAX;
 
 export type IngredientStepProps = Omit<PlannerStepProps<readonly string[]>, "disabled"> & {
   /** 親の isSaving 等。incomplete 判定では使わず、押下可否はこれだけ */
@@ -111,7 +116,7 @@ export function IngredientStep({
       return "duplicate_or_empty";
     }
     if (Array.from(next).length > mainIngredientLengthLimit) {
-      setLocalError("メイン食材は1件80文字までです。");
+      setLocalError(`メイン食材は1件${String(mainIngredientLengthLimit)}文字までです。`);
       return "too_long";
     }
     if (includesCanonicalMainIngredient(value, next)) {

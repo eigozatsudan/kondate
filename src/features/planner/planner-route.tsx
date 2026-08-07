@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router";
+import type { PantryItem } from "@shared/contracts/pantry";
 import {
   collectPlannerRequestText,
   PLANNER_TARGET_MEMBER_LIMIT,
@@ -290,13 +291,20 @@ export function PlannerRoutePage() {
       );
       savePendingGeneration(pending);
       // savePendingGeneration 本体は targetMode を知らないため meta はここで書く。
-      savePendingGenerationMeta({
-        kind: "new_menu",
-        targetMode: mode,
-        idempotencyKey: pending.request.idempotencyKey,
-        ownerUserId: userId,
-        createdAt: pending.createdAt,
-      });
+      // P2: body→meta は非アトミック。meta が QuotaExceeded 等で throw すると body だけ sticky
+      // に残り C2 再開導線と矛盾する。meta 失敗時は body+meta をまとめて消してから再 throw。
+      try {
+        savePendingGenerationMeta({
+          kind: "new_menu",
+          targetMode: mode,
+          idempotencyKey: pending.request.idempotencyKey,
+          ownerUserId: userId,
+          createdAt: pending.createdAt,
+        });
+      } catch (error) {
+        clearPendingGeneration();
+        throw error;
+      }
       // strip/abort が pending 保存後に走った場合は sticky 再開導線を残さない
       if (signal.aborted) {
         clearPendingGeneration();
@@ -381,6 +389,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const pendingResetFlushRef = useRef(false);
   // P1: onSubmit の flush 後再検証用。render クロージャの safetyData より最新の eligible を見る
   const eligibleMemberIdsRef = useRef<readonly string[]>([]);
+  // P3: flush 後の pantry 再検証用。pre-flush 時点の snapshot だけでは削除/期限更新 TOCTOU が残る
+  const pantryRowsRef = useRef<readonly PantryItem[]>([]);
   const startNewAttempt = useCallback(() => {
     setAttempt(createPlannerAttempt());
   }, []);
@@ -389,6 +399,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     if (safetyQuery.data === undefined) return;
     eligibleMemberIdsRef.current = safetyQuery.data.eligibleMemberIds;
   }, [safetyQuery.data]);
+
+  useEffect(() => {
+    if (pantryQuery.data === undefined) return;
+    pantryRowsRef.current = pantryQuery.data;
+  }, [pantryQuery.data]);
 
   // P2: Free / plan 未取得へ降格したら attempt.qualityMode を false に同期（UI checked と state のズレ防止）
   const planCode = usage.isSuccess ? usage.data.plan : null;
@@ -1101,6 +1116,39 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             if (!isPlannerSubmitStillActive(mountedRef, submitOperationId, submitOperationIdRef)) {
               return;
             }
+            // P3: flush 後に pantry 削除/期限更新が入り得る（staleTime:0 の背景 refetch）。
+            // eligibility と同型で最新 ref を再検証し、navigate+sticky pending 後の端末失敗を避ける。
+            {
+              const pantryRowsLatest = pantryRowsRef.current;
+              const pantryIdSetLatest = new Set(pantryRowsLatest.map((item) => item.id));
+              if (
+                saved.pantrySelections.some(
+                  (selection) => !pantryIdSetLatest.has(selection.pantryItemId),
+                )
+              ) {
+                setSubmissionError(
+                  "冷蔵庫から削除された食材の選択を解除してから献立を作ってください。",
+                );
+                setStep("review");
+                return;
+              }
+              const nowForExpiryPostFlush = new Date();
+              const hasUnconfirmedExpiredPostFlush = saved.pantrySelections.some((selection) => {
+                const item = pantryRowsLatest.find((entry) => entry.id === selection.pantryItemId);
+                if (item === undefined) return false;
+                return (
+                  isPastEnteredExpiry(item, nowForExpiryPostFlush) &&
+                  !hasCurrentExpiredConfirmation(attempt, item.id, nowForExpiryPostFlush)
+                );
+              });
+              if (hasUnconfirmedExpiredPostFlush) {
+                setSubmissionError(
+                  "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
+                );
+                setStep("review");
+                return;
+              }
+            }
             // 生成へ渡す attempt は選択中 confirmation のみ・非 Plus は qualityMode を落とす
             const commandAttempt: PlannerAttempt = {
               ...attempt,
@@ -1133,6 +1181,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               return;
             }
             // IncompleteDraft は通信失敗と分けて人数未設定を伝える
+            // （pending は startGeneration 内の meta 失敗 rollback / mode 判定で処理済み。
+            //  flush 失敗時に既存 C2 resume pending を誤って消さないようここでは clear しない）
             setSubmissionError(
               error instanceof IncompleteDraftSaveError
                 ? "人数など必要な条件が未設定のため、生成を開始しませんでした。確認画面で内容を見直してください。"

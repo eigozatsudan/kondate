@@ -976,6 +976,45 @@ it("P1: flush 中に eligibility strip すると startGeneration しない", asy
   expect(startGeneration).not.toHaveBeenCalled();
 });
 
+it("P3: flush 中に pantry が消えると post-flush 再検証で startGeneration しない", async () => {
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  const startGeneration = vi.fn();
+  const user = userEvent.setup();
+  const view = render(<PlannerPage startGeneration={startGeneration} />);
+
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  await user.click(screen.getByRole("button", { name: "生成" }));
+  expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+
+  // flush 中に選択 ID が pantry から消える（削除 TOCTOU）
+  queryState.pantry = { data: [], isError: false, isPending: false };
+  view.rerender(<PlannerPage startGeneration={startGeneration} />);
+  // pantryRowsRef を effect で同期してから flush を進める
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("pantry names")).toHaveTextContent("");
+  });
+
+  deferred.resolve({
+    ...draft,
+    pantrySelections: [
+      {
+        pantryItemId: "74000000-0000-4000-8000-000000000001",
+        priority: "prefer_use",
+      },
+    ],
+    revision: 4,
+  });
+
+  await vi.waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "冷蔵庫から削除された食材の選択を解除してから献立を作ってください。",
+    );
+  });
+  expect(startGeneration).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
+});
+
 it("P6: 生成 submit 中は settings をガードし navigate しない", async () => {
   const user = userEvent.setup();
   // isSubmitting 中ガード: 遅延 flush の生成中に settings を呼ぶ
@@ -1336,6 +1375,30 @@ describe("PlannerRoutePage", () => {
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByLabelText("check count")).toHaveTextContent("1");
+  });
+
+  it("P2: meta 保存が失敗したら pending を消し遷移しない", async () => {
+    // body だけ残る sticky pending を防ぐ（meta QuotaExceeded 等）
+    pendingGenerationMock.savePendingGenerationMeta.mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "献立条件を保存できなかったため、生成を開始しませんでした。",
+      );
+    });
+    expect(pendingGenerationMock.savePendingGeneration).toHaveBeenCalled();
+    expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
+    // resume 導線は pending 無し（sticky にならない）
+    expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
   });
 
   it("P2: targetMode 無効の saved では pending を書かず専用文言を出す", async () => {

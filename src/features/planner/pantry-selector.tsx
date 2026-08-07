@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { PantryItem, PantrySelectionDraft } from "@shared/contracts/pantry";
+import { PLANNER_PANTRY_SELECTION_LIMIT } from "@shared/contracts/planner";
 import {
   confirmExpiredPantryItem,
   hasCurrentExpiredConfirmation,
@@ -44,7 +45,8 @@ export function PantrySelector({
     itemsStatus === "loaded"
       ? selections.filter((selection) => !itemIds.has(selection.pantryItemId))
       : [];
-  const selectionLimitReached = selections.length >= 50;
+  // schema の pantrySelections.max と単一ソース（P11）
+  const selectionLimitReached = selections.length >= PLANNER_PANTRY_SELECTION_LIMIT;
 
   useEffect(() => {
     if (attemptKeyRef.current === attempt.idempotencyKey) return;

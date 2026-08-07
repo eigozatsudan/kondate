@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { PantryItem } from "@shared/contracts/pantry";
-import { collectPlannerRequestText, type PlannerDraftInput } from "@shared/contracts/planner";
+import {
+  collectPlannerRequestText,
+  PLANNER_AVOID_INGREDIENT_LIMIT,
+  PLANNER_INGREDIENT_TEXT_MAX,
+  PLANNER_MEMO_TEXT_MAX,
+  type PlannerDraftInput,
+} from "@shared/contracts/planner";
 import { formatPlanQuotaCopy } from "@shared/copy/plan-tier";
 import type { PlanCode } from "@shared/contracts/plan-quota";
 import { detectUnsupportedMedicalRequest } from "@shared/safety-pure/medical-scope";
@@ -29,8 +35,9 @@ import type { PlannerStepProps } from "./planner-wizard-props";
 export const medicalRequestBlockedMessage =
   "離乳食、飲み込み・嚥下、治療食の依頼には対応できません。専門職の指示に従ってください。";
 
-const avoidIngredientLimit = 20;
-const avoidIngredientLengthLimit = 80;
+// schema / UI の上限は contracts の単一点定義（P11）
+const avoidIngredientLimit = PLANNER_AVOID_INGREDIENT_LIMIT;
+const avoidIngredientLengthLimit = PLANNER_INGREDIENT_TEXT_MAX;
 
 /**
  * parseAvoidIngredientInput を review step でも共有する。
@@ -332,6 +339,7 @@ export function ReviewStep({
           {targetSafetyMembers.length > 0 ? (
             <CurrentSafetySummary
               members={targetSafetyMembers}
+              disabled={disabled}
               {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
             />
           ) : null}
@@ -610,7 +618,7 @@ export function ReviewStep({
           <label className="field">
             自由メモ
             <textarea
-              maxLength={200}
+              maxLength={PLANNER_MEMO_TEXT_MAX}
               value={value.memo}
               disabled={disabled}
               aria-invalid={fieldErrors?.memo != null ? "true" : undefined}
