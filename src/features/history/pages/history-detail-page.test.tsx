@@ -618,6 +618,25 @@ describe("HistoryDetailPage safety gate", () => {
     expect(acceptMenuVersionMock).toHaveBeenCalledWith(MENU_ID);
   });
 
+  it("HR8: auxiliary accept is disabled during soft recheck (mirrors primary actionsEnabled)", async () => {
+    // 単一案 + actionable → 買い物 primary、補助に「この献立にする」。
+    // soft 中は canCreate が落ちて補助が消えるか、残っても disabled。採用 RPC は呼ばない。
+    listDerivationVersionsMock.mockResolvedValue([]);
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: validRevalidation,
+        isSoftRechecking: true,
+      },
+    });
+    expect(await screen.findByText("いまの家族設定を再確認しています")).toBeVisible();
+    const acceptButtons = screen.queryAllByRole("button", { name: "この献立にする" });
+    for (const button of acceptButtons) {
+      expect(button).toBeDisabled();
+    }
+    expect(acceptMenuVersionMock).not.toHaveBeenCalled();
+  });
+
   it("after accept, promotes shopping list as the primary next step", async () => {
     const user = userEvent.setup();
     renderHistoryDetail({

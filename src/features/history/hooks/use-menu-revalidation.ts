@@ -77,39 +77,6 @@ export function useMenuRevalidation(menuId: string) {
   });
 
   /**
-   * soft: キャッシュを残したまま再 POST。表示は直前の checked を維持する。
-   * HR4: offline hold / offline 中は no-op（poll と同型）。focus soft が generation
-   * を進めて finally で hold を崩し error CTA へ落ちる経路を閉じる。
-   */
-  const beginSoftRecheck = useCallback(() => {
-    if (menuId.length === 0) return;
-    if (isOfflineHoldRef.current) return;
-    if (typeof navigator !== "undefined" && !navigator.onLine) return;
-    void cache.invalidateQueries({
-      queryKey,
-      exact: true,
-      refetchType: "active",
-    });
-  }, [cache, menuId, queryKey]);
-
-  /**
-   * hard: 同期的に checking へ落とし、キャッシュを本当に捨ててから再 POST する。
-   * setQueryData(undefined) は TQ v5 で no-op のため removeQueries / resetQueries を使う。
-   * 進行中 soft の finally が forcedChecking を下ろさないよう、先に世代を進める。
-   */
-  const beginHardRecheck = useCallback(() => {
-    if (menuId.length === 0) return;
-    // 進行中 soft の finally が generation 一致で forcedChecking を下ろすのを防ぐ
-    requestGenerationRef.current += 1;
-    // online hard 等へ遷移したら offline 専用文言は下ろす（再 POST 中は通常 checking copy）
-    setIsOfflineHold(false);
-    setForcedChecking(true);
-    void cache.cancelQueries({ queryKey, exact: true });
-    // data を消してから active refetch（失敗時 hasData=false → error、旧 valid に戻さない）
-    void cache.resetQueries({ queryKey, exact: true });
-  }, [cache, menuId, queryKey]);
-
-  /**
    * offline: hard と同じく世代を進めて閉じるが、offline 中は再 POST しない。
    * online 復帰の hard 契約と衝突させない（resetQueries しない）。
    */
@@ -121,6 +88,51 @@ export function useMenuRevalidation(menuId: string) {
     setForcedChecking(true);
     void cache.cancelQueries({ queryKey, exact: true });
   }, [cache, menuId, queryKey]);
+
+  /**
+   * soft: キャッシュを残したまま再 POST。表示は直前の checked を維持する。
+   * HR4: offline hold 中は no-op（generation を進めず sticky を保つ）。
+   * HR2: offline なのに hold 未入なら beginOfflineHold へ（`offline` イベント欠落でも CTA を閉じる）。
+   * focus soft が generation を進めて finally で hold を崩し error CTA へ落ちる経路を閉じる。
+   */
+  const beginSoftRecheck = useCallback(() => {
+    if (menuId.length === 0) return;
+    if (isOfflineHoldRef.current) return;
+    // HR2: soft/poll/focus 到達時に offline なら hold へ（イベント無し切断でも actionable を残さない）
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      beginOfflineHold();
+      return;
+    }
+    void cache.invalidateQueries({
+      queryKey,
+      exact: true,
+      refetchType: "active",
+    });
+  }, [beginOfflineHold, cache, menuId, queryKey]);
+
+  /**
+   * hard: 同期的に checking へ落とし、キャッシュを本当に捨ててから再 POST する。
+   * setQueryData(undefined) は TQ v5 で no-op のため removeQueries / resetQueries を使う。
+   * 進行中 soft の finally が forcedChecking を下ろさないよう、先に世代を進める。
+   * HR1: offline 中の hard（Realtime CHANNEL_ERROR/TIMED_OUT 等）は POST せず hold を sticky に保つ。
+   * online 復帰（navigator.onLine=true）の hard だけが hold を下ろして再 POST する。
+   */
+  const beginHardRecheck = useCallback(() => {
+    if (menuId.length === 0) return;
+    // HR1: offline 中は resetQueries（POST）も hold 解除もしない
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      beginOfflineHold();
+      return;
+    }
+    // 進行中 soft の finally が generation 一致で forcedChecking を下ろすのを防ぐ
+    requestGenerationRef.current += 1;
+    // online hard 等へ遷移したら offline 専用文言は下ろす（再 POST 中は通常 checking copy）
+    setIsOfflineHold(false);
+    setForcedChecking(true);
+    void cache.cancelQueries({ queryKey, exact: true });
+    // data を消してから active refetch（失敗時 hasData=false → error、旧 valid に戻さない）
+    void cache.resetQueries({ queryKey, exact: true });
+  }, [beginOfflineHold, cache, menuId, queryKey]);
 
   /**
    * 公開 API は hard（ラベル確認後・stale confirm 失敗など fail-closed が必要な呼び出し元向け）。
@@ -158,6 +170,7 @@ export function useMenuRevalidation(menuId: string) {
       .subscribe((status) => {
         // Realtime 購読状態は文字列比較（テストからも素の文字列が届く）。
         // CHANNEL_ERROR / TIMED_OUT は hard 再検査へ（旧 valid のまま 60s soft 依存にしない）。
+        // offline 中は beginHardRecheck 内で hold へ（HR1: sticky hold を error に落とさない）。
         const state: string = status;
         if (state === "CHANNEL_ERROR" || state === "TIMED_OUT") {
           hard();
@@ -175,12 +188,13 @@ export function useMenuRevalidation(menuId: string) {
         ? candidate
         : 60_000;
     })();
-    // pollMs=0 のときは interval を張らない（signal 専用待機と soft poll を分離する E2E 用）
+    // pollMs=0 のときは interval を張らない（signal 専用待機と soft poll を分離する E2E 用）。
+    // HR2: offline でも soft を呼び、beginSoftRecheck が hold へ入れる（onLine ガードは soft 側）。
     const timer =
       pollMs === 0
         ? undefined
         : window.setInterval(() => {
-            if (document.visibilityState === "visible" && navigator.onLine) soft();
+            if (document.visibilityState === "visible") soft();
           }, pollMs);
     window.addEventListener(householdSafetyChangedEvent, hard);
     window.addEventListener("storage", stored);

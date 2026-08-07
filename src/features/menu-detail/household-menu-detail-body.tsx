@@ -187,6 +187,10 @@ export function HouseholdMenuDetailBody({
     isRevalidationActionable(revalidation.result);
   // actionsEnabled: 採用/再生成/買い物 mutation（HR1: soft 飛行中は閉じる）
   const actionsEnabled = gateOpen && !isSoftRechecking;
+  // HR8: soft 開始〜再描画のあいだ onClick クロージャが stale な actionsEnabled=true のまま
+  // 残っても、最新値で RPC を止める（primary / 補助採用の両方）
+  const actionsEnabledRef = useRef(actionsEnabled);
+  actionsEnabledRef.current = actionsEnabled;
   // HR4: retarget は checking/error 中は閉じる。checked なら invalid でも許可
   // （使えない献立から条件を変えて作り直す escape hatch）。accept/regen は actionsEnabled。
   // soft 飛行中も retarget は許可（条件変更の escape を閉じない）。
@@ -712,7 +716,8 @@ export function HouseholdMenuDetailBody({
               disabled={!actionsEnabled || accept.isPending}
               onClick={() => {
                 // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
-                if (!actionsEnabled) return;
+                // HR8: ref で soft-flight 中の stale クロージャも塞ぐ
+                if (!actionsEnabledRef.current) return;
                 setAcceptError(null);
                 accept.mutate(menuId, {
                   onSuccess: () => {
@@ -751,9 +756,12 @@ export function HouseholdMenuDetailBody({
               <button
                 type="button"
                 className="secondary-button min-h-11"
-                // HR6: この枝は canCreateShoppingList ⇒ actionsEnabled 済み。pending のみ disable
-                disabled={accept.isPending}
+                // HR8: primary 採用と同型。soft 開始〜再描画のあいだに補助 CTA が残っても
+                // actionsEnabled で塞ぎ、pending だけに依存しない（soft-flight race を閉じる）。
+                disabled={!actionsEnabled || accept.isPending}
                 onClick={() => {
+                  // HR3/HR8: RPC は所有権のみ。ref で最新 actionsEnabled を再確認してから呼ぶ
+                  if (!actionsEnabledRef.current) return;
                   setAcceptError(null);
                   accept.mutate(menuId, {
                     onSuccess: () => {

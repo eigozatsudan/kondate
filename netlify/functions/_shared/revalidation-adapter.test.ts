@@ -526,6 +526,163 @@ describe("validateStoredMenuCurrentSafety", () => {
     expect(loadCurrentSafetyContext).not.toHaveBeenCalled();
   });
 
+  it("HR6: projects deleted-member free text before subset validate (no false-invalid on survivors)", async () => {
+    // 削除済み member_1 の取り分け free text に卵別名があると、投影なしでは生存 member の
+    // allergen 走査に混ざって false-invalid になる。再生成ゲートと同型の射影で揃える。
+    // mealType=breakfast は最低 2 品（schema の full_menu 下限）。副菜を足して shape を満たす。
+    const dishId = "50000000-0000-4000-8000-000000000001";
+    const sideDishId = "50000000-0000-4000-8000-000000000002";
+    const stepId = "51000000-0000-4000-8000-000000000001";
+    const sideStepId = "51000000-0000-4000-8000-000000000002";
+    const ingredientId = INGREDIENT_ID;
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue(
+      makeCurrentSafetyContext({
+        members: [
+          {
+            householdMemberId: LIVE_MEMBER_ID,
+            anonymousRef: "member_1",
+            ageBand: "adult",
+            allergyStatus: "registered",
+            allergenIds: ["egg"],
+            hasUnmappedCustomAllergy: false,
+            customAllergies: [],
+            requiredSafetyConstraints: [],
+            unsupportedDietStatus: "none",
+            unsupportedDietKinds: [],
+          },
+        ],
+        allergenDictionary: {
+          version: "jp-caa-2026-04.v1",
+          catalog: [{ id: "egg", displayName: "卵", catalogVersion: "jp-caa-2026-04.v1" }],
+          aliases: [
+            {
+              allergenId: "egg",
+              alias: "卵",
+              normalizedAlias: "卵",
+              aliasKind: "direct",
+              requiresLabelConfirmation: false,
+              dictionaryVersion: "jp-caa-2026-04.v1",
+            },
+          ],
+        },
+      }),
+    );
+
+    const stored = makeStored({
+      menu: makeValidatedMenu({
+        menuId: MENU_ID,
+        mealType: "breakfast",
+        dishes: [
+          {
+            id: dishId,
+            role: "main",
+            position: 1,
+            name: "野菜炒め",
+            description: "説明",
+            cookingTimeMinutes: 15,
+            ingredients: [
+              {
+                id: ingredientId,
+                position: 1,
+                name: "キャベツ",
+                quantityValue: 100,
+                quantityText: "100g",
+                unit: "g",
+                storeSection: "produce",
+                pantrySelectionId: null,
+                labelConfirmationRequired: false,
+              },
+            ],
+            steps: [{ id: stepId, position: 1, instruction: "炒める" }],
+          },
+          {
+            id: sideDishId,
+            role: "side",
+            position: 2,
+            name: "温野菜",
+            description: "副菜",
+            cookingTimeMinutes: 5,
+            ingredients: [
+              {
+                id: "53000000-0000-4000-8000-000000000002",
+                position: 1,
+                name: "にんじん",
+                quantityValue: 0.5,
+                quantityText: "1/2本",
+                unit: "本",
+                storeSection: "produce",
+                pantrySelectionId: null,
+                labelConfirmationRequired: false,
+              },
+            ],
+            steps: [{ id: sideStepId, position: 1, instruction: "加熱する" }],
+          },
+        ],
+        adaptations: [
+          {
+            id: "57000000-0000-4000-8000-000000000001",
+            dishId,
+            // 歴史上の削除済み ref（live は member_2 へ写像される）
+            anonymousMemberRef: "member_1",
+            portionText: "削除済み向け。卵アレルギー注意の取り分け文言",
+            branchBeforeRecipeStepId: stepId,
+            additionalCutting: null,
+            additionalHeating: null,
+            additionalSeasoning: null,
+            servingCheck: "確認",
+            safetyTags: [],
+            safetyActions: [],
+          },
+          {
+            id: "57000000-0000-4000-8000-000000000002",
+            dishId,
+            anonymousMemberRef: "member_2",
+            portionText: "生存メンバーの取り分け",
+            branchBeforeRecipeStepId: stepId,
+            additionalCutting: null,
+            additionalHeating: null,
+            additionalSeasoning: null,
+            servingCheck: "確認",
+            safetyTags: [],
+            safetyActions: [],
+          },
+        ],
+        labelConfirmations: [],
+        pantryUsage: [],
+      }),
+    });
+
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await validateStoredMenuCurrentSafety({
+      ownerClient: ownerClient as never,
+      admin: {} as never,
+      stored,
+      userId: USER_ID,
+    });
+
+    // 削除済み free text は射影で落ち、生存メンバー向けだけが candidate に残る
+    expect(result.ok).toBe(true);
+    expect(result.issues.filter((issue) => /allergen/i.test(issue.code))).toEqual([]);
+    expect(result.candidate.adaptations.map((row) => row.anonymousMemberRef)).toEqual([
+      "member_2",
+    ]);
+    expect(result.candidate.adaptations[0]?.portionText).toBe("生存メンバーの取り分け");
+  });
+
   it("keeps historical confirmed provenance on the stored aggregate and does not use it as current provider evidence", async () => {
     const stored = makeStored();
     const historical = structuredClone(stored.menu.labelConfirmations);

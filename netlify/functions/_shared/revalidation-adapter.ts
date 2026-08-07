@@ -18,6 +18,7 @@ import type { AuthenticatedUser } from "./generation-repository.js";
 import { loadCurrentSafetyContext } from "./current-safety.js";
 import { HttpError } from "./http.js";
 import type { CurrentMenuLabelWarning, RevalidationDeps } from "./revalidation-service.js";
+import { projectMenuForSurvivingTargets } from "./regeneration-context.js";
 import {
   loadStoredMenu,
   toStoredRevalidationCandidate,
@@ -417,7 +418,11 @@ export async function validateStoredMenuCurrentSafety(input: {
     input.safety ?? (await loadCurrentSafetyContext(admin, userId, stored.targetMemberIds));
   const safety = withHistoricalAnonymousRefs(renumberedSafety, stored);
   const generationContext = makeRevalidationGenerationContext(stored, safety);
-  const candidate = toStoredRevalidationCandidate(stored.menu, generationContext);
+  // HR6: 再生成ゲートと同型に削除済み ref の取り分け・安全処理・ラベルを射影してから
+  // subset validate する。孤児 free text が生存メンバーの allergen 走査に混ざる false-invalid を防ぐ。
+  const survivingRefs = new Set(safety.members.map((member) => member.anonymousRef));
+  const projectedMenu = projectMenuForSurvivingTargets(stored.menu, survivingRefs);
+  const candidate = toStoredRevalidationCandidate(projectedMenu, generationContext);
 
   // A-C2 residual: invalid allergen もラベル警告と同じ memberDisplayLabel を使う。
   const allergenMemberLabels = Object.fromEntries(

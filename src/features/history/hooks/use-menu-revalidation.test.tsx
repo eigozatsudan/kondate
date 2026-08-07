@@ -601,6 +601,91 @@ describe("useMenuRevalidation", () => {
     });
   });
 
+  it("HR1: CHANNEL_ERROR during offline hold stays hold without extra POST or error phase", async () => {
+    // offline hold 中に Realtime fail-closed hard が resetQueries すると finally で
+    // forcedChecking が下り phase=error になり sticky hold 契約が崩れる。
+    // jsdom は offline イベントでも onLine を下げないため、実ブラウザ同型に mock する。
+    const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    const { result, unmount } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const callsAfterMount = revalidateMenuMock.mock.calls.length;
+    onlineSpy.mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.isOfflineHold).toBe(true);
+
+    act(() => {
+      channelHandlers.statusCallback?.("CHANNEL_ERROR");
+    });
+    // hold は sticky。追加 POST なし・error へ落ちない
+    expect(revalidateMenuMock.mock.calls.length).toBe(callsAfterMount);
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.isOfflineHold).toBe(true);
+    expect(result.current.errorMessage).toBeUndefined();
+
+    act(() => {
+      channelHandlers.statusCallback?.("TIMED_OUT");
+    });
+    expect(revalidateMenuMock.mock.calls.length).toBe(callsAfterMount);
+    expect(result.current.isOfflineHold).toBe(true);
+
+    // online hard で初めて再 POST
+    onlineSpy.mockReturnValue(true);
+    const onlineFlight = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(onlineFlight.promise);
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(result.current.isOfflineHold).toBe(false);
+    expect(result.current.phase).toBe("checking");
+    act(() => {
+      onlineFlight.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    unmount();
+    onlineSpy.mockRestore();
+  });
+
+  it("HR2: navigator.onLine=false without offline event enters hold on soft path", async () => {
+    // offline イベント無しで onLine=false のまま soft が no-op だと checked+CTA が開き続ける。
+    // soft（focus / poll）到達時に hold へ入る。
+    const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    const { result, unmount } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const callsAfterMount = revalidateMenuMock.mock.calls.length;
+
+    onlineSpy.mockReturnValue(false);
+    act(() => {
+      result.current.beginSoftRecheck();
+    });
+    expect(revalidateMenuMock.mock.calls.length).toBe(callsAfterMount);
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.isOfflineHold).toBe(true);
+    expect(result.current.errorMessage).toBeUndefined();
+
+    // hold 中の soft 再入は no-op（追加 POST なし）
+    act(() => {
+      result.current.beginSoftRecheck();
+    });
+    expect(revalidateMenuMock.mock.calls.length).toBe(callsAfterMount);
+    expect(result.current.isOfflineHold).toBe(true);
+
+    onlineSpy.mockReturnValue(true);
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    unmount();
+    onlineSpy.mockRestore();
+  });
+
   it("does not hard recheck on SUBSCRIBED alone", async () => {
     const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
     await waitFor(() => {
