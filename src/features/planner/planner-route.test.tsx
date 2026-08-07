@@ -52,6 +52,7 @@ const queryState = vi.hoisted(() => ({
   },
   ownerBPending: false,
   privacyConsent: null as { user_id: string; notice_version: string } | null,
+  privacyIsError: false,
 }));
 
 const ownerBId = "72000000-0000-4000-8000-000000000002";
@@ -159,7 +160,12 @@ vi.mock("@tanstack/react-query", () => ({
       };
     }
     if (queryKey[0] === "privacy") {
-      return { data: queryState.privacyConsent, isError: false, isPending: false };
+      return {
+        data: queryState.privacyIsError ? undefined : queryState.privacyConsent,
+        isError: queryState.privacyIsError,
+        isPending: false,
+        refetch: vi.fn(),
+      };
     }
     const ownerId = queryKey[0] === "pantry" ? queryKey[1] : queryKey[2];
     const isOwnerBPending = ownerId === ownerBId && queryState.ownerBPending;
@@ -240,6 +246,8 @@ type WizardMockProps = {
   pantryItems: readonly PantryItem[];
   pantryItemsStatus: "loading" | "loaded";
   hasAcceptedOrDeclinedPrivacy: boolean;
+  privacyConsentLoadFailed?: boolean;
+  onRetryPrivacyConsent?: () => void;
   onOpenPrivacyNotice(): void;
   hasDraftConflict?: boolean;
   draftConflictRefetchError?: boolean;
@@ -274,6 +282,9 @@ vi.mock("./components/planner-wizard", () => ({
         <output aria-label="check count">{props.attempt.expiredPantryChecks.length}</output>
         <output aria-label="privacy accepted or declined">
           {String(props.hasAcceptedOrDeclinedPrivacy)}
+        </output>
+        <output aria-label="privacy consent load failed">
+          {String(props.privacyConsentLoadFailed ?? false)}
         </output>
         <output aria-label="has draft conflict">{String(props.hasDraftConflict ?? false)}</output>
         <button
@@ -467,6 +478,7 @@ beforeEach(() => {
     isPending: false,
   };
   queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-29.v1" };
+  queryState.privacyIsError = false;
   // flush 後の saved にクライアント入力（pantrySelections 等）を残す（P1 exact-set 検証用）
   savePlannerDraftMock.mockImplementation(
     (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
@@ -1014,6 +1026,15 @@ it("AI情報未確認では wizard へ hasAcceptedOrDeclinedPrivacy=false を渡
   queryState.privacyConsent = null;
   render(<PlannerPage />);
   expect(screen.getByLabelText("privacy accepted or declined")).toHaveTextContent("false");
+  expect(screen.getByLabelText("privacy consent load failed")).toHaveTextContent("false");
+});
+
+it("AP5: privacy 読取 isError は未同意に潰さず privacyConsentLoadFailed=true を渡す", () => {
+  queryState.privacyConsent = null;
+  queryState.privacyIsError = true;
+  render(<PlannerPage />);
+  expect(screen.getByLabelText("privacy accepted or declined")).toHaveTextContent("false");
+  expect(screen.getByLabelText("privacy consent load failed")).toHaveTextContent("true");
 });
 
 it("privacy notice への遷移操作は review resume 付きの returnTo を組み立てる", async () => {

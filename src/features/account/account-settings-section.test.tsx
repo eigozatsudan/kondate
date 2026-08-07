@@ -2,7 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
-import { AccountSettingsSection } from "./account-settings-section";
+import {
+  AccountSettingsSection,
+  AUTH_SESSION_PROBE_TIMEOUT_MS,
+} from "./account-settings-section";
 
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn());
 const clearOwnedLocalDataBestEffortMock = vi.hoisted(() => vi.fn());
@@ -16,6 +19,8 @@ const locationReplaceMock = vi.hoisted(() => vi.fn());
 vi.mock("@/features/auth/auth-cleanup", () => ({
   clearLocalAuthAndDrafts: clearLocalAuthAndDraftsMock,
   clearOwnedLocalDataBestEffort: clearOwnedLocalDataBestEffortMock,
+  // AP1: 本番は signOut と同窓。モックでも数値定数を export する
+  SIGN_OUT_TIMEOUT_MS: 4_000,
 }));
 
 vi.mock("@/features/auth/session", () => ({
@@ -467,5 +472,60 @@ describe("AccountSettingsSection", () => {
     expect(getUserMock).not.toHaveBeenCalled();
     expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
     expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
+  it("AP1: getUser never-settle is timed out so pending clears (no dialog stuck)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      fetchMock.mockRejectedValue(new TypeError("network"));
+      getSessionMock.mockResolvedValue({
+        data: { session: { access_token: "stale-jwt" } },
+        error: null,
+      });
+      // never-settle: timeout 後に不明扱いへ倒し pending を finally で落とす
+      getUserMock.mockReturnValue(new Promise(() => undefined));
+
+      render(<AccountSettingsSection />);
+      await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+      await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+      await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+      await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+      await vi.advanceTimersByTimeAsync(AUTH_SESSION_PROBE_TIMEOUT_MS + 50);
+
+      expect(
+        await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
+      ).toBeVisible();
+      expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
+      expect(locationReplaceMock).not.toHaveBeenCalled();
+      // pending 解除後は「やめる」で閉じられる
+      expect(screen.getByRole("button", { name: "やめる" })).not.toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP8: getUser user:null error:null is treated as session gone", async () => {
+    const user = userEvent.setup();
+    seedOwnedStorage();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    getSessionMock.mockResolvedValue({
+      data: { session: { access_token: "stale-jwt" } },
+      error: null,
+    });
+    getUserMock.mockResolvedValue({ data: { user: null }, error: null });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    await waitFor(() => {
+      expect(getUserMock).toHaveBeenCalled();
+      expect(clearLocalAuthAndDraftsMock).toHaveBeenCalled();
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+    });
   });
 });

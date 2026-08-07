@@ -40,6 +40,9 @@ export type PlannerWizardExtraProps = {
   attempt: PlannerAttempt;
   onAttemptChange: (next: PlannerAttempt) => void;
   hasAcceptedOrDeclinedPrivacy: boolean;
+  /** AP5: privacy 読取失敗時 true（ReviewStep へ透過） */
+  privacyConsentLoadFailed?: boolean;
+  onRetryPrivacyConsent?: () => void;
   onOpenPrivacyNotice: () => void;
   /**
    * 家族設定へ遷移する。route が flush 完了後に navigate する（P5）。
@@ -144,6 +147,8 @@ export function PlannerWizard({
   attempt,
   onAttemptChange,
   hasAcceptedOrDeclinedPrivacy,
+  privacyConsentLoadFailed = false,
+  onRetryPrivacyConsent,
   onOpenPrivacyNotice,
   onOpenSettings,
   hasDraftConflict = false,
@@ -533,6 +538,8 @@ export function PlannerWizard({
         fieldErrors={buildReviewFieldErrors(fieldErrors)}
         summaryError={error}
         hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
+        privacyConsentLoadFailed={privacyConsentLoadFailed}
+        {...(onRetryPrivacyConsent !== undefined ? { onRetryPrivacyConsent } : {})}
         onOpenPrivacyNotice={onOpenPrivacyNotice}
         safetyMembers={eligibleMembers}
         {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}

@@ -1,12 +1,20 @@
 import { useState } from "react";
 import { deleteAccountEnvelopeSchema } from "@shared/contracts/account";
+import { withTimeout } from "@/features/auth/async-timeout";
 import {
   clearLocalAuthAndDrafts,
   clearOwnedLocalDataBestEffort,
+  SIGN_OUT_TIMEOUT_MS,
 } from "@/features/auth/auth-cleanup";
 import { requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { DeleteAccountDialog } from "./delete-account-dialog";
+
+/**
+ * AP1: 削除後 probe の getSession/getUser が never-settle すると pending が固着し
+ * Escape/やめるも効かず cleanup に進めない。signOut と同窓で切る（cancel 不能な SDK 向け）。
+ */
+export const AUTH_SESSION_PROBE_TIMEOUT_MS = SIGN_OUT_TIMEOUT_MS;
 
 function mapDeleteError(code: string | undefined): string {
   if (code === "invalid_request") return "「削除する」と入力してください";
@@ -101,17 +109,30 @@ export function AccountSettingsSection() {
    * Admin hard delete は他端末の local JWT を消さないため、getSession（local のみ）だけでは
    * サーバ削除成功を検出できない。local session が null なら gone。残っていれば getUser で
    * Auth サーバへ確認し、user 不在 / 4xx なら削除済みとみなして成功同等 cleanup へ寄せる。
-   * getSession/getUser の一時エラーや 5xx・ネットワーク系は不明扱い（誤成功・請求 fail-closed を壊さない）。
+   * getSession/getUser の一時エラー・5xx・timeout・ネットワーク系は不明扱い
+   * （誤成功・請求 fail-closed を壊さない。AP3 residual-intentional）。
+   *
+   * AP1: probe 自体に timeout を付け、never-settle で pending/ダイアログが固着しないようにする。
+   * AP8: `{ user: null, error: null }` のランタイム形も gone 扱い（型上の non-null 前提に依存しない）。
+   *
+   * AP2 residual-intentional: 成功 cleanup は local 既定のみ。他端末 / cleanup 未到達端末の
+   * owned storage は SPA では wipe 不能。RequireSession は login Navigate のみで storage 非掃除。
    */
   async function isAuthSessionGone(): Promise<boolean> {
     try {
       const client = getBrowserSupabaseClient();
-      const sessionResult = await client.auth.getSession();
+      const sessionResult = await withTimeout(
+        client.auth.getSession(),
+        AUTH_SESSION_PROBE_TIMEOUT_MS,
+      );
       if (sessionResult.error !== null) return false;
       if (sessionResult.data.session === null) return true;
 
       // local JWT 残存: Auth サーバでユーザー実在を確認（AP3）
-      const { error } = await client.auth.getUser();
+      const { data, error } = await withTimeout(
+        client.auth.getUser(),
+        AUTH_SESSION_PROBE_TIMEOUT_MS,
+      );
       if (error !== null) {
         // AuthApiError 等の 4xx は JWT 無効・ユーザー削除済み。status 無し / 5xx は不明
         const status = error.status;
@@ -120,14 +141,19 @@ export function AccountSettingsSection() {
         }
         return false;
       }
-      // getUser 成功時の user は型上 non-null（成功 = セッション存続）
+      // AP8: error 無しでも user が null なら削除済み寄り（誤 residual 維持を避ける）
+      if (data.user === null) return true;
       return false;
     } catch {
+      // timeout / throw → 不明。finally で pending を落としダイアログを復帰させる（AP1）
       return false;
     }
   }
 
-  /** 削除成功後の local 掃除 + フル遷移（AP5 の second pass を含む） */
+  /**
+   * 削除成功後の local 掃除 + フル遷移（AP5 の second pass を含む）。
+   * AP2 residual-intentional: signOutScope 既定 local。他端末 JWT/draft は触れない。
+   */
   async function completeAccountDeletedLocally(): Promise<void> {
     try {
       await clearLocalAuthAndDrafts(getBrowserSupabaseClient());
@@ -160,6 +186,8 @@ export function AccountSettingsSection() {
         raw = await response.json();
       } catch {
         // AP10: 本文欠落窓。Auth 消滅済みなら成功同等 cleanup
+        // AP4 residual-intentional: 非 JSON では専用 code を復元できない。
+        // Auth 残存時は汎用文言のみ（cancel 済みの可観測性は JSON 成功枝に限定）。
         if (await isAuthSessionGone()) {
           await completeAccountDeletedLocally();
           return;
@@ -169,6 +197,7 @@ export function AccountSettingsSection() {
       }
       const parsed = deleteAccountEnvelopeSchema.safeParse(raw);
       if (!parsed.success) {
+        // AP4 residual-intentional: 同上（専用 billing/Auth 文言は envelope 成功時のみ）
         if (await isAuthSessionGone()) {
           await completeAccountDeletedLocally();
           return;

@@ -34,7 +34,8 @@ export function PrivacyNoticePage() {
           const share = await upsertMyShareConsent(client, true);
           queryClient.setQueryData(shareConsentKeys.current(userId), share);
         } catch {
-          // best-effort: privacy は保存済み。share は設定トグルで再試行できる
+          // AP12 residual-intentional: share は無言 best-effort。
+          // privacy は保存済み・returnTo 継続。失敗案内は設定トグル再試行に委ねる。
         }
       }
       return consent;

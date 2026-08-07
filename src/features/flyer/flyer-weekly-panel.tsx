@@ -22,6 +22,12 @@ export type FlyerWeeklyPanelProps = {
    * サーバ側でも consent_required で閉じる。
    */
   hasAcceptedPrivacy?: boolean;
+  /**
+   * AP5: privacy 読取失敗。true のとき未同意ゲートではなくエラー UI（再試行）。
+   * アップロードは fail-closed のまま。
+   */
+  privacyConsentLoadFailed?: boolean;
+  onRetryPrivacyConsent?: () => void;
 };
 
 function newIdempotencyKey(): string {
@@ -42,6 +48,8 @@ export function FlyerWeeklyPanel({
   plusEntitled,
   // AP5: 既定 false。呼び出し側が同意状態を渡さない限りアップロード UI を出さない
   hasAcceptedPrivacy = false,
+  privacyConsentLoadFailed = false,
+  onRetryPrivacyConsent,
 }: FlyerWeeklyPanelProps) {
   const inputId = useId();
   const { session } = useAuth();
@@ -74,6 +82,33 @@ export function FlyerWeeklyPanel({
         <Link className="primary-button" to="/plus">
           Plus を見る
         </Link>
+      </section>
+    );
+  }
+
+  // AP5: 読取障害を未同意ゲートに潰さない（アップロードは fail-closed）
+  if (privacyConsentLoadFailed) {
+    return (
+      <section
+        className="stack card"
+        data-testid="flyer-weekly-privacy-load-error"
+        aria-labelledby={inputId}
+      >
+        <h2 id={inputId}>チラシから 1 週間の献立</h2>
+        <p role="alert">
+          AI情報の確認状態を読み込めませんでした。通信を確認して再試行してください。
+        </p>
+        {onRetryPrivacyConsent !== undefined ? (
+          <button
+            type="button"
+            className="secondary-button min-h-11"
+            onClick={() => {
+              onRetryPrivacyConsent();
+            }}
+          >
+            再試行
+          </button>
+        ) : null}
       </section>
     );
   }

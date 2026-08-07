@@ -107,4 +107,51 @@ describe("FeedbackSection", () => {
     await user.click(screen.getByRole("button", { name: "送信する" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("送信回数の上限に達しました");
   });
+
+  it("AP10: blocks same-body resubmit after ambiguous response loss", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    render(<FeedbackSection />);
+    await expandFeedback(user);
+    const text = "応答欠落後に同じ本文を再送したくない内容です。";
+    await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("同じ内容を再送すると重複");
+    // 二重 insert 防止: fetch は増えない
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("AP10: allows retry after definitive server error (not ambiguous)", async () => {
+    const user = userEvent.setup();
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        json: () =>
+          Promise.resolve({
+            ok: false,
+            error: { code: "feedback_rate_limited", message: "rate" },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, data: { id: "feedback-2" } }),
+      });
+    render(<FeedbackSection />);
+    await expandFeedback(user);
+    await user.type(
+      screen.getByLabelText("内容（10〜2000文字）"),
+      "サーバ明示拒否後は再送を許可する本文です。",
+    );
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("送信回数の上限に達しました");
+
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("フィードバックを受け付けました");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

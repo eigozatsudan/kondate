@@ -4,6 +4,10 @@ import type { Tables, TablesInsert } from "@/shared/types/database.generated";
 
 export type PrivacyConsentRow = Tables<"privacy_consents">;
 
+/**
+ * 現行 notice_version の同意行を読む。error 時は throw → RQ isError。
+ * AP5: 呼び出し側は isError を未同意に潰さずエラー UI へ分岐すること。
+ */
 export async function getCurrentPrivacyConsent(
   client: BrowserSupabaseClient,
   userId: string,
@@ -18,6 +22,11 @@ export async function getCurrentPrivacyConsent(
   return data;
 }
 
+/**
+ * 現行 notice_version の同意行を返すか INSERT する。
+ * AP6 residual-intentional: ゲート権威は DB 行の有無。説明本文の読了証明・content hash は無い。
+ * 改変クライアントの own-user insert はサーバ生成の consent SELECT でも通る（elevation ではない）。
+ */
 export async function acceptCurrentPrivacyConsent(
   client: BrowserSupabaseClient,
   userId: string,

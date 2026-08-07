@@ -582,7 +582,16 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   }, [flushDraft, resetToken]);
 
   // 同意のみが生成許可。拒否（「今はAIを使わない」）は永続化せず、毎回ゲートする。
-  const hasAcceptedPrivacy = hasCurrentPrivacyConsent(privacyQuery.data ?? null);
+  // AP9 residual-intentional: hasAcceptedOrDeclinedPrivacy 名は declined 永続を意味しない。
+  // AP5: isError かつ data 無しは未同意に潰さず loadFailed としてエラー UI へ（生成は fail-closed）。
+  const privacyConsentLoadFailed =
+    privacyQuery.isError && privacyQuery.data === undefined;
+  const hasAcceptedPrivacy = privacyConsentLoadFailed
+    ? false
+    : hasCurrentPrivacyConsent(privacyQuery.data ?? null);
+  const retryPrivacyConsent = useCallback((): void => {
+    void privacyQuery.refetch();
+  }, [privacyQuery]);
   const openPrivacyNotice = useCallback((): void => {
     // privacy 往復前に下書きを flush し、react-query cache へ同期する。
     // 未 flush だと return 時に stale な draft で step 1 へ巻き戻る。
@@ -800,6 +809,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         attempt={attempt}
         onAttemptChange={setAttempt}
         hasAcceptedOrDeclinedPrivacy={hasAcceptedPrivacy}
+        privacyConsentLoadFailed={privacyConsentLoadFailed}
+        onRetryPrivacyConsent={retryPrivacyConsent}
         onOpenPrivacyNotice={openPrivacyNotice}
         onOpenSettings={openSettings}
         hasDraftConflict={hasDraftConflict}
@@ -816,6 +827,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           <FlyerWeeklyPanel
             plusEntitled={usage.isSuccess ? usage.data.plusEntitled : false}
             hasAcceptedPrivacy={hasAcceptedPrivacy}
+            privacyConsentLoadFailed={privacyConsentLoadFailed}
+            onRetryPrivacyConsent={retryPrivacyConsent}
           />
         }
         onSubmit={async () => {
@@ -894,6 +907,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           setAudienceStatusError(null);
           try {
             const saved = await flushDraft();
+            // AP5: 読取失敗中は /privacy 誘導せず再試行（未同意と誤認しない）
+            if (privacyConsentLoadFailed) {
+              setSubmissionError(
+                "AI情報の確認状態を読み込めませんでした。通信を確認して再試行してください。",
+              );
+              return;
+            }
             if (!hasAcceptedPrivacy) {
               openPrivacyNotice();
               return;

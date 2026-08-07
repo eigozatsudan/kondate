@@ -8,7 +8,11 @@ import { requireUser } from "./_shared/auth.js";
 import { handleError, HttpError, json, methodNotAllowed, parseJson } from "./_shared/http.js";
 import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
 
-/** 利用者あたり直近 24 時間の送信上限（連投・スパム抑止）。 */
+/**
+ * 利用者あたり直近 24 時間の送信上限（連投・スパム抑止）。
+ * AP11 residual-intentional: RPC は service_role 専用で p_user_id / p_limit を信頼する。
+ * 通常 Function は auth.userId と本定数のみ渡す。browser 主 path は閉じている。
+ */
 const feedbackDailyLimit = 5;
 
 const rateLimitedInsertResultSchema = z.discriminatedUnion("ok", [

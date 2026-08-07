@@ -1,4 +1,4 @@
-import { useState, type SyntheticEvent } from "react";
+import { useRef, useState, type SyntheticEvent } from "react";
 import {
   feedbackCategories,
   feedbackEnvelopeSchema,
@@ -23,9 +23,18 @@ function mapError(code: string | undefined, fallback: string): string {
   return fallback;
 }
 
+/** AP10: 同一 category+body の指紋。曖昧失敗後の再送で二重 insert を抑止する。 */
+function feedbackSubmitFingerprint(category: FeedbackCategory, body: string): string {
+  return `${category}\n${body.trim()}`;
+}
+
 /**
  * 設定ページのフィードバック。機能改善と不具合報告を受け付ける。
  * 既定は折りたたみ。本文はサーバへだけ送り、クライアントログには出さない。
+ *
+ * AP7 residual-intentional: free-form 本文は ops 保管（約 30 日スイープ）。
+ * PII 禁止スキーマは設けず、クライアントログにも出さない。利用者向けの保管期間・PII 注意
+ * は製品開示の別途拡張余地（本修正では保管モデル自体は変えない）。
  */
 export function FeedbackSection() {
   const [expanded, setExpanded] = useState(false);
@@ -34,11 +43,27 @@ export function FeedbackSection() {
   const [pending, setPending] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // AP10: React 再描画前の二重 submit を同期ガード（pending state だけでは足りない）
+  const submitInFlightRef = useRef(false);
+  // AP10: 応答欠落など「サーバ到達済みかも」の曖昧失敗後、同一本文の再送を抑止
+  const ambiguousSubmitFingerprintRef = useRef<string | null>(null);
 
   async function handleSubmit(event: SyntheticEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (pending) return;
+    if (pending || submitInFlightRef.current) return;
+
+    const fingerprint = feedbackSubmitFingerprint(category, body);
+    // 直前の送信が成功か失敗か端末側で確定できないとき、同じ内容の再送は ops 二重保管になり得る
+    if (ambiguousSubmitFingerprintRef.current === fingerprint) {
+      setStatusMessage(null);
+      setErrorMessage(
+        "直前の送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",
+      );
+      return;
+    }
+
     setPending(true);
+    submitInFlightRef.current = true;
     setStatusMessage(null);
     setErrorMessage(null);
 
@@ -51,11 +76,15 @@ export function FeedbackSection() {
       const first = parsed.error.issues[0]?.message ?? "入力内容を確認してください";
       setErrorMessage(first);
       setPending(false);
+      submitInFlightRef.current = false;
       return;
     }
 
+    // fetch 到達後の欠落だけを ambiguous 扱いする（token 取得前失敗は未到達）
+    let requestStarted = false;
     try {
       const accessToken = await requireAccessToken(getBrowserSupabaseClient());
+      requestStarted = true;
       const response = await fetch("/api/feedback", {
         method: "POST",
         headers: {
@@ -69,27 +98,45 @@ export function FeedbackSection() {
       try {
         raw = await response.json();
       } catch {
-        setErrorMessage("送信できませんでした。時間をおいてもう一度お試しください");
+        // 到達後の非 JSON: 二重 insert を避けるため同一本文の再送を抑止
+        ambiguousSubmitFingerprintRef.current = fingerprint;
+        setErrorMessage(
+          "送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",
+        );
         return;
       }
       const envelope = feedbackEnvelopeSchema.safeParse(raw);
       if (!envelope.success) {
-        setErrorMessage("送信できませんでした。時間をおいてもう一度お試しください");
+        ambiguousSubmitFingerprintRef.current = fingerprint;
+        setErrorMessage(
+          "送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",
+        );
         return;
       }
       if (!envelope.data.ok) {
+        // サーバが明示拒否したので未 insert 確定。同一本文の再試行を許可
+        ambiguousSubmitFingerprintRef.current = null;
         setErrorMessage(
           mapError(envelope.data.error.code, envelope.data.error.message || "送信できませんでした"),
         );
         return;
       }
+      ambiguousSubmitFingerprintRef.current = null;
       setBody("");
       setCategory("feature_request");
       setStatusMessage("ありがとうございます。フィードバックを受け付けました");
     } catch {
-      setErrorMessage("送信できませんでした。時間をおいてもう一度お試しください");
+      if (requestStarted) {
+        ambiguousSubmitFingerprintRef.current = fingerprint;
+        setErrorMessage(
+          "送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",
+        );
+      } else {
+        setErrorMessage("送信できませんでした。時間をおいてもう一度お試しください");
+      }
     } finally {
       setPending(false);
+      submitInFlightRef.current = false;
     }
   }
 

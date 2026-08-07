@@ -87,7 +87,19 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
   onAttemptChange: (next: PlannerAttempt) => void;
   fieldErrors?: ReviewFieldErrors;
   summaryError?: string | null;
+  /**
+   * 現行 notice_version の同意行があるとき true。
+   * AP9 residual-intentional: prop 名に OrDeclined とあるが、拒否（「今はAIを使わない」）は
+   * 永続化せず毎回 false。declined 永続やゲート緩和の根拠にしないこと。
+   */
   hasAcceptedOrDeclinedPrivacy: boolean;
+  /**
+   * AP5: privacy_consents 読取失敗。true のときは未同意ゲートではなくエラー UI を出す。
+   * 生成は fail-closed（hasAcceptedOrDeclinedPrivacy=false と併用）。
+   */
+  privacyConsentLoadFailed?: boolean;
+  /** AP5: 読取失敗時の再試行。route が privacyQuery.refetch を所有する */
+  onRetryPrivacyConsent?: () => void;
   onOpenPrivacyNotice: () => void;
   onSubmit: () => void;
   /** 家族モードの安全要約表示用。idea でも免責文を見せるため渡す。 */
@@ -168,6 +180,8 @@ export function ReviewStep({
   fieldErrors,
   summaryError,
   hasAcceptedOrDeclinedPrivacy,
+  privacyConsentLoadFailed = false,
+  onRetryPrivacyConsent,
   onOpenPrivacyNotice,
   onSubmit,
   safetyMembers = [],
@@ -637,22 +651,43 @@ export function ReviewStep({
           {pendingResumeBeforeGenerateMessage}
         </p>
       ) : null}
-      {!hasAcceptedOrDeclinedPrivacy && (
+      {/* AP5: 読取障害を未同意ゲートに潰さない（再試行可能なエラー UI） */}
+      {privacyConsentLoadFailed ? (
         <div className="stack privacy-notice-gate">
-          <p>AI情報の説明をまだ確認していません。献立を作る前に説明を確認してください。</p>
-          <button
-            ref={privacyNoticeButtonRef}
-            className="wizard-action secondary-button"
-            type="button"
-            disabled={disabled}
-            onClick={() => {
-              closePrivacyGate();
-              onOpenPrivacyNotice();
-            }}
-          >
-            AI情報の説明を見る
-          </button>
+          <p role="alert">
+            AI情報の確認状態を読み込めませんでした。通信を確認して再試行してください。
+          </p>
+          {onRetryPrivacyConsent !== undefined ? (
+            <button
+              className="wizard-action secondary-button"
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                onRetryPrivacyConsent();
+              }}
+            >
+              再試行
+            </button>
+          ) : null}
         </div>
+      ) : (
+        !hasAcceptedOrDeclinedPrivacy && (
+          <div className="stack privacy-notice-gate">
+            <p>AI情報の説明をまだ確認していません。献立を作る前に説明を確認してください。</p>
+            <button
+              ref={privacyNoticeButtonRef}
+              className="wizard-action secondary-button"
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                closePrivacyGate();
+                onOpenPrivacyNotice();
+              }}
+            >
+              AI情報の説明を見る
+            </button>
+          </div>
+        )
       )}
       {summaryError != null && <p role="alert">{summaryError}</p>}
       {/*
@@ -790,6 +825,11 @@ export function ReviewStep({
           type="button"
           disabled={generateDisabled}
           onClick={() => {
+            // AP5: 読取失敗中は説明誘導ではなく再試行を促す（未同意ダイアログに潰さない）
+            if (privacyConsentLoadFailed) {
+              onRetryPrivacyConsent?.();
+              return;
+            }
             // 同意前は生成を開始せず、ダイアログで説明へ誘導する
             if (!hasAcceptedOrDeclinedPrivacy) {
               setPrivacyGateOpen(true);
