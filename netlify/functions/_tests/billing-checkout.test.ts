@@ -278,6 +278,62 @@ describe("runBillingCheckout", () => {
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
+  // B10: Stripe list の past_due は DB 経路と同じ use_portal（already_entitled に潰さない）
+  it("returns 409 billing_checkout_use_portal when Stripe list finds past_due (B10)", async () => {
+    subscriptionsList.mockImplementation((params: { status?: string }) => {
+      if (params.status === "past_due") {
+        return Promise.resolve({
+          data: [{ id: "sub_pd", status: "past_due" }],
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "billing_checkout_use_portal" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+    // lock 取得後の 409 なので release される
+    expect(rpc.mock.calls.some(([n]) => n === "release_billing_checkout_lock")).toBe(true);
+  });
+
+  // B10: Stripe list の incomplete は DB 経路と同じ incomplete code
+  it("returns 409 billing_checkout_incomplete when Stripe list finds incomplete (B10)", async () => {
+    subscriptionsList.mockImplementation((params: { status?: string }) => {
+      if (params.status === "incomplete") {
+        return Promise.resolve({
+          data: [{ id: "sub_inc", status: "incomplete" }],
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "billing_checkout_incomplete" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
+  // B9/B10: DB free + Stripe active は already_entitled ではなく Portal 誘導
+  it("returns 409 billing_checkout_use_portal when Stripe list finds active while DB free (B9)", async () => {
+    subscriptionsList.mockImplementation((params: { status?: string }) => {
+      if (params.status === "active") {
+        return Promise.resolve({
+          data: [{ id: "sub_live", status: "active" }],
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "billing_checkout_use_portal" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
   it("acquire → sessions.create → bind → returns url (happy path)", async () => {
     const response = await runBillingCheckout(request({ interval: "year" }), deps());
     expect(response.status).toBe(200);

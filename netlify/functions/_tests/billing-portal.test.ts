@@ -130,6 +130,7 @@ describe("runBillingPortal", () => {
   const loadEntitlement = vi.fn();
   const rpc = vi.fn();
   const portalCreate = vi.fn();
+  const subscriptionsList = vi.fn();
 
   function deps(overrides: Partial<BillingPortalDeps> = {}): BillingPortalDeps {
     return {
@@ -140,6 +141,7 @@ describe("runBillingPortal", () => {
         billingPortal: {
           sessions: { create: portalCreate },
         },
+        subscriptions: { list: subscriptionsList },
       },
       admin: { rpc },
       requestId: "req-portal-1",
@@ -157,10 +159,13 @@ describe("runBillingPortal", () => {
     loadEntitlement.mockReset();
     rpc.mockReset();
     portalCreate.mockReset();
+    subscriptionsList.mockReset();
     authenticate.mockResolvedValue({ userId: USER_ID, email: "user@example.com" });
     loadEntitlement.mockResolvedValue(plusActive);
     rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
     portalCreate.mockResolvedValue({ url: PORTAL_URL });
+    // 既定: live 無し（Free 終端の 403 を壊さない）
+    subscriptionsList.mockResolvedValue({ data: [] });
   });
 
   it("returns 503 when billing is disabled", async () => {
@@ -172,7 +177,7 @@ describe("runBillingPortal", () => {
     expect(portalCreate).not.toHaveBeenCalled();
   });
 
-  it("returns 403 when free terminal even if customer map exists (B9)", async () => {
+  it("returns 403 when free terminal with customer map and no Stripe live (B9)", async () => {
     loadEntitlement.mockResolvedValue(freeNone);
     const response = await runBillingPortal(request(), deps());
     expect(response.status).toBe(403);
@@ -180,6 +185,28 @@ describe("runBillingPortal", () => {
       error: { code: "billing_portal_unavailable" },
     });
     expect(portalCreate).not.toHaveBeenCalled();
+    // Free 終端でも live 確認のため list する
+    expect(subscriptionsList).toHaveBeenCalled();
+  });
+
+  // B9: DB free + Stripe live は Portal を開き Checkout/Portal 両閉じを避ける
+  it("returns portal url when DB free but Stripe has live subscription (B9)", async () => {
+    loadEntitlement.mockResolvedValue(freeNone);
+    subscriptionsList.mockImplementation((params: { status?: string }) => {
+      if (params.status === "active") {
+        return Promise.resolve({ data: [{ id: "sub_live", status: "active" }] });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const response = await runBillingPortal(request(), deps());
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      data: { url: PORTAL_URL },
+    });
+    expect(portalCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ customer: CUSTOMER_ID, locale: "ja" }),
+    );
   });
 
   it("returns portal url when entitled and customer mapped", async () => {
@@ -192,6 +219,8 @@ describe("runBillingPortal", () => {
     expect(portalCreate).toHaveBeenCalledWith(
       expect.objectContaining({ customer: CUSTOMER_ID, locale: "ja" }),
     );
+    // DB 許可時は Stripe live list を不要とする
+    expect(subscriptionsList).not.toHaveBeenCalled();
   });
 
   it("returns 401 when authentication fails", async () => {

@@ -276,6 +276,11 @@ export async function runBillingCheckout(
     // Stripe 側の live sub がある場合は Portal 誘導（409）。
     // status 別 list（limit 1）で terminal 履歴に埋もれた live を見落とさない。
     // list 失敗は 503 fail-closed。
+    //
+    // B10: list ヒットを一律 already_entitled に潰さない（DB 経路と揃える）。
+    // past_due → use_portal / incomplete → incomplete。
+    // B9: ここに来る時点で DB は非 entitled。active/trialing も「すでに Plus」コピーは
+    // 権益と不一致なので Portal 誘導（use_portal）に揃え、管理導線を閉じない。
     try {
       for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
         const listed = await deps.stripe.subscriptions.list({
@@ -283,9 +288,29 @@ export async function runBillingCheckout(
           status,
           limit: 1,
         });
-        if (listed.data.some((sub) => LIVE_SUB_STATUSES.has(sub.status))) {
-          throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
+        if (!listed.data.some((sub) => LIVE_SUB_STATUSES.has(sub.status))) {
+          continue;
         }
+        if (status === "incomplete") {
+          throw new HttpError(
+            409,
+            "billing_checkout_incomplete",
+            "お支払い手続きが完了していません。設定からお支払い管理を開いてください",
+          );
+        }
+        if (status === "past_due") {
+          throw new HttpError(
+            409,
+            "billing_checkout_use_portal",
+            "お支払い管理から手続きしてください",
+          );
+        }
+        // active / trialing（DB free の list 経路）
+        throw new HttpError(
+          409,
+          "billing_checkout_use_portal",
+          "お支払い管理から手続きしてください",
+        );
       }
     } catch (error: unknown) {
       if (error instanceof HttpError) throw error;

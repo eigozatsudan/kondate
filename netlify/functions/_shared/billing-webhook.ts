@@ -459,17 +459,45 @@ export async function cancelDualLiveSubscriptions(
     }
   }
 
+  // B11: discard を 1 件ずつ try。途中失敗で全体 throw すると先行 cancel が不可逆のまま
+  // event 未 claim になり、部分 dual 窓だけが残る。残りも cancel を試し、mark 済み keep は
+  // 呼び出し側の process 投影へ進める（再送で残 live を再整理）。
   const discardedSubscriptionIds: string[] = [];
+  let cancelFailureCount = 0;
   for (const other of sorted.slice(1)) {
-    await deps.stripe.subscriptions.cancel(other.id);
-    discardedSubscriptionIds.push(other.id);
+    try {
+      await deps.stripe.subscriptions.cancel(other.id);
+      discardedSubscriptionIds.push(other.id);
+      deps.log({
+        level: "warn",
+        requestId: deps.requestId,
+        code: "billing_dual_subscription_canceled",
+        durationMs: Date.now() - deps.startedAt,
+        stripeCustomerId,
+        stripeSubscriptionId: other.id,
+      });
+    } catch {
+      cancelFailureCount += 1;
+      deps.log({
+        level: "error",
+        requestId: deps.requestId,
+        code: "billing_dual_subscription_cancel_failed",
+        durationMs: Date.now() - deps.startedAt,
+        stripeCustomerId,
+        stripeSubscriptionId: other.id,
+        alertMetric: 1,
+      });
+    }
+  }
+  if (cancelFailureCount > 0) {
     deps.log({
-      level: "warn",
+      level: "error",
       requestId: deps.requestId,
-      code: "billing_dual_subscription_canceled",
+      code: "billing_dual_cancel_partial",
       durationMs: Date.now() - deps.startedAt,
       stripeCustomerId,
-      stripeSubscriptionId: other.id,
+      stripeSubscriptionId: keep.id,
+      alertMetric: 1,
     });
   }
 

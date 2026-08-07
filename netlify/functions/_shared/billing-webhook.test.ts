@@ -1215,6 +1215,78 @@ describe("handleBillingWebhook", () => {
     expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
   });
 
+  // B11: discard cancel 途中失敗でも残りを試し、mark 済み keep の process へ進む
+  it("continues dual cancel after mid-loop cancel failure and still processes keep (B11)", async () => {
+    const older = makeSubscription({
+      id: "sub_older_partial",
+      created: 1000,
+      status: "active",
+    });
+    const mid = makeSubscription({
+      id: "sub_mid_fail",
+      created: 1500,
+      status: "active",
+    });
+    const newer = makeSubscription({
+      id: "sub_newer_partial",
+      created: 2000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.created", newer, { id: "evt_dual_partial" }),
+    );
+    list.mockImplementation((params: { status?: string }) => {
+      const data =
+        params.status === "active" || params.status === undefined ? [older, mid, newer] : [];
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+    });
+    retrieve.mockResolvedValue(newer);
+    // keep=newer。discard 2 件のうち先頭だけ失敗し、後続 cancel と process が続くことを固定
+    let cancelAttempt = 0;
+    cancel.mockImplementation((id: string) => {
+      cancelAttempt += 1;
+      if (cancelAttempt === 1) {
+        return Promise.reject(new Error("stripe_cancel_transient"));
+      }
+      return Promise.resolve(makeSubscription({ id, status: "canceled", created: 1000 }));
+    });
+    rpc.mockImplementation((name: string) => {
+      if (name === "mark_billing_subscription_dual_cancel_keep") {
+        return Promise.resolve({ data: { ok: true }, error: null });
+      }
+      if (name === "process_billing_stripe_event") {
+        return Promise.resolve({ data: { ok: true, outcome: "applied" }, error: null });
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return Promise.resolve({
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    // 2 discard とも cancel 試行（途中失敗でループを止めない）
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "billing_dual_subscription_cancel_failed" }),
+    );
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "billing_dual_cancel_partial" }),
+    );
+    // mark 成功後は process で keep を投影（event 未 claim で止めない）
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(true);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.stripe_subscription_id).toBe("sub_newer_partial");
+  });
+
   // B10: mark missing は cancel せず process 投影へ（再送で dual 完了）
   it("skips dual cancel when mark keep reports subscription missing (B10)", async () => {
     const older = makeSubscription({

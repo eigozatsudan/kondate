@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { EntitlementData } from "@shared/contracts/billing";
 import { createCheckoutSession, createPortalSession } from "./billing-api";
 import {
@@ -80,18 +80,27 @@ export function PlanSettingsSection({
   onCheckout,
   onPortal,
 }: PlanSettingsSectionProps) {
+  // interval / yearConfirmed は form 内完結。親は pending と API 結果エラーのみ持つ。
+  const [pending, setPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // B9: Checkout が Stripe live を検出したとき（use_portal / incomplete / already_entitled）
+  // Free 枝でも Portal CTA を出し、管理導線を閉じない。サーバ Portal は live 確認で許可する。
+  const [portalCtaFromCheckoutBlock, setPortalCtaFromCheckoutBlock] = useState(false);
+  // B9: poll 期限後も Free のとき query 除去後も Portal 導線を残す（COMING_SOON で再 Checkout 不能でも管理可能）
+  const [portalCtaAfterSuccessPoll, setPortalCtaAfterSuccessPoll] = useState(false);
+
   const query = useEntitlement(userId, {
     pollAfterCheckoutSuccess,
-    ...(onCheckoutPollSettled === undefined ? {} : { onCheckoutPollSettled }),
+    onCheckoutPollSettled: () => {
+      // poll 終了後も Free 枝に Portal を残す（親が billing=success を外しても導線維持）
+      setPortalCtaAfterSuccessPoll(true);
+      onCheckoutPollSettled?.();
+    },
   });
   const data = injected !== undefined ? injected : (query.data ?? null);
   const loading =
     entitlementLoading !== undefined ? entitlementLoading : query.isPending || query.isFetching;
   const error = entitlementError !== undefined ? entitlementError : query.isError;
-
-  // interval / yearConfirmed は form 内完結。親は pending と API 結果エラーのみ持つ。
-  const [pending, setPending] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   const surfacesOpen = data?.productSurfacesOpen === true;
   // B6: error 時は stale Plus を出さない（サーバ再検証までの fail-closed 表示）
@@ -101,6 +110,23 @@ export function PlanSettingsSection({
   // B1: incomplete は Checkout 409 が Portal 完了を指示。Checkout フォームではなく Portal CTA を出す
   const isIncomplete = data?.status === "incomplete";
   const trialEndLabel = formatTrialEnd(data?.trialEnd ?? null);
+  // Checkout 成功後の webhook 遅延待ち中・期限後も Portal を出せる（両閉じ回避）
+  const showPortalOnFreeBranch =
+    surfacesOpen &&
+    (portalCtaFromCheckoutBlock || pollAfterCheckoutSuccess || portalCtaAfterSuccessPoll);
+
+  // 新しい success poll 開始で期限後 CTA をリセット。Plus 反映で不要になる。
+  useEffect(() => {
+    if (pollAfterCheckoutSuccess) {
+      setPortalCtaAfterSuccessPoll(false);
+    }
+  }, [pollAfterCheckoutSuccess]);
+  useEffect(() => {
+    if (entitled) {
+      setPortalCtaAfterSuccessPoll(false);
+      setPortalCtaFromCheckoutBlock(false);
+    }
+  }, [entitled]);
 
   async function runPortal(): Promise<void> {
     if (pending) return;
@@ -201,6 +227,7 @@ export function PlanSettingsSection({
                     // pending 管理は親のみ。form は onSubmit と年額確認に専念する。
                     setPending(true);
                     setActionError(null);
+                    setPortalCtaFromCheckoutBlock(false);
                     try {
                       if (onCheckout !== undefined) {
                         await onCheckout(interval);
@@ -213,10 +240,16 @@ export function PlanSettingsSection({
                       const code = err instanceof Error ? err.message : "";
                       if (code === "billing_checkout_incomplete") {
                         setActionError(INCOMPLETE_COPY);
-                      } else if (code === "billing_checkout_use_portal") {
+                        setPortalCtaFromCheckoutBlock(true);
+                      } else if (
+                        code === "billing_checkout_use_portal" ||
+                        code === "billing_already_entitled"
+                      ) {
+                        // B9/B10: Stripe live 検出。Portal CTA を出し新規 Checkout は閉じる
                         setActionError(
                           "お支払い管理から手続きしてください。新規のお申し込みはできません",
                         );
+                        setPortalCtaFromCheckoutBlock(true);
                       } else {
                         setActionError(
                           "お支払い画面を開けませんでした。時間をおいてもう一度お試しください",
@@ -228,6 +261,22 @@ export function PlanSettingsSection({
                   }}
                 />
               )}
+              {/* B9: Free 枝でも Stripe live / 成功 poll 中は Portal 導線を残す */}
+              {showPortalOnFreeBranch ? (
+                <div className="stack gap-2">
+                  <p className="type-small">{STRIPE_REDIRECT_NOTICE}</p>
+                  <button
+                    type="button"
+                    className="secondary-button min-h-11"
+                    disabled={pending}
+                    onClick={() => {
+                      void runPortal();
+                    }}
+                  >
+                    {PORTAL_BUTTON_LABEL}
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
 

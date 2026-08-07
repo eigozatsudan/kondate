@@ -181,4 +181,39 @@ describe("PlanSettingsSection", () => {
       expect(onCheckout).toHaveBeenCalledWith("month");
     });
   });
+
+  // B9: Checkout が Stripe live を use_portal で返したとき Free 枝でも Portal CTA を出す
+  it("shows portal CTA on free branch after checkout use_portal block (B9)", async () => {
+    if (PLUS_LP_UPGRADE_COMING_SOON) return;
+    const onCheckout = vi.fn(() => Promise.reject(new Error("billing_checkout_use_portal")));
+    const onPortal = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    renderPlan({ onCheckout, onPortal });
+    await user.click(screen.getByRole("button", { name: "Plus をはじめる" }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/お支払い管理から手続きしてください。新規のお申し込みはできません/),
+      ).toBeVisible();
+    });
+    const portal = screen.getByRole("button", { name: PORTAL_BUTTON_LABEL });
+    expect(portal).toBeVisible();
+    await user.click(portal);
+    await waitFor(() => {
+      expect(onPortal).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // B9: Checkout 成功後の poll 中は Free でも Portal 導線を残す
+  it("shows portal CTA while polling after checkout success while still free (B9)", async () => {
+    const onPortal = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    renderPlan({ pollAfterCheckoutSuccess: true, onPortal });
+    expect(screen.getByText(/お支払いの反映を確認しています/)).toBeVisible();
+    const portal = screen.getByRole("button", { name: PORTAL_BUTTON_LABEL });
+    expect(portal).toBeVisible();
+    await user.click(portal);
+    await waitFor(() => {
+      expect(onPortal).toHaveBeenCalledTimes(1);
+    });
+  });
 });
