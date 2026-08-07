@@ -26,6 +26,7 @@ import { createFinalizeSafetyFingerprint } from "../../../shared/safety/fingerpr
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { createIdeaSafetyFingerprint } from "../../../shared/safety/idea-fingerprint.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
+import { formatQuantityValue } from "../../../shared/shopping/normalize.js";
 import type { AuthenticatedUser } from "./generation-repository.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
 import { HttpError } from "./http.js";
@@ -798,6 +799,37 @@ export function materializeDishRegenerationCandidate(
   );
   const targetMemberRefs = new Set(context.targetMembers.map((member) => member.anonymousRef));
 
+  // full_menu materializer（R2/G5/G17/G4）と同型: pantry 連動の name/unit/quantity 整合
+  const usageByRef = new Map(output.pantryUsage.map((row) => [row.pantryRef, row] as const));
+
+  /** pantryRef 正当時: plannedQuantity → quantityValue（0 以下は null） */
+  const quantityValueFromPlanned = (
+    pantryRef: string | null,
+    providerQuantity: number | null,
+  ): number | null => {
+    if (pantryRef === null) return providerQuantity;
+    const usage = usageByRef.get(pantryRef);
+    if (usage === undefined) return providerQuantity;
+    if (usage.plannedQuantity === null) return null;
+    if (usage.plannedQuantity <= 0) return null;
+    return usage.plannedQuantity;
+  };
+
+  /**
+   * G4: pantry 連動時は quantityText を value+unit と揃える。
+   * planned 無しで value null のときは AI 文言を権威にせず固定「適量」。
+   */
+  const quantityTextFromValue = (
+    pantryRef: string | null,
+    quantityValue: number | null,
+    unit: string | null,
+    providerText: string,
+  ): string => {
+    if (pantryRef === null) return providerText;
+    if (quantityValue === null) return "適量";
+    return `${formatQuantityValue(quantityValue)}${unit ?? ""}`;
+  };
+
   const mapLocalDish = (dish: RetainedDishPrompt) => ({
     id: requiredMap(dishIdByRef, dish.dishRef),
     role: dish.role,
@@ -805,18 +837,40 @@ export function materializeDishRegenerationCandidate(
     name: dish.name,
     description: dish.description,
     cookingTimeMinutes: dish.cookingTimeMinutes,
-    ingredients: dish.ingredients.map((item) => ({
-      id: requiredMap(ingredientIdByRef, item.ingredientRef),
-      position: item.position,
-      name: item.name,
-      quantityValue: item.quantityValue,
-      quantityText: item.quantityText,
-      unit: item.unit,
-      storeSection: item.storeSection,
-      pantrySelectionId:
-        item.pantryRef === null ? null : requiredMap(selectionIdByRef, item.pantryRef),
-      labelConfirmationRequired: item.labelConfirmationRequired,
-    })),
+    ingredients: dish.ingredients.map((item) => {
+      // R2/G5/G17/G4: pantryRef 正当時は trusted name/unit と planned 数量へ揃える
+      //（dish 経路だけ AI 値のまま persist すると full_menu と買い物/分量表示が非対称になる）
+      let name = item.name;
+      let unit = item.unit;
+      let quantityValue = item.quantityValue;
+      let quantityText = item.quantityText;
+      if (item.pantryRef !== null) {
+        const trusted = pantryByRef.get(item.pantryRef);
+        if (trusted !== undefined) {
+          name = trusted.item.name;
+          unit = trusted.item.unit;
+          quantityValue = quantityValueFromPlanned(item.pantryRef, item.quantityValue);
+          quantityText = quantityTextFromValue(
+            item.pantryRef,
+            quantityValue,
+            unit,
+            item.quantityText,
+          );
+        }
+      }
+      return {
+        id: requiredMap(ingredientIdByRef, item.ingredientRef),
+        position: item.position,
+        name,
+        quantityValue,
+        quantityText,
+        unit,
+        storeSection: item.storeSection,
+        pantrySelectionId:
+          item.pantryRef === null ? null : requiredMap(selectionIdByRef, item.pantryRef),
+        labelConfirmationRequired: item.labelConfirmationRequired,
+      };
+    }),
     steps: dish.steps.map((step) => ({
       id: requiredMap(stepIdByRef, step.stepRef),
       position: step.position,
@@ -872,7 +926,8 @@ export function materializeDishRegenerationCandidate(
       additionalHeating: row.additionalHeating,
       additionalSeasoning: row.additionalSeasoning,
       servingCheck: row.servingCheck,
-      safetyTags: [...row.safetyTags],
+      // G3/G10: AI safetyTags は権威にしない。full_menu と同契約で常に空
+      safetyTags: [],
       safetyActions: row.safetyActions.map((action) => {
         if (!targetMemberRefs.has(action.anonymousMemberRef)) {
           materializeError("unknown_member_ref");
@@ -889,12 +944,32 @@ export function materializeDishRegenerationCandidate(
     };
   });
 
+  /** full_menu exactThousandths と同型（千分率で shortage を再計算） */
+  const exactThousandths = (value: number): number => {
+    const scaled = Math.round(value * 1000);
+    if (!Number.isSafeInteger(scaled) || scaled / 1000 !== value) {
+      materializeError("pantry_unit_mismatch");
+    }
+    return scaled;
+  };
+
   const pantryUsage = output.pantryUsage.map((usage) => {
     const trusted = pantryByRef.get(usage.pantryRef);
     if (trusted === undefined) {
       // 現行コンテキストに無い pantryRef は拒否（スキーマ外参照）
       materializeError("unknown_pantry_ref");
     }
+    // full_menu と同型: provider unit と trusted unit の不一致は fail-closed
+    const providerUnit = usage.unit?.trim() ?? null;
+    const trustedUnit = trusted.item.unit?.trim() ?? null;
+    if (providerUnit !== trustedUnit) materializeError("pantry_unit_mismatch");
+    if (usage.plannedQuantity !== null && trusted.item.quantity === null) {
+      materializeError("pantry_unit_mismatch");
+    }
+    const plannedThousandths =
+      usage.plannedQuantity === null ? null : exactThousandths(usage.plannedQuantity);
+    const inventoryThousandths =
+      trusted.item.quantity === null ? null : exactThousandths(trusted.item.quantity);
     return {
       selectionId: requiredMap(selectionIdByRef, usage.pantryRef),
       pantryItemId: trusted.item.id,
@@ -903,7 +978,11 @@ export function materializeDishRegenerationCandidate(
       usageStatus: usage.usageStatus,
       plannedQuantity: usage.plannedQuantity,
       inventoryQuantity: trusted.item.quantity,
-      shortageQuantity: usage.shortageQuantity,
+      // G2: AI shortage を信じず planned−inventory で再計算（full_menu と同型）
+      shortageQuantity:
+        plannedThousandths === null || inventoryThousandths === null
+          ? null
+          : Math.max(plannedThousandths - inventoryThousandths, 0) / 1000,
       unit: trusted.item.unit,
       dishIds: usage.dishRefs.map((ref) => requiredMap(dishIdByRef, ref)),
       unusedReason: usage.unusedReason,
@@ -960,7 +1039,8 @@ export function materializeDishRegenerationCandidate(
     cuisineGenre: sourceMenu.cuisineGenre,
     servings: sourceMenu.servings,
     totalElapsedMinutes,
-    safetyTags: [...sourceMenu.safetyTags],
+    // G3/G10: menu も AI/source tags を権威にせず空固定（full_menu と同契約）
+    safetyTags: [],
     dishes,
     timeline,
     adaptations,

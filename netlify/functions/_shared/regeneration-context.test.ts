@@ -1283,6 +1283,78 @@ describe("materializeDishRegenerationCandidate", () => {
       ),
     ).toBe(true);
   });
+
+  // G2/G3/G4: dish materialize を full_menu の pantry integrity / safetyTags strip と揃える
+  it("G2/G3/G4: aligns pantry name/unit/quantity/shortage and strips safetyTags", () => {
+    const pantryItemId = "61000000-0000-4000-8000-000000000099";
+    const { execution, uuid } = makeDishRegenerationExecutionContext();
+    execution.generationContext = makeGenerationContext({
+      submission: {
+        ...makeGenerationContext().submission,
+        mainIngredients: ["豚こま肉"],
+        timeLimitMinutes: null,
+        pantrySelections: [{ pantryItemId, priority: "prefer_use" as const }],
+      },
+      pantryItems: [
+        {
+          id: pantryItemId,
+          userId: user.userId,
+          name: "豚こま肉",
+          quantity: 100,
+          unit: "g",
+          expiresOn: null,
+          expirationType: null,
+          openedState: null,
+          createdAt: "2026-07-11T00:00:00.000Z",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+      ],
+    });
+    const output = makeDishRegenerationAiOutput();
+    // AI が unit/quantity/name/shortage/safetyTags を偽値で載せても materialize が揃える
+    output.replacementDish.ingredients[0] = {
+      ...output.replacementDish.ingredients[0]!,
+      name: "偽の肉",
+      quantityValue: 999,
+      quantityText: "999本",
+      unit: "本",
+      pantryRef: "pantry_1",
+    };
+    output.pantryUsage = [
+      {
+        pantryRef: "pantry_1",
+        pantryItemName: "偽の肉",
+        priority: "prefer_use",
+        usageStatus: "used",
+        plannedQuantity: 200,
+        inventoryQuantity: 50,
+        shortageQuantity: 999,
+        unit: "g",
+        dishRefs: ["dish_1"],
+        unusedReason: null,
+      },
+    ];
+    output.adaptations[0]!.safetyTags = ["soft_vegetable", "remove_bones"];
+
+    const candidate = materializeDishRegenerationCandidate(execution, output, uuid);
+    const replacement = candidate.dishes.find((dish) => dish.role === "main");
+    expect(replacement).toBeDefined();
+    expect(replacement!.ingredients[0]).toMatchObject({
+      name: "豚こま肉",
+      unit: "g",
+      quantityValue: 200,
+      quantityText: "200g",
+    });
+    expect(candidate.pantryUsage[0]).toMatchObject({
+      pantryItemName: "豚こま肉",
+      plannedQuantity: 200,
+      inventoryQuantity: 100,
+      shortageQuantity: 100,
+      unit: "g",
+    });
+    expect(candidate.safetyTags).toEqual([]);
+    expect(candidate.adaptations[0]?.safetyTags).toEqual([]);
+  });
 });
 
 describe("buildDishRegenerationPrompt label source refs", () => {

@@ -380,6 +380,30 @@ describe("materializeAiGeneratedMenu", () => {
     expect(menu.pantryUsage[0]!.plannedQuantity).toBe(300);
   });
 
+  // G4: pantry 連動時 quantityText も planned+unit に揃える（value 片側だけ揃うのを閉じる）
+  it("G4: rebinds pantry-backed quantityText to planned value and trusted unit", () => {
+    const payload = makePayload();
+    payload.dishes[0]!.ingredients[0]!.quantityValue = 999;
+    payload.dishes[0]!.ingredients[0]!.quantityText = "999本";
+    payload.dishes[0]!.ingredients[0]!.unit = "本";
+    payload.pantryUsage[0]!.plannedQuantity = 300;
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    expect(menu.dishes[0]!.ingredients[0]!.quantityValue).toBe(300);
+    expect(menu.dishes[0]!.ingredients[0]!.unit).toBe("g");
+    expect(menu.dishes[0]!.ingredients[0]!.quantityText).toBe("300g");
+  });
+
+  it("G4: uses fixed 適量 text when pantry plannedQuantity is null", () => {
+    const payload = makePayload();
+    payload.dishes[0]!.ingredients[0]!.quantityValue = 120;
+    payload.dishes[0]!.ingredients[0]!.quantityText = "200g";
+    payload.pantryUsage[0]!.plannedQuantity = null;
+    payload.pantryUsage[0]!.unit = null;
+    const menu = materializeAiGeneratedMenu(payload, makeContext(null), uuidFactory());
+    expect(menu.dishes[0]!.ingredients[0]!.quantityValue).toBeNull();
+    expect(menu.dishes[0]!.ingredients[0]!.quantityText).toBe("適量");
+  });
+
   it("G17: sets pantry-backed quantityValue null when plannedQuantity is null", () => {
     const payload = makePayload();
     payload.dishes[0]!.ingredients[0]!.quantityValue = 120;

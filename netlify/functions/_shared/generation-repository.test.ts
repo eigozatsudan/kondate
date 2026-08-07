@@ -840,6 +840,76 @@ describe("createGenerationRepository regeneration reserve", () => {
     expect(rpcMock).not.toHaveBeenCalledWith("reserve_ai_generation", expect.anything());
   });
 
+  // G1: plan 降格後の qualityMode replay は processing を終端してから 403（枠孤児を残さない）
+  it("G1: replayExisting qualityMode after Free demotion terminalizes processing then 403", async () => {
+    loadEntitlementMock.mockResolvedValue(freeEntitlement);
+    const qualityCommand = { ...newMenuCommand, qualityMode: true };
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        ...publicRecord,
+        status: "failed",
+        failure_code: "quality_mode_requires_plus",
+        completed_at: "2026-07-19T12:01:00+09:00",
+      },
+      error: null,
+    });
+    const repository = createGenerationRepository(user);
+    await expect(
+      repository.replayExisting(qualityCommand, {
+        kind: "hit",
+        requestId,
+        requestHmacVersion: generationRequestHmacVersion,
+        integrity: householdIntegrity,
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "quality_mode_requires_plus",
+    });
+    expect(rpcMock).toHaveBeenCalledWith(
+      "finalize_ai_generation_failure",
+      expect.objectContaining({
+        p_request_id: requestId,
+        p_failure_code: "quality_mode_requires_plus",
+        p_retry_at: null,
+      }),
+    );
+    expect(rpcMock).not.toHaveBeenCalledWith("reserve_ai_generation", expect.anything());
+  });
+
+  // G1: 既に succeeded の行は plan 降格でも壊さず返す（finalize が現状を返す）
+  it("G1: replayExisting qualityMode demotion keeps already-succeeded terminal", async () => {
+    loadEntitlementMock.mockResolvedValue(freeEntitlement);
+    const qualityCommand = { ...newMenuCommand, qualityMode: true };
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        ...publicRecord,
+        status: "succeeded",
+        failure_code: null,
+        completed_menu_id: "90000000-0000-4000-8000-000000000001",
+        replayed: true,
+        completed_at: "2026-07-19T12:01:00+09:00",
+      },
+      error: null,
+    });
+    const repository = createGenerationRepository(user);
+    await expect(
+      repository.replayExisting(qualityCommand, {
+        kind: "hit",
+        requestId,
+        requestHmacVersion: generationRequestHmacVersion,
+        integrity: householdIntegrity,
+      }),
+    ).resolves.toMatchObject({
+      status: "succeeded",
+      completed_menu_id: "90000000-0000-4000-8000-000000000001",
+    });
+    expect(rpcMock).toHaveBeenCalledWith(
+      "finalize_ai_generation_failure",
+      expect.objectContaining({ p_request_id: requestId }),
+    );
+    expect(rpcMock).not.toHaveBeenCalledWith("reserve_ai_generation", expect.anything());
+  });
+
   it("passes p_quality_mode true when Plus and qualityMode", async () => {
     loadEntitlementMock.mockResolvedValue(plusEntitlement);
     getServerEnvMock.mockReturnValue({

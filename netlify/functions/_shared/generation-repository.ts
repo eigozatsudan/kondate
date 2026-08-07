@@ -362,6 +362,37 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
     async replayExisting(command, lookup) {
       // 保存済み integrity から HMAC を再計算し、live draft/menu を読まずに台帳へ照合する
       try {
+        // G1: Plus で qualityMode:true 予約後に plan が Free 化すると、reserve 前
+        // assertQualityModeAllowed の 403 だけで processing 行が残り、クライアントが
+        // quality_mode_requires_plus を failed として pending を消して status 回収不能になる。
+        // lookup hit では先に finalize failure で processing を終端し、枠を解放する。
+        // 既に succeeded 等の terminal は finalize が現状を返すため壊さない。
+        // HMAC / qualityMode 契約は緩めない（false へ書換えての再送は 409 のまま）。
+        if (command.qualityMode) {
+          const { quotaPlan } = await resolvePlanLimits();
+          if (quotaPlan !== "plus") {
+            const terminal = requestPayloadSchema.parse(
+              await rpc("finalize_ai_generation_failure", {
+                p_request_id: lookup.requestId,
+                p_failure_code: "quality_mode_requires_plus",
+                p_retry_at: null,
+              }),
+            );
+            // processing→failed（または既に同 code failed）: 初回 Free quality と同 UX の 403
+            if (
+              terminal.status === "failed" &&
+              terminal.failure_code === "quality_mode_requires_plus"
+            ) {
+              throw new HttpError(
+                403,
+                "quality_mode_requires_plus",
+                issueMessages.quality_mode_requires_plus,
+              );
+            }
+            // 既 terminal（succeeded / 他 failed / conflict）はそのまま返す
+            return terminal;
+          }
+        }
         return requestPayloadSchema.parse(
           await rpc("reserve_ai_generation", await buildReserveArgs(command, lookup.integrity)),
         );

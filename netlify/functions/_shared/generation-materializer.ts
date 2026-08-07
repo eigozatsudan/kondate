@@ -9,6 +9,7 @@ import {
 } from "../../../shared/contracts/generation.js";
 import { normalizeFoodText } from "../../../shared/safety/allergens.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import { formatQuantityValue } from "../../../shared/shopping/normalize.js";
 import { GenerationOutputError, type GenerationRepairCode } from "./generation-repair.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -105,17 +106,43 @@ export function materializeAiGeneratedMenu(
     return usage.plannedQuantity;
   };
 
+  /**
+   * G4: pantry 連動時は quantityText を value+unit と揃える（value 片側だけ G17 で揃うのを閉じる）。
+   * planned 無しで value が null のときは AI 文言を権威にせず固定「適量」（買い物側と同型）。
+   */
+  const quantityTextFromValue = (
+    pantryRef: string | null,
+    quantityValue: number | null,
+    unit: string | null,
+    providerText: string,
+  ): string => {
+    if (pantryRef === null) return providerText;
+    if (quantityValue === null) return "適量";
+    return `${formatQuantityValue(quantityValue)}${unit ?? ""}`;
+  };
+
   const workingDishes = menu.dishes.map((dish) => ({
     ...dish,
     ingredients: dish.ingredients.map((ingredient) => {
       if (ingredient.pantryRef === null) return ingredient;
       const trusted = pantryByRef.get(ingredient.pantryRef);
       if (trusted === undefined) return ingredient;
+      const quantityValue = quantityValueFromPlanned(
+        ingredient.pantryRef,
+        ingredient.quantityValue,
+      );
       return {
         ...ingredient,
         name: trusted.item.name,
         unit: trusted.item.unit,
-        quantityValue: quantityValueFromPlanned(ingredient.pantryRef, ingredient.quantityValue),
+        quantityValue,
+        // G4: planned 整合後の value/unit から text を再生成（AI の「999本」等を残さない）
+        quantityText: quantityTextFromValue(
+          ingredient.pantryRef,
+          quantityValue,
+          trusted.item.unit,
+          ingredient.quantityText,
+        ),
       };
     }),
   }));
@@ -201,6 +228,7 @@ export function materializeAiGeneratedMenu(
         name: ingredient.name,
         // G17: pantry 行は plannedQuantity 整合済み。買い足しは AI 値のまま。
         quantityValue: ingredient.quantityValue,
+        // G4: working 上で pantry 連動 text も value/unit 整合済み。買い足しは AI text のまま。
         quantityText: ingredient.quantityText,
         // working 上で trusted unit 済み（G5）。買い足し（pantryRef null）は AI unit のまま。
         unit: ingredient.unit,
