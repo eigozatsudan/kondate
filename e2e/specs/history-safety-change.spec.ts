@@ -24,7 +24,11 @@ test("automatically revalidates on mount and blocks stale history after safety c
   await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
 });
 
-/** POST /api/menus/:menuId/revalidate の 200 応答を待つ（signal 単位で独立に張る） */
+/**
+ * POST /api/menus/:menuId/revalidate の 200 応答を待つ（signal 単位で独立に張る）。
+ * initiator 弁別は HTTP 層に無いため、呼び出し側で soft poll を止めた状態
+ * （__KONDATE_REVALIDATE_POLL_MS=0）で signal を発火し、poll と混線しないこと。
+ */
 function waitForRevalidate200(
   page: import("@playwright/test").Page,
   menuId: string,
@@ -37,6 +41,16 @@ function waitForRevalidate200(
       response.status() === 200,
     { timeout },
   );
+}
+
+/** E2E seam: soft poll 間隔。0=無効 / 1〜60000=ms。navigation 前に sessionStorage へ書く。 */
+async function setE2eRevalidatePollMs(
+  page: import("@playwright/test").Page,
+  pollMs: 0 | number,
+): Promise<void> {
+  await page.evaluate((ms) => {
+    sessionStorage.setItem("__KONDATE_E2E_REVALIDATE_POLL_MS", String(ms));
+  }, pollMs);
 }
 
 const invalidRevalidationSchema = z.object({
@@ -98,7 +112,11 @@ async function insertStandardAllergyViaPg(userId: string, memberId: string, alle
  * P4#4: 標準アレルゲン hit 後の revalidate 200 invalid issue list、操作 disabled、
  * Plan 契約の自動 signal（focus / visibility / online / Realtime / 最大60秒 poll）を
  * 各 signal 独立の waitForResponse で非 vacuous に証明する。
- * 60秒は本番 interval のまま待たず、test seam で短縮した poll を1回観測する。
+ *
+ * E2E1: soft poll と signal を混線させない。
+ * - signal 段は __KONDATE_REVALIDATE_POLL_MS=0（poll 無効）で mount し、
+ *   イベント後の次の 200 だけを signal 起因として観測する。
+ * - poll 段は seam 2s で再 mount し、操作なしの soft poll だけを観測する。
  */
 test("standard allergen hit returns invalid revalidation, disables actions, and auto-signals recheck", async ({
   historyPage: page,
@@ -107,12 +125,17 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
   // 保存済み献立へ直接アレルゲン語を注入し、標準 wheat 登録と衝突させる
   await injectDirectAllergenHit(page, menuId, "小麦粉");
 
-  // 最大60秒 poll の browser 経路を証明するため、mount 前に poll 間隔だけ短縮する。
-  // 製品コードは未設定時 60_000ms を使い、ここは E2E 専用 seam。
+  // sessionStorage → __KONDATE_REVALIDATE_POLL_MS を navigation ごとに切替（E2E 専用 seam）
   await page.addInitScript(() => {
-    (window as Window & { __KONDATE_REVALIDATE_POLL_MS?: number }).__KONDATE_REVALIDATE_POLL_MS =
-      2_000;
+    const raw = sessionStorage.getItem("__KONDATE_E2E_REVALIDATE_POLL_MS");
+    if (raw === null) return;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n > 60_000) return;
+    (window as Window & { __KONDATE_REVALIDATE_POLL_MS?: number }).__KONDATE_REVALIDATE_POLL_MS = n;
   });
+
+  // --- signal 段: soft poll を止め、focus / visibility / online / Realtime だけを測る ---
+  await setE2eRevalidatePollMs(page, 0);
 
   const firstRevalidate = waitForRevalidate200(page, menuId);
   await page.goto(`/history/${menuId}`);
@@ -134,7 +157,7 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
     await expect(page.getByText(issueMessage).first()).toBeVisible({ timeout: 15_000 });
   }
 
-  // --- Plan 契約の自動 signal を独立に証明（バッチしない） ---
+  // --- Plan 契約の自動 signal を独立に証明（バッチしない・poll と非混線） ---
   // 1) focus
   const focusRevalidate = waitForRevalidate200(page, menuId);
   await page.evaluate(() => {
@@ -164,6 +187,7 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
   expect(onlineBody.data.issues.length).toBeGreaterThan(0);
 
   // 4) Realtime: member_allergies 変更は pg 経由で必須（RLS soft-skip 禁止）
+  // poll 無効のため、Realtime 無しではこの wait は timeout で red になる（非 vacuous）
   const token = await accessTokenFromPage(page);
   const payload = JSON.parse(
     Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"),
@@ -208,7 +232,12 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
     .parse(await (await realtimeRevalidate).json());
   expect(["invalid", "changed"]).toContain(realtimeBody.data.status);
 
-  // 5) 最大60秒 poll（seam 2s）— 操作なしで次の revalidate が飛ぶこと
+  // 5) 最大60秒 poll（seam 2s）— 再 mount して poll だけを観測（signal イベント無し）
+  await setE2eRevalidatePollMs(page, 2_000);
+  const pollMountRevalidate = waitForRevalidate200(page, menuId);
+  await page.goto(`/history/${menuId}`);
+  await pollMountRevalidate;
+  // mount 起因の初回 POST 完了後、操作なしで soft poll が飛ぶこと
   const pollRevalidate = waitForRevalidate200(page, menuId, 15_000);
   const pollBody = invalidRevalidationSchema.parse(await (await pollRevalidate).json());
   expect(pollBody.data.issues.length).toBeGreaterThan(0);

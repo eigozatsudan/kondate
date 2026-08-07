@@ -163,19 +163,25 @@ export function useMenuRevalidation(menuId: string) {
           hard();
         }
       });
-    // 既定は 60s。dev / E2E のみ window 上の test seam で短縮可能。
+    // 既定は 60s。dev / E2E のみ window 上の test seam で短縮・無効化可能。
     // 本番バンドル（import.meta.env.PROD）では seam を読まず常に 60s（HR7）。
+    // 0 は soft poll 無効（E2E で focus/Realtime 等と 2s poll 観測を混線させない）。
     const pollMs = (() => {
       if (import.meta.env.PROD) return 60_000;
       const candidate = (window as Window & { __KONDATE_REVALIDATE_POLL_MS?: unknown })
         .__KONDATE_REVALIDATE_POLL_MS;
+      if (candidate === 0) return 0;
       return typeof candidate === "number" && candidate > 0 && candidate <= 60_000
         ? candidate
         : 60_000;
     })();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) soft();
-    }, pollMs);
+    // pollMs=0 のときは interval を張らない（signal 専用待機と soft poll を分離する E2E 用）
+    const timer =
+      pollMs === 0
+        ? undefined
+        : window.setInterval(() => {
+            if (document.visibilityState === "visible" && navigator.onLine) soft();
+          }, pollMs);
     window.addEventListener(householdSafetyChangedEvent, hard);
     window.addEventListener("storage", stored);
     window.addEventListener("focus", onFocus);
@@ -189,7 +195,7 @@ export function useMenuRevalidation(menuId: string) {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       document.removeEventListener("visibilitychange", onFocus);
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearInterval(timer);
       void channel.unsubscribe();
     };
   }, [beginHardRecheck, beginOfflineHold, beginSoftRecheck, menuId, userId]);

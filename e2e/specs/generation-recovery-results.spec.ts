@@ -6,6 +6,7 @@ import {
   openAndAssertIdeaSafetyDetails,
   openFirstMemberEditor,
   selectHouseholdAudienceWithMember,
+  setMockScenario,
 } from "../fixtures/history";
 import { localRestHeaders } from "../fixtures/local-supabase";
 import type { Locator, Page, Request, Route } from "@playwright/test";
@@ -507,54 +508,6 @@ function isAppGenerationMenuUrl(url: URL, appOrigin: string): boolean {
   return url.origin === appOrigin && url.pathname === "/api/generations/menu";
 }
 
-function createFirstGenerationPostSelector(
-  appOrigin: string,
-): (url: URL, method: string) => boolean {
-  let selected = false;
-  return (url, method) => {
-    if (selected || method !== "POST" || !isAppGenerationMenuUrl(url, appOrigin)) return false;
-    selected = true;
-    return true;
-  };
-}
-
-async function selectIdeaMockScenario(
-  page: Page,
-  servings: 1 | 20,
-  appOrigin: string,
-): Promise<void> {
-  const shouldForwardScenario = createFirstGenerationPostSelector(appOrigin);
-  await page.route(
-    (url) => isAppGenerationMenuUrl(url, appOrigin),
-    async (route) => {
-      const request = route.request();
-      if (!shouldForwardScenario(new URL(request.url()), request.method())) {
-        await route.continue();
-        return;
-      }
-      await route.continue({
-        headers: {
-          ...request.headers(),
-          "x-kondate-mock-scenario": `idea-servings-${String(servings)}`,
-        },
-      });
-    },
-  );
-}
-
-test("selects only the first same-origin generation POST for an idea mock scenario", () => {
-  const appOrigin = "http://127.0.0.1:5173";
-  const sameOriginUrl = new URL("/api/generations/menu", appOrigin);
-  const shouldForwardScenario = createFirstGenerationPostSelector(appOrigin);
-
-  expect([
-    shouldForwardScenario(new URL("https://example.com/api/generations/menu"), "POST"),
-    shouldForwardScenario(sameOriginUrl, "GET"),
-    shouldForwardScenario(sameOriginUrl, "POST"),
-    shouldForwardScenario(sameOriginUrl, "POST"),
-  ]).toEqual([false, false, true, false]);
-});
-
 for (const servings of [1, 20] as const) {
   test(`generates an idea menu for servings=${String(servings)} boundary without mounting household actions or shopping requests`, async ({
     authenticatedPage: page,
@@ -577,7 +530,8 @@ for (const servings of [1, 20] as const) {
 
     await completeIdeaPlannerToReview(page, servings);
     const appOrigin = new URL(page.url()).origin;
-    await selectIdeaMockScenario(page, servings, appOrigin);
+    // sticky: recovery 再送でも idea-servings fixture が外れない（E2E7）
+    await setMockScenario(page, `idea-servings-${String(servings)}`);
     const generationResponsePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&

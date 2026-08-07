@@ -100,12 +100,32 @@ export async function openFirstMemberEditor(page: Page): Promise<void> {
   await expect(nameField).toBeVisible({ timeout: 15_000 });
 }
 
+/** page ごとの sticky mock scenario handler（clear / 差し替えまで維持） */
+type MockScenarioBinding = {
+  match: (url: URL | string) => boolean;
+  handler: (route: Route) => Promise<void>;
+};
+const mockScenarioByPage = new WeakMap<Page, MockScenarioBinding>();
+
 /**
- * 次の generation POST だけに mock シナリオヘッダを付ける（Compose mock 時のみサーバが尊重）。
- * GET 等で times:1 が吸われないよう、POST 成功 continue 後に handler を外す。
+ * sticky mock シナリオを外す。setMockScenario 差し替え前や明示クリア用。
+ */
+export async function clearMockScenario(page: Page): Promise<void> {
+  const existing = mockScenarioByPage.get(page);
+  if (existing === undefined) return;
+  await page.unroute(existing.match, existing.handler);
+  mockScenarioByPage.delete(page);
+}
+
+/**
+ * generation POST に mock シナリオヘッダを付ける（Compose mock 時のみサーバが尊重）。
+ * recovery / connectionreset 再送 / 二重 submit でも外れない sticky。
+ * clearMockScenario または別 scenario の setMockScenario 差し替えまで維持する。
+ * GET で吸われないよう POST のみヘッダ付与。
  * 呼び出し側は fixture 固有の中身（料理名等）を assert し、吸込み偽 green を防ぐこと。
  */
 export async function setMockScenario(page: Page, scenario: string): Promise<void> {
+  await clearMockScenario(page);
   const matchGeneration = (url: URL | string): boolean => {
     const path = new URL(url).pathname;
     return path === "/api/generations/menu" || path === "/api/generations/dish";
@@ -115,15 +135,15 @@ export async function setMockScenario(page: Page, scenario: string): Promise<voi
       await route.continue();
       return;
     }
+    // sticky: unroute しない。再送でも同一 scenario を付け続ける（E2E7）
     await route.continue({
       headers: {
         ...route.request().headers(),
         "x-kondate-mock-scenario": scenario,
       },
     });
-    // POST 1 回分だけ適用。unroute は continue 後（handler 内で外してよい）
-    await page.unroute(matchGeneration, handler);
   };
+  mockScenarioByPage.set(page, { match: matchGeneration, handler });
   await page.route(matchGeneration, handler);
 }
 

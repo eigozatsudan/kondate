@@ -19,6 +19,8 @@ project_name=$("$script_dir/compose-project-name.sh" "$repo_root")
 "$script_dir/ensure-compose-project-env.sh" "$repo_root" "$project_name"
 export KONDATE_COMPOSE_PROJECT_NAME="$project_name"
 lock_dir=$repo_root/.run-e2e.lock
+# holder の pid を書き、kill -9 / OOM 後の stale ロックを回収する（E2E11）
+lock_pid_file=$lock_dir/pid
 
 # シグナル受信後、子プロセスの自然終了をどれだけ待つかの猶予秒数。
 signal_grace_seconds=${KONDATE_E2E_SIGNAL_GRACE_SECONDS:-5}
@@ -268,12 +270,51 @@ release_lock() {
   if [ "$lock_acquired" -eq 0 ]; then
     return 0
   fi
+  # rmdir 前に pid を消す（途中 kill されても空 dir として stale 回収できる）
+  rm -f "$lock_pid_file" 2>/dev/null || true
   if rmdir "$lock_dir"; then
     lock_acquired=0
     return 0
   else
     return $?
   fi
+}
+
+# mkdir ディレクトリロックを取得する。失敗時は holder pid の死活を見て stale なら回収して再取得。
+# 生存中 holder や回収不能な状態は 1 を返し、呼び出し側が fail-closed する。
+try_acquire_lock() {
+  if mkdir "$lock_dir" 2>/dev/null; then
+    # 取得直後に自身の pid を記録（再取得競合は mkdir の原子性で排除）
+    printf '%s\n' "$$" >"$lock_pid_file"
+    lock_acquired=1
+    return 0
+  fi
+
+  holder_pid=
+  if [ -f "$lock_pid_file" ]; then
+    holder_pid=$(cat "$lock_pid_file" 2>/dev/null || true)
+  fi
+
+  if [ -n "$holder_pid" ] && printf '%s\n' "$holder_pid" | grep -Eq '^[1-9][0-9]*$'; then
+    if kill -0 "$holder_pid" 2>/dev/null; then
+      # holder 生存 → 本物の多重起動
+      return 1
+    fi
+    # holder 死亡 → stale ロックを回収して再取得を試みる
+    echo "removing stale E2E lock (dead pid $holder_pid): $lock_dir" >&2
+  else
+    # pid 無し・不正・旧形式。空 dir なら回収（中身があると rmdir 失敗 → fail-closed）
+    echo "removing stale E2E lock (missing or invalid pid): $lock_dir" >&2
+  fi
+  rm -f "$lock_pid_file" 2>/dev/null || true
+  rmdir "$lock_dir" 2>/dev/null || true
+
+  if mkdir "$lock_dir" 2>/dev/null; then
+    printf '%s\n' "$$" >"$lock_pid_file"
+    lock_acquired=1
+    return 0
+  fi
+  return 1
 }
 
 # ロック解放後の最終的なexitコードを決定して終了する。シグナルによる
@@ -310,8 +351,8 @@ cleanup_on_exit() {
 }
 trap cleanup_on_exit EXIT
 
-if mkdir "$lock_dir"; then
-  lock_acquired=1
+if try_acquire_lock; then
+  :
 else
   trap - EXIT
   echo "another E2E run is active: $lock_dir" >&2

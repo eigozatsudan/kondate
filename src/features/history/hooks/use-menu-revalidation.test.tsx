@@ -611,5 +611,30 @@ describe("useMenuRevalidation", () => {
     expect(revalidateMenuMock.mock.calls.length).toBe(before);
   });
 
+  it("E2E1 seam: __KONDATE_REVALIDATE_POLL_MS=0 disables soft poll interval", async () => {
+    // signal 専用 E2E と 2s poll を混線させないため 0 は soft poll 用 setInterval を張らない
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    (
+      window as Window & { __KONDATE_REVALIDATE_POLL_MS?: number }
+    ).__KONDATE_REVALIDATE_POLL_MS = 0;
+    try {
+      const { unmount } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+      await waitFor(() => {
+        expect(revalidateMenuMock).toHaveBeenCalled();
+      });
+      // soft poll 候補（0 / 短縮 2s / 既定 60s）が interval 登録されていないこと。
+      // waitFor 等の短周期 interval は対象外。
+      const softPollTimers = setIntervalSpy.mock.calls.filter(
+        (call) => call[1] === 0 || call[1] === 2_000 || call[1] === 60_000,
+      );
+      expect(softPollTimers).toHaveLength(0);
+      unmount();
+    } finally {
+      delete (window as Window & { __KONDATE_REVALIDATE_POLL_MS?: number })
+        .__KONDATE_REVALIDATE_POLL_MS;
+      setIntervalSpy.mockRestore();
+    }
+  });
+
   // 60 秒 poll は history-detail-page の sixty-second-poll ケースで page 統合として検証する
 });

@@ -5,6 +5,7 @@ import {
   clickWizardNext,
   openFirstMemberEditor,
   selectHouseholdAudienceWithMember,
+  setMockScenario,
 } from "./history";
 import { localRestHeaders } from "./local-supabase";
 
@@ -132,38 +133,9 @@ export async function addManualItem(page: Page, name: string): Promise<void> {
   await expect(page.getByText(name)).toBeVisible({ timeout: 15_000 });
 }
 
-/**
- * 次の generation POST だけに mock シナリオヘッダを付ける。
- * history.ts の setMockScenario と同型。再生成が success fixture と material 重複しない
- * alternate-menu を返すために必要（重複は「ほぼ同じ案」で失敗終端になる）。
- */
-/**
- * 次の generation POST だけに mock シナリオを付ける。
- * GET で times が吸われないよう POST 後に unroute（history.setMockScenario と同型）。
- */
-async function setMockScenario(page: Page, scenario: string): Promise<void> {
-  const matchGeneration = (url: URL | string): boolean => {
-    const path = new URL(url).pathname;
-    return path === "/api/generations/menu" || path === "/api/generations/dish";
-  };
-  const handler = async (route: Route) => {
-    if (route.request().method() !== "POST") {
-      await route.continue();
-      return;
-    }
-    await route.continue({
-      headers: {
-        ...route.request().headers(),
-        "x-kondate-mock-scenario": scenario,
-      },
-    });
-    await page.unroute(matchGeneration, handler);
-  };
-  await page.route(matchGeneration, handler);
-}
-
 /** 履歴詳細から献立まるごとの別案を作り、新しい menuId を返す */
 export async function regenerateWholeMenu(page: Page, menuId: string): Promise<string> {
+  // sticky alternate-menu（history.setMockScenario）。再送でも同一 fixture を維持する。
   // 成功 fixture と material が重複しない別案を返す（history-regeneration と同じ）
   await setMockScenario(page, "alternate-menu");
   await page.goto(`/history/${menuId}`);

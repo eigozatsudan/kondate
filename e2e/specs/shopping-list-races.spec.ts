@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   createShoppingListRequestSchema,
   reconcileShoppingListRequestSchema,
@@ -11,9 +12,65 @@ import {
   test,
 } from "../fixtures/shopping";
 import { openFirstMemberEditor } from "../fixtures/history";
+import type { Route } from "@playwright/test";
 
 // 献立生成を伴うため既定の30秒では足りない（既存の履歴系specと同じ扱い）。
 test.setTimeout(180_000);
+
+/** safety 変更後 create/reconcile が契約どおり返す code（5xx や別 4xx の false green を閉じる） */
+const SAFETY_REJECT_CODES = new Set(["current_safety_revalidation_required"]);
+
+type CapturedHttpReject = { status: number; code: string | undefined };
+
+/**
+ * route.fetch の status と error.code を記録し、同一 body で fulfill する。
+ * json() 消費で body が消えないよう text 経由で往復する（E2E12）。
+ */
+async function captureRejectAndFulfill(
+  route: Route,
+  into: CapturedHttpReject[],
+): Promise<void> {
+  const response = await route.fetch();
+  const bodyText = await response.text();
+  const status = response.status();
+  let code: string | undefined;
+  try {
+    const parsed = z
+      .object({
+        error: z.object({ code: z.string() }).partial().optional(),
+      })
+      .passthrough()
+      .safeParse(JSON.parse(bodyText) as unknown);
+    code = parsed.success ? parsed.data.error?.code : undefined;
+  } catch {
+    code = undefined;
+  }
+  into.push({ status, code });
+  await route.fulfill({
+    status,
+    headers: response.headers(),
+    body: bodyText,
+  });
+}
+
+/** 4xx かつ契約 code。5xx や code 欠落は不合格。 */
+function expectSafetyContractReject(results: CapturedHttpReject[], label: string): void {
+  expect(results.length, `${label}: expected at least one response`).toBeGreaterThanOrEqual(1);
+  for (const result of results) {
+    expect(
+      result.status,
+      `${label}: must not succeed (got ${String(result.status)} code=${String(result.code)})`,
+    ).toBeGreaterThanOrEqual(400);
+    expect(
+      result.status,
+      `${label}: 5xx is not a contractual safety reject (got ${String(result.status)})`,
+    ).toBeLessThan(500);
+    expect(
+      SAFETY_REJECT_CODES.has(result.code ?? ""),
+      `${label}: expected code in {${[...SAFETY_REJECT_CODES].join(", ")}}, got status=${String(result.status)} code=${String(result.code)}`,
+    ).toBe(true);
+  }
+}
 
 test("reuses one idempotency key after the first response is lost", async ({
   authenticatedPage: page,
@@ -194,7 +251,7 @@ test("pending create envelope does not create a list after household safety chan
   shoppingMenuId,
 }) => {
   let createPosts = 0;
-  const createStatuses: number[] = [];
+  const createRejects: CapturedHttpReject[] = [];
   let releaseCreates: () => void = () => undefined;
   const createsReleased = new Promise<void>((resolve) => {
     releaseCreates = resolve;
@@ -208,9 +265,7 @@ test("pending create envelope does not create a list after household safety chan
     }
     createPosts += 1;
     if (!released) await createsReleased;
-    const response = await route.fetch();
-    createStatuses.push(response.status());
-    await route.fulfill({ response });
+    await captureRejectAndFulfill(route, createRejects);
   });
 
   await page.goto(`/menus/${shoppingMenuId}`);
@@ -247,14 +302,9 @@ test("pending create envelope does not create a list after household safety chan
   released = true;
   releaseCreates();
 
-  // 解放後の create は 4xx（current_safety_revalidation_required 等）で終わる
-  await expect.poll(() => createStatuses.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
-  for (const status of createStatuses) {
-    expect(
-      status,
-      `create after safety change must not succeed (got ${String(status)})`,
-    ).toBeGreaterThanOrEqual(400);
-  }
+  // 解放後の create は 4xx + current_safety_revalidation_required（5xx は不合格）
+  await expect.poll(() => createRejects.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  expectSafetyContractReject(createRejects, "create after safety change");
 
   // メニュー結果は安全条件変更で fail closed。作成 CTA は disabled。
   // shopping 側の別 alert（リスト状態）と strict 衝突しないよう文言で絞る。
@@ -305,7 +355,7 @@ test("pending reconcile envelope does not apply after household safety changes",
   const nextMenuId = await regenerateWholeMenu(page, shoppingMenuId);
 
   let reconcilePosts = 0;
-  const reconcileStatuses: number[] = [];
+  const reconcileRejects: CapturedHttpReject[] = [];
   let releaseReconciles: () => void = () => undefined;
   const reconcilesReleased = new Promise<void>((resolve) => {
     releaseReconciles = resolve;
@@ -319,9 +369,7 @@ test("pending reconcile envelope does not apply after household safety changes",
     }
     reconcilePosts += 1;
     if (!released) await reconcilesReleased;
-    const response = await route.fetch();
-    reconcileStatuses.push(response.status());
-    await route.fulfill({ response });
+    await captureRejectAndFulfill(route, reconcileRejects);
   });
 
   await page.goto(`/menus/${nextMenuId}`);
@@ -358,13 +406,8 @@ test("pending reconcile envelope does not apply after household safety changes",
   released = true;
   releaseReconciles();
 
-  await expect.poll(() => reconcileStatuses.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
-  for (const status of reconcileStatuses) {
-    expect(
-      status,
-      `reconcile after safety change must not succeed (got ${String(status)})`,
-    ).toBeGreaterThanOrEqual(400);
-  }
+  await expect.poll(() => reconcileRejects.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  expectSafetyContractReject(reconcileRejects, "reconcile after safety change");
 
   // code 付き失敗で envelope 消去 + 状態変化メッセージ
   await expect
