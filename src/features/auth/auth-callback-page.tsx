@@ -8,6 +8,7 @@ import {
 import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
 import { getPublicEnv } from "@/shared/config/public-env";
 import {
+  adjustedAuthNowMs,
   clearAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthContinuationCallbackStartedAt,
@@ -60,13 +61,15 @@ export function AuthCallbackPage({
   leaveAuthCallback?: (href: string) => void;
 }) {
   const [result, setResult] = useState<AuthCallbackResult | null>(null);
+  // C14: deposited 案内が TTL 超過後も残らないよう期限切れ二次 UI へ切替
+  const [depositedExpired, setDepositedExpired] = useState(false);
   const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
   const activeGateway = gateway ?? defaultGateway;
   const callbackPromise = useRef<Promise<AuthCallbackResult> | null>(null);
   const callbackFlowId = useRef<string | null>(null);
   // 二重 leave を防ぐ（StrictMode 再実行や complete + recovery 競合）
   const leftRef = useRef(false);
-  // deposited は案内を読み終わるまで watchdog で強制 leave しない
+  // deposited は案内を読み終わるまで watchdog で強制 leave しない（C14: 期限後は UI 切替）
   const stayOnDepositedRef = useRef(false);
   // hangWatchdog は storage に flow が無いケースでも returnTo を落とさない（テスト・strip 後）
   const hangWatchReturnToRef = useRef<string | undefined>(undefined);
@@ -147,9 +150,18 @@ export function AuthCallbackPage({
       serverExpiresMs !== null && Number.isFinite(serverExpiresMs)
         ? Math.min(localDeadlineMs, serverExpiresMs)
         : localDeadlineMs;
-    const remainingMs = Math.max(0, deadlineMs - Date.now());
+    // C4: normalizeAuthClock と同型で clockSkewMs を差し引き、進みすぎクライアントの早期焼却を防ぐ
+    const remainingMs = Math.max(
+      0,
+      deadlineMs - adjustedAuthNowMs(Date.now(), flowForDeadline?.clockSkewMs),
+    );
     const hangWatchdog = window.setTimeout(() => {
-      if (leftRef.current || stayOnDepositedRef.current) return;
+      if (leftRef.current) return;
+      // C14: deposited は強制 leave せず、期限切れ・やり直す二次 UI へ切替
+      if (stayOnDepositedRef.current) {
+        setDepositedExpired(true);
+        return;
+      }
       // storage の flow と gateway 結果の双方から returnTo を拾う（C4）
       const fromStorage =
         flowIdForWatch === null
@@ -274,14 +286,28 @@ export function AuthCallbackPage({
   if (result?.kind === "deposited") {
     return (
       <main className="page-frame stack">
-        <h1>ログイン情報を元のブラウザへ渡しました</h1>
+        <h1>
+          {depositedExpired
+            ? "ログインの引き継ぎ期限が切れました"
+            : "ログイン情報を元のブラウザへ渡しました"}
+        </h1>
         <section className="card stack">
-          <p>元のブラウザでログインを続けてください。この画面にログイン用の情報は保存されません</p>
-          <ol className="stack type-small">
-            <li>このアプリを開いていた元のブラウザのタブへ戻る</li>
-            <li>元のタブでログイン完了を待つ</li>
-            <li>元のタブが分からない・閉じた場合は、下のボタンからやり直す</li>
-          </ol>
+          {depositedExpired ? (
+            <p>
+              元のブラウザへの引き継ぎ期限が過ぎました。下のボタンから最初の画面に戻り、ログインをやり直してください。
+            </p>
+          ) : (
+            <>
+              <p>
+                元のブラウザでログインを続けてください。この画面にログイン用の情報は保存されません
+              </p>
+              <ol className="stack type-small">
+                <li>このアプリを開いていた元のブラウザのタブへ戻る</li>
+                <li>元のタブでログイン完了を待つ</li>
+                <li>元のタブが分からない・閉じた場合は、下のボタンからやり直す</li>
+              </ol>
+            </>
+          )}
           {/* B-C1: WebView 内で session を作らず、continuation も再消費しない。新規ログインのみ。 */}
           <button
             type="button"

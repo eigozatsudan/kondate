@@ -641,7 +641,59 @@ it("C6: hangWatchdog fails closed at server expiresAt when shorter than local TT
   }
 });
 
-it("does not force-leave a deposited WebView at the hang watchdog TTL", async () => {
+it("C4: hangWatchdog accounts for clockSkewMs so secret is not burned early", async () => {
+  vi.useFakeTimers();
+  // クライアント時計が 60s 進んでいる想定（skew +60s）。サーバ期限は wall+30s 相当を保持。
+  vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
+  try {
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: "2026-07-13T00:00:00.000Z",
+        expiresAt: "2026-07-13T00:00:30.000Z",
+        clockSkewMs: 60_000,
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.callback-owner.${flowId}`,
+      "2026-07-13T00:00:00.000Z",
+    );
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
+      resumeFlow: vi.fn(),
+    };
+    const { leaveAuthCallback } = renderCallback(gateway, {
+      ttlMs: 300_000,
+      initialEntry: `/auth/callback?flow=${flowId}`,
+    });
+    await act(async () => Promise.resolve());
+    // skew 非適用なら remaining=0 で即 leave。補正後は server 期限まで待つ。
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(29_000);
+    });
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("C14: deposited WebView switches to expired retry UI after hang watchdog TTL", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
   try {
@@ -667,7 +719,10 @@ it("does not force-leave a deposited WebView at the hang watchdog TTL", async ()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300_000);
     });
+    // C14: 強制 leave はせず、期限切れ・やり直す二次 UI へ切替
     expect(leaveAuthCallback).not.toHaveBeenCalled();
+    expect(screen.getByText("ログインの引き継ぎ期限が切れました")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "最初からやり直す" })).toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }

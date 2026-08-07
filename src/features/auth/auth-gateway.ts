@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   buildAuthCallbackUrl,
   clearAuthFlow,
-  clearClaimedAuthFlow,
   ContinuationHttpError,
   ContinuationResponseLostError,
   createAuthFlow,
@@ -73,10 +72,21 @@ export type AuthCallbackResult =
  * createAuthGateway ごとだと callback ページと AuthProvider が別 Map を持ち、
  * 同一タブ／同一プロセスでも dual exchange が再成立し得るためモジュール共有にする。
  * （タブ横断は storage の callback pre-lease + AUTH-R2 が担う。）
+ *
  * withTimeout は元 Promise を cancel しない。先着 Promise に join し、
  * C3 冪等 re-claim は settle 後の再呼び出しで従来どおり。C4 hang 中 secret 保持も維持。
+ *
+ * C11: soft TTL で Map エントリを外し、外側 withTimeout 後に後続が新規 run を立てられる。
+ * 旧 run は放置（cancel 不能）。exchange lease は R2/R3 が dual exchange を抑止する。
  */
-const inflightResumeByFlowId = new Map<string, Promise<AuthCallbackResult>>();
+type InflightResumeEntry = {
+  generation: number;
+  promise: Promise<AuthCallbackResult>;
+};
+const inflightResumeByFlowId = new Map<string, InflightResumeEntry>();
+let inflightResumeGeneration = 0;
+/** Map 保持の soft TTL。IMMEDIATE_CLAIM_TIMEOUT と同値（外側 withTimeout と揃える）。 */
+const INFLIGHT_RESUME_MAP_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS;
 
 /** テスト専用: never-settle resume が Map に残ったあとの隔離用。本番コードからは呼ばない。 */
 export function resetInflightResumeForTests(): void {
@@ -305,16 +315,33 @@ export function createAuthGateway(
     async resumeFlow(flowId) {
       const existing = inflightResumeByFlowId.get(flowId);
       if (existing !== undefined) {
-        return existing;
+        return existing.promise;
       }
-      const run = runResumeFlow(flowId).finally(() => {
-        // 自分の世代だけ消す（先着が settle 後に後続が新規起動して差し替えた場合は触らない）
-        if (inflightResumeByFlowId.get(flowId) === run) {
+      // C11: generation で Map 除去を世代一致に限定（soft TTL / settle の競合でも後続を壊さない）
+      const generation = (inflightResumeGeneration += 1);
+      const runPromise = runResumeFlow(flowId);
+      const entry: InflightResumeEntry = {
+        generation,
+        promise: runPromise.finally(() => {
+          const current = inflightResumeByFlowId.get(flowId);
+          if (current?.generation === generation) {
+            inflightResumeByFlowId.delete(flowId);
+          }
+        }),
+      };
+      inflightResumeByFlowId.set(flowId, entry);
+      // soft TTL: withTimeout 後も Map に hang Promise が残り続けるのを防ぐ。
+      // 旧 run は cancel しない。lease 保持中なら後続は acquire 失敗で awaiting に倒れる。
+      const softTtlTimer = setTimeout(() => {
+        const current = inflightResumeByFlowId.get(flowId);
+        if (current?.generation === generation) {
           inflightResumeByFlowId.delete(flowId);
         }
+      }, INFLIGHT_RESUME_MAP_TTL_MS);
+      void runPromise.finally(() => {
+        clearTimeout(softTtlTimer);
       });
-      inflightResumeByFlowId.set(flowId, run);
-      return run;
+      return entry.promise;
     },
   };
 
@@ -385,16 +412,18 @@ export function createAuthGateway(
           : client.auth.exchangeCodeForSession(claimedCode.code);
       const { error } = await result;
       if (error !== null) throw new Error("provider exchange failed");
-      // exchange 成功後に secret を破棄（所有証跡は clearClaimed で整理）
-      clearClaimedAuthFlow(flow.id, storage);
       // F-AUTH-002: claim 成功の returnTo も再 sanitize（create 経路の防御を二重化）
       const safeReturnTo = sanitizeReturnPath(claimedCode.returnTo);
+      // C1 / C10: secret 消去は publishAuthContinuationCompletion（setItem 成功後の clear）に一本化。
+      // 先に clearClaimed すると setItem 失敗時に他タブ re-claim 不能・completion 未公開でスタックする。
       // C4: withTimeout で結果が discard されても storage 経由で recovery/listener が拾えるよう公開。
       // gateway に注入された storage と同じ領域へ書き、テストの MapStorage とも一致させる。
       try {
         publishAuthContinuationCompletion({ flowId: flow.id, returnTo: safeReturnTo }, storage);
       } catch {
-        // localStorage 障害は complete 結果自体を妨げない
+        // setItem 失敗時 publish は clear しない → secret 残存（他タブ re-claim / ページ側再 publish 可）。
+        // セッションは既に確立済みなので outer catch の terminal clear に落とさず complete を返す。
+        // （throw を外へ出すと exchangeStarted 分岐が secret を焼いて C1 が再発する。）
       }
       return {
         kind: "complete",

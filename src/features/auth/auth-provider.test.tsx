@@ -268,6 +268,69 @@ describe("AuthProvider", () => {
     expect(getSession).toHaveBeenCalledTimes(2);
   });
 
+  it("C7: completion listener navigates on /login only when flowId matches a waiting flow", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    const waitingFlowId = "10000000-0000-4000-8000-000000000001";
+    const otherFlowId = "20000000-0000-4000-8000-000000000002";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${waitingFlowId}`,
+      JSON.stringify({
+        id: waitingFlowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    const navigateTo = vi.fn();
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        navigateTo={navigateTo}
+        startRecovery={() => vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+
+    await act(async () => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "kondate.auth.supabase.continuation-complete",
+          newValue: JSON.stringify({ flowId: otherFlowId, returnTo: "/planner" }),
+        }),
+      );
+      await Promise.resolve();
+    });
+    // 別 flow 完了では navigate しない（session 再取得のみ）
+    expect(navigateTo).not.toHaveBeenCalled();
+    expect(getSession).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "kondate.auth.supabase.continuation-complete",
+          newValue: JSON.stringify({ flowId: waitingFlowId, returnTo: "/onboarding" }),
+        }),
+      );
+      await Promise.resolve();
+    });
+    expect(navigateTo).toHaveBeenCalledWith("/onboarding");
+  });
+
   it("leaves callback claim ownership to AuthCallbackPage", async () => {
     window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
     const client = {

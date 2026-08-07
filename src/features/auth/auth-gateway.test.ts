@@ -461,7 +461,7 @@ it("same-browser callback deposits then claims and exchanges immediately", async
   expect(claim).toHaveBeenCalledWith(flow.id, { secret: flow.secret, state: flow.state });
   expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
   expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
-  // exchange 成功後は clearClaimedAuthFlow で secret を消す（C4）
+  // exchange 成功後は publishAuthContinuationCompletion 内 clear で secret を消す（C1/C4）
   expect(readAuthFlow(flow.id, storage)).toBeNull();
 });
 
@@ -967,4 +967,92 @@ it("C4: publishes continuation completion when resumeFlow completes", async () =
   expect(
     JSON.parse(storage.getItem("kondate.auth.supabase.continuation-complete") ?? "null"),
   ).toEqual({ flowId: flow.id, returnTo: "/onboarding" });
+});
+
+it("C1: keeps secret when completion setItem fails after exchange success", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+  const originalSetItem = storage.setItem.bind(storage);
+  storage.setItem = (key: string, value: string) => {
+    if (key === "kondate.auth.supabase.continuation-complete") {
+      throw new Error("quota exceeded");
+    }
+    originalSetItem(key, value);
+  };
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toMatchObject({
+    kind: "complete",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  // C1: publish 前に clearClaimed しない。setItem 失敗時も secret が残り re-claim / 再 publish 可能
+  expect(readAuthFlow(flow.id, storage)?.secret).toBe(flow.secret);
+  expect(storage.getItem("kondate.auth.supabase.continuation-complete")).toBeNull();
+});
+
+it("C11: after inflight resume soft TTL a later resume can start a new run", async () => {
+  vi.useFakeTimers();
+  try {
+    const storage = new MapStorage();
+    const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+    const api = continuationApiMock({ claim });
+    const client = authClientMock();
+    // 最初の exchange は never-settle。soft TTL 後の第二 run は成功させる
+    let exchangeCalls = 0;
+    client.auth.exchangeCodeForSession = vi.fn().mockImplementation(() => {
+      exchangeCalls += 1;
+      if (exchangeCalls === 1) {
+        return new Promise(() => undefined);
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const gateway = createAuthGateway(
+      client as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, {
+      ...fixedFlowDeps,
+      now: () => new Date(),
+    });
+
+    void gateway.resumeFlow(flow.id);
+    await vi.advanceTimersByTimeAsync(EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS + 20);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+
+    // soft TTL 前は同一 hang Promise に join（第二 exchange しない）
+    void gateway.resumeFlow(flow.id);
+    await Promise.resolve();
+    expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+    expect(claim).toHaveBeenCalledOnce();
+
+    // soft TTL 経過後は Map から外れ、後続が新規 run を立てられる（lease があれば awaiting でも可）
+    await vi.advanceTimersByTimeAsync(IMMEDIATE_CLAIM_TIMEOUT_MS);
+    const second = gateway.resumeFlow(flow.id);
+    await vi.advanceTimersByTimeAsync(EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS + 20);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+
+    // 第一 run が lease を保持中なら awaiting。lease 失効後なら complete もあり得る。
+    // いずれにせよ第二 resume は hang join ではなく新しい結果を返す。
+    await expect(second).resolves.toMatchObject({
+      flowId: flow.id,
+    });
+    expect(claim.mock.calls.length).toBeGreaterThanOrEqual(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });

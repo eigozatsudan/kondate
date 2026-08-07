@@ -313,6 +313,14 @@ function clampClockSkewMs(skewMs: number | null | undefined): number {
 }
 
 /**
+ * C4 / C6: hangWatchdog や completion wait が normalizeAuthClock と同型で now を補正する。
+ * 正の skew（クライアント進み）を差し引き、サーバ期限前の secret 早期焼却を防ぐ。
+ */
+export function adjustedAuthNowMs(wallNowMs: number, clockSkewMs?: number | null): number {
+  return wallNowMs - clampClockSkewMs(clockSkewMs);
+}
+
+/**
  * create 応答の expiresAt とクライアント now から skew を推定する（C6）。
  * serverImpliedNow ≈ expiresAt − ttl。client が進みすぎなら正の skew。
  */

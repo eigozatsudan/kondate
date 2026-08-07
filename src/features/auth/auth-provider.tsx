@@ -14,7 +14,7 @@ import {
 } from "./auth-continuation-completion";
 import { withTimeout } from "./async-timeout";
 import { createAuthGateway } from "./auth-gateway";
-import { clearAuthFlow } from "./auth-flow";
+import { clearAuthFlow, listUnexpiredAuthFlows } from "./auth-flow";
 
 export type AuthProviderClient = {
   auth: Pick<BrowserSupabaseClient["auth"], "getSession" | "onAuthStateChange">;
@@ -175,6 +175,12 @@ export function AuthProvider({
           // 設定編集中などの他タブを強制 navigate して未保存 UI を捨てない。
           const path = window.location.pathname;
           if (path === "/login" || path.startsWith("/login/") || path === "/auth/callback") {
+            // C7: 端末に待ち flow があるときは flowId 一致時のみ navigate。
+            // 別 flow 完了や改ざん payload で意図しない returnTo へ飛ばない。
+            const waiting = listUnexpiredAuthFlows(window.localStorage, new Date());
+            if (waiting.length > 0 && !waiting.some((flow) => flow.id === result.flowId)) {
+              return;
+            }
             navigateTo(result.returnTo);
           }
         },
