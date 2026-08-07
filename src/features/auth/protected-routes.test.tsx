@@ -75,3 +75,24 @@ it("L1: after C5 deadline while still loading, fail-closed to login", async () =
     vi.useRealTimers();
   }
 });
+
+it("L6: loading main exposes aria-busy and aria-live", () => {
+  vi.mocked(useAuth).mockReturnValue({
+    status: "loading",
+    session: null,
+    refreshSession: vi.fn(),
+  });
+  const router = createMemoryRouter(
+    [
+      {
+        element: <RequireSession />,
+        children: [{ path: "/pantry", element: <h1>冷蔵庫</h1> }],
+      },
+    ],
+    { initialEntries: ["/pantry"] },
+  );
+  render(<RouterProvider router={router} />);
+  const pending = screen.getByText("ログイン状態を確認しています…");
+  expect(pending).toHaveAttribute("aria-busy", "true");
+  expect(pending).toHaveAttribute("aria-live", "polite");
+});

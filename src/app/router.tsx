@@ -26,14 +26,21 @@ export function createAppRouter(): AppRouter {
         {
           path: "/login",
           lazy: async () => {
-            const { LoginPage } = await import("@/features/auth/login-page");
+            // L4: lazy chunk never-settle を C5 同尺で打ち切り（welcome と同型）
+            const { LoginPage } = await withTimeout(
+              import("@/features/auth/login-page"),
+              COLD_START_SESSION_DEADLINE_MS,
+            );
             return { Component: LoginPage };
           },
         },
         {
           path: "/auth/callback",
           lazy: async () => {
-            const { AuthCallbackPage } = await import("@/features/auth/auth-callback-page");
+            const { AuthCallbackPage } = await withTimeout(
+              import("@/features/auth/auth-callback-page"),
+              COLD_START_SESSION_DEADLINE_MS,
+            );
             return { Component: AuthCallbackPage };
           },
         },
@@ -62,18 +69,23 @@ export function createAppRouter(): AppRouter {
               },
             },
             {
+              // L4: /onboarding も welcome と同尺の lazy hang gate
               path: "/onboarding",
               lazy: async () => {
-                const { HouseholdOnboardingPage } =
-                  await import("@/features/household/household-onboarding-page");
+                const { HouseholdOnboardingPage } = await withTimeout(
+                  import("@/features/household/household-onboarding-page"),
+                  COLD_START_SESSION_DEADLINE_MS,
+                );
                 return { Component: HouseholdOnboardingPage };
               },
             },
             {
               path: "/privacy",
               lazy: async () => {
-                const { PrivacyNoticePage } =
-                  await import("@/features/privacy/privacy-notice-page");
+                const { PrivacyNoticePage } = await withTimeout(
+                  import("@/features/privacy/privacy-notice-page"),
+                  COLD_START_SESSION_DEADLINE_MS,
+                );
                 return { Component: PrivacyNoticePage };
               },
             },
@@ -116,16 +128,20 @@ export function createAppRouter(): AppRouter {
                 {
                   path: "/settings",
                   lazy: async () => {
-                    const { HouseholdSettingsPage } =
-                      await import("@/features/household/household-settings-page");
+                    const { HouseholdSettingsPage } = await withTimeout(
+                      import("@/features/household/household-settings-page"),
+                      COLD_START_SESSION_DEADLINE_MS,
+                    );
                     return { Component: HouseholdSettingsPage };
                   },
                 },
                 {
                   path: "/plus",
                   lazy: async () => {
-                    const { PlusLandingPage } =
-                      await import("@/features/billing/plus-landing-page");
+                    const { PlusLandingPage } = await withTimeout(
+                      import("@/features/billing/plus-landing-page"),
+                      COLD_START_SESSION_DEADLINE_MS,
+                    );
                     return { Component: PlusLandingPage };
                   },
                 },

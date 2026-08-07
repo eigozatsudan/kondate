@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COLD_START_SESSION_DEADLINE_MS } from "@/features/auth/auth-provider";
 
 const getProfileMock = vi.hoisted(() => vi.fn());
@@ -19,7 +19,7 @@ vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
 
-import { WelcomeRoutePage } from "./welcome-route-page";
+import { WelcomeRoutePage, WELCOME_START_RECONCILE_GRACE_MS } from "./welcome-route-page";
 
 const userId = "72000000-0000-4000-8000-000000000001";
 
@@ -52,6 +52,12 @@ describe("WelcomeRoutePage L4 first-writer", () => {
       session: { user: { id: userId } },
       refreshSession: vi.fn(),
     });
+  });
+
+  afterEach(() => {
+    // fake timer 残留で後続 findBy / userEvent が testTimeout(15s) まで死ぬのを防ぐ
+    vi.useRealTimers();
+    cleanup();
   });
 
   it("does not overwrite when another tab already set in_progress; navigates to onboarding", async () => {
@@ -164,6 +170,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
 
   it("L1: start re-read hang past C5 deadline shows error and re-enables CTA", async () => {
     // 表示用は 1 回解決、開始時 re-read 以降は never-settle → lock 内 withTimeout
+    // timeout 後の L1 reconcile 再読込も hang するため grace も進める
     getProfileMock
       .mockResolvedValueOnce({ onboarding_status: "not_started" })
       .mockReturnValue(new Promise(() => undefined));
@@ -176,8 +183,12 @@ describe("WelcomeRoutePage L4 first-writer", () => {
       fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
       expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+        // C5 + reconcile grace。双方 hang なら失敗 UI
+        await vi.advanceTimersByTimeAsync(
+          COLD_START_SESSION_DEADLINE_MS + WELCOME_START_RECONCILE_GRACE_MS,
+        );
       });
+      // getBy: fake timer 下の findBy ポーリングは進まない
       expect(screen.getByRole("alert")).toHaveTextContent("開始できませんでした");
       expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeEnabled();
       expect(setOnboardingStatusMock).not.toHaveBeenCalled();
@@ -186,8 +197,8 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     }
   });
 
-  it("L1: zombie re-read after timeout does not CAS or navigate", async () => {
-    // timeout 後に遅延 resolve しても generation 無効化で副作用なし
+  it("L1: zombie re-read after timeout does not CAS or navigate when still not_started", async () => {
+    // timeout 後に遅延 resolve しても not_started なら CAS / navigate なし
     let resolveReread: ((value: { onboarding_status: string }) => void) | undefined;
     getProfileMock.mockResolvedValueOnce({ onboarding_status: "not_started" }).mockImplementation(
       () =>
@@ -203,9 +214,13 @@ describe("WelcomeRoutePage L4 first-writer", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
       });
+      // C5 timeout 後の reconcile re-read も hang。grace で打ち切り失敗 UI
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(WELCOME_START_RECONCILE_GRACE_MS);
+      });
       expect(screen.getByRole("alert")).toHaveTextContent("開始できませんでした");
       expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeEnabled();
-      // ゾンビ re-read が settle しても CAS / navigate しない
+      // ゾンビ re-read が not_started で settle しても CAS / navigate しない
       await act(async () => {
         resolveReread?.({ onboarding_status: "not_started" });
         await Promise.resolve();
@@ -217,6 +232,98 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("L1: deferred CAS past C5 reconciles navigate instead of sticky false failure", async () => {
+    // CAS が C5 後に着地しても、timeout 無効化後のゾンビを reconcile して遷移する
+    let resolveCas: ((value: { onboarding_status: string }) => void) | undefined;
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    setOnboardingStatusMock.mockImplementation(
+      () =>
+        new Promise<{ onboarding_status: string }>((resolve) => {
+          resolveCas = resolve;
+        }),
+    );
+    const router = renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+      // getProfile mock を microtask で流し CAS を武装
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(setOnboardingStatusMock).toHaveBeenCalled();
+      await act(async () => {
+        // C5 + reconcile grace（re-read は not_started → 一旦失敗し得る）
+        await vi.advanceTimersByTimeAsync(
+          COLD_START_SESSION_DEADLINE_MS + WELCOME_START_RECONCILE_GRACE_MS,
+        );
+      });
+    } finally {
+      // findBy / RR navigate は real timer 下で待つ（fake 下の findBy は testTimeout までハング）
+      vi.useRealTimers();
+    }
+    // 遅延 CAS が skipped で着地 → L1 reconcile で /planner へ
+    await act(async () => {
+      resolveCas?.({ onboarding_status: "skipped" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/planner");
+  });
+
+  it("L2: unmount during start does not zombie-navigate after late CAS", async () => {
+    // 離脱後に CAS が成功しても generation 無効化で router yank しない
+    let resolveCas: ((value: { onboarding_status: string }) => void) | undefined;
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    setOnboardingStatusMock.mockImplementation(
+      () =>
+        new Promise<{ onboarding_status: string }>((resolve) => {
+          resolveCas = resolve;
+        }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const router = createMemoryRouter(
+      [
+        { path: "/welcome", element: <WelcomeRoutePage /> },
+        { path: "/planner", element: <h1>献立</h1> },
+        { path: "/onboarding", element: <h1>家族設定</h1> },
+        { path: "/history", element: <h1>履歴</h1> },
+      ],
+      { initialEntries: ["/welcome"] },
+    );
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("button", { name: "家族情報を登録する" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "家族情報を登録する" }));
+    expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
+    // CAS 発行まで待ってから離脱（未発行だとゾンビ経路を検証できない）
+    await waitFor(() => {
+      expect(setOnboardingStatusMock).toHaveBeenCalled();
+    });
+    // 開始 flight 中に別画面へ離脱（household CAS 成功なら本来 /onboarding）
+    await act(async () => {
+      await router.navigate("/history");
+    });
+    expect(router.state.location.pathname).toBe("/history");
+    expect(await screen.findByRole("heading", { name: "履歴" })).toBeVisible();
+    await act(async () => {
+      resolveCas?.({ onboarding_status: "in_progress" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // ゾンビ navigate で /onboarding に引っ張られない
+    expect(router.state.location.pathname).toBe("/history");
+    expect(screen.getByRole("heading", { name: "履歴" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "家族設定" })).not.toBeInTheDocument();
   });
 
   it("L2: CAS success navigates even when invalidateQueries would hang", async () => {

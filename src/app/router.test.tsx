@@ -70,6 +70,18 @@ describe("app router", () => {
     router.dispose();
   });
 
+  // L4: welcome 以外の lazy も C5 withTimeout で hang gate（登録を静的に固定）
+  it.each(["/onboarding", "/privacy", "/settings", "/plus", "/login", "/auth/callback"])(
+    "L4: %s lazy is registered (chunk hang is deadline-bounded in lazy)",
+    (path) => {
+      const router = createAppRouter();
+      const route = findRoute(router.routes, path);
+      expect(route?.lazy).toEqual(expect.any(Function));
+      expect(route?.element).toBeUndefined();
+      router.dispose();
+    },
+  );
+
   it("keeps /emergency-menus reachable without completed onboarding, per design spec 632", () => {
     const router = createAppRouter();
     const emergencyAncestors = findAncestorElementTypes(router.routes, "/emergency-menus");

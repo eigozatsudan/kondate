@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import type { OnboardingStatus } from "@shared/contracts/domain";
@@ -15,9 +15,17 @@ import { WelcomePage } from "./welcome-page";
 const ONBOARDING_START_LOCK = "kondate:welcome-onboarding-start";
 
 /**
+ * L1: C5 timeout 後の reconcile 再読込。既に C5 を待っているため短い grace に留め、
+ * getProfile hang の二重待ちで失敗 UI を塞がない。
+ * テストから fake timer 進み幅を合わせるため export する。
+ */
+export const WELCOME_START_RECONCILE_GRACE_MS = 3_000;
+
+/**
  * L1: lock 内 getProfile / CAS が never-settle でも auth C5 同尺で打ち切る。
  * timeout は **lock コールバック内**でかけ、reject で lock を解放し dual-tab 閉塞を防ぐ。
  * withTimeout は元 Promise を cancel しないため、onTimeout で generation を無効化する。
+ * 遅延 CAS の DB 書き込み自体は止められないが、route 側で re-read / ゾンビ CAS を reconcile する。
  */
 async function withOnboardingStartLock<T>(
   run: () => Promise<T>,
@@ -76,6 +84,10 @@ function navigateAfterWelcomeStart(
   throw new Error("onboarding start did not advance");
 }
 
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message === "timeout";
+}
+
 // router層の結線だけをここへ切り出し、WelcomePage自体はDB/APIを直接呼ばない
 // 表示専用コンポーネントのまま保つ（brief の WelcomePageProps 契約を保持するため）。
 // idea開始はsetOnboardingStatus(...,"skipped")成功後に/planner、
@@ -84,9 +96,13 @@ export function WelcomeRoutePage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  // L1: withTimeout 後も run() が続行するゾンビを無効化する generation。
-  // timeout/失敗時にインクリメントし、遅延 CAS・navigate を no-op にする。
+  // L1/L2: withTimeout 後も run() が続行するゾンビと、unmount 後の遅延 navigate を抑止する generation。
+  // - timeout: onTimeout で +1（クライアント副作用を止める）
+  // - unmount: cleanup で +1（離脱後の router yank を止める）
+  // 遅延 CAS の DB 書き込みは cancel 不能。timeout のみで無効化された flight
+  // （ref === generation+1 かつ mounted）は L1 reconcile で遷移する。
   const startGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
   const userId = auth.session?.user.id;
   const profileQuery = useQuery({
     queryKey: householdKeys.profile(userId ?? "none"),
@@ -99,22 +115,91 @@ export function WelcomeRoutePage() {
   // L2: profile hang は isError にならない。auth C5 と同尺で pending を打ち切り再試行 UI へ。
   const { showPending, pendingTimedOut } = useProfilePendingDeadline(profileQuery.isPending);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      // L2: 離脱後のゾンビ navigate を timeout 無効化と同型で止める
+      mountedRef.current = false;
+      startGenerationRef.current += 1;
+    };
+  }, []);
+
+  /**
+   * L1: timeout でちょうど 1 回だけ無効化された flight の遅延確定を reconcile。
+   * unmount（mounted=false）や新 flight（ref !== generation+1）では no-op。
+   */
+  function tryReconcileZombieWrite(generation: number, status: OnboardingStatus): boolean {
+    if (!mountedRef.current || userId === undefined) return false;
+    if (startGenerationRef.current !== generation + 1) return false;
+    if (status === "not_started") return false;
+    softInvalidateProfile(queryClient, userId);
+    if (!mountedRef.current || startGenerationRef.current !== generation + 1) return false;
+    navigateAfterWelcomeStart(status, navigate);
+    return true;
+  }
+
+  /**
+   * L1: C5 timeout 後、in-flight CAS / 他タブ先行を短い grace の再読込で確認。
+   * status が進んでいれば失敗表示せず遷移。true hang のみ timeout を再 throw。
+   */
+  async function reconcileAfterStartTimeout(generation: number): Promise<void> {
+    if (!mountedRef.current || userId === undefined) {
+      throw new Error("timeout");
+    }
+    if (startGenerationRef.current !== generation + 1) {
+      throw new Error("timeout");
+    }
+    try {
+      const latest = await withTimeout(
+        getProfile(getBrowserSupabaseClient(), userId),
+        WELCOME_START_RECONCILE_GRACE_MS,
+      );
+      if (!mountedRef.current || startGenerationRef.current !== generation + 1) {
+        throw new Error("timeout");
+      }
+      if (latest.onboarding_status === "not_started") {
+        throw new Error("timeout");
+      }
+      softInvalidateProfile(queryClient, userId);
+      if (!mountedRef.current || startGenerationRef.current !== generation + 1) {
+        return;
+      }
+      navigateAfterWelcomeStart(latest.onboarding_status, navigate);
+    } catch (inner) {
+      if (isTimeoutError(inner)) {
+        throw inner;
+      }
+      // re-read 失敗や navigate 契約違反も開始失敗 UI へ
+      throw new Error("timeout");
+    }
+  }
+
   /**
    * 1 開始 flight 分の generation を発行し、timeout 時に無効化する。
    * body 内の await 後は isCurrent() で副作用をガードする。
+   * timeout 後は L1 reconcile を挟み、status 進行済みなら失敗にしない。
    */
-  async function runWelcomeStart(body: (isCurrent: () => boolean) => Promise<void>): Promise<void> {
+  async function runWelcomeStart(
+    body: (isCurrent: () => boolean, generation: number) => Promise<void>,
+  ): Promise<void> {
     const generation = ++startGenerationRef.current;
     const isCurrent = (): boolean => startGenerationRef.current === generation;
     const invalidateGeneration = (): void => {
-      // timeout 発火時点で同期的に破棄（catch より前にゾンビを止める）
+      // timeout 発火時点で同期的に破棄（catch より前に通常 navigate を止める）
       if (startGenerationRef.current === generation) {
         startGenerationRef.current += 1;
       }
     };
-    await withOnboardingStartLock(async () => {
-      await body(isCurrent);
-    }, invalidateGeneration);
+    try {
+      await withOnboardingStartLock(async () => {
+        await body(isCurrent, generation);
+      }, invalidateGeneration);
+    } catch (error) {
+      if (!isTimeoutError(error)) {
+        throw error;
+      }
+      await reconcileAfterStartTimeout(generation);
+    }
   }
 
   if (showPending) {
@@ -155,11 +240,15 @@ export function WelcomeRoutePage() {
       onStartIdea={async () => {
         // L5: 未ログインは return せず throw し、pending 解除 + 再試行 UI へ
         if (userId === undefined) throw new Error("ログインが必要です");
-        await runWelcomeStart(async (isCurrent) => {
+        await runWelcomeStart(async (isCurrent, generation) => {
           const client = getBrowserSupabaseClient();
           // ロック内で最新 status を再読込し、別タブの確定を上書きしない
           const latest = await getProfile(client, userId);
-          if (!isCurrent()) return;
+          if (!isCurrent()) {
+            // L1: timeout 後の遅延 re-read。進んでいれば reconcile、未進行なら no-op
+            tryReconcileZombieWrite(generation, latest.onboarding_status);
+            return;
+          }
           const live = latest.onboarding_status;
           if (live === "skipped" || live === "complete") {
             // L2: invalidate hang を開始失敗にしない（navigate を優先）
@@ -182,8 +271,11 @@ export function WelcomeRoutePage() {
           const written = await setOnboardingStatus(client, userId, "skipped", {
             expectedStatus: live,
           });
-          // L1: timeout 後のゾンビ CAS 結果は破棄（navigate しない）
-          if (!isCurrent()) return;
+          // L1: timeout 後のゾンビ CAS は generation+1 かつ mounted なら reconcile 遷移
+          if (!isCurrent()) {
+            tryReconcileZombieWrite(generation, written.onboarding_status);
+            return;
+          }
           // L2: CAS 成功後は invalidate hang を失敗扱いにしない
           softInvalidateProfile(queryClient, userId);
           if (!isCurrent()) return;
@@ -192,10 +284,13 @@ export function WelcomeRoutePage() {
       }}
       onStartHousehold={async () => {
         if (userId === undefined) throw new Error("ログインが必要です");
-        await runWelcomeStart(async (isCurrent) => {
+        await runWelcomeStart(async (isCurrent, generation) => {
           const client = getBrowserSupabaseClient();
           const latest = await getProfile(client, userId);
-          if (!isCurrent()) return;
+          if (!isCurrent()) {
+            tryReconcileZombieWrite(generation, latest.onboarding_status);
+            return;
+          }
           const live = latest.onboarding_status;
           if (live === "skipped" || live === "complete") {
             softInvalidateProfile(queryClient, userId);
@@ -213,7 +308,10 @@ export function WelcomeRoutePage() {
           const written = await setOnboardingStatus(client, userId, "in_progress", {
             expectedStatus: "not_started",
           });
-          if (!isCurrent()) return;
+          if (!isCurrent()) {
+            tryReconcileZombieWrite(generation, written.onboarding_status);
+            return;
+          }
           softInvalidateProfile(queryClient, userId);
           if (!isCurrent()) return;
           navigateAfterWelcomeStart(written.onboarding_status, navigate);
