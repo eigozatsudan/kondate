@@ -948,6 +948,41 @@ describe("ShoppingListPage mutations", () => {
     }
   });
 
+  it("reuses the same idempotency key when add_manual is retried after a lost response (SHOP13)", async () => {
+    // 通信ロスト（code 無し）後の同一意図再送は SQL early replay のため key を再利用する
+    mutateShoppingItem.mockRejectedValueOnce(new Error("network lost"));
+    await renderPage(makeShoppingList([makeItem()]));
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "とうふ");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1丁");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("買い物項目を更新できませんでした");
+    });
+    expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
+    const firstKey = mutateShoppingItem.mock.calls[0]?.[0].idempotencyKey;
+    expect(typeof firstKey).toBe("string");
+
+    // フォームは clear されるので同じ内容を再入力して再試行
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "とうふ");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1丁");
+    mutateShoppingItem.mockResolvedValueOnce({
+      listId: LIST_ID,
+      version: 2,
+      itemId: "40000000-0000-4000-8000-0000000000aa",
+      replayed: true,
+    });
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(mutateShoppingItem).toHaveBeenCalledTimes(2);
+    });
+    expect(mutateShoppingItem.mock.calls[1]?.[0].idempotencyKey).toBe(firstKey);
+    expect(mutateShoppingItem.mock.calls[1]?.[0]).toEqual(mutateShoppingItem.mock.calls[0]?.[0]);
+  });
+
   it("adds a manual item with optional quantity and unit", async () => {
     await renderPage(makeShoppingList([makeItem()]));
     await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
@@ -1300,6 +1335,62 @@ describe("persistedShoppingCommand", () => {
     const replayed = persistedShoppingCommand("create", MENU_ID, schema, build);
     expect(replayed).toEqual(first);
     expect(JSON.stringify(replayed)).toBe(JSON.stringify(first));
+  });
+
+  it("discards sticky when isReusable rejects the saved command (SHOP6 mode change)", () => {
+    const modeSchema = z
+      .object({
+        menuId: z.uuid(),
+        mode: z.enum(["new", "append"]),
+        idempotencyKey: z.uuid(),
+      })
+      .strict();
+    const append = persistedShoppingCommand("create", MENU_ID, modeSchema, (idempotencyKey) => ({
+      menuId: MENU_ID,
+      mode: "append" as const,
+      idempotencyKey,
+    }));
+    // ユーザーが mode を new に切り替えた → sticky は捨てて新 key
+    const rebuilt = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      modeSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "new" as const,
+        idempotencyKey,
+      }),
+      (saved) => saved.mode === "new",
+    );
+    expect(rebuilt.mode).toBe("new");
+    expect(rebuilt.idempotencyKey).not.toBe(append.idempotencyKey);
+  });
+
+  it("reuses sticky when isReusable accepts the saved command (SHOP6 same mode)", () => {
+    const modeSchema = z
+      .object({
+        menuId: z.uuid(),
+        mode: z.enum(["new", "append"]),
+        idempotencyKey: z.uuid(),
+      })
+      .strict();
+    const first = persistedShoppingCommand("create", MENU_ID, modeSchema, (idempotencyKey) => ({
+      menuId: MENU_ID,
+      mode: "append" as const,
+      idempotencyKey,
+    }));
+    const second = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      modeSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "append" as const,
+        idempotencyKey,
+      }),
+      (saved) => saved.mode === "append",
+    );
+    expect(second).toEqual(first);
   });
 
   it("clears and never sends a record older than 24 hours by one millisecond", () => {

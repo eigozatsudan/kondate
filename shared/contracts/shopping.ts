@@ -129,6 +129,8 @@ const activeExpectation = z
     }
   });
 
+// residual-intentional (SHOP14): create は sourceMenuVersion 非ピン（menuId identity のみ）。
+// reconcile/preview は version 必須。create SQL は write 時 live version を source 刻印する。
 export const createShoppingListRequestSchema = z
   .object({
     menuId: uuid,

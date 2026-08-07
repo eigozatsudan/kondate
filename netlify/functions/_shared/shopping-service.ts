@@ -44,6 +44,8 @@ export function createReconciliationRequestHash(
 export function createShoppingCommandHash(
   command: CreateShoppingListRequest & UserCommand,
 ): string {
+  // residual-intentional (SHOP1): pantry / draft は hash に含めない。
+  // 失応答 resume は作成時 items スナップショットを replay し、在庫変化は再 apply しない。
   const canonical = {
     menuId: command.menuId,
     mode: command.mode,
@@ -113,6 +115,8 @@ async function validatedDraft(deps: ShoppingDependencies, menuId: string) {
  * append が単一 menu fingerprint だけ見ると、他 source が invalid でも 200 になり得る。
  * dead source（menu_id null）は SQL list_unverifiable と同趣旨で拒否する。
  */
+// residual-intentional (SHOP4/SHOP11): SQL 側 FP は世帯 fingerprint 自己一致のみ。
+// メニュー allergen invalid の権威は本 service revalidate。service_role 直 RPC の DiD は migration 非変更で残す。
 async function assertActiveListSourcesCurrentlySafe(
   deps: ShoppingDependencies,
   listId: string,
@@ -164,6 +168,7 @@ async function assertReplayStillCurrentlySafe(
     ),
   ];
   // live source が残っていれば現行 safety を当てる。全て削除済みならリスト保持のまま replay 可。
+  // residual-intentional (SHOP2): live 0 件は revalidate ループ無しで 200 replay（製品のリスト保持仕様）。
   for (const menuId of liveMenuIds) {
     await assertHouseholdMenuIdentity(deps, menuId);
     await revalidateMenuOrThrow(deps, menuId);
@@ -228,6 +233,9 @@ export async function createShoppingListFromMenu(
     await assertActiveListSourcesCurrentlySafe(deps, command.activeListId);
   }
   try {
+    // residual-intentional (SHOP3): SQL early-replay 成功 return に post-apply assert は付けない。
+    // 競合枝（replayAfterListVersionConflict）と service 先読み hit だけ assert 済み。
+    // TOCTOU / service_role 直 early の DiD は migration 契約を触らず残す。
     return await deps.applyDraft({ ...command, requestHash, safetyFingerprint, draft });
   } catch (error: unknown) {
     // SHOP3: 並行同一 key+hash で敗者が list_version_conflict になった場合は
@@ -276,6 +284,8 @@ async function hasSourceLineageOnList(
   sourceMenuId: string,
   sourceDerivationGroupId: string,
 ): Promise<boolean> {
+  // residual-intentional (SHOP5): lineage は source 行の menu/group 一致のみ（items 件数非依存）。
+  // ingredient が辿れず scope 空でも 409 にせず、orphan plain 温存 + add 寄りの窓は意図的。
   const sources = await deps.loadActiveListSources(listId);
   return sources.some((source) => {
     const sameMenu = source.menuId === sourceMenuId || source.sourceMenuIdSnapshot === sourceMenuId;
@@ -717,9 +727,10 @@ export async function reconcileShoppingList(
     if (concurrent !== null) return concurrent;
     throw error;
   }
-  // R2: SHOP7 の scoped current delete 後、対象 group の projection が空のまま残る窓を
+  // R2: scoped current delete 後、対象 group の projection が空のまま残る窓を
   // 応答前の list revalidate で閉じる。失敗しても reconcile 自体は成功済みなので握りつぶし、
   // 買い物画面着地時の revalidate に委ねる。
+  // residual-intentional (SHOP9): best-effort 失敗時の投影空窓は 200 を取り消さない。
   try {
     await revalidateActiveShoppingList(deps, {
       userId: command.userId,

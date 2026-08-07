@@ -102,6 +102,8 @@ export function computeShoppingDiff(
   }
 
   // protected非手動行の完全一致をplain行より先に割り当て、入力順による結果変化を防ぐ。
+  // residual-intentional (SHOP7): protected は exact diffKey の delta/add のみ。
+  // label 警告差分の replace は plain のみ（SP-I8）。購入済み行の provenance 差し替えはしない。
   for (const item of protectedDerivedItems) {
     const exact = takeCandidate(diffKey(item));
     if (

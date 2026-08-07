@@ -303,6 +303,15 @@ export function HouseholdMenuDetailBody({
   const submitCreate = async (command: CreateShoppingListRequest) => {
     // HR9: soft/checking 中の resume でも mutate しない（pending は enabled 復帰で再試行）
     if (!actionsEnabled) return;
+    // SHOP8: list gate blocked 中の append sticky は飛ばさない（壊れた active への再トラップ防止）。
+    // mode=new は D-C1 どおり blocked でも続行可。append は sticky を捨て forceNew へ誘導する。
+    if (shoppingGate.blocked && command.mode === "append") {
+      clearShoppingCommand("create", command.menuId);
+      setShoppingError(
+        "今のリストは家族設定で確認できないため、追加ではなく新しいリストを作り直してください",
+      );
+      return;
+    }
     try {
       await createList.mutateAsync(command);
       await finishShoppingCommand("create", command.menuId);
@@ -329,8 +338,10 @@ export function HouseholdMenuDetailBody({
     targetId: menuId,
     schema: createShoppingListRequestSchema,
     submit: submitCreate,
-    // HR9: soft/hard 閉じ中は focus resume を止める。true 復帰で effect が再送
-    enabled: actionsEnabled,
+    // HR9: soft/hard 閉じ中は focus resume を止める。true 復帰で effect が再送。
+    // SHOP8: list blocked 中は create resume 自体も止め、submit 内の append ガードと二重に閉じる。
+    // mode=new の自動再開は gate 復帰後（またはシート手動送信）に委ねる。
+    enabled: actionsEnabled && !shoppingGate.blocked,
   });
   useResumeShoppingCommand({
     kind: "reconcile",
@@ -832,6 +843,11 @@ export function HouseholdMenuDetailBody({
                 expectedListVersion: input.expectedListVersion,
                 idempotencyKey,
               }),
+              // SHOP6: mode / 対象 list が変わったら sticky を捨てて新 key で rebuild
+              (saved) =>
+                saved.mode === input.mode &&
+                saved.activeListId === input.activeListId &&
+                saved.expectedListVersion === input.expectedListVersion,
             );
             void submitCreate(command);
           }}
@@ -866,6 +882,25 @@ export function HouseholdMenuDetailBody({
                   idempotencyKey,
                   approval,
                 }),
+                // SHOP6: approval / version が変わったら sticky を捨てて新 key で rebuild
+                (saved) => {
+                  const sorted = (xs: readonly string[]) => [...xs].toSorted();
+                  return (
+                    saved.expectedListVersion === activeList.version &&
+                    saved.sourceMenuId === menuId &&
+                    saved.sourceMenuVersion === target.sourceMenuVersion &&
+                    JSON.stringify({
+                      addKeys: sorted(saved.approval.addKeys),
+                      replaceItemIds: sorted(saved.approval.replaceItemIds),
+                      removeItemIds: sorted(saved.approval.removeItemIds),
+                    }) ===
+                      JSON.stringify({
+                        addKeys: sorted(approval.addKeys),
+                        replaceItemIds: sorted(approval.replaceItemIds),
+                        removeItemIds: sorted(approval.removeItemIds),
+                      })
+                  );
+                },
               );
               void submitReconcile(listId, command);
             }}

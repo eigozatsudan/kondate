@@ -222,6 +222,13 @@ export function persistedShoppingCommand<T>(
   targetId: string,
   schema: z.ZodType<T>,
   build: (idempotencyKey: string) => T,
+  /**
+   * SHOP6: 保存済み command を再利用してよいか。
+   * mode / approval などユーザーがシートで選び直した意図と一致しない sticky は
+   * 破棄して rebuild する（同一 targetId でも誤 mode 再送を防ぐ）。
+   * 省略時は従来どおり TTL 内なら常に再利用（resume 経路向け）。
+   */
+  isReusable?: (saved: T) => boolean,
 ): T {
   const key = pendingShoppingCommandStorageKey(kind, targetId);
   const saved = sessionStorage.getItem(key);
@@ -230,7 +237,11 @@ export function persistedShoppingCommand<T>(
       const parsed = pendingShoppingCommandEnvelopeSchema(schema).safeParse(JSON.parse(saved));
       if (parsed.success) {
         const age = Date.now() - parsed.data.createdAtMs;
-        if (age >= 0 && age <= pendingShoppingCommandTtlMs) return parsed.data.command;
+        if (age >= 0 && age <= pendingShoppingCommandTtlMs) {
+          const command = parsed.data.command;
+          // 互換判定が無い（resume）か、意図が一致するときだけ sticky を返す
+          if (isReusable === undefined || isReusable(command)) return command;
+        }
       }
     } catch {
       /* 下の removeItem で捨てる */
