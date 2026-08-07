@@ -1461,44 +1461,43 @@ export function HouseholdSettingsForm({
                   const nextAge = event.target.value as AgeBand;
                   const nextDefaults = defaultsForAgeBand(nextAge);
                   // 直前の年齢デフォルトと一致する項目だけ上書きし、ユーザー編集を黙って潰さない。
-                  // 未選択 "" は ageBand デフォルト比較の対象外（H12: FormValue で空を型付け）
+                  // 未選択 "" は H12 の FromDbRow と同じ adult 既定を比較 baseline にする。
+                  // previousDefaults===null 短絡で常 true にすると、保持済みの非デフォルト
+                  // portion/spice/ease/constraints が初回年齢選択で next 既定に上書きされる（RR1）。
                   const previousAge = values.ageBand;
                   const previousDefaults =
                     previousAge === ""
-                      ? null
-                      : previousAge in householdAgeLabels
-                        ? defaultsForAgeBand(previousAge)
-                        : null;
+                      ? defaultsForAgeBand("adult")
+                      : defaultsForAgeBand(previousAge);
                   const stillAtPreviousDefault = <T,>(
                     current: T,
                     previousDefault: T | undefined,
                   ): boolean =>
-                    previousDefaults === null ||
                     previousDefault === undefined ||
                     JSON.stringify(current) === JSON.stringify(previousDefault);
                   updateAndSave({
                     ageBand: nextAge,
                     portionSize: stillAtPreviousDefault(
                       values.portionSize,
-                      previousDefaults?.portion_size,
+                      previousDefaults.portion_size,
                     )
                       ? nextDefaults.portion_size
                       : values.portionSize,
                     spiceLevel: stillAtPreviousDefault(
                       values.spiceLevel,
-                      previousDefaults?.spice_level,
+                      previousDefaults.spice_level,
                     )
                       ? nextDefaults.spice_level
                       : values.spiceLevel,
                     easePreferences: stillAtPreviousDefault(
                       values.easePreferences,
-                      previousDefaults?.ease_preferences,
+                      previousDefaults.ease_preferences,
                     )
                       ? nextDefaults.ease_preferences
                       : values.easePreferences,
                     requiredSafetyConstraints: stillAtPreviousDefault(
                       values.requiredSafetyConstraints,
-                      previousDefaults?.required_safety_constraints,
+                      previousDefaults.required_safety_constraints,
                     )
                       ? nextDefaults.required_safety_constraints
                       : values.requiredSafetyConstraints,

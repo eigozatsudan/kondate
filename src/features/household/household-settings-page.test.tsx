@@ -1318,6 +1318,52 @@ it("initializes form from corrupt DB enums as empty selects and age defaults", a
   expect(screen.getByLabelText("小さく切る")).not.toBeChecked();
 });
 
+// RR1: 空年齢 + 保持した非デフォルト portion は、初回年齢選択で next 既定に潰さない
+it("RR1: first age selection from empty keeps non-default portion from H12", async () => {
+  // draft: age null + portion large（H12 が large を保持、age は ""）
+  const draftWithLarge: HouseholdMemberRow = {
+    ...member,
+    id: "member-draft-rr1",
+    status: "draft",
+    display_name: "下書き",
+    age_band: null,
+    portion_size: "large",
+    spice_level: "mild",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const updateDraft = vi.fn().mockResolvedValue({
+    ...draftWithLarge,
+    age_band: "adult",
+    portion_size: "large",
+    spice_level: "mild",
+  });
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([draftWithLarge]),
+    updateDraft,
+  });
+
+  expect(await screen.findByLabelText("年齢のめやす")).toHaveValue("");
+  expect(screen.getByLabelText("食べる量")).toHaveValue("large");
+  expect(screen.getByLabelText("辛さ")).toHaveValue("mild");
+
+  // adult 既定は portion regular / spice regular。mild も adult 既定外なので保持。
+  await userEvent.selectOptions(screen.getByLabelText("年齢のめやす"), "adult");
+
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalled();
+  });
+  const patch = updateDraft.mock.calls.at(-1)?.[1] as HouseholdMemberPatch | undefined;
+  expect(patch).toMatchObject({
+    age_band: "adult",
+    portion_size: "large",
+    spice_level: "mild",
+  });
+  // UI も上書きされていないこと
+  expect(screen.getByLabelText("食べる量")).toHaveValue("large");
+  expect(screen.getByLabelText("辛さ")).toHaveValue("mild");
+});
+
 it("shows Japanese labels for unsupported diet kinds, not English enum keys", async () => {
   // 回帰: 設定編集フォームが weaning_food 等のキーをそのまま出していた
   await renderSettings();
