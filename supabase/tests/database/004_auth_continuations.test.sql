@@ -2,7 +2,7 @@
 begin;
 -- 他のローカル実行やE2Eが残した有効なレコードに依存しないよう、テスト対象を初期化する。
 delete from private.auth_continuations;
-select plan(39);
+select plan(41);
 select has_table('private', 'auth_continuations', 'continuation ledger exists');
 select function_returns('public', 'claim_auth_continuation', array['uuid', 'bytea', 'bytea', 'text', 'timestamp with time zone'], 'setof record', 'claim has exact five-argument signature');
 select function_returns('public', 'cleanup_auth_continuations', array['timestamp with time zone'], 'bigint', 'cleanup keeps the one-argument signature');
@@ -33,6 +33,20 @@ select throws_ok($$
     'https://app.test', '//host', '2026-07-11T00:00:00Z', 300
   )
 $$, '23514', null, 'protocol-relative return path is rejected');
+-- C9: Function Zod / isSafeAuthReturnTo と同型で '\' と制御文字を拒否する
+select throws_ok($$
+  select * from public.create_auth_continuation(
+    decode(repeat('38', 32), 'hex'), decode(repeat('39', 32), 'hex'),
+    'https://app.test', E'/foo\\bar', '2026-07-11T00:00:00Z', 300
+  )
+$$, '23514', null, 'return path with backslash is rejected');
+select throws_ok($$
+  select * from public.create_auth_continuation(
+    decode(repeat('3a', 32), 'hex'), decode(repeat('3b', 32), 'hex'),
+    -- PG text は NUL を格納できないため、格納可能な HT (U+0009) で制御文字拒否を検証
+    'https://app.test', E'/planner\x09x', '2026-07-11T00:00:00Z', 300
+  )
+$$, '23514', null, 'return path with control character is rejected');
 select lives_ok($$
   select * from public.create_auth_continuation(
     decode(repeat('34', 32), 'hex'), decode(repeat('35', 32), 'hex'),
