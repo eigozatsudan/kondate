@@ -45,11 +45,16 @@ const pantryItem: PantryItem = {
 const queryState = vi.hoisted(() => ({
   userId: "72000000-0000-4000-8000-000000000001",
   draft: undefined as PlannerDraft | null | undefined,
+  /** P7: init 後 draft 背景 refetch 失敗を再現 */
+  draftIsError: false,
   pantry: {
     data: undefined as PantryItem[] | undefined,
     isError: false,
     isPending: false,
   },
+  /** P1/P4: safety の eligible と soft error を制御 */
+  safetyEligibleMemberIds: ["70000000-0000-4000-8000-000000000001"] as string[],
+  safetyIsError: false,
   ownerBPending: false,
   privacyConsent: null as { user_id: string; notice_version: string } | null,
   privacyIsError: false,
@@ -176,7 +181,7 @@ vi.mock("@tanstack/react-query", () => ({
             : ownerId === ownerBId
               ? ownerBDraft
               : (queryState.draft ?? (queryState.draft === null ? null : draft)),
-          isError: false,
+          isError: queryState.draftIsError,
           isPending: isOwnerBPending,
           refetch: vi.fn().mockResolvedValue({ isError: false, data: draft }),
         }
@@ -187,7 +192,8 @@ vi.mock("@tanstack/react-query", () => ({
         : {
             data: isOwnerBPending
               ? undefined
-              : {
+              : // soft error でも previous data を保持（実 TanStack Query と同型）
+                {
                   members: [
                     {
                       id: draft.targetMemberIds[0],
@@ -198,10 +204,11 @@ vi.mock("@tanstack/react-query", () => ({
                       blockedReason: null,
                     },
                   ],
-                  eligibleMemberIds: draft.targetMemberIds,
+                  eligibleMemberIds: queryState.safetyEligibleMemberIds,
                 },
-            isError: false,
+            isError: queryState.safetyIsError,
             isPending: isOwnerBPending,
+            refetch: vi.fn(),
           };
   },
 }));
@@ -259,6 +266,9 @@ type WizardMockProps = {
   onReset?: () => void;
   /** P2: 進行中 pending があるとき true（確認画面の再開注意用） */
   hasResumablePendingGeneration?: boolean;
+  /** P4: soft safety/pantry 失敗中は主 CTA を止める */
+  blockGenerationForStaleSafety?: boolean;
+  onOpenSettings?: () => void;
 };
 const wizardPropsSpy = vi.hoisted(() => vi.fn());
 vi.mock("./components/planner-wizard", () => ({
@@ -271,6 +281,9 @@ vi.mock("./components/planner-wizard", () => ({
         <output aria-label="wizard error">{props.error ?? ""}</output>
         <output aria-label="has resumable pending">
           {String(props.hasResumablePendingGeneration ?? false)}
+        </output>
+        <output aria-label="block generation stale">
+          {String(props.blockGenerationForStaleSafety ?? false)}
         </output>
         {props.error !== null && props.error !== "" ? <p role="alert">{props.error}</p> : null}
         <output aria-label="pantry status">{props.pantryItemsStatus}</output>
@@ -360,7 +373,11 @@ vi.mock("./components/planner-wizard", () => ({
         >
           品質モードONで確認
         </button>
-        <button type="button" onClick={() => void props.onSubmit().catch(() => undefined)}>
+        <button
+          type="button"
+          disabled={props.isSaving || props.blockGenerationForStaleSafety === true}
+          onClick={() => void props.onSubmit().catch(() => undefined)}
+        >
           生成
         </button>
         <button
@@ -373,11 +390,21 @@ vi.mock("./components/planner-wizard", () => ({
         </button>
         <button
           type="button"
+          disabled={props.isSaving}
           onClick={() => {
             props.onOpenPrivacyNotice();
           }}
         >
           privacy notice
+        </button>
+        <button
+          type="button"
+          disabled={props.isSaving}
+          onClick={() => {
+            props.onOpenSettings?.();
+          }}
+        >
+          家族設定
         </button>
         <button
           type="button"
@@ -471,12 +498,15 @@ beforeEach(() => {
   autosaveInputs.length = 0;
   queryState.userId = draft.userId;
   queryState.draft = draft;
+  queryState.draftIsError = false;
   queryState.ownerBPending = false;
   queryState.pantry = {
     data: [pantryItem],
     isError: false,
     isPending: false,
   };
+  queryState.safetyEligibleMemberIds = [...draft.targetMemberIds];
+  queryState.safetyIsError = false;
   queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-29.v1" };
   queryState.privacyIsError = false;
   // flush 後の saved にクライアント入力（pantrySelections 等）を残す（P1 exact-set 検証用）
@@ -853,14 +883,151 @@ it("P3: init 後の pantry 背景 refetch 失敗では wizard を破棄しない
 
   // soft banner と wizard の status 系 output が同居するため role 単独は使わない
   expect(
-    screen.getByText("家族または冷蔵庫の最新情報を再取得できませんでした。表示は直前の内容です。"),
+    screen.getByText(
+      "家族または冷蔵庫の最新情報を再取得できませんでした。表示は直前の内容です。最新を取得してから献立を作ってください。",
+    ),
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "再試行" })).toBeInTheDocument();
+  // P4: soft 中は主 CTA をゲート（blockGenerationForStaleSafety）
+  expect(screen.getByLabelText("block generation stale")).toHaveTextContent("true");
   // wizard は残る（全画面 error で破棄しない）
   expect(screen.getByLabelText("pantry status")).toHaveTextContent("loaded");
   expect(
     screen.queryByText("献立条件を読み込めませんでした。再読み込みしてください。"),
   ).not.toBeInTheDocument();
+});
+
+it("P4: soft safety/pantry 中の生成は onSubmit で止め startGeneration しない", async () => {
+  queryState.pantry = { data: [pantryItem], isError: false, isPending: false };
+  const startGeneration = vi.fn();
+  const view = render(<PlannerPage startGeneration={startGeneration} />);
+  queryState.pantry = { data: [pantryItem], isError: true, isPending: false };
+  view.rerender(<PlannerPage startGeneration={startGeneration} />);
+
+  // disabled でも mock 経路の直接 onSubmit を検証するため props 経由で呼ぶ
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  await props.onSubmit();
+
+  expect(startGeneration).not.toHaveBeenCalled();
+  // soft banner は role=status。hard alert ではなく blockGenerationForStaleSafety でゲートする。
+  expect(screen.getByLabelText("block generation stale")).toHaveTextContent("true");
+  expect(
+    screen.getByText(
+      "家族または冷蔵庫の最新情報を再取得できませんでした。表示は直前の内容です。最新を取得してから献立を作ってください。",
+    ),
+  ).toBeInTheDocument();
+});
+
+it("P7: init 後の draft 背景 refetch 失敗は soft banner を出す", () => {
+  queryState.draft = draft;
+  queryState.draftIsError = false;
+  const view = render(<PlannerPage />);
+  expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+
+  queryState.draftIsError = true;
+  view.rerender(<PlannerPage />);
+
+  expect(
+    screen.getByText("下書きの最新情報を再取得できませんでした。表示は直前の内容です。"),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "再試行" })).toBeInTheDocument();
+  // draft soft だけでは生成ブロックしない（safety/pantry の stale ゲートと分離）
+  expect(screen.getByLabelText("block generation stale")).toHaveTextContent("false");
+  expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+});
+
+it("P1: flush 中に eligibility strip すると startGeneration しない", async () => {
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  const startGeneration = vi.fn();
+  const user = userEvent.setup();
+  const view = render(<PlannerPage startGeneration={startGeneration} />);
+
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  await user.click(screen.getByRole("button", { name: "生成" }));
+  // flush 待機中
+  expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+
+  // safety が選択家族を ineligible に → strip
+  queryState.safetyEligibleMemberIds = [];
+  view.rerender(<PlannerPage startGeneration={startGeneration} />);
+
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
+  );
+
+  // 遅延 flush を完了させても生成は走らない
+  deferred.resolve({
+    ...draft,
+    pantrySelections: [
+      {
+        pantryItemId: "74000000-0000-4000-8000-000000000001",
+        priority: "prefer_use",
+      },
+    ],
+    revision: 4,
+  });
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+  });
+  expect(startGeneration).not.toHaveBeenCalled();
+});
+
+it("P6: 生成 submit 中は settings をガードし navigate しない", async () => {
+  const user = userEvent.setup();
+  // isSubmitting 中ガード: 遅延 flush の生成中に settings を呼ぶ
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  await user.click(screen.getByRole("button", { name: "生成" }));
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+  });
+
+  // isSaving で disabled。props 直呼びでガードを検証
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  props.onOpenSettings?.();
+  expect(navigateMock).not.toHaveBeenCalledWith("/settings");
+
+  deferred.resolve({ ...draft, revision: 4 });
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+  });
+});
+
+it("P8: privacy 未同意の生成は委譲完了まで再 generate を受け付けない", async () => {
+  queryState.privacyConsent = null;
+  const deferred = createDeferred<PlannerDraft>();
+  let flushCalls = 0;
+  savePlannerDraftMock.mockImplementation(() => {
+    flushCalls += 1;
+    if (flushCalls === 1) return deferred.promise;
+    return Promise.resolve({ ...draft, revision: draft.revision + flushCalls });
+  });
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  // 1 回目 generate → privacy 委譲のための flush 待ち
+  await user.click(screen.getByRole("button", { name: "生成" }));
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+  });
+  // 再押下は submittingRef で弾く（mock は disabled でも props 直呼び）
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  await props.onSubmit();
+  // 1 回目 flush のみ（2 回目 onSubmit は early return）
+  expect(flushCalls).toBe(1);
+
+  deferred.resolve({ ...draft, revision: 4 });
+  await vi.waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
+  });
 });
 
 it("選択解除後も attempt に残った confirmation は生成 command から落とす (P1)", async () => {
@@ -1170,4 +1337,56 @@ describe("PlannerRoutePage", () => {
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByLabelText("check count")).toHaveTextContent("1");
   });
+
+  it("P2: targetMode 無効の saved では pending を書かず専用文言を出す", async () => {
+    // flush 結果だけ targetMode を落とす（strip 後 snapshot を模す）
+    savePlannerDraftMock.mockImplementation(
+      (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
+        Promise.resolve({
+          ...draft,
+          ...next,
+          targetMode: null,
+          targetMemberIds: [],
+          id: draft.id,
+          userId: draft.userId,
+          revision: revision > 0 ? revision : draft.revision,
+          createdAt: draft.createdAt,
+          updatedAt: draft.updatedAt,
+        }),
+    );
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
+      );
+    });
+    // mode 判定は savePending 前 / onSubmit 再検証。sticky pending を作らない
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+  });
+});
+
+it("P2: startGeneration が target_mode_required のとき pending を消し専用文言を出す", async () => {
+  const startGeneration = vi.fn().mockImplementation(() => {
+    // 注入経路で throw。route catch が clear + 専用文言に分岐することを固定する
+    throw new Error("target_mode_required");
+  });
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={startGeneration} />);
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  await user.click(screen.getByRole("button", { name: "生成" }));
+
+  await vi.waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "作る相手が未設定のため、生成を開始できません。対象を選び直してください。",
+    );
+  });
+  expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalled();
+  expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
 });

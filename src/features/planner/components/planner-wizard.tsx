@@ -84,6 +84,11 @@ export type PlannerWizardExtraProps = {
    */
   hasResumablePendingGeneration?: boolean;
   /**
+   * P4: safety/pantry 背景 refetch soft 失敗中 true。
+   * 主 CTA のみ止める（編集は previous data で継続）。onSubmit 側でも再ゲートする。
+   */
+  blockGenerationForStaleSafety?: boolean;
+  /**
    * 各 step の page-frame 末尾に置く追加 UI（L10-3 チラシ入口など）。
    * page-frame 外に置くと幅・余白が崩れるため、main 内に描画する。
    */
@@ -167,6 +172,7 @@ export function PlannerWizard({
   autosaveState = "idle",
   onRetryAutosave,
   hasResumablePendingGeneration = false,
+  blockGenerationForStaleSafety = false,
   footer = null,
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
@@ -550,6 +556,7 @@ export function PlannerWizard({
         globalAvailable={globalAvailable}
         shortWindowRetryAt={shortWindowRetryAt}
         hasResumablePendingGeneration={hasResumablePendingGeneration}
+        blockGenerationForStaleSafety={blockGenerationForStaleSafety}
         onSubmit={() => {
           void onSubmit();
         }}

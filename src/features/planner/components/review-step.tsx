@@ -148,6 +148,11 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
    * 「献立を作る」は新条件を捨てて再開するだけなので、押下前に明示する（P2）。
    */
   hasResumablePendingGeneration?: boolean;
+  /**
+   * P4: safety/pantry soft 失敗中 true。主 CTA（献立を作る）のみ disable。
+   * 編集や緊急導線は previous data で継続可能にする。
+   */
+  blockGenerationForStaleSafety?: boolean;
 };
 
 /** privacy 未確認のまま生成を押したときのダイアログ本文 */
@@ -195,6 +200,7 @@ export function ReviewStep({
   onEditStep,
   seasonContext = getJstSeasonContext(new Date()),
   hasResumablePendingGeneration = false,
+  blockGenerationForStaleSafety = false,
 }: ReviewStepProps) {
   // 残数行用の plan。未取得なら free 接頭を避けず free として扱う（usage 未取得では行自体非表示）。
   const quotaPlan: PlanCode = plan ?? "free";
@@ -300,7 +306,9 @@ export function ReviewStep({
     hasUnconfirmedExpiredPantry ||
     medicalBlocked ||
     hasActiveUsageBlocker ||
-    avoidIngredientLocalError != null;
+    avoidIngredientLocalError != null ||
+    // P4: soft safety/pantry 失敗中は stale 送信を主 CTA で止める
+    blockGenerationForStaleSafety;
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };

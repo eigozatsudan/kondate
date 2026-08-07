@@ -70,6 +70,7 @@ function Harness({
   autosaveState = "idle" as const,
   onRetryAutosave,
   hasResumablePendingGeneration = false,
+  blockGenerationForStaleSafety = false,
 }: {
   initialStep?: PlannerStep;
   initialDraft?: PlannerDraftInput;
@@ -98,6 +99,7 @@ function Harness({
   autosaveState?: "idle" | "saving" | "saved" | "error";
   onRetryAutosave?: () => void;
   hasResumablePendingGeneration?: boolean;
+  blockGenerationForStaleSafety?: boolean;
 }) {
   const [step, setStep] = useState<PlannerStep>(initialStep);
   const [draft, setDraft] = useState<PlannerDraftInput>(initialDraft);
@@ -133,6 +135,7 @@ function Harness({
           shortWindowRetryAt={shortWindowRetryAt}
           autosaveState={autosaveState}
           hasResumablePendingGeneration={hasResumablePendingGeneration}
+          blockGenerationForStaleSafety={blockGenerationForStaleSafety}
           {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
           {...(onIdeaAudienceConfirmed !== undefined ? { onIdeaAudienceConfirmed } : {})}
           {...(onReset !== undefined ? { onReset } : {})}
@@ -837,6 +840,17 @@ describe("PlannerWizard review step", () => {
         "離乳食、飲み込み・嚥下、治療食の依頼には対応できません。専門職の指示に従ってください。",
       ),
     ).toBeVisible();
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+  });
+
+  it("P4: soft safety/pantry 失敗中は献立を作る CTA を disable する", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        blockGenerationForStaleSafety
+      />,
+    );
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
   });
 

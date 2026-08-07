@@ -260,6 +260,13 @@ export function PlannerRoutePage() {
         void navigate("/generation?resumed=1");
         return Promise.resolve(false);
       }
+      // P2: mode 判定は savePendingGeneration より前。throw 後に sticky pending を残さない。
+      // household 補助文用 meta も new_menu のみ・draft.targetMode を正本に upsert。
+      const mode = draft.targetMode;
+      if (mode !== "household" && mode !== "idea") {
+        // submission 通過後の経路では通常到達しない。pending を書かず生成開始も止める。
+        throw new Error("target_mode_required");
+      }
       // P1: 送信 confirmation は選択中 pantry のみ（attempt 残存 extra を載せない）
       // P2/P3: Free / 非 Plus / plan 未取得では qualityMode を必ず false
       // （onSubmit clamp をすり抜けた注入・将来呼び出しでも pending に true を載せない）
@@ -282,13 +289,7 @@ export function PlannerRoutePage() {
         userId,
       );
       savePendingGeneration(pending);
-      // household 補助文用 meta は new_menu のみ・draft.targetMode を正本に upsert。
-      // savePendingGeneration 本体は targetMode を知らないためここでは書かない。
-      const mode = draft.targetMode;
-      if (mode !== "household" && mode !== "idea") {
-        // submission 通過後の経路では通常到達しない。meta を残さず生成開始も止める。
-        throw new Error("target_mode_required");
-      }
+      // savePendingGeneration 本体は targetMode を知らないため meta はここで書く。
       savePendingGenerationMeta({
         kind: "new_menu",
         targetMode: mode,
@@ -296,7 +297,11 @@ export function PlannerRoutePage() {
         ownerUserId: userId,
         createdAt: pending.createdAt,
       });
-      if (signal.aborted) return Promise.resolve(false);
+      // strip/abort が pending 保存後に走った場合は sticky 再開導線を残さない
+      if (signal.aborted) {
+        clearPendingGeneration();
+        return Promise.resolve(false);
+      }
       void navigate("/generation");
       return Promise.resolve(true);
     },
@@ -357,18 +362,33 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [audienceStatusError, setAudienceStatusError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isOpeningEmergencyMenus, setIsOpeningEmergencyMenus] = useState(false);
+  // P6/P8: privacy・settings 遷移中は isSaving に載せ二重 flush/navigate を抑止
+  const [isOpeningPrivacy, setIsOpeningPrivacy] = useState(false);
+  const [isOpeningSettings, setIsOpeningSettings] = useState(false);
   const generationAbortControllerRef = useRef<AbortController | null>(null);
   // 緊急献立遷移の single-flight と unmount 後の遅延 navigate 抑止。
   const mountedRef = useRef(true);
   const emergencyOperationIdRef = useRef(0);
+  // P1: 生成 submit の operationId。strip で無効化し flush 後の startGeneration を止める
+  const submitOperationIdRef = useRef(0);
   // P8: isSubmitting の再描画前に二重 onSubmit しない同期ガード
   const submittingRef = useRef(false);
+  // P6: privacy/settings の single-flight（再描画前の連打抑止）
+  const privacyOpeningRef = useRef(false);
+  const settingsOpeningRef = useRef(false);
   // P1: 利用者 reset 直後だけ route が flush を await する印（conflict resolve の resetToken とは分離）
   const resetFlushGenerationRef = useRef(0);
   const pendingResetFlushRef = useRef(false);
+  // P1: onSubmit の flush 後再検証用。render クロージャの safetyData より最新の eligible を見る
+  const eligibleMemberIdsRef = useRef<readonly string[]>([]);
   const startNewAttempt = useCallback(() => {
     setAttempt(createPlannerAttempt());
   }, []);
+
+  useEffect(() => {
+    if (safetyQuery.data === undefined) return;
+    eligibleMemberIdsRef.current = safetyQuery.data.eligibleMemberIds;
+  }, [safetyQuery.data]);
 
   // P2: Free / plan 未取得へ降格したら attempt.qualityMode を false に同期（UI checked と state のズレ防止）
   const planCode = usage.isSuccess ? usage.data.plan : null;
@@ -408,6 +428,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
   // 緊急献立への遷移中に対象が消えたら navigate を中止し、無言で /emergency-menus へ落ちない。
+  // P1: 生成 submit 中の strip も operationId 無効化 + abort で startGeneration を止める（緊急と同型）。
   // GP-I1 / guided §10: 選択家族が削除・未完了・利用不可になったら対象ステップへ戻す。
   useEffect(() => {
     if (!initialized || safetyQuery.data === undefined) return;
@@ -419,6 +440,20 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       emergencyOperationIdRef.current += 1;
       setIsOpeningEmergencyMenus(false);
       setSubmissionError("作る相手の条件が変わったため、緊急献立への移動を中止しました。");
+    } else if (
+      isSubmitting ||
+      submittingRef.current ||
+      generationAbortControllerRef.current !== null
+    ) {
+      // flush 中〜startGeneration 中の strip: 進行中 submit を無効化し audience へ戻す
+      submitOperationIdRef.current += 1;
+      generationAbortControllerRef.current?.abort();
+      generationAbortControllerRef.current = null;
+      submittingRef.current = false;
+      setIsSubmitting(false);
+      setSubmissionError(
+        "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
+      );
     } else {
       setSubmissionError(
         "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
@@ -431,7 +466,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       servings: null,
     });
     setStep("audience");
-  }, [initialized, isOpeningEmergencyMenus, safetyQuery.data, value]);
+  }, [initialized, isOpeningEmergencyMenus, isSubmitting, safetyQuery.data, value]);
 
   const save = useCallback(
     async (next: PlannerDraftInput, revision: number) => {
@@ -591,32 +626,68 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const retryPrivacyConsent = useCallback((): void => {
     void privacyQuery.refetch();
   }, [privacyQuery]);
-  const openPrivacyNotice = useCallback((): void => {
-    // privacy 往復前に下書きを flush し、react-query cache へ同期する。
-    // 未 flush だと return 時に stale な draft で step 1 へ巻き戻る。
-    // シグネチャは () => void のまま（非同期処理は fire-and-forget）。
-    void (async () => {
-      try {
-        await flushDraft();
-      } catch {
-        if (mountedRef.current) {
-          setSubmissionError("献立条件を保存できなかったため、説明画面へ進めませんでした。");
-        }
-        return;
-      }
-      if (!mountedRef.current) return;
+  /**
+   * privacy へ flush→navigate する本体。
+   * P6/P8: single-flight + conflict/saving/緊急 ガード。成功時 true。
+   * onSubmit から await して委譲完了まで submitting を維持する。
+   */
+  const runPrivacyNavigation = useCallback(async (): Promise<boolean> => {
+    if (
+      privacyOpeningRef.current ||
+      isOpeningEmergencyMenus ||
+      isOpeningSettings ||
+      hasDraftConflict ||
+      autosave.state === "saving"
+    ) {
+      return false;
+    }
+    privacyOpeningRef.current = true;
+    setIsOpeningPrivacy(true);
+    setSubmissionError(null);
+    try {
+      // privacy 往復前に下書きを flush し、react-query cache へ同期する。
+      // 未 flush だと return 時に stale な draft で step 1 へ巻き戻る。
+      await flushDraft();
+      if (!mountedRef.current) return false;
       // review resume 付きの returnTo で /privacy へ往復する（brief step 9）。
       // sanitizeReturnPath と同じ形へ揃えるため、pathとqueryをまとめて
       // encodeURIComponent した固定文字列を使う（"/planner?resume=review"）。
       void navigate("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
-    })();
-  }, [flushDraft, navigate]);
+      return true;
+    } catch {
+      if (mountedRef.current) {
+        setSubmissionError("献立条件を保存できなかったため、説明画面へ進めませんでした。");
+      }
+      return false;
+    } finally {
+      privacyOpeningRef.current = false;
+      if (mountedRef.current) {
+        setIsOpeningPrivacy(false);
+      }
+    }
+  }, [
+    autosave.state,
+    flushDraft,
+    hasDraftConflict,
+    isOpeningEmergencyMenus,
+    isOpeningSettings,
+    navigate,
+  ]);
+
+  // シグネチャは () => void のまま（wizard の onOpenPrivacyNotice）。
+  // 生成 submit 中の privacy ボタンは isSaving で disabled。single-flight は run 本体。
+  const openPrivacyNotice = useCallback((): void => {
+    if (isSubmitting || submittingRef.current) return;
+    void runPrivacyNavigation();
+  }, [isSubmitting, runPrivacyNavigation]);
 
   // 設計 §5.1: AI を使わない緊急献立への導線。route が flush 後に navigate を所有する。
   const openEmergencyMenus = useCallback((): void => {
     if (
       isOpeningEmergencyMenus ||
       isSubmitting ||
+      isOpeningPrivacy ||
+      isOpeningSettings ||
       hasDraftConflict ||
       autosave.state === "saving"
     ) {
@@ -655,38 +726,74 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     flushDraft,
     hasDraftConflict,
     isOpeningEmergencyMenus,
+    isOpeningPrivacy,
+    isOpeningSettings,
     isSubmitting,
     navigate,
   ]);
 
   // P5: settings 遷移も privacy/緊急と同様に flush 完了を待ってから navigate する。
   // Link 直遷移だと unmount dirty flush の失敗が黙殺され、サーバ旧下書きが正本のまま残る。
+  // P6: 緊急と同型の conflict/saving/submitting/single-flight ガード。
   const openSettings = useCallback((): void => {
+    if (
+      settingsOpeningRef.current ||
+      isOpeningEmergencyMenus ||
+      isOpeningPrivacy ||
+      isSubmitting ||
+      submittingRef.current ||
+      hasDraftConflict ||
+      autosave.state === "saving"
+    ) {
+      return;
+    }
+    settingsOpeningRef.current = true;
+    setIsOpeningSettings(true);
+    setSubmissionError(null);
     void (async () => {
       try {
         await flushDraft();
+        if (!mountedRef.current) return;
+        void navigate("/settings");
       } catch {
         if (mountedRef.current) {
           setSubmissionError(
             "条件を保存できなかったため、家族設定を開けませんでした。通信を確認して再度お試しください。",
           );
         }
-        return;
+      } finally {
+        settingsOpeningRef.current = false;
+        if (mountedRef.current) {
+          setIsOpeningSettings(false);
+        }
       }
-      if (!mountedRef.current) return;
-      void navigate("/settings");
     })();
-  }, [flushDraft, navigate]);
+  }, [
+    autosave.state,
+    flushDraft,
+    hasDraftConflict,
+    isOpeningEmergencyMenus,
+    isOpeningPrivacy,
+    isSubmitting,
+    navigate,
+  ]);
 
   // P3: 初回 data 未取得の失敗だけ全画面。init 後の背景 refetch 失敗は previous data で wizard 継続。
   const safetyLoadFatal = safetyQuery.isError && safetyQuery.data === undefined;
   const pantryLoadFatal = pantryQuery.isError && pantryQuery.data === undefined;
-  // 背景 refetch 失敗時のソフトエラー（wizard は破棄しない。focus 再取得や下の再試行で回復）
-  const backgroundSafetyPantryError =
+  // 背景 refetch 失敗時の soft 状態（wizard は破棄しない。P4: 生成 CTA はゲートする）
+  const staleBackgroundSafetyPantry =
     initialized &&
     ((safetyQuery.isError && safetyQuery.data !== undefined) ||
-      (pantryQuery.isError && pantryQuery.data !== undefined))
-      ? "家族または冷蔵庫の最新情報を再取得できませんでした。表示は直前の内容です。"
+      (pantryQuery.isError && pantryQuery.data !== undefined));
+  // P7: draft も init 後背景失敗を soft banner に載せる（safety/pantry と対称）
+  const staleBackgroundDraft =
+    initialized && draftQuery.isError && draftQuery.data !== undefined;
+  // 背景 refetch 失敗時のソフトエラー（wizard は破棄しない。focus 再取得や下の再試行で回復）
+  const backgroundRefetchErrorMessage = staleBackgroundSafetyPantry
+    ? "家族または冷蔵庫の最新情報を再取得できませんでした。表示は直前の内容です。最新を取得してから献立を作ってください。"
+    : staleBackgroundDraft
+      ? "下書きの最新情報を再取得できませんでした。表示は直前の内容です。"
       : null;
 
   if ((!initialized && draftQuery.isError) || safetyLoadFatal || pantryLoadFatal) {
@@ -720,15 +827,16 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const pantryData = pantryQuery.data;
   return (
     <>
-      {backgroundSafetyPantryError !== null ? (
+      {backgroundRefetchErrorMessage !== null ? (
         <div className="page-frame stack">
-          <p role="status">{backgroundSafetyPantryError}</p>
+          <p role="status">{backgroundRefetchErrorMessage}</p>
           <button
             className="secondary-button min-h-11"
             type="button"
             onClick={() => {
               if (safetyQuery.isError) void safetyQuery.refetch();
               if (pantryQuery.isError) void pantryQuery.refetch();
+              if (draftQuery.isError) void draftQuery.refetch();
             }}
           >
             再試行
@@ -741,8 +849,15 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         step={step}
         eligibleMembers={safetyData.members}
         isSaving={
-          autosave.state === "saving" || isSubmitting || hasDraftConflict || isOpeningEmergencyMenus
+          autosave.state === "saving" ||
+          isSubmitting ||
+          hasDraftConflict ||
+          isOpeningEmergencyMenus ||
+          isOpeningPrivacy ||
+          isOpeningSettings
         }
+        // P4: safety/pantry soft 失敗中は stale 送信を禁止（主 CTA のみ。編集は previous data で継続）
+        blockGenerationForStaleSafety={staleBackgroundSafetyPantry}
         error={
           // 競合 chrome は wizard 側の明示 UI に任せる。短時間枠・成功残数は review の生成ボタン近く
           // （設計 §10.3）。ここでは audience skipped / submission のみ。
@@ -824,6 +939,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           if (submittingRef.current) return;
           setSubmissionError(null);
           setFieldErrors({});
+          // P4: safety/pantry soft 失敗中は stale previous data で送信しない
+          if (staleBackgroundSafetyPantry) {
+            setSubmissionError(
+              "家族または冷蔵庫の最新情報を再取得できないため、献立を開始できません。再試行してからお試しください。",
+            );
+            setStep("review");
+            return;
+          }
           const submissionCandidate: PlannerDraftInput = {
             mealType: value.mealType,
             mainIngredients: value.mainIngredients,
@@ -890,11 +1013,41 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             return;
           }
           if (startGeneration === undefined) return;
+          // P1: strip が flush 中に走ったら operationId 不一致で startGeneration を止める
+          const submitOperationId = ++submitOperationIdRef.current;
           submittingRef.current = true;
           setIsSubmitting(true);
           setAudienceStatusError(null);
           try {
             const saved = await flushDraft();
+            if (
+              !mountedRef.current ||
+              submitOperationId !== submitOperationIdRef.current ||
+              !submittingRef.current
+            ) {
+              return;
+            }
+            // P1: flush 済み saved を最新 eligibility で再検証（strip 前 snapshot での生成禁止）
+            if (saved.targetMode === "household") {
+              const eligibleIds = new Set(eligibleMemberIdsRef.current);
+              const stillEligible =
+                saved.targetMemberIds.length > 0 &&
+                saved.targetMemberIds.every((id) => eligibleIds.has(id));
+              if (!stillEligible) {
+                setSubmissionError(
+                  "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
+                );
+                setStep("audience");
+                return;
+              }
+            } else if (saved.targetMode !== "idea") {
+              // P2 接続: flush 中 strip で targetMode null になった saved は生成しない
+              setSubmissionError(
+                "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
+              );
+              setStep("audience");
+              return;
+            }
             // AP5: 読取失敗中は /privacy 誘導せず再試行（未同意と誤認しない）
             if (privacyConsentLoadFailed) {
               setSubmissionError(
@@ -903,7 +1056,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               return;
             }
             if (!hasAcceptedPrivacy) {
-              openPrivacyNotice();
+              // P8: privacy 委譲の flush/navigate 完了まで submitting を維持（finally で解除）
+              await runPrivacyNavigation();
               return;
             }
             // resume で audience を踏まず review に着いた idea 下書きでも skipped を揃える安全網。
@@ -924,6 +1078,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
                 }
                 return;
               }
+            }
+            if (
+              !mountedRef.current ||
+              submitOperationId !== submitOperationIdRef.current ||
+              !submittingRef.current
+            ) {
+              return;
             }
             // 生成へ渡す attempt は選択中 confirmation のみ・非 Plus は qualityMode を落とす
             const commandAttempt: PlannerAttempt = {
@@ -947,6 +1108,15 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               }
             }
           } catch (error) {
+            // P2: target_mode_required は pending を消し専用文言（汎用保存失敗に畳まない）
+            if (error instanceof Error && error.message === "target_mode_required") {
+              clearPendingGeneration();
+              setSubmissionError(
+                "作る相手が未設定のため、生成を開始できません。対象を選び直してください。",
+              );
+              setStep("audience");
+              return;
+            }
             // IncompleteDraft は通信失敗と分けて人数未設定を伝える
             setSubmissionError(
               error instanceof IncompleteDraftSaveError
@@ -954,8 +1124,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
                 : "献立条件を保存できなかったため、生成を開始しませんでした。",
             );
           } finally {
-            submittingRef.current = false;
-            setIsSubmitting(false);
+            // strip が既に operation を無効化して ref を落としている場合は上書きしない
+            if (submitOperationId === submitOperationIdRef.current) {
+              submittingRef.current = false;
+              setIsSubmitting(false);
+            }
           }
         }}
       />
