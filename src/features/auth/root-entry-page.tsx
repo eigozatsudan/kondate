@@ -44,7 +44,12 @@ export function RootEntryPage() {
   const { showPending, pendingTimedOut } = useProfilePendingDeadline(profileQuery.isPending);
 
   if (showPending) {
-    return <main className="page-frame">状態を確認しています…</main>;
+    // L10: 待ち UI は SR に busy/live を通知
+    return (
+      <main className="page-frame" aria-busy="true" aria-live="polite">
+        状態を確認しています…
+      </main>
+    );
   }
 
   if (profileQuery.isError || pendingTimedOut) {
@@ -59,8 +64,11 @@ export function RootEntryPage() {
   }
 
   const { onboarding_status } = profileQuery.data;
-  if (onboarding_status === "not_started" || onboarding_status === "in_progress") {
-    return <Navigate to="/welcome" replace />;
+  // L7: 既知 terminal のみ planner。未知値は planner へ fail-open せず welcome へ
+  // （Welcome は complete/skipped 以外を操作 UI として扱う契約と対称）。
+  if (onboarding_status === "complete" || onboarding_status === "skipped") {
+    return <Navigate to="/planner" replace />;
   }
-  return <Navigate to="/planner" replace />;
+  // not_started / in_progress / 未知値 → welcome（本編を開かない fail-closed）
+  return <Navigate to="/welcome" replace />;
 }

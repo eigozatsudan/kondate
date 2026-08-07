@@ -26,4 +26,13 @@ describe("withTimeout", () => {
     const pending = withTimeout(Promise.reject(new Error("boom")), 5_000);
     await expect(pending).rejects.toThrow("boom");
   });
+
+  it("invokes onTimeout synchronously when the deadline fires", async () => {
+    const onTimeout = vi.fn();
+    const pending = withTimeout(new Promise<string>(() => undefined), 1_000, onTimeout);
+    const expectation = expect(pending).rejects.toThrow("timeout");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onTimeout).toHaveBeenCalledOnce();
+    await expectation;
+  });
 });

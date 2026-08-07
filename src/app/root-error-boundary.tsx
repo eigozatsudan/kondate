@@ -6,21 +6,31 @@ type RootErrorBoundaryProps = {
 
 type RootErrorBoundaryState = {
   hasError: boolean;
+  /** public-env / 公開設定破損。ホーム・再読込は同一障害へ再突入するため専用 UI。 */
+  isConfigError: boolean;
 };
 
+/** getPublicEnv / parsePublicEnv が投げる固定文言（値は echo しない）。 */
+const PUBLIC_ENV_ERROR_MESSAGE = "公開設定を読み込めません";
+
+function isPublicEnvError(error: unknown): boolean {
+  return error instanceof Error && error.message === PUBLIC_ENV_ERROR_MESSAGE;
+}
+
 /**
- * L3: Router 外（AppProviders / AuthProvider / getPublicEnv）の render throw 用。
+ * L3/L6: Router 外（AppProviders / AuthProvider / getPublicEnv）の render throw 用。
  * RouteErrorElement は router 配下のみ拾うため、createRoot 直下に置く最小 ErrorBoundary。
  * 詳細・内部メッセージは出さず、日本語の再読込導線だけを示す。
+ * L6: 公開設定破損時はホーム／再読込ループを避け、設定不備である旨だけを示す。
  */
 export class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErrorBoundaryState> {
   public constructor(props: RootErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, isConfigError: false };
   }
 
-  public static getDerivedStateFromError(): RootErrorBoundaryState {
-    return { hasError: true };
+  public static getDerivedStateFromError(error: unknown): RootErrorBoundaryState {
+    return { hasError: true, isConfigError: isPublicEnvError(error) };
   }
 
   public componentDidCatch(): void {
@@ -30,6 +40,19 @@ export class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErr
 
   public render(): ReactNode {
     if (this.state.hasError) {
+      if (this.state.isConfigError) {
+        // L6: assign("/") / reload は同じ初期化で再 throw する死回路。
+        // 利用者に「設定側の問題で再試行では直らない」と明示し、脱出不能ボタンを出さない。
+        return (
+          <main className="page-frame stack">
+            <h1>アプリを起動できません</h1>
+            <p role="alert">
+              公開設定に問題があるため画面を表示できません。再読み込みやホームへの移動では解消しないことがあります。時間をおいて再度アクセスするか、サービス提供元へお問い合わせください。
+            </p>
+          </main>
+        );
+      }
+
       return (
         <main className="page-frame stack">
           <h1>画面を表示できませんでした</h1>

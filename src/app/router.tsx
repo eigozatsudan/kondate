@@ -2,6 +2,8 @@ import { createBrowserRouter } from "react-router";
 import { AppShell } from "./layouts/app-shell";
 import { NotFoundPage } from "./not-found-page";
 import { RouteErrorElement } from "./route-error-element";
+import { withTimeout } from "@/features/auth/async-timeout";
+import { COLD_START_SESSION_DEADLINE_MS } from "@/features/auth/auth-provider";
 import { RequireSession } from "@/features/auth/protected-routes";
 import { RootGatePage } from "@/features/landing/root-gate-page";
 import { PantryPage } from "@/features/pantry/pantry-page";
@@ -48,9 +50,14 @@ export function createAppRouter(): AppRouter {
           errorElement: <RouteErrorElement />,
           children: [
             {
+              // L5: /welcome lazy chunk が never-settle でも C5 同尺で打ち切り errorElement へ
+              // （Free LP ChunkGate と対称。reject/timeout は親 errorElement が日本語リカバリ）。
               path: "/welcome",
               lazy: async () => {
-                const { WelcomeRoutePage } = await import("@/features/welcome/welcome-route-page");
+                const { WelcomeRoutePage } = await withTimeout(
+                  import("@/features/welcome/welcome-route-page"),
+                  COLD_START_SESSION_DEADLINE_MS,
+                );
                 return { Component: WelcomeRoutePage };
               },
             },

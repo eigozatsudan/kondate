@@ -49,7 +49,7 @@ function findAncestorElementTypes(
 }
 
 describe("app router", () => {
-  it.each(["/login", "/auth/callback", "/onboarding", "/privacy", "/settings"])(
+  it.each(["/login", "/auth/callback", "/welcome", "/onboarding", "/privacy", "/settings"])(
     "%s の画面コードをルート解決時まで読み込まない",
     (path) => {
       const router = createAppRouter();
@@ -60,6 +60,15 @@ describe("app router", () => {
       router.dispose();
     },
   );
+
+  it("L5: /welcome lazy is registered (chunk hang is deadline-bounded in lazy)", () => {
+    // hang 自体は withTimeout(import, C5) で errorElement へ。登録だけ静的に固定する。
+    const router = createAppRouter();
+    const route = findRoute(router.routes, "/welcome");
+    expect(route?.lazy).toEqual(expect.any(Function));
+    expect(route?.element).toBeUndefined();
+    router.dispose();
+  });
 
   it("keeps /emergency-menus reachable without completed onboarding, per design spec 632", () => {
     const router = createAppRouter();

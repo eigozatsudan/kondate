@@ -93,6 +93,26 @@ it.each(["complete", "skipped"] as const)(
   },
 );
 
+it("L7: unknown onboarding_status is fail-closed to /welcome (not planner)", async () => {
+  useQueryMock.mockReturnValue({
+    isPending: false,
+    isError: false,
+    status: "success",
+    data: { onboarding_status: "bogus" },
+  });
+  const router = renderWithRouter();
+  expect(await screen.findByRole("heading", { name: "ウェルカム" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/welcome");
+});
+
+it("L10: pending main exposes aria-busy and aria-live", () => {
+  useQueryMock.mockReturnValue({ isPending: true, isError: false, data: undefined });
+  renderWithRouter();
+  const pending = screen.getByText(/確認/u);
+  expect(pending).toHaveAttribute("aria-busy", "true");
+  expect(pending).toHaveAttribute("aria-live", "polite");
+});
+
 it("query error は not_started へ推測変換せず再試行操作を持つ alert に留まりredirectしない", () => {
   useQueryMock.mockReturnValue({ isPending: false, isError: true, data: undefined });
   const router = renderWithRouter();

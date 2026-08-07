@@ -73,7 +73,11 @@ describe("RootGatePage", () => {
       refreshSession: vi.fn(),
     });
     renderGate();
-    expect(screen.getByText("ログイン状態を確認しています…")).toBeVisible();
+    const pending = screen.getByText("ログイン状態を確認しています…");
+    expect(pending).toBeVisible();
+    // L10: 待ち UI に busy/live
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    expect(pending).toHaveAttribute("aria-live", "polite");
     expect(screen.queryByRole("heading", { name: FREE_LP_H1 })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "RootEntry stub" })).not.toBeInTheDocument();
   });
@@ -171,9 +175,15 @@ describe("RootGatePage", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(screen.getByText("読み込み中…")).toBeVisible();
+      const loading = screen.getByText("読み込み中…");
+      expect(loading).toBeVisible();
+      // L10: chunk 待ちも busy/live
+      expect(loading).toHaveAttribute("aria-busy", "true");
+      expect(loading).toHaveAttribute("aria-live", "polite");
       await act(async () => {
+        // L3: timer は queueMicrotask 再確認するため +1 tick 相当を流す
         await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+        await Promise.resolve();
       });
       expect(
         screen.getByText("読み込みに時間がかかっています。通信を確認して再読み込みしてください。"),
@@ -184,5 +194,22 @@ describe("RootGatePage", () => {
       freeLpSuspend.finish();
       vi.useRealTimers();
     }
+  });
+
+  it("L3: successful Free LP mount stays mounted (layoutEffect disarms timeout)", async () => {
+    // probe の useLayoutEffect が loaded を立て timer を clear するため、
+    // 成功 mount 後に timeout UI へ差し替わらないことを固定する。
+    useAuthMock.mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+    });
+    renderGate();
+    expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
+    // 成功後も再読み込み UI にはならない
+    expect(
+      screen.queryByText("読み込みに時間がかかっています。通信を確認して再読み込みしてください。"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "再読み込み" })).not.toBeInTheDocument();
   });
 });

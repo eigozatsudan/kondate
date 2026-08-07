@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { COLD_START_SESSION_DEADLINE_MS } from "@/features/auth/auth-provider";
 import { RootEntryPage } from "@/features/auth/root-entry-page";
 import { useAuthLoadingDeadline } from "@/features/auth/use-auth-loading-deadline";
@@ -19,13 +19,14 @@ const FreeLandingPage = lazy(async () => {
 });
 
 /**
- * L2: Free LP が mount されたら deadline 武装を解除するプローブ。
+ * L2/L3: Free LP が commit されたら deadline 武装を解除するプローブ。
  * Suspense 中は effect が走らないため、chunk / 子の suspend 中は timeout 対象のまま。
+ * L3: useEffect ではなく useLayoutEffect で paint 前に武装解除し、timer race 窓を潰す。
  */
 function FreeLandingLoadProbe({ onLoaded }: { onLoaded: () => void }) {
   const onLoadedRef = useRef(onLoaded);
   onLoadedRef.current = onLoaded;
-  useEffect(() => {
+  useLayoutEffect(() => {
     onLoadedRef.current();
   }, []);
   return <FreeLandingPage />;
@@ -38,17 +39,26 @@ function FreeLandingLoadProbe({ onLoaded }: { onLoaded: () => void }) {
 function FreeLandingChunkGate() {
   const [timedOut, setTimedOut] = useState(false);
   const loadedRef = useRef(false);
+  const timerIdRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (timedOut) return;
-    const timerId = window.setTimeout(() => {
-      // 成功 mount 後は UI をエラーに差し替えない
-      if (!loadedRef.current) {
-        setTimedOut(true);
-      }
+    // 既に probe が layout 済みなら武装不要
+    if (loadedRef.current) return;
+    timerIdRef.current = window.setTimeout(() => {
+      // L3: layout より後の同一 tick で loaded が立つ場合に備え、
+      // macrotask 直後に再確認してから timedOut にする。
+      window.queueMicrotask(() => {
+        if (!loadedRef.current) {
+          setTimedOut(true);
+        }
+      });
     }, COLD_START_SESSION_DEADLINE_MS);
     return () => {
-      window.clearTimeout(timerId);
+      if (timerIdRef.current !== undefined) {
+        window.clearTimeout(timerIdRef.current);
+        timerIdRef.current = undefined;
+      }
     };
   }, [timedOut]);
 
@@ -72,10 +82,22 @@ function FreeLandingChunkGate() {
   }
 
   return (
-    <Suspense fallback={<main className="page-frame">{LANDING_CHUNK_FALLBACK_COPY}</main>}>
+    <Suspense
+      fallback={
+        // L10: chunk 待ちも busy/live で SR に状態を通知
+        <main className="page-frame" aria-busy="true" aria-live="polite">
+          {LANDING_CHUNK_FALLBACK_COPY}
+        </main>
+      }
+    >
       <FreeLandingLoadProbe
         onLoaded={() => {
           loadedRef.current = true;
+          // L3: commit 時点で timer を止め、deadline 誤爆を防ぐ
+          if (timerIdRef.current !== undefined) {
+            window.clearTimeout(timerIdRef.current);
+            timerIdRef.current = undefined;
+          }
         }}
       />
     </Suspense>
@@ -92,7 +114,12 @@ export function RootGatePage() {
   const { showLoading, loadingTimedOut } = useAuthLoadingDeadline(auth.status);
 
   if (showLoading) {
-    return <main className="page-frame">{SESSION_CHECK_COPY}</main>;
+    // L10: セッション確認待ちを SR に通知
+    return (
+      <main className="page-frame" aria-busy="true" aria-live="polite">
+        {SESSION_CHECK_COPY}
+      </main>
+    );
   }
 
   // L1: loading が C5 期限を超えたら未ログイン相当（Free LP）へ fail-closed。

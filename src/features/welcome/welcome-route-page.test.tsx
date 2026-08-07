@@ -186,6 +186,64 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     }
   });
 
+  it("L1: zombie re-read after timeout does not CAS or navigate", async () => {
+    // timeout 後に遅延 resolve しても generation 無効化で副作用なし
+    let resolveReread: ((value: { onboarding_status: string }) => void) | undefined;
+    getProfileMock
+      .mockResolvedValueOnce({ onboarding_status: "not_started" })
+      .mockImplementation(
+        () =>
+          new Promise<{ onboarding_status: string }>((resolve) => {
+            resolveReread = resolve;
+          }),
+      );
+    const router = renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("開始できませんでした");
+      expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeEnabled();
+      // ゾンビ re-read が settle しても CAS / navigate しない
+      await act(async () => {
+        resolveReread?.({ onboarding_status: "not_started" });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+      expect(router.state.location.pathname).toBe("/welcome");
+      expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("L2: CAS success navigates even when invalidateQueries would hang", async () => {
+    // invalidate を await しない契約: CAS 成功後は false failure を出さない
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "skipped" });
+    const user = userEvent.setup();
+    const router = renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();
+    expect(setOnboardingStatusMock).toHaveBeenCalled();
+    expect(router.state.location.pathname).toBe("/planner");
+    // 失敗 alert は出ない
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("L10: profile loading main exposes aria-busy and aria-live", async () => {
+    getProfileMock.mockReturnValue(new Promise(() => undefined));
+    renderWelcome();
+    const pending = await screen.findByText("状態を確認しています…");
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    expect(pending).toHaveAttribute("aria-live", "polite");
+  });
+
   it("L4: successful idea start replaces history (back does not return to welcome)", async () => {
     getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
     setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "skipped" });
