@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { useForm } from "react-hook-form";
 import {
   expirationTypes,
@@ -75,7 +76,12 @@ export function PantryForm({
   const form = useForm<PantryItemInput>({
     defaultValues: initialValue,
   });
+  // PE14: React の isPending 反映前に enter 連打されると handleSubmit が二重起動し得る。
+  // フォーム側でも single-flight して create 二重 insert を抑止する。
+  const submitInFlightRef = useRef(false);
   const submit = form.handleSubmit(async (input) => {
+    if (submitInFlightRef.current || saving) return;
+    submitInFlightRef.current = true;
     form.clearErrors();
     const parsed = pantryItemInputSchema.safeParse(input);
     if (!parsed.success) {
@@ -92,6 +98,7 @@ export function PantryForm({
       if (firstInvalidField !== undefined) {
         form.setFocus(firstInvalidField);
       }
+      submitInFlightRef.current = false;
       return;
     }
     try {
@@ -99,6 +106,8 @@ export function PantryForm({
       form.reset(defaults);
     } catch {
       // 親画面が通信・競合エラーを表示するため、入力値を保持して再確認できる状態にします。
+    } finally {
+      submitInFlightRef.current = false;
     }
   });
   const errorAttributes = (field: keyof PantryItemInput) => {

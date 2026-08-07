@@ -1,4 +1,5 @@
 import { type PantryItem, type PantryItemInput, pantryItemSchema } from "@shared/contracts/pantry";
+import { normalizeUnit } from "@shared/shopping/normalize";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import type { Tables } from "@/shared/types/database.generated";
 
@@ -27,12 +28,16 @@ function writeRow(userId: string, input: PantryItemInput) {
     user_id: userId,
     name: input.name,
     quantity: input.quantity,
-    unit: input.unit,
+    // PE8: 保存時に単位同義を canonical へ（グラム→g）。契約の自由文は緩めない。
+    unit: normalizeUnit(input.unit),
     expires_on: input.expiresOn,
     expiration_type: input.expirationType,
     opened_state: input.openedState,
   };
 }
+
+/** PE14: create の同一タブ連打による二重 insert を抑止する（multi-tab は残差）。 */
+let createPantryItemLocked = false;
 
 /** PE10: updated_at 楽観ロック衝突。RLS + user_id で他ユーザー横断は閉じ済み。 */
 export class PantryVersionConflictError extends Error {
@@ -68,13 +73,23 @@ export async function createPantryItem(
   userId: string,
   input: PantryItemInput,
 ): Promise<PantryItem> {
-  const { data, error } = await client
-    .from("pantry_items")
-    .insert(writeRow(requireUserId(userId), input))
-    .select("*")
-    .single();
-  if (error !== null) throw new Error("食材を追加できませんでした");
-  return mapRow(data);
+  // PE14: saving disabled 反映前の連打で同名 2 行にならないよう mutex。
+  // 進行中の第二呼び出しは insert せず失敗（結果共有しない。別 input の誤共有を防ぐ）。
+  if (createPantryItemLocked) {
+    throw new Error("食材を追加できませんでした");
+  }
+  createPantryItemLocked = true;
+  try {
+    const { data, error } = await client
+      .from("pantry_items")
+      .insert(writeRow(requireUserId(userId), input))
+      .select("*")
+      .single();
+    if (error !== null) throw new Error("食材を追加できませんでした");
+    return mapRow(data);
+  } finally {
+    createPantryItemLocked = false;
+  }
 }
 
 export async function updatePantryItem(

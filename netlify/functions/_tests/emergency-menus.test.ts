@@ -9,6 +9,8 @@ import * as emergencyFilter from "../../../shared/emergency/filter-emergency-men
 import { makeCurrentSafetyContext } from "../../../shared/testing/factories.js";
 import {
   createEmergencyMenusHandler,
+  mapSharedRowsToCommunityCandidates,
+  pantryNamesForEmergencyScoring,
   type EmergencyHandlerDeps,
   type ListActiveSharedEmergencyRecipesInput,
   type SharedEmergencyListRow,
@@ -733,6 +735,42 @@ describe("GET /api/emergency-menus", () => {
     });
     expect(body.data.candidates.length).toBeGreaterThan(0);
     expect(body.data.fixtureVersion).toBe("2026-07-28.v1");
+  });
+
+  it("PE4: pantryNamesForEmergencyScoring drops past-entered expiry but keeps null", () => {
+    const names = pantryNamesForEmergencyScoring(
+      [
+        { name: "鮭", expires_on: "2026-07-01" },
+        { name: "キャベツ", expires_on: null },
+        { name: "豆腐", expires_on: "2026-08-07" },
+      ],
+      "2026-08-07",
+    );
+    expect(names).toEqual(["キャベツ", "豆腐"]);
+  });
+
+  it("PE16: mapSharedRowsToCommunityCandidates drops meal_type mismatch before Stage S", () => {
+    const dinnerRow = communityListRowForMeal("dinner");
+    // 列が要求帯と不一致 → 0 件（fetch 枠食い residual を閉じる）
+    const columnMismatch: SharedEmergencyListRow = {
+      ...dinnerRow,
+      meal_type: "lunch",
+    };
+    expect(mapSharedRowsToCommunityCandidates([columnMismatch], "dinner")).toEqual([]);
+
+    // payload.mealType 不一致（列は一致）も落とす
+    const payload = dinnerRow.menu_payload as { mealType: string };
+    const payloadMismatch: SharedEmergencyListRow = {
+      ...dinnerRow,
+      meal_type: "dinner",
+      menu_payload: { ...payload, mealType: "lunch" },
+    };
+    expect(mapSharedRowsToCommunityCandidates([payloadMismatch], "dinner")).toEqual([]);
+
+    // 一致行は載る
+    const ok = mapSharedRowsToCommunityCandidates([dinnerRow], "dinner");
+    expect(ok).toHaveLength(1);
+    expect(ok[0]?.source).toBe("community");
   });
 
   describe("S2 shared pool (Task 9)", () => {

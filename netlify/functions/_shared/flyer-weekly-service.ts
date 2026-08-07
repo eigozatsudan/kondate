@@ -318,6 +318,99 @@ export function appendDraftMemberAllergiesForFlyerInspection(
   };
 }
 
+/**
+ * PE2: complete + draft 検査用の現行 safety を組み立てる。
+ * succeeded 冪等 replay と初回 OpenRouter 後で同じ検査集合を使い、
+ * 成功後に追加されたアレルギーで旧献立を再生しない。
+ * finalize は触らない（既 terminal を壊さない）。
+ */
+export async function loadFlyerInspectionSafety(
+  admin: AdminSupabaseClient,
+  userId: string,
+): Promise<CurrentSafetyContext> {
+  const { data: memberRows, error: memberError } = await admin
+    .from("household_members")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "complete")
+    .order("sort_order", { ascending: true });
+  if (memberError !== null) {
+    throw new HttpError(
+      400,
+      "flyer_invalid_ai_response",
+      flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+    );
+  }
+  const memberIds = (Array.isArray(memberRows) ? memberRows : []).map(
+    (row: { id: string }) => row.id,
+  );
+  // complete 0 人では banned 空のまま検査スキップして成功させない（false-safe 禁止）
+  if (memberIds.length === 0) {
+    throw new HttpError(
+      422,
+      "current_target_member_required",
+      issueMessages.current_target_member_required,
+    );
+  }
+  const safety = await loadCurrentSafetyContext(admin, userId, memberIds);
+  // unconfirmed / allergen_missing を generation と同型で fail-closed
+  for (const member of safety.members) {
+    if (member.allergyStatus === "unconfirmed") {
+      throw new HttpError(422, "allergy_unconfirmed", issueMessages.allergy_unconfirmed);
+    }
+    if (
+      member.allergyStatus === "registered" &&
+      member.allergenIds.length === 0 &&
+      member.customAllergies.length === 0
+    ) {
+      throw new HttpError(422, "allergen_missing", issueMessages.allergen_missing);
+    }
+    if (member.unsupportedDietStatus === "unconfirmed") {
+      throw new HttpError(
+        422,
+        "unsupported_diet_unconfirmed",
+        issueMessages.unsupported_diet_unconfirmed,
+      );
+    }
+    if (member.unsupportedDietStatus === "present") {
+      throw new HttpError(422, "unsupported_diet", issueMessages.unsupported_diet);
+    }
+  }
+  // draft に登録済みアレルギーが残っていても検査集合から外さない
+  const { data: draftMemberRows, error: draftMemberError } = await admin
+    .from("household_members")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "draft");
+  if (draftMemberError !== null) {
+    throw new HttpError(
+      400,
+      "flyer_invalid_ai_response",
+      flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+    );
+  }
+  const draftMemberIds = (Array.isArray(draftMemberRows) ? draftMemberRows : []).map(
+    (row: { id: string }) => row.id,
+  );
+  if (draftMemberIds.length === 0) return safety;
+  const { data: draftAllergyRows, error: draftAllergyError } = await admin
+    .from("member_allergies")
+    .select("member_id,allergen_id,custom_name,custom_aliases,custom_confirmed")
+    .eq("user_id", userId)
+    .in("member_id", draftMemberIds);
+  if (draftAllergyError !== null) {
+    throw new HttpError(
+      400,
+      "flyer_invalid_ai_response",
+      flyerWeeklyIssueMessages.flyer_invalid_ai_response,
+    );
+  }
+  return appendDraftMemberAllergiesForFlyerInspection(
+    safety,
+    Array.isArray(draftAllergyRows) ? draftAllergyRows : [],
+  );
+}
+
 export function assertFlyerMenuAgainstSafety(
   menu: WeeklyFlyerMenu,
   safety: CurrentSafetyContext,
@@ -481,6 +574,10 @@ export async function runFlyerWeekly(
 
   if (reserve.status === "succeeded" && reserve.result != null) {
     const menu = weeklyFlyerMenuSchema.parse(reserve.result) as WeeklyFlyerMenuResult;
+    // PE2: 冪等 replay でも現行 safety を再 assert。成功後アレルギー追加で旧献立を出さない。
+    // 既 terminal は finalize しない（破壊禁止）。拒否のみ。
+    const inspectionSafety = await loadFlyerInspectionSafety(admin, deps.user.userId);
+    assertFlyerMenuAgainstSafety(menu, inspectionSafety);
     return { menu, requestId: reserve.request_id ?? requestIdForLog };
   }
 
@@ -631,94 +728,9 @@ export async function runFlyerWeekly(
 
   // server current safety only（クライアント allergy は信頼しない）
   try {
-    // 世帯の complete メンバー ID をサーバ側で読み、current safety を組み立てる
-    const { data: memberRows, error: memberError } = await admin
-      .from("household_members")
-      .select("id")
-      .eq("user_id", deps.user.userId)
-      .eq("status", "complete")
-      .order("sort_order", { ascending: true });
-    if (memberError !== null) {
-      throw new HttpError(
-        400,
-        "flyer_invalid_ai_response",
-        flyerWeeklyIssueMessages.flyer_invalid_ai_response,
-      );
-    }
-    const memberIds = (Array.isArray(memberRows) ? memberRows : []).map(
-      (row: { id: string }) => row.id,
-    );
-    // PE1: complete 0 人では banned 空のまま検査スキップして成功させない（false-safe 禁止）。
-    // incomplete のみ世帯・未設定世帯は fail-closed。成功確定前に枠は mark 済み（残差は PE5 後段）。
-    if (memberIds.length === 0) {
-      throw new HttpError(
-        422,
-        "current_target_member_required",
-        issueMessages.current_target_member_required,
-      );
-    }
-    const safety = await loadCurrentSafetyContext(admin, deps.user.userId, memberIds);
-    // U6-001: unconfirmed / allergen_missing を generation と同型で fail-closed。
-    // ゲートは complete ターゲットのみ（draft 検査用 union は後段で足す）。
-    for (const member of safety.members) {
-      if (member.allergyStatus === "unconfirmed") {
-        throw new HttpError(422, "allergy_unconfirmed", issueMessages.allergy_unconfirmed);
-      }
-      if (
-        member.allergyStatus === "registered" &&
-        member.allergenIds.length === 0 &&
-        member.customAllergies.length === 0
-      ) {
-        throw new HttpError(422, "allergen_missing", issueMessages.allergen_missing);
-      }
-      if (member.unsupportedDietStatus === "unconfirmed") {
-        throw new HttpError(
-          422,
-          "unsupported_diet_unconfirmed",
-          issueMessages.unsupported_diet_unconfirmed,
-        );
-      }
-      if (member.unsupportedDietStatus === "present") {
-        throw new HttpError(422, "unsupported_diet", issueMessages.unsupported_diet);
-      }
-    }
-    // PE1: draft（入力途中）に登録済みアレルギーが残っていても検査集合から外さない。
-    // complete「なし」+ draft「卵」混在で卵メニューが 200 になる false-safe を閉じる。
-    const { data: draftMemberRows, error: draftMemberError } = await admin
-      .from("household_members")
-      .select("id")
-      .eq("user_id", deps.user.userId)
-      .eq("status", "draft");
-    if (draftMemberError !== null) {
-      throw new HttpError(
-        400,
-        "flyer_invalid_ai_response",
-        flyerWeeklyIssueMessages.flyer_invalid_ai_response,
-      );
-    }
-    const draftMemberIds = (Array.isArray(draftMemberRows) ? draftMemberRows : []).map(
-      (row: { id: string }) => row.id,
-    );
-    let inspectionSafety = safety;
-    if (draftMemberIds.length > 0) {
-      const { data: draftAllergyRows, error: draftAllergyError } = await admin
-        .from("member_allergies")
-        .select("member_id,allergen_id,custom_name,custom_aliases,custom_confirmed")
-        .eq("user_id", deps.user.userId)
-        .in("member_id", draftMemberIds);
-      if (draftAllergyError !== null) {
-        throw new HttpError(
-          400,
-          "flyer_invalid_ai_response",
-          flyerWeeklyIssueMessages.flyer_invalid_ai_response,
-        );
-      }
-      inspectionSafety = appendDraftMemberAllergiesForFlyerInspection(
-        safety,
-        Array.isArray(draftAllergyRows) ? draftAllergyRows : [],
-      );
-    }
-    // PE2: 辞書 alias + custom を foodTextContainsAlias（evaluateAllergens 同型）で検査
+    // PE2: 初回も replay と同型の loadFlyerInspectionSafety（complete + draft union）
+    const inspectionSafety = await loadFlyerInspectionSafety(admin, deps.user.userId);
+    // 辞書 alias + custom を foodTextContainsAlias（evaluateAllergens 同型）で検査
     assertFlyerMenuAgainstSafety(parsedMenu.data, inspectionSafety);
   } catch (error: unknown) {
     if (error instanceof HttpError) {

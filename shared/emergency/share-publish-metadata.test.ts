@@ -99,6 +99,45 @@ describe("computeSharePublishMetadata", () => {
     expect(withEgg.standardAllergenIds).toContain("egg");
   });
 
+  it("PE7: flags egg in recipe steps when ingredient name is non-allergen", () => {
+    const catalog = makeEggAwareCatalog();
+    const base = makeValidatedMenu();
+    const dish = base.dishes[0]!;
+    const step = dish.steps[0]!;
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((entry, index) =>
+        index === 0
+          ? {
+              ...entry,
+              // 材料は非アレルゲン。手順にだけ卵語が残る経路（metadata すり抜け residual）
+              ingredients: entry.ingredients.map((ingredient, ingredientIndex) =>
+                ingredientIndex === 0 ? { ...ingredient, name: "混合物" } : ingredient,
+              ),
+              steps: entry.steps.map((entryStep, stepIndex) =>
+                stepIndex === 0
+                  ? { ...entryStep, instruction: "卵を割って混ぜる" }
+                  : entryStep,
+              ),
+            }
+          : entry,
+      ),
+      // timeline も卵語を含む（collectMenuTextSources が steps + timeline を見る）
+      timeline: [
+        {
+          id: "54000000-0000-4000-8000-000000000001",
+          position: 1,
+          startMinute: 0,
+          durationMinutes: 10,
+          instruction: "卵を割って混ぜる",
+          dishId: dish.id,
+          recipeStepId: step.id,
+        },
+      ],
+    });
+    const meta = computeSharePublishMetadata(menu, catalog);
+    expect(meta.standardAllergenIds).toContain("egg");
+  });
+
   it("under-six household filter drops community with only neutral portion and no bound safetyActions", () => {
     const catalog = makeEggAwareCatalog();
     const base = makeValidatedMenu();

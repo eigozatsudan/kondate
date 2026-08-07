@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PantryItemInput } from "@shared/contracts/pantry";
-import { deletePantryItem, PantryVersionConflictError, updatePantryItem } from "./pantry-api";
+import {
+  createPantryItem,
+  deletePantryItem,
+  PantryVersionConflictError,
+  updatePantryItem,
+} from "./pantry-api";
 
 const userId = "61000000-0000-4000-8000-000000000001";
 const itemId = "60000000-0000-4000-8000-000000000001";
@@ -50,6 +55,46 @@ function mutationClient(data: unknown) {
     from,
   };
 }
+
+describe("pantry create single-flight (PE14)", () => {
+  it("rejects concurrent create while first insert is in flight", async () => {
+    let resolveInsert: ((value: { data: unknown; error: null }) => void) | undefined;
+    const insertPromise = new Promise<{ data: unknown; error: null }>((resolve) => {
+      resolveInsert = resolve;
+    });
+    const chain = {
+      insert: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      single: vi.fn().mockReturnValue(insertPromise),
+    };
+    const client = { from: vi.fn().mockReturnValue(chain) } as never;
+
+    const first = createPantryItem(client, userId, input);
+    // 第一が完了する前の第二は insert せず失敗（二重行を作らない）
+    await expect(createPantryItem(client, userId, input)).rejects.toThrow(
+      "食材を追加できませんでした",
+    );
+    resolveInsert?.({ data: pantryRow(), error: null });
+    await expect(first).resolves.toMatchObject({ id: itemId, name: input.name });
+    expect(chain.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it("PE8: normalizes unit synonyms on write (グラム → g)", async () => {
+    const chain = {
+      insert: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({
+        data: { ...pantryRow(), unit: "g" },
+        error: null,
+      }),
+    };
+    const client = { from: vi.fn().mockReturnValue(chain) } as never;
+    await createPantryItem(client, userId, { ...input, unit: "グラム" });
+    expect(chain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ unit: "g", name: input.name }),
+    );
+  });
+});
 
 describe("pantry optimistic concurrency", () => {
   it("updates with owner, id, and displayed version and returns the written row", async () => {

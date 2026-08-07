@@ -318,14 +318,18 @@ export function EmergencyMenuPage() {
   });
 
   // loading / error は candidateQueryEnabled の後に定義する（設計 §5 順序）。
-  // draft は「データ無しの初回取得」だけ loading。キャッシュ済みの背景 refetch では
-  // intro/candidates を消さない（window-focus での空白フラッシュ防止）。
+  // PE9: draft と同様、household/candidate も「データ無しの初回」だけ loading。
+  // キャッシュ済みの背景 refetch（window focus / 60s）では intro・候補・開示を消さない。
+  // safety revision 変更で key が変わったときは data が無いので isPending で hard close を維持。
   const draftInitialLoading =
     draftQueryEnabled && (draftQuery.isPending || (draftQuery.isFetching && !draftResolved));
-  const loading =
-    draftInitialLoading ||
-    (householdQueryEnabled && (householdQuery.isPending || householdQuery.isFetching)) ||
-    (candidateQueryEnabled && (query.isPending || query.isFetching));
+  const householdInitialLoading =
+    householdQueryEnabled &&
+    (householdQuery.isPending || (householdQuery.isFetching && householdQuery.data === undefined));
+  const candidateInitialLoading =
+    candidateQueryEnabled &&
+    (query.isPending || (query.isFetching && query.data === undefined));
+  const loading = draftInitialLoading || householdInitialLoading || candidateInitialLoading;
   const error =
     draftQuery.isError || (householdQueryEnabled && householdQuery.isError) || query.isError
       ? "緊急献立を読み込めませんでした"

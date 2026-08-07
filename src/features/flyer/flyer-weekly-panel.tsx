@@ -40,28 +40,40 @@ function newIdempotencyKey(): string {
 }
 
 /**
- * PE2: sticky Idempotency-Key を画像内容に束縛するための fingerprint。
- * 通信断後に別チラシを選んでも旧 key / 旧結果に束縛しない。
- * 先頭 8KiB + size/type で区別（4MiB 上限の全読は避けつつ同一再送は一致）。
+ * sticky Idempotency-Key を画像内容に束縛するための fingerprint。
+ * PE1: name/lastModified は OS/ブラウザ再選択で変わり得るため使わない。
+ * size:type + 全文 FNV-1a（上限 4MiB。アップロード前に既に File があるので全読でよい）。
+ * 先頭 8KiB だけだと後半差分の別画像を同一 key に束縛し得る residual を閉じる。
+ * arrayBuffer が無い jsdom では size:type:name:lastModified にフォールバック（テスト用）。
  */
 async function fingerprintFlyerImage(file: File): Promise<string> {
-  // Blob.arrayBuffer が無い jsdom では size/type/name/lastModified にフォールバック
-  const meta = `${String(file.size)}:${file.type}:${file.name}:${String(file.lastModified)}`;
-  const slice = file.slice(0, 8192);
-  if (typeof slice.arrayBuffer !== "function") {
+  // name/lastModified は再選択で変わるため fingerprint に載せない（PE1）
+  const meta = `${String(file.size)}:${file.type}`;
+  if (typeof file.arrayBuffer !== "function") {
     return meta;
   }
   try {
-    const headBytes = new Uint8Array(await slice.arrayBuffer());
+    const bytes = new Uint8Array(await file.arrayBuffer());
     let rolling = 2166136261;
-    for (const byte of headBytes) {
+    for (const byte of bytes) {
       rolling ^= byte;
       rolling = Math.imul(rolling, 16777619);
     }
     return `${meta}:${(rolling >>> 0).toString(16)}`;
   } catch {
+    // 読取失敗時も name に依存せず size:type のみ（再選択で key が割れない）
     return meta;
   }
+}
+
+/** PE3: 再試行で同一 key を保つエラー（finalize 成功後の 5xx 欠落・processing 等）。 */
+function shouldKeepFlyerSticky(errorCode: string | undefined, status: number): boolean {
+  if (status >= 500) return true;
+  return (
+    errorCode === "generation_in_progress" ||
+    errorCode === "internal_error" ||
+    errorCode === "generation_timeout"
+  );
 }
 
 type StickyFlyerAttempt = {
@@ -198,9 +210,9 @@ export function FlyerWeeklyPanel({
       if (!response.ok || !parsed.success) {
         const err = errorSchema.safeParse(raw);
         const errorCode = err.success ? err.data.error?.code : undefined;
-        // PE1: processing 中（generation_in_progress）は sticky を残し同一 key で再試行する。
-        // 確定失敗（Zod 不正・その他 !ok）だけキーを捨て、失敗行への冪等 hit を避ける。
-        if (errorCode !== "generation_in_progress") {
+        // PE3: 5xx / processing / timeout は sticky 維持。finalize 成功後の応答欠落で
+        // 新 key にすると週次 try を二重消費する。4xx の確定失敗だけ破棄。
+        if (!shouldKeepFlyerSticky(errorCode, response.status)) {
           stickyAttemptRef.current = null;
         }
         setError(

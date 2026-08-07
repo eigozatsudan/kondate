@@ -37,6 +37,45 @@ export function resolveFlyerIdempotencyKey(request: Request, form: FormData): st
 }
 
 /**
+ * PE10: Content-Length 欠落時もストリームで上限超過を prepare 前に拒否する。
+ * CL があるときは従来どおり early reject。無いときは読取中に total を数え、超えたら cancel。
+ */
+export async function readFlyerRequestBodyWithLimit(
+  request: Request,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/u.test(contentLength) || Number(contentLength) > maxBytes) {
+      throw new HttpError(400, "flyer_invalid_image", flyerWeeklyIssueMessages.flyer_invalid_image);
+    }
+  }
+  if (request.body === null) {
+    throw new HttpError(400, "flyer_invalid_image", flyerWeeklyIssueMessages.flyer_invalid_image);
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new HttpError(400, "flyer_invalid_image", flyerWeeklyIssueMessages.flyer_invalid_image);
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+/**
  * POST /api/flyer-weekly
  * multipart/form-data の image フィールドを受理（クライアント safety 禁止）。
  * Idempotency-Key ヘッダまたは form idempotencyKey は必須（欠落は 400・台帳非接触）。
@@ -52,17 +91,18 @@ export default async function flyerWeekly(request: Request): Promise<Response> {
       throw new HttpError(400, "invalid_request", "画像を multipart で送ってください。");
     }
 
-    const contentLength = request.headers.get("content-length");
-    if (
-      contentLength !== null &&
-      (/^\d+$/u.test(contentLength) ? Number(contentLength) > MAX_MULTIPART_BYTES : true)
-    ) {
-      throw new HttpError(400, "flyer_invalid_image", flyerWeeklyIssueMessages.flyer_invalid_image);
-    }
-
+    // PE10: CL 有無に関わらず上限付きで body を読む（欠落時の formData 全読メモリ窓を閉じる）
+    const bodyBytes = await readFlyerRequestBodyWithLimit(request, MAX_MULTIPART_BYTES);
     let form: FormData;
     try {
-      form = await request.formData();
+      // BlobPart は ArrayBuffer 系。SharedArrayBuffer 混在を避けるため slice でコピー
+      const bodyBuffer = bodyBytes.buffer.slice(
+        bodyBytes.byteOffset,
+        bodyBytes.byteOffset + bodyBytes.byteLength,
+      ) as ArrayBuffer;
+      form = await new Response(bodyBuffer, {
+        headers: { "content-type": contentType },
+      }).formData();
     } catch {
       throw new HttpError(400, "flyer_invalid_image", flyerWeeklyIssueMessages.flyer_invalid_image);
     }

@@ -19,6 +19,7 @@ import {
   type EmergencySourceCandidate,
 } from "../../shared/emergency/filter-emergency-menus.js";
 import { buildIdeaPersonalSafetyContext } from "../../shared/emergency/idea-context.js";
+import { getJstDateKey } from "../../shared/time/jst.js";
 import { requireUser } from "./_shared/auth.js";
 import {
   loadEmergencyCurrentSafety,
@@ -230,14 +231,20 @@ function buildFixtureSourceCandidates(): EmergencySourceCandidate[] {
 /**
  * DB 行を community 候補へ。menu_payload は Zod で閉じ、メタは DB 列を正とする。
  * 不正行は捨てて継続（個別失敗で全体 500 にしない）。
+ * PE16: meal_type 列または payload.mealType が要求帯と不一致なら Stage S 前に落とす
+ * （fetch 枠を食い Stage S で捨てるだけの残差を閉じる）。
  */
 export function mapSharedRowsToCommunityCandidates(
   rows: readonly SharedEmergencyListRow[],
+  expectedMealType: (typeof mealTypes)[number],
 ): EmergencySourceCandidate[] {
   const out: EmergencySourceCandidate[] = [];
   for (const row of rows) {
+    if (row.meal_type !== undefined && row.meal_type !== expectedMealType) continue;
     const menuParsed = validatedMenuSchema.safeParse(row.menu_payload);
     if (!menuParsed.success) continue;
+    // payload 側の mealType も要求帯と一致必須（列欠落・改ざんの両経路）
+    if (menuParsed.data.mealType !== expectedMealType) continue;
     const eligibleAgeBands = row.eligible_age_bands.filter(
       (band): band is (typeof ageBands)[number] => ageBandSet.has(band),
     );
@@ -323,7 +330,7 @@ async function resolveMultiSourceEmergencyMenus(input: {
       limit: shareQuota.sharePoolFetchLimit,
       salt: input.salt,
     });
-    communityCandidates = mapSharedRowsToCommunityCandidates(rows);
+    communityCandidates = mapSharedRowsToCommunityCandidates(rows, input.mealType);
   } catch {
     // S2 全体障害は S1 のみ 200（design §10.3）
     return s1;
@@ -541,6 +548,19 @@ async function listActiveSharedRecipesFromAdmin(input: ListActiveSharedEmergency
   return parsed.data;
 }
 
+/**
+ * PE4: 緊急候補の pantry スコア用名前。入力済み期限が todayJst より前の行は除外。
+ * expires_on null はゲートしない（PE15 製品境界と同型）。
+ */
+export function pantryNamesForEmergencyScoring(
+  rows: readonly { name: string; expires_on: string | null }[],
+  todayJst: string,
+): string[] {
+  return rows
+    .filter((row) => row.expires_on === null || row.expires_on >= todayJst)
+    .map((row) => row.name);
+}
+
 const handler = createEmergencyMenusHandler({
   authenticate: requireUser,
   loadContext: (userId, ids) => loadEmergencyCurrentSafety(getSupabaseAdmin(), userId, ids),
@@ -548,13 +568,13 @@ const handler = createEmergencyMenusHandler({
     if (ids.length === 0) return [];
     const { data, error } = await getSupabaseAdmin()
       .from("pantry_items")
-      .select("name")
+      .select("name, expires_on")
       .eq("user_id", userId)
       .in("id", [...ids]);
     // PE8: 1 件不正混入で正当 ID 分まで捨てない。error のみ空。見つからない ID は黙って落とす。
     // 生成型上 data は error===null のとき non-null。
     if (error !== null) return [];
-    return data.map((row) => row.name);
+    return pantryNamesForEmergencyScoring(data, getJstDateKey(new Date()));
   },
   listActiveSharedRecipes: listActiveSharedRecipesFromAdmin,
 });

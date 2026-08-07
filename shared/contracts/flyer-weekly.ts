@@ -70,7 +70,9 @@ export const flyerWeeklyIssueMessages = {
   flyer_weekly_try_limit: "しばらくしてから再度お試しください。",
   flyer_invalid_image: "画像を読み取れませんでした。別の写真でお試しください。",
   flyer_unsupported_media: "対応している画像形式は JPEG / PNG / WebP です。",
-  flyer_invalid_ai_response: "週間献立を正しく確認できませんでした。",
+  // PE11: mark 後失敗は try 非返却（generation と同型）。連発枯渇を平易に開示する。
+  flyer_invalid_ai_response:
+    "週間献立を正しく確認できませんでした。作成の試行回数は使われている場合があります。",
 } as const satisfies Record<FlyerWeeklyIssueCode, string>;
 
 /** Free locked preview 用の固定文言（L10-3） */

@@ -46,7 +46,7 @@ describe("flyerWeeklyIssueMessages", () => {
       "対応している画像形式は JPEG / PNG / WebP です。",
     );
     expect(flyerWeeklyIssueMessages.flyer_invalid_ai_response).toBe(
-      "週間献立を正しく確認できませんでした。",
+      "週間献立を正しく確認できませんでした。作成の試行回数は使われている場合があります。",
     );
     expect(FLYER_LOCKED_PREVIEW_COPY).toBe("チラシ写真から 1 週間の献立は Plus の機能です");
   });

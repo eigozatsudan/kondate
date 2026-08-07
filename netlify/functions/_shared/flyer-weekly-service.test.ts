@@ -142,6 +142,10 @@ describe("flyer-weekly-service", () => {
     expect(result.openRouterCalls).toBe(1);
     expect(openRouterSender).toHaveBeenCalledOnce();
   });
+
+  it("PE11: flyer_invalid_ai_response discloses try may be consumed", () => {
+    expect(flyerWeeklyIssueMessages.flyer_invalid_ai_response).toContain("試行回数");
+  });
 });
 
 describe("assertFlyerPrivacyConsent", () => {
@@ -232,6 +236,8 @@ describe("assertFlyerMenuSafe", () => {
 });
 
 describe("assertFlyerMenuAgainstSafety", () => {
+  // PE2: succeeded 冪等 replay も同じ assert を通す（loadFlyerInspectionSafety 後）。
+  // 成功後に卵アレルギー追加 → 旧「たまご焼き」献立を再生しない核をここで固定。
   it("PE2: rejects catalog allergen via dictionary aliases", () => {
     const base = makeCurrentSafetyContext();
     const safety = makeCurrentSafetyContext({

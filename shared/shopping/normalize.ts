@@ -6,11 +6,40 @@ export function normalizeIngredientName(
   return aliases.get(compact) ?? compact;
 }
 
-/** 単位の全角/半角ゆれを揃え、合算・パントリー照合で同じ単位として扱う（D-I3）。 */
+/**
+ * PE8: 表記ゆれを canonical 単位へ寄せる（契約の unit 自由文は緩めない）。
+ * NFKC+trim 後に和名・略称を ASCII 系へ。未登録はそのまま返す。
+ * 買い物合算・パントリー trusted 差し引きの「グラム」≠「g」不一致を防ぐ。
+ */
+const UNIT_SYNONYMS: Readonly<Record<string, string>> = {
+  g: "g",
+  グラム: "g",
+  ｇ: "g",
+  kg: "kg",
+  キロ: "kg",
+  キログラム: "kg",
+  ｋｇ: "kg",
+  mg: "mg",
+  ミリグラム: "mg",
+  ml: "ml",
+  ミリリットル: "ml",
+  ｍｌ: "ml",
+  cc: "ml",
+  ｃｃ: "ml",
+  l: "l",
+  L: "l",
+  リットル: "l",
+  ｌ: "l",
+};
+
+/** 単位の全角/半角・和名ゆれを揃え、合算・パントリー照合で同じ単位として扱う（D-I3 / PE8）。 */
 export function normalizeUnit(unit: string | null): string | null {
   if (unit === null) return null;
   const compact = unit.normalize("NFKC").trim();
-  return compact === "" ? null : compact;
+  if (compact === "") return null;
+  // 大小ゆれ（G / ML 等）も synonym へ。和名はそのままキー照合。
+  const lower = compact.toLowerCase();
+  return UNIT_SYNONYMS[compact] ?? UNIT_SYNONYMS[lower] ?? compact;
 }
 
 /**

@@ -204,4 +204,125 @@ describe("FlyerWeeklyPanel", () => {
     ];
     expect(keyB).not.toBe(keyA);
   });
+
+  it("PE1: reuses sticky key when same bytes are reselected with different name/lastModified", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "generation_in_progress",
+            message: "別の献立を作成中です。",
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const bytes = "same-image-bytes-for-pe1";
+    const fileA = new File([bytes], "flyer-a.jpg", {
+      type: "image/jpeg",
+      lastModified: 1_700_000_000_000,
+    });
+    fireEvent.change(input!, { target: { files: [fileA] } });
+    await waitFor(() => {
+      expect(screen.getByText("別の献立を作成中です。")).toBeVisible();
+    });
+    const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    // OS 再選択で name/lastModified だけ変わっても同一 content → 同一 key
+    const fileB = new File([bytes], "flyer-b-renamed.jpg", {
+      type: "image/jpeg",
+      lastModified: 1_800_000_000_000,
+    });
+    fireEvent.change(input!, { target: { files: [fileB] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const secondKey = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(secondKey).toBe(firstKey);
+  });
+
+  it("PE1: uses a new key when prefix matches but full content differs", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network"))
+      .mockRejectedValueOnce(new Error("network"));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    // 先頭は同じ・後半だけ違う → 全文 hash で別 fingerprint
+    const prefix = "x".repeat(100);
+    const fileA = new File([`${prefix}-tail-a`], "a.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [fileA] } });
+    await waitFor(() => {
+      expect(screen.getByText("チラシ献立を作成できませんでした。")).toBeVisible();
+    });
+    const keyA = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    const fileB = new File([`${prefix}-tail-b-different`], "a.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [fileB] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const keyB = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(keyB).not.toBe(keyA);
+  });
+
+  it("PE3: keeps sticky Idempotency-Key on structured 500 internal_error", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "internal_error",
+            message: "しばらくしてから再度お試しください。",
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const file = new File(["pe3-bytes"], "flyer.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(screen.getByText("しばらくしてから再度お試しください。")).toBeVisible();
+    });
+    const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const secondKey = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(secondKey).toBe(firstKey);
+  });
 });

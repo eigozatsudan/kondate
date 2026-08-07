@@ -862,6 +862,55 @@ it("keeps idea chrome while draft is background-refetching with cached data", ()
   ).toBeNull();
 });
 
+it("PE9: keeps candidates while candidate query is background-refetching with cache", () => {
+  // 旧: isFetching だけで loading → response null → 候補フラッシュ。
+  // 新: キャッシュがある背景 refetch では intro/候補/開示を維持する。
+  const menu = makeValidatedMenu();
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        mealType: "dinner",
+        mainIngredients: [],
+        targetMode: "idea",
+        targetMemberIds: [],
+        pantrySelections: [],
+      },
+      isSuccess: true,
+      isPending: false,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isPending: false,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: {
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        path: "idea",
+        matchMode: "none",
+        emptyReason: null,
+      } satisfies EmergencyMenusData,
+      isSuccess: true,
+      isPending: false,
+      isFetching: true,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+
+  expect(screen.getByText(/個人向けの固定候補です/u)).toBeVisible();
+  // 見出しと材料に同名が並ぶため getAll
+  expect(screen.getAllByText(menu.dishes[0]!.name, { exact: false }).length).toBeGreaterThan(0);
+  expect(screen.queryByText("候補を確認中…")).toBeNull();
+});
+
 it("fails closed when response path disagrees with expectedPath", () => {
   const menu = makeValidatedMenu();
   renderWithRouter(

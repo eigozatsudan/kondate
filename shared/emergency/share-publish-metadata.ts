@@ -9,7 +9,11 @@
 
 import { ageBands, type AgeBand } from "../contracts/domain.js";
 import type { ValidatedMenu } from "../contracts/generation.js";
-import { foodTextContainsAlias, normalizeFoodText } from "../safety/allergens.js";
+import {
+  collectMenuTextSources,
+  foodTextContainsAlias,
+  normalizeFoodText,
+} from "../safety/allergens.js";
 
 /** 掲載時照合に必要な最小カタログ形（Functions は full alias を渡す） */
 export type SharePublishAllergenCatalog = {
@@ -30,9 +34,10 @@ export type SharePublishMetadata = {
 };
 
 /**
- * 材料名から standardAllergenIds を保守的に収集する。
+ * 献立テキストから standardAllergenIds を保守的に収集する。
+ * PE7: 材料名だけでなく料理名・手順・timeline・adaptations も走査（DiD）。
  * displayName exact（normalize 後）と alias の foodTextContainsAlias ヒットを和集合にする。
- * 並びは catalog 出現順で安定させる。
+ * 並びは catalog 出現順で安定させる。主防衛は二次 validateGeneratedMenu のまま。
  */
 function collectStandardAllergenIds(
   menu: ValidatedMenu,
@@ -55,33 +60,32 @@ function collectStandardAllergenIds(
     catalogIds.has(alias.allergenId),
   );
 
-  for (const dish of menu.dishes) {
-    for (const ingredient of dish.ingredients) {
-      const name = ingredient.name;
-      const normalizedName = normalizeFoodText(name);
-      if (normalizedName === "") continue;
+  // PE7: collectMenuTextSources で steps / dish.name / adaptations まで含む
+  for (const source of collectMenuTextSources(menu)) {
+    const name = source.text;
+    const normalizedName = normalizeFoodText(name);
+    if (normalizedName === "") continue;
 
-      const exact = byNormalizedDisplay.get(normalizedName);
-      if (exact !== undefined) {
-        hits.add(exact);
+    const exact = byNormalizedDisplay.get(normalizedName);
+    if (exact !== undefined) {
+      hits.add(exact);
+    }
+
+    // 部分一致（contains）で alias ヒットを拾う。卵様・加工名の取りこぼしを fail-closed 側へ倒す
+    for (const alias of aliases) {
+      if (
+        foodTextContainsAlias(name, alias.normalizedAlias) ||
+        foodTextContainsAlias(name, alias.alias)
+      ) {
+        hits.add(alias.allergenId);
       }
+    }
 
-      // 部分一致（contains）で alias ヒットを拾う。卵様・加工名の取りこぼしを fail-closed 側へ倒す
-      for (const alias of aliases) {
-        if (
-          foodTextContainsAlias(name, alias.normalizedAlias) ||
-          foodTextContainsAlias(name, alias.alias)
-        ) {
-          hits.add(alias.allergenId);
-        }
-      }
-
-      // aliases 未指定時でも displayName の部分一致は保守的に付与
-      if (aliases.length === 0) {
-        for (const entry of allergenCatalog.catalog) {
-          if (foodTextContainsAlias(name, entry.displayName)) {
-            hits.add(entry.id);
-          }
+    // aliases 未指定時でも displayName の部分一致は保守的に付与
+    if (aliases.length === 0) {
+      for (const entry of allergenCatalog.catalog) {
+        if (foodTextContainsAlias(name, entry.displayName)) {
+          hits.add(entry.id);
         }
       }
     }

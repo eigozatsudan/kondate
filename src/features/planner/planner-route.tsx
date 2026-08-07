@@ -693,6 +693,25 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     ) {
       return;
     }
+    // PE4: 生成と同型。未確認の期限切れ pantry があるうちは緊急へ進めない。
+    // サーバも expires_on でスコア対象から外すが、導線で実物確認を先に求める。
+    // pantryData 定数は後段 early-return の後に置くため、ここでは query.data を直接見る。
+    const pantryRows = pantryQuery.data ?? [];
+    const nowForExpiry = new Date();
+    const hasUnconfirmedExpired = value.pantrySelections.some((selection) => {
+      const item = pantryRows.find((entry) => entry.id === selection.pantryItemId);
+      if (item === undefined) return false;
+      return (
+        isPastEnteredExpiry(item, nowForExpiry) &&
+        !hasCurrentExpiredConfirmation(attempt, item.id, nowForExpiry)
+      );
+    });
+    if (hasUnconfirmedExpired) {
+      setSubmissionError(
+        "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから緊急献立を開いてください。",
+      );
+      return;
+    }
     const operationId = ++emergencyOperationIdRef.current;
     setIsOpeningEmergencyMenus(true);
     setSubmissionError(null);
@@ -722,6 +741,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       }
     })();
   }, [
+    attempt,
     autosave.state,
     flushDraft,
     hasDraftConflict,
@@ -730,6 +750,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     isOpeningSettings,
     isSubmitting,
     navigate,
+    pantryQuery.data,
+    value.pantrySelections,
   ]);
 
   // P5: settings 遷移も privacy/緊急と同様に flush 完了を待ってから navigate する。
