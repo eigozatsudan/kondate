@@ -54,4 +54,23 @@ export default tseslint.config(
       "@typescript-eslint/no-non-null-assertion": "off",
     },
   },
+  {
+    // browser は safety 本体（allergens / fingerprint / hard gate）をバンドルしない。
+    // pure UX 前チェックのみ @shared/safety-pure/* を許可（CLAUDE.md ownership）。
+    files: ["src/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@shared/safety", "@shared/safety/*"],
+              message:
+                "Browser must import pure modules from @shared/safety-pure/* only; @shared/safety/* is Functions-oriented.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );
