@@ -23,7 +23,10 @@ export const AUTH_SESSION_PROBE_TIMEOUT_MS = SIGN_OUT_TIMEOUT_MS;
  */
 export const ACCOUNT_DELETE_CLIENT_TIMEOUT_MS = 58_000;
 
-function mapDeleteError(code: string | undefined): string {
+function mapDeleteError(
+  code: string | undefined,
+  options?: { maybeStillProcessing?: boolean },
+): string {
   if (code === "invalid_request") return "「削除する」と入力してください";
   if (code === "billing_cancel_failed") {
     return "有料プランの解約が完了しませんでした。請求が続く可能性があるため、アカウントは削除していません。時間をおいてもう一度お試しください";
@@ -32,7 +35,30 @@ function mapDeleteError(code: string | undefined): string {
   if (code === "account_delete_after_billing_cancel_failed") {
     return "有料プランの解約は完了した可能性がありますが、アカウント削除に失敗しました。時間をおいてもう一度削除を試してください";
   }
+  // AP3: クライアント締切後もサーバ側削除が完了し得る。失敗確定に見えない文言にする
+  if (options?.maybeStillProcessing === true) {
+    return "削除の結果を確認できませんでした。処理が続いている場合があるため、時間をおいてからログインできるか確認してください。すでに削除済みのときはログインできなくなります";
+  }
   return "削除できませんでした。時間をおいてもう一度お試しください";
+}
+
+/** withTimeout の timeout と AbortSignal abort の両方を締切扱いする */
+function isDeleteAttemptTimeoutError(error: unknown): boolean {
+  if (error instanceof Error && error.message === "timeout") return true;
+  if (
+    typeof DOMException !== "undefined" &&
+    error instanceof DOMException &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  ) {
+    return true;
+  }
+  if (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -180,10 +206,22 @@ export function AccountSettingsSection() {
     setErrorMessage(null);
     // fetch 開始前の requireAccessToken 失敗では session probe を成功扱いにしない
     let requestStarted = false;
+    // AP2/AP3: 締切時に in-flight DELETE を abort し zombie 再試行並行を抑える
+    const abortController = new AbortController();
+    const abortDelete = (): void => {
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+      }
+    };
+    // settle + body を同一壁時計で切る（ヘッダ到達後の body hang = AP1）
+    const deleteDeadlineMs = Date.now() + ACCOUNT_DELETE_CLIENT_TIMEOUT_MS;
+    const remainingDeleteBudgetMs = (): number =>
+      Math.max(1, deleteDeadlineMs - Date.now());
     try {
       const accessToken = await requireAccessToken(getBrowserSupabaseClient());
       requestStarted = true;
-      // AP1: DELETE 本体も timeout。半開き回線で pending / Escape 無効が永久化しないようにする
+      // AP1/AP2: withTimeout で UI を回復しつつ onTimeout で AbortSignal を立て、
+      // プラットフォームが中断可能な in-flight DELETE を止める（generation POST と同型）。
       const response = await withTimeout(
         fetch("/api/account", {
           method: "DELETE",
@@ -193,13 +231,20 @@ export function AccountSettingsSection() {
           },
           body: JSON.stringify({ confirmation }),
           cache: "no-store",
+          signal: abortController.signal,
         }),
-        ACCOUNT_DELETE_CLIENT_TIMEOUT_MS,
+        remainingDeleteBudgetMs(),
+        abortDelete,
       );
       let raw: unknown;
       try {
-        raw = await response.json();
-      } catch {
+        // AP1: body 読取も同一予算。headers-only hang で pending 固着させない
+        raw = await withTimeout(response.json(), remainingDeleteBudgetMs(), abortDelete);
+      } catch (error) {
+        // 締切 / abort は外側で probe + AP3 文言へ
+        if (isDeleteAttemptTimeoutError(error)) {
+          throw error;
+        }
         // AP10: 本文欠落窓。Auth 消滅済みなら成功同等 cleanup
         // AP4 residual-intentional: 非 JSON では専用 code を復元できない。
         // Auth 残存時は汎用文言のみ（cancel 済みの可観測性は JSON 成功枝に限定）。
@@ -227,14 +272,20 @@ export function AccountSettingsSection() {
       }
       // サーバー削除成功後のローカル掃除は best-effort。Auth は消えているので成功遷移する。
       await completeAccountDeletedLocally();
-    } catch {
+    } catch (error) {
       // AP10: ネットワーク切断等。DELETE 到達後に session が消えていれば成功同等
       if (requestStarted && (await isAuthSessionGone())) {
         await completeAccountDeletedLocally();
         return;
       }
-      setErrorMessage(mapDeleteError(undefined));
+      // AP3: timeout/abort は「失敗確定」ではなく処理継続の可能性を開示
+      setErrorMessage(
+        mapDeleteError(undefined, {
+          maybeStillProcessing: requestStarted && isDeleteAttemptTimeoutError(error),
+        }),
+      );
     } finally {
+      abortDelete();
       setPending(false);
     }
   }

@@ -57,4 +57,6 @@ test("deletes the account through settings and zeroes owned rows and auth user",
     timeout: 10_000,
   });
   await expect(page.getByRole("status")).toContainText("利用回数の記録だけは残ることがあります");
+  // AP8: 方針 B（匿名共有 pool 残存）も成功バナーで再掲
+  await expect(page.getByRole("status")).toContainText("匿名一般化済みの緊急候補本文");
 });

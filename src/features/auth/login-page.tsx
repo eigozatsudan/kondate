@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { Navigate, useLocation } from "react-router";
+import { accountDeletionAnonymousShareNote } from "@/features/privacy/privacy-copy";
 import { createAuthGateway, type AuthGateway } from "./auth-gateway";
 import type { MagicLinkState } from "./magic-link-state";
 import { sanitizeLoginReturnPath } from "./auth-flow";
@@ -318,7 +319,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const statusNotice = useMemo(() => {
     const query = new URLSearchParams(location.search);
     if (query.get("accountDeleted") === "1") {
-      return "アカウントを削除しました。不正利用防止のため、利用回数の記録だけは残ることがあります。ご利用ありがとうございました。";
+      // AP8: 方針 B（匿名共有 pool 残存）を成功バナーでも再掲（DangerZone と単一ソース）
+      return `アカウントを削除しました。不正利用防止のため、利用回数の記録だけは残ることがあります。${accountDeletionAnonymousShareNote}ご利用ありがとうございました。`;
     }
     if (query.get("signedOut") === "1") {
       return "ログアウトしました。";

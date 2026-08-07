@@ -140,13 +140,14 @@ type ConsentRow = {
 } | null;
 
 function createConsentFrom(
-  row: ConsentRow = {
+  getRow: () => ConsentRow = () => ({
     consent_version: shareConsentVersion,
     revoked_at: null,
-  },
+  }),
   error: unknown = null,
 ) {
-  const maybeSingle = vi.fn(() => Promise.resolve({ data: row, error }));
+  // 各 maybeSingle 呼び出しで再評価（AP6 mid-flight revoke 用）
+  const maybeSingle = vi.fn(() => Promise.resolve({ data: getRow(), error }));
   const eq = vi.fn(() => ({ maybeSingle }));
   const select = vi.fn(() => ({ eq }));
   const from = vi.fn((table: string) => {
@@ -164,8 +165,11 @@ function createRpcAdmin(
     publish?: (args: RpcArgs) => Promise<{ data: unknown; error: unknown }>;
     /** 当日 AI 残り枠。省略時は 500（cap 未到達） */
     aiBudgetRemaining?: number;
-    /** AP7: 同意行。null で未同意 / revoked 相当 */
-    consentRow?: ConsentRow;
+    /**
+     * AP7/AP6: 同意行。null で未同意 / revoked 相当。
+     * 関数を渡すと毎回評価（Pass 間 revoke シミュレーション）。
+     */
+    consentRow?: ConsentRow | (() => ConsentRow);
     consentError?: unknown;
   } = {},
 ) {
@@ -187,12 +191,17 @@ function createRpcAdmin(
         })),
   );
   const budgetRemaining = handlers.aiBudgetRemaining ?? 500;
-  const consentFrom = createConsentFrom(
-    handlers.consentRow === undefined
-      ? { consent_version: shareConsentVersion, revoked_at: null }
-      : handlers.consentRow,
-    handlers.consentError ?? null,
-  );
+  const resolveConsentRow: () => ConsentRow = (() => {
+    const row = handlers.consentRow;
+    if (typeof row === "function") {
+      return row;
+    }
+    return () =>
+      row === undefined
+        ? { consent_version: shareConsentVersion, revoked_at: null }
+        : row;
+  })();
+  const consentFrom = createConsentFrom(resolveConsentRow, handlers.consentError ?? null);
   const from = consentFrom.from;
   const rpc = vi.fn((name: string, args?: RpcArgs) => {
     const payload = args ?? {};
@@ -392,9 +401,9 @@ describe("processShareGeneralizationJob pipeline", () => {
     });
 
     expect(publish).not.toHaveBeenCalled();
-    // pool insert はしない（consent 再確認の select のみ）
+    // pool insert はしない。consent は claim 直後 + Pass1/2 直前で再読（AP6）
     expect(from).toHaveBeenCalledWith("user_share_consents");
-    expect(from).toHaveBeenCalledTimes(1);
+    expect(from.mock.calls.length).toBeGreaterThanOrEqual(3);
     expect(finish).toHaveBeenCalledTimes(1);
     expect(finish.mock.calls[0]![0]).toMatchObject({
       p_job_id: JOB_ID,
@@ -405,6 +414,79 @@ describe("processShareGeneralizationJob pipeline", () => {
 
     const logs = logLines.map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(logs.some((l) => l.failure_code === "server_gate_failed")).toBe(true);
+  });
+
+  it("AP6: skips before Pass2 when consent revoked after Pass1", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    let consentReads = 0;
+    const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
+    const { admin, finish, publish, from } = createRpcAdmin({
+      // 1: claim 直後 / 2: Pass1 直前 → 有効。3: Pass2 直前 → revoke
+      consentRow: () => {
+        consentReads += 1;
+        if (consentReads >= 3) {
+          return {
+            consent_version: shareConsentVersion,
+            revoked_at: "2026-08-01T12:05:00.000Z",
+          };
+        }
+        return { consent_version: shareConsentVersion, revoked_at: null };
+      },
+    });
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+    });
+
+    // Pass1 のみ。Pass2 は同意失効で OpenRouter に送らない
+    expect(sendPass).toHaveBeenCalledTimes(1);
+    expect(sendPass.mock.calls[0]![0]?.pass).toBe("pass1");
+    expect(publish).not.toHaveBeenCalled();
+    expect(from).toHaveBeenCalledWith("user_share_consents");
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "skipped",
+        p_code: "consent_revoked",
+        // Pass1 成功分のみ
+        p_ai_call_count: 1,
+      }),
+    );
+  });
+
+  it("AP15: skips further Pass when consent row gone mid-flight (Auth delete CASCADE)", async () => {
+    // hard delete 後 consent CASCADE → 行 null。Pass2 以降の provider 開示を止める
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    let consentReads = 0;
+    const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
+    const { admin, finish, publish } = createRpcAdmin({
+      consentRow: () => {
+        consentReads += 1;
+        if (consentReads >= 3) return null;
+        return { consent_version: shareConsentVersion, revoked_at: null };
+      },
+    });
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+    });
+
+    expect(sendPass).toHaveBeenCalledTimes(1);
+    expect(publish).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "skipped",
+        p_code: "consent_revoked",
+        p_ai_call_count: 1,
+      }),
+    );
   });
 
   it("payload menuId !== source menu id", async () => {
@@ -719,6 +801,47 @@ describe("processShareGeneralizationJob pipeline", () => {
               ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
                 ingredientIndex === 0
                   ? { ...ingredient, name: "うちの冷蔵庫の残りもの" }
+                  : ingredient,
+              ),
+            }
+          : dish,
+      ),
+    });
+    const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
+    const { admin, finish, publish } = createRpcAdmin();
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+    });
+
+    expect(sendPass).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "skipped",
+        p_code: "denylist_precheck",
+        p_ai_call_count: 0,
+      }),
+    );
+  });
+
+  it("AP5: denylist_precheck blocks unlisted given-name dish before sendPass", async () => {
+    // 太郎リスト外の「健太の〜」も precheck で OpenRouter に送らない
+    const base = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const source = makeValidatedMenu({
+      menuId: SOURCE_MENU_ID,
+      dishes: base.dishes.map((dish, index) =>
+        index === 0
+          ? {
+              ...dish,
+              name: "健太の特製ハンバーグ",
+              ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+                ingredientIndex === 0
+                  ? { ...ingredient, name: "健太の特製だれ" }
                   : ingredient,
               ),
             }

@@ -305,11 +305,17 @@ export async function processShareGeneralizationJob(
     const sourceMenuId = job.source_menu_id;
     const contributorUserId = job.contributor_user_id;
 
-    // --- 2b. AP7: claim 直後の同意再確認（revoke 後の in-flight AI を止める） ---
+    // --- 2b. 同意再確認（claim 直後 + 各 Pass 直前） ---
     // private.share_consent_is_valid は service_role から直呼び不可のため、
     // 公開表 user_share_consents を admin で読み isCurrentShareConsent と同判定する。
     // publish 前の TOCTOU 再確認は RPC 側に残す（無断掲載防衛は intact）。
-    {
+    //
+    // AP7: claim 直後で revoke 後 enqueue 済み job の AI を止める。
+    // AP6: Pass1/Pass2 直前でも再読し、mid-flight revoke 後の追加 OpenRouter 送信を止める。
+    // AP15: Auth hard delete 後は consent CASCADE で行消滅 → 同経路で skip（running job の
+    // メモリ上 Pass 継続による provider 開示を DiD で縮める。Pass 途中の in-flight 1 本は
+    // OpenRouter 側で止められない residual）。
+    const readShareConsentValid = async (): Promise<boolean> => {
       const consentQuery = await deps.admin
         .from("user_share_consents")
         .select("consent_version, revoked_at")
@@ -319,17 +325,19 @@ export async function processShareGeneralizationJob(
         throw new Error("share_consent_recheck_failed");
       }
       const row = consentQuery.data;
-      const consentValid =
+      return (
         row !== null &&
         typeof row.consent_version === "string" &&
         isCurrentShareConsent({
           consent_version: row.consent_version,
           revoked_at: row.revoked_at ?? null,
-        });
-      if (!consentValid) {
-        await finish("skipped", "consent_revoked");
-        return;
-      }
+        })
+      );
+    };
+
+    if (!(await readShareConsentValid())) {
+      await finish("skipped", "consent_revoked");
+      return;
     }
 
     const sourceMenu = await deps.loadSourceMenu({
@@ -384,6 +392,7 @@ export async function processShareGeneralizationJob(
 
     // --- 4. Pass1 → Pass2（AI 台帳は injectable。generate 予約には非接触） ---
     // publish はゲート後に実 RPC するため、ここでは no-op でメニューだけ確定させる。
+    // beforeEachPass: 各 sendPass 直前に同意を再読（AP6/AP15）
     const aiResult = await runShareGeneralizeAiPipeline({
       menu: canonical.menu,
       lockedGraph,
@@ -394,12 +403,23 @@ export async function processShareGeneralizationJob(
       publish: async () => {
         // Task 7d: 実 publish は gate + metadata の後
       },
+      beforeEachPass: async () => {
+        if (!(await readShareConsentValid())) {
+          return { skip: "consent_revoked" };
+        }
+        return "continue";
+      },
     });
     aiCallCount = aiResult.aiCallCount;
     pass1Model = aiResult.pass1Model;
     pass2Model = aiResult.pass2Model;
 
     if (!aiResult.ok) {
+      // skip（同意失効）と failure（OpenRouter 等）を分ける
+      if (aiResult.skipped === true) {
+        await finish("skipped", aiResult.code);
+        return;
+      }
       await finish("failed", aiResult.code);
       return;
     }

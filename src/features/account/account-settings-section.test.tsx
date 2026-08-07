@@ -523,8 +523,46 @@ describe("AccountSettingsSection", () => {
       expect(screen.getByRole("button", { name: "削除しています" })).toBeDisabled();
       await vi.advanceTimersByTimeAsync(ACCOUNT_DELETE_CLIENT_TIMEOUT_MS + 50);
 
+      // AP3: timeout は処理継続の可能性を開示（失敗確定文言にしない）
       expect(
-        await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
+        await screen.findByText(/削除の結果を確認できませんでした。処理が続いている場合がある/),
+      ).toBeVisible();
+      expect(screen.getByRole("button", { name: "やめる" })).not.toBeDisabled();
+      expect(locationReplaceMock).not.toHaveBeenCalled();
+      // AP2: abortable fetch（signal 付き）
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/account",
+        expect.objectContaining({
+          method: "DELETE",
+          signal: expect.any(AbortSignal) as AbortSignal,
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP1: headers-only body hang is timed out so pending clears", async () => {
+    // headers は返るが body が never-settle → json() も同一予算で切る
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: () => new Promise(() => undefined),
+      });
+
+      render(<AccountSettingsSection />);
+      await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+      await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+      await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+      await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+      expect(screen.getByRole("button", { name: "削除しています" })).toBeDisabled();
+      await vi.advanceTimersByTimeAsync(ACCOUNT_DELETE_CLIENT_TIMEOUT_MS + 50);
+
+      expect(
+        await screen.findByText(/削除の結果を確認できませんでした。処理が続いている場合がある/),
       ).toBeVisible();
       expect(screen.getByRole("button", { name: "やめる" })).not.toBeDisabled();
       expect(locationReplaceMock).not.toHaveBeenCalled();

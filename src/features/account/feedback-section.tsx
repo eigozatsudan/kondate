@@ -131,10 +131,19 @@ export function FeedbackSection() {
 
     // fetch 到達後の欠落だけを ambiguous 扱いする（token 取得前失敗は未到達）
     let requestStarted = false;
+    // AP9: 締切時に in-flight POST を abort し zombie 二重 insert 窓を縮める
+    const abortController = new AbortController();
+    const abortPost = (): void => {
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+      }
+    };
+    const postDeadlineMs = Date.now() + FEEDBACK_POST_CLIENT_TIMEOUT_MS;
+    const remainingPostBudgetMs = (): number => Math.max(1, postDeadlineMs - Date.now());
     try {
       const accessToken = await requireAccessToken(getBrowserSupabaseClient());
       requestStarted = true;
-      // AP6: never-settle で pending / 閉じる不能にしない
+      // AP6/AP9: settle + body を同一予算。withTimeout は UI 回復、onTimeout で AbortSignal
       const response = await withTimeout(
         fetch("/api/feedback", {
           method: "POST",
@@ -144,13 +153,27 @@ export function FeedbackSection() {
           },
           body: JSON.stringify(parsed.data),
           cache: "no-store",
+          signal: abortController.signal,
         }),
-        FEEDBACK_POST_CLIENT_TIMEOUT_MS,
+        remainingPostBudgetMs(),
+        abortPost,
       );
       let raw: unknown;
       try {
-        raw = await response.json();
-      } catch {
+        // AP9: headers-only hang で pending / 閉じる不能にしない
+        raw = await withTimeout(response.json(), remainingPostBudgetMs(), abortPost);
+      } catch (error) {
+        // 締切 / abort は外側 catch で ambiguous 扱い
+        if (
+          (error instanceof Error && error.message === "timeout") ||
+          (typeof DOMException !== "undefined" &&
+            error instanceof DOMException &&
+            (error.name === "AbortError" || error.name === "TimeoutError")) ||
+          (error instanceof Error &&
+            (error.name === "AbortError" || error.name === "TimeoutError"))
+        ) {
+          throw error;
+        }
         // 到達後の非 JSON: 二重 insert を避けるため同一本文の再送を抑止
         rememberAmbiguousFingerprint(fingerprint);
         setErrorMessage(
@@ -188,6 +211,7 @@ export function FeedbackSection() {
         setErrorMessage("送信できませんでした。時間をおいてもう一度お試しください");
       }
     } finally {
+      abortPost();
       setPending(false);
       submitInFlightRef.current = false;
     }

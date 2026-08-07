@@ -5,7 +5,7 @@
  */
 
 import type { ValidatedMenu } from "../../../shared/contracts/generation.js";
-import type { ShareFailureCode } from "../../../shared/contracts/share-job.js";
+import type { ShareFailureCode, ShareSkipReason } from "../../../shared/contracts/share-job.js";
 import { OpenRouterCallError } from "./openrouter.js";
 import type {
   ShareFreeTextPatch,
@@ -34,6 +34,12 @@ export type ShareAiCallLedger = (delta: number) => void | Promise<void>;
 /** 成功時のみ呼ぶ publish フック（7c はモック、7d で実 RPC） */
 export type SharePublishHook = (menu: ValidatedMenu) => void | Promise<void>;
 
+/**
+ * AP6/AP15: 各 sendPass 直前のガード結果。
+ * continue で OpenRouter へ進む。skip は AI を呼ばず pipeline を skip 終端する。
+ */
+export type ShareBeforeEachPassResult = "continue" | { skip: ShareSkipReason };
+
 export type RunShareGeneralizeAiPipelineInput = {
   /** Pass 前のカノニカルメニュー（数量ロックの基準） */
   menu: ValidatedMenu;
@@ -47,6 +53,11 @@ export type RunShareGeneralizeAiPipelineInput = {
   recordAiCallLedger: ShareAiCallLedger;
   /** Pass1+Pass2 成功時のみ。失敗経路では呼ばない */
   publish: SharePublishHook;
+  /**
+   * AP6/AP15: 各 sendPass 直前に呼ぶ（同意再確認・削除後 contributor 消滅など）。
+   * 省略時はガード無し（単体 pipeline テスト向け）。
+   */
+  beforeEachPass?: () => Promise<ShareBeforeEachPassResult>;
 };
 
 export type ShareGeneralizeAiPipelineResult =
@@ -59,7 +70,18 @@ export type ShareGeneralizeAiPipelineResult =
     }
   | {
       ok: false;
+      /** 失敗（OpenRouter / merge）。publish しない */
+      skipped?: false;
       code: ShareFailureCode;
+      aiCallCount: number;
+      pass1Model: string | null;
+      pass2Model: string | null;
+    }
+  | {
+      ok: false;
+      /** 同意失効など。AI 未呼出の Pass は台帳に載せない */
+      skipped: true;
+      code: ShareSkipReason;
       aiCallCount: number;
       pass1Model: string | null;
       pass2Model: string | null;
@@ -230,6 +252,7 @@ async function recordOneAiCall(
 /**
  * Pass1 → merge+restore → Pass2 → merge+restore → publish（成功時のみ）。
  * いずれの失敗でも publish しない。AI 試行は台帳へ 1 ずつ計上。
+ * beforeEachPass が skip を返した Pass は OpenRouter を呼ばない（AP6/AP15）。
  */
 export async function runShareGeneralizeAiPipeline(
   input: RunShareGeneralizeAiPipelineInput,
@@ -240,7 +263,25 @@ export async function runShareGeneralizeAiPipeline(
   let pass2Model: string | null = null;
   let currentMenu = input.menu;
 
+  const runBeforeEachPass = async (): Promise<ShareGeneralizeAiPipelineResult | null> => {
+    if (input.beforeEachPass === undefined) return null;
+    const gate = await input.beforeEachPass();
+    if (gate === "continue") return null;
+    return {
+      ok: false,
+      skipped: true,
+      code: gate.skip,
+      aiCallCount: ai.count,
+      pass1Model,
+      pass2Model,
+    };
+  };
+
   // --- Pass1 ---
+  {
+    const skipped = await runBeforeEachPass();
+    if (skipped !== null) return skipped;
+  }
   try {
     const pass1 = await input.sendPass({ pass: "pass1", menu: currentMenu });
     await recordOneAiCall(input.recordAiCallLedger, ai);
@@ -271,6 +312,10 @@ export async function runShareGeneralizeAiPipeline(
   }
 
   // --- Pass2 ---
+  {
+    const skipped = await runBeforeEachPass();
+    if (skipped !== null) return skipped;
+  }
   try {
     const pass2 = await input.sendPass({ pass: "pass2", menu: currentMenu });
     await recordOneAiCall(input.recordAiCallLedger, ai);

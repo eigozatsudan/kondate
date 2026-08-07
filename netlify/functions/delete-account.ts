@@ -5,6 +5,7 @@ import {
   deleteAccountRequestSchema,
   type DeleteAccountResult,
 } from "../../shared/contracts/account.js";
+import { FUNCTION_TOTAL_BUDGET_MS } from "../../shared/contracts/function-budget.js";
 import { requireUser } from "./_shared/auth.js";
 import { getStripeClientFromEnv } from "./_shared/billing-stripe.js";
 import { getServerEnv } from "./_shared/env.js";
@@ -44,6 +45,20 @@ export type CancelBillingResult = {
  * 病理的 has_more 永続で Function 壁時計まで回らないよう上限を置く。
  */
 export const MAX_STRIPE_SUBSCRIPTION_LIST_PAGES = 10;
+
+/**
+ * AP13: billing cancel（list + cancel ループ）の壁時計上限。
+ * Function 総予算と同一（platform 60s の内側）。超過時は Auth 削除前に fail-closed。
+ * リテラルミラー禁止 — function-budget 正本から re-export。
+ */
+export const ACCOUNT_DELETE_BILLING_CANCEL_BUDGET_MS = FUNCTION_TOTAL_BUDGET_MS;
+
+/** list/cancel の各ステップ前に壁時計を検査する（AP13） */
+function assertWithinBillingCancelBudget(startedAt: number): void {
+  if (Date.now() - startedAt >= ACCOUNT_DELETE_BILLING_CANCEL_BUDGET_MS) {
+    throw new Error("stripe_billing_cancel_budget_exceeded");
+  }
+}
 
 export type DeleteAccountDeps = {
   authenticate: typeof requireUser;
@@ -208,6 +223,8 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
         });
         throw new Error("stripe_subscription_list_page_limit");
       }
+      // AP13: ページ取得前に壁時計。遅延 list で Auth 削除前に platform を食わない
+      assertWithinBillingCancelBudget(startedAt);
       const listed = await stripe.subscriptions.list({
         customer: customerId,
         status: "all",
@@ -222,6 +239,16 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
     }
   } catch (error) {
     if (error instanceof Error && error.message === "stripe_subscription_list_page_limit") {
+      throw error;
+    }
+    if (error instanceof Error && error.message === "stripe_billing_cancel_budget_exceeded") {
+      log({
+        level: "warn",
+        requestId,
+        code: "billing_cancel_failed",
+        durationMs: Date.now() - startedAt,
+        stripeCustomerId: customerId,
+      });
       throw error;
     }
     log({
@@ -241,9 +268,23 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
       continue;
     }
     try {
+      // AP13: cancel 前に壁時計。遅延 multi-sub cancel で Auth 削除を失わない
+      assertWithinBillingCancelBudget(startedAt);
       await stripe.subscriptions.cancel(sub.id);
       cancelledLiveSubscription = true;
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message === "stripe_billing_cancel_budget_exceeded") {
+        // 予算超過は即 fail-closed（残り cancel を続けて壁時計を食い潰さない）
+        log({
+          level: "warn",
+          requestId,
+          code: "billing_cancel_failed",
+          durationMs: Date.now() - startedAt,
+          stripeCustomerId: customerId,
+          stripeSubscriptionId: sub.id,
+        });
+        throw error;
+      }
       // 部分失敗でも残りを試行。いずれか失敗したら最終的に throw（Auth 削除しない）
       cancelFailed = true;
       log({

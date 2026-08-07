@@ -35,6 +35,7 @@ const {
   createDeleteAccountHandler,
   cancelAllLiveSubscriptionsForUser,
   MAX_STRIPE_SUBSCRIPTION_LIST_PAGES,
+  ACCOUNT_DELETE_BILLING_CANCEL_BUDGET_MS,
   default: productionHandler,
 } = await import("../delete-account.js");
 
@@ -366,6 +367,72 @@ describe("cancelAllLiveSubscriptionsForUser", () => {
     expect(listMock).toHaveBeenCalledTimes(MAX_STRIPE_SUBSCRIPTION_LIST_PAGES);
     expect(cancelMock).not.toHaveBeenCalled();
     expect(events.some((e) => e.code === "billing_cancel_failed")).toBe(true);
+  });
+
+  it("AP13: throws when cancel loop exceeds wall-clock budget without Auth delete path", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    listMock.mockResolvedValue({
+      data: [
+        { id: SUB_ACTIVE, status: "active" },
+        { id: SUB_TRIALING, status: "trialing" },
+      ],
+      has_more: false,
+    });
+    // startedAt を予算超過済みにして cancel 前 assert で fail-closed
+    const startedAt = Date.now() - ACCOUNT_DELETE_BILLING_CANCEL_BUDGET_MS - 1;
+
+    await expect(
+      cancelAllLiveSubscriptionsForUser({
+        userId: USER_ID,
+        admin: { rpc },
+        stripe: stripe as never,
+        log,
+        requestId: "req-budget",
+        startedAt,
+      }),
+    ).rejects.toThrow(/stripe_billing_cancel_budget_exceeded/u);
+
+    // list 前でも予算超過なら list 自体も走らない（startedAt 超過）
+    expect(listMock).not.toHaveBeenCalled();
+    expect(cancelMock).not.toHaveBeenCalled();
+    expect(events.some((e) => e.code === "billing_cancel_failed")).toBe(true);
+  });
+
+  it("AP13: fails closed mid-cancel when budget elapses after first cancel", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    listMock.mockResolvedValue({
+      data: [
+        { id: SUB_ACTIVE, status: "active" },
+        { id: SUB_TRIALING, status: "trialing" },
+      ],
+      has_more: false,
+    });
+    // list 中は予算内、1 件 cancel 後に超過させる
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      cancelMock.mockImplementation(() => {
+        now = ACCOUNT_DELETE_BILLING_CANCEL_BUDGET_MS + 5_000;
+        return Promise.resolve({ id: SUB_ACTIVE, status: "canceled" });
+      });
+
+      await expect(
+        cancelAllLiveSubscriptionsForUser({
+          userId: USER_ID,
+          admin: { rpc },
+          stripe: stripe as never,
+          log,
+          requestId: "req-budget-mid",
+          startedAt: 0,
+        }),
+      ).rejects.toThrow(/stripe_billing_cancel_budget_exceeded/u);
+
+      // 2 件目 cancel 前に予算超過で停止
+      expect(cancelMock).toHaveBeenCalledTimes(1);
+      expect(events.some((e) => e.code === "billing_cancel_failed")).toBe(true);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("cancels every live subscription when customer has multiple", async () => {

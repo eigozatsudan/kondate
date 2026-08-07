@@ -206,6 +206,41 @@ describe("FeedbackSection", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
       expect(screen.getByRole("button", { name: "閉じる" })).not.toBeDisabled();
       expect(screen.getByRole("button", { name: "送信する" })).not.toBeDisabled();
+      // AP9: abortable POST
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/feedback",
+        expect.objectContaining({
+          method: "POST",
+          signal: expect.any(AbortSignal) as AbortSignal,
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP9: headers-only body hang is timed out so pending clears", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: () => new Promise(() => undefined),
+      });
+      render(<FeedbackSection />);
+      await expandFeedback(user);
+      await user.type(
+        screen.getByLabelText("内容（10〜2000文字）"),
+        "本文が返らないとき閉じられるようにするフィードバックです。",
+      );
+      await user.click(screen.getByRole("button", { name: "送信する" }));
+      expect(screen.getByRole("button", { name: "送信しています…" })).toBeDisabled();
+
+      await vi.advanceTimersByTimeAsync(FEEDBACK_POST_CLIENT_TIMEOUT_MS + 50);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+      expect(screen.getByRole("button", { name: "閉じる" })).not.toBeDisabled();
+      expect(sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

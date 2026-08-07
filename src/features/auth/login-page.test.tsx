@@ -193,6 +193,8 @@ it("does not rehydrate sent UI when accountDeleted notice must show", () => {
   );
 
   expect(screen.getByRole("status")).toHaveTextContent("アカウントを削除しました");
+  // AP8: 方針 B（匿名共有残存）を成功バナーでも再掲
+  expect(screen.getByRole("status")).toHaveTextContent(/匿名一般化済みの緊急候補本文/);
   expect(screen.queryByText("メールを確認してください")).not.toBeInTheDocument();
   sessionStorage.removeItem("kondate.auth.magicSentUi");
 });

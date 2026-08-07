@@ -63,6 +63,43 @@ function makeSender(
 }
 
 describe("runShareGeneralizeAiPipeline", () => {
+  it("AP6: beforeEachPass skip before Pass2 does not call sendPass again", async () => {
+    const menu = makeValidatedMenu();
+    const ledger = vi.fn();
+    const publish = vi.fn();
+    let passCount = 0;
+    const sendPass = makeSender((pass, current) => {
+      passCount += 1;
+      return {
+        modelId: pass === "pass1" ? "model-p1" : "model-p2",
+        patch: identityPatch(current),
+      };
+    });
+    let guards = 0;
+    const result = await runShareGeneralizeAiPipeline({
+      menu,
+      sendPass,
+      recordAiCallLedger: ledger,
+      publish,
+      beforeEachPass: async () => {
+        guards += 1;
+        // Pass1 は continue、Pass2 直前で skip
+        if (guards >= 2) return { skip: "consent_revoked" };
+        return "continue";
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      skipped: true,
+      code: "consent_revoked",
+      aiCallCount: 1,
+    });
+    expect(passCount).toBe(1);
+    expect(publish).not.toHaveBeenCalled();
+    expect(ledger).toHaveBeenCalledTimes(1);
+  });
+
   it("records two AI call ledger increments on Pass1+Pass2 success", async () => {
     const menu = makeValidatedMenu();
     const ledger = vi.fn();
