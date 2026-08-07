@@ -119,6 +119,30 @@ const requestPayloadSchema = z
   .strip();
 export type QuotaRequestRecord = z.infer<typeof requestPayloadSchema>;
 
+/**
+ * reserve / finalize 系 RPC は private.ai_request_payload のみ返す経路があり、
+ * user_daily_limit が欠ける（status RPC は p_user_limit を merge する）。
+ * S11 の必須化に合わせ、呼び出し側が送信した plan limit で欠落だけを埋める。
+ * 既に返っている値は上書きしない（status 経路の fail-closed テストも壊さない）。
+ */
+function parseRequestPayload(raw: unknown, fillUserDailyLimit?: 3 | 10): QuotaRequestRecord {
+  if (
+    fillUserDailyLimit !== undefined &&
+    raw !== null &&
+    typeof raw === "object" &&
+    !Array.isArray(raw)
+  ) {
+    const record = raw as Record<string, unknown>;
+    if (record.user_daily_limit === undefined) {
+      return requestPayloadSchema.parse({
+        ...record,
+        user_daily_limit: fillUserDailyLimit,
+      });
+    }
+  }
+  return requestPayloadSchema.parse(raw);
+}
+
 const repairReservationSchema = z
   .object({
     reserved: z.boolean(),
@@ -382,12 +406,14 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
         if (command.qualityMode) {
           const planLimits = await resolvePlanLimits();
           if (planLimits.quotaPlan !== "plus") {
-            const terminal = requestPayloadSchema.parse(
+            const terminal = parseRequestPayload(
               await rpc("finalize_ai_generation_failure", {
                 p_request_id: lookup.requestId,
                 p_failure_code: "quality_mode_requires_plus",
                 p_retry_at: null,
               }),
+              // 降格後は Free 投影。欠落時のみ埋める（S11: 未知 plan への fail-open ではない）
+              3,
             );
             // processing→failed（または既に同 code failed）: 初回 Free quality と同 UX の 403
             if (
@@ -404,16 +430,34 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
             return terminal;
           }
           // plus 継続: 同じ planLimits を reserve に渡し、assert / limits の再読取を避ける
-          return requestPayloadSchema.parse(
+          {
+            const limit = planLimits.limits.successPerDay;
+            if (limit !== 3 && limit !== 10) {
+              throw new HttpError(500, "internal_error", "生成の受付状態を更新できませんでした。");
+            }
+            return parseRequestPayload(
+              await rpc(
+                "reserve_ai_generation",
+                await buildReserveArgs(command, lookup.integrity, planLimits),
+              ),
+              limit,
+            );
+          }
+        }
+        {
+          const planLimits = await resolvePlanLimits();
+          const limit = planLimits.limits.successPerDay;
+          if (limit !== 3 && limit !== 10) {
+            throw new HttpError(500, "internal_error", "生成の受付状態を更新できませんでした。");
+          }
+          return parseRequestPayload(
             await rpc(
               "reserve_ai_generation",
               await buildReserveArgs(command, lookup.integrity, planLimits),
             ),
+            limit,
           );
         }
-        return requestPayloadSchema.parse(
-          await rpc("reserve_ai_generation", await buildReserveArgs(command, lookup.integrity)),
-        );
       } catch (error: unknown) {
         // lookup hit 後に row が消えた場合は miss へ戻さず fail-closed
         if (error instanceof HttpError && error.code === "quota_transition_failed") {
@@ -424,9 +468,13 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
     },
 
     async reserveNew(command, integrity) {
-      return requestPayloadSchema.parse(
-        await rpc("reserve_ai_generation", await buildReserveArgs(command, integrity)),
-      );
+      const planLimits = await resolvePlanLimits();
+      const args = await buildReserveArgs(command, integrity, planLimits);
+      const limit = planLimits.limits.successPerDay;
+      if (limit !== 3 && limit !== 10) {
+        throw new HttpError(500, "internal_error", "生成の受付状態を更新できませんでした。");
+      }
+      return parseRequestPayload(await rpc("reserve_ai_generation", args), limit);
     },
   };
 
@@ -437,7 +485,12 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
       // sent / code は短期窓拒否時に付加される。通常成功は sent=true。
       // extras 解析失敗時は status!==processing なら fail-closed で sent=false。
       const raw = await rpc("mark_ai_global_sent", { p_request_id: requestId });
-      const record = requestPayloadSchema.parse(raw);
+      const { limits } = await resolvePlanLimits();
+      const limit = limits.successPerDay;
+      if (limit !== 3 && limit !== 10) {
+        throw new HttpError(500, "internal_error", "生成の受付状態を更新できませんでした。");
+      }
+      const record = parseRequestPayload(raw, limit);
       const extras = z
         .object({
           sent: z.boolean().optional(),
@@ -473,23 +526,35 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
       });
     },
     async fail(requestId: string, code: string, retryAt: string | null) {
-      return requestPayloadSchema.parse(
+      const { limits } = await resolvePlanLimits();
+      const limit = limits.successPerDay;
+      if (limit !== 3 && limit !== 10) {
+        throw new HttpError(500, "internal_error", "生成の受付状態を更新できませんでした。");
+      }
+      return parseRequestPayload(
         await rpc("finalize_ai_generation_failure", {
           p_request_id: requestId,
           p_failure_code: code,
           p_retry_at: retryAt,
         }),
+        limit,
       );
     },
     async conflict(requestId: string, conflicts: unknown[]) {
       // 永続化境界へは閉じた code 配列だけを渡し、message/conditionRefs は載せない
       const parsed = conflictPayloadSchema.parse(conflicts);
       const codes = [...new Set(parsed.map((conflict) => conflict.code))];
-      return requestPayloadSchema.parse(
+      const { limits } = await resolvePlanLimits();
+      const limit = limits.successPerDay;
+      if (limit !== 3 && limit !== 10) {
+        throw new HttpError(500, "internal_error", "生成の受付状態を更新できませんでした。");
+      }
+      return parseRequestPayload(
         await rpc("finalize_ai_generation_conflict", {
           p_request_id: requestId,
           p_conflict_codes: codes,
         }),
+        limit,
       );
     },
     async succeed(input: GenerationSuccessInput, options: GenerationSucceedOptions) {
@@ -500,7 +565,12 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
         throw new GenerationFinalizeTimeoutError();
       }
       // idea は null version / 空 target をそのまま渡し、サム値へ置換しない
-      return requestPayloadSchema.parse(
+      const { limits } = await resolvePlanLimits();
+      const limit = limits.successPerDay;
+      if (limit !== 3 && limit !== 10) {
+        throw new HttpError(500, "internal_error", "生成の受付状態を更新できませんでした。");
+      }
+      return parseRequestPayload(
         await rpc("finalize_ai_generation_success_deadline_bounded", {
           p_timeout_ms: timeoutMs,
           p_request_id: input.requestId,
@@ -516,6 +586,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
           p_change_reason: input.changeReason,
           p_change_reason_custom: input.changeReasonCustom,
         }),
+        limit,
       );
     },
     async status(idempotencyKey: string) {
