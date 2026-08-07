@@ -125,15 +125,23 @@ export function WelcomeRoutePage() {
   }, []);
 
   /**
+   * ref の再読は関数経由にし、制御フロー狭め（always-true）で race ガードが消えないようにする。
+   * softInvalidate / await のあとも同じ判定をやり直す（L1/L2）。
+   */
+  function stillActive(generation: number): boolean {
+    return mountedRef.current && startGenerationRef.current === generation + 1;
+  }
+
+  /**
    * L1: timeout でちょうど 1 回だけ無効化された flight の遅延確定を reconcile。
    * unmount（mounted=false）や新 flight（ref !== generation+1）では no-op。
    */
   function tryReconcileZombieWrite(generation: number, status: OnboardingStatus): boolean {
-    if (!mountedRef.current || userId === undefined) return false;
-    if (startGenerationRef.current !== generation + 1) return false;
+    if (!stillActive(generation) || userId === undefined) return false;
     if (status === "not_started") return false;
     softInvalidateProfile(queryClient, userId);
-    if (!mountedRef.current || startGenerationRef.current !== generation + 1) return false;
+    // userId は上で narrowed。再判定は generation/mounted のみ（softInvalidate は sync）。
+    if (!stillActive(generation)) return false;
     navigateAfterWelcomeStart(status, navigate);
     return true;
   }
@@ -143,10 +151,7 @@ export function WelcomeRoutePage() {
    * status が進んでいれば失敗表示せず遷移。true hang のみ timeout を再 throw。
    */
   async function reconcileAfterStartTimeout(generation: number): Promise<void> {
-    if (!mountedRef.current || userId === undefined) {
-      throw new Error("timeout");
-    }
-    if (startGenerationRef.current !== generation + 1) {
+    if (!stillActive(generation) || userId === undefined) {
       throw new Error("timeout");
     }
     try {
@@ -154,14 +159,14 @@ export function WelcomeRoutePage() {
         getProfile(getBrowserSupabaseClient(), userId),
         WELCOME_START_RECONCILE_GRACE_MS,
       );
-      if (!mountedRef.current || startGenerationRef.current !== generation + 1) {
+      if (!stillActive(generation)) {
         throw new Error("timeout");
       }
       if (latest.onboarding_status === "not_started") {
         throw new Error("timeout");
       }
       softInvalidateProfile(queryClient, userId);
-      if (!mountedRef.current || startGenerationRef.current !== generation + 1) {
+      if (!stillActive(generation)) {
         return;
       }
       navigateAfterWelcomeStart(latest.onboarding_status, navigate);

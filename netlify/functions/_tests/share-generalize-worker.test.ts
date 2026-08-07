@@ -197,9 +197,7 @@ function createRpcAdmin(
       return row;
     }
     return () =>
-      row === undefined
-        ? { consent_version: shareConsentVersion, revoked_at: null }
-        : row;
+      row === undefined ? { consent_version: shareConsentVersion, revoked_at: null } : row;
   })();
   const consentFrom = createConsentFrom(resolveConsentRow, handlers.consentError ?? null);
   const from = consentFrom.from;
@@ -444,7 +442,7 @@ describe("processShareGeneralizationJob pipeline", () => {
 
     // Pass1 のみ。Pass2 は同意失効で OpenRouter に送らない
     expect(sendPass).toHaveBeenCalledTimes(1);
-    expect(sendPass.mock.calls[0]![0]?.pass).toBe("pass1");
+    expect(sendPass.mock.calls[0]![0].pass).toBe("pass1");
     expect(publish).not.toHaveBeenCalled();
     expect(from).toHaveBeenCalledWith("user_share_consents");
     expect(finish).toHaveBeenCalledWith(
@@ -840,9 +838,7 @@ describe("processShareGeneralizationJob pipeline", () => {
               ...dish,
               name: "健太の特製ハンバーグ",
               ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
-                ingredientIndex === 0
-                  ? { ...ingredient, name: "健太の特製だれ" }
-                  : ingredient,
+                ingredientIndex === 0 ? { ...ingredient, name: "健太の特製だれ" } : ingredient,
               ),
             }
           : dish,

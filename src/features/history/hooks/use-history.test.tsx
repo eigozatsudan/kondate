@@ -2,10 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  MENU_ACCEPT_BROADCAST_CHANNEL,
-  useAcceptMenuVersion,
-} from "./use-history";
+import { MENU_ACCEPT_BROADCAST_CHANNEL, useAcceptMenuVersion } from "./use-history";
 
 const acceptMenuVersionMock = vi.hoisted(() => vi.fn());
 
@@ -135,7 +132,7 @@ describe("useAcceptMenuVersion", () => {
       wrapper: wrapperFor(client),
     });
 
-    await act(async () => {
+    act(() => {
       const publisher = new FakeBroadcastChannel(MENU_ACCEPT_BROADCAST_CHANNEL);
       publisher.postMessage({ userId: USER_ID, menuId: MENU_B, at: Date.now() });
       publisher.close();

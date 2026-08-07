@@ -16,6 +16,13 @@ const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
 const channelMock = vi.hoisted(() => vi.fn());
 const listPantryItemsMock = vi.hoisted(() => vi.fn());
 
+function emergencyMenusQueryCallEnabled(enabled: boolean): boolean {
+  return useQueryMock.mock.calls.some((call) => {
+    const options = call[0] as { queryKey?: readonly unknown[]; enabled?: boolean } | undefined;
+    return options?.queryKey?.[0] === "emergency-menus" && options.enabled === enabled;
+  });
+}
+
 vi.mock("@tanstack/react-query", () => ({ useQuery: useQueryMock }));
 vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: "72000000-0000-4000-8000-000000000001" } } }),
@@ -1395,11 +1402,7 @@ it("PE8: direct /emergency-menus blocks candidate query for unconfirmed past-dat
   });
   expect(screen.getByRole("alertdialog", { name: "期限を過ぎた食材の確認" })).toBeVisible();
   // 候補 query は expired ゲート中 enabled:false
-  expect(
-    useQueryMock.mock.calls.some(
-      (call) => call[0]?.queryKey?.[0] === "emergency-menus" && call[0]?.enabled === false,
-    ),
-  ).toBe(true);
+  expect(emergencyMenusQueryCallEnabled(false)).toBe(true);
   expect(getEmergencyMenusMock).not.toHaveBeenCalled();
 });
 
@@ -1479,9 +1482,5 @@ it("PE8: confirming expired pantry on emergency page enables candidate query", a
     expect(screen.queryByTestId("emergency-expired-pantry-gate")).toBeNull();
   });
   // ゲート解除後に emergency-menus が enabled:true で起動する
-  expect(
-    useQueryMock.mock.calls.some(
-      (call) => call[0]?.queryKey?.[0] === "emergency-menus" && call[0]?.enabled === true,
-    ),
-  ).toBe(true);
+  expect(emergencyMenusQueryCallEnabled(true)).toBe(true);
 });

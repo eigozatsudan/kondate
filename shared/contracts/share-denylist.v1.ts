@@ -119,8 +119,7 @@ const phoneLikePattern =
  * AP5: 1〜4 文字の和文 + 敬称（ちゃん/くん/さん/様）+ 任意の助詞。
  * 例: 「健太ちゃんの特製」「みさきさんの残り」。食品名への誤爆より fail-closed を優先。
  */
-const personHonorificPattern =
-  /[一-龯ぁ-んァ-ン]{1,4}(?:ちゃん|くん|さん|様)(?:の|は|を|に|が)?/u;
+const personHonorificPattern = /[一-龯ぁ-んァ-ン]{1,4}(?:ちゃん|くん|さん|様)(?:の|は|を|に|が)?/u;
 
 /** 郵便番号残渣（〒 付き / ハイフン有無） */
 const postalCodePattern = /〒\s*\d{3}-?\d{4}|\b\d{3}-\d{4}\b/u;

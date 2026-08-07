@@ -52,10 +52,7 @@ function isDeleteAttemptTimeoutError(error: unknown): boolean {
   ) {
     return true;
   }
-  if (
-    error instanceof Error &&
-    (error.name === "AbortError" || error.name === "TimeoutError")
-  ) {
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
     return true;
   }
   return false;
@@ -215,8 +212,7 @@ export function AccountSettingsSection() {
     };
     // settle + body を同一壁時計で切る（ヘッダ到達後の body hang = AP1）
     const deleteDeadlineMs = Date.now() + ACCOUNT_DELETE_CLIENT_TIMEOUT_MS;
-    const remainingDeleteBudgetMs = (): number =>
-      Math.max(1, deleteDeadlineMs - Date.now());
+    const remainingDeleteBudgetMs = (): number => Math.max(1, deleteDeadlineMs - Date.now());
     try {
       const accessToken = await requireAccessToken(getBrowserSupabaseClient());
       requestStarted = true;

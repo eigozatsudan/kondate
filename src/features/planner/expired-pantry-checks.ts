@@ -67,7 +67,10 @@ function readSessionExpiredEnvelope(userId: string): SessionExpiredConfirmEnvelo
   }
 }
 
-function writeSessionExpiredEnvelope(userId: string, envelope: SessionExpiredConfirmEnvelope): void {
+function writeSessionExpiredEnvelope(
+  userId: string,
+  envelope: SessionExpiredConfirmEnvelope,
+): void {
   try {
     sessionStorage.setItem(expiredPantryConfirmSessionKey(userId), JSON.stringify(envelope));
   } catch {
@@ -92,9 +95,7 @@ export function loadSessionExpiredPantryChecks(
     }
     return [];
   }
-  return envelope.checks.filter(
-    (item) => getJstDateKey(new Date(item.checkedAt)) === today,
-  );
+  return envelope.checks.filter((item) => getJstDateKey(new Date(item.checkedAt)) === today);
 }
 
 /** 1 件の当日確認を session に追記（同一 pantryItemId は上書き）。 */

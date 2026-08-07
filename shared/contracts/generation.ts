@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  aiGeneratedMenuPayloadSchema,
-  nullablePositiveQuantity,
-} from "./ai-generation-output.js";
+import { aiGeneratedMenuPayloadSchema, nullablePositiveQuantity } from "./ai-generation-output.js";
 import {
   cuisineGenres,
   generationStatuses,

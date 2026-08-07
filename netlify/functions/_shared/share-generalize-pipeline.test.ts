@@ -81,11 +81,11 @@ describe("runShareGeneralizeAiPipeline", () => {
       sendPass,
       recordAiCallLedger: ledger,
       publish,
-      beforeEachPass: async () => {
+      beforeEachPass: () => {
         guards += 1;
         // Pass1 は continue、Pass2 直前で skip
-        if (guards >= 2) return { skip: "consent_revoked" };
-        return "continue";
+        if (guards >= 2) return Promise.resolve({ skip: "consent_revoked" as const });
+        return Promise.resolve("continue" as const);
       },
     });
 

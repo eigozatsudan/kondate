@@ -677,9 +677,7 @@ describe("validateStoredMenuCurrentSafety", () => {
     // 削除済み free text は射影で落ち、生存メンバー向けだけが candidate に残る
     expect(result.ok).toBe(true);
     expect(result.issues.filter((issue) => /allergen/i.test(issue.code))).toEqual([]);
-    expect(result.candidate.adaptations.map((row) => row.anonymousMemberRef)).toEqual([
-      "member_2",
-    ]);
+    expect(result.candidate.adaptations.map((row) => row.anonymousMemberRef)).toEqual(["member_2"]);
     expect(result.candidate.adaptations[0]?.portionText).toBe("生存メンバーの取り分け");
   });
 

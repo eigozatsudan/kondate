@@ -4,7 +4,7 @@ import type { AllergenAliasRow, AllergenCatalogRow } from "./household-api";
 /**
  * アレルゲン登録・辞書照合用の正規化。
  * evaluate 側の normalizeFoodText と同じ空間（句読点・書式制御 Cf 除去込み）へ寄せ、
- * カスタム「卵、」「卵​」が標準卵と衝突して拒否されるようにする（H12）。
+ * カスタム「卵、」や「卵」+ZWSP が標準卵と衝突して拒否されるようにする（H12）。
  * SQL private.normalize_allergen_term も同集合を strip する。
  */
 export function normalizeAllergenTerm(value: string): string {

@@ -756,9 +756,9 @@ export function HouseholdMenuDetailBody({
               <button
                 type="button"
                 className="secondary-button min-h-11"
-                // HR8: primary 採用と同型。soft 開始〜再描画のあいだに補助 CTA が残っても
-                // actionsEnabled で塞ぎ、pending だけに依存しない（soft-flight race を閉じる）。
-                disabled={!actionsEnabled || accept.isPending}
+                // canCreateShoppingList が true のとき actionsEnabled も true（型上冗長）。
+                // soft-flight race は actionsEnabledRef の onClick 再確認で閉じる（HR8）。
+                disabled={accept.isPending}
                 onClick={() => {
                   // HR3/HR8: RPC は所有権のみ。ref で最新 actionsEnabled を再確認してから呼ぶ
                   if (!actionsEnabledRef.current) return;

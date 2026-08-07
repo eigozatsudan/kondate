@@ -22,7 +22,10 @@ function seedOwnedKeys(storage: Storage): void {
   );
   storage.setItem("kondate:shopping:list:abc", '{"items":[]}');
   storage.setItem("kondate:flyer:sticky:v1:user-1", '{"key":"k","fingerprint":"f"}');
-  storage.setItem("kondate:expired-pantry-confirm:v1:user-1", '{"dayKey":"2026-07-11","checks":[]}');
+  storage.setItem(
+    "kondate:expired-pantry-confirm:v1:user-1",
+    '{"dayKey":"2026-07-11","checks":[]}',
+  );
   storage.setItem(householdSafetyRevisionStorageKey, "revision-1");
   // 無関係な設定は残す
   storage.setItem("kondate:preferences", "keep-me");

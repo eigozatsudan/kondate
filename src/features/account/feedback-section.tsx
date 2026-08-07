@@ -169,8 +169,7 @@ export function FeedbackSection() {
           (typeof DOMException !== "undefined" &&
             error instanceof DOMException &&
             (error.name === "AbortError" || error.name === "TimeoutError")) ||
-          (error instanceof Error &&
-            (error.name === "AbortError" || error.name === "TimeoutError"))
+          (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
         ) {
           throw error;
         }

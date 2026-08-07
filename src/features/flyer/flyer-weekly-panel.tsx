@@ -205,10 +205,9 @@ export async function readFlyerImageBytes(file: File): Promise<Uint8Array | null
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        if (value !== undefined) {
-          chunks.push(value);
-          total += value.byteLength;
-        }
+        // done=false のとき value は必ず chunk（DOM lib の判別共用体）
+        chunks.push(value);
+        total += value.byteLength;
       }
       const out = new Uint8Array(total);
       let offset = 0;
@@ -275,7 +274,7 @@ export function FlyerWeeklyPanel({
 }: FlyerWeeklyPanelProps) {
   const inputId = useId();
   const { session } = useAuth();
-  const userId = session?.user?.id;
+  const userId = session?.user.id;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<WeeklyFlyerMenuResult | null>(null);
@@ -363,10 +362,7 @@ export function FlyerWeeklyPanel({
   const resolveStickyForFingerprint = (fingerprint: string): string => {
     // 同一マウントの ref を優先。無ければ Storage（remount / 他タブ）。
     let sticky = stickyAttemptRef.current;
-    if (
-      (sticky === null || sticky.fingerprint !== fingerprint) &&
-      userId !== undefined
-    ) {
+    if ((sticky === null || sticky.fingerprint !== fingerprint) && userId !== undefined) {
       const stored = readFlyerStickyAttempt(userId);
       if (stored !== null && stored.fingerprint === fingerprint) {
         sticky = stored;

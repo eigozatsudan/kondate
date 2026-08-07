@@ -427,7 +427,7 @@ describe("FlyerWeeklyPanel", () => {
       Object.defineProperty(file, "arrayBuffer", {
         configurable: true,
         writable: true,
-        value: async () => new ArrayBuffer(0),
+        value: () => Promise.resolve(new ArrayBuffer(0)),
       });
     }
     const ownAb = vi.spyOn(file, "arrayBuffer").mockRejectedValue(new Error("read fail"));
@@ -437,7 +437,7 @@ describe("FlyerWeeklyPanel", () => {
       Object.defineProperty(Blob.prototype, "arrayBuffer", {
         configurable: true,
         writable: true,
-        value: async () => new ArrayBuffer(0),
+        value: () => Promise.resolve(new ArrayBuffer(0)),
       });
     }
     const blobAb = vi
@@ -446,15 +446,15 @@ describe("FlyerWeeklyPanel", () => {
     const readerSpy = vi
       .spyOn(FileReader.prototype, "readAsArrayBuffer")
       .mockImplementation(function (this: FileReader) {
-        const self = this;
+        // arrow で this を捕捉（no-this-alias を避けつつ FileReader を保持）
         queueMicrotask(() => {
-          Object.defineProperty(self, "error", {
+          Object.defineProperty(this, "error", {
             configurable: true,
             value: new Error("FileReader forced fail"),
           });
-          const handler = self.onerror;
+          const handler = this.onerror;
           if (typeof handler === "function") {
-            handler.call(self, new Event("error") as ProgressEvent<FileReader>);
+            handler.call(this, new Event("error") as ProgressEvent<FileReader>);
           }
         });
       });
