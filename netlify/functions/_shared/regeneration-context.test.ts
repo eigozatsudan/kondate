@@ -80,6 +80,7 @@ import type { GenerationExecutionContext } from "./generation-service.js";
 import type { StoredMenuAggregate } from "./stored-menu-loader.js";
 import {
   buildDishRegenerationPrompt,
+  buildPantrySelectionIdToRef,
   isRegenerationDuplicate,
   loadRegenerationExecutionContext,
   materializeDishRegenerationCandidate,
@@ -1423,7 +1424,7 @@ describe("materializeDishRegenerationCandidate", () => {
       );
     }
 
-    // dishRefs が実際の ingredient.pantryRef 集合と不一致
+    // dishRefs が実際の ingredient.pantryRef 集合と不一致（retained に pantryRef 無し）
     {
       const { execution, uuid, output } = withPantry();
       output.pantryUsage[0]!.dishRefs = ["dish_2"];
@@ -1431,6 +1432,279 @@ describe("materializeDishRegenerationCandidate", () => {
         "pantry_usage_link_mismatch",
       );
     }
+  });
+
+  // G3: 保持料理の pantry 由来を再リンクできる（置換料理だけに押し付ける必要がない）
+  it("G3: re-links retained dish pantrySelectionId when pantryRef maps through current submission", () => {
+    const pantryItemId = "61000000-0000-4000-8000-000000000088";
+    const sourceSelectionId = "58000000-0000-4000-8000-000000000088";
+    const mainStepId = "51000000-0000-4000-8000-000000000001";
+    const sideStepId = "51000000-0000-4000-8000-000000000002";
+    const sourceMenu = makeValidatedMenu({
+      dishes: [
+        {
+          id: dish1Id,
+          role: "main",
+          position: 1,
+          name: "元の主菜",
+          description: "置換対象",
+          cookingTimeMinutes: 20,
+          ingredients: [
+            {
+              id: "53000000-0000-4000-8000-000000000001",
+              position: 1,
+              name: "鶏肉",
+              quantityValue: 200,
+              quantityText: "200g",
+              unit: "g",
+              storeSection: "meat_fish",
+              pantrySelectionId: null,
+              labelConfirmationRequired: false,
+            },
+          ],
+          steps: [{ id: mainStepId, position: 1, instruction: "焼く" }],
+        },
+        {
+          id: dish2Id,
+          role: "side",
+          position: 2,
+          name: "保持する副菜",
+          description: "保持",
+          cookingTimeMinutes: 10,
+          ingredients: [
+            {
+              id: "53000000-0000-4000-8000-000000000002",
+              position: 1,
+              name: "にんじん",
+              quantityValue: 100,
+              quantityText: "100g",
+              unit: "g",
+              storeSection: "produce",
+              // ソースでは副菜だけが在庫リンク
+              pantrySelectionId: sourceSelectionId,
+              labelConfirmationRequired: false,
+            },
+          ],
+          steps: [{ id: sideStepId, position: 1, instruction: "和える" }],
+        },
+      ],
+      timeline: [
+        {
+          id: "54000000-0000-4000-8000-000000000001",
+          position: 1,
+          startMinute: 0,
+          durationMinutes: 20,
+          instruction: "主菜",
+          dishId: dish1Id,
+          recipeStepId: mainStepId,
+        },
+      ],
+      adaptations: [
+        {
+          id: "57000000-0000-4000-8000-000000000001",
+          dishId: dish1Id,
+          anonymousMemberRef: "member_1",
+          portionText: "通常量",
+          branchBeforeRecipeStepId: mainStepId,
+          additionalCutting: null,
+          additionalHeating: null,
+          additionalSeasoning: null,
+          servingCheck: "通常の取り分けを確認する",
+          safetyTags: [],
+          safetyActions: [],
+        },
+      ],
+      pantryUsage: [
+        {
+          selectionId: sourceSelectionId,
+          pantryItemId,
+          pantryItemName: "にんじん",
+          priority: "must_use",
+          usageStatus: "used",
+          plannedQuantity: 100,
+          inventoryQuantity: 100,
+          shortageQuantity: 0,
+          unit: "g",
+          dishIds: [dish2Id],
+          unusedReason: null,
+        },
+      ],
+    });
+
+    const pantrySelectionIdToRef = buildPantrySelectionIdToRef(sourceMenu, [{ pantryItemId }]);
+    // 投影: 保持副菜の ingredient が pantry_1 を持つ
+    const retained = toRetainedDishPrompt(sourceMenu, dish1Id, pantrySelectionIdToRef);
+    expect(retained.dto).toHaveLength(1);
+    expect(retained.dto[0]?.ingredients[0]?.pantryRef).toBe("pantry_1");
+    // 置換対象はリンク無し → null のまま
+    expect(retained.replaceTarget?.ingredients[0]?.pantryRef).toBeNull();
+
+    const generationContext = makeGenerationContext({
+      submission: {
+        ...makeGenerationContext().submission,
+        mainIngredients: ["豚こま肉"],
+        timeLimitMinutes: null,
+        pantrySelections: [{ pantryItemId, priority: "must_use" as const }],
+      },
+      pantryItems: [
+        {
+          id: pantryItemId,
+          userId: user.userId,
+          name: "にんじん",
+          quantity: 100,
+          unit: "g",
+          expiresOn: null,
+          expirationType: null,
+          openedState: null,
+          createdAt: "2026-07-11T00:00:00.000Z",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+      ],
+    });
+    let seq = 0;
+    const uuid = () => {
+      seq += 1;
+      return `c${String(seq).padStart(7, "0")}-0000-4000-8000-000000000001`;
+    };
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_dish" }> = {
+      kind: "regenerate_dish",
+      command: dishCommand,
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext,
+      expectedSafetyFingerprint: createCurrentSafetyFingerprint(generationContext.safety),
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: dish1Id,
+        retainedDishIds: [dish2Id],
+        excludedDishIds: [dish1Id, dish2Id],
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: retained.dto,
+          sourceDishToReplace: retained.replaceTarget,
+          promptDto: null,
+          retainedRefMap: retained.refMap,
+        },
+      },
+    };
+
+    const output = makeDishRegenerationAiOutput();
+    // AI は保持副菜 dish_2 を truthfully 列挙（置換 dish_1 へ寄せない）
+    output.pantryUsage = [
+      {
+        pantryRef: "pantry_1",
+        pantryItemName: "にんじん",
+        priority: "must_use",
+        usageStatus: "used",
+        plannedQuantity: 100,
+        inventoryQuantity: 100,
+        shortageQuantity: 0,
+        unit: "g",
+        dishRefs: ["dish_2"],
+        unusedReason: null,
+      },
+    ];
+
+    const candidate = materializeDishRegenerationCandidate(execution, output, uuid);
+    const retainedDish = candidate.dishes.find((dish) => dish.name === "保持する副菜");
+    expect(retainedDish).toBeDefined();
+    expect(retainedDish!.ingredients[0]?.pantrySelectionId).not.toBeNull();
+    expect(retainedDish!.ingredients[0]?.pantrySelectionId).toBe(
+      candidate.pantryUsage[0]?.selectionId,
+    );
+    expect(candidate.pantryUsage[0]?.dishIds).toEqual([retainedDish!.id]);
+    // 置換料理は pantry 無し
+    const replacement = candidate.dishes.find((dish) => dish.role === "main");
+    expect(replacement?.ingredients[0]?.pantrySelectionId).toBeNull();
+  });
+
+  it("G3: strips retained pantryRef when source pantry is absent from current submission", () => {
+    const sourceSelectionId = "58000000-0000-4000-8000-000000000077";
+    const gonePantryItemId = "61000000-0000-4000-8000-000000000077";
+    const menu = makeValidatedMenu({
+      dishes: [
+        {
+          id: dish1Id,
+          role: "main",
+          position: 1,
+          name: "主菜",
+          description: "置換",
+          cookingTimeMinutes: 20,
+          ingredients: [
+            {
+              id: "53000000-0000-4000-8000-000000000001",
+              position: 1,
+              name: "鶏肉",
+              quantityValue: 200,
+              quantityText: "200g",
+              unit: "g",
+              storeSection: "meat_fish",
+              pantrySelectionId: null,
+              labelConfirmationRequired: false,
+            },
+          ],
+          steps: [
+            {
+              id: "51000000-0000-4000-8000-000000000001",
+              position: 1,
+              instruction: "焼く",
+            },
+          ],
+        },
+        {
+          id: dish2Id,
+          role: "side",
+          position: 2,
+          name: "副菜",
+          description: "保持",
+          cookingTimeMinutes: 10,
+          ingredients: [
+            {
+              id: "53000000-0000-4000-8000-000000000002",
+              position: 1,
+              name: "消えた在庫",
+              quantityValue: 1,
+              quantityText: "1",
+              unit: null,
+              storeSection: "other",
+              pantrySelectionId: sourceSelectionId,
+              labelConfirmationRequired: false,
+            },
+          ],
+          steps: [
+            {
+              id: "51000000-0000-4000-8000-000000000002",
+              position: 1,
+              instruction: "和える",
+            },
+          ],
+        },
+      ],
+      pantryUsage: [
+        {
+          selectionId: sourceSelectionId,
+          pantryItemId: gonePantryItemId,
+          pantryItemName: "消えた在庫",
+          priority: "prefer_use",
+          usageStatus: "used",
+          plannedQuantity: null,
+          inventoryQuantity: null,
+          shortageQuantity: null,
+          unit: null,
+          dishIds: [dish2Id],
+          unusedReason: null,
+        },
+      ],
+    });
+    // 現行 submission に gonePantryItemId が無い
+    const map = buildPantrySelectionIdToRef(menu, []);
+    const retained = toRetainedDishPrompt(menu, dish1Id, map);
+    expect(retained.dto[0]?.ingredients[0]?.pantryRef).toBeNull();
   });
 });
 

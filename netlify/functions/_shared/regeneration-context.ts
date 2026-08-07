@@ -106,12 +106,41 @@ type RetainedPromptResult = {
 };
 
 /**
+ * ソース pantryUsage.selectionId → 現行 submission の pantry_N。
+ * pantryItemId が現行選択に無い在庫は載せない（再リンク不能 → pantryRef null）。
+ * G3: regenerate_dish が保持料理の pantry 由来を落としていた穴を閉じるための写像。
+ */
+export function buildPantrySelectionIdToRef(
+  menu: ValidatedMenu,
+  pantrySelections: readonly { pantryItemId: string }[],
+): ReadonlyMap<string, string> {
+  const itemIdToRef = new Map<string, string>();
+  pantrySelections.forEach((selection, index) => {
+    itemIdToRef.set(selection.pantryItemId, `pantry_${String(index + 1)}`);
+  });
+  const selectionIdToRef = new Map<string, string>();
+  for (const usage of menu.pantryUsage) {
+    // sourcePantryUsage と同型: pantryItemId 優先、無ければ selectionId を item キーとして試す
+    const ref =
+      (usage.pantryItemId !== null ? itemIdToRef.get(usage.pantryItemId) : undefined) ??
+      itemIdToRef.get(usage.selectionId);
+    if (ref !== undefined) {
+      selectionIdToRef.set(usage.selectionId, ref);
+    }
+  }
+  return selectionIdToRef;
+}
+
+/**
  * 保持料理を request-local ref 付き DTO へ投影する。
  * refMap は server 専用（localRef → 元 UUID）。prompt JSON には載せない。
+ * pantrySelectionIdToRef が渡されたときだけ、現行 submission に残る在庫を pantry_N で再リンクする。
+ * 未登録 selectionId / 現行外在庫は null（強制 strip ではなく「再リンク不能」）。
  */
 export function toRetainedDishPrompt(
   menu: ValidatedMenu,
   replaceDishId: string | null,
+  pantrySelectionIdToRef: ReadonlyMap<string, string> = new Map(),
 ): RetainedPromptResult {
   const refMap = new Map<string, string>();
   const ordered = menu.dishes.toSorted((left, right) => left.position - right.position);
@@ -130,6 +159,11 @@ export function toRetainedDishPrompt(
         .map((item, itemIndex) => {
           const ingredientRef = `ingredient_${String(dishIndex * 50 + itemIndex + 1)}`;
           refMap.set(ingredientRef, item.id);
+          // G3: 保持料理でも source pantrySelectionId を現行 pantry_N へ。null 固定は provenance を壊す。
+          const pantryRef =
+            item.pantrySelectionId === null
+              ? null
+              : (pantrySelectionIdToRef.get(item.pantrySelectionId) ?? null);
           return {
             ingredientRef,
             position: item.position,
@@ -138,7 +172,7 @@ export function toRetainedDishPrompt(
             quantityText: item.quantityText,
             unit: item.unit,
             storeSection: item.storeSection,
-            pantryRef: null as string | null,
+            pantryRef,
             labelConfirmationRequired: item.labelConfirmationRequired,
           };
         }),
@@ -301,6 +335,7 @@ export function buildDishRegenerationPrompt(input: {
   });
 
   // pantry: selectionId または pantryItemId を pantry_N に写す（現行コンテキスト順を優先）
+  // retained 食材投影と同じ item→pantry_N 順序を使い、sourcePantryUsage と整合させる
   const pantryIdToRef = new Map<string, string>();
   input.generationContext.submission.pantrySelections.forEach((selection, index) => {
     pantryIdToRef.set(selection.pantryItemId, `pantry_${String(index + 1)}`);
@@ -311,6 +346,7 @@ export function buildDishRegenerationPrompt(input: {
       (usage.pantryItemId !== null ? pantryIdToRef.get(usage.pantryItemId) : undefined) ??
       pantryIdToRef.get(usage.selectionId);
     if (pantryRef === undefined) {
+      // G11 residual: 現行に無い source-only 在庫は phantom pantry_N（materialize は unknown_pantry_ref で拒否）
       pantryFallback += 1;
       pantryRef = `pantry_${String(pantryFallback)}`;
     }
@@ -587,7 +623,12 @@ export async function loadRegenerationExecutionContext(
     dishSignatures: item.menu.dishes.map((dish) => createDishSignature(dishSignatureInput(dish))),
   }));
 
-  const retained = toRetainedDishPrompt(source.menu, replaceDishId);
+  // G3: 保持料理の pantrySelectionId を現行 submission の pantry_N へ写して artifacts / prompt に載せる
+  const pantrySelectionIdToRef = buildPantrySelectionIdToRef(
+    source.menu,
+    generationContext.submission.pantrySelections,
+  );
+  const retained = toRetainedDishPrompt(source.menu, replaceDishId, pantrySelectionIdToRef);
   let promptDto: DishRegenerationPrompt | null = null;
   if (command.kind === "regenerate_dish") {
     promptDto = buildDishRegenerationPrompt({
@@ -833,6 +874,8 @@ export function materializeDishRegenerationCandidate(
     return `${formatQuantityValue(quantityValue)}${unit ?? ""}`;
   };
 
+  // retained / replacement 共通。G3: retained も pantryRef を持ち得るため、
+  // selectionId は AI pantryUsage の pantryRef 経由でだけ割当（現行外 ref は dangling）。
   const mapLocalDish = (dish: RetainedDishPrompt) => ({
     id: requiredMap(dishIdByRef, dish.dishRef),
     role: dish.role,
@@ -963,7 +1006,8 @@ export function materializeDishRegenerationCandidate(
     return values.size === left.length && right.every((value) => values.has(value));
   };
 
-  // dishRefs link 照合用: retained + replacement の AI 形（pantryRef 付き）を正とする
+  // dishRefs link 照合用: retained + replacement の pantryRef 付き食材を正とする。
+  // G3: retained も pantryRef を保持するため、保持料理 dishRefs を truthfully 列挙できる。
   const dishesForPantryLink = [
     ...artifacts.retainedDishes.map((dish) => ({
       dishRef: dish.dishRef,
