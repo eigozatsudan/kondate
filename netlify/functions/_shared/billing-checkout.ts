@@ -60,6 +60,10 @@ export type BillingCheckoutDeps = {
   upgradeComingSoon?: boolean;
 };
 
+/**
+ * residual-intentional (B2): paused / unpaid は live 母集団外（webhook dual と同型）。
+ * DB free なら Checkout Session 作成可。pause 解除後の dual は webhook rank に委ねる。
+ */
 const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete"]);
 
 /**

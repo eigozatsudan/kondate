@@ -69,6 +69,9 @@ export function computePlusEntitled(
     }
     return { plusEntitled: false, pastDueGrace: false };
   }
+  // residual-intentional (B1): canceled は period_end のみ。prior past_due grace 失効は見ない。
+  // grace 切れ後に canceled+period 残で Plus 再付与し得るが、SQL billing_entitlement_json と同型。
+  // 連鎖 demotion（grace 失効後は canceled でも非 Plus）は SQL/TS 契約変更のため本パスでしない。
   if (row.status === "canceled" && now.getTime() < new Date(row.current_period_end).getTime()) {
     return { plusEntitled: true, pastDueGrace: false };
   }

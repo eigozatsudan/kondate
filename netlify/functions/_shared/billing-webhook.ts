@@ -104,22 +104,63 @@ function periodUnixFromSubscription(sub: Stripe.Subscription): {
   return { start: null, end: null };
 }
 
-/** Checkout 進行中の incomplete も live 候補に含む（list / dual 対象の母集団）。 */
+/**
+ * Checkout 進行中の incomplete も live 候補に含む（list / dual 対象の母集団）。
+ * residual-intentional (B2): paused / unpaid は意図的に外す。
+ * 非 Plus なので Checkout 409 にならず、dual cancel も触らない（pause 解除・回収を Stripe 正とする）。
+ * 母集団拡大は Stripe 契約・二重 cancel ポリシー変更のため本パスではしない。
+ */
 const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete"]);
 
 /**
  * dual-sub keep 優先（数値が小さいほど keep）:
- * - trialing|active（健全な paid/trial）を最優先
- * - past_due は incomplete より優先するが active より下位
- *   （新しい past_due が古い健全 active を Stripe cancel しない — B3）
+ * - active（課金中）を最優先 — 新しい trialing が古い paid active を Stripe cancel しない（B3）
+ * - trialing は active の次
+ * - past_due は incomplete より優先するが active/trialing より下位
+ *   （新しい past_due が古い健全 sub を cancel しない — a7 B3）
  * - incomplete は最下位
  * 同 rank 内は新しい created を keep（再 Checkout 後の誤ダウングレード残差を減らす）。
  */
 function dualSubKeepRank(status: string): number {
-  if (status === "trialing" || status === "active") return 0;
-  if (status === "past_due") return 1;
-  if (status === "incomplete") return 2;
-  return 3;
+  if (status === "active") return 0;
+  if (status === "trialing") return 1;
+  if (status === "past_due") return 2;
+  if (status === "incomplete") return 3;
+  return 4;
+}
+
+/**
+ * Customer の live sub を status 別 list で全ページ取得する（B6）。
+ * delete-account の U1-M5 と同型: limit 100 の 1 ページだけでは 100 超の病理で keep/discard が欠ける。
+ */
+async function listLiveSubscriptionsForCustomer(
+  stripe: BillingWebhookStripe,
+  stripeCustomerId: string,
+): Promise<Stripe.Subscription[]> {
+  const byId = new Map<string, Stripe.Subscription>();
+  for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
+    let startingAfter: string | undefined;
+    for (;;) {
+      const listed = await stripe.subscriptions.list({
+        customer: stripeCustomerId,
+        status,
+        limit: 100,
+        ...(startingAfter === undefined ? {} : { starting_after: startingAfter }),
+      });
+      for (const sub of listed.data) {
+        byId.set(sub.id, sub);
+      }
+      if (!listed.has_more || listed.data.length === 0) {
+        break;
+      }
+      const last = listed.data[listed.data.length - 1];
+      if (last === undefined) {
+        break;
+      }
+      startingAfter = last.id;
+    }
+  }
+  return [...byId.values()].filter((sub) => LIVE_SUB_STATUSES.has(sub.status));
 }
 
 /** Checkout が使う Plus price のみを権益対象にする（Dashboard 手動・Portal 価格変更の elevation を閉じる）。 */
@@ -307,19 +348,8 @@ export async function cancelDualLiveSubscriptions(
   userId: string,
   stripeCustomerId: string,
 ): Promise<DualSubscriptionCleanup> {
-  // status 別 list で terminal 履歴に埋もれた live を落とさない（単一 page status=all は不十分）
-  const byId = new Map<string, Stripe.Subscription>();
-  for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
-    const listed = await deps.stripe.subscriptions.list({
-      customer: stripeCustomerId,
-      status,
-      limit: 100,
-    });
-    for (const sub of listed.data) {
-      byId.set(sub.id, sub);
-    }
-  }
-  const live = [...byId.values()].filter((sub) => LIVE_SUB_STATUSES.has(sub.status));
+  // status 別 list + has_more で terminal 履歴に埋もれた live を落とさない（B6）
+  const live = await listLiveSubscriptionsForCustomer(deps.stripe, stripeCustomerId);
   if (live.length <= 1) {
     return {
       keepSubscriptionId: live[0]?.id ?? null,
@@ -327,7 +357,7 @@ export async function cancelDualLiveSubscriptions(
     };
   }
 
-  // entitled 優先 → created 昇順（先に entitled になった方を keep）
+  // rank 優先 → 同 rank は新しい created を keep
   const sorted = [...live].sort((a, b) => {
     const rankDiff = dualSubKeepRank(a.status) - dualSubKeepRank(b.status);
     if (rankDiff !== 0) return rankDiff;
@@ -353,6 +383,9 @@ export async function cancelDualLiveSubscriptions(
     });
   }
 
+  // residual-intentional (B9): mark は keep の stripe_subscription_id / updated_at のみ更新。
+  // status・period・past_due_since は直後の process 投影に委ねる。mark 成功〜process 完了前の
+  // 歪み窓は再送で修復し得るが、migration 契約変更（mark で status も写す）は本パスでしない。
   const { data: markData, error: markError } = await deps.admin.rpc(
     "mark_billing_subscription_dual_cancel_keep",
     {
@@ -391,18 +424,8 @@ export async function resolveTerminalEventDualProjection(
   stripeCustomerId: string,
   eventSubscriptionId: string,
 ): Promise<DualSubscriptionCleanup> {
-  const byId = new Map<string, Stripe.Subscription>();
-  for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
-    const listed = await deps.stripe.subscriptions.list({
-      customer: stripeCustomerId,
-      status,
-      limit: 100,
-    });
-    for (const sub of listed.data) {
-      byId.set(sub.id, sub);
-    }
-  }
-  const live = [...byId.values()].filter((sub) => LIVE_SUB_STATUSES.has(sub.status));
+  // B6: terminal 経路も dual cancel と同じ全ページ list を使う
+  const live = await listLiveSubscriptionsForCustomer(deps.stripe, stripeCustomerId);
   // イベント対象がまだ live なら通常投影（terminal と矛盾するが list を正にしない）
   if (live.some((sub) => sub.id === eventSubscriptionId)) {
     return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
@@ -505,6 +528,9 @@ async function handleSubscriptionEvent(
     stripeCustomerId: customerId,
   });
   if (userId === null) {
+    // residual-intentional (B4): map 未整備は process 前に 200 + 非 claim。
+    // Stripe 再送と map 後適用を意図的リカバリとする。claim して event_only にすると
+    // map 後に同一 evt が再投影できず elevation が永久落ちるため、仕様変更はしない。
     log({
       level: "warn",
       requestId,
@@ -573,7 +599,8 @@ async function handleSubscriptionEvent(
   let projection =
     retrieved ?? (projectSubscriptionId === sub.id ? projectionFromSubscription(sub) : null);
   if (projection === null) {
-    // 投影不能は event 記録のみ（再送地獄回避で 200）
+    // residual-intentional (B5): 投影不能は skip_subscription_projection で claim + event_only。
+    // 再送地獄回避の 200。権益更新は後続 event / reconcile 待ち（同一 evt 再送は duplicate）。
     const outcome = await processStripeEvent(deps.admin, {
       stripe_event_id: event.id,
       event_type: event.type,
@@ -611,8 +638,10 @@ async function handleSubscriptionEvent(
 
   const clearPastDue =
     projectedStatus === "active" || projectedStatus === "trialing" || forceCanceledFromDeleted;
-  // B2: 初回 past_due の grace 起点は webhook 処理時刻ではなく Stripe event.created。
+  // 初回 past_due の grace 起点は webhook 処理時刻ではなく Stripe event.created。
   // SQL は既存 past_due_since を優先 coalesce するため再送・延長では伸ばさない。
+  // residual-intentional (B8): SQL 正本は payload 欠落時 clock_timestamp() fallback。
+  // 正規 Function 経路は常に past_due_since を載せる。手投入/将来 path の延長残差は migration 契約。
   const pastDueSinceIso =
     !clearPastDue && projectedStatus === "past_due" ? unixToIsoZ(event.created) : null;
 
@@ -631,6 +660,8 @@ async function handleSubscriptionEvent(
     clear_past_due_since: clearPastDue,
     ...(pastDueSinceIso !== null ? { past_due_since: pastDueSinceIso } : {}),
     // same-second 用。RPC が created 比較後に参照。evt_ 辞書順は使わない。
+    // residual-intentional (B7): 投影成功時は常に retrieved を載せるため SQL の terminality
+    // fallback は実質デッド。同一秒 race は後勝ち live スナップショット（migration 契約）。
     retrieved_subscription: {
       status: projectedStatus,
       stripe_price_id: projection.stripe_price_id,
@@ -784,6 +815,7 @@ async function handleInvoiceEvent(
     stripeCustomerId: resolvedCustomerId,
   });
   if (userId === null) {
+    // residual-intentional (B4): subscription 経路と同型。claim せず 200 + 再送リカバリ。
     log({
       level: "warn",
       requestId,
@@ -848,7 +880,7 @@ async function handleInvoiceEvent(
     projection = projectionFromSubscription(sub);
   }
   if (projection === null) {
-    // 投影不能でも event ledger へ記録（再送地獄回避の 200 + durable claim）
+    // residual-intentional (B5): subscription 経路と同型。event_only claim で再送停止。
     const outcome = await processStripeEvent(deps.admin, {
       stripe_event_id: event.id,
       event_type: event.type,
@@ -859,7 +891,7 @@ async function handleInvoiceEvent(
     return json(200, { ok: true, data: { outcome } });
   }
 
-  // B1 price allowlist + B7 kill 中の Plus 投影抑止
+  // price allowlist + kill 中の Plus 投影抑止
   const stripeCfg = deps.env.stripe;
   if (stripeCfg !== undefined) {
     projection = guardSubscriptionProjection(projection, {
@@ -868,12 +900,14 @@ async function handleInvoiceEvent(
     });
   }
 
-  // invoice.paid は Subscription オブジェクトの status と整合させる（past_due を勝手に active 化しない）。
+  // residual-intentional (B10): invoice type で status を上書きしない。
+  // Subscription retrieve を正とし、past_due を invoice.payment_failed だけで勝手に付けない。
+  // payment_failed 後も retrieve が active なら demotion は subscription.updated 待ち（一時 over-entitle）。
   // past_due_since クリアは paid 確定かつ status が active/trialing のときだけ（A6: past_due+NULL=非 entitled）。
   const isPaid = event.type === "invoice.paid";
   const status = projection.status;
   const clearPastDueSince = isPaid && (status === "active" || status === "trialing");
-  // B2: invoice 経路でも初回 past_due は event.created を起点に載せる（処理遅延の過付与を防ぐ）
+  // invoice 経路でも初回 past_due は event.created を起点に載せる（処理遅延の過付与を防ぐ / B8 Function 緩和）
   const pastDueSinceIso =
     !clearPastDueSince && status === "past_due" ? unixToIsoZ(event.created) : null;
 
@@ -994,6 +1028,8 @@ export async function handleBillingWebhook(
     });
   }
 
+  // residual-intentional (B12): 署名欠落/不正は 400（秘密無し elevation 閉じ済み）。
+  // SDK 既定 timestamp tolerance と whsec 漏洩時の注入は秘密管理境界の運用残差。
   const signature = request.headers.get("stripe-signature");
   if (signature === null || signature.length === 0) {
     return json(400, {

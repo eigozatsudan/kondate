@@ -70,7 +70,11 @@ async function authedJson(
   return envelope.data;
 }
 
-/** GET /api/billing/entitlement — クライアントはプランを主張せずサーバ投影を読む。 */
+/**
+ * GET /api/billing/entitlement — クライアントはプランを主張せずサーバ投影を読む。
+ * residual-intentional (B11): DevTools 等で UI の plusEntitled を改変しても表示のみ。
+ * quality / flyer / quota 消費はサーバ loadEntitlement + applyQuotaPlan が権威（真 elevation 閉じ）。
+ */
 export async function getEntitlement(deps: BillingApiDeps = {}): Promise<EntitlementData> {
   const data = await authedJson(
     "/api/billing/entitlement",

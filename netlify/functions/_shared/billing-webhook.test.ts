@@ -1005,8 +1005,8 @@ describe("handleBillingWebhook", () => {
     );
   });
 
-  // B3: active と past_due を同 rank にすると新しい past_due が古い健全 active を cancel し得る
-  it("keeps older active over newer past_due dual-sub (B3)", async () => {
+  // a7 B3: active と past_due を同 rank にすると新しい past_due が古い健全 active を cancel し得る
+  it("keeps older active over newer past_due dual-sub (B3 past_due rank)", async () => {
     const olderActive = makeSubscription({
       id: "sub_active_old",
       created: 1000,
@@ -1058,6 +1058,116 @@ describe("handleBillingWebhook", () => {
     // discard した past_due ではなく keep(active) を投影する
     expect(processPayload.stripe_subscription_id).toBe("sub_active_old");
     expect(processPayload.status).toBe("active");
+  });
+
+  // B3: active と trialing を同 rank にすると新しい trialing が古い paid active を cancel し得る
+  it("keeps older active over newer trialing dual-sub (B3)", async () => {
+    const olderActive = makeSubscription({
+      id: "sub_active_old_trial",
+      created: 1000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    const newerTrialing = makeSubscription({
+      id: "sub_trial_new",
+      created: 2000,
+      status: "trialing",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", newerTrialing, { id: "evt_dual_trial" }),
+    );
+    retrieve.mockImplementation((id: string) => {
+      if (id === "sub_trial_new") {
+        return Promise.resolve(newerTrialing);
+      }
+      return Promise.resolve(olderActive);
+    });
+    list.mockImplementation((params: { status?: string }) => {
+      const all = [olderActive, newerTrialing];
+      const data =
+        params.status === undefined ? all : all.filter((sub) => sub.status === params.status);
+      return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+    });
+    cancel.mockResolvedValue(
+      makeSubscription({ id: "sub_trial_new", status: "canceled", created: 2000 }),
+    );
+
+    await handleBillingWebhook(signedRequest(), deps());
+    expect(cancel).toHaveBeenCalledWith("sub_trial_new");
+    expect(cancel).not.toHaveBeenCalledWith("sub_active_old_trial");
+    expect(rpc).toHaveBeenCalledWith(
+      "mark_billing_subscription_dual_cancel_keep",
+      expect.objectContaining({
+        p_keep_stripe_subscription_id: "sub_active_old_trial",
+      }),
+    );
+
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.stripe_subscription_id).toBe("sub_active_old_trial");
+    expect(processPayload.status).toBe("active");
+  });
+
+  // B6: status 別 list が has_more のとき 2 ページ目の live も dual 母集団に入れる
+  it("pages dual live list when has_more (B6)", async () => {
+    const page1Active = makeSubscription({
+      id: "sub_page1",
+      created: 1000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    const page2Active = makeSubscription({
+      id: "sub_page2",
+      created: 2000,
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", page2Active, { id: "evt_dual_page" }),
+    );
+    retrieve.mockResolvedValue(page2Active);
+    list.mockImplementation((params: { status?: string; starting_after?: string }) => {
+      if (params.status === "active") {
+        if (params.starting_after === undefined) {
+          return Promise.resolve({
+            object: "list",
+            data: [page1Active],
+            has_more: true,
+            url: "",
+          });
+        }
+        if (params.starting_after === "sub_page1") {
+          return Promise.resolve({
+            object: "list",
+            data: [page2Active],
+            has_more: false,
+            url: "",
+          });
+        }
+      }
+      return Promise.resolve({ object: "list", data: [], has_more: false, url: "" });
+    });
+    cancel.mockResolvedValue(
+      makeSubscription({ id: "sub_page1", status: "canceled", created: 1000 }),
+    );
+
+    await handleBillingWebhook(signedRequest(), deps());
+    // 2 ページ目まで見て newer active を keep・older を cancel
+    expect(cancel).toHaveBeenCalledWith("sub_page1");
+    expect(cancel).not.toHaveBeenCalledWith("sub_page2");
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "active", starting_after: "sub_page1" }),
+    );
+    expect(rpc).toHaveBeenCalledWith(
+      "mark_billing_subscription_dual_cancel_keep",
+      expect.objectContaining({
+        p_keep_stripe_subscription_id: "sub_page2",
+      }),
+    );
   });
 
   it("returns 500 when dual-sub mark_keep RPC fails", async () => {
