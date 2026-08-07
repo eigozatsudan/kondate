@@ -2205,6 +2205,21 @@ describe("toGenerationStatus", () => {
     });
   });
 
+  it("projects Plus user_daily_limit 10 without Free 3 default (S11)", () => {
+    expect(
+      toGenerationStatus(
+        { ...record("processing"), user_daily_limit: 10 as const, remaining: 7 },
+        key,
+      ),
+    ).toMatchObject({
+      status: "processing",
+      quota: {
+        remaining: 7,
+        userDailyLimit: 10,
+      },
+    });
+  });
+
   it("rehydrates constraint conflicts from closed codes with fixed Japanese copy", () => {
     expect(
       toGenerationStatus(

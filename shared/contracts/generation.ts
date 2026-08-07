@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { aiGeneratedMenuPayloadSchema } from "./ai-generation-output.js";
+import {
+  aiGeneratedMenuPayloadSchema,
+  nullablePositiveQuantity,
+} from "./ai-generation-output.js";
 import {
   cuisineGenres,
   generationStatuses,
@@ -70,8 +73,8 @@ export const dishIngredientSchema = z
     id: z.uuid(),
     position: z.number().int().positive(),
     name: z.string().trim().min(1).max(100),
-    // AI wire / shopping と同一天井（S2: nullablePositiveQuantity）
-    quantityValue: z.number().positive().max(999_999).nullable(),
+    // AI wire / shopping と同一正本（天井 + milli グリッド）
+    quantityValue: nullablePositiveQuantity,
     quantityText: z.string().trim().min(1).max(60),
     unit: z.string().trim().min(1).max(24).nullable(),
     storeSection: z.enum(storeSections),

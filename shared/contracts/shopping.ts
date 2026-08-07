@@ -1,11 +1,18 @@
 import { z } from "zod";
+import { nullablePositiveQuantity } from "./ai-generation-output.js";
 import { labelSourceTypes, storeSections } from "./generation.js";
 
 const uuid = z.uuid();
 export type StoreSection = (typeof storeSections)[number];
 
-/** 材料・draft・list 応答で共有する数量天井（AI/pantry と揃える・S2） */
-const shoppingQuantityValue = z.number().positive().max(999_999).nullable();
+/**
+ * draft/list 品目配列の上限。
+ * 5 品×50 材料の理論上限に手追加・append 合算の余裕を足した製品天井（無制限 graph を閉じる・S6）。
+ */
+export const shoppingItemsMax = 500 as const;
+
+/** 材料・draft・list で AI/pantry と同一の数量正本（天井 + milli グリッド） */
+const shoppingQuantityValue = nullablePositiveQuantity;
 
 export const shoppingSourceIngredientSchema = z
   .object({
@@ -57,8 +64,8 @@ export const shoppingDraftItemSchema = z
 
 export const shoppingDraftSchema = z
   .object({
-    items: z.array(shoppingDraftItemSchema),
-    listLabelWarnings: z.array(shoppingLabelSnapshotSchema),
+    items: z.array(shoppingDraftItemSchema).max(shoppingItemsMax),
+    listLabelWarnings: z.array(shoppingLabelSnapshotSchema).max(300),
   })
   .strict();
 
@@ -87,40 +94,44 @@ export const shoppingListSchema = z
     id: uuid,
     status: z.enum(["active", "archived"]),
     version: z.number().int().positive(),
-    items: z.array(shoppingItemSchema),
-    listLabelWarnings: z.array(shoppingLabelSnapshotSchema),
+    items: z.array(shoppingItemSchema).max(shoppingItemsMax),
+    listLabelWarnings: z.array(shoppingLabelSnapshotSchema).max(300),
   })
   .strict();
 
 export const shoppingDiffSchema = z
   .object({
-    add: z.array(shoppingDraftItemSchema),
-    replace: z.array(
-      z
-        .object({
-          itemId: uuid,
-          current: z
-            .object({
-              displayName: z.string().trim().min(1).max(100),
-              quantityText: z.string().trim().min(1).max(60),
-              storeSection: z.enum(storeSections),
-            })
-            .strict(),
-          next: shoppingDraftItemSchema,
-        })
-        .strict(),
-    ),
-    remove: z.array(
-      z
-        .object({
-          itemId: uuid,
-          displayName: z.string().trim().min(1).max(100),
-          quantityText: z.string().trim().min(1).max(60),
-        })
-        .strict(),
-    ),
-    protectedItemIds: z.array(uuid),
-    listLabelWarnings: z.array(shoppingLabelSnapshotSchema),
+    add: z.array(shoppingDraftItemSchema).max(shoppingItemsMax),
+    replace: z
+      .array(
+        z
+          .object({
+            itemId: uuid,
+            current: z
+              .object({
+                displayName: z.string().trim().min(1).max(100),
+                quantityText: z.string().trim().min(1).max(60),
+                storeSection: z.enum(storeSections),
+              })
+              .strict(),
+            next: shoppingDraftItemSchema,
+          })
+          .strict(),
+      )
+      .max(shoppingItemsMax),
+    remove: z
+      .array(
+        z
+          .object({
+            itemId: uuid,
+            displayName: z.string().trim().min(1).max(100),
+            quantityText: z.string().trim().min(1).max(60),
+          })
+          .strict(),
+      )
+      .max(shoppingItemsMax),
+    protectedItemIds: z.array(uuid).max(shoppingItemsMax),
+    listLabelWarnings: z.array(shoppingLabelSnapshotSchema).max(300),
   })
   .strict();
 
@@ -173,9 +184,9 @@ export const reconcileShoppingListRequestSchema = z
     idempotencyKey: uuid,
     approval: z
       .object({
-        addKeys: z.array(z.string().min(1).max(200)),
-        replaceItemIds: z.array(uuid),
-        removeItemIds: z.array(uuid),
+        addKeys: z.array(z.string().min(1).max(200)).max(shoppingItemsMax),
+        replaceItemIds: z.array(uuid).max(shoppingItemsMax),
+        removeItemIds: z.array(uuid).max(shoppingItemsMax),
       })
       .strict(),
   })

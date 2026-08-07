@@ -829,6 +829,32 @@ describe("createGenerationRepository regeneration reserve", () => {
     );
   });
 
+  it("rejects status payload missing user_daily_limit (S11)", async () => {
+    loadEntitlementMock.mockResolvedValue(plusEntitlement);
+    getServerEnvMock.mockReturnValue({
+      openRouter: {
+        userDailyLimit: 3,
+        globalDailyLimit: 20,
+        staleAfterSeconds: 180,
+      },
+      generationIntegrity: {
+        requestHmacKey: hmacKey,
+      },
+      quotaIdentityHmacKey: identityHmacKey,
+      aiQuotaDisabled: false,
+      billingEnabled: true,
+    });
+    const { user_daily_limit: _omit, ...withoutLimit } = publicRecord;
+    void _omit;
+    rpcMock.mockResolvedValueOnce({
+      data: withoutLimit,
+      error: null,
+    });
+    const repository = createGenerationRepository(user);
+    // Free 3 へ fail-open せず schema で拒否（Plus 誤表示を防ぐ）
+    await expect(repository.status(idempotencyKey)).rejects.toThrow();
+  });
+
   it("rejects qualityMode on Free before calling reserve RPC", async () => {
     loadEntitlementMock.mockResolvedValue(freeEntitlement);
     const repository = createGenerationRepository(user);

@@ -252,6 +252,24 @@ describe("aiGeneratedMenuPayloadSchema", () => {
     expect(aiGeneratedMenuPayloadSchema.safeParse(atCeiling).success).toBe(true);
   });
 
+  it("rejects sub-milli quantityValue that would round to 0 (S3)", () => {
+    const withQuantity = (quantityValue: number) => ({
+      ...validPayload,
+      dishes: [
+        {
+          ...validPayload.dishes[0],
+          ingredients: [{ ...validPayload.dishes[0].ingredients[0], quantityValue }],
+        },
+        validPayload.dishes[1],
+      ],
+    });
+    // aggregate の 3dp 丸めで 0 になる sub-milli は AI wire で拒否
+    expect(aiGeneratedMenuPayloadSchema.safeParse(withQuantity(1e-10)).success).toBe(false);
+    expect(aiGeneratedMenuPayloadSchema.safeParse(withQuantity(1.23456789)).success).toBe(false);
+    expect(aiGeneratedMenuPayloadSchema.safeParse(withQuantity(0.001)).success).toBe(true);
+    expect(aiGeneratedMenuPayloadSchema.safeParse(withQuantity(1.234)).success).toBe(true);
+  });
+
   it("rejects dinner with fewer dishes than mealType minimum (S11)", () => {
     // dinner 最低 3 品。1 品は AI wire で早期拒否（後段 invalid_ai_response 前）
     expect(

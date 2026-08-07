@@ -107,8 +107,8 @@ const requestPayloadSchema = z
     processing_expires_at: z.iso.datetime({ offset: true }).nullable().optional(),
     completed_menu_id: z.uuid().nullable().optional(),
     remaining: z.number().int().min(0).optional(),
-    // Free 3 / Plus 10。defense max を default にしない
-    user_daily_limit: z.union([z.literal(3), z.literal(10)]).optional(),
+    // Free 3 / Plus 10。RPC は常に p_user_limit を返すため必須（欠落時 Free 3 へ fail-open しない・S11）
+    user_daily_limit: z.union([z.literal(3), z.literal(10)]),
     consumed: z.boolean().optional(),
     terminal_details: z.record(z.string(), z.unknown()).nullable().optional(),
     actual_model_ids: z.array(z.string()).optional(),

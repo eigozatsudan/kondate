@@ -10,7 +10,6 @@ import {
   generationConflictSchema,
   generationFailureCodes,
   issueMessages,
-  releaseQuota,
   type GenerationCommand,
   type GenerationFailureCode,
   type GenerationIntegrityContextV2,
@@ -312,7 +311,8 @@ export function toGenerationStatus(
   const quota = {
     consumed: record.consumed ?? record.status === "succeeded",
     remaining: record.remaining ?? 0,
-    userDailyLimit: record.user_daily_limit ?? releaseQuota.userDailySuccessLimit,
+    // RPC 契約上必須。欠落時の Free 3 既定は Plus を誤表示するため置かない（S11）
+    userDailyLimit: record.user_daily_limit,
     limitKind:
       record.failure_code === "user_daily_limit"
         ? ("user" as const)

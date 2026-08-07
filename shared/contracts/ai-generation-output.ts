@@ -19,10 +19,16 @@ const safetyTag = z.string().regex(/^[a-z][a-z0-9_]*$/u);
 /** pantry plannedQuantity 用（0 許容）。ingredient quantity とは別。 */
 const nullableQuantity = z.number().min(0).max(999_999).nullable();
 /**
- * 材料数量の正本 bound（pantry / draft と天井を揃える）。
- * 0 は不可・上限 999_999（nullableQuantity 天井の positive 版）。
+ * 材料数量の正本 bound（pantry / draft / shopping と揃える）。
+ * 0 は不可・上限 999_999・numeric(12,3) 相当の milli グリッド（multipleOf 0.001）。
+ * sub-milli は aggregate の 3dp 丸めで 0 になり得るため wire で拒否する（S3）。
  */
-export const nullablePositiveQuantity = z.number().positive().max(999_999).nullable();
+export const nullablePositiveQuantity = z
+  .number()
+  .positive()
+  .max(999_999)
+  .multipleOf(0.001)
+  .nullable();
 const nullableUnit = z.string().trim().min(1).max(24).nullable();
 const sourceRef = z.union([dishRef, ingredientRef, stepRef, timelineRef, adaptationRef]);
 
