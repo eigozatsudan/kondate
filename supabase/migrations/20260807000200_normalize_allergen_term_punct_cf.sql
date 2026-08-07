@@ -13,8 +13,9 @@ set search_path = ''
 as $function$
   -- 1) NFKC  2) カタカナ(ァ-ヶ)→ひらがな  3) lower
   -- 4) normalizeFoodText と同型の空白・句読点除去
-  -- 5) 代表的な書式制御 Cf（ZWSP 等。JS \p{Cf} の攻撃面をカバー）
-  select regexp_replace(
+  -- 5) 代表的な書式制御 Cf を translate の削除（to が短いと from 余剰文字を削除）で除去。
+  --    PG regexp の \x{} は無効のため U& リテラルを使う（JS \p{Cf} の攻撃面: ZWSP 等）。
+  select translate(
     regexp_replace(
       lower(
         translate(
@@ -28,10 +29,9 @@ as $function$
       '',
       'g'
     ),
-    -- 代表的 Cf: soft hyphen / ZWSP–RLM / bidi / WJ–isolates / BOM
-    E'[\\x{00AD}\\x{200B}-\\x{200F}\\x{202A}-\\x{202E}\\x{2060}-\\x{206F}\\x{FEFF}]',
-    '',
-    'g'
+    -- soft hyphen / ZWSP–RLM / bidi embeddings / WJ–FA / bidi isolates / BOM
+    U&'\00AD\200B\200C\200D\200E\200F\202A\202B\202C\202D\202E\2060\2061\2062\2063\2064\2066\2067\2068\2069\206A\206B\206C\206D\206E\206F\FEFF',
+    ''
   );
 $function$;
 
