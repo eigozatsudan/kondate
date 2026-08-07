@@ -43,6 +43,17 @@ it("normalizes custom allergy and dislike names at the repository boundary", asy
   );
 });
 
+// H12: 純句読点/Cf は collision normalize 後 empty。RPC 前にクライアントで拒否する。
+it("rejects custom allergy names that collapse to empty after collision normalize (H12)", async () => {
+  const client = {} as never;
+  await expect(addCustomMemberAllergy(client, "user-1", "member-1", "、。", [])).rejects.toThrow(
+    "1〜80文字",
+  );
+  await expect(addCustomMemberAllergy(client, "user-1", "member-1", "\u200b", [])).rejects.toThrow(
+    "1〜80文字",
+  );
+});
+
 it("rejects empty or oversized dislike names", async () => {
   const client = {} as never;
   await expect(addMemberDislike(client, "user-1", "member-1", " ")).rejects.toThrow("1〜80文字");

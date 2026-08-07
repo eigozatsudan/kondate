@@ -11,11 +11,11 @@ set local role authenticated;
 select lives_ok(
   $sql$
     insert into public.household_members (
-      id, user_id, age_band, allergy_status, unsupported_diet_status
+      id, user_id, age_band, portion_size, spice_level, allergy_status, unsupported_diet_status
     ) values (
       'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       '11111111-1111-1111-1111-111111111111',
-      'adult', 'none', 'none'
+      'adult', 'regular', 'regular', 'none', 'none'
     )
   $sql$,
   'owner can insert a draft member'

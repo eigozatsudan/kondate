@@ -157,6 +157,58 @@ it("shows a direct or derived alias match and prevents custom registration", asy
   expect(addCustom).not.toHaveBeenCalled();
 });
 
+// H12: 句読点・ZWSP 付きの近傍標準カスタムも衝突として拒否する
+// （ZWSP は userEvent.type では不安定なため change で一括投入）
+it.each(["たまご、", "たまご\u200b"] as const)(
+  "blocks near-standard custom %j as a standard collision (H12)",
+  async (name) => {
+    const addCustom = vi.fn();
+    render(
+      <AllergyEditor
+        memberId="member-1"
+        catalog={catalog}
+        aliases={aliases}
+        allergies={[]}
+        addStandard={vi.fn()}
+        addCustom={addCustom}
+        remove={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("自由登録名"), { target: { value: name } });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("一覧に同じものがあります: 項目1");
+    await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
+    expect(screen.getByRole("button", { name: "自由登録を追加" })).toBeDisabled();
+    expect(addCustom).not.toHaveBeenCalled();
+  },
+);
+
+// H12: 純句読点/Cf は normalize 後 empty。幽霊カスタムとして追加不可。
+it.each(["、。", "\u200b"] as const)(
+  "disables custom add when name collapses to empty after normalize (%j) (H12)",
+  async (name) => {
+    const addCustom = vi.fn();
+    render(
+      <AllergyEditor
+        memberId="member-1"
+        catalog={catalog}
+        aliases={aliases}
+        allergies={[]}
+        addStandard={vi.fn()}
+        addCustom={addCustom}
+        remove={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("自由登録名"), { target: { value: name } });
+    await userEvent.click(screen.getByLabelText("一覧にないアレルギーとして登録"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "自由登録を追加" })).toBeDisabled();
+    expect(addCustom).not.toHaveBeenCalled();
+  },
+);
+
 it("does not treat a processed-food label term as the user's standard allergen", async () => {
   render(
     <AllergyEditor

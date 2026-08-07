@@ -1,4 +1,5 @@
 import type { OnboardingStatus } from "@shared/contracts/domain";
+import { normalizeFoodText } from "@shared/safety-pure/normalize-food-text";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import type { Database } from "@/shared/types/database";
 import type { Tables, TablesInsert, TablesUpdate } from "@/shared/types/database.generated";
@@ -216,10 +217,16 @@ export async function addCustomMemberAllergy(
   aliases: string[],
 ): Promise<MemberAllergyRow> {
   const normalizedName = customName.normalize("NFKC").trim();
+  // H12: 純句読点・Cf は collision normalize 後 empty。RPC の invalid と揃えクライアントでも拒否。
+  const collisionNormalizedName = normalizeFoodText(customName);
   const normalizedAliases = aliases
     .map((alias) => alias.normalize("NFKC").trim())
-    .filter((alias) => alias.length > 0);
-  if (normalizedName.length < 1 || normalizedName.length > 80) {
+    .filter((alias) => alias.length > 0 && normalizeFoodText(alias).length > 0);
+  if (
+    normalizedName.length < 1 ||
+    normalizedName.length > 80 ||
+    collisionNormalizedName.length < 1
+  ) {
     throw dataError("自由登録アレルギーは1〜80文字で入力してください");
   }
   if (

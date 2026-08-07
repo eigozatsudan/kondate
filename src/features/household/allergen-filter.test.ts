@@ -12,6 +12,25 @@ describe("normalizeAllergenTerm", () => {
     expect(normalizeAllergenTerm(" 卵 ")).toBe(normalizeAllergenTerm("卵"));
     expect(normalizeAllergenTerm("卵（鶏）")).toBe(normalizeAllergenTerm("卵鶏"));
   });
+
+  // H12: evaluate の normalizeFoodText と同じ句読点・Cf strip。近傍標準カスタムのすり抜けを閉じる。
+  it("strips food-text punctuation so 卵、 collides with 卵 (H12)", () => {
+    expect(normalizeAllergenTerm("卵、")).toBe(normalizeAllergenTerm("卵"));
+    expect(normalizeAllergenTerm("卵・")).toBe(normalizeAllergenTerm("卵"));
+    expect(normalizeAllergenTerm("たまご。")).toBe(normalizeAllergenTerm("たまご"));
+  });
+
+  it("strips format controls so 卵+ZWSP collides with 卵 (H12)", () => {
+    expect(normalizeAllergenTerm("卵\u200b")).toBe(normalizeAllergenTerm("卵"));
+    expect(normalizeAllergenTerm("たまご\u200b")).toBe(normalizeAllergenTerm("たまご"));
+  });
+
+  it("collapses pure punctuation or Cf to empty (H12)", () => {
+    expect(normalizeAllergenTerm("、。")).toBe("");
+    expect(normalizeAllergenTerm("・")).toBe("");
+    expect(normalizeAllergenTerm("\u200b")).toBe("");
+    expect(normalizeAllergenTerm("\u200b、\u200b")).toBe("");
+  });
 });
 
 describe("filterAllergenCatalog", () => {

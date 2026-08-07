@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(11);
+select plan(15);
 
 select tests.create_supabase_user(
   '44444444-4444-4444-4444-444444444444',
@@ -53,6 +53,59 @@ select throws_ok(
   '23514',
   'custom_allergy_matches_standard',
   'katakana タマゴ must match standard egg alias after kana fold'
+);
+-- H12: 句読点付き近傍標準カスタムも collision normalize 後に標準 alias と一致して拒否される
+-- （RPC は allergen_aliases 照合。display_name「卵」は UI 側 exactMatch が担当）
+select throws_ok(
+  $sql$
+    select public.add_custom_member_allergy(
+      'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      'たまご、',
+      array[]::text[]
+    )
+  $sql$,
+  '23514',
+  'custom_allergy_matches_standard',
+  'punctuated たまご、 must collide with standard egg alias after food-text normalize (H12)'
+);
+-- H12: ZWSP 付きも同様（chr(8203) = U+200B）
+select throws_ok(
+  $sql$
+    select public.add_custom_member_allergy(
+      'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      'たまご' || chr(8203),
+      array[]::text[]
+    )
+  $sql$,
+  '23514',
+  'custom_allergy_matches_standard',
+  'ZWSP-decorated たまご must collide with standard egg alias after Cf strip (H12)'
+);
+-- H12: 純句読点は normalize 後 empty → invalid_custom_allergy
+select throws_ok(
+  $sql$
+    select public.add_custom_member_allergy(
+      'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      '、。',
+      array[]::text[]
+    )
+  $sql$,
+  '23514',
+  'invalid_custom_allergy',
+  'pure punctuation custom is rejected as empty after normalize (H12)'
+);
+-- H12: 純 Cf も empty
+select throws_ok(
+  $sql$
+    select public.add_custom_member_allergy(
+      'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      chr(8203),
+      array[]::text[]
+    )
+  $sql$,
+  '23514',
+  'invalid_custom_allergy',
+  'pure Cf custom is rejected as empty after normalize (H12)'
 );
 select throws_ok(
   $sql$

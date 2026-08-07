@@ -1,20 +1,14 @@
+import { normalizeFoodText } from "@shared/safety-pure/normalize-food-text";
 import type { AllergenAliasRow, AllergenCatalogRow } from "./household-api";
-
-/** カタカナ（ァ-ヶ）を対応するひらがなへ折り畳む（normalizeFoodText と同型）。 */
-function foldKatakanaToHiragana(value: string): string {
-  return value.replace(/[\u30a1-\u30f6]/gu, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60));
-}
 
 /**
  * アレルゲン登録・辞書照合用の正規化。
- * NFKC → カタカナ→ひらがな → 小文字 → 空白・括弧除去。
- * SQL private.normalize_allergen_term と揃える（F-SAF-001: タマゴ≠たまご の取りこぼし防止）。
+ * evaluate 側の normalizeFoodText と同じ空間（句読点・書式制御 Cf 除去込み）へ寄せ、
+ * カスタム「卵、」「卵​」が標準卵と衝突して拒否されるようにする（H12）。
+ * SQL private.normalize_allergen_term も同集合を strip する。
  */
 export function normalizeAllergenTerm(value: string): string {
-  return foldKatakanaToHiragana(value.normalize("NFKC"))
-    .trim()
-    .toLocaleLowerCase("ja-JP")
-    .replace(/[\s()（）]/gu, "");
+  return normalizeFoodText(value);
 }
 
 export function filterAllergenCatalog(

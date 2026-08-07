@@ -27,6 +27,8 @@ export function AllergyEditor(props: AllergyEditorProps) {
     [aliases, catalog, query],
   );
   const normalizedCustomName = customName.normalize("NFKC").trim();
+  // 衝突判定は evaluate と同じ normalize 空間（句読点・Cf 除去）。空は幽霊カスタムになるため拒否。
+  const collisionNormalizedName = normalizeAllergenTerm(customName);
   const customTerms = [normalizedCustomName, ...customAliases.split(",")]
     .map(normalizeAllergenTerm)
     .filter((term) => term.length > 0);
@@ -44,10 +46,11 @@ export function AllergyEditor(props: AllergyEditorProps) {
   }
   const exactMatches = catalog.filter((item) => exactMatchIds.has(item.id));
   const exactMatch = exactMatches.length > 0;
+  // 別名も normalize 後が空（純句読点/Cf）なら捨てる。RPC 側でも invalid になるが UI で先に弾く。
   const aliasValues = customAliases
     .split(",")
     .map((alias) => alias.normalize("NFKC").trim())
-    .filter((alias) => alias.length > 0);
+    .filter((alias) => alias.length > 0 && normalizeAllergenTerm(alias).length > 0);
   const mutationDisabled = disabled || mutationPending;
   const runMutation = (operation: () => Promise<unknown>, onSuccess?: () => void) => {
     // React の再描画前に連続クリックされても、アレルギー更新を同時送信しない。
@@ -201,6 +204,8 @@ export function AllergyEditor(props: AllergyEditorProps) {
             !confirmed ||
             exactMatch ||
             normalizedCustomName.length < 1 ||
+            // H12: 純句読点・Cf のみは normalize 後 empty。幽霊カスタムを UI でも拒否する。
+            collisionNormalizedName.length < 1 ||
             normalizedCustomName.length > 80 ||
             aliasValues.length > 10
           }

@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(9);
+select plan(11);
 
 select tests.create_supabase_user(
   '33333333-3333-3333-3333-333333333333',
@@ -45,11 +45,29 @@ select lives_ok(
   $sql$,
   'draft accepts the selected unsupported diet kind'
 );
+-- H16: portion/spice 未設定のまま complete すると incomplete（生成 U4-001 と揃える）
+select throws_ok(
+  $sql$
+    select public.complete_household_member('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee')
+  $sql$,
+  '23514',
+  'member_required_fields_incomplete',
+  'completion rejects null portion_size/spice_level (H16)'
+);
+select lives_ok(
+  $sql$
+    update public.household_members
+    set portion_size = 'regular',
+        spice_level = 'regular'
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+  $sql$,
+  'draft accepts portion_size and spice_level defaults (H16)'
+);
 select lives_ok(
   $sql$
     select public.complete_household_member('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee')
   $sql$,
-  'completion succeeds after an unsupported diet kind is selected'
+  'completion succeeds after unsupported diet kind and portion/spice are set'
 );
 
 -- =============================================================================
