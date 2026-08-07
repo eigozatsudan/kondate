@@ -809,8 +809,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     ((safetyQuery.isError && safetyQuery.data !== undefined) ||
       (pantryQuery.isError && pantryQuery.data !== undefined));
   // P7: draft も init 後背景失敗を soft banner に載せる（safety/pantry と対称）
-  const staleBackgroundDraft =
-    initialized && draftQuery.isError && draftQuery.data !== undefined;
+  const staleBackgroundDraft = initialized && draftQuery.isError && draftQuery.data !== undefined;
   // 背景 refetch 失敗時のソフトエラー（wizard は破棄しない。focus 再取得や下の再試行で回復）
   const backgroundRefetchErrorMessage = staleBackgroundSafetyPantry
     ? "家族または冷蔵庫の最新情報を再取得できませんでした。表示は直前の内容です。最新を取得してから献立を作ってください。"
@@ -1042,11 +1041,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           setAudienceStatusError(null);
           try {
             const saved = await flushDraft();
-            if (
-              !mountedRef.current ||
-              submitOperationId !== submitOperationIdRef.current ||
-              !submittingRef.current
-            ) {
+            // strip は operationId を先に無効化するので submittingRef の再読は冗長
+            if (!mountedRef.current || submitOperationId !== submitOperationIdRef.current) {
               return;
             }
             // P1: flush 済み saved を最新 eligibility で再検証（strip 前 snapshot での生成禁止）
@@ -1101,11 +1097,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
                 return;
               }
             }
-            if (
-              !mountedRef.current ||
-              submitOperationId !== submitOperationIdRef.current ||
-              !submittingRef.current
-            ) {
+            // await 跨ぎで strip が operationId を進めている可能性がある（ref は制御フロー外）
+            if (!isPlannerSubmitStillActive(mountedRef, submitOperationId, submitOperationIdRef)) {
               return;
             }
             // 生成へ渡す attempt は選択中 confirmation のみ・非 Plus は qualityMode を落とす
@@ -1156,6 +1149,15 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       />
     </>
   );
+}
+
+/** await 跨ぎの strip/unmount を ref 再読で検知する（制御フロー解析に畳まれないよう関数経由）。 */
+function isPlannerSubmitStillActive(
+  mountedRef: { current: boolean },
+  submitOperationId: number,
+  submitOperationIdRef: { current: number },
+): boolean {
+  return mountedRef.current && submitOperationId === submitOperationIdRef.current;
 }
 
 /** idea → skipped 書込の失敗理由。UI は code で文言を分岐する。 */

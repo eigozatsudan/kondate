@@ -100,10 +100,7 @@ export function toHouseholdFieldErrors(
 }
 
 /** 単一 enum 列を schema で検証。不正・null は undefined（呼び出し側で空/デフォルトへ） */
-function parseEnumField<T extends string>(
-  schema: z.ZodType<T>,
-  value: unknown,
-): T | undefined {
+function parseEnumField<T extends string>(schema: z.ZodType<T>, value: unknown): T | undefined {
   const parsed = schema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
 }
@@ -164,8 +161,7 @@ export function householdSettingsValueFromDbRow(
       row.required_safety_constraints,
       2,
     ),
-    portionSize:
-      parseEnumField(z.enum(portionSizes), row.portion_size) ?? defaults.portion_size,
+    portionSize: parseEnumField(z.enum(portionSizes), row.portion_size) ?? defaults.portion_size,
     spiceLevel: parseEnumField(z.enum(spiceLevels), row.spice_level) ?? defaults.spice_level,
     easePreferences: parseEnumArrayField(z.enum(easePreferences), row.ease_preferences, 3),
   };

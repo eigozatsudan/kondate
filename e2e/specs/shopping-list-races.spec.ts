@@ -26,20 +26,16 @@ type CapturedHttpReject = { status: number; code: string | undefined };
  * route.fetch の status と error.code を記録し、同一 body で fulfill する。
  * json() 消費で body が消えないよう text 経由で往復する（E2E12）。
  */
-async function captureRejectAndFulfill(
-  route: Route,
-  into: CapturedHttpReject[],
-): Promise<void> {
+async function captureRejectAndFulfill(route: Route, into: CapturedHttpReject[]): Promise<void> {
   const response = await route.fetch();
   const bodyText = await response.text();
   const status = response.status();
   let code: string | undefined;
   try {
     const parsed = z
-      .object({
+      .looseObject({
         error: z.object({ code: z.string() }).partial().optional(),
       })
-      .passthrough()
       .safeParse(JSON.parse(bodyText) as unknown);
     code = parsed.success ? parsed.data.error?.code : undefined;
   } catch {
@@ -108,7 +104,8 @@ test("rejects creation after current household safety changes", async ({
   await expect(page.getByRole("alert")).toContainText(/現在の(家族設定|安全条件)/u, {
     timeout: 30_000,
   });
-  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
+  // HR2: 安全ゲート閉鎖時は作成 CTA を非表示（disabled で残さない）
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
 });
 
 test("disables shopping actions immediately after member or allergy mutation", async ({
@@ -306,14 +303,12 @@ test("pending create envelope does not create a list after household safety chan
   await expect.poll(() => createRejects.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
   expectSafetyContractReject(createRejects, "create after safety change");
 
-  // メニュー結果は安全条件変更で fail closed。作成 CTA は disabled。
+  // メニュー結果は安全条件変更で fail closed。HR2: 作成 CTA は非表示。
   // shopping 側の別 alert（リスト状態）と strict 衝突しないよう文言で絞る。
   await expect(
     page.getByRole("alert").filter({ hasText: /現在の(家族設定|安全条件)/u }),
   ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled({
-    timeout: 30_000,
-  });
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
 
   // E2E6: code 付き 4xx 後は failShoppingCommand が create envelope を消し、
   // ユーザー向け状態変化メッセージを出す（clear 退行・resume 再送ループを検出）

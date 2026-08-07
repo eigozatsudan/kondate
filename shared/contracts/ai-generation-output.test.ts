@@ -233,9 +233,7 @@ describe("aiGeneratedMenuPayloadSchema", () => {
       dishes: [
         {
           ...validPayload.dishes[0],
-          ingredients: [
-            { ...validPayload.dishes[0].ingredients[0], quantityValue: 1e15 },
-          ],
+          ingredients: [{ ...validPayload.dishes[0].ingredients[0], quantityValue: 1e15 }],
         },
         validPayload.dishes[1],
       ],
@@ -246,9 +244,7 @@ describe("aiGeneratedMenuPayloadSchema", () => {
       dishes: [
         {
           ...validPayload.dishes[0],
-          ingredients: [
-            { ...validPayload.dishes[0].ingredients[0], quantityValue: 999_999 },
-          ],
+          ingredients: [{ ...validPayload.dishes[0].ingredients[0], quantityValue: 999_999 }],
         },
         validPayload.dishes[1],
       ],

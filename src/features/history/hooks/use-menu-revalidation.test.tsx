@@ -525,7 +525,10 @@ describe("useMenuRevalidation", () => {
     expect(result.current.phase).toBe("checking");
     expect(result.current.isOfflineHold).toBe(true);
 
-    const visibilityDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
+    const visibilityDescriptor = Object.getOwnPropertyDescriptor(
+      Document.prototype,
+      "visibilityState",
+    );
     act(() => {
       Object.defineProperty(document, "visibilityState", {
         configurable: true,
@@ -614,9 +617,7 @@ describe("useMenuRevalidation", () => {
   it("E2E1 seam: __KONDATE_REVALIDATE_POLL_MS=0 disables soft poll interval", async () => {
     // signal 専用 E2E と 2s poll を混線させないため 0 は soft poll 用 setInterval を張らない
     const setIntervalSpy = vi.spyOn(window, "setInterval");
-    (
-      window as Window & { __KONDATE_REVALIDATE_POLL_MS?: number }
-    ).__KONDATE_REVALIDATE_POLL_MS = 0;
+    (window as Window & { __KONDATE_REVALIDATE_POLL_MS?: number }).__KONDATE_REVALIDATE_POLL_MS = 0;
     try {
       const { unmount } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
       await waitFor(() => {

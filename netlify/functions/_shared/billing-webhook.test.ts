@@ -1622,9 +1622,9 @@ describe("projectionFromSubscription multi-item (B4)", () => {
     expect(projection!.current_period_start).toBe(new Date(1_720_000_000 * 1000).toISOString());
     expect(projection!.current_period_end).toBe(new Date(1_722_592_000 * 1000).toISOString());
     // guard 後も Plus のまま
-    expect(
-      guardSubscriptionProjection(projection!, { billingEnabled: true, stripe }).status,
-    ).toBe("active");
+    expect(guardSubscriptionProjection(projection!, { billingEnabled: true, stripe }).status).toBe(
+      "active",
+    );
   });
 
   it("falls back to items[0] when no allowlisted price", () => {

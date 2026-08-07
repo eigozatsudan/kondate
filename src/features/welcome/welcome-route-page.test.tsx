@@ -189,14 +189,12 @@ describe("WelcomeRoutePage L4 first-writer", () => {
   it("L1: zombie re-read after timeout does not CAS or navigate", async () => {
     // timeout 後に遅延 resolve しても generation 無効化で副作用なし
     let resolveReread: ((value: { onboarding_status: string }) => void) | undefined;
-    getProfileMock
-      .mockResolvedValueOnce({ onboarding_status: "not_started" })
-      .mockImplementation(
-        () =>
-          new Promise<{ onboarding_status: string }>((resolve) => {
-            resolveReread = resolve;
-          }),
-      );
+    getProfileMock.mockResolvedValueOnce({ onboarding_status: "not_started" }).mockImplementation(
+      () =>
+        new Promise<{ onboarding_status: string }>((resolve) => {
+          resolveReread = resolve;
+        }),
+    );
     const router = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     vi.useFakeTimers();

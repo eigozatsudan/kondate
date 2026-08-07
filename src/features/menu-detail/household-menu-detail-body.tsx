@@ -231,8 +231,7 @@ export function HouseholdMenuDetailBody({
   const canCreateShoppingList = canOpenCreateSheet;
   // HR2: notice と同型に gateOpen を要求。invalid 後に disabled 買い物を primary に残さない。
   // soft 中は gateOpen 維持のまま canCreate が false → shopping 枝だが disabled（一時）。
-  const shoppingAsPrimary =
-    (accepted && gateOpen) || (confirmedSingle && canCreateShoppingList);
+  const shoppingAsPrimary = (accepted && gateOpen) || (confirmedSingle && canCreateShoppingList);
   const nonRemovedCount =
     activeList === null ? 0 : activeList.items.filter((item) => !item.isRemovedByUser).length;
   // HR3: preview/apply の await 後に最新 gate を読む（クロージャ stale を避ける）
@@ -709,10 +708,9 @@ export function HouseholdMenuDetailBody({
               <button
                 type="button"
                 className="secondary-button min-h-11"
-                // HR6: primary accept と同型。soft 開始と click のレースで RPC を飛ばさない
-                disabled={!actionsEnabled || accept.isPending}
+                // HR6: この枝は canCreateShoppingList ⇒ actionsEnabled 済み。pending のみ disable
+                disabled={accept.isPending}
                 onClick={() => {
-                  if (!actionsEnabled) return;
                   setAcceptError(null);
                   accept.mutate(menuId, {
                     onSuccess: () => {
@@ -760,9 +758,7 @@ export function HouseholdMenuDetailBody({
                         return;
                       }
                       if (fingerprintAtPreview !== revalidationFingerprintRef.current) {
-                        setShoppingError(
-                          "家族設定が変わったため、差分を開き直してください",
-                        );
+                        setShoppingError("家族設定が変わったため、差分を開き直してください");
                         return;
                       }
                       reconcileDiffFingerprintRef.current = fingerprintAtPreview ?? null;

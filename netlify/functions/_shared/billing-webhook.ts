@@ -182,7 +182,7 @@ export function subscriptionHasAllowlistedPlusPrice(
   stripe: { pricePlusMonthly: string; pricePlusYearly: string },
 ): boolean {
   for (const item of sub.items.data) {
-    const priceId = item.price?.id;
+    const priceId = item.price.id;
     if (typeof priceId === "string" && isAllowlistedPlusPrice(priceId, stripe)) {
       return true;
     }
@@ -219,7 +219,7 @@ export function selectSubscriptionItemForProjection(
 ): Stripe.SubscriptionItem | undefined {
   if (stripe !== undefined) {
     for (const item of sub.items.data) {
-      const priceId = item.price?.id;
+      const priceId = item.price.id;
       if (typeof priceId === "string" && isAllowlistedPlusPrice(priceId, stripe)) {
         return item;
       }

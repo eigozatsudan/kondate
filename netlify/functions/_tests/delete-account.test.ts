@@ -347,7 +347,7 @@ describe("cancelAllLiveSubscriptionsForUser", () => {
     // 常に has_more:true + 非空 data → 無限ページ病理
     listMock.mockImplementation(() =>
       Promise.resolve({
-        data: [{ id: `sub_page_${listMock.mock.calls.length}`, status: "canceled" }],
+        data: [{ id: `sub_page_${String(listMock.mock.calls.length)}`, status: "canceled" }],
         has_more: true,
       }),
     );

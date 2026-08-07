@@ -1088,9 +1088,7 @@ describe("ShoppingListPage mutations", () => {
     await waitFor(() => {
       expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
     });
-    expect(mutateShoppingItem.mock.calls[0]?.[0].idempotencyKey).toBe(
-      stickyRequest.idempotencyKey,
-    );
+    expect(mutateShoppingItem.mock.calls[0]?.[0].idempotencyKey).toBe(stickyRequest.idempotencyKey);
     expect(mutateShoppingItem.mock.calls[0]?.[0]).toEqual(stickyRequest);
     // 成功後は sticky を消す
     expect(readPendingItemMutation(LIST_ID)).toBeNull();

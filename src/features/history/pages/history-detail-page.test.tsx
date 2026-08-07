@@ -453,7 +453,9 @@ describe("HistoryDetailPage safety gate", () => {
     expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
     expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
     // HR2: gate 未開・未採用では買い物を primary に出さない（checking 中の disabled 買い物 residual を閉じる）
-    expect(screen.queryByRole("button", { name: "材料の買い物リストを作る" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "材料の買い物リストを作る" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
     act(() => {
       revalidate.resolve(validRevalidation);

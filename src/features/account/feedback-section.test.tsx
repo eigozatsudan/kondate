@@ -1,10 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  FEEDBACK_DAILY_LIMIT,
-  FEEDBACK_RATE_WINDOW_HOURS,
-} from "@shared/contracts/feedback";
+import { FEEDBACK_DAILY_LIMIT, FEEDBACK_RATE_WINDOW_HOURS } from "@shared/contracts/feedback";
 import {
   FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY,
   FEEDBACK_POST_CLIENT_TIMEOUT_MS,

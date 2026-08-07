@@ -114,9 +114,7 @@ describe("computeSharePublishMetadata", () => {
                 ingredientIndex === 0 ? { ...ingredient, name: "混合物" } : ingredient,
               ),
               steps: entry.steps.map((entryStep, stepIndex) =>
-                stepIndex === 0
-                  ? { ...entryStep, instruction: "卵を割って混ぜる" }
-                  : entryStep,
+                stepIndex === 0 ? { ...entryStep, instruction: "卵を割って混ぜる" } : entryStep,
               ),
             }
           : entry,

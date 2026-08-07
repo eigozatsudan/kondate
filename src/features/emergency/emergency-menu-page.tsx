@@ -327,8 +327,7 @@ export function EmergencyMenuPage() {
     householdQueryEnabled &&
     (householdQuery.isPending || (householdQuery.isFetching && householdQuery.data === undefined));
   const candidateInitialLoading =
-    candidateQueryEnabled &&
-    (query.isPending || (query.isFetching && query.data === undefined));
+    candidateQueryEnabled && (query.isPending || (query.isFetching && query.data === undefined));
   const loading = draftInitialLoading || householdInitialLoading || candidateInitialLoading;
   const error =
     draftQuery.isError || (householdQueryEnabled && householdQuery.isError) || query.isError

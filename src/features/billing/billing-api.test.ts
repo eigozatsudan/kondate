@@ -34,15 +34,15 @@ describe("createCheckoutSession / createPortalSession host DiD (B7)", () => {
   it("rejects checkout URL outside Stripe hosts", async () => {
     const fetchImpl = vi.fn(() =>
       Promise.resolve(
-        new Response(
-          JSON.stringify({ ok: true, data: { url: "https://evil.example/phish" } }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+        new Response(JSON.stringify({ ok: true, data: { url: "https://evil.example/phish" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       ),
     );
-    await expect(
-      createCheckoutSession({ interval: "month" }, { fetchImpl: fetchImpl as typeof fetch }),
-    ).rejects.toThrow("billing_redirect_url_invalid");
+    await expect(createCheckoutSession({ interval: "month" }, { fetchImpl })).rejects.toThrow(
+      "billing_redirect_url_invalid",
+    );
   });
 
   it("accepts Stripe checkout URL", async () => {
@@ -57,22 +57,22 @@ describe("createCheckoutSession / createPortalSession host DiD (B7)", () => {
         ),
       ),
     );
-    await expect(
-      createCheckoutSession({ interval: "month" }, { fetchImpl: fetchImpl as typeof fetch }),
-    ).resolves.toEqual({ url: "https://checkout.stripe.com/c/pay/cs_ok" });
+    await expect(createCheckoutSession({ interval: "month" }, { fetchImpl })).resolves.toEqual({
+      url: "https://checkout.stripe.com/c/pay/cs_ok",
+    });
   });
 
   it("rejects portal URL outside Stripe hosts", async () => {
     const fetchImpl = vi.fn(() =>
       Promise.resolve(
-        new Response(
-          JSON.stringify({ ok: true, data: { url: "https://evil.example/portal" } }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+        new Response(JSON.stringify({ ok: true, data: { url: "https://evil.example/portal" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       ),
     );
-    await expect(
-      createPortalSession({ fetchImpl: fetchImpl as typeof fetch }),
-    ).rejects.toThrow("billing_redirect_url_invalid");
+    await expect(createPortalSession({ fetchImpl })).rejects.toThrow(
+      "billing_redirect_url_invalid",
+    );
   });
 });

@@ -23,8 +23,7 @@ async function withOnboardingStartLock<T>(
   run: () => Promise<T>,
   onTimeout?: () => void,
 ): Promise<T> {
-  const execute = (): Promise<T> =>
-    withTimeout(run(), COLD_START_SESSION_DEADLINE_MS, onTimeout);
+  const execute = (): Promise<T> => withTimeout(run(), COLD_START_SESSION_DEADLINE_MS, onTimeout);
   // DOM 型は locks を常置するが、未対応 UA では runtime で欠けることがある
   const locks = Reflect.get(globalThis.navigator, "locks") as LockManager | undefined;
   if (locks === undefined || typeof locks.request !== "function") {
@@ -104,9 +103,7 @@ export function WelcomeRoutePage() {
    * 1 開始 flight 分の generation を発行し、timeout 時に無効化する。
    * body 内の await 後は isCurrent() で副作用をガードする。
    */
-  async function runWelcomeStart(
-    body: (isCurrent: () => boolean) => Promise<void>,
-  ): Promise<void> {
+  async function runWelcomeStart(body: (isCurrent: () => boolean) => Promise<void>): Promise<void> {
     const generation = ++startGenerationRef.current;
     const isCurrent = (): boolean => startGenerationRef.current === generation;
     const invalidateGeneration = (): void => {
@@ -179,22 +176,18 @@ export function WelcomeRoutePage() {
             void navigate("/onboarding", welcomeStartNavigateOptions);
             return;
           }
-          // L1: 表示が in_progress の「設定せず…」は expected=in_progress で skipped CAS。
+          // L1: skipped|complete 以外は not_started|in_progress のみ。
+          // 表示が in_progress の「設定せず…」は expected=in_progress で skipped CAS。
           // not_started は従来どおり expected=not_started。RPC は両遷移を合法とする。
-          if (live === "not_started" || live === "in_progress") {
-            const written = await setOnboardingStatus(client, userId, "skipped", {
-              expectedStatus: live,
-            });
-            // L1: timeout 後のゾンビ CAS 結果は破棄（navigate しない）
-            if (!isCurrent()) return;
-            // L2: CAS 成功後は invalidate hang を失敗扱いにしない
-            softInvalidateProfile(queryClient, userId);
-            if (!isCurrent()) return;
-            navigateAfterWelcomeStart(written.onboarding_status, navigate);
-            return;
-          }
-          // 想定外 status: pending 固着を避け rethrow 相当で再試行可能に
-          throw new Error("onboarding start did not advance");
+          const written = await setOnboardingStatus(client, userId, "skipped", {
+            expectedStatus: live,
+          });
+          // L1: timeout 後のゾンビ CAS 結果は破棄（navigate しない）
+          if (!isCurrent()) return;
+          // L2: CAS 成功後は invalidate hang を失敗扱いにしない
+          softInvalidateProfile(queryClient, userId);
+          if (!isCurrent()) return;
+          navigateAfterWelcomeStart(written.onboarding_status, navigate);
         });
       }}
       onStartHousehold={async () => {

@@ -297,10 +297,7 @@ export function readPendingItemMutation(listId: string): PendingItemMutationStic
   return null;
 }
 
-export function writePendingItemMutation(
-  listId: string,
-  sticky: PendingItemMutationSticky,
-): void {
+export function writePendingItemMutation(listId: string, sticky: PendingItemMutationSticky): void {
   sessionStorage.setItem(
     pendingItemMutationStorageKey(listId),
     JSON.stringify({

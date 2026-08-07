@@ -617,12 +617,32 @@ test("E2E runner serializes runs from the same checkout and releases its lock", 
   );
 });
 
-test("E2E runner rejects a stale checkout lock before invoking Docker", async (t) => {
+// E2E11: 空の .run-e2e.lock（pid 無し・旧形式）は stale として回収し、Docker を起動する
+test("E2E runner recovers a stale empty checkout lock before invoking Docker", async (t) => {
   const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = await installDockerRecorder(root);
   const logDir = join(root, "stale E2E lock log");
   await mkdir(await expectedE2ELockDir(root));
+
+  await runE2E(root, bin, logDir, [], { TMPDIR: root });
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false),
+  );
+  await assert.rejects(access(await expectedE2ELockDir(root)));
+});
+
+// 中身があり rmdir できない放棄ロックは fail-closed で Docker を呼ばない
+test("E2E runner rejects a non-empty abandoned checkout lock before invoking Docker", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "abandoned E2E lock log");
+  const lockDir = await expectedE2ELockDir(root);
+  await mkdir(lockDir);
+  await writeFile(join(lockDir, "blocker"), "stuck\n");
 
   await assert.rejects(runE2E(root, bin, logDir, [], { TMPDIR: root }));
 

@@ -845,11 +845,7 @@ describe("PlannerWizard review step", () => {
 
   it("P4: soft safety/pantry 失敗中は献立を作る CTA を disable する", () => {
     render(
-      <Harness
-        initialStep="review"
-        initialDraft={reviewDraft}
-        blockGenerationForStaleSafety
-      />,
+      <Harness initialStep="review" initialDraft={reviewDraft} blockGenerationForStaleSafety />,
     );
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
   });

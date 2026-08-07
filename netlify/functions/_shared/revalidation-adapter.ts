@@ -557,7 +557,7 @@ export async function reconcileCurrentMenuLabelWarnings(
   if (catalogResult.error !== null) {
     throw new HttpError(503, "revalidation_unavailable", "現在の家族設定で確認できませんでした");
   }
-  const catalogRows = catalogResult.data ?? [];
+  const catalogRows = catalogResult.data;
   const catalog = new Map(catalogRows.map((row) => [row.id, row.display_name] as const));
 
   const warnings: CurrentMenuLabelWarning[] = [];

@@ -21,7 +21,8 @@ test("automatically revalidates on mount and blocks stale history after safety c
     timeout: 30_000,
   });
   await expect(page.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
+  // HR2: gate 閉鎖時は死んだ disabled 買い物 CTA を残さず非表示
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
 });
 
 /**
@@ -46,7 +47,7 @@ function waitForRevalidate200(
 /** E2E seam: soft poll 間隔。0=無効 / 1〜60000=ms。navigation 前に sessionStorage へ書く。 */
 async function setE2eRevalidatePollMs(
   page: import("@playwright/test").Page,
-  pollMs: 0 | number,
+  pollMs: number,
 ): Promise<void> {
   await page.evaluate((ms) => {
     sessionStorage.setItem("__KONDATE_E2E_REVALIDATE_POLL_MS", String(ms));
@@ -149,7 +150,8 @@ test("standard allergen hit returns invalid revalidation, disables actions, and 
   await expect(page.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled({
     timeout: 15_000,
   });
-  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toBeDisabled();
+  // HR2: invalid 中は買い物 CTA を出さない（disabled 残置しない）
+  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
 
   // issue 文言が画面に出る（非 vacuous な invalid 表示）
   const issueMessage = firstBody.data.issues[0]?.message ?? "";

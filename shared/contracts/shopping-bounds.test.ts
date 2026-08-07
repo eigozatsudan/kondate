@@ -24,18 +24,16 @@ const validItem = {
 describe("shopping response bounds (S2/S8)", () => {
   it("accepts draft-aligned item strings and quantity ceiling", () => {
     expect(shoppingItemSchema.safeParse(validItem).success).toBe(true);
-    expect(
-      shoppingItemSchema.safeParse({ ...validItem, quantityValue: 999_999 }).success,
-    ).toBe(true);
+    expect(shoppingItemSchema.safeParse({ ...validItem, quantityValue: 999_999 }).success).toBe(
+      true,
+    );
   });
 
   it("rejects unbounded displayName / quantityValue", () => {
     expect(
       shoppingItemSchema.safeParse({ ...validItem, displayName: "あ".repeat(101) }).success,
     ).toBe(false);
-    expect(
-      shoppingItemSchema.safeParse({ ...validItem, quantityValue: 1e15 }).success,
-    ).toBe(false);
+    expect(shoppingItemSchema.safeParse({ ...validItem, quantityValue: 1e15 }).success).toBe(false);
     expect(
       shoppingListSchema.safeParse({
         id: listId,

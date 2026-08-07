@@ -139,7 +139,7 @@ async function releaseCheckoutLock(
     ...(sessionId === undefined ? {} : { p_stripe_checkout_session_id: sessionId }),
   });
   if (error !== null) {
-    throw new Error(error.message ?? "release_billing_checkout_lock_failed");
+    throw new Error(error.message || "release_billing_checkout_lock_failed");
   }
 }
 
@@ -222,11 +222,7 @@ export async function runBillingCheckout(
     // B5: past_due は dual 防止で Checkout 拒否するが、grace 切れは非 Plus。
     // 「すでに Plus」コピーは権益と不一致なので Portal 誘導専用 code に分離する。
     if (entitlement.status === "past_due") {
-      throw new HttpError(
-        409,
-        "billing_checkout_use_portal",
-        "お支払い管理から手続きしてください",
-      );
+      throw new HttpError(409, "billing_checkout_use_portal", "お支払い管理から手続きしてください");
     }
     if (entitlement.status === "trialing" || entitlement.status === "active") {
       throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
