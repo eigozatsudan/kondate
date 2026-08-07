@@ -58,17 +58,17 @@ export function ShoppingListPage() {
   const [pendingUndoIds, setPendingUndoIds] = useState<ReadonlySet<string>>(() => new Set());
   // SP-I7: hooks は early return より前に置く
   const mutationInFlight = useRef(false);
-  // SHOP13 + SHOP2: 失応答後の同一操作再試行で idempotencyKey を再利用する。
+  // SHOP13 + SHOP2 + SHOP4: 失応答後の同一操作再試行で idempotencyKey を再利用する。
   // SQL の request_hash は list version / safety fingerprint を含むため、
   // 「直前に送った完全な request」をそのまま再送し early replay で dual-apply を防ぐ。
-  // sessionStorage に永続化し reload 後も dual add_manual を防ぐ（create sticky と同型）。
+  // localStorage に永続化し reload / 他タブでも dual add_manual を防ぐ。
   // list_version_conflict / mismatch は未適用確定なので sticky を捨てる。
   // SHOP3: shopping_safety_fingerprint_changed は適用済み+early FP fail もあり得るため
   // sticky を保持し、同一 intent の再送鍵を固定して dual-add に転化させない。
   const pendingItemMutationRef = useRef<PendingItemMutationSticky | null>(null);
   const [itemMutationPending, setItemMutationPending] = useState(false);
 
-  /** ref が空なら sessionStorage から復元（SHOP2 reload 耐性）。 */
+  /** ref が空なら local/sessionStorage から復元（SHOP2 reload・SHOP4 他タブ耐性）。 */
   const loadItemMutationSticky = (listId: string): PendingItemMutationSticky | null => {
     const fromRef = pendingItemMutationRef.current;
     if (fromRef !== null && fromRef.request.listId === listId) return fromRef;
@@ -277,6 +277,35 @@ export function ShoppingListPage() {
     setFieldError(null);
     setAdding(false);
   };
+  // SHOP5: manual 追加（SHOP4）と同型。mutate false ではエディタを閉じず値を保持する。
+  const submitEdit = async (event: SyntheticEvent) => {
+    event.preventDefault();
+    if (editingItem === null) return;
+    const quantity = editingQuantity.trim() === "" ? null : Number(editingQuantity);
+    if (
+      editingQuantityText.trim() === "" ||
+      (quantity !== null && (!Number.isFinite(quantity) || quantity <= 0))
+    ) {
+      setFieldError("分量を確認してください");
+      requestAnimationFrame(() => editFirstField.current?.focus());
+      return;
+    }
+    const ok = await mutate({
+      operation: "edit",
+      itemId: editingItem.id,
+      payload: {
+        displayName: editingItem.displayName,
+        normalizedName: normalizeIngredientName(editingItem.displayName, reviewedShoppingAliases),
+        storeSection: editingSection,
+        quantityValue: quantity,
+        quantityText: editingQuantityText.trim(),
+        unit: editingUnit.trim() === "" ? null : editingUnit.trim(),
+      },
+    });
+    if (!ok) return;
+    setEditingItem(null);
+    setFieldError(null);
+  };
   // 削除済みは進捗から外す。店舗で「まだ買うもの」と「済んだもの」の比だけを見せる。
   const progressItems = list.items.filter((item) => !item.isRemovedByUser);
   const checkedCount = progressItems.filter((item) => item.isChecked).length;
@@ -419,33 +448,7 @@ export function ShoppingListPage() {
         <form
           className="card stack"
           onSubmit={(event) => {
-            event.preventDefault();
-            const quantity = editingQuantity.trim() === "" ? null : Number(editingQuantity);
-            if (
-              editingQuantityText.trim() === "" ||
-              (quantity !== null && (!Number.isFinite(quantity) || quantity <= 0))
-            ) {
-              setFieldError("分量を確認してください");
-              requestAnimationFrame(() => editFirstField.current?.focus());
-              return;
-            }
-            void mutate({
-              operation: "edit",
-              itemId: editingItem.id,
-              payload: {
-                displayName: editingItem.displayName,
-                normalizedName: normalizeIngredientName(
-                  editingItem.displayName,
-                  reviewedShoppingAliases,
-                ),
-                storeSection: editingSection,
-                quantityValue: quantity,
-                quantityText: editingQuantityText.trim(),
-                unit: editingUnit.trim() === "" ? null : editingUnit.trim(),
-              },
-            }).then(() => {
-              setEditingItem(null);
-            });
+            void submitEdit(event);
           }}
         >
           <h2>{editingItem.displayName}を編集</h2>

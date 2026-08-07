@@ -289,8 +289,9 @@ beforeEach(() => {
   // 各テストの開始時にグローバル状態だけ明示的に戻す（アサーションには影響しない）。
   onlineManager.setOnline(true);
   vi.resetAllMocks();
-  // SHOP2: item mutate sticky は sessionStorage。前テストの残滓で dual-key 偽グリーンにしない。
+  // SHOP2/SHOP4: item mutate sticky は local+session。前テストの残滓で dual-key 偽グリーンにしない。
   sessionStorage.clear();
+  localStorage.clear();
   realtime.ownerId = OWNER_ID;
   realtime.getUserError = null;
   realtime.channelNames = [];
@@ -1094,6 +1095,27 @@ describe("ShoppingListPage mutations", () => {
     expect(readPendingItemMutation(LIST_ID)).toBeNull();
   });
 
+  it("keeps edit form open with values when mutate returns false (SHOP5)", async () => {
+    mutateShoppingItem.mockRejectedValueOnce(new Error("network lost"));
+    await renderPage(
+      makeShoppingList([makeItem({ displayName: "にんじん", quantityValue: 1, unit: "本" })]),
+    );
+    await user.click(screen.getByRole("button", { name: "数量・単位・売り場を編集" }));
+    await user.clear(screen.getByLabelText("にんじんの数量"));
+    await user.type(screen.getByLabelText("にんじんの数量"), "3");
+    await user.clear(screen.getByLabelText("にんじんの分量表記"));
+    await user.type(screen.getByLabelText("にんじんの分量表記"), "3袋");
+    await user.click(screen.getByRole("button", { name: "変更を保存" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("買い物項目を更新できませんでした");
+    });
+    // 失敗時はエディタを閉じず値を保持（manual SHOP4 と同型）
+    expect(screen.getByRole("heading", { name: "にんじんを編集" })).toBeInTheDocument();
+    expect(screen.getByLabelText("にんじんの数量")).toHaveValue(3);
+    expect(screen.getByLabelText("にんじんの分量表記")).toHaveValue("3袋");
+    expect(screen.getByRole("button", { name: "変更を保存" })).toBeInTheDocument();
+  });
+
   it("adds a manual item with optional quantity and unit", async () => {
     await renderPage(makeShoppingList([makeItem()]));
     await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
@@ -1732,15 +1754,46 @@ describe("useResumeShoppingCommand", () => {
     expect(submit).not.toHaveBeenCalled();
     expect(sessionStorage.getItem(storageKey)).not.toBeNull();
   });
+
+  it("does not resume while SHOP6 session suppress keeps enabled false after remount", async () => {
+    // remount 後 shoppingSheet は null でも suppress→enabled=false なら旧 sticky を飛ばさない。
+    // Cancel で suppress clear → enabled true で SHOP1 どおり再武装する。
+    seed(Date.now());
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+    const { rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useResumeShoppingCommand({
+          kind: "create",
+          targetId: MENU_ID,
+          schema,
+          submit,
+          enabled,
+        }),
+      { initialProps: { enabled: false } },
+    );
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(storageKey)).not.toBeNull();
+
+    rerender({ enabled: true });
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
-describe("pendingItemMutation sticky (SHOP2)", () => {
+describe("pendingItemMutation sticky (SHOP2 + SHOP4)", () => {
   afterEach(() => {
     sessionStorage.clear();
+    localStorage.clear();
     vi.useRealTimers();
   });
 
-  it("round-trips intentKey and full request within TTL", () => {
+  it("round-trips intentKey and full request within TTL to local and session", () => {
     const request = shoppingItemMutationRequestSchema.parse({
       operation: "add_manual",
       itemId: null,
@@ -1760,9 +1813,77 @@ describe("pendingItemMutation sticky (SHOP2)", () => {
     });
     writePendingItemMutation(LIST_ID, { intentKey: "k1", request });
     expect(readPendingItemMutation(LIST_ID)).toEqual({ intentKey: "k1", request });
+    // SHOP4: 跨タブ正本は localStorage。session は mirror。
+    expect(localStorage.getItem(pendingItemMutationStorageKey(LIST_ID))).not.toBeNull();
     expect(sessionStorage.getItem(pendingItemMutationStorageKey(LIST_ID))).not.toBeNull();
     clearPendingItemMutation(LIST_ID);
     expect(readPendingItemMutation(LIST_ID)).toBeNull();
+    expect(localStorage.getItem(pendingItemMutationStorageKey(LIST_ID))).toBeNull();
+    expect(sessionStorage.getItem(pendingItemMutationStorageKey(LIST_ID))).toBeNull();
+  });
+
+  it("reuses localStorage sticky when sessionStorage is empty (SHOP4 multi-tab)", () => {
+    const request = shoppingItemMutationRequestSchema.parse({
+      operation: "add_manual",
+      itemId: null,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey: "40000000-0000-4000-8000-0000000000f1",
+      payload: {
+        displayName: "しいたけ",
+        normalizedName: "しいたけ",
+        storeSection: "produce",
+        quantityValue: null,
+        quantityText: "1袋",
+        unit: null,
+        pantryCheckRequired: false,
+      },
+    });
+    // Tab A が local に書いたあと、Tab B は session が空（per-tab）
+    localStorage.setItem(
+      pendingItemMutationStorageKey(LIST_ID),
+      JSON.stringify({
+        createdAtMs: Date.now(),
+        intentKey: "k-tab-a",
+        request,
+      }),
+    );
+    sessionStorage.removeItem(pendingItemMutationStorageKey(LIST_ID));
+    expect(readPendingItemMutation(LIST_ID)).toEqual({ intentKey: "k-tab-a", request });
+    // promote: 読取後 session にもミラー
+    expect(sessionStorage.getItem(pendingItemMutationStorageKey(LIST_ID))).not.toBeNull();
+  });
+
+  it("promotes legacy session-only sticky into localStorage (SHOP4)", () => {
+    const request = shoppingItemMutationRequestSchema.parse({
+      operation: "add_manual",
+      itemId: null,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey: "40000000-0000-4000-8000-0000000000f2",
+      payload: {
+        displayName: "ごぼう",
+        normalizedName: "ごぼう",
+        storeSection: "produce",
+        quantityValue: null,
+        quantityText: "1本",
+        unit: null,
+        pantryCheckRequired: false,
+      },
+    });
+    sessionStorage.setItem(
+      pendingItemMutationStorageKey(LIST_ID),
+      JSON.stringify({
+        createdAtMs: Date.now(),
+        intentKey: "k-legacy",
+        request,
+      }),
+    );
+    expect(localStorage.getItem(pendingItemMutationStorageKey(LIST_ID))).toBeNull();
+    expect(readPendingItemMutation(LIST_ID)).toEqual({ intentKey: "k-legacy", request });
+    expect(localStorage.getItem(pendingItemMutationStorageKey(LIST_ID))).not.toBeNull();
   });
 
   it("discards expired and corrupt item mutation sticky", () => {
@@ -1784,6 +1905,7 @@ describe("pendingItemMutation sticky (SHOP2)", () => {
     expect(readPendingItemMutation(LIST_ID)).toBeNull();
 
     sessionStorage.setItem(pendingItemMutationStorageKey(LIST_ID), "{ not json");
+    localStorage.setItem(pendingItemMutationStorageKey(LIST_ID), "{ not json");
     expect(readPendingItemMutation(LIST_ID)).toBeNull();
   });
 });

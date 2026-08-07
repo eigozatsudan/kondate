@@ -114,3 +114,56 @@ export function hasPendingCreateCommand(menuId: string): boolean {
   const age = Date.now() - parsed.data.createdAtMs;
   return age >= 0 && age <= pendingShoppingCommandTtlMs;
 }
+
+/**
+ * SHOP6: create/reconcile シートを開いているあいだ resume を止める印。
+ * React の shoppingSheet は remount で消えるが sessionStorage は残るため、
+ * モード/approval 選び直し中のハードリロードで旧 sticky が自動 POST される窓を閉じる。
+ * Cancel / 成功 / code 付き fail で明示 clear → SHOP1 どおり sticky 再送を再開できる。
+ */
+export function shoppingResumeSuppressKey(kind: "create" | "reconcile", targetId: string): string {
+  return `kondate:shopping:resume-suppress:v1:${kind}:${targetId}`;
+}
+
+export function isShoppingResumeSuppressed(
+  kind: "create" | "reconcile",
+  targetId: string,
+): boolean {
+  return sessionStorage.getItem(shoppingResumeSuppressKey(kind, targetId)) === "1";
+}
+
+export function markShoppingResumeSuppress(kind: "create" | "reconcile", targetId: string): void {
+  sessionStorage.setItem(shoppingResumeSuppressKey(kind, targetId), "1");
+}
+
+export function clearShoppingResumeSuppress(kind: "create" | "reconcile", targetId: string): void {
+  sessionStorage.removeItem(shoppingResumeSuppressKey(kind, targetId));
+}
+
+/**
+ * SHOP2: list gate blocked 中は create resume が enabled=false のため
+ * submitCreate 内の append clear が到達しない。blocked 遷移時に mode=append
+ * sticky だけを捨て、forceNew 誘導と ready 復帰後の旧 append 自動再送を防ぐ。
+ * mode=new は D-C1 どおり保持する。
+ * @returns true のとき append sticky を捨てた
+ */
+export function discardAppendCreateCommandIfPresent(menuId: string): boolean {
+  const key = pendingShoppingCommandStorageKey("create", menuId);
+  const raw = sessionStorage.getItem(key);
+  if (raw === null) return false;
+  let json: unknown;
+  try {
+    json = JSON.parse(raw) as unknown;
+  } catch {
+    return false;
+  }
+  const parsed = pendingShoppingCommandEnvelopeSchema(createShoppingListRequestSchema).safeParse(
+    json,
+  );
+  if (!parsed.success) return false;
+  const age = Date.now() - parsed.data.createdAtMs;
+  if (age < 0 || age > pendingShoppingCommandTtlMs) return false;
+  if (parsed.data.command.mode !== "append") return false;
+  sessionStorage.removeItem(key);
+  return true;
+}

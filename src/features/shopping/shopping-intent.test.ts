@@ -3,31 +3,39 @@ import {
   beginShoppingIntentCycle,
   cancelPendingIntentClear,
   clearShoppingIntentCycle,
+  clearShoppingResumeSuppress,
   clearShoppingSheetExpected,
+  discardAppendCreateCommandIfPresent,
   hasPendingCreateCommand,
   hasShoppingDidAutoOpen,
   hasShoppingIntent,
   historyPathForShopping,
   isShoppingIntentActive,
+  isShoppingResumeSuppressed,
   isShoppingSheetExpected,
+  markShoppingResumeSuppress,
   markShoppingSheetAutoOpened,
   menusPathForShopping,
   scheduleIntentClear,
   shoppingDidAutoOpenKey,
   shoppingIntentStorageKey,
+  shoppingResumeSuppressKey,
   shoppingSheetExpectedKey,
 } from "./shopping-intent";
 import { pendingShoppingCommandStorageKey } from "./api/shopping-api";
 
 const MENU = "40000000-0000-4000-8000-000000000001";
+const LIST = "41000000-0000-4000-8000-000000000001";
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   vi.useFakeTimers();
 });
 afterEach(() => {
   vi.useRealTimers();
   sessionStorage.clear();
+  localStorage.clear();
 });
 
 describe("shopping-intent paths", () => {
@@ -122,5 +130,71 @@ describe("hasPendingCreateCommand", () => {
     expect(hasPendingCreateCommand(MENU)).toBe(false);
     sessionStorage.setItem(pendingShoppingCommandStorageKey("create", MENU), "{");
     expect(hasPendingCreateCommand(MENU)).toBe(false);
+  });
+});
+
+describe("discardAppendCreateCommandIfPresent (SHOP2)", () => {
+  // fake timers 下でも age 判定が通るよう envelope は it 内で作る
+  const appendCommand = {
+    menuId: MENU,
+    mode: "append" as const,
+    activeListId: LIST,
+    expectedListVersion: 1,
+    idempotencyKey: "00000000-0000-4000-8000-0000000000aa",
+  };
+  const newCommand = {
+    menuId: MENU,
+    mode: "new" as const,
+    activeListId: null,
+    expectedListVersion: null,
+    idempotencyKey: "00000000-0000-4000-8000-0000000000bb",
+  };
+
+  it("discards mode=append sticky and returns true", () => {
+    sessionStorage.setItem(
+      pendingShoppingCommandStorageKey("create", MENU),
+      JSON.stringify({ createdAtMs: Date.now(), command: appendCommand }),
+    );
+    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(true);
+    expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU))).toBeNull();
+    expect(hasPendingCreateCommand(MENU)).toBe(false);
+  });
+
+  it("keeps mode=new sticky (D-C1) and returns false", () => {
+    sessionStorage.setItem(
+      pendingShoppingCommandStorageKey("create", MENU),
+      JSON.stringify({ createdAtMs: Date.now(), command: newCommand }),
+    );
+    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(false);
+    expect(hasPendingCreateCommand(MENU)).toBe(true);
+  });
+
+  it("returns false when no sticky or corrupt", () => {
+    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(false);
+    sessionStorage.setItem(pendingShoppingCommandStorageKey("create", MENU), "{");
+    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(false);
+  });
+});
+
+describe("shopping resume suppress (SHOP6)", () => {
+  it("uses kondate:shopping: prefix and round-trips mark/clear", () => {
+    expect(shoppingResumeSuppressKey("create", MENU).startsWith("kondate:shopping:")).toBe(true);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+    markShoppingResumeSuppress("create", MENU);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
+    // remount 相当: React state は消えても sessionStorage の suppress は残る
+    expect(sessionStorage.getItem(shoppingResumeSuppressKey("create", MENU))).toBe("1");
+    clearShoppingResumeSuppress("create", MENU);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+  });
+
+  it("scopes suppress by kind and targetId", () => {
+    markShoppingResumeSuppress("create", MENU);
+    markShoppingResumeSuppress("reconcile", LIST);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
+    expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(true);
+    clearShoppingResumeSuppress("create", MENU);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+    expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(true);
   });
 });

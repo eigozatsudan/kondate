@@ -258,9 +258,11 @@ export const clearShoppingCommand = (kind: "create" | "reconcile", targetId: str
 };
 
 /**
- * SHOP2: item mutate の失応答 sticky。create/reconcile と同型の sessionStorage
- * （24h TTL・成功時 clear）。reload / ルート再マウント後も同一 idempotencyKey を再利用し
- * dual add_manual を防ぐ。in-memory ref だけでは消える残窓を閉じる。
+ * SHOP2 + SHOP4: item mutate の失応答 sticky（24h TTL・成功時 clear）。
+ * localStorage に書き同一 origin の他タブと共有し multi-tab dual add_manual を防ぐ
+ * （sessionStorage だけだと Tab B が新 UUID を mint する）。sessionStorage にも
+ * ミラーし、旧クライアント残滓の読取と同一タブ reload を維持する。
+ * in-memory ref だけでは消える残窓を閉じる。
  */
 export const pendingItemMutationStorageKey = (listId: string) =>
   `kondate:shopping:item-mutate:${listId}`;
@@ -278,9 +280,17 @@ export type PendingItemMutationSticky = {
   request: ShoppingItemMutationRequest;
 };
 
-export function readPendingItemMutation(listId: string): PendingItemMutationSticky | null {
-  const key = pendingItemMutationStorageKey(listId);
-  const saved = sessionStorage.getItem(key);
+/** 単一 Storage から TTL 内 sticky を読む。不正・期限切れは当該 Storage から捨てる。 */
+function readPendingItemMutationFrom(
+  storage: Storage,
+  key: string,
+): PendingItemMutationSticky | null {
+  let saved: string | null;
+  try {
+    saved = storage.getItem(key);
+  } catch {
+    return null;
+  }
   if (saved === null) return null;
   try {
     const parsed = pendingItemMutationEnvelopeSchema.safeParse(JSON.parse(saved));
@@ -293,23 +303,74 @@ export function readPendingItemMutation(listId: string): PendingItemMutationStic
   } catch {
     /* 下の removeItem で捨てる */
   }
-  sessionStorage.removeItem(key);
+  try {
+    storage.removeItem(key);
+  } catch {
+    /* 掃除失敗は読取 null で足りる */
+  }
+  return null;
+}
+
+function writeStorageBestEffort(storage: Storage, key: string, value: string): void {
+  try {
+    storage.setItem(key, value);
+  } catch {
+    /* Quota / private mode — 他方の Storage に委ねる */
+  }
+}
+
+function removeStorageBestEffort(storage: Storage, key: string): void {
+  try {
+    storage.removeItem(key);
+  } catch {
+    /* 掃除失敗は残差として許容（auth-cleanup が後で拾う） */
+  }
+}
+
+export function readPendingItemMutation(listId: string): PendingItemMutationSticky | null {
+  const key = pendingItemMutationStorageKey(listId);
+  // 共有正本は localStorage。他タブが書いた鍵を先に拾う（SHOP4）。
+  const fromLocal = readPendingItemMutationFrom(localStorage, key);
+  if (fromLocal !== null) {
+    // 同一タブの高速経路用に session へミラー（失敗は無視）
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw !== null) writeStorageBestEffort(sessionStorage, key, raw);
+    } catch {
+      /* mirror optional */
+    }
+    return fromLocal;
+  }
+  // 旧クライアントや local 書込失敗時の session 残滓を promote
+  const fromSession = readPendingItemMutationFrom(sessionStorage, key);
+  if (fromSession !== null) {
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (raw !== null) writeStorageBestEffort(localStorage, key, raw);
+    } catch {
+      /* promote optional */
+    }
+    return fromSession;
+  }
   return null;
 }
 
 export function writePendingItemMutation(listId: string, sticky: PendingItemMutationSticky): void {
-  sessionStorage.setItem(
-    pendingItemMutationStorageKey(listId),
-    JSON.stringify({
-      createdAtMs: Date.now(),
-      intentKey: sticky.intentKey,
-      request: sticky.request,
-    }),
-  );
+  const key = pendingItemMutationStorageKey(listId);
+  const payload = JSON.stringify({
+    createdAtMs: Date.now(),
+    intentKey: sticky.intentKey,
+    request: sticky.request,
+  });
+  // local が跨タブ正本。session は同一タブ mirror。
+  writeStorageBestEffort(localStorage, key, payload);
+  writeStorageBestEffort(sessionStorage, key, payload);
 }
 
 export function clearPendingItemMutation(listId: string): void {
-  sessionStorage.removeItem(pendingItemMutationStorageKey(listId));
+  const key = pendingItemMutationStorageKey(listId);
+  removeStorageBestEffort(localStorage, key);
+  removeStorageBestEffort(sessionStorage, key);
 }
 
 export type ReconcilableMenuSource = { sourceMenuId: string; sourceMenuVersion: number };
