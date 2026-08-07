@@ -12,7 +12,10 @@ import {
   createContinuationApi,
   type ContinuationApi,
 } from "./auth-flow";
-import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
+import {
+  publishAuthContinuationCompletion,
+  readAuthContinuationCompletion,
+} from "./auth-continuation-completion";
 import {
   isAuthContinuationExchangeInFlightOwner,
   releaseAuthContinuationCallbackPreLease,
@@ -27,6 +30,66 @@ import { IMMEDIATE_CLAIM_TIMEOUT_MS, withTimeout } from "./async-timeout";
 
 /** 互換 re-export（正本は async-timeout.ts） */
 export { IMMEDIATE_CLAIM_TIMEOUT_MS };
+
+/**
+ * C1/C2: deposit 1 試行の hang 上限（claim 即時経路と同窓）。
+ * never-settle でも completeCallback が settle し、secret を hangWatchdog 前に awaiting へ渡せる。
+ */
+const DEPOSIT_ATTEMPT_TIMEOUT_MS = IMMEDIATE_CLAIM_TIMEOUT_MS;
+/** C1: code を閉包に保持したまま 429/5xx/transport/timeout を再試行する回数（初回含む）。 */
+const DEPOSIT_MAX_ATTEMPTS = 3;
+/** 試行間 backoff（ms）。attempt index に対応（0 は初回で未使用）。 */
+const DEPOSIT_BACKOFF_MS = [0, 1_000, 2_000] as const;
+
+type DepositOutcome = "ok" | "timeout" | "transient" | "terminal";
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message === "timeout";
+}
+
+function isRetryableDepositError(error: unknown): boolean {
+  if (isTimeoutError(error)) return true;
+  if (error instanceof TypeError) return true;
+  if (error instanceof ContinuationHttpError) {
+    return error.status === 429 || error.status >= 500;
+  }
+  return false;
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * C1/C2: deposit を timeout 付きで再試行する。
+ * code は呼び出し側閉包に残り、URL strip 後も budget 内は再 deposit できる。
+ * - ok: 204 相当
+ * - timeout: 最終試行が hang（late 204 の可能性 → 同一ブラウザは secret 保持で awaiting）
+ * - transient: 最終が 429/5xx/TypeError（budget 尽きたら terminal）
+ * - terminal: 非リトライ 4xx 等
+ */
+async function depositWithRetry(depositOnce: () => Promise<void>): Promise<DepositOutcome> {
+  let last: DepositOutcome = "transient";
+  for (let attempt = 0; attempt < DEPOSIT_MAX_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      // as const タプルの固定添字は number に絞れる（noUncheckedIndexedAccess でも）
+      const backoffMs = attempt === 1 ? DEPOSIT_BACKOFF_MS[1] : DEPOSIT_BACKOFF_MS[2];
+      await sleepMs(backoffMs);
+    }
+    try {
+      await withTimeout(depositOnce(), DEPOSIT_ATTEMPT_TIMEOUT_MS);
+      return "ok";
+    } catch (error) {
+      if (!isRetryableDepositError(error)) {
+        return "terminal";
+      }
+      last = isTimeoutError(error) ? "timeout" : "transient";
+    }
+  }
+  return last;
+}
 
 /**
  * completeCallback が受け付けるクエリキー。
@@ -254,18 +317,21 @@ export function createAuthGateway(
       // R1 residual-intentional: 正当 deposit 後の後着毒も last-wins で上書きし得る（可用性 DoS、
       // アカウント奪取ではない）。first-wins に戻すと C2 が再発するため維持。deposit API は
       // code 形式を厳格化して明らかなゴミを弾くが、形式を通る毒は閉じない。
+      // C1: 429/5xx/transport は code 閉包保持のまま backoff 再試行。budget 後のみ terminal。
       if (stored === null) {
-        try {
-          await continuationApi.deposit(flowId, { state, code });
-        } catch {
-          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+        const depositOutcome = await depositWithRetry(() =>
+          continuationApi.deposit(flowId, { state, code }),
+        );
+        if (depositOutcome === "ok") {
+          return {
+            kind: "deposited",
+            continuation: "original_browser",
+            flowId,
+            returnTo: "/planner",
+          };
         }
-        return {
-          kind: "deposited",
-          continuation: "original_browser",
-          flowId,
-          returnTo: "/planner",
-        };
+        // secret 無し。late 204 は元ブラウザの claim に委ね、WebView 側は unbound で再ログイン案内。
+        return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
       }
       // 同一ブラウザ: deposit 直後に即 claim/exchange する。
       // iOS 等で recovery の 5s poll / タイマー抑制に依存すると「確認中」が長く見える。
@@ -277,16 +343,28 @@ export function createAuthGateway(
       // C3: awaiting 手渡し時は heartbeat を止めず、lease TTL 切れの orphan 誤認窓を閉じる。
       let keepPreLeaseHeartbeat = false;
       try {
-        try {
-          // C2: 同一ブラウザは secret を付けて毒 first-wins を上書きできるようにする
-          await continuationApi.deposit(flowId, {
+        // C1/C2: deposit は timeout+backoff 再試行。URL strip 後も code は本閉包に残る。
+        // 同一ブラウザは secret 付きで毒 last-wins を上書きできる（owner overwrite）。
+        const depositOutcome = await depositWithRetry(() =>
+          continuationApi.deposit(flowId, {
             state,
             code,
             secret: stored.secret,
-          });
-        } catch {
+          }),
+        );
+        if (depositOutcome !== "ok") {
+          // C2: hang/timeout の late 204 を救うため secret を残し awaiting へ（recovery が claim）。
+          // C1: 確定的 transient 尽きた場合は terminal（code 再 deposit 不能・claim も 404）。
+          if (depositOutcome === "timeout") {
+            keepPreLeaseHeartbeat = true;
+            return {
+              kind: "awaiting_completion",
+              flowId,
+              returnTo,
+            };
+          }
           releaseAuthContinuationCallbackPreLease(flowId, storage);
-          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+          return { kind: "error", code: "unbound_callback", returnTo };
         }
         try {
           const result = await withTimeout(gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);
@@ -438,6 +516,41 @@ export function createAuthGateway(
         error instanceof ContinuationResponseLostError ||
         error instanceof TypeError;
       if (exchangeStarted && !isRetryableTransport) {
+        // C5: bg throttle で lease が切れ dual exchange した loser でも、
+        // 他タブが既に session/completion を確立していれば fail-closed で UX を壊さない。
+        const existingCompletion = readAuthContinuationCompletion(flow.id, storage);
+        if (existingCompletion !== null) {
+          // 完了済みなら secret は不要（publish 済みの clear をここで揃える）
+          clearAuthFlow(flow.id, storage);
+          return {
+            kind: "complete",
+            continuation: "same_browser",
+            returnTo: existingCompletion.returnTo,
+            flowId: flow.id,
+          };
+        }
+        try {
+          const sessionResult = await client.auth.getSession();
+          if (sessionResult.data.session !== null) {
+            const safeReturnTo = sanitizeReturnPath(flow.returnTo);
+            try {
+              publishAuthContinuationCompletion(
+                { flowId: flow.id, returnTo: safeReturnTo },
+                storage,
+              );
+            } catch {
+              // setItem 失敗でも session は確立済み。complete を返し terminal clear を避ける。
+            }
+            return {
+              kind: "complete",
+              continuation: "same_browser",
+              returnTo: safeReturnTo,
+              flowId: flow.id,
+            };
+          }
+        } catch {
+          // getSession 失敗時は従来どおり terminal へ（曖昧な成功扱いをしない）
+        }
         // mock/provider の失敗 Error。"timeout" は withTimeout 側で resumeFlow の外。
         clearAuthFlow(flow.id, storage);
         return {

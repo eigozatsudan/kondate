@@ -1471,6 +1471,58 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
     stop();
     expect(clearIntervalMock).toHaveBeenCalled();
   });
+
+  it("C5: heartbeat beats on freeze/pagehide even when document is hidden", async () => {
+    const storage = new MapStorage();
+    let nowMs = 0;
+    expect(
+      await tryAcquireAuthContinuationExchangeInFlight(
+        flowId,
+        "tab-a",
+        storage,
+        nowMs,
+        fastStorageOnly,
+      ),
+    ).toBe(true);
+
+    const setIntervalMock = ((handler: TimerHandler) => {
+      void handler;
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof setInterval;
+    const clearIntervalMock = vi.fn() as unknown as typeof clearInterval;
+
+    const stop = startAuthContinuationExchangeInFlightHeartbeat(
+      flowId,
+      "tab-a",
+      storage,
+      () => nowMs,
+      setIntervalMock,
+      clearIntervalMock,
+    );
+
+    // 旧実装は visibilityState===hidden で wake を捨てていた。C5 では hidden でも beat する。
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden" as DocumentVisibilityState,
+    });
+    nowMs = 60_000;
+    document.dispatchEvent(new Event("freeze"));
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
+      instanceId: "tab-a",
+      refreshedAt: 60_000,
+    });
+
+    nowMs = 90_000;
+    window.dispatchEvent(new Event("pagehide"));
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    expect(JSON.parse(storage.getItem(exchangeKey) ?? "{}")).toMatchObject({
+      instanceId: "tab-a",
+      refreshedAt: 90_000,
+    });
+
+    stop();
+  });
 });
 
 async function flushPromises(): Promise<void> {

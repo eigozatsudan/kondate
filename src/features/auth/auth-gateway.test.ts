@@ -15,6 +15,7 @@ import {
   readAuthFlow,
   type ContinuationApi,
 } from "./auth-flow";
+import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
 import { EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS } from "./auth-continuation-recovery";
 
 /** R2: localStorage acquire の確認遅延を超えて exchange 開始まで進める */
@@ -82,6 +83,8 @@ function authClientMock(overrides?: {
   otpResult?: { data: unknown; error: AuthError | null };
   exchangeResult?: { data: unknown; error: AuthError | null };
   signInWithPasswordResult?: { data: unknown; error: AuthError | null };
+  /** C5: exchange 失敗時の sibling session 検査用 */
+  getSessionResult?: { data: { session: unknown }; error: AuthError | null };
 }) {
   const oauthResult = overrides?.oauthResult ?? { data: null, error: null };
   const otpResult = overrides?.otpResult ?? { data: null, error: null };
@@ -90,12 +93,17 @@ function authClientMock(overrides?: {
     data: null,
     error: null,
   };
+  const getSessionResult = overrides?.getSessionResult ?? {
+    data: { session: null },
+    error: null,
+  };
   return {
     auth: {
       signInWithOAuth: vi.fn().mockResolvedValue(oauthResult),
       signInWithOtp: vi.fn().mockResolvedValue(otpResult),
       exchangeCodeForSession: vi.fn().mockResolvedValue(exchangeResult),
       signInWithPassword: vi.fn().mockResolvedValue(signInWithPasswordResult),
+      getSession: vi.fn().mockResolvedValue(getSessionResult),
     },
   };
 }
@@ -452,7 +460,7 @@ it("same-browser callback deposits then claims and exchanges immediately", async
     returnTo: "/onboarding",
     flowId: flow.id,
   });
-  // C2: 同一ブラウザは secret 付き deposit で毒 first-wins を上書きできる
+  // C2: 同一ブラウザは secret 付き deposit で毒（匿名 last-wins）を所有者上書きできる
   expect(deposit).toHaveBeenCalledWith(flow.id, {
     state: flow.state,
     code: "code-1",
@@ -1055,4 +1063,303 @@ it("C11: after inflight resume soft TTL a later resume can start a new run", asy
   } finally {
     vi.useRealTimers();
   }
+});
+
+it.each([
+  new ContinuationHttpError(429),
+  new ContinuationHttpError(503),
+  new TypeError("network unavailable"),
+])("C1: same-browser deposit transient then success retries and completes", async (firstError) => {
+  vi.useFakeTimers();
+  try {
+    const storage = new MapStorage();
+    const deposit = vi.fn().mockRejectedValueOnce(firstError).mockResolvedValueOnce(undefined);
+    const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+    const api = continuationApiMock({ deposit, claim });
+    const client = authClientMock();
+    const gateway = createAuthGateway(
+      client as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+    const pending = gateway.completeCallback(
+      new URL(
+        `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`,
+      ),
+    );
+    // deposit 1 回目失敗 → backoff 1s → 2 回目成功 → exchange 確認遅延
+    await vi.advanceTimersByTimeAsync(1_000 + EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS + 20);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+
+    await expect(pending).resolves.toEqual({
+      kind: "complete",
+      continuation: "same_browser",
+      returnTo: "/onboarding",
+      flowId: flow.id,
+    });
+    expect(deposit).toHaveBeenCalledTimes(2);
+    expect(deposit).toHaveBeenNthCalledWith(1, flow.id, {
+      state: flow.state,
+      code: "code-1",
+      secret: flow.secret,
+    });
+    expect(deposit).toHaveBeenNthCalledWith(2, flow.id, {
+      state: flow.state,
+      code: "code-1",
+      secret: flow.secret,
+    });
+    expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("C1: same-browser deposit 429 exhausted becomes terminal unbound (secret kept for AUTH-1)", async () => {
+  vi.useFakeTimers();
+  try {
+    const storage = new MapStorage();
+    const deposit = vi.fn().mockRejectedValue(new ContinuationHttpError(429));
+    const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+    const api = continuationApiMock({ deposit, claim });
+    const client = authClientMock();
+    const gateway = createAuthGateway(
+      client as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+    const pending = gateway.completeCallback(
+      new URL(
+        `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`,
+      ),
+    );
+    // 3 試行の backoff: 1s + 2s
+    await vi.advanceTimersByTimeAsync(1_000 + 2_000);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+
+    await expect(pending).resolves.toEqual({
+      kind: "error",
+      code: "unbound_callback",
+      returnTo: "/onboarding",
+    });
+    // 3 試行（初回 + backoff 2 回）
+    expect(deposit).toHaveBeenCalledTimes(3);
+    expect(claim).not.toHaveBeenCalled();
+    // gateway は deposit 失敗で secret を焼かない（ページ側 AUTH-1 と同型）
+    expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("C1: cross-browser deposit 429 then success returns deposited", async () => {
+  vi.useFakeTimers();
+  try {
+    const deposit = vi
+      .fn()
+      .mockRejectedValueOnce(new ContinuationHttpError(429))
+      .mockResolvedValueOnce(undefined);
+    const gateway = createAuthGateway(
+      authClientMock() as unknown as BrowserSupabaseClient,
+      continuationApiMock({ deposit }),
+      new MapStorage(),
+      gatewayDeps(),
+    );
+
+    const pending = gateway.completeCallback(
+      new URL("http://127.0.0.1:5173/auth/callback?flow=isolated-flow-1&state=state-1&code=code-1"),
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+
+    await expect(pending).resolves.toEqual({
+      kind: "deposited",
+      continuation: "original_browser",
+      flowId: "isolated-flow-1",
+      returnTo: "/planner",
+    });
+    expect(deposit).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("C2: same-browser deposit hang times out into awaiting_completion with secret kept", async () => {
+  vi.useFakeTimers();
+  try {
+    const storage = new MapStorage();
+    // never-settle deposit → 試行ごと withTimeout → budget 後 timeout outcome
+    const deposit = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+    const api = continuationApiMock({ deposit, claim });
+    const client = authClientMock();
+    const gateway = createAuthGateway(
+      client as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+    const pending = gateway.completeCallback(
+      new URL(
+        `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`,
+      ),
+    );
+    // 3 試行 × 30s + backoff 1s + 2s
+    await vi.advanceTimersByTimeAsync(IMMEDIATE_CLAIM_TIMEOUT_MS * 3 + 1_000 + 2_000);
+    await expect(pending).resolves.toEqual({
+      kind: "awaiting_completion",
+      returnTo: "/onboarding",
+      flowId: flow.id,
+    });
+    expect(deposit).toHaveBeenCalledTimes(3);
+    expect(claim).not.toHaveBeenCalled();
+    // C2: hangWatchdog 前に settle し secret を残す（late 204 後の claim を可能にする）
+    expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("C1: non-retryable deposit 400 is terminal without multi-retry", async () => {
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockRejectedValue(new ContinuationHttpError(400));
+  const api = continuationApiMock({ deposit });
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+  const result = await gateway.completeCallback(
+    new URL(`http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`),
+  );
+
+  expect(result).toEqual({ kind: "error", code: "unbound_callback", returnTo: "/onboarding" });
+  expect(deposit).toHaveBeenCalledTimes(1);
+});
+
+it("C5: provider exchange failure keeps complete when sibling already published completion", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock({
+    exchangeResult: {
+      data: null,
+      error: { message: "code already used", name: "AuthApiError", status: 400 } as AuthError,
+    },
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+  const flowKey = `kondate.auth.flow.${flow.id}`;
+  const flowSnapshot = storage.getItem(flowKey);
+  if (flowSnapshot === null) {
+    throw new Error("expected flow snapshot before publish");
+  }
+  // 他タブが既に complete を公開したあとの loser exchange
+  publishAuthContinuationCompletion({ flowId: flow.id, returnTo: "/onboarding" }, storage);
+  // publish は secret を消す。re-seed して resume を進められるようにする（loser 経路の再現）
+  storage.setItem(flowKey, flowSnapshot);
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "complete",
+    continuation: "same_browser",
+    returnTo: "/onboarding",
+    flowId: flow.id,
+  });
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+  // terminal clear に落ちていない（completion 経路で complete）
+  expect(client.auth.getSession).not.toHaveBeenCalled();
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("C5: provider exchange failure completes when getSession already has a session", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock({
+    exchangeResult: {
+      data: null,
+      error: { message: "code already used", name: "AuthApiError", status: 400 } as AuthError,
+    },
+    getSessionResult: {
+      data: {
+        session: {
+          access_token: "tok",
+          refresh_token: "ref",
+          expires_in: 3600,
+          token_type: "bearer",
+          user: { id: "user-1" },
+        },
+      },
+      error: null,
+    },
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "complete",
+    continuation: "same_browser",
+    returnTo: "/onboarding",
+    flowId: flow.id,
+  });
+  expect(client.auth.getSession).toHaveBeenCalledOnce();
+  // sibling 成功相当: secret は publish 経由で消える
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("C5: provider exchange failure without session stays terminal unbound", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock({
+    exchangeResult: {
+      data: null,
+      error: { message: "invalid code", name: "AuthApiError", status: 400 } as AuthError,
+    },
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "error",
+    code: "unbound_callback",
+    returnTo: "/onboarding",
+    flowId: flow.id,
+  });
+  expect(client.auth.getSession).toHaveBeenCalledOnce();
+  expect(readAuthFlow(flow.id, storage)).toBeNull();
 });

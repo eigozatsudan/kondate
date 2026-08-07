@@ -477,8 +477,9 @@ export interface ContinuationApi {
   }>;
   /**
    * code を deposit する。
-   * secret を渡すと同じブラウザ所有者として毒 first-wins を上書きできる（C2）。
-   * WebView 等 secret 無しは従来どおり first-wins。
+   * secret を渡すと同じブラウザ所有者として毒を上書きできる（C2 owner overwrite）。
+   * secret 無し（WebView 等）は未 claim なら last-wins（R1 residual-intentional:
+   * 正当 deposit 後の後着毒も上書きし得る可用性 DoS。first-wins は C2 再発のため採用しない）。
    */
   deposit(
     continuationId: string,

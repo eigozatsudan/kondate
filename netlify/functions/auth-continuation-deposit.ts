@@ -91,8 +91,9 @@ export const config: Config = {
   path: "/api/auth/continuations/:continuationId/callback",
   method: "POST",
   // C6: create/deposit/claim が同一 IP で食い合わないよう、deposit は 40/60 に余裕を持たせる。
-  // C17: IP 集約は CGNAT/法人 NAT で共有バケットになり 429 を出し得るが、
-  // クライアントは awaiting 再試行する。キーを user/secret に緩めない（ロック契約）。
+  // C17: IP 集約は CGNAT/法人 NAT で共有バケットになり 429 を出し得る。
+  // クライアント completeCallback は deposit 429/5xx を code 保持のまま backoff 再試行する
+  // （claim の awaiting 再試行とは別経路）。キーを user/secret に緩めない（ロック契約）。
   rateLimit: { windowLimit: 40, windowSize: 60, aggregateBy: ["ip"] },
 };
 

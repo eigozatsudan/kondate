@@ -1,7 +1,8 @@
 /**
- * deposit 後の即 claim/exchange、および recovery poll 1 回分の上限。
+ * deposit 1 試行・deposit 後の即 claim/exchange・recovery poll 1 回分の上限。
  * settle しないと UI が awaiting に入れず TTL fail-closed も武装できないため、
  * ここで切って awaiting（recovery + page TTL）へフォールバックする。
+ * deposit hang も同窓で切り、hangWatchdog が secret を焼く前に completeCallback を settle させる（C2）。
  * auth-gateway / recovery の双方から参照するため timeout ユーティリティ側に置く（循環 import 回避）。
  */
 export const IMMEDIATE_CLAIM_TIMEOUT_MS = 30_000;

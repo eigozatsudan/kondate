@@ -333,6 +333,8 @@ export function isAuthContinuationExchangeInFlightOwner(
 /**
  * R3: exchange 中の heartbeat。MIN_CLAIM_POLL_GAP 間隔で同一 instance の lease を延長する。
  * 返却関数は heartbeat のみ止める（キー削除は release 側）。
+ * C5: bg throttle で interval が止まる前に freeze / pagehide / 非表示遷移でも 1 拍延命し、
+ * 復帰時（resume / pageshow / focus / visible）も即 beat。hidden wake を捨てない。
  */
 export function startAuthContinuationExchangeInFlightHeartbeat(
   flowId: string,
@@ -348,22 +350,29 @@ export function startAuthContinuationExchangeInFlightHeartbeat(
     void tryAcquireAuthContinuationExchangeInFlight(flowId, instanceId, storage, now());
   };
   const timer = setIntervalFn(beat, MIN_CLAIM_POLL_GAP_MS);
-  // R2-1: バックグラウンド throttle / タブ復帰後に即座に lease を延命（poll と同様の wake）
+  // C5: hidden でも beat（深 sleep 直前の延命）。interval が throttle されても
+  // freeze/pagehide で 1 拍、復帰で再拍できる。
   const wake = (): void => {
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-      return;
-    }
     beat();
   };
   if (typeof window !== "undefined" && typeof document !== "undefined") {
     window.addEventListener("focus", wake);
     document.addEventListener("visibilitychange", wake);
+    // Page Lifecycle: freeze 前・resume 後に lease を延命（モバイル bg の dual exchange 窓を縮める）
+    document.addEventListener("freeze", wake);
+    document.addEventListener("resume", wake);
+    window.addEventListener("pagehide", wake);
+    window.addEventListener("pageshow", wake);
   }
   return () => {
     clearIntervalFn(timer);
     if (typeof window !== "undefined" && typeof document !== "undefined") {
       window.removeEventListener("focus", wake);
       document.removeEventListener("visibilitychange", wake);
+      document.removeEventListener("freeze", wake);
+      document.removeEventListener("resume", wake);
+      window.removeEventListener("pagehide", wake);
+      window.removeEventListener("pageshow", wake);
     }
   };
 }
@@ -692,7 +701,10 @@ export function startAuthContinuationRecovery(input: {
     }
   };
   // B-I1 / C12: claim の IP 上限 60/60s を超えないよう 5s 間隔（最大 12 回/分）にする。
-  // create/deposit は 40/60。CGNAT 共有で 429 になり得るが gateway は awaiting 再試行する（C17）。
+  // create/deposit は 40/60。CGNAT 共有で 429 になり得る。
+  // claim の 429/5xx は gateway が awaiting 再試行（C17）。deposit の 429/5xx は
+  // completeCallback 内で code 閉包保持のまま backoff 再試行し、budget 後は terminal
+  // （timeout のみ同一ブラウザ awaiting — C1/C2）。recovery は deposit を再送しない。
   const timer = (input.setInterval ?? window.setInterval)(() => {
     void poll();
   }, 5_000);
