@@ -33,6 +33,23 @@ Phase 0 が提供する共有プリミティブ（`src/shared/ui/`）と ESLint 
 1. **Task 0.8** — 参照ビジュアルの人間承認。ここで承認を得てから Phase 1 に進みます。
 2. **Task 1.0** — `src/shared/ui/wizard/` の参照ゼロ 4 ファイルを**削除するか残すか**を人間に確認します。`phase-1-wizard.md` に「判断が得られるまで Task 1.1 に着手しない」と明記されています。実態調査だけして自分で決めてよいタスクではありません。
 
+Phase の切れ目（0→1、1→2、2→3、3→4）にも承認ゲートがあります。**合計 6 回止まります。**
+
+### ゲートに到達したときの手順
+
+「先に進まない」の代わりに、次をやってください。
+
+1. そこまでのコミットを `git log --oneline <開始時のHEAD>..HEAD` で全件出力する
+2. 後述の提出物 4 点を出力する
+3. **何を承認してほしいのかを 1 段落で書く**
+4. そこで作業を終える。次の指示を待つ
+
+### 再開するときの手順
+
+**まず `git log --oneline` で、どこまで終わっているかを自分で判定してください。** 会話の履歴やこのプロンプトの記述ではなく、コミット履歴が唯一の正です。済んでいる Task を再実行したり、重複したコミットを積んだりしないでください。
+
+`src/shared/ui/` に `Button` や `Surface` が無い場合、それは Phase 0 が未着手だという意味です。事故ではありません。Task 0.1 から始めてください。
+
 ## 各 Phase の進め方
 
 Phase ファイル内の Task 単位で、TDD で進めます。
@@ -158,6 +175,36 @@ hover / focus のトランジション、Skeleton の shimmer、状態遷移の�
 - **クラス名・CSS セレクタに依存するアサーションの改訂は認めます。** 別コミットにし、コミット本文に「なぜその期待が古くなったか」を書くこと。
 - **ただし「改訂」であって「削除」ではありません。** 落ちたアサーションは、**同じ意図を新しい実装で表す等価なアサーションに置き換えて**ください。テストケースごと消す、`expect` を削るだけ、`it.skip` にする、といった**カバレッジを減らす変更は認めません**。置き換え後にアサーション件数が減る場合は、コミット本文に減った理由を書いてください。
 - **`role` / アクセシブル名に依存するアサーションの改訂は認めません。** これが落ちたら実装が契約を破っています。テストではなく実装を直してください。
+- **変更禁止テスト 4 本の中にあるアサーションは、クラス名依存であっても改訂できません。** 例えば `src/app/accessibility.test.tsx:287-288` は `querySelectorAll(".primary-button")` を使っていますが、このファイルは変更禁止です。ここが落ちたら実装を直すか、実装を止めて人間に相談してください。**変更禁止が常に優先します。**
+
+## 最初にやること：環境の準備
+
+**これをやらないと最初の 1 コマンドが必ず失敗します。** `compose.yaml:1` は
+`KONDATE_COMPOSE_PROJECT_NAME` を必須にし、`include` は `./.env` を要求します。`node_modules`
+は名前付き volume なのでイメージには入っていません。
+
+```bash
+./scripts/generate-local-secrets.sh          # .env を生成（既にあれば不要）
+docker compose run --rm --no-deps app npm ci # node_modules volume を作る
+docker compose up -d --wait                  # Supabase / mock を起動
+```
+
+詳細は `AGENTS.md` の **§2（セットアップ）** と **§3（ローカル起動）**、および
+`docs/local-development.md` にあります。**必ず読んでください。** 後述の §8/§9/§10 だけでは
+環境が立ち上がりません。
+
+`--no-deps` を付ける純粋な単体テスト・typecheck・lint・format:check だけなら
+`docker compose up` は不要ですが、e2e とスクリーンショット撮影には起動が要ります。
+
+## 作業ブランチ
+
+**`main` で直接作業しないでください。** 作業用ブランチを切ってください。
+
+```bash
+git switch -c ui/modernization-phase-0
+```
+
+Phase 単位で revert できることがこの計画のロールバック戦略の前提です。
 
 ## コマンドはすべて Docker 経由
 
@@ -188,11 +235,23 @@ docker compose --profile test run --rm db-test
 
 ## 各 Phase 完了時の提出物
 
-1. **スクリーンショット（幅 320 / 375 / 768 px）。** `./scripts/run-e2e.sh` は成功時に画像を出力しません（`playwright.config.ts` の `screenshot: "only-on-failure"`）。撮影用の一時 Playwright スクリプトを作り（`e2e/specs/` には置かない。置くと本番 spec として実行される）、`page.setViewportSize` と `page.screenshot` で 3 幅を撮ってください。**撮影スクリプトはコミットしない。** 提出物は画像のみ。
+1. **スクリーンショット（幅 320 / 375 / 768 px）。**
+
+   `./scripts/run-e2e.sh` は成功時に画像を出力しません（`playwright.config.ts` の `screenshot: "only-on-failure"`）。撮影は別途行います。
+
+   **`playwright.config.ts` の `testDir` は `./e2e/specs` です。** そこに置くと本番 spec として実行されてしまい、置かないと `playwright test` が拾いません。この矛盾は**撮影専用の config を別に作って `--config` で渡す**ことで解きます。撮影 spec は `e2e/screenshots/` のような `testDir` 外のディレクトリに置き、その config の `testDir` をそこに向けてください。
+
+   撮影対象の画面はログインと在庫データを必要とします。`e2e/fixtures/` の既存 fixture（`auth.ts` / `household.ts` ほか）を読み、e2e 本体と同じ方法で認証・シードしてください。ゼロから認証を組まないでください。
+
+   `docker compose up -d --wait` でスタックが起動している必要があります。
+
+   **撮影 config と spec はコミットしないでください。** 提出物は生成された画像のみです。
+
+   **撮影ができない場合は、画像なしで「完了」と報告しないでください。** 何をどう試して何が起きたかを添えて、実装を止めて報告してください。視覚回帰テストはこのリポジトリに存在せず（`toHaveScreenshot` / `toMatchSnapshot` が 0 件）、**人間の目がこの計画の唯一の品質ゲート**です。これが省略されると、計画全体の目的が検証されないまま進みます。
    視覚回帰テストはこのリポジトリに存在しません（`toHaveScreenshot` / `toMatchSnapshot` が 0 件）。**人間の目が「オシャレさ」の唯一のゲート**です。768 px を含めるのは、`@media (min-width: 720px)` 配下がどのテストからも検証されていないためです。
-2. 変更ファイル一覧
-3. テスト変更を分離したコミットの hash（あれば）
-4. 検証フロー 9 ステップの pass/fail
+2. **`git log --oneline <開始時のHEAD>..HEAD` の全件**と **`git diff --stat <開始時のHEAD>..HEAD`**
+3. テスト変更を分離したコミットの hash（あれば）と、そのコミット本文
+4. **検証フロー 9 ステップの結果。pass/fail の一言ではなく、各コマンドの実際の出力末尾を貼ってください**（`vitest` の `Tests N passed` 行、`playwright` の `N passed` 行、`tsc` / `eslint` / `prettier` の終了時出力）。**「9 ステップ全部 pass です」という自己申告だけでは受け取れません。**
 
 ## コミット規約
 
@@ -210,6 +269,17 @@ docker compose --profile test run --rm db-test
 - ブラウザコードからの `@shared/safety/*` の import（`@shared/safety-pure/*` のみ可）
 - 生成ファイルの手編集（`package-lock.json`、`infra/supabase/**`、`src/shared/types/database.generated.ts`）
 - **アレルギー／食品安全に関する文言を「安全です」「対応済み」などの保証表現に寄せること**（Phase 2 の `idea-menu-safety-notice.tsx` に関わります。平易化はしてよいが、保証表現は禁止）
+
+## 計画のコードは「設計」であって「実行済みのコード」ではありません
+
+計画に載っているコードスニペットは、リポジトリの実物と突き合わせて検証された設計ですが、**そのまま実行して緑になることまでは確認されていません**。
+
+特に、ツールを自前で駆動するテスト（Task 0.6 の ESLint fixture など）を写経して赤になったとき、**テスト対象（セレクタ・ルール・実装）が悪いと決めつける前に、まずテストハーネス自身を疑ってください。** 過去に見つかった実例は次の 2 つです。
+
+- `Linter#verify` の第 3 引数（ファイル名）を省略すると、`files` パターンに一致せず全ケースがパースエラーになる
+- `tsconfig.app.json` の `allowJs` と `include` の都合で、TS から `eslint.config.js` を import すると typecheck が落ちる
+
+計画の指示が「セレクタを直せ」と書いていても、**原因がハーネス側なら指示のほうが間違っています**。その場合は指示に従わず、止めて報告してください。
 
 ## 詰まったら
 

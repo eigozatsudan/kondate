@@ -285,6 +285,7 @@ grep -nE 'failed|✘' /tmp/e2e.log | head -n 40
 | --- | --- |
 | `e2e/specs/mobile-accessibility.spec.ts:64` | `goto("/planner")`（アサーションなし） |
 | `e2e/specs/mobile-accessibility.spec.ts:108` | `heading "1. 食事"` |
+| `e2e/specs/mobile-accessibility.spec.ts:236` | `goto("/planner")`。直後は `setMockScenario` でアサーションを持たないため、**影響なしと判定済み**。ここが落ちた場合は例外規定の対象外なので、テストを書き換えず実装を止めて人間に相談する |
 | `e2e/specs/mobile-accessibility.spec.ts:93-97` | `/planner?resume=review` → `heading "5. 確認"` |
 | `e2e/specs/full-journey.spec.ts:39-40` | `goto("/planner")` → `1. 食事` |
 | `e2e/specs/menu-domain-pantry.spec.ts:75-80` | `5. 確認`（下書き復帰）→ `戻る`×4 → `1. 食事` |

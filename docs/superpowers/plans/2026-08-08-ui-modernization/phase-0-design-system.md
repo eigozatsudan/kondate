@@ -478,6 +478,7 @@ git commit -m "feat: 共有 Button プリミティブを追加"
 
   export type SurfaceTone = "plain" | "sunken" | "notice";
   export type SurfaceProps = LandmarkProps & { tone?: SurfaceTone;
+  // onSubmit?: FormEventHandler<HTMLFormElement>（as="form" 用。Task 0.7 で必須）
     as?: "div" | "section" | "article" | "form"; children: React.ReactNode };
   export function Surface(props: SurfaceProps): React.JSX.Element;
 
@@ -642,6 +643,15 @@ export type SurfaceProps = LandmarkProps & {
   tone?: SurfaceTone;
   as?: "div" | "section" | "article" | "form";
   children: ReactNode;
+  /**
+   * as="form" のときだけ意味を持つ。pantry-form.tsx:131 が
+   * <form onSubmit={…}> であり、これが無いと Task 0.7 で
+   * <Surface as="form"> に移行できない。
+   * onSubmit はハイフンを含まない camelCase なので TypeScript の
+   * 余剰プロパティ検査に引っかかり、型に無いと即コンパイルエラーになる
+   * （aria-label が黙って消えるのとは逆の壊れ方をする）。
+   */
+  onSubmit?: FormEventHandler<HTMLFormElement>;
 };
 
 const toneClass: Record<SurfaceTone, string> = {
@@ -765,6 +775,10 @@ export function Inset({ pad = 4, children, ...rest }: InsetProps): JSX.Element {
  * Stack の実装側で as="ul" のとき role="list" を既定で付けること
  * （呼び出し側が role を渡した場合はそちらを優先する）。
  * jsdom はこの退行を再現しないのでテストでは検出できない。
+ *
+ * 注意: Step 3 に載せた Stack の実装コードはこの既定付与を含んでいない
+ * （最小例のため）。実装時はこのコメントの指示を正とし、
+ * as="ul" かつ role 未指定のとき role="list" を付けること。
  */
 ul.ui-stack {
   margin: 0;
@@ -1113,7 +1127,10 @@ export function Badge({
 
 - [ ] **Step 4: CSS を書く**
 
-アニメーションは付けない（`unexpectedMotionRules` との衝突を避けるため。上の注意参照）。
+**アニメーションを付けてよい。** `.ui-skeleton__line` は新規クラス名で
+`selectorMatchesRepresentative` に一致せず、`unexpectedKeyframesRules` は `wizard-enter`
+以外の keyframes を見ない（実測確認済み）。下の CSS の `@keyframes ui-shimmer` と
+`animation` はそのまま書くこと。**`prefers-reduced-motion` のペアを必ずセットで書く。**
 
 ```css
 /*
@@ -1355,62 +1372,95 @@ grep -rlE 'className=[{"][^;]*(\bbg-|\btext-(red|amber|green|blue|stone|slate|gr
 **ルールが壊れたことを検出できないなら、ルールがあることの保証にならない。**
 上の表を CI で固定する fixture テストを作る。
 
-`src/shared/ui/eslint-primitive-rule.test.ts`（新規）:
+**置き場所は `tests/tooling/eslint-primitive-rule.test.mjs`（新規）。`src/` 配下の
+`.test.ts` にはしない。** 理由は 2 つあり、どちらも実測で確認済みである。
 
-```ts
+1. `tsconfig.app.json` は `allowJs: false`（`:6`）で、`include`（`:27-`）は
+   `eslint.config.js` を含まない。TS から `import config from "../../../eslint.config.js"`
+   すると **TS7016（暗黙 any）** で `npm run typecheck` が落ちる。`strict: true` なので
+   警告ではなくエラーである。さらに `config` が `any` になるため
+   `strictTypeChecked` の `no-unsafe-assignment` / `no-unsafe-call` で `npm run lint` も落ちる。
+2. このリポジトリには既に「設定ファイルが期待どおりかを検証する」テストの置き場所が
+   ある。`tests/tooling/*.test.mjs`（`node:test` ベース）がそれで、`scripts/ci.sh:20-23`
+   に列挙されて `node --test` で実行される。JS なので TS の型検査を通らず、上記の問題が
+   そもそも起きない。
+
+`tests/tooling/eslint-primitive-rule.test.mjs`（新規）:
+
+```js
+import assert from "node:assert/strict";
+import test from "node:test";
 import { Linter } from "eslint";
-import { describe, expect, it } from "vitest";
-import config from "../../../eslint.config.js";
+import tsparser from "@typescript-eslint/parser";
+import config from "../../eslint.config.js";
 
 /** eslint.config.js から本ルールのブロックだけを取り出して単体で回す。 */
-const rule = config.find(
-  (block) =>
-    typeof block === "object" &&
-    block !== null &&
-    "rules" in block &&
-    block.rules !== undefined &&
-    "no-restricted-syntax" in block.rules,
+const ruleBlock = config.find(
+  (block) => block?.rules !== undefined && "no-restricted-syntax" in block.rules,
 );
 
-const lint = (code: string): number => {
-  const linter = new Linter();
-  return linter.verify(code, {
-    files: ["**/*.tsx"],
-    languageOptions: { parserOptions: { ecmaFeatures: { jsx: true }, ecmaVersion: "latest", sourceType: "module" } },
-    rules: rule?.rules ?? {},
-  }).length;
-};
+/**
+ * 第 3 引数のファイル名は必須。省略すると既定名 <input> が files パターンに
+ * 一致せず languageOptions が適用されないため、全ケースが
+ * "Parsing error: Unexpected token <" を 1 件返す。その結果 rejects 側は
+ * 偽の緑、allows 側は赤になり、原因をセレクタだと誤診する。
+ */
+const lint = (code) =>
+  new Linter().verify(
+    code,
+    {
+      files: ["**/*.tsx"],
+      languageOptions: { parser: tsparser, parserOptions: { ecmaFeatures: { jsx: true } } },
+      rules: ruleBlock?.rules ?? {},
+    },
+    "fixture.tsx",
+  ).length;
 
-describe("primitive-only className rule", () => {
-  it.each([
-    ['<div className="font-semibold text-red-800" />'],
-    ['<div className={"bg-terracotta-700"} />'],
-    ["<div className={`stack ${on ? \"bg-terracotta-700\" : \"p-4\"}`} />"],
-    ['<div className={on ? "text-amber-800" : "gap-4"} />'],
-    ['<div className="text-ink text-white" />'],
-    ['<div className="flex-col w-full rounded-xl" />'],
-    ['<div className="flex flex-col gap-2" />'],
-  ])("rejects %s", (code) => {
-    expect(lint(code)).toBeGreaterThan(0);
+for (const code of [
+  '<div className="font-semibold text-red-800" />',
+  '<div className={"bg-terracotta-700"} />',
+  '<div className={`stack ${on ? "bg-terracotta-700" : "p-4"}`} />',
+  '<div className={on ? "text-amber-800" : "gap-4"} />',
+  '<div className="text-ink text-white" />',
+  '<div className="flex-col w-full rounded-xl" />',
+  '<div className="flex flex-col gap-2" />',
+]) {
+  test(`rejects ${code}`, () => {
+    assert.ok(lint(code) > 0, "違反として検出されるべき");
   });
+}
 
-  it.each([
-    ['<button className="primary-button min-h-11" />'],
-    ['<div className="page-frame stack" />'],
-    ['<p className="type-small" />'],
-    ["<div className={notice.className} />"],
-  ])("allows %s", (code) => {
-    expect(lint(code)).toBe(0);
+for (const code of [
+  '<button className="primary-button min-h-11" />',
+  '<div className="page-frame stack" />',
+  '<p className="type-small" />',
+  "<div className={notice.className} />",
+]) {
+  test(`allows ${code}`, () => {
+    assert.equal(lint(code), 0, "許可されるべき");
   });
-});
+}
 ```
+
+`scripts/ci.sh:20-23` の `node --test` の列挙に 1 行追加する。
 
 ```bash
-docker compose run --rm --no-deps app npx vitest run src/shared/ui/eslint-primitive-rule.test.ts
+docker compose run --rm --no-deps app node --test tests/tooling/eslint-primitive-rule.test.mjs
 ```
 
-期待: PASS。**落ちたケースがあればセレクタを直す。** このテストが緑になるまで
-先に進まない。
+期待: 全 11 ケース PASS。
+
+**落ちたときに最初に疑うのはセレクタではない。** 計画に載っているコードは検証済みの
+設計であって実行済みのコードではない。ESLint の `Linter` API を自前で駆動する以上、
+**まずテストハーネス自身**（`verify` の第 3 引数、parser の指定、`ruleBlock` が
+取れているか）を疑うこと。ハーネスが正しいことを確認したうえでなお落ちるなら、
+そのときセレクタを直す。
+
+**既知の限界**: 3 番目の rejects ケース（テンプレートリテラル内の三項）は、実測では
+子孫 `Literal` セレクタだけで検出される。`TemplateElement` セレクタはこの fixture では
+一度も発火しないため、**`TemplateElement` 側を消しても全ケース緑のまま**である。
+テンプレートリテラルの静的部分（`` `bg-terracotta-700 ${x}` `` のような形）を検証する
+ケースを 1 つ足すと、この穴を塞げる。
 
 - [ ] **Step 4: lint を実行する**
 
@@ -1428,7 +1478,7 @@ Step 3 の fixture テストが証明している。
 - [ ] **Step 5: コミット**
 
 ```bash
-git add eslint.config.js src/shared/ui/eslint-primitive-rule.test.ts
+git add eslint.config.js tests/tooling/eslint-primitive-rule.test.mjs scripts/ci.sh
 git commit -m "feat: プリミティブ経由を強制する ESLint ルールを追加"
 ```
 
@@ -1702,7 +1752,7 @@ git commit -m "test: expiryNotice のトーン化に追随"
 - [ ] 新規に `style={{ … }}` を 1 箇所も書いていない
       （確認: `grep -rn 'style={{' src/shared/ui src/features/pantry`）
 - [ ] `src/features/pantry/**` が ESLint の例外リストに**入っていない**状態で lint が緑
-- [ ] `eslint-primitive-rule.test.ts` の fixture が全ケース緑
+- [ ] `tests/tooling/eslint-primitive-rule.test.mjs` の fixture が全 11 ケース緑
       （中括弧・テンプレートリテラル・`text-ink` 系を確実に検出できている）
 - [ ] `Button` に `ref` が通り、`Stack` に `aria-label` が通ることをテストで固定した
 - [ ] 新規プリミティブのモーションに `prefers-reduced-motion` ペアを添えた

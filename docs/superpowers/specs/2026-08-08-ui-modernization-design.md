@@ -140,7 +140,7 @@ Phase 4 は実行不能になる。
 .app-section  :root
 ```
 
-加えて `touchesProtectedContract`（`:850-856`）は、次の正規表現に一致するセレクタも
+加えて `touchesProtectedContract`（`:851-856`）は、次の正規表現に一致するセレクタも
 保護対象にする。
 
 ```js
