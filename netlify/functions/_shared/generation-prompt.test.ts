@@ -300,6 +300,15 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain(GENERATION_SYSTEM_PROMPT_CORE.slice(0, 40));
   });
 
+  it("guides readable units for non-pantry amounts without relying on pre-existing pantry wording", () => {
+    const system = systemText(buildGenerationMessages(asNewMenuExecution(makeGenerationContext())));
+    // 新規誘導の核だけをロック（既存の「大さじ」「ml」「pantry…換算」だけでは通さない）
+    expect(system).toContain("買い足し");
+    expect(system).toContain("4以上");
+    expect(system).toContain("数字を付けない");
+    expect(system).toContain("ml（またはg）");
+  });
+
   it("requires Japanese user-facing text in the system prompt", () => {
     const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext()));
     const system = messages.find((message) => message.role === "system")?.content ?? "";
