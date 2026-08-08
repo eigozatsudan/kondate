@@ -442,7 +442,8 @@
                           {
                             "type": "number",
                             "minimum": 0,
-                            "maximum": 999999
+                            "maximum": 999999,
+                            "multipleOf": 0.001
                           },
                           {
                             "type": "null"
