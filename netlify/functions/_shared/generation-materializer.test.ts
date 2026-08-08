@@ -563,4 +563,86 @@ describe("materializeAiGeneratedMenu", () => {
     expect(menu.safetyTags).toEqual([]);
     expect(menu.adaptations[0]?.safetyTags).toEqual([]);
   });
+
+  it("normalizes non-pantry large tablespoon quantities to ml", () => {
+    const payload = makePayload();
+    payload.dishes[1]!.ingredients[0] = {
+      ingredientRef: "ingredient_2",
+      position: 1,
+      name: "オリーブ油",
+      quantityValue: 15,
+      quantityText: "15大さじ",
+      unit: "大さじ",
+      storeSection: "seasonings",
+      pantryRef: null,
+      labelConfirmationRequired: false,
+    };
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    const oil = menu.dishes.flatMap((d) => d.ingredients).find((i) => i.name === "オリーブ油");
+    // UI amount() は value+unit 優先。triple 同時更新を固定する
+    expect(oil).toMatchObject({
+      quantityValue: 225,
+      quantityText: "225ml",
+      unit: "ml",
+    });
+  });
+
+  it("does not convert pantry-backed spoon quantities", () => {
+    const context = makeContext(5);
+    context.pantryItems = [
+      {
+        ...context.pantryItems[0]!,
+        name: "ごはん",
+        quantity: 5,
+        unit: "大さじ",
+      },
+    ];
+    const payload = makePayload();
+    payload.dishes[0]!.ingredients[0] = {
+      ...payload.dishes[0]!.ingredients[0]!,
+      name: "ごはん",
+      quantityValue: 5,
+      quantityText: "5大さじ",
+      unit: "大さじ",
+    };
+    payload.pantryUsage = [
+      {
+        pantryRef: "pantry_1",
+        priority: "must_use",
+        usageStatus: "used",
+        plannedQuantity: 5,
+        unit: "大さじ",
+        dishRefs: ["dish_1"],
+        unusedReason: null,
+      },
+    ];
+    const menu = materializeAiGeneratedMenu(payload, context, uuidFactory());
+    const rice = menu.dishes[0]!.ingredients[0]!;
+    // 5>3 なので skip 漏れなら 75ml になり即検知
+    expect(rice.quantityValue).toBe(5);
+    expect(rice.unit).toBe("大さじ");
+    expect(rice.quantityText).toBe("5大さじ");
+  });
+
+  it("normalizes 1少々 on non-pantry ingredients", () => {
+    const payload = makePayload();
+    payload.dishes[1]!.ingredients[0] = {
+      ingredientRef: "ingredient_2",
+      position: 1,
+      name: "こしょう",
+      quantityValue: 1,
+      quantityText: "1少々",
+      unit: "少々",
+      storeSection: "seasonings",
+      pantryRef: null,
+      labelConfirmationRequired: false,
+    };
+    const menu = materializeAiGeneratedMenu(payload, makeContext(), uuidFactory());
+    const pepper = menu.dishes.flatMap((d) => d.ingredients).find((i) => i.name === "こしょう");
+    expect(pepper).toMatchObject({
+      quantityValue: null,
+      quantityText: "少々",
+      unit: null,
+    });
+  });
 });
