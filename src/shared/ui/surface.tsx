@@ -1,4 +1,4 @@
-import type { FormEventHandler, HTMLAttributes, JSX, ReactNode } from "react";
+import type { HTMLAttributes, JSX, ReactNode, SubmitEventHandler } from "react";
 
 /**
  * レイアウトプリミティブが必ず素通しする属性。
@@ -23,8 +23,9 @@ export type SurfaceProps = LandmarkProps & {
    * onSubmit はハイフンを含まない camelCase なので TypeScript の
    * 余剰プロパティ検査に引っかかり、型に無いと即コンパイルエラーになる
    * （aria-label が黙って消えるのとは逆の壊れ方をする）。
+   * React 19 では FormEventHandler が deprecated のため SubmitEventHandler を使う。
    */
-  onSubmit?: FormEventHandler<HTMLFormElement>;
+  onSubmit?: SubmitEventHandler<HTMLFormElement>;
 };
 
 const toneClass: Record<SurfaceTone, string> = {
