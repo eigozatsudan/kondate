@@ -51,14 +51,37 @@ describe("normalizeIngredientQuantity", () => {
       expected: { quantityValue: 225, quantityText: "225ml", unit: "ml" },
     },
     {
+      // M2-1: value 欠落でも unit がスプーンなら text から補完
+      name: "P1b value null unit spoon text 15大さじ",
+      input: { quantityValue: null, quantityText: "15大さじ", unit: "大さじ" },
+      expected: { quantityValue: 225, quantityText: "225ml", unit: "ml" },
+    },
+    {
+      name: "P1b value null unit spoon text 大さじ15 prefix",
+      input: { quantityValue: null, quantityText: "大さじ15", unit: "大さじ" },
+      expected: { quantityValue: 225, quantityText: "225ml", unit: "ml" },
+    },
+    {
+      name: "P1b unit spoon text other spoon type stays",
+      input: { quantityValue: null, quantityText: "10小さじ", unit: "大さじ" },
+      expected: { quantityValue: null, quantityText: "10小さじ", unit: "大さじ" },
+    },
+    {
       name: "non-spoon unit does not parse text spoon",
       input: { quantityValue: 15, quantityText: "15大さじ", unit: "g" },
       expected: { quantityValue: 15, quantityText: "15大さじ", unit: "g" },
     },
     {
-      name: "non-finite value stays",
+      // value が非有限でも text 同種スプーンがあれば補完（M2-1 と同じ経路）
+      name: "non-finite value recovers from spoon text",
       input: { quantityValue: Number.NaN, quantityText: "15大さじ", unit: "大さじ" },
-      expected: { quantityValue: Number.NaN, quantityText: "15大さじ", unit: "大さじ" },
+      expected: { quantityValue: 225, quantityText: "225ml", unit: "ml" },
+    },
+    {
+      // text も補完不能なら入力のまま（NaN は toEqual で一致）
+      name: "non-finite value without parseable text stays",
+      input: { quantityValue: Number.NaN, quantityText: "適量っぽい", unit: "大さじ" },
+      expected: { quantityValue: Number.NaN, quantityText: "適量っぽい", unit: "大さじ" },
     },
     {
       name: "tsp boundary 3 stays",

@@ -116,14 +116,17 @@
 
 **Step B — スプーン → ml**
 
-1. **P1:** `quantityValue != null` かつ unit が 大さじ/小さじ → 丸め後 `> 3` なら ml 化  
+1. **P1:** unit が 大さじ/小さじ のとき  
+   - `quantityValue` が有限正 → その値で丸め後 `> 3` なら ml 化  
+   - value が null / 非有限 / `≤0` → **同種スプーンの text をパース**して補完し、同様に ml 化（M2-1: `value:null, unit:大さじ, text:15大さじ`）  
+   - text のスプーン種別が unit と食い違う（例: unit 大さじ + text `10小さじ`）→ 無変換  
 2. **P2:** unit が null（または normalize 後 null）のとき、text 全体をパース（`N大さじ` / `大さじN` / 小さじ同型、大匙・小匙含む）。  
    - パース成功かつ丸め後 `> 3` なら ml 化  
    - 数値の優先: `quantityValue` が有限かつ `> 0` ならそれを使い、さもなくば text から得た数を使う  
    - （`value:15, unit:null, text:"15大さじ"` のような AI 欠けを拾う。unit が `g` 等の非スプーンのときは text を権威にしない）  
 3. それ以外 → 無変換  
 
-**意図的に無変換のまま残す例:** `1/2大さじ`、`大さじ約15`、unit=`g` と矛盾 text、英語 `tbsp`（非目的・残渣）。
+**意図的に無変換のまま残す例:** `1/2大さじ`、`大さじ約15`、unit=`g` と矛盾 text、unit と text のスプーン種別不一致、英語 `tbsp`（非目的・残渣）。
 
 ### 4.7 materialize 適用順序
 

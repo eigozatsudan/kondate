@@ -55,14 +55,55 @@ function tryQualitative(input: IngredientQuantityFields): IngredientQuantityFiel
   return null;
 }
 
+/**
+ * text からスプーン量を読む。expectedUnit があるときは text 側の単位がそれと一致するときだけ。
+ * expectedUnit が null のときは text の単位をそのまま採用（P2）。
+ */
+function parseSpoonAmountFromText(
+  quantityText: string,
+  expectedUnit: string | null,
+): { value: number; unit: string; factor: number } | null {
+  const text = quantityText.normalize("NFKC").trim();
+  const m = SPOON_TEXT.exec(text);
+  if (m === null) return null;
+  const rawValue = m[1] ?? m[4];
+  const rawUnit = m[2] ?? m[3];
+  if (rawValue === undefined || rawUnit === undefined) return null;
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  const spoonCanon = normalizeUnit(rawUnit);
+  if (spoonCanon === null) return null;
+  const factor = spoonFactor(spoonCanon);
+  if (factor === null) return null;
+  if (expectedUnit !== null && spoonCanon !== expectedUnit) return null;
+  return { value: parsed, unit: spoonCanon, factor };
+}
+
+/**
+ * P1: unit が 大さじ/小さじ のとき ml 化。
+ * value が有限正ならそれを使い、null / 非有限 / ≤0 なら同種スプーンの text から補完（M2-1）。
+ */
 function trySpoonFromValueUnit(input: IngredientQuantityFields): IngredientQuantityFields | null {
-  if (input.quantityValue === null) return null;
-  if (!Number.isFinite(input.quantityValue) || input.quantityValue <= 0) return null;
   const unitCanon = normalizeUnit(input.unit);
   if (unitCanon === null) return null;
   const factor = spoonFactor(unitCanon);
   if (factor === null) return null;
-  const rounded = roundQuantityValue(input.quantityValue);
+
+  let numeric: number | null = null;
+  if (
+    input.quantityValue !== null &&
+    Number.isFinite(input.quantityValue) &&
+    input.quantityValue > 0
+  ) {
+    numeric = input.quantityValue;
+  } else {
+    // value 欠落時は text の同種スプーン量で補う（unit=大さじ + text=15大さじ）
+    const fromText = parseSpoonAmountFromText(input.quantityText, unitCanon);
+    if (fromText === null) return null;
+    numeric = fromText.value;
+  }
+
+  const rounded = roundQuantityValue(numeric);
   if (rounded <= SPOON_THRESHOLD) {
     // 閾値以下は仕様どおり無変換
     return null;
@@ -77,25 +118,15 @@ function trySpoonFromValueUnit(input: IngredientQuantityFields): IngredientQuant
 function trySpoonFromText(input: IngredientQuantityFields): IngredientQuantityFields | null {
   const unitCanon = normalizeUnit(input.unit);
   if (unitCanon !== null) return null;
-  const text = input.quantityText.normalize("NFKC").trim();
-  const m = SPOON_TEXT.exec(text);
-  if (m === null) return null;
-  const rawValue = m[1] ?? m[4];
-  const rawUnit = m[2] ?? m[3];
-  if (rawValue === undefined || rawUnit === undefined) return null;
-  const parsed = Number(rawValue);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  const spoonCanon = normalizeUnit(rawUnit);
-  if (spoonCanon === null) return null;
-  const factor = spoonFactor(spoonCanon);
-  if (factor === null) return null;
+  const fromText = parseSpoonAmountFromText(input.quantityText, null);
+  if (fromText === null) return null;
   const numeric =
     input.quantityValue !== null && Number.isFinite(input.quantityValue) && input.quantityValue > 0
       ? input.quantityValue
-      : parsed;
+      : fromText.value;
   const rounded = roundQuantityValue(numeric);
   if (rounded <= SPOON_THRESHOLD) return null;
-  return toMlTriple(rounded, factor);
+  return toMlTriple(rounded, fromText.factor);
 }
 
 /**
