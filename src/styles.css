@@ -51,6 +51,8 @@
   --color-line: #e7e2dd; /* = --border。区切り線・淡い塗り */
   --color-line-strong: #8e8681; /* = --border-strong。境界を示す枠（3:1） */
   --color-danger-700: #b3261e; /* = --danger。白文字で 6.54:1 */
+  --color-canvas-sunken: #f2efec; /* = --surface-sunken */
+  --color-warning: #8a4b00; /* = --warning。白文字ではなく文字色として使う */
 }
 
 /*
@@ -118,6 +120,19 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  /*
+   * エディトリアル方向（2026-08-08 UI/UX モダン化）で追加したトークン。
+   * 既存トークンは styles.contrast.test.ts が hex 単位で固定しているため触らない。
+   * 影は追加しない。階層は線と余白で表現する（.choice-card の box-shadow は
+   * contrast テストが完全一致で固定しており、共通トークン化できないため）。
+   */
+  --surface-sunken: #f2efec;
+  --warning: #8a4b00; /* 期限「まもなく」。白地 6.80:1 */
+  --text-hero: clamp(1.75rem, 8vw, 2.75rem);
+  --leading-hero: 1.3;
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
 :root {

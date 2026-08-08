@@ -1184,6 +1184,26 @@ describe("color token contrast", () => {
       expect(css.toLowerCase()).toContain(tint);
     });
   }
+
+  it("adds editorial tokens without touching existing ones", () => {
+    expectEffectiveDeclarations(":root", {
+      "--surface-sunken": "#f2efec",
+      "--warning": "#8a4b00",
+      "--motion-fast": "120ms",
+      "--motion-base": "200ms",
+      "--motion-ease": "cubic-bezier(0.2, 0, 0, 1)",
+    });
+  });
+
+  it("keeps warning readable on the surfaces it actually ships on", () => {
+    // 期限「まもなく」表示に使う。実際の出荷先は .ui-badge--warning の背景 --notice。
+    // 白地・沈んだ面も含め、本文 AA（4.5:1）を満たすことを固定する。
+    expect(contrast("#8a4b00", "#ffffff")).toBeGreaterThanOrEqual(4.5); // 実測 6.80
+    expect(contrast("#8a4b00", "#fdf1ec")).toBeGreaterThanOrEqual(4.5); // --notice。実測 6.15
+    expect(contrast("#8a4b00", "#f2efec")).toBeGreaterThanOrEqual(4.5); // 実測 5.94
+    expect(contrast("#b3261e", "#fdf1ec")).toBeGreaterThanOrEqual(4.5); // --danger on --notice
+    expect(contrast("#b3261e", "#f2efec")).toBeGreaterThanOrEqual(4.5); // 実測 5.71
+  });
 });
 
 describe("guided planner theme", () => {
