@@ -6,6 +6,9 @@ import {
   type PantryItemInput,
   pantryItemInputSchema,
 } from "@shared/contracts/pantry";
+import { Button } from "@/shared/ui/button";
+import { Inset, Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 
 const defaults: PantryItemInput = {
   name: "",
@@ -126,108 +129,114 @@ export function PantryForm({
     );
   };
   return (
-    <form
-      className="card stack"
+    <Surface
+      as="form"
       onSubmit={(event) => {
         void submit(event);
       }}
     >
-      <h2 className="pantry-form-title" tabIndex={-1}>
-        {title}
-      </h2>
-      <label className="field">
-        食材名
-        <input autoComplete="off" {...errorAttributes("name")} {...form.register("name")} />
-      </label>
-      {fieldError("name")}
-      <div className="pantry-field-row">
-        <div>
+      <Inset pad={5}>
+        <Stack gap={4}>
+          {/* フォーカス復帰契約: 親が querySelector("h2") で掴む。tabIndex=-1 必須。 */}
+          <h2 className="pantry-form-title" tabIndex={-1}>
+            {title}
+          </h2>
           <label className="field">
-            分量
-            <input
-              type="number"
-              min="0.001"
-              step="0.001"
-              {...errorAttributes("quantity")}
-              {...form.register("quantity", {
-                setValueAs: (value: string) => (value === "" ? null : Number(value)),
-              })}
-            />
+            食材名
+            <input autoComplete="off" {...errorAttributes("name")} {...form.register("name")} />
           </label>
-          {fieldError("quantity")}
-        </div>
-        <div>
+          {fieldError("name")}
+          <div className="pantry-field-row">
+            <div>
+              <label className="field">
+                分量
+                <input
+                  type="number"
+                  min="0.001"
+                  step="0.001"
+                  {...errorAttributes("quantity")}
+                  {...form.register("quantity", {
+                    setValueAs: (value: string) => (value === "" ? null : Number(value)),
+                  })}
+                />
+              </label>
+              {fieldError("quantity")}
+            </div>
+            <div>
+              <label className="field">
+                単位
+                <input
+                  autoComplete="off"
+                  {...errorAttributes("unit")}
+                  {...form.register("unit", {
+                    setValueAs: (value: string) => (value === "" ? null : value),
+                  })}
+                />
+              </label>
+              {fieldError("unit")}
+            </div>
+          </div>
           <label className="field">
-            単位
+            期限日
             <input
-              autoComplete="off"
-              {...errorAttributes("unit")}
-              {...form.register("unit", {
+              type="date"
+              {...errorAttributes("expiresOn")}
+              {...form.register("expiresOn", {
                 setValueAs: (value: string) => (value === "" ? null : value),
               })}
             />
           </label>
-          {fieldError("unit")}
-        </div>
-      </div>
-      <label className="field">
-        期限日
-        <input
-          type="date"
-          {...errorAttributes("expiresOn")}
-          {...form.register("expiresOn", {
-            setValueAs: (value: string) => (value === "" ? null : value),
-          })}
-        />
-      </label>
-      {fieldError("expiresOn")}
-      <label className="field">
-        期限の種類
-        <select
-          {...errorAttributes("expirationType")}
-          {...form.register("expirationType", {
-            setValueAs: (value: string) => (value === "" ? null : value),
-          })}
-        >
-          <option value="">指定なし</option>
-          {expirationTypes.map((value) => (
-            <option key={value} value={value}>
-              {expirationLabels[value]}
-            </option>
-          ))}
-        </select>
-      </label>
-      {fieldError("expirationType")}
-      <label className="field">
-        開封状態
-        <select
-          {...errorAttributes("openedState")}
-          {...form.register("openedState", {
-            setValueAs: (value: string) => (value === "" ? null : value),
-          })}
-        >
-          <option value="">指定なし</option>
-          {openedStates.map((value) => (
-            <option key={value} value={value}>
-              {openedLabels[value]}
-            </option>
-          ))}
-        </select>
-      </label>
-      {fieldError("openedState")}
-      {form.formState.errors.root?.schema !== undefined && (
-        <p className="error-message" role="alert" lang="ja">
-          {form.formState.errors.root.schema.message}
-        </p>
-      )}
-      <button className="primary-button" disabled={saving} type="submit">
-        {saving ? "保存中…" : submitLabel}
-      </button>
-      {onCancel !== undefined && (
-        <button className="text-button" disabled={saving} type="button" onClick={onCancel}>
-          キャンセル
-        </button>
-      )}
-    </form>
+          {fieldError("expiresOn")}
+          <label className="field">
+            期限の種類
+            <select
+              {...errorAttributes("expirationType")}
+              {...form.register("expirationType", {
+                setValueAs: (value: string) => (value === "" ? null : value),
+              })}
+            >
+              <option value="">指定なし</option>
+              {expirationTypes.map((value) => (
+                <option key={value} value={value}>
+                  {expirationLabels[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          {fieldError("expirationType")}
+          <label className="field">
+            開封状態
+            <select
+              {...errorAttributes("openedState")}
+              {...form.register("openedState", {
+                setValueAs: (value: string) => (value === "" ? null : value),
+              })}
+            >
+              <option value="">指定なし</option>
+              {openedStates.map((value) => (
+                <option key={value} value={value}>
+                  {openedLabels[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          {fieldError("openedState")}
+          {form.formState.errors.root?.schema !== undefined && (
+            <p className="error-message" role="alert" lang="ja">
+              {form.formState.errors.root.schema.message}
+            </p>
+          )}
+          {/* type="submit" を明示しないと既定の button になり Enter 送信が壊れる */}
+          <Button type="submit" busy={saving}>
+            {saving ? "保存中…" : submitLabel}
+          </Button>
+          {onCancel !== undefined && (
+            <Button variant="ghost" disabled={saving} type="button" onClick={onCancel}>
+              キャンセル
+            </Button>
+          )}
+        </Stack>
+      </Inset>
+    </Surface>
   );
 }

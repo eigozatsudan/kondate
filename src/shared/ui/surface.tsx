@@ -38,10 +38,20 @@ export function Surface({
   tone = "plain",
   as: Tag = "div",
   children,
+  onSubmit,
   ...rest
 }: SurfaceProps): JSX.Element {
+  const className = `ui-surface ${toneClass[tone]}`;
+  // form 以外に onSubmit を渡すと HTMLDivElement との型が衝突するため分岐する
+  if (Tag === "form") {
+    return (
+      <form {...rest} className={className} onSubmit={onSubmit}>
+        {children}
+      </form>
+    );
+  }
   return (
-    <Tag {...rest} className={`ui-surface ${toneClass[tone]}`}>
+    <Tag {...rest} className={className}>
       {children}
     </Tag>
   );
