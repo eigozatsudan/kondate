@@ -249,10 +249,10 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
   await expect(privacyCta).toBeVisible();
   await privacyCta.click();
   await expect(page).toHaveURL((url) => url.pathname === "/privacy");
-  // 共有チェックは任意・既定 off。未チェックのまま進み、生成導線（review resume）が死なないこと。
+  // 共有チェックは任意・既定 on。必須同意だけ確認して進み、生成導線（review resume）が死なないこと。
   const shareCheckbox = page.getByRole("checkbox", { name: "匿名で緊急候補に役立ててよい" });
   await expect(shareCheckbox).toBeVisible();
-  await expect(shareCheckbox).not.toBeChecked();
+  await expect(shareCheckbox).toBeChecked();
   await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
   await page.getByRole("button", { name: "確認して進む" }).click();
   await expect(page).toHaveURL(

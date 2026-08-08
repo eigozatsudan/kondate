@@ -83,10 +83,10 @@ const ensurePrivacyThenGenerate = async (
     await expect(generate).toBeEnabled();
     await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
-    // 共有は任意・既定 off。チェックせず進んでも生成導線は維持する。
+    // 共有は任意・既定 on（privacy-notice-page shareChecked 初期 true）。必須同意とは独立。
     await expect(
       page.getByRole("checkbox", { name: "匿名で緊急候補に役立ててよい" }),
-    ).not.toBeChecked();
+    ).toBeChecked();
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
     await expect(page).toHaveURL(
