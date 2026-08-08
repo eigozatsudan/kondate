@@ -47,8 +47,8 @@ test("oauth-mock cancel returns safe retry copy and erases transient code/state"
     timeout: 15_000,
   });
   await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
-  // メール導線はいったん非表示（gateway 自体は維持）
-  await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toHaveCount(0);
+  // SHOW_EMAIL_LOGIN=true: メール導線は既定表示（gateway 維持）
+  await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
 
   // transient code/state がアドレスバーから消えている
   const visible = new URL(page.url());
@@ -105,8 +105,8 @@ test("past expires_at continuation fails with safe retry copy and erases transie
     ),
   ).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
-  // メール導線はいったん非表示（gateway 自体は維持）
-  await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toHaveCount(0);
+  // SHOW_EMAIL_LOGIN=true: メール導線は既定表示（gateway 維持）
+  await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
 
   // transient code/state 消去
   const visible = new URL(page.url());

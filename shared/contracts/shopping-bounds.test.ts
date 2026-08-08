@@ -155,13 +155,10 @@ describe("shopping response bounds (S2/S8)", () => {
 
   it("rejects nested sourceIngredients over shoppingSourceIngredientsMax (S8)", () => {
     const source = validDraftItem.sourceIngredients[0];
-    const overMax = Array.from(
-      { length: shoppingSourceIngredientsMax + 1 },
-      (_, index) => ({
-        ...source,
-        ingredientId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      }),
-    );
+    const overMax = Array.from({ length: shoppingSourceIngredientsMax + 1 }, (_, index) => ({
+      ...source,
+      ingredientId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    }));
     expect(
       shoppingDraftItemSchema.safeParse({ ...validDraftItem, sourceIngredients: overMax }).success,
     ).toBe(false);

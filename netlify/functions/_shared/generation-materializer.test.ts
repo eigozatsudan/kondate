@@ -245,8 +245,10 @@ describe("materializeAiGeneratedMenu", () => {
         },
         makeContext(),
       ],
+      // S1: off-grid plannedQuantity は AI Zod（multipleOf 0.001）で invalid_provider_menu
+      // に早期拒否し、後段 pantry_unit_mismatch に委ねない
       [
-        "pantry_unit_mismatch",
+        "invalid_provider_menu",
         (payload) => {
           payload.pantryUsage[0]!.plannedQuantity = 0.0001;
         },

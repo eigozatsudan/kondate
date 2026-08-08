@@ -326,10 +326,7 @@ export function validateProductionEnv(env) {
   if (quotaIdentityHmac === sampleHmacPlaceholder) {
     throw new Error("QUOTA_IDENTITY_HMAC_KEY_sample");
   }
-  const quotaIdentityDecoded = decodeExact32Base64(
-    quotaIdentityHmac,
-    "QUOTA_IDENTITY_HMAC_KEY",
-  );
+  const quotaIdentityDecoded = decodeExact32Base64(quotaIdentityHmac, "QUOTA_IDENTITY_HMAC_KEY");
   // identity 日次枠と generation request integrity は別ドメイン。同一 32 バイト材料は拒否（S4）
   if (timingSafeEqual(hmacDecoded, quotaIdentityDecoded)) {
     throw new Error("hmac_keys_must_differ");

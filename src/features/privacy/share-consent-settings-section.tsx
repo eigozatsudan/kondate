@@ -154,10 +154,7 @@ export function ShareConsentSettingsSection({
       // サーバ再読で最終状態を正とする（他タブ完了分を拾う）
       // AP6: 再読も同上限。timeout/失敗時は mutation 結果 next にフォールバック（同意操作自体は成功扱い）
       try {
-        const fresh = await withTimeout(
-          getMyShareConsent(client),
-          SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
-        );
+        const fresh = await withTimeout(getMyShareConsent(client), SHARE_CONSENT_TOGGLE_TIMEOUT_MS);
         if (generation === mutationGenerationRef.current) {
           queryClient.setQueryData(shareConsentKeys.current(userId), fresh);
         }
