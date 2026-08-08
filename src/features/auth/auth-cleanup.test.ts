@@ -26,6 +26,11 @@ function seedOwnedKeys(storage: Storage): void {
     "kondate:expired-pantry-confirm:v1:user-1",
     '{"dayKey":"2026-07-11","checks":[]}',
   );
+  // AP1: feedback 曖昧 fingerprint（free-form 本文を含む）。ログアウト/削除で消す
+  storage.setItem(
+    "kondate:feedback:ambiguous-fingerprint",
+    "bug_report\nアレルギーとメール address@example.com を含む自由記述",
+  );
   storage.setItem(householdSafetyRevisionStorageKey, "revision-1");
   // 無関係な設定は残す
   storage.setItem("kondate:preferences", "keep-me");
@@ -68,6 +73,7 @@ describe("clearLocalAuthAndDrafts", () => {
       expect(storage.getItem("kondate:shopping:list:abc")).toBeNull();
       expect(storage.getItem("kondate:flyer:sticky:v1:user-1")).toBeNull();
       expect(storage.getItem("kondate:expired-pantry-confirm:v1:user-1")).toBeNull();
+      expect(storage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
       expect(storage.getItem(householdSafetyRevisionStorageKey)).toBeNull();
       expect(storage.getItem("kondate:preferences")).toBe("keep-me");
     }
@@ -129,8 +135,33 @@ describe("clearLocalAuthAndDrafts", () => {
     for (const storage of [localStorage, sessionStorage]) {
       expect(storage.getItem("kondate.auth.supabase")).toBeNull();
       expect(storage.getItem("kondate:generation:v2")).toBeNull();
+      // AP1: free-form fingerprint も second-pass で消える
+      expect(storage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
       expect(storage.getItem("kondate:preferences")).toBe("keep-me");
     }
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
+  });
+
+  it("AP1: clears kondate:feedback free-form fingerprint on logout and best-effort pass", async () => {
+    const freeForm = "other\n共有端末に残してはいけない自由記述 PII";
+    localStorage.setItem("kondate:feedback:ambiguous-fingerprint", freeForm);
+    sessionStorage.setItem("kondate:feedback:ambiguous-fingerprint", freeForm);
+    localStorage.setItem("kondate:preferences", "keep-me");
+
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const client = {
+      auth: { signOut },
+    } as unknown as SupabaseClient<Database>;
+
+    await clearLocalAuthAndDrafts(client);
+    expect(localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
+    expect(sessionStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
+    expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+
+    // second-pass 経路でも同様
+    localStorage.setItem("kondate:feedback:ambiguous-fingerprint", freeForm);
+    clearOwnedLocalDataBestEffort();
+    expect(localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
+    expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
   });
 });
