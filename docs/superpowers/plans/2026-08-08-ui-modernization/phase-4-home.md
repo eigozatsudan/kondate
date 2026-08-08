@@ -100,7 +100,7 @@ Phase 4 は `/planner` の初期表示を変えるため、同 spec がファイ
 
 1. **アサーションを含まない `goto` 行の差し替え** — `:64` の
    `await page.goto("/planner")`（`ensureWheatMemberForMockSuccess` 内）
-2. **既存アサーションの直前へのナビゲーション行の挿入** — `:110` の
+2. **既存アサーションの直前へのナビゲーション行の挿入** — `:108` の
    `await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible()` の前に
    ホーム経由のホップを 1 行足す
 
@@ -109,7 +109,7 @@ Phase 4 は `/planner` の初期表示を変えるため、同 spec がファイ
 本体への一切の変更。
 
 この切り分けが構造上可能であることは検証済み（`:64` はアサーションを含まない純粋な
-`goto`、`:110` は 1 行挿入で既存アサーションが 1 文字も変わらない）。
+`goto`、`:108` は 1 行挿入で既存アサーションが 1 文字も変わらない）。
 
 ---
 
@@ -284,7 +284,7 @@ grep -nE 'failed|✘' /tmp/e2e.log | head -n 40
 | ファイル:行 | 依存内容 |
 | --- | --- |
 | `e2e/specs/mobile-accessibility.spec.ts:64` | `goto("/planner")`（アサーションなし） |
-| `e2e/specs/mobile-accessibility.spec.ts:110` | `heading "1. 食事"` |
+| `e2e/specs/mobile-accessibility.spec.ts:108` | `heading "1. 食事"` |
 | `e2e/specs/mobile-accessibility.spec.ts:93-97` | `/planner?resume=review` → `heading "5. 確認"` |
 | `e2e/specs/full-journey.spec.ts:39-40` | `goto("/planner")` → `1. 食事` |
 | `e2e/specs/menu-domain-pantry.spec.ts:75-80` | `5. 確認`（下書き復帰）→ `戻る`×4 → `1. 食事` |
@@ -321,7 +321,7 @@ grep -nE 'failed|✘' /tmp/e2e.log | head -n 40
 `menu-domain-pantry.spec.ts` / `fixtures/shopping.ts` がそれを呼ぶようにする。
 
 `mobile-accessibility.spec.ts` については §5b の範囲で、
-`:64` の `goto` を差し替え、`:110` のアサーション直前に 1 行挿入する。
+`:64` の `goto` を差し替え、`:108` のアサーション直前に 1 行挿入する。
 **既存の `expect` は 1 文字も変えない。**
 
 **各 spec の本体アサーションは変えない。**
@@ -401,7 +401,7 @@ git commit -m "chore: 移行済みディレクトリを ESLint 例外から外�
 
 - [ ] `README.md` の検証フロー 9 ステップをすべて実行し、すべてパスした
 - [ ] `mobile-accessibility.spec.ts` の変更が §5b で認められた 2 種類
-      （`:64` の `goto` 差し替え、`:110` 直前への 1 行挿入）に収まっている
+      （`:64` の `goto` 差し替え、`:108` 直前への 1 行挿入）に収まっている
 - [ ] それ以外の変更禁止テスト 3 本の既存アサーションを 1 つも変更していない
 - [ ] `/planner?resume=review` と下書き復帰時にウィザードが出ることを確認した（不変契約 4b）
 - [ ] ホームの主ボタン名が `献立を作る` と衝突していない

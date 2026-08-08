@@ -105,14 +105,14 @@ Phase 4 は実行不能になる。
 そこで **Phase 4 に限り**、次の 2 種類の変更のみを人間のレビュー付きで認める。
 
 1. **アサーションを含まない `goto` 行の差し替え**（`:64` の `page.goto("/planner")`）
-2. **既存アサーションの直前へのナビゲーション行の挿入**（`:110` の
+2. **既存アサーションの直前へのナビゲーション行の挿入**（`:108` の
    `expect(heading "1. 食事")` の前にホーム経由のホップを 1 行足す）
 
 **認めないもの**: 既存 `expect` の書き換え・削除、`assertMajorActionHeights` の期待件数の
 変更、44px / 320px アサーション本体への一切の変更。
 
 構造上この切り分けが可能であることは検証済み（`:64` はアサーションを含まない純粋な
-`goto`、`:110` は 1 行挿入で既存アサーションが 1 文字も変わらない）。
+`goto`、`:108` は 1 行挿入で既存アサーションが 1 文字も変わらない）。
 
 ### 4.2 CSP：inline style 禁止
 
@@ -140,8 +140,29 @@ Phase 4 は実行不能になる。
 .app-section  :root
 ```
 
-加えて `body|button|a|input|select|textarea` を要素トークンとして含むセレクタも
-保護対象になる。
+加えて `touchesProtectedContract`（`:850-856`）は、次の正規表現に一致するセレクタも
+保護対象にする。
+
+```js
+/(?:^|[\s>+~,(])(?:body|button|a|input|select|textarea)(?=$|[\s>+~,.#:[\]()])/u
+```
+
+**これは「素の要素セレクタ」だけの話ではない。新規 `.ui-*` クラス配下の子孫要素
+セレクタも同じく保護対象になる。** 実測:
+
+| セレクタ | 保護対象か |
+| --- | --- |
+| `.ui-prose a` | **はい（そのままでは書けない）** |
+| `.ui-card button` | **はい** |
+| `.ui-list > a` | **はい** |
+| `.ui-card a:hover` | **はい** |
+| `.ui-btn` | いいえ |
+| `.ui-badge` | いいえ |
+
+「温かいエディトリアル」で本文中のリンクや操作要素を組む場合、`.ui-prose a { … }` は
+最も自然な書き方だが、**ここで必ず落ちる**。原因をクラス名断片と誤診しやすい。
+回避策は (a) 要素セレクタを使わずリンク側にもクラスを振る（`.ui-prose-link`）か、
+(b) `allowedProtectedSelectors` に理由コメント付きで追記するかのいずれか。
 
 **帰結**: 新規 CSS クラス名にこれらの文字列を含めてはならない。含む場合は
 `allowedProtectedSelectors` へ追記し、追記理由を日本語コメントで残す。
@@ -180,25 +201,46 @@ Phase 4 は実行不能になる。
 コンポーネント単位の `prefers-reduced-motion` ペアを必ずセットで書く**。既存の 3 箇所
 （`src/styles.css:359` / `:794` / `:2056`）がそのパターンである。
 
-### 4.6 `taskRuleDeclarations` — ウィザード CSS は宣言単位で凍結されている
+### 4.6 凍結ガードは 2 つある。意味論が違うので混同しないこと
 
-`src/styles.contrast.test.ts:370-814` の `taskRuleDeclarations` は **66 セレクタ**を
-キーに持ち、うち **65 件がウィザード／デザインシステム系**
-（`.guided-planner-theme *` / `.wizard-*` / `.choice-card*` / `.progress-*` /
-`.inline-notice*` / `.review-row*` / `.primary-button` / `.field*`）、残り 1 件が
-`.app-section` である。
+`src/styles.contrast.test.ts` には**性質の異なる凍結ガードが 2 つ**ある。これを 1 つと
+誤認すると、Phase 0 の最初のタスク（`:root` へのトークン追加）が禁止事項に見えて
+着手できなくなる。
 
-`hasExactDeclarations`（`:816-833`）は `declarations.size === canonicalExpected.size` を
-要求するため、**宣言の追加も削除も落ちる**。
+| 定数 | 行 | キー数 | 検査 | 宣言の追加 |
+| --- | --- | --- | --- | --- |
+| `taskRuleDeclarations` | `:370-687` | **66** | `hasExactDeclarations`（`:816`） | **落ちる** |
+| `globalRuleDeclarations` | `:689-814` | **17** | `hasRequiredDeclarations`（`:835`、`:906` で使用） | **通る（部分集合検査）** |
 
-**重要**: `allowedProtectedSelectors` への追記では回復しない。`unexpectedProtectedSelectors`
-は `:864` で `taskRuleDeclarations[selector]` を先に引き、存在すれば `hasExactDeclarations` を
-要求する。実測では、既に allowlist に載っている `.wizard-title`（`:324`）に
-`letter-spacing` を 1 行追加しただけで 3 テストが落ちた。回復には
-`taskRuleDeclarations` 本体の書き換えが必要で、それは**変更禁止テストファイルの編集**にあたる。
+**`taskRuleDeclarations`（66 セレクタ、宣言数の完全一致）**
 
-**帰結**: これら 66 セレクタの見た目は**変えない**。見た目を変えたい場合は、
-既存セレクタを触らず**新規 `.ui-*` セレクタ側で表現する**。これを既定方針とする。
+全件がウィザード／guided-planner／デザインシステム系（`.guided-planner-theme *` /
+`.wizard-*` / `.choice-card*` / `.progress-*` / `.inline-notice*` / `.review-row*` /
+`.primary-button` / `.field*` / `.app-section`）。`hasExactDeclarations` が
+`declarations.size === canonicalExpected.size` を要求するため、**宣言の追加も削除も落ちる**。
+
+`allowedProtectedSelectors` への追記では回復しない。`unexpectedProtectedSelectors` は
+`taskRuleDeclarations[selector]` を先に引き、存在すれば `hasExactDeclarations` を要求する。
+実測では、既に allowlist に載っている `.wizard-title`（`:324`）に `letter-spacing` を
+1 行追加しただけで落ちた。回復には `taskRuleDeclarations` 本体の書き換えが必要で、
+それは**変更禁止テストファイルの編集**にあたる。
+
+**`globalRuleDeclarations`（17 セレクタ、部分集合検査）**
+
+`*` / `:root` / `html, body, #root` / `body` / `button, a, input, select, textarea` /
+`.primary-button` 系 / `.secondary-button` / `.text-button` / `.field` 系 / `.app-section`。
+`hasRequiredDeclarations` は「期待した宣言がすべて存在するか」だけを見るので、
+**宣言の追加は通る**。Phase 0 の `:root` へのデザイントークン追加はここに該当し、
+禁止されていない。
+
+**帰結**: 触ってはならないのは `taskRuleDeclarations` の 66 セレクタ**だけ**。
+見た目を変えたい場合は、既存セレクタを触らず**新規 `.ui-*` セレクタ側で表現する**。
+
+**注意（`allowedProtectedSelectors` の正しい使い方）**: 上記は
+「`taskRuleDeclarations` にキーがあるセレクタ」の話である。**新規セレクタが §4.3 の
+保護断片や要素トークンに触れてしまった場合は、`allowedProtectedSelectors` への追記が
+唯一かつ正規の回復手段**であり、禁止されていない（追記理由を日本語コメントで残すこと）。
+この 2 つを混同して「allowlist は使えない」と一般化しないこと。
 
 ### 4.7 テストのロケート方式
 
@@ -422,8 +464,9 @@ CSP `font-src 'self'` のため data: 不可）を伴うため、人間の承認
 ホーム化より波及が小さいためである。
 
 **ただし §4.6 の制約により、ウィザードの既存 CSS セレクタ（`.wizard-*` /
-`.choice-card` 等 65 件）は宣言単位で凍結されている。** 見た目の変更は既存セレクタでは
-行えず、新規 `.ui-*` セレクタ側で表現する。Phase 1 の裁量はその範囲に限られる。
+`.choice-card` 等、`taskRuleDeclarations` の 66 件）は宣言単位で凍結されている。**
+見た目の変更は既存セレクタでは行えず、新規 `.ui-*` セレクタ側で表現する。
+Phase 1 の裁量はその範囲に限られる。
 
 意図: 1 画面 1 問。余白で問いを立てる。明朝の設問を大きく、選択肢は線のみのカードに。
 
@@ -531,7 +574,9 @@ Phase 1 の冒頭で人間に確認する。
 #### クラス名アサーションは全 Phase で必ず割れる
 
 `toHaveClass("primary-button")` や `document.querySelector(".gen-status-indicator")` の
-ような**実装クラス名に依存するアサーションが 68 箇所実在する**。主なもの:
+ような**実装クラス名に依存するアサーションが多数実在する**。実測（`src/**/*.test.ts(x)`）:
+`toHaveClass` 64、クラス指定の `querySelector` / `querySelectorAll` 22、`.className` への
+直接アサーション 9、`classList` 1。重複行を排除して 97 行。下表は代表例であり全件ではない。
 
 | ファイル:行 | アサーション | 割れる Phase |
 | --- | --- | --- |

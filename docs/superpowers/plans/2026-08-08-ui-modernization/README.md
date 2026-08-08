@@ -49,7 +49,7 @@ Playwright / Docker Compose
 Phase 4 に限り次の 2 種のみ人間レビュー付きで認める。
 
 1. アサーションを含まない `goto` 行の差し替え（`:64`）
-2. 既存アサーションの**直前**へのナビゲーション行の挿入（`:110` の
+2. 既存アサーションの**直前**へのナビゲーション行の挿入（`:108` の
    `expect(heading "1. 食事")` の前）
 
 既存 `expect` の書き換え・削除、`assertMajorActionHeights` の期待件数変更、
@@ -58,8 +58,19 @@ Phase 4 に限り次の 2 種のみ人間レビュー付きで認める。
 ### クラス名アサーションは全 Phase で必ず割れる
 
 `toHaveClass("primary-button")` や `document.querySelector(".gen-status-indicator")` の
-ような**実装クラス名に依存するアサーションが 68 箇所実在する**。各 Phase の
+ような**実装クラス名に依存するアサーションが実在する**。各 Phase の
 「期待: すべて PASS」はそのままでは偽になる。
+
+実測（`src/**/*.test.ts(x)`、重複行を排除して 97 行）:
+
+| 種類 | 件数 |
+| --- | --- |
+| `toHaveClass` | 64 |
+| クラス指定の `querySelector` / `querySelectorAll` | 22 |
+| `.className` への直接アサーション | 9 |
+| `classList` | 1 |
+
+下表は Phase ごとに割れる代表例であり、**全件の一覧ではない**。
 
 | ファイル:行 | 割れる Phase |
 | --- | --- |
@@ -73,6 +84,10 @@ Phase 4 に限り次の 2 種のみ人間レビュー付きで認める。
 
 - **クラス名・CSS セレクタに依存するアサーションの改訂は認める。** 別コミットにし、
   コミット本文に「なぜその期待が古くなったか」を書く。
+- **ただし「改訂」であって「削除」ではない。** 落ちたアサーションは、**同じ意図を新しい
+  実装で表す等価なアサーションに置き換える**こと。テストケースごと消す、`expect` を
+  削るだけ、`it.skip` にする、といった**カバレッジを減らす変更は認めない**。置き換え後の
+  アサーション件数が減る場合は、コミット本文に減った理由を書く。
 - **`role` / アクセシブル名に依存するアサーションの改訂は認めない。** これが落ちたら
   実装が契約を破っている。実装を直すこと。
 
@@ -104,9 +119,28 @@ Phase 4 に限り次の 2 種のみ人間レビュー付きで認める。
 .app-section  :root
 ```
 
-`body|button|a|input|select|textarea` を要素トークンとして含むセレクタも保護対象になる。
-やむを得ず含める場合は `allowedProtectedSelectors` に追記し、**追記理由を日本語コメントで
-残す**。このリポジトリは同じ罠に過去 2 回落ちている
+加えて `touchesProtectedContract`（`:850-856`）は次の正規表現に一致するセレクタも保護対象に
+する。**これは「素の要素セレクタ」だけの話ではなく、新規 `.ui-*` クラス配下の子孫要素
+セレクタも同じく落ちる。**
+
+```js
+/(?:^|[\s>+~,(])(?:body|button|a|input|select|textarea)(?=$|[\s>+~,.#:[\]()])/u
+```
+
+実測:
+
+| セレクタ | 保護対象か |
+| --- | --- |
+| `.ui-prose a` | **はい（そのままでは書けない）** |
+| `.ui-card button` | **はい** |
+| `.ui-list > a` | **はい** |
+| `.ui-card a:hover` | **はい** |
+| `.ui-btn` / `.ui-badge` | いいえ |
+
+本文中のリンクや操作要素を組むとき `.ui-prose a { … }` は最も自然な書き方だが、ここで
+必ず落ちる。原因をクラス名断片と誤診しやすい。回避策は (a) リンク側にもクラスを振る
+（`.ui-prose-link`）か、(b) `allowedProtectedSelectors` に**追記理由を日本語コメントで
+残して**追記するかのいずれか。このリポジトリは同じ罠に過去 2 回落ちている
 （`src/styles.contrast.test.ts:280-282`、`:286`）。
 
 ### 色は必ず `var(--…)`
@@ -151,21 +185,32 @@ hover / focus のトランジション、Skeleton の shimmer、状態遷移の�
 **この計画で明確に許可されている**。「オシャレさ」への寄与が最も大きい要素なので、
 契約に触れない範囲で積極的に使うこと。
 
-### ウィザードの既存 CSS は宣言単位で凍結されている
+### 凍結ガードは 2 つある。意味論が違うので混同しないこと
 
-`src/styles.contrast.test.ts:370-814` の `taskRuleDeclarations` は **66 セレクタ**を
-キーに持ち、うち **65 件がウィザード／デザインシステム系**。
-`hasExactDeclarations`（`:816-833`）が宣言数の一致を要求するため、**宣言の追加も削除も
-落ちる**。
+`src/styles.contrast.test.ts` には**性質の異なる凍結ガードが 2 つ**ある。1 つと誤認すると、
+Phase 0 の最初のタスク（`:root` へのトークン追加）が禁止事項に見えて着手できなくなる。
 
-**`allowedProtectedSelectors` への追記では回復しない。** `unexpectedProtectedSelectors`
-は `:864` で `taskRuleDeclarations[selector]` を先に引き、存在すれば
-`hasExactDeclarations` を要求する。実測では、既に allowlist に載っている
-`.wizard-title`（`:324`）に `letter-spacing` を 1 行足しただけで 3 テストが落ちた。
+| 定数 | 行 | キー数 | 検査 | 宣言の追加 |
+| --- | --- | --- | --- | --- |
+| `taskRuleDeclarations` | `:370-687` | **66** | `hasExactDeclarations`（`:816`） | **落ちる** |
+| `globalRuleDeclarations` | `:689-814` | **17** | `hasRequiredDeclarations`（`:835`、`:906`） | **通る（部分集合）** |
 
-**帰結:** これら 66 セレクタは**触らない**。見た目を変えたい場合は新規 `.ui-*`
-セレクタ側で表現する。触る必要が生じたら実装を止めて人間に相談する
-（`taskRuleDeclarations` の書き換えは変更禁止テストの編集にあたる）。
+**`taskRuleDeclarations` の 66 セレクタは触らない。** 全件がウィザード／guided-planner／
+デザインシステム系。`hasExactDeclarations` が宣言数の一致を要求するため、**宣言の追加も
+削除も落ちる**。`allowedProtectedSelectors` への追記でも回復しない（実測: 既に allowlist に
+載っている `.wizard-title`（`:324`）に `letter-spacing` を 1 行足しただけで落ちた）。
+見た目を変えたい場合は新規 `.ui-*` セレクタ側で表現する。触る必要が生じたら実装を止めて
+人間に相談する（`taskRuleDeclarations` の書き換えは変更禁止テストの編集にあたる）。
+
+**`globalRuleDeclarations` の 17 セレクタは部分集合検査。** `*` / `:root` /
+`html, body, #root` / `button, a, input, select, textarea` などが対象で、
+**宣言の追加は通る**。Phase 0 の `:root` へのデザイントークン追加はここに該当し、
+禁止されていない。
+
+**`allowedProtectedSelectors` は封じられていない。** 上記の「回復しない」は
+`taskRuleDeclarations` にキーがあるセレクタの話である。**新規セレクタが保護断片や要素
+トークンに触れてしまった場合は、allowlist への追記が唯一かつ正規の回復手段**であり、
+禁止されていない（追記理由を日本語コメントで残すこと）。
 
 ### 所有境界
 
@@ -181,6 +226,10 @@ hover / focus のトランジション、Skeleton の shimmer、状態遷移の�
 - 破壊的 git 操作（`reset --hard`、`push --force`、`clean -f`、ブランチ削除）を
   人間の即時承認なしに行うこと。
 - `--no-verify` によるフック回避、署名の迂回。
+- **ガードの無力化。** Phase 0 で導入する ESLint ルールを `// eslint-disable*` コメントで
+  黙らせること、`eslint.config.js` の当該ルールを緩めること・除外を増やすこと
+  （Task 4.4 で定められた除外の削減を除く）。ルールに引っかかったら、ルールではなく
+  実装を直す。どうしても必要なら実装を止めて人間に相談する。
 - 機能の追加・削除・変更。ダークモード対応、i18n 対応、フォントウェイト追加
   （設計書 §1 の非目的）。
 
@@ -211,6 +260,21 @@ docker compose --profile test run --rm db-test
 
 Supabase / oauth-mock / openrouter-mock を叩く Vitest spec は、先に
 `docker compose up -d --wait` でスタックを起動し、`--no-deps` を**付けずに**実行する。
+
+### Task ごとの検証（各 Task の最後に必須）
+
+Phase 完了時の 9 ステップとは別に、**Task ごとに、その Task が触ったファイルに絞って**
+以下を実行する。Phase の全 Task を積んでから初めて検証すると、どのコミットが壊したかを
+特定できなくなる。
+
+```bash
+docker compose run --rm --no-deps app npm run format:check
+docker compose run --rm --no-deps app npx eslint <触ったファイル>
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run <その Task のテストファイル>
+```
+
+これを通してからコミットする。e2e と db:test は Task 単位では回さない（Phase 完了時のみ）。
 
 ### 提出前の検証フロー（各 Phase の最後に必須）
 
@@ -278,7 +342,7 @@ grep -nE 'error|FAIL' /tmp/lint.log || tail -n 60 /tmp/lint.log
 | [0](./phase-0-design-system.md) | デザインシステム ＋ 冷蔵庫画面の垂直スライス | `src/styles.css`, `src/shared/ui/*`, `eslint.config.js`, `src/features/pantry/*` | なし | 不可 |
 | [1](./phase-1-wizard.md) | ウィザード（献立条件入力） | `src/features/planner/components/*`, `src/shared/ui/wizard/*` | なし | 不可 |
 | [2](./phase-2-generation-wait.md) | 待ち時間体験 | `src/features/generation/components/*` | なし | 不可 |
-| [3](./phase-3-menu-detail.md) | 結果・詳細の見せ方 | `src/features/menu-detail/*` | なし | 不可 |
+| [3](./phase-3-menu-detail.md) | 結果・詳細の見せ方 | `src/features/menu-detail/*`, `src/features/history/*`（5 ファイル） | なし | 不可 |
 | [4](./phase-4-home.md) | ホーム（献立タブ）の役割 | `src/features/planner/planner-route.tsx`, `src/app/layouts/app-shell.tsx` | **あり** | **可**（別コミット） |
 
 **Phase 0 は必ず最初に完了させること。** Phase 0 が提供するプリミティブと ESLint ルールが

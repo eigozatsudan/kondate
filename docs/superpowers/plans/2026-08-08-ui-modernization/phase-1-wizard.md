@@ -73,8 +73,10 @@ Phase 4 まで先取りしない」方針を取る。
 
 ### 3. ウィザード CSS は宣言単位で凍結されている（最重要）
 
-`src/styles.contrast.test.ts:370-814` の `taskRuleDeclarations` は **66 セレクタ**を
-キーに持ち、うち **65 件がウィザード／デザインシステム系**である。当初この計画は
+`src/styles.contrast.test.ts:370-687` の `taskRuleDeclarations` は **66 セレクタ**を
+キーに持ち、**全件がウィザード／guided-planner／デザインシステム系**である。
+（`:689-814` は別定数 `globalRuleDeclarations` で、こちらは部分集合検査のため宣言の追加が
+通る。混同しないこと。詳細は README の「凍結ガードは 2 つある」節。）当初この計画は
 「`.ingredient-entry-row` など 6 セレクタ」と書いていたが、実際には**ウィザード CSS の
 ほぼ全ルール**が対象で、以下がすべて含まれる。
 
@@ -99,7 +101,7 @@ Phase 4 まで先取りしない」方針を取る。
 ### 4. アクセシブル名と構造
 
 - **step 見出しの文言と番号書式を変えない。** `1. 食事` / `5. 確認` は
-  `e2e/specs/mobile-accessibility.spec.ts:110` / `:97`、`full-journey.spec.ts:39-40`、
+  `e2e/specs/mobile-accessibility.spec.ts:108` / `:97`、`full-journey.spec.ts:39-40`、
   `menu-domain-pantry.spec.ts:75, 130, 610, 629`、`e2e/fixtures/history.ts:167, 366`、
   `e2e/fixtures/shopping.ts:72` が `getByRole("heading", { name: … })` で引いている。
 - **ステップ切替時に見出しへフォーカスする挙動を維持する**（`tabIndex={-1}` を持つ
