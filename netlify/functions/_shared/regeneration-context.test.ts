@@ -1300,9 +1300,7 @@ describe("materializeDishRegenerationCandidate", () => {
       labelConfirmationRequired: false,
     };
     const candidate = materializeDishRegenerationCandidate(execution, output, uuid);
-    const oil = candidate.dishes
-      .flatMap((d) => d.ingredients)
-      .find((i) => i.name === "オリーブ油");
+    const oil = candidate.dishes.flatMap((d) => d.ingredients).find((i) => i.name === "オリーブ油");
     expect(oil).toMatchObject({
       quantityValue: 225,
       quantityText: "225ml",
