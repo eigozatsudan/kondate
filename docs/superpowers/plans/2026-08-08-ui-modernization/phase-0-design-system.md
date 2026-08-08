@@ -65,8 +65,11 @@ Task 0.6 の ESLint ルールがこれを禁止するため、トークン化が
 - [ ] **Step 1: 失敗するテストを書く**
 
 `src/styles.contrast.test.ts` の末尾に近い `describe` の中へ以下を**追記**する
-（既存アサーションは一切触らない）。`contrastRatio` と `expectEffectiveDeclarations`
-はこのファイル内に既にあるヘルパを使う。
+（既存アサーションは一切触らない）。
+
+**ヘルパ名に注意**: コントラスト比の関数は `contrast`（`src/styles.contrast.test.ts:1131`）
+である。`contrastRatio` という名前の関数は**存在しない**。`expectEffectiveDeclarations` は
+そのままの名前で存在する。
 
 ```ts
 it("adds editorial tokens without touching existing ones", () => {
@@ -79,11 +82,14 @@ it("adds editorial tokens without touching existing ones", () => {
   });
 });
 
-it("keeps warning readable on both surfaces", () => {
-  // 期限「まもなく」表示に使う。白地と沈んだ面の双方で本文 AA（4.5:1）を満たす。
-  expect(contrastRatio("#8a4b00", "#ffffff")).toBeGreaterThanOrEqual(4.5);
-  expect(contrastRatio("#8a4b00", "#f2efec")).toBeGreaterThanOrEqual(4.5);
-  expect(contrastRatio("#b3261e", "#f2efec")).toBeGreaterThanOrEqual(4.5);
+it("keeps warning readable on the surfaces it actually ships on", () => {
+  // 期限「まもなく」表示に使う。実際の出荷先は .ui-badge--warning の背景 --notice。
+  // 白地・沈んだ面も含め、本文 AA（4.5:1）を満たすことを固定する。
+  expect(contrast("#8a4b00", "#ffffff")).toBeGreaterThanOrEqual(4.5); // 実測 6.80
+  expect(contrast("#8a4b00", "#fdf1ec")).toBeGreaterThanOrEqual(4.5); // --notice。実測 6.15
+  expect(contrast("#8a4b00", "#f2efec")).toBeGreaterThanOrEqual(4.5); // 実測 5.94
+  expect(contrast("#b3261e", "#fdf1ec")).toBeGreaterThanOrEqual(4.5); // --danger on --notice
+  expect(contrast("#b3261e", "#f2efec")).toBeGreaterThanOrEqual(4.5); // 実測 5.71
 });
 ```
 
@@ -155,12 +161,23 @@ git commit -m "feat: エディトリアル方向のデザイントークンを�
   export type ButtonVariant = "primary" | "secondary" | "ghost";
   export type ButtonSize = "regular" | "large";
   export type ButtonProps = Omit<
-    React.ButtonHTMLAttributes<HTMLButtonElement>, "className"
+    React.ComponentPropsWithRef<"button">, "className"
   > & { variant?: ButtonVariant; size?: ButtonSize; busy?: boolean };
   export function Button(props: ButtonProps): React.JSX.Element;
   ```
   `className` を `Omit` しているのは**意図的**。呼び出し側からの生ユーティリティ注入を
   型で塞ぐ（Task 0.6 の ESLint と二重の防御）。
+
+  **`ButtonHTMLAttributes` ではなく `ComponentPropsWithRef` を使うこと。**
+  `ButtonHTMLAttributes` は `AriaAttributes` と `DOMAttributes` を継承するが `ref` を
+  含まない（`ref` は `RefAttributes` 側）。`Omit<ButtonHTMLAttributes<…>, "className">`
+  にすると `<Button ref={…}>` が **TS2322** になる（実測で確認済み）。
+
+  React 19 では `forwardRef` は不要で、`ref` を rest に含めて spread すればよい。
+
+  これが無いと `src/features/pantry/pantry-page.tsx:192-195` / `:231` の
+  「エディタを閉じたらトリガーへフォーカスを戻す」契約が実装できず、Task 0.7 の
+  不変契約を満たせなくなる。
 
 **命名の注意:** クラス名に `.primary-button` / `.secondary-button` / `.text-button` /
 `.field` を**含めない**（Global Constraints の保護セレクタ断片）。`ui-btn` を接頭辞に使う。
@@ -170,6 +187,7 @@ git commit -m "feat: エディトリアル方向のデザイントークンを�
 `src/shared/ui/button.test.tsx`:
 
 ```tsx
+import { createRef } from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
@@ -230,6 +248,25 @@ describe("Button", () => {
     render(<Button type="submit">登録</Button>);
     expect(screen.getByRole("button", { name: "登録" })).toHaveAttribute("type", "submit");
   });
+
+  it("forwards ref to the real DOM node", () => {
+    // pantry のフォーカス復帰契約（editorTriggerRef.current?.focus()）が
+    // これに依存する。ref が通らないと Task 0.7 が実装不能になる。
+    const ref = createRef<HTMLButtonElement>();
+    render(<Button ref={ref}>追加</Button>);
+    expect(ref.current).toBe(screen.getByRole("button", { name: "追加" }));
+  });
+
+  it("forwards aria attributes used by the pantry editor", () => {
+    render(
+      <Button aria-expanded={false} aria-controls="pantry-editor">
+        食材を追加
+      </Button>,
+    );
+    const button = screen.getByRole("button", { name: "食材を追加" });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(button).toHaveAttribute("aria-controls", "pantry-editor");
+  });
 });
 ```
 
@@ -246,7 +283,7 @@ docker compose run --rm --no-deps app npx vitest run src/shared/ui/button.test.t
 `src/shared/ui/button.tsx`:
 
 ```tsx
-import type { ButtonHTMLAttributes, JSX } from "react";
+import type { ComponentPropsWithRef, JSX } from "react";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost";
 export type ButtonSize = "regular" | "large";
@@ -254,8 +291,10 @@ export type ButtonSize = "regular" | "large";
 /**
  * 共有ボタン。className を受け取らないのは意図的で、呼び出し側からの
  * 生ユーティリティ注入を型で塞ぐ（CSP と二重系統の再発防止）。
+ * ComponentPropsWithRef を使うのは ref を通すため（ButtonHTMLAttributes には
+ * ref が含まれず、pantry のフォーカス復帰契約が実装できなくなる）。
  */
-export type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "className"> & {
+export type ButtonProps = Omit<ComponentPropsWithRef<"button">, "className"> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
   busy?: boolean;
@@ -323,6 +362,11 @@ export function Button({
   cursor: pointer;
 }
 
+/* regular は既定寸法。クラスは常に出力されるので空定義にしない。 */
+.ui-btn--regular {
+  padding: 0 var(--space-5);
+}
+
 .ui-btn--large {
   min-height: 52px;
   width: 100%;
@@ -365,6 +409,23 @@ export function Button({
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
+
+/*
+ * モーション。新規クラス名（.ui-*）は代表 DOM に一致しないため
+ * unexpectedMotionRules の検査対象外（実測で緑を確認済み）。
+ * グローバルな * の一括リセットは書けないので、必ずこのペアで書く。
+ */
+.ui-btn {
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-btn {
+    transition: none;
+  }
+}
 ```
 
 - [ ] **Step 5: テストを実行して成功を確認する**
@@ -376,11 +437,21 @@ docker compose run --rm --no-deps app npx vitest run src/styles.contrast.test.ts
 
 期待: 両方 PASS。
 
-**`styles.contrast.test.ts` が落ちた場合**、`.ui-btn` が保護セレクタ判定に引っかかって
-いる（`button` 要素トークンを含むセレクタは保護対象）。その場合は
-`allowedProtectedSelectors` に `.ui-btn` 系セレクタを追記し、
-「共有ボタンプリミティブ（2026-08-08）」という日本語コメントを添える。
-**既存アサーションの変更ではなく allowlist への追記であることを守ること。**
+`.ui-btn` は保護セレクタ判定に**引っかからない**（実測済み）。`touchesProtectedContract`
+（`:850-855`）の要素トークン判定は語境界付きの正規表現なので、`.ui-btn` の "btn" は
+`button` に一致しない。`selectorMatchesRepresentative` にも
+`unexpectedRepresentativeOverrides` にも一致しない。
+
+**それでも `styles.contrast.test.ts` が落ちた場合**、失敗メッセージのセレクタ名を読んで
+原因を切り分けること。
+
+- `findUnscopedDesignColorLeaks` の失敗 → CSS にパレット色の literal hex を書いている。
+  `var(--…)` に直す。
+- `unexpectedProtectedSelectors` の失敗 → 新規クラス名が保護断片
+  （`.field` 等）を部分文字列として含んでいる。**まずクラス名を変える。**
+  変えられない場合のみ `allowedProtectedSelectors` に理由コメント付きで追記する。
+- `unexpectedMotionRules` の失敗 → 代表 DOM に一致するセレクタにモーションを書いている。
+  新規クラス名側へ移す。
 
 - [ ] **Step 6: コミット**
 
@@ -402,20 +473,33 @@ git commit -m "feat: 共有 Button プリミティブを追加"
 - Consumes: Task 0.1 の `--surface-sunken` / `--notice`
 - Produces:
   ```ts
+  export type LandmarkProps = Pick<React.HTMLAttributes<HTMLElement>,
+    "id" | "role" | "aria-label" | "aria-labelledby">;
+
   export type SurfaceTone = "plain" | "sunken" | "notice";
-  export type SurfaceProps = { tone?: SurfaceTone; as?: "div" | "section" | "article";
-    children: React.ReactNode } & Pick<React.HTMLAttributes<HTMLElement>,
-    "id" | "role" | "aria-labelledby" | "aria-label">;
+  export type SurfaceProps = LandmarkProps & { tone?: SurfaceTone;
+    as?: "div" | "section" | "article" | "form"; children: React.ReactNode };
   export function Surface(props: SurfaceProps): React.JSX.Element;
 
   export type SpaceStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
-  export function Stack(props: { gap?: SpaceStep;
+  export function Stack(props: LandmarkProps & { gap?: SpaceStep;
     as?: "div" | "section" | "ul"; children: React.ReactNode }): React.JSX.Element;
-  export function Inset(props: { pad?: SpaceStep;
+  export function Inset(props: LandmarkProps & { pad?: SpaceStep;
     children: React.ReactNode }): React.JSX.Element;
   ```
   `SpaceStep` の 1〜7 は `src/styles.css` の既存 `--space-1`〜`--space-7`（4/8/12/16/24/32/48px）に
   1 対 1 対応する。**新しい間隔値を持ち込まない。**
+
+  **`LandmarkProps` を全レイアウトプリミティブに付け、実装で必ず rest を spread すること。**
+  TypeScript はハイフンを含む JSX 属性名を余剰プロパティ検査から除外するため、
+  `aria-label` を受け取らない `Stack` に `<Stack aria-label="…">` と書いても
+  **コンパイルは通り、実行時に黙って消える**（実測で確認済み）。
+  `src/features/pantry/pantry-page.tsx:294` の `<ul aria-label="冷蔵庫の食材">` が
+  これに該当する。本設計で最も検出しにくい a11y 退行経路であり、下の Step 1 の
+  テストで必ず固定する。
+
+  `Surface` の `as` に `"form"` を含めるのは `pantry-form.tsx:127` の
+  `<form className="card stack">` を表現するため。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -450,6 +534,15 @@ describe("Surface", () => {
     );
     expect(screen.getByRole("region", { name: "登録済みの食材" })).toBeInTheDocument();
   });
+
+  it("can render as a form so pantry-form keeps its submit semantics", () => {
+    render(
+      <Surface as="form" aria-label="食材を追加">
+        中身
+      </Surface>,
+    );
+    expect(screen.getByRole("form", { name: "食材を追加" })).toBeInTheDocument();
+  });
 });
 ```
 
@@ -482,6 +575,30 @@ describe("Stack", () => {
     );
     expect(screen.getByRole("list")).toBeInTheDocument();
   });
+
+  it("forwards aria-label so labelled lists keep their name", () => {
+    // これが無いと <Stack as="ul" aria-label="…"> が型を通ったまま実行時に消える。
+    // pantry-page.tsx:294 の「冷蔵庫の食材」がこの経路で静かに失われる。
+    render(
+      <Stack as="ul" aria-label="冷蔵庫の食材">
+        <li>キャベツ</li>
+      </Stack>,
+    );
+    expect(screen.getByRole("list", { name: "冷蔵庫の食材" })).toBeInTheDocument();
+  });
+
+  it("forwards id and aria-labelledby", () => {
+    render(
+      <>
+        <h2 id="stack-heading">見出し</h2>
+        <Stack id="stack-body" aria-labelledby="stack-heading" role="group">
+          中身
+        </Stack>
+      </>,
+    );
+    const group = screen.getByRole("group", { name: "見出し" });
+    expect(group).toHaveAttribute("id", "stack-body");
+  });
 });
 
 describe("Inset", () => {
@@ -509,14 +626,21 @@ docker compose run --rm --no-deps app npx vitest run src/shared/ui/surface.test.
 ```tsx
 import type { HTMLAttributes, JSX, ReactNode } from "react";
 
+/**
+ * レイアウトプリミティブが必ず素通しする属性。
+ * これを付けずに実装すると、aria-* はハイフン名のため型検査を素通りし、
+ * 実行時に黙って消える（a11y の静かな退行）。
+ */
+export type LandmarkProps = Pick<
+  HTMLAttributes<HTMLElement>,
+  "id" | "role" | "aria-label" | "aria-labelledby"
+>;
+
 export type SurfaceTone = "plain" | "sunken" | "notice";
 
-export type SurfaceProps = Pick<
-  HTMLAttributes<HTMLElement>,
-  "id" | "role" | "aria-labelledby" | "aria-label"
-> & {
+export type SurfaceProps = LandmarkProps & {
   tone?: SurfaceTone;
-  as?: "div" | "section" | "article";
+  as?: "div" | "section" | "article" | "form";
   children: ReactNode;
 };
 
@@ -544,24 +668,39 @@ export function Surface({
 
 ```tsx
 import type { JSX, ReactNode } from "react";
+import type { LandmarkProps } from "./surface";
 
 /** 既存の --space-1〜--space-7（4/8/12/16/24/32/48px）に 1 対 1 対応する。 */
 export type SpaceStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
-export type StackProps = {
+export type StackProps = LandmarkProps & {
   gap?: SpaceStep;
   as?: "div" | "section" | "ul";
   children: ReactNode;
 };
 
-export function Stack({ gap = 4, as: Tag = "div", children }: StackProps): JSX.Element {
-  return <Tag className={`ui-stack ui-stack--gap-${String(gap)}`}>{children}</Tag>;
+export function Stack({
+  gap = 4,
+  as: Tag = "div",
+  children,
+  ...rest
+}: StackProps): JSX.Element {
+  // rest を必ず spread する。落とすと aria-* が型検査を素通りして実行時に消える。
+  return (
+    <Tag {...rest} className={`ui-stack ui-stack--gap-${String(gap)}`}>
+      {children}
+    </Tag>
+  );
 }
 
-export type InsetProps = { pad?: SpaceStep; children: ReactNode };
+export type InsetProps = LandmarkProps & { pad?: SpaceStep; children: ReactNode };
 
-export function Inset({ pad = 4, children }: InsetProps): JSX.Element {
-  return <div className={`ui-inset ui-inset--pad-${String(pad)}`}>{children}</div>;
+export function Inset({ pad = 4, children, ...rest }: InsetProps): JSX.Element {
+  return (
+    <div {...rest} className={`ui-inset ui-inset--pad-${String(pad)}`}>
+      {children}
+    </div>
+  );
 }
 ```
 
@@ -620,7 +759,13 @@ export function Inset({ pad = 4, children }: InsetProps): JSX.Element {
 .ui-inset--pad-6 { padding: var(--space-6); }
 .ui-inset--pad-7 { padding: var(--space-7); }
 
-/* ul で使ったときにブラウザ既定のマーカーと余白を消す */
+/*
+ * ul で使ったときにブラウザ既定のマーカーと余白を消す。
+ * list-style: none は Safari/VoiceOver でリストセマンティクスを失わせるため、
+ * Stack の実装側で as="ul" のとき role="list" を既定で付けること
+ * （呼び出し側が role を渡した場合はそちらを優先する）。
+ * jsdom はこの退行を再現しないのでテストでは検出できない。
+ */
 ul.ui-stack {
   margin: 0;
   padding: 0;
@@ -816,18 +961,20 @@ git commit -m "feat: PageHeader プリミティブを追加"
   ```ts
   export function Skeleton(props: { lines?: 1 | 2 | 3; label: string }): React.JSX.Element;
   export function EmptyState(props: {
-    title: string; body: string; action?: React.ReactNode;
+    title: string; body: string; titleId?: string; action?: React.ReactNode;
   }): React.JSX.Element;
   export type BadgeTone = "neutral" | "warning" | "danger";
   export function Badge(props: { tone?: BadgeTone; children: React.ReactNode }): React.JSX.Element;
   ```
 
-**モーションの注意:** `Skeleton` にアニメーションを付ける場合、`unexpectedMotionRules` が
-`.wizard-transition` 以外の `animation` / `transition` を不正とする。`.ui-skeleton` が
-代表 DOM に `matches()` しなければ検出対象外だが、**確認せずに書かないこと**。
-Step 5 で `styles.contrast.test.ts` を実行して判定する。落ちた場合は
-`allowedProtectedSelectors` ではなくモーション側の扱いになるため、**アニメーションを
-諦めて静的なプレースホルダにする**（グローバル reduced-motion 単一ルールは書けない）。
+**モーションについて:** `.ui-skeleton__line` へのアニメーションは**許可されている**。
+`unexpectedMotionRules` が検査するのは代表 DOM に一致するセレクタだけで、`.ui-*` は
+一致しない。`.ui-skeleton__line { animation }` ＋ `@keyframes ui-shimmer` ＋
+reduced-motion ペアを投入した状態で全テストが緑になることを実測で確認済み。
+
+**必ず `@media (prefers-reduced-motion: reduce)` のペアをセットで書くこと。**
+グローバルな `*` の一括リセットは書けないため、これがないと reduced-motion 設定が
+効かないコンポーネントになる。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -925,12 +1072,20 @@ export function Skeleton({ lines = 2, label }: SkeletonProps): JSX.Element {
   );
 }
 
-export type EmptyStateProps = { title: string; body: string; action?: ReactNode };
+export type EmptyStateProps = {
+  title: string;
+  body: string;
+  /** aria-labelledby の参照先にする場合の見出し id。 */
+  titleId?: string;
+  action?: ReactNode;
+};
 
-export function EmptyState({ title, body, action }: EmptyStateProps): JSX.Element {
+export function EmptyState({ title, body, titleId, action }: EmptyStateProps): JSX.Element {
   return (
     <div className="ui-empty">
-      <h3 className="ui-empty__title">{title}</h3>
+      <h3 className="ui-empty__title" {...(titleId !== undefined ? { id: titleId } : {})}>
+        {title}
+      </h3>
       <p className="ui-empty__body">{body}</p>
       {action !== undefined && <div className="ui-empty__action">{action}</div>}
     </div>
@@ -963,9 +1118,28 @@ export function Badge({
 ```css
 /*
  * 読み込み・空状態・ラベル（2026-08-08 UI/UX モダン化）。
- * Skeleton にアニメーションは付けない。unexpectedMotionRules が
- * .wizard-transition 以外の animation を不正とするため。
+ * .ui-* は代表 DOM に一致しないので unexpectedMotionRules の対象外。
+ * shimmer を入れてよいが、reduced-motion ペアを必ずセットで書くこと。
  */
+@keyframes ui-shimmer {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ui-skeleton__line {
+  animation: ui-shimmer var(--motion-base) var(--motion-ease) infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-skeleton__line {
+    animation: none;
+  }
+}
+
 .ui-skeleton {
   display: flex;
   min-width: 0;
@@ -985,7 +1159,13 @@ export function Badge({
   background: var(--surface-sunken);
 }
 
-.ui-skeleton__line:nth-child(3) {
+/*
+ * 最終行だけ短くして「文章の途中」に見せる。
+ * .ui-skeleton の第1子は .ui-skeleton__label（span）なので
+ * nth-child ではなく last-child を使う（nth-child(3) だと lines=2 のとき
+ * 2 本目、lines=3 のときも 2 本目に当たって意図とずれる）。
+ */
+.ui-skeleton__line:last-child {
   width: 60%;
 }
 
@@ -1076,13 +1256,36 @@ git commit -m "feat: Skeleton・EmptyState・Badge プリミティブを追加"
 - `font-bold` などのタイポグラフィ、`type-small` などの既存セマンティッククラス
 - `src/app/**` と `src/shared/ui/**`（プリミティブ自身の実装箇所）
 
+**セレクタ設計の前提（実測で確認済み）:**
+
+`JSXAttribute[name.name='className'] > Literal` という**直下**指定では、次がすべて
+素通りする。中括弧 1 組でルールを無効化できてしまい、機構として機能しない。
+
+| 記述 | 直下指定 | 必要な対処 |
+| --- | --- | --- |
+| `className="text-red-800"` | 検出 | — |
+| `className={"bg-terracotta-700"}` | **素通り** | 子孫セレクタにする |
+| `` className={`stack ${on ? "bg-terracotta-700" : "p-4"}`} `` | **素通り** | 子孫＋`TemplateElement` |
+| `className={on ? "text-amber-800" : "gap-4"}` | **素通り** | 子孫セレクタにする |
+| `className="text-ink text-white"` | **素通り** | 色列挙に追加 |
+| `className="flex-col w-full rounded-xl"` | **素通り** | `flex$` のアンカーを外す |
+
+`src/features` には既に非リテラル `className={` が 11 箇所ある。
+`text-ink`(14 箇所) / `text-ink-muted`(7) / `text-white`(6) は数値段階を持たないため
+素朴な `text-<color>-<数値>` パターンから漏れる。
+
 - [ ] **Step 1: 現在の違反ファイルを洗い出す**
 
 ```bash
-grep -rlE 'className="[^"]*(\bbg-|\btext-(red|amber|green|blue|stone|slate|gray|zinc|neutral)-|\bflex\b|\bgrid\b|\bitems-|\bjustify-|\bgap-|\bp[xytblr]?-[0-9]|\bm[xytblr]?-[0-9])' src/features --include='*.tsx' | grep -v '\.test\.tsx$' | sort
+grep -rlE 'className=[{"][^;]*(\bbg-|\btext-(red|amber|green|blue|stone|slate|gray|zinc|neutral)-|\btext-(ink|white|canvas|line)\b|\bflex\b|\bflex-|\bgrid\b|\bgrid-cols-|\bitems-|\bjustify-|\bgap-|\bw-|\brounded-|\bp[xytblr]?-[0-9]|\bm[xytblr]?-[0-9])' src/features --include='*.tsx' | grep -v '\.test\.tsx$' | sort
 ```
 
 出力されたファイル一覧を控える。これが Step 3 の例外リストの初期値になる。
+
+**`src/features/pantry/` はこの出力に含まれない。** pantry の `text-red-800` /
+`text-amber-800` は `className` 属性ではなく `expiryNotice` の戻り値文字列
+（`pantry-page.tsx:44, 48`）にあり、`className={notice.className}`（`:305`）経由で
+適用される。**pantry は現時点で違反ゼロである。** これを Step 4 で取り違えないこと。
 
 - [ ] **Step 2: ルールを追加する**
 
@@ -1124,10 +1327,19 @@ grep -rlE 'className="[^"]*(\bbg-|\btext-(red|amber|green|blue|stone|slate|gray|
       "no-restricted-syntax": [
         "error",
         {
+          // 子孫セレクタ。> による直下限定だと className={"…"} や
+          // 三項演算子の中の文字列が素通りする。
           selector:
-            "JSXAttribute[name.name='className'] > Literal[value=/(^|\\s)(bg-|text-(red|amber|green|blue|stone|slate|gray|zinc|neutral)-|flex$|grid$|items-|justify-|grid-cols-|gap-|space-[xy]-|p[xytblr]?-[0-9]|m[xytblr]?-[0-9])/]",
+            "JSXAttribute[name.name='className'] Literal[value=/(^|\\s)(bg-|text-(red|amber|green|blue|stone|slate|gray|zinc|neutral)-|text-(ink|ink-muted|white|black|canvas|line)(\\s|$)|border-(red|amber|green|blue|stone|slate|gray)-|flex(-|\\s|$)|grid(-|\\s|$)|grid-cols-|items-|justify-|gap-|space-[xy]-|w-[0-9]|rounded-|absolute(\\s|$)|fixed(\\s|$)|sticky(\\s|$)|p[xytblr]?-[0-9]|m[xytblr]?-[0-9])/]",
           message:
             "配色・余白・レイアウトは src/shared/ui のプリミティブ（Surface / Stack / Inset / Button / PageHeader）を使うこと。生 Tailwind ユーティリティの直書きは禁止（min-h-11 / min-w-11 は可）。",
+        },
+        {
+          // テンプレートリテラル内の静的部分も同じ規則で塞ぐ。
+          selector:
+            "JSXAttribute[name.name='className'] TemplateElement[value.raw=/(^|\\s)(bg-|text-(red|amber|green|blue|stone|slate|gray|zinc|neutral)-|text-(ink|ink-muted|white|black|canvas|line)(\\s|$)|flex(-|\\s|$)|grid(-|\\s|$)|grid-cols-|items-|justify-|gap-|space-[xy]-|w-[0-9]|rounded-|p[xytblr]?-[0-9]|m[xytblr]?-[0-9])/]",
+          message:
+            "配色・余白・レイアウトは src/shared/ui のプリミティブを使うこと。テンプレートリテラル内でも生 Tailwind ユーティリティは禁止。",
         },
       ],
     },
@@ -1138,34 +1350,87 @@ grep -rlE 'className="[^"]*(\bbg-|\btext-(red|amber|green|blue|stone|slate|gray|
 逆に、`ignores` に載っているが Step 1 の出力に無いディレクトリはそのままでよい
 （将来の再発も防ぐため）。
 
-- [ ] **Step 3: lint を実行して緑を確認する**
+- [ ] **Step 3: ルールが効くことを fixture で証明する**
+
+**ルールが壊れたことを検出できないなら、ルールがあることの保証にならない。**
+上の表を CI で固定する fixture テストを作る。
+
+`src/shared/ui/eslint-primitive-rule.test.ts`（新規）:
+
+```ts
+import { Linter } from "eslint";
+import { describe, expect, it } from "vitest";
+import config from "../../../eslint.config.js";
+
+/** eslint.config.js から本ルールのブロックだけを取り出して単体で回す。 */
+const rule = config.find(
+  (block) =>
+    typeof block === "object" &&
+    block !== null &&
+    "rules" in block &&
+    block.rules !== undefined &&
+    "no-restricted-syntax" in block.rules,
+);
+
+const lint = (code: string): number => {
+  const linter = new Linter();
+  return linter.verify(code, {
+    files: ["**/*.tsx"],
+    languageOptions: { parserOptions: { ecmaFeatures: { jsx: true }, ecmaVersion: "latest", sourceType: "module" } },
+    rules: rule?.rules ?? {},
+  }).length;
+};
+
+describe("primitive-only className rule", () => {
+  it.each([
+    ['<div className="font-semibold text-red-800" />'],
+    ['<div className={"bg-terracotta-700"} />'],
+    ["<div className={`stack ${on ? \"bg-terracotta-700\" : \"p-4\"}`} />"],
+    ['<div className={on ? "text-amber-800" : "gap-4"} />'],
+    ['<div className="text-ink text-white" />'],
+    ['<div className="flex-col w-full rounded-xl" />'],
+    ['<div className="flex flex-col gap-2" />'],
+  ])("rejects %s", (code) => {
+    expect(lint(code)).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['<button className="primary-button min-h-11" />'],
+    ['<div className="page-frame stack" />'],
+    ['<p className="type-small" />'],
+    ["<div className={notice.className} />"],
+  ])("allows %s", (code) => {
+    expect(lint(code)).toBe(0);
+  });
+});
+```
+
+```bash
+docker compose run --rm --no-deps app npx vitest run src/shared/ui/eslint-primitive-rule.test.ts
+```
+
+期待: PASS。**落ちたケースがあればセレクタを直す。** このテストが緑になるまで
+先に進まない。
+
+- [ ] **Step 4: lint を実行する**
 
 ```bash
 docker compose run --rm --no-deps app npm run lint > /tmp/lint.log 2>&1
 grep -nE 'error|problem' /tmp/lint.log || tail -n 30 /tmp/lint.log
 ```
 
-期待: エラーなし。この時点では `src/features/pantry/**` が `ignores` に**入っていない**
-ため、`pantry-page.tsx:44-48` の `text-red-800` / `text-amber-800` が**エラーになる**。
+期待: **エラーなし（緑）**。`src/features/pantry/**` は `ignores` に入っていないが、
+pantry には元々違反が無いため緑になる。これは正常である。
 
-- [ ] **Step 4: ルールが実際に効いていることを確認する**
-
-Step 3 で pantry のエラーが出たなら、ルールは機能している。エラーが 1 件も出なかった
-場合は selector が誤っているので、`text-red-800` を含む行を実際に検出できるまで
-selector を修正すること。**「エラーが出ないから緑」で先に進んではならない。**
-
-pantry は次の Task 0.7 で移行するため、ここでは `ignores` に**追加しない**。
+**「pantry でエラーが出るはず」と考えて selector をいじらないこと。** ルールが効くことは
+Step 3 の fixture テストが証明している。
 
 - [ ] **Step 5: コミット**
 
 ```bash
-git add eslint.config.js
+git add eslint.config.js src/shared/ui/eslint-primitive-rule.test.ts
 git commit -m "feat: プリミティブ経由を強制する ESLint ルールを追加"
 ```
-
-このコミット時点で `npm run lint` は pantry のエラーで赤い。Task 0.7 で緑に戻す。
-**この 1 コミットだけは赤のまま進めてよい**（ルールの追加と移行を同一コミットに
-混ぜると、ルールが本当に効いているかが diff から読めなくなるため）。
 
 ---
 
@@ -1186,14 +1451,30 @@ git commit -m "feat: プリミティブ経由を強制する ESLint ルールを
 ### 不変契約（変更禁止）
 
 - **見出し・ボタン・ラベルのアクセシブル名をすべて維持する。** e2e は `getByTestId` が
-  0 件で `getByRole` / `getByText` に全依存している。具体的には最低限:
+  0 件で `getByRole` / `getByText` に全依存している。**以下は実測から起こした一覧である。
+  記憶や推測で補わないこと。**
   - `heading` level 1: `食材リスト`
   - `heading` level 2: `登録済みの食材（…）`（件数の書式も維持）
-  - `button`: `食材を追加` / `変更を保存` / `キャンセル` / `削除`
+  - `button`: `食材を追加` / `変更を保存` / `キャンセル`
+  - `button`（`aria-label`）: **`${item.name}を編集`** / **`${item.name}を削除`**
+    （`pantry-page.tsx:317` / `:331`）。`e2e/specs/menu-domain-pantry.spec.ts:426, 627` が
+    `キャベツを編集` / `キャベツを削除` で引いている。**素の「削除」「編集」にしない。**
+  - `button`: `最新の内容を編集フォームに反映`（競合復帰）
+  - フォーム見出し: `${item.name}を編集`（`pantry-form.tsx:135`、`.pantry-form-title`）
   - `heading`: `まだ食材がありません`
   - `role="status"`: `食材リストを読み込んでいます…`
+  - `list`（`aria-label`）: `冷蔵庫の食材`（`pantry-page.tsx:294`）。
+    `Stack` に `aria-label` を通せないと**静かに消える**。Task 0.3 で対処済み。
+  - 空状態: `<section aria-labelledby="pantry-empty-title">` +
+    `<h3 id="pantry-empty-title">`（`:286-287`）。`EmptyState` の `titleId` で再現する。
 - `aria-expanded` / `aria-controls="pantry-editor"` / `id="pantry-editor"` の関係を維持する。
-- エディタ開閉時のフォーカス移動（`h2` へフォーカス、閉じたらトリガーへ戻す）を維持する。
+- エディタ開閉時のフォーカス移動を維持する。**実装の暗黙契約に注意**:
+  `pantry-page.tsx:209` が `editorContainerRef.current?.querySelector("h2")?.focus()` で
+  フォーカス先を掴んでいる。したがって `pantry-form.tsx:139` の見出しは
+  **`h2` タグであること**と **`tabIndex={-1}` を持つこと**の両方が契約である。
+  プリミティブ化してタグレベルが変わると、フォーカス移動が黙って壊れる。
+- トリガーへのフォーカス復帰（`addTriggerRef` / `editorTriggerRef`、`:192-195` / `:231`）を
+  維持する。**`Button` に `ref` が通ることが前提**（Task 0.2）。
 - 楽観ロック（`expectedUpdatedAt`）と `PantryVersionConflictError` の扱いを一切変えない。
 - 期限表示の意味を変えない: 期限切れ＝赤＋「（期限切れ）」、7 日以内＝琥珀＋「（まもなく）」。
 - `main` ランドマークを維持する（axe region 契約）。
@@ -1270,6 +1551,18 @@ export function expiryNotice(expiresOn: string, now: Date = new Date()): ExpiryN
 呼び出し側は `className` を渡していた箇所を `<Badge tone={notice.tone}>` に置き換える
 （`tone` が `null` のときは `Badge` を描画しない）。
 
+**既存テストとの衝突に注意**: `pantry-page.test.tsx:155` の
+`screen.getByText(/期限切れ/u)` は現在 `<p>` 1 要素にのみ一致する。「（期限切れ）」を
+`<span class="ui-badge">` に移すと、`<p>` と `<span>` の両方が textContent 一致して
+**"Found multiple elements" で throw する**。
+
+対処は次のどちらか。**テストの期待を緩めるのではなく、DOM 構造で解決すること。**
+
+- 接尾辞を `<p>` から完全に取り除き、`Badge` だけが「（期限切れ）」を持つようにする
+- `Badge` 内の文言を「期限切れ」にし、`<p>` 側の接尾辞は残さない
+
+いずれにせよ `pantry-page.test.tsx` の変更が必要になる。Step 10 で**別コミット**にする。
+
 - [ ] **Step 4: テストを実行して成功を確認する**
 
 ```bash
@@ -1286,6 +1579,17 @@ docker compose run --rm --no-deps app npx vitest run src/features/pantry/pantry-
 
 `main` 要素と `page-frame` クラスは残してよい（設計書 §5.6: 旧クラスは削除しない）。
 `className="primary-button min-h-11"` のような直書きは `<Button>` に置き換える。
+
+**`pantry-form.tsx` の送信ボタンに注意**: `:223` は
+`<button className="primary-button" disabled={saving} type="submit">` である。
+`Button` の `type` 既定は `"button"` なので、**`type="submit"` を明示的に渡すこと**。
+渡し忘れると Enter キー送信と `onSubmit` 経路が黙って壊れる。テストが `click` 経由なら
+緑のまま通ってしまうため、テストでは検出できない。
+
+**既存テストが割れる箇所（想定済み）**: `pantry-page.test.tsx:183, 184, 204, 308` は
+`toHaveClass("pantry-card-text")` / `toHaveClass("pantry-form-title")` を検証している。
+クラス構成を変えるなら、これらの改訂は認められる（README「クラス名アサーションは
+全 Phase で必ず割れる」の規律に従い**別コミット**にする）。
 
 **レイアウトの具体は実装者の裁量。** ただし:
 - 320px で横スクロールを出さない
@@ -1354,6 +1658,41 @@ git commit -m "test: expiryNotice のトーン化に追随"
 
 ---
 
+---
+
+## Task 0.8: 参照ビジュアルを人間に承認させる
+
+**Files:** なし（提出物のみ）
+
+**なぜ必要か:** 全 5 Phase を走らせてから「なんとなく違う」となる手戻りを避けるため。
+「オシャレさ」は自動検証できず、人間の目が唯一のゲートである。**Phase 1 以降の裁量は、
+この承認を得た見本に沿うことを条件とする。**
+
+- [ ] **Step 1: 冷蔵庫画面を 3 幅で撮影する**
+
+`e2e/` 配下に**恒久的でない**撮影用スクリプトを作る（`e2e/specs/` には置かない。
+置くと本番 spec として実行される）。`page.setViewportSize({ width, height })` と
+`page.screenshot({ path })` で 320 / 375 / 768 px を撮る。撮影スクリプトはコミットしない。
+
+一覧・空状態・エディタ展開の 3 状態をそれぞれ撮ること。
+
+- [ ] **Step 2: 「エディトリアル」の数値目安を提案する**
+
+「温かいエディトリアル」という語だけでは外部エージェントに再現性がない。
+次の 4 項目について**具体的な数値**を提案し、スクリーンショットと一緒に提出する。
+
+- 主見出しと本文のサイズ比（例: 2.0 倍以上）
+- 1 画面あたりの罫線・枠線の本数上限（例: 3 本）
+- 面（`Surface`）の入れ子の深さ上限（例: 2 段）
+- セクション間の最小余白（例: `--space-5` 以上）
+
+- [ ] **Step 3: 人間の承認を待つ**
+
+**承認が得られるまで Phase 1 に着手しない。** 承認された数値目安は、Phase 1 以降の
+「意図」の判定基準になる。
+
+---
+
 ## Phase 0 完了チェック
 
 - [ ] `README.md` の検証フロー 9 ステップをすべて実行し、すべてパスした
@@ -1363,7 +1702,12 @@ git commit -m "test: expiryNotice のトーン化に追随"
 - [ ] 新規に `style={{ … }}` を 1 箇所も書いていない
       （確認: `grep -rn 'style={{' src/shared/ui src/features/pantry`）
 - [ ] `src/features/pantry/**` が ESLint の例外リストに**入っていない**状態で lint が緑
-- [ ] 冷蔵庫画面のスクリーンショットを 320 / 375 / 768 px で提出した
+- [ ] `eslint-primitive-rule.test.ts` の fixture が全ケース緑
+      （中括弧・テンプレートリテラル・`text-ink` 系を確実に検出できている）
+- [ ] `Button` に `ref` が通り、`Stack` に `aria-label` が通ることをテストで固定した
+- [ ] 新規プリミティブのモーションに `prefers-reduced-motion` ペアを添えた
+- [ ] 冷蔵庫画面のスクリーンショットを 320 / 375 / 768 px × 3 状態で提出した
+- [ ] 「エディトリアル」の数値目安 4 項目を提案し、人間の承認を得た（Task 0.8）
 - [ ] 変更ファイル一覧と、テスト変更を分離したコミット hash を提出した
 
 **次:** `phase-1-wizard.md`

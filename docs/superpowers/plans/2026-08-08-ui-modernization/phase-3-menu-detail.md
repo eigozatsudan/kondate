@@ -27,8 +27,17 @@
 | `src/features/menu-detail/menu-actions.tsx`（新規） | 採用・再生成・買い物リスト等の操作列 |
 | 上記各ファイルの `.test.tsx`（新規） | 各パーツのテスト |
 | `src/features/menu-detail/idea-menu-detail-body.tsx`（変更） | 同じパーツを使うよう整理 |
+| `src/features/history/pages/history-page.tsx`（変更） | 履歴一覧 |
+| `src/features/history/pages/history-detail-page.tsx`（変更） | 履歴詳細 |
+| `src/features/history/history-card.tsx`（変更） | 履歴カード |
+| `src/features/history/menu-version-switcher.tsx`（変更） | 版切替 |
+| `src/features/history/regeneration-sheet.tsx`（変更） | 再生成シート |
 | `src/styles.css`（変更） | 見た目 |
 | `eslint.config.js`（変更） | `src/features/menu-detail/**` と `src/features/history/**` を例外リストから外す |
+
+**`src/features/history/` の 5 ファイルは当初の一覧から漏れていた。** ESLint 例外を
+`src/features/history/**` 単位で外す以上、必ず対象に入る。履歴カードは menu-detail と
+同じ語彙で組むこと（同じ献立を別の文脈で見せる画面なので、見えが揃っている必要がある）。
 
 **分割の原則:** 状態管理（`useQuery` / `useMutation` / ダイアログ開閉）は
 `household-menu-detail-body.tsx` に残す。新規パーツは**表示専用（props を受け取って
@@ -139,6 +148,9 @@ diff <(grep -oE '[0-9]+ (passed|failed)' /tmp/before.log) <(grep -oE '[0-9]+ (pa
 期待: 差分なし（新規テストの分だけ passed が増えるのは可）。**failed が 1 件でも
 増えていたら先に進まない。**
 
+Task 3.1 は純粋な移動なので、クラス名アサーションも含めて緑を保てるはずである。
+落ちたなら移動の過程で構造を変えている。
+
 - [ ] **Step 4: axe と e2e を確認する**
 
 ```bash
@@ -180,16 +192,28 @@ grep -nE 'error|problem' /tmp/lint.log || tail -n 30 /tmp/lint.log
 期待: エラーなし。`src/features/history/**` にも生ユーティリティが残っていれば、
 そちらもプリミティブに置き換える（履歴カードは menu-detail と同じ語彙で組む）。
 
-- [ ] **Step 3: 検証**
+- [ ] **Step 3: 検証と、割れたテストの分類**
 
 ```bash
-docker compose run --rm --no-deps app npx vitest run src/features/menu-detail src/features/generation src/features/history
+docker compose run --rm --no-deps app npx vitest run src/features/menu-detail src/features/generation src/features/history > /tmp/p3.log 2>&1
+grep -nE 'FAIL|✘' /tmp/p3.log | head -n 30
 docker compose run --rm --no-deps app npx vitest run src/app/accessibility.test.tsx
 docker compose run --rm --no-deps app npx vitest run src/styles.contrast.test.ts src/styles.theme.test.ts
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-期待: すべて PASS。
+**次のクラス名アサーションは Phase 3 で割れる想定である**（README の一覧参照）。
+
+- `menu-result-page.test.tsx:753, 789, 815` — `toHaveClass("primary-button")`
+- `history-detail-page.test.tsx:654` / `history-page.test.tsx:164` /
+  `history-card.test.tsx:160` — 同種
+
+これらの改訂は認められる（Step 5 で**別コミット**）。
+
+**`role` / アクセシブル名 / `role="alert"` `role="status"` の使い分けに関する
+アサーションが落ちた場合は、実装が契約を破っている。実装を直すこと。**
+
+`accessibility.test.tsx` と contrast / theme テストは**すべて PASS** でなければならない。
 
 - [ ] **Step 4: e2e を実行する**
 

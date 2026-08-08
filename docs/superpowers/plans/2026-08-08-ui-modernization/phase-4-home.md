@@ -67,6 +67,19 @@
   生成中にホームへ戻ったときの復帰導線が壊れる。
 - `useUsageToday`（本日の残り回数）の取得と表示条件を変えない。
 
+### 4b. `/planner?resume=…` はホームではなくウィザードを描画する
+
+**これは新しく追加された不変契約である。** 下書き復帰の深リンクが依存している。
+
+- `/planner?resume=review` は**確認ステップ（`5. 確認`）を直接描画する**。
+  依存: `e2e/specs/mobile-accessibility.spec.ts:93-97`（`ensurePrivacyThenGenerate`）
+- 下書きがある状態で `/planner` を開いたときの復帰先も変えない。
+  依存: `e2e/specs/menu-domain-pantry.spec.ts:75, 610, 629` が `5. 確認` に直着地し、
+  `:75` はそこから `戻る` を 4 回押して `1. 食事` に戻る
+
+ホーム化の対象は**「下書きも pending も無い素の `/planner`」だけ**である。
+`resume` パラメータ付き、および下書き復帰時は従来どおりウィザードを出す。
+
 ### 5. 44×44 とボタン件数
 
 `e2e/specs/mobile-accessibility.spec.ts` の `assertMajorActionHeights` は
@@ -74,9 +87,29 @@
 そのボタン名が既存の期待に含まれていなくても**同名のボタンが増えれば件数が変わって
 落ちる**。
 
-同 spec は**変更禁止テスト**なので、**アサーションの追加のみ**認める。既存の期待件数を
-書き換えてはならない。ホームに置くボタンの名前は、既存の期待に載っている名前と
-**衝突しないもの**を選ぶこと。
+**既存の期待件数の書き換えは認めない。** ホームに置くボタンの名前は、既存の期待に
+載っている名前と**衝突しないもの**を選ぶこと。とくに **`献立を作る` は 6 ファイル
+20 箇所で使われている既存の期待名**（`mobile-accessibility.spec.ts:151` の件数固定と
+`src/app/accessibility.test.tsx:500` を含む）なので、**ホームの主ボタンに使わない**。
+
+### 5b. `mobile-accessibility.spec.ts` の Phase 4 限定例外
+
+Phase 4 は `/planner` の初期表示を変えるため、同 spec がファイル内に持つナビゲーション
+ヘルパ（`:54-124`）と必ず衝突する。**Phase 4 に限り**、次の 2 種のみ人間レビュー付きで
+認める。
+
+1. **アサーションを含まない `goto` 行の差し替え** — `:64` の
+   `await page.goto("/planner")`（`ensureWheatMemberForMockSuccess` 内）
+2. **既存アサーションの直前へのナビゲーション行の挿入** — `:110` の
+   `await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible()` の前に
+   ホーム経由のホップを 1 行足す
+
+**認めないもの**: 既存 `expect` の書き換え・削除、`assertMajorActionHeights` /
+`assertStepFits` / `assertNoHorizontalScroll` の期待値変更、44px / 320px アサーション
+本体への一切の変更。
+
+この切り分けが構造上可能であることは検証済み（`:64` はアサーションを含まない純粋な
+`goto`、`:110` は 1 行挿入で既存アサーションが 1 文字も変わらない）。
 
 ---
 
@@ -121,7 +154,7 @@ props のみで動く表示コンポーネントとして作る。各ファイ�
 ```tsx
 it("renders the primary generation entry point", () => {
   render(<HomeGenerateCard remainingToday={2} onStart={vi.fn()} />);
-  expect(screen.getByRole("button", { name: "献立を作る" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeInTheDocument();
 });
 
 it("shows the remaining count for today", () => {
@@ -130,10 +163,17 @@ it("shows the remaining count for today", () => {
 });
 ```
 
-**ボタン名は既存 e2e の期待と衝突しないものを選ぶこと。** 選ぶ前に確認する:
+**ボタン名は既存 e2e の期待と衝突しないものを選ぶこと。**
+
+上の例で `献立を作る` ではなく `今日の献立をつくる` を使っているのは意図的である。
+**`献立を作る` は 6 ファイル 20 箇所で使われている既存の期待名**であり、ホームに
+同名のボタンを置くと `mobile-accessibility.spec.ts:151` の `{ 献立を作る: 1 }` という
+件数固定が壊れる。
+
+選ぶ前に必ず確認する:
 
 ```bash
-grep -rhoE 'name: "[^"]+"' e2e/specs | sort -u
+grep -rhoE 'name: "[^"]+"' e2e/specs e2e/fixtures | sort | uniq -c | sort -rn | head -40
 ```
 
 - [ ] **Step 3: パーツ単体のテストを実行する**
@@ -239,24 +279,51 @@ EOF
 grep -nE 'failed|✘' /tmp/e2e.log | head -n 40
 ```
 
+**影響範囲は事前に判明している。** 次がすべて `/planner` の初期表示に依存する。
+
+| ファイル:行 | 依存内容 |
+| --- | --- |
+| `e2e/specs/mobile-accessibility.spec.ts:64` | `goto("/planner")`（アサーションなし） |
+| `e2e/specs/mobile-accessibility.spec.ts:110` | `heading "1. 食事"` |
+| `e2e/specs/mobile-accessibility.spec.ts:93-97` | `/planner?resume=review` → `heading "5. 確認"` |
+| `e2e/specs/full-journey.spec.ts:39-40` | `goto("/planner")` → `1. 食事` |
+| `e2e/specs/menu-domain-pantry.spec.ts:75-80` | `5. 確認`（下書き復帰）→ `戻る`×4 → `1. 食事` |
+| `e2e/specs/menu-domain-pantry.spec.ts:130-131` | `goto("/planner")` → `1. 食事` |
+| `e2e/specs/menu-domain-pantry.spec.ts:610-611, 629-630` | `5. 確認`（下書き復帰） |
+| `e2e/specs/billing-plus.spec.ts:155-159` | `goto("/planner")` → `link "Plus を見る"` が可視 |
+| `e2e/fixtures/history.ts:167-168, 366-367` | `goto("/planner")` → `1. 食事` |
+| `e2e/fixtures/shopping.ts:72-76` | `goto("/planner")` → `1. 食事` |
+| `e2e/fixtures/auth.ts:45, 63, 67, 81` | URL のみ検査。**影響なし** |
+
+このうち `?resume=` と下書き復帰の 4 件（`mobile-accessibility.spec.ts:93-97`、
+`menu-domain-pantry.spec.ts:75, 610, 629`）は、**不変契約 4b により実装側で
+ウィザードを出し続けるので落ちてはならない**。落ちたら実装が 4b を破っている。
+
 - [ ] **Step 2: 落ちた原因を分類する**
 
 各失敗について、次のどちらかを判定する。
 
-- **(a) 導線が変わったことによる正当な失敗**: `/planner` を開いた直後の画面が
-  ウィザードからホームに変わったため、fixture がウィザードに直行できなくなった等。
+- **(a) 導線が変わったことによる正当な失敗**: 素の `/planner` を開いた直後の画面が
+  ウィザードからホームに変わったため、fixture がウィザードに直行できなくなった。
   → e2e / fixture を直してよい。
 - **(b) 契約が壊れた失敗**: ボタンの 44px を割った、320px で横スクロールした、
-  ラベルが変わった、遷移先が変わった、下書きが保存されなくなった等。
+  ラベルが変わった、遷移先が変わった、下書きが保存されなくなった、
+  `?resume=` でホームが出た等。
   → **実装を直す。e2e を書き換えてはならない。**
 
-`e2e/specs/mobile-accessibility.spec.ts` が落ちた場合は**必ず (b)** である。
-このファイルは変更禁止。
+`e2e/specs/mobile-accessibility.spec.ts` については、**§5b の例外規定で認められた
+2 種類の変更のみ**が (a) として扱える。それ以外の失敗はすべて (b) である。
 
 - [ ] **Step 3: (a) の失敗を直す**
 
-fixture の入口を追加するのが望ましい。例えば `e2e/fixtures/history.ts` に
-「ホームからウィザードを開く」ヘルパを足し、既存の spec がそれを呼ぶようにする。
+`e2e/fixtures/history.ts` に「ホームからウィザードを開く」ヘルパ
+（例: `openWizardFromHome(page)`）を足し、`full-journey.spec.ts` /
+`menu-domain-pantry.spec.ts` / `fixtures/shopping.ts` がそれを呼ぶようにする。
+
+`mobile-accessibility.spec.ts` については §5b の範囲で、
+`:64` の `goto` を差し替え、`:110` のアサーション直前に 1 行挿入する。
+**既存の `expect` は 1 文字も変えない。**
+
 **各 spec の本体アサーションは変えない。**
 
 - [ ] **Step 4: e2e を再実行する**
@@ -333,7 +400,11 @@ git commit -m "chore: 移行済みディレクトリを ESLint 例外から外�
 ## Phase 4 完了チェック
 
 - [ ] `README.md` の検証フロー 9 ステップをすべて実行し、すべてパスした
-- [ ] 変更禁止テスト 4 本の既存アサーションを 1 つも変更していない
+- [ ] `mobile-accessibility.spec.ts` の変更が §5b で認められた 2 種類
+      （`:64` の `goto` 差し替え、`:110` 直前への 1 行挿入）に収まっている
+- [ ] それ以外の変更禁止テスト 3 本の既存アサーションを 1 つも変更していない
+- [ ] `/planner?resume=review` と下書き復帰時にウィザードが出ることを確認した（不変契約 4b）
+- [ ] ホームの主ボタン名が `献立を作る` と衝突していない
 - [ ] URL を 1 つも変えていない
 - [ ] 下タブが 5 本、ラベルが `献立` / `冷蔵庫` / `履歴` / `買い物` / `設定` のまま
 - [ ] `RequireSession` の保護範囲、オンボーディング・プライバシーゲートを変えていない

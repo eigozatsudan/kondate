@@ -18,12 +18,37 @@
 | `src/features/generation/components/generation-status-panel.tsx`（変更） | 各 phase の表示 |
 | `src/features/generation/pages/generation-page.tsx`（変更） | 生成中ページの枠 |
 | `src/features/generation/pages/menu-result-page.tsx`（変更） | 読み込み中表示を `Skeleton` に |
-| `src/styles.css`（変更） | `.gen-status-panel` 系の見た目 |
+| `src/features/generation/components/menu-result.tsx`（変更・833 行） | 結果本体。sticky タブ列を持つ |
+| `src/features/generation/components/idea-menu-safety-notice.tsx`（変更・135 行） | **アレルギー非保証文言** |
+| `src/styles.css`（変更） | `.gen-status-panel` 系と `.menu-result-*` の見た目 |
 | `eslint.config.js`（変更） | `src/features/generation/**` を例外リストから外す |
+
+**後 2 者は当初の一覧から漏れていた。** ESLint 例外を `src/features/generation/**` 単位で
+外す以上、必ず対象に入る。とくに `idea-menu-safety-notice.tsx` を「一覧に無いから」と
+無警告で書き換えると、下記 §0 の安全条項に違反する。
+
+`menu-result.tsx:460` の sticky タブ列（`sticky top-0 z-10 flex … overflow-x-auto`）と
+`:516` の `grid-cols-[minmax(0,1fr)_minmax(0,45%)]` は `Surface` / `Stack` / `Inset` では
+表現できない。**専用セマンティッククラス（`.menu-result-*`）へ退避してよい。**
+新規クラス名なので保護セレクタ断片に該当せず、モーションも追加できる。
 
 ---
 
 ## 不変契約（変更したら差し戻し）
+
+### 0. 安全・アレルギー表示（最重要）
+
+`src/features/generation/components/idea-menu-safety-notice.tsx:6-7` は次を明記している。
+
+> 表示確認の記録完了＝食べて安全、と誤認しないよう…設計は保証表現（「安全です」
+> 「対応済み」等）を禁じる。平易化で保証寄りにしないこと。
+
+- **同ファイルの文言（`:10`, `:17`, `:82`, `:116` ほか）を一字一句変更しない。**
+- 提示順を変えない。他の情報より後ろに追いやらない。
+- **「読みやすくする」「平易にする」という名目でも書き換えない。** 保証寄りに倒れる。
+- レイアウトのみプリミティブへ移行してよい。
+
+**この節に関わる変更が必要になったら、実装を止めて人間に相談すること。**
 
 ### 1. 段階表そのもの
 
@@ -80,9 +105,11 @@
 
 `.gen-status-indicator` に既存のアニメーションがある（`src/styles.css:2010` 付近と
 `:2056` の reduced-motion）。**この 2 つはセットで維持する。**
-新しい `animation` / `transition` を追加する場合は、`unexpectedMotionRules` に
-引っかからないことを Step で必ず確認する。**グローバルな reduced-motion 単一ルールは
-書けない**（Global Constraints 参照）。
+
+新規クラス（`.gen-progress-*` / `.menu-result-*` / `.ui-*`）へのモーションは
+**追加してよい**。これらは代表 DOM に一致しないため `unexpectedMotionRules` の対象外。
+ただし `@media (prefers-reduced-motion: reduce)` のペアを必ずセットで書くこと
+（グローバルな `*` の一括リセットは書けないため）。
 
 ---
 
@@ -146,20 +173,43 @@ docker compose run --rm --no-deps app npx vitest run src/features/generation
 **維持すること:** `main` ランドマーク（axe region 契約）、`role="status"` /
 `aria-live="polite"`（`Skeleton` が内部で持つ）、文言「献立を読み込んでいます」。
 
-- [ ] **Step 3: テストを実行して緑を確認する**
+- [ ] **Step 3: テストを実行し、割れる 2 件を確認する**
 
 ```bash
 docker compose run --rm --no-deps app npx vitest run src/features/generation
 docker compose run --rm --no-deps app npx vitest run src/app/accessibility.test.tsx
 ```
 
-期待: PASS。
+**期待: `menu-result-page.test.tsx:293` と `:381` が FAIL する。** この 2 件は
+`document.querySelector(".gen-status-indicator")).not.toBeNull()` を検証しており、
+`Skeleton` への置換でその要素が消えるため必ず落ちる。**これは想定内である。**
 
-- [ ] **Step 4: コミット**
+それ以外が落ちた場合は実装を疑うこと。特に `role="status"` /
+`aria-live="polite"` / `main` ランドマークが失われていないか確認する。
+
+同種のアサーションは `generation-status-panel.test.tsx:166` と
+`history-detail-page.test.tsx:453` にもある。こちらは `.gen-status-indicator` を
+残す限り緑のままなので、**この Task では触らないこと**。
+
+- [ ] **Step 4: 実装をコミットする**
 
 ```bash
 git add src/features/generation/pages/menu-result-page.tsx
 git commit -m "refactor: 献立読み込み中の表示を Skeleton に置き換える"
+```
+
+- [ ] **Step 5: 割れたテストを別コミットで直す**
+
+```bash
+git add src/features/generation/pages/menu-result-page.test.tsx
+git commit -m "$(cat <<'EOF'
+test: 読み込み中表示の Skeleton 化に追随
+
+.gen-status-indicator を持つローディング表示を Skeleton に置き換えたため、
+その要素の存在を検証していた 2 件を、role="status" と文言の検証に改めた。
+アクセシブル名（献立を読み込んでいます）は変更していない。
+EOF
+)"
 ```
 
 ---
@@ -193,9 +243,22 @@ it("renders a progress meter reflecting the current stage while submitting", () 
 });
 ```
 
-`renderPanelInSubmittingState` は既存テストのヘルパを流用するか、既存テストが
-どう `submitting` 状態を作っているかを読んで同じ方法で書くこと。
+**`renderPanelInSubmittingState` というヘルパは存在しない。** 既存テストの作法は
+`generation-status-panel.test.tsx:573-583` にある通り、次の形である。
+
+```tsx
+render(<GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />);
+act(() => {
+  vi.setSystemTime(new Date(startedAt.getTime() + 8_000));
+  vi.advanceTimersByTime(1_000);
+});
+```
+
+**着手前に `:560-640` を読み、そこで使われている fixture・タイマー操作・
+`state` の組み立て方をそのまま踏襲すること。** 自前のヘルパを新設しない。
+
 `GENERATION_PROGRESS_STAGES` は `@/features/generation/model/progress-stages` から import する。
+`selectGenerationProgressStageIndex(8000)` は **2** を返すので `aria-valuenow` は **3** になる。
 
 **`aria-valuenow` を 1 始まりにする理由:** `data-progress-stage` は 0 始まりの index で
 既存テストが依存しているため、そちらは変えない。人間に見せる進捗は 1/5〜5/5 が自然なので
@@ -234,13 +297,14 @@ docker compose run --rm --no-deps app npx vitest run src/features/generation/com
         </div>
 ```
 
-CSS（`src/styles.css` 末尾）。**`animation` / `transition` を書かない**（`unexpectedMotionRules`）。
+CSS（`src/styles.css` 末尾）。`.gen-*` は新規クラス名で代表 DOM に一致しないため、
+**モーションを付けてよい**（実測で確認済み）。`prefers-reduced-motion` ペアは必須。
 
 ```css
 /*
  * 生成の進み具合（2026-08-08 UI/UX モダン化）。
- * animation / transition は書かない。unexpectedMotionRules が
- * .wizard-transition 以外の動きを不正とするため。
+ * .gen-progress-* は代表 DOM に一致しないため unexpectedMotionRules の対象外。
+ * グローバルな * の一括リセットは書けないので、reduced-motion はここで個別に書く。
  */
 .gen-progress-meter {
   display: flex;
@@ -253,10 +317,17 @@ CSS（`src/styles.css` 末尾）。**`animation` / `transition` を書かない*
   flex: 1 1 0;
   border-radius: var(--radius-pill);
   background: var(--border);
+  transition: background-color var(--motion-base) var(--motion-ease);
 }
 
 .gen-progress-step.is-done {
   background: var(--primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gen-progress-step {
+    transition: none;
+  }
 }
 ```
 
@@ -351,7 +422,10 @@ git commit -m "refactor: 生成待ち画面をエディトリアル方向に整�
 - [ ] `GENERATION_PROGRESS_STAGES` の段階数・`afterMs`・5 文言を変えていない
 - [ ] `data-progress-stage` と `data-phase` 8 種をすべて維持している
 - [ ] 進捗文言に「AI」「送信」「通信」「モデル」「サーバ」を含めていない
-- [ ] 新しい `animation` / `transition` を追加していない（または追加して contrast テストが緑）
+- [ ] **`idea-menu-safety-notice.tsx` の文言を一字一句変更していない**（不変契約 0）
+- [ ] `menu-result.tsx` の sticky タブ列とグリッドを `.menu-result-*` へ退避した
+- [ ] 追加したモーションすべてに `prefers-reduced-motion` ペアを添えた
+- [ ] `.gen-status-indicator` を消した箇所のテスト改訂を別コミットにした
 - [ ] `eslint.config.js` の `ignores` から `src/features/generation/**` が消えた状態で lint が緑
 - [ ] 生成中・成功・失敗・オフラインの各画面のスクリーンショットを 320 / 375 / 768 px で提出した
 

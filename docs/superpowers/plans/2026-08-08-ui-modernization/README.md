@@ -42,7 +42,39 @@ Playwright / Docker Compose
 1. `src/styles.contrast.test.ts`
 2. `src/styles.theme.test.ts`
 3. `src/app/accessibility.test.tsx`
-4. `e2e/specs/mobile-accessibility.spec.ts`
+4. `e2e/specs/mobile-accessibility.spec.ts`（**Phase 4 に限り例外あり。下記**）
+
+**Phase 4 限定の例外**: Phase 4 は `/planner` の初期表示をホームに変えるため、
+同 spec がファイル内に持つナビゲーションヘルパ（`:54-124`）と必ず衝突する。
+Phase 4 に限り次の 2 種のみ人間レビュー付きで認める。
+
+1. アサーションを含まない `goto` 行の差し替え（`:64`）
+2. 既存アサーションの**直前**へのナビゲーション行の挿入（`:110` の
+   `expect(heading "1. 食事")` の前）
+
+既存 `expect` の書き換え・削除、`assertMajorActionHeights` の期待件数変更、
+44px / 320px アサーション本体の変更は**認めない**。
+
+### クラス名アサーションは全 Phase で必ず割れる
+
+`toHaveClass("primary-button")` や `document.querySelector(".gen-status-indicator")` の
+ような**実装クラス名に依存するアサーションが 68 箇所実在する**。各 Phase の
+「期待: すべて PASS」はそのままでは偽になる。
+
+| ファイル:行 | 割れる Phase |
+| --- | --- |
+| `pantry-page.test.tsx:183, 184, 204, 308` | Phase 0 |
+| `planner-wizard.test.tsx:284, 287, 288, 344, 810` / `current-safety-summary.test.tsx:40` | Phase 1 |
+| `menu-result-page.test.tsx:293, 381`（`.gen-status-indicator`） | Phase 2 |
+| `menu-result-page.test.tsx:753, 789, 815` | Phase 2 / 3 |
+| `history-detail-page.test.tsx:453, 654` / `history-page.test.tsx:164` / `history-card.test.tsx:160` | Phase 3 |
+
+**規律（全 Phase 共通）:**
+
+- **クラス名・CSS セレクタに依存するアサーションの改訂は認める。** 別コミットにし、
+  コミット本文に「なぜその期待が古くなったか」を書く。
+- **`role` / アクセシブル名に依存するアサーションの改訂は認めない。** これが落ちたら
+  実装が契約を破っている。実装を直すこと。
 
 `src/styles.contrast.test.ts` は、過去に `bg-terracotta-700` が未定義で「白背景に白文字」
 となり 11 箇所が操作不能になった実障害を受けて作られたガードである
@@ -87,16 +119,53 @@ Playwright / Docker Compose
 
 ### モーション
 
-`unexpectedMotionRules` は `.wizard-transition` の以下 2 パターン**以外の**
-`animation` / `transition` ルールをすべて不正とする（代表 DOM に `matches()` するもの）。
+制約は「ウィザード配下かどうか」という**場所**ではなく、**セレクタの同一性**である。
 
-- `.wizard-transition { animation: wizard-enter 180ms ease-out }`
-- `@media (prefers-reduced-motion: reduce) { .wizard-transition { animation: none } }`
+`unexpectedMotionRules`（`src/styles.contrast.test.ts:915-953`）は
+`selector.includes("wizard-transition") || selectorMatchesRepresentative(selector)` に
+該当するルールだけを検査する。代表 DOM（`:955-975`）は `.guided-planner-theme` を root に
+`.wizard-*` / `.choice-card` / `.progress-*` / `.inline-notice*` / `.review-row*` /
+`.primary-button` と素の要素セレクタのみを含む。
 
-したがって `*, *::before, *::after { animation: none !important }` のような
-**グローバルな reduced-motion 単一ルールは書けない**。コンポーネント単位で
-`animation: none` を宣言し、必要なら allowlist に追記する（既存例:
-`src/styles.css:359` / `:794` / `:2056`）。
+**書けないもの:**
+
+- `*, *::before, *::after` のようなグローバルセレクタ。`*` の reduced-motion 一括
+  リセットを入れると `unexpectedMotionRules` と `unexpectedRepresentativeOverrides` の
+  2 つが落ちる（実測）。
+- 素の要素セレクタ（`button { transition }` 等）。
+- 上記の既存クラスへのモーション追加。
+
+**書けるもの:**
+
+- `.ui-*` / `.gen-*` のような**新規クラス名**へのモーション。
+  `.ui-btn { transition }` / `.ui-skeleton__line { animation }` /
+  `.gen-progress-step { transition }` ＋ `@keyframes ui-shimmer` を投入した状態で
+  全テストが緑になることを実測で確認済み。`unexpectedKeyframesRules` は
+  `wizard-enter` 以外の keyframes を見ない。
+
+**必須:** グローバル一括リセットが書けない以上、**新規プリミティブには
+`@media (prefers-reduced-motion: reduce)` のペアを必ずコンポーネント単位で書く**。
+既存例: `src/styles.css:359` / `:794` / `:2056`。
+
+hover / focus のトランジション、Skeleton の shimmer、状態遷移の気配は
+**この計画で明確に許可されている**。「オシャレさ」への寄与が最も大きい要素なので、
+契約に触れない範囲で積極的に使うこと。
+
+### ウィザードの既存 CSS は宣言単位で凍結されている
+
+`src/styles.contrast.test.ts:370-814` の `taskRuleDeclarations` は **66 セレクタ**を
+キーに持ち、うち **65 件がウィザード／デザインシステム系**。
+`hasExactDeclarations`（`:816-833`）が宣言数の一致を要求するため、**宣言の追加も削除も
+落ちる**。
+
+**`allowedProtectedSelectors` への追記では回復しない。** `unexpectedProtectedSelectors`
+は `:864` で `taskRuleDeclarations[selector]` を先に引き、存在すれば
+`hasExactDeclarations` を要求する。実測では、既に allowlist に載っている
+`.wizard-title`（`:324`）に `letter-spacing` を 1 行足しただけで 3 テストが落ちた。
+
+**帰結:** これら 66 セレクタは**触らない**。見た目を変えたい場合は新規 `.ui-*`
+セレクタ側で表現する。触る必要が生じたら実装を止めて人間に相談する
+（`taskRuleDeclarations` の書き換えは変更禁止テストの編集にあたる）。
 
 ### 所有境界
 
@@ -184,6 +253,10 @@ grep -nE 'error|FAIL' /tmp/lint.log || tail -n 60 /tmp/lint.log
 ## 各 Phase 完了時の提出物
 
 1. **スクリーンショット**: 幅 **320 / 375 / 768 px** で対象画面を撮影して提出する。
+   `./scripts/run-e2e.sh` はスクリーンショットを出力しない。撮影用の一時 Playwright
+   スクリプトを作り（`e2e/specs/` には置かない。置くと本番 spec として実行される）、
+   `page.setViewportSize({ width, height })` と `page.screenshot({ path })` で 3 幅を撮る。
+   **撮影スクリプトはコミットしない。** 提出物は生成された画像のみ。
    視覚回帰テストはこのリポジトリに存在しない（`toHaveScreenshot` / `toMatchSnapshot`
    が 0 件）ため、**人間の目が「オシャレさ」の唯一のゲート**である。
    768 px を含めるのは、`src/styles.css` の `@media (min-width: 720px)` 配下
