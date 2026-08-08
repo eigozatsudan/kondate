@@ -279,18 +279,32 @@ export function createAuthGateway(
       const code = url.searchParams.get("code");
       const stored = flowId === null ? null : readAuthFlow(flowId, storage);
       const returnTo = sanitizeReturnPath(stored?.returnTo);
-      if (isExpired(null, url)) return { kind: "expired", flowId: flowId ?? "", returnTo };
-      const providerError = url.searchParams.get("error");
-      if (providerError !== null) {
+      // C1: code+state があるときは spoofable な URL error_code より deposit を優先する。
+      // 攻撃者が有効な code に error_code=otp_expired を足しても short-circuit で捨てない。
+      const hasCodeAndState = state !== null && code !== null;
+      if (!hasCodeAndState && isExpired(null, url)) {
+        // C1: ローカル flow があるときは provider-error と同様に state 照合してから expired を受理。
+        // flow UUID だけで error_code を付けた未束縛 URL は unbound（秘密を焼かない）。
+        // AuthCallbackPage は kind=expired で clear するため、ここで state 束縛しないと DoS になる。
         if (stored !== null && state !== stored.state) {
           return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
         }
-        if (flowId !== null) clearAuthFlow(flowId, storage);
-        return {
-          kind: "error",
-          code: providerError === "access_denied" ? "oauth_cancelled" : "auth_callback_failed",
-          returnTo,
-        };
+        return { kind: "expired", flowId: flowId ?? "", returnTo };
+      }
+      // code+state がある場合は error クエリがあっても deposit へ進む（上の C1 と同趣旨）。
+      if (!hasCodeAndState) {
+        const providerError = url.searchParams.get("error");
+        if (providerError !== null) {
+          if (stored !== null && state !== stored.state) {
+            return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+          }
+          if (flowId !== null) clearAuthFlow(flowId, storage);
+          return {
+            kind: "error",
+            code: providerError === "access_denied" ? "oauth_cancelled" : "auth_callback_failed",
+            returnTo,
+          };
+        }
       }
       if (flowId === null) {
         return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
