@@ -1039,6 +1039,104 @@ it("P6: 生成 submit 中は settings をガードし navigate しない", async
   });
 });
 
+it("P1: 生成 submit 中は emergency をガードし navigate / 二重 flush しない", async () => {
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  const startGeneration = vi.fn().mockResolvedValue(true);
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={startGeneration} />);
+
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  await user.click(screen.getByRole("button", { name: "生成" }));
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+  });
+
+  // isSaving で disabled。props 直呼びで submittingRef ガードを検証
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  props.onOpenEmergencyMenus?.();
+  expect(navigateMock).not.toHaveBeenCalledWith("/emergency-menus");
+  // 生成の flush 1 回のみ（緊急が第二 flight を起こさない）
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+
+  deferred.resolve({ ...draft, revision: 4 });
+  await vi.waitFor(() => {
+    expect(startGeneration).toHaveBeenCalled();
+  });
+  expect(navigateMock).not.toHaveBeenCalledWith("/emergency-menus");
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+});
+
+it("P1: emergency open 中は generate をガードし startGeneration / sticky pending しない", async () => {
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  const startGeneration = vi.fn().mockResolvedValue(true);
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={startGeneration} />);
+
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  await user.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+  });
+
+  // emergencyOpeningRef で onSubmit を同期抑止（mock は disabled でも props 直呼び）
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  await props.onSubmit();
+  expect(startGeneration).not.toHaveBeenCalled();
+  expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+
+  deferred.resolve({ ...draft, revision: 4 });
+  await vi.waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith("/emergency-menus");
+  });
+  expect(startGeneration).not.toHaveBeenCalled();
+  expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+});
+
+it("P3: emergency flush 中に pantry が消えると post-flush 再検証で navigate せず PE8 session も書かない", async () => {
+  sessionStorage.clear();
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  const user = userEvent.setup();
+  const view = render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  await user.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+  expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+  // PE8: post-flush 通過前（flush 中）は session に載せない
+  expect(sessionStorage.getItem(`kondate:expired-pantry-confirm:v1:${draft.userId}`)).toBeNull();
+
+  // flush 中に選択 ID が pantry から消える（削除 TOCTOU）
+  queryState.pantry = { data: [], isError: false, isPending: false };
+  view.rerender(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("pantry names")).toHaveTextContent("");
+  });
+
+  deferred.resolve({
+    ...draft,
+    pantrySelections: [
+      {
+        pantryItemId: "74000000-0000-4000-8000-000000000001",
+        priority: "prefer_use",
+      },
+    ],
+    revision: 4,
+  });
+
+  await vi.waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "冷蔵庫から削除された食材の選択を解除してから緊急献立を開いてください。",
+    );
+  });
+  expect(navigateMock).not.toHaveBeenCalledWith("/emergency-menus");
+  // post-flush 失敗経路でも PE8 session を残さない
+  expect(sessionStorage.getItem(`kondate:expired-pantry-confirm:v1:${draft.userId}`)).toBeNull();
+  expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+});
+
 it("P8: privacy 未同意の生成は委譲完了まで再 generate を受け付けない", async () => {
   queryState.privacyConsent = null;
   const deferred = createDeferred<PlannerDraft>();

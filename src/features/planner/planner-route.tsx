@@ -385,6 +385,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // P6: privacy/settings の single-flight（再描画前の連打抑止）
   const privacyOpeningRef = useRef(false);
   const settingsOpeningRef = useRef(false);
+  // P1: 緊急献立 open の同期 single-flight（state 再描画前に generate と二重 flight しない）
+  const emergencyOpeningRef = useRef(false);
   // P1: 利用者 reset 直後だけ route が flush を await する印（conflict resolve の resetToken とは分離）
   const resetFlushGenerationRef = useRef(0);
   const pendingResetFlushRef = useRef(false);
@@ -452,8 +454,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     const eligibleIds = new Set(safetyQuery.data.eligibleMemberIds);
     const nextIds = value.targetMemberIds.filter((id) => eligibleIds.has(id));
     if (nextIds.length === value.targetMemberIds.length) return;
-    if (isOpeningEmergencyMenus) {
+    if (isOpeningEmergencyMenus || emergencyOpeningRef.current) {
+      // strip で緊急 flight を無効化し、同期 ref も落として generate を再解放する
       emergencyOperationIdRef.current += 1;
+      emergencyOpeningRef.current = false;
       setIsOpeningEmergencyMenus(false);
       setSubmissionError("作る相手の条件が変わったため、緊急献立への移動を中止しました。");
     } else if (
@@ -650,6 +654,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const runPrivacyNavigation = useCallback(async (): Promise<boolean> => {
     if (
       privacyOpeningRef.current ||
+      emergencyOpeningRef.current ||
       isOpeningEmergencyMenus ||
       isOpeningSettings ||
       hasDraftConflict ||
@@ -698,10 +703,15 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   }, [isSubmitting, runPrivacyNavigation]);
 
   // 設計 §5.1: AI を使わない緊急献立への導線。route が flush 後に navigate を所有する。
+  // P1: privacy/settings/generate と同型の同期 single-flight（submittingRef / emergencyOpeningRef）。
   const openEmergencyMenus = useCallback((): void => {
     if (
+      emergencyOpeningRef.current ||
       isOpeningEmergencyMenus ||
       isSubmitting ||
+      submittingRef.current ||
+      privacyOpeningRef.current ||
+      settingsOpeningRef.current ||
       isOpeningPrivacy ||
       isOpeningSettings ||
       hasDraftConflict ||
@@ -728,26 +738,55 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       );
       return;
     }
-    // PE8: attempt メモリの当日確認を session に載せ、直接 /emergency-menus 再入場でもゲートを通す。
-    // remount 後に attempt が消えても二重確認を強いず、未確認の直接 URL は emergency 側で止める。
-    if (userId !== undefined) {
-      persistSessionExpiredPantryChecks(userId, attempt.expiredPantryChecks, nowForExpiry);
-    }
+    // P1: setState 再描画前に ref を武装し、generate onSubmit との二重 flight を同期抑止
     const operationId = ++emergencyOperationIdRef.current;
+    emergencyOpeningRef.current = true;
     setIsOpeningEmergencyMenus(true);
     setSubmissionError(null);
     void (async () => {
       try {
-        await flushDraft();
+        const saved = await flushDraft();
         if (!mountedRef.current || operationId !== emergencyOperationIdRef.current) {
           return;
         }
-        void navigate("/emergency-menus");
-        // 遷移後もフラグを落とす。route が残る経路で isSaving が固着し wizard が死ぬのを防ぐ。
-        // navigate 後も同 operation なら落とす（mounted 判定は上の early-return で十分）。
-        if (operationId === emergencyOperationIdRef.current) {
-          setIsOpeningEmergencyMenus(false);
+        // P3: flush 中の pantry 削除/期限更新 TOCTOU を pantryRowsRef で再検証（生成 post-flush と同型）。
+        // pre-flush 成功だけでは session に載せてから失敗したときの stale handoff が残る。
+        {
+          const pantryRowsLatest = pantryRowsRef.current;
+          const pantryIdSetLatest = new Set(pantryRowsLatest.map((item) => item.id));
+          if (
+            saved.pantrySelections.some(
+              (selection) => !pantryIdSetLatest.has(selection.pantryItemId),
+            )
+          ) {
+            setSubmissionError(
+              "冷蔵庫から削除された食材の選択を解除してから緊急献立を開いてください。",
+            );
+            return;
+          }
+          const nowForExpiryPostFlush = new Date();
+          const hasUnconfirmedExpiredPostFlush = saved.pantrySelections.some((selection) => {
+            const item = pantryRowsLatest.find((entry) => entry.id === selection.pantryItemId);
+            if (item === undefined) return false;
+            return (
+              isPastEnteredExpiry(item, nowForExpiryPostFlush) &&
+              !hasCurrentExpiredConfirmation(attempt, item.id, nowForExpiryPostFlush)
+            );
+          });
+          if (hasUnconfirmedExpiredPostFlush) {
+            setSubmissionError(
+              "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから緊急献立を開いてください。",
+            );
+            return;
+          }
         }
+        // PE8: post-flush 通過後・navigate 直前だけ session に載せる。
+        // flush 失敗や post-flush ゲート失敗で planner に留まる経路に stale 当日確認を残さない。
+        // ここまで sync のみのため operationId 再読は不要（await は flush 直後の 1 回だけ）。
+        if (userId !== undefined) {
+          persistSessionExpiredPantryChecks(userId, attempt.expiredPantryChecks, new Date());
+        }
+        void navigate("/emergency-menus");
       } catch (error) {
         if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
           // C-I14: 緊急導線の保存失敗は生成失敗と別文言（生成していないのに「生成」と言わない）。
@@ -757,7 +796,15 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               ? "人数など必要な条件が未設定のため、緊急献立を開けませんでした。確認画面で内容を見直してください。"
               : "条件を保存できなかったため、緊急献立を開けませんでした。通信を確認して再度お試しください。",
           );
-          setIsOpeningEmergencyMenus(false);
+        }
+      } finally {
+        // 遷移後もフラグを落とす。route が残る経路で isSaving が固着し wizard が死ぬのを防ぐ。
+        // strip が operationId を進めて ref を落としている場合は上書きしない。
+        if (operationId === emergencyOperationIdRef.current) {
+          emergencyOpeningRef.current = false;
+          if (mountedRef.current) {
+            setIsOpeningEmergencyMenus(false);
+          }
         }
       }
     })();
@@ -782,6 +829,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const openSettings = useCallback((): void => {
     if (
       settingsOpeningRef.current ||
+      emergencyOpeningRef.current ||
       isOpeningEmergencyMenus ||
       isOpeningPrivacy ||
       isSubmitting ||
@@ -979,7 +1027,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         }
         onSubmit={async () => {
           // P8: React 再描画前の二重 click を同期 ref で抑止（idea audience の confirmingRef と同型）
-          if (submittingRef.current) return;
+          // P1: 緊急 open 中は generate を受け付けない（二重 flush / sticky pending と session 乖離を防ぐ）
+          if (submittingRef.current || emergencyOpeningRef.current) return;
           setSubmissionError(null);
           setFieldErrors({});
           // P4: safety/pantry soft 失敗中は stale previous data で送信しない
