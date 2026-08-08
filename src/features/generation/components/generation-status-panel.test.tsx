@@ -249,7 +249,8 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByText("献立は完成していないので、作成回数は減っていません")).toBeVisible();
     expect(screen.queryByText("成功回数には含まれません")).not.toBeInTheDocument();
     expect(screen.getByText("無料版は本日あと2回まで献立の作成を受け付けます")).toBeVisible();
-    expect(screen.getByText(/^再開:/u)).toBeVisible();
+    // 日次枠の retryAt（翌 JST 0:00）は「明日H:MM」
+    expect(screen.getByText(/^再開: 明日/u)).toBeVisible();
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(
       "href",
       "/emergency-menus",
@@ -258,6 +259,33 @@ describe("GenerationStatusPanel", () => {
       "href",
       "/history",
     );
+  });
+
+  it("G1: quality_monthly_limit retryAt (next JST month) does not show 明日", () => {
+    // 2026-07-20 JST 相当の NOW から翌月初 = 2026-08-01 00:00 JST = 2026-07-31T15:00:00.000Z
+    const nextMonthStart = "2026-07-31T15:00:00+00:00";
+    const monthlyFailed: GenerationClientState = {
+      phase: "failed",
+      data: {
+        ...failedData,
+        error: {
+          code: "quality_monthly_limit",
+          message: "今月のプレミアム回数を使い切りました。",
+          retryable: false,
+        },
+        quota: {
+          ...quota,
+          retryAt: nextMonthStart,
+        },
+      },
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={monthlyFailed} />);
+    const resume = screen.getByText(/^再開:/u);
+    expect(resume).toBeVisible();
+    expect(resume).not.toHaveTextContent(/明日/u);
+    // 絶対日時（formatRetryAt / ja-JP short）を含むこと
+    expect(resume).toHaveTextContent(/2026/u);
   });
 
   it("shows Plus hard-limit CTA on Free daily limit failure without usage userId", () => {
