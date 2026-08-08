@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef } from "react";
+import { withTimeout } from "@/features/auth/async-timeout";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { shareConsentSettingsCopy } from "./privacy-copy";
 import {
@@ -15,6 +16,13 @@ import { shareConsentKeys } from "./share-consent-queries";
 
 /** AP12: 跨タブで同意 cache を invalidate するための BroadcastChannel 名 */
 export const SHARE_CONSENT_BROADCAST_CHANNEL = "kondate:share-consent";
+
+/**
+ * AP6: 設定トグルの revoke/reaccept（+ 再読）上限。
+ * never-settle で switch が disabled のまま固着し「協力を止める」が完了不能になるのを防ぐ。
+ * privacy accept（PRIVACY_ACCEPT_TIMEOUT_MS）と同値。
+ */
+export const SHARE_CONSENT_TOGGLE_TIMEOUT_MS = 10_000;
 
 export type ShareConsentSettingsSectionProps = {
   userId: string;
@@ -128,21 +136,25 @@ export function ShareConsentSettingsSection({
     mutationFn: async (nextEnabled: boolean) => {
       const generation = ++mutationGenerationRef.current;
       if (onToggle !== undefined) {
-        await onToggle(nextEnabled);
+        // AP6: 注入ハンドラも同上限（テストの never-settle と本番 RPC を揃える）
+        await withTimeout(onToggle(nextEnabled), SHARE_CONSENT_TOGGLE_TIMEOUT_MS);
         return { nextEnabled, generation };
       }
       const client = getBrowserSupabaseClient();
       // off → revoke、on → 現行 version で reaccept（upsert 本体は API 側）
-      const next = nextEnabled
-        ? await reacceptMyShareConsent(client)
-        : await revokeMyShareConsent(client);
+      // AP6: never-settle で switch disabled 固着を防ぐ（timeout → saveError + 再有効化）
+      const next = await withTimeout(
+        nextEnabled ? reacceptMyShareConsent(client) : revokeMyShareConsent(client),
+        SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
+      );
       // AP12: 古い mutation の応答は捨て、最新世代だけ cache を更新する
       if (generation !== mutationGenerationRef.current) {
         return { nextEnabled, generation, discarded: true as const };
       }
       // サーバ再読で最終状態を正とする（他タブ完了分を拾う）
+      // AP6: 再読も同上限。timeout/失敗時は mutation 結果 next にフォールバック（同意操作自体は成功扱い）
       try {
-        const fresh = await getMyShareConsent(client);
+        const fresh = await withTimeout(getMyShareConsent(client), SHARE_CONSENT_TOGGLE_TIMEOUT_MS);
         if (generation === mutationGenerationRef.current) {
           queryClient.setQueryData(shareConsentKeys.current(userId), fresh);
         }

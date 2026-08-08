@@ -13,11 +13,11 @@
 - 派生グループ内の案の見比べと、任意の案からの再生成
 - 家族オンボーディングの次アクション案内、対象外食事の明示と追加前確認
 - 安全: 現行の家族制約が履歴スナップショットより優先。保証表現は出さない
-- **匿名緊急共有**（任意同意・既定オフ）: 生成成功後に適格・抽選で一般化し、他利用者の緊急候補へ。設定で同意の on/off と提供一覧（タイトル・日付のみ）
+- **匿名緊急共有**（任意同意・既定オン（外せる））: 生成成功後に適格・抽選で一般化し、他利用者の緊急候補へ。設定で同意の on/off と提供一覧（タイトル・日付のみ）
 
 無料のまま日常の献立づくりに使える **永久フリーミアム** に加え、有料プラン **「こんだて日和 Plus」**（Stripe Checkout / Customer Portal）で日次枠の拡大・品質モード・チラシ写真からの 1 週間献立を提供します。課金の正本はブラウザではなく **Netlify Functions + Stripe Webhook + Postgres** です。
 
-> **一時ゲート（契約定数）**: いまの main では Plus のアップグレード申込が **開発中クローズ**（`PLUS_LP_UPGRADE_COMING_SOON = true`。LP / 設定 / `POST /api/billing/checkout` を dual-surface で同期）です。ログイン画面の **メール導線もいったん非表示**（`SHOW_EMAIL_LOGIN = false`。API・callback は維持。`?emailLogin=1` で再表示）。いずれも公開時に定数を戻します。
+> **一時ゲート（契約定数）**: いまの main では Plus のアップグレード申込が **開発中クローズ**（`PLUS_LP_UPGRADE_COMING_SOON = true`。LP / 設定 / `POST /api/billing/checkout` を dual-surface で同期）です。ログイン画面の **メール（マジックリンク）導線は表示**（`SHOW_EMAIL_LOGIN = true`。一時的に隠すときは `false` にし `?emailLogin=1` で再表示可）。
 
 この repository には React アプリ、Netlify Functions、共有 contract、Supabase の schema、Stripe 連携、ローカル開発環境が含まれます。
 
@@ -101,11 +101,11 @@ http://127.0.0.1:5173
 
 #### メール（マジックリンク）
 
-`AuthGateway.sendMagicLink`・callback・sent/expired UI は実装済みですが、ログイン画面のメール入力は **`SHOW_EMAIL_LOGIN = false` でいったん非表示**です（期限切れ復帰など必要な経路では自動表示）。
+`AuthGateway.sendMagicLink`・callback・sent/expired UI と、ログイン画面のメール入力（**`SHOW_EMAIL_LOGIN = true`**）が有効です。一時的に隠すときは定数を `false` にし、`?emailLogin=1` または期限切れ復帰で再表示できます。
 
-手動・E2E でフォームを出すとき:
+ローカルでの手動確認:
 
-1. [http://127.0.0.1:5173/login?emailLogin=1](http://127.0.0.1:5173/login?emailLogin=1) を開く（または定数を `true` に戻す）
+1. [http://127.0.0.1:5173/login](http://127.0.0.1:5173/login) を開く
 2. メールアドレスを入れ「ログイン用メールを送る」
 3. Mailpit UI（[http://127.0.0.1:8025](http://127.0.0.1:8025)）でメールを開き、リンクから続行する
 
@@ -187,11 +187,11 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 #### 5. ブラウザで試す
 
 1. [http://127.0.0.1:5173](http://127.0.0.1:5173) を開く（`localhost` ではない。未ログインなら無料 LP）
-2. `/login` で Google（oauth-mock）。メールは `?emailLogin=1` が必要（上節）
+2. `/login` で Google（oauth-mock）またはメール（マジックリンク。Mailpit で受信）
 3. 初回は `/welcome`。「献立アイデアを考える」または「家族情報を登録する」を選ぶ
 4. `/planner` のウィザード（食事 → 食材 → ジャンル → 家族/アイデア → 確認）で条件を入れ、**献立を作る**
    - 未同意なら AI 情報送信の説明（`/privacy`）を先に確認する（必須）
-   - 同画面の**匿名緊急共有**は任意チェック（既定オフ）。ON にすると適格な完成献立が抽選で共有一般化の対象になる
+   - 同画面の**匿名緊急共有**は任意チェック（既定オン。不要なら外す。失敗時は設定のトグルで再設定可）。外さなければ適格な完成献立が抽選で共有一般化の対象になる
    - Plus の品質モードは Free / kill / COMING_SOON では選べない（サーバが clamp）
 5. `/generation`（段階進捗表示）のあと結果（`/menus/:menuId`）が出れば、実 OpenRouter 経由で動いている
 6. 緊急献立（`/emergency-menus`）は AI 枠を消費しない。固定 fixture（S1）優先のうえ、空き枠だけコミュニティプール（S2）を載せる
@@ -241,7 +241,7 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 | 項目     | 内容                                                                                                                     |
 | -------- | ------------------------------------------------------------------------------------------------------------------------ |
-| 同意     | `/privacy` の**任意**チェック（既定オフ）。AI 説明同意とは別テーブル・別版（`shareConsentVersion`）                      |
+| 同意     | `/privacy` の**任意**チェック（既定オン（外せる））。AI 説明同意とは別テーブル・別版（`shareConsentVersion`）            |
 | 蓄積     | 生成成功後のみ。適格ゲート → 日次 cap → **20% 抽選** → job。生成 UX を待たせない・失敗させない                           |
 | 一般化   | 独立 worker（Pass1 一般化 → Pass2 点検）+ サーバー関門（Zod・材料グラフ不変・denylist）。不合格は非掲載                  |
 | 他者向け | 緊急候補に**混ざるだけ**。提供者名・「共有」バッジなし                                                                   |
@@ -496,7 +496,7 @@ npm run preflight:production
 | 症状                                     | 確認すること                                                                                                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 設定 / LP に Checkout が出ない           | まず `PLUS_LP_UPGRADE_COMING_SOON`（意図的クローズ）。次に `BILLING_ENABLED` と `productSurfacesOpen`                                                                    |
-| ログインにメール欄が無い                 | 意図的。`?emailLogin=1` または `SHOW_EMAIL_LOGIN`。gateway 自体は生きている                                                                                              |
+| ログインにメール欄が無い                 | `SHOW_EMAIL_LOGIN` が `false` になっていないか。gateway は常に生きている。再表示は定数 `true` または `?emailLogin=1`                                                     |
 | Checkout 後も Free のまま                | Webhook が届いているか、署名 secret が endpoint と一致か、`supabase_user_id` metadata / customer マップ                                                                  |
 | 品質モードが「通信を確認」になる         | 古いクライアント。現行は `quality_mode_requires_plus` を端末失敗として表示                                                                                               |
 | 献立作成が「通信を確認しています」のまま | 業務エラー（同意・下書き・枠等）を offline に落としていた古いクライアント。現行は failed 画面。本当の通信断のみ offline 自動再試行                                       |

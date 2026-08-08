@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   beginShoppingIntentCycle,
   cancelPendingIntentClear,
+  cancelPendingResumeSuppressClear,
   clearShoppingIntentCycle,
   clearShoppingResumeSuppress,
   clearShoppingSheetExpected,
@@ -17,6 +18,7 @@ import {
   markShoppingSheetAutoOpened,
   menusPathForShopping,
   scheduleIntentClear,
+  scheduleResumeSuppressClear,
   shoppingDidAutoOpenKey,
   shoppingIntentStorageKey,
   shoppingResumeSuppressKey,
@@ -194,6 +196,59 @@ describe("shopping resume suppress (SHOP6)", () => {
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
     expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(true);
     clearShoppingResumeSuppress("create", MENU);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+    expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(true);
+  });
+});
+
+describe("resume suppress unmount clear (SHOP1)", () => {
+  // Cancel なし abandon-navigate 相当: schedule 後に suppress が落ち、sticky は別経路で保持する。
+  it("schedule alone clears suppress after timeout without touching other kinds", () => {
+    markShoppingResumeSuppress("create", MENU);
+    markShoppingResumeSuppress("reconcile", LIST);
+    scheduleResumeSuppressClear("create", MENU);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
+    vi.advanceTimersByTime(0);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+    expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(true);
+  });
+
+  it("cancel after schedule keeps suppress (StrictMode remount / SHOP6)", () => {
+    markShoppingResumeSuppress("create", MENU);
+    scheduleResumeSuppressClear("create", MENU);
+    cancelPendingResumeSuppressClear("create", MENU);
+    vi.advanceTimersByTime(0);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
+  });
+
+  it("does not clear sticky create command when suppress is scheduled away", () => {
+    // abandon-navigate は suppress だけ落とし sticky を残す（pause-not-abandon）
+    sessionStorage.setItem(
+      pendingShoppingCommandStorageKey("create", MENU),
+      JSON.stringify({
+        createdAtMs: Date.now(),
+        command: {
+          menuId: MENU,
+          mode: "new",
+          activeListId: null,
+          expectedListVersion: null,
+          idempotencyKey: "00000000-0000-4000-8000-0000000000cc",
+        },
+      }),
+    );
+    markShoppingResumeSuppress("create", MENU);
+    scheduleResumeSuppressClear("create", MENU);
+    vi.advanceTimersByTime(0);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+    expect(hasPendingCreateCommand(MENU)).toBe(true);
+  });
+
+  it("scopes schedule/cancel by kind and targetId", () => {
+    markShoppingResumeSuppress("create", MENU);
+    markShoppingResumeSuppress("reconcile", LIST);
+    scheduleResumeSuppressClear("create", MENU);
+    cancelPendingResumeSuppressClear("reconcile", LIST);
+    vi.advanceTimersByTime(0);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
     expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(true);
   });

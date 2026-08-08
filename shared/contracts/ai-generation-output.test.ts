@@ -270,6 +270,19 @@ describe("aiGeneratedMenuPayloadSchema", () => {
     expect(aiGeneratedMenuPayloadSchema.safeParse(withQuantity(1.234)).success).toBe(true);
   });
 
+  it("rejects off-grid pantryUsage.plannedQuantity early at AI Zod (S1)", () => {
+    const withPlanned = (plannedQuantity: number | null) => ({
+      ...validPayload,
+      pantryUsage: [{ ...validPayload.pantryUsage[0], plannedQuantity }],
+    });
+    // G17 が ingredient へ転記する planned も milli グリッド必須。0 は materialize→null 用に許容
+    expect(aiGeneratedMenuPayloadSchema.safeParse(withPlanned(1e-10)).success).toBe(false);
+    expect(aiGeneratedMenuPayloadSchema.safeParse(withPlanned(1.23456789)).success).toBe(false);
+    expect(aiGeneratedMenuPayloadSchema.safeParse(withPlanned(0.001)).success).toBe(true);
+    expect(aiGeneratedMenuPayloadSchema.safeParse(withPlanned(0)).success).toBe(true);
+    expect(aiGeneratedMenuPayloadSchema.safeParse(withPlanned(null)).success).toBe(true);
+  });
+
   it("rejects dinner with fewer dishes than mealType minimum (S11)", () => {
     // dinner 最低 3 品。1 品は AI wire で早期拒否（後段 invalid_ai_response 前）
     expect(

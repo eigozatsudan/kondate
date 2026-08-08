@@ -11,6 +11,18 @@ export type StoreSection = (typeof storeSections)[number];
  */
 export const shoppingItemsMax = 500 as const;
 
+/**
+ * 1 品目あたり sourceIngredients の上限。
+ * dish 材料 max(50) と揃え、合算後の 1 行病理的膨張を閉じる（S8）。
+ */
+export const shoppingSourceIngredientsMax = 50 as const;
+
+/**
+ * 1 品目あたり labelWarnings の上限。
+ * emergency labelWarnings.max(200) と同型。list 全体は listLabelWarnings.max(300)（S8）。
+ */
+export const shoppingItemLabelWarningsMax = 200 as const;
+
 /** 材料・draft・list で AI/pantry と同一の数量正本（天井 + milli グリッド） */
 const shoppingQuantityValue = nullablePositiveQuantity;
 
@@ -57,8 +69,12 @@ export const shoppingDraftItemSchema = z
     quantityText: z.string().trim().min(1).max(60),
     unit: z.string().trim().min(1).max(24).nullable(),
     pantryCheckRequired: z.boolean(),
-    sourceIngredients: z.array(shoppingSourceIngredientSchema).min(1),
-    labelWarnings: z.array(shoppingLabelSnapshotSchema),
+    // ネスト配列も天井付き（外側 items max だけでは 1 行の病理的膨張を閉じられない・S8）
+    sourceIngredients: z
+      .array(shoppingSourceIngredientSchema)
+      .min(1)
+      .max(shoppingSourceIngredientsMax),
+    labelWarnings: z.array(shoppingLabelSnapshotSchema).max(shoppingItemLabelWarningsMax),
   })
   .strict();
 
@@ -85,7 +101,7 @@ export const shoppingItemSchema = z
     isManual: z.boolean(),
     isManuallyEdited: z.boolean(),
     isRemovedByUser: z.boolean(),
-    labelWarnings: z.array(shoppingLabelSnapshotSchema),
+    labelWarnings: z.array(shoppingLabelSnapshotSchema).max(shoppingItemLabelWarningsMax),
   })
   .strict();
 

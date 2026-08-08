@@ -1285,6 +1285,29 @@ describe("materializeDishRegenerationCandidate", () => {
     ).toBe(true);
   });
 
+  it("normalizes non-pantry tablespoon quantities on replacement dish", () => {
+    const { execution, uuid } = makeDishRegenerationExecutionContext();
+    const output = makeDishRegenerationAiOutput();
+    output.replacementDish.ingredients[0] = {
+      ingredientRef: "ingredient_10",
+      position: 1,
+      name: "オリーブ油",
+      quantityValue: 15,
+      quantityText: "15大さじ",
+      unit: "大さじ",
+      storeSection: "seasonings",
+      pantryRef: null,
+      labelConfirmationRequired: false,
+    };
+    const candidate = materializeDishRegenerationCandidate(execution, output, uuid);
+    const oil = candidate.dishes.flatMap((d) => d.ingredients).find((i) => i.name === "オリーブ油");
+    expect(oil).toMatchObject({
+      quantityValue: 225,
+      quantityText: "225ml",
+      unit: "ml",
+    });
+  });
+
   // G2/G3/G4: dish materialize を full_menu の pantry integrity / safetyTags strip と揃える
   it("G2/G3/G4: aligns pantry name/unit/quantity/shortage and strips safetyTags", () => {
     const pantryItemId = "61000000-0000-4000-8000-000000000099";

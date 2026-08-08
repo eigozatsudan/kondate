@@ -119,7 +119,8 @@ export function hasPendingCreateCommand(menuId: string): boolean {
  * SHOP6: create/reconcile シートを開いているあいだ resume を止める印。
  * React の shoppingSheet は remount で消えるが sessionStorage は残るため、
  * モード/approval 選び直し中のハードリロードで旧 sticky が自動 POST される窓を閉じる。
- * Cancel / 成功 / code 付き fail で明示 clear → SHOP1 どおり sticky 再送を再開できる。
+ * Cancel / 成功 / code 付き fail / menu-detail 真 unmount（SHOP1 遅延 clear）で明示 clear
+ * → sticky は残したまま resume 再送を再開できる（pause-not-abandon）。
  */
 export function shoppingResumeSuppressKey(kind: "create" | "reconcile", targetId: string): string {
   return `kondate:shopping:resume-suppress:v1:${kind}:${targetId}`;
@@ -138,6 +139,39 @@ export function markShoppingResumeSuppress(kind: "create" | "reconcile", targetI
 
 export function clearShoppingResumeSuppress(kind: "create" | "reconcile", targetId: string): void {
   sessionStorage.removeItem(shoppingResumeSuppressKey(kind, targetId));
+}
+
+/**
+ * SHOP1: resume-suppress の unmount 遅延 clear（intent clear と同型）。
+ * Cancel なし abandon-navigate で suppress が残り sticky 復旧が凍る穴を閉じる。
+ * StrictMode remount では cancel が先に走り、シート選び直し中の suppress は残す（SHOP6）。
+ * sticky 本体は触らない（pause-not-abandon）。
+ */
+const pendingResumeSuppressClears = new Map<string, ReturnType<typeof setTimeout>>();
+
+function resumeSuppressClearMapKey(kind: "create" | "reconcile", targetId: string): string {
+  return `${kind}:${targetId}`;
+}
+
+export function scheduleResumeSuppressClear(kind: "create" | "reconcile", targetId: string): void {
+  cancelPendingResumeSuppressClear(kind, targetId);
+  const mapKey = resumeSuppressClearMapKey(kind, targetId);
+  const handle = setTimeout(() => {
+    pendingResumeSuppressClears.delete(mapKey);
+    clearShoppingResumeSuppress(kind, targetId);
+  }, 0);
+  pendingResumeSuppressClears.set(mapKey, handle);
+}
+
+export function cancelPendingResumeSuppressClear(
+  kind: "create" | "reconcile",
+  targetId: string,
+): void {
+  const mapKey = resumeSuppressClearMapKey(kind, targetId);
+  const handle = pendingResumeSuppressClears.get(mapKey);
+  if (handle === undefined) return;
+  clearTimeout(handle);
+  pendingResumeSuppressClears.delete(mapKey);
 }
 
 /**

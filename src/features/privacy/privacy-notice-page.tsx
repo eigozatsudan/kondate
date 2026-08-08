@@ -87,9 +87,9 @@ export function PrivacyNoticeContent({
   onAccept: (input: PrivacyAcceptInput) => void;
   onSkip: () => void;
 }) {
-  // 共有は既定 unchecked。primary の enable 条件には使わない
+  // 共有は既定 checked（任意。primary の enable 条件には使わない）
   const [checked, setChecked] = useState(false);
-  const [shareChecked, setShareChecked] = useState(false);
+  const [shareChecked, setShareChecked] = useState(true);
   return (
     <main className="page-frame stack">
       <div>
@@ -121,10 +121,11 @@ export function PrivacyNoticeContent({
         />
         説明を確認しました
       </label>
-      {/* 共有は必須 AI 同意と視覚的に分離した別カード。推奨トーンや既定オンにしない */}
+      {/* 共有は必須 AI 同意と視覚的に分離した別カード。既定オン・推奨トーンなし。任意のまま */}
       <section className="card" aria-labelledby="share-consent-heading">
         <h2 id="share-consent-heading">{shareConsentSection.title}</h2>
         <p>{shareConsentSection.body}</p>
+        <p className="type-small">{shareConsentSection.defaultCheckedHint}</p>
         <label className="control-label">
           <input
             type="checkbox"

@@ -27,6 +27,7 @@ import type { GenerationContext } from "../../../shared/safety/generation-contex
 import { createIdeaSafetyFingerprint } from "../../../shared/safety/idea-fingerprint.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { formatQuantityValue } from "../../../shared/shopping/normalize.js";
+import { normalizeIngredientQuantity } from "../../../shared/shopping/quantity-display.js";
 import type { AuthenticatedUser } from "./generation-repository.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
 import { HttpError } from "./http.js";
@@ -903,6 +904,16 @@ export function materializeDishRegenerationCandidate(
             item.quantityText,
           );
         }
+      } else {
+        // 買い足しのみ読みやすい分量へ（full_menu materializer と同趣旨）
+        const normalized = normalizeIngredientQuantity({
+          quantityValue,
+          quantityText,
+          unit,
+        });
+        quantityValue = normalized.quantityValue;
+        quantityText = normalized.quantityText;
+        unit = normalized.unit;
       }
       return {
         id: requiredMap(ingredientIdByRef, item.ingredientRef),

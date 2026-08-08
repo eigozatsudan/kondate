@@ -256,11 +256,14 @@ describe("WelcomeRoutePage L4 first-writer", () => {
       });
       expect(setOnboardingStatusMock).toHaveBeenCalled();
       await act(async () => {
-        // C5 + reconcile grace（re-read は not_started → 一旦失敗し得る）
+        // C5 + reconcile grace（CAS outstanding → single-flight 維持、即失敗 UI にしない）
         await vi.advanceTimersByTimeAsync(
           COLD_START_SESSION_DEADLINE_MS + WELCOME_START_RECONCILE_GRACE_MS,
         );
       });
+      // post-grace でも CAS 待ちのため CTA は閉じたまま（opposite dual-flight 防止）
+      expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
       // findBy / RR navigate は real timer 下で待つ（fake 下の findBy は testTimeout までハング）
       vi.useRealTimers();
@@ -273,6 +276,60 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     });
     expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/planner");
+  });
+
+  it("L1: post-grace CAS hang keeps single-flight; opposite CTA does not issue second CAS", async () => {
+    // C5+grace 後も zombie CAS が pending の間は双方 CTA を閉じ、opposite が dual-flight しない
+    let resolveCas: ((value: { onboarding_status: string }) => void) | undefined;
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    setOnboardingStatusMock.mockImplementation(
+      () =>
+        new Promise<{ onboarding_status: string }>((resolve) => {
+          resolveCas = resolve;
+        }),
+    );
+    const router = renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(setOnboardingStatusMock).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          COLD_START_SESSION_DEADLINE_MS + WELCOME_START_RECONCILE_GRACE_MS,
+        );
+      });
+      // false failure で双方 CTA を開けない（pre-CAS hang と非対称）
+      expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      // opposite CTA は disabled。クリックしても第二 CAS は出ない
+      const household = screen.getByRole("button", { name: "家族情報を登録する" });
+      expect(household).toBeDisabled();
+      fireEvent.click(household);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(setOnboardingStatusMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    // 第一 CAS が skipped で着地 → household 意図の dual CAS なしで /planner へ単一 reconcile
+    await act(async () => {
+      resolveCas?.({ onboarding_status: "skipped" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/planner");
+    expect(setOnboardingStatusMock).toHaveBeenCalledTimes(1);
+    expect(setOnboardingStatusMock).toHaveBeenCalledWith(expect.anything(), userId, "skipped", {
+      expectedStatus: "not_started",
+    });
   });
 
   it("L2: unmount during start does not zombie-navigate after late CAS", async () => {

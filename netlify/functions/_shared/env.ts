@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { STRIPE_API_VERSION } from "../../../shared/contracts/billing.js";
 import {
@@ -446,6 +447,11 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
     }
   }
   const { GENERATION_REQUEST_HMAC_KEY, QUOTA_IDENTITY_HMAC_KEY, ...publicEnv } = result.data;
+  // identity 日次枠と generation request integrity は別ドメイン。
+  // 32 バイト同一材料は blast radius 拡大のため fail-closed（コメント「共用しない」の実行面・S4）
+  if (timingSafeEqual(GENERATION_REQUEST_HMAC_KEY, QUOTA_IDENTITY_HMAC_KEY)) {
+    throw new Error("server_configuration_invalid");
+  }
   return {
     ...publicEnv,
     isLocal,

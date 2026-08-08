@@ -63,6 +63,7 @@ import {
   useShoppingSafetyGate,
 } from "@/features/shopping/hooks/use-shopping-list";
 import {
+  cancelPendingResumeSuppressClear,
   clearShoppingResumeSuppress,
   discardAppendCreateCommandIfPresent,
   hasPendingCreateCommand,
@@ -71,6 +72,7 @@ import {
   isShoppingResumeSuppressed,
   isShoppingSheetExpected,
   markShoppingResumeSuppress,
+  scheduleResumeSuppressClear,
 } from "@/features/shopping/shopping-intent";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { type MenuDetailRevalidationView, type MenuDetailSurface } from "./menu-detail-types";
@@ -275,6 +277,29 @@ export function HouseholdMenuDetailBody({
     activeList,
   ]);
 
+  // SHOP1: menu-detail 真 unmount で create resume-suppress を遅延 clear。
+  // Cancel なし abandon-navigate 後も sticky があるなら auto-resume を再開する。
+  // StrictMode remount では cancel が先に走り SHOP6（選び直し中 suppress 保持）を壊さない。
+  // sticky は触らない（SHOP2 pause-not-abandon）。
+  useEffect(() => {
+    if (menuId.length === 0) return;
+    cancelPendingResumeSuppressClear("create", menuId);
+    return () => {
+      scheduleResumeSuppressClear("create", menuId);
+    };
+  }, [menuId]);
+
+  // SHOP1: reconcile suppress も list を見ている surface の真 unmount / list 切替で落とす。
+  // create とは deps を分け、activeList 変化で create suppress を誤 clear しない。
+  useEffect(() => {
+    const listId = activeList?.id;
+    if (listId === undefined) return;
+    cancelPendingResumeSuppressClear("reconcile", listId);
+    return () => {
+      scheduleResumeSuppressClear("reconcile", listId);
+    };
+  }, [activeList?.id]);
+
   // SHOP2: gate blocked 中は create resume が止むため submitCreate 内の append clear が
   // 到達しない。blocked 遷移で append sticky を捨て、ready 復帰後の旧 append 自動再送を防ぐ。
   useEffect(() => {
@@ -393,7 +418,8 @@ export function HouseholdMenuDetailBody({
     // （mode/list/version 照合 rebuild）を focus/online がすり抜けて旧 sticky を
     // 飛ばす dual-intent 窓を閉じる。シート閉じ後に enabled 復帰で再試行。
     // SHOP6: suppress は sessionStorage。remount で shoppingSheet が null でも
-    // 選び直し中の旧 sticky 自動 POST を抑止する（Cancel で clear → SHOP1 再送）。
+    // 選び直し中の旧 sticky 自動 POST を抑止する。
+    // Cancel または menu-detail 真 unmount（SHOP1 遅延 clear）で suppress を落とし sticky 再送。
     enabled:
       actionsEnabled &&
       !shoppingGate.blocked &&
@@ -407,6 +433,7 @@ export function HouseholdMenuDetailBody({
     submit: (command: ReconcileShoppingListRequest) =>
       submitReconcile(activeList?.id ?? "", command),
     // SHOP1 + SHOP6: reconcile シート表示中 / suppress 中は resume しない。
+    // suppress は Cancel または menu-detail 真 unmount の遅延 clear で落ちる。
     enabled:
       actionsEnabled &&
       !shoppingGate.blocked &&

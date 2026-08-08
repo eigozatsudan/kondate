@@ -189,6 +189,22 @@ describe("parseOpenRouterModels", () => {
     ).toThrow("server_configuration_invalid");
   });
 
+  it("rejects equal GENERATION_REQUEST and QUOTA_IDENTITY HMAC keys after 32-byte decode (S4)", () => {
+    // 両鍵とも canonical 32 バイトだが材料が同一 → blast radius 拡大のため fail-closed
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        QUOTA_IDENTITY_HMAC_KEY: validServerEnv.GENERATION_REQUEST_HMAC_KEY,
+      }),
+    ).toThrow("server_configuration_invalid");
+  });
+
+  it("accepts distinct GENERATION_REQUEST and QUOTA_IDENTITY HMAC keys (S4)", () => {
+    expect(() => parseServerEnv(validServerEnv)).not.toThrow();
+    const parsed = parseServerEnv(validServerEnv);
+    expect(parsed.generationIntegrity.requestHmacKey).not.toEqual(parsed.quotaIdentityHmacKey);
+  });
+
   it.each(["0", String(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX + 1)])(
     "rejects out-of-range global quota %s",
     (value) => {

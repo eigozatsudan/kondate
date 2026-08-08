@@ -19,4 +19,14 @@ describe("normalizeUnit (PE8)", () => {
     expect(normalizeUnit(null)).toBeNull();
     expect(normalizeUnit("  ")).toBeNull();
   });
+
+  it("maps tablespoon/teaspoon Japanese synonyms to canonical spoon units", () => {
+    expect(normalizeUnit("大さじ")).toBe("大さじ");
+    expect(normalizeUnit("大匙")).toBe("大さじ");
+    expect(normalizeUnit("小さじ")).toBe("小さじ");
+    expect(normalizeUnit("小匙")).toBe("小さじ");
+    // 英語は合法化しない
+    expect(normalizeUnit("tbsp")).toBe("tbsp");
+    expect(normalizeUnit("tsp")).toBe("tsp");
+  });
 });

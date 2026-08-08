@@ -1,12 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { shareConsentVersion } from "@shared/contracts/share-consent";
 import { shareConsentSettingsCopy } from "./privacy-copy";
 import type { ShareConsentState, SharedEmergencyRecipeListItem } from "./share-consent-api";
-import { ShareConsentSettingsSection } from "./share-consent-settings-section";
+import {
+  SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
+  ShareConsentSettingsSection,
+} from "./share-consent-settings-section";
 
 const acceptedConsent: ShareConsentState = {
   consent_version: shareConsentVersion,
@@ -220,5 +223,33 @@ describe("ShareConsentSettingsSection", () => {
     await waitFor(() => {
       expect(toggle).not.toBeDisabled();
     });
+  });
+
+  it("AP6: never-settle toggle times out so pending clears and saveError shows", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      // revoke/reaccept が settle しない共有端末固着を再現
+      const onToggle = vi.fn(() => new Promise<void>(() => undefined));
+      renderSection({ consent: acceptedConsent, onToggle });
+
+      const toggle = screen.getByRole("switch", { name: shareConsentSettingsCopy.toggleLabel });
+      await user.click(toggle);
+      await waitFor(() => {
+        expect(onToggle).toHaveBeenCalledTimes(1);
+      });
+      expect(toggle).toBeDisabled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_TOGGLE_TIMEOUT_MS + 50);
+      });
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        shareConsentSettingsCopy.saveError,
+      );
+      expect(toggle).not.toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

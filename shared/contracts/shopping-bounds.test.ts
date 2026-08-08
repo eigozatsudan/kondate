@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   reconcileShoppingListRequestSchema,
+  shoppingDraftItemSchema,
   shoppingDraftSchema,
+  shoppingItemLabelWarningsMax,
   shoppingItemSchema,
   shoppingItemsMax,
   shoppingListSchema,
+  shoppingSourceIngredientsMax,
 } from "./shopping.js";
 
 const listId = "10000000-0000-4000-8000-000000000001";
@@ -148,5 +151,53 @@ describe("shopping response bounds (S2/S8)", () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("rejects nested sourceIngredients over shoppingSourceIngredientsMax (S8)", () => {
+    const source = validDraftItem.sourceIngredients[0];
+    const overMax = Array.from({ length: shoppingSourceIngredientsMax + 1 }, (_, index) => ({
+      ...source,
+      ingredientId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    }));
+    expect(
+      shoppingDraftItemSchema.safeParse({ ...validDraftItem, sourceIngredients: overMax }).success,
+    ).toBe(false);
+    expect(
+      shoppingDraftItemSchema.safeParse({
+        ...validDraftItem,
+        sourceIngredients: overMax.slice(0, shoppingSourceIngredientsMax),
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects per-item labelWarnings over shoppingItemLabelWarningsMax (S8)", () => {
+    const warning = {
+      confirmationId: null,
+      warningKey: "a".repeat(64),
+      sourceMenuId: menuId,
+      sourceDerivationGroupId: listId,
+      sourceType: "ingredient" as const,
+      sourceId: itemId,
+      sourcePath: "dishes.0.ingredients.0.name",
+      allergenId: "egg",
+      allergenDisplayName: "卵",
+      anonymousMemberRef: "member_1",
+      memberDisplayName: "本人",
+      sourceDisplayName: "マヨネーズ",
+      dictionaryVersion: "jp-caa-2026-04.v1",
+      confirmationStatus: "pending" as const,
+    };
+    const overMax = Array.from({ length: shoppingItemLabelWarningsMax + 1 }, () => warning);
+    expect(
+      shoppingDraftItemSchema.safeParse({ ...validDraftItem, labelWarnings: overMax }).success,
+    ).toBe(false);
+    expect(shoppingItemSchema.safeParse({ ...validItem, labelWarnings: overMax }).success).toBe(
+      false,
+    );
+    const atMax = overMax.slice(0, shoppingItemLabelWarningsMax);
+    expect(
+      shoppingDraftItemSchema.safeParse({ ...validDraftItem, labelWarnings: atMax }).success,
+    ).toBe(true);
+    expect(shoppingItemSchema.safeParse({ ...validItem, labelWarnings: atMax }).success).toBe(true);
   });
 });

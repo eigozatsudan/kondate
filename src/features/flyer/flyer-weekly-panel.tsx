@@ -284,6 +284,10 @@ export function FlyerWeeklyPanel({
   // 成功・端末確定失敗後は破棄し、次の選択で新しいキーを採番する。
   // サーバはキー必須（欠落で random 採番しない）。常に sticky/新規を送る。
   const stickyAttemptRef = useRef<StickyFlyerAttempt | null>(null);
+  // PE4: React の busy 反映前に onChange が二重発火すると onFile が並列起動し、
+  // sticky 未書き込みのまま二重 mint / 二重 POST し得る。pantry PE14 と同型の
+  // sync single-flight。跨タブ dual-mint（PE1）や multi-fingerprint map（PE2）は対象外。
+  const uploadInFlightRef = useRef(false);
 
   if (!plusEntitled) {
     return (
@@ -377,19 +381,21 @@ export function FlyerWeeklyPanel({
 
   const onFile = async (file: File | null) => {
     if (!file || !session?.access_token) return;
+    // PE4: busy の re-render より先に同期ガード。既に飛行中なら第2選択を無視（queue しない）。
+    if (uploadInFlightRef.current) return;
+    uploadInFlightRef.current = true;
     setBusy(true);
     setError(null);
     setMenu(null);
-    // PE2: 同一画像の再送だけ sticky key を再利用。内容を束縛できない読取失敗は中止。
-    const fingerprint = await fingerprintFlyerImage(file);
-    if (fingerprint === null) {
-      setError("画像を読み込めませんでした。");
-      setBusy(false);
-      return;
-    }
-    const attemptKey = resolveStickyForFingerprint(fingerprint);
-    persistSticky({ key: attemptKey, fingerprint });
     try {
+      // PE2: 同一画像の再送だけ sticky key を再利用。内容を束縛できない読取失敗は中止。
+      const fingerprint = await fingerprintFlyerImage(file);
+      if (fingerprint === null) {
+        setError("画像を読み込めませんでした。");
+        return;
+      }
+      const attemptKey = resolveStickyForFingerprint(fingerprint);
+      persistSticky({ key: attemptKey, fingerprint });
       const form = new FormData();
       form.append("image", file);
       form.append("idempotencyKey", attemptKey);
@@ -422,7 +428,7 @@ export function FlyerWeeklyPanel({
         const errorCode = err.success ? err.data.error?.code : undefined;
         // PE3: 5xx / processing / timeout は sticky 維持。finalize 成功後の応答欠落で
         // 新 key にすると週次 try を二重消費する。4xx の確定失敗だけ破棄。
-        // PE4: HTTP 200 だが body が Zod で閉じられないときは成功/transport 曖昧。
+        // PE4 (ambiguous body): HTTP 200 だが body が Zod で閉じられないときは成功/transport 曖昧。
         // catch（通信断）と同様に sticky を残し、同一画像の再送で二重 try を防ぐ。
         const ambiguousOkBody = response.ok && !parsed.success;
         if (!ambiguousOkBody && !shouldKeepFlyerSticky(errorCode, response.status)) {
@@ -441,6 +447,8 @@ export function FlyerWeeklyPanel({
       // 通信断: sticky を残し、同じ画像・同じキーで再送できるようにする
       setError("チラシ献立を作成できませんでした。");
     } finally {
+      // PE4: fingerprint null 早期 return もここに合流して in-flight / busy を必ず解除
+      uploadInFlightRef.current = false;
       setBusy(false);
       // access_token 以外を触らない。クライアントは破棄。
       void getBrowserSupabaseClient;

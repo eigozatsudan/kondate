@@ -547,4 +547,71 @@ describe("FlyerWeeklyPanel", () => {
     ];
     expect(secondKey).toBe(firstKey);
   });
+
+  it("PE4: overlapping same-tab onFile is single-flight (no second POST / mint)", async () => {
+    // busy の re-render 前に onChange が二重発火しても uploadInFlightRef で第2飛行を抑止する。
+    // fetch を遅延させ、第1飛行中に sticky 未書き込み相当の窓で第2 onFile を起動する。
+    let releaseFetch!: (value: {
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }) => void;
+    const fetchGate = new Promise<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const fetchMock = vi.fn().mockReturnValue(fetchGate);
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    const file = new File(["pe4-inflight-bytes"], "flyer.jpg", { type: "image/jpeg" });
+    fireEvent.change(input, { target: { files: [file] } });
+    // 第1飛行が fingerprint を終え POST に入るまで待つ（sticky は resolve 後に書かれる）
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    // 第1飛行中に disabled={busy} がまだ効かない／手動で二重起動しても第2 POST しない
+    fireEvent.change(input, { target: { files: [file] } });
+    // マイクロタスクを少し進め、第2飛行が POST していないことを固定
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // sticky は第1 mint のみ（二重 key 採番していない）
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)?.key).toBe(firstKey);
+    releaseFetch({
+      ok: false,
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "generation_in_progress",
+            message: "別の献立を作成中です。",
+          },
+        }),
+    });
+    await waitFor(() => {
+      expect(screen.getByText("別の献立を作成中です。")).toBeVisible();
+    });
+    // 飛行終了後は同じ画像の再選択で sticky 再利用して POST できる（mutex が解放されている）
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const secondKey = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(secondKey).toBe(firstKey);
+  });
 });

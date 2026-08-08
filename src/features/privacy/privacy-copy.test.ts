@@ -45,6 +45,12 @@ it("keeps share consent optional and separate from AI privacy sections", () => {
   }
 });
 
+it("documents pre-checked share consent without recommendation tone", () => {
+  expect(shareConsentSection.defaultCheckedHint).toContain("最初からチェックが入っています");
+  expect(shareConsentSection.defaultCheckedHint).toContain("不要なら外してください");
+  expect(shareConsentSection.defaultCheckedHint).not.toMatch(/ぜひ|おすすめ|推奨/u);
+});
+
 it("locks residual retention copy for settings toggle off", () => {
   // 設計 §7.2: オフ操作時にも「既提供分は残る」を再表示
   expect(shareConsentSettingsCopy.residualRetentionNotice).toContain("既提供分は残");

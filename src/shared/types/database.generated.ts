@@ -866,6 +866,7 @@ export type Database = {
       ai_jst_month_start: { Args: { p_now: string }; Returns: string }
       ai_jst_week_start: { Args: { p_now: string }; Returns: string }
       ai_next_jst_midnight: { Args: { p_now: string }; Returns: string }
+      ai_next_jst_month_start: { Args: { p_now: string }; Returns: string }
       ai_request_payload: {
         Args: {
           p_replayed?: boolean

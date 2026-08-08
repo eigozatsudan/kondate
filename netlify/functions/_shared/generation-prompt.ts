@@ -76,8 +76,14 @@ const GENERATION_SYSTEM_PROMPT_CORE_PREFIX =
   // サーバー言語ゲートはラテン／非CJK汚染を拒否する。純粋な漢字のみは CJK として通し得る
   // （中国語専用検出は別問題）。英語だけの description 等を最優先で防ぐ。
   "英語などラテン文字だけの本文は不可です。日本語（ひらがな・カタカナ・漢字）で書いてください。" +
-  "分量の数字と単位（g・ml・大さじ等）はそのままでよい。ingredientsのunitにtsp・tbsp・piece等の英語単位だけは書かない。" +
-  // pantry 契約（R2）
+  // 分量: 日本語計量・買い足しの読みやすさ（大さじ過多→ml/g、定性に数字を付けない）。
+  // pantry 連動行の name/unit は下の (2)(3) が優先（入力どおり・換算しない）。
+  "分量の数字と単位は日本語の計量（g・ml・大さじ・小さじ・個等）で書く。" +
+  "ingredientsのunitにtsp・tbsp・piece等の英語単位だけは書かない。" +
+  "買い足し材料で大さじまたは小さじが4以上になる量はml（またはg）で書く。" +
+  "少々・適量・ひとつまみ・適宜に数字を付けない。" +
+  "材料のunit/quantityと手順の言い回しを大きく食い違わせない。" +
+  // pantry 契約（R2）— name/unit の換算禁止は入力 pantry に限る
   "pantryの各要素はref・name・unitを持ちます。" +
   "ingredientsでpantryRefを使う場合:" +
   "(1)pantryRefは入力pantryのrefと文字どおり一致させる。" +

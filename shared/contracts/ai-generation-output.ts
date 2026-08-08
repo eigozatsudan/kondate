@@ -16,8 +16,13 @@ const adaptationRef = z.string().regex(/^adaptation_[1-9][0-9]*$/u);
 const pantryRef = z.string().regex(/^pantry_[1-9][0-9]*$/u);
 const memberRef = z.string().regex(/^member_[1-9][0-9]*$/u);
 const safetyTag = z.string().regex(/^[a-z][a-z0-9_]*$/u);
-/** pantry plannedQuantity 用（0 許容）。ingredient quantity とは別。 */
-const nullableQuantity = z.number().min(0).max(999_999).nullable();
+/**
+ * pantry plannedQuantity 用（0 許容 + milli グリッド）。
+ * ingredient の positive と異なり 0 は materialize で null 化するが、
+ * >0 は numeric(12,3) 相当 multipleOf(0.001) 必須。G17 が ingredient quantityValue へ
+ * 転記するため、off-grid は AI Zod で早期拒否する（後段 pantry_unit_mismatch に委ねない・S1）。
+ */
+const nullableQuantity = z.number().min(0).max(999_999).multipleOf(0.001).nullable();
 /**
  * 材料数量の正本 bound（pantry / draft / shopping と揃える）。
  * 0 は不可・上限 999_999・numeric(12,3) 相当の milli グリッド（multipleOf 0.001）。

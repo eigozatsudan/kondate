@@ -411,6 +411,129 @@ it("maps any other provider error to auth_callback_failed", async () => {
   expect(result).toEqual({ kind: "error", code: "auth_callback_failed", returnTo: "/planner" });
 });
 
+// C1 (adversarial f2cb7b0b): spoofable URL error_code は state 束縛前に expired で秘密を焼かない
+it("C1: spoofed error_code without matching state does not burn a live stored flow", async () => {
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const api = continuationApiMock({ deposit });
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+  // flow UUID のみ + error_code（state 無し）は公開 UUID 経由の可用性 DoS になり得る
+  const result = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&error=access_denied&error_code=otp_expired`,
+    ),
+  );
+
+  expect(result).toEqual({ kind: "error", code: "unbound_callback", returnTo: "/planner" });
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+  expect(deposit).not.toHaveBeenCalled();
+});
+
+it("C1: spoofed error_code with mismatched state does not burn a live stored flow", async () => {
+  const storage = new MapStorage();
+  const api = continuationApiMock();
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+  const result = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=wrong-state&error_code=otp_expired`,
+    ),
+  );
+
+  expect(result).toEqual({ kind: "error", code: "unbound_callback", returnTo: "/planner" });
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+});
+
+it("C1: error_code with matching state still expires correctly", async () => {
+  const storage = new MapStorage();
+  const api = continuationApiMock();
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+  // 正当な期限切れ redirect は redirect_to の state を保持する。gateway 自体は clear しない
+  // （AuthCallbackPage が kind=expired で clear）。secret はここでは残る。
+  const result = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&error=access_denied&error_code=otp_expired`,
+    ),
+  );
+
+  expect(result).toEqual({
+    kind: "expired",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+});
+
+it("C1: unbound error_code without local flow still maps to expired", async () => {
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    continuationApiMock(),
+    new MapStorage(),
+    gatewayDeps(),
+  );
+  // e2e 相当: flow 無しでも otp_expired は期限切れ UI へ
+  const result = await gateway.completeCallback(
+    new URL("http://127.0.0.1:5173/auth/callback?error=access_denied&error_code=otp_expired"),
+  );
+  expect(result).toEqual({ kind: "expired", flowId: "", returnTo: "/planner" });
+});
+
+it("C1: code+state is preferred over spoofed error_code and still deposits", async () => {
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ deposit, claim });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+  // 有効な code+state に spoofable error_code を足しても deposit/claim を捨てない
+  const result = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1&error_code=otp_expired`,
+    ),
+  );
+
+  expect(result).toEqual({
+    kind: "complete",
+    continuation: "same_browser",
+    returnTo: "/onboarding",
+    flowId: flow.id,
+  });
+  expect(deposit).toHaveBeenCalledWith(flow.id, {
+    state: flow.state,
+    code: "code-1",
+    secret: flow.secret,
+  });
+  expect(claim).toHaveBeenCalled();
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("auth-code-1");
+});
+
 it("deposits for the original browser when this context never held the flow", async () => {
   const client = authClientMock();
   const deposit = vi.fn().mockResolvedValue(undefined);

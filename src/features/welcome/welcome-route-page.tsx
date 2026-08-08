@@ -103,6 +103,14 @@ export function WelcomeRoutePage() {
   // （ref === generation+1 かつ mounted）は L1 reconcile で遷移する。
   const startGenerationRef = useRef(0);
   const mountedRef = useRef(true);
+  // L1: setOnboardingStatus 発行後〜settle までの outstanding。Web Lock は C5 で解放したまま
+  // （dual-tab 閉塞を維持）。false failure 後に opposite CTA が第二 CAS を出すのを防ぐため、
+  // post-grace timeout ではこの Promise が settle するまで WelcomePage の single-flight を保持する。
+  // pre-CAS hang（re-read never-settle）では null のまま → 双方 CTA 再有効化を許可。
+  const casFlightRef = useRef<{
+    generation: number;
+    promise: Promise<{ onboarding_status: OnboardingStatus }>;
+  } | null>(null);
   const userId = auth.session?.user.id;
   const profileQuery = useQuery({
     queryKey: householdKeys.profile(userId ?? "none"),
@@ -180,14 +188,59 @@ export function WelcomeRoutePage() {
   }
 
   /**
+   * L1: CAS 発行を generation 付きで記録する（呼び出し前に同期 arm）。
+   * body と post-grace catch の両方が同一 Promise を await できる。
+   */
+  function trackCasFlight(
+    generation: number,
+    promise: Promise<{ onboarding_status: OnboardingStatus }>,
+  ): Promise<{ onboarding_status: OnboardingStatus }> {
+    casFlightRef.current = { generation, promise };
+    return promise;
+  }
+
+  /**
+   * L1: C5+grace 後も CAS が in-flight なら settle まで待ち、opposite CTA dual-flight を防ぐ。
+   * pre-CAS hang（casFlight なし）は即 timeout を再 throw → 双方 CTA 再有効化。
+   * settle 後は tryReconcileZombieWrite で遷移を保証（body 側と二重呼び出し可）。
+   * Web Lock は伸ばさない。RPC cancel は主張しない。
+   */
+  async function awaitOutstandingCasAfterGrace(generation: number): Promise<void> {
+    const flight = casFlightRef.current;
+    if (flight === null || flight.generation !== generation) {
+      throw new Error("timeout");
+    }
+    let written: { onboarding_status: OnboardingStatus };
+    try {
+      written = await flight.promise;
+    } catch {
+      // CAS 自体の失敗も開始失敗 UI へ（single-flight はここで解除）
+      throw new Error("timeout");
+    }
+    if (tryReconcileZombieWrite(generation, written.onboarding_status)) {
+      // 遷移成功: WelcomePage は pending 維持のまま unmount する
+      return;
+    }
+    if (!stillActive(generation)) {
+      // unmount / 新 flight: 旧 UI の setState を起こさない
+      return;
+    }
+    // 未進行のまま settle（CAS miss 等）→ 失敗 UI + 双方 CTA 再有効化
+    throw new Error("timeout");
+  }
+
+  /**
    * 1 開始 flight 分の generation を発行し、timeout 時に無効化する。
    * body 内の await 後は isCurrent() で副作用をガードする。
    * timeout 後は L1 reconcile を挟み、status 進行済みなら失敗にしない。
+   * CAS 発行後の grace miss は outstanding CAS 待ちで single-flight を維持する（L1）。
    */
   async function runWelcomeStart(
     body: (isCurrent: () => boolean, generation: number) => Promise<void>,
   ): Promise<void> {
     const generation = ++startGenerationRef.current;
+    // 新 flight 開始時に旧 CAS 追跡を捨てる（前 flight の settle 待ちに reverse しない）
+    casFlightRef.current = null;
     const isCurrent = (): boolean => startGenerationRef.current === generation;
     const invalidateGeneration = (): void => {
       // timeout 発火時点で同期的に破棄（catch より前に通常 navigate を止める）
@@ -203,7 +256,14 @@ export function WelcomeRoutePage() {
       if (!isTimeoutError(error)) {
         throw error;
       }
-      await reconcileAfterStartTimeout(generation);
+      try {
+        await reconcileAfterStartTimeout(generation);
+      } catch (reconcileError) {
+        if (!isTimeoutError(reconcileError)) {
+          throw reconcileError;
+        }
+        await awaitOutstandingCasAfterGrace(generation);
+      }
     }
   }
 
@@ -273,9 +333,13 @@ export function WelcomeRoutePage() {
           // L1: skipped|complete 以外は not_started|in_progress のみ。
           // 表示が in_progress の「設定せず…」は expected=in_progress で skipped CAS。
           // not_started は従来どおり expected=not_started。RPC は両遷移を合法とする。
-          const written = await setOnboardingStatus(client, userId, "skipped", {
-            expectedStatus: live,
-          });
+          // trackCasFlight は await 前に同期 arm（post-grace の opposite CTA 閉塞用）。
+          const written = await trackCasFlight(
+            generation,
+            setOnboardingStatus(client, userId, "skipped", {
+              expectedStatus: live,
+            }),
+          );
           // L1: timeout 後のゾンビ CAS は generation+1 かつ mounted なら reconcile 遷移
           if (!isCurrent()) {
             tryReconcileZombieWrite(generation, written.onboarding_status);
@@ -310,9 +374,13 @@ export function WelcomeRoutePage() {
             return;
           }
           // R1: expected=not_started の CAS。locks 無し dual-tab でも skipped/in_progress/complete を上書きしない
-          const written = await setOnboardingStatus(client, userId, "in_progress", {
-            expectedStatus: "not_started",
-          });
+          // trackCasFlight は await 前に同期 arm（post-grace の opposite CTA 閉塞用）。
+          const written = await trackCasFlight(
+            generation,
+            setOnboardingStatus(client, userId, "in_progress", {
+              expectedStatus: "not_started",
+            }),
+          );
           if (!isCurrent()) {
             tryReconcileZombieWrite(generation, written.onboarding_status);
             return;

@@ -67,10 +67,11 @@ it("explains sent, unsent, and stored data before accepting", async () => {
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   await user.click(accept);
   expect(onAccept).toHaveBeenCalledOnce();
-  expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: false });
+  // 共有は既定オンのまま進む
+  expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: true });
 });
 
-it("keeps share consent as a separate card, unchecked by default, without gating primary", async () => {
+it("keeps share consent as a separate card, checked by default, without gating primary", async () => {
   const user = userEvent.setup();
   const onAccept = vi.fn();
   renderPrivacyContent({ saving: false, onAccept, onSkip: vi.fn() });
@@ -82,22 +83,31 @@ it("keeps share consent as a separate card, unchecked by default, without gating
   expect(
     within(shareCard as HTMLElement).queryByRole("checkbox", { name: /説明を確認しました/ }),
   ).toBeNull();
+  expect(shareCard?.textContent ?? "").toContain(shareConsentSection.defaultCheckedHint);
 
   const shareCheckbox = screen.getByRole("checkbox", {
     name: shareConsentSection.checkboxLabel,
   });
-  expect(shareCheckbox).not.toBeChecked();
+  expect(shareCheckbox).toBeChecked();
 
   const accept = screen.getByRole("button", { name: "確認して進む" });
-  // 共有チェックだけでは primary は有効にならない
+  // 共有を外しても primary は privacy のみ依存
   await user.click(shareCheckbox);
-  expect(shareCheckbox).toBeChecked();
+  expect(shareCheckbox).not.toBeChecked();
   expect(accept).toBeDisabled();
 
-  // privacy のみで primary が有効（共有は任意のまま）
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   expect(accept).toBeEnabled();
   await user.click(accept);
+  expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: false });
+});
+
+it("accepts share consent by default when user leaves the pre-checked box on", async () => {
+  const user = userEvent.setup();
+  const onAccept = vi.fn();
+  renderPrivacyContent({ saving: false, onAccept, onSkip: vi.fn() });
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
   expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: true });
 });
 
@@ -112,41 +122,7 @@ it("renders all required share-consent phrases for toContain locks", () => {
   }
 });
 
-it("saves only the privacy consent and navigates to the sanitized returnTo, without touching onboarding status", async () => {
-  const user = userEvent.setup();
-  acceptConsent.mockResolvedValue({
-    user_id: "user-1",
-    notice_version: "2026-07-29.v1",
-    accepted_at: "2026-07-12T00:00:00.000Z",
-    created_at: "2026-07-12T00:00:00.000Z",
-  });
-  const router = createMemoryRouter(
-    [
-      { path: "/privacy", element: <PrivacyNoticePage /> },
-      { path: "/planner", element: <h1>献立</h1> },
-    ],
-    { initialEntries: ["/privacy?returnTo=/planner"] },
-  );
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-  render(
-    <QueryClientProvider client={client}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
-  );
-
-  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
-  await user.click(screen.getByRole("button", { name: "確認して進む" }));
-
-  await waitFor(() => {
-    expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
-  });
-  // 共有未チェック時は share upsert を呼ばない
-  expect(upsertShare).not.toHaveBeenCalled();
-  expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
-});
-
-it("upserts share consent only when the optional share checkbox is checked", async () => {
+it("saves privacy consent with default-on share and navigates to the sanitized returnTo, without touching onboarding status", async () => {
   const user = userEvent.setup();
   acceptConsent.mockResolvedValue({
     user_id: "user-1",
@@ -175,13 +151,53 @@ it("upserts share consent only when the optional share checkbox is checked", asy
   );
 
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  await waitFor(() => {
+    expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+  });
+  // 既定 share ON のまま進むと upsert する
+  expect(upsertShare).toHaveBeenCalledWith({}, true);
+  expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+});
+
+it("does not upsert share consent when the optional share checkbox is unchecked", async () => {
+  const user = userEvent.setup();
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  upsertShare.mockResolvedValue({
+    consent_version: "2026-08-01.v1",
+    accepted_at: "2026-08-01T00:00:00.000Z",
+    revoked_at: null,
+  });
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  // 既定 ON を外してから accept → share upsert しない
   await user.click(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }));
   await user.click(screen.getByRole("button", { name: "確認して進む" }));
 
   await waitFor(() => {
     expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
   });
-  expect(upsertShare).toHaveBeenCalledWith({}, true);
+  expect(upsertShare).not.toHaveBeenCalled();
   expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
 });
 
@@ -210,7 +226,7 @@ it("共有同意 RPC が失敗しても必須 privacy 同意後は returnTo へ�
   );
 
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
-  await user.click(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }));
+  // 既定 ON のまま（外さない）→ upsert が呼ばれ reject しても遷移継続
   await user.click(screen.getByRole("button", { name: "確認して進む" }));
 
   await waitFor(() => {
@@ -229,6 +245,11 @@ it("review resume 付きの returnTo（review確定直前の遷移）を確認�
     notice_version: "2026-07-29.v1",
     accepted_at: "2026-07-12T00:00:00.000Z",
     created_at: "2026-07-12T00:00:00.000Z",
+  });
+  upsertShare.mockResolvedValue({
+    consent_version: "2026-08-01.v1",
+    accepted_at: "2026-08-01T00:00:00.000Z",
+    revoked_at: null,
   });
   // review stepのprivacy未確認導線が組み立てる正確なreturnTo文字列
   // （"/planner?resume=review"）をそのまま使い、往復先が変わらないことを固定する。
@@ -253,7 +274,8 @@ it("review resume 付きの returnTo（review確定直前の遷移）を確認�
   expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
   expect(router.state.location.pathname).toBe("/planner");
   expect(router.state.location.search).toBe("?resume=review");
-  expect(upsertShare).not.toHaveBeenCalled();
+  // 既定 share ON のまま resume へ戻る
+  expect(upsertShare).toHaveBeenCalledWith({}, true);
 });
 
 it("今はAIを使わない を選んだ場合も同じ returnTo へ戻るが同意を保存しない", async () => {

@@ -10,16 +10,20 @@ import { resolveProcessingAnchorMs } from "../model/progress-stages";
 import { clearPendingGeneration, readPendingGeneration } from "../model/pending-generation";
 import { readPendingGenerationMeta } from "../model/pending-generation-meta";
 
-// 本日分の作成上限に伴う retryAt は JST 日次リセット（翌0:00）に一致するため、
-// 生の日時ではなく「明日H:MM」の相対表現で示す。
+// 日次枠の retryAt は JST 翌日 0:00 と一致するため「明日H:MM」で示す。
+// quality_monthly_limit 等の非日次 stamp（翌月初など）は「明日」と誤誘導しないよう
+// JST 日付+時刻の絶対表現へ落とす（G1）。
 // サーバは timestamptz→jsonb で "+00:00" を出し、クライアント toISOString は ".000Z"。
 // 文字列一致ではなく epoch ms で比較する（E-I1）。
 function formatJstRetryTime(retryAt: string, now: Date): string {
   const retryDate = new Date(retryAt);
-  const hour = String((retryDate.getUTCHours() + 9) % 24);
-  const minute = String(retryDate.getUTCMinutes()).padStart(2, "0");
   const isTomorrow = retryDate.getTime() === getNextJstMidnight(now).getTime();
-  return isTomorrow ? `明日${hour}:${minute}` : `${hour}:${minute}`;
+  if (isTomorrow) {
+    const hour = String((retryDate.getUTCHours() + 9) % 24);
+    const minute = String(retryDate.getUTCMinutes()).padStart(2, "0");
+    return `明日${hour}:${minute}`;
+  }
+  return formatRetryAt(retryAt);
 }
 
 function formatRetryAt(value: string): string {
