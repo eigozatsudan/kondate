@@ -2229,3 +2229,227 @@ dialog:not([open]) {
     transition: none;
   }
 }
+
+/*
+ * 面と間隔のプリミティブ（2026-08-08 UI/UX モダン化）。
+ * 間隔は既存の --space-* のみを参照し、新しい値を持ち込まない。
+ * 影は使わない。面の区別は地色と細い線で行う。
+ */
+.ui-surface {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.ui-surface--plain {
+  background: var(--surface);
+}
+
+.ui-surface--sunken {
+  border-color: transparent;
+  background: var(--surface-sunken);
+}
+
+.ui-surface--notice {
+  border-color: var(--selection);
+  background: var(--notice);
+}
+
+.ui-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.ui-stack--gap-1 {
+  gap: var(--space-1);
+}
+.ui-stack--gap-2 {
+  gap: var(--space-2);
+}
+.ui-stack--gap-3 {
+  gap: var(--space-3);
+}
+.ui-stack--gap-4 {
+  gap: var(--space-4);
+}
+.ui-stack--gap-5 {
+  gap: var(--space-5);
+}
+.ui-stack--gap-6 {
+  gap: var(--space-6);
+}
+.ui-stack--gap-7 {
+  gap: var(--space-7);
+}
+
+.ui-inset {
+  min-width: 0;
+}
+
+.ui-inset--pad-1 {
+  padding: var(--space-1);
+}
+.ui-inset--pad-2 {
+  padding: var(--space-2);
+}
+.ui-inset--pad-3 {
+  padding: var(--space-3);
+}
+.ui-inset--pad-4 {
+  padding: var(--space-4);
+}
+.ui-inset--pad-5 {
+  padding: var(--space-5);
+}
+.ui-inset--pad-6 {
+  padding: var(--space-6);
+}
+.ui-inset--pad-7 {
+  padding: var(--space-7);
+}
+
+/*
+ * ul で使ったときにブラウザ既定のマーカーと余白を消す。
+ * list-style: none は Safari/VoiceOver でリストセマンティクスを失わせるため、
+ * Stack の実装側で as="ul" のとき role="list" を既定で付ける
+ * （呼び出し側が role を渡した場合はそちらを優先する）。
+ * jsdom はこの退行を再現しないのでテストでは検出できない。
+ */
+ul.ui-stack {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * ページ見出し（2026-08-08 UI/UX モダン化）。
+ * 明朝は 700 のみ読み込んでいる（styles.css 冒頭の @font-face 注記参照）。
+ * font-synthesis: none のため 400 を指定すると端末依存のフォールバックになる。
+ * 「細さ」は字間・行間・サイズと --muted で作る。
+ */
+.ui-page-header {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ui-page-header__title {
+  margin: 0;
+  font-family: var(--question-font);
+  font-size: var(--text-hero);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: var(--leading-hero);
+}
+
+.ui-page-header__lead {
+  margin: 0;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.ui-page-header__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: var(--leading-body);
+}
+
+/*
+ * 読み込み・空状態・ラベル（2026-08-08 UI/UX モダン化）。
+ * .ui-* は代表 DOM に一致しないので unexpectedMotionRules の対象外。
+ * shimmer を入れてよいが、reduced-motion ペアを必ずセットで書くこと。
+ */
+@keyframes ui-shimmer {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ui-skeleton__line {
+  display: block;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  animation: ui-shimmer var(--motion-base) var(--motion-ease) infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-skeleton__line {
+    animation: none;
+  }
+}
+
+.ui-skeleton {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ui-skeleton__label {
+  color: var(--muted);
+  font-size: var(--text-small);
+}
+
+/*
+ * 最終行だけ短くして「文章の途中」に見せる。
+ * .ui-skeleton の第1子は .ui-skeleton__label（span）なので
+ * nth-child ではなく last-child を使う。
+ */
+.ui-skeleton__line:last-child {
+  width: 60%;
+}
+
+.ui-empty {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-4);
+}
+
+.ui-empty__title {
+  margin: 0;
+  font-family: var(--question-font);
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.ui-empty__body {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-3);
+  font-size: var(--text-small);
+  font-weight: 700;
+}
+
+.ui-badge--neutral {
+  background: var(--surface-sunken);
+  color: var(--muted);
+}
+
+.ui-badge--warning {
+  background: var(--notice);
+  color: var(--warning);
+}
+
+.ui-badge--danger {
+  background: var(--notice);
+  color: var(--danger);
+}
