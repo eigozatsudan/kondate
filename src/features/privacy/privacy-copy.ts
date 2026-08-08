@@ -41,10 +41,12 @@ export const shareConsentRequiredPhrases = [
   "アレルギーの安全は保証しません",
 ] as const;
 
-/** 初回 /privacy の共有任意カード用コピー。既定オフ・推奨トーンなし。 */
+/** 初回 /privacy の共有任意カード用コピー。既定オン・推奨トーンなし。 */
 export const shareConsentSection = {
   title: "匿名の緊急候補への協力（任意）",
   checkboxLabel: "匿名で緊急候補に役立ててよい",
+  /** pre-checked であることの平易な説明（推奨トーンなし） */
+  defaultCheckedHint: "最初からチェックが入っています。不要なら外してください。",
   // 必須フレーズを句点でつなぎ、平易な一文の流れにする（推奨トーンなし）
   body: [
     "完成した献立のうち、条件を満たしたものの一部を、匿名の緊急用レシピ候補として他の方にも役立てることがあります。",
