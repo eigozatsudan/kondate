@@ -2143,3 +2143,89 @@ dialog:not([open]) {
 .settings-section-title {
   margin: 0;
 }
+
+/*
+ * 共有ボタン（2026-08-08 UI/UX モダン化）。
+ * .primary-button 等の保護セレクタ断片を名前に含めないため ui-btn を接頭辞にする。
+ * 44px は mobile-accessibility.spec.ts が実測する契約。
+ */
+.ui-btn {
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-5);
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+/* regular は既定寸法。クラスは常に出力されるので空定義にしない。 */
+.ui-btn--regular {
+  padding: 0 var(--space-5);
+}
+
+.ui-btn--large {
+  min-height: 52px;
+  width: 100%;
+}
+
+.ui-btn--primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+.ui-btn--primary:hover:not(:disabled) {
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
+}
+
+.ui-btn--primary:active:not(:disabled) {
+  border-color: var(--primary-active);
+  background: var(--primary-active);
+}
+
+.ui-btn--secondary {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.ui-btn--ghost {
+  border-color: transparent;
+  background: none;
+  color: var(--primary-strong);
+}
+
+.ui-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.ui-btn:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/*
+ * モーション。新規クラス名（.ui-*）は代表 DOM に一致しないため
+ * unexpectedMotionRules の検査対象外（実測で緑を確認済み）。
+ * グローバルな * の一括リセットは書けないので、必ずこのペアで書く。
+ */
+.ui-btn {
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-btn {
+    transition: none;
+  }
+}
