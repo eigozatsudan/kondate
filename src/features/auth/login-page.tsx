@@ -20,12 +20,11 @@ export const LOGIN_EMAIL_HINT =
   "届いたメールのリンクを開くと入れます。はじめてのメールアドレスでも大丈夫です。" as const;
 
 /**
- * ログイン画面のメール導線をいったん非表示にする。
- * AuthGateway.sendMagicLink・callback・sent/expired UI は残す。
- * 再表示: true にするか、クエリ `?emailLogin=1`（E2E・手動確認用）。
- * （boolean 注釈は true 切替時に lint の always-falsy を避けるため）
+ * ログイン画面のメール（マジックリンク）導線を表示する。
+ * false にするとフォームを隠し、`?emailLogin=1` または期限切れ復帰などで再表示できる。
+ * （boolean 注釈は定数切替時に lint の always-falsy を避けるため）
  */
-export const SHOW_EMAIL_LOGIN: boolean = false;
+export const SHOW_EMAIL_LOGIN: boolean = true;
 
 function emailLoginRequested(search: string): boolean {
   if (SHOW_EMAIL_LOGIN) return true;

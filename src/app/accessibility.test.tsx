@@ -243,7 +243,7 @@ function renderShellRoute(path: string, page: ReactElement): ReturnType<typeof r
 }
 
 describe("route accessibility", () => {
-  it("login exposes named Google control, error live region, and no bottom nav (email form hidden by default)", async () => {
+  it("login exposes named Google control, email field, error live region, and no bottom nav", async () => {
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
@@ -263,7 +263,8 @@ describe("route accessibility", () => {
     await expectAccessible(container);
     expect(screen.queryByRole("navigation", { name: "メインメニュー" })).toBeNull();
     expect(screen.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
-    expect(screen.queryByLabelText("メールアドレス")).toBeNull();
+    expect(screen.getByLabelText("メールアドレス")).toBeVisible();
+    expect(screen.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent(/Googleログインがキャンセル/);
   });
 

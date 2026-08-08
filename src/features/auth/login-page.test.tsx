@@ -16,10 +16,10 @@ vi.mock("./use-auth", () => ({
   useAuth: vi.fn(() => ({ status: "unauthenticated", session: null })),
 }));
 
-/** メール導線を再表示するテスト用クエリ（本番既定は非表示） */
+/** マジックリンク操作テスト用（SHOW_EMAIL_LOGIN 時は /login でも可。クエリは互換のため残す） */
 const emailLoginEntry = "/login?emailLogin=1";
 
-it("explains that first-time users can register on the same screen (Google only by default)", () => {
+it("explains that first-time users can register on the same screen with Google and email", () => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
@@ -34,15 +34,17 @@ it("explains that first-time users can register on the same screen (Google only 
   );
 
   expect(screen.getByText(LOGIN_PAGE_LEAD)).toBeVisible();
-  expect(screen.getByText(LOGIN_PAGE_NOTE)).toBeVisible();
-  expect(screen.queryByText(LOGIN_EMAIL_HINT)).toBeNull();
-  expect(screen.queryByLabelText("メールアドレス")).toBeNull();
+  expect(screen.getByText(LOGIN_PAGE_NOTE_WITH_EMAIL)).toBeVisible();
+  expect(screen.getByText(LOGIN_EMAIL_HINT)).toBeVisible();
+  expect(screen.getByLabelText("メールアドレス")).toBeVisible();
   expect(screen.getByText("Google アカウントではじめての方も、そのまま使えます。")).toBeVisible();
   expect(screen.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "ログイン用メールを送る" })).toBeNull();
+  expect(screen.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
+  // Google のみ向けの短い注記は出さない
+  expect(screen.queryByText(LOGIN_PAGE_NOTE)).toBeNull();
 });
 
-it("shows email magic-link form when emailLogin=1", () => {
+it("shows email magic-link form by default without emailLogin query", () => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
@@ -51,7 +53,7 @@ it("shows email magic-link form when emailLogin=1", () => {
   };
 
   render(
-    <MemoryRouter initialEntries={[emailLoginEntry]}>
+    <MemoryRouter initialEntries={["/login"]}>
       <LoginPage gateway={gateway} />
     </MemoryRouter>,
   );
