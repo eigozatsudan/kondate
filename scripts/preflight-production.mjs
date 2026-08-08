@@ -4,6 +4,7 @@
  * URL 成分・project ref・秘密値は出さない。
  */
 import { Buffer } from "node:buffer";
+import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -319,13 +320,20 @@ export function validateProductionEnv(env) {
   if (hmac === sampleHmacPlaceholder) {
     throw new Error("GENERATION_REQUEST_HMAC_KEY_sample");
   }
-  decodeExact32Base64(hmac, "GENERATION_REQUEST_HMAC_KEY");
+  const hmacDecoded = decodeExact32Base64(hmac, "GENERATION_REQUEST_HMAC_KEY");
 
   const quotaIdentityHmac = String(env.QUOTA_IDENTITY_HMAC_KEY);
   if (quotaIdentityHmac === sampleHmacPlaceholder) {
     throw new Error("QUOTA_IDENTITY_HMAC_KEY_sample");
   }
-  decodeExact32Base64(quotaIdentityHmac, "QUOTA_IDENTITY_HMAC_KEY");
+  const quotaIdentityDecoded = decodeExact32Base64(
+    quotaIdentityHmac,
+    "QUOTA_IDENTITY_HMAC_KEY",
+  );
+  // identity 日次枠と generation request integrity は別ドメイン。同一 32 バイト材料は拒否（S4）
+  if (timingSafeEqual(hmacDecoded, quotaIdentityDecoded)) {
+    throw new Error("hmac_keys_must_differ");
+  }
 
   // 本番 SITE は HTTPS origin のみ
   let site;
