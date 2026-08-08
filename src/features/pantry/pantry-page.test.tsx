@@ -2,9 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
-import { PantryPage, PantryPageContent } from "./pantry-page";
+import { expiryNotice, PantryPage, PantryPageContent } from "./pantry-page";
 import { PantryVersionConflictError, pantryKeys } from "./pantry-api";
 import { PantryForm } from "./pantry-form";
 
@@ -49,6 +49,26 @@ vi.mock("./pantry-api", async (importOriginal) => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+describe("expiryNotice", () => {
+  const now = new Date("2026-08-08T03:00:00Z"); // JST 2026-08-08 12:00
+
+  it("marks a past date as expired with the danger tone", () => {
+    expect(expiryNotice("2026-08-07", now)).toEqual({ tone: "danger", suffix: "（期限切れ）" });
+  });
+
+  it("marks a date within seven days as soon with the warning tone", () => {
+    expect(expiryNotice("2026-08-14", now)).toEqual({ tone: "warning", suffix: "（まもなく）" });
+  });
+
+  it("leaves a far future date unmarked", () => {
+    expect(expiryNotice("2026-09-30", now)).toEqual({ tone: null, suffix: "" });
+  });
+
+  it("treats today as not yet expired", () => {
+    expect(expiryNotice("2026-08-08", now)).toEqual({ tone: "warning", suffix: "（まもなく）" });
+  });
 });
 
 it("初回読み込み中は未確定の食材件数を0件と表示しない", () => {
