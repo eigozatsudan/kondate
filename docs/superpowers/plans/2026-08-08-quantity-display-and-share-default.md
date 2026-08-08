@@ -59,6 +59,7 @@
   - `export function normalizeIngredientQuantity(input: IngredientQuantityFields): IngredientQuantityFields`
   - 定性固定語: `少々` | `適量` | `ひとつまみ` | `適宜`
   - 大さじ→ml ×15、小さじ→ml ×5、閾値 `roundQuantityValue(value) > 3`
+  - P2: unit null 時に text パース（value 有限正なら value 優先）
 
 - [ ] **Step 1: synonym の RED テストを追加**
 
@@ -160,6 +161,26 @@ describe("normalizeIngredientQuantity", () => {
       expected: { quantityValue: 225, quantityText: "225ml", unit: "ml" },
     },
     {
+      name: "P2 value set unit null text spoon uses value",
+      input: { quantityValue: 15, quantityText: "15大さじ", unit: null },
+      expected: { quantityValue: 225, quantityText: "225ml", unit: "ml" },
+    },
+    {
+      name: "non-spoon unit does not parse text spoon",
+      input: { quantityValue: 15, quantityText: "15大さじ", unit: "g" },
+      expected: { quantityValue: 15, quantityText: "15大さじ", unit: "g" },
+    },
+    {
+      name: "non-finite value stays",
+      input: { quantityValue: Number.NaN, quantityText: "15大さじ", unit: "大さじ" },
+      expected: { quantityValue: Number.NaN, quantityText: "15大さじ", unit: "大さじ" },
+    },
+    {
+      name: "tsp boundary 3 stays",
+      input: { quantityValue: 3, quantityText: "3小さじ", unit: "小さじ" },
+      expected: { quantityValue: 3, quantityText: "3小さじ", unit: "小さじ" },
+    },
+    {
       name: "大匙 synonym converts",
       input: { quantityValue: 10, quantityText: "10大匙", unit: "大匙" },
       expected: { quantityValue: 150, quantityText: "150ml", unit: "ml" },
@@ -243,7 +264,12 @@ export type IngredientQuantityFields = {
   unit: string | null;
 };
 
-const QUALITATIVE = new Set(["少々", "適量", "ひとつまみ", "適宜"] as const);
+/** strict で string を受けられるよう includes（Set<"少々"|...> は typecheck で落ちる） */
+const QUALITATIVE_WORDS = ["少々", "適量", "ひとつまみ", "適宜"] as const;
+
+function isQualitativeWord(value: string): boolean {
+  return (QUALITATIVE_WORDS as readonly string[]).includes(value);
+}
 
 const TBSP_ML = 15;
 const TSP_ML = 5;
@@ -274,7 +300,7 @@ function toMlTriple(value: number, factor: number): IngredientQuantityFields {
 
 function tryQualitative(input: IngredientQuantityFields): IngredientQuantityFields | null {
   const unitCanon = normalizeUnit(input.unit);
-  if (unitCanon !== null && QUALITATIVE.has(unitCanon)) {
+  if (unitCanon !== null && isQualitativeWord(unitCanon)) {
     return { quantityValue: null, unit: null, quantityText: unitCanon };
   }
   const text = input.quantityText.normalize("NFKC").trim();
@@ -297,28 +323,38 @@ function trySpoonFromValueUnit(
   if (factor === null) return null;
   const rounded = roundQuantityValue(input.quantityValue);
   if (rounded <= SPOON_THRESHOLD) {
-    // 閾値以下: unit だけ canonical に寄せ、text は value+unit で再整合（任意）
-    // 仕様は「触らない」なので入力をそのまま返す
+    // 閾値以下は仕様どおり無変換
     return null;
   }
   return toMlTriple(rounded, factor);
 }
 
+/**
+ * P2: unit が null のとき text をパース（設計 §4.6）。
+ * quantityValue が有限正なら数値は value 優先。unit が g 等なら触らない。
+ */
 function trySpoonFromText(input: IngredientQuantityFields): IngredientQuantityFields | null {
-  if (input.quantityValue !== null) return null;
+  const unitCanon = normalizeUnit(input.unit);
+  if (unitCanon !== null) return null;
   const text = input.quantityText.normalize("NFKC").trim();
   const m = SPOON_TEXT.exec(text);
   if (m === null) return null;
   const rawValue = m[1] ?? m[4];
   const rawUnit = m[2] ?? m[3];
   if (rawValue === undefined || rawUnit === undefined) return null;
-  const value = Number(rawValue);
-  if (!Number.isFinite(value) || value <= 0) return null;
-  const unitCanon = normalizeUnit(rawUnit);
-  if (unitCanon === null) return null;
-  const factor = spoonFactor(unitCanon);
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  const spoonCanon = normalizeUnit(rawUnit);
+  if (spoonCanon === null) return null;
+  const factor = spoonFactor(spoonCanon);
   if (factor === null) return null;
-  const rounded = roundQuantityValue(value);
+  const numeric =
+    input.quantityValue !== null &&
+    Number.isFinite(input.quantityValue) &&
+    input.quantityValue > 0
+      ? input.quantityValue
+      : parsed;
+  const rounded = roundQuantityValue(numeric);
   if (rounded <= SPOON_THRESHOLD) return null;
   return toMlTriple(rounded, factor);
 }
@@ -342,8 +378,6 @@ export function normalizeIngredientQuantity(
   return input;
 }
 ```
-
-実装メモ: `QUALITATIVE.has(unitCanon)` は Set の型が狭い場合 `as` を避け、`QUALITATIVE.has(unitCanon as ...)` ではなく `["少々","適量","ひとつまみ","適宜"].includes(unitCanon)` でも可。strict で通る書き方にすること。
 
 - [ ] **Step 8: pure テスト PASS**
 
@@ -392,7 +426,7 @@ EOF
       quantityValue: 15,
       quantityText: "15大さじ",
       unit: "大さじ",
-      storeSection: "seasoning",
+      storeSection: "seasonings",
       pantryRef: null,
       labelConfirmationRequired: false,
     };
@@ -400,6 +434,7 @@ EOF
     const oil = menu.dishes
       .flatMap((d) => d.ingredients)
       .find((i) => i.name === "オリーブ油");
+    // UI amount() は value+unit 優先。triple 同時更新を固定する
     expect(oil).toMatchObject({
       quantityValue: 225,
       quantityText: "225ml",
@@ -409,10 +444,10 @@ EOF
 
   it("does not convert pantry-backed spoon quantities", () => {
     const context = makeContext(5);
-    // pantry unit を大さじに
     context.pantryItems = [
       {
         ...context.pantryItems[0]!,
+        name: "ごはん",
         quantity: 5,
         unit: "大さじ",
       },
@@ -420,6 +455,7 @@ EOF
     const payload = makePayload();
     payload.dishes[0]!.ingredients[0] = {
       ...payload.dishes[0]!.ingredients[0]!,
+      name: "ごはん",
       quantityValue: 5,
       quantityText: "5大さじ",
       unit: "大さじ",
@@ -435,9 +471,9 @@ EOF
         unusedReason: null,
       },
     ];
-    // makePayload の pantryUsage 形が異なる場合は既存テスト G17 をコピーして unit だけ大さじにする
     const menu = materializeAiGeneratedMenu(payload, context, uuidFactory());
     const rice = menu.dishes[0]!.ingredients[0]!;
+    // 5>3 なので skip 漏れなら 75ml になり即検知
     expect(rice.quantityValue).toBe(5);
     expect(rice.unit).toBe("大さじ");
     expect(rice.quantityText).toBe("5大さじ");
@@ -452,7 +488,7 @@ EOF
       quantityValue: 1,
       quantityText: "1少々",
       unit: "少々",
-      storeSection: "seasoning",
+      storeSection: "seasonings",
       pantryRef: null,
       labelConfirmationRequired: false,
     };
@@ -468,7 +504,7 @@ EOF
   });
 ```
 
-注: `makePayload` の `pantryUsage` フィールドは既存ファイルの成功ケースを参照し、スキーマに合わせて正確に埋めること。
+注: `storeSection` は契約 enum の **`seasonings`**（末尾 s）。`seasoning` は `invalid_provider_menu` になる。
 
 - [ ] **Step 2: RED 確認**
 
@@ -566,22 +602,36 @@ EOF
 
 - [ ] **Step 1: 既存の materialize 成功テスト近くに RED を追加**
 
-`regeneration-context.test.ts` の `materializeDishRegenerationCandidate` describe 内。既存 fixture で replacement dish の ingredient を 15大さじに差し替えられるならそれを使う。最低限:
+`regeneration-context.test.ts` の `describe("materializeDishRegenerationCandidate")` 内に、既存 helper を使った完全コードを追加する:
 
 ```ts
   it("normalizes non-pantry tablespoon quantities on replacement dish", () => {
-    // 既存の成功ビルダー（execution, output, uuid）を流用し、
-    // output.replacementDish.ingredients の pantryRef null 行を
-    // quantityValue:15, unit:"大さじ", quantityText:"15大さじ" に差し替える
+    const { execution, uuid } = makeDishRegenerationExecutionContext();
+    const output = makeDishRegenerationAiOutput();
+    output.replacementDish.ingredients[0] = {
+      ingredientRef: "ingredient_10",
+      position: 1,
+      name: "オリーブ油",
+      quantityValue: 15,
+      quantityText: "15大さじ",
+      unit: "大さじ",
+      storeSection: "seasonings",
+      pantryRef: null,
+      labelConfirmationRequired: false,
+    };
     const candidate = materializeDishRegenerationCandidate(execution, output, uuid);
-    const hit = candidate.dishes
+    const oil = candidate.dishes
       .flatMap((d) => d.ingredients)
-      .find((i) => i.unit === "ml" && i.quantityValue === 225);
-    expect(hit).toBeDefined();
+      .find((i) => i.name === "オリーブ油");
+    expect(oil).toMatchObject({
+      quantityValue: 225,
+      quantityText: "225ml",
+      unit: "ml",
+    });
   });
 ```
 
-実装時はファイル内の既存 helper（`buildExecution` 等）を読み、コンパイルが通る具体コードに落とすこと。pantry 非変換の 1 本も可能なら追加。
+注: `makeDishRegenerationExecutionContext` / `makeDishRegenerationAiOutput` は同 describe 内の既存 local function（`regeneration-context.test.ts` 付近 L981–1186）。replacement の `ingredient_10` を差し替えるだけなので timeline/adaptation の ref はそのまま通る。
 
 - [ ] **Step 2: RED 確認**
 
@@ -685,19 +735,17 @@ EOF
 `generation-prompt.test.ts` に追加（既存の system 文字列取得ヘルパを使う）:
 
 ```ts
-  it("guides readable units for non-pantry amounts and keeps pantry units unconverted", () => {
+  it("guides readable units for non-pantry amounts without relying on pre-existing pantry wording", () => {
     const system = systemText(buildGenerationMessages(asNewMenuExecution(makeGenerationContext())));
-    expect(system).toContain("大さじ");
-    expect(system).toContain("ml");
-    expect(system).toContain("少々");
+    // 新規誘導の核だけをロック（既存の「大さじ」「ml」「pantry…換算」だけでは通さない）
+    expect(system).toContain("買い足し");
+    expect(system).toContain("4以上");
     expect(system).toContain("数字を付けない");
-    // pantry 換算禁止の書き分け
-    expect(system).toMatch(/pantry.*換算/u);
+    expect(system).toContain("ml（またはg）");
   });
 ```
 
-文言は Step 3 の実装文字列と一致させること。
-
+文言は Step 3 の実装文字列と**完全一致**させること。
 - [ ] **Step 2: RED 確認**
 
 Run:
@@ -797,12 +845,12 @@ it("documents pre-checked share consent without recommendation tone", () => {
 });
 ```
 
-- [ ] **Step 2: privacy-notice テストを反転（RED）**
+- [ ] **Step 2: privacy-notice テストを反転（RED）— Content と Page 統合の両方**
 
-`privacy-notice-page.test.tsx`:
+#### Content 系
 
-1. `"explains sent..."` の `shareConsentAccepted: false` 期待を **`true`** に変更（既定オンのまま進むため）。
-2. `"keeps share consent as a separate card, unchecked by default..."` を改名・改写:
+1. `"explains sent..."` の `shareConsentAccepted: false` → **`true`**（既定オンのまま進む）。
+2. `"keeps share consent as a separate card, unchecked by default..."` を改名:
 
 ```ts
 it("keeps share consent as a separate card, checked by default, without gating primary", async () => {
@@ -836,8 +884,6 @@ it("keeps share consent as a separate card, checked by default, without gating p
 });
 ```
 
-追加ケース（既定のまま accept → true）:
-
 ```ts
 it("accepts share consent by default when user leaves the pre-checked box on", async () => {
   const user = userEvent.setup();
@@ -848,6 +894,17 @@ it("accepts share consent by default when user leaves the pre-checked box on", a
   expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: true });
 });
 ```
+
+#### Page 統合（`PrivacyNoticePage` + mock RPC）— 未更新だと Task 5/6 が赤
+
+| 現行テスト名（付近） | 変更 |
+| --- | --- |
+| `saves only the privacy consent...` | タイトルを「既定 share ON で upsert する」に。`expect(upsertShare).not.toHaveBeenCalled()` → **`toHaveBeenCalledWith({}, true)`**。`upsertShare.mockResolvedValue({...})` を追加 |
+| `upserts share consent only when the optional share checkbox is checked` | タイトルを「外すと upsert しない」に。**クリックで OFF** にしてから accept → `expect(upsertShare).not.toHaveBeenCalled()` |
+| `共有同意 RPC が失敗しても...` | **クリックで外さない**（既定 ON のまま）。`upsertShare` は reject のまま呼ばれ、遷移継続・alert なし |
+| `review resume 付きの returnTo...` | 末尾 `expect(upsertShare).not.toHaveBeenCalled()` を削除し、**`toHaveBeenCalledWith({}, true)`**（既定 ON）。`upsertShare.mockResolvedValue` を追加 |
+
+「opt-out して resume へ戻る」専用ケースは必須ではない。resume は既定 ON 経路を固定すれば足りる。
 
 - [ ] **Step 3: 実装**
 
@@ -882,7 +939,7 @@ it("accepts share consent by default when user leaves the pre-checked box on", a
 - [ ] **Step 5: README 3 箇所**
 
 - 行付近「任意同意・既定オフ」→「任意同意・既定オン（外せる）」
-- planner 手順の「既定オフ」→「既定オン。不要なら外す」
+- planner 手順の「既定オフ」→「既定オン。不要なら外す。失敗時は設定のトグルで再設定可」
 - 表「既定オフ」→「既定オン（外せる）」
 
 - [ ] **Step 6: テスト PASS**
@@ -952,17 +1009,26 @@ git diff --check
 
 ---
 
-## Plan self-review
+## Plan self-review（レビュー指摘パッチ後）
 
 | Spec 要件 | Task |
 | --- | --- |
 | synonym 大さじ/小さじ | Task 1 |
-| pure triple 正規化・閾値・定性・P1/P2 | Task 1 |
-| materialize 非 pantry のみ | Task 2 |
-| regeneration 同一 pure | Task 3 |
-| プロンプト誘導 | Task 4 |
-| 共有既定オン・hint・README・e2e | Task 5 |
+| pure triple 正規化・閾値・定性・P1/P2（unit null 含む） | Task 1 |
+| materialize 非 pantry のみ・`seasonings` fixture | Task 2 |
+| regeneration 同一 pure・完全テストコード | Task 3 |
+| プロンプト誘導（新規フレーズロック） | Task 4 |
+| 共有既定オン・hint・Content+Page 統合・README・e2e | Task 5 |
 | 手順機械置換なし / マイグレーションなし | 非タスク（意図的） |
 | shareConsentVersion 非バンプ | Task 5 で触らない |
 
-Placeholder なし。`normalizeIngredientQuantity` のシグネチャは Task 1→2/3 で一致。
+### レビュー由来の修正済み項目
+
+- B1: `storeSection: "seasonings"`（末尾 s）
+- B2: privacy Page 統合 4 本の反転を Task 5 に明記
+- B3: `QUALITATIVE` を `includes` ベースに（typecheck 通過）
+- M1: unit null + value/text スプーンを P2 で拾う（spec §4.6 同期）
+- M2: Task 3 に `makeDishRegeneration*` 完全コード
+- M3: プロンプト RED を `買い足し` / `4以上` / `数字を付けない` 中心に
+
+`normalizeIngredientQuantity` のシグネチャは Task 1→2/3 で一致。
