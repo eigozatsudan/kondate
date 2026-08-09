@@ -1,6 +1,10 @@
 import { useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import { menusPathForShopping } from "@/features/shopping/shopping-intent";
+import { Button } from "@/shared/ui/button";
+import { Badge } from "@/shared/ui/feedback";
+import { Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 import type { HistoryGroup } from "../model/group-history";
 import { useDeleteMenuGroup, useToggleFavorite } from "../hooks/use-history";
 
@@ -15,6 +19,7 @@ type HistoryCardProps = {
  * - 代表タイトルと「詳細を見る」で /menus/:id へ遷移（詳細の安全再検査は結果画面側）
  * - 44px タッチターゲットの詳細／お気に入り／削除
  * - 削除は native dialog で確認し、失敗時はカードを残して再試行可能
+ * menu-detail と同じ語彙（Surface / Stack / Button / Badge）で組む。
  */
 export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps) {
   const titleId = useId();
@@ -63,80 +68,72 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
   };
 
   return (
-    <article className="card stack" aria-labelledby={titleId}>
-      <div className="stack gap-2">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <h2 id={titleId} className="min-w-0 text-lg font-bold break-words">
-            <Link
-              to={menuPath}
-              className="min-h-11 inline-flex items-center text-inherit underline-offset-2 hover:underline"
-            >
-              {representative.title.length > 0 ? representative.title : "献立"}
-            </Link>
-          </h2>
-          <p className="shrink-0 rounded-full border px-3 py-1 text-sm font-semibold">
-            {versionCount}案
+    <Surface as="article" aria-labelledby={titleId} tone="plain">
+      <Stack gap={4}>
+        <Stack gap={2}>
+          <div className="history-card-heading">
+            <h2 id={titleId} className="history-card-title">
+              <Link to={menuPath} className="history-card-title-link min-h-11">
+                {representative.title.length > 0 ? representative.title : "献立"}
+              </Link>
+            </h2>
+            <Badge tone="neutral">{versionCount}案</Badge>
+          </div>
+          {/* idea/household の権威ある判定元はHistoryGroup.representative.targetMode。
+              idea カードには家族安全確認済みと誤解させる表現を一切出さない
+              （brief step 12）。 */}
+          <Badge tone={representative.targetMode === "idea" ? "neutral" : "warning"}>
+            {representative.targetMode === "idea" ? "アイデア" : "家族に合わせた献立"}
+          </Badge>
+          <p className="type-small">
+            {new Intl.DateTimeFormat("ja-JP", {
+              timeZone: "Asia/Tokyo",
+              dateStyle: "medium",
+              timeStyle: "short",
+            }).format(new Date(representative.createdAt))}
           </p>
-        </div>
-        {/* idea/household の権威ある判定元はHistoryGroup.representative.targetMode。
-            idea カードには家族安全確認済みと誤解させる表現を一切出さない
-            （brief step 12）。 */}
-        <p
-          className={
-            representative.targetMode === "idea"
-              ? "inline-flex w-fit shrink-0 items-center rounded-full border border-line-strong bg-canvas px-3 py-1 text-sm font-semibold"
-              : "inline-flex w-fit shrink-0 items-center rounded-full border border-terracotta-700 bg-terracotta-50 px-3 py-1 text-sm font-semibold"
-          }
-        >
-          {representative.targetMode === "idea" ? "アイデア" : "家族に合わせた献立"}
-        </p>
-        <p className="text-sm text-ink-muted">
-          {new Intl.DateTimeFormat("ja-JP", {
-            timeZone: "Asia/Tokyo",
-            dateStyle: "medium",
-            timeStyle: "short",
-          }).format(new Date(representative.createdAt))}
-        </p>
-        <p className="text-sm text-ink-muted">
-          {representative.targetMode === "idea"
-            ? "開いても家族条件は確認しません"
-            : "開くと現在の家族設定で再確認します"}
-        </p>
-      </div>
-      <div className="history-card-actions">
-        {representative.targetMode === "household" ? (
-          <Link to={menusPathForShopping(representative.id)} className="primary-button min-h-11">
-            買い物リストを作る
+          <p className="type-small">
+            {representative.targetMode === "idea"
+              ? "開いても家族条件は確認しません"
+              : "開くと現在の家族設定で再確認します"}
+          </p>
+        </Stack>
+        <div className="history-card-actions">
+          {representative.targetMode === "household" ? (
+            <Link
+              to={menusPathForShopping(representative.id)}
+              className="button-link button-link--primary min-h-11 min-w-11"
+            >
+              買い物リストを作る
+            </Link>
+          ) : null}
+          <Link to={menuPath} className="button-link min-h-11 min-w-11">
+            詳細を見る
           </Link>
-        ) : null}
-        <Link to={menuPath} className="secondary-button min-h-11">
-          詳細を見る
-        </Link>
-        <button
-          type="button"
-          className="secondary-button min-h-11"
-          aria-pressed={representative.isFavorite}
-          aria-label={representative.isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
-          disabled={favoritePending}
-          onClick={onToggleFavorite}
-        >
-          {representative.isFavorite ? "★ お気に入り" : "☆ お気に入り"}
-        </button>
-        <button
-          type="button"
-          className="secondary-button min-h-11"
-          aria-label="この履歴を削除"
-          disabled={deletePending}
-          onClick={openDeleteDialog}
-        >
-          削除
-        </button>
-      </div>
-      {toggleFavorite.isError && (
-        <p role="alert" className="error-message">
-          お気に入りを更新できませんでした
-        </p>
-      )}
+          <Button
+            variant="secondary"
+            aria-pressed={representative.isFavorite}
+            aria-label={representative.isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
+            disabled={favoritePending}
+            onClick={onToggleFavorite}
+          >
+            {representative.isFavorite ? "★ お気に入り" : "☆ お気に入り"}
+          </Button>
+          <Button
+            variant="secondary"
+            aria-label="この履歴を削除"
+            disabled={deletePending}
+            onClick={openDeleteDialog}
+          >
+            削除
+          </Button>
+        </div>
+        {toggleFavorite.isError && (
+          <p role="alert" className="error-message">
+            お気に入りを更新できませんでした
+          </p>
+        )}
+      </Stack>
       {/*
         dialog 本体に .stack（display:grid）を付けない。
         作者スタイルの display は UA の dialog:not([open]){display:none} を
@@ -145,7 +142,7 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
       */}
       <dialog
         ref={dialogRef}
-        className="card m-auto max-w-[min(100%,24rem)] rounded-xl p-4"
+        className="history-dialog"
         aria-labelledby={dialogTitleId}
         onCancel={(event) => {
           // 削除中の Escape で閉じると、失敗時のエラーが閉じた dialog に載る。
@@ -154,8 +151,8 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
           closeDeleteDialog();
         }}
       >
-        <div className="stack">
-          <h3 id={dialogTitleId} className="text-base font-bold">
+        <Stack gap={4}>
+          <h3 id={dialogTitleId} className="history-dialog-title">
             この履歴を削除しますか？
           </h3>
           <p>
@@ -167,29 +164,19 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
             </p>
           )}
           <div className="history-card-actions">
-            <button
-              type="button"
-              className="primary-button min-h-11"
-              disabled={deletePending}
-              onClick={confirmDelete}
-            >
+            <Button variant="primary" disabled={deletePending} onClick={confirmDelete}>
               {deletePending
                 ? "削除しています"
                 : deleteError !== null
                   ? "もう一度削除する"
                   : "削除する"}
-            </button>
-            <button
-              type="button"
-              className="secondary-button min-h-11"
-              disabled={deletePending}
-              onClick={closeDeleteDialog}
-            >
+            </Button>
+            <Button variant="secondary" disabled={deletePending} onClick={closeDeleteDialog}>
               やめる
-            </button>
+            </Button>
           </div>
-        </div>
+        </Stack>
       </dialog>
-    </article>
+    </Surface>
   );
 }

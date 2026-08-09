@@ -66,6 +66,8 @@ import {
   scheduleResumeSuppressClear,
 } from "@/features/shopping/shopping-intent";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { Button } from "@/shared/ui/button";
+import { Stack } from "@/shared/ui/stack";
 import { type MenuDetailRevalidationView, type MenuDetailSurface } from "./menu-detail-types";
 import { usageViewFromQuery } from "./usage-view-from-query";
 
@@ -548,8 +550,10 @@ export function HouseholdMenuDetailBody({
     }
   };
 
+  // 横はみ出し抑止と guided-planner 互換は .menu-detail-page 意味クラスへ退避。
   return (
-    <main className="page-frame guided-planner-theme min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
+    <main className="page-frame guided-planner-theme menu-detail-page">
+      <Stack gap={4}>
       <MenuSafetyNotice
         section="disclaimers"
         phase={revalidation.phase}
@@ -557,9 +561,7 @@ export function HouseholdMenuDetailBody({
         statusCopy={statusCopy}
       />
       {surface.showFlyerUpsell && usage.isSuccess && !usage.data.plusEntitled ? (
-        <div className="mt-4">
-          <FlyerUpsellBanner plusEntitled={false} />
-        </div>
+        <FlyerUpsellBanner plusEntitled={false} />
       ) : null}
       <MenuSafetyNotice
         section="revalidation"
@@ -582,17 +584,16 @@ export function HouseholdMenuDetailBody({
         pathForMenuId={surface.pathForMenuId}
       />
       {versionsFailed ? (
-        <p className="mb-2" role="alert">
-          案の一覧を読み込めませんでした。
-          <button
-            type="button"
-            className="ml-2 underline"
+        <p role="alert">
+          案の一覧を読み込めませんでした。{" "}
+          <Button
+            variant="ghost"
             onClick={() => {
               void versionsQuery.refetch();
             }}
           >
             もう一度読み込む
-          </button>
+          </Button>
         </p>
       ) : null}
 
@@ -648,12 +649,12 @@ export function HouseholdMenuDetailBody({
             />
           )}
           {acceptError !== null && (
-            <p className="mt-2" role="alert">
+            <p role="alert">
               {acceptError}
             </p>
           )}
           {pantryGateMessage !== null && (
-            <p className="mt-2" role="status">
+            <p role="status">
               {pantryGateMessage}
             </p>
           )}
@@ -878,6 +879,7 @@ export function HouseholdMenuDetailBody({
           }}
         />
       )}
+      </Stack>
     </main>
   );
 }

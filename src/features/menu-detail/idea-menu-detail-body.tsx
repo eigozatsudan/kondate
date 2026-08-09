@@ -38,6 +38,9 @@ import { createPlannerDraftFromMenu } from "@/features/planner/model/draft-from-
 import { getPlannerDraft, plannerKeys, savePlannerDraft } from "@/features/planner/planner-api";
 import { historyPathForShopping } from "@/features/shopping/shopping-intent";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { Button } from "@/shared/ui/button";
+import { Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 import { type MenuDetailSurface } from "./menu-detail-types";
 import { usageViewFromQuery } from "./usage-view-from-query";
 
@@ -200,24 +203,26 @@ export function IdeaMenuDetailBody({
   };
 
   // idea の必須注意は 1 枠に集約（免責・家族未使用・AI 作成を別枠で重ねない）。
+  // 横はみ出し抑止は .menu-detail-page 意味クラスへ退避。
   return (
-    <main className="page-frame guided-planner-theme min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
+    <main className="page-frame guided-planner-theme menu-detail-page">
+      <Stack gap={4}>
       <IdeaMenuSafetyNotice />
       {surface.showFlyerUpsell && usage.isSuccess && !usage.data.plusEntitled ? (
-        <div className="mb-4">
-          <FlyerUpsellBanner plusEntitled={false} />
-        </div>
+        <FlyerUpsellBanner plusEntitled={false} />
       ) : null}
       {showIdeaShoppingRejected ? (
-        <section className="card stack mb-4" role="status">
-          <p>アイデア献立は買い物リストに使えません。家族に合わせた献立を選んでください</p>
-          <Link className="secondary-button min-h-11" to={historyPathForShopping()}>
-            履歴に戻る
-          </Link>
-          <Link className="secondary-button min-h-11" to="/shopping">
-            買い物に戻る
-          </Link>
-        </section>
+        <Surface as="section" role="status" tone="notice">
+          <Stack gap={3}>
+            <p>アイデア献立は買い物リストに使えません。家族に合わせた献立を選んでください</p>
+            <Link className="button-link" to={historyPathForShopping()}>
+              履歴に戻る
+            </Link>
+            <Link className="button-link" to="/shopping">
+              買い物に戻る
+            </Link>
+          </Stack>
+        </Surface>
       ) : null}
       <MenuVersionSwitcher
         versions={siblingVersions}
@@ -225,17 +230,16 @@ export function IdeaMenuDetailBody({
         pathForMenuId={surface.pathForMenuId}
       />
       {versionsFailed ? (
-        <p className="mb-2" role="alert">
-          案の一覧を読み込めませんでした。
-          <button
-            type="button"
-            className="ml-2 underline"
+        <p role="alert">
+          案の一覧を読み込めませんでした。{" "}
+          <Button
+            variant="ghost"
             onClick={() => {
               void versionsQuery.refetch();
             }}
           >
             もう一度読み込む
-          </button>
+          </Button>
         </p>
       ) : null}
       {actions === undefined ? (
@@ -271,17 +275,17 @@ export function IdeaMenuDetailBody({
         />
       )}
       {acceptError !== null && (
-        <p className="mt-2" role="alert">
+        <p role="alert">
           {acceptError}
         </p>
       )}
       {favoriteError !== null && (
-        <p className="mt-2" role="alert">
+        <p role="alert">
           {favoriteError}
         </p>
       )}
       {pantryGateMessage !== null && (
-        <p className="mt-2" role="status">
+        <p role="status">
           {pantryGateMessage}
         </p>
       )}
@@ -297,13 +301,12 @@ export function IdeaMenuDetailBody({
         }
         primary={
           accepted || confirmedSingle ? (
-            <Link className="primary-button min-h-11" to="/history">
+            <Link className="button-link button-link--primary" to="/history">
               {surface.ideaAcceptedPrimaryLabel}
             </Link>
           ) : (
-            <button
-              type="button"
-              className="primary-button min-h-11"
+            <Button
+              variant="primary"
               disabled={accept.isPending}
               onClick={() => {
                 setAcceptError(null);
@@ -318,15 +321,14 @@ export function IdeaMenuDetailBody({
               }}
             >
               この献立にする
-            </button>
+            </Button>
           )
         }
         auxiliaries={
           <>
             {!accepted && confirmedSingle ? (
-              <button
-                type="button"
-                className="secondary-button min-h-11"
+              <Button
+                variant="secondary"
                 disabled={accept.isPending}
                 onClick={() => {
                   setAcceptError(null);
@@ -341,11 +343,10 @@ export function IdeaMenuDetailBody({
                 }}
               >
                 この献立にする
-              </button>
+              </Button>
             ) : null}
-            <button
-              type="button"
-              className="secondary-button min-h-11"
+            <Button
+              variant="secondary"
               disabled={!pantryGateReady}
               onClick={() => {
                 if (!pantryGateReady) return;
@@ -353,21 +354,19 @@ export function IdeaMenuDetailBody({
               }}
             >
               この案を元に別の献立を作り直す
-            </button>
+            </Button>
             {canUpdatePostCook ? (
-              <button
-                type="button"
-                className="secondary-button min-h-11"
+              <Button
+                variant="secondary"
                 onClick={() => {
                   setPostCookOpen(true);
                 }}
               >
                 使った食材の在庫を更新
-              </button>
+              </Button>
             ) : null}
-            <button
-              type="button"
-              className="secondary-button min-h-11"
+            <Button
+              variant="secondary"
               disabled={favorite.isPending}
               aria-pressed={isFavorite}
               aria-label={isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
@@ -388,25 +387,24 @@ export function IdeaMenuDetailBody({
               }}
             >
               {isFavorite ? "★ お気に入り" : "☆ お気に入り"}
-            </button>
+            </Button>
             {result.sourceSubmission !== null ? (
-              <button
-                type="button"
-                className="secondary-button min-h-11"
+              <Button
+                variant="secondary"
                 disabled={retargetPending}
                 onClick={() => {
                   void onRetarget();
                 }}
               >
                 条件を変えて作り直す
-              </button>
+              </Button>
             ) : null}
           </>
         }
       />
 
       {retargetError !== null && (
-        <p role="alert" className="mt-4">
+        <p role="alert">
           {retargetError}
         </p>
       )}
@@ -422,6 +420,7 @@ export function IdeaMenuDetailBody({
           }}
         />
       )}
+      </Stack>
     </main>
   );
 }

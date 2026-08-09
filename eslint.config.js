@@ -91,9 +91,6 @@ export default tseslint.config(
      */
     files: ["src/features/**/*.tsx"],
     ignores: [
-      // Phase 3 で移行: 結果・詳細
-      "src/features/menu-detail/**",
-      "src/features/history/**",
       // 本プロジェクトのスコープ外（設計書 §1）。移行しないため恒久的に除外する。
       "src/features/billing/**",
       "src/features/landing/**",

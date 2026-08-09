@@ -3,6 +3,9 @@ import {
   MENU_LABEL_DISCLAIMER,
 } from "@/features/generation/components/idea-menu-safety-notice";
 import type { RevalidationPhaseName } from "@/features/history/hooks/use-menu-revalidation";
+import { Button } from "@/shared/ui/button";
+import { Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 
 export type MenuSafetyNoticeIssue = {
   code: string;
@@ -50,6 +53,7 @@ export type MenuSafetyNoticeProps = {
  * household 献立詳細の安全・アレルギー表示。
  * 表示専用。文言は不変契約どおり一字一句変えない。
  * role=alert / role=status の使い分けも維持する。
+ * sticky は .menu-result-gate-status 意味クラスへ退避（生 utility 禁止）。
  */
 export function MenuSafetyNotice({
   phase,
@@ -64,13 +68,10 @@ export function MenuSafetyNotice({
   if (section === "gate") {
     if (!showGateStatus) return null;
     return (
-      <div
-        className="menu-result-gate-status sticky top-0 z-10 bg-canvas/95 py-2"
-        role="status"
-      >
-        <p className="m-0">{statusCopy}</p>
+      <div className="menu-result-gate-status" role="status">
+        <p className="menu-result-gate-status-copy">{statusCopy}</p>
         {changedDetailLines.length > 0 && (
-          <ul className="mt-1 list-disc pl-5 type-small">
+          <ul className="menu-result-gate-status-list type-small">
             {changedDetailLines.map((line) => (
               <li key={line}>{line}</li>
             ))}
@@ -82,12 +83,13 @@ export function MenuSafetyNotice({
 
   if (section === "disclaimers") {
     return (
-      <>
-        <p className="rounded-xl border border-amber-700 p-3 font-semibold">
-          {MENU_LABEL_DISCLAIMER}
-        </p>
-        <p className="type-small text-ink/80">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
-      </>
+      <Stack gap={3}>
+        {/* 不安を煽らず目立たせる: notice 面。文言は固定契約。 */}
+        <Surface tone="notice">
+          <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
+        </Surface>
+        <p className="type-small">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
+      </Stack>
     );
   }
 
@@ -114,29 +116,30 @@ export function MenuSafetyNotice({
       )}
 
       {phase === "error" && (
-        <div className="mt-4 stack gap-2">
+        <Stack gap={2}>
           <p role="alert">{statusCopy}</p>
-          <button
-            type="button"
-            className="min-h-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+          <Button
+            variant="secondary"
             onClick={() => {
               onRetry?.();
             }}
           >
             もう一度確認
-          </button>
-        </div>
+          </Button>
+        </Stack>
       )}
 
       {phase === "checked" && invalidIssues !== undefined && invalidIssues.length > 0 && (
-        <div className="mt-4 stack gap-2" role="alert">
-          <p>現在の家族設定ではこの献立を利用できません</p>
-          <ul className="list-disc pl-5">
-            {invalidIssues.map((issue) => (
-              <li key={`${issue.code}:${issue.path}`}>{issue.message}</li>
-            ))}
-          </ul>
-        </div>
+        <Surface tone="notice" role="alert">
+          <Stack gap={2}>
+            <p>現在の家族設定ではこの献立を利用できません</p>
+            <ul className="menu-detail-issue-list">
+              {invalidIssues.map((issue) => (
+                <li key={`${issue.code}:${issue.path}`}>{issue.message}</li>
+              ))}
+            </ul>
+          </Stack>
+        </Surface>
       )}
     </>
   );

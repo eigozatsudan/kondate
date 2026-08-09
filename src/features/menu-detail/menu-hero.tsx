@@ -1,4 +1,5 @@
 import { formatGenerationModelLabel } from "@shared/contracts/generation-model-label";
+import { PageHeader } from "@/shared/ui/page-header";
 
 export type MenuHeroProps = {
   /** 食卓までの合計目安分 */
@@ -15,29 +16,24 @@ export type MenuHeroProps = {
 /**
  * 献立詳細の見出し部（成功タイトル・所要時間・作成モデル）。
  * 表示専用。状態・副作用は持たない。
- * Task 3.1: household/MenuResult から見た目を変えず切り出した。
+ * 明朝ヒーローは PageHeader に委ね、文言は不変契約どおり維持する。
  */
 export function MenuHero({
   totalElapsedMinutes,
   servings,
   generationModelId,
 }: MenuHeroProps) {
+  const modelLabel =
+    generationModelId !== null ? formatGenerationModelLabel(generationModelId) : "";
+  // 台帳欠落時は note を渡さない（推測ラベルを捏造しない）
+  const note =
+    modelLabel !== "" ? `作成モデル: ${modelLabel}` : undefined;
+
   return (
-    <header className="menu-result-header">
-      <h1 className="menu-result-title">献立ができました</h1>
-      <p className="menu-result-summary">
-        食卓まで約{totalElapsedMinutes}分・{servings}人分
-      </p>
-      {/*
-        生成モデルは透明性のための薄いメタ情報。主見出しの下に小さく置き、
-        台帳欠落時は出さない（推測ラベルを捏造しない）。
-      */}
-      {generationModelId !== null &&
-      formatGenerationModelLabel(generationModelId) !== "" ? (
-        <p className="menu-result-model type-small">
-          作成モデル: {formatGenerationModelLabel(generationModelId)}
-        </p>
-      ) : null}
-    </header>
+    <PageHeader
+      title="献立ができました"
+      lead={`食卓まで約${String(totalElapsedMinutes)}分・${String(servings)}人分`}
+      {...(note !== undefined ? { note } : {})}
+    />
   );
 }
