@@ -79,8 +79,9 @@ test("household journey: welcome through shopping create and alternate reconcile
     /\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1],
   );
 
-  // 料理タブ
-  const dishTab = page.getByRole("tab").first();
+  // 料理タブ — 段取り側 tablist（「献立の段取りと材料」）と混同しない
+  const dishTablist = page.getByRole("tablist", { name: "料理" });
+  const dishTab = dishTablist.getByRole("tab").first();
   await expect(dishTab).toBeVisible();
   await dishTab.click();
 
