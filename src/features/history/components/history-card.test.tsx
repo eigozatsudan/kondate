@@ -157,7 +157,8 @@ describe("HistoryCard detail CTA", () => {
     renderCard(ideaGroup());
     const detail = screen.getByRole("link", { name: "詳細を見る" });
     expect(detail).toHaveAttribute("href", "/menus/menu-idea");
-    expect(detail).toHaveClass("min-h-11", "secondary-button");
+    // secondary-button → button-link（Link は Button 化しない契約）。44px は min-h-11
+    expect(detail).toHaveClass("min-h-11", "button-link");
     expect(screen.getByRole("button", { name: "お気に入りに追加" })).toBeVisible();
     expect(screen.getByRole("button", { name: "この履歴を削除" })).toBeVisible();
   });

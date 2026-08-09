@@ -754,7 +754,8 @@ describe("MenuResultPage", () => {
       expect(screen.queryByRole("button", { name: "この献立にしました" })).toBeNull();
       const historyLink = screen.getByRole("link", { name: "作った献立を見る" });
       expect(historyLink).toHaveAttribute("href", "/history");
-      expect(historyLink).toHaveClass("primary-button");
+      // primary-button → button-link--primary（Link は Button 化しない契約）
+      expect(historyLink).toHaveClass("button-link", "button-link--primary");
     });
 
     it("shows version switcher and primary accept when multiple sibling versions exist", async () => {
@@ -790,7 +791,8 @@ describe("MenuResultPage", () => {
       expect(await screen.findByText(/別案を見比べる（2案）/u)).toBeVisible();
       // 複数案では採用が主操作
       const accept = await screen.findByRole("button", { name: "この献立にする" });
-      expect(accept).toHaveClass("primary-button");
+      // primary-button → ui-btn--primary（共有 Button プリミティブ）
+      expect(accept).toHaveClass("ui-btn", "ui-btn--primary");
       expect(screen.getByRole("link", { name: /案1/u })).toHaveAttribute(
         "href",
         `/menus/${otherId}`,
@@ -816,7 +818,8 @@ describe("MenuResultPage", () => {
       expect(await screen.findByText(/材料の買い物リストを作ると/u)).toBeVisible();
       expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
       const shopping = screen.getByRole("button", { name: "材料の買い物リストを作る" });
-      expect(shopping).toHaveClass("primary-button");
+      // primary-button → ui-btn--primary（共有 Button プリミティブ）
+      expect(shopping).toHaveClass("ui-btn", "ui-btn--primary");
       expect(shopping).toBeEnabled();
     });
 
