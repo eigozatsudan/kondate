@@ -1,102 +1,12 @@
-import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-import { ChoiceCard } from "./choice-card";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { InlineNotice } from "./inline-notice";
-import { ProgressIndicator } from "./progress-indicator";
-import { ReviewRow } from "./review-row";
-import { WizardFrame } from "./wizard-frame";
 
-describe("wizard UI", () => {
-  it("moves focus to the question heading when the step changes", () => {
-    const { rerender } = render(
-      <WizardFrame
-        stepKey="meal"
-        currentStep={1}
-        totalSteps={5}
-        title="いつの食事ですか？"
-        primaryAction={{ label: "次へ", onClick: vi.fn() }}
-      >
-        <p>選択肢</p>
-      </WizardFrame>,
-    );
-    expect(screen.getByRole("heading", { name: "いつの食事ですか？" })).toHaveFocus();
-    rerender(
-      <WizardFrame
-        stepKey="ingredient"
-        currentStep={2}
-        totalSteps={5}
-        title="メインの食材は？"
-        primaryAction={{ label: "次へ", onClick: vi.fn() }}
-      >
-        <p>選択肢</p>
-      </WizardFrame>,
-    );
-    expect(screen.getByRole("heading", { name: "メインの食材は？" })).toHaveFocus();
-  });
-
-  it("exposes selection without relying on colour", async () => {
-    const onSelect = vi.fn();
-    render(<ChoiceCard title="夕食" selected selectionMode="single" onSelect={onSelect} />);
-    const choice = screen.getByRole("button", { name: /夕食/ });
-    expect(choice).toHaveAttribute("aria-pressed", "true");
-    expect(within(choice).getByText("選択中")).toBeVisible();
-    await userEvent.click(choice);
-    expect(onSelect).toHaveBeenCalledOnce();
-  });
-
-  it("renders progress as text and a bar", () => {
-    render(<ProgressIndicator currentStep={2} totalSteps={5} />);
-    expect(screen.getByText("質問 2 / 5")).toBeVisible();
-    const progressbar = screen.getByRole("progressbar", { name: "質問 2 / 5" });
-    expect(progressbar).toHaveAttribute("aria-label", "質問 2 / 5");
-    expect(progressbar).not.toHaveAttribute("aria-labelledby");
-    expect(progressbar).toHaveAttribute("aria-valuenow", "2");
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuemin", "0");
-    // CSP style-src 'self' のため style 属性は使わず、SVG rect の width で塗り幅を表す
-    expect(progressbar.querySelector("rect.progress-value-rect")).toHaveAttribute("width", "40");
-    expect(progressbar.querySelector("[style]")).toBeNull();
-  });
-
-  it("aligns the visual and accessible range for a single step", () => {
-    render(<ProgressIndicator currentStep={1} totalSteps={1} />);
-    const progressbar = screen.getByRole("progressbar", { name: "質問 1 / 1" });
-    expect(progressbar).toHaveAttribute("aria-valuemin", "0");
-    expect(progressbar).toHaveAttribute("aria-valuemax", "1");
-    expect(progressbar).toHaveAttribute("aria-valuenow", "1");
-    expect(progressbar.querySelector("rect.progress-value-rect")).toHaveAttribute("width", "100");
-  });
-
-  it("does not require progress label ids across multiple instances", () => {
-    render(
-      <>
-        <ProgressIndicator currentStep={2} totalSteps={5} />
-        <ProgressIndicator currentStep={2} totalSteps={5} />
-      </>,
-    );
-    const progressbars = screen.getAllByRole("progressbar", { name: "質問 2 / 5" });
-    expect(
-      progressbars.every((progressbar) => progressbar.getAttribute("aria-label") !== null),
-    ).toBe(true);
-    expect(screen.getAllByText("質問 2 / 5").every((label) => label.id === "")).toBe(true);
-  });
-
-  it("normalizes invalid progress boundaries", () => {
-    const { rerender } = render(<ProgressIndicator currentStep={0} totalSteps={0} />);
-    expect(screen.getByText("質問 1 / 1")).toBeVisible();
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
-    rerender(<ProgressIndicator currentStep={9} totalSteps={5} />);
-    expect(screen.getByText("質問 5 / 5")).toBeVisible();
-    expect(
-      screen.getByRole("progressbar").querySelector("rect.progress-value-rect"),
-    ).toHaveAttribute("width", "100");
-  });
-
-  it("renders without JSX style attributes under strict CSP", () => {
-    const { container } = render(<ProgressIndicator currentStep={2} totalSteps={5} />);
-    expect(container.querySelector("[style]")).toBeNull();
-  });
-
+/**
+ * WizardFrame / ChoiceCard / ProgressIndicator / ReviewRow は参照ゼロの死コードとして
+ * Phase 1 Task 1.0 で削除した。残すのは live 参照のある InlineNotice のみ。
+ */
+describe("InlineNotice", () => {
   it("uses alert only for errors", () => {
     const { rerender } = render(
       <InlineNotice tone="notice" title="お知らせ">
@@ -118,39 +28,14 @@ describe("wizard UI", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("再試行してください");
   });
 
-  it("keeps disabled choices visibly unavailable", () => {
-    render(
-      <ChoiceCard
-        title="選べない候補"
-        description="現在は利用できません"
-        selected={false}
-        selectionMode="multiple"
-        disabled
-        onSelect={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("button", { name: /選べない候補/ })).toBeDisabled();
-  });
-
   it("accepts block content without nesting it in paragraphs", () => {
     render(
-      <>
-        <InlineNotice tone="notice" title="詳細">
-          <div>お知らせのブロック要素</div>
-        </InlineNotice>
-        <ReviewRow label="食事" value={<div>確認行のブロック要素</div>} onEdit={vi.fn()} />
-      </>,
+      <InlineNotice tone="notice" title="詳細">
+        <div>お知らせのブロック要素</div>
+      </InlineNotice>,
     );
     expect(screen.getByText("お知らせのブロック要素").parentElement).toHaveClass(
       "inline-notice-body",
     );
-    expect(screen.getByText("確認行のブロック要素").parentElement).toHaveClass("review-row-value");
-  });
-
-  it("gives review edit actions a contextual name", async () => {
-    const onEdit = vi.fn();
-    render(<ReviewRow label="食事" value="夕食" onEdit={onEdit} />);
-    await userEvent.click(screen.getByRole("button", { name: "食事を変更" }));
-    expect(onEdit).toHaveBeenCalledOnce();
   });
 });
