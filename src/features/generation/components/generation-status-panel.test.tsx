@@ -606,6 +606,27 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
   });
 
+  it("renders a progress meter while processing (same contract as submitting)", () => {
+    // 長時間待ちの本体は processing。submitting だけの契約だと削除退行が緑のまま残る。
+    const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
+      status: "processing",
+      idempotencyKey: KEY,
+      requestId: REQUEST_ID,
+      startedAt: new Date(NOW.getTime() - 10_000).toISOString(),
+      quota,
+    };
+    render(
+      <GenerationStatusPanel
+        state={{ phase: "processing", data: processingData, effect: "poll" }}
+      />,
+    );
+    const meter = screen.getByRole("progressbar", { name: "献立作成の進み具合" });
+    expect(meter).toHaveAttribute("aria-valuenow", "3");
+    expect(meter).toHaveAttribute("aria-valuemin", "1");
+    expect(meter).toHaveAttribute("aria-valuemax", "5");
+    expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
+  });
+
   it.each([
     [0, 0, "条件を確認しています"],
     [10_000, 2, "献立案を用意しています"],

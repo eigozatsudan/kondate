@@ -286,6 +286,7 @@ function GenerationProgressMeter({ stageIndex }: { stageIndex: number }) {
         <span
           key={stage.afterMs}
           className={index <= stageIndex ? "gen-progress-step is-done" : "gen-progress-step"}
+          aria-hidden="true"
         />
       ))}
     </div>

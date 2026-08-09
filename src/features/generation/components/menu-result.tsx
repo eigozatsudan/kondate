@@ -655,6 +655,7 @@ export function MenuResult({
           <dialog
             ref={postCookDialogRef}
             aria-labelledby={postCookTitleId}
+            aria-modal="true"
             onCancel={(event) => {
               // Escape / 背面クリックの native close を止め、親の close に委ねる
               event.preventDefault();

@@ -102,6 +102,7 @@ export function IdeaMenuSafetyNotice() {
       <dialog
         ref={dialogRef}
         aria-labelledby={titleId}
+        aria-modal="true"
         onCancel={(event) => {
           event.preventDefault();
           closeDetails();

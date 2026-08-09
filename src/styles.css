@@ -2930,6 +2930,9 @@ h1.ui-page-header__title {
   margin: auto;
   width: calc(100% - 2rem);
   max-width: 28rem;
+  /* 320 高・ズームでも閉じるが viewport 外に出ないよう縦スクロールを許す */
+  max-height: min(90vh, 40rem);
+  overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
