@@ -1692,11 +1692,20 @@ dialog:not([open]) {
 /*
  * 献立結果本文の縦リズム。
  * 注意枠と成功見出しが密着しないよう、ヘッダ→注意→カードの順で gap を固定する。
+ * 320px 幅での横はみ出し抑止は class 契約（unit が root の min/max/overflow を固定）。
+ * sticky タブ列・材料 grid は Surface では表現できないため .menu-result-* に退避。
  */
 .menu-result {
   display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   gap: 20px;
   padding-block: 8px 24px;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  word-break: break-word;
 }
 
 .menu-result-header {
@@ -1710,6 +1719,8 @@ dialog:not([open]) {
   font-size: var(--text-display);
   font-weight: 700;
   line-height: var(--leading-display);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-summary {
@@ -1717,11 +1728,15 @@ dialog:not([open]) {
   font-size: 1.125rem;
   font-weight: 600;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-model {
   margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-ai-notice,
@@ -1734,14 +1749,32 @@ dialog:not([open]) {
   padding: 14px 16px;
   font-size: var(--text-small);
   line-height: 1.6;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-soft-gap {
+  display: grid;
+  gap: var(--space-3);
   font-size: inherit;
+}
+
+.menu-result-soft-gap-title {
+  font-size: var(--text-small);
+  font-weight: 700;
+}
+
+.menu-result-soft-gap-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  list-style: disc;
+  font-size: var(--text-small);
 }
 
 .menu-result-card {
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
   border-radius: 18px;
   background: var(--surface);
   padding: 18px 16px;
@@ -1755,18 +1788,334 @@ dialog:not([open]) {
   font-size: var(--text-h2);
   font-weight: 700;
   line-height: var(--leading-h2);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-dish-description {
   margin: 8px 0 0;
   color: var(--muted);
   line-height: 1.65;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
+.menu-result-section-heading {
+  margin: var(--space-5) 0 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.menu-result-section-lead {
+  margin: var(--space-2) 0 0;
+}
+
+.menu-result-regenerate-wrap {
+  margin-top: var(--space-4);
+}
+
+/*
+ * sticky タブ列。Surface に sticky を載せない（契約: 意味クラスへ退避）。
+ * 背景は canvas 固定で、スクロール時に下層コンテンツが透けないようにする。
+ */
 .menu-result-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
   padding-block: 10px 6px;
-  gap: 10px;
+  gap: var(--space-2);
+  overflow-x: auto;
+  background: var(--app-background);
+}
+
+.menu-result-tab {
+  min-height: 44px;
+  flex-shrink: 0;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  padding: 0 var(--space-4);
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.menu-result-tab[aria-selected="true"] {
+  border-color: var(--primary);
+  background: var(--selection);
+}
+
+.menu-result-ingredient-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu-result-ingredient-list > li + li {
+  border-top: 1px solid var(--border);
+}
+
+/*
+ * 材料行: 名称 1fr / 分量 最大 45%。
+ * 320px でも auto-min-width に遮られず折返せるよう子は min-width:0。
+ */
+.menu-result-ingredient-row {
+  display: grid;
+  min-width: 0;
+  min-height: 44px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 45%);
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: var(--space-2);
+}
+
+.menu-result-ingredient-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.menu-result-ingredient-amount {
+  min-width: 0;
+  width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: right;
+}
+
+.menu-result-label-chip {
+  display: inline-block;
+  margin-left: var(--space-2);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  color: var(--text);
+  font-size: var(--text-small);
+}
+
+.menu-result-step-list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.menu-result-step-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.menu-result-step-position {
+  font-weight: 700;
+}
+
+.menu-result-step-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.menu-result-adaptation {
+  margin: var(--space-2) 0 0;
+  border-radius: var(--radius-lg);
+  background: var(--app-background);
+  padding: var(--space-3);
+}
+
+.menu-result-adaptation-title {
+  font-weight: 700;
+}
+
+.menu-result-label-section {
+  margin-top: var(--space-5);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-lg);
+  background: var(--notice);
+  padding: var(--space-3);
+}
+
+.menu-result-label-section-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.menu-result-label-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.menu-result-label-item {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.menu-result-label-meta {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-small);
+}
+
+.menu-result-label-confirmed {
+  display: inline-block;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  padding: 0 var(--space-2);
+  font-size: var(--text-small);
+}
+
+.menu-result-label-action {
+  margin-top: var(--space-2);
+}
+
+.menu-result-pantry-list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.menu-result-pantry-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+}
+
+/*
+ * 在庫更新ダイアログ。dialog 本体に display を付けない
+ * （UA の dialog:not([open]){display:none} を作者スタイルで潰さない）。
+ */
+.menu-result-dialog {
+  margin: auto;
+  max-height: min(90vh, 40rem);
+  width: calc(100% - 2rem);
+  max-width: 28rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-5);
+  box-shadow: 0 12px 40px rgb(51 44 39 / 18%);
+}
+
+.menu-result-dialog-title {
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.menu-result-dialog-lead {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: 1.6;
+}
+
+.menu-result-dialog-alert {
+  margin: 0;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-lg);
+  background: var(--notice);
+  padding: var(--space-3);
+}
+
+.menu-result-post-cook-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.menu-result-post-cook-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+}
+
+.menu-result-post-cook-deleted {
+  margin: var(--space-1) 0 0;
+}
+
+.menu-result-post-cook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+  gap: var(--space-2);
+}
+
+.menu-result-post-cook-confirm {
+  margin-top: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--app-background);
+  padding: var(--space-3);
+}
+
+.menu-result-post-cook-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+  gap: var(--space-2);
+}
+
+.menu-result-remainder-form {
+  display: grid;
+  margin-top: var(--space-3);
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--app-background);
+  padding: var(--space-3);
+}
+
+.menu-result-field {
+  display: block;
+}
+
+.menu-result-field-input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin-top: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.menu-result-undo {
+  margin-top: var(--space-2);
+}
+
+/* 結果表示失敗時の履歴導線（Link は Button 化しない） */
+.menu-result-history-link {
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  color: var(--primary-strong);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.menu-result-history-link:hover {
+  background: var(--notice);
 }
 
 /* ページ枠の再検証ステータス（成功後の1行）。主見出しと競合しないよう薄く・余白多め。 */
@@ -1844,6 +2193,7 @@ dialog:not([open]) {
   gap: 12px;
   min-width: 0;
   min-height: 44px;
+  border-left: 4px solid var(--primary);
   padding-left: 12px;
 }
 
@@ -2036,12 +2386,13 @@ dialog:not([open]) {
 }
 
 /*
- * 生成待ちパネル。6フェーズ共通の枠。演出はクラス駆動のみで、
- * prefers-reduced-motion ではインジケータを止める。
+ * 生成待ちパネル。8 phase 共通の枠（data-phase 契約）。
+ * 面は Surface が持ち、ここは data-phase と縦リズムのホストに徹する。
+ * prefers-reduced-motion ではインジケータを止める（下のペアとセットで維持）。
  */
 .gen-status-panel {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .gen-status-panel h1 {
@@ -2059,7 +2410,13 @@ dialog:not([open]) {
 .gen-status-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-3);
+}
+
+/* Surface 内の本文。page-header と indicator を縦に積む */
+.gen-status-body {
+  display: grid;
+  gap: var(--space-4);
 }
 
 .gen-status-indicator {
@@ -2531,4 +2888,68 @@ h1.ui-page-header__title {
   .gen-progress-step {
     transition: none;
   }
+}
+
+/*
+ * idea 結果の必須注意（レイアウトのみ。文言は idea-menu-safety-notice.tsx が正）。
+ * 保証表現に寄る見た目変更を避けるため、警告アイコン色は --warning / --notice 系に留める。
+ */
+.idea-safety-notice-body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.idea-safety-notice-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.idea-safety-notice-icon {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--notice);
+  color: var(--primary-strong);
+}
+
+.idea-safety-notice-mandatory {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+  color: var(--text);
+}
+
+.idea-safety-dialog {
+  margin: auto;
+  width: calc(100% - 2rem);
+  max-width: 28rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-5);
+  box-shadow: 0 12px 40px rgb(51 44 39 / 18%);
+}
+
+.idea-safety-dialog-title {
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.idea-safety-dialog-body {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.idea-safety-dialog-emphasis {
+  margin: 0;
+  font-weight: 700;
 }

@@ -8,6 +8,8 @@ import { formatGenerationModelLabel } from "@shared/contracts/generation-model-l
 import type { MenuResultViewModel, PantryPostCookTarget } from "../api/menu-result-api";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
 import { MENU_LABEL_CONFIRMATION_RECORD_NOTICE } from "@/features/generation/components/idea-menu-safety-notice";
+import { Button } from "@/shared/ui/button";
+import { Stack } from "@/shared/ui/stack";
 
 const roleLabels = {
   main: "主菜",
@@ -336,11 +338,12 @@ export function MenuResult({
   // idea の AI/免責注意はページ枠の IdeaMenuSafetyNotice に集約するため、
   // 本文側では household だけ AI 作成バナーを出す（二重表示防止）。
   // 見出しを先に置き、注意枠が成功タイトルに密着しないよう縦リズムを分ける。
+  // sticky タブ列と材料 grid は Surface では表現できないため .menu-result-* へ退避。
   return (
-    <div className="menu-result mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
+    <div className="menu-result">
       <header className="menu-result-header">
-        <h1 className="menu-result-title break-words">献立ができました</h1>
-        <p className="menu-result-summary break-words">
+        <h1 className="menu-result-title">献立ができました</h1>
+        <p className="menu-result-summary">
           食卓まで約{menu.totalElapsedMinutes}分・{menu.servings}人分
         </p>
         {/*
@@ -349,22 +352,22 @@ export function MenuResult({
         */}
         {result.generationModelId !== null &&
         formatGenerationModelLabel(result.generationModelId) !== "" ? (
-          <p className="menu-result-model type-small break-words">
+          <p className="menu-result-model type-small">
             作成モデル: {formatGenerationModelLabel(result.generationModelId)}
           </p>
         ) : null}
       </header>
       {mode !== "idea" ? (
-        <p className="menu-result-ai-notice break-words">
+        <p className="menu-result-ai-notice">
           <strong>AIが作成した献立です。</strong>{" "}
           内容、加熱状態、家庭内での混入を調理前に確認してください。
         </p>
       ) : null}
       {/* A-I7: 苦手 soft gap — 生成結果画面のみ（view model が空なら履歴側） */}
       {result.preferenceGaps.length > 0 && (
-        <section className="menu-result-soft-gap stack" role="status" aria-label="希望条件の注意">
-          <strong className="text-sm">苦手の希望について</strong>
-          <ul className="list-disc pl-5 text-sm">
+        <section className="menu-result-soft-gap" role="status" aria-label="希望条件の注意">
+          <strong className="menu-result-soft-gap-title">苦手の希望について</strong>
+          <ul className="menu-result-soft-gap-list">
             {result.preferenceGaps.map((gap) => (
               <li key={`${gap.anonymousMemberRef}:${gap.dislikeToken}`}>{gap.message}</li>
             ))}
@@ -376,15 +379,12 @@ export function MenuResult({
       </div>
       {/* 在庫更新ダイアログを開いている間は dialog 内だけに出し、二重表示しない */}
       {conflictMessage !== null && !postCookOpen && (
-        <p role="alert" className="menu-result-alert break-words">
+        <p role="alert" className="menu-result-alert">
           {conflictMessage}
         </p>
       )}
 
-      <section
-        aria-labelledby="timeline-heading"
-        className="cook-timeline-panel menu-result-card min-w-0 max-w-full"
-      >
+      <section aria-labelledby="timeline-heading" className="cook-timeline-panel menu-result-card">
         <h2 id="timeline-heading" className="menu-result-section-title">
           全体の段取り
         </h2>
@@ -414,9 +414,9 @@ export function MenuResult({
             return (
               <li
                 key={step.id}
-                // レールは薄い色では WCAG 1.4.11 の非テキスト 3:1 を満たさないため
-                // terracotta-700 を使う。色は補助で、料理名テキストを必ず併記する。
-                className={`cook-timeline-step cook-timeline-dish-${String(dishIndex % 5)} border-l-4 border-terracotta-700`}
+                // レール色は .cook-timeline-step の border-left（CSS）。
+                // 色は補助で、料理名テキストを必ず併記する。
+                className={`cook-timeline-step cook-timeline-dish-${String(dishIndex % 5)}`}
               >
                 <div className="cook-timeline-time tabular-nums">
                   <span className="cook-timeline-start">{step.startMinute}分〜</span>
@@ -454,11 +454,7 @@ export function MenuResult({
         </ol>
       </section>
 
-      <div
-        role="tablist"
-        aria-label="料理"
-        className="menu-result-tabs sticky top-0 z-10 flex min-w-0 max-w-full gap-2 overflow-x-auto bg-canvas"
-      >
+      <div role="tablist" aria-label="料理" className="menu-result-tabs">
         {menu.dishes.map((dish) => (
           <button
             key={dish.id}
@@ -474,7 +470,7 @@ export function MenuResult({
             onKeyDown={(event) => {
               handleTabKeyDown(event, dish.id);
             }}
-            className="min-h-11 shrink-0 rounded-full border-2 px-4 font-semibold aria-selected:border-terracotta-700 aria-selected:bg-terracotta-100"
+            className="menu-result-tab"
           >
             {roleLabels[dish.role]}・{dish.name}
           </button>
@@ -486,69 +482,59 @@ export function MenuResult({
         id={`panel-${selected.id}`}
         role="tabpanel"
         aria-labelledby={`tab-${selected.id}`}
-        className="menu-result-card min-w-0 max-w-full"
+        className="menu-result-card"
       >
-        <h2 className="menu-result-section-title break-words">{selected.name}</h2>
-        <p className="menu-result-dish-description break-words [overflow-wrap:anywhere]">
-          {selected.description}
-        </p>
+        <h2 className="menu-result-section-title">{selected.name}</h2>
+        <p className="menu-result-dish-description">{selected.description}</p>
         {onRegenerateSelectedDish !== undefined && (
-          <div className="mt-4">
+          <div className="menu-result-regenerate-wrap">
             {/*
               料理パネル内に置くことで「この一品」の指示対象が文脈で伝わる。
               ラベル文言は e2e / 既存 getByRole 契約のため変更しない。
             */}
-            <button
-              type="button"
-              className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+            <Button
+              variant="secondary"
               disabled={regenerateSelectedDishDisabled}
               onClick={onRegenerateSelectedDish}
             >
               この一品だけ別案にする
-            </button>
+            </Button>
           </div>
         )}
-        <h3 className="mt-5 text-lg font-bold">材料</h3>
-        <ul className="divide-y">
+        <h3 className="menu-result-section-heading">材料</h3>
+        <ul className="menu-result-ingredient-list">
           {selected.ingredients.map((item) => (
-            <li
-              key={item.id}
-              className="grid min-h-11 min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,45%)] items-center gap-3 py-2"
-            >
-              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+            <li key={item.id} className="menu-result-ingredient-row">
+              <span className="menu-result-ingredient-name">
                 {item.name}
                 {item.labelConfirmationRequired && (
-                  <span className="ml-2 rounded border border-amber-700 px-2 text-sm">
-                    ラベル確認
-                  </span>
+                  <span className="menu-result-label-chip">ラベル確認</span>
                 )}
               </span>
-              <span className="min-w-0 w-full break-words text-right [overflow-wrap:anywhere]">
+              <span className="menu-result-ingredient-amount">
                 {amount(item.quantityValue, item.unit, item.quantityText)}
               </span>
             </li>
           ))}
         </ul>
-        <h3 className="mt-5 text-lg font-bold">作り方</h3>
-        <ol className="mt-2 space-y-3">
+        <h3 className="menu-result-section-heading">作り方</h3>
+        <ol className="menu-result-step-list">
           {selected.steps.map((step) => (
-            <li key={step.id} className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-2">
-              <span className="font-bold">{step.position}</span>
-              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-                {step.instruction}
-              </span>
+            <li key={step.id} className="menu-result-step-row">
+              <span className="menu-result-step-position">{step.position}</span>
+              <span className="menu-result-step-text">{step.instruction}</span>
             </li>
           ))}
         </ol>
         {mode === "household" && (
           <>
-            <h3 className="mt-5 text-lg font-bold">家族向けの取り分け</h3>
+            <h3 className="menu-result-section-heading">家族向けの取り分け</h3>
             {selectedAdaptations.length === 0 ? (
-              <p className="mt-2">この料理の取り分け案はありません。</p>
+              <p className="menu-result-section-lead">この料理の取り分け案はありません。</p>
             ) : (
               selectedAdaptations.map((item) => (
-                <dl key={item.id} className="mt-2 rounded-xl bg-canvas p-3">
-                  <dt className="font-bold">
+                <dl key={item.id} className="menu-result-adaptation">
+                  <dt className="menu-result-adaptation-title">
                     {result.memberLabels[item.anonymousMemberRef] ?? "家族"}・{item.portionText}
                   </dt>
                   <dd>
@@ -583,36 +569,33 @@ export function MenuResult({
         {mode === "household" && labels.length !== 0 && (
           <section
             aria-labelledby="label-confirmations-heading"
-            className="mt-5 rounded-xl border border-amber-700 bg-amber-50 p-3"
+            className="menu-result-label-section"
           >
-            <h3 id="label-confirmations-heading" className="font-bold">
+            <h3 id="label-confirmations-heading" className="menu-result-label-section-title">
               原材料表示の確認
             </h3>
             <p className="font-semibold">加工品は原材料表示を確認してください</p>
             {/* soft processed は確認手続きのみ。バッジ直近で確認＝安全の誤認を抑える（H1） */}
             <p className="type-small">{MENU_LABEL_CONFIRMATION_RECORD_NOTICE}</p>
-            <ul className="space-y-3">
+            <ul className="menu-result-label-list">
               {labels.map((item) => (
-                <li key={item.confirmationId} className="break-words">
+                <li key={item.confirmationId} className="menu-result-label-item">
                   {item.sourceText}：{item.allergenName}（{item.memberLabel}）
-                  <span className="block text-sm text-ink-muted">
-                    辞書版 {item.dictionaryVersion}
-                  </span>
+                  <span className="menu-result-label-meta">辞書版 {item.dictionaryVersion}</span>
                   {item.confirmationStatus === "confirmed" ? (
-                    <span className="mt-1 inline-block rounded bg-line px-2 text-sm">
-                      表示確認を記録済み
-                    </span>
+                    <span className="menu-result-label-confirmed">表示確認を記録済み</span>
                   ) : actions === undefined ? null : (
-                    <button
-                      type="button"
-                      className="mt-2 min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-3 font-semibold"
-                      disabled={busy || confirmingId === item.confirmationId}
-                      onClick={() => {
-                        void handleConfirmLabel(item.confirmationId);
-                      }}
-                    >
-                      本人が商品の原材料表示を確認しました
-                    </button>
+                    <div className="menu-result-label-action">
+                      <Button
+                        variant="secondary"
+                        disabled={busy || confirmingId === item.confirmationId}
+                        onClick={() => {
+                          void handleConfirmLabel(item.confirmationId);
+                        }}
+                      >
+                        本人が商品の原材料表示を確認しました
+                      </Button>
+                    </div>
                   )}
                 </li>
               ))}
@@ -626,9 +609,9 @@ export function MenuResult({
           冷蔵庫食材の使い方
         </h2>
         {menu.pantryUsage.length === 0 ? (
-          <p className="mt-2">今回選んだ冷蔵庫食材はありません。</p>
+          <p className="menu-result-section-lead">今回選んだ冷蔵庫食材はありません。</p>
         ) : (
-          <ul className="mt-2 space-y-3">
+          <ul className="menu-result-pantry-list">
             {menu.pantryUsage.map((item) => {
               // PANTRY-I1 / design §10.3: 使用料理（使用先）を dishIds から組み立てる
               const dishNames =
@@ -638,7 +621,7 @@ export function MenuResult({
                       .filter((name): name is string => name !== undefined && name.trim() !== "")
                   : [];
               return (
-                <li key={item.selectionId} className="rounded-xl border p-3">
+                <li key={item.selectionId} className="menu-result-pantry-item">
                   <strong>{item.pantryItemName}</strong>
                   {item.usageStatus === "used" ? (
                     <>
@@ -682,35 +665,34 @@ export function MenuResult({
               setRemainderUnit("");
               onPostCookClose?.();
             }}
-            className="m-auto max-h-[min(90vh,40rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-2xl border bg-white p-5 shadow-lg"
+            className="menu-result-dialog"
           >
-            <div className="stack gap-4">
-              <h2 id={postCookTitleId} className="text-xl font-bold">
+            <Stack gap={4}>
+              <h2 id={postCookTitleId} className="menu-result-dialog-title">
                 使った食材の在庫を更新
               </h2>
-              <p className="text-sm text-ink-muted">
+              <p className="menu-result-dialog-lead">
                 作り終わったら、使った食材を「使い切った」か「まだある」で記録します。AIが自動では減らしません。
               </p>
               {conflictMessage !== null && (
-                <p role="alert" className="rounded-xl border border-amber-700 bg-amber-50 p-3">
+                <p role="alert" className="menu-result-dialog-alert">
                   {conflictMessage}
                 </p>
               )}
-              <ul className="space-y-4">
+              <ul className="menu-result-post-cook-list">
                 {result.pantryPostCookTargets.map((target) => {
                   const isDeleted = deletedSelectionIds.has(target.selectionId);
                   const live = target.currentPantryRow;
                   return (
-                    <li key={target.selectionId} className="rounded-xl border p-3">
+                    <li key={target.selectionId} className="menu-result-post-cook-item">
                       <strong>{target.pantryItemName}</strong>
                       {isDeleted || live === null || target.pantryItemId === null ? (
-                        <p className="mt-1">冷蔵庫から削除済み</p>
+                        <p className="menu-result-post-cook-deleted">冷蔵庫から削除済み</p>
                       ) : (
                         <>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+                          <div className="menu-result-post-cook-actions">
+                            <Button
+                              variant="secondary"
                               disabled={busy}
                               onClick={() => {
                                 setDeletePendingId(target.selectionId);
@@ -718,10 +700,9 @@ export function MenuResult({
                               }}
                             >
                               使い切った
-                            </button>
-                            <button
-                              type="button"
-                              className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+                            </Button>
+                            <Button
+                              variant="secondary"
                               disabled={busy}
                               onClick={() => {
                                 setRemainderTargetId(target.selectionId);
@@ -729,41 +710,39 @@ export function MenuResult({
                               }}
                             >
                               まだある
-                            </button>
+                            </Button>
                           </div>
                           {deletePendingId === target.selectionId && (
-                            <div className="mt-3 rounded-lg bg-canvas p-3">
+                            <div className="menu-result-post-cook-confirm">
                               <p>この食材を冷蔵庫から削除しますか？</p>
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
+                              <div className="menu-result-post-cook-confirm-actions">
+                                <Button
+                                  variant="primary"
                                   disabled={busy}
                                   onClick={() => {
                                     void handleDeleteConfirm(target);
                                   }}
                                 >
                                   削除する
-                                </button>
-                                <button
-                                  type="button"
-                                  className="min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
+                                </Button>
+                                <Button
+                                  variant="secondary"
                                   disabled={busy}
                                   onClick={() => {
                                     setDeletePendingId(null);
                                   }}
                                 >
                                   やめる
-                                </button>
+                                </Button>
                               </div>
                             </div>
                           )}
                           {remainderTargetId === target.selectionId && (
-                            <div className="mt-3 space-y-2 rounded-lg bg-canvas p-3">
-                              <label className="block">
+                            <div className="menu-result-remainder-form">
+                              <label className="menu-result-field">
                                 残りの分量（任意）
                                 <input
-                                  className="mt-1 min-h-11 w-full rounded border px-2"
+                                  className="menu-result-field-input"
                                   inputMode="decimal"
                                   value={remainderQty}
                                   onChange={(event) => {
@@ -771,49 +750,48 @@ export function MenuResult({
                                   }}
                                 />
                               </label>
-                              <label className="block">
+                              <label className="menu-result-field">
                                 単位
                                 <input
-                                  className="mt-1 min-h-11 w-full rounded border px-2"
+                                  className="menu-result-field-input"
                                   value={remainderUnit}
                                   onChange={(event) => {
                                     setRemainderUnit(event.target.value);
                                   }}
                                 />
                               </label>
-                              <button
-                                type="button"
-                                className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
+                              <Button
+                                variant="primary"
                                 disabled={busy}
                                 onClick={() => {
                                   void handleUpdateRemainder(target);
                                 }}
                               >
                                 分量を保存
-                              </button>
+                              </Button>
                             </div>
                           )}
                         </>
                       )}
                       {undo?.selectionId === target.selectionId && (
-                        <button
-                          type="button"
-                          className="mt-2 min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
-                          disabled={busy}
-                          onClick={() => {
-                            void handleUndo();
-                          }}
-                        >
-                          元に戻す
-                        </button>
+                        <div className="menu-result-undo">
+                          <Button
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => {
+                              void handleUndo();
+                            }}
+                          >
+                            元に戻す
+                          </Button>
+                        </div>
                       )}
                     </li>
                   );
                 })}
               </ul>
-              <button
-                type="button"
-                className="min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
+              <Button
+                variant="secondary"
                 disabled={busy}
                 onClick={() => {
                   setDeletePendingId(null);
@@ -824,8 +802,8 @@ export function MenuResult({
                 }}
               >
                 閉じる
-              </button>
-            </div>
+              </Button>
+            </Stack>
           </dialog>
         )}
     </div>

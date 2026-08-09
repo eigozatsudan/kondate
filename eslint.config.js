@@ -91,8 +91,6 @@ export default tseslint.config(
      */
     files: ["src/features/**/*.tsx"],
     ignores: [
-      // Phase 2 で移行: 待ち時間
-      "src/features/generation/**",
       // Phase 3 で移行: 結果・詳細
       "src/features/menu-detail/**",
       "src/features/history/**",

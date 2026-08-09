@@ -11,9 +11,10 @@ import {
 } from "@/features/menu-detail/menu-detail-types";
 import { useShoppingCreateIntent } from "@/features/shopping/hooks/use-shopping-create-intent";
 import { Skeleton } from "@/shared/ui/feedback";
+import { PageHeader } from "@/shared/ui/page-header";
+import { Stack } from "@/shared/ui/stack";
 import { getMenuResult } from "../api/menu-result-api";
 import { clearPendingGeneration } from "../model/pending-generation";
-
 
 export type { MenuResultPageRevalidationView };
 
@@ -52,18 +53,17 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
   if (!parsed.success || menuId === null) return <Navigate to="/planner" replace />;
   if (query.isError)
     return (
-      <main className="page-frame stack">
-        <h1>献立を表示できません</h1>
-        <p>履歴からもう一度確認してください。</p>
-        <Link
-          to="/history"
-          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg px-3 font-semibold"
-        >
-          履歴を見る
-        </Link>
+      <main className="page-frame">
+        <Stack gap={4}>
+          <PageHeader title="献立を表示できません" lead="履歴からもう一度確認してください。" />
+          {/* Link は <a> 相当のため Button 化しない。44px は min-h/w-11（ESLint 許可）で保証。 */}
+          <Link to="/history" className="menu-result-history-link min-h-11 min-w-11">
+            履歴を見る
+          </Link>
+        </Stack>
       </main>
     );
-  // 読み込み中も main ランドマークを維持する（axe region / ルート a11y 契約）。
+  // 読み込み中も main ランドマークを維持する（axe region 契約）。
   // Skeleton が role="status" / aria-live="polite" と文言 label を内部で持つ。
   if (query.isPending)
     return (
