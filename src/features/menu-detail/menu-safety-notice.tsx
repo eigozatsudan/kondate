@@ -27,9 +27,9 @@ export type MenuSafetyNoticeProps = {
    * phase=checked かつ status=invalid のときだけ渡す。
    * 省略または空なら invalid 帯を出さない。
    */
-  invalidIssues?: readonly MenuSafetyNoticeIssue[];
+  invalidIssues?: readonly MenuSafetyNoticeIssue[] | undefined;
   /** phase=error の「もう一度確認」 */
-  onRetry?: () => void;
+  onRetry?: (() => void) | undefined;
   /**
    * gate 通過後の sticky 状態帯を出すか。
    * MenuResult 直前に置く提示順を維持するため、親が gateOpen 時に true にする。

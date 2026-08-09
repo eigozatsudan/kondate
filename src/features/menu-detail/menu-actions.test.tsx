@@ -59,12 +59,17 @@ it("promotes shopping to primary after accept and keeps role=status notice", () 
 });
 
 it("exposes shopping intent rejection as role=alert", () => {
-  renderActions({
-    shoppingIntentActive: true,
-    gateOpen: false,
-    revalidationPhase: "checked",
-    shoppingRejectedMessage: "現在の家族設定ではこの献立から買い物リストを作れません",
-  });
+  render(
+    <MemoryRouter>
+      <MenuActions
+        {...baseProps}
+        shoppingIntentActive
+        gateOpen={false}
+        revalidationPhase="checked"
+        shoppingRejectedMessage="現在の家族設定ではこの献立から買い物リストを作れません"
+      />
+    </MemoryRouter>,
+  );
   expect(screen.getByRole("alert")).toHaveTextContent(
     "現在の家族設定ではこの献立から買い物リストを作れません",
   );
