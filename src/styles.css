@@ -2503,3 +2503,32 @@ h1.ui-page-header__title {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
+
+/*
+ * 生成の進み具合（2026-08-08 UI/UX モダン化）。
+ * .gen-progress-* は代表 DOM に一致しないため unexpectedMotionRules の対象外。
+ * グローバルな * の一括リセットは書けないので、reduced-motion はここで個別に書く。
+ */
+.gen-progress-meter {
+  display: flex;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.gen-progress-step {
+  height: 3px;
+  flex: 1 1 0;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  transition: background-color var(--motion-base) var(--motion-ease);
+}
+
+.gen-progress-step.is-done {
+  background: var(--primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gen-progress-step {
+    transition: none;
+  }
+}

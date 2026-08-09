@@ -6,7 +6,10 @@ import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "@/features/planner/househ
 import type { GenerationClientState } from "../model/generation-machine";
 import { useGenerationProgressMessage } from "../hooks/use-generation-progress-message";
 import { useUsageToday } from "../hooks/use-usage-today";
-import { resolveProcessingAnchorMs } from "../model/progress-stages";
+import {
+  GENERATION_PROGRESS_STAGES,
+  resolveProcessingAnchorMs,
+} from "../model/progress-stages";
 import { clearPendingGeneration, readPendingGeneration } from "../model/pending-generation";
 import { readPendingGenerationMeta } from "../model/pending-generation-meta";
 
@@ -262,6 +265,30 @@ function TerminalQuotaBlock({
   );
 }
 
+/**
+ * 体感段階の視覚メーター。data-progress-stage（0 始まり）とは別ノードで、
+ * aria-valuenow は人間向けに 1 始まり（index + 1）。
+ */
+function GenerationProgressMeter({ stageIndex }: { stageIndex: number }) {
+  return (
+    <div
+      className="gen-progress-meter"
+      role="progressbar"
+      aria-label="献立作成の進み具合"
+      aria-valuenow={stageIndex + 1}
+      aria-valuemin={1}
+      aria-valuemax={GENERATION_PROGRESS_STAGES.length}
+    >
+      {GENERATION_PROGRESS_STAGES.map((stage, index) => (
+        <span
+          key={stage.afterMs}
+          className={index <= stageIndex ? "gen-progress-step is-done" : "gen-progress-step"}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function GenerationStatusPanel({
   state,
   userId,
@@ -299,9 +326,11 @@ export function GenerationStatusPanel({
     return (
       <div className="gen-status-panel" data-phase="submitting">
         <div className="gen-status-indicator" aria-hidden="true" />
+        {/* data-progress-stage は 0 始まり。progressbar は 1 始まりの別ノード。 */}
         <p role="status" aria-live="polite" data-progress-stage={String(progressStageIndex)}>
           {progressMessage}
         </p>
+        <GenerationProgressMeter stageIndex={progressStageIndex} />
       </div>
     );
   }
@@ -313,6 +342,7 @@ export function GenerationStatusPanel({
         <p role="status" aria-live="polite" data-progress-stage={String(progressStageIndex)}>
           {progressMessage}
         </p>
+        <GenerationProgressMeter stageIndex={progressStageIndex} />
         <p>この画面を閉じても、同じ作成IDであとから確認できます。</p>
         {/* 長時間 processing / ハング時の脱出。破棄は confirm 必須（G2）。
             端末 pending だけ消してもサーバ processing は最大約 3 分残り得る。 */}
