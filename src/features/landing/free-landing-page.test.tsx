@@ -119,4 +119,14 @@ describe("FreeLandingPage", () => {
     expect(document.querySelector(".free-landing__hero-img")).not.toBeNull();
     expect(document.querySelectorAll(".free-landing__card-img")).toHaveLength(3);
   });
+
+  it("never emits inline style so CSP style-src self holds in production", () => {
+    renderLp();
+    const main = document.querySelector("main");
+    expect(main).not.toBeNull();
+    for (const element of main!.querySelectorAll("*")) {
+      expect(element.getAttribute("style")).toBeNull();
+    }
+    expect(main!.getAttribute("style")).toBeNull();
+  });
 });
