@@ -16,9 +16,7 @@ const ing = (overrides: Partial<Ingredient> & Pick<Ingredient, "id" | "name">): 
   ...overrides,
 });
 
-const dish = (
-  overrides: Partial<Dish> & Pick<Dish, "id" | "name" | "ingredients">,
-): Dish => ({
+const dish = (overrides: Partial<Dish> & Pick<Dish, "id" | "name" | "ingredients">): Dish => ({
   role: "main",
   position: 1,
   description: "説明",
@@ -195,21 +193,9 @@ describe("buildMenuIngredientsSummary", () => {
         ],
       });
     const sections = buildMenuIngredientsSummary([
-      salt(
-        "53000000-0000-4000-8000-000000000001",
-        "50000000-0000-4000-8000-000000000001",
-        1,
-      ),
-      salt(
-        "53000000-0000-4000-8000-000000000002",
-        "50000000-0000-4000-8000-000000000002",
-        2,
-      ),
-      salt(
-        "53000000-0000-4000-8000-000000000003",
-        "50000000-0000-4000-8000-000000000003",
-        3,
-      ),
+      salt("53000000-0000-4000-8000-000000000001", "50000000-0000-4000-8000-000000000001", 1),
+      salt("53000000-0000-4000-8000-000000000002", "50000000-0000-4000-8000-000000000002", 2),
+      salt("53000000-0000-4000-8000-000000000003", "50000000-0000-4000-8000-000000000003", 3),
     ]);
     const seasonings = sections.find((s) => s.storeSection === "seasonings");
     expect(seasonings?.lines).toHaveLength(1);
