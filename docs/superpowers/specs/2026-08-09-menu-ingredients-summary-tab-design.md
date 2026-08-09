@@ -58,7 +58,7 @@
 - 見出し **「全体の段取り」**（`id="timeline-heading"`）を残す。
 - **DOM 構造のロック（E2E 互換）:**
   - `h2#timeline-heading` の **直接の親** は従来どおり **`.cook-timeline-panel`** とする。
-  - タブ list は `.cook-timeline-panel` **内** で、見出しの直後（または見出しと同パネル内の兄弟）に置く。
+  - タブ list は `.cook-timeline-panel` **内** で、見出しの直後（または見出しと同パネル内の兄弟）に置く。クラスは **`.cook-timeline-tabs`**（§5.4。`.menu-result-tabs` は使わない）。
   - 段取り tabpanel 内の `ol.cook-timeline` は現状と同型を維持する。
   - 材料まとめ panel は同じ `.cook-timeline-panel` 内の別 tabpanel に置く（見出しの親を差し替えない）。
 - household / idea の両方で同じ（材料は `ValidatedMenu.dishes` 由来でモード差なし）。
@@ -70,6 +70,9 @@
 - 空の区分は出さない。
 - 合算グループ内のいずれかが `labelConfirmationRequired === true` なら、行に **「ラベル確認」バッジ**（表示のみ。確認 mutation はしない）。
 - **空状態:** `ValidatedMenu` 契約上 dishes/ingredients はいずれも `min(1)` のため到達しない。空 UI 分岐は書かない（防御的ガードも不要）。
+- **区分ブロックのマークアップ:** 売り場区分は **`<div>` + `<h3>`** とする。  
+  区分ごとに名前付き `<section>`（= `role="region"` ランドマーク）を **増やさない**  
+  （ランドマーク一覧が「野菜」「肉・魚」…で埋まらないようにする。見出し階層でナビする）。
 
 ### 3.3 区分ラベル（文言）
 
@@ -131,10 +134,11 @@
 #### 数量テキスト整形（既存 `MenuDishes` との差）
 
 - 本機能の合算行は **`formatQuantityValue`** を使う（合算の浮動小数ノイズを milli グリッドで潰す。買い物と同型）。
+- **合算グループが1件のみでも** `quantityText` を `formatQuantityValue` で **再生成する**（分数表記は保持しない。例: 元が `1/2本` でも表示は `0.5本`）。
 - 既存 `MenuDishes` の `amount()` は  
   `value === null ? text : \`${String(value)}${unit ?? ""}\``  
-  で、`formatQuantityValue` を通さない。
-- **同じ画面に2系統が並ぶのは意図的。** 1品表示は従来どおり。合算表示だけ誤差除去を優先する。1品側の `amount()` 統一はこのタスクの非目的。
+  で、`formatQuantityValue` を通さない（ただし `0.5` + `本` は結果的に同じ `0.5本` になりやすい）。
+- **同じ画面に2系統が並ぶのは意図的。** 1品表示は従来どおり。合算表示だけ誤差除去と表記統一を優先する。1品側の `amount()` 統一はこのタスクの非目的。
 
 正規化は既存 `@shared/shopping/normalize` を再利用する。
 
@@ -184,19 +188,36 @@
 
 | 手順 | 内容 |
 | --- | --- |
-| 1 | `src/shared/ui/` または `src/shared/lib/` 相当の薄いモジュールへ `categoryLabel` を移す（例: `src/shared/ui/store-section-label.ts`）。`StoreSection` 型は既存どおり `@shared/contracts/shopping`（または generation の storeSections）から取る |
+| 1 | **`src/shared/ui/store-section-label.ts`** へ `categoryLabel` を移す。`StoreSection` 型は `@shared/contracts/shopping` から取る。配置を `ui/` にした理由: 文言定数だが既存 UI ラベル（ボタン等）と同じ browser 共有層に寄せ、`@/shared/ui/*` の import 習慣に揃える（`lib/` でも可だったが計画を1パスに固定） |
 | 2 | `src/features/shopping/category-label.ts` は **re-export のみ** に変更し、既存 shopping import を壊さない |
-| 3 | menu-detail は **移動後の `src/shared/...` を直接 import** |
+| 3 | menu-detail は **`@/shared/ui/store-section-label` を直接 import** |
 
 二重定義を避けつつ、menu-detail → shopping の新規 feature 依存を作らない。
 
-### 5.4 スタイリング制約（lint）
+### 5.4 スタイリング制約（lint）と段取りタブ列
 
 - `src/features/**/*.tsx` は **生 Tailwind ユーティリティ禁止**（eslint）。`menu-detail` は ignores 対象外。
 - `menu-ingredients-summary.tsx` / 拡張後の `menu-steps.tsx` は:
   - 配色・余白・レイアウト: `Surface` / `Stack` / `Inset` 等の UI プリミティブ
-  - 材料リスト・タブ: 既存 **意味クラス**（`.menu-result-tabs`、`.menu-result-ingredient-*`、`.cook-timeline-*`）を `styles.css` 経由で流用
-- 新規 utility class をコンポーネントに直書きしない。
+  - 材料リスト: 既存 **意味クラス**（`.menu-result-ingredient-*`）
+  - 段取り/材料タブ列: **`.cook-timeline-tabs`**（下記）。料理タブは従来どおり `.menu-result-tabs`
+- コンポーネントに utility class を直書きしない。新規見た目は `src/styles.css` の意味クラスで足す。
+
+#### 段取りタブ列は sticky にしない（必須）
+
+`.menu-result-tabs` は `position: sticky; top: 0; z-index: 10`（料理タブ列用）。  
+段取りブロックの新 tablist に同じクラスを付けると、スクロール時に **料理タブ列と `top:0` で重なり、片方が隠れる**。  
+既存 E2E の横はみ出し検査は `closest('[role="tablist"]')` 配下を除外するため、この視覚崩れを検知しない。
+
+**決定:**
+
+| クラス | 用途 | sticky |
+| --- | --- | --- |
+| `.menu-result-tabs` | 料理タブ列のみ（現状維持） | **する** |
+| `.cook-timeline-tabs` | 段取り/材料 tablist（**新規**、`styles.css`） | **しない**（`position: static`） |
+| `.menu-result-tab` | 両方のタブボタン見た目（共有可） | — |
+
+`.cook-timeline-tabs` は `.menu-result-tabs` から sticky / z-index / top / 不透明 background 以外の見た目（flex・gap・padding・overflow-x 等）を揃える。sticky 専用プロパティは載せない。
 
 ## 6. アクセシビリティとモバイル
 
@@ -206,7 +227,8 @@
 - `aria-selected`、`aria-controls`、`aria-labelledby`
 - roving tabindex（選択タブのみ `tabIndex=0`）。←→ / Home / End は `MenuDishes` と同型
 - タッチターゲット 44×44 CSS px、320 CSS px で横スクロールなし
-- 既存 `.menu-result-tabs` パターンを流用（§5.4）
+- 段取り tablist は `.cook-timeline-tabs`（§5.4）。料理 tablist だけ sticky
+- 材料区分はランドマークにしない（§3.2）
 
 ## 7. テスト計画
 
@@ -286,3 +308,4 @@
 | --- | --- |
 | 2026-08-09 | 初版（brainstorming 承認） |
 | 2026-08-09 | 敵対レビュー反映: 適用面共有の明記、E2E 必須化、非合算重複畳み、aliases 差分、単位合算意図、categoryLabel の shared 移設、lint/空状態/数量整形/ローカル state/a11y 検証 |
+| 2026-08-09 | 計画レビュー反映: 段取りタブは sticky 禁止（`.cook-timeline-tabs`）、区分は div+h3、単一グループでも quantityText 再生成 |
