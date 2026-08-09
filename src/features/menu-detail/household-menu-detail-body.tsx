@@ -11,15 +11,12 @@ import {
 } from "@shared/contracts/shopping";
 import { FlyerUpsellBanner } from "@/features/billing/flyer-upsell-banner";
 import {
-  EASE_SOFT_NOT_SWALLOW_DISCLAIMER,
-  MENU_LABEL_DISCLAIMER,
-} from "@/features/generation/components/idea-menu-safety-notice";
-import {
   MENU_ACCEPT_NOTICE_SHOPPING_READY,
   MENU_ACCEPT_NOTICE_SHOPPING_WAIT,
   MENU_ACCEPT_NOTICE_TITLE,
   MenuResultActionBar,
 } from "@/features/generation/components/menu-result-action-bar";
+import { MenuSafetyNotice } from "@/features/menu-detail/menu-safety-notice";
 import { confirmLabelConfirmation } from "@/features/generation/api/confirm-label-api";
 import { MenuResult, type MenuResultActions } from "@/features/generation/components/menu-result";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
@@ -559,60 +556,31 @@ export function HouseholdMenuDetailBody({
 
   return (
     <main className="page-frame guided-planner-theme min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
-      <p className="rounded-xl border border-amber-700 p-3 font-semibold">
-        {MENU_LABEL_DISCLAIMER}
-      </p>
-      <p className="type-small text-ink/80">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
+      <MenuSafetyNotice
+        section="disclaimers"
+        phase={revalidation.phase}
+        isOfflineHold={isOfflineHold}
+        statusCopy={statusCopy}
+      />
       {surface.showFlyerUpsell && usage.isSuccess && !usage.data.plusEntitled ? (
         <div className="mt-4">
           <FlyerUpsellBanner plusEntitled={false} />
         </div>
       ) : null}
-
-      {revalidation.phase === "checking" && (
-        <div
-          className="revalidation-checking-overlay"
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-        >
-          <div className="revalidation-checking-panel">
-            <div className="gen-status-indicator" aria-hidden="true" />
-            {/* HR1: offline hold は shopping と同型の接続誘導。通常 checking は確認中 */}
-            <p>
-              {isOfflineHold
-                ? "ネット接続後に現在の家族設定を確認してください"
-                : "現在の家族設定で確認しています"}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {revalidation.phase === "error" && (
-        <div className="mt-4 stack gap-2">
-          <p role="alert">{statusCopy}</p>
-          <button
-            type="button"
-            className="min-h-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-            onClick={() => {
-              revalidation.refetch?.();
-            }}
-          >
-            もう一度確認
-          </button>
-        </div>
-      )}
-
-      {revalidation.phase === "checked" && revalidation.result?.status === "invalid" && (
-        <div className="mt-4 stack gap-2" role="alert">
-          <p>現在の家族設定ではこの献立を利用できません</p>
-          <ul className="list-disc pl-5">
-            {revalidation.result.issues.map((issue) => (
-              <li key={`${issue.code}:${issue.path}`}>{issue.message}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <MenuSafetyNotice
+        section="revalidation"
+        phase={revalidation.phase}
+        isOfflineHold={isOfflineHold}
+        statusCopy={statusCopy}
+        invalidIssues={
+          revalidation.phase === "checked" && revalidation.result?.status === "invalid"
+            ? revalidation.result.issues
+            : undefined
+        }
+        onRetry={() => {
+          revalidation.refetch?.();
+        }}
+      />
 
       <MenuVersionSwitcher
         versions={siblingVersions}
@@ -636,19 +604,14 @@ export function HouseholdMenuDetailBody({
 
       {gateOpen && revalidation.result !== undefined && (
         <>
-          <div
-            className="menu-result-gate-status sticky top-0 z-10 bg-canvas/95 py-2"
-            role="status"
-          >
-            <p className="m-0">{statusCopy}</p>
-            {changedDetailLines.length > 0 && (
-              <ul className="mt-1 list-disc pl-5 type-small">
-                {changedDetailLines.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <MenuSafetyNotice
+            section="gate"
+            phase={revalidation.phase}
+            isOfflineHold={isOfflineHold}
+            statusCopy={statusCopy}
+            showGateStatus
+            changedDetailLines={changedDetailLines}
+          />
           {actions === undefined ? (
             <MenuResult
               result={result}
