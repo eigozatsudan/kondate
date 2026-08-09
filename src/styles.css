@@ -2468,3 +2468,23 @@ h1.ui-page-header__title {
   background: var(--notice);
   color: var(--danger);
 }
+
+/*
+ * 本文中のテキストリンク（2026-08-08 UI モダン化 Phase 1）。
+ * `.ui-prose a` は要素トークン保護に触れるため、リンク側にクラスを振る。
+ * 44px タッチ下限を満たす。
+ */
+.ui-text-link {
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 44px;
+  align-items: center;
+  color: var(--primary-strong);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.ui-text-link:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}

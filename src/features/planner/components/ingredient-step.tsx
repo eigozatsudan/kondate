@@ -5,6 +5,9 @@ import {
   PLANNER_MAIN_INGREDIENT_LIMIT,
 } from "@shared/contracts/planner";
 import { useAppToast } from "@/shared/ui/app-toast";
+import { Button } from "@/shared/ui/button";
+import { Inset, Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 import {
   commonMainIngredients,
   excludeCanonicalMainIngredient,
@@ -161,198 +164,200 @@ export function IngredientStep({
   };
 
   return (
-    <section className="card stack" aria-labelledby="ingredient-step-title">
-      <h2 id="ingredient-step-title" tabIndex={-1} ref={headingRef}>
-        2. メイン食材
-      </h2>
+    <section aria-labelledby="ingredient-step-title">
+      <Surface>
+        <Inset pad={5}>
+          <Stack gap={5}>
+            <h2 id="ingredient-step-title" tabIndex={-1} ref={headingRef}>
+              2. メイン食材
+            </h2>
 
-      <section className="ingredient-quick-select stack" aria-labelledby="ingredient-quick-title">
-        <h3 id="ingredient-quick-title">よく使う食材から選ぶ</h3>
-        <div ref={quickSelectRef} className="wizard-chip-row">
-          {commonMainIngredients.map((candidate) => {
-            const pressed = includesCanonicalMainIngredient(value, candidate);
-            return (
-              <button
-                className="wizard-chip"
-                type="button"
-                key={candidate}
-                disabled={disabled}
-                aria-pressed={pressed}
-                onClick={() => {
-                  toggleQuickIngredient(candidate);
-                }}
-              >
-                {candidate}
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <div className="ingredient-selected stack">
-        <p className="ingredient-selected-count">
-          選んだ食材（{String(value.length)}/{String(mainIngredientLimit)}）
-        </p>
-        <div className="wizard-chip-row">
-          {value.map((item) => (
-            <button
-              className="wizard-chip"
-              type="button"
-              key={item}
-              disabled={disabled}
-              onClick={() => {
-                // 追加経路と同じ canonical 規則で解除する（厳密等価の経路分岐を残さない）
-                removeIngredient(item);
-              }}
+            <section
+              className="ingredient-quick-select stack"
+              aria-labelledby="ingredient-quick-title"
             >
-              {item}を外す
-            </button>
-          ))}
-        </div>
-      </div>
+              <h3 id="ingredient-quick-title">よく使う食材から選ぶ</h3>
+              <div ref={quickSelectRef} className="wizard-chip-row">
+                {commonMainIngredients.map((candidate) => {
+                  const pressed = includesCanonicalMainIngredient(value, candidate);
+                  return (
+                    <button
+                      className="wizard-chip"
+                      type="button"
+                      key={candidate}
+                      disabled={disabled}
+                      aria-pressed={pressed}
+                      onClick={() => {
+                        toggleQuickIngredient(candidate);
+                      }}
+                    >
+                      {candidate}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
 
-      <section className="ingredient-free-input stack" aria-labelledby="ingredient-free-title">
-        {/*
+            <div className="ingredient-selected stack">
+              <p className="ingredient-selected-count">
+                選んだ食材（{String(value.length)}/{String(mainIngredientLimit)}）
+              </p>
+              <div className="wizard-chip-row">
+                {value.map((item) => (
+                  <button
+                    className="wizard-chip"
+                    type="button"
+                    key={item}
+                    disabled={disabled}
+                    onClick={() => {
+                      // 追加経路と同じ canonical 規則で解除する（厳密等価の経路分岐を残さない）
+                      removeIngredient(item);
+                    }}
+                  >
+                    {item}を外す
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <section
+              className="ingredient-free-input stack"
+              aria-labelledby="ingredient-free-title"
+            >
+              {/*
           セクション見出しと input の accessible name を分離する。
           label は「メイン食材」のままにし、既存 E2E / getByLabelText を壊さない。
         */}
-        <h3 id="ingredient-free-title">一覧にない食材を入力</h3>
-        <div className="ingredient-entry-row">
-          <label className="field ingredient-entry-field">
-            メイン食材
-            <input
-              ref={freeInputRef}
-              value={ingredient}
-              disabled={disabled}
-              aria-invalid={combinedError != null ? "true" : undefined}
-              aria-describedby={combinedError != null ? errorId : undefined}
-              onChange={(event) => {
-                const rawValue = event.target.value;
-                setIngredient(rawValue);
-                if (
-                  Array.from(normalizeMainIngredient(rawValue)).length <= mainIngredientLengthLimit
-                ) {
-                  setLocalError(null);
-                } else {
-                  setLocalError("メイン食材は1件80文字までです。");
-                }
-              }}
-              onKeyDown={(event) => {
-                // スマホ確定キー / Enter でも「追加」と同じ経路（C-I5）
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                if (disabled) return;
-                const result = tryAddIngredient(ingredient);
-                if (result === "too_long" || result === "at_limit") {
-                  return;
-                }
-                if (result === "duplicate_or_empty") {
-                  const trimmed = normalizeMainIngredient(ingredient);
-                  setLocalError(
-                    trimmed === ""
-                      ? "食材名を入力してから追加してください。"
-                      : "同じ食材はすでに追加されています。",
-                  );
-                  return;
-                }
-                setLocalError(null);
-                setIngredient("");
-              }}
-            />
-          </label>
-          <button
-            className="secondary-button ingredient-add-button"
-            type="button"
-            disabled={disabled}
-            onClick={() => {
-              const result = tryAddIngredient(ingredient);
-              if (result === "too_long" || result === "at_limit") {
-                return;
-              }
-              if (result === "duplicate_or_empty") {
-                const trimmed = normalizeMainIngredient(ingredient);
-                setLocalError(
-                  trimmed === ""
-                    ? "食材名を入力してから追加してください。"
-                    : "同じ食材はすでに追加されています。",
-                );
-                return;
-              }
-              setLocalError(null);
-              setIngredient("");
-            }}
-          >
-            追加
-          </button>
-        </div>
-      </section>
-
-      {combinedError != null && (
-        <p id={errorId} role="alert">
-          {combinedError}
-        </p>
-      )}
-
-      <section className="ingredient-pantry stack" aria-labelledby="ingredient-pantry-title">
-        <div>
-          <h3 id="ingredient-pantry-title">冷蔵庫から選ぶ</h3>
-          <p>
-            ここでは料理の中心にしたい食材を追加します。「必ず使う／使えれば使う」は確認画面で別に選べます。
-          </p>
-        </div>
-        {pantryItemsStatus === "loading" && <p>冷蔵庫の食材を読み込んでいます…</p>}
-        {pantryItemsStatus === "loaded" && pantryItems.length === 0 && (
-          <div className="stack gap-2">
-            <p>冷蔵庫に登録した食材はありません。</p>
-            <p className="type-small">
-              食材を使いたいときは、下のメニュー「冷蔵庫」から食材リストに登録できます。登録なしでも献立は作れます。
-            </p>
-          </div>
-        )}
-        {pantryItemsStatus === "loaded" && pantryItems.length > 0 && (
-          <div className="wizard-chip-row">
-            {pantryItems.map((item) => {
-              const normalizedName = normalizeMainIngredient(item.name);
-              const selected = includesCanonicalMainIngredient(value, normalizedName);
-              return (
-                <button
-                  className="wizard-chip"
-                  type="button"
-                  key={item.id}
-                  disabled={disabled || selected}
+              <h3 id="ingredient-free-title">一覧にない食材を入力</h3>
+              <div className="ingredient-entry-row">
+                <label className="field ingredient-entry-field">
+                  メイン食材
+                  <input
+                    ref={freeInputRef}
+                    value={ingredient}
+                    disabled={disabled}
+                    aria-invalid={combinedError != null ? "true" : undefined}
+                    aria-describedby={combinedError != null ? errorId : undefined}
+                    onChange={(event) => {
+                      const rawValue = event.target.value;
+                      setIngredient(rawValue);
+                      if (
+                        Array.from(normalizeMainIngredient(rawValue)).length <=
+                        mainIngredientLengthLimit
+                      ) {
+                        setLocalError(null);
+                      } else {
+                        setLocalError("メイン食材は1件80文字までです。");
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      // スマホ確定キー / Enter でも「追加」と同じ経路（C-I5）
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      if (disabled) return;
+                      const result = tryAddIngredient(ingredient);
+                      if (result === "too_long" || result === "at_limit") {
+                        return;
+                      }
+                      if (result === "duplicate_or_empty") {
+                        const trimmed = normalizeMainIngredient(ingredient);
+                        setLocalError(
+                          trimmed === ""
+                            ? "食材名を入力してから追加してください。"
+                            : "同じ食材はすでに追加されています。",
+                        );
+                        return;
+                      }
+                      setLocalError(null);
+                      setIngredient("");
+                    }}
+                  />
+                </label>
+                <Button
+                  variant="secondary"
+                  disabled={disabled}
                   onClick={() => {
-                    // 選択済みは disabled のためここには来ない。トグル解除しない（意図的非対称）。
-                    tryAddIngredient(normalizedName);
+                    const result = tryAddIngredient(ingredient);
+                    if (result === "too_long" || result === "at_limit") {
+                      return;
+                    }
+                    if (result === "duplicate_or_empty") {
+                      const trimmed = normalizeMainIngredient(ingredient);
+                      setLocalError(
+                        trimmed === ""
+                          ? "食材名を入力してから追加してください。"
+                          : "同じ食材はすでに追加されています。",
+                      );
+                      return;
+                    }
+                    setLocalError(null);
+                    setIngredient("");
                   }}
                 >
-                  {normalizedName}を追加
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                  追加
+                </Button>
+              </div>
+            </section>
 
-      <div className="wizard-actions">
-        {onBack !== undefined && (
-          <button
-            className="wizard-action secondary-button"
-            type="button"
-            disabled={disabled}
-            onClick={onBack}
-          >
-            {backLabel}
-          </button>
-        )}
-        <button
-          className="wizard-action primary-button"
-          type="button"
-          disabled={disabled}
-          onClick={handleNext}
-        >
-          {nextLabel}
-        </button>
-      </div>
+            {combinedError != null && (
+              <p id={errorId} role="alert">
+                {combinedError}
+              </p>
+            )}
+
+            <section className="ingredient-pantry stack" aria-labelledby="ingredient-pantry-title">
+              <div>
+                <h3 id="ingredient-pantry-title">冷蔵庫から選ぶ</h3>
+                <p>
+                  ここでは料理の中心にしたい食材を追加します。「必ず使う／使えれば使う」は確認画面で別に選べます。
+                </p>
+              </div>
+              {pantryItemsStatus === "loading" && <p>冷蔵庫の食材を読み込んでいます…</p>}
+              {pantryItemsStatus === "loaded" && pantryItems.length === 0 && (
+                <Stack gap={2}>
+                  <p>冷蔵庫に登録した食材はありません。</p>
+                  <p className="type-small">
+                    食材を使いたいときは、下のメニュー「冷蔵庫」から食材リストに登録できます。登録なしでも献立は作れます。
+                  </p>
+                </Stack>
+              )}
+              {pantryItemsStatus === "loaded" && pantryItems.length > 0 && (
+                <div className="wizard-chip-row">
+                  {pantryItems.map((item) => {
+                    const normalizedName = normalizeMainIngredient(item.name);
+                    const selected = includesCanonicalMainIngredient(value, normalizedName);
+                    return (
+                      <button
+                        className="wizard-chip"
+                        type="button"
+                        key={item.id}
+                        disabled={disabled || selected}
+                        onClick={() => {
+                          // 選択済みは disabled のためここには来ない。トグル解除しない（意図的非対称）。
+                          tryAddIngredient(normalizedName);
+                        }}
+                      >
+                        {normalizedName}を追加
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            <div className="wizard-actions">
+              {onBack !== undefined && (
+                <Button variant="secondary" disabled={disabled} onClick={onBack}>
+                  {backLabel}
+                </Button>
+              )}
+              <Button variant="primary" disabled={disabled} onClick={handleNext}>
+                {nextLabel}
+              </Button>
+            </div>
+          </Stack>
+        </Inset>
+      </Surface>
     </section>
   );
 }
