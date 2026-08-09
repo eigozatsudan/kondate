@@ -37,6 +37,7 @@ describe("CurrentSafetySummary", () => {
     expect(screen.getByText(/AI生成だけでアレルギーの安全は保証できません/)).toBeVisible();
     const settingsLink = screen.getByRole("link", { name: "家族設定を変更" });
     expect(settingsLink).toHaveAttribute("href", "/settings");
+    // Link フォールバック経路。Button 化できない a/Link は semantic class を維持。
     expect(settingsLink).toHaveClass("secondary-button", "min-h-11");
   });
 

@@ -281,11 +281,12 @@ describe("PlannerWizard 固定順とnavigation", () => {
     expect(inputLabel).toHaveClass("field", "ingredient-entry-field");
     expect(entryRow).toHaveClass("ingredient-entry-row");
     expect(entryRow).toContainElement(addButton);
-    expect(addButton).toHaveClass("secondary-button", "ingredient-add-button");
+    // Phase 1: secondary-button 直書きを共有 Button に置換。role/名は不変。
+    expect(addButton.className).toContain("ui-btn--secondary");
     expect(backButton.parentElement).toHaveClass("wizard-actions");
     expect(backButton.parentElement).not.toHaveClass("stack-row");
-    expect(backButton).toHaveClass("wizard-action", "secondary-button");
-    expect(nextButton).toHaveClass("wizard-action", "primary-button");
+    expect(backButton.className).toContain("ui-btn--secondary");
+    expect(nextButton.className).toContain("ui-btn--primary");
   });
 
   it("meal→ingredients→cuisine→audience→reviewの順で進み、戻ると回答を保持する", async () => {
@@ -341,7 +342,7 @@ describe("PlannerWizard 固定順とnavigation", () => {
     render(<Harness initialStep="meal" />);
     const nextButton = screen.getByRole("button", { name: "次へ" });
     expect(nextButton.parentElement).toHaveClass("wizard-actions");
-    expect(nextButton).toHaveClass("wizard-action", "primary-button");
+    expect(nextButton.className).toContain("ui-btn--primary");
     const breakfast = screen.getByRole("radio", { name: "朝食" });
     expect(breakfast.closest("label")).toHaveClass("wizard-option");
     expect(breakfast.closest('[role="radiogroup"]')).toHaveClass("wizard-option-list");
@@ -807,7 +808,7 @@ describe("PlannerWizard review step", () => {
     const privacy = screen.getByRole("button", { name: "AI情報の説明を見る" });
     expect(generate).toBeEnabled();
     expect(privacy).toBeEnabled();
-    expect(privacy).toHaveClass("secondary-button");
+    expect(privacy.className).toContain("ui-btn--secondary");
     await user.click(generate);
     expect(onSubmit).not.toHaveBeenCalled();
     const dialog = screen.getByRole("alertdialog", { name: "AI情報の説明の確認" });
