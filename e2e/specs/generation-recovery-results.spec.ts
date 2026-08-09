@@ -359,19 +359,39 @@ test("shows result details and keeps major regions within their parent", async (
   await expect(page.getByRole("heading", { name: "全体の段取り" })).toBeVisible();
   await expect(page.getByText("主菜の材料を切って加熱を始める")).toBeVisible();
   await expect(page.getByText("主菜を煮ながら副菜を仕上げる")).toBeVisible();
+
+  // --- 材料まとめタブ: 320px 横はみ出し（viewport ループより前・段取りに必ず戻す） ---
+  // 材料 panel が .cook-timeline-panel 内に収まること。チェック後は段取りへ戻し、
+  // 以降の料理タブ操作・resultRoot 溢れ走査に材料 panel が混ざらないようにする。
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.getByRole("tab", { name: "材料まとめ" }).click();
+  const ingredientsPanel = page.getByRole("tabpanel", { name: "材料まとめ" });
+  await expect(ingredientsPanel).toBeVisible();
+  const stepsPanel = page.getByRole("heading", { name: "全体の段取り" }).locator("..");
+  await expect(stepsPanel).toHaveClass(/cook-timeline-panel/);
+  await expectContainedHorizontally(stepsPanel, ingredientsPanel);
+  // 必須: 段取りに戻す（以降の料理タブ操作・overflow 走査と干渉させない）
+  await page.getByRole("tab", { name: "段取り" }).click();
+  await expect(page.getByRole("tabpanel", { name: "段取り" })).toBeVisible();
+
   // ラベル確認セクション — mock success fixture は ingredient_2「しょうゆ」に
   // wheat アレルゲンの label confirmation を持つ
   await expect(page.getByText("加工品は原材料表示を確認してください")).toBeVisible();
   await expect(page.getByText("しょうゆ：小麦")).toBeVisible();
   // 料理タブ — 2品目「にんじんの温サラダ」が存在する
-  await expect(page.getByRole("tablist", { name: "料理" })).toBeVisible();
-  await page.getByRole("tab").nth(1).click();
+  // 段取り側にも tablist（「献立の段取りと材料」）があるため、料理 tablist にスコープする。
+  // ページ全体の getByRole("tab") だと nth が段取りタブを掴み、tabpanel も 2 件になる。
+  const dishTablist = page.getByRole("tablist", { name: "料理" });
+  await expect(dishTablist).toBeVisible();
+  await dishTablist.getByRole("tab").nth(1).click();
   // 材料・作り方見出し
-  await expect(page.getByRole("heading", { name: "材料" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "作り方" })).toBeVisible();
+  // exact: true — 「原材料表示の確認」見出しが name: "材料" に部分一致して
+  // strict mode で 2 件ヒットするのを防ぐ（desktop で実測）。
+  await expect(page.getByRole("heading", { name: "材料", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "作り方", exact: true })).toBeVisible();
   // 1番目の料理の取り分けセクション — mock success fixture の adaptation
   // portionText: "1人分", safetyActions[0].instruction: "骨を完全に除く"
-  await page.getByRole("tab").first().click();
+  await dishTablist.getByRole("tab").first().click();
   await expect(page.getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
   await expect(page.getByText("骨を完全に除く")).toBeVisible();
   // 冷蔵庫食材セクション — mock success fixture の pantryUsage は空なので
@@ -398,25 +418,43 @@ test("shows result details and keeps major regions within their parent", async (
     const pageDisclaimer = page.getByText(
       "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
     );
+    // 免責本文は Surface 内 Inset（pad-5 = 24px）の内側にある。
+    // カラム幅の契約は「面（.ui-surface）が見出し帯と同じ幅」であり、
+    // 本文要素そのものではない（Inset 導入前は Surface が padding 無しで
+    // 本文≈面幅だったため、本文比較でもたまたま通っていた）。
+    const disclaimerSurface = page.locator(".ui-surface").filter({ has: pageDisclaimer }).first();
     const resultRoot = page.getByRole("heading", { name: "献立ができました" }).locator("..");
     const timeline = page.getByRole("heading", { name: "全体の段取り" }).locator("..");
-    const tablist = page.getByRole("tablist", { name: "料理" });
-    const tabpanel = page.getByRole("tabpanel");
+    await expect(timeline).toHaveClass(/cook-timeline-panel/);
+
+    // 料理 tablist の選択中 tab → aria-controls で dish tabpanel を特定する。
+    // 段取り側 tabpanel（「段取り」「材料まとめ」）と混同しない。
+    // panel-${uuid} は [0-9a-f-] のみ。Node に CSS グローバルは無いので CSS.escape は使わない。
+    const loopDishTablist = page.getByRole("tablist", { name: "料理" });
+    const selectedDishTab = loopDishTablist.getByRole("tab", { selected: true });
+    const dishPanelId = await selectedDishTab.getAttribute("aria-controls");
+    if (dishPanelId === null) throw new Error("dish tab aria-controls required");
+    const tabpanel = page.locator(`#${dishPanelId}`);
+    const stepsTablist = page.getByRole("tablist", { name: "献立の段取りと材料" });
+
     await expectContainedHorizontally(html, body);
     await expectContainedHorizontally(body, root);
     await expectContainedHorizontally(root, appSection);
     await expectContainedHorizontally(appSection, pageContainer);
     await expectContainedHorizontally(pageContainer, resultRoot);
-    await expectSameHorizontalBounds(pageDisclaimer, resultRoot);
+    await expectSameHorizontalBounds(disclaimerSurface, resultRoot);
+    await expectContainedHorizontally(disclaimerSurface, pageDisclaimer);
     await expectContainedHorizontally(resultRoot, timeline);
-    await expectContainedHorizontally(resultRoot, tablist);
+    await expectContainedHorizontally(resultRoot, loopDishTablist);
     await expectContainedHorizontally(resultRoot, tabpanel);
+    await expectContainedHorizontally(resultRoot, stepsTablist);
     for (const clippingBoundary of [
       html,
       body,
       root,
       appSection,
       pageContainer,
+      disclaimerSurface,
       pageDisclaimer,
       resultRoot,
       timeline,
@@ -424,7 +462,7 @@ test("shows result details and keeps major regions within their parent", async (
     ]) {
       await expectNoHorizontalClipping(clippingBoundary);
     }
-    await expectScrollableTablistContent(tablist);
+    await expectScrollableTablistContent(loopDishTablist);
 
     const overflowingContent = await resultRoot.evaluate((resultElement) => {
       const rootRect = resultElement.getBoundingClientRect();

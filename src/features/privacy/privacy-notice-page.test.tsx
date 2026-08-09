@@ -36,6 +36,7 @@ import {
   PRIVACY_ACCEPT_TIMEOUT_MS,
   PrivacyNoticeContent,
   PrivacyNoticePage,
+  privacyConsentCheckboxRequiredMessage,
 } from "./privacy-notice-page";
 
 function renderPrivacyContent(props: ComponentProps<typeof PrivacyNoticeContent>) {
@@ -63,12 +64,40 @@ it("explains sent, unsent, and stored data before accepting", async () => {
   expect(screen.getByRole("heading", { name: "AIへ送らない情報" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "アプリに保存する情報" })).toBeInTheDocument();
   const accept = screen.getByRole("button", { name: "確認して進む" });
-  expect(accept).toBeDisabled();
+  // 未チェックでも押せる（押下で案内）。保存中だけ disabled。
+  expect(accept).toBeEnabled();
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   await user.click(accept);
   expect(onAccept).toHaveBeenCalledOnce();
   // 共有は既定オンのまま進む
   expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: true });
+});
+
+it("shows an alert and focuses the checkbox when primary is pressed without consent check", async () => {
+  const user = userEvent.setup();
+  const onAccept = vi.fn();
+  renderPrivacyContent({ saving: false, onAccept, onSkip: vi.fn() });
+
+  const accept = screen.getByRole("button", { name: "確認して進む" });
+  expect(accept).toBeEnabled();
+  await user.click(accept);
+
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(privacyConsentCheckboxRequiredMessage);
+  expect(onAccept).not.toHaveBeenCalled();
+
+  const consentCheckbox = screen.getByRole("checkbox", { name: /説明を確認しました/ });
+  expect(consentCheckbox).toHaveFocus();
+  expect(consentCheckbox).toHaveAttribute("aria-invalid", "true");
+  expect(consentCheckbox).toHaveAttribute("aria-describedby", "privacy-consent-checkbox-hint");
+  expect(alert).toHaveAttribute("id", "privacy-consent-checkbox-hint");
+
+  // チェックを入れると案内が消え、進められる
+  await user.click(consentCheckbox);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(consentCheckbox).not.toHaveAttribute("aria-invalid");
+  await user.click(accept);
+  expect(onAccept).toHaveBeenCalledOnce();
 });
 
 it("keeps share consent as a separate card, checked by default, without gating primary", async () => {
@@ -91,10 +120,11 @@ it("keeps share consent as a separate card, checked by default, without gating p
   expect(shareCheckbox).toBeChecked();
 
   const accept = screen.getByRole("button", { name: "確認して進む" });
-  // 共有を外しても primary は privacy のみ依存
+  // 共有を外しても primary は privacy のみ依存（共有は任意・既定オン）
   await user.click(shareCheckbox);
   expect(shareCheckbox).not.toBeChecked();
-  expect(accept).toBeDisabled();
+  // 未チェックでも primary は有効（押下で案内）。共有オフはゲートにしない。
+  expect(accept).toBeEnabled();
 
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   expect(accept).toBeEnabled();

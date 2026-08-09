@@ -47,11 +47,28 @@ function renderPostCookOpen(
   );
 }
 
+/** 料理タブ列（段取り/材料まとめタブと混同しない） */
+function dishTablist() {
+  return screen.getByRole("tablist", { name: "料理" });
+}
+
+/** 現在選択中の料理 tabpanel */
+function selectedDishPanel() {
+  const selected = within(dishTablist()).getByRole("tab", { selected: true });
+  const panelId = selected.getAttribute("aria-controls");
+  if (panelId === null) throw new Error("dish tab must have aria-controls");
+  const panel = document.getElementById(panelId);
+  if (!(panel instanceof HTMLElement)) throw new Error("dish tabpanel missing");
+  return panel;
+}
+
 it("shows the overall timeline before persistent dish tabs", () => {
   const { container } = render(<MenuResult result={makeMenuResultViewModel()} />);
   const timeline = screen.getByRole("heading", { name: "全体の段取り" });
   const tabs = screen.getByRole("tablist", { name: "料理" });
   expect(timeline.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // 段取り側にも tablist がある（材料まとめタブ）
+  expect(screen.getByRole("tablist", { name: "献立の段取りと材料" })).toBeVisible();
   // household 既定では成功見出しの下に AI 作成バナーを出す（密着回避のため見出し優先）
   expect(container).toHaveTextContent("AIが作成した献立です");
   // モデル未記録時はメタ行を出さない
@@ -91,9 +108,11 @@ it("switches dishes and exposes structured preparation and label checks", async 
   render(<MenuResult result={result} />);
   // タブの実際のアクセシブルネームは「区分・料理名」（例: 副菜・温野菜）で、
   // getByRoleのname照合は常に完全一致のため、料理名だけの完全一致にはならない。
-  // 正規表現で部分一致させて該当タブを選択する。
-  await userEvent.click(screen.getByRole("tab", { name: new RegExp(secondDish.name, "u") }));
-  const panel = screen.getByRole("tabpanel");
+  // 正規表現で部分一致させて該当タブを選択する。料理 tablist にスコープする。
+  await userEvent.click(
+    within(dishTablist()).getByRole("tab", { name: new RegExp(secondDish.name, "u") }),
+  );
+  const panel = selectedDishPanel();
   expect(within(panel).getByRole("heading", { name: "材料" })).toBeVisible();
   expect(within(panel).getByRole("heading", { name: "作り方" })).toBeVisible();
   expect(within(panel).getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
@@ -103,7 +122,8 @@ it("switches dishes and exposes structured preparation and label checks", async 
 it("moves focus and selection with roving tab keyboard controls", async () => {
   const result = makeMenuResultViewModel();
   render(<MenuResult result={result} />);
-  const tabs = screen.getAllByRole("tab");
+  // 段取りタブが DOM 上先に来るため、料理 tablist 内に限定する
+  const tabs = within(dishTablist()).getAllByRole("tab");
   const firstTab = tabs[0];
   const lastTab = tabs.at(-1);
   if (firstTab === undefined || lastTab === undefined) throw new Error("fixture must contain tabs");
@@ -210,7 +230,7 @@ it("shows recorded badge without bare 確認済み when label confirmation is co
 it("renders numbered steps and every persisted adaptation field", () => {
   const result = makeMenuResultViewModel();
   render(<MenuResult result={result} />);
-  const panel = screen.getByRole("tabpanel");
+  const panel = selectedDishPanel();
   const recipeHeading = within(panel).getByRole("heading", { name: "作り方" });
   const recipeList = recipeHeading.nextElementSibling;
   if (!(recipeList instanceof HTMLOListElement)) throw new Error("recipe steps must be an ol");
@@ -232,7 +252,9 @@ it("shows a plain empty state when the selected dish has no adaptation", async (
   if (secondDish === undefined) throw new Error("fixture must contain a second dish");
   render(<MenuResult result={result} />);
 
-  await userEvent.click(screen.getByRole("tab", { name: new RegExp(secondDish.name, "u") }));
+  await userEvent.click(
+    within(dishTablist()).getByRole("tab", { name: new RegExp(secondDish.name, "u") }),
+  );
 
   expect(screen.getByText("この料理の取り分け案はありません。")).toBeVisible();
 });
@@ -244,7 +266,7 @@ it("places dish-only regeneration inside the selected dish tabpanel", async () =
   if (firstDish === undefined) throw new Error("fixture must contain a dish");
   render(<MenuResult result={result} onRegenerateSelectedDish={onRegenerateSelectedDish} />);
 
-  const panel = screen.getByRole("tabpanel");
+  const panel = selectedDishPanel();
   const button = within(panel).getByRole("button", { name: "この一品だけ別案にする" });
   expect(button).toBeVisible();
   // 操作バー相当の外には出さない（タブパネル内だけ）

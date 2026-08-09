@@ -61,19 +61,10 @@ export const FREE_LP_EXISTING = "すでにアカウントがある方は" as con
  */
 export function FreeLandingPage() {
   return (
-    <main className="page-frame free-landing stack gap-5">
-      <p className="free-landing__brand">{FREE_LP_BRAND}</p>
-
-      <div className="free-landing__hero stack gap-3">
-        <img
-          src={heroUrl}
-          alt=""
-          width={1280}
-          height={480}
-          className="free-landing__hero-img"
-          decoding="async"
-        />
-        <h1>{FREE_LP_H1}</h1>
+    <main className="page-frame free-landing">
+      <div className="free-landing__hero">
+        <p className="free-landing__brand">{FREE_LP_BRAND}</p>
+        <h1 className="free-landing__title">{FREE_LP_H1}</h1>
         <p className="free-landing__lead">{FREE_LP_LEAD}</p>
         <p className="free-landing__lead-sub">{FREE_LP_LEAD_SUB}</p>
         <div className="free-landing__cta-row">
@@ -86,7 +77,16 @@ export function FreeLandingPage() {
         </div>
       </div>
 
-      <section className="free-landing__flow stack gap-2" aria-labelledby="free-lp-flow-title">
+      <img
+        src={heroUrl}
+        alt=""
+        width={1280}
+        height={720}
+        className="free-landing__hero-img"
+        decoding="async"
+      />
+
+      <section className="free-landing__flow" aria-labelledby="free-lp-flow-title">
         <h2 id="free-lp-flow-title" className="free-landing__section-title">
           {FREE_LP_FLOW_TITLE}
         </h2>
@@ -102,62 +102,62 @@ export function FreeLandingPage() {
         </ol>
       </section>
 
-      <section className="stack gap-3" aria-labelledby="free-lp-features-title">
+      <section className="free-landing__features" aria-labelledby="free-lp-features-title">
         <h2 id="free-lp-features-title" className="free-landing__section-title">
           {FREE_LP_FEATURES_TITLE}
         </h2>
-        <ul className="free-landing__cards stack gap-3" aria-label="できること">
-          <li className="free-landing__card card stack gap-2">
-            <div className="free-landing__card-header">
+        <ul className="free-landing__feature-list" aria-label="できること">
+          <li className="free-landing__feature">
+            <div className="free-landing__feature-head">
               <img
                 src={familyUrl}
                 alt=""
-                width={160}
-                height={160}
-                className="free-landing__card-img"
+                width={640}
+                height={640}
+                className="free-landing__feature-img"
                 decoding="async"
               />
-              <h3 className="free-landing__card-title">{FREE_LP_FAMILY_TITLE}</h3>
+              <h3 className="free-landing__feature-title">{FREE_LP_FAMILY_TITLE}</h3>
             </div>
-            <p>{FREE_LP_FAMILY_BODY}</p>
+            <p className="free-landing__feature-body">{FREE_LP_FAMILY_BODY}</p>
             <ul className="free-landing__points">
               {FREE_LP_FAMILY_POINTS.map((point) => (
                 <li key={point}>{point}</li>
               ))}
             </ul>
           </li>
-          <li className="free-landing__card card stack gap-2">
-            <div className="free-landing__card-header">
+          <li className="free-landing__feature">
+            <div className="free-landing__feature-head">
               <img
                 src={menuUrl}
                 alt=""
-                width={160}
-                height={160}
-                className="free-landing__card-img"
+                width={640}
+                height={640}
+                className="free-landing__feature-img"
                 decoding="async"
               />
-              <h3 className="free-landing__card-title">{FREE_LP_MENU_TITLE}</h3>
+              <h3 className="free-landing__feature-title">{FREE_LP_MENU_TITLE}</h3>
             </div>
-            <p>{FREE_LP_MENU_BODY}</p>
+            <p className="free-landing__feature-body">{FREE_LP_MENU_BODY}</p>
             <ul className="free-landing__points">
               {FREE_LP_MENU_POINTS.map((point) => (
                 <li key={point}>{point}</li>
               ))}
             </ul>
           </li>
-          <li className="free-landing__card card stack gap-2">
-            <div className="free-landing__card-header">
+          <li className="free-landing__feature">
+            <div className="free-landing__feature-head">
               <img
                 src={pantryUrl}
                 alt=""
-                width={160}
-                height={160}
-                className="free-landing__card-img"
+                width={640}
+                height={640}
+                className="free-landing__feature-img"
                 decoding="async"
               />
-              <h3 className="free-landing__card-title">{FREE_LP_PANTRY_TITLE}</h3>
+              <h3 className="free-landing__feature-title">{FREE_LP_PANTRY_TITLE}</h3>
             </div>
-            <p>{FREE_LP_PANTRY_BODY}</p>
+            <p className="free-landing__feature-body">{FREE_LP_PANTRY_BODY}</p>
             <ul className="free-landing__points">
               {FREE_LP_PANTRY_POINTS.map((point) => (
                 <li key={point}>{point}</li>
@@ -167,12 +167,14 @@ export function FreeLandingPage() {
         </ul>
       </section>
 
-      <section className="stack gap-2" aria-labelledby="free-lp-closing">
-        <p id="free-lp-closing">{FREE_LP_CLOSING}</p>
+      <section className="free-landing__closing" aria-labelledby="free-lp-closing">
+        <p id="free-lp-closing" className="free-landing__closing-body">
+          {FREE_LP_CLOSING}
+        </p>
         <Link className="primary-button min-h-11" to="/login">
           {FREE_LP_CTA}
         </Link>
-        <p className="type-small">{FREE_LP_EXISTING}</p>
+        <p className="free-landing__closing-note">{FREE_LP_EXISTING}</p>
         <Link className="secondary-button min-h-11 free-landing__login-link" to="/login">
           {FREE_LP_LOGIN}
         </Link>
