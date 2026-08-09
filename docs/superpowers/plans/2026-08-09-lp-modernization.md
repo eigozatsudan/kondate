@@ -225,7 +225,22 @@ describe("free landing contrast", () => {
     expect(contrast(PRIMARY, WHITE)).toBeGreaterThanOrEqual(4.5); // 実測 4.96
     expect(contrast(PRIMARY, SUNKEN)).toBeLessThan(4.5); // 実測 4.33
   });
+
+  it("holds for the canvas ground too, in case the page ground is ever painted", () => {
+    // 現在ページ地を塗る規則は無い（styles.css に html/body/#root/.page-frame の
+    // background 宣言が無く var(--canvas) 参照も 0 件）。将来塗られたときに
+    // 黙って割れないよう先に固定する。
+    expect(contrast(TEXT, CANVAS)).toBeGreaterThanOrEqual(4.5); // 実測 15.14
+    expect(contrast(MUTED, CANVAS)).toBeGreaterThanOrEqual(4.5); // 実測 7.52
+    expect(contrast(PRIMARY_STRONG, CANVAS)).toBeGreaterThanOrEqual(4.5); // 実測 6.22
+  });
 });
+```
+
+`CANVAS` を定数群に足す。
+
+```ts
+const CANVAS = "#faf9f8";
 ```
 
 - [ ] **Step 4: 実行して通ることを確認する**
@@ -269,7 +284,10 @@ docker compose run --rm --no-deps app npx eslint src/app/accessibility.test.tsx 
 docker compose run --rm --no-deps app npm run format:check
 ```
 
-期待: すべてエラーなし。
+期待: すべてエラーなし。**`src/features/landing/**` は `eslint.config.js` の
+プリミティブ強制ルールの `ignores` に入っているため、そのルールに関しては no-op である。**
+ここで効くのは `strictTypeChecked` など全体に掛かる規則のほう。「landing で何も出ない＝
+ルールが壊れている」と誤診しないこと。
 
 - [ ] **Step 8: コミット**
 
@@ -777,7 +795,36 @@ Task 2 で残した `<section className="free-landing__flow …">` 以降を差�
 }
 ```
 
-- [ ] **Step 5: 実行して通ることを確認する**
+- [ ] **Step 5: CSS の配線を固定するテストを追加する**
+
+**コントラストテストは hex の算術しか見ていない。** `.free-landing__flow-num` の色を
+`var(--primary)` に戻しても全ケース緑のままで、退行を検出できない。CSS の実配線を
+1 本だけ assert する。
+
+`src/features/landing/free-landing-page.contrast.test.ts` の末尾に追記する。
+
+```ts
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+describe("free landing css wiring", () => {
+  it("wires the flow number to --primary-strong, not --primary", () => {
+    // 算術だけでは「表は緑・実装は --primary」を通してしまう。実 CSS を読む。
+    const css = readFileSync(
+      resolve(process.cwd(), "src/features/landing/free-landing-page.css"),
+      "utf8",
+    );
+    const rule = /\.free-landing__flow-num\s*\{([^}]*)\}/u.exec(css)?.[1];
+    expect(rule).toBeDefined();
+    expect(rule).toContain("color: var(--primary-strong)");
+    expect(rule).not.toContain("color: var(--primary)");
+  });
+});
+```
+
+`import` はファイル先頭に置くこと（`describe` の直前ではない）。
+
+- [ ] **Step 6: 実行して通ることを確認する**
 
 ```bash
 docker compose run --rm --no-deps app npx vitest run src/features/landing/
@@ -786,7 +833,7 @@ docker compose run --rm --no-deps app npx vitest run src/app/accessibility.test.
 
 期待: すべて PASS。**禁止語テストが落ちていないことを必ず確認する。**
 
-- [ ] **Step 6: 型・lint・整形**
+- [ ] **Step 7: 型・lint・整形**
 
 ```bash
 docker compose run --rm --no-deps app npm run typecheck
@@ -794,7 +841,7 @@ docker compose run --rm --no-deps app npx eslint src/features/landing/
 docker compose run --rm --no-deps app npm run format:check
 ```
 
-- [ ] **Step 7: コミット（実装とテストを分ける）**
+- [ ] **Step 8: コミット（実装とテストを分ける）**
 
 ```bash
 git add src/features/landing/free-landing-page.tsx src/features/landing/free-landing-page.css
@@ -895,6 +942,11 @@ test("landing", async ({ page }) => {
 撮影した 320px の画像を目視し、右端で内容が切れていないことを確認する。
 `.free-landing__hero-img` に `width: 100%` を使い bleed していなければ出ないはずだが、
 `.free-landing__points` の `padding-left` と長い箇条書きの組み合わせで出ることがある。
+
+あわせて、**320px の画像で最初の 1 画面ぶん（上から 568px 相当）に `<h1>` と
+「無料ではじめる」が両方入っているか**を目視する。設計書 §4 のとおりこれは
+受け入れ条件ではなく努力目標だが、入っていない場合は人間の判断を仰ぐこと。
+自動テストは存在しない。
 
 - [ ] **Step 6: 提出**
 
