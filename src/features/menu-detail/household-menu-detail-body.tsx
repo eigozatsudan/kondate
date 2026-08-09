@@ -554,331 +554,323 @@ export function HouseholdMenuDetailBody({
   return (
     <main className="page-frame guided-planner-theme menu-detail-page">
       <Stack gap={4}>
-      <MenuSafetyNotice
-        section="disclaimers"
-        phase={revalidation.phase}
-        isOfflineHold={isOfflineHold}
-        statusCopy={statusCopy}
-      />
-      {surface.showFlyerUpsell && usage.isSuccess && !usage.data.plusEntitled ? (
-        <FlyerUpsellBanner plusEntitled={false} />
-      ) : null}
-      <MenuSafetyNotice
-        section="revalidation"
-        phase={revalidation.phase}
-        isOfflineHold={isOfflineHold}
-        statusCopy={statusCopy}
-        invalidIssues={
-          revalidation.phase === "checked" && revalidation.result?.status === "invalid"
-            ? revalidation.result.issues
-            : undefined
-        }
-        onRetry={() => {
-          revalidation.refetch?.();
-        }}
-      />
-
-      <MenuVersionSwitcher
-        versions={siblingVersions}
-        currentMenuId={menuId}
-        pathForMenuId={surface.pathForMenuId}
-      />
-      {versionsFailed ? (
-        <p role="alert">
-          案の一覧を読み込めませんでした。{" "}
-          <Button
-            variant="ghost"
-            onClick={() => {
-              void versionsQuery.refetch();
-            }}
-          >
-            もう一度読み込む
-          </Button>
-        </p>
-      ) : null}
-
-      {gateOpen && revalidation.result !== undefined && (
-        <>
-          <MenuSafetyNotice
-            section="gate"
-            phase={revalidation.phase}
-            isOfflineHold={isOfflineHold}
-            statusCopy={statusCopy}
-            showGateStatus
-            changedDetailLines={changedDetailLines}
-          />
-          {actions === undefined ? (
-            <MenuResult
-              result={result}
-              mode="household"
-              currentLabelWarnings={revalidation.result.currentLabelWarnings}
-              currentSafetyFingerprint={revalidation.result.safetyFingerprint}
-              postCookOpen={postCookOpen}
-              onPostCookClose={() => {
-                setPostCookOpen(false);
-              }}
-              onSelectedDishChange={setSelectedDishId}
-              onRegenerateSelectedDish={() => {
-                // HR1/HR5: soft 飛行中・pantry ゲート未通過では皿別案を開かない
-                if (!actionsEnabled || !pantryGateReady) return;
-                setSheetMode("dish");
-              }}
-              regenerateSelectedDishDisabled={
-                dishIdForRegen === null || !pantryGateReady || !actionsEnabled
-              }
-            />
-          ) : (
-            <MenuResult
-              result={result}
-              mode="household"
-              actions={actions}
-              currentLabelWarnings={revalidation.result.currentLabelWarnings}
-              currentSafetyFingerprint={revalidation.result.safetyFingerprint}
-              postCookOpen={postCookOpen}
-              onPostCookClose={() => {
-                setPostCookOpen(false);
-              }}
-              onSelectedDishChange={setSelectedDishId}
-              onRegenerateSelectedDish={() => {
-                if (!actionsEnabled || !pantryGateReady) return;
-                setSheetMode("dish");
-              }}
-              regenerateSelectedDishDisabled={
-                dishIdForRegen === null || !pantryGateReady || !actionsEnabled
-              }
-            />
-          )}
-          {acceptError !== null && (
-            <p role="alert">
-              {acceptError}
-            </p>
-          )}
-          {pantryGateMessage !== null && (
-            <p role="status">
-              {pantryGateMessage}
-            </p>
-          )}
-        </>
-      )}
-
-      <MenuActions
-        accepted={accepted}
-        gateOpen={gateOpen}
-        canCreateShoppingList={canCreateShoppingList}
-        shoppingAsPrimary={shoppingAsPrimary}
-        actionsEnabled={actionsEnabled}
-        acceptPending={accept.isPending}
-        confirmedSingle={confirmedSingle}
-        pantryGateReady={pantryGateReady}
-        showReconcile={reconcileTarget.data !== null && reconcileTarget.data !== undefined}
-        reconcileDisabled={shoppingMutateBlocked || reconcileList.isPending}
-        canUpdatePostCook={canUpdatePostCook}
-        showRetarget={result.sourceSubmission !== null}
-        retargetEnabled={retargetEnabled}
-        retargetPending={retargetPending}
-        retargetError={retargetError}
-        shoppingError={shoppingError}
-        shoppingIntentActive={shoppingIntentActive}
-        revalidationPhase={revalidation.phase}
-        isSoftRechecking={isSoftRechecking}
-        shoppingRejectedMessage={
-          revalidation.errorMessage ?? "現在の家族設定ではこの献立から買い物リストを作れません"
-        }
-        onAccept={() => {
-          // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
-          // HR8: ref で soft-flight 中の stale クロージャも塞ぐ
-          if (!actionsEnabledRef.current) return;
-          setAcceptError(null);
-          accept.mutate(menuId, {
-            onSuccess: () => {
-              setAccepted(true);
-            },
-            onError: () => {
-              setAcceptError("採用を保存できませんでした。もう一度お試しください");
-            },
-          });
-        }}
-        onOpenCreateShopping={() => {
-          setShoppingError(null);
-          // SHOP6: シート open を永続化し remount 後の旧 sticky resume を抑止
-          markShoppingResumeSuppress("create", menuId);
-          setShoppingSheet("create");
-        }}
-        onOpenWholeRegen={() => {
-          if (!pantryGateReady) return;
-          setSheetMode("whole");
-        }}
-        onOpenReconcile={() => {
-          const target = reconcileTarget.data;
-          if (activeList === null || target === null || target === undefined) return;
-          if (shoppingMutateBlocked) return;
-          // HR3: preview 開始時の FP。await 後に gate / FP を再確認してから sheet を開く
-          const fingerprintAtPreview = revalidation.result?.safetyFingerprint;
-          setShoppingError(null);
-          previewShoppingDiff(menuId, target.sourceMenuVersion, activeList)
-            .then((diff) => {
-              // soft/hard 飛行中や non-actionable になったら stale diff で開かない
-              if (shoppingMutateBlockedRef.current) {
-                setShoppingError(
-                  "家族設定の確認中です。確認が終わってから差分を開き直してください",
-                );
-                return;
-              }
-              if (fingerprintAtPreview !== revalidationFingerprintRef.current) {
-                setShoppingError("家族設定が変わったため、差分を開き直してください");
-                return;
-              }
-              reconcileDiffFingerprintRef.current = fingerprintAtPreview ?? null;
-              setShoppingDiff(diff);
-              // SHOP6: reconcile シート open も suppress を永続化
-              markShoppingResumeSuppress("reconcile", activeList.id);
-              setShoppingSheet("reconcile");
-            })
-            .catch(() => {
-              setShoppingError("差分を確認できませんでした");
-            });
-        }}
-        onOpenPostCook={() => {
-          setPostCookOpen(true);
-        }}
-        onRetarget={() => {
-          if (!retargetEnabled) return;
-          void onRetarget();
-        }}
-      />
-
-      {shoppingSheet === "create" && (
-        <CreateListSheet
-          // HR9: soft/hard 後に FP/status が変わったら form を再マウントし mode を既定へ戻す
-          // （soft 開始前に選んだ mode のまま stale create しない）。list version 変化も同様。
-          key={`${activeList?.id ?? "none"}-${String(activeList?.version ?? 0)}-${revalidation.result?.safetyFingerprint ?? "none"}-${revalidation.result?.status ?? "none"}`}
-          activeList={
-            activeList === null
-              ? null
-              : {
-                  id: activeList.id,
-                  version: activeList.version,
-                  itemCount: nonRemovedCount,
-                }
+        <MenuSafetyNotice
+          section="disclaimers"
+          phase={revalidation.phase}
+          isOfflineHold={isOfflineHold}
+          statusCopy={statusCopy}
+        />
+        {surface.showFlyerUpsell && usage.isSuccess && !usage.data.plusEntitled ? (
+          <FlyerUpsellBanner plusEntitled={false} />
+        ) : null}
+        <MenuSafetyNotice
+          section="revalidation"
+          phase={revalidation.phase}
+          isOfflineHold={isOfflineHold}
+          statusCopy={statusCopy}
+          invalidIssues={
+            revalidation.phase === "checked" && revalidation.result?.status === "invalid"
+              ? revalidation.result.issues
+              : undefined
           }
-          pending={createList.isPending}
-          // L8: 開く条件 (canOpenCreateSheet) に isFetching を含むため、
-          // 表示中の再取得で「作成する」が disable 点滅しないよう送信は actionsEnabled のみ見る。
-          safetyBlocked={!actionsEnabled}
-          forceNewMode={shoppingGate.blocked}
-          onSubmit={(input) => {
-            // 表示中 isFetching では止めない（safetyBlocked と同じく actions のみ）
-            if (!actionsEnabled || createList.isPending) return;
-            const command = persistedShoppingCommand(
-              "create",
-              menuId,
-              createShoppingListRequestSchema,
-              (idempotencyKey) => ({
-                menuId,
-                mode: input.mode,
-                // mode=new でも active があるときは SQL がアーカイブ用に正確な id/version を要求する。
-                // append 専用に null へ落とすと list_version_conflict になり「新しいリストにする」が常に失敗する。
-                activeListId: input.activeListId,
-                expectedListVersion: input.expectedListVersion,
-                idempotencyKey,
-              }),
-              // SHOP6: mode / 対象 list が変わったら sticky を捨てて新 key で rebuild
-              (saved) =>
-                saved.mode === input.mode &&
-                saved.activeListId === input.activeListId &&
-                saved.expectedListVersion === input.expectedListVersion,
-            );
-            void submitCreate(command);
-          }}
-          onCancel={() => {
-            // SHOP1: Cancel は sticky を捨てない。SHOP6 suppress だけ落とし resume を再武装する。
-            clearShoppingResumeSuppress("create", menuId);
-            setShoppingSheet(null);
-            clearShoppingCycle();
+          onRetry={() => {
+            revalidation.refetch?.();
           }}
         />
-      )}
 
-      {shoppingSheet === "reconcile" &&
-        shoppingDiff !== null &&
-        activeList !== null &&
-        reconcileTarget.data !== null &&
-        reconcileTarget.data !== undefined && (
-          <ReconcileListSheet
-            diff={shoppingDiff}
-            pending={reconcileList.isPending}
-            safetyBlocked={shoppingMutateBlocked}
-            onApply={(approval) => {
-              const target = reconcileTarget.data;
-              // HR3: Apply 直前に gate と preview 時 FP を再確認（hard 後の stale diff 適用を閉じる）
-              if (shoppingMutateBlocked || target === null) return;
-              if (
-                reconcileDiffFingerprintRef.current !== null &&
-                reconcileDiffFingerprintRef.current !== revalidation.result?.safetyFingerprint
-              ) {
-                setShoppingError("家族設定が変わったため、差分を開き直してください");
-                clearShoppingResumeSuppress("reconcile", activeList.id);
-                setShoppingSheet(null);
-                setShoppingDiff(null);
-                reconcileDiffFingerprintRef.current = null;
-                return;
-              }
-              const listId = activeList.id;
-              const command = persistedShoppingCommand(
-                "reconcile",
-                listId,
-                reconcileShoppingListRequestSchema,
-                (idempotencyKey) => ({
-                  expectedListVersion: activeList.version,
-                  sourceMenuId: menuId,
-                  sourceMenuVersion: target.sourceMenuVersion,
-                  idempotencyKey,
-                  approval,
-                }),
-                // SHOP6: approval / version が変わったら sticky を捨てて新 key で rebuild
-                (saved) => {
-                  const sorted = (xs: readonly string[]) => [...xs].toSorted();
-                  return (
-                    saved.expectedListVersion === activeList.version &&
-                    saved.sourceMenuId === menuId &&
-                    saved.sourceMenuVersion === target.sourceMenuVersion &&
-                    JSON.stringify({
-                      addKeys: sorted(saved.approval.addKeys),
-                      replaceItemIds: sorted(saved.approval.replaceItemIds),
-                      removeItemIds: sorted(saved.approval.removeItemIds),
-                    }) ===
-                      JSON.stringify({
-                        addKeys: sorted(approval.addKeys),
-                        replaceItemIds: sorted(approval.replaceItemIds),
-                        removeItemIds: sorted(approval.removeItemIds),
-                      })
+        <MenuVersionSwitcher
+          versions={siblingVersions}
+          currentMenuId={menuId}
+          pathForMenuId={surface.pathForMenuId}
+        />
+        {versionsFailed ? (
+          <p role="alert">
+            案の一覧を読み込めませんでした。{" "}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                void versionsQuery.refetch();
+              }}
+            >
+              もう一度読み込む
+            </Button>
+          </p>
+        ) : null}
+
+        {gateOpen && revalidation.result !== undefined && (
+          <>
+            <MenuSafetyNotice
+              section="gate"
+              phase={revalidation.phase}
+              isOfflineHold={isOfflineHold}
+              statusCopy={statusCopy}
+              showGateStatus
+              changedDetailLines={changedDetailLines}
+            />
+            {actions === undefined ? (
+              <MenuResult
+                result={result}
+                mode="household"
+                currentLabelWarnings={revalidation.result.currentLabelWarnings}
+                currentSafetyFingerprint={revalidation.result.safetyFingerprint}
+                postCookOpen={postCookOpen}
+                onPostCookClose={() => {
+                  setPostCookOpen(false);
+                }}
+                onSelectedDishChange={setSelectedDishId}
+                onRegenerateSelectedDish={() => {
+                  // HR1/HR5: soft 飛行中・pantry ゲート未通過では皿別案を開かない
+                  if (!actionsEnabled || !pantryGateReady) return;
+                  setSheetMode("dish");
+                }}
+                regenerateSelectedDishDisabled={
+                  dishIdForRegen === null || !pantryGateReady || !actionsEnabled
+                }
+              />
+            ) : (
+              <MenuResult
+                result={result}
+                mode="household"
+                actions={actions}
+                currentLabelWarnings={revalidation.result.currentLabelWarnings}
+                currentSafetyFingerprint={revalidation.result.safetyFingerprint}
+                postCookOpen={postCookOpen}
+                onPostCookClose={() => {
+                  setPostCookOpen(false);
+                }}
+                onSelectedDishChange={setSelectedDishId}
+                onRegenerateSelectedDish={() => {
+                  if (!actionsEnabled || !pantryGateReady) return;
+                  setSheetMode("dish");
+                }}
+                regenerateSelectedDishDisabled={
+                  dishIdForRegen === null || !pantryGateReady || !actionsEnabled
+                }
+              />
+            )}
+            {acceptError !== null && <p role="alert">{acceptError}</p>}
+            {pantryGateMessage !== null && <p role="status">{pantryGateMessage}</p>}
+          </>
+        )}
+
+        <MenuActions
+          accepted={accepted}
+          gateOpen={gateOpen}
+          canCreateShoppingList={canCreateShoppingList}
+          shoppingAsPrimary={shoppingAsPrimary}
+          actionsEnabled={actionsEnabled}
+          acceptPending={accept.isPending}
+          confirmedSingle={confirmedSingle}
+          pantryGateReady={pantryGateReady}
+          showReconcile={reconcileTarget.data !== null && reconcileTarget.data !== undefined}
+          reconcileDisabled={shoppingMutateBlocked || reconcileList.isPending}
+          canUpdatePostCook={canUpdatePostCook}
+          showRetarget={result.sourceSubmission !== null}
+          retargetEnabled={retargetEnabled}
+          retargetPending={retargetPending}
+          retargetError={retargetError}
+          shoppingError={shoppingError}
+          shoppingIntentActive={shoppingIntentActive}
+          revalidationPhase={revalidation.phase}
+          isSoftRechecking={isSoftRechecking}
+          shoppingRejectedMessage={
+            revalidation.errorMessage ?? "現在の家族設定ではこの献立から買い物リストを作れません"
+          }
+          onAccept={() => {
+            // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
+            // HR8: ref で soft-flight 中の stale クロージャも塞ぐ
+            if (!actionsEnabledRef.current) return;
+            setAcceptError(null);
+            accept.mutate(menuId, {
+              onSuccess: () => {
+                setAccepted(true);
+              },
+              onError: () => {
+                setAcceptError("採用を保存できませんでした。もう一度お試しください");
+              },
+            });
+          }}
+          onOpenCreateShopping={() => {
+            setShoppingError(null);
+            // SHOP6: シート open を永続化し remount 後の旧 sticky resume を抑止
+            markShoppingResumeSuppress("create", menuId);
+            setShoppingSheet("create");
+          }}
+          onOpenWholeRegen={() => {
+            if (!pantryGateReady) return;
+            setSheetMode("whole");
+          }}
+          onOpenReconcile={() => {
+            const target = reconcileTarget.data;
+            if (activeList === null || target === null || target === undefined) return;
+            if (shoppingMutateBlocked) return;
+            // HR3: preview 開始時の FP。await 後に gate / FP を再確認してから sheet を開く
+            const fingerprintAtPreview = revalidation.result?.safetyFingerprint;
+            setShoppingError(null);
+            previewShoppingDiff(menuId, target.sourceMenuVersion, activeList)
+              .then((diff) => {
+                // soft/hard 飛行中や non-actionable になったら stale diff で開かない
+                if (shoppingMutateBlockedRef.current) {
+                  setShoppingError(
+                    "家族設定の確認中です。確認が終わってから差分を開き直してください",
                   );
-                },
+                  return;
+                }
+                if (fingerprintAtPreview !== revalidationFingerprintRef.current) {
+                  setShoppingError("家族設定が変わったため、差分を開き直してください");
+                  return;
+                }
+                reconcileDiffFingerprintRef.current = fingerprintAtPreview ?? null;
+                setShoppingDiff(diff);
+                // SHOP6: reconcile シート open も suppress を永続化
+                markShoppingResumeSuppress("reconcile", activeList.id);
+                setShoppingSheet("reconcile");
+              })
+              .catch(() => {
+                setShoppingError("差分を確認できませんでした");
+              });
+          }}
+          onOpenPostCook={() => {
+            setPostCookOpen(true);
+          }}
+          onRetarget={() => {
+            if (!retargetEnabled) return;
+            void onRetarget();
+          }}
+        />
+
+        {shoppingSheet === "create" && (
+          <CreateListSheet
+            // HR9: soft/hard 後に FP/status が変わったら form を再マウントし mode を既定へ戻す
+            // （soft 開始前に選んだ mode のまま stale create しない）。list version 変化も同様。
+            key={`${activeList?.id ?? "none"}-${String(activeList?.version ?? 0)}-${revalidation.result?.safetyFingerprint ?? "none"}-${revalidation.result?.status ?? "none"}`}
+            activeList={
+              activeList === null
+                ? null
+                : {
+                    id: activeList.id,
+                    version: activeList.version,
+                    itemCount: nonRemovedCount,
+                  }
+            }
+            pending={createList.isPending}
+            // L8: 開く条件 (canOpenCreateSheet) に isFetching を含むため、
+            // 表示中の再取得で「作成する」が disable 点滅しないよう送信は actionsEnabled のみ見る。
+            safetyBlocked={!actionsEnabled}
+            forceNewMode={shoppingGate.blocked}
+            onSubmit={(input) => {
+              // 表示中 isFetching では止めない（safetyBlocked と同じく actions のみ）
+              if (!actionsEnabled || createList.isPending) return;
+              const command = persistedShoppingCommand(
+                "create",
+                menuId,
+                createShoppingListRequestSchema,
+                (idempotencyKey) => ({
+                  menuId,
+                  mode: input.mode,
+                  // mode=new でも active があるときは SQL がアーカイブ用に正確な id/version を要求する。
+                  // append 専用に null へ落とすと list_version_conflict になり「新しいリストにする」が常に失敗する。
+                  activeListId: input.activeListId,
+                  expectedListVersion: input.expectedListVersion,
+                  idempotencyKey,
+                }),
+                // SHOP6: mode / 対象 list が変わったら sticky を捨てて新 key で rebuild
+                (saved) =>
+                  saved.mode === input.mode &&
+                  saved.activeListId === input.activeListId &&
+                  saved.expectedListVersion === input.expectedListVersion,
               );
-              void submitReconcile(listId, command);
+              void submitCreate(command);
             }}
             onCancel={() => {
-              // SHOP1: sticky は残す。SHOP6 suppress だけ落として resume 再武装。
-              clearShoppingResumeSuppress("reconcile", activeList.id);
+              // SHOP1: Cancel は sticky を捨てない。SHOP6 suppress だけ落とし resume を再武装する。
+              clearShoppingResumeSuppress("create", menuId);
               setShoppingSheet(null);
-              setShoppingDiff(null);
-              reconcileDiffFingerprintRef.current = null;
+              clearShoppingCycle();
             }}
           />
         )}
 
-      {sheetMode !== null && (
-        <RegenerationSheet
-          targetMode="household"
-          usage={usageView}
-          actionsEnabled={actionsEnabled}
-          expiredPantryItems={expiredPantryItems}
-          onSubmit={onSubmitReason}
-          onCancel={() => {
-            setSheetMode(null);
-          }}
-        />
-      )}
+        {shoppingSheet === "reconcile" &&
+          shoppingDiff !== null &&
+          activeList !== null &&
+          reconcileTarget.data !== null &&
+          reconcileTarget.data !== undefined && (
+            <ReconcileListSheet
+              diff={shoppingDiff}
+              pending={reconcileList.isPending}
+              safetyBlocked={shoppingMutateBlocked}
+              onApply={(approval) => {
+                const target = reconcileTarget.data;
+                // HR3: Apply 直前に gate と preview 時 FP を再確認（hard 後の stale diff 適用を閉じる）
+                if (shoppingMutateBlocked || target === null) return;
+                if (
+                  reconcileDiffFingerprintRef.current !== null &&
+                  reconcileDiffFingerprintRef.current !== revalidation.result?.safetyFingerprint
+                ) {
+                  setShoppingError("家族設定が変わったため、差分を開き直してください");
+                  clearShoppingResumeSuppress("reconcile", activeList.id);
+                  setShoppingSheet(null);
+                  setShoppingDiff(null);
+                  reconcileDiffFingerprintRef.current = null;
+                  return;
+                }
+                const listId = activeList.id;
+                const command = persistedShoppingCommand(
+                  "reconcile",
+                  listId,
+                  reconcileShoppingListRequestSchema,
+                  (idempotencyKey) => ({
+                    expectedListVersion: activeList.version,
+                    sourceMenuId: menuId,
+                    sourceMenuVersion: target.sourceMenuVersion,
+                    idempotencyKey,
+                    approval,
+                  }),
+                  // SHOP6: approval / version が変わったら sticky を捨てて新 key で rebuild
+                  (saved) => {
+                    const sorted = (xs: readonly string[]) => [...xs].toSorted();
+                    return (
+                      saved.expectedListVersion === activeList.version &&
+                      saved.sourceMenuId === menuId &&
+                      saved.sourceMenuVersion === target.sourceMenuVersion &&
+                      JSON.stringify({
+                        addKeys: sorted(saved.approval.addKeys),
+                        replaceItemIds: sorted(saved.approval.replaceItemIds),
+                        removeItemIds: sorted(saved.approval.removeItemIds),
+                      }) ===
+                        JSON.stringify({
+                          addKeys: sorted(approval.addKeys),
+                          replaceItemIds: sorted(approval.replaceItemIds),
+                          removeItemIds: sorted(approval.removeItemIds),
+                        })
+                    );
+                  },
+                );
+                void submitReconcile(listId, command);
+              }}
+              onCancel={() => {
+                // SHOP1: sticky は残す。SHOP6 suppress だけ落として resume 再武装。
+                clearShoppingResumeSuppress("reconcile", activeList.id);
+                setShoppingSheet(null);
+                setShoppingDiff(null);
+                reconcileDiffFingerprintRef.current = null;
+              }}
+            />
+          )}
+
+        {sheetMode !== null && (
+          <RegenerationSheet
+            targetMode="household"
+            usage={usageView}
+            actionsEnabled={actionsEnabled}
+            expiredPantryItems={expiredPantryItems}
+            onSubmit={onSubmitReason}
+            onCancel={() => {
+              setSheetMode(null);
+            }}
+          />
+        )}
       </Stack>
     </main>
   );

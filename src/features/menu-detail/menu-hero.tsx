@@ -18,16 +18,11 @@ export type MenuHeroProps = {
  * 表示専用。状態・副作用は持たない。
  * 明朝ヒーローは PageHeader に委ね、文言は不変契約どおり維持する。
  */
-export function MenuHero({
-  totalElapsedMinutes,
-  servings,
-  generationModelId,
-}: MenuHeroProps) {
+export function MenuHero({ totalElapsedMinutes, servings, generationModelId }: MenuHeroProps) {
   const modelLabel =
     generationModelId !== null ? formatGenerationModelLabel(generationModelId) : "";
   // 台帳欠落時は note を渡さない（推測ラベルを捏造しない）
-  const note =
-    modelLabel !== "" ? `作成モデル: ${modelLabel}` : undefined;
+  const note = modelLabel !== "" ? `作成モデル: ${modelLabel}` : undefined;
 
   return (
     <PageHeader

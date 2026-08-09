@@ -147,11 +147,7 @@ export function MenuActions({
               この案を元に別の献立を作り直す
             </Button>
             {showReconcile ? (
-              <Button
-                variant="secondary"
-                disabled={reconcileDisabled}
-                onClick={onOpenReconcile}
-              >
+              <Button variant="secondary" disabled={reconcileDisabled} onClick={onOpenReconcile}>
                 買い物リストの差分を見る
               </Button>
             ) : null}

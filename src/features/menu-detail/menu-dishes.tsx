@@ -121,9 +121,7 @@ export function MenuDishes({
                 <li key={item.id} className="menu-result-ingredient-row">
                   <span className="menu-result-ingredient-name">
                     {item.name}
-                    {item.labelConfirmationRequired && (
-                      <Badge tone="warning">ラベル確認</Badge>
-                    )}
+                    {item.labelConfirmationRequired && <Badge tone="warning">ラベル確認</Badge>}
                   </span>
                   <span className="menu-result-ingredient-amount">
                     {amount(item.quantityValue, item.unit, item.quantityText)}
@@ -186,11 +184,7 @@ export function MenuDishes({
             </div>
           )}
           {mode === "household" && labels.length !== 0 && (
-            <Surface
-              as="section"
-              tone="notice"
-              aria-labelledby="label-confirmations-heading"
-            >
+            <Surface as="section" tone="notice" aria-labelledby="label-confirmations-heading">
               <Stack gap={3}>
                 <h3 id="label-confirmations-heading" className="menu-result-label-section-title">
                   原材料表示の確認
@@ -204,7 +198,9 @@ export function MenuDishes({
                   {labels.map((item) => (
                     <li key={item.confirmationId} className="menu-result-label-item">
                       {item.sourceText}：{item.allergenName}（{item.memberLabel}）
-                      <span className="menu-result-label-meta">辞書版 {item.dictionaryVersion}</span>
+                      <span className="menu-result-label-meta">
+                        辞書版 {item.dictionaryVersion}
+                      </span>
                       {item.confirmationStatus === "confirmed" ? (
                         <span className="menu-result-label-confirmed">表示確認を記録済み</span>
                       ) : !canConfirmLabel ? null : (

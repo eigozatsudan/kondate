@@ -207,128 +207,94 @@ export function IdeaMenuDetailBody({
   return (
     <main className="page-frame guided-planner-theme menu-detail-page">
       <Stack gap={4}>
-      <IdeaMenuSafetyNotice />
-      {surface.showFlyerUpsell && usage.isSuccess && !usage.data.plusEntitled ? (
-        <FlyerUpsellBanner plusEntitled={false} />
-      ) : null}
-      {showIdeaShoppingRejected ? (
-        <Surface as="section" role="status" tone="notice">
-          <Stack gap={3}>
-            <p>アイデア献立は買い物リストに使えません。家族に合わせた献立を選んでください</p>
-            <Link className="button-link" to={historyPathForShopping()}>
-              履歴に戻る
-            </Link>
-            <Link className="button-link" to="/shopping">
-              買い物に戻る
-            </Link>
-          </Stack>
-        </Surface>
-      ) : null}
-      <MenuVersionSwitcher
-        versions={siblingVersions}
-        currentMenuId={menuId}
-        pathForMenuId={surface.pathForMenuId}
-      />
-      {versionsFailed ? (
-        <p role="alert">
-          案の一覧を読み込めませんでした。{" "}
-          <Button
-            variant="ghost"
-            onClick={() => {
-              void versionsQuery.refetch();
-            }}
-          >
-            もう一度読み込む
-          </Button>
-        </p>
-      ) : null}
-      {actions === undefined ? (
-        <MenuResult
-          result={result}
-          mode="idea"
-          postCookOpen={postCookOpen}
-          onPostCookClose={() => {
-            setPostCookOpen(false);
-          }}
-          onSelectedDishChange={setSelectedDishId}
-          onRegenerateSelectedDish={() => {
-            if (!pantryGateReady) return;
-            setSheetMode("dish");
-          }}
-          regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
+        <IdeaMenuSafetyNotice />
+        {surface.showFlyerUpsell && usage.isSuccess && !usage.data.plusEntitled ? (
+          <FlyerUpsellBanner plusEntitled={false} />
+        ) : null}
+        {showIdeaShoppingRejected ? (
+          <Surface as="section" role="status" tone="notice">
+            <Stack gap={3}>
+              <p>アイデア献立は買い物リストに使えません。家族に合わせた献立を選んでください</p>
+              <Link className="button-link" to={historyPathForShopping()}>
+                履歴に戻る
+              </Link>
+              <Link className="button-link" to="/shopping">
+                買い物に戻る
+              </Link>
+            </Stack>
+          </Surface>
+        ) : null}
+        <MenuVersionSwitcher
+          versions={siblingVersions}
+          currentMenuId={menuId}
+          pathForMenuId={surface.pathForMenuId}
         />
-      ) : (
-        <MenuResult
-          result={result}
-          mode="idea"
-          actions={actions}
-          postCookOpen={postCookOpen}
-          onPostCookClose={() => {
-            setPostCookOpen(false);
-          }}
-          onSelectedDishChange={setSelectedDishId}
-          onRegenerateSelectedDish={() => {
-            if (!pantryGateReady) return;
-            setSheetMode("dish");
-          }}
-          regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
-        />
-      )}
-      {acceptError !== null && (
-        <p role="alert">
-          {acceptError}
-        </p>
-      )}
-      {favoriteError !== null && (
-        <p role="alert">
-          {favoriteError}
-        </p>
-      )}
-      {pantryGateMessage !== null && (
-        <p role="status">
-          {pantryGateMessage}
-        </p>
-      )}
-
-      <MenuResultActionBar
-        notice={
-          accepted ? (
-            <div role="status">
-              <p className="menu-result-actions-notice-title">{MENU_ACCEPT_NOTICE_TITLE}</p>
-              <p className="menu-result-actions-notice-hint">{MENU_ACCEPT_NOTICE_IDEA}</p>
-            </div>
-          ) : null
-        }
-        primary={
-          accepted || confirmedSingle ? (
-            <Link className="button-link button-link--primary" to="/history">
-              {surface.ideaAcceptedPrimaryLabel}
-            </Link>
-          ) : (
+        {versionsFailed ? (
+          <p role="alert">
+            案の一覧を読み込めませんでした。{" "}
             <Button
-              variant="primary"
-              disabled={accept.isPending}
+              variant="ghost"
               onClick={() => {
-                setAcceptError(null);
-                accept.mutate(menuId, {
-                  onSuccess: () => {
-                    setAccepted(true);
-                  },
-                  onError: () => {
-                    setAcceptError("採用を保存できませんでした。もう一度お試しください");
-                  },
-                });
+                void versionsQuery.refetch();
               }}
             >
-              この献立にする
+              もう一度読み込む
             </Button>
-          )
-        }
-        auxiliaries={
-          <>
-            {!accepted && confirmedSingle ? (
+          </p>
+        ) : null}
+        {actions === undefined ? (
+          <MenuResult
+            result={result}
+            mode="idea"
+            postCookOpen={postCookOpen}
+            onPostCookClose={() => {
+              setPostCookOpen(false);
+            }}
+            onSelectedDishChange={setSelectedDishId}
+            onRegenerateSelectedDish={() => {
+              if (!pantryGateReady) return;
+              setSheetMode("dish");
+            }}
+            regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
+          />
+        ) : (
+          <MenuResult
+            result={result}
+            mode="idea"
+            actions={actions}
+            postCookOpen={postCookOpen}
+            onPostCookClose={() => {
+              setPostCookOpen(false);
+            }}
+            onSelectedDishChange={setSelectedDishId}
+            onRegenerateSelectedDish={() => {
+              if (!pantryGateReady) return;
+              setSheetMode("dish");
+            }}
+            regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
+          />
+        )}
+        {acceptError !== null && <p role="alert">{acceptError}</p>}
+        {favoriteError !== null && <p role="alert">{favoriteError}</p>}
+        {pantryGateMessage !== null && <p role="status">{pantryGateMessage}</p>}
+
+        <MenuResultActionBar
+          notice={
+            accepted ? (
+              <div role="status">
+                <p className="menu-result-actions-notice-title">{MENU_ACCEPT_NOTICE_TITLE}</p>
+                <p className="menu-result-actions-notice-hint">{MENU_ACCEPT_NOTICE_IDEA}</p>
+              </div>
+            ) : null
+          }
+          primary={
+            accepted || confirmedSingle ? (
+              <Link className="button-link button-link--primary" to="/history">
+                {surface.ideaAcceptedPrimaryLabel}
+              </Link>
+            ) : (
               <Button
-                variant="secondary"
+                variant="primary"
                 disabled={accept.isPending}
                 onClick={() => {
                   setAcceptError(null);
@@ -344,82 +310,100 @@ export function IdeaMenuDetailBody({
               >
                 この献立にする
               </Button>
-            ) : null}
-            <Button
-              variant="secondary"
-              disabled={!pantryGateReady}
-              onClick={() => {
-                if (!pantryGateReady) return;
-                setSheetMode("whole");
-              }}
-            >
-              この案を元に別の献立を作り直す
-            </Button>
-            {canUpdatePostCook ? (
+            )
+          }
+          auxiliaries={
+            <>
+              {!accepted && confirmedSingle ? (
+                <Button
+                  variant="secondary"
+                  disabled={accept.isPending}
+                  onClick={() => {
+                    setAcceptError(null);
+                    accept.mutate(menuId, {
+                      onSuccess: () => {
+                        setAccepted(true);
+                      },
+                      onError: () => {
+                        setAcceptError("採用を保存できませんでした。もう一度お試しください");
+                      },
+                    });
+                  }}
+                >
+                  この献立にする
+                </Button>
+              ) : null}
               <Button
                 variant="secondary"
+                disabled={!pantryGateReady}
                 onClick={() => {
-                  setPostCookOpen(true);
+                  if (!pantryGateReady) return;
+                  setSheetMode("whole");
                 }}
               >
-                使った食材の在庫を更新
+                この案を元に別の献立を作り直す
               </Button>
-            ) : null}
-            <Button
-              variant="secondary"
-              disabled={favorite.isPending}
-              aria-pressed={isFavorite}
-              aria-label={isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
-              onClick={() => {
-                const nextFavorite = !isFavorite;
-                setFavoriteError(null);
-                favorite.mutate(
-                  { menuId, isFavorite: nextFavorite },
-                  {
-                    onSuccess: () => {
-                      setIsFavorite(nextFavorite);
-                    },
-                    onError: () => {
-                      setFavoriteError("お気に入りを更新できませんでした");
-                    },
-                  },
-                );
-              }}
-            >
-              {isFavorite ? "★ お気に入り" : "☆ お気に入り"}
-            </Button>
-            {result.sourceSubmission !== null ? (
+              {canUpdatePostCook ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setPostCookOpen(true);
+                  }}
+                >
+                  使った食材の在庫を更新
+                </Button>
+              ) : null}
               <Button
                 variant="secondary"
-                disabled={retargetPending}
+                disabled={favorite.isPending}
+                aria-pressed={isFavorite}
+                aria-label={isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
                 onClick={() => {
-                  void onRetarget();
+                  const nextFavorite = !isFavorite;
+                  setFavoriteError(null);
+                  favorite.mutate(
+                    { menuId, isFavorite: nextFavorite },
+                    {
+                      onSuccess: () => {
+                        setIsFavorite(nextFavorite);
+                      },
+                      onError: () => {
+                        setFavoriteError("お気に入りを更新できませんでした");
+                      },
+                    },
+                  );
                 }}
               >
-                条件を変えて作り直す
+                {isFavorite ? "★ お気に入り" : "☆ お気に入り"}
               </Button>
-            ) : null}
-          </>
-        }
-      />
-
-      {retargetError !== null && (
-        <p role="alert">
-          {retargetError}
-        </p>
-      )}
-
-      {sheetMode !== null && (
-        <RegenerationSheet
-          targetMode="idea"
-          usage={usageView}
-          expiredPantryItems={expiredPantryItems}
-          onSubmit={onSubmitReason}
-          onCancel={() => {
-            setSheetMode(null);
-          }}
+              {result.sourceSubmission !== null ? (
+                <Button
+                  variant="secondary"
+                  disabled={retargetPending}
+                  onClick={() => {
+                    void onRetarget();
+                  }}
+                >
+                  条件を変えて作り直す
+                </Button>
+              ) : null}
+            </>
+          }
         />
-      )}
+
+        {retargetError !== null && <p role="alert">{retargetError}</p>}
+
+        {sheetMode !== null && (
+          <RegenerationSheet
+            targetMode="idea"
+            usage={usageView}
+            expiredPantryItems={expiredPantryItems}
+            onSubmit={onSubmitReason}
+            onCancel={() => {
+              setSheetMode(null);
+            }}
+          />
+        )}
       </Stack>
     </main>
   );
