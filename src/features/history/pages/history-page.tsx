@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { hasShoppingIntent } from "@/features/shopping/shopping-intent";
 import { Button } from "@/shared/ui/button";
-import { EmptyState, Skeleton } from "@/shared/ui/feedback";
+import { Skeleton } from "@/shared/ui/feedback";
 import { PageHeader } from "@/shared/ui/page-header";
 import { Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
@@ -87,17 +87,20 @@ export function HistoryPageContent({
             lead="これまでに作った献立を見返す場所です。下のメニューでは「履歴」と表示されます。"
           />
           {shoppingIntent ? <ShoppingIntentBanner /> : null}
+          {/*
+            EmptyState は h3 固定のため、PageHeader(h1) 直下だと heading-order 違反になる。
+            空状態は h2 見出し + 本文 + CTA で組む（axe / accessibility 契約）。
+          */}
           <Surface as="section" tone="sunken" aria-labelledby="history-empty-title">
-            <EmptyState
-              titleId="history-empty-title"
-              title="まだ献立がありません"
-              body="「献立」タブで質問に答えて献立をつくると、ここに並びます。あとから見返したり、買い物リストにしたりできます。"
-              action={
-                <Link className="button-link button-link--primary" to="/planner">
-                  献立を作る
-                </Link>
-              }
-            />
+            <Stack gap={3}>
+              <h2 id="history-empty-title">まだ献立がありません</h2>
+              <p className="type-small">
+                「献立」タブで質問に答えて献立をつくると、ここに並びます。あとから見返したり、買い物リストにしたりできます。
+              </p>
+              <Link className="button-link button-link--primary" to="/planner">
+                献立を作る
+              </Link>
+            </Stack>
           </Surface>
         </Stack>
       </main>

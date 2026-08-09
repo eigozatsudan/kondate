@@ -2383,9 +2383,12 @@ dialog:not([open]) {
   gap: 8px;
 }
 
-/* Button / button-link の両方を操作帯では全幅に揃える */
-.menu-result-actions .primary-button,
-.menu-result-actions .secondary-button,
+/*
+ * 操作帯の主/副操作を全幅に揃える。
+ * .primary-button / .secondary-button は保護断片のためここに書かない
+ * （styles.contrast の unexpectedProtectedSelectors）。
+ * Button と button-link のみを対象にする。
+ */
 .menu-result-actions .ui-btn,
 .menu-result-actions .button-link {
   width: 100%;
