@@ -36,6 +36,11 @@ for (const code of [
   '<div className="flex flex-col gap-2" />',
   // TemplateElement セレクタが静的部分を拾うことを固定する（子孫 Literal だけでは漏れうる）
   "<div className={`bg-terracotta-700 ${x}`} />",
+  // Literal と TemplateElement の禁止集合を揃えたことを固定（absolute / border- の抜け）
+  "<div className={`absolute top-0 ${x}`} />",
+  "<div className={`border-red-500 ${x}`} />",
+  "<div className={`sticky top-0 ${x}`} />",
+  "<div className={`fixed inset-0 ${x}`} />",
 ]) {
   test(`rejects ${code}`, () => {
     assert.ok(lint(code) > 0, "違反として検出されるべき");

@@ -124,8 +124,9 @@ export default tseslint.config(
         },
         {
           // テンプレートリテラル内の静的部分も同じ規則で塞ぐ。
+          // Literal 側と禁止集合を揃える（border- / absolute / fixed / sticky の抜けを塞ぐ）。
           selector:
-            "JSXAttribute[name.name='className'] TemplateElement[value.raw=/(^|\\s)(bg-|text-(red|amber|green|blue|stone|slate|gray|zinc|neutral)-|text-(ink|ink-muted|white|black|canvas|line)(\\s|$)|flex(-|\\s|$)|grid(-|\\s|$)|grid-cols-|items-|justify-|gap-|space-[xy]-|w-[0-9]|rounded-|p[xytblr]?-[0-9]|m[xytblr]?-[0-9])/]",
+            "JSXAttribute[name.name='className'] TemplateElement[value.raw=/(^|\\s)(bg-|text-(red|amber|green|blue|stone|slate|gray|zinc|neutral)-|text-(ink|ink-muted|white|black|canvas|line)(\\s|$)|border-(red|amber|green|blue|stone|slate|gray)-|flex(-|\\s|$)|grid(-|\\s|$)|grid-cols-|items-|justify-|gap-|space-[xy]-|w-[0-9]|rounded-|absolute(\\s|$)|fixed(\\s|$)|sticky(\\s|$)|p[xytblr]?-[0-9]|m[xytblr]?-[0-9])/]",
           message:
             "配色・余白・レイアウトは src/shared/ui のプリミティブを使うこと。テンプレートリテラル内でも生 Tailwind ユーティリティは禁止。",
         },
