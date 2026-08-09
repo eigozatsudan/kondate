@@ -116,8 +116,8 @@
 }
 
 /*
- * 番号は --primary-strong。--primary（#b85033）は地色が付くと
- * 本文 AA を割る（sunken 上 4.33。free-landing-page.contrast.test.ts で固定）。
+ * 番号は --primary-strong。--primary は地色が付くと本文 AA を割る
+ * （sunken 上 4.33。free-landing-page.contrast.test.ts で固定）。
  */
 .free-landing__flow-num {
   flex: 0 0 auto;
