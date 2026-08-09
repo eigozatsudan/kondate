@@ -31,7 +31,7 @@ import {
 } from "../model/planner-labels";
 import { PantrySelector, type PantryItemsStatus } from "../pantry-selector";
 import type { PlannerSafetyMember } from "../planner-safety-member";
-import type { PlannerStep } from "../model/planner-wizard";
+import { isAudienceComplete, type PlannerStep } from "../model/planner-wizard";
 import type { PlannerStepProps } from "./planner-wizard-props";
 
 /** Plan 2 由来の医療・治療食依頼拒否コピー（旧 PlannerForm と同一文言） */
@@ -310,8 +310,12 @@ export function ReviewStep({
   // attemptsRemaining === null（未取得）では行を出してよい。0 のときだけ隠す。
   const showSuccessRemaining =
     usageRemaining !== null && usageRemaining > 0 && attemptsRemaining !== 0;
+  // P2/P8: audience 未完成（0人 / 人数未設定 / 未選択）では主 CTA・緊急 CTA を一枚目で止める。
+  // サーバ/flush の fail-closed に加え、確認 UI でも生成・緊急へ進めない。
+  const audienceIncomplete = !isAudienceComplete(value);
   const generateDisabled =
     disabled ||
+    audienceIncomplete ||
     hasUnavailablePantrySelections ||
     hasUnconfirmedExpiredPantry ||
     medicalBlocked ||
@@ -920,10 +924,15 @@ export function ReviewStep({
                 </div>
               </div>
             )}
-            {/* household / idea とも同一 CTA。旧 idea 切替案内「家族向けの緊急献立は…」は削除。 */}
+            {/* household / idea とも同一 CTA。旧 idea 切替案内「家族向けの緊急献立は…」は削除。
+                P8: audience 未完成時は disabled（生成 CTA と同じ一枚目ガード）。 */}
             {(value.targetMode === "household" || value.targetMode === "idea") &&
               onOpenEmergencyMenus !== undefined && (
-                <Button variant="secondary" disabled={disabled} onClick={onOpenEmergencyMenus}>
+                <Button
+                  variant="secondary"
+                  disabled={disabled || audienceIncomplete}
+                  onClick={onOpenEmergencyMenus}
+                >
                   AIを使わない緊急献立を見る
                 </Button>
               )}

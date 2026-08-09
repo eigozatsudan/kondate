@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import { DraftRevisionConflictError } from "./planner-api";
-import { IncompleteDraftSaveError, useDraftAutosave } from "./use-draft-autosave";
+import { useDraftAutosave } from "./use-draft-autosave";
 
 const base: PlannerDraftInput = {
   mealType: null,
@@ -548,7 +548,7 @@ it("P1: flush は reset 強制保存の完了を await し失敗を隠さない"
   expect(onSaved).toHaveBeenCalledTimes(1);
 });
 
-it("P2: non-persistable へ遷移したあと lastSaved を成功 return しない", async () => {
+it("P3: non-persistable へ遷移したあと audience 中立形を追記し旧 mode をサーバに残さない", async () => {
   vi.useFakeTimers();
   let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
   const household = {
@@ -565,10 +565,19 @@ it("P2: non-persistable へ遷移したあと lastSaved を成功 return しな�
     targetMemberIds: [] as string[],
     servings: null,
   };
-  const save = vi.fn(() => {
-    return new Promise<PlannerDraft>((resolve) => {
-      resolveFirst = resolve;
-    });
+  const neutralized = {
+    ...incompleteIdea,
+    targetMode: null,
+    targetMemberIds: [] as string[],
+    servings: null,
+  };
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>((resolve) => {
+        resolveFirst = resolve;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
   });
   const onSaved = vi.fn();
   const { rerender, result } = renderHook(
@@ -591,7 +600,7 @@ it("P2: non-persistable へ遷移したあと lastSaved を成功 return しな�
   // in-flight 中に idea + servings=null（non-persistable）へ切替
   rerender({ value: incompleteIdea });
 
-  // 1 本目 RPC は household を commit するが、latest が incomplete のため成功 return しない
+  // 1 本目 household commit 後、同一 op が audience 中立形を追記（P3）
   await act(async () => {
     resolveFirst?.(saved(household, 2));
     await Promise.resolve();
@@ -599,17 +608,24 @@ it("P2: non-persistable へ遷移したあと lastSaved を成功 return しな�
     await Promise.resolve();
   });
 
-  // onSaved / state=saved を抑止（旧 mode を cache 成功扱いにしない）
-  expect(onSaved).not.toHaveBeenCalled();
-  expect(result.current.state).toBe("idle");
-  // サーバ revision は学習済み（次の persistable 保存が conflict しない）
-  expect(result.current.revision).toBe(2);
-
-  // flush も Incomplete で失敗し、呼び出し元が成功扱いにできない
-  await act(async () => {
-    await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(1, household, 1);
+  expect(save).toHaveBeenNthCalledWith(2, neutralized, 2);
+  // 中立形だけを成功扱いにし、旧 household を cache に残さない
+  expect(onSaved).toHaveBeenCalledTimes(1);
+  expect(onSaved.mock.calls[0]?.[0]).toMatchObject({
+    targetMode: null,
+    revision: 3,
   });
-  expect(onSaved).not.toHaveBeenCalled();
+  expect(result.current.state).toBe("saved");
+  expect(result.current.revision).toBe(3);
+
+  // flush は中立 baseline と incomplete UI を fingerprint 一致とみなし追加 RPC なしで済む場合もあるが、
+  // 少なくとも Incomplete で失敗して旧 mode 成功扱いにはしない
+  await act(async () => {
+    const flushed = await result.current.flush();
+    expect(flushed.targetMode).toBeNull();
+  });
 });
 
 it("P2: in-flight save が supersede 後も revision を引き継ぎ、後続 empty が conflict しない", async () => {

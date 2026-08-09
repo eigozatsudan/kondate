@@ -4,6 +4,7 @@ import {
   type PlannerDraft,
   type PlannerDraftInput,
 } from "@shared/contracts/planner";
+import { neutralizeAudienceForPersistence } from "./model/planner-wizard";
 import { DraftRevisionConflictError } from "./planner-api";
 
 export type DraftSaveState = "idle" | "saving" | "saved" | "error";
@@ -72,6 +73,77 @@ function isPersistableDraft(value: PlannerDraftInput): boolean {
   }).success;
 }
 
+/**
+ * 直前にサーバへ書いた（または hydrate した）入力に audience があるか。
+ * あるときだけ incomplete → 中立形の strip 保存を許可する（P3）。
+ * idea 選択直後の servings=null など「途中入力」では false のままにし、debounce/flush しない。
+ */
+function hasPersistedAudience(persisted: PlannerDraftInput | null): boolean {
+  if (persisted === null) return false;
+  return (
+    persisted.targetMode !== null ||
+    persisted.targetMemberIds.length > 0 ||
+    persisted.servings !== null
+  );
+}
+
+/**
+ * 同一 op 内で latest が non-persistable のとき、サーバへ書く audience 中立形。
+ * meal 等は latest を保ち、targetMode/members/servings だけ null/空にする。
+ */
+function audienceNeutralPersistable(value: PlannerDraftInput): PlannerDraftInput | null {
+  const neutralized = neutralizeAudienceForPersistence(value);
+  return isPersistableDraft(neutralized) ? neutralized : null;
+}
+
+/**
+ * 旧 complete mode がサーバに残る遷移だけ中立形を書く。
+ * 初回の incomplete idea 入力では書かない（false の保存・flush 成功を防ぐ）。
+ */
+function shouldWriteAudienceNeutral(
+  latest: PlannerDraftInput,
+  lastPersisted: PlannerDraftInput | null,
+): boolean {
+  if (isPersistableDraft(latest)) return false;
+  if (audienceNeutralPersistable(latest) === null) return false;
+  return hasPersistedAudience(lastPersisted);
+}
+
+/**
+ * dirty / baseline 比較用の fingerprint。
+ * - persistable はそのまま
+ * - strip が必要な incomplete は audience 中立形（P3 後の再送ループ防止 / P11）
+ * - 途中 incomplete は「最後に永続化した形」と同一視し debounce を起こさない
+ */
+function persistenceFingerprint(
+  value: PlannerDraftInput,
+  lastPersisted: PlannerDraftInput | null,
+): string {
+  if (isPersistableDraft(value)) return JSON.stringify(value);
+  if (shouldWriteAudienceNeutral(value, lastPersisted)) {
+    const neutralized = audienceNeutralPersistable(value);
+    if (neutralized !== null) return JSON.stringify(neutralized);
+  }
+  // 途中 incomplete: サーバへ書けないので lastPersisted（または中立形）を dirty 基準にする
+  if (lastPersisted !== null && isPersistableDraft(lastPersisted)) {
+    return JSON.stringify(lastPersisted);
+  }
+  const neutralized = audienceNeutralPersistable(value);
+  if (neutralized !== null) return JSON.stringify(neutralized);
+  return JSON.stringify(value);
+}
+
+/**
+ * 同一 op 内の追記ループ収束判定用。
+ * dirty 用と違い、incomplete は常に中立形と照合する（lastPersisted 依存で誤収束しない）。
+ */
+function convergenceFingerprint(value: PlannerDraftInput): string {
+  if (isPersistableDraft(value)) return JSON.stringify(value);
+  const neutralized = audienceNeutralPersistable(value);
+  if (neutralized !== null) return JSON.stringify(neutralized);
+  return JSON.stringify(value);
+}
+
 export function useDraftAutosave({
   value,
   enabled,
@@ -102,9 +174,19 @@ export function useDraftAutosave({
   const resetGenerationRef = useRef(0);
   const baselineRevisionRef = useRef(baselineRevision);
   const conflictRef = useRef<DraftRevisionConflictError | null>(null);
+  /**
+   * 直近にサーバへ書いた（または hydrate 同期した）入力。
+   * incomplete → 中立 strip の可否判定に使う（初回 idea 途中では audience 無し）。
+   */
+  const lastPersistedInputRef = useRef<PlannerDraftInput | null>(null);
+  /** flush が RPC なしで返すための直近成功 row（P3 中立保存後の incomplete flush）。 */
+  const lastSavedDraftRef = useRef<PlannerDraft | null>(null);
   const serialized = JSON.stringify(value);
+  // dirty 判定は fingerprint（strip 要の incomplete は中立形）を使い、P3 後の再送ループを防ぐ
+  const fingerprint = persistenceFingerprint(value, lastPersistedInputRef.current);
   const latestSerializedRef = useRef(serialized);
-  const baselineSerializedRef = useRef(serialized);
+  const latestFingerprintRef = useRef(fingerprint);
+  const baselineSerializedRef = useRef(fingerprint);
   const wasEnabledRef = useRef(false);
   const enabledRef = useRef(enabled);
   const hasCompletedInitialResetEffectRef = useRef(false);
@@ -116,6 +198,7 @@ export function useDraftAutosave({
   const onSavedRef = useRef(onSaved);
   latestRef.current = value;
   latestSerializedRef.current = serialized;
+  latestFingerprintRef.current = fingerprint;
   baselineRevisionRef.current = baselineRevision;
   enabledRef.current = enabled;
   onSavedRef.current = onSaved;
@@ -123,7 +206,7 @@ export function useDraftAutosave({
   const resetBaseline = useCallback((revision: number): void => {
     revisionRef.current = revision;
     setSavedRevision(revision);
-    baselineSerializedRef.current = latestSerializedRef.current;
+    baselineSerializedRef.current = latestFingerprintRef.current;
     pendingDebounceRef.current = false;
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = null;
@@ -132,6 +215,11 @@ export function useDraftAutosave({
   useEffect(() => {
     if (conflictRef.current !== null) return;
     resetBaseline(baselineRevision);
+    // サーバ確定 revision の更新に合わせ、persistable な現行 value を「永続化済み」と同期する。
+    // incomplete UI のまま baseline だけ進んだ場合は触らない（中立 strip 判定を壊さない）。
+    if (isPersistableDraft(latestRef.current)) {
+      lastPersistedInputRef.current = latestRef.current;
+    }
   }, [baselineRevision, resetBaseline]);
 
   useEffect(() => {
@@ -149,7 +237,18 @@ export function useDraftAutosave({
     // 初回 mount は hydrate 同期のみ（保存しない）。
     if (!hasCompletedInitialResetEffectRef.current) {
       hasCompletedInitialResetEffectRef.current = true;
-      baselineSerializedRef.current = latestSerializedRef.current;
+      // hydrate 済み draft の audience を strip 判定の基準にする（未保存 incomplete は中立形 or null）
+      const initial = latestRef.current;
+      if (isPersistableDraft(initial)) {
+        lastPersistedInputRef.current = initial;
+      } else {
+        lastPersistedInputRef.current = audienceNeutralPersistable(initial);
+      }
+      baselineSerializedRef.current = persistenceFingerprint(
+        initial,
+        lastPersistedInputRef.current,
+      );
+      latestFingerprintRef.current = baselineSerializedRef.current;
       return;
     }
 
@@ -184,9 +283,13 @@ export function useDraftAutosave({
           return Promise.reject(existingConflict);
         }
       }
-      // idea 選択直後など整合前の一時状態は RPC しない（CHECK 違反 → 偽の保存失敗 toast を防ぐ）。
-      // state は触らない（直前の idle/saved を維持。error にもしない）。
-      if (!isPersistableDraft(next)) {
+      // idea 選択直後など整合前の一時状態:
+      // - 直前永続化に audience があり中立形へ落とせる → P3 でサーバ旧 mode を消すためキューへ進める
+      // - それ以外（初回 incomplete idea 等）→ RPC せず Incomplete（偽の保存失敗 toast / 誤 flush 成功を防ぐ）
+      if (
+        !isPersistableDraft(next) &&
+        !shouldWriteAudienceNeutral(next, lastPersistedInputRef.current)
+      ) {
         return Promise.reject(new IncompleteDraftSaveError());
       }
       const resetGeneration = resetGenerationRef.current;
@@ -204,6 +307,10 @@ export function useDraftAutosave({
 
         // P4: キュー待ち〜in-flight 完了後に latest が変わっていれば追従する。
         // 予約時 next へのフォールバックは mode 切替・strip 後に旧内容を書くため使わない。
+        // P4 residual-intentional: 既開始 RPC のペイロードは transport cancel できない。
+        // 中間 revision N（例: strip 前 members）は他タブが読み得る短い窓がある。
+        // 同一 op の追記で N+1 へ収束し、hydrate sanitize / 生成 current-safety が第二防衛。
+        // キャンセル可能 transport の導入は契約拡張のためここでは行わない。
         for (;;) {
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
@@ -214,15 +321,21 @@ export function useDraftAutosave({
           }
 
           const latest = latestRef.current;
-          if (!isPersistableDraft(latest)) {
-            // P2: 途中状態（idea+servings=null 等）へ遷移したあと、既に書いた旧 mode を
-            // 成功 return しない。onSaved / toast「保存しました」/ RQ cache が旧 household のまま
-            // 進む idea/household 混乱を防ぐ。revision は save 成功時に local へ反映済み。
-            // サーバ上の中間 revision は残り得る（P4 残差）。Incomplete で flush 呼び出し元へ通知する。
+          let toSave: PlannerDraftInput;
+          if (isPersistableDraft(latest)) {
+            toSave = latest;
+          } else if (shouldWriteAudienceNeutral(latest, lastPersistedInputRef.current)) {
+            // P3/P11: 旧 complete mode がサーバに残る遷移だけ audience 中立形を書く。
+            // UI の incomplete 選択（idea+servings=null 等）はローカルに残す。
+            const neutralized = audienceNeutralPersistable(latest);
+            if (neutralized === null) {
+              throw new IncompleteDraftSaveError();
+            }
+            toSave = neutralized;
+          } else {
+            // 初回 incomplete idea など、strip 不要な途中状態は保存しない
             throw new IncompleteDraftSaveError();
           }
-
-          const toSave = latest;
           // ネットワーク直前にも generation を再確認（await 開始前の切替を拾う）
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
@@ -232,6 +345,10 @@ export function useDraftAutosave({
             // P4 残差: 既に飛んだ RPC のペイロードは開始時 toSave のまま commit される。
             // キャンセル可能な transport は持たないため、成功後の追記ループで latest に収束する。
             const saved = await save(toSave, revisionRef.current);
+            // 同一 op の追記判定用に、成功した書き込みをすぐ lastPersisted へ反映する
+            // （household 保存直後に incomplete へ切替 → 中立 strip を許可するため）
+            lastPersistedInputRef.current = toSave;
+            lastSavedDraftRef.current = saved;
             if (resetGeneration !== resetGenerationRef.current) {
               // 無効化後でもサーバ revision は進んでいる。後続の空保存が conflict しないよう引き継ぐ。
               revisionRef.current = saved.revision;
@@ -243,8 +360,9 @@ export function useDraftAutosave({
             revisionRef.current = saved.revision;
             if (mountedRef.current) setSavedRevision(saved.revision);
 
-            // P4: in-flight 中の strip / 編集があれば最新を同一キュー内で追記保存する
-            if (JSON.stringify(toSave) !== latestSerializedRef.current) {
+            // latest と toSave が raw 不一致でも、収束 fingerprint 一致なら P3 中立収束とみなす
+            // （dirty 用 fingerprint は lastPersisted 依存のため、ループ内では使わない）
+            if (convergenceFingerprint(toSave) !== convergenceFingerprint(latestRef.current)) {
               continue;
             }
             return { saved, toSave };
@@ -260,8 +378,13 @@ export function useDraftAutosave({
         (result) => {
           if (resetGeneration !== resetGenerationRef.current) return;
           revisionRef.current = result.saved.revision;
-          // 成功 return は latest 一致時のみ（P2 で non-persistable 成功経路を廃止）
-          baselineSerializedRef.current = JSON.stringify(result.toSave);
+          lastPersistedInputRef.current = result.toSave;
+          lastSavedDraftRef.current = result.saved;
+          // baseline は fingerprint（中立形含む）で保持し、incomplete UI との再送ループを防ぐ
+          baselineSerializedRef.current = persistenceFingerprint(
+            result.toSave,
+            lastPersistedInputRef.current,
+          );
           if (mountedRef.current) {
             setSavedRevision(result.saved.revision);
             if (operationNumber === operationNumberRef.current) setState("saved");
@@ -275,8 +398,7 @@ export function useDraftAutosave({
           ) {
             return;
           }
-          // P2: Incomplete は error toast にしないが、saving 固着を避け idle へ戻す
-          // （旧 lastSaved 成功 return では saved になっていた経路の代替）。
+          // Incomplete は error toast にしないが、saving 固着を避け idle へ戻す
           if (error instanceof IncompleteDraftSaveError) {
             if (mountedRef.current && operationNumber === operationNumberRef.current) {
               setState("idle");
@@ -301,18 +423,18 @@ export function useDraftAutosave({
 
   useEffect(() => {
     if (!enabled) {
-      baselineSerializedRef.current = serialized;
+      baselineSerializedRef.current = fingerprint;
       wasEnabledRef.current = false;
       pendingDebounceRef.current = false;
       return undefined;
     }
     if (!wasEnabledRef.current) {
       wasEnabledRef.current = true;
-      baselineSerializedRef.current = serialized;
+      baselineSerializedRef.current = fingerprint;
       pendingDebounceRef.current = false;
       return undefined;
     }
-    if (serialized === baselineSerializedRef.current) {
+    if (fingerprint === baselineSerializedRef.current) {
       pendingDebounceRef.current = false;
       return undefined;
     }
@@ -326,21 +448,21 @@ export function useDraftAutosave({
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = null;
     };
-  }, [enabled, enqueue, serialized]);
+  }, [enabled, enqueue, fingerprint]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      // P3: debounce 待ちだけでなく、error 後などで dirty のまま残った編集も離脱時に再試行する
-      const dirty = latestSerializedRef.current !== baselineSerializedRef.current;
+      // debounce 待ちだけでなく、error 後などで dirty のまま残った編集も離脱時に再試行する
+      const dirty = latestFingerprintRef.current !== baselineSerializedRef.current;
       if (!pendingDebounceRef.current && !dirty) return;
       pendingDebounceRef.current = false;
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = null;
       // 画面離脱直前の編集も通常保存と同じ直列キューへ積み、完了後は UI state を更新しない。
-      // P5 残差: unmount 後は toast を出せないため失敗は握りつぶす。settings 等の明示遷移は
-      // route が await flush + submissionError で可視化する（P5 修正側）。
+      // unmount 後は toast を出せないため失敗は握りつぶす。settings 等の明示遷移は
+      // route が await flush + submissionError で可視化する。
       void enqueueRef.current(latestRef.current).catch(() => undefined);
     };
   }, []);
@@ -357,7 +479,7 @@ export function useDraftAutosave({
     if (pending !== null) {
       return pending.promise.then(
         (saved) => {
-          if (latestSerializedRef.current !== baselineSerializedRef.current) {
+          if (latestFingerprintRef.current !== baselineSerializedRef.current) {
             return enqueue(latestRef.current);
           }
           return saved;
@@ -371,7 +493,29 @@ export function useDraftAutosave({
         },
       );
     }
-    return enqueue(latestRef.current);
+
+    const latest = latestRef.current;
+    if (!isPersistableDraft(latest)) {
+      // 旧 mode strip が必要なときだけ中立形を書く
+      if (shouldWriteAudienceNeutral(latest, lastPersistedInputRef.current)) {
+        return enqueue(latest);
+      }
+      // P3 中立保存後: 直前永続化が既に audience 無しで latest の収束先と同じなら RPC なしで返す。
+      // dirty fingerprint の re-render 待ちに依存せず Incomplete で旧 mode 成功扱いにしない。
+      const lastSaved = lastSavedDraftRef.current;
+      const lastPersisted = lastPersistedInputRef.current;
+      if (
+        lastSaved !== null &&
+        lastPersisted !== null &&
+        !hasPersistedAudience(lastPersisted) &&
+        convergenceFingerprint(latest) === JSON.stringify(lastPersisted)
+      ) {
+        return Promise.resolve(lastSaved);
+      }
+      // 途中 idea（servings=null 等）は明示的に拒否
+      return Promise.reject(new IncompleteDraftSaveError());
+    }
+    return enqueue(latest);
   }, [enqueue]);
 
   return { state, revision: savedRevision, flush };

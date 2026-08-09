@@ -1473,6 +1473,22 @@ describe("PlannerRoutePage", () => {
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
   });
 
+  it("P6: 初期化後に ?resume= が付くと同一インスタンスでもウィザードを開く", () => {
+    // 空下書き + pending なし → ホーム着地（initialized 後）
+    queryState.draft = null;
+    queryState.search = "";
+    pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+    const view = render(<PlannerRoutePage />);
+    expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+
+    // 同一 mount のまま search だけ resume 付きへ（SPA 深リンク）
+    queryState.search = "resume=review";
+    view.rerender(<PlannerRoutePage />);
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+    // 空下書きなので firstIncomplete は meal
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("meal");
+  });
+
   it("既存 pending がある状態でウィザードから生成すると上書きせず再開し attempt を回転しない", async () => {
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,

@@ -606,6 +606,102 @@ describe("PlannerWizard idea audience onIdeaAudienceConfirmed", () => {
     });
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
   });
+
+  it("P1: idea confirm 中は入力リセットを disabled にする", async () => {
+    const user = userEvent.setup();
+    let resolveConfirm: (() => void) | undefined;
+    const onIdeaAudienceConfirmed = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfirm = resolve;
+        }),
+    );
+    render(
+      <Harness
+        initialStep="audience"
+        initialDraft={ideaAudienceDraft}
+        onIdeaAudienceConfirmed={onIdeaAudienceConfirmed}
+        onReset={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(onIdeaAudienceConfirmed).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(screen.getByRole("button", { name: "入力をリセット" })).toBeDisabled();
+    });
+
+    await act(async () => {
+      resolveConfirm?.();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "入力をリセット" })).toBeEnabled();
+  });
+
+  it("P1: idea confirm await 中に wizard が remount されたら resolve 後も review へ進まない", async () => {
+    const user = userEvent.setup();
+    let resolveConfirm: (() => void) | undefined;
+    const onIdeaAudienceConfirmed = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfirm = resolve;
+        }),
+    );
+    const steps: PlannerStep[] = [];
+
+    function RemountHarness({ wizardKey }: { wizardKey: number }) {
+      const [step, setStep] = useState<PlannerStep>("audience");
+      const [draft, setDraft] = useState<PlannerDraftInput>(ideaAudienceDraft);
+      const [attempt, setAttempt] = useState(createPlannerAttempt());
+      return (
+        <MemoryRouter>
+          <AppToastProvider>
+            <PlannerWizard
+              key={wizardKey}
+              draft={draft}
+              step={step}
+              eligibleMembers={[eligibleMember]}
+              isSaving={false}
+              error={null}
+              fieldErrors={{}}
+              onDraftChange={setDraft}
+              onStepChange={(next) => {
+                steps.push(next);
+                setStep(next);
+              }}
+              onSubmit={vi.fn()}
+              pantryItems={[]}
+              pantryItemsStatus="loaded"
+              attempt={attempt}
+              onAttemptChange={setAttempt}
+              hasAcceptedOrDeclinedPrivacy
+              onOpenPrivacyNotice={vi.fn()}
+              onIdeaAudienceConfirmed={onIdeaAudienceConfirmed}
+            />
+          </AppToastProvider>
+        </MemoryRouter>
+      );
+    }
+
+    const { rerender } = render(<RemountHarness wizardKey={0} />);
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(onIdeaAudienceConfirmed).toHaveBeenCalledTimes(1);
+
+    // resetToken 相当の remount（親 step は meal へ戻した想定だが、旧 async が review を押し込むのを防ぐ）
+    rerender(<RemountHarness wizardKey={1} />);
+    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveConfirm?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 旧 wizard クロージャの goToStep("review") が発火していない
+    expect(steps).not.toContain("review");
+    expect(screen.queryByRole("heading", { name: "5. 確認" })).not.toBeInTheDocument();
+  });
 });
 
 describe("PlannerWizard review step", () => {
@@ -696,6 +792,31 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "確認に戻る" }));
     expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+  });
+
+  it("P2: 確認からの「やめる」は audience 未完成なら review に戻さない", async () => {
+    const user = userEvent.setup();
+    const draft = {
+      ...emptyDraft,
+      mealType: "dinner" as const,
+      mainIngredients: ["鶏肉"],
+      cuisineGenre: "japanese" as const,
+      targetMode: "household" as const,
+      targetMemberIds: [eligibleMember.id],
+    };
+
+    render(<Harness initialStep="review" initialDraft={draft} />);
+    await user.click(screen.getByRole("button", { name: "対象を変更" }));
+    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+
+    // 対象を外して incomplete にする
+    await user.click(screen.getByRole("checkbox", { name: /^子ども/u }));
+    expect(screen.getByRole("checkbox", { name: /^子ども/u })).not.toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "やめる" }));
+    // incomplete のまま review へ戻らない（P2）
+    expect(screen.queryByRole("heading", { name: "5. 確認" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
   });
 
   it("追加条件は field 縦積みで狭幅でも崩れない構造を持つ", () => {
@@ -1355,6 +1476,40 @@ describe("PlannerWizard review step", () => {
         /家族向けの緊急献立は、対象を「家族に合わせて作る」に切り替えたあとで使えます/,
       ),
     ).not.toBeInTheDocument();
+  });
+
+  it("P2/P8: audience 未完成の review では生成・緊急 CTA を disable する", () => {
+    const onOpenEmergencyMenus = vi.fn();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...reviewDraft,
+          targetMode: "household",
+          targetMemberIds: [],
+        }}
+        onOpenEmergencyMenus={onOpenEmergencyMenus}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
+  });
+
+  it("P8: idea 人数未設定の review でも生成 CTA を disable する", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...reviewDraft,
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: null,
+        }}
+        onOpenEmergencyMenus={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
   });
 
   it("meal など review 以外の step では緊急献立ボタンを出さない", () => {

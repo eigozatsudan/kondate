@@ -2,7 +2,12 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import type { PantryItemsStatus } from "../pantry-selector";
 import type { PantryItem } from "@shared/contracts/pantry";
-import { plannerSteps, type PlannerFieldName } from "../model/planner-wizard";
+import {
+  firstIncompletePlannerStep,
+  isAudienceComplete,
+  plannerSteps,
+  type PlannerFieldName,
+} from "../model/planner-wizard";
 import { AudienceStep } from "./audience-step";
 import { CuisineStep } from "./cuisine-step";
 import { IngredientStep } from "./ingredient-step";
@@ -186,6 +191,8 @@ export function PlannerWizard({
   // idea audience 確定の single-flight。ref は同期ガード、state は disabled 表示用。
   const confirmingIdeaAudienceRef = useRef(false);
   const [confirmingIdeaAudience, setConfirmingIdeaAudience] = useState(false);
+  // P1: await 中の reset/unmount で親 onStepChange("review") を捨てる世代トークン
+  const ideaConfirmGenerationRef = useRef(0);
   // 確認画面の「変更」から飛んだとき true。次へ／戻るで確認へ直行する。
   const [returnToReviewAfterEdit, setReturnToReviewAfterEdit] = useState(false);
   // 浮遊トーストの表示。親の autosaveState が "saved" のままでも 3 秒で消す。
@@ -208,15 +215,34 @@ export function PlannerWizard({
     };
   }, [autosaveState]);
 
+  // P1: unmount（resetToken remount 含む）で in-flight idea 確定の goToStep を無効化する
+  useEffect(() => {
+    return () => {
+      ideaConfirmGenerationRef.current += 1;
+    };
+  }, []);
+
   const goToStep = (next: (typeof plannerSteps)[number]): void => {
     onStepChange(next);
+  };
+
+  /**
+   * 確認からの編集戻り先。audience 未完成のまま review に戻さない（P2）。
+   * 未完成なら firstIncomplete へ寄せ、生成 CTA が incomplete 状態で有効になる経路を塞ぐ。
+   */
+  const returnToReviewIfAudienceComplete = (): void => {
+    setReturnToReviewAfterEdit(false);
+    if (isAudienceComplete(draft)) {
+      goToStep("review");
+      return;
+    }
+    goToStep(firstIncompletePlannerStep(draft));
   };
 
   /** 通常の順送り先。確認からの編集中なら review へ戻す。 */
   const advanceFromEditOr = (sequentialNext: (typeof plannerSteps)[number]): void => {
     if (returnToReviewAfterEdit) {
-      setReturnToReviewAfterEdit(false);
-      goToStep("review");
+      returnToReviewIfAudienceComplete();
       return;
     }
     goToStep(sequentialNext);
@@ -225,8 +251,7 @@ export function PlannerWizard({
   /** 通常の戻り先。確認からの編集中なら review へ戻す（編集をやめる）。 */
   const backFromEditOr = (sequentialBack: (typeof plannerSteps)[number]): void => {
     if (returnToReviewAfterEdit) {
-      setReturnToReviewAfterEdit(false);
-      goToStep("review");
+      returnToReviewIfAudienceComplete();
       return;
     }
     goToStep(sequentialBack);
@@ -323,7 +348,8 @@ export function PlannerWizard({
         <button
           className="wizard-reset-button"
           type="button"
-          disabled={isSaving}
+          // P1: idea 確定 await 中は reset を塞ぎ、空下書き + 遅延 review 遷移の競合を避ける
+          disabled={isSaving || confirmingIdeaAudience}
           onClick={() => {
             // 誤タップで下書きを消さないよう、ブラウザ確認後にだけ route へ委譲する
             if (
@@ -478,14 +504,18 @@ export function PlannerWizard({
             if (draft.targetMode === "idea" && onIdeaAudienceConfirmed !== undefined) {
               confirmingIdeaAudienceRef.current = true;
               setConfirmingIdeaAudience(true);
+              // P1: reset/unmount で generation が進んだら goToStep しない
+              const confirmGeneration = ++ideaConfirmGenerationRef.current;
               void (async () => {
                 try {
                   await onIdeaAudienceConfirmed();
                 } catch {
+                  if (confirmGeneration !== ideaConfirmGenerationRef.current) return;
                   confirmingIdeaAudienceRef.current = false;
                   setConfirmingIdeaAudience(false);
                   return;
                 }
+                if (confirmGeneration !== ideaConfirmGenerationRef.current) return;
                 confirmingIdeaAudienceRef.current = false;
                 setConfirmingIdeaAudience(false);
                 // idea の next 先は常に review（編集戻りでも同じ）
@@ -495,6 +525,11 @@ export function PlannerWizard({
               return;
             }
             setReturnToReviewAfterEdit(false);
+            // household 等: 未完成 audience のまま review へ進めない（P2 / handleNext と二重防衛）
+            if (!isAudienceComplete(draft)) {
+              goToStep(firstIncompletePlannerStep(draft));
+              return;
+            }
             goToStep("review");
           }}
           disabled={isSaving || confirmingIdeaAudience}

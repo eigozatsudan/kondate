@@ -6,6 +6,7 @@ import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner"
 import { householdKeys } from "@/features/household/household-queries";
 import { pantryKeys } from "@/features/pantry/pantry-api";
 import { privacyKeys } from "@/features/privacy/privacy-queries";
+import { AppToastProvider } from "@/shared/ui/app-toast";
 import { DraftRevisionConflictError, plannerKeys } from "./planner-api";
 
 const userId = "72000000-0000-4000-8000-000000000001";
@@ -134,11 +135,14 @@ function renderRetainedDraft(queryClient: QueryClient) {
     user_id: userId,
     notice_version: "2026-07-29.v1",
   });
+  // audience step の incomplete「次へ」等が useAppToast を使うため Provider 必須（P5 再整列）
   return render(
     <MemoryRouter initialEntries={["/planner"]}>
       <QueryClientProvider client={queryClient}>
-        <PlannerPage startGeneration={vi.fn()} />
-        <CurrentPath />
+        <AppToastProvider>
+          <PlannerPage startGeneration={vi.fn()} />
+          <CurrentPath />
+        </AppToastProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -237,6 +241,51 @@ it("retained cache の refetch 完了だけでは入力を置換せず明示操�
     expect.objectContaining({ memo: "revision 2 から編集" }),
     3,
   );
+});
+
+it("P5: 競合解決で incomplete な最新下書きを読むと firstIncomplete step へ再整列する", async () => {
+  const incompleteLatest: PlannerDraft = {
+    ...revisionTwo,
+    targetMode: null,
+    targetMemberIds: [],
+    servings: null,
+    memo: "incomplete latest",
+  };
+  const deferredRefetch = createDeferred<PlannerDraft>();
+  getPlannerDraftMock.mockReturnValue(deferredRefetch.promise);
+  savePlannerDraftMock
+    .mockRejectedValueOnce(new DraftRevisionConflictError())
+    .mockImplementation(
+      (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
+        Promise.resolve({ ...incompleteLatest, ...next, revision: revision + 1 }),
+    );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  renderRetainedDraft(queryClient);
+  await openReviewOptionalDetails();
+
+  // review 上にいることを確認
+  expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("自由メモ"), { target: { value: "Aの入力" } });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+
+  await act(async () => {
+    deferredRefetch.resolve(incompleteLatest);
+    await deferredRefetch.promise;
+    await Promise.resolve();
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "最新の下書きを読み込む" }));
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  // incomplete audience → audience step（review に incomplete を残さない）
+  expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "5. 確認" })).not.toBeInTheDocument();
 });
 
 it("競合 refetch の失敗後は再取得できないことを alert で示し、入力を保持したまま再試行できる", async () => {

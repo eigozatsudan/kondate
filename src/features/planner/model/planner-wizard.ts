@@ -50,12 +50,27 @@ export function firstIncompletePlannerStep(draft: PlannerDraftInput): PlannerSte
  * audience（対象家族/人数）の回答が完成しているかどうかを判定する。
  * shared/contracts/planner.tsのrefineTargetAndServingsが強制する不変条件
  * （household: 対象1人以上・servings未指定 / idea: 対象0人・servings必須）
- * をUI側のresume判定にもそのまま反映させる。
+ * をUI側のresume判定・確認CTA・編集戻りガードにもそのまま反映させる（P2/P8）。
  */
-function isAudienceComplete(draft: PlannerDraftInput): boolean {
+export function isAudienceComplete(draft: PlannerDraftInput): boolean {
   if (draft.targetMode === "household") return draft.targetMemberIds.length > 0;
   if (draft.targetMode === "idea") return draft.servings !== null;
   return false;
+}
+
+/**
+ * audience を mode 未選択の整合形へ中立化する（P3）。
+ * idea↔household 切替直後の incomplete を RPC 可能な形に落とし、
+ * サーバに旧 complete mode が残り続けるのを防ぐ。
+ * meal/ingredients 等の他フィールドは保持する。
+ */
+export function neutralizeAudienceForPersistence(draft: PlannerDraftInput): PlannerDraftInput {
+  return {
+    ...draft,
+    targetMode: null,
+    targetMemberIds: [],
+    servings: null,
+  };
 }
 
 /**

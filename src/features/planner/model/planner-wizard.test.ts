@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
 import {
   firstIncompletePlannerStep,
+  isAudienceComplete,
   mapPlannerIssuePathToField,
+  neutralizeAudienceForPersistence,
   normalizeAudienceForModeChange,
 } from "./planner-wizard";
 
@@ -119,6 +121,55 @@ describe("mapPlannerIssuePathToField", () => {
 
   it("returns null for an empty path", () => {
     expect(mapPlannerIssuePathToField([])).toBeNull();
+  });
+});
+
+describe("isAudienceComplete", () => {
+  it("household は1人以上で完成、0人は未完成", () => {
+    expect(isAudienceComplete(completeQuestionAnswers)).toBe(true);
+    expect(isAudienceComplete({ ...completeQuestionAnswers, targetMemberIds: [] })).toBe(false);
+  });
+
+  it("idea は servings 必須、null は未完成", () => {
+    expect(
+      isAudienceComplete({
+        ...completeQuestionAnswers,
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 2,
+      }),
+    ).toBe(true);
+    expect(
+      isAudienceComplete({
+        ...completeQuestionAnswers,
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("targetMode 未選択は未完成", () => {
+    expect(
+      isAudienceComplete({
+        ...completeQuestionAnswers,
+        targetMode: null,
+        targetMemberIds: [],
+        servings: null,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("neutralizeAudienceForPersistence", () => {
+  it("P3: meal 等を残しつつ audience だけ null/空へ中立化する", () => {
+    const next = neutralizeAudienceForPersistence(completeQuestionAnswers);
+    expect(next.mealType).toBe("dinner");
+    expect(next.mainIngredients).toEqual(["鶏肉"]);
+    expect(next.cuisineGenre).toBe("japanese");
+    expect(next.targetMode).toBeNull();
+    expect(next.targetMemberIds).toEqual([]);
+    expect(next.servings).toBeNull();
   });
 });
 

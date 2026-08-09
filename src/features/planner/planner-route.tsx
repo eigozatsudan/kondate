@@ -449,10 +449,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     };
   }, []);
 
+  // P6: post-init の ?resume= 反応で最新 value を読む（search 変更時だけ step を触る）
+  const valueForResumeRef = useRef(emptyDraft);
+
   useEffect(() => {
     if (draftQuery.data === undefined || safetyQuery.data === undefined || initialized) return;
     const sanitized = sanitizeDraft(draftQuery.data, safetyQuery.data.eligibleMemberIds);
     setValue(sanitized);
+    valueForResumeRef.current = sanitized;
     setBaselineRevision(draftQuery.data?.revision ?? 0);
     // 下書きの回答状況からresume先stepを判定する（brief: 「resumes an incomplete
     // target draft at audience without losing answers」）。
@@ -478,6 +482,27 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setWizardOpen(hasResumeQuery || (hasDraftProgress && !hasResumablePendingOnInit));
     setInitialized(true);
   }, [draftQuery.data, initialized, safetyQuery.data, searchParams, userId]);
+
+  // value 更新を resume 用 ref へ同期（P6 effect は searchParams 変化時だけ読む）
+  useEffect(() => {
+    valueForResumeRef.current = value;
+  }, [value]);
+
+  // P6: 既に mount 済みの /planner でも ?resume= 後付けでウィザードを開く（不変契約 4b の同一インスタンス）。
+  // init effect は initialized 後 no-op のため、resume 文字列変化専用の経路を持つ。
+  // searchParams オブジェクト参照ではなく get("resume") 結果に依存し、毎 render の再実行を避ける。
+  const resumeQuery = searchParams.get("resume");
+  useEffect(() => {
+    if (!initialized) return;
+    if (resumeQuery === null) return;
+    const firstIncomplete = firstIncompletePlannerStep(valueForResumeRef.current);
+    if (resumeQuery === "review" && firstIncomplete === "review") {
+      setStep("review");
+    } else {
+      setStep(firstIncomplete);
+    }
+    setWizardOpen(true);
+  }, [initialized, resumeQuery]);
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
@@ -613,6 +638,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     const sanitized = sanitizeDraft(latestConflictDraft, safetyQuery.data.eligibleMemberIds);
     // 同じ render で表示値・保存 baseline・reset 世代を切り替え、混在状態を作らない。
     setValue(sanitized);
+    // P5: 最新が incomplete でも step を review に残さず firstIncomplete へ再整列する
+    setStep(firstIncompletePlannerStep(sanitized));
+    setWizardOpen(true);
     setBaselineRevision(latestConflictDraft?.revision ?? 0);
     setResetToken((current) => current + 1);
     setLatestConflictDraft(undefined);
@@ -665,8 +693,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         if (!mountedRef.current || generation !== resetFlushGenerationRef.current) return;
         if (error instanceof IncompleteDraftSaveError) return;
         if (error instanceof DraftRevisionConflictError) return;
+        // P7: 画面は空でもサーバ旧下書きが残る可能性を明示（楽観 reset の残差）
         setSubmissionError(
-          "入力のリセットを保存できませんでした。通信を確認し、画面の再試行から保存し直すか、もう一度リセットしてください。",
+          "入力のリセットをサーバへ保存できませんでした。画面上は空ですが、通信が直るまで以前の条件が残っている可能性があります。通信を確認し、再試行またはもう一度リセットしてください。",
         );
       }
     })();
