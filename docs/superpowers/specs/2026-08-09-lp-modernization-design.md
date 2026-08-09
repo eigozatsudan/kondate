@@ -253,9 +253,10 @@ LP は現状ほぼガードの外にいる。`accessibility.test.tsx` の axe �
 
 - **触らない**: 禁止語テスト、h1 が 1 つであること、CTA の `href="/login"`、
   各定数のテキストが可視であること、`<img>` が 4 枚でありすべて `alt=""` であること
-- **改訂する**: クラス名に依存する 3 箇所のみ。
-  `.free-landing__card` でトップレベル項目を絞り込んでいる箇所、
-  `.free-landing__card-img` を 3 枚数えている箇所、`.free-landing__hero-img` の存在確認
+- **改訂する**: 改名するクラスに依存する 2 箇所のみ。
+  `.free-landing__card` でトップレベル項目を絞り込んでいる箇所と、
+  `.free-landing__card-img` を 3 枚数えている箇所。
+  **`.free-landing__hero-img` は改名しないので、その存在確認は触らない。**
 
 3 つ目の `it`（`uses empty alt on decorative images and keeps images compact classes`）は
 1 ブロックの中に「枚数と `alt`」と「クラス名」の両方を持つ。**前者は 1 文字も変えず、
