@@ -263,16 +263,9 @@ it("leaves the label disclaimer to the page shell and keeps a 320px no-overflow 
     ),
   ).toBeNull();
   // jsdomは実レイアウトを計測しないため、320px幅で子要素を収める全体契約を
-  // 横方向の最大幅・はみ出し抑止・長文折返しの具体的classで固定する。
-  // main はページ枠が所有する。本文ルートは横方向のはみ出し抑止 class を持つ。
-  // 横 padding はページ枠側（二重余白で 320px が詰まるのを避ける）。
-  expect(container.firstElementChild).toHaveClass(
-    "w-full",
-    "min-w-0",
-    "max-w-full",
-    "overflow-x-hidden",
-    "break-words",
-  );
+  // 意味クラス .menu-result（width/min/max/overflow/word-break を CSS 側に持つ）で固定する。
+  // main はページ枠が所有する。横 padding はページ枠側（二重余白を避ける）。
+  expect(container.firstElementChild).toHaveClass("menu-result");
   expect(container.firstElementChild?.className.split(/\s+/u)).not.toContain("px-4");
 });
 
@@ -298,16 +291,10 @@ it("wraps unbroken ingredient names and amounts inside a 320px material row", ()
   const amount = screen.getByText(maximumAmount);
   const row = name.closest("li");
   // jsdomはlayout geometryを返さないためscrollWidthを偽装せず、320pxでも
-  // flexのauto-min-widthに遮られない子要素単位の折返し契約をclassで固定する。
-  expect(row).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_minmax(0,45%)]");
-  expect(name).toHaveClass("min-w-0", "break-words", "[overflow-wrap:anywhere]");
-  expect(amount).toHaveClass(
-    "min-w-0",
-    "w-full",
-    "break-words",
-    "text-right",
-    "[overflow-wrap:anywhere]",
-  );
+  // 材料行の 1fr/45% grid と子の min-width:0 折返しを意味クラスで固定する。
+  expect(row).toHaveClass("menu-result-ingredient-row");
+  expect(name).toHaveClass("menu-result-ingredient-name");
+  expect(amount).toHaveClass("menu-result-ingredient-amount");
 });
 
 it("shows the label-confirm action and calls the confirm handler", async () => {
@@ -336,8 +323,9 @@ it("renders 44px post-cook controls and deleted state without mutation buttons",
   renderPostCookOpen();
   const usedUp = screen.getByRole("button", { name: "使い切った" });
   const stillHave = screen.getByRole("button", { name: "まだある" });
-  expect(usedUp).toHaveClass("min-h-11", "min-w-11");
-  expect(stillHave).toHaveClass("min-h-11", "min-w-11");
+  // 44px タッチターゲットは ui-btn（min-height/width: 44px）が保証する。
+  expect(usedUp).toHaveClass("ui-btn");
+  expect(stillHave).toHaveClass("ui-btn");
   expect(screen.getByText("冷蔵庫から削除済み")).toBeVisible();
 });
 
