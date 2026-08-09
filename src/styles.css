@@ -2335,7 +2335,22 @@ ul.ui-stack {
   gap: var(--space-3);
 }
 
-.ui-page-header__title {
+/*
+ * セレクタは .page-frame h1（0,1,1）より勝つ必要がある。
+ * .ui-page-header__title 単独は (0,1,0) で負け、--text-hero が死ぬ
+ * （Phase 0 レビューで実測。pantry の main.page-frame 配下で沈黙していた）。
+ * 2 セレクタは意図的に分割（contrast の declarationsForSelector は完全一致）。
+ */
+.page-frame .ui-page-header__title {
+  margin: 0;
+  font-family: var(--question-font);
+  font-size: var(--text-hero);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: var(--leading-hero);
+}
+
+h1.ui-page-header__title {
   margin: 0;
   font-family: var(--question-font);
   font-size: var(--text-hero);

@@ -1195,6 +1195,19 @@ describe("color token contrast", () => {
     });
   });
 
+  it("keeps PageHeader hero size above page-frame h1 defaults", () => {
+    // .page-frame h1 は (0,1,1)。.ui-page-header__title 単独だと負けて --text-hero が死ぬ。
+    // 両方のセレクタで hero 寸法を固定し、カスケード退行を検知する。
+    expectEffectiveDeclarations(".page-frame .ui-page-header__title", {
+      "font-size": "var(--text-hero)",
+      "line-height": "var(--leading-hero)",
+    });
+    expectEffectiveDeclarations("h1.ui-page-header__title", {
+      "font-size": "var(--text-hero)",
+      "line-height": "var(--leading-hero)",
+    });
+  });
+
   it("keeps warning readable on the surfaces it actually ships on", () => {
     // 期限「まもなく」表示に使う。実際の出荷先は .ui-badge--warning の背景 --notice。
     // 白地・沈んだ面も含め、本文 AA（4.5:1）を満たすことを固定する。
