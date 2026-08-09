@@ -2004,6 +2004,20 @@ dialog:not([open]) {
   background: var(--app-background);
 }
 
+/*
+ * 段取り/材料 tablist。料理の .menu-result-tabs と sticky が top:0 で重ならないよう
+ * position は static のまま。見た目（flex・gap・padding）だけ揃える。
+ */
+.cook-timeline-tabs {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding-block: 10px 6px;
+  gap: var(--space-2);
+  overflow-x: auto;
+}
+
 .menu-result-tab {
   min-height: 44px;
   flex-shrink: 0;
