@@ -14,7 +14,7 @@ import {
 } from "./auth-continuation-completion";
 import { withTimeout } from "./async-timeout";
 import { createAuthGateway } from "./auth-gateway";
-import { clearAuthFlow, listUnexpiredAuthFlows } from "./auth-flow";
+import { clearAuthFlow, clearOwnedAuthStorage, listUnexpiredAuthFlows } from "./auth-flow";
 
 export type AuthProviderClient = {
   auth: Pick<BrowserSupabaseClient["auth"], "getSession" | "onAuthStateChange">;
@@ -40,6 +40,25 @@ const COLD_START_SESSION_RETRY_MS = 1_500;
 export const COLD_START_GET_SESSION_TIMEOUT_MS = 5_000;
 /** cold-start 全体の fail-closed 上限。超えたら未ログイン扱いで UI を解放する（C5）。 */
 export const COLD_START_SESSION_DEADLINE_MS = 15_000;
+
+/**
+ * C5: cold-start deadline で UI を unauthenticated にするとき、persist された token も消す。
+ * session-expiry / logout と同型にし、「未ログイン UI + 端末に refresh 残存」の非対称を閉じる。
+ * signOut は getSession hang と同系で固着し得るため storage のみ同期 clear（best-effort）。
+ */
+function clearPersistedAuthOnColdStartFailClosed(): void {
+  if (typeof window === "undefined") return;
+  try {
+    clearOwnedAuthStorage(window.localStorage);
+  } catch {
+    // storage 障害でも UI 解放は続行
+  }
+  try {
+    clearOwnedAuthStorage(window.sessionStorage);
+  } catch {
+    // 同上
+  }
+}
 
 function publishCompletionSafely(completion: { flowId: string; returnTo: string }): void {
   try {
@@ -94,6 +113,7 @@ export function AuthProvider({
       }
       // 一時エラーの累積も cold-start deadline で fail-closed（C5）
       if (Date.now() - beganAt >= COLD_START_SESSION_DEADLINE_MS) {
+        clearPersistedAuthOnColdStartFailClosed();
         setSession(null);
         setLoaded(true);
       }
@@ -117,8 +137,10 @@ export function AuthProvider({
       if (!hasResolvedSessionOnce.current) void refreshSession();
     }, COLD_START_SESSION_RETRY_MS);
     // C5: hang/一時失敗の再試行を打ち切り、未ログインとして UI を解放する全体上限
+    // persist token も同期 clear し、focus 復活で「いつの間にかログイン」を防ぐ
     const coldStartDeadlineTimer = window.setTimeout(() => {
       if (hasResolvedSessionOnce.current) return;
+      clearPersistedAuthOnColdStartFailClosed();
       setSession(null);
       setLoaded(true);
     }, COLD_START_SESSION_DEADLINE_MS);

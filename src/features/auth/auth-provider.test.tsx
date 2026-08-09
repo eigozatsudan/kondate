@@ -404,6 +404,11 @@ describe("AuthProvider", () => {
   it("C5: fails closed to unauthenticated when cold-start getSession never settles past deadline", async () => {
     vi.useFakeTimers();
     try {
+      // persist token が残っている状態を再現（fail-closed で消えること）
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
       const getSession = vi.fn().mockReturnValue(new Promise(() => undefined));
       const client = {
         auth: {
@@ -427,13 +432,14 @@ describe("AuthProvider", () => {
       });
       expect(screen.getByText("loading")).toBeInTheDocument();
 
-      // 全体 deadline タイマーで未ログイン fail-closed
+      // 全体 deadline タイマーで未ログイン fail-closed + owned storage 掃除
       await act(async () => {
         await vi.advanceTimersByTimeAsync(
           COLD_START_SESSION_DEADLINE_MS - COLD_START_GET_SESSION_TIMEOUT_MS,
         );
       });
       expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      expect(window.localStorage.getItem("kondate.auth.supabase")).toBeNull();
     } finally {
       vi.useRealTimers();
     }

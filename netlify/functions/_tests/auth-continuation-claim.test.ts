@@ -236,7 +236,7 @@ describe("auth continuation claim", () => {
     });
   });
 
-  it("C1: returns 410 when claim succeeds but decrypt fails (code already burned)", async () => {
+  it("C1: returns 410 when claim succeeds but decrypt fails (payload unreadable, not C3 burn)", async () => {
     const encryptionKey = crypto.getRandomValues(new Uint8Array(32));
     const wrongKey = crypto.getRandomValues(new Uint8Array(32));
     const encrypted = await encryptContinuationCode(
@@ -297,9 +297,9 @@ describe("auth continuation claim", () => {
     });
   });
 
-  it("C1 residual: returns 410 when claim reports gone (fromBytea / IV after burn)", async () => {
+  it("C1 residual: returns 410 when claim reports gone (fromBytea / IV unreadable)", async () => {
     // production createAdminTransition が parseClaimedContinuationRow で "gone" を返す経路。
-    // ciphertext は RPC 側で既に single-use 消去済みのため 404 リトライ不可。
+    // C3: ciphertext は TTL まで保持されるが、bytea 破損時は 404 リトライ不可のため 410。
     const claim = vi.fn().mockResolvedValue("gone");
     const handler = createHandler({
       origin: ORIGIN,

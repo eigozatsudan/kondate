@@ -702,9 +702,9 @@ export function startAuthContinuationRecovery(input: {
   };
   // B-I1 / C12: claim の IP 上限 60/60s を超えないよう 5s 間隔（最大 12 回/分）にする。
   // create/deposit は 40/60。CGNAT 共有で 429 になり得る。
-  // claim の 429/5xx は gateway が awaiting 再試行（C17）。deposit の 429/5xx は
-  // completeCallback 内で code 閉包保持のまま backoff 再試行し、budget 後は terminal
-  // （timeout のみ同一ブラウザ awaiting — C1/C2）。recovery は deposit を再送しない。
+  // claim の 429/5xx は gateway が awaiting 再試行（C17）。
+  // C3: deposit の 429/5xx は completeCallback 内 backoff 後、同一ブラウザは pending code を残して
+  // awaiting へ。resumeFlow（recovery 経由含む）が pending から re-deposit してから claim する。
   const timer = (input.setInterval ?? window.setInterval)(() => {
     void poll();
   }, 5_000);

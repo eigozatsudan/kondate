@@ -5,8 +5,15 @@ import {
   readAuthContinuationCompletion,
   startAuthContinuationCompletionWait,
 } from "./auth-continuation-completion";
-import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
+import {
+  isAuthContinuationExchangeInFlight,
+  startAuthContinuationRecovery,
+} from "./auth-continuation-recovery";
 import { getPublicEnv } from "@/shared/config/public-env";
+import {
+  captureAndStripAuthCallbackUrl,
+  takeCapturedAuthCallbackUrl,
+} from "./auth-callback-url-capture";
 import {
   adjustedAuthNowMs,
   clearAuthFlow,
@@ -92,18 +99,10 @@ export function AuthCallbackPage({
     const callbackTtlMs = ttlMs ?? getPublicEnv().authContinuationTtlMs;
 
     if (callbackPromise.current === null) {
-      const callbackUrl = new URL(window.location.href);
-      // C5/C8: 可視 URL は flow 以外を全削除（gateway の allowlist 処理とは別層）。
-      // code / access_token 等がアドレスバー・history・同一タブ Referer に残らないようにする。
-      // 初回ナビゲーション URL のエッジログはインフラ管轄（アプリ JS では消せない）。
-      const visibleUrl = new URL(callbackUrl);
-      for (const key of [...visibleUrl.searchParams.keys()]) {
-        if (key !== "flow") {
-          visibleUrl.searchParams.delete(key);
-        }
-      }
-      visibleUrl.hash = "";
-      window.history.replaceState(window.history.state, "", visibleUrl);
+      // C7: main bootstrap で未 strip ならここで capture+strip（テスト経路の防御二層）。
+      // エッジ access log の初回 URL はインフラ管轄（アプリでは除去不能）。
+      captureAndStripAuthCallbackUrl();
+      const callbackUrl = takeCapturedAuthCallbackUrl();
       const flowId = callbackUrl.searchParams.get("flow");
       callbackFlowId.current = flowId;
       const canContinue =
@@ -168,7 +167,24 @@ export function AuthCallbackPage({
           ? undefined
           : (readAuthFlow(flowIdForWatch, window.localStorage)?.returnTo ?? undefined);
       const watchedReturnTo = fromStorage ?? hangWatchReturnToRef.current;
-      if (flowIdForWatch !== null) clearAuthFlow(flowIdForWatch);
+      // C15: late exchange 成功と watchdog の競合を同期で解決する。
+      // completion 済み → success leave。exchange in-flight 中は secret を焼かず login-error のみ
+      // （gateway が後から completion を publish し、他タブ / login の listener が拾える）。
+      if (flowIdForWatch !== null) {
+        const completion = readAuthContinuationCompletion(flowIdForWatch);
+        if (completion !== null) {
+          leaveSuccess(completion.returnTo);
+          return;
+        }
+        const exchangeBusy = isAuthContinuationExchangeInFlight(
+          flowIdForWatch,
+          window.localStorage,
+          Date.now(),
+        );
+        if (!exchangeBusy) {
+          clearAuthFlow(flowIdForWatch);
+        }
+      }
       leaveLoginError("unbound_callback", watchedReturnTo);
     }, remainingMs);
 
@@ -211,6 +227,21 @@ export function AuthCallbackPage({
         };
         const failClosed = (authError: "magic_link_expired" | "unbound_callback"): void => {
           if (finished) return;
+          // C15: onExpire と late exchange の競合 — completion があれば success へ
+          if (authError === "unbound_callback") {
+            const completion = readAuthContinuationCompletion(next.flowId);
+            if (completion !== null) {
+              stopAwaiting();
+              leaveSuccess(completion.returnTo);
+              return;
+            }
+            if (isAuthContinuationExchangeInFlight(next.flowId, window.localStorage, Date.now())) {
+              // exchange 中は secret を残し login-error のみ（completion bus が後から救える）
+              stopAwaiting();
+              leaveLoginError(authError, next.returnTo);
+              return;
+            }
+          }
           stopAwaiting();
           clearAuthFlow(next.flowId);
           leaveLoginError(authError, next.returnTo);

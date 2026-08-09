@@ -30,8 +30,9 @@ export function continuationUnavailable(): Response {
 
 /**
  * claim RPC 成功後に payload 読取（bytea）/ decrypt / 応答検証が失敗したとき用。
- * サーバ側 code は既に single-use で消去済みなので、クライアントは 404 リトライではなく
- * terminal（410 Gone）として扱う。
+ * C3: サーバ ciphertext は expires_at まで保持され、同一 credential なら冪等 re-claim 可能。
+ * ここでの 410 は「行が burned で消えた」ではなく、bytea 破損・decrypt 失敗・応答 schema 不一致など
+ * クライアントが 404 リトライしても回復しない terminal 障害を示す。
  */
 export function continuationGone(): Response {
   return jsonResponse(410, {

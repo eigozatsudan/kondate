@@ -20,6 +20,19 @@ export class AuthSessionExpiredError extends Error {
   }
 }
 
+/**
+ * C9: getSession / refreshSession が timeout したときの一時障害。
+ * 端末の refresh token が失効したとは限らないため isAuthSessionFailure には含めない
+ * （生成等は offline/retry 扱い。false re-login + storage clear を避ける）。
+ * fail-open はしない: token は返さず呼び出し側は操作を中断する。
+ */
+export class AuthSessionProbeTimeoutError extends Error {
+  constructor() {
+    super("auth_session_probe_timeout");
+    this.name = "AuthSessionProbeTimeoutError";
+  }
+}
+
 /** 期限切れ N 秒前から refresh を試み、失効を早めに検知する */
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 30_000;
 
@@ -49,8 +62,8 @@ export async function requireAccessToken(client: BrowserSupabaseClient): Promise
       ACCESS_TOKEN_GET_SESSION_TIMEOUT_MS,
     );
   } catch {
-    // hang / throw → 再ログイン対象（offline 永久待ちにしない）
-    throw new AuthSessionExpiredError();
+    // C9: hang は期限切れではない。再ログイン誘導せず probe timeout で fail-closed。
+    throw new AuthSessionProbeTimeoutError();
   }
   const { data, error } = sessionResult;
   if (error !== null || data.session === null) throw new AuthSessionRequiredError();
@@ -65,12 +78,12 @@ export async function requireAccessToken(client: BrowserSupabaseClient): Promise
     return session.access_token;
   }
 
-  // hang / 失敗はいずれも再ログイン対象（offline 永久待ちにしない）
+  // refresh 明示失敗は期限切れ。hang は C9 どおり probe timeout（storage を焼かない）。
   let refreshed: Awaited<ReturnType<BrowserSupabaseClient["auth"]["refreshSession"]>>;
   try {
     refreshed = await withTimeout(client.auth.refreshSession(), ACCESS_TOKEN_REFRESH_TIMEOUT_MS);
   } catch {
-    throw new AuthSessionExpiredError();
+    throw new AuthSessionProbeTimeoutError();
   }
   if (refreshed.error !== null || refreshed.data.session === null) {
     throw new AuthSessionExpiredError();
@@ -83,6 +96,7 @@ export async function requireAccessToken(client: BrowserSupabaseClient): Promise
  * - AuthSessionRequiredError / AuthSessionExpiredError
  * - Function の closed code `auth_required`
  * - requireAccessToken の日本語メッセージ（後方互換）
+ * - AuthSessionProbeTimeoutError は含めない（一時 hang → offline/retry）
  */
 export function isAuthSessionFailure(error: unknown): boolean {
   if (error instanceof AuthSessionRequiredError || error instanceof AuthSessionExpiredError) {

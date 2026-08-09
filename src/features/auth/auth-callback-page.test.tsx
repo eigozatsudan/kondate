@@ -2,11 +2,12 @@ import { act, render, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import { AuthCallbackPage } from "./auth-callback-page";
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
 import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
+import { resetAuthCallbackUrlCaptureForTests } from "./auth-callback-url-capture";
 import {
   clearAuthFlow,
   markAuthContinuationCallbackOwner,
@@ -23,9 +24,15 @@ vi.mock("./auth-continuation-completion", async (importOriginal) => {
   return { ...actual, publishAuthContinuationCompletion: vi.fn() };
 });
 
-vi.mock("./auth-continuation-recovery", () => ({
-  startAuthContinuationRecovery: vi.fn(() => () => undefined),
-}));
+// C15 hangWatchdog / failClosed が isAuthContinuationExchangeInFlight を呼ぶ。
+// 完全差し替え mock だと export 欠落で TypeError → leave 経路が壊れる。
+vi.mock("./auth-continuation-recovery", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./auth-continuation-recovery")>();
+  return {
+    ...actual,
+    startAuthContinuationRecovery: vi.fn(() => () => undefined),
+  };
+});
 
 vi.mock("./auth-flow", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./auth-flow")>();
@@ -40,6 +47,15 @@ vi.mock("./auth-flow", async (importOriginal) => {
 const createAuthGatewayMock = vi.mocked(createAuthGateway);
 const startAuthContinuationRecoveryMock = vi.mocked(startAuthContinuationRecovery);
 
+afterEach(() => {
+  resetAuthCallbackUrlCaptureForTests();
+  // C7 capture が window.history を見るため、前テストの replaceState が残ると flow UUID が混線する
+  window.history.replaceState(null, "", "/");
+  startAuthContinuationRecoveryMock.mockClear();
+  vi.mocked(publishAuthContinuationCompletion).mockClear();
+  vi.mocked(clearAuthFlow).mockClear();
+});
+
 function renderCallback(
   gateway: AuthGateway,
   options?: {
@@ -50,6 +66,13 @@ function renderCallback(
   },
 ) {
   const leaveAuthCallback = options?.leaveAuthCallback ?? vi.fn();
+  // C7: captureAndStripAuthCallbackUrl は window.location を見る。
+  // MemoryRouter の entry だけでは jsdom の location が更新されないため揃える。
+  // 既に history を明示設定したテスト（code 付き URL 等）は上書きしない。
+  const initialEntry = options?.initialEntry ?? "/auth/callback?flow=flow-1";
+  if (!window.location.pathname.startsWith("/auth/callback")) {
+    window.history.replaceState(null, "", initialEntry);
+  }
   const callbackElement =
     options?.ttlMs === undefined ? (
       <AuthCallbackPage gateway={gateway} leaveAuthCallback={leaveAuthCallback} />
@@ -70,7 +93,7 @@ function renderCallback(
       { path: "/login", element: <h1>ログイン</h1> },
       { path: "/planner", element: <h1>献立</h1> },
     ],
-    { initialEntries: [options?.initialEntry ?? "/auth/callback?flow=flow-1"] },
+    { initialEntries: [initialEntry] },
   );
   const ui = options?.strict ? (
     <StrictMode>

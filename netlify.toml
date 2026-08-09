@@ -46,8 +46,9 @@
     X-Frame-Options = "DENY"
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
 
-# C8: OAuth/magic の初回 URL に code が載る。callback からの Referer 中継を抑える。
-# エッジ access log の code マスクはインフラ管轄（アプリ側では除去不能）。
+# C7/C8: OAuth/magic の初回 URL に code が載る。callback からの Referer 中継を抑える。
+# アプリは main bootstrap で最短 strip（auth-callback-url-capture）するが、
+# エッジ access log / プロキシの初回 URL 記録はインフラ管轄（アプリ JS では除去不能）。
 [[headers]]
   for = "/auth/callback"
   [headers.values]

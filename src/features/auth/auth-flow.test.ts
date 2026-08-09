@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clearAuthFlow,
+  clearPendingAuthDeposit,
   ContinuationResponseLostError,
   createContinuationApi,
   createAuthFlow,
@@ -12,8 +13,10 @@ import {
   ownedAuthStoragePrefixes,
   readAuthContinuationCallbackStartedAt,
   readAuthFlow,
+  readPendingAuthDeposit,
   sanitizeLoginReturnPath,
   sanitizeReturnPath,
+  writePendingAuthDeposit,
 } from "./auth-flow";
 
 const fixedFlowDeps = {
@@ -375,7 +378,7 @@ it("preserves an unavailable claim HTTP status without reading sensitive respons
 });
 
 it("R1: claim 2xx with unreadable body surfaces ContinuationResponseLostError", async () => {
-  // HTTP 成功後の body 欠落は burn 済み近似の印対象（素の TypeError と区別）
+  // C3/C10: HTTP 成功後の body 欠落は冪等 re-claim 対象（burn 消去ではない。素の TypeError と区別）
   const api = createContinuationApi(() => {
     const response = {
       ok: true,
@@ -517,3 +520,47 @@ function writeFlow(
     }),
   );
 }
+
+it("C3: pending deposit cache survives write/read and is cleared with the flow", () => {
+  const storage = new MapStorage();
+  const flowId = "10000000-0000-4000-8000-000000000001";
+  const nowMs = Date.parse("2026-07-13T00:00:00.000Z");
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-1",
+      expiresAtMs: nowMs + 60_000,
+    },
+    storage,
+  );
+  expect(readPendingAuthDeposit(flowId, storage, nowMs)).toEqual({
+    state: "B".repeat(43),
+    code: "oauth-code-1",
+    expiresAtMs: nowMs + 60_000,
+  });
+  expect(readPendingAuthDeposit(flowId, storage, nowMs + 60_000)).toBeNull();
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-2",
+      expiresAtMs: nowMs + 120_000,
+    },
+    storage,
+  );
+  clearPendingAuthDeposit(flowId, storage);
+  expect(readPendingAuthDeposit(flowId, storage, nowMs)).toBeNull();
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-3",
+      expiresAtMs: nowMs + 120_000,
+    },
+    storage,
+  );
+  writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z");
+  clearAuthFlow(flowId, storage);
+  expect(readPendingAuthDeposit(flowId, storage, nowMs)).toBeNull();
+});
