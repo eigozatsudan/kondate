@@ -61,19 +61,10 @@ export const FREE_LP_EXISTING = "すでにアカウントがある方は" as con
  */
 export function FreeLandingPage() {
   return (
-    <main className="page-frame free-landing stack gap-5">
-      <p className="free-landing__brand">{FREE_LP_BRAND}</p>
-
-      <div className="free-landing__hero stack gap-3">
-        <img
-          src={heroUrl}
-          alt=""
-          width={1280}
-          height={480}
-          className="free-landing__hero-img"
-          decoding="async"
-        />
-        <h1>{FREE_LP_H1}</h1>
+    <main className="page-frame free-landing">
+      <div className="free-landing__hero">
+        <p className="free-landing__brand">{FREE_LP_BRAND}</p>
+        <h1 className="free-landing__title">{FREE_LP_H1}</h1>
         <p className="free-landing__lead">{FREE_LP_LEAD}</p>
         <p className="free-landing__lead-sub">{FREE_LP_LEAD_SUB}</p>
         <div className="free-landing__cta-row">
@@ -85,6 +76,15 @@ export function FreeLandingPage() {
           </Link>
         </div>
       </div>
+
+      <img
+        src={heroUrl}
+        alt=""
+        width={1280}
+        height={720}
+        className="free-landing__hero-img"
+        decoding="async"
+      />
 
       <section className="free-landing__flow stack gap-2" aria-labelledby="free-lp-flow-title">
         <h2 id="free-lp-flow-title" className="free-landing__section-title">
