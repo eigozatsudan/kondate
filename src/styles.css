@@ -3236,9 +3236,13 @@ h1.ui-page-header__title {
 }
 
 .home-recent-link {
+  /* 短い献立名でも 44×44 タッチ下限を満たす（Mobile-first 契約） */
   display: flex;
   align-items: center;
-  min-width: 0;
+  box-sizing: border-box;
+  min-height: 44px;
+  min-width: 44px;
+  width: 100%;
   padding-block: var(--space-2);
   color: var(--text);
   font-weight: 600;
