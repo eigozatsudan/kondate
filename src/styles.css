@@ -314,6 +314,12 @@
   padding-inline: 8px;
 }
 
+/* Phase 1: 「変更」を ghost Button にした後も確認行のコンパクト密度を維持 */
+.review-answer-cell .ui-btn--ghost {
+  min-width: 4.5rem;
+  padding-inline: 8px;
+}
+
 .guided-planner-theme .wizard-reset-row {
   display: flex;
   min-width: 0;
@@ -516,6 +522,15 @@
 .guided-planner-theme .privacy-notice-gate .wizard-action {
   width: 100%;
   min-height: 44px;
+}
+
+/*
+ * Phase 1: privacy CTA を Button に移行後も全幅を維持。
+ * .guided-planner-theme をセレクタに含めない（protectedSelectorFragments 部分一致で落ちる）。
+ * .wizard-action は Button が className を受け取れないため新規 .ui-btn 側で表現。
+ */
+.privacy-notice-gate .ui-btn {
+  width: 100%;
 }
 
 /* 確認 step の任意条件。デフォルト展開し、summary で開閉が分かるようにする */

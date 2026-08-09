@@ -723,8 +723,7 @@ export function ReviewStep({
         idea 注意文の直前配置契約を壊さないよう、usage / 品質 / 主 CTA より上に季節を置く。
       */}
             <p role="status" className="review-season-hint type-small">
-              いまは{seasonContext.labelJa}（{String(seasonContext.month)}
-              月）の食材を優先して提案します
+              {`いまは${seasonContext.labelJa}（${String(seasonContext.month)}月）の食材を優先して提案します`}
             </p>
             {/* 設計 2026-07-29: dual 常時残数を supersede。常時は success 残の受け付け口調1行のみ。
           attempt 常時行は置かない。blocker 時は行動文（明日0:00 / 待ち）だけ。
