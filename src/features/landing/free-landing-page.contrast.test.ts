@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /** WCAG 2.x の相対輝度。styles.contrast.test.ts:1131 と同じ式を LP 用に持つ。 */
@@ -52,5 +54,19 @@ describe("free landing contrast", () => {
     expect(contrast(TEXT, CANVAS)).toBeGreaterThanOrEqual(4.5); // 実測 15.14
     expect(contrast(MUTED, CANVAS)).toBeGreaterThanOrEqual(4.5); // 実測 7.52
     expect(contrast(PRIMARY_STRONG, CANVAS)).toBeGreaterThanOrEqual(4.5); // 実測 6.22
+  });
+});
+
+describe("free landing css wiring", () => {
+  it("wires the flow number to --primary-strong, not --primary", () => {
+    // 算術だけでは「表は緑・実装は --primary」を通してしまう。実 CSS を読む。
+    const css = readFileSync(
+      resolve(process.cwd(), "src/features/landing/free-landing-page.css"),
+      "utf8",
+    );
+    const rule = /\.free-landing__flow-num\s*\{([^}]*)\}/u.exec(css)?.[1];
+    expect(rule).toBeDefined();
+    expect(rule).toContain("color: var(--primary-strong)");
+    expect(rule).not.toContain("color: var(--primary)");
   });
 });

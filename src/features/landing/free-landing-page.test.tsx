@@ -59,7 +59,7 @@ describe("FreeLandingPage", () => {
     const cards = screen.getByRole("list", { name: "できること" });
     const items = within(cards).getAllByRole("listitem");
     // 各カード本文 + 各カード内のポイント li がネストされるため、直下のカード li だけを数える
-    const topCards = items.filter((el) => el.classList.contains("free-landing__card"));
+    const topCards = items.filter((el) => el.classList.contains("free-landing__feature"));
     expect(topCards).toHaveLength(3);
 
     expect(
@@ -117,7 +117,7 @@ describe("FreeLandingPage", () => {
       expect(img.getAttribute("alt")).toBe("");
     }
     expect(document.querySelector(".free-landing__hero-img")).not.toBeNull();
-    expect(document.querySelectorAll(".free-landing__card-img")).toHaveLength(3);
+    expect(document.querySelectorAll(".free-landing__feature-img")).toHaveLength(3);
   });
 
   it("never emits inline style so CSP style-src self holds in production", () => {
