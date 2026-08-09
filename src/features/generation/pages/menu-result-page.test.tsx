@@ -289,8 +289,12 @@ describe("MenuResultPage", () => {
 
     renderPage(`/menus/${VALID_MENU_ID}`);
 
-    expect(screen.getByRole("status")).toHaveTextContent("献立を読み込んでいます");
-    expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
+    // Skeleton 化後も role="status" とアクセシブル名（文言）は維持する。
+    // 実装クラス .gen-status-indicator は Skeleton に置き換わったため、
+    // 同じ意図を role / 文言で固定する（revalidation 側の indicator 契約は別テスト）。
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("献立を読み込んでいます");
+    expect(status).toHaveAttribute("aria-live", "polite");
     expect(clearPendingGenerationMock).not.toHaveBeenCalled();
   });
 
