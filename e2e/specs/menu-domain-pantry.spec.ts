@@ -3,6 +3,7 @@ import { expect, test } from "../fixtures/auth";
 import {
   clickWizardNext,
   openFirstMemberEditor,
+  openWizardFromHome,
   selectHouseholdAudienceWithMember,
 } from "../fixtures/history";
 import { confirmAddScopeNotice } from "../fixtures/household";
@@ -127,8 +128,7 @@ async function advanceToReviewWithHousehold(
   page: Page,
   mealName: "朝食" | "昼食" | "夕食",
 ): Promise<void> {
-  await page.goto("/planner");
-  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+  await openWizardFromHome(page);
   await page.getByRole("radio", { name: mealName }).check();
   await clickWizardNext(page);
   // getByLabel("メイン食材")はaria-labelledbyを持つsectionとinput要素の両方に

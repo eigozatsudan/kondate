@@ -61,6 +61,7 @@ const ensureWheatMemberForMockSuccess = async (page: Page) => {
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
+  // Phase 4 §5b: 素の /planner はホーム着地（ウィザード hop は answerSharedWizardSteps 側）
   await page.goto("/planner");
 };
 
@@ -105,6 +106,8 @@ const ensurePrivacyThenGenerate = async (
 };
 
 const answerSharedWizardSteps = async (page: Page) => {
+  // Phase 4 §5b: ideaMode 等、ensureWheat を経由しない経路用のホーム経由ホップ（expect は 1 文字も変えない）
+  await page.getByRole("button", { name: "今日の献立をつくる" }).click();
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
   // meal: 選択後に「次へ」が必須
