@@ -3193,3 +3193,64 @@ h1.ui-page-header__title {
   margin: 0;
   font-weight: 700;
 }
+
+/*
+ * 献立ホーム（Phase 4）。意味クラス .home-* のみ。
+ * protected 断片（.wizard- / .primary-button 等）と素の要素セレクタは使わない。
+ */
+.home-page {
+  min-width: 0;
+}
+
+.home-generate-title,
+.home-section-title {
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+  color: var(--text);
+}
+
+.home-generate-remaining {
+  margin: 0;
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.home-pending-notice {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: var(--leading-body);
+  color: var(--text);
+}
+
+.home-soft-banner {
+  min-width: 0;
+}
+
+.home-recent-item,
+.home-expiring-item {
+  min-width: 0;
+  list-style: none;
+}
+
+.home-recent-link {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-block: var(--space-2);
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.home-recent-link:hover {
+  color: var(--primary-strong);
+}
+
+.home-expiring-name {
+  font-weight: 600;
+  color: var(--text);
+}

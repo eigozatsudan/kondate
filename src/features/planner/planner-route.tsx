@@ -22,6 +22,7 @@ import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
+import { expiryNotice } from "@/features/pantry/pantry-page";
 import {
   clearPendingGeneration,
   createPendingGeneration,
@@ -30,10 +31,14 @@ import {
 } from "@/features/generation/model/pending-generation";
 import { savePendingGenerationMeta } from "@/features/generation/model/pending-generation-meta";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
+import { historyKeys, listHistoryGroups } from "@/features/history/api/history-api";
 import { getCurrentPrivacyConsent, hasCurrentPrivacyConsent } from "@/features/privacy/privacy-api";
 import { privacyKeys } from "@/features/privacy/privacy-queries";
+import { FlyerWeeklyPanel } from "@/features/flyer/flyer-weekly-panel";
 import { PlannerWizard } from "./components/planner-wizard";
 import { medicalRequestBlockedMessage } from "./components/review-step";
+import type { HomeExpiringPantryItem } from "./home/home-expiring-pantry";
+import { PlannerHome } from "./home/planner-home";
 import {
   buildPlannerSubmissionFieldErrors,
   firstIncompletePlannerStep,
@@ -58,7 +63,11 @@ import {
   savePlannerDraft,
 } from "./planner-api";
 import { useDraftAutosave } from "./use-draft-autosave";
-import { FlyerWeeklyPanel } from "@/features/flyer/flyer-weekly-panel";
+
+/** ホームに載せる直近献立の件数上限（詰め込みすぎない）。 */
+const HOME_RECENT_MENU_LIMIT = 5;
+/** ホームに載せる期限注意食材の件数上限。 */
+const HOME_EXPIRING_PANTRY_LIMIT = 5;
 
 const emptyDraft: PlannerDraftInput = {
   mealType: null,
@@ -354,8 +363,20 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     queryFn: () => getCurrentPrivacyConsent(client, userId ?? ""),
     enabled: userId !== undefined,
   });
+  // ホームの直近献立。取得失敗はホーム内 soft error に留め、ウィザード契約は壊さない。
+  const historyQuery = useQuery({
+    queryKey: historyKeys.groups(userId ?? "missing"),
+    queryFn: () => listHistoryGroups(),
+    enabled: userId !== undefined,
+    staleTime: 30_000,
+  });
   const [value, setValue] = useState<PlannerDraftInput>(emptyDraft);
   const [initialized, setInitialized] = useState(false);
+  /**
+   * 素の /planner（下書き進捗なし・resume なし）だけホーム。
+   * resume クエリ・下書き復帰時はウィザードを出し続ける（不変契約 4b）。
+   */
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [baselineRevision, setBaselineRevision] = useState(0);
   const [resetToken, setResetToken] = useState(0);
   const [latestConflictDraft, setLatestConflictDraft] = useState<PlannerDraft | null | undefined>(
@@ -440,6 +461,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     } else {
       setStep(firstIncomplete);
     }
+    // 下書きに meal 以降の回答がある、または resume クエリ付き → ウィザードへ復帰。
+    // 空下書きの素の /planner だけホーム（導線変更はこの分岐に限定）。
+    const hasResumeQuery = searchParams.get("resume") !== null;
+    const hasDraftProgress = firstIncomplete !== "meal";
+    setWizardOpen(hasResumeQuery || hasDraftProgress);
     setInitialized(true);
   }, [draftQuery.data, initialized, safetyQuery.data, searchParams]);
 
@@ -916,6 +942,83 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // fatal(error かつ data 無し) と pending を通過済み → data は利用可能（型も non-null）
   const safetyData = safetyQuery.data;
   const pantryData = pantryQuery.data;
+  const hasResumablePending =
+    userId !== undefined && readPendingGeneration(userId, new Date()) !== null;
+  const flyerFooter = (
+    <FlyerWeeklyPanel
+      plusEntitled={usage.isSuccess ? usage.data.plusEntitled : false}
+      hasAcceptedPrivacy={hasAcceptedPrivacy}
+      privacyConsentLoadFailed={privacyConsentLoadFailed}
+      onRetryPrivacyConsent={retryPrivacyConsent}
+    />
+  );
+  // history 未取得・失敗時は空。mock が非配列を返しても壊さない。
+  const historyGroups = Array.isArray(historyQuery.data) ? historyQuery.data : [];
+  const recentMenus = historyGroups.slice(0, HOME_RECENT_MENU_LIMIT).map((group) => ({
+    id: group.representative.id,
+    title: group.representative.title.length > 0 ? group.representative.title : "献立",
+  }));
+  const expiringItems: HomeExpiringPantryItem[] = pantryData
+    .flatMap((item) => {
+      if (item.expiresOn === null) return [];
+      const notice = expiryNotice(item.expiresOn);
+      if (notice.tone === null) return [];
+      return [
+        {
+          id: item.id,
+          name: item.name,
+          expiresOn: item.expiresOn,
+          tone: notice.tone,
+          suffix: notice.suffix,
+        },
+      ];
+    })
+    .slice(0, HOME_EXPIRING_PANTRY_LIMIT);
+
+  // ホーム: 下書き進捗も resume も無い素の /planner のみ。
+  if (!wizardOpen) {
+    return (
+      <PlannerHome
+        remainingToday={usage.isSuccess ? usage.data.success.remaining : null}
+        onStartWizard={() => {
+          setWizardOpen(true);
+          setStep(firstIncompletePlannerStep(value));
+        }}
+        hasResumablePending={hasResumablePending}
+        onResumePending={() => {
+          // 既存 C2 再開と同経路（pending を壊さず generation へ）。
+          void navigate("/generation?resumed=1");
+        }}
+        recentMenus={recentMenus}
+        recentMenusLoading={historyQuery.isPending}
+        recentMenusError={historyQuery.isError}
+        onRetryRecentMenus={() => {
+          void historyQuery.refetch();
+        }}
+        expiringItems={expiringItems}
+        footer={flyerFooter}
+        banner={
+          backgroundRefetchErrorMessage !== null ? (
+            <div className="home-soft-banner stack">
+              <p role="status">{backgroundRefetchErrorMessage}</p>
+              <button
+                className="secondary-button min-h-11"
+                type="button"
+                onClick={() => {
+                  if (safetyQuery.isError) void safetyQuery.refetch();
+                  if (pantryQuery.isError) void pantryQuery.refetch();
+                  if (draftQuery.isError) void draftQuery.refetch();
+                }}
+              >
+                再試行
+              </button>
+            </div>
+          ) : null
+        }
+      />
+    );
+  }
+
   return (
     <>
       {backgroundRefetchErrorMessage !== null ? (
@@ -964,9 +1067,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             : null
         }
         // 進行中 pending があれば「献立を作る」は再開のみ。確認画面で新条件破棄を押下前に示す
-        hasResumablePendingGeneration={
-          userId !== undefined && readPendingGeneration(userId, new Date()) !== null
-        }
+        hasResumablePendingGeneration={hasResumablePending}
         autosaveState={autosave.state}
         onRetryAutosave={() => {
           void autosave.flush().catch(() => {
@@ -1017,14 +1118,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         onOpenEmergencyMenus={openEmergencyMenus}
         onReset={resetPlannerDraft}
         // L10-3: チラシ入口。page-frame 内に置き幅・下余白をウィザードと揃える
-        footer={
-          <FlyerWeeklyPanel
-            plusEntitled={usage.isSuccess ? usage.data.plusEntitled : false}
-            hasAcceptedPrivacy={hasAcceptedPrivacy}
-            privacyConsentLoadFailed={privacyConsentLoadFailed}
-            onRetryPrivacyConsent={retryPrivacyConsent}
-          />
-        }
+        footer={flyerFooter}
         onSubmit={async () => {
           // P8: React 再描画前の二重 click を同期 ref で抑止（idea audience の confirmingRef と同型）
           // P1: 緊急 open 中は generate を受け付けない（二重 flush / sticky pending と session 乖離を防ぐ）

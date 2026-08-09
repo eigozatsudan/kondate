@@ -51,12 +51,7 @@ export function HomeGenerateCard({
             <p className="home-pending-notice" role="status">
               作成中の献立があります。続きから再開できます。
             </p>
-            <Button
-              variant="primary"
-              size="large"
-              disabled={disabled}
-              onClick={onResumePending}
-            >
+            <Button variant="primary" size="large" disabled={disabled} onClick={onResumePending}>
               作成中の献立を続ける
             </Button>
             <Button variant="secondary" disabled={disabled} onClick={onStart}>
