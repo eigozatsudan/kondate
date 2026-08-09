@@ -39,7 +39,7 @@ import { getPlannerDraft, plannerKeys, savePlannerDraft } from "@/features/plann
 import { historyPathForShopping } from "@/features/shopping/shopping-intent";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { Button } from "@/shared/ui/button";
-import { Stack } from "@/shared/ui/stack";
+import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
 import { type MenuDetailSurface } from "./menu-detail-types";
 import { usageViewFromQuery } from "./usage-view-from-query";
@@ -213,15 +213,17 @@ export function IdeaMenuDetailBody({
         ) : null}
         {showIdeaShoppingRejected ? (
           <Surface as="section" role="status" tone="notice">
-            <Stack gap={3}>
-              <p>アイデア献立は買い物リストに使えません。家族に合わせた献立を選んでください</p>
-              <Link className="button-link" to={historyPathForShopping()}>
-                履歴に戻る
-              </Link>
-              <Link className="button-link" to="/shopping">
-                買い物に戻る
-              </Link>
-            </Stack>
+            <Inset pad={5}>
+              <Stack gap={3}>
+                <p>アイデア献立は買い物リストに使えません。家族に合わせた献立を選んでください</p>
+                <Link className="button-link" to={historyPathForShopping()}>
+                  履歴に戻る
+                </Link>
+                <Link className="button-link" to="/shopping">
+                  買い物に戻る
+                </Link>
+              </Stack>
+            </Inset>
           </Surface>
         ) : null}
         <MenuVersionSwitcher

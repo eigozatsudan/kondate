@@ -4,7 +4,7 @@ import {
 } from "@/features/generation/components/idea-menu-safety-notice";
 import type { RevalidationPhaseName } from "@/features/history/hooks/use-menu-revalidation";
 import { Button } from "@/shared/ui/button";
-import { Stack } from "@/shared/ui/stack";
+import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
 
 export type MenuSafetyNoticeIssue = {
@@ -86,7 +86,9 @@ export function MenuSafetyNotice({
       <Stack gap={3}>
         {/* 不安を煽らず目立たせる: notice 面。文言は固定契約。 */}
         <Surface tone="notice">
-          <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
+          <Inset pad={5}>
+            <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
+          </Inset>
         </Surface>
         <p className="type-small">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
       </Stack>
@@ -131,14 +133,16 @@ export function MenuSafetyNotice({
 
       {phase === "checked" && invalidIssues !== undefined && invalidIssues.length > 0 && (
         <Surface tone="notice" role="alert">
-          <Stack gap={2}>
-            <p>現在の家族設定ではこの献立を利用できません</p>
-            <ul className="menu-detail-issue-list">
-              {invalidIssues.map((issue) => (
-                <li key={`${issue.code}:${issue.path}`}>{issue.message}</li>
-              ))}
-            </ul>
-          </Stack>
+          <Inset pad={5}>
+            <Stack gap={2}>
+              <p>現在の家族設定ではこの献立を利用できません</p>
+              <ul className="menu-detail-issue-list">
+                {invalidIssues.map((issue) => (
+                  <li key={`${issue.code}:${issue.path}`}>{issue.message}</li>
+                ))}
+              </ul>
+            </Stack>
+          </Inset>
         </Surface>
       )}
     </>

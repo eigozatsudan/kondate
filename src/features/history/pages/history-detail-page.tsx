@@ -13,7 +13,7 @@ import {
 import { useShoppingCreateIntent } from "@/features/shopping/hooks/use-shopping-create-intent";
 import { Skeleton } from "@/shared/ui/feedback";
 import { PageHeader } from "@/shared/ui/page-header";
-import { Stack } from "@/shared/ui/stack";
+import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
 
 export type { HistoryDetailRevalidationView };
@@ -55,7 +55,9 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
       <main className="page-frame menu-detail-page">
         <Stack gap={4}>
           <Surface tone="notice">
-            <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
+            <Inset pad={5}>
+              <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
+            </Inset>
           </Surface>
           <Skeleton label="献立を読み込んでいます" lines={3} />
         </Stack>
@@ -68,7 +70,9 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
       <main className="page-frame menu-detail-page">
         <Stack gap={4}>
           <Surface tone="notice">
-            <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
+            <Inset pad={5}>
+              <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
+            </Inset>
           </Surface>
           <PageHeader title="献立を表示できません" />
           <Link to="/history" className="button-link">

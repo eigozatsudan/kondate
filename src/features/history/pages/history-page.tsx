@@ -4,7 +4,7 @@ import { hasShoppingIntent } from "@/features/shopping/shopping-intent";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/feedback";
 import { PageHeader } from "@/shared/ui/page-header";
-import { Stack } from "@/shared/ui/stack";
+import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
 import type { HistoryGroup } from "../model/group-history";
 import { HistoryCard } from "../components/history-card";
@@ -30,18 +30,20 @@ export function HistoryPage() {
         <Stack gap={4}>
           <PageHeader title="作った献立" />
           <Surface as="section" tone="notice">
-            <Stack gap={3}>
-              <p role="alert">履歴を読み込めませんでした</p>
-              <Button
-                variant="secondary"
-                disabled={isFetching}
-                onClick={() => {
-                  void refetch();
-                }}
-              >
-                もう一度読み込む
-              </Button>
-            </Stack>
+            <Inset pad={5}>
+              <Stack gap={3}>
+                <p role="alert">履歴を読み込めませんでした</p>
+                <Button
+                  variant="secondary"
+                  disabled={isFetching}
+                  onClick={() => {
+                    void refetch();
+                  }}
+                >
+                  もう一度読み込む
+                </Button>
+              </Stack>
+            </Inset>
           </Surface>
         </Stack>
       </main>
@@ -54,15 +56,17 @@ export function HistoryPage() {
 function ShoppingIntentBanner() {
   return (
     <Surface as="section" role="status" tone="notice">
-      <Stack gap={3}>
-        <p className="history-banner-title">買い物リスト用に献立を選んでください</p>
-        <p className="type-small">
-          「家族に合わせた献立」の「買い物リストを作る」を押します。アイデア献立は使えません。
-        </p>
-        <Link className="button-link" to="/shopping">
-          買い物に戻る
-        </Link>
-      </Stack>
+      <Inset pad={5}>
+        <Stack gap={3}>
+          <p className="history-banner-title">買い物リスト用に献立を選んでください</p>
+          <p className="type-small">
+            「家族に合わせた献立」の「買い物リストを作る」を押します。アイデア献立は使えません。
+          </p>
+          <Link className="button-link" to="/shopping">
+            買い物に戻る
+          </Link>
+        </Stack>
+      </Inset>
     </Surface>
   );
 }
@@ -92,15 +96,17 @@ export function HistoryPageContent({
             空状態は h2 見出し + 本文 + CTA で組む（axe / accessibility 契約）。
           */}
           <Surface as="section" tone="sunken" aria-labelledby="history-empty-title">
-            <Stack gap={3}>
-              <h2 id="history-empty-title">まだ献立がありません</h2>
-              <p className="type-small">
-                「献立」タブで質問に答えて献立をつくると、ここに並びます。あとから見返したり、買い物リストにしたりできます。
-              </p>
-              <Link className="button-link button-link--primary" to="/planner">
-                献立を作る
-              </Link>
-            </Stack>
+            <Inset pad={5}>
+              <Stack gap={3}>
+                <h2 id="history-empty-title">まだ献立がありません</h2>
+                <p className="type-small">
+                  「献立」タブで質問に答えて献立をつくると、ここに並びます。あとから見返したり、買い物リストにしたりできます。
+                </p>
+                <Link className="button-link button-link--primary" to="/planner">
+                  献立を作る
+                </Link>
+              </Stack>
+            </Inset>
           </Surface>
         </Stack>
       </main>
@@ -139,14 +145,36 @@ export function HistoryPageContent({
         </label>
         {showShoppingDeadEnd ? (
           <Surface as="section" tone="notice">
-            <Stack gap={3}>
-              <p>
-                いま選べる家族向けの献立がありません。買い物リストに使えるのは家族に合わせた献立だけです
-              </p>
-              <Link className="button-link button-link--primary" to="/planner">
-                家族向けの献立を作る
-              </Link>
-              {favoritesOnly ? (
+            <Inset pad={5}>
+              <Stack gap={3}>
+                <p>
+                  いま選べる家族向けの献立がありません。買い物リストに使えるのは家族に合わせた献立だけです
+                </p>
+                <Link className="button-link button-link--primary" to="/planner">
+                  家族向けの献立を作る
+                </Link>
+                {favoritesOnly ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setFavoritesOnly(false);
+                    }}
+                  >
+                    すべての献立を表示
+                  </Button>
+                ) : null}
+                <Link className="button-link" to="/shopping">
+                  買い物に戻る
+                </Link>
+              </Stack>
+            </Inset>
+          </Surface>
+        ) : null}
+        {!showShoppingDeadEnd && favoritesOnly && visible.length === 0 ? (
+          <Surface as="section" tone="sunken">
+            <Inset pad={5}>
+              <Stack gap={3}>
+                <p>お気に入りがありません</p>
                 <Button
                   variant="secondary"
                   onClick={() => {
@@ -155,26 +183,8 @@ export function HistoryPageContent({
                 >
                   すべての献立を表示
                 </Button>
-              ) : null}
-              <Link className="button-link" to="/shopping">
-                買い物に戻る
-              </Link>
-            </Stack>
-          </Surface>
-        ) : null}
-        {!showShoppingDeadEnd && favoritesOnly && visible.length === 0 ? (
-          <Surface as="section" tone="sunken">
-            <Stack gap={3}>
-              <p>お気に入りがありません</p>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setFavoritesOnly(false);
-                }}
-              >
-                すべての献立を表示
-              </Button>
-            </Stack>
+              </Stack>
+            </Inset>
           </Surface>
         ) : null}
         {!showShoppingDeadEnd && visible.length > 0 ? (

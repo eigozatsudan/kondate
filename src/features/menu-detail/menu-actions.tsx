@@ -8,7 +8,7 @@ import {
 import type { RevalidationPhaseName } from "@/features/history/hooks/use-menu-revalidation";
 import { historyPathForShopping } from "@/features/shopping/shopping-intent";
 import { Button } from "@/shared/ui/button";
-import { Stack } from "@/shared/ui/stack";
+import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
 
 export type MenuActionsProps = {
@@ -187,18 +187,20 @@ export function MenuActions({
         {shoppingIntentActive &&
         (revalidationPhase === "error" || (revalidationPhase === "checked" && !gateOpen)) ? (
           <Surface as="section" role="alert" tone="notice">
-            <Stack gap={3}>
-              <p>
-                {shoppingRejectedMessage ??
-                  "現在の家族設定ではこの献立から買い物リストを作れません"}
-              </p>
-              <Link className="button-link" to={historyPathForShopping()}>
-                履歴に戻る
-              </Link>
-              <Link className="button-link" to="/shopping">
-                買い物に戻る
-              </Link>
-            </Stack>
+            <Inset pad={5}>
+              <Stack gap={3}>
+                <p>
+                  {shoppingRejectedMessage ??
+                    "現在の家族設定ではこの献立から買い物リストを作れません"}
+                </p>
+                <Link className="button-link" to={historyPathForShopping()}>
+                  履歴に戻る
+                </Link>
+                <Link className="button-link" to="/shopping">
+                  買い物に戻る
+                </Link>
+              </Stack>
+            </Inset>
           </Surface>
         ) : null}
       </Stack>

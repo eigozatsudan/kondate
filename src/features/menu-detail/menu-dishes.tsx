@@ -4,7 +4,7 @@ import { MENU_LABEL_CONFIRMATION_RECORD_NOTICE } from "@/features/generation/com
 import type { MenuResultLabelWarning } from "@/features/generation/components/menu-result";
 import { Button } from "@/shared/ui/button";
 import { Badge } from "@/shared/ui/feedback";
-import { Stack } from "@/shared/ui/stack";
+import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
 
 const roleLabels = {
@@ -185,41 +185,43 @@ export function MenuDishes({
           )}
           {mode === "household" && labels.length !== 0 && (
             <Surface as="section" tone="notice" aria-labelledby="label-confirmations-heading">
-              <Stack gap={3}>
-                <h3 id="label-confirmations-heading" className="menu-result-label-section-title">
-                  原材料表示の確認
-                </h3>
-                <p className="menu-detail-disclaimer-strong">
-                  加工品は原材料表示を確認してください
-                </p>
-                {/* soft processed は確認手続きのみ。バッジ直近で確認＝安全の誤認を抑える（H1） */}
-                <p className="type-small">{MENU_LABEL_CONFIRMATION_RECORD_NOTICE}</p>
-                <ul className="menu-result-label-list">
-                  {labels.map((item) => (
-                    <li key={item.confirmationId} className="menu-result-label-item">
-                      {item.sourceText}：{item.allergenName}（{item.memberLabel}）
-                      <span className="menu-result-label-meta">
-                        辞書版 {item.dictionaryVersion}
-                      </span>
-                      {item.confirmationStatus === "confirmed" ? (
-                        <span className="menu-result-label-confirmed">表示確認を記録済み</span>
-                      ) : !canConfirmLabel ? null : (
-                        <div className="menu-result-label-action">
-                          <Button
-                            variant="secondary"
-                            disabled={busy || confirmingId === item.confirmationId}
-                            onClick={() => {
-                              onConfirmLabel(item.confirmationId);
-                            }}
-                          >
-                            本人が商品の原材料表示を確認しました
-                          </Button>
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </Stack>
+              <Inset pad={5}>
+                <Stack gap={3}>
+                  <h3 id="label-confirmations-heading" className="menu-result-label-section-title">
+                    原材料表示の確認
+                  </h3>
+                  <p className="menu-detail-disclaimer-strong">
+                    加工品は原材料表示を確認してください
+                  </p>
+                  {/* soft processed は確認手続きのみ。バッジ直近で確認＝安全の誤認を抑える（H1） */}
+                  <p className="type-small">{MENU_LABEL_CONFIRMATION_RECORD_NOTICE}</p>
+                  <ul className="menu-result-label-list">
+                    {labels.map((item) => (
+                      <li key={item.confirmationId} className="menu-result-label-item">
+                        {item.sourceText}：{item.allergenName}（{item.memberLabel}）
+                        <span className="menu-result-label-meta">
+                          辞書版 {item.dictionaryVersion}
+                        </span>
+                        {item.confirmationStatus === "confirmed" ? (
+                          <span className="menu-result-label-confirmed">表示確認を記録済み</span>
+                        ) : !canConfirmLabel ? null : (
+                          <div className="menu-result-label-action">
+                            <Button
+                              variant="secondary"
+                              disabled={busy || confirmingId === item.confirmationId}
+                              onClick={() => {
+                                onConfirmLabel(item.confirmationId);
+                              }}
+                            >
+                              本人が商品の原材料表示を確認しました
+                            </Button>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </Stack>
+              </Inset>
             </Surface>
           )}
         </Stack>
