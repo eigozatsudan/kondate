@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import type { MenuResultViewModel } from "@shared/contracts/menu-result";
 import {
   createShoppingListRequestSchema,
@@ -10,12 +10,7 @@ import {
   type ShoppingDiff,
 } from "@shared/contracts/shopping";
 import { FlyerUpsellBanner } from "@/features/billing/flyer-upsell-banner";
-import {
-  MENU_ACCEPT_NOTICE_SHOPPING_READY,
-  MENU_ACCEPT_NOTICE_SHOPPING_WAIT,
-  MENU_ACCEPT_NOTICE_TITLE,
-  MenuResultActionBar,
-} from "@/features/generation/components/menu-result-action-bar";
+import { MenuActions } from "@/features/menu-detail/menu-actions";
 import { MenuSafetyNotice } from "@/features/menu-detail/menu-safety-notice";
 import { confirmLabelConfirmation } from "@/features/generation/api/confirm-label-api";
 import { MenuResult, type MenuResultActions } from "@/features/generation/components/menu-result";
@@ -65,7 +60,6 @@ import {
   discardAppendCreateCommandIfPresent,
   hasPendingCreateCommand,
   hasShoppingDidAutoOpen,
-  historyPathForShopping,
   isShoppingResumeSuppressed,
   isShoppingSheetExpected,
   markShoppingResumeSuppress,
@@ -666,227 +660,91 @@ export function HouseholdMenuDetailBody({
         </>
       )}
 
-      <MenuResultActionBar
-        notice={
-          // HR12: invalid 後も「採用しました」が残ると usable 誤読になる。gate が開いているときだけ表示
-          accepted && gateOpen ? (
-            <div role="status">
-              <p className="menu-result-actions-notice-title">{MENU_ACCEPT_NOTICE_TITLE}</p>
-              <p className="menu-result-actions-notice-hint">
-                {canCreateShoppingList
-                  ? MENU_ACCEPT_NOTICE_SHOPPING_READY
-                  : MENU_ACCEPT_NOTICE_SHOPPING_WAIT}
-              </p>
-            </div>
-          ) : null
+      <MenuActions
+        accepted={accepted}
+        gateOpen={gateOpen}
+        canCreateShoppingList={canCreateShoppingList}
+        shoppingAsPrimary={shoppingAsPrimary}
+        actionsEnabled={actionsEnabled}
+        acceptPending={accept.isPending}
+        confirmedSingle={confirmedSingle}
+        pantryGateReady={pantryGateReady}
+        showReconcile={reconcileTarget.data !== null && reconcileTarget.data !== undefined}
+        reconcileDisabled={shoppingMutateBlocked || reconcileList.isPending}
+        canUpdatePostCook={canUpdatePostCook}
+        showRetarget={result.sourceSubmission !== null}
+        retargetEnabled={retargetEnabled}
+        retargetPending={retargetPending}
+        retargetError={retargetError}
+        shoppingError={shoppingError}
+        shoppingIntentActive={shoppingIntentActive}
+        revalidationPhase={revalidation.phase}
+        isSoftRechecking={isSoftRechecking}
+        shoppingRejectedMessage={
+          revalidation.errorMessage ?? "現在の家族設定ではこの献立から買い物リストを作れません"
         }
-        primary={
-          // HR2: invalid 後に disabled 買い物を primary に残さない（gateOpen 必須）。
-          // 単一案の採用降格は買い物が作れるときだけ（C5 / 再検証中の死んだ主操作防止）
-          shoppingAsPrimary ? (
-            <button
-              type="button"
-              className={
-                canCreateShoppingList ? "primary-button min-h-11" : "secondary-button min-h-11"
+        onAccept={() => {
+          // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
+          // HR8: ref で soft-flight 中の stale クロージャも塞ぐ
+          if (!actionsEnabledRef.current) return;
+          setAcceptError(null);
+          accept.mutate(menuId, {
+            onSuccess: () => {
+              setAccepted(true);
+            },
+            onError: () => {
+              setAcceptError("採用を保存できませんでした。もう一度お試しください");
+            },
+          });
+        }}
+        onOpenCreateShopping={() => {
+          setShoppingError(null);
+          // SHOP6: シート open を永続化し remount 後の旧 sticky resume を抑止
+          markShoppingResumeSuppress("create", menuId);
+          setShoppingSheet("create");
+        }}
+        onOpenWholeRegen={() => {
+          if (!pantryGateReady) return;
+          setSheetMode("whole");
+        }}
+        onOpenReconcile={() => {
+          const target = reconcileTarget.data;
+          if (activeList === null || target === null || target === undefined) return;
+          if (shoppingMutateBlocked) return;
+          // HR3: preview 開始時の FP。await 後に gate / FP を再確認してから sheet を開く
+          const fingerprintAtPreview = revalidation.result?.safetyFingerprint;
+          setShoppingError(null);
+          previewShoppingDiff(menuId, target.sourceMenuVersion, activeList)
+            .then((diff) => {
+              // soft/hard 飛行中や non-actionable になったら stale diff で開かない
+              if (shoppingMutateBlockedRef.current) {
+                setShoppingError(
+                  "家族設定の確認中です。確認が終わってから差分を開き直してください",
+                );
+                return;
               }
-              disabled={!canCreateShoppingList}
-              onClick={() => {
-                setShoppingError(null);
-                // SHOP6: シート open を永続化し remount 後の旧 sticky resume を抑止
-                markShoppingResumeSuppress("create", menuId);
-                setShoppingSheet("create");
-              }}
-            >
-              材料の買い物リストを作る
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="primary-button min-h-11"
-              disabled={!actionsEnabled || accept.isPending}
-              onClick={() => {
-                // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
-                // HR8: ref で soft-flight 中の stale クロージャも塞ぐ
-                if (!actionsEnabledRef.current) return;
-                setAcceptError(null);
-                accept.mutate(menuId, {
-                  onSuccess: () => {
-                    setAccepted(true);
-                  },
-                  onError: () => {
-                    setAcceptError("採用を保存できませんでした。もう一度お試しください");
-                  },
-                });
-              }}
-            >
-              この献立にする
-            </button>
-          )
-        }
-        next={
-          // HR2: gate が閉じているあいだは secondary 買い物も出さない（死んだ CTA を残さない）
-          shoppingAsPrimary || !gateOpen ? null : (
-            <button
-              type="button"
-              className="secondary-button min-h-11"
-              disabled={!canCreateShoppingList}
-              onClick={() => {
-                setShoppingError(null);
-                markShoppingResumeSuppress("create", menuId);
-                setShoppingSheet("create");
-              }}
-            >
-              材料の買い物リストを作る
-            </button>
-          )
-        }
-        auxiliaries={
-          <>
-            {!accepted && confirmedSingle && canCreateShoppingList ? (
-              <button
-                type="button"
-                className="secondary-button min-h-11"
-                // canCreateShoppingList が true のとき actionsEnabled も true（型上冗長）。
-                // soft-flight race は actionsEnabledRef の onClick 再確認で閉じる（HR8）。
-                disabled={accept.isPending}
-                onClick={() => {
-                  // HR3/HR8: RPC は所有権のみ。ref で最新 actionsEnabled を再確認してから呼ぶ
-                  if (!actionsEnabledRef.current) return;
-                  setAcceptError(null);
-                  accept.mutate(menuId, {
-                    onSuccess: () => {
-                      setAccepted(true);
-                    },
-                    onError: () => {
-                      setAcceptError("採用を保存できませんでした。もう一度お試しください");
-                    },
-                  });
-                }}
-              >
-                この献立にする
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="secondary-button min-h-11"
-              disabled={!actionsEnabled || !pantryGateReady}
-              onClick={() => {
-                if (!pantryGateReady) return;
-                setSheetMode("whole");
-              }}
-            >
-              この案を元に別の献立を作り直す
-            </button>
-            {reconcileTarget.data !== null && reconcileTarget.data !== undefined ? (
-              <button
-                type="button"
-                className="secondary-button min-h-11"
-                disabled={shoppingMutateBlocked || reconcileList.isPending}
-                onClick={() => {
-                  const target = reconcileTarget.data;
-                  if (activeList === null || target === null) return;
-                  if (shoppingMutateBlocked) return;
-                  // HR3: preview 開始時の FP。await 後に gate / FP を再確認してから sheet を開く
-                  const fingerprintAtPreview = revalidation.result?.safetyFingerprint;
-                  setShoppingError(null);
-                  previewShoppingDiff(menuId, target.sourceMenuVersion, activeList)
-                    .then((diff) => {
-                      // soft/hard 飛行中や non-actionable になったら stale diff で開かない
-                      if (shoppingMutateBlockedRef.current) {
-                        setShoppingError(
-                          "家族設定の確認中です。確認が終わってから差分を開き直してください",
-                        );
-                        return;
-                      }
-                      if (fingerprintAtPreview !== revalidationFingerprintRef.current) {
-                        setShoppingError("家族設定が変わったため、差分を開き直してください");
-                        return;
-                      }
-                      reconcileDiffFingerprintRef.current = fingerprintAtPreview ?? null;
-                      setShoppingDiff(diff);
-                      // SHOP6: reconcile シート open も suppress を永続化
-                      markShoppingResumeSuppress("reconcile", activeList.id);
-                      setShoppingSheet("reconcile");
-                    })
-                    .catch(() => {
-                      setShoppingError("差分を確認できませんでした");
-                    });
-                }}
-              >
-                買い物リストの差分を見る
-              </button>
-            ) : null}
-            {canUpdatePostCook ? (
-              <button
-                type="button"
-                className="secondary-button min-h-11"
-                disabled={!actionsEnabled}
-                onClick={() => {
-                  setPostCookOpen(true);
-                }}
-              >
-                使った食材の在庫を更新
-              </button>
-            ) : null}
-            {result.sourceSubmission !== null ? (
-              <button
-                type="button"
-                className="secondary-button min-h-11"
-                disabled={!retargetEnabled || retargetPending}
-                onClick={() => {
-                  if (!retargetEnabled) return;
-                  void onRetarget();
-                }}
-              >
-                条件を変えて作り直す
-              </button>
-            ) : null}
-          </>
-        }
+              if (fingerprintAtPreview !== revalidationFingerprintRef.current) {
+                setShoppingError("家族設定が変わったため、差分を開き直してください");
+                return;
+              }
+              reconcileDiffFingerprintRef.current = fingerprintAtPreview ?? null;
+              setShoppingDiff(diff);
+              // SHOP6: reconcile シート open も suppress を永続化
+              markShoppingResumeSuppress("reconcile", activeList.id);
+              setShoppingSheet("reconcile");
+            })
+            .catch(() => {
+              setShoppingError("差分を確認できませんでした");
+            });
+        }}
+        onOpenPostCook={() => {
+          setPostCookOpen(true);
+        }}
+        onRetarget={() => {
+          if (!retargetEnabled) return;
+          void onRetarget();
+        }}
       />
-
-      {retargetError !== null && (
-        <p role="alert" className="mt-4">
-          {retargetError}
-        </p>
-      )}
-
-      {shoppingError !== null && (
-        <p role="alert" className="mt-4">
-          {shoppingError}
-        </p>
-      )}
-
-      {shoppingIntentActive && actionsEnabled ? (
-        <p className="mt-4" role="status">
-          この献立で買い物リストを作れます
-        </p>
-      ) : null}
-      {shoppingIntentActive && revalidation.phase === "checking" ? (
-        <p className="mt-4" role="status">
-          買い物リストを作る前に、いまの家族設定を確認しています
-        </p>
-      ) : null}
-      {/* HR1: soft 飛行中は恒久拒否ではなく再確認待ち（invalid アラートと混同しない） */}
-      {shoppingIntentActive && isSoftRechecking ? (
-        <p className="mt-4" role="status">
-          買い物リストを作る前に、いまの家族設定を再確認しています
-        </p>
-      ) : null}
-      {shoppingIntentActive &&
-      (revalidation.phase === "error" || (revalidation.phase === "checked" && !gateOpen)) ? (
-        <section className="card stack mt-4" role="alert">
-          <p>
-            {revalidation.errorMessage ?? "現在の家族設定ではこの献立から買い物リストを作れません"}
-          </p>
-          <Link className="secondary-button min-h-11" to={historyPathForShopping()}>
-            履歴に戻る
-          </Link>
-          <Link className="secondary-button min-h-11" to="/shopping">
-            買い物に戻る
-          </Link>
-        </section>
-      ) : null}
 
       {shoppingSheet === "create" && (
         <CreateListSheet
