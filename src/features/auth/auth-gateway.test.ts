@@ -3,7 +3,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
   createAuthGateway,
+  dropInflightResumeMapForTests,
   IMMEDIATE_CLAIM_TIMEOUT_MS,
+  INFLIGHT_RESUME_MAP_TTL_MS,
   resetInflightResumeForTests,
   type AuthGatewayDeps,
 } from "./auth-gateway";
@@ -13,10 +15,14 @@ import {
   createAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthFlow,
+  writePendingAuthDeposit,
   type ContinuationApi,
 } from "./auth-flow";
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
-import { EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS } from "./auth-continuation-recovery";
+import {
+  EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS,
+  tryAcquireAuthContinuationExchangeInFlight,
+} from "./auth-continuation-recovery";
 
 /** R2: localStorage acquire の確認遅延を超えて exchange 開始まで進める */
 async function flushResumeUntilExchange(): Promise<void> {
@@ -1173,8 +1179,15 @@ it("C11: after inflight resume soft TTL a later resume can start a new run", asy
     expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
     expect(claim).toHaveBeenCalledOnce();
 
-    // soft TTL 経過後は Map から外れ、後続が新規 run を立てられる（lease があれば awaiting でも可）
+    // RR2: soft TTL は deposit 再試行壁 + claim 窓。IMMEDIATE_CLAIM だけでは Map に残る
     await vi.advanceTimersByTimeAsync(IMMEDIATE_CLAIM_TIMEOUT_MS);
+    void gateway.resumeFlow(flow.id);
+    await Promise.resolve();
+    expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+    expect(claim).toHaveBeenCalledOnce();
+
+    // soft TTL 経過後は Map から外れ、後続が新規 run を立てられる（lease があれば awaiting でも可）
+    await vi.advanceTimersByTimeAsync(INFLIGHT_RESUME_MAP_TTL_MS - IMMEDIATE_CLAIM_TIMEOUT_MS);
     const second = gateway.resumeFlow(flow.id);
     await vi.advanceTimersByTimeAsync(EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS + 20);
     for (let index = 0; index < 20; index += 1) await Promise.resolve();
@@ -1337,6 +1350,162 @@ it("C3: resumeFlow re-deposits from pending cache after prior 429 exhaust", asyn
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("RR2: soft TTL keeps overlapping resume joined so re-deposit is not doubled", async () => {
+  vi.useFakeTimers();
+  try {
+    const storage = new MapStorage();
+    // deposit は never-settle（withTimeout が試行ごとに切る）
+    const deposit = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+    const api = continuationApiMock({ deposit, claim });
+    const client = authClientMock();
+    const gateway = createAuthGateway(
+      client as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, {
+      ...fixedFlowDeps,
+      now: () => new Date(),
+    });
+    writePendingAuthDeposit(
+      flow.id,
+      {
+        state: flow.state,
+        code: "pending-code-1",
+        expiresAtMs: Date.now() + 300_000,
+      },
+      storage,
+    );
+
+    void gateway.resumeFlow(flow.id);
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    expect(deposit).toHaveBeenCalledTimes(1);
+
+    // recovery 外側 30s timeout 相当で再入しても、旧 soft TTL では Map 脱落→dual だった。
+    // 新 soft TTL では join のみ → deposit 試行は単一 run 分に留まる。
+    await vi.advanceTimersByTimeAsync(IMMEDIATE_CLAIM_TIMEOUT_MS);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    // attempt1 timeout 後の backoff(1s) を進め attempt2 を起動
+    await vi.advanceTimersByTimeAsync(1_000);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    const afterOuterTimeoutWindow = deposit.mock.calls.length;
+    expect(afterOuterTimeoutWindow).toBeGreaterThanOrEqual(1);
+    expect(afterOuterTimeoutWindow).toBeLessThanOrEqual(3);
+
+    void gateway.resumeFlow(flow.id);
+    void gateway.resumeFlow(flow.id);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    // 重畳 resume は join し、deposit を二重起動しない
+    expect(deposit).toHaveBeenCalledTimes(afterOuterTimeoutWindow);
+
+    // soft TTL 全期間を単一 run が消化しても deposit は最大 3 試行（DEPOSIT_MAX_ATTEMPTS）
+    await vi.advanceTimersByTimeAsync(
+      INFLIGHT_RESUME_MAP_TTL_MS - IMMEDIATE_CLAIM_TIMEOUT_MS - 1_000,
+    );
+    for (let index = 0; index < 40; index += 1) await Promise.resolve();
+    expect(deposit.mock.calls.length).toBeLessThanOrEqual(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("RR2: re-deposit in-flight guard skips second deposit after Map drop", async () => {
+  vi.useFakeTimers();
+  try {
+    const storage = new MapStorage();
+    // deposit は never-settle。withTimeout 前に Map だけ落としてガードを検証する。
+    const deposit = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+    const api = continuationApiMock({ deposit, claim });
+    const client = authClientMock();
+    const gateway = createAuthGateway(
+      client as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, {
+      ...fixedFlowDeps,
+      now: () => new Date(),
+    });
+    writePendingAuthDeposit(
+      flow.id,
+      {
+        state: flow.state,
+        code: "pending-code-1",
+        expiresAtMs: Date.now() + 300_000,
+      },
+      storage,
+    );
+
+    void gateway.resumeFlow(flow.id);
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    expect(deposit).toHaveBeenCalledTimes(1);
+
+    // soft TTL 相当の Map 脱落を再現（redeposit in-flight は残す）
+    dropInflightResumeMapForTests();
+
+    // Map 脱落後の第二 resume: redepositInFlight ガードで deposit を重ねず claim のみ
+    const second = gateway.resumeFlow(flow.id);
+    await vi.advanceTimersByTimeAsync(EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS + 20);
+    for (let index = 0; index < 30; index += 1) await Promise.resolve();
+
+    // deposit は 1 回のまま（Map 脱落後も re-deposit ガード）。claim は進む。
+    expect(deposit).toHaveBeenCalledTimes(1);
+    expect(claim.mock.calls.length).toBeGreaterThanOrEqual(1);
+    await expect(second).resolves.toMatchObject({ flowId: flow.id });
+    // 成功 complete 後は clearAuthFlow で pending も消えてよい（ガード対象は deposit 回数）
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("RR2: skips re-deposit when exchange is already in flight", async () => {
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+  const api = continuationApiMock({ deposit, claim });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+  writePendingAuthDeposit(
+    flow.id,
+    {
+      state: flow.state,
+      code: "pending-code-1",
+      expiresAtMs: Date.now() + 300_000,
+    },
+    storage,
+  );
+  // 他タブ相当: exchange lease を先に立てる
+  await tryAcquireAuthContinuationExchangeInFlight(
+    flow.id,
+    "sibling-tab-exchange",
+    storage,
+    Date.now(),
+    { locks: null, confirmDelayMs: 0 },
+  );
+
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(deposit).not.toHaveBeenCalled();
+  expect(claim).not.toHaveBeenCalled();
+  expect(storage.getItem(`kondate.auth.supabase.pending-deposit.${flow.id}`)).not.toBeNull();
 });
 
 it("C1: cross-browser deposit 429 then success returns deposited", async () => {

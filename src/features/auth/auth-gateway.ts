@@ -19,6 +19,7 @@ import {
   readAuthContinuationCompletion,
 } from "./auth-continuation-completion";
 import {
+  isAuthContinuationExchangeInFlight,
   isAuthContinuationExchangeInFlightOwner,
   releaseAuthContinuationCallbackPreLease,
   releaseAuthContinuationExchangeInFlight,
@@ -46,6 +47,12 @@ const DEPOSIT_ATTEMPT_TIMEOUT_MS = IMMEDIATE_CLAIM_TIMEOUT_MS;
 const DEPOSIT_MAX_ATTEMPTS = 3;
 /** 試行間 backoff（ms）。attempt index に対応（0 は初回で未使用）。 */
 const DEPOSIT_BACKOFF_MS = [0, 1_000, 2_000] as const;
+/**
+ * RR2: depositWithRetry の最悪壁時計（3×timeout + backoff 1s+2s）。
+ * soft TTL / recovery 再入がこの窓より短いとゾンビ re-deposit と第二 run が並走する。
+ */
+const DEPOSIT_RETRY_WALL_MS =
+  DEPOSIT_MAX_ATTEMPTS * DEPOSIT_ATTEMPT_TIMEOUT_MS + DEPOSIT_BACKOFF_MS[1] + DEPOSIT_BACKOFF_MS[2];
 /**
  * C4: dual exchange loser の getSession 遅延を待つ短い再検査。
  * 他タブが session 確立済みなら secret を焼かず complete に収束する。
@@ -151,8 +158,10 @@ export type AuthCallbackResult =
  * withTimeout は元 Promise を cancel しない。先着 Promise に join し、
  * C3 冪等 re-claim は settle 後の再呼び出しで従来どおり。C4 hang 中 secret 保持も維持。
  *
- * C11: soft TTL で Map エントリを外し、外側 withTimeout 後に後続が新規 run を立てられる。
+ * C11 / RR2: soft TTL で Map エントリを外し、外側 withTimeout 後に後続が新規 run を立てられる。
  * 旧 run は放置（cancel 不能）。exchange lease は R2/R3 が dual exchange を抑止する。
+ * soft TTL は deposit 再試行最悪壁時計 + IMMEDIATE_CLAIM 窓に揃え、recovery 30s timeout 後の
+ * 再入がゾンビ re-deposit と並走しないようにする（RR2）。
  */
 type InflightResumeEntry = {
   generation: number;
@@ -160,11 +169,29 @@ type InflightResumeEntry = {
 };
 const inflightResumeByFlowId = new Map<string, InflightResumeEntry>();
 let inflightResumeGeneration = 0;
-/** Map 保持の soft TTL。IMMEDIATE_CLAIM_TIMEOUT と同値（外側 withTimeout と揃える）。 */
-const INFLIGHT_RESUME_MAP_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS;
+/**
+ * Map 保持の soft TTL。depositWithRetry 最悪壁 + claim/exchange 外側窓。
+ * 旧 IMMEDIATE_CLAIM 単独だと re-deposit hang 中に Map が外れ dual deposit が起き得た（RR2）。
+ */
+export const INFLIGHT_RESUME_MAP_TTL_MS = DEPOSIT_RETRY_WALL_MS + IMMEDIATE_CLAIM_TIMEOUT_MS;
+/**
+ * RR2: 同一プロセスで flow 単位の re-deposit を直列化する。
+ * soft TTL 経過後や Map 離脱後でも、先着の depositWithRetry が生きていれば第二 run は
+ * re-deposit を重ねず claim のみ試す（deposit IP 予算の自己枯渇を抑止）。
+ */
+const redepositInFlightByFlowId = new Set<string>();
 
 /** テスト専用: never-settle resume が Map に残ったあとの隔離用。本番コードからは呼ばない。 */
 export function resetInflightResumeForTests(): void {
+  inflightResumeByFlowId.clear();
+  redepositInFlightByFlowId.clear();
+}
+
+/**
+ * テスト専用: soft TTL による Map 脱落だけを再現する（redeposit in-flight は残す）。
+ * RR2 ガード検証用。本番コードからは呼ばない。
+ */
+export function dropInflightResumeMapForTests(): void {
   inflightResumeByFlowId.clear();
 }
 
@@ -522,17 +549,30 @@ export function createAuthGateway(
     // C3: completeCallback の deposit budget 後も pending code があれば re-deposit してから claim。
     const pendingDeposit = readPendingAuthDeposit(flow.id, storage, Date.now());
     if (pendingDeposit !== null) {
-      const redepositOutcome = await depositWithRetry(() =>
-        continuationApi.deposit(flow.id, {
-          state: pendingDeposit.state,
-          code: pendingDeposit.code,
-          secret: flow.secret,
-        }),
-      );
-      if (redepositOutcome === "ok") {
-        clearPendingAuthDeposit(flow.id, storage);
+      // RR2: 他 run が既に exchange 中なら re-deposit を重ねず recovery へ委ねる。
+      if (isAuthContinuationExchangeInFlight(flow.id, storage, Date.now())) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
-      // timeout/transient: pending を残し claim を試みる（late 204 / 既存 deposit の可能性）
+      // RR2: 同一プロセスで re-deposit 進行中なら deposit を重ねず claim のみ試す。
+      // soft TTL 離脱後の第二 run がゾンビ depositWithRetry と並走して rate を焼くのを防ぐ。
+      if (!redepositInFlightByFlowId.has(flow.id)) {
+        redepositInFlightByFlowId.add(flow.id);
+        try {
+          const redepositOutcome = await depositWithRetry(() =>
+            continuationApi.deposit(flow.id, {
+              state: pendingDeposit.state,
+              code: pendingDeposit.code,
+              secret: flow.secret,
+            }),
+          );
+          if (redepositOutcome === "ok") {
+            clearPendingAuthDeposit(flow.id, storage);
+          }
+        } finally {
+          redepositInFlightByFlowId.delete(flow.id);
+        }
+      }
+      // timeout/transient / re-deposit スキップ: pending を残し claim を試みる（late 204 の可能性）
       // re-deposit await 後も sibling completion があれば dual exchange を避ける
       const afterRedepositCompletion = readAuthContinuationCompletion(flow.id, storage);
       if (afterRedepositCompletion !== null) {

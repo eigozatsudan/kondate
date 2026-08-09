@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  browserSupabaseSessionStorageKey,
   clearAuthFlow,
+  clearBrowserSupabaseSessionStorage,
   clearPendingAuthDeposit,
   ContinuationResponseLostError,
   createContinuationApi,
@@ -43,6 +45,25 @@ const continuationApiMock = () => ({
 describe("auth flow storage", () => {
   it("keeps the locked owned storage prefixes", () => {
     expect(ownedAuthStoragePrefixes).toEqual(["kondate.auth.flow.", "kondate.auth.supabase"]);
+  });
+  it("RR1: clearBrowserSupabaseSessionStorage removes only the exact session key", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-0000000000bb";
+    storage.setItem(browserSupabaseSessionStorageKey, '{"access_token":"t"}');
+    storage.setItem(`kondate.auth.flow.${flowId}`, '{"id":"x"}');
+    storage.setItem(`kondate.auth.supabase.pending-deposit.${flowId}`, '{"code":"c"}');
+    storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, "2026-07-11T00:00:00.000Z");
+    storage.setItem("kondate.auth.supabase.continuation-complete", '{"flowId":"x"}');
+    storage.setItem("user-preference.theme", "dark");
+
+    clearBrowserSupabaseSessionStorage(storage);
+
+    expect(storage.getItem(browserSupabaseSessionStorageKey)).toBeNull();
+    expect(storage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
+    expect(storage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).not.toBeNull();
+    expect(storage.getItem(`kondate.auth.supabase.callback-owner.${flowId}`)).not.toBeNull();
+    expect(storage.getItem("kondate.auth.supabase.continuation-complete")).not.toBeNull();
+    expect(storage.getItem("user-preference.theme")).toBe("dark");
   });
   it("accepts only same-origin path values", () => {
     expect(sanitizeReturnPath("/planner?resume=1")).toBe("/planner?resume=1");

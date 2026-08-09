@@ -432,7 +432,7 @@ describe("AuthProvider", () => {
       });
       expect(screen.getByText("loading")).toBeInTheDocument();
 
-      // 全体 deadline タイマーで未ログイン fail-closed + owned storage 掃除
+      // 全体 deadline タイマーで未ログイン fail-closed + session キー掃除
       await act(async () => {
         await vi.advanceTimersByTimeAsync(
           COLD_START_SESSION_DEADLINE_MS - COLD_START_GET_SESSION_TIMEOUT_MS,
@@ -441,6 +441,79 @@ describe("AuthProvider", () => {
       expect(screen.getByText("unauthenticated")).toBeInTheDocument();
       expect(window.localStorage.getItem("kondate.auth.supabase")).toBeNull();
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("RR1: cold-start fail-closed clears session key only and keeps sibling flow secrets/pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const flowId = "10000000-0000-4000-8000-0000000000aa";
+      const flowKey = `kondate.auth.flow.${flowId}`;
+      const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
+      const ownerKey = `kondate.auth.supabase.callback-owner.${flowId}`;
+      const completionKey = "kondate.auth.supabase.continuation-complete";
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      // 他タブ相当: 進行中 OAuth の secret / pending / owner / completion を共有 storage に置く
+      window.localStorage.setItem(
+        flowKey,
+        JSON.stringify({
+          id: flowId,
+          secret: "A".repeat(43),
+          state: "B".repeat(43),
+          origin: "http://127.0.0.1:5173",
+          returnTo: "/onboarding",
+          sessionExchange: "supabase",
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      window.localStorage.setItem(
+        pendingKey,
+        JSON.stringify({
+          state: "B".repeat(43),
+          code: "sibling-code",
+          expiresAtMs: Date.now() + 60_000,
+        }),
+      );
+      window.localStorage.setItem(ownerKey, new Date().toISOString());
+      window.localStorage.setItem(
+        completionKey,
+        JSON.stringify({ flowId, returnTo: "/onboarding" }),
+      );
+
+      const getSession = vi.fn().mockReturnValue(new Promise(() => undefined));
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: () => ({
+            data: { subscription: createAuthSubscription() },
+          }),
+        },
+      } satisfies AuthProviderClient;
+
+      render(
+        <AuthProvider client={client}>
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      // C5: session キーは消えて focus 復活しない
+      expect(window.localStorage.getItem("kondate.auth.supabase")).toBeNull();
+      // RR1: 他タブの進行中 flow / pending / owner / completion は焼かない
+      expect(window.localStorage.getItem(flowKey)).not.toBeNull();
+      expect(window.localStorage.getItem(pendingKey)).not.toBeNull();
+      expect(window.localStorage.getItem(ownerKey)).not.toBeNull();
+      expect(window.localStorage.getItem(completionKey)).not.toBeNull();
+    } finally {
+      window.localStorage.clear();
       vi.useRealTimers();
     }
   });

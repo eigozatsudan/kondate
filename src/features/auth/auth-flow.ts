@@ -70,7 +70,8 @@ const callbackOwnerPrefix = `${ownedAuthStoragePrefixes[1]}.callback-owner.`;
 const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
 /**
  * C3: URL strip 後も 429/5xx 再 deposit できるよう、同一ブラウザに短寿命で code を保持する。
- * owned prefix 配下なので logout / cold-start fail-closed の clearOwnedAuthStorage で消える。
+ * owned prefix 配下なので logout の clearOwnedAuthStorage で消える。
+ * cold-start fail-closed（RR1）は session キーのみ消し、pending は温存する。
  */
 const pendingDepositPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
 const defaultAuthContinuationTtlMs = 300_000;
@@ -532,6 +533,25 @@ export function clearPendingAuthDeposit(flowId: string, storage: Storage): void 
     storage.removeItem(`${pendingDepositPrefix}${flowId}`);
   } catch {
     // TTL で収束
+  }
+}
+
+/**
+ * Browser Supabase の session 永続キー（createBrowserSupabaseClient の storageKey と一致）。
+ * ownedAuthStoragePrefixes[1] と同じ文字列だが、logout の prefix 一掃ではなく **exact key** として扱う。
+ */
+export const browserSupabaseSessionStorageKey = ownedAuthStoragePrefixes[1];
+
+/**
+ * C5 / RR1: cold-start fail-closed 専用。session 永続キーだけを消す。
+ * clearOwnedAuthStorage は flow secret / pending-deposit / callback-owner まで origin 共有領域から
+ * 一掃するため、他タブの進行中ログインを unbound にする（RR1）。logout 経路は従来どおり全所有キー。
+ */
+export function clearBrowserSupabaseSessionStorage(storage: Storage): void {
+  try {
+    storage.removeItem(browserSupabaseSessionStorageKey);
+  } catch {
+    // best-effort（storage 障害でも呼び出し側の UI 解放を妨げない）
   }
 }
 

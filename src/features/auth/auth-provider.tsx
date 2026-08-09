@@ -14,7 +14,11 @@ import {
 } from "./auth-continuation-completion";
 import { withTimeout } from "./async-timeout";
 import { createAuthGateway } from "./auth-gateway";
-import { clearAuthFlow, clearOwnedAuthStorage, listUnexpiredAuthFlows } from "./auth-flow";
+import {
+  clearAuthFlow,
+  clearBrowserSupabaseSessionStorage,
+  listUnexpiredAuthFlows,
+} from "./auth-flow";
 
 export type AuthProviderClient = {
   auth: Pick<BrowserSupabaseClient["auth"], "getSession" | "onAuthStateChange">;
@@ -42,19 +46,28 @@ export const COLD_START_GET_SESSION_TIMEOUT_MS = 5_000;
 export const COLD_START_SESSION_DEADLINE_MS = 15_000;
 
 /**
- * C5: cold-start deadline で UI を unauthenticated にするとき、persist された token も消す。
- * session-expiry / logout と同型にし、「未ログイン UI + 端末に refresh 残存」の非対称を閉じる。
- * signOut は getSession hang と同系で固着し得るため storage のみ同期 clear（best-effort）。
+ * C5 / RR1: cold-start deadline で UI を unauthenticated にするとき、**session 永続キーのみ**消す。
+ *
+ * C5 の目的（「未ログイン UI + 端末に refresh 残存 → focus で復活」）は session キー削除で足りる。
+ * 旧 clearOwnedAuthStorage は flow secret / pending-deposit / callback-owner まで origin 共有領域から
+ * 一掃し、他タブの進行中 OAuth を unbound にした（RR1）。
+ *
+ * Tradeoff（意図的）:
+ * - session キー自体は origin 共有のため、このタブの fail-closed で他タブの persist token も消える。
+ *   他タブはメモリ上 session が残る間は動き得るが、reload 後は再ログインが必要になり得る。
+ * - flow secret / pending-deposit / completion は温存し、並行ログイン・recovery を優先する。
+ * - signOut は getSession hang と同系で固着し得るため storage のみ同期 clear（best-effort）。
+ * - 明示 logout は auth-cleanup 経由の clearOwnedAuthStorage（全所有キー）のまま。
  */
 function clearPersistedAuthOnColdStartFailClosed(): void {
   if (typeof window === "undefined") return;
   try {
-    clearOwnedAuthStorage(window.localStorage);
+    clearBrowserSupabaseSessionStorage(window.localStorage);
   } catch {
     // storage 障害でも UI 解放は続行
   }
   try {
-    clearOwnedAuthStorage(window.sessionStorage);
+    clearBrowserSupabaseSessionStorage(window.sessionStorage);
   } catch {
     // 同上
   }
