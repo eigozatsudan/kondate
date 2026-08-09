@@ -72,36 +72,24 @@ describe("expiryNotice", () => {
 });
 
 it("maps soon expiry to the warning badge tone on the page", () => {
-  const soonItem: PantryItem = {
-    ...expired,
-    id: "60000000-0000-0000-0000-000000000099",
-    name: "ヨーグルト",
-    expiresOn: "2026-08-14",
-    expirationType: "best_before",
-  };
-  // 固定 now ではなく実時計に依存しないよう、期限を「今日〜7日」内に置くには
-  // 実行日依存になる。ここでは expiryNotice が warning を返す日付を fixture に使い、
-  // ページ配線が tone を Badge に渡すことだけを見る。
-  // 実行日が 2026-08-14 を過ぎるとこの fixture は danger になるため、
-  // 相対日で組み立てる。
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-  const inThreeDays = new Date();
-  inThreeDays.setUTCDate(inThreeDays.getUTCDate() + 3);
+  // expiryNotice と同じく now + N 日を JST キー化する（setUTCDate は JST 日境界でずれる）。
+  // 3 日後は常に 7 日窓内なので warning になる。
   const soonKey = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Tokyo",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(inThreeDays);
-  void today;
+  }).format(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000));
+  const soonItem: PantryItem = {
+    ...expired,
+    id: "60000000-0000-0000-0000-000000000099",
+    name: "ヨーグルト",
+    expiresOn: soonKey,
+    expirationType: "best_before",
+  };
   render(
     <PantryPageContent
-      items={[{ ...soonItem, expiresOn: soonKey }]}
+      items={[soonItem]}
       loading={false}
       saving={false}
       error={null}

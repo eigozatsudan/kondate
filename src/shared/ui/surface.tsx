@@ -37,23 +37,32 @@ const toneClass: Record<SurfaceTone, string> = {
   notice: "ui-surface--notice",
 };
 
+function landmarkFrom(props: LandmarkProps): LandmarkProps {
+  return {
+    id: props.id,
+    role: props.role,
+    "aria-label": props["aria-label"],
+    "aria-labelledby": props["aria-labelledby"],
+  };
+}
+
 export function Surface(props: SurfaceProps): JSX.Element {
   const tone = props.tone ?? "plain";
   const className = `ui-surface ${toneClass[tone]}`;
+  const landmark = landmarkFrom(props);
 
   if (props.as === "form") {
-    const { tone: _tone, as: _as, children, onSubmit, ...rest } = props;
     return (
-      <form {...rest} className={className} onSubmit={onSubmit}>
-        {children}
+      <form {...landmark} className={className} onSubmit={props.onSubmit}>
+        {props.children}
       </form>
     );
   }
 
-  const { tone: _tone, as: Tag = "div", children, ...rest } = props;
+  const Tag = props.as ?? "div";
   return (
-    <Tag {...rest} className={className}>
-      {children}
+    <Tag {...landmark} className={className}>
+      {props.children}
     </Tag>
   );
 }
