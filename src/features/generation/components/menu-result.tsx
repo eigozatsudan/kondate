@@ -4,10 +4,10 @@ import {
   type PantryItem,
   type PantryItemInput,
 } from "@shared/contracts/pantry";
-import { formatGenerationModelLabel } from "@shared/contracts/generation-model-label";
 import type { MenuResultViewModel, PantryPostCookTarget } from "../api/menu-result-api";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
 import { MENU_LABEL_CONFIRMATION_RECORD_NOTICE } from "@/features/generation/components/idea-menu-safety-notice";
+import { MenuHero } from "@/features/menu-detail/menu-hero";
 import { Button } from "@/shared/ui/button";
 import { Stack } from "@/shared/ui/stack";
 
@@ -341,22 +341,11 @@ export function MenuResult({
   // sticky タブ列と材料 grid は Surface では表現できないため .menu-result-* へ退避。
   return (
     <div className="menu-result">
-      <header className="menu-result-header">
-        <h1 className="menu-result-title">献立ができました</h1>
-        <p className="menu-result-summary">
-          食卓まで約{menu.totalElapsedMinutes}分・{menu.servings}人分
-        </p>
-        {/*
-          生成モデルは透明性のための薄いメタ情報。主見出しの下に小さく置き、
-          台帳欠落時は出さない（推測ラベルを捏造しない）。
-        */}
-        {result.generationModelId !== null &&
-        formatGenerationModelLabel(result.generationModelId) !== "" ? (
-          <p className="menu-result-model type-small">
-            作成モデル: {formatGenerationModelLabel(result.generationModelId)}
-          </p>
-        ) : null}
-      </header>
+      <MenuHero
+        totalElapsedMinutes={menu.totalElapsedMinutes}
+        servings={menu.servings}
+        generationModelId={result.generationModelId}
+      />
       {mode !== "idea" ? (
         <p className="menu-result-ai-notice">
           <strong>AIが作成した献立です。</strong>{" "}
