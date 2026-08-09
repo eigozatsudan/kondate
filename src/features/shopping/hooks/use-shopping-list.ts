@@ -16,9 +16,7 @@ import {
   clearShoppingCommand,
   createShoppingList,
   fetchActiveShoppingList,
-  pendingShoppingCommandEnvelopeSchema,
-  pendingShoppingCommandStorageKey,
-  pendingShoppingCommandTtlMs,
+  readPendingShoppingCommand,
   reconcileShoppingListRequest,
   revalidateActiveShoppingList,
 } from "../api/shopping-api";
@@ -287,24 +285,10 @@ export function useResumeShoppingCommand<T>({
   const resume = useCallback(async () => {
     // HR9: actionsEnabled 等が false のときは送らず pending を残す
     if (!enabled || inFlight.current || targetId === null) return;
-    const key = pendingShoppingCommandStorageKey(kind, targetId);
-    const saved = sessionStorage.getItem(key);
-    if (saved === null) return;
-    // 壊れた記録・時計が巻き戻った記録・24時間超の記録は、送信する前に必ず捨てる。
-    let command: T | null = null;
-    try {
-      const parsed = pendingShoppingCommandEnvelopeSchema(schema).safeParse(JSON.parse(saved));
-      if (parsed.success) {
-        const age = Date.now() - parsed.data.createdAtMs;
-        if (age >= 0 && age <= pendingShoppingCommandTtlMs) command = parsed.data.command;
-      }
-    } catch {
-      command = null;
-    }
-    if (command === null) {
-      sessionStorage.removeItem(key);
-      return;
-    }
+    // SHOP3: local 正本を先に読む（他タブの失応答 sticky も同じ key で再送）。
+    // 壊れた / TTL 超過 / 時計巻き戻しは read 側で当該 Storage から掃除済み。
+    const command = readPendingShoppingCommand(kind, targetId, schema);
+    if (command === null) return;
     inFlight.current = true;
     try {
       await submitRef.current(command);

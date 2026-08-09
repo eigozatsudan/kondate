@@ -111,20 +111,24 @@ describe("L15 schedule/cancel", () => {
 });
 
 describe("hasPendingCreateCommand", () => {
-  it("returns true for fresh envelope", () => {
-    sessionStorage.setItem(
-      pendingShoppingCommandStorageKey("create", MENU),
-      JSON.stringify({
-        createdAtMs: Date.now(),
-        command: {
-          menuId: MENU,
-          mode: "new",
-          activeListId: null,
-          expectedListVersion: null,
-          idempotencyKey: "00000000-0000-4000-8000-000000000099",
-        },
-      }),
-    );
+  const command = {
+    menuId: MENU,
+    mode: "new" as const,
+    activeListId: null,
+    expectedListVersion: null,
+    idempotencyKey: "00000000-0000-4000-8000-000000000099",
+  };
+  // fake timers 下でも age 判定が通るよう createdAtMs は it 内で付ける
+  const envelope = () => JSON.stringify({ createdAtMs: Date.now(), command });
+
+  it("returns true for fresh envelope in session", () => {
+    sessionStorage.setItem(pendingShoppingCommandStorageKey("create", MENU), envelope());
+    expect(hasPendingCreateCommand(MENU)).toBe(true);
+  });
+
+  it("returns true for localStorage-only envelope (SHOP3 multi-tab)", () => {
+    localStorage.setItem(pendingShoppingCommandStorageKey("create", MENU), envelope());
+    sessionStorage.removeItem(pendingShoppingCommandStorageKey("create", MENU));
     expect(hasPendingCreateCommand(MENU)).toBe(true);
   });
 
@@ -151,41 +155,71 @@ describe("discardAppendCreateCommandIfPresent (SHOP2)", () => {
     expectedListVersion: null,
     idempotencyKey: "00000000-0000-4000-8000-0000000000bb",
   };
+  const key = () => pendingShoppingCommandStorageKey("create", MENU);
 
   it("discards mode=append sticky and returns true", () => {
     sessionStorage.setItem(
-      pendingShoppingCommandStorageKey("create", MENU),
+      key(),
       JSON.stringify({ createdAtMs: Date.now(), command: appendCommand }),
     );
     expect(discardAppendCreateCommandIfPresent(MENU)).toBe(true);
-    expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU))).toBeNull();
+    expect(sessionStorage.getItem(key())).toBeNull();
+    expect(localStorage.getItem(key())).toBeNull();
     expect(hasPendingCreateCommand(MENU)).toBe(false);
   });
 
-  it("keeps mode=new sticky (D-C1) and returns false", () => {
-    sessionStorage.setItem(
-      pendingShoppingCommandStorageKey("create", MENU),
-      JSON.stringify({ createdAtMs: Date.now(), command: newCommand }),
+  it("discards append sticky from localStorage-only (SHOP3 multi-tab)", () => {
+    // Tab A が local 正本に書いたあと、discard は両 Storage を落とす
+    localStorage.setItem(
+      key(),
+      JSON.stringify({ createdAtMs: Date.now(), command: appendCommand }),
     );
+    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(true);
+    expect(localStorage.getItem(key())).toBeNull();
+    expect(sessionStorage.getItem(key())).toBeNull();
+  });
+
+  it("keeps mode=new sticky (D-C1) and returns false", () => {
+    sessionStorage.setItem(key(), JSON.stringify({ createdAtMs: Date.now(), command: newCommand }));
     expect(discardAppendCreateCommandIfPresent(MENU)).toBe(false);
     expect(hasPendingCreateCommand(MENU)).toBe(true);
   });
 
   it("returns false when no sticky or corrupt", () => {
     expect(discardAppendCreateCommandIfPresent(MENU)).toBe(false);
-    sessionStorage.setItem(pendingShoppingCommandStorageKey("create", MENU), "{");
+    sessionStorage.setItem(key(), "{");
     expect(discardAppendCreateCommandIfPresent(MENU)).toBe(false);
   });
 });
 
-describe("shopping resume suppress (SHOP6)", () => {
-  it("uses kondate:shopping: prefix and round-trips mark/clear", () => {
+describe("shopping resume suppress (SHOP6 + SHOP3)", () => {
+  it("uses kondate:shopping: prefix and round-trips mark/clear on local+session", () => {
     expect(shoppingResumeSuppressKey("create", MENU).startsWith("kondate:shopping:")).toBe(true);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
     markShoppingResumeSuppress("create", MENU);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
-    // remount 相当: React state は消えても sessionStorage の suppress は残る
+    // remount 相当: React state は消えても Storage の suppress は残る
     expect(sessionStorage.getItem(shoppingResumeSuppressKey("create", MENU))).toBe("1");
+    // SHOP3: 跨タブ正本は localStorage
+    expect(localStorage.getItem(shoppingResumeSuppressKey("create", MENU))).toBe("1");
+    clearShoppingResumeSuppress("create", MENU);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+    expect(localStorage.getItem(shoppingResumeSuppressKey("create", MENU))).toBeNull();
+  });
+
+  it("sees suppress written only to localStorage (other tab sheet open)", () => {
+    localStorage.setItem(shoppingResumeSuppressKey("create", MENU), "1");
+    sessionStorage.removeItem(shoppingResumeSuppressKey("create", MENU));
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
+    // session へ promote しない（他タブ clear 後の永久 suppress を防ぐ）
+    expect(sessionStorage.getItem(shoppingResumeSuppressKey("create", MENU))).toBeNull();
+  });
+
+  it("drops shared local suppress when cleared so other tab can resume again", () => {
+    markShoppingResumeSuppress("create", MENU);
+    // 他タブ相当: session を空にしても local で suppress 中
+    sessionStorage.removeItem(shoppingResumeSuppressKey("create", MENU));
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
     clearShoppingResumeSuppress("create", MENU);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
   });

@@ -8,6 +8,7 @@ import {
 import { normalizeIngredientName } from "@shared/shopping/normalize";
 import { reviewedShoppingAliases } from "@shared/shopping/reviewed-aliases";
 import {
+  claimItemMutationSticky,
   clearPendingItemMutation,
   mutateShoppingItem,
   readPendingItemMutation,
@@ -58,10 +59,11 @@ export function ShoppingListPage() {
   const [pendingUndoIds, setPendingUndoIds] = useState<ReadonlySet<string>>(() => new Set());
   // SP-I7: hooks は early return より前に置く
   const mutationInFlight = useRef(false);
-  // SHOP13 + SHOP2 + SHOP4: 失応答後の同一操作再試行で idempotencyKey を再利用する。
+  // SHOP13 + SHOP2 + SHOP4 + SHOP6: 失応答後の同一操作再試行で idempotencyKey を再利用する。
   // SQL の request_hash は list version / safety fingerprint を含むため、
   // 「直前に送った完全な request」をそのまま再送し early replay で dual-apply を防ぐ。
   // localStorage に永続化し reload / 他タブでも dual add_manual を防ぐ。
+  // SHOP6: 初回 sticky 未書込の並行 mint は claimItemMutationSticky（Web Locks）で直列化。
   // list_version_conflict / mismatch は未適用確定なので sticky を捨てる。
   // SHOP3: shopping_safety_fingerprint_changed は適用済み+early FP fail もあり得るため
   // sticky を保持し、同一 intent の再送鍵を固定して dual-add に転化させない。
@@ -171,22 +173,25 @@ export function ShoppingListPage() {
         await safetyGate.refresh();
         return false;
       }
-      const sticky = loadItemMutationSticky(list.id);
       // SHOP13: 同一意図の失応答再試行は直前 request（同一 idempotencyKey）を再送する。
       // early replay は hash（version 込み）一致で 200 を返し add_manual の二重 INSERT を防ぐ。
-      const request =
-        sticky !== null && sticky.intentKey === intentKey && sticky.request.listId === list.id
-          ? sticky.request
-          : shoppingItemMutationRequestSchema.parse({
-              ...value,
-              listId: list.id,
-              expectedListVersion: list.version,
-              expectedSafetyFingerprint: live.safetyFingerprint,
-              idempotencyKey: crypto.randomUUID(),
-            });
-      if (sticky === null || sticky.intentKey !== intentKey || sticky.request.listId !== list.id) {
-        saveItemMutationSticky({ intentKey, request });
-      }
+      // SHOP6: claim は sticky 読取→mint→書込を Web Locks で直列化し、両タブ同時初回
+      // add_manual が別 UUID を mint する pre-write TOCTOU を閉じる。
+      const fromRef = loadItemMutationSticky(list.id);
+      const claimed =
+        fromRef !== null && fromRef.intentKey === intentKey && fromRef.request.listId === list.id
+          ? fromRef
+          : await claimItemMutationSticky(list.id, intentKey, () =>
+              shoppingItemMutationRequestSchema.parse({
+                ...value,
+                listId: list.id,
+                expectedListVersion: list.version,
+                expectedSafetyFingerprint: live.safetyFingerprint,
+                idempotencyKey: crypto.randomUUID(),
+              }),
+            );
+      saveItemMutationSticky(claimed);
+      const request = claimed.request;
       await mutateShoppingItem(request);
       // 成功（replay 含む）したら sticky を捨て、次の意図的な同内容 add は新 key になる
       dropItemMutationSticky(list.id);

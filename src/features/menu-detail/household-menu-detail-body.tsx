@@ -293,17 +293,19 @@ export function HouseholdMenuDetailBody({
     };
   }, [activeList?.id]);
 
-  // SHOP2: gate blocked 中は create resume が止むため submitCreate 内の append clear が
-  // 到達しない。blocked 遷移で append sticky を捨て、ready 復帰後の旧 append 自動再送を防ぐ。
+  // SHOP2 + SHOP1: list gate が真に invalid/unverifiable（error=phase blocked）のときだけ
+  // append sticky を捨てる。create resume は blocked（checking 含む）で止むが、checking 中の
+  // hard recheck（focus / Realtime）で sticky を捨てると失応答 append 復旧が壊れる（SHOP1）。
+  // forceNew 誘導と ready 復帰後の旧 append 自動再送防止は error 時のみ。
   useEffect(() => {
-    if (!shoppingGate.blocked) return;
+    if (!shoppingGate.error) return;
     if (menuId.length === 0) return;
     if (discardAppendCreateCommandIfPresent(menuId)) {
       setShoppingError(
         "今のリストは家族設定で確認できないため、追加ではなく新しいリストを作り直してください",
       );
     }
-  }, [shoppingGate.blocked, menuId]);
+  }, [shoppingGate.error, menuId]);
 
   // auto-open / StrictMode sheetExpected 復帰
   useEffect(() => {
@@ -316,7 +318,7 @@ export function HouseholdMenuDetailBody({
     const firstOpen = shoppingIntentActive && !hasShoppingDidAutoOpen(menuId);
     if (!restore && !firstOpen) return;
 
-    // SHOP6: シート open を sessionStorage に残し remount 後も旧 sticky resume を抑止
+    // SHOP6 + SHOP3: シート open を Storage に残し remount / 他タブでも旧 sticky resume を抑止
     markShoppingResumeSuppress("create", menuId);
     setShoppingSheet("create");
     if (firstOpen) {
@@ -369,13 +371,17 @@ export function HouseholdMenuDetailBody({
   const submitCreate = async (command: CreateShoppingListRequest) => {
     // HR9: soft/checking 中の resume でも mutate しない（pending は enabled 復帰で再試行）
     if (!actionsEnabled) return;
-    // SHOP8: list gate blocked 中の append sticky は飛ばさない（壊れた active への再トラップ防止）。
-    // mode=new は D-C1 どおり blocked でも続行可。append は sticky を捨て forceNew へ誘導する。
-    if (shoppingGate.blocked && command.mode === "append") {
-      clearShoppingCommand("create", command.menuId);
-      setShoppingError(
-        "今のリストは家族設定で確認できないため、追加ではなく新しいリストを作り直してください",
-      );
+    // SHOP8 + SHOP1: list gate 非 ready 中の append は飛ばさない。
+    // 真の invalid/unverifiable（error）だけ sticky を捨て forceNew へ誘導する。
+    // checking 中は sticky を保持し ready 復帰後の同一 key 再送を残す（SHOP1）。
+    // mode=new は D-C1 どおり blocked でも続行可。
+    if (command.mode === "append" && shoppingGate.blocked) {
+      if (shoppingGate.error) {
+        clearShoppingCommand("create", command.menuId);
+        setShoppingError(
+          "今のリストは家族設定で確認できないため、追加ではなく新しいリストを作り直してください",
+        );
+      }
       return;
     }
     try {
@@ -757,7 +763,7 @@ export function HouseholdMenuDetailBody({
             // L8: 開く条件 (canOpenCreateSheet) に isFetching を含むため、
             // 表示中の再取得で「作成する」が disable 点滅しないよう送信は actionsEnabled のみ見る。
             safetyBlocked={!actionsEnabled}
-            forceNewMode={shoppingGate.blocked}
+            forceNewMode={shoppingGate.error}
             onSubmit={(input) => {
               // 表示中 isFetching では止めない（safetyBlocked と同じく actions のみ）
               if (!actionsEnabled || createList.isPending) return;
