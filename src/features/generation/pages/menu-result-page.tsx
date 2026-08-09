@@ -10,8 +10,10 @@ import {
   type MenuResultPageRevalidationView,
 } from "@/features/menu-detail/menu-detail-types";
 import { useShoppingCreateIntent } from "@/features/shopping/hooks/use-shopping-create-intent";
+import { Skeleton } from "@/shared/ui/feedback";
 import { getMenuResult } from "../api/menu-result-api";
 import { clearPendingGeneration } from "../model/pending-generation";
+
 
 export type { MenuResultPageRevalidationView };
 
@@ -62,15 +64,11 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
       </main>
     );
   // 読み込み中も main ランドマークを維持する（axe region / ルート a11y 契約）。
+  // Skeleton が role="status" / aria-live="polite" と文言 label を内部で持つ。
   if (query.isPending)
     return (
       <main className="page-frame">
-        <div className="gen-status-panel" data-phase="loading">
-          <div className="gen-status-indicator" aria-hidden="true" />
-          <p role="status" aria-live="polite">
-            献立を読み込んでいます
-          </p>
-        </div>
+        <Skeleton lines={3} label="献立を読み込んでいます" />
       </main>
     );
 
