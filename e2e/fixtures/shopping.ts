@@ -4,6 +4,7 @@ import { completeMinimumOnboarding, expect, test as authTest } from "./auth";
 import {
   clickWizardNext,
   openFirstMemberEditor,
+  openWizardFromHome,
   selectHouseholdAudienceWithMember,
   setMockScenario,
 } from "./history";
@@ -39,11 +40,10 @@ export { expect };
 export async function ensurePlannerReady(page: Page): Promise<void> {
   await page.goto("/planner");
   // 遷移直後は SPA が未 mount で isVisible() が常に false になり、初回設定が
-  // 素通りされてしまう。初回設定かプランナー本体のどちらかが出るまで待ってから判定する。
+  // 素通りされてしまう。初回設定かホーム主 CTA のどちらかが出るまで待ってから判定する。
   const onboardingHeading = page.getByRole("heading", { name: "家族の初回設定" });
-  await expect(onboardingHeading.or(page.getByRole("radio", { name: "朝食" })).first()).toBeVisible(
-    { timeout: 30_000 },
-  );
+  const homeStart = page.getByRole("button", { name: "今日の献立をつくる" });
+  await expect(onboardingHeading.or(homeStart).first()).toBeVisible({ timeout: 30_000 });
   if (await onboardingHeading.isVisible()) {
     // 家族初回設定完了は /planner へ直接遷移し privacy を踏まない。
     // completedOnboardingPage と同様に privacy を別遷移で完了してから設定へ進む。
@@ -61,7 +61,8 @@ export async function ensurePlannerReady(page: Page): Promise<void> {
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
-  await page.goto("/planner");
+  // ウィザード第1ステップまで開き、操作可能であることを固定する
+  await openWizardFromHome(page);
   await expect(page.getByRole("radio", { name: "朝食" })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -69,11 +70,10 @@ export async function ensurePlannerReady(page: Page): Promise<void> {
 export async function generateShoppingMenu(page: Page): Promise<string> {
   const { resetGlobalAiQuotaForE2e } = await import("./reset-global-ai-quota");
   await resetGlobalAiQuotaForE2e();
-  await page.goto("/planner");
   // 設計書は「夕食」を指定するが、ローカルの OpenRouter mock が返す success fixture は
   // mealType=breakfast のため、夕食で要求すると生成が成立しない。既存の history.ts と
   // 同じく朝食で要求する（この読み替えは検証している内容を変えない）。
-  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
+  await openWizardFromHome(page);
   await page.getByRole("radio", { name: "朝食" }).check();
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();

@@ -289,8 +289,12 @@ describe("MenuResultPage", () => {
 
     renderPage(`/menus/${VALID_MENU_ID}`);
 
-    expect(screen.getByRole("status")).toHaveTextContent("献立を読み込んでいます");
-    expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
+    // Skeleton 化後も role="status" とアクセシブル名（文言）は維持する。
+    // 実装クラス .gen-status-indicator は Skeleton に置き換わったため、
+    // 同じ意図を role / 文言で固定する（revalidation 側の indicator 契約は別テスト）。
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("献立を読み込んでいます");
+    expect(status).toHaveAttribute("aria-live", "polite");
     expect(clearPendingGenerationMock).not.toHaveBeenCalled();
   });
 
@@ -750,7 +754,8 @@ describe("MenuResultPage", () => {
       expect(screen.queryByRole("button", { name: "この献立にしました" })).toBeNull();
       const historyLink = screen.getByRole("link", { name: "作った献立を見る" });
       expect(historyLink).toHaveAttribute("href", "/history");
-      expect(historyLink).toHaveClass("primary-button");
+      // primary-button → button-link--primary（Link は Button 化しない契約）
+      expect(historyLink).toHaveClass("button-link", "button-link--primary");
     });
 
     it("shows version switcher and primary accept when multiple sibling versions exist", async () => {
@@ -786,7 +791,8 @@ describe("MenuResultPage", () => {
       expect(await screen.findByText(/別案を見比べる（2案）/u)).toBeVisible();
       // 複数案では採用が主操作
       const accept = await screen.findByRole("button", { name: "この献立にする" });
-      expect(accept).toHaveClass("primary-button");
+      // primary-button → ui-btn--primary（共有 Button プリミティブ）
+      expect(accept).toHaveClass("ui-btn", "ui-btn--primary");
       expect(screen.getByRole("link", { name: /案1/u })).toHaveAttribute(
         "href",
         `/menus/${otherId}`,
@@ -812,7 +818,8 @@ describe("MenuResultPage", () => {
       expect(await screen.findByText(/材料の買い物リストを作ると/u)).toBeVisible();
       expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
       const shopping = screen.getByRole("button", { name: "材料の買い物リストを作る" });
-      expect(shopping).toHaveClass("primary-button");
+      // primary-button → ui-btn--primary（共有 Button プリミティブ）
+      expect(shopping).toHaveClass("ui-btn", "ui-btn--primary");
       expect(shopping).toBeEnabled();
     });
 

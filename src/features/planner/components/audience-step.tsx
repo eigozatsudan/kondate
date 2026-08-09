@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { PLANNER_TARGET_MEMBER_LIMIT, type TargetMode } from "@shared/contracts/planner";
 import { useAppToast } from "@/shared/ui/app-toast";
+import { Button } from "@/shared/ui/button";
+import { Inset, Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 import { CurrentSafetySummary } from "../current-safety-summary";
 import { normalizeAudienceForModeChange } from "../model/planner-wizard";
 import { memberSafetyText, type PlannerSafetyMember } from "../planner-safety-member";
@@ -243,253 +246,258 @@ export function AudienceStep({
   };
 
   return (
-    <section className="card stack" aria-labelledby="audience-step-title">
-      <h2 id="audience-step-title" tabIndex={-1} ref={headingRef}>
-        4. 作る相手
-      </h2>
-      {/* idea では家族安全条件を見せない（安全確認済みと誤認させない・C-I3 / §3.1）
+    <section aria-labelledby="audience-step-title">
+      <Surface>
+        <Inset pad={5}>
+          <Stack gap={5}>
+            <h2 id="audience-step-title" tabIndex={-1} ref={headingRef}>
+              4. 作る相手
+            </h2>
+            {/* idea では家族安全条件を見せない（安全確認済みと誤認させない・C-I3 / §3.1）
           未選択で全員 blocked のときだけ理由一覧を出す（household 選択前の説明）。 */}
-      {value.targetMode === null &&
-        eligibleMembers.length > 0 &&
-        !hasEligibleMembers &&
-        eligibleMembers.map((member) =>
-          member.blockedReason !== null ? (
-            <p key={member.id} role="alert">
-              {member.displayName}: {member.blockedReason}
-            </p>
-          ) : null,
-        )}
-      <div
-        ref={targetModeGroupRef}
-        className="wizard-option-list"
-        role="radiogroup"
-        aria-describedby={modeError != null ? targetModeErrorId : undefined}
-      >
-        {/* 設計 L9: idea を上、household を下 */}
-        <label className="wizard-option">
-          <input
-            type="radio"
-            name="audience-mode"
-            disabled={disabled}
-            checked={value.targetMode === "idea"}
-            aria-invalid={modeError != null ? "true" : undefined}
-            onChange={() => {
-              setMode("idea");
-            }}
-          />
-          <span>人数だけ指定してアイデアを見る</span>
-        </label>
-        <label className="wizard-option">
-          <input
-            type="radio"
-            name="audience-mode"
-            disabled={disabled || !hasEligibleMembers}
-            checked={value.targetMode === "household"}
-            aria-invalid={modeError != null ? "true" : undefined}
-            aria-describedby={
-              !hasEligibleMembers
-                ? "audience-household-disabled-reason"
-                : modeError != null
-                  ? targetModeErrorId
-                  : undefined
-            }
-            onChange={() => {
-              setMode("household");
-            }}
-          />
-          <span>家族に合わせて作る</span>
-        </label>
-      </div>
-      {modeError != null && (
-        <p id={targetModeErrorId} role="alert">
-          {modeError}
-        </p>
-      )}
-      {!hasEligibleMembers && (
-        <p id="audience-household-disabled-reason" className="wizard-disabled-reason" role="note">
-          {eligibleMembers.length === 0
-            ? "家族設定がまだないため、「家族に合わせて作る」は選べません。"
-            : "献立に使える家族がいないため、「家族に合わせて作る」は選べません。アレルギー確認などが未完了の家族は下の一覧で理由を確認できます。"}{" "}
-          {onOpenSettings !== undefined ? (
-            <button
-              className="secondary-button min-h-11"
-              type="button"
-              disabled={disabled}
-              onClick={onOpenSettings}
-            >
-              家族を追加する
-            </button>
-          ) : (
-            <Link className="secondary-button min-h-11" to="/settings">
-              家族を追加する
-            </Link>
-          )}
-        </p>
-      )}
-      {value.targetMode === "household" && (
-        <>
-          {/* 0 人: チェック必須を強調。1 人以上: 短い note に格下げ（§6.2 / U3-M3） */}
-          <p
-            id={householdHintId}
-            className={
-              selectedSelectableCount === 0 ? "wizard-required-hint" : "wizard-option-description"
-            }
-            role="note"
-          >
-            {selectedSelectableCount === 0
-              ? householdZeroMessage
-              : "選んだ家族の条件で献立を作ります。"}
-          </p>
-          <div
-            ref={membersGroupRef}
-            className="stack"
-            aria-describedby={
-              [householdHintId, listNoteId, membersError != null ? membersErrorId : null]
-                .filter((id): id is string => id != null)
-                .join(" ") || undefined
-            }
-          >
-            {eligibleMembers.map((member) => {
-              const isBlocked = member.blockedReason !== null;
-              const descriptionId = `audience-member-${member.id}-description`;
-              return (
-                <div key={member.id} className="wizard-option-block">
-                  <label className="wizard-option">
-                    <input
-                      type="checkbox"
-                      disabled={
-                        disabled ||
-                        isBlocked ||
-                        (!value.targetMemberIds.includes(member.id) &&
-                          selectedSelectableCount >= PLANNER_TARGET_MEMBER_LIMIT)
-                      }
-                      aria-describedby={descriptionId}
-                      aria-invalid={membersError != null ? "true" : undefined}
-                      checked={value.targetMemberIds.includes(member.id) && !isBlocked}
-                      onChange={(event) => {
-                        if (isBlocked) return;
-                        const nextIds = event.target.checked
-                          ? [
-                              ...value.targetMemberIds.filter((id) => selectableIds.has(id)),
-                              member.id,
-                            ]
-                          : value.targetMemberIds.filter((id) => id !== member.id);
-                        onChange({ ...value, targetMemberIds: nextIds });
-                      }}
-                    />
-                    <span>
-                      {member.displayName}
-                      <span className="wizard-option-meta">（{memberSafetyText(member)}）</span>
-                    </span>
-                  </label>
-                  <p id={descriptionId} className="wizard-option-description">
-                    {isBlocked ? member.blockedReason : memberSafetyText(member)}
+            {value.targetMode === null &&
+              eligibleMembers.length > 0 &&
+              !hasEligibleMembers &&
+              eligibleMembers.map((member) =>
+                member.blockedReason !== null ? (
+                  <p key={member.id} role="alert">
+                    {member.displayName}: {member.blockedReason}
                   </p>
-                </div>
-              );
-            })}
-            {membersError != null && (
-              <p id={membersErrorId} role="alert">
-                {membersError}
+                ) : null,
+              )}
+            <div
+              ref={targetModeGroupRef}
+              className="wizard-option-list"
+              role="radiogroup"
+              aria-describedby={modeError != null ? targetModeErrorId : undefined}
+            >
+              {/* 設計 L9: idea を上、household を下 */}
+              <label className="wizard-option">
+                <input
+                  type="radio"
+                  name="audience-mode"
+                  disabled={disabled}
+                  checked={value.targetMode === "idea"}
+                  aria-invalid={modeError != null ? "true" : undefined}
+                  onChange={() => {
+                    setMode("idea");
+                  }}
+                />
+                <span>人数だけ指定してアイデアを見る</span>
+              </label>
+              <label className="wizard-option">
+                <input
+                  type="radio"
+                  name="audience-mode"
+                  disabled={disabled || !hasEligibleMembers}
+                  checked={value.targetMode === "household"}
+                  aria-invalid={modeError != null ? "true" : undefined}
+                  aria-describedby={
+                    !hasEligibleMembers
+                      ? "audience-household-disabled-reason"
+                      : modeError != null
+                        ? targetModeErrorId
+                        : undefined
+                  }
+                  onChange={() => {
+                    setMode("household");
+                  }}
+                />
+                <span>家族に合わせて作る</span>
+              </label>
+            </div>
+            {modeError != null && (
+              <p id={targetModeErrorId} role="alert">
+                {modeError}
               </p>
             )}
-          </div>
-          <p id={listNoteId} className="wizard-option-description" role="note">
-            {listReferenceNote}
-          </p>
-          {/*
+            {!hasEligibleMembers && (
+              <p
+                id="audience-household-disabled-reason"
+                className="wizard-disabled-reason"
+                role="note"
+              >
+                {eligibleMembers.length === 0
+                  ? "家族設定がまだないため、「家族に合わせて作る」は選べません。"
+                  : "献立に使える家族がいないため、「家族に合わせて作る」は選べません。アレルギー確認などが未完了の家族は下の一覧で理由を確認できます。"}{" "}
+                {onOpenSettings !== undefined ? (
+                  <Button variant="secondary" disabled={disabled} onClick={onOpenSettings}>
+                    家族を追加する
+                  </Button>
+                ) : (
+                  <Link className="secondary-button min-h-11" to="/settings">
+                    家族を追加する
+                  </Link>
+                )}
+              </p>
+            )}
+            {value.targetMode === "household" && (
+              <>
+                {/* 0 人: チェック必須を強調。1 人以上: 短い note に格下げ（§6.2 / U3-M3） */}
+                <p
+                  id={householdHintId}
+                  className={
+                    selectedSelectableCount === 0
+                      ? "wizard-required-hint"
+                      : "wizard-option-description"
+                  }
+                  role="note"
+                >
+                  {selectedSelectableCount === 0
+                    ? householdZeroMessage
+                    : "選んだ家族の条件で献立を作ります。"}
+                </p>
+                <div
+                  ref={membersGroupRef}
+                  className="ui-stack ui-stack--gap-4"
+                  aria-describedby={
+                    [householdHintId, listNoteId, membersError != null ? membersErrorId : null]
+                      .filter((id): id is string => id != null)
+                      .join(" ") || undefined
+                  }
+                >
+                  {eligibleMembers.map((member) => {
+                    const isBlocked = member.blockedReason !== null;
+                    const descriptionId = `audience-member-${member.id}-description`;
+                    return (
+                      <div key={member.id} className="wizard-option-block">
+                        <label className="wizard-option">
+                          <input
+                            type="checkbox"
+                            disabled={
+                              disabled ||
+                              isBlocked ||
+                              (!value.targetMemberIds.includes(member.id) &&
+                                selectedSelectableCount >= PLANNER_TARGET_MEMBER_LIMIT)
+                            }
+                            aria-describedby={descriptionId}
+                            aria-invalid={membersError != null ? "true" : undefined}
+                            checked={value.targetMemberIds.includes(member.id) && !isBlocked}
+                            onChange={(event) => {
+                              if (isBlocked) return;
+                              const nextIds = event.target.checked
+                                ? [
+                                    ...value.targetMemberIds.filter((id) => selectableIds.has(id)),
+                                    member.id,
+                                  ]
+                                : value.targetMemberIds.filter((id) => id !== member.id);
+                              onChange({ ...value, targetMemberIds: nextIds });
+                            }}
+                          />
+                          <span>
+                            {member.displayName}
+                            <span className="wizard-option-meta">
+                              （{memberSafetyText(member)}）
+                            </span>
+                          </span>
+                        </label>
+                        <p id={descriptionId} className="wizard-option-description">
+                          {isBlocked ? member.blockedReason : memberSafetyText(member)}
+                        </p>
+                      </div>
+                    );
+                  })}
+                  {membersError != null && (
+                    <p id={membersErrorId} role="alert">
+                      {membersError}
+                    </p>
+                  )}
+                </div>
+                <p id={listNoteId} className="wizard-option-description" role="note">
+                  {listReferenceNote}
+                </p>
+                {/*
             ラジオ上の全員サマリーは削除。選択 0 件も CurrentSafetySummary の empty 本文へ寄せ、
             CTA disabled / disclaimer の drift を防ぐ（P9/P10）。selectedOnlyNote は sibling のみ。
           */}
-          <CurrentSafetySummary
-            members={selectedSafetyMembers}
-            disabled={disabled}
-            {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
-          />
-          {selectedSafetyMembers.length > 0 ? (
-            <p className="wizard-option-description" role="note">
-              {selectedOnlyNote}
-            </p>
-          ) : null}
-        </>
-      )}
-      {value.targetMode === "idea" && (
-        <div
-          className="stack"
-          aria-describedby={servingsError !== null ? servingsErrorId : undefined}
-        >
-          <p>人数</p>
-          <div
-            ref={servingsChipRowRef}
-            className="wizard-chip-row"
-            role="group"
-            aria-label="人数（1〜6人）"
-          >
-            {ideaButtonServings.map((count) => (
-              <button
-                key={count}
-                className="wizard-chip"
-                type="button"
-                disabled={disabled}
-                aria-pressed={value.servings === count}
-                aria-invalid={servingsError !== null ? "true" : undefined}
-                onClick={() => {
-                  onChange({ ...value, servings: count });
-                }}
+                <CurrentSafetySummary
+                  members={selectedSafetyMembers}
+                  disabled={disabled}
+                  {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
+                />
+                {selectedSafetyMembers.length > 0 ? (
+                  <p className="wizard-option-description" role="note">
+                    {selectedOnlyNote}
+                  </p>
+                ) : null}
+              </>
+            )}
+            {value.targetMode === "idea" && (
+              <div
+                className="ui-stack ui-stack--gap-4"
+                aria-describedby={servingsError !== null ? servingsErrorId : undefined}
               >
-                {count}人
-              </button>
-            ))}
-          </div>
-          <label className="field">
-            7人以上（20人まで）
-            <select
-              value={value.servings !== null && value.servings >= 7 ? String(value.servings) : ""}
-              disabled={disabled}
-              aria-invalid={servingsError !== null ? "true" : undefined}
-              aria-describedby={servingsError !== null ? servingsErrorId : undefined}
-              ref={servingsSelectRef}
-              onChange={(event) => {
-                const raw = event.target.value;
-                onChange({ ...value, servings: raw === "" ? null : Number(raw) });
-              }}
-            >
-              <option value="">選ばない</option>
-              {ideaSelectServings.map((count) => (
-                <option key={count} value={count}>
-                  {count}人
-                </option>
-              ))}
-            </select>
-          </label>
-          {servingsError !== null && (
-            <p id={servingsErrorId} role="alert">
-              {servingsError}
-            </p>
-          )}
-        </div>
-      )}
-      <div className="wizard-actions">
-        {onBack !== undefined && (
-          <button
-            className="wizard-action secondary-button"
-            type="button"
-            disabled={disabled}
-            onClick={onBack}
-          >
-            {backLabel}
-          </button>
-        )}
-        <button
-          className="wizard-action primary-button"
-          type="button"
-          // incomplete では止めない。親の isSaving / idea 確定中だけ disabled。
-          disabled={disabled}
-          onClick={handleNext}
-        >
-          {nextLabel}
-        </button>
-      </div>
+                <p>人数</p>
+                <div
+                  ref={servingsChipRowRef}
+                  className="wizard-chip-row"
+                  role="group"
+                  aria-label="人数（1〜6人）"
+                >
+                  {ideaButtonServings.map((count) => (
+                    <button
+                      key={count}
+                      className="wizard-chip"
+                      type="button"
+                      disabled={disabled}
+                      aria-pressed={value.servings === count}
+                      aria-invalid={servingsError !== null ? "true" : undefined}
+                      onClick={() => {
+                        onChange({ ...value, servings: count });
+                      }}
+                    >
+                      {count}人
+                    </button>
+                  ))}
+                </div>
+                <label className="field">
+                  7人以上（20人まで）
+                  <select
+                    value={
+                      value.servings !== null && value.servings >= 7 ? String(value.servings) : ""
+                    }
+                    disabled={disabled}
+                    aria-invalid={servingsError !== null ? "true" : undefined}
+                    aria-describedby={servingsError !== null ? servingsErrorId : undefined}
+                    ref={servingsSelectRef}
+                    onChange={(event) => {
+                      const raw = event.target.value;
+                      onChange({ ...value, servings: raw === "" ? null : Number(raw) });
+                    }}
+                  >
+                    <option value="">選ばない</option>
+                    {ideaSelectServings.map((count) => (
+                      <option key={count} value={count}>
+                        {count}人
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {servingsError !== null && (
+                  <p id={servingsErrorId} role="alert">
+                    {servingsError}
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="wizard-actions">
+              {onBack !== undefined && (
+                <Button variant="secondary" disabled={disabled} onClick={onBack}>
+                  {backLabel}
+                </Button>
+              )}
+              <Button
+                variant="primary"
+                // incomplete では止めない。親の isSaving / idea 確定中だけ disabled。
+                disabled={disabled}
+                onClick={handleNext}
+              >
+                {nextLabel}
+              </Button>
+            </div>
+          </Stack>
+        </Inset>
+      </Surface>
     </section>
   );
 }

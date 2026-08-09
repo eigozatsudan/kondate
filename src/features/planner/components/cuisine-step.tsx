@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { cuisineGenres } from "@shared/contracts/domain";
 import type { CuisineGenre } from "@shared/contracts/domain";
 import { useAppToast } from "@/shared/ui/app-toast";
+import { Button } from "@/shared/ui/button";
+import { Inset, Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 import { cuisineGenreLabels } from "../model/planner-labels";
 import type { PlannerStepProps } from "./planner-wizard-props";
 
@@ -79,57 +82,53 @@ export function CuisineStep({
   };
 
   return (
-    <section className="card stack" aria-labelledby="cuisine-step-title">
-      <h2 id="cuisine-step-title" tabIndex={-1} ref={headingRef}>
-        3. ジャンル
-      </h2>
-      <div
-        ref={radioGroupRef}
-        className="wizard-option-list"
-        role="radiogroup"
-        aria-describedby={shownError != null ? errorId : undefined}
-      >
-        {cuisineGenres.map((key) => (
-          <label key={key} className="wizard-option">
-            <input
-              type="radio"
-              name="genre"
-              disabled={disabled}
-              checked={value === key}
-              aria-invalid={shownError != null ? "true" : undefined}
-              onChange={() => {
-                onChange(key);
-              }}
-            />
-            <span>{cuisineGenreLabels[key]}</span>
-          </label>
-        ))}
-      </div>
-      {shownError != null && (
-        <p id={errorId} role="alert">
-          {shownError}
-        </p>
-      )}
-      <div className="wizard-actions">
-        {onBack !== undefined && (
-          <button
-            className="wizard-action secondary-button"
-            type="button"
-            disabled={disabled}
-            onClick={onBack}
-          >
-            {backLabel}
-          </button>
-        )}
-        <button
-          className="wizard-action primary-button"
-          type="button"
-          disabled={disabled}
-          onClick={handleNext}
-        >
-          {nextLabel}
-        </button>
-      </div>
+    <section aria-labelledby="cuisine-step-title">
+      <Surface>
+        <Inset pad={5}>
+          <Stack gap={5}>
+            <h2 id="cuisine-step-title" tabIndex={-1} ref={headingRef}>
+              3. ジャンル
+            </h2>
+            <div
+              ref={radioGroupRef}
+              className="wizard-option-list"
+              role="radiogroup"
+              aria-describedby={shownError != null ? errorId : undefined}
+            >
+              {cuisineGenres.map((key) => (
+                <label key={key} className="wizard-option">
+                  <input
+                    type="radio"
+                    name="genre"
+                    disabled={disabled}
+                    checked={value === key}
+                    aria-invalid={shownError != null ? "true" : undefined}
+                    onChange={() => {
+                      onChange(key);
+                    }}
+                  />
+                  <span>{cuisineGenreLabels[key]}</span>
+                </label>
+              ))}
+            </div>
+            {shownError != null && (
+              <p id={errorId} role="alert">
+                {shownError}
+              </p>
+            )}
+            <div className="wizard-actions">
+              {onBack !== undefined && (
+                <Button variant="secondary" disabled={disabled} onClick={onBack}>
+                  {backLabel}
+                </Button>
+              )}
+              <Button variant="primary" disabled={disabled} onClick={handleNext}>
+                {nextLabel}
+              </Button>
+            </div>
+          </Stack>
+        </Inset>
+      </Surface>
     </section>
   );
 }

@@ -1,12 +1,17 @@
+import type { ReactNode } from "react";
 import { formatPlanQuotaCopy } from "@shared/copy/plan-tier";
 import type { PlanCode } from "@shared/contracts/plan-quota";
 import { getNextJstMidnight } from "@shared/time/jst";
 import { PlusHardLimitCta } from "@/features/billing/plus-cta";
 import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "@/features/planner/household-safety-helper-copy";
+import { Button } from "@/shared/ui/button";
+import { PageHeader } from "@/shared/ui/page-header";
+import { Inset, Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 import type { GenerationClientState } from "../model/generation-machine";
 import { useGenerationProgressMessage } from "../hooks/use-generation-progress-message";
 import { useUsageToday } from "../hooks/use-usage-today";
-import { resolveProcessingAnchorMs } from "../model/progress-stages";
+import { GENERATION_PROGRESS_STAGES, resolveProcessingAnchorMs } from "../model/progress-stages";
 import { clearPendingGeneration, readPendingGeneration } from "../model/pending-generation";
 import { readPendingGenerationMeta } from "../model/pending-generation-meta";
 
@@ -103,6 +108,8 @@ function confirmProcessingDiscard(): boolean {
  * 緊急献立 CTA は household / idea とも常時表示（2026-07-28 設計: idea 個人固定候補パス）。
  *
  * requireDiscardConfirm: processing / offline 用。localStorage の冪等キー破棄前に確認する。
+ *
+ * 真の <button> だけ Button 化する。button-link の <a> は Button 化しない（契約）。
  */
 function RecoveryLinks({
   onClear,
@@ -119,16 +126,15 @@ function RecoveryLinks({
   return (
     <div className="gen-status-actions">
       {onClear !== undefined ? (
-        <button
-          type="button"
-          className="button-link"
+        <Button
+          variant="secondary"
           onClick={() => {
             if (!guardDiscard()) return;
             onClear();
           }}
         >
           条件を直してやり直す
-        </button>
+        </Button>
       ) : (
         <a
           className="button-link"
@@ -262,6 +268,53 @@ function TerminalQuotaBlock({
   );
 }
 
+/**
+ * 体感段階の視覚メーター。data-progress-stage（0 始まり）とは別ノードで、
+ * aria-valuenow は人間向けに 1 始まり（index + 1）。
+ */
+function GenerationProgressMeter({ stageIndex }: { stageIndex: number }) {
+  return (
+    <div
+      className="gen-progress-meter"
+      role="progressbar"
+      aria-label="献立作成の進み具合"
+      aria-valuenow={stageIndex + 1}
+      aria-valuemin={1}
+      aria-valuemax={GENERATION_PROGRESS_STAGES.length}
+    >
+      {GENERATION_PROGRESS_STAGES.map((stage, index) => (
+        <span
+          key={stage.afterMs}
+          className={index <= stageIndex ? "gen-progress-step is-done" : "gen-progress-step"}
+          aria-hidden="true"
+        />
+      ))}
+    </div>
+  );
+}
+
+type PanelShellProps = {
+  phase: string;
+  tone?: "plain" | "sunken" | "notice";
+  children: ReactNode;
+};
+
+/**
+ * data-phase 契約を持つ枠 + Surface。失敗系は tone="notice"。
+ * gen-status-panel は data-phase / 既存 CSS 契約のホストとして外側に残す。
+ */
+function PanelShell({ phase, tone = "plain", children }: PanelShellProps) {
+  return (
+    <div className="gen-status-panel" data-phase={phase}>
+      <Surface tone={tone}>
+        <Inset pad={5}>
+          <Stack gap={4}>{children}</Stack>
+        </Inset>
+      </Surface>
+    </div>
+  );
+}
+
 export function GenerationStatusPanel({
   state,
   userId,
@@ -287,48 +340,55 @@ export function GenerationStatusPanel({
 
   if (state.phase === "checking") {
     return (
-      <div className="gen-status-panel" data-phase="checking">
+      <PanelShell phase="checking" tone="sunken">
         <div className="gen-status-indicator" aria-hidden="true" />
         <p role="status" aria-live="polite">
           保存した作成状況を確認しています
         </p>
-      </div>
+      </PanelShell>
     );
   }
   if (state.phase === "submitting") {
     return (
-      <div className="gen-status-panel" data-phase="submitting">
+      <PanelShell phase="submitting">
         <div className="gen-status-indicator" aria-hidden="true" />
+        {/* data-progress-stage は 0 始まり。progressbar は 1 始まりの別ノード。 */}
         <p role="status" aria-live="polite" data-progress-stage={String(progressStageIndex)}>
           {progressMessage}
         </p>
-      </div>
+        <GenerationProgressMeter stageIndex={progressStageIndex} />
+      </PanelShell>
     );
   }
   if (state.phase === "processing") {
     return (
-      <div className="gen-status-panel" data-phase="processing">
+      <PanelShell phase="processing">
         <div className="gen-status-indicator" aria-hidden="true" />
-        <h1>献立を作っています</h1>
+        <PageHeader
+          title="献立を作っています"
+          lead="この画面を閉じても、同じ作成IDであとから確認できます。"
+        />
         <p role="status" aria-live="polite" data-progress-stage={String(progressStageIndex)}>
           {progressMessage}
         </p>
-        <p>この画面を閉じても、同じ作成IDであとから確認できます。</p>
+        <GenerationProgressMeter stageIndex={progressStageIndex} />
         {/* 長時間 processing / ハング時の脱出。破棄は confirm 必須（G2）。
             端末 pending だけ消してもサーバ processing は最大約 3 分残り得る。 */}
         <p>
           途中でやめる場合は下のリンクから作成中のIDを破棄できます。破棄すると、しばらく新しい作成を始められないことや、裏で完成した献立が履歴に残ることがあります。
         </p>
         <RecoveryLinks requireDiscardConfirm {...(onClear === undefined ? {} : { onClear })} />
-      </div>
+      </PanelShell>
     );
   }
   if (state.phase === "offline") {
     return (
-      <div className="gen-status-panel" data-phase="offline">
+      <PanelShell phase="offline" tone="notice">
         <div className="gen-status-indicator" aria-hidden="true" />
-        <h1>通信を確認しています</h1>
-        <p>接続が戻ると、保存した作成IDから自動で確認します。</p>
+        <PageHeader
+          title="通信を確認しています"
+          lead="接続が戻ると、保存した作成IDから自動で確認します。"
+        />
         {/* 実ネット断以外（API 失敗・長時間 POST）でも offline に落ちる。
             自動復帰だけに頼ると pending 保持で planner 再開がループするため、明示破棄を出す。
             processing 台帳が残っている可能性があるため破棄は confirm 必須（G2）。 */}
@@ -336,7 +396,7 @@ export function GenerationStatusPanel({
           やめて条件を変える場合は下のリンクから作成中のIDを破棄できます。破棄すると、しばらく新しい作成を始められないことがあります。
         </p>
         <RecoveryLinks requireDiscardConfirm {...(onClear === undefined ? {} : { onClear })} />
-      </div>
+      </PanelShell>
     );
   }
   if (state.phase === "constraint_conflict") {
@@ -353,8 +413,8 @@ export function GenerationStatusPanel({
       pending.kind === "new_menu" &&
       meta.targetMode === "household";
     return (
-      <div className="gen-status-panel" data-phase="constraint_conflict">
-        <h1>条件を同時に満たせませんでした</h1>
+      <PanelShell phase="constraint_conflict" tone="notice">
+        <PageHeader title="条件を同時に満たせませんでした" />
         {state.data.conflicts.map((item) => (
           <p key={`${item.code}-${item.conditionRefs.join()}`}>{item.message}</p>
         ))}
@@ -366,7 +426,7 @@ export function GenerationStatusPanel({
           retryAt={state.data.quota.retryAt}
         />
         <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
-      </div>
+      </PanelShell>
     );
   }
   if (state.phase === "failed") {
@@ -374,8 +434,8 @@ export function GenerationStatusPanel({
       state.data.error.code === "user_daily_limit" ||
       state.data.error.code === "user_attempt_limit";
     return (
-      <div className="gen-status-panel" data-phase="failed">
-        <h1>献立を作成できませんでした</h1>
+      <PanelShell phase="failed" tone="notice">
+        <PageHeader title="献立を作成できませんでした" />
         <FailedQuotaMessage
           code={state.data.error.code}
           message={state.data.error.message}
@@ -389,21 +449,21 @@ export function GenerationStatusPanel({
           showHardLimitCta={hardLimitFailure}
         />
         <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
-      </div>
+      </PanelShell>
     );
   }
   if (state.phase === "request_conflict") {
     // RecoveryLinks と同様、idea でも個人向け緊急献立リンクを出す（2 箇所目）。
     return (
-      <div className="gen-status-panel" data-phase="request_conflict">
-        <h1>同じ操作を続けられませんでした</h1>
+      <PanelShell phase="request_conflict" tone="notice">
+        <PageHeader title="同じ操作を続けられませんでした" />
         <p>{state.message}</p>
         {userId !== undefined ? <TerminalGenerationUsage userId={userId} /> : null}
         <div className="gen-status-actions">
           {onClear !== undefined ? (
-            <button type="button" className="button-link" onClick={onClear}>
+            <Button variant="secondary" onClick={onClear}>
               最初からやり直す
-            </button>
+            </Button>
           ) : (
             <a className="button-link" href="/planner">
               最初からやり直す
@@ -413,19 +473,19 @@ export function GenerationStatusPanel({
             15分緊急献立を見る
           </a>
         </div>
-      </div>
+      </PanelShell>
     );
   }
   // succeeded: navigate 完了〜結果取得までの空白を埋める。
   // return null だとスピナーが消え、/menus/:id の isPending まで画面が空になる。
   if (state.phase === "succeeded") {
     return (
-      <div className="gen-status-panel" data-phase="succeeded">
+      <PanelShell phase="succeeded" tone="sunken">
         <div className="gen-status-indicator" aria-hidden="true" />
         <p role="status" aria-live="polite">
           献立を表示しています
         </p>
-      </div>
+      </PanelShell>
     );
   }
   return null;

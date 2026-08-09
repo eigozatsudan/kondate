@@ -2,6 +2,7 @@ import { clickWizardNext, expect, setMockScenario, test } from "../fixtures/acce
 import {
   expectIdeaResultSurface,
   openFirstMemberEditor,
+  openWizardFromHome,
   requestWholeRegeneration,
   selectHouseholdAudienceWithMember,
 } from "../fixtures/history";
@@ -36,8 +37,8 @@ test("household journey: welcome through shopping create and alternate reconcile
 
   // completedOnboardingPage は onboarding_status=complete のため /welcome は
   // WelcomePage 契約どおり /planner へ即時リダイレクトする。welcome 見出しは期待しない。
-  await page.goto("/planner");
-  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({ timeout: 15_000 });
+  // Phase 4: 素の /planner はホーム → 主 CTA でウィザードへ。
+  await openWizardFromHome(page);
   await page.getByRole("radio", { name: "朝食" }).check();
   await clickWizardNext(page);
 
@@ -226,6 +227,8 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
   await page.goto("/welcome");
   await page.getByRole("button", { name: "献立アイデアを考える" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/planner");
+  // Phase 4: ホーム主 CTA からウィザードへ
+  await page.getByRole("button", { name: "今日の献立をつくる" }).click();
 
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
@@ -249,10 +252,10 @@ test("idea journey: no family safety, no shopping, mode-preserving regen", async
   await expect(privacyCta).toBeVisible();
   await privacyCta.click();
   await expect(page).toHaveURL((url) => url.pathname === "/privacy");
-  // 共有チェックは任意・既定 off。未チェックのまま進み、生成導線（review resume）が死なないこと。
+  // 共有チェックは任意・既定 on。必須同意だけ確認して進み、生成導線（review resume）が死なないこと。
   const shareCheckbox = page.getByRole("checkbox", { name: "匿名で緊急候補に役立ててよい" });
   await expect(shareCheckbox).toBeVisible();
-  await expect(shareCheckbox).not.toBeChecked();
+  await expect(shareCheckbox).toBeChecked();
   await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
   await page.getByRole("button", { name: "確認して進む" }).click();
   await expect(page).toHaveURL(

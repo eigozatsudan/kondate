@@ -2,9 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
-import { PantryPage, PantryPageContent } from "./pantry-page";
+import { expiryNotice, PantryPage, PantryPageContent } from "./pantry-page";
 import { PantryVersionConflictError, pantryKeys } from "./pantry-api";
 import { PantryForm } from "./pantry-form";
 
@@ -49,6 +49,57 @@ vi.mock("./pantry-api", async (importOriginal) => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+describe("expiryNotice", () => {
+  const now = new Date("2026-08-08T03:00:00Z"); // JST 2026-08-08 12:00
+
+  it("marks a past date as expired with the danger tone", () => {
+    expect(expiryNotice("2026-08-07", now)).toEqual({ tone: "danger", suffix: "（期限切れ）" });
+  });
+
+  it("marks a date within seven days as soon with the warning tone", () => {
+    expect(expiryNotice("2026-08-14", now)).toEqual({ tone: "warning", suffix: "（まもなく）" });
+  });
+
+  it("leaves a far future date unmarked", () => {
+    expect(expiryNotice("2026-09-30", now)).toEqual({ tone: null, suffix: "" });
+  });
+
+  it("treats today as not yet expired", () => {
+    expect(expiryNotice("2026-08-08", now)).toEqual({ tone: "warning", suffix: "（まもなく）" });
+  });
+});
+
+it("maps soon expiry to the warning badge tone on the page", () => {
+  // expiryNotice と同じく now + N 日を JST キー化する（setUTCDate は JST 日境界でずれる）。
+  // 3 日後は常に 7 日窓内なので warning になる。
+  const soonKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000));
+  const soonItem: PantryItem = {
+    ...expired,
+    id: "60000000-0000-0000-0000-000000000099",
+    name: "ヨーグルト",
+    expiresOn: soonKey,
+    expirationType: "best_before",
+  };
+  render(
+    <PantryPageContent
+      items={[soonItem]}
+      loading={false}
+      saving={false}
+      error={null}
+      onCreate={vi.fn()}
+      onUpdate={vi.fn()}
+      onDelete={vi.fn()}
+    />,
+  );
+  const badge = screen.getByText(/まもなく/u);
+  expect(badge.className).toContain("ui-badge--warning");
 });
 
 it("初回読み込み中は未確定の食材件数を0件と表示しない", () => {
@@ -152,7 +203,11 @@ it("shows entered expiry/open state and confirms before deletion", async () => {
   );
   // D-I6: 期限切れは「（期限切れ）」接尾辞付き。日付そのものは JST キーのまま。
   expect(screen.getByText(/消費期限\s*2026-07-10/u)).toBeInTheDocument();
-  expect(screen.getByText(/期限切れ/u)).toBeInTheDocument();
+  const expiredBadge = screen.getByText(/期限切れ/u);
+  expect(expiredBadge).toBeInTheDocument();
+  // 旧 className（text-red-800）相当の危険トーンが Badge に載っていること。
+  // 文言だけ残して tone を落とす配線退行を防ぐ。
+  expect(expiredBadge.className).toContain("ui-badge--danger");
   expect(screen.getByText("開封済み")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "牛乳を削除" }));
   expect(onDelete).toHaveBeenCalledWith(expired.id, expired.updatedAt);

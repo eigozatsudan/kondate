@@ -4,18 +4,14 @@ import {
   type PantryItem,
   type PantryItemInput,
 } from "@shared/contracts/pantry";
-import { formatGenerationModelLabel } from "@shared/contracts/generation-model-label";
 import type { MenuResultViewModel, PantryPostCookTarget } from "../api/menu-result-api";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
-import { MENU_LABEL_CONFIRMATION_RECORD_NOTICE } from "@/features/generation/components/idea-menu-safety-notice";
+import { MenuDishes } from "@/features/menu-detail/menu-dishes";
+import { MenuHero } from "@/features/menu-detail/menu-hero";
+import { MenuSteps } from "@/features/menu-detail/menu-steps";
+import { Button } from "@/shared/ui/button";
+import { Stack } from "@/shared/ui/stack";
 
-const roleLabels = {
-  main: "主菜",
-  side: "副菜",
-  soup: "汁物",
-  staple: "主食",
-  other: "料理",
-} as const;
 const amount = (value: number | null, unit: string | null, text: string) =>
   value === null ? text : `${String(value)}${unit ?? ""}`;
 
@@ -336,35 +332,25 @@ export function MenuResult({
   // idea の AI/免責注意はページ枠の IdeaMenuSafetyNotice に集約するため、
   // 本文側では household だけ AI 作成バナーを出す（二重表示防止）。
   // 見出しを先に置き、注意枠が成功タイトルに密着しないよう縦リズムを分ける。
+  // sticky タブ列と材料 grid は Surface では表現できないため .menu-result-* へ退避。
   return (
-    <div className="menu-result mx-auto w-full min-w-0 max-w-full overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
-      <header className="menu-result-header">
-        <h1 className="menu-result-title break-words">献立ができました</h1>
-        <p className="menu-result-summary break-words">
-          食卓まで約{menu.totalElapsedMinutes}分・{menu.servings}人分
-        </p>
-        {/*
-          生成モデルは透明性のための薄いメタ情報。主見出しの下に小さく置き、
-          台帳欠落時は出さない（推測ラベルを捏造しない）。
-        */}
-        {result.generationModelId !== null &&
-        formatGenerationModelLabel(result.generationModelId) !== "" ? (
-          <p className="menu-result-model type-small break-words">
-            作成モデル: {formatGenerationModelLabel(result.generationModelId)}
-          </p>
-        ) : null}
-      </header>
+    <div className="menu-result">
+      <MenuHero
+        totalElapsedMinutes={menu.totalElapsedMinutes}
+        servings={menu.servings}
+        generationModelId={result.generationModelId}
+      />
       {mode !== "idea" ? (
-        <p className="menu-result-ai-notice break-words">
+        <p className="menu-result-ai-notice">
           <strong>AIが作成した献立です。</strong>{" "}
           内容、加熱状態、家庭内での混入を調理前に確認してください。
         </p>
       ) : null}
       {/* A-I7: 苦手 soft gap — 生成結果画面のみ（view model が空なら履歴側） */}
       {result.preferenceGaps.length > 0 && (
-        <section className="menu-result-soft-gap stack" role="status" aria-label="希望条件の注意">
-          <strong className="text-sm">苦手の希望について</strong>
-          <ul className="list-disc pl-5 text-sm">
+        <section className="menu-result-soft-gap" role="status" aria-label="希望条件の注意">
+          <strong className="menu-result-soft-gap-title">苦手の希望について</strong>
+          <ul className="menu-result-soft-gap-list">
             {result.preferenceGaps.map((gap) => (
               <li key={`${gap.anonymousMemberRef}:${gap.dislikeToken}`}>{gap.message}</li>
             ))}
@@ -376,259 +362,42 @@ export function MenuResult({
       </div>
       {/* 在庫更新ダイアログを開いている間は dialog 内だけに出し、二重表示しない */}
       {conflictMessage !== null && !postCookOpen && (
-        <p role="alert" className="menu-result-alert break-words">
+        <p role="alert" className="menu-result-alert">
           {conflictMessage}
         </p>
       )}
 
-      <section
-        aria-labelledby="timeline-heading"
-        className="cook-timeline-panel menu-result-card min-w-0 max-w-full"
-      >
-        <h2 id="timeline-heading" className="menu-result-section-title">
-          全体の段取り
-        </h2>
-        {/*
-          縮退版: duration 比例の縦幅は契約上 180 分まで伸びるため採用しない。
-          時間の tabular-nums 強調・レール色・料理名テキスト・並行の文字明示に絞る。
-        */}
-        <ol className="cook-timeline">
-          {menu.timeline.map((step) => {
-            const dish =
-              step.dishId === null
-                ? null
-                : (menu.dishes.find((item) => item.id === step.dishId) ?? null);
-            const dishIndex =
-              dish === null
-                ? 0
-                : Math.max(
-                    0,
-                    menu.dishes.findIndex((item) => item.id === dish.id),
-                  );
-            const stepEnd = step.startMinute + step.durationMinutes;
-            const parallel = menu.timeline.filter((other) => {
-              if (other.id === step.id) return false;
-              const otherEnd = other.startMinute + other.durationMinutes;
-              return step.startMinute < otherEnd && other.startMinute < stepEnd;
-            });
-            return (
-              <li
-                key={step.id}
-                // レールは薄い色では WCAG 1.4.11 の非テキスト 3:1 を満たさないため
-                // terracotta-700 を使う。色は補助で、料理名テキストを必ず併記する。
-                className={`cook-timeline-step cook-timeline-dish-${String(dishIndex % 5)} border-l-4 border-terracotta-700`}
-              >
-                <div className="cook-timeline-time tabular-nums">
-                  <span className="cook-timeline-start">{step.startMinute}分〜</span>
-                  <span className="cook-timeline-duration type-small">
-                    目安 {step.durationMinutes}分
-                  </span>
-                </div>
-                <div className="cook-timeline-body">
-                  {dish !== null && (
-                    <span className="cook-timeline-dish-label type-small">
-                      {roleLabels[dish.role]}・{dish.name}
-                    </span>
-                  )}
-                  <span className="cook-timeline-instruction">{step.instruction}</span>
-                  {parallel.length > 0 && (
-                    <span className="cook-timeline-parallel type-small">
-                      並行：
-                      {parallel
-                        .map((other) => {
-                          const otherDish =
-                            other.dishId === null
-                              ? null
-                              : menu.dishes.find((item) => item.id === other.dishId);
-                          return otherDish !== null && otherDish !== undefined
-                            ? `${roleLabels[otherDish.role]}・${otherDish.name}`
-                            : other.instruction;
-                        })
-                        .join("、")}
-                    </span>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ol>
-      </section>
+      <MenuSteps timeline={menu.timeline} dishes={menu.dishes} />
 
-      <div
-        role="tablist"
-        aria-label="料理"
-        className="menu-result-tabs sticky top-0 z-10 flex min-w-0 max-w-full gap-2 overflow-x-auto bg-canvas"
-      >
-        {menu.dishes.map((dish) => (
-          <button
-            key={dish.id}
-            id={`tab-${dish.id}`}
-            type="button"
-            role="tab"
-            aria-selected={dish.id === selectedId}
-            aria-controls={`panel-${dish.id}`}
-            tabIndex={dish.id === selectedId ? 0 : -1}
-            onClick={() => {
-              setSelectedId(dish.id);
-            }}
-            onKeyDown={(event) => {
-              handleTabKeyDown(event, dish.id);
-            }}
-            className="min-h-11 shrink-0 rounded-full border-2 px-4 font-semibold aria-selected:border-terracotta-700 aria-selected:bg-terracotta-100"
-          >
-            {roleLabels[dish.role]}・{dish.name}
-          </button>
-        ))}
-      </div>
-
-      {/* article に role=tabpanel は aria-allowed-role 違反になるため div を使う */}
-      <div
-        id={`panel-${selected.id}`}
-        role="tabpanel"
-        aria-labelledby={`tab-${selected.id}`}
-        className="menu-result-card min-w-0 max-w-full"
-      >
-        <h2 className="menu-result-section-title break-words">{selected.name}</h2>
-        <p className="menu-result-dish-description break-words [overflow-wrap:anywhere]">
-          {selected.description}
-        </p>
-        {onRegenerateSelectedDish !== undefined && (
-          <div className="mt-4">
-            {/*
-              料理パネル内に置くことで「この一品」の指示対象が文脈で伝わる。
-              ラベル文言は e2e / 既存 getByRole 契約のため変更しない。
-            */}
-            <button
-              type="button"
-              className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
-              disabled={regenerateSelectedDishDisabled}
-              onClick={onRegenerateSelectedDish}
-            >
-              この一品だけ別案にする
-            </button>
-          </div>
-        )}
-        <h3 className="mt-5 text-lg font-bold">材料</h3>
-        <ul className="divide-y">
-          {selected.ingredients.map((item) => (
-            <li
-              key={item.id}
-              className="grid min-h-11 min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,45%)] items-center gap-3 py-2"
-            >
-              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-                {item.name}
-                {item.labelConfirmationRequired && (
-                  <span className="ml-2 rounded border border-amber-700 px-2 text-sm">
-                    ラベル確認
-                  </span>
-                )}
-              </span>
-              <span className="min-w-0 w-full break-words text-right [overflow-wrap:anywhere]">
-                {amount(item.quantityValue, item.unit, item.quantityText)}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <h3 className="mt-5 text-lg font-bold">作り方</h3>
-        <ol className="mt-2 space-y-3">
-          {selected.steps.map((step) => (
-            <li key={step.id} className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-2">
-              <span className="font-bold">{step.position}</span>
-              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-                {step.instruction}
-              </span>
-            </li>
-          ))}
-        </ol>
-        {mode === "household" && (
-          <>
-            <h3 className="mt-5 text-lg font-bold">家族向けの取り分け</h3>
-            {selectedAdaptations.length === 0 ? (
-              <p className="mt-2">この料理の取り分け案はありません。</p>
-            ) : (
-              selectedAdaptations.map((item) => (
-                <dl key={item.id} className="mt-2 rounded-xl bg-canvas p-3">
-                  <dt className="font-bold">
-                    {result.memberLabels[item.anonymousMemberRef] ?? "家族"}・{item.portionText}
-                  </dt>
-                  <dd>
-                    分ける前: 手順
-                    {
-                      selected.steps.find((step) => step.id === item.branchBeforeRecipeStepId)
-                        ?.position
-                    }
-                  </dd>
-                  {item.additionalCutting && <dd>切り方: {item.additionalCutting}</dd>}
-                  {item.additionalHeating && <dd>加熱: {item.additionalHeating}</dd>}
-                  {item.additionalSeasoning && <dd>味付け: {item.additionalSeasoning}</dd>}
-                  <dd>配膳時: {item.servingCheck}</dd>
-                  {item.safetyActions.length !== 0 && (
-                    <dd>
-                      {/* 「安全のための手順」は保証語に寄るため、取り分け時の注意として示す（H10） */}
-                      <strong>取り分け時の注意</strong>
-                      <ul>
-                        {item.safetyActions.map((action, index) => (
-                          <li key={`${action.beforeRecipeStepId}-${String(index)}`}>
-                            {action.instruction}
-                          </li>
-                        ))}
-                      </ul>
-                    </dd>
-                  )}
-                </dl>
-              ))
-            )}
-          </>
-        )}
-        {mode === "household" && labels.length !== 0 && (
-          <section
-            aria-labelledby="label-confirmations-heading"
-            className="mt-5 rounded-xl border border-amber-700 bg-amber-50 p-3"
-          >
-            <h3 id="label-confirmations-heading" className="font-bold">
-              原材料表示の確認
-            </h3>
-            <p className="font-semibold">加工品は原材料表示を確認してください</p>
-            {/* soft processed は確認手続きのみ。バッジ直近で確認＝安全の誤認を抑える（H1） */}
-            <p className="type-small">{MENU_LABEL_CONFIRMATION_RECORD_NOTICE}</p>
-            <ul className="space-y-3">
-              {labels.map((item) => (
-                <li key={item.confirmationId} className="break-words">
-                  {item.sourceText}：{item.allergenName}（{item.memberLabel}）
-                  <span className="block text-sm text-ink-muted">
-                    辞書版 {item.dictionaryVersion}
-                  </span>
-                  {item.confirmationStatus === "confirmed" ? (
-                    <span className="mt-1 inline-block rounded bg-line px-2 text-sm">
-                      表示確認を記録済み
-                    </span>
-                  ) : actions === undefined ? null : (
-                    <button
-                      type="button"
-                      className="mt-2 min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-3 font-semibold"
-                      disabled={busy || confirmingId === item.confirmationId}
-                      onClick={() => {
-                        void handleConfirmLabel(item.confirmationId);
-                      }}
-                    >
-                      本人が商品の原材料表示を確認しました
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-      </div>
+      <MenuDishes
+        dishes={menu.dishes}
+        selected={selected}
+        selectedId={selectedId}
+        mode={mode}
+        selectedAdaptations={selectedAdaptations}
+        memberLabels={result.memberLabels}
+        labels={labels}
+        onSelectDish={setSelectedId}
+        onTabKeyDown={handleTabKeyDown}
+        {...(onRegenerateSelectedDish !== undefined
+          ? { onRegenerateSelectedDish, regenerateSelectedDishDisabled }
+          : {})}
+        canConfirmLabel={actions !== undefined && actions.onConfirmLabel !== undefined}
+        confirmingId={confirmingId}
+        busy={busy}
+        onConfirmLabel={(confirmationId) => {
+          void handleConfirmLabel(confirmationId);
+        }}
+      />
 
       <section aria-labelledby="pantry-heading" className="menu-result-card">
         <h2 id="pantry-heading" className="menu-result-section-title">
           冷蔵庫食材の使い方
         </h2>
         {menu.pantryUsage.length === 0 ? (
-          <p className="mt-2">今回選んだ冷蔵庫食材はありません。</p>
+          <p className="menu-result-section-lead">今回選んだ冷蔵庫食材はありません。</p>
         ) : (
-          <ul className="mt-2 space-y-3">
+          <ul className="menu-result-pantry-list">
             {menu.pantryUsage.map((item) => {
               // PANTRY-I1 / design §10.3: 使用料理（使用先）を dishIds から組み立てる
               const dishNames =
@@ -638,7 +407,7 @@ export function MenuResult({
                       .filter((name): name is string => name !== undefined && name.trim() !== "")
                   : [];
               return (
-                <li key={item.selectionId} className="rounded-xl border p-3">
+                <li key={item.selectionId} className="menu-result-pantry-item">
                   <strong>{item.pantryItemName}</strong>
                   {item.usageStatus === "used" ? (
                     <>
@@ -672,6 +441,7 @@ export function MenuResult({
           <dialog
             ref={postCookDialogRef}
             aria-labelledby={postCookTitleId}
+            aria-modal="true"
             onCancel={(event) => {
               // Escape / 背面クリックの native close を止め、親の close に委ねる
               event.preventDefault();
@@ -682,35 +452,34 @@ export function MenuResult({
               setRemainderUnit("");
               onPostCookClose?.();
             }}
-            className="m-auto max-h-[min(90vh,40rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-2xl border bg-white p-5 shadow-lg"
+            className="menu-result-dialog"
           >
-            <div className="stack gap-4">
-              <h2 id={postCookTitleId} className="text-xl font-bold">
+            <Stack gap={4}>
+              <h2 id={postCookTitleId} className="menu-result-dialog-title">
                 使った食材の在庫を更新
               </h2>
-              <p className="text-sm text-ink-muted">
+              <p className="menu-result-dialog-lead">
                 作り終わったら、使った食材を「使い切った」か「まだある」で記録します。AIが自動では減らしません。
               </p>
               {conflictMessage !== null && (
-                <p role="alert" className="rounded-xl border border-amber-700 bg-amber-50 p-3">
+                <p role="alert" className="menu-result-dialog-alert">
                   {conflictMessage}
                 </p>
               )}
-              <ul className="space-y-4">
+              <ul className="menu-result-post-cook-list">
                 {result.pantryPostCookTargets.map((target) => {
                   const isDeleted = deletedSelectionIds.has(target.selectionId);
                   const live = target.currentPantryRow;
                   return (
-                    <li key={target.selectionId} className="rounded-xl border p-3">
+                    <li key={target.selectionId} className="menu-result-post-cook-item">
                       <strong>{target.pantryItemName}</strong>
                       {isDeleted || live === null || target.pantryItemId === null ? (
-                        <p className="mt-1">冷蔵庫から削除済み</p>
+                        <p className="menu-result-post-cook-deleted">冷蔵庫から削除済み</p>
                       ) : (
                         <>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+                          <div className="menu-result-post-cook-actions">
+                            <Button
+                              variant="secondary"
                               disabled={busy}
                               onClick={() => {
                                 setDeletePendingId(target.selectionId);
@@ -718,10 +487,9 @@ export function MenuResult({
                               }}
                             >
                               使い切った
-                            </button>
-                            <button
-                              type="button"
-                              className="min-h-11 min-w-11 rounded-lg border-2 border-terracotta-700 px-4 font-semibold"
+                            </Button>
+                            <Button
+                              variant="secondary"
                               disabled={busy}
                               onClick={() => {
                                 setRemainderTargetId(target.selectionId);
@@ -729,41 +497,39 @@ export function MenuResult({
                               }}
                             >
                               まだある
-                            </button>
+                            </Button>
                           </div>
                           {deletePendingId === target.selectionId && (
-                            <div className="mt-3 rounded-lg bg-canvas p-3">
+                            <div className="menu-result-post-cook-confirm">
                               <p>この食材を冷蔵庫から削除しますか？</p>
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
+                              <div className="menu-result-post-cook-confirm-actions">
+                                <Button
+                                  variant="primary"
                                   disabled={busy}
                                   onClick={() => {
                                     void handleDeleteConfirm(target);
                                   }}
                                 >
                                   削除する
-                                </button>
-                                <button
-                                  type="button"
-                                  className="min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
+                                </Button>
+                                <Button
+                                  variant="secondary"
                                   disabled={busy}
                                   onClick={() => {
                                     setDeletePendingId(null);
                                   }}
                                 >
                                   やめる
-                                </button>
+                                </Button>
                               </div>
                             </div>
                           )}
                           {remainderTargetId === target.selectionId && (
-                            <div className="mt-3 space-y-2 rounded-lg bg-canvas p-3">
-                              <label className="block">
+                            <div className="menu-result-remainder-form">
+                              <label className="menu-result-field">
                                 残りの分量（任意）
                                 <input
-                                  className="mt-1 min-h-11 w-full rounded border px-2"
+                                  className="menu-result-field-input"
                                   inputMode="decimal"
                                   value={remainderQty}
                                   onChange={(event) => {
@@ -771,49 +537,48 @@ export function MenuResult({
                                   }}
                                 />
                               </label>
-                              <label className="block">
+                              <label className="menu-result-field">
                                 単位
                                 <input
-                                  className="mt-1 min-h-11 w-full rounded border px-2"
+                                  className="menu-result-field-input"
                                   value={remainderUnit}
                                   onChange={(event) => {
                                     setRemainderUnit(event.target.value);
                                   }}
                                 />
                               </label>
-                              <button
-                                type="button"
-                                className="min-h-11 min-w-11 rounded-lg bg-terracotta-700 px-4 font-semibold text-white"
+                              <Button
+                                variant="primary"
                                 disabled={busy}
                                 onClick={() => {
                                   void handleUpdateRemainder(target);
                                 }}
                               >
                                 分量を保存
-                              </button>
+                              </Button>
                             </div>
                           )}
                         </>
                       )}
                       {undo?.selectionId === target.selectionId && (
-                        <button
-                          type="button"
-                          className="mt-2 min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
-                          disabled={busy}
-                          onClick={() => {
-                            void handleUndo();
-                          }}
-                        >
-                          元に戻す
-                        </button>
+                        <div className="menu-result-undo">
+                          <Button
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => {
+                              void handleUndo();
+                            }}
+                          >
+                            元に戻す
+                          </Button>
+                        </div>
                       )}
                     </li>
                   );
                 })}
               </ul>
-              <button
-                type="button"
-                className="min-h-11 min-w-11 rounded-lg border px-4 font-semibold"
+              <Button
+                variant="secondary"
                 disabled={busy}
                 onClick={() => {
                   setDeletePendingId(null);
@@ -824,8 +589,8 @@ export function MenuResult({
                 }}
               >
                 閉じる
-              </button>
-            </div>
+              </Button>
+            </Stack>
           </dialog>
         )}
     </div>

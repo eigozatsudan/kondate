@@ -15,6 +15,7 @@ import {
   clearPendingGenerationMeta,
   savePendingGenerationMeta,
 } from "../model/pending-generation-meta";
+import { GENERATION_PROGRESS_STAGES } from "../model/progress-stages";
 import { GenerationStatusPanel } from "./generation-status-panel";
 
 const getUsageTodayMock = vi.hoisted(() => vi.fn());
@@ -580,6 +581,49 @@ describe("GenerationStatusPanel", () => {
       vi.advanceTimersByTime(1_000);
     });
     expect(screen.getByRole("status")).toHaveTextContent("献立案を用意しています");
+    expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
+  });
+
+  it("exposes the total stage count so progress can be rendered", () => {
+    // 段階の総数は GENERATION_PROGRESS_STAGES の length（5）と一致し続ける必要がある。
+    // 表示側が独自の定数を持つと段階表の変更に追随できなくなる。
+    expect(GENERATION_PROGRESS_STAGES).toHaveLength(5);
+  });
+
+  it("renders a progress meter reflecting the current stage while submitting", () => {
+    // data-progress-stage は 0 始まりの index のまま status に残す。
+    // progressbar の aria-valuenow は人間向けに 1 始まり（index + 1）。
+    render(<GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />);
+    act(() => {
+      vi.setSystemTime(new Date(NOW.getTime() + 10_000));
+      vi.advanceTimersByTime(1_000);
+    });
+    const meter = screen.getByRole("progressbar", { name: "献立作成の進み具合" });
+    expect(meter).toHaveAttribute("aria-valuenow", "3");
+    expect(meter).toHaveAttribute("aria-valuemin", "1");
+    expect(meter).toHaveAttribute("aria-valuemax", "5");
+    // status の data-progress-stage 契約は 0-based のまま
+    expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
+  });
+
+  it("renders a progress meter while processing (same contract as submitting)", () => {
+    // 長時間待ちの本体は processing。submitting だけの契約だと削除退行が緑のまま残る。
+    const processingData: Extract<GenerationStatusData, { status: "processing" }> = {
+      status: "processing",
+      idempotencyKey: KEY,
+      requestId: REQUEST_ID,
+      startedAt: new Date(NOW.getTime() - 10_000).toISOString(),
+      quota,
+    };
+    render(
+      <GenerationStatusPanel
+        state={{ phase: "processing", data: processingData, effect: "poll" }}
+      />,
+    );
+    const meter = screen.getByRole("progressbar", { name: "献立作成の進み具合" });
+    expect(meter).toHaveAttribute("aria-valuenow", "3");
+    expect(meter).toHaveAttribute("aria-valuemin", "1");
+    expect(meter).toHaveAttribute("aria-valuemax", "5");
     expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "2");
   });
 

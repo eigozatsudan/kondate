@@ -96,6 +96,24 @@ UI は破綻していないが機能最低限で、「使いやすい」「使�
 白背景に白文字となり操作不能）を受けて作られたガードである
 （`src/styles.css:26-34`、`src/styles.theme.test.ts:5-10`）。無力化は許されない。
 
+#### `mobile-accessibility.spec.ts` の唯一の例外（Phase 4 のみ）
+
+Phase 4 は `/planner` の初期表示をウィザード step1 からホームに変える。同 spec は
+ナビゲーションヘルパを**ファイル内に持つ**（`:54-124`）ため、これを一切変えられないと
+Phase 4 は実行不能になる。
+
+そこで **Phase 4 に限り**、次の 2 種類の変更のみを人間のレビュー付きで認める。
+
+1. **アサーションを含まない `goto` 行の差し替え**（`:64` の `page.goto("/planner")`）
+2. **既存アサーションの直前へのナビゲーション行の挿入**（`:108` の
+   `expect(heading "1. 食事")` の前にホーム経由のホップを 1 行足す）
+
+**認めないもの**: 既存 `expect` の書き換え・削除、`assertMajorActionHeights` の期待件数の
+変更、44px / 320px アサーション本体への一切の変更。
+
+構造上この切り分けが可能であることは検証済み（`:64` はアサーションを含まない純粋な
+`goto`、`:108` は 1 行挿入で既存アサーションが 1 文字も変わらない）。
+
 ### 4.2 CSP：inline style 禁止
 
 `scripts/csp-headers.mjs:12` の `CSP_STATIC_DIRECTIVES` は `style-src 'self'` であり、
@@ -122,8 +140,29 @@ UI は破綻していないが機能最低限で、「使いやすい」「使�
 .app-section  :root
 ```
 
-加えて `body|button|a|input|select|textarea` を要素トークンとして含むセレクタも
-保護対象になる。
+加えて `touchesProtectedContract`（`:851-856`）は、次の正規表現に一致するセレクタも
+保護対象にする。
+
+```js
+/(?:^|[\s>+~,(])(?:body|button|a|input|select|textarea)(?=$|[\s>+~,.#:[\]()])/u
+```
+
+**これは「素の要素セレクタ」だけの話ではない。新規 `.ui-*` クラス配下の子孫要素
+セレクタも同じく保護対象になる。** 実測:
+
+| セレクタ | 保護対象か |
+| --- | --- |
+| `.ui-prose a` | **はい（そのままでは書けない）** |
+| `.ui-card button` | **はい** |
+| `.ui-list > a` | **はい** |
+| `.ui-card a:hover` | **はい** |
+| `.ui-btn` | いいえ |
+| `.ui-badge` | いいえ |
+
+「温かいエディトリアル」で本文中のリンクや操作要素を組む場合、`.ui-prose a { … }` は
+最も自然な書き方だが、**ここで必ず落ちる**。原因をクラス名断片と誤診しやすい。
+回避策は (a) 要素セレクタを使わずリンク側にもクラスを振る（`.ui-prose-link`）か、
+(b) `allowedProtectedSelectors` に理由コメント付きで追記するかのいずれか。
 
 **帰結**: 新規 CSS クラス名にこれらの文字列を含めてはならない。含む場合は
 `allowedProtectedSelectors` へ追記し、追記理由を日本語コメントで残す。
@@ -137,19 +176,73 @@ UI は破綻していないが機能最低限で、「使いやすい」「使�
 
 ### 4.5 モーション
 
-`unexpectedMotionRules` は、`animation` / `transition` を持つルールのうち代表 DOM に
-`element.matches()` するものを、`.wizard-transition` の以下 2 パターン**以外すべて不正**とする。
+制約の所在は「ウィザード配下かどうか」という**場所**ではなく、**セレクタの同一性**である。
 
-- `.wizard-transition { animation: wizard-enter 180ms ease-out }`
-- `@media (prefers-reduced-motion: reduce) { .wizard-transition { animation: none } }`
+`unexpectedMotionRules`（`src/styles.contrast.test.ts:915-953`）は、`animation` /
+`transition` を持つルールのうち
+`selector.includes("wizard-transition") || selectorMatchesRepresentative(selector)` に
+該当するものだけを検査する。`representativeElements()`（`:955-975`）が構築する代表 DOM は
+`.guided-planner-theme` を root とし、`.wizard-*` / `.choice-card` / `.progress-*` /
+`.inline-notice*` / `.review-row*` / `.primary-button` と素の要素セレクタ
+（`button` / `h1` / `p` / `div` / `header` / `footer` / `section` / `main` 等）のみを含む。
 
-**帰結**: `*, *::before, *::after { animation: none !important }` のような**グローバルな
-reduced-motion 単一ルールは書けない**（`*` は代表 DOM に一致し、保護セレクタ上の
-`!important` も別途不正）。既存の 3 箇所（`src/styles.css:359` / `:794` / `:2056`）が
-示す通り、**コンポーネント単位で `animation: none` を宣言し、必要なら allowlist に
-追記する**パターンを踏襲する。
+**帰結（実測で確認済み）:**
 
-### 4.6 テストのロケート方式
+- **書けないもの**: `*, *::before, *::after` のようなグローバルセレクタ、素の要素セレクタ、
+  および上記の既存クラスに対するモーション。`*` の reduced-motion 一括リセットを追加すると
+  `unexpectedMotionRules` と `unexpectedRepresentativeOverrides` の 2 つが落ちる。
+- **書けるもの**: `.ui-*` / `.gen-*` のような**新規クラス名**に対するモーション。
+  `.ui-btn { transition }` / `.ui-skeleton__line { animation }` / `.gen-progress-step
+  { transition }` と `@keyframes ui-shimmer`、およびそれぞれの
+  `@media (prefers-reduced-motion: reduce)` ペアを追加した状態で全テストが緑になることを
+  実測で確認している。`unexpectedKeyframesRules` は `wizard-enter` 以外の keyframes を見ない。
+
+**したがって**: グローバル一括リセットが書けない以上、**新規プリミティブには
+コンポーネント単位の `prefers-reduced-motion` ペアを必ずセットで書く**。既存の 3 箇所
+（`src/styles.css:359` / `:794` / `:2056`）がそのパターンである。
+
+### 4.6 凍結ガードは 2 つある。意味論が違うので混同しないこと
+
+`src/styles.contrast.test.ts` には**性質の異なる凍結ガードが 2 つ**ある。これを 1 つと
+誤認すると、Phase 0 の最初のタスク（`:root` へのトークン追加）が禁止事項に見えて
+着手できなくなる。
+
+| 定数 | 行 | キー数 | 検査 | 宣言の追加 |
+| --- | --- | --- | --- | --- |
+| `taskRuleDeclarations` | `:370-687` | **66** | `hasExactDeclarations`（`:816`） | **落ちる** |
+| `globalRuleDeclarations` | `:689-814` | **17** | `hasRequiredDeclarations`（`:835`、`:906` で使用） | **通る（部分集合検査）** |
+
+**`taskRuleDeclarations`（66 セレクタ、宣言数の完全一致）**
+
+全件がウィザード／guided-planner／デザインシステム系（`.guided-planner-theme *` /
+`.wizard-*` / `.choice-card*` / `.progress-*` / `.inline-notice*` / `.review-row*` /
+`.primary-button` / `.field*` / `.app-section`）。`hasExactDeclarations` が
+`declarations.size === canonicalExpected.size` を要求するため、**宣言の追加も削除も落ちる**。
+
+`allowedProtectedSelectors` への追記では回復しない。`unexpectedProtectedSelectors` は
+`taskRuleDeclarations[selector]` を先に引き、存在すれば `hasExactDeclarations` を要求する。
+実測では、既に allowlist に載っている `.wizard-title`（`:324`）に `letter-spacing` を
+1 行追加しただけで落ちた。回復には `taskRuleDeclarations` 本体の書き換えが必要で、
+それは**変更禁止テストファイルの編集**にあたる。
+
+**`globalRuleDeclarations`（17 セレクタ、部分集合検査）**
+
+`*` / `:root` / `html, body, #root` / `body` / `button, a, input, select, textarea` /
+`.primary-button` 系 / `.secondary-button` / `.text-button` / `.field` 系 / `.app-section`。
+`hasRequiredDeclarations` は「期待した宣言がすべて存在するか」だけを見るので、
+**宣言の追加は通る**。Phase 0 の `:root` へのデザイントークン追加はここに該当し、
+禁止されていない。
+
+**帰結**: 触ってはならないのは `taskRuleDeclarations` の 66 セレクタ**だけ**。
+見た目を変えたい場合は、既存セレクタを触らず**新規 `.ui-*` セレクタ側で表現する**。
+
+**注意（`allowedProtectedSelectors` の正しい使い方）**: 上記は
+「`taskRuleDeclarations` にキーがあるセレクタ」の話である。**新規セレクタが §4.3 の
+保護断片や要素トークンに触れてしまった場合は、`allowedProtectedSelectors` への追記が
+唯一かつ正規の回復手段**であり、禁止されていない（追記理由を日本語コメントで残すこと）。
+この 2 つを混同して「allowlist は使えない」と一般化しないこと。
+
+### 4.7 テストのロケート方式
 
 - e2e は `getByRole` / `getByText` に依存し、`getByTestId` は **0 件**。見出し文言・
   ボタン名の変更は直ちに e2e を割る。
@@ -159,7 +252,7 @@ reduced-motion 単一ルールは書けない**（`*` は代表 DOM に一致し
   ごとに期待件数を `toHaveCount` で固定**する。ボタンの追加・削除・改名が直撃する。
 - 視覚回帰の仕組みは存在しない（`toHaveScreenshot` / `toMatchSnapshot` が 0 件）。
 
-### 4.7 待ち時間の段階表
+### 4.8 待ち時間の段階表
 
 `src/features/generation/model/progress-stages.ts` の
 `GENERATION_PROGRESS_STAGES` は 5 段（`afterMs` = 0 / 3,000 / 8,000 / 30,000 / 45,000）。
@@ -169,7 +262,7 @@ reduced-motion 単一ルールは書けない**（`*` は代表 DOM に一致し
 あってサーバ工程と一致しないため、**8 秒帯で「AI に聞いている」と断定してはならない**。
 断定するとユーザーが誤認して pending を破棄する既知の不具合を誘発する。
 
-### 4.8 所有境界（CLAUDE.md より）
+### 4.9 所有境界（CLAUDE.md より）
 
 - `src/features` はブラウザ専用。`netlify/functions` はサーバ専用。
 - ブラウザから `@shared/safety/*` を import してはならない。`@shared/safety-pure/*` のみ。
@@ -209,7 +302,7 @@ reduced-motion 単一ルールは書けない**（`*` は代表 DOM に一致し
 | `Stack` | 縦方向の間隔。`gap` を prop で持つ |
 | `Inset` | 内側余白 |
 | `PageHeader` | 明朝ヒーロー見出し＋補足文 |
-| `Button` | `variant`（`primary` / `secondary` / `ghost`）× `size`。44×44 px 下限を型と CSS の双方で保証 |
+| `Button` | `variant`（`primary` / `secondary` / `ghost`）× `size`。44×44 px 下限を CSS で保証 |
 | `Skeleton` | 読み込み中のプレースホルダ |
 | `EmptyState` | 空状態 |
 | `Badge` | ラベル |
@@ -218,8 +311,30 @@ reduced-motion 単一ルールは書けない**（`*` は代表 DOM に一致し
 
 - 可変 prop は**列挙済み固定クラスへのマップのみ**（§4.2）。
 - 新規クラス名は §4.3 の断片を含まない。
-- 色は `var(--…)` 参照のみ（§4.4）。
-- モーションはコンポーネント単位で宣言（§4.5）。
+- 色は `var(--…)` 参照のみ（§4.4）。パレット色を literal hex で書くと
+  `findUnscopedDesignColorLeaks` が落ちる（実測で確認済み）。
+- モーションはコンポーネント単位で `prefers-reduced-motion` ペアとセットで宣言（§4.5）。
+
+#### 既存 DOM 契約を表現できる API にすること（必須）
+
+プリミティブ API が既存画面の必須属性を落とすと、**型エラーにならないまま a11y が
+静かに退行する**。次を必ず満たすこと。
+
+- **`Button` は `ref` を受け取れること。** `ButtonHTMLAttributes` に `ref` は含まれず、
+  `Omit<ButtonHTMLAttributes<HTMLButtonElement>, "className">` では `ref` を渡すと
+  TS2322 になる（実測）。`Omit<ComponentPropsWithRef<"button">, "className">` を使う。
+  React 19 では `forwardRef` は不要で、`ref` を rest に含めて spread すればよい。
+  これが無いと `src/features/pantry/pantry-page.tsx:192-195` / `:231` のフォーカス復帰
+  契約が実装不能になる。
+- **`Stack` / `Inset` は `id` / `role` / `aria-label` / `aria-labelledby` を受け取り、
+  rest を spread すること。** TypeScript はハイフンを含む JSX 属性名を余剰プロパティ
+  検査から除外するため、`<Stack aria-label="…">` は**コンパイルを通り、実行時に黙って
+  消える**。`pantry-page.tsx:294` の `<ul aria-label="冷蔵庫の食材">` がこれに該当する。
+  本設計で最も検出しにくい退行経路であり、Phase 0 のテストで必ず固定する。
+- **`EmptyState` は見出しの `id` を出せること**（`titleId`）。
+  `pantry-page.tsx:286-287` の `<section aria-labelledby="pantry-empty-title">` を再現する。
+- **`Surface` の `as` に `"form"` を含めること。** `pantry-form.tsx:127` の
+  `<form className="card stack">` を表現するため。
 
 ### 5.3 影を導入しない
 
@@ -247,11 +362,33 @@ CSP `font-src 'self'` のため data: 不可）を伴うため、人間の承認
 `eslint.config.js` に、`src/features/**` の TSX における `className` 属性内の生 Tailwind
 ユーティリティ直書きを禁止するルールを追加する。
 
+**セレクタは子孫指定にすること。** `JSXAttribute[name.name='className'] > Literal` という
+**直下**指定では、次がすべて素通りする（実測）。
+
+| 記述 | 直下指定での検出 |
+| --- | --- |
+| `className="text-red-800"` | 検出する |
+| `className={"bg-terracotta-700"}` | **素通り** |
+| `` className={`stack ${on ? "bg-terracotta-700" : "p-4"}`} `` | **素通り** |
+| `className={on ? "text-amber-800" : "gap-4"}` | **素通り** |
+
+中括弧 1 組でルールを無効化できるということであり、これでは「裁量を安全にする唯一の
+機構」として機能しない。`src/features` には既に非リテラル `className={` が 11 箇所ある。
+
+したがって次の 2 本立てにする。
+
+- `JSXAttribute[name.name='className'] Literal[value=/…/]`（子孫）
+- `JSXAttribute[name.name='className'] TemplateElement[value.raw=/…/]`
+
 禁止対象は**配色・余白・レイアウト**のユーティリティに限定する:
 
-- 配色: `bg-*` / `text-<color>-*` / `border-<color>-*`
+- 配色: `bg-*` / `text-<color>-*` / `border-<color>-*`、および本リポジトリ独自の
+  `text-ink` / `text-ink-muted` / `text-white` / `text-canvas` / `text-line`
+  （それぞれ 14 / 7 / 6 箇所実在し、`-<数値>` を持たないため素朴な正規表現から漏れる）
 - 余白: `p*-*` / `m*-*` / `gap-*` / `space-*`
-- レイアウト: `flex` / `grid` / `items-*` / `justify-*` / `grid-cols-*`
+- レイアウト: `flex` / `flex-*` / `grid` / `grid-cols-*` / `items-*` / `justify-*` /
+  `w-*` / `rounded-*` / `absolute` / `fixed` / `sticky`
+  （`flex$` のような行末アンカーにすると `flex-col` / `flex-1` が漏れる）
 
 禁止しないもの（プリミティブでは表現しきれず、既存契約が依存するため）:
 
@@ -259,9 +396,23 @@ CSP `font-src 'self'` のため data: 不可）を伴うため、人間の承認
 - タイポグラフィ: `font-bold` / `type-small` 等のセマンティッククラス
 - `src/app/**` と `src/shared/ui/**`（プリミティブ自身の実装箇所）
 
+**ルール自体のテストを Phase 0 の成果物に含めること。** 上の表（検出する／素通りする
+記述の一覧）を fixture として固定し、CI で回す。ルールが壊れたことを検出できないなら、
+ルールがあることの保証にならない。
+
 既存 23 ファイルはフェーズ移行が済むまで例外リストに載せ、各フェーズ完了時に
-**そのフェーズの対象ファイルを例外リストから外す**。例外リストが空になることが本
-プロジェクトの完了条件のひとつ。
+**そのフェーズの対象ファイルを例外リストから外す**。
+
+**注意**: `src/features/pantry/` は現時点で違反ゼロである（`text-red-800` /
+`text-amber-800` は `className` 属性ではなく `expiryNotice` の戻り値文字列にあり、
+`className={notice.className}` 経由で適用される）。Phase 0 でこのルールが効くことを
+確認する際に「pantry でエラーが出ること」を期待してはならない。
+
+完了条件は「例外リストが空」ではなく、**フェーズ移行対象のディレクトリが 1 つも
+例外リストに残っていないこと**である（§6 の Phase 0〜4 が対象とする `pantry` /
+`planner` / `generation` / `menu-detail` / `history`）。`billing` / `household` /
+`shopping` などフェーズ対象外のディレクトリは、将来の再発防止のため例外に残したまま
+恒久除外とする。
 
 ### 5.6 旧セマンティッククラスの扱い
 
@@ -299,16 +450,47 @@ CSP `font-src 'self'` のため data: 不可）を伴うため、人間の承認
 
 ### Phase 1: ウィザード（献立条件入力）
 
-対象: `src/features/planner/components/*`、`src/shared/ui/wizard/*`
+対象: `src/features/planner/components/{audience,meal,cuisine,ingredient,review}-step.tsx`
 
-既に `wizard-frame` / `choice-card` / `progress-indicator` という部品分割が済んでおり、
-プリミティブが最初に効く場所。移行コストが最も低い。
+**`src/shared/ui/wizard/` は対象に含めない。** `WizardFrame` / `ChoiceCard` /
+`ProgressIndicator` / `ReviewRow` は `src` 配下で**参照ゼロの死コード**である（実測。
+`InlineNotice` のみ `household-onboarding-page.tsx` と
+`idea-menu-safety-notice.tsx` の 2 箇所で使われている）。実際のウィザードは各 step が
+自前でマークアップを持つ（例: `meal-step.tsx:118-137` が `.wizard-actions` と
+`.secondary-button` を直書き）。
+
+当初この「部品分割が済んでいる」ことを Phase 1 を先頭に置く根拠としていたが、事実誤認
+だった。それでも Phase 1 を先頭に置くのは、step ファイル群が独立性が高く、Phase 4 の
+ホーム化より波及が小さいためである。
+
+**ただし §4.6 の制約により、ウィザードの既存 CSS セレクタ（`.wizard-*` /
+`.choice-card` 等、`taskRuleDeclarations` の 66 件）は宣言単位で凍結されている。**
+見た目の変更は既存セレクタでは行えず、新規 `.ui-*` セレクタ側で表現する。
+Phase 1 の裁量はその範囲に限られる。
 
 意図: 1 画面 1 問。余白で問いを立てる。明朝の設問を大きく、選択肢は線のみのカードに。
 
+参照ゼロの `src/shared/ui/wizard/` 5 ファイルをどうするか（削除するか残すか）は、
+Phase 1 の冒頭で人間に確認する。
+
 ### Phase 2: 待ち時間体験
 
-対象: `src/features/generation/components/generation-status-panel.tsx`
+対象: `src/features/generation/` 配下全体。ESLint 例外を外す以上、次も含まれる。
+
+- `generation-status-panel.tsx`（本命）
+- `pages/generation-page.tsx` / `pages/menu-result-page.tsx`
+- **`components/menu-result.tsx`（833 行）**
+- **`components/idea-menu-safety-notice.tsx`（135 行）**
+
+後 2 者は当初の対象一覧から漏れていた。とくに `idea-menu-safety-notice.tsx` は
+**アレルギー非保証文言のコンポーネント**であり、同ファイル `:6-7` が
+「表示確認の記録完了＝食べて安全、と誤認しないよう…設計は保証表現（『安全です』
+『対応済み』等）を禁じる。平易化で保証寄りにしないこと」と明記している。
+**§6 Phase 3 の安全条項が Phase 2 にも同等に適用される。**
+
+また `menu-result.tsx:460` の sticky タブ列（`sticky top-0 z-10 flex … overflow-x-auto`）や
+`:516` の `grid-cols-[minmax(0,1fr)_minmax(0,45%)]` は `Surface` / `Stack` / `Inset` では
+表現できない。これらは**専用セマンティッククラス（`.menu-result-*`）へ退避してよい**。
 
 意図: 不安を埋める。段階の進行を視覚化し、`Skeleton` で結果の形を先に見せる。
 
@@ -352,6 +534,29 @@ CSP `font-src 'self'` のため data: 不可）を伴うため、人間の承認
 幅 **320 / 375 / 768 px** で対象画面のスクリーンショットを提出する。
 `AGENTS.md` §10 の「UI 変更にはスクリーンショットを添付」と整合する。
 
+**生成手順**: `./scripts/run-e2e.sh` はスクリーンショットを出力しない。実装エージェントは
+`e2e/` 配下に**恒久的でない撮影用スクリプト**を作り（`e2e/specs/` には置かない）、
+`page.setViewportSize({ width, height })` と `page.screenshot({ path })` で 3 幅を撮る。
+撮影スクリプトはコミットせず、生成された画像のみを提出物とする。
+
+#### Phase 0 で参照ビジュアルを先に承認する
+
+全 5 Phase を走らせてから「なんとなく違う」となる手戻りを避けるため、**Phase 0 の
+成果物に「参照ビジュアル 1 枚」を含める**。プリミティブだけで組んだ静的な見本ページ
+（冷蔵庫画面でよい）を 320 / 375 / 768 px で撮り、人間の承認を得てから Phase 1 に進む。
+
+#### 「エディトリアル」を測定可能にする
+
+「温かいエディトリアル」という語だけでは外部エージェントに再現性がない。各 Phase の
+「意図」に、次の形式で**数値の目安を 2〜3 個**添える。
+
+- 見出しと本文のサイズ比（例: 1 画面の主見出しは本文の 2 倍以上）
+- 1 画面あたりの罫線・枠線の本数上限
+- 面（`Surface`）の入れ子の深さ上限
+- セクション間の最小余白（`--space-*` のどの段以上か）
+
+数値は実装エージェントが提案し、Phase 0 の参照ビジュアル承認時に人間が確定させる。
+
 768 px を含めるのは、`src/styles.css` の `@media (min-width: 720px)` 配下
 （`:336` / `:429` / `:1465` / `:1524` / `:2099`）が現在どのテストからも検証されて
 いないため。`e2e/specs/mobile-accessibility.spec.ts` の実測幅は `[320, 375, 430]` に留まる。
@@ -364,7 +569,31 @@ CSP `font-src 'self'` のため data: 不可）を伴うため、人間の承認
 
 - テストの変更は**実装コミットとは別のコミット**に分離する。
 - 別コミットの diff を人間がレビューして初めて採用とする。
-- §4.1 の 4 本は対象外（そもそも変更禁止）。
+- §4.1 の 4 本は対象外（そもそも変更禁止。Phase 4 の例外は §4.1 に記載）。
+
+#### クラス名アサーションは全 Phase で必ず割れる
+
+`toHaveClass("primary-button")` や `document.querySelector(".gen-status-indicator")` の
+ような**実装クラス名に依存するアサーションが多数実在する**。実測（`src/**/*.test.ts(x)`）:
+`toHaveClass` 64、クラス指定の `querySelector` / `querySelectorAll` 22、`.className` への
+直接アサーション 9、`classList` 1。重複行を排除して 97 行。下表は代表例であり全件ではない。
+
+| ファイル:行 | アサーション | 割れる Phase |
+| --- | --- | --- |
+| `menu-result-page.test.tsx:293, 381` | `.gen-status-indicator` not null | Phase 2（Skeleton 置換で要素が消える） |
+| `menu-result-page.test.tsx:753, 789, 815` | `toHaveClass("primary-button")` | Phase 2 / 3 |
+| `planner-wizard.test.tsx:284, 287, 288, 344, 810` | `toHaveClass("wizard-action", "primary-button")` | Phase 1 |
+| `current-safety-summary.test.tsx:40` | `toHaveClass("secondary-button", "min-h-11")` | Phase 1 |
+| `pantry-page.test.tsx:183, 184, 204, 308` | `toHaveClass("pantry-card-text" / "pantry-form-title")` | Phase 0 |
+| `history-detail-page.test.tsx:453, 654` / `history-page.test.tsx:164` / `history-card.test.tsx:160` | 同種 | Phase 3 |
+
+**したがって各 Phase の「既存テストが緑」という受け入れ基準は、そのままでは偽である。**
+全 Phase について次を規律とする。
+
+- **クラス名・CSS セレクタに依存するアサーションの改訂は認める。** 別コミット・
+  コミット本文に「なぜその期待が古くなったか」を記載。
+- **`role` / アクセシブル名に依存するアサーションの改訂は認めない。** これが落ちたら
+  実装が契約を破っている。
 
 ### 7.4 レビュー体制
 
@@ -375,20 +604,31 @@ CSP `font-src 'self'` のため data: 不可）を伴うため、人間の承認
 ### 7.5 完了条件
 
 - Phase 0〜4 がすべて §7.1 を満たす。
-- §5.5 の ESLint 例外リストが空になる。
+- §5.5 の ESLint 例外リストに、フェーズ移行対象ディレクトリ（`pantry` / `planner` /
+  `generation` / `menu-detail` / `history`）が 1 つも残っていない。
 - 全フェーズのスクリーンショットについて人間の承認が得られている。
 
 ---
 
 ## 8. ロールバック
 
-フェーズ単位で revert 可能にする。各フェーズは以下のコミット粒度を守る。
+各フェーズは以下のコミット粒度を守る。
 
 1. 実装コミット（日本語 Conventional Commits）
 2. テスト追随コミット（あれば。§7.3）
 
-フェーズをまたぐ変更を 1 コミットに混ぜない。Phase 4 のみ導線を変えるため、問題が
-起きた場合の切り戻し先は Phase 3 完了時点となる。
+フェーズをまたぐ変更を 1 コミットに混ぜない。
+
+**ただし単一フェーズだけの revert は現実的に成立しない。** 理由は 2 つ。
+
+- `src/styles.css` は全フェーズが末尾に追記するため、Phase 3 だけを revert しようと
+  すると Phase 4 の追記と隣接ハンクで衝突する。
+- Phase 4 は実装と e2e が別コミットのため、実装だけを revert すると e2e が壊れたまま残る。
+
+**したがって実務上の切り戻し単位は「Phase N 以降をすべて戻す」である。**
+問題が Phase 3 で見つかったなら Phase 2 完了時点まで戻す。コミット粒度を守るのは、
+この「N 以降を全部戻す」を確実に実行できるようにするためであって、単一フェーズの
+抜き取りを可能にするためではない。
 
 ---
 

@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { Button } from "@/shared/ui/button";
+import { Stack } from "@/shared/ui/stack";
 import { InlineNotice } from "@/shared/ui/wizard/inline-notice";
 
 /**
@@ -30,6 +32,9 @@ export const IDEA_SAFETY_DETAILS_BUTTON_LABEL = "注意事項を見る";
  * idea 結果・履歴詳細の上部注意。
  * 設計 §5.4 / Plan 7 Step 11: 固定必須文言は常時表示。
  * AI 詳細とラベル免責の長文はダイアログで追加確認できる。
+ *
+ * ユーザー向け文言は一字一句変更しない（UI モダン化不変契約 0）。
+ * レイアウトのみプリミティブ / 意味クラスへ移行する。
  */
 export function IdeaMenuSafetyNotice() {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -54,13 +59,10 @@ export function IdeaMenuSafetyNotice() {
   return (
     <>
       <InlineNotice tone="notice" title="ご確認ください">
-        <div className="stack gap-3">
-          <div className="flex items-start gap-3">
+        <div className="idea-safety-notice-body">
+          <div className="idea-safety-notice-row">
             {/* 注意を惹く警告アイコン。装飾なので a11y ツリーには載せない */}
-            <span
-              className="mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-800"
-              aria-hidden="true"
-            >
+            <span className="idea-safety-notice-icon" aria-hidden="true">
               <svg
                 viewBox="0 0 24 24"
                 width="24"
@@ -77,20 +79,19 @@ export function IdeaMenuSafetyNotice() {
               </svg>
             </span>
             {/* 設計固定の必須2文は常時表示（ダイアログ内だけに閉じない） */}
-            <div className="stack min-w-0 gap-1 text-ink">
+            <div className="idea-safety-notice-mandatory">
               <p>家族条件を使用していません</p>
               <p>年齢・アレルギーへの適合は確認されていません</p>
             </div>
           </div>
-          <button
-            type="button"
-            className="min-h-11 w-full rounded-xl border-2 border-terracotta-700 px-4 font-semibold text-ink sm:w-auto"
+          <Button
+            variant="secondary"
             onClick={() => {
               setDetailsOpen(true);
             }}
           >
             {IDEA_SAFETY_DETAILS_BUTTON_LABEL}
-          </button>
+          </Button>
         </div>
       </InlineNotice>
 
@@ -101,34 +102,31 @@ export function IdeaMenuSafetyNotice() {
       <dialog
         ref={dialogRef}
         aria-labelledby={titleId}
+        aria-modal="true"
         onCancel={(event) => {
           event.preventDefault();
           closeDetails();
         }}
-        className="m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl border bg-white p-5 shadow-lg"
+        className="idea-safety-dialog"
       >
-        <div className="stack gap-4">
-          <h2 id={titleId} className="text-lg font-bold">
+        <Stack gap={4}>
+          <h2 id={titleId} className="idea-safety-dialog-title">
             この献立はアイデアとして作成しました
           </h2>
-          <div className="stack gap-2">
+          <div className="idea-safety-dialog-body">
             <p>家族条件を使用していません</p>
             <p>年齢・アレルギーへの適合は確認されていません</p>
             <p>
               <strong>AIが作成した献立です。</strong>{" "}
               内容、加熱状態、家庭内での混入を調理前に確認してください。
             </p>
-            <p className="font-semibold">{MENU_LABEL_DISCLAIMER}</p>
+            <p className="idea-safety-dialog-emphasis">{MENU_LABEL_DISCLAIMER}</p>
             <p className="type-small">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
           </div>
-          <button
-            type="button"
-            className="min-h-11 rounded-xl bg-terracotta-700 px-4 font-semibold text-white"
-            onClick={closeDetails}
-          >
+          <Button variant="primary" onClick={closeDetails}>
             閉じる
-          </button>
-        </div>
+          </Button>
+        </Stack>
       </dialog>
     </>
   );

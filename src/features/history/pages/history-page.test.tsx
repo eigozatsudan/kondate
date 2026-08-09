@@ -161,7 +161,8 @@ describe("HistoryPage", () => {
     expect(screen.getByRole("heading", { name: "作った献立" })).toBeVisible();
     const cta = screen.getByRole("link", { name: "献立を作る" });
     expect(cta).toHaveAttribute("href", "/planner");
-    expect(cta.className).toMatch(/primary-button/);
+    // primary-button → button-link--primary（Link は Button 化しない契約）
+    expect(cta.className).toMatch(/button-link--primary/);
   });
 
   it("shows a heading and a retry control when loading fails", async () => {
@@ -178,7 +179,8 @@ describe("HistoryPage", () => {
     renderConnectedHistoryPage();
 
     const favorite = await screen.findByRole("button", { name: "お気に入りを外す" });
-    expect(favorite.className).toMatch(/min-h-11/);
+    // 44px は min-h-11 ではなく共有 Button（.ui-btn min-height: 44px）が保証する
+    expect(favorite).toHaveClass("ui-btn");
     await user.click(favorite);
     await waitFor(() => {
       expect(api.setMenuFavorite).toHaveBeenCalledWith("menu-2", false);

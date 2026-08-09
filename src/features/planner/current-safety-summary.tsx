@@ -1,4 +1,7 @@
 import { Link } from "react-router";
+import { Button } from "@/shared/ui/button";
+import { Inset, Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 import { memberSafetyText, type PlannerSafetyMember } from "./planner-safety-member";
 
 /** 安全条件サマリー共通の免責（audience empty / selected / review で単一ソース）。 */
@@ -29,40 +32,39 @@ export function CurrentSafetySummary({
 }) {
   const isEmpty = members.length === 0;
   return (
-    <section className="card stack" aria-labelledby="current-safety-title">
-      <h2 id="current-safety-title">現在の家族・安全条件</h2>
-      {isEmpty ? (
-        <p>{CURRENT_SAFETY_EMPTY_BODY}</p>
-      ) : (
-        members.map((member) => (
-          <div key={member.id}>
-            <strong>{member.displayName}</strong>
-            <p>{memberSafetyText(member)}</p>
-            {member.blockedReason !== null && <p role="alert">{member.blockedReason}</p>}
-          </div>
-        ))
-      )}
-      {onOpenSettings !== undefined ? (
-        <button
-          className="secondary-button min-h-11"
-          type="button"
-          disabled={disabled}
-          onClick={onOpenSettings}
-        >
-          家族設定を変更
-        </button>
-      ) : // 単体利用・テスト向けフォールバック。本番 route は onOpenSettings を渡す（P5）。
-      // Link は保存中ガードを持たないため disabled 時は visually 抑止する。
-      disabled ? (
-        <button className="secondary-button min-h-11" type="button" disabled>
-          家族設定を変更
-        </button>
-      ) : (
-        <Link className="secondary-button min-h-11" to="/settings">
-          家族設定を変更
-        </Link>
-      )}
-      <p>{CURRENT_SAFETY_DISCLAIMER}</p>
-    </section>
+    <Surface as="section" aria-labelledby="current-safety-title">
+      <Inset pad={4}>
+        <Stack gap={3}>
+          <h2 id="current-safety-title">現在の家族・安全条件</h2>
+          {isEmpty ? (
+            <p>{CURRENT_SAFETY_EMPTY_BODY}</p>
+          ) : (
+            members.map((member) => (
+              <div key={member.id}>
+                <strong>{member.displayName}</strong>
+                <p>{memberSafetyText(member)}</p>
+                {member.blockedReason !== null && <p role="alert">{member.blockedReason}</p>}
+              </div>
+            ))
+          )}
+          {onOpenSettings !== undefined ? (
+            <Button variant="secondary" disabled={disabled} onClick={onOpenSettings}>
+              家族設定を変更
+            </Button>
+          ) : // 単体利用・テスト向けフォールバック。本番 route は onOpenSettings を渡す（P5）。
+          // Link は保存中ガードを持たないため disabled 時は visually 抑止する。
+          disabled ? (
+            <Button variant="secondary" disabled>
+              家族設定を変更
+            </Button>
+          ) : (
+            <Link className="secondary-button min-h-11" to="/settings">
+              家族設定を変更
+            </Link>
+          )}
+          <p>{CURRENT_SAFETY_DISCLAIMER}</p>
+        </Stack>
+      </Inset>
+    </Surface>
   );
 }

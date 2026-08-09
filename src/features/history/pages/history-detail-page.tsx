@@ -11,6 +11,10 @@ import {
   type HistoryDetailRevalidationView,
 } from "@/features/menu-detail/menu-detail-types";
 import { useShoppingCreateIntent } from "@/features/shopping/hooks/use-shopping-create-intent";
+import { Skeleton } from "@/shared/ui/feedback";
+import { PageHeader } from "@/shared/ui/page-header";
+import { Inset, Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 
 export type { HistoryDetailRevalidationView };
 
@@ -48,32 +52,33 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
 
   if (menuQuery.isPending) {
     return (
-      <main className="page-frame min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
-        <p className="rounded-xl border border-amber-700 p-3 font-semibold">
-          {MENU_LABEL_DISCLAIMER}
-        </p>
-        <p role="status" className="mt-4">
-          献立を読み込んでいます
-        </p>
+      <main className="page-frame menu-detail-page">
+        <Stack gap={4}>
+          <Surface tone="notice">
+            <Inset pad={5}>
+              <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
+            </Inset>
+          </Surface>
+          <Skeleton label="献立を読み込んでいます" lines={3} />
+        </Stack>
       </main>
     );
   }
 
   if (menuQuery.isError) {
     return (
-      <main className="page-frame min-w-0 overflow-x-hidden break-words text-ink [overflow-wrap:anywhere]">
-        <p className="rounded-xl border border-amber-700 p-3 font-semibold">
-          {MENU_LABEL_DISCLAIMER}
-        </p>
-        <div className="mt-4 stack gap-2">
-          <h1>献立を表示できません</h1>
-          <Link
-            to="/history"
-            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg px-3 font-semibold"
-          >
+      <main className="page-frame menu-detail-page">
+        <Stack gap={4}>
+          <Surface tone="notice">
+            <Inset pad={5}>
+              <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
+            </Inset>
+          </Surface>
+          <PageHeader title="献立を表示できません" />
+          <Link to="/history" className="button-link">
             履歴へ戻る
           </Link>
-        </div>
+        </Stack>
       </main>
     );
   }

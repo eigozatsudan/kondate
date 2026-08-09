@@ -7,6 +7,8 @@ import type { TargetMode } from "@shared/contracts/planner";
 import { formatPlanQuotaCopy } from "@shared/copy/plan-tier";
 import type { PlanCode } from "@shared/contracts/plan-quota";
 import { PlusHardLimitCta } from "@/features/billing/plus-cta";
+import { Button } from "@/shared/ui/button";
+import { Stack } from "@/shared/ui/stack";
 import type { ExpiredPantryForRegen } from "../model/expired-pantry-for-regen";
 
 const allReasons = [
@@ -220,145 +222,151 @@ export function RegenerationSheet({
         if (form.formState.isSubmitting) return;
         onCancel();
       }}
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl border bg-white p-5 shadow-lg"
+      className="history-dialog"
     >
-      <form onSubmit={(event) => void submit(event)} className="stack gap-4">
-        <fieldset className="stack gap-2">
-          <legend id={titleId} className="text-lg font-bold">
-            どのように変えますか？
-          </legend>
-          {reasons.map(([value, label]) => (
-            <label key={value} className="flex min-h-11 items-center gap-3">
-              <input type="radio" value={value} {...form.register("changeReason")} />
-              {label}
-            </label>
-          ))}
-          {form.formState.errors.changeReason?.message !== undefined && (
-            <span role="alert" className="error-message">
-              {form.formState.errors.changeReason.message}
-            </span>
-          )}
-        </fieldset>
-        {selectedReason === "custom" ? (
-          <label className="mt-2 block">
-            どのように変えたいですか？
-            <textarea
-              className="mt-2 min-h-24 w-full rounded-xl border p-3"
-              {...form.register("changeReasonCustom")}
-            />
-            {/* HR-I4: 自由記述に個人名を入れない注意（設計 §3） */}
-            <p className="type-small mt-1">
-              個人名や連絡先は書かないでください。献立の変えたい点だけ書いてください。
-            </p>
-            {form.formState.errors.changeReasonCustom?.message !== undefined && (
-              <span role="alert" className="error-message">
-                {form.formState.errors.changeReasonCustom.message}
-              </span>
-            )}
-          </label>
-        ) : null}
-        {expiredPantryItems.length > 0 ? (
-          <fieldset className="stack gap-2">
-            <legend className="font-semibold">期限を過ぎた食材の確認</legend>
-            <p className="type-small">
-              入力した期限を過ぎています。実物の状態を確認できた食材だけチェックしてください（可食性の保証ではありません）。
-            </p>
-            {expiredPantryItems.map((item) => (
-              <label key={item.pantryItemId} className="flex min-h-11 items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={confirmedExpiredIds.has(item.pantryItemId)}
-                  onChange={(event) => {
-                    setConfirmedExpiredIds((current) => {
-                      const next = new Set(current);
-                      if (event.target.checked) next.add(item.pantryItemId);
-                      else next.delete(item.pantryItemId);
-                      return next;
-                    });
-                    setExpiredConfirmError(null);
-                  }}
-                />
-                <span>{item.name}</span>
-              </label>
-            ))}
-            {expiredConfirmError !== null ? (
-              <span role="alert" className="error-message">
-                {expiredConfirmError}
-              </span>
-            ) : null}
-          </fieldset>
-        ) : null}
-        {usage.loading ? (
-          <p role="status">本日の作成回数を確認しています…</p>
-        ) : usage.error ? (
-          <p role="alert" className="error-message">
-            本日の作成回数を確認できませんでした。通信を確認してください。
-          </p>
-        ) : (
-          <div className="stack gap-1">
-            <p>
-              {formatPlanQuotaCopy(
-                usage.successRemaining === null
-                  ? "別の献立が完成した場合に1回使用します"
-                  : `別の献立が完成した場合に1回使用・現在残り${String(usage.successRemaining)}回`,
-                quotaPlan,
+      <form
+        onSubmit={(event) => {
+          void submit(event);
+        }}
+      >
+        <Stack gap={4}>
+          <fieldset className="history-regen-fieldset">
+            <legend id={titleId} className="history-dialog-title">
+              どのように変えますか？
+            </legend>
+            <Stack gap={2}>
+              {reasons.map(([value, label]) => (
+                <label key={value} className="history-regen-option min-h-11">
+                  <input type="radio" value={value} {...form.register("changeReason")} />
+                  {label}
+                </label>
+              ))}
+              {form.formState.errors.changeReason?.message !== undefined && (
+                <span role="alert" className="error-message">
+                  {form.formState.errors.changeReason.message}
+                </span>
               )}
+            </Stack>
+          </fieldset>
+          {selectedReason === "custom" ? (
+            <label className="history-regen-custom">
+              どのように変えたいですか？
+              <textarea
+                className="history-regen-textarea"
+                {...form.register("changeReasonCustom")}
+              />
+              {/* HR-I4: 自由記述に個人名を入れない注意（設計 §3） */}
+              <p className="type-small">
+                個人名や連絡先は書かないでください。献立の変えたい点だけ書いてください。
+              </p>
+              {form.formState.errors.changeReasonCustom?.message !== undefined && (
+                <span role="alert" className="error-message">
+                  {form.formState.errors.changeReasonCustom.message}
+                </span>
+              )}
+            </label>
+          ) : null}
+          {expiredPantryItems.length > 0 ? (
+            <fieldset className="history-regen-fieldset">
+              <legend className="history-regen-legend">期限を過ぎた食材の確認</legend>
+              <Stack gap={2}>
+                <p className="type-small">
+                  入力した期限を過ぎています。実物の状態を確認できた食材だけチェックしてください（可食性の保証ではありません）。
+                </p>
+                {expiredPantryItems.map((item) => (
+                  <label key={item.pantryItemId} className="history-regen-option min-h-11">
+                    <input
+                      type="checkbox"
+                      checked={confirmedExpiredIds.has(item.pantryItemId)}
+                      onChange={(event) => {
+                        setConfirmedExpiredIds((current) => {
+                          const next = new Set(current);
+                          if (event.target.checked) next.add(item.pantryItemId);
+                          else next.delete(item.pantryItemId);
+                          return next;
+                        });
+                        setExpiredConfirmError(null);
+                      }}
+                    />
+                    <span>{item.name}</span>
+                  </label>
+                ))}
+                {expiredConfirmError !== null ? (
+                  <span role="alert" className="error-message">
+                    {expiredConfirmError}
+                  </span>
+                ) : null}
+              </Stack>
+            </fieldset>
+          ) : null}
+          {usage.loading ? (
+            <p role="status">本日の作成回数を確認しています…</p>
+          ) : usage.error ? (
+            <p role="alert" className="error-message">
+              本日の作成回数を確認できませんでした。通信を確認してください。
             </p>
-            {quotaPlan === "free" && usage.successRemaining === 1 ? (
-              <p role="status">本日の無料回数が残り 1 回です</p>
-            ) : null}
-            {/* 案 A: attempt 常時残数行は出さない。0 / short ブロック時のみ行動文 */}
-            {successBlocked ? (
-              <p className="type-small" role="status">
+          ) : (
+            <Stack gap={1}>
+              <p>
                 {formatPlanQuotaCopy(
-                  "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+                  usage.successRemaining === null
+                    ? "別の献立が完成した場合に1回使用します"
+                    : `別の献立が完成した場合に1回使用・現在残り${String(usage.successRemaining)}回`,
                   quotaPlan,
                 )}
               </p>
-            ) : null}
-            {attemptsBlocked && !successBlocked ? (
-              <p className="type-small" role="status">
-                {formatPlanQuotaCopy(
-                  "今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。",
-                  quotaPlan,
-                )}
-              </p>
-            ) : null}
-            {shortWindowBlocked && usage.shortWindowRetryAt !== null ? (
-              <p className="type-small" role="status">
-                {formatPlanQuotaCopy(
-                  `しばらく続けて作成を試したため、${new Intl.DateTimeFormat("ja-JP", {
-                    timeZone: "Asia/Tokyo",
-                    dateStyle: "short",
-                    timeStyle: "short",
-                  }).format(new Date(usage.shortWindowRetryAt))}以降に再試行してください`,
-                  quotaPlan,
-                )}
-              </p>
-            ) : null}
-            {/* L10-1: Free 硬上限で Plus CTA */}
-            {quotaPlan === "free" && (successBlocked || attemptsBlocked) ? (
-              <PlusHardLimitCta />
-            ) : null}
+              {quotaPlan === "free" && usage.successRemaining === 1 ? (
+                <p role="status">本日の無料回数が残り 1 回です</p>
+              ) : null}
+              {/* 案 A: attempt 常時残数行は出さない。0 / short ブロック時のみ行動文 */}
+              {successBlocked ? (
+                <p className="type-small" role="status">
+                  {formatPlanQuotaCopy(
+                    "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+                    quotaPlan,
+                  )}
+                </p>
+              ) : null}
+              {attemptsBlocked && !successBlocked ? (
+                <p className="type-small" role="status">
+                  {formatPlanQuotaCopy(
+                    "今日は新しい献立の作成を受け付けられません。明日0:00（日本時間）以降にお試しください。",
+                    quotaPlan,
+                  )}
+                </p>
+              ) : null}
+              {shortWindowBlocked && usage.shortWindowRetryAt !== null ? (
+                <p className="type-small" role="status">
+                  {formatPlanQuotaCopy(
+                    `しばらく続けて作成を試したため、${new Intl.DateTimeFormat("ja-JP", {
+                      timeZone: "Asia/Tokyo",
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    }).format(new Date(usage.shortWindowRetryAt))}以降に再試行してください`,
+                    quotaPlan,
+                  )}
+                </p>
+              ) : null}
+              {/* L10-1: Free 硬上限で Plus CTA */}
+              {quotaPlan === "free" && (successBlocked || attemptsBlocked) ? (
+                <PlusHardLimitCta />
+              ) : null}
+            </Stack>
+          )}
+          <div className="history-regen-actions">
+            <Button type="submit" variant="primary" disabled={submitDisabled}>
+              別案を作る
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={form.formState.isSubmitting}
+              onClick={onCancel}
+            >
+              やめる
+            </Button>
           </div>
-        )}
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="min-h-11 rounded-xl bg-terracotta-700 px-4 font-semibold text-white"
-            type="submit"
-            disabled={submitDisabled}
-          >
-            別案を作る
-          </button>
-          <button
-            type="button"
-            className="min-h-11 rounded-xl border-2 border-terracotta-700 px-4 font-semibold"
-            disabled={form.formState.isSubmitting}
-            onClick={onCancel}
-          >
-            やめる
-          </button>
-        </div>
+        </Stack>
       </form>
     </dialog>
   );

@@ -58,6 +58,8 @@ const queryState = vi.hoisted(() => ({
   ownerBPending: false,
   privacyConsent: null as { user_id: string; notice_version: string } | null,
   privacyIsError: false,
+  /** useSearchParams の mock 用。例: "resume=review" */
+  search: "",
 }));
 
 const ownerBId = "72000000-0000-4000-8000-000000000002";
@@ -98,7 +100,7 @@ vi.mock("react-router", async (importOriginal) => {
     ...original,
     useNavigate: () => navigateMock,
     // Router 未 wrap の unit でも resume query を読めるようにする
-    useSearchParams: () => [new URLSearchParams(), vi.fn()],
+    useSearchParams: () => [new URLSearchParams(queryState.search), vi.fn()],
     // FlyerWeeklyPanel の Free CTA が Link を使うため、Router 無しでも描画できるよう差し替え
     Link: ({
       to,
@@ -169,6 +171,16 @@ vi.mock("@tanstack/react-query", () => ({
         data: queryState.privacyIsError ? undefined : queryState.privacyConsent,
         isError: queryState.privacyIsError,
         isPending: false,
+        refetch: vi.fn(),
+      };
+    }
+    // ホーム直近献立。空配列で十分（route の表示分岐検証は home 単体に任せる）。
+    if (queryKey[0] === "history") {
+      return {
+        data: [],
+        isError: false,
+        isPending: false,
+        isSuccess: true,
         refetch: vi.fn(),
       };
     }
@@ -509,6 +521,7 @@ beforeEach(() => {
   queryState.safetyIsError = false;
   queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-29.v1" };
   queryState.privacyIsError = false;
+  queryState.search = "";
   // flush 後の saved にクライアント入力（pantrySelections 等）を残す（P1 exact-set 検証用）
   savePlannerDraftMock.mockImplementation(
     (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
@@ -1419,7 +1432,9 @@ describe("PlannerRoutePage", () => {
     expect(pending.qualityMode).toBe(false);
   });
 
-  it("既存 pending があるときは上書きせず再開し attempt を回転しない", async () => {
+  it("生成中断（pending）があるときは下書きが揃っていてもホームを優先し再開 CTA を出す", async () => {
+    // 完全回答済み下書きは firstIncomplete === "review" なので、pending を見ないと
+    // 常にウィザードへ落ち、HomeGenerateCard の hasResumablePending 分岐に届かない。
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
       commandVersion: "generation-command.v3",
@@ -1429,6 +1444,47 @@ describe("PlannerRoutePage", () => {
     });
     const user = userEvent.setup();
     render(<PlannerRoutePage />);
+
+    expect(screen.getByText(/作成中の献立があります/u)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "作成中の献立を続ける" })).toBeInTheDocument();
+    // ウィザード（mock の attempt key 等）はまだ出さない
+    expect(screen.queryByLabelText("attempt key")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "作成中の献立を続ける" }));
+    expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    // ホーム再開は pending を触らず generation へ渡す（C2 と同経路）
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+  });
+
+  it("?resume= 付きは pending があってもウィザードを優先する（不変契約 4b）", () => {
+    queryState.search = "resume=review";
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: { idempotencyKey: "existing" },
+    });
+    render(<PlannerRoutePage />);
+    // ホーム再開 CTA は出さず、確認 step の wizard を出す
+    expect(screen.queryByRole("button", { name: "作成中の献立を続ける" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
+    expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
+  });
+
+  it("既存 pending がある状態でウィザードから生成すると上書きせず再開し attempt を回転しない", async () => {
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: { idempotencyKey: "existing" },
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    // pending 優先でホーム着地 → 主 CTA からウィザードへ入る経路を固定する
+    await user.click(screen.getByRole("button", { name: "今日の献立をつくる" }));
     // P2: 確認画面向けに pending 再開注意フラグを渡す（新条件破棄の押下前明示）
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
     const attemptKey = screen.getByLabelText("attempt key").textContent;

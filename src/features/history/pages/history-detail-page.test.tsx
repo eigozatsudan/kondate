@@ -651,7 +651,8 @@ describe("HistoryDetailPage safety gate", () => {
     expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
     expect(screen.queryByRole("button", { name: "この献立にしました" })).toBeNull();
     const shopping = screen.getByRole("button", { name: "材料の買い物リストを作る" });
-    expect(shopping).toHaveClass("primary-button");
+    // primary-button → ui-btn--primary（共有 Button プリミティブ）
+    expect(shopping).toHaveClass("ui-btn", "ui-btn--primary");
     expect(shopping).toBeEnabled();
   });
 

@@ -3,6 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import type { PantryItem, PantryItemInput } from "@shared/contracts/pantry";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { Button } from "@/shared/ui/button";
+import { Badge, EmptyState, Skeleton, type BadgeTone } from "@/shared/ui/feedback";
+import { PageHeader } from "@/shared/ui/page-header";
+import { Inset, Stack } from "@/shared/ui/stack";
+import { Surface } from "@/shared/ui/surface";
 import {
   createPantryItem,
   deletePantryItem,
@@ -35,19 +40,19 @@ function jstDateKey(date: Date): string {
   }).format(date);
 }
 
-type ExpiryNotice = { className: string | undefined; suffix: string };
+export type ExpiryNotice = { tone: BadgeTone | null; suffix: string };
 
-/** D-I6: 期限切れは赤・7日以内はまもなく（注意表示）。 */
-function expiryNotice(expiresOn: string, now: Date = new Date()): ExpiryNotice {
+/** D-I6: 期限切れは danger・7日以内は warning（注意表示）。色は Badge のトーンで表す。 */
+export function expiryNotice(expiresOn: string, now: Date = new Date()): ExpiryNotice {
   const todayKey = jstDateKey(now);
   if (expiresOn < todayKey) {
-    return { className: "font-semibold text-red-800", suffix: "（期限切れ）" };
+    return { tone: "danger", suffix: "（期限切れ）" };
   }
   const soonKey = jstDateKey(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
   if (expiresOn <= soonKey) {
-    return { className: "font-semibold text-amber-800", suffix: "（まもなく）" };
+    return { tone: "warning", suffix: "（まもなく）" };
   }
-  return { className: undefined, suffix: "" };
+  return { tone: null, suffix: "" };
 }
 
 export function PantryPage() {
@@ -214,175 +219,188 @@ export function PantryPageContent({
   };
 
   return (
-    <main className="page-frame stack">
-      <h1>食材リスト</h1>
-      <p>
-        冷蔵庫やパントリーにある食材を登録する場所です。献立を作るときに「使いたい食材」として選べます。
-      </p>
-      <p className="type-small">
-        期限日は並び順や注意表示のための入力です。アプリが「食べられるか」を判断するものではありません。
-      </p>
-      <section className="pantry-overview stack" aria-labelledby="pantry-list-heading">
-        <div className="pantry-section-heading">
-          <h2 id="pantry-list-heading">
-            登録済みの食材（{loading ? "件数を確認中" : `${String(items.length)}件`}）
-          </h2>
-          <button
-            ref={addTriggerRef}
-            className="primary-button min-h-11"
-            type="button"
-            disabled={saving || creating}
-            aria-expanded={creating}
-            aria-controls="pantry-editor"
-            onClick={() => {
-              onEditingSessionChange?.();
-              editorTriggerRef.current = addTriggerRef.current;
-              setEditing(null);
-              setCreating(true);
-            }}
-          >
-            食材を追加
-          </button>
-        </div>
-        {(creating || editing !== null) && (
-          <div id="pantry-editor" ref={editorContainerRef}>
-            {creating && (
-              <PantryForm
-                saving={saving}
-                onSubmit={async (input) => {
-                  await onCreate(input);
-                  closeEditorAndReturnFocus();
-                  setCreating(false);
-                }}
-                onCancel={() => {
-                  closeEditorAndReturnFocus();
-                  setCreating(false);
-                }}
-              />
-            )}
-            {editing !== null && (
-              <PantryForm
-                key={`${editing.id}:${editing.updatedAt}`}
-                saving={saving}
-                title={`${editing.name}を編集`}
-                submitLabel="変更を保存"
-                initialValue={inputFromItem(editing)}
-                onSubmit={async (input) => {
-                  await onUpdate(editing.id, editing.updatedAt, input);
-                  closeEditorAndReturnFocus();
-                  setEditing(null);
-                }}
-                onCancel={() => {
+    <main className="page-frame">
+      <Stack gap={5}>
+        <PageHeader
+          title="食材リスト"
+          lead="冷蔵庫やパントリーにある食材を登録する場所です。献立を作るときに「使いたい食材」として選べます。"
+          note="期限日は並び順や注意表示のための入力です。アプリが「食べられるか」を判断するものではありません。"
+        />
+        <section className="pantry-overview" aria-labelledby="pantry-list-heading">
+          <Stack gap={4}>
+            <div className="pantry-section-heading">
+              <h2 id="pantry-list-heading">
+                登録済みの食材（{loading ? "件数を確認中" : `${String(items.length)}件`}）
+              </h2>
+              <Button
+                ref={addTriggerRef}
+                disabled={saving || creating}
+                aria-expanded={creating}
+                aria-controls="pantry-editor"
+                onClick={() => {
                   onEditingSessionChange?.();
-                  closeEditorAndReturnFocus();
+                  editorTriggerRef.current = addTriggerRef.current;
                   setEditing(null);
+                  setCreating(true);
                 }}
-              />
+              >
+                食材を追加
+              </Button>
+            </div>
+            {(creating || editing !== null) && (
+              <div id="pantry-editor" ref={editorContainerRef}>
+                {creating && (
+                  <PantryForm
+                    saving={saving}
+                    onSubmit={async (input) => {
+                      await onCreate(input);
+                      closeEditorAndReturnFocus();
+                      setCreating(false);
+                    }}
+                    onCancel={() => {
+                      closeEditorAndReturnFocus();
+                      setCreating(false);
+                    }}
+                  />
+                )}
+                {editing !== null && (
+                  <PantryForm
+                    key={`${editing.id}:${editing.updatedAt}`}
+                    saving={saving}
+                    title={`${editing.name}を編集`}
+                    submitLabel="変更を保存"
+                    initialValue={inputFromItem(editing)}
+                    onSubmit={async (input) => {
+                      await onUpdate(editing.id, editing.updatedAt, input);
+                      closeEditorAndReturnFocus();
+                      setEditing(null);
+                    }}
+                    onCancel={() => {
+                      onEditingSessionChange?.();
+                      closeEditorAndReturnFocus();
+                      setEditing(null);
+                    }}
+                  />
+                )}
+              </div>
             )}
-          </div>
+            {loading && <Skeleton label="食材リストを読み込んでいます…" lines={3} />}
+            {!loading && items.length === 0 && !creating && (
+              <Surface as="section" aria-labelledby="pantry-empty-title" tone="sunken">
+                <EmptyState
+                  titleId="pantry-empty-title"
+                  title="まだ食材がありません"
+                  body="「食材を追加」から、名前と分量などを入力して登録できます。全部入れなくても大丈夫です。使いたいものだけ登録してください。あとから編集や削除もできます。"
+                />
+              </Surface>
+            )}
+            <Stack as="ul" gap={3} aria-label="冷蔵庫の食材">
+              {items.map((item) => {
+                const notice = item.expiresOn !== null ? expiryNotice(item.expiresOn) : null;
+                return (
+                  <li key={item.id}>
+                    <Surface>
+                      <Inset pad={4}>
+                        <Stack gap={2}>
+                          <h3 className="pantry-card-text">{item.name}</h3>
+                          <p className="pantry-card-text">
+                            {item.quantity === null
+                              ? "分量未入力"
+                              : `${String(item.quantity)}${item.unit ?? ""}`}
+                          </p>
+                          {item.expiresOn !== null && notice !== null && (
+                            <Stack gap={1}>
+                              {/* 接尾辞は Badge のみが持ち、p と二重一致しないようにする */}
+                              <p className="pantry-card-text">
+                                {item.expirationType === null
+                                  ? "期限"
+                                  : expiryLabels[item.expirationType]}{" "}
+                                {item.expiresOn}
+                              </p>
+                              {notice.tone !== null && (
+                                <Badge tone={notice.tone}>{notice.suffix}</Badge>
+                              )}
+                            </Stack>
+                          )}
+                          {item.openedState !== null && <p>{openedLabels[item.openedState]}</p>}
+                          <div className="pantry-actions">
+                            <Button
+                              variant="secondary"
+                              aria-label={`${item.name}を編集`}
+                              onClick={(event) => {
+                                onEditingSessionChange?.();
+                                editorTriggerRef.current = event.currentTarget;
+                                setCreating(false);
+                                setEditing(item);
+                              }}
+                            >
+                              編集
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              aria-label={`${item.name}を削除`}
+                              onClick={() => {
+                                if (window.confirm("この食材を削除しますか？")) {
+                                  onDelete(item.id, item.updatedAt);
+                                }
+                              }}
+                            >
+                              削除
+                            </Button>
+                          </div>
+                        </Stack>
+                      </Inset>
+                    </Surface>
+                  </li>
+                );
+              })}
+            </Stack>
+          </Stack>
+        </section>
+        {error !== null && (
+          <p role="alert" aria-live="assertive" className="error-message">
+            {error}
+          </p>
         )}
-        {loading && <p role="status">食材リストを読み込んでいます…</p>}
-        {!loading && items.length === 0 && !creating && (
-          <section className="card stack" aria-labelledby="pantry-empty-title">
-            <h3 id="pantry-empty-title">まだ食材がありません</h3>
-            <p>
-              「食材を追加」から、名前と分量などを入力して登録できます。全部入れなくても大丈夫です。使いたいものだけ登録してください。
-            </p>
-            <p className="type-small">あとから編集や削除もできます。</p>
-          </section>
-        )}
-        <ul className="stack pantry-list" aria-label="冷蔵庫の食材">
-          {items.map((item) => (
-            <li className="card pantry-card" key={item.id}>
-              <h3 className="pantry-card-text">{item.name}</h3>
-              <p className="pantry-card-text">
-                {item.quantity === null
-                  ? "分量未入力"
-                  : `${String(item.quantity)}${item.unit ?? ""}`}
-              </p>
-              {item.expiresOn !== null &&
-                (() => {
-                  const notice = expiryNotice(item.expiresOn);
-                  return (
-                    <p className={notice.className}>
-                      {item.expirationType === null ? "期限" : expiryLabels[item.expirationType]}{" "}
-                      {item.expiresOn}
-                      {notice.suffix}
-                    </p>
-                  );
-                })()}
-              {item.openedState !== null && <p>{openedLabels[item.openedState]}</p>}
-              <div className="pantry-actions">
-                <button
-                  className="secondary-button"
-                  type="button"
-                  aria-label={`${item.name}を編集`}
+        {latestEditingItem !== undefined && (
+          <Surface as="section" aria-labelledby="pantry-latest-item-heading" tone="notice">
+            <Inset pad={4}>
+              <Stack gap={3}>
+                <h2 id="pantry-latest-item-heading">最新の内容</h2>
+                <p className="pantry-card-text">最新の食材名: {latestEditingItem.name}</p>
+                <p>
+                  最新の分量:{" "}
+                  {latestEditingItem.quantity === null
+                    ? "未入力"
+                    : `${String(latestEditingItem.quantity)}${latestEditingItem.unit ?? ""}`}
+                </p>
+                {latestEditingItem.expiresOn !== null && (
+                  <p>
+                    最新の期限:{" "}
+                    {latestEditingItem.expirationType === null
+                      ? "期限"
+                      : expiryLabels[latestEditingItem.expirationType]}{" "}
+                    {latestEditingItem.expiresOn}
+                  </p>
+                )}
+                {latestEditingItem.openedState !== null && (
+                  <p>最新の開封状態: {openedLabels[latestEditingItem.openedState]}</p>
+                )}
+                <Button
+                  variant="secondary"
                   onClick={(event) => {
                     onEditingSessionChange?.();
                     editorTriggerRef.current = event.currentTarget;
-                    setCreating(false);
-                    setEditing(item);
+                    setEditing(latestEditingItem);
                   }}
                 >
-                  編集
-                </button>
-                <button
-                  className="text-button"
-                  type="button"
-                  aria-label={`${item.name}を削除`}
-                  onClick={() => {
-                    if (window.confirm("この食材を削除しますか？")) {
-                      onDelete(item.id, item.updatedAt);
-                    }
-                  }}
-                >
-                  削除
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-      {error !== null && (
-        <p role="alert" aria-live="assertive" className="error-message">
-          {error}
-        </p>
-      )}
-      {latestEditingItem !== undefined && (
-        <section className="card stack" aria-labelledby="pantry-latest-item-heading">
-          <h2 id="pantry-latest-item-heading">最新の内容</h2>
-          <p className="pantry-card-text">最新の食材名: {latestEditingItem.name}</p>
-          <p>
-            最新の分量:{" "}
-            {latestEditingItem.quantity === null
-              ? "未入力"
-              : `${String(latestEditingItem.quantity)}${latestEditingItem.unit ?? ""}`}
-          </p>
-          {latestEditingItem.expiresOn !== null && (
-            <p>
-              最新の期限:{" "}
-              {latestEditingItem.expirationType === null
-                ? "期限"
-                : expiryLabels[latestEditingItem.expirationType]}{" "}
-              {latestEditingItem.expiresOn}
-            </p>
-          )}
-          {latestEditingItem.openedState !== null && (
-            <p>最新の開封状態: {openedLabels[latestEditingItem.openedState]}</p>
-          )}
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={(event) => {
-              onEditingSessionChange?.();
-              editorTriggerRef.current = event.currentTarget;
-              setEditing(latestEditingItem);
-            }}
-          >
-            最新の内容を編集フォームに反映
-          </button>
-        </section>
-      )}
+                  最新の内容を編集フォームに反映
+                </Button>
+              </Stack>
+            </Inset>
+          </Surface>
+        )}
+      </Stack>
     </main>
   );
 }

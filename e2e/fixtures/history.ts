@@ -18,6 +18,22 @@ export const test = authTest.extend<HistoryFixtures>({
 export { expect };
 
 /**
+ * 素の /planner（ホーム）からウィザード第1ステップ（1. 食事）を開く。
+ * Phase 4 以降、空下書きの /planner はホーム表示のため、wizard 直行の fixture は
+ * このヘルパ経由で主 CTA を踏む。下書き復帰で既にウィザードならクリックをスキップする。
+ */
+export async function openWizardFromHome(page: Page): Promise<void> {
+  await page.goto("/planner");
+  const mealHeading = page.getByRole("heading", { name: "1. 食事" });
+  const homeStart = page.getByRole("button", { name: "今日の献立をつくる" });
+  await expect(homeStart.or(mealHeading).first()).toBeVisible({ timeout: 15_000 });
+  if (await homeStart.isVisible()) {
+    await homeStart.click();
+  }
+  await expect(mealHeading).toBeVisible({ timeout: 15_000 });
+}
+
+/**
  * wizard の「次へ」を押す。
  * fixed bottom-nav にボタンが隠れる退行を検出するため、DOM 直接 click() は使わない。
  * scroll → ナビより上にあること → Playwright actionability click の順で、
@@ -164,10 +180,7 @@ export async function seedGeneratedMenu(page: Page): Promise<string> {
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
-  await page.goto("/planner");
-  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({
-    timeout: 15_000,
-  });
+  await openWizardFromHome(page);
   await page.getByRole("radio", { name: "朝食" }).check();
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
@@ -363,10 +376,7 @@ export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2
         new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft"),
     );
 
-  await page.goto("/planner");
-  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({
-    timeout: 15_000,
-  });
+  await openWizardFromHome(page);
   const mealSave = waitDraftSave();
   await page.getByRole("radio", { name: "朝食" }).check();
   expect((await mealSave).ok()).toBe(true);

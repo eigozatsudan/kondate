@@ -61,6 +61,7 @@ const ensureWheatMemberForMockSuccess = async (page: Page) => {
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
+  // Phase 4 §5b: 素の /planner はホーム着地（ウィザード hop は answerSharedWizardSteps 側）
   await page.goto("/planner");
 };
 
@@ -83,10 +84,10 @@ const ensurePrivacyThenGenerate = async (
     await expect(generate).toBeEnabled();
     await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
-    // 共有は任意・既定 off。チェックせず進んでも生成導線は維持する。
+    // 共有は任意・既定 on（privacy-notice-page shareChecked 初期 true）。必須同意とは独立。
     await expect(
       page.getByRole("checkbox", { name: "匿名で緊急候補に役立ててよい" }),
-    ).not.toBeChecked();
+    ).toBeChecked();
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
     await expect(page).toHaveURL(
@@ -105,6 +106,8 @@ const ensurePrivacyThenGenerate = async (
 };
 
 const answerSharedWizardSteps = async (page: Page) => {
+  // Phase 4 §5b: ideaMode 等、ensureWheat を経由しない経路用のホーム経由ホップ（expect は 1 文字も変えない）
+  await page.getByRole("button", { name: "今日の献立をつくる" }).click();
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
   // meal: 選択後に「次へ」が必須

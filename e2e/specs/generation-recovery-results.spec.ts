@@ -5,6 +5,7 @@ import {
   expectIdeaResultSurface,
   openAndAssertIdeaSafetyDetails,
   openFirstMemberEditor,
+  openWizardFromHome,
   selectHouseholdAudienceWithMember,
   setMockScenario,
 } from "../fixtures/history";
@@ -24,6 +25,8 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   await expect(page).toHaveURL((url) => url.pathname === "/welcome");
   await page.getByRole("button", { name: "献立アイデアを考える" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/planner");
+  // Phase 4: 素の /planner はホーム。ウィザードへ主 CTA で入る。
+  await page.getByRole("button", { name: "今日の献立をつくる" }).click();
 
   // 1. 食事
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
@@ -114,10 +117,9 @@ async function completeMinimumPlanner(page: Page) {
   await page.getByLabel("アレルギーの確認").selectOption("registered");
   await page.getByRole("button", { name: "小麦を追加" }).click();
   await page.getByRole("button", { name: "この家族の設定を完了" }).click();
-  await page.goto("/planner");
+  await openWizardFromHome(page);
   // PlannerWizardは1画面1質問（meal→ingredients→cuisine→audience→review）のため、
   // 旧PlannerForm（同一画面で全条件をradio選択）とは操作手順が異なる。
-  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
   await page.getByRole("radio", { name: "朝食" }).check();
   await clickWizardNext(page);
   // getByLabel("メイン食材")はaria-labelledbyを持つsectionとinput要素の両方に
@@ -617,6 +619,7 @@ test("ingredient empty next uses toast and alert instead of alertdialog", async 
   await expect(page).toHaveURL((url) => url.pathname === "/welcome");
   await page.getByRole("button", { name: "献立アイデアを考える" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/planner");
+  await page.getByRole("button", { name: "今日の献立をつくる" }).click();
   await page.getByRole("radio", { name: "朝食" }).check();
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "2. メイン食材" })).toBeVisible();
@@ -643,6 +646,7 @@ test("offers only in-range servings so an out-of-range draft cannot be composed"
   await expect(page).toHaveURL((url) => url.pathname === "/welcome");
   await page.getByRole("button", { name: "献立アイデアを考える" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/planner");
+  await page.getByRole("button", { name: "今日の献立をつくる" }).click();
   await page.getByRole("radio", { name: "朝食" }).check();
   await clickWizardNext(page);
   await page.getByRole("textbox", { name: "メイン食材" }).fill("鶏肉");
@@ -803,7 +807,7 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     // household_members取得は家族安全actionではないため、route listenerを
     // 外さずに記録対象外として扱う（activeRoute = null）。
     activeRoute = null;
-    await page.goto("/planner");
+    await openWizardFromHome(page);
     await page.getByRole("radio", { name: "夕食" }).check();
     await clickWizardNext(page);
     await page.getByRole("textbox", { name: "メイン食材" }).fill("豆腐");
@@ -994,6 +998,9 @@ test.describe("wizard accessibility and layout contracts", () => {
     await page.getByRole("button", { name: "献立アイデアを考える" }).focus();
     await activateFocusedWithKeyboard(page);
     await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    // Phase 4: ホーム主 CTA からウィザードへ（レイアウト契約の本体は各 step 側）
+    await page.getByRole("button", { name: "今日の献立をつくる" }).focus();
+    await activateFocusedWithKeyboard(page);
     await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
 
     // --- 1. 食事 ---
@@ -1063,6 +1070,14 @@ test.describe("wizard accessibility and layout contracts", () => {
       page,
       (focus) => focus.name.includes("献立アイデアを考える") && !focus.disabled,
       'welcome CTA "献立アイデアを考える"',
+    );
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
+    // Phase 4: ホーム経由。主 CTA をキーボードで開いてからウィザード契約を検証する。
+    await tabUntil(
+      page,
+      (focus) => focus.name.includes("今日の献立をつくる") && !focus.disabled,
+      'home CTA "今日の献立をつくる"',
     );
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
@@ -1166,6 +1181,7 @@ test.describe("wizard accessibility and layout contracts", () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await expect(page).toHaveURL((url) => url.pathname === "/welcome");
     await page.getByRole("button", { name: "献立アイデアを考える" }).click();
+    await page.getByRole("button", { name: "今日の献立をつくる" }).click();
     await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
     const animationName = await page.evaluate(() => {
       const probe = document.createElement("div");

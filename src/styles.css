@@ -51,6 +51,8 @@
   --color-line: #e7e2dd; /* = --border。区切り線・淡い塗り */
   --color-line-strong: #8e8681; /* = --border-strong。境界を示す枠（3:1） */
   --color-danger-700: #b3261e; /* = --danger。白文字で 6.54:1 */
+  --color-canvas-sunken: #f2efec; /* = --surface-sunken */
+  --color-warning: #8a4b00; /* = --warning。白文字ではなく文字色として使う */
 }
 
 /*
@@ -118,6 +120,19 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  /*
+   * エディトリアル方向（2026-08-08 UI/UX モダン化）で追加したトークン。
+   * 既存トークンは styles.contrast.test.ts が hex 単位で固定しているため触らない。
+   * 影は追加しない。階層は線と余白で表現する（.choice-card の box-shadow は
+   * contrast テストが完全一致で固定しており、共通トークン化できないため）。
+   */
+  --surface-sunken: #f2efec;
+  --warning: #8a4b00; /* 期限「まもなく」。白地 6.80:1 */
+  --text-hero: clamp(1.75rem, 8vw, 2.75rem);
+  --leading-hero: 1.3;
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
 :root {
@@ -295,6 +310,12 @@
 }
 
 .review-edit-action {
+  min-width: 4.5rem;
+  padding-inline: 8px;
+}
+
+/* Phase 1: 「変更」を ghost Button にした後も確認行のコンパクト密度を維持 */
+.review-answer-cell .ui-btn--ghost {
   min-width: 4.5rem;
   padding-inline: 8px;
 }
@@ -501,6 +522,15 @@
 .guided-planner-theme .privacy-notice-gate .wizard-action {
   width: 100%;
   min-height: 44px;
+}
+
+/*
+ * Phase 1: privacy CTA を Button に移行後も全幅を維持。
+ * .guided-planner-theme をセレクタに含めない（protectedSelectorFragments 部分一致で落ちる）。
+ * .wizard-action は Button が className を受け取れないため新規 .ui-btn 側で表現。
+ */
+.privacy-notice-gate .ui-btn {
+  width: 100%;
 }
 
 /* 確認 step の任意条件。デフォルト展開し、summary で開閉が分かるようにする */
@@ -1448,6 +1478,177 @@ dialog:not([open]) {
   gap: 8px;
 }
 
+.history-card-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.history-card-title {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.history-card-title-link {
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+.history-card-title-link:hover {
+  text-decoration: underline;
+}
+
+.history-banner-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.history-filter-label {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/*
+ * 履歴・再生成の native dialog。
+ * dialog 本体に display:grid を付けない（UA の display:none 上書き防止）。
+ */
+.history-dialog {
+  width: calc(100% - 2rem);
+  max-width: 28rem;
+  margin: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-5);
+  box-shadow:
+    0 1px 3px rgb(15 23 42 / 8%),
+    0 8px 24px rgb(15 23 42 / 6%);
+}
+
+.history-dialog-title {
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.history-regen-fieldset {
+  margin: 0;
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.history-regen-legend {
+  margin: 0;
+  padding: 0;
+  font-weight: 700;
+}
+
+.history-regen-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.history-regen-custom {
+  display: block;
+}
+
+.history-regen-textarea {
+  display: block;
+  width: 100%;
+  min-height: 6rem;
+  margin-top: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font: inherit;
+}
+
+.history-regen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* 案切替チップ。横スクロールは Surface では表現できない */
+.history-version-switcher {
+  min-width: 0;
+}
+
+.history-version-switcher-title {
+  margin: 0;
+  font-size: var(--text-small);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.history-version-switcher-list {
+  display: flex;
+  min-width: 0;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 var(--space-1);
+  list-style: none;
+  overflow-x: auto;
+}
+
+.history-version-switcher-item {
+  flex-shrink: 0;
+}
+
+.history-version-chip {
+  display: flex;
+  max-width: 14rem;
+  min-height: 44px;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--app-background);
+  padding: var(--space-2) var(--space-3);
+  color: inherit;
+  text-decoration: none;
+}
+
+.history-version-chip--current {
+  border-width: 2px;
+  border-color: var(--primary);
+  background: var(--notice);
+}
+
+.history-version-chip-label {
+  font-size: var(--text-small);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.history-version-chip-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--text-small);
+  color: var(--text);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.history-version-chip-parent {
+  color: var(--muted);
+}
+
 /* 編集フォーム末尾: 完了・やめる/削除を横並び */
 .household-editor-actions {
   display: flex;
@@ -1662,11 +1863,20 @@ dialog:not([open]) {
 /*
  * 献立結果本文の縦リズム。
  * 注意枠と成功見出しが密着しないよう、ヘッダ→注意→カードの順で gap を固定する。
+ * 320px 幅での横はみ出し抑止は class 契約（unit が root の min/max/overflow を固定）。
+ * sticky タブ列・材料 grid は Surface では表現できないため .menu-result-* に退避。
  */
 .menu-result {
   display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   gap: 20px;
   padding-block: 8px 24px;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  word-break: break-word;
 }
 
 .menu-result-header {
@@ -1680,6 +1890,8 @@ dialog:not([open]) {
   font-size: var(--text-display);
   font-weight: 700;
   line-height: var(--leading-display);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-summary {
@@ -1687,11 +1899,15 @@ dialog:not([open]) {
   font-size: 1.125rem;
   font-weight: 600;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-model {
   margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-ai-notice,
@@ -1704,14 +1920,32 @@ dialog:not([open]) {
   padding: 14px 16px;
   font-size: var(--text-small);
   line-height: 1.6;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-soft-gap {
+  display: grid;
+  gap: var(--space-3);
   font-size: inherit;
+}
+
+.menu-result-soft-gap-title {
+  font-size: var(--text-small);
+  font-weight: 700;
+}
+
+.menu-result-soft-gap-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  list-style: disc;
+  font-size: var(--text-small);
 }
 
 .menu-result-card {
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
   border-radius: 18px;
   background: var(--surface);
   padding: 18px 16px;
@@ -1725,26 +1959,390 @@ dialog:not([open]) {
   font-size: var(--text-h2);
   font-weight: 700;
   line-height: var(--leading-h2);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .menu-result-dish-description {
   margin: 8px 0 0;
   color: var(--muted);
   line-height: 1.65;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
+.menu-result-section-heading {
+  margin: var(--space-5) 0 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.menu-result-section-lead {
+  margin: var(--space-2) 0 0;
+}
+
+.menu-result-regenerate-wrap {
+  margin-top: var(--space-4);
+}
+
+/*
+ * sticky タブ列。Surface に sticky を載せない（契約: 意味クラスへ退避）。
+ * 背景は canvas 固定で、スクロール時に下層コンテンツが透けないようにする。
+ */
 .menu-result-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
   padding-block: 10px 6px;
-  gap: 10px;
+  gap: var(--space-2);
+  overflow-x: auto;
+  background: var(--app-background);
 }
 
-/* ページ枠の再検証ステータス（成功後の1行）。主見出しと競合しないよう薄く・余白多め。 */
+.menu-result-tab {
+  min-height: 44px;
+  flex-shrink: 0;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  padding: 0 var(--space-4);
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.menu-result-tab[aria-selected="true"] {
+  border-color: var(--primary);
+  background: var(--selection);
+}
+
+.menu-result-ingredient-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu-result-ingredient-list > li + li {
+  border-top: 1px solid var(--border);
+}
+
+/*
+ * 材料行: 名称 1fr / 分量 最大 45%。
+ * 320px でも auto-min-width に遮られず折返せるよう子は min-width:0。
+ */
+.menu-result-ingredient-row {
+  display: grid;
+  min-width: 0;
+  min-height: 44px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 45%);
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: var(--space-2);
+}
+
+.menu-result-ingredient-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.menu-result-ingredient-amount {
+  min-width: 0;
+  width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: right;
+}
+
+.menu-result-label-chip {
+  display: inline-block;
+  margin-left: var(--space-2);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  color: var(--text);
+  font-size: var(--text-small);
+}
+
+.menu-result-step-list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.menu-result-step-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.menu-result-step-position {
+  font-weight: 700;
+}
+
+.menu-result-step-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.menu-result-adaptation {
+  margin: var(--space-2) 0 0;
+  border-radius: var(--radius-lg);
+  background: var(--app-background);
+  padding: var(--space-3);
+}
+
+.menu-result-adaptation-title {
+  font-weight: 700;
+}
+
+.menu-result-label-section {
+  margin-top: var(--space-5);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-lg);
+  background: var(--notice);
+  padding: var(--space-3);
+}
+
+.menu-result-label-section-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.menu-result-label-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.menu-result-label-item {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.menu-result-label-meta {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-small);
+}
+
+.menu-result-label-confirmed {
+  display: inline-block;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  padding: 0 var(--space-2);
+  font-size: var(--text-small);
+}
+
+.menu-result-label-action {
+  margin-top: var(--space-2);
+}
+
+.menu-result-pantry-list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.menu-result-pantry-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+}
+
+/*
+ * 在庫更新ダイアログ。dialog 本体に display を付けない
+ * （UA の dialog:not([open]){display:none} を作者スタイルで潰さない）。
+ */
+.menu-result-dialog {
+  margin: auto;
+  max-height: min(90vh, 40rem);
+  width: calc(100% - 2rem);
+  max-width: 28rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-5);
+  box-shadow: 0 12px 40px rgb(51 44 39 / 18%);
+}
+
+.menu-result-dialog-title {
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.menu-result-dialog-lead {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: 1.6;
+}
+
+.menu-result-dialog-alert {
+  margin: 0;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-lg);
+  background: var(--notice);
+  padding: var(--space-3);
+}
+
+.menu-result-post-cook-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.menu-result-post-cook-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+}
+
+.menu-result-post-cook-deleted {
+  margin: var(--space-1) 0 0;
+}
+
+.menu-result-post-cook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+  gap: var(--space-2);
+}
+
+.menu-result-post-cook-confirm {
+  margin-top: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--app-background);
+  padding: var(--space-3);
+}
+
+.menu-result-post-cook-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+  gap: var(--space-2);
+}
+
+.menu-result-remainder-form {
+  display: grid;
+  margin-top: var(--space-3);
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--app-background);
+  padding: var(--space-3);
+}
+
+.menu-result-field {
+  display: block;
+}
+
+.menu-result-field-input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin-top: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.menu-result-undo {
+  margin-top: var(--space-2);
+}
+
+/* 結果表示失敗時の履歴導線（Link は Button 化しない） */
+.menu-result-history-link {
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  color: var(--primary-strong);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.menu-result-history-link:hover {
+  background: var(--notice);
+}
+
+/*
+ * ページ枠の再検証ステータス（成功後の1行）。
+ * sticky は Surface では表現できないため意味クラスへ退避（生 utility 禁止）。
+ * 主見出しと競合しないよう薄く・余白多め。
+ */
 .menu-result-gate-status {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   margin: 20px 0 0;
+  padding-block: var(--space-2);
+  background: color-mix(in srgb, var(--app-background) 95%, transparent);
   color: var(--muted);
   font-size: var(--text-small);
   line-height: 1.5;
+}
+
+.menu-result-gate-status-copy {
+  margin: 0;
+}
+
+.menu-result-gate-status-list {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-5);
+  list-style: disc;
+}
+
+.menu-detail-issue-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  list-style: disc;
+}
+
+.menu-detail-disclaimer-strong {
+  margin: 0;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+/*
+ * 献立詳細本文の横はみ出し抑止。
+ * page-frame に生 Tailwind を重ねず、意味クラスで 320px 契約を守る。
+ */
+.menu-detail-page {
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--text);
+}
+
+/* 材料名横のラベル確認 Badge の余白（旧 .menu-result-label-chip 相当） */
+.menu-result-ingredient-name .ui-badge {
+  margin-left: var(--space-2);
 }
 
 /*
@@ -1785,10 +2383,28 @@ dialog:not([open]) {
   gap: 8px;
 }
 
-.menu-result-actions .primary-button,
-.menu-result-actions .secondary-button {
+/*
+ * 操作帯の主/副操作を全幅に揃える。
+ * .primary-button / .secondary-button は保護断片のためここに書かない
+ * （styles.contrast の unexpectedProtectedSelectors）。
+ * Button と button-link のみを対象にする。
+ */
+.menu-result-actions .ui-btn,
+.menu-result-actions .button-link {
   width: 100%;
   justify-content: center;
+}
+
+/* Link の主操作（Button 化できない <a> 用）。.primary-button 断片は名前に含めない */
+.button-link--primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+.button-link--primary:hover {
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
 }
 
 .menu-result-actions-aux-label {
@@ -1814,6 +2430,7 @@ dialog:not([open]) {
   gap: 12px;
   min-width: 0;
   min-height: 44px;
+  border-left: 4px solid var(--primary);
   padding-left: 12px;
 }
 
@@ -2006,12 +2623,13 @@ dialog:not([open]) {
 }
 
 /*
- * 生成待ちパネル。6フェーズ共通の枠。演出はクラス駆動のみで、
- * prefers-reduced-motion ではインジケータを止める。
+ * 生成待ちパネル。8 phase 共通の枠（data-phase 契約）。
+ * 面は Surface が持ち、ここは data-phase と縦リズムのホストに徹する。
+ * prefers-reduced-motion ではインジケータを止める（下のペアとセットで維持）。
  */
 .gen-status-panel {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .gen-status-panel h1 {
@@ -2029,7 +2647,13 @@ dialog:not([open]) {
 .gen-status-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-3);
+}
+
+/* Surface 内の本文。page-header と indicator を縦に積む */
+.gen-status-body {
+  display: grid;
+  gap: var(--space-4);
 }
 
 .gen-status-indicator {
@@ -2127,4 +2751,510 @@ dialog:not([open]) {
 
 .settings-section-title {
   margin: 0;
+}
+
+/*
+ * 共有ボタン（2026-08-08 UI/UX モダン化）。
+ * .primary-button 等の保護セレクタ断片を名前に含めないため ui-btn を接頭辞にする。
+ * 44px は mobile-accessibility.spec.ts が実測する契約。
+ */
+.ui-btn {
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-5);
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+/* regular は既定寸法。クラスは常に出力されるので空定義にしない。 */
+.ui-btn--regular {
+  padding: 0 var(--space-5);
+}
+
+.ui-btn--large {
+  min-height: 52px;
+  width: 100%;
+}
+
+.ui-btn--primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+.ui-btn--primary:hover:not(:disabled) {
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
+}
+
+.ui-btn--primary:active:not(:disabled) {
+  border-color: var(--primary-active);
+  background: var(--primary-active);
+}
+
+.ui-btn--secondary {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.ui-btn--ghost {
+  border-color: transparent;
+  background: none;
+  color: var(--primary-strong);
+}
+
+.ui-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.ui-btn:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/*
+ * モーション。新規クラス名（.ui-*）は代表 DOM に一致しないため
+ * unexpectedMotionRules の検査対象外（実測で緑を確認済み）。
+ * グローバルな * の一括リセットは書けないので、必ずこのペアで書く。
+ */
+.ui-btn {
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-btn {
+    transition: none;
+  }
+}
+
+/*
+ * 面と間隔のプリミティブ（2026-08-08 UI/UX モダン化）。
+ * 間隔は既存の --space-* のみを参照し、新しい値を持ち込まない。
+ * 影は使わない。面の区別は地色と細い線で行う。
+ */
+.ui-surface {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.ui-surface--plain {
+  background: var(--surface);
+}
+
+.ui-surface--sunken {
+  border-color: transparent;
+  background: var(--surface-sunken);
+}
+
+.ui-surface--notice {
+  border-color: var(--selection);
+  background: var(--notice);
+}
+
+.ui-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.ui-stack--gap-1 {
+  gap: var(--space-1);
+}
+.ui-stack--gap-2 {
+  gap: var(--space-2);
+}
+.ui-stack--gap-3 {
+  gap: var(--space-3);
+}
+.ui-stack--gap-4 {
+  gap: var(--space-4);
+}
+.ui-stack--gap-5 {
+  gap: var(--space-5);
+}
+.ui-stack--gap-6 {
+  gap: var(--space-6);
+}
+.ui-stack--gap-7 {
+  gap: var(--space-7);
+}
+
+.ui-inset {
+  min-width: 0;
+}
+
+.ui-inset--pad-1 {
+  padding: var(--space-1);
+}
+.ui-inset--pad-2 {
+  padding: var(--space-2);
+}
+.ui-inset--pad-3 {
+  padding: var(--space-3);
+}
+.ui-inset--pad-4 {
+  padding: var(--space-4);
+}
+.ui-inset--pad-5 {
+  padding: var(--space-5);
+}
+.ui-inset--pad-6 {
+  padding: var(--space-6);
+}
+.ui-inset--pad-7 {
+  padding: var(--space-7);
+}
+
+/*
+ * ul で使ったときにブラウザ既定のマーカーと余白を消す。
+ * list-style: none は Safari/VoiceOver でリストセマンティクスを失わせるため、
+ * Stack の実装側で as="ul" のとき role="list" を既定で付ける
+ * （呼び出し側が role を渡した場合はそちらを優先する）。
+ * jsdom はこの退行を再現しないのでテストでは検出できない。
+ */
+ul.ui-stack {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * ページ見出し（2026-08-08 UI/UX モダン化）。
+ * 明朝は 700 のみ読み込んでいる（styles.css 冒頭の @font-face 注記参照）。
+ * font-synthesis: none のため 400 を指定すると端末依存のフォールバックになる。
+ * 「細さ」は字間・行間・サイズと --muted で作る。
+ */
+.ui-page-header {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/*
+ * セレクタは .page-frame h1（0,1,1）より勝つ必要がある。
+ * .ui-page-header__title 単独は (0,1,0) で負け、--text-hero が死ぬ
+ * （Phase 0 レビューで実測。pantry の main.page-frame 配下で沈黙していた）。
+ * 2 セレクタは意図的に分割（contrast の declarationsForSelector は完全一致）。
+ */
+.page-frame .ui-page-header__title {
+  margin: 0;
+  font-family: var(--question-font);
+  font-size: var(--text-hero);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: var(--leading-hero);
+}
+
+h1.ui-page-header__title {
+  margin: 0;
+  font-family: var(--question-font);
+  font-size: var(--text-hero);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: var(--leading-hero);
+}
+
+.ui-page-header__lead {
+  margin: 0;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.ui-page-header__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: var(--leading-body);
+}
+
+/*
+ * 読み込み・空状態・ラベル（2026-08-08 UI/UX モダン化）。
+ * .ui-* は代表 DOM に一致しないので unexpectedMotionRules の対象外。
+ * shimmer を入れてよいが、reduced-motion ペアを必ずセットで書くこと。
+ */
+@keyframes ui-shimmer {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ui-skeleton__line {
+  display: block;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  animation: ui-shimmer var(--motion-base) var(--motion-ease) infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-skeleton__line {
+    animation: none;
+  }
+}
+
+.ui-skeleton {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ui-skeleton__label {
+  color: var(--muted);
+  font-size: var(--text-small);
+}
+
+/*
+ * 最終行だけ短くして「文章の途中」に見せる。
+ * .ui-skeleton の第1子は .ui-skeleton__label（span）なので
+ * nth-child ではなく last-child を使う。
+ */
+.ui-skeleton__line:last-child {
+  width: 60%;
+}
+
+.ui-empty {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-4);
+}
+
+.ui-empty__title {
+  margin: 0;
+  font-family: var(--question-font);
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.ui-empty__body {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-3);
+  font-size: var(--text-small);
+  font-weight: 700;
+}
+
+.ui-badge--neutral {
+  background: var(--surface-sunken);
+  color: var(--muted);
+}
+
+.ui-badge--warning {
+  background: var(--notice);
+  color: var(--warning);
+}
+
+.ui-badge--danger {
+  background: var(--notice);
+  color: var(--danger);
+}
+
+/*
+ * 本文中のテキストリンク（2026-08-08 UI モダン化 Phase 1）。
+ * `.ui-prose a` は要素トークン保護に触れるため、リンク側にクラスを振る。
+ * 44px タッチ下限を満たす。
+ */
+.ui-text-link {
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 44px;
+  align-items: center;
+  color: var(--primary-strong);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.ui-text-link:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/*
+ * 生成の進み具合（2026-08-08 UI/UX モダン化）。
+ * .gen-progress-* は代表 DOM に一致しないため unexpectedMotionRules の対象外。
+ * グローバルな * の一括リセットは書けないので、reduced-motion はここで個別に書く。
+ */
+.gen-progress-meter {
+  display: flex;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.gen-progress-step {
+  height: 3px;
+  flex: 1 1 0;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  transition: background-color var(--motion-base) var(--motion-ease);
+}
+
+.gen-progress-step.is-done {
+  background: var(--primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gen-progress-step {
+    transition: none;
+  }
+}
+
+/*
+ * idea 結果の必須注意（レイアウトのみ。文言は idea-menu-safety-notice.tsx が正）。
+ * 保証表現に寄る見た目変更を避けるため、警告アイコン色は --warning / --notice 系に留める。
+ */
+.idea-safety-notice-body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.idea-safety-notice-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.idea-safety-notice-icon {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--notice);
+  color: var(--primary-strong);
+}
+
+.idea-safety-notice-mandatory {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+  color: var(--text);
+}
+
+.idea-safety-dialog {
+  margin: auto;
+  width: calc(100% - 2rem);
+  max-width: 28rem;
+  /* 320 高・ズームでも閉じるが viewport 外に出ないよう縦スクロールを許す */
+  max-height: min(90vh, 40rem);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--space-5);
+  box-shadow: 0 12px 40px rgb(51 44 39 / 18%);
+}
+
+.idea-safety-dialog-title {
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+}
+
+.idea-safety-dialog-body {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.idea-safety-dialog-emphasis {
+  margin: 0;
+  font-weight: 700;
+}
+
+/*
+ * 献立ホーム（Phase 4）。意味クラス .home-* のみ。
+ * protected 断片（.wizard- / .primary-button 等）と素の要素セレクタは使わない。
+ */
+.home-page {
+  min-width: 0;
+}
+
+.home-generate-title,
+.home-section-title {
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 700;
+  line-height: var(--leading-h2);
+  color: var(--text);
+}
+
+.home-generate-remaining {
+  margin: 0;
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.home-pending-notice {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: var(--leading-body);
+  color: var(--text);
+}
+
+.home-soft-banner {
+  min-width: 0;
+}
+
+.home-recent-item,
+.home-expiring-item {
+  min-width: 0;
+  list-style: none;
+}
+
+.home-recent-link {
+  /* 短い献立名でも 44×44 タッチ下限を満たす（Mobile-first 契約） */
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 44px;
+  min-width: 44px;
+  width: 100%;
+  padding-block: var(--space-2);
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.home-recent-link:hover {
+  color: var(--primary-strong);
+}
+
+.home-expiring-name {
+  font-weight: 600;
+  color: var(--text);
 }
