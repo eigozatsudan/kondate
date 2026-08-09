@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Surface } from "./surface";
 
 describe("Surface", () => {
@@ -34,5 +34,18 @@ describe("Surface", () => {
       </Surface>,
     );
     expect(screen.getByRole("form", { name: "食材を追加" })).toBeInTheDocument();
+  });
+
+  it("wires onSubmit only when rendered as a form", () => {
+    const onSubmit = vi.fn((event: { preventDefault: () => void }) => {
+      event.preventDefault();
+    });
+    render(
+      <Surface as="form" aria-label="送信フォーム" onSubmit={onSubmit}>
+        <button type="submit">送る</button>
+      </Surface>,
+    );
+    screen.getByRole("button", { name: "送る" }).click();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });

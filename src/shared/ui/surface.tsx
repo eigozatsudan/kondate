@@ -12,21 +12,24 @@ export type LandmarkProps = Pick<
 
 export type SurfaceTone = "plain" | "sunken" | "notice";
 
-export type SurfaceProps = LandmarkProps & {
+type SurfaceCommon = LandmarkProps & {
   tone?: SurfaceTone;
-  as?: "div" | "section" | "article" | "form";
   children: ReactNode;
-  /**
-   * as="form" のときだけ意味を持つ。pantry-form.tsx:131 が
-   * <form onSubmit={…}> であり、これが無いと Task 0.7 で
-   * <Surface as="form"> に移行できない。
-   * onSubmit はハイフンを含まない camelCase なので TypeScript の
-   * 余剰プロパティ検査に引っかかり、型に無いと即コンパイルエラーになる
-   * （aria-label が黙って消えるのとは逆の壊れ方をする）。
-   * React 19 では FormEventHandler が deprecated のため SubmitEventHandler を使う。
-   */
-  onSubmit?: SubmitEventHandler<HTMLFormElement>;
 };
+
+/**
+ * as ごとの prop を判別共用体にする。
+ * onSubmit を常に受け付けると as="section" でも型が通り、実行時に黙って捨てられる
+ * （Phase 0 敵対的レビュー指摘）。form のときだけ onSubmit を許可する。
+ */
+export type SurfaceProps =
+  | (SurfaceCommon & {
+      as?: "div" | "section" | "article";
+    })
+  | (SurfaceCommon & {
+      as: "form";
+      onSubmit?: SubmitEventHandler<HTMLFormElement>;
+    });
 
 const toneClass: Record<SurfaceTone, string> = {
   plain: "ui-surface--plain",
@@ -34,22 +37,20 @@ const toneClass: Record<SurfaceTone, string> = {
   notice: "ui-surface--notice",
 };
 
-export function Surface({
-  tone = "plain",
-  as: Tag = "div",
-  children,
-  onSubmit,
-  ...rest
-}: SurfaceProps): JSX.Element {
+export function Surface(props: SurfaceProps): JSX.Element {
+  const tone = props.tone ?? "plain";
   const className = `ui-surface ${toneClass[tone]}`;
-  // form 以外に onSubmit を渡すと HTMLDivElement との型が衝突するため分岐する
-  if (Tag === "form") {
+
+  if (props.as === "form") {
+    const { tone: _tone, as: _as, children, onSubmit, ...rest } = props;
     return (
       <form {...rest} className={className} onSubmit={onSubmit}>
         {children}
       </form>
     );
   }
+
+  const { tone: _tone, as: Tag = "div", children, ...rest } = props;
   return (
     <Tag {...rest} className={className}>
       {children}
