@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { withTimeout } from "@/features/auth/async-timeout";
 import { useAuth } from "@/features/auth/use-auth";
@@ -16,6 +16,10 @@ import { shareConsentKeys } from "./share-consent-queries";
  * never-settle で saving 固着し「今はAIを使わない」も disabled のままになるのを防ぐ。
  */
 export const PRIVACY_ACCEPT_TIMEOUT_MS = 10_000;
+
+/** 必須チェック未入力のまま primary を押したときの案内（disabled だと理由が伝わらないため） */
+export const privacyConsentCheckboxRequiredMessage =
+  "「説明を確認しました」にチェックを入れてから進んでください。";
 
 export type PrivacyAcceptInput = {
   /** 共有任意チェック。true のときだけ upsert_my_share_consent(accept=true) を呼ぶ */
@@ -90,6 +94,11 @@ export function PrivacyNoticeContent({
   // 共有は既定 checked（任意。primary の enable 条件には使わない）
   const [checked, setChecked] = useState(false);
   const [shareChecked, setShareChecked] = useState(true);
+  // 未チェックのまま primary を押したときの案内。チェックしたら消す。
+  const [consentGateMessage, setConsentGateMessage] = useState<string | undefined>();
+  const consentCheckboxRef = useRef<HTMLInputElement>(null);
+  // 保存失敗とゲート案内は同じ領域。保存失敗を優先する。
+  const displayError = error ?? consentGateMessage;
   return (
     <main className="page-frame stack">
       <div>
@@ -113,10 +122,20 @@ export function PrivacyNoticeContent({
       </p>
       <label className="control-label">
         <input
+          ref={consentCheckboxRef}
           type="checkbox"
           checked={checked}
+          aria-invalid={error === undefined && consentGateMessage !== undefined ? true : undefined}
+          aria-describedby={
+            error === undefined && consentGateMessage !== undefined
+              ? "privacy-consent-checkbox-hint"
+              : undefined
+          }
           onChange={(event) => {
-            setChecked(event.target.checked);
+            const next = event.target.checked;
+            setChecked(next);
+            // チェックが入ったらゲート案内を消し、再試行しやすくする
+            if (next) setConsentGateMessage(undefined);
           }}
         />
         説明を確認しました
@@ -137,16 +156,30 @@ export function PrivacyNoticeContent({
           {shareConsentSection.checkboxLabel}
         </label>
       </section>
-      {error !== undefined && (
-        <p className="error-message" role="alert">
-          {error}
+      {displayError !== undefined && (
+        <p
+          id={
+            error === undefined && consentGateMessage !== undefined
+              ? "privacy-consent-checkbox-hint"
+              : undefined
+          }
+          className="error-message"
+          role="alert"
+        >
+          {displayError}
         </p>
       )}
       <button
         className="primary-button"
         type="button"
-        disabled={!checked || saving}
+        // 未チェックでも押せるようにし、押下時に理由を案内する（disabled だと無反応に見える）
+        disabled={saving}
         onClick={() => {
+          if (!checked) {
+            setConsentGateMessage(privacyConsentCheckboxRequiredMessage);
+            consentCheckboxRef.current?.focus();
+            return;
+          }
           onAccept({ shareConsentAccepted: shareChecked });
         }}
       >
