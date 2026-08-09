@@ -71,6 +71,49 @@ describe("expiryNotice", () => {
   });
 });
 
+it("maps soon expiry to the warning badge tone on the page", () => {
+  const soonItem: PantryItem = {
+    ...expired,
+    id: "60000000-0000-0000-0000-000000000099",
+    name: "ヨーグルト",
+    expiresOn: "2026-08-14",
+    expirationType: "best_before",
+  };
+  // 固定 now ではなく実時計に依存しないよう、期限を「今日〜7日」内に置くには
+  // 実行日依存になる。ここでは expiryNotice が warning を返す日付を fixture に使い、
+  // ページ配線が tone を Badge に渡すことだけを見る。
+  // 実行日が 2026-08-14 を過ぎるとこの fixture は danger になるため、
+  // 相対日で組み立てる。
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const inThreeDays = new Date();
+  inThreeDays.setUTCDate(inThreeDays.getUTCDate() + 3);
+  const soonKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(inThreeDays);
+  void today;
+  render(
+    <PantryPageContent
+      items={[{ ...soonItem, expiresOn: soonKey }]}
+      loading={false}
+      saving={false}
+      error={null}
+      onCreate={vi.fn()}
+      onUpdate={vi.fn()}
+      onDelete={vi.fn()}
+    />,
+  );
+  const badge = screen.getByText(/まもなく/u);
+  expect(badge.className).toContain("ui-badge--warning");
+});
+
 it("初回読み込み中は未確定の食材件数を0件と表示しない", () => {
   render(
     <PantryPageContent
@@ -172,7 +215,11 @@ it("shows entered expiry/open state and confirms before deletion", async () => {
   );
   // D-I6: 期限切れは「（期限切れ）」接尾辞付き。日付そのものは JST キーのまま。
   expect(screen.getByText(/消費期限\s*2026-07-10/u)).toBeInTheDocument();
-  expect(screen.getByText(/期限切れ/u)).toBeInTheDocument();
+  const expiredBadge = screen.getByText(/期限切れ/u);
+  expect(expiredBadge).toBeInTheDocument();
+  // 旧 className（text-red-800）相当の危険トーンが Badge に載っていること。
+  // 文言だけ残して tone を落とす配線退行を防ぐ。
+  expect(expiredBadge.className).toContain("ui-badge--danger");
   expect(screen.getByText("開封済み")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "牛乳を削除" }));
   expect(onDelete).toHaveBeenCalledWith(expired.id, expired.updatedAt);
