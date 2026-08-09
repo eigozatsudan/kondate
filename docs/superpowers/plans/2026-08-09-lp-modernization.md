@@ -206,6 +206,7 @@ const PRIMARY = "#b85033";
 const PRIMARY_STRONG = "#a13d24";
 const WHITE = "#ffffff";
 const SUNKEN = "#f2efec";
+const CANVAS = "#faf9f8";
 
 describe("free landing contrast", () => {
   it("keeps body text readable on both page grounds", () => {
@@ -237,19 +238,13 @@ describe("free landing contrast", () => {
 });
 ```
 
-`CANVAS` を定数群に足す。
-
-```ts
-const CANVAS = "#faf9f8";
-```
-
 - [ ] **Step 4: 実行して通ることを確認する**
 
 ```bash
 docker compose run --rm --no-deps app npx vitest run src/features/landing/free-landing-page.contrast.test.ts
 ```
 
-期待: 3 ケースすべて PASS。
+期待: 4 ケースすべて PASS。
 
 - [ ] **Step 5: inline style ゼロのテストを追加する**
 
