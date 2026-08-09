@@ -73,12 +73,23 @@
 
 - `/planner?resume=review` は**確認ステップ（`5. 確認`）を直接描画する**。
   依存: `e2e/specs/mobile-accessibility.spec.ts:93-97`（`ensurePrivacyThenGenerate`）
-- 下書きがある状態で `/planner` を開いたときの復帰先も変えない。
+- **生成中断（resumable pending）が無いとき**、下書き進捗がある状態で `/planner` を
+  開いたときの復帰先はウィザードのまま。
   依存: `e2e/specs/menu-domain-pantry.spec.ts:75, 610, 629` が `5. 確認` に直着地し、
   `:75` はそこから `戻る` を 4 回押して `1. 食事` に戻る
+- **生成中断（resumable pending）があるとき**は、下書きが確認まで揃っていても
+  **ホームを優先**し、`HomeGenerateCard` の「作成中の献立を続ける」を最上位に出す。
+  生成を開始できるだけ答えた下書きは `firstIncompletePlannerStep` が必ず `"review"` を
+  返すため、pending を見ずに `hasDraftProgress` だけで分岐するとホーム再開導線に
+  永久に届かない（設計意図: 生成中断が最優先で目に入ること）。
+  `?resume=` 付きは上記より優先してウィザード。
 
-ホーム化の対象は**「下書きも pending も無い素の `/planner`」だけ**である。
-`resume` パラメータ付き、および下書き復帰時は従来どおりウィザードを出す。
+ホーム化の対象は次のとおり。
+
+1. 下書き進捗も pending も無い素の `/planner`
+2. resumable pending がある `/planner`（`?resume=` 無し）
+
+`resume` パラメータ付き、および **pending 無しの**下書き復帰時はウィザードを出す。
 
 ### 5. 44×44 とボタン件数
 

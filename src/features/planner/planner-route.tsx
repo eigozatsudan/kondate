@@ -373,8 +373,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [value, setValue] = useState<PlannerDraftInput>(emptyDraft);
   const [initialized, setInitialized] = useState(false);
   /**
-   * 素の /planner（下書き進捗なし・resume なし）だけホーム。
-   * resume クエリ・下書き復帰時はウィザードを出し続ける（不変契約 4b）。
+   * ホーム vs ウィザード。
+   * - `?resume=` 付き → 常にウィザード（不変契約 4b の深リンク）
+   * - 生成中断（resumable pending）あり → ホーム優先（再開 CTA を最上位に）
+   * - 下書き進捗あり・pending なし → ウィザード復帰
+   * - 空下書き・pending なし → ホーム
    */
   const [wizardOpen, setWizardOpen] = useState(false);
   const [baselineRevision, setBaselineRevision] = useState(0);
@@ -461,13 +464,20 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     } else {
       setStep(firstIncomplete);
     }
-    // 下書きに meal 以降の回答がある、または resume クエリ付き → ウィザードへ復帰。
-    // 空下書きの素の /planner だけホーム（導線変更はこの分岐に限定）。
+    // ホーム / ウィザードの初期分岐:
+    // 1) ?resume= は深リンク契約を最優先してウィザード（privacy 往復など）
+    // 2) 生成中断があるときはホームを優先し、HomeGenerateCard の再開 CTA を最上位に出す
+    //    （設計意図: 生成が中断されている場合はそれが最優先で目に入ること）
+    //    完全回答済み下書きは firstIncomplete が必ず "review" になるため、pending を
+    //    見ずに hasDraftProgress だけで分岐するとホームの再開導線に永久に届かない。
+    // 3) pending 無しで下書き進捗があるときだけウィザードへ自動復帰
     const hasResumeQuery = searchParams.get("resume") !== null;
     const hasDraftProgress = firstIncomplete !== "meal";
-    setWizardOpen(hasResumeQuery || hasDraftProgress);
+    const hasResumablePendingOnInit =
+      userId !== undefined && readPendingGeneration(userId, new Date()) !== null;
+    setWizardOpen(hasResumeQuery || (hasDraftProgress && !hasResumablePendingOnInit));
     setInitialized(true);
-  }, [draftQuery.data, initialized, safetyQuery.data, searchParams]);
+  }, [draftQuery.data, initialized, safetyQuery.data, searchParams, userId]);
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
@@ -975,7 +985,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     })
     .slice(0, HOME_EXPIRING_PANTRY_LIMIT);
 
-  // ホーム: 下書き進捗も resume も無い素の /planner のみ。
+  // ホーム: 空下書き、または生成中断（pending）優先。?resume= 時はここへ来ない。
   if (!wizardOpen) {
     return (
       <PlannerHome
