@@ -84,93 +84,123 @@
   background: var(--surface-sunken);
 }
 
-/* 以下は Task 3 で書き換える。当面は既存のフロー／カード／ポイントを維持する。 */
-
 .free-landing__section-title {
-  margin: 0;
-  font-size: 1.0625rem;
+  margin: 0 0 var(--space-5);
+  font-family: var(--question-font);
+  font-size: var(--text-h2);
   font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: var(--leading-h2);
 }
 
 .free-landing__flow-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .free-landing__flow-item {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
-  font-size: 0.9375rem;
-  line-height: 1.55;
+  gap: var(--space-4);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
 }
 
+.free-landing__flow-item + .free-landing__flow-item {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-4);
+}
+
+/*
+ * 番号は --primary-strong。--primary（#b85033）は地色が付くと
+ * 本文 AA を割る（sunken 上 4.33。free-landing-page.contrast.test.ts で固定）。
+ */
 .free-landing__flow-num {
-  flex: 0 0 1.75rem;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.8125rem;
+  flex: 0 0 auto;
+  min-width: 1.5em;
+  color: var(--primary-strong);
+  font-family: var(--question-font);
+  font-size: var(--text-h2);
   font-weight: 700;
-  background: color-mix(in srgb, var(--section-tint, #f6f6f4) 40%, #e8ddd4);
-  color: color-mix(in srgb, currentColor 90%, #8b5a3c);
+  line-height: 1.1;
 }
 
-.free-landing__cards {
-  list-style: none;
+.free-landing__feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
   margin: 0;
   padding: 0;
+  list-style: none;
 }
 
-.free-landing__card {
-  padding: 0.875rem;
+/* 箱を使わない。項目の区切りは罫線だけ。 */
+.free-landing__feature + .free-landing__feature {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-5);
 }
 
-.free-landing__card-header {
+.free-landing__feature-head {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
-.free-landing__card-img {
+.free-landing__feature-img {
   display: block;
-  flex: 0 0 3.5rem;
-  width: 3.5rem;
-  height: 3.5rem;
+  flex: 0 0 52px;
+  width: 52px;
+  height: 52px;
   aspect-ratio: 1 / 1;
   object-fit: cover;
-  border-radius: 0.625rem;
-  background: color-mix(in srgb, var(--section-tint, #f6f6f4) 70%, #e8e4df);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
 }
 
-.free-landing__card-title {
+.free-landing__feature-title {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--text-body);
   font-weight: 700;
-  line-height: 1.4;
+  line-height: var(--leading-body);
 }
 
-.free-landing__card > p {
-  margin: 0;
-  font-size: 0.9375rem;
-  line-height: 1.6;
+.free-landing__feature-body {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
 }
 
 .free-landing__points {
   margin: 0;
-  padding-left: 1.15rem;
-  font-size: 0.875rem;
-  line-height: 1.55;
-  color: color-mix(in srgb, currentColor 88%, transparent);
+  padding-left: var(--space-5);
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: var(--leading-body);
 }
 
 .free-landing__points li + li {
-  margin-top: 0.35rem;
+  margin-top: var(--space-1);
+}
+
+.free-landing__closing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.free-landing__closing-body {
+  margin: 0;
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.free-landing__closing-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-small);
 }
