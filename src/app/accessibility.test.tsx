@@ -24,6 +24,7 @@ import { createPlannerAttempt } from "@/features/planner/expired-pantry-checks";
 import type { PlannerSafetyMember } from "@/features/planner/planner-safety-member";
 import type { PlannerStep } from "@/features/planner/model/planner-wizard";
 import { ShoppingListPage } from "@/features/shopping/pages/shopping-list-page";
+import { FreeLandingPage } from "@/features/landing/free-landing-page";
 import { runAxe } from "@/test/axe";
 import { AppToastProvider } from "@/shared/ui/app-toast";
 import { AppShell } from "./layouts/app-shell";
@@ -645,5 +646,24 @@ describe("generation and result accessibility", () => {
     expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
     expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
     expect(screen.queryByText("加工品は原材料表示を確認してください")).toBeNull();
+  });
+});
+
+describe("landing accessibility", () => {
+  // LP は e2e にも既存 axe にも登場しない。構成変更で触るのは見出し階層と
+  // リスト構造なので、そこを axe で固定する。
+  // jsdom には描画が無いため色コントラストは axe では見えない（incomplete になる）。
+  // それは free-landing-page.contrast.test.ts が受け持つ。
+  it("free landing keeps main landmark, single h1, and list semantics", async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <FreeLandingPage />
+      </MemoryRouter>,
+    );
+
+    await expectAccessible(container);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("list", { name: "できること" })).toBeVisible();
+    expect(screen.queryByRole("navigation", { name: "メインメニュー" })).toBeNull();
   });
 });
