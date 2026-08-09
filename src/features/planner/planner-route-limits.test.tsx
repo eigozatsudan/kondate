@@ -61,6 +61,15 @@ vi.mock("@tanstack/react-query", () => ({
         isPending: false,
       };
     }
+    if (queryKey[0] === "history") {
+      return {
+        data: [],
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+        refetch: vi.fn(),
+      };
+    }
     return {
       data: {
         members: mocks.eligibleMemberIds.map((id, index) => ({
@@ -98,7 +107,8 @@ it("新規下書きは対象を自動埋めせず、household 選択後も上限
     </MemoryRouter>,
   );
 
-  // audience step まで進む（適格家族は 21 人モック）
+  // 素の /planner はホーム。ウィザード第1ステップから audience まで進む（適格家族は 21 人モック）
+  await userEvent.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
   await userEvent.click(await screen.findByRole("radio", { name: "夕食" }));
   await userEvent.click(screen.getByRole("button", { name: "次へ" }));
   await userEvent.type(screen.getByLabelText("メイン食材"), "鶏肉");

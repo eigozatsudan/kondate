@@ -172,6 +172,16 @@ vi.mock("@tanstack/react-query", () => ({
         refetch: vi.fn(),
       };
     }
+    // ホーム直近献立。空配列で十分（route の表示分岐検証は home 単体に任せる）。
+    if (queryKey[0] === "history") {
+      return {
+        data: [],
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+        refetch: vi.fn(),
+      };
+    }
     const ownerId = queryKey[0] === "pantry" ? queryKey[1] : queryKey[2];
     const isOwnerBPending = ownerId === ownerBId && queryState.ownerBPending;
     return queryKey[0] === "planner"
