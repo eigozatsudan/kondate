@@ -286,6 +286,7 @@
 | 生成結果と `/menus` の両面にタブが出る | **意図どおり**（§1）。片面だけにしない |
 | E2E strict 失敗 / 誤クリック | tablist `aria-label` 固定 + E2E を tablist スコープに直す（§7 必須） |
 | 見出し親 DOM 変化で E2E が別要素を掴む | `h2` の親を `.cook-timeline-panel` にロック（§3.1） |
+| 段取りタブと料理タブが sticky で重なる | 段取りは `.cook-timeline-tabs`（static）。料理だけ sticky（§5.4）。E2E は tablist 配下を除外するため視覚崩れを検知しない |
 | 買い物と行数・数量がズレる | 在庫非控除 + **aliases 空**を §4.6 で明記。コメントで目的差 |
 | 調味料の重複行 | 非合算行の完全一致畳み（§4.3） |
 | menu-detail → shopping 依存 | categoryLabel を `src/shared` へ移し re-export（§5.3） |
