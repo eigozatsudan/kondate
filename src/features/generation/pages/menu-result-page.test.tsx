@@ -617,7 +617,7 @@ describe("MenuResultPage", () => {
     expect(await screen.findByRole("heading", { name: "献立変更の差分" })).toBeVisible();
   });
 
-  it("clears the approval and asks for a new one when the reconcile fails with a code", async () => {
+  it("keeps reconcile sticky on list_version_conflict so concurrent winner can resume (SHOP2)", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
     shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({
       sourceMenuId: VALID_MENU_ID,
@@ -640,9 +640,12 @@ describe("MenuResultPage", () => {
       "買い物リストの状態が変わりました。もう一度確認してください",
     );
     expect(screen.queryByRole("heading", { name: "献立変更の差分" })).not.toBeInTheDocument();
-    expect(
-      sessionStorage.getItem(pendingShoppingCommandStorageKey("reconcile", SHOPPING_LIST_ID)),
-    ).toBeNull();
+    // SHOP2: list_version_conflict では共有 sticky を wipe しない（SHOP9: list+menu 粒度）
+    const stickyKey = pendingShoppingCommandStorageKey(
+      "reconcile",
+      `${SHOPPING_LIST_ID}:${VALID_MENU_ID}`,
+    );
+    expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).not.toBeNull();
   });
 
   describe("idea result boundary", () => {

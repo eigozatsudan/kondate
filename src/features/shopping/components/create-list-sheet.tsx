@@ -9,6 +9,11 @@ export type CreateListSheetProps = {
    * append 既定で壊れたリストに再トラップしないよう new を強制する。
    */
   forceNewMode?: boolean;
+  /**
+   * SHOP4: 同 lineage が reconcilable のとき true。
+   * append は二重行になるため閉じ、差分 CTA へ誘導する（mode=new は維持）。
+   */
+  disableAppend?: boolean;
   onSubmit: (input: {
     mode: "new" | "append";
     activeListId: string | null;
@@ -27,14 +32,17 @@ export function CreateListSheet({
   pending,
   safetyBlocked,
   forceNewMode = false,
+  disableAppend = false,
   onSubmit,
   onCancel,
 }: CreateListSheetProps) {
-  // 確認不能な active リストがあるときは append 既定を避ける（SP-I10）
+  // 確認不能 / reconcilable のときは append 既定を避ける（SP-I10 / SHOP4）
+  const appendBlocked = forceNewMode || disableAppend;
   const [mode, setMode] = useState<"new" | "append">(
-    activeList === null || forceNewMode ? "new" : "append",
+    activeList === null || appendBlocked ? "new" : "append",
   );
-  const effectiveMode = forceNewMode ? "new" : mode;
+  // forceNew は new 固定。disableAppend のみのときは new 既定だがユーザーは new のみ選択可
+  const effectiveMode = appendBlocked ? "new" : mode;
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -74,12 +82,17 @@ export function CreateListSheet({
                 今のリストは家族設定で確認できないため、新しいリストを作ります。
               </p>
             )}
+            {disableAppend && !forceNewMode && (
+              <p className="type-small" role="status">
+                この献立の更新は「買い物リストの差分を見る」から反映してください。追加ではなく新しいリストにする場合のみ選べます。
+              </p>
+            )}
             <label className="control-label">
               <input
                 type="radio"
                 name="create-list-mode"
                 checked={effectiveMode === "append"}
-                disabled={forceNewMode}
+                disabled={appendBlocked}
                 onChange={() => {
                   setMode("append");
                 }}
@@ -102,7 +115,10 @@ export function CreateListSheet({
         {showNewListWarning ? (
           <p role="status" className="rounded-xl border border-line bg-canvas px-3 py-2 text-sm">
             新しいリストにすると、いまの買い物リスト（{activeList.itemCount}
-            件）は消えます。いまのリストへ足したいときは「今のリストへ追加」を選んでください。
+            件）は消えます。
+            {appendBlocked
+              ? null
+              : "いまのリストへ足したいときは「今のリストへ追加」を選んでください。"}
           </p>
         ) : null}
         <button

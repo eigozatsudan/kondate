@@ -302,17 +302,31 @@ function writePendingShoppingCommandEnvelope(key: string, command: unknown): voi
   writeStorageBestEffort(sessionStorage, key, payload);
 }
 
+/**
+ * SHOP9: reconcile sticky / suppress の targetId は listId だけでは足りない。
+ * sourceMenuId を混ぜ、MenuA の pending が MenuB 詳細から resume/clobber されない粒度にする。
+ */
+export function reconcileCommandTargetId(listId: string, sourceMenuId: string): string {
+  return `${listId}:${sourceMenuId}`;
+}
+
+/** Web Locks 名: create/reconcile sticky mint をタブ間で直列化する（SHOP2）。 */
+export const pendingShoppingCommandClaimLockName = (
+  kind: "create" | "reconcile",
+  targetId: string,
+) => `kondate:shopping:command-claim:${kind}:${targetId}`;
+
+/**
+ * create/reconcile sticky の読取→mint→書込。
+ * mode / approval などユーザーがシートで選び直した意図と一致しない sticky は
+ * 破棄して rebuild する（同一 targetId でも誤 mode 再送を防ぐ）。
+ * isReusable 省略時は TTL 内なら常に再利用（resume 経路向け）。
+ */
 export function persistedShoppingCommand<T>(
   kind: "create" | "reconcile",
   targetId: string,
   schema: z.ZodType<T>,
   build: (idempotencyKey: string) => T,
-  /**
-   * 保存済み command を再利用してよいか。
-   * mode / approval などユーザーがシートで選び直した意図と一致しない sticky は
-   * 破棄して rebuild する（同一 targetId でも誤 mode 再送を防ぐ）。
-   * 省略時は従来どおり TTL 内なら常に再利用（resume 経路向け）。
-   */
   isReusable?: (saved: T) => boolean,
 ): T {
   const key = pendingShoppingCommandStorageKey(kind, targetId);
@@ -326,7 +340,32 @@ export function persistedShoppingCommand<T>(
   }
   const command = schema.parse(build(crypto.randomUUID()));
   writePendingShoppingCommandEnvelope(key, command);
+  // SHOP2: 書込後 re-read。Locks 無し競合で他タブが先勝ちした場合は共有 sticky を優先する。
+  const again = readPendingShoppingCommand(kind, targetId, schema);
+  if (again !== null && (isReusable === undefined || isReusable(again))) {
+    return again;
+  }
   return command;
+}
+
+/**
+ * SHOP2: create/reconcile の sticky 読取→mint→書込を Web Locks で直列化し、
+ * 両タブが sticky 空で同時に別 UUID を mint する pre-write TOCTOU を閉じる。
+ * ロック保持は mint のみ（ネットワーク送信は外）。Locks 非対応は write-then-reread にフォールバック。
+ */
+export async function claimShoppingCommand<T>(
+  kind: "create" | "reconcile",
+  targetId: string,
+  schema: z.ZodType<T>,
+  build: (idempotencyKey: string) => T,
+  isReusable?: (saved: T) => boolean,
+): Promise<T> {
+  const run = (): T => persistedShoppingCommand(kind, targetId, schema, build, isReusable);
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+  if (locks !== undefined && typeof locks.request === "function") {
+    return locks.request(pendingShoppingCommandClaimLockName(kind, targetId), () => run());
+  }
+  return run();
 }
 
 export const clearShoppingCommand = (kind: "create" | "reconcile", targetId: string) => {

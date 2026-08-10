@@ -571,6 +571,103 @@ describe("createShoppingListFromMenu", () => {
     expect(mocks.applyDraft).not.toHaveBeenCalled();
     expect(mocks.revalidate).toHaveBeenCalledWith(OTHER_MENU);
   });
+
+  it("rejects append when same lineage is already on the active list (SHOP4)", async () => {
+    // 同 derivation group の旧版が list にあると append は二重行になる → reconcile へ誘導
+    const mocks = makeMocks();
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: "52000000-0000-4000-8000-0000000000aa",
+        sourceMenuIdSnapshot: "52000000-0000-4000-8000-0000000000aa",
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
+    await expect(
+      createShoppingListFromMenu(
+        toDeps(mocks),
+        makeCommand({
+          mode: "append",
+          activeListId: "70000000-0000-4000-8000-000000000001",
+          expectedListVersion: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "reconcile_required",
+    });
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
+  });
+
+  it("revalidates live safety after SQL early-replay success (SHOP1)", async () => {
+    // applyDraft が replayed:true を返したら service が post-assert する
+    const mocks = makeMocks();
+    const earlyReplay = makeResponse({ replayed: true, version: 4 });
+    mocks.applyDraft.mockResolvedValue(earlyReplay);
+    mocks.loadActiveList.mockResolvedValue({
+      id: earlyReplay.listId,
+      status: "active",
+      version: 4,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: MENU_ID,
+        sourceMenuIdSnapshot: MENU_ID,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
+    await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).resolves.toEqual(
+      earlyReplay,
+    );
+    expect(mocks.applyDraft).toHaveBeenCalledTimes(1);
+    // post-assert で list / live source / validatedDraft 経路が走る
+    expect(mocks.loadActiveList).toHaveBeenCalledWith(earlyReplay.listId);
+    expect(mocks.revalidate).toHaveBeenCalled();
+  });
+
+  it("rejects SQL early-replay when live safety no longer passes (SHOP1)", async () => {
+    const mocks = makeMocks();
+    mocks.applyDraft.mockResolvedValue(makeResponse({ replayed: true }));
+    mocks.loadActiveList.mockResolvedValue({
+      id: "70000000-0000-4000-8000-000000000001",
+      status: "active",
+      version: 1,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: MENU_ID,
+        sourceMenuIdSnapshot: MENU_ID,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
+    // apply 前の validatedDraft は通す。post-assert の revalidate だけ invalid にする
+    let revalidateCalls = 0;
+    mocks.revalidate.mockImplementation(() => {
+      revalidateCalls += 1;
+      if (revalidateCalls >= 2) {
+        return Promise.resolve(
+          makeRevalidation({
+            status: "invalid",
+            issues: [{ code: "direct_allergen_match", path: "x", message: "だめ" }],
+          }),
+        );
+      }
+      return Promise.resolve(makeRevalidation());
+    });
+    await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).rejects.toMatchObject({
+      status: 409,
+      code: "current_safety_revalidation_required",
+    });
+  });
 });
 
 // --- 設計書 Task4: preview / revalidate / reconcile ---------------------------------

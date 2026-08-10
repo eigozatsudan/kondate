@@ -39,10 +39,11 @@ import {
 import { createPlannerDraftFromMenu } from "@/features/planner/model/draft-from-menu";
 import { getPlannerDraft, plannerKeys, savePlannerDraft } from "@/features/planner/planner-api";
 import {
+  claimShoppingCommand,
   clearShoppingCommand,
   fetchReconcilableMenuSource,
-  persistedShoppingCommand,
   previewShoppingDiff,
+  reconcileCommandTargetId,
 } from "@/features/shopping/api/shopping-api";
 import { CreateListSheet } from "@/features/shopping/components/create-list-sheet";
 import { ReconcileListSheet } from "@/features/shopping/components/reconcile-list-sheet";
@@ -259,7 +260,9 @@ export function HouseholdMenuDetailBody({
       setShoppingSheet(null);
       setShoppingDiff(null);
       reconcileDiffFingerprintRef.current = null;
-      if (activeList !== null) clearShoppingResumeSuppress("reconcile", activeList.id);
+      if (activeList !== null) {
+        clearShoppingResumeSuppress("reconcile", reconcileCommandTargetId(activeList.id, menuId));
+      }
     }
   }, [
     mustCloseCreateSheet,
@@ -282,16 +285,17 @@ export function HouseholdMenuDetailBody({
     };
   }, [menuId]);
 
-  // SHOP1: reconcile suppress も list を見ている surface の真 unmount / list 切替で落とす。
+  // SHOP1 + SHOP9: reconcile suppress は listId:sourceMenuId 粒度。
   // create とは deps を分け、activeList 変化で create suppress を誤 clear しない。
   useEffect(() => {
     const listId = activeList?.id;
-    if (listId === undefined) return;
-    cancelPendingResumeSuppressClear("reconcile", listId);
+    if (listId === undefined || menuId.length === 0) return;
+    const reconcileTargetId = reconcileCommandTargetId(listId, menuId);
+    cancelPendingResumeSuppressClear("reconcile", reconcileTargetId);
     return () => {
-      scheduleResumeSuppressClear("reconcile", listId);
+      scheduleResumeSuppressClear("reconcile", reconcileTargetId);
     };
-  }, [activeList?.id]);
+  }, [activeList?.id, menuId]);
 
   // SHOP2 + SHOP1: list gate が真に invalid/unverifiable（error=phase blocked）のときだけ
   // append sticky を捨てる。create resume は blocked（checking 含む）で止むが、checking 中の
@@ -354,8 +358,16 @@ export function HouseholdMenuDetailBody({
   };
   const failShoppingCommand = (kind: "create" | "reconcile", targetId: string, error: unknown) => {
     if (error instanceof Error && "code" in error) {
-      clearShoppingCommand(kind, targetId);
-      clearShoppingResumeSuppress(kind, targetId);
+      const code = error.code;
+      // SHOP2: list_version_conflict は並行敗者が共有 sticky（勝者の復旧鍵）を wipe しない。
+      // 真の stale でも sticky を残し、シート再 open 時 isReusable で version rebuild。
+      // auto-resume の 409 ループを防ぐため suppress を立てる（他 code は sticky+suppress clear）。
+      if (code === "list_version_conflict") {
+        markShoppingResumeSuppress(kind, targetId);
+      } else {
+        clearShoppingCommand(kind, targetId);
+        clearShoppingResumeSuppress(kind, targetId);
+      }
       void queryClient.invalidateQueries({ queryKey: shoppingKeys.active(ownerId) });
       void queryClient.invalidateQueries({ queryKey });
       setShoppingSheet(null);
@@ -393,15 +405,19 @@ export function HouseholdMenuDetailBody({
       failShoppingCommand("create", command.menuId, error);
     }
   };
-  const submitReconcile = async (listId: string, command: ReconcileShoppingListRequest) => {
+  const submitReconcile = async (
+    listId: string,
+    command: ReconcileShoppingListRequest,
+    stickyTargetId: string,
+  ) => {
     // HR9: 献立 gate が閉じているあいだは resume も送らない
     if (!actionsEnabled || shoppingGate.blocked) return;
     try {
       await reconcileList.mutateAsync({ listId, input: command });
-      await finishShoppingCommand("reconcile", listId);
+      await finishShoppingCommand("reconcile", stickyTargetId);
       void navigate("/shopping");
     } catch (error) {
-      failShoppingCommand("reconcile", listId, error);
+      failShoppingCommand("reconcile", stickyTargetId, error);
     }
   };
 
@@ -427,17 +443,25 @@ export function HouseholdMenuDetailBody({
   });
   useResumeShoppingCommand({
     kind: "reconcile",
-    targetId: activeList?.id ?? null,
+    // SHOP9: listId だけでは MenuA sticky が MenuB 詳細から resume される。menu 粒度へ。
+    targetId: activeList !== null ? reconcileCommandTargetId(activeList.id, menuId) : null,
     schema: reconcileShoppingListRequestSchema,
-    submit: (command: ReconcileShoppingListRequest) =>
-      submitReconcile(activeList?.id ?? "", command),
+    submit: (command: ReconcileShoppingListRequest) => {
+      if (activeList === null) return Promise.resolve();
+      return submitReconcile(
+        activeList.id,
+        command,
+        reconcileCommandTargetId(activeList.id, menuId),
+      );
+    },
     // SHOP1 + SHOP6: reconcile シート表示中 / suppress 中は resume しない。
     // suppress は Cancel または menu-detail 真 unmount の遅延 clear で落ちる。
     enabled:
       actionsEnabled &&
       !shoppingGate.blocked &&
       shoppingSheet !== "reconcile" &&
-      (activeList === null || !isShoppingResumeSuppressed("reconcile", activeList.id)),
+      (activeList === null ||
+        !isShoppingResumeSuppressed("reconcile", reconcileCommandTargetId(activeList.id, menuId))),
   });
 
   const firstDishId = result.menu.dishes[0]?.id ?? null;
@@ -728,8 +752,11 @@ export function HouseholdMenuDetailBody({
                 }
                 reconcileDiffFingerprintRef.current = fingerprintAtPreview ?? null;
                 setShoppingDiff(diff);
-                // SHOP6: reconcile シート open も suppress を永続化
-                markShoppingResumeSuppress("reconcile", activeList.id);
+                // SHOP6 + SHOP9: reconcile シート open も list+menu 粒度で suppress を永続化
+                markShoppingResumeSuppress(
+                  "reconcile",
+                  reconcileCommandTargetId(activeList.id, menuId),
+                );
                 setShoppingSheet("reconcile");
               })
               .catch(() => {
@@ -764,10 +791,15 @@ export function HouseholdMenuDetailBody({
             // 表示中の再取得で「作成する」が disable 点滅しないよう送信は actionsEnabled のみ見る。
             safetyBlocked={!actionsEnabled}
             forceNewMode={shoppingGate.error}
+            // SHOP4: reconcilable 時は append を閉じ、差分 CTA へ誘導（mode=new は維持）
+            disableAppend={
+              reconcileTarget.data !== null && reconcileTarget.data !== undefined
+            }
             onSubmit={(input) => {
               // 表示中 isFetching では止めない（safetyBlocked と同じく actions のみ）
               if (!actionsEnabled || createList.isPending) return;
-              const command = persistedShoppingCommand(
+              // SHOP2: mint を Web Locks で直列化し multi-tab 別 UUID を閉じる
+              void claimShoppingCommand(
                 "create",
                 menuId,
                 createShoppingListRequestSchema,
@@ -785,8 +817,9 @@ export function HouseholdMenuDetailBody({
                   saved.mode === input.mode &&
                   saved.activeListId === input.activeListId &&
                   saved.expectedListVersion === input.expectedListVersion,
-              );
-              void submitCreate(command);
+              ).then((command) => {
+                void submitCreate(command);
+              });
             }}
             onCancel={() => {
               // SHOP1: Cancel は sticky を捨てない。SHOP6 suppress だけ落とし resume を再武装する。
@@ -810,21 +843,23 @@ export function HouseholdMenuDetailBody({
                 const target = reconcileTarget.data;
                 // HR3: Apply 直前に gate と preview 時 FP を再確認（hard 後の stale diff 適用を閉じる）
                 if (shoppingMutateBlocked || target === null) return;
+                const stickyTargetId = reconcileCommandTargetId(activeList.id, menuId);
                 if (
                   reconcileDiffFingerprintRef.current !== null &&
                   reconcileDiffFingerprintRef.current !== revalidation.result?.safetyFingerprint
                 ) {
                   setShoppingError("家族設定が変わったため、差分を開き直してください");
-                  clearShoppingResumeSuppress("reconcile", activeList.id);
+                  clearShoppingResumeSuppress("reconcile", stickyTargetId);
                   setShoppingSheet(null);
                   setShoppingDiff(null);
                   reconcileDiffFingerprintRef.current = null;
                   return;
                 }
                 const listId = activeList.id;
-                const command = persistedShoppingCommand(
+                // SHOP2 + SHOP9: list+menu 粒度 sticky を Locks 付きで mint
+                void claimShoppingCommand(
                   "reconcile",
-                  listId,
+                  stickyTargetId,
                   reconcileShoppingListRequestSchema,
                   (idempotencyKey) => ({
                     expectedListVersion: activeList.version,
@@ -852,12 +887,16 @@ export function HouseholdMenuDetailBody({
                         })
                     );
                   },
-                );
-                void submitReconcile(listId, command);
+                ).then((command) => {
+                  void submitReconcile(listId, command, stickyTargetId);
+                });
               }}
               onCancel={() => {
                 // SHOP1: sticky は残す。SHOP6 suppress だけ落として resume 再武装。
-                clearShoppingResumeSuppress("reconcile", activeList.id);
+                clearShoppingResumeSuppress(
+                  "reconcile",
+                  reconcileCommandTargetId(activeList.id, menuId),
+                );
                 setShoppingSheet(null);
                 setShoppingDiff(null);
                 reconcileDiffFingerprintRef.current = null;

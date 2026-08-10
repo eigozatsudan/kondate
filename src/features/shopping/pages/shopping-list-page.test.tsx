@@ -24,16 +24,19 @@ import { categoryLabel } from "../category-label";
 import { ShoppingListPage } from "./shopping-list-page";
 import {
   claimItemMutationSticky,
+  claimShoppingCommand,
   clearPendingItemMutation,
   clearShoppingCommand,
   fetchReconcilableMenuSource,
   pendingItemMutationClaimLockName,
   pendingItemMutationStorageKey,
+  pendingShoppingCommandClaimLockName,
   pendingShoppingCommandStorageKey,
   pendingShoppingCommandTtlMs,
   persistedShoppingCommand,
   readPendingItemMutation,
   readPendingShoppingCommand,
+  reconcileCommandTargetId,
   writePendingItemMutation,
   type PendingItemMutationSticky,
 } from "../api/shopping-api";
@@ -1252,6 +1255,28 @@ describe("CreateListSheet", () => {
     ).toBeInTheDocument();
   });
 
+  it("disables append and defaults to new when reconcilable (SHOP4)", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <CreateListSheet
+        activeList={{ id: LIST_ID, version: 3, itemCount: 4 }}
+        pending={false}
+        safetyBlocked={false}
+        disableAppend
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/今のリストへ追加/u)).toBeDisabled();
+    expect(screen.getByText(/買い物リストの差分を見る/u)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "作成する" }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      mode: "new",
+      activeListId: LIST_ID,
+      expectedListVersion: 3,
+    });
+  });
+
   it("submits a new list with null expectations when none is active", async () => {
     const onSubmit = vi.fn();
     render(
@@ -1577,6 +1602,75 @@ describe("persistedShoppingCommand", () => {
     sessionStorage.removeItem(pendingShoppingCommandStorageKey("create", MENU_ID));
     const second = persistedShoppingCommand("create", MENU_ID, schema, build);
     expect(second).toEqual(first);
+  });
+
+  it("builds reconcile sticky target as listId:sourceMenuId (SHOP9)", () => {
+    expect(reconcileCommandTargetId(LIST_ID, MENU_ID)).toBe(`${LIST_ID}:${MENU_ID}`);
+  });
+});
+
+describe("claimShoppingCommand (SHOP2 pre-write concurrent mint)", () => {
+  afterEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  const schema = z.object({ menuId: z.uuid(), idempotencyKey: z.uuid() }).strict();
+
+  it("serializes concurrent first claims via Web Locks so both tabs share one key", async () => {
+    type Claimed = { menuId: string; idempotencyKey: string };
+    type LockRequest = {
+      name: string;
+      callback: () => Claimed;
+      resolve: (value: Claimed) => void;
+      reject: (reason?: unknown) => void;
+    };
+    const queue: LockRequest[] = [];
+    let running = false;
+    const pump = () => {
+      if (running) return;
+      const next = queue.shift();
+      if (next === undefined) return;
+      running = true;
+      void Promise.resolve()
+        .then(() => next.callback())
+        .then((value) => {
+          next.resolve(value);
+        })
+        .catch((error: unknown) => {
+          next.reject(error);
+        })
+        .finally(() => {
+          running = false;
+          pump();
+        });
+    };
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: (name: string, callback: () => Claimed) =>
+          new Promise<Claimed>((resolve, reject) => {
+            expect(name).toBe(pendingShoppingCommandClaimLockName("create", MENU_ID));
+            queue.push({ name, callback, resolve, reject });
+            pump();
+          }),
+      },
+    });
+
+    const [a, b] = await Promise.all([
+      claimShoppingCommand("create", MENU_ID, schema, () => ({
+        menuId: MENU_ID,
+        idempotencyKey: "40000000-0000-4000-8000-0000000000a1",
+      })),
+      claimShoppingCommand("create", MENU_ID, schema, () => ({
+        menuId: MENU_ID,
+        idempotencyKey: "40000000-0000-4000-8000-0000000000b1",
+      })),
+    ]);
+    expect(a.idempotencyKey).toBe(b.idempotencyKey);
+    expect(readPendingShoppingCommand("create", MENU_ID, schema)?.idempotencyKey).toBe(
+      a.idempotencyKey,
+    );
   });
 });
 

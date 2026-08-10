@@ -183,6 +183,12 @@ function mapRpcError(error: { message: string }): never {
       "menu_version_already_in_list",
       "この献立はすでに今の買い物リストへ追加されています",
     ],
+    // SHOP4: 同 lineage が既に list にある append を拒否（reconcile へ誘導）
+    reconcile_required: [
+      409,
+      "reconcile_required",
+      "この献立は買い物リストに取り込まれています。差分から反映してください",
+    ],
     // SP-3: 出典削除済みリストへの append 拒否。mode=new で作り直す。
     list_unverifiable: [
       409,

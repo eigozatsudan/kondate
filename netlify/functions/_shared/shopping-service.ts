@@ -227,16 +227,44 @@ export async function createShoppingListFromMenu(
     return replay;
   }
   // SHOP8: idea / owner は full aggregate より前（SQL の identity 優先と同順）
-  const { draft, safetyFingerprint } = await validatedDraft(deps, command.menuId);
+  const { menu, draft, safetyFingerprint } = await validatedDraft(deps, command.menuId);
   // SHOP2: append は active list 全 live source の現行 safety を先に確認
   if (command.mode === "append" && command.activeListId !== null) {
     await assertActiveListSourcesCurrentlySafe(deps, command.activeListId);
+    // SHOP4: 同 lineage（同一 menu / derivation group）が既に list にあるときは
+    // append の二重行を拒否し reconcile 入口へ誘導する（UI CTA と対称のサーバ DiD）。
+    if (
+      await hasSourceLineageOnList(
+        deps,
+        command.activeListId,
+        command.menuId,
+        menu.derivationGroupId,
+      )
+    ) {
+      throw new HttpError(
+        409,
+        "reconcile_required",
+        "この献立は買い物リストに取り込まれています。差分から反映してください",
+      );
+    }
   }
   try {
-    // residual-intentional (SHOP3): SQL early-replay 成功 return に post-apply assert は付けない。
-    // 競合枝（replayAfterListVersionConflict）と service 先読み hit だけ assert 済み。
-    // TOCTOU / service_role 直 early の DiD は migration 契約を触らず残す。
-    return await deps.applyDraft({ ...command, requestHash, safetyFingerprint, draft });
+    const result = await deps.applyDraft({
+      ...command,
+      requestHash,
+      safetyFingerprint,
+      draft,
+    });
+    // SHOP1: SQL early-replay（replayed:true）成功後も現行 safety を再確認する。
+    // 両者が service find を miss した並行同一 key で、勝者 commit 後に世帯が変わり
+    // 敗者が SQL early だけ踏む TOCTOU を閉じる（先読み hit / conflict 枝と同契約）。
+    if (result.replayed) {
+      await assertReplayStillCurrentlySafe(deps, {
+        menuId: command.menuId,
+        listId: result.listId,
+      });
+    }
+    return result;
   } catch (error: unknown) {
     // SHOP3: 並行同一 key+hash で敗者が list_version_conflict になった場合は
     // 勝者が書いた mutation を再読して 200 replayed にする（逐次再送と対称）
@@ -726,6 +754,13 @@ export async function reconcileShoppingList(
     );
     if (concurrent !== null) return concurrent;
     throw error;
+  }
+  // SHOP1: create と同様、SQL early-replay 成功後も現行 safety を再確認する
+  if (result.replayed) {
+    await assertReplayStillCurrentlySafe(deps, {
+      menuId: command.sourceMenuId,
+      listId: result.listId,
+    });
   }
   // R2: scoped current delete 後、対象 group の projection が空のまま残る窓を
   // 応答前の list revalidate で閉じる。失敗しても reconcile 自体は成功済みなので握りつぶし、
