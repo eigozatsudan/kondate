@@ -361,8 +361,13 @@ export function HouseholdMenuDetailBody({
       const code = error.code;
       // SHOP2: list_version_conflict は並行敗者が共有 sticky（勝者の復旧鍵）を wipe しない。
       // 真の stale でも sticky を残し、シート再 open 時 isReusable で version rebuild。
-      // auto-resume の 409 ループを防ぐため suppress を立てる（他 code は sticky+suppress clear）。
-      if (code === "list_version_conflict") {
+      // SHOP1 (adversarial): current_safety_revalidation_required も sticky を保持する。
+      // 適用済み create/reconcile + 応答ロスト後に safety が一時 invalid になると
+      // replay が 409 になる。ここで clear するとユーザー再送が新 idempotency key になり、
+      // mode=new は active を archive して第二リストを作る（進捗 wipe / dual-create）。
+      // suppress で auto-resume の 409 ループは止め、safety 復帰後の同一 key 再送を残す。
+      // 他 code は sticky+suppress clear。
+      if (code === "list_version_conflict" || code === "current_safety_revalidation_required") {
         markShoppingResumeSuppress(kind, targetId);
       } else {
         clearShoppingCommand(kind, targetId);

@@ -380,6 +380,11 @@ export const clearShoppingCommand = (kind: "create" | "reconcile", targetId: str
  * （sessionStorage だけだと Tab B が新 UUID を mint する）。sessionStorage にも
  * ミラーし、旧クライアント残滓の読取と同一タブ reload を維持する。
  * in-memory ref だけでは消える残窓を閉じる。
+ *
+ * SHOP2 (adversarial multi-intent): list あたり **intentKey 単位の multi-slot**。
+ * 旧 single-slot は異 intent claim が既存 sticky を上書きし、適用済み add_manual の
+ * 再試行が新 UUID → dual-add になっていた。v2 store は intent ごとに upsert し、
+ * 他 intent を clobber しない。legacy 単一 envelope も読取時に v2 へ昇格する。
  */
 export const pendingItemMutationStorageKey = (listId: string) =>
   `kondate:shopping:item-mutate:${listId}`;
@@ -388,7 +393,10 @@ export const pendingItemMutationStorageKey = (listId: string) =>
 export const pendingItemMutationClaimLockName = (listId: string) =>
   `kondate:shopping:item-mutate-claim:${listId}`;
 
-const pendingItemMutationEnvelopeSchema = z
+/** list あたり同時保持する intent slot 上限（異常蓄積の fail-safe）。 */
+const maxPendingItemMutationSlots = 16;
+
+const pendingItemMutationEntrySchema = z
   .object({
     createdAtMs: z.number().int().nonnegative(),
     intentKey: z.string().min(1),
@@ -396,16 +404,61 @@ const pendingItemMutationEnvelopeSchema = z
   })
   .strict();
 
+const pendingItemMutationStoreV2Schema = z
+  .object({
+    v: z.literal(2),
+    entries: z.array(pendingItemMutationEntrySchema),
+  })
+  .strict();
+
+type PendingItemMutationEntry = z.infer<typeof pendingItemMutationEntrySchema>;
+
 export type PendingItemMutationSticky = {
   intentKey: string;
   request: ShoppingItemMutationRequest;
 };
 
-/** 単一 Storage から TTL 内 sticky を読む。不正・期限切れは当該 Storage から捨てる。 */
-function readPendingItemMutationFrom(
+function isEntryWithinTtl(entry: PendingItemMutationEntry, nowMs: number): boolean {
+  const age = nowMs - entry.createdAtMs;
+  return age >= 0 && age <= pendingShoppingCommandTtlMs;
+}
+
+/**
+ * Storage 生 JSON を v2 entries に正規化する。
+ * legacy 単一 envelope（{createdAtMs,intentKey,request}）も 1 slot として受理する。
+ * 不正・全期限切れは null（呼び出し側が当該 Storage を捨てる）。
+ */
+function parsePendingItemMutationEntries(
+  raw: string,
+  nowMs: number = Date.now(),
+): PendingItemMutationEntry[] | null {
+  try {
+    const json: unknown = JSON.parse(raw);
+    const v2 = pendingItemMutationStoreV2Schema.safeParse(json);
+    if (v2.success) {
+      const live = v2.data.entries.filter((entry) => isEntryWithinTtl(entry, nowMs));
+      // 空配列は「正当な空 store」ではなく期限切れ扱い（キー削除）
+      return live.length > 0 ? live : null;
+    }
+    const legacy = pendingItemMutationEntrySchema.safeParse(json);
+    if (legacy.success && isEntryWithinTtl(legacy.data, nowMs)) {
+      return [legacy.data];
+    }
+  } catch {
+    /* corrupt */
+  }
+  return null;
+}
+
+function serializePendingItemMutationStore(entries: PendingItemMutationEntry[]): string {
+  return JSON.stringify({ v: 2 as const, entries });
+}
+
+/** 単一 Storage から TTL 内 entries を読む。不正・期限切れは当該 Storage から捨てる。 */
+function readPendingItemMutationEntriesFrom(
   storage: Storage,
   key: string,
-): PendingItemMutationSticky | null {
+): PendingItemMutationEntry[] | null {
   let saved: string | null;
   try {
     saved = storage.getItem(key);
@@ -413,72 +466,123 @@ function readPendingItemMutationFrom(
     return null;
   }
   if (saved === null) return null;
-  try {
-    const parsed = pendingItemMutationEnvelopeSchema.safeParse(JSON.parse(saved));
-    if (parsed.success) {
-      const age = Date.now() - parsed.data.createdAtMs;
-      if (age >= 0 && age <= pendingShoppingCommandTtlMs) {
-        return { intentKey: parsed.data.intentKey, request: parsed.data.request };
-      }
-    }
-  } catch {
-    /* 下の removeItem で捨てる */
+  const entries = parsePendingItemMutationEntries(saved);
+  if (entries === null) {
+    removeStorageBestEffort(storage, key);
+    return null;
   }
-  removeStorageBestEffort(storage, key);
-  return null;
+  return entries;
 }
 
-export function readPendingItemMutation(listId: string): PendingItemMutationSticky | null {
+function readAllPendingItemMutationEntries(listId: string): PendingItemMutationEntry[] {
   const key = pendingItemMutationStorageKey(listId);
   // 共有正本は localStorage。他タブが書いた鍵を先に拾う（SHOP4）。
-  const fromLocal = readPendingItemMutationFrom(localStorage, key);
+  const fromLocal = readPendingItemMutationEntriesFrom(localStorage, key);
   if (fromLocal !== null) {
-    // 同一タブの高速経路用に session へミラー（失敗は無視）
     try {
-      const raw = localStorage.getItem(key);
-      if (raw !== null) writeStorageBestEffort(sessionStorage, key, raw);
+      // v2 正規化済みを両 Storage に書き戻し（legacy 昇格・期限切れ刈り込み）
+      const payload = serializePendingItemMutationStore(fromLocal);
+      writeStorageBestEffort(localStorage, key, payload);
+      writeStorageBestEffort(sessionStorage, key, payload);
     } catch {
       /* mirror optional */
     }
     return fromLocal;
   }
-  // 旧クライアントや local 書込失敗時の session 残滓を promote
-  const fromSession = readPendingItemMutationFrom(sessionStorage, key);
+  const fromSession = readPendingItemMutationEntriesFrom(sessionStorage, key);
   if (fromSession !== null) {
     try {
-      const raw = sessionStorage.getItem(key);
-      if (raw !== null) writeStorageBestEffort(localStorage, key, raw);
+      const payload = serializePendingItemMutationStore(fromSession);
+      writeStorageBestEffort(localStorage, key, payload);
+      writeStorageBestEffort(sessionStorage, key, payload);
     } catch {
       /* promote optional */
     }
     return fromSession;
   }
-  return null;
+  return [];
 }
 
-export function writePendingItemMutation(listId: string, sticky: PendingItemMutationSticky): void {
+function writeAllPendingItemMutationEntries(
+  listId: string,
+  entries: PendingItemMutationEntry[],
+): void {
   const key = pendingItemMutationStorageKey(listId);
-  const payload = JSON.stringify({
-    createdAtMs: Date.now(),
-    intentKey: sticky.intentKey,
-    request: sticky.request,
-  });
-  // local が跨タブ正本。session は同一タブ mirror。
+  if (entries.length === 0) {
+    removeStorageBestEffort(localStorage, key);
+    removeStorageBestEffort(sessionStorage, key);
+    return;
+  }
+  const payload = serializePendingItemMutationStore(entries);
   writeStorageBestEffort(localStorage, key, payload);
   writeStorageBestEffort(sessionStorage, key, payload);
 }
 
-export function clearPendingItemMutation(listId: string): void {
-  const key = pendingItemMutationStorageKey(listId);
-  removeStorageBestEffort(localStorage, key);
-  removeStorageBestEffort(sessionStorage, key);
+/**
+ * list の sticky を読む。
+ * - intentKey 指定: その intent の slot（無ければ null）
+ * - 省略: 先頭の live entry（単一 slot 時代のテスト互換。multi 時は任意の 1 件）
+ */
+export function readPendingItemMutation(
+  listId: string,
+  intentKey?: string,
+): PendingItemMutationSticky | null {
+  const entries = readAllPendingItemMutationEntries(listId);
+  const hit =
+    intentKey === undefined
+      ? (entries[0] ?? null)
+      : (entries.find((entry) => entry.intentKey === intentKey) ?? null);
+  if (hit === null) return null;
+  return { intentKey: hit.intentKey, request: hit.request };
 }
 
 /**
- * SHOP6: 同一 list の sticky 読取→mint→書込を Web Locks で直列化し、
+ * intentKey 単位で upsert。他 intent の slot は残す（SHOP2 multi-slot）。
+ * slot 上限超過時は **書き込み対象以外** の最古 entry を落とす。
+ */
+export function writePendingItemMutation(listId: string, sticky: PendingItemMutationSticky): void {
+  const nowMs = Date.now();
+  const existing = readAllPendingItemMutationEntries(listId).filter(
+    (entry) => entry.intentKey !== sticky.intentKey,
+  );
+  const next: PendingItemMutationEntry[] = [
+    ...existing,
+    {
+      createdAtMs: nowMs,
+      intentKey: sticky.intentKey,
+      request: sticky.request,
+    },
+  ];
+  // 上限: 最古から落とす（いま書いた intent は残す）
+  next.sort((a, b) => a.createdAtMs - b.createdAtMs);
+  while (next.length > maxPendingItemMutationSlots) {
+    const dropIndex = next.findIndex((entry) => entry.intentKey !== sticky.intentKey);
+    if (dropIndex < 0) break;
+    next.splice(dropIndex, 1);
+  }
+  writeAllPendingItemMutationEntries(listId, next);
+}
+
+/** intentKey 省略時は list 全 slot を捨てる。指定時はその intent だけ。 */
+export function clearPendingItemMutation(listId: string, intentKey?: string): void {
+  if (intentKey === undefined) {
+    const key = pendingItemMutationStorageKey(listId);
+    removeStorageBestEffort(localStorage, key);
+    removeStorageBestEffort(sessionStorage, key);
+    return;
+  }
+  const remaining = readAllPendingItemMutationEntries(listId).filter(
+    (entry) => entry.intentKey !== intentKey,
+  );
+  writeAllPendingItemMutationEntries(listId, remaining);
+}
+
+/**
+ * SHOP6 + SHOP2: 同一 list の sticky 読取→mint→書込を Web Locks で直列化し、
  * 両タブが sticky 未書込で同時に新 UUID を mint する pre-write TOCTOU を閉じる。
  * ロック保持は mint のみ（ネットワーク送信は外）で intentional 再 add の新 key は維持。
  * Locks 非対応環境は書込後 re-read にフォールバック（同一 intent の勝者 key を優先）。
+ * 異 intent は別 slot に共存し、互いの idempotency key を上書きしない（SHOP2）。
  */
 export async function claimItemMutationSticky(
   listId: string,
@@ -486,20 +590,16 @@ export async function claimItemMutationSticky(
   buildNew: () => ShoppingItemMutationRequest,
 ): Promise<PendingItemMutationSticky> {
   const run = (): PendingItemMutationSticky => {
-    const existing = readPendingItemMutation(listId);
-    if (
-      existing !== null &&
-      existing.intentKey === intentKey &&
-      existing.request.listId === listId
-    ) {
+    const existing = readPendingItemMutation(listId, intentKey);
+    if (existing !== null && existing.request.listId === listId) {
       return existing;
     }
     const request = buildNew();
     const sticky: PendingItemMutationSticky = { intentKey, request };
     writePendingItemMutation(listId, sticky);
     // ロック無し競合や書込失敗時: 同一 intent が既に他タブで勝っていればそちらを使う
-    const again = readPendingItemMutation(listId);
-    if (again !== null && again.intentKey === intentKey && again.request.listId === listId) {
+    const again = readPendingItemMutation(listId, intentKey);
+    if (again !== null && again.request.listId === listId) {
       return again;
     }
     return sticky;

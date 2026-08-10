@@ -1055,6 +1055,75 @@ describe("ShoppingListPage mutations", () => {
     expect(mutateShoppingItem.mock.calls[1]?.[0]).toEqual(mutateShoppingItem.mock.calls[0]?.[0]);
   });
 
+  it("rebuilds sticky expectedSafetyFingerprint on same key after household FP change (SHOP3)", async () => {
+    // 適用済み+応答ロスト後に sticky が旧 FP を固定し、SHOP10 early が reject し続ける穴。
+    // preflight の live FP へ同一 key で書き戻して再送する。
+    // intentKey は form が組み立てる payload（既定 storeSection=other 等）と一致させる。
+    const stickyRequest = shoppingItemMutationRequestSchema.parse({
+      operation: "add_manual",
+      itemId: null,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey: "40000000-0000-4000-8000-0000000000c3",
+      payload: {
+        displayName: "大根",
+        normalizedName: "大根",
+        storeSection: "other",
+        quantityValue: null,
+        quantityText: "1本",
+        unit: null,
+        pantryCheckRequired: false,
+      },
+    });
+    const intentKey = JSON.stringify({
+      operation: "add_manual",
+      itemId: null,
+      payload: stickyRequest.payload,
+    });
+    writePendingItemMutation(LIST_ID, { intentKey, request: stickyRequest });
+    await renderPage(makeShoppingList([makeItem()]));
+    // gate ready 後の preflight だけ live FP を新値に（renderPage 既定は FINGERPRINT）
+    revalidateActiveShoppingList.mockResolvedValue(validSafety(NEXT_FINGERPRINT));
+    mutateShoppingItem.mockResolvedValueOnce({
+      listId: LIST_ID,
+      version: 2,
+      itemId: "40000000-0000-4000-8000-0000000000c4",
+      replayed: false,
+    });
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "大根");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1本");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
+    });
+    const sent = mutateShoppingItem.mock.calls[0]?.[0];
+    expect(sent?.idempotencyKey).toBe(stickyRequest.idempotencyKey);
+    expect(sent?.expectedSafetyFingerprint).toBe(NEXT_FINGERPRINT);
+    expect(sent?.expectedListVersion).toBe(1);
+  });
+
+  it("abandons form after idempotency_payload_mismatch so FP-rebuild dual-add is avoided (SHOP3)", async () => {
+    // FP rebuild 後に適用済み hash mismatch → sticky を捨てフォームも閉じる。
+    mutateShoppingItem.mockRejectedValueOnce(
+      Object.assign(new Error("mismatch"), { code: "idempotency_payload_mismatch" }),
+    );
+    await renderPage(makeShoppingList([makeItem()]));
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "白菜");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1/4個");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("反映済みの可能性");
+    });
+    expect(readPendingItemMutation(LIST_ID)).toBeNull();
+    // フォーム abandon: 同じ内容の新 key 再送を誘発しない
+    expect(screen.queryByLabelText("項目名")).toBeNull();
+  });
+
   it("reuses item mutation sticky from sessionStorage after remount (SHOP2)", async () => {
     const stickyRequest = shoppingItemMutationRequestSchema.parse({
       operation: "add_manual",
@@ -2034,6 +2103,58 @@ describe("claimItemMutationSticky (SHOP6 pre-write concurrent mint)", () => {
     expect(claimed.intentKey).toBe(intentKey);
     expect(readPendingItemMutation(LIST_ID)?.request.idempotencyKey).toBe(
       "40000000-0000-4000-8000-0000000000f1",
+    );
+  });
+
+  it("does not clobber foreign intent sticky when claiming a different intent (SHOP2)", async () => {
+    // Tab A add_manual 失応答後、Tab B が set_checked しても A の key が残ること。
+    // 単 slot 上書きだと A 再試行が新 UUID → dual-add になる。
+    const intentA = "intent-add-tofu";
+    const intentB = "intent-set-checked";
+    const stickyA = buildRequest("40000000-0000-4000-8000-0000000000a1");
+    writePendingItemMutation(LIST_ID, { intentKey: intentA, request: stickyA });
+
+    const claimedB = await claimItemMutationSticky(LIST_ID, intentB, () =>
+      shoppingItemMutationRequestSchema.parse({
+        operation: "set_checked",
+        itemId: ITEM_ID,
+        listId: LIST_ID,
+        expectedListVersion: 1,
+        expectedSafetyFingerprint: FINGERPRINT,
+        idempotencyKey: "40000000-0000-4000-8000-0000000000b1",
+        payload: { isChecked: true },
+      }),
+    );
+    expect(claimedB.intentKey).toBe(intentB);
+    expect(claimedB.request.idempotencyKey).toBe("40000000-0000-4000-8000-0000000000b1");
+    // 異 intent の slot は残る
+    expect(readPendingItemMutation(LIST_ID, intentA)?.request.idempotencyKey).toBe(
+      stickyA.idempotencyKey,
+    );
+    // 元 intent の再 claim は新 UUID を mint せず A を返す
+    const reclaimedA = await claimItemMutationSticky(LIST_ID, intentA, () =>
+      buildRequest(crypto.randomUUID()),
+    );
+    expect(reclaimedA.request.idempotencyKey).toBe(stickyA.idempotencyKey);
+  });
+
+  it("clears only the targeted intent slot leaving foreign sticky intact (SHOP2)", () => {
+    const requestA = buildRequest("40000000-0000-4000-8000-0000000000a2");
+    const requestB = shoppingItemMutationRequestSchema.parse({
+      operation: "set_checked",
+      itemId: ITEM_ID,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey: "40000000-0000-4000-8000-0000000000b2",
+      payload: { isChecked: true },
+    });
+    writePendingItemMutation(LIST_ID, { intentKey: "intent-a", request: requestA });
+    writePendingItemMutation(LIST_ID, { intentKey: "intent-b", request: requestB });
+    clearPendingItemMutation(LIST_ID, "intent-a");
+    expect(readPendingItemMutation(LIST_ID, "intent-a")).toBeNull();
+    expect(readPendingItemMutation(LIST_ID, "intent-b")?.request.idempotencyKey).toBe(
+      requestB.idempotencyKey,
     );
   });
 });
