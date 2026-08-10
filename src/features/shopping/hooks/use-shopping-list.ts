@@ -283,17 +283,22 @@ export function useResumeShoppingCommand<T>({
 }: ResumeShoppingCommandOptions<T>) {
   const inFlight = useRef(false);
   const submitRef = useRef(submit);
+  // enabled も ref で保持し、ロック待ち後に最新値を再確認する（クロージャ固定値では再確認にならない）。
+  const enabledRef = useRef(enabled);
   // 描画中に ref を書き換えない（破棄される並行描画でも書き換わってしまうため）。
   useEffect(() => {
     submitRef.current = submit;
   }, [submit]);
+  useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
 
   const resume = useCallback(async () => {
     // HR9: actionsEnabled 等が false のときは送らず pending を残す
     if (!enabled || inFlight.current || targetId === null) return;
     const run = async (): Promise<void> => {
       // ロック取得後にも enabled / sticky を再確認（待ち行列中の無効化・clear に追従）
-      if (!enabled) return;
+      if (!enabledRef.current) return;
       // SHOP3: local 正本を先に読む（他タブの失応答 sticky も同じ key で再送）。
       // 壊れた / TTL 超過 / 時計巻き戻しは read 側で当該 Storage から掃除済み。
       const command = readPendingShoppingCommand(kind, targetId, schema);

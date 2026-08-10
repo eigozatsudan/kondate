@@ -20,13 +20,7 @@ function chain(data: unknown, error: unknown = null) {
     insert: vi.fn(),
     update: vi.fn(),
   };
-  for (const method of [
-    result.eq,
-    result.order,
-    result.select,
-    result.insert,
-    result.update,
-  ])
+  for (const method of [result.eq, result.order, result.select, result.insert, result.update])
     method.mockReturnValue(result);
   result.single.mockResolvedValue({ data, error });
   result.maybeSingle.mockResolvedValue({ data, error });
@@ -148,13 +142,7 @@ it("updateCompleteHouseholdMember CAS-guards with expectedUpdatedAt", async () =
   const patch = { allergy_status: "registered" as const };
 
   await expect(
-    updateCompleteHouseholdMember(
-      client,
-      "user-1",
-      "member-1",
-      patch,
-      "2026-07-11T00:00:00.000Z",
-    ),
+    updateCompleteHouseholdMember(client, "user-1", "member-1", patch, "2026-07-11T00:00:00.000Z"),
   ).resolves.toBe(saved);
 
   expect(updateChain.update).toHaveBeenCalledWith(patch);

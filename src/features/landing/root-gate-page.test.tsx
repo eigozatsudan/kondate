@@ -241,7 +241,9 @@ describe("RootGatePage", () => {
       vi.useRealTimers();
       expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
       expect(
-        screen.queryByText("読み込みに時間がかかっています。通信を確認して再読み込みしてください。"),
+        screen.queryByText(
+          "読み込みに時間がかかっています。通信を確認して再読み込みしてください。",
+        ),
       ).not.toBeInTheDocument();
     } finally {
       freeLpSuspend.finish();

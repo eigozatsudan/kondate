@@ -792,9 +792,7 @@ export function HouseholdMenuDetailBody({
             safetyBlocked={!actionsEnabled}
             forceNewMode={shoppingGate.error}
             // SHOP4: reconcilable 時は append を閉じ、差分 CTA へ誘導（mode=new は維持）
-            disableAppend={
-              reconcileTarget.data !== null && reconcileTarget.data !== undefined
-            }
+            disableAppend={reconcileTarget.data !== null && reconcileTarget.data !== undefined}
             onSubmit={(input) => {
               // 表示中 isFetching では止めない（safetyBlocked と同じく actions のみ）
               if (!actionsEnabled || createList.isPending) return;

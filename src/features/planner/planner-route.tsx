@@ -289,8 +289,7 @@ export function PlannerRoutePage() {
         {
           commandVersion: "generation-command.v3",
           kind: "new_menu",
-          qualityMode:
-            planCode === "plus" && qualityAvailable === true && attempt.qualityMode,
+          qualityMode: planCode === "plus" && qualityAvailable === true && attempt.qualityMode,
           request: {
             idempotencyKey: attempt.idempotencyKey,
             draftId: draft.id,
@@ -1364,8 +1363,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             const nowForCommand = new Date();
             const commandAttempt: PlannerAttempt = {
               ...attempt,
-              qualityMode:
-                planCode === "plus" && qualityAvailable === true && attempt.qualityMode,
+              qualityMode: planCode === "plus" && qualityAvailable === true && attempt.qualityMode,
               expiredPantryChecks: filterExpiredPantryChecksForSelections(
                 attempt.expiredPantryChecks,
                 saved.pantrySelections,

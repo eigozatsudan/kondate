@@ -2285,7 +2285,7 @@ it("0件確認中のsafe保存後はregisteredを送らず追加成功後に再�
       2,
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
-      "2026-07-11T00:00:00.000Z"
+      "2026-07-11T00:00:00.000Z",
     );
   });
 });
@@ -2528,7 +2528,7 @@ it("registered保存中の別フィールド変更を後続の最新snapshotで�
         allergy_status: "registered",
         display_name: "更新後",
       }),
-      "2026-07-11T00:00:00.000Z"
+      "2026-07-11T00:00:00.000Z",
     );
   });
   await waitFor(() => {

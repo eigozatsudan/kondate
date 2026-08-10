@@ -152,10 +152,7 @@ export function createPlannerAttempt(): PlannerAttempt {
   };
 }
 
-export function isPastEnteredExpiry(
-  item: Pick<PantryItem, "expiresOn">,
-  now: Date,
-): boolean {
+export function isPastEnteredExpiry(item: Pick<PantryItem, "expiresOn">, now: Date): boolean {
   return item.expiresOn !== null && item.expiresOn < getJstDateKey(now);
 }
 
