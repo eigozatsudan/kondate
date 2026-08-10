@@ -75,9 +75,9 @@ describe("RootGatePage", () => {
     renderGate();
     const pending = screen.getByText("ログイン状態を確認しています…");
     expect(pending).toBeVisible();
-    // L10: 待ち UI に busy/live
-    expect(pending).toHaveAttribute("aria-busy", "true");
-    expect(pending).toHaveAttribute("aria-live", "polite");
+    // L10: main busy + status live（mount 後に sr-only status が埋まる）
+    expect(pending.closest("main")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
     expect(screen.queryByRole("heading", { name: FREE_LP_H1 })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "RootEntry stub" })).not.toBeInTheDocument();
   });
@@ -177,9 +177,9 @@ describe("RootGatePage", () => {
       });
       const loading = screen.getByText("読み込み中…");
       expect(loading).toBeVisible();
-      // L10: chunk 待ちも busy/live
-      expect(loading).toHaveAttribute("aria-busy", "true");
-      expect(loading).toHaveAttribute("aria-live", "polite");
+      // L10: chunk 待ちも busy + status live
+      expect(loading.closest("main")).toHaveAttribute("aria-busy", "true");
+      expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
       await act(async () => {
         // L3: timer は queueMicrotask 再確認するため +1 tick 相当を流す
         await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
@@ -211,5 +211,41 @@ describe("RootGatePage", () => {
       screen.queryByText("読み込みに時間がかかっています。通信を確認して再読み込みしてください。"),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "再読み込み" })).not.toBeInTheDocument();
+  });
+
+  it("L3: load completing after timer microtask does not sticky-timeout successful mount", async () => {
+    // timer 発火 → microtask が setTimedOut を予約 → 同一 flush で Suspense が commit しても
+    // loadedRef + setTimedOut(false) で成功 UI を維持する（sticky 誤 timeout 防止）。
+    freeLpSuspend.start();
+    useAuthMock.mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+    });
+    vi.useFakeTimers();
+    try {
+      renderGate();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByText("読み込み中…")).toBeVisible();
+      await act(async () => {
+        // 同一 act 内: timer microtask の setTimedOut(true) と成功 commit を交差させる
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+        await Promise.resolve();
+        freeLpSuspend.finish();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      vi.useRealTimers();
+      expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
+      expect(
+        screen.queryByText("読み込みに時間がかかっています。通信を確認して再読み込みしてください。"),
+      ).not.toBeInTheDocument();
+    } finally {
+      freeLpSuspend.finish();
+      vi.useRealTimers();
+    }
   });
 });

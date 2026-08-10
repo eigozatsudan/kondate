@@ -93,6 +93,6 @@ it("L6: loading main exposes aria-busy and aria-live", () => {
   );
   render(<RouterProvider router={router} />);
   const pending = screen.getByText("ログイン状態を確認しています…");
-  expect(pending).toHaveAttribute("aria-busy", "true");
-  expect(pending).toHaveAttribute("aria-live", "polite");
+  expect(pending.closest("main")).toHaveAttribute("aria-busy", "true");
+  expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
 });

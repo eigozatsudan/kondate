@@ -9,6 +9,7 @@ import { getProfile, setOnboardingStatus } from "@/features/household/household-
 import { householdKeys } from "@/features/household/household-queries";
 import { useProfilePendingDeadline } from "@/features/household/use-profile-pending-deadline";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { LivePendingMain } from "@/shared/ui/feedback";
 import { WelcomePage } from "./welcome-page";
 
 /** 別タブ同時開始の last-write-wins を抑える（L4）。Web Locks 未対応環境は直列フォールバックなしで実行。 */
@@ -20,6 +21,13 @@ const ONBOARDING_START_LOCK = "kondate:welcome-onboarding-start";
  * テストから fake timer 進み幅を合わせるため export する。
  */
 export const WELCOME_START_RECONCILE_GRACE_MS = 3_000;
+
+/**
+ * L1: post-grace の outstanding CAS settle 上限。
+ * 無期限 await は Welcome CTA を永久閉塞する。auth C5 同尺（RPC cancel は主張しない）。
+ * テストから fake timer 進み幅を合わせるため export する。
+ */
+export const WELCOME_START_CAS_SETTLE_MS = COLD_START_SESSION_DEADLINE_MS;
 
 /**
  * L1: lock 内 getProfile / CAS が never-settle でも auth C5 同尺で打ち切る。
@@ -200,9 +208,10 @@ export function WelcomeRoutePage() {
   }
 
   /**
-   * L1: C5+grace 後も CAS が in-flight なら settle まで待ち、opposite CTA dual-flight を防ぐ。
+   * L1: C5+grace 後も CAS が in-flight なら第二 deadline まで待ち、opposite CTA dual-flight を防ぐ。
    * pre-CAS hang（casFlight なし）は即 timeout を再 throw → 双方 CTA 再有効化。
    * settle 後は tryReconcileZombieWrite で遷移を保証（body 側と二重呼び出し可）。
+   * 第二 deadline 超過は失敗 UI + single-flight 解除（never-settle の永久閉塞を避ける）。
    * Web Lock は伸ばさない。RPC cancel は主張しない。
    */
   async function awaitOutstandingCasAfterGrace(generation: number): Promise<void> {
@@ -212,9 +221,10 @@ export function WelcomeRoutePage() {
     }
     let written: { onboarding_status: OnboardingStatus };
     try {
-      written = await flight.promise;
+      // L1: 第二 deadline。無期限 await は「準備しています…」で CTA を永久閉塞する
+      written = await withTimeout(flight.promise, WELCOME_START_CAS_SETTLE_MS);
     } catch {
-      // CAS 自体の失敗も開始失敗 UI へ（single-flight はここで解除）
+      // CAS 失敗 / 第二 deadline → 開始失敗 UI（single-flight はここで解除）
       throw new Error("timeout");
     }
     if (tryReconcileZombieWrite(generation, written.onboarding_status)) {
@@ -268,12 +278,8 @@ export function WelcomeRoutePage() {
   }
 
   if (showPending) {
-    // L10: 待ち UI は SR に busy/live を通知（timeout 後の alert と対称）
-    return (
-      <main className="page-frame" aria-busy="true" aria-live="polite">
-        状態を確認しています…
-      </main>
-    );
+    // L10: 待ち UI は SR に busy/status を通知（timeout 後の alert と対称。初期 live は mount 後）
+    return <LivePendingMain message="状態を確認しています…" />;
   }
   if (profileQuery.isError || pendingTimedOut || profileQuery.data == null) {
     return (

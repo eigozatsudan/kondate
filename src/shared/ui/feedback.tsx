@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from "react";
+import { useEffect, useState, type JSX, type ReactNode } from "react";
 
 export type SkeletonProps = { lines?: 1 | 2 | 3; label: string };
 
@@ -14,6 +14,26 @@ export function Skeleton({ lines = 2, label }: SkeletonProps): JSX.Element {
         <span key={index} className="ui-skeleton__line" aria-hidden="true" />
       ))}
     </div>
+  );
+}
+
+/**
+ * L10: 全画面待ち。aria-live の初期コンテンツは多くの SR で通知されないため、
+ * mount 後に role=status を埋めて「変更」として通知する。
+ * 視覚は初回 paint から message を出し、announce 後は status ノードだけに集約する。
+ */
+export function LivePendingMain({ message }: { message: string }): JSX.Element {
+  const [announced, setAnnounced] = useState(false);
+  useEffect(() => {
+    setAnnounced(true);
+  }, []);
+  return (
+    <main className="page-frame" aria-busy="true">
+      {!announced ? <p aria-hidden="true">{message}</p> : null}
+      <p role="status" aria-live="polite">
+        {announced ? message : ""}
+      </p>
+    </main>
   );
 }
 

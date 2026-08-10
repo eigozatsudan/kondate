@@ -39,6 +39,7 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
   const [pendingAction, setPendingAction] = useState<"idea" | "household" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const pendingStatusRef = useRef<HTMLParagraphElement>(null);
   const hasMounted = useRef(false);
   // L5: state 更新前の同期連打でも第二 flight を拒否する single-flight
   const startFlightRef = useRef(false);
@@ -51,6 +52,13 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
       hasMounted.current = true;
     }
   }, [slideIndex]);
+
+  useEffect(() => {
+    // L11: CTA disabled でフォーカスが body へ飛ぶ UA 向けに、status マウント後へ移す
+    if (pendingAction !== null) {
+      pendingStatusRef.current?.focus();
+    }
+  }, [pendingAction]);
 
   if (onboardingStatus === "complete" || onboardingStatus === "skipped") {
     return <Navigate to="/planner" replace />;
@@ -84,7 +92,10 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
   }
 
   return (
-    <main className="page-frame guided-planner-theme welcome-tutorial">
+    <main
+      className="page-frame guided-planner-theme welcome-tutorial"
+      aria-busy={isPending ? true : undefined}
+    >
       <header className="welcome-tutorial__header">
         <p className="eyebrow">はじめに</p>
         <h1 className="welcome-tutorial__page-title">どちらから始めますか？</h1>
@@ -144,6 +155,19 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
       {actionError !== null ? (
         <p className="error-message" role="alert">
           {actionError}
+        </p>
+      ) : null}
+
+      {/* L11: pending 中の独立 status（disabled CTA だけでは SR / キーボードに状態が届きにくい） */}
+      {isPending ? (
+        <p
+          ref={pendingStatusRef}
+          className="type-small"
+          role="status"
+          aria-live="polite"
+          tabIndex={-1}
+        >
+          準備しています…
         </p>
       ) : null}
 

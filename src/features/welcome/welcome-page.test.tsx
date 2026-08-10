@@ -94,6 +94,23 @@ it("L5: successful start keeps CTA disabled (pending held until navigate unmount
   expect(onStartIdea).toHaveBeenCalledOnce();
 });
 
+it("L11: pending exposes status region and marks main busy", async () => {
+  const user = userEvent.setup();
+  const onStartIdea = vi.fn(() => new Promise<void>(() => undefined));
+  render(
+    <WelcomePage
+      onboardingStatus="not_started"
+      onStartIdea={onStartIdea}
+      onStartHousehold={vi.fn().mockResolvedValue(undefined)}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+  const status = screen.getByRole("status");
+  expect(status).toHaveTextContent("準備しています…");
+  expect(status).toHaveAttribute("aria-live", "polite");
+  expect(status.closest("main")).toHaveAttribute("aria-busy", "true");
+});
+
 it("家族導線をクリックすると onStartHousehold を呼ぶ", async () => {
   const user = userEvent.setup();
   const onStartHousehold = vi.fn().mockResolvedValue(undefined);
