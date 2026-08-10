@@ -266,7 +266,13 @@ export function AccountSettingsSection() {
         return;
       }
       if (!parsed.data.ok) {
-        // 明示失敗（billing_cancel 等）は Auth 残存が正。probe で成功扱いしない
+        // billing_cancel* は Auth 残存が正。probe で成功扱いしない（請求 fail-closed を壊さない）。
+        // AP6: 二タブ DELETE の敗者は Auth 削除後に auth_required を受け得る。
+        // その code だけ session-gone probe し、削除済みなら成功同等 cleanup へ寄せる。
+        if (parsed.data.error.code === "auth_required" && (await isAuthSessionGone())) {
+          await completeAccountDeletedLocally();
+          return;
+        }
         setErrorMessage(mapDeleteError(parsed.data.error.code));
         return;
       }

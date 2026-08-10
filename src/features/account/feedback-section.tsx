@@ -35,15 +35,30 @@ function mapError(code: string | undefined, fallback: string): string {
   return fallback;
 }
 
-/** AP10: 同一 category+body の指紋。曖昧失敗後の再送で二重 insert を抑止する。 */
-function feedbackSubmitFingerprint(category: FeedbackCategory, body: string): string {
-  return `${category}\n${body.trim()}`;
+/**
+ * AP10 + AP1: 同一 category+body の指紋。
+ * 曖昧失敗後の再送で二重 insert を抑止する。
+ * AP1: free-form 本文を sessionStorage に平文で残さない（SHA-256 hex のみ保管）。
+ */
+async function feedbackSubmitFingerprint(
+  category: FeedbackCategory,
+  body: string,
+): Promise<string> {
+  const raw = `${category}\n${body.trim()}`;
+  const bytes = new TextEncoder().encode(raw);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function readAmbiguousFingerprint(): string | null {
   try {
     const value = sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
-    return value !== null && value.length > 0 ? value : null;
+    // AP1: 64 hex（SHA-256）のみ受理。旧平文残留は読まず再送抑止をやり直す（PII を再露出させない）。
+    if (value !== null && /^[0-9a-f]{64}$/u.test(value)) return value;
+    if (value !== null) {
+      sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    }
+    return null;
   } catch {
     // sessionStorage 拒否時は in-memory のみにフォールバック
     return null;
@@ -55,6 +70,7 @@ function writeAmbiguousFingerprint(fingerprint: string | null): void {
     if (fingerprint === null) {
       sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
     } else {
+      // AP1: hash のみ。呼び出し側が plaintext を渡さない契約。
       sessionStorage.setItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY, fingerprint);
     }
   } catch {
@@ -96,7 +112,8 @@ export function FeedbackSection() {
     event.preventDefault();
     if (pending || submitInFlightRef.current) return;
 
-    const fingerprint = feedbackSubmitFingerprint(category, body);
+    // AP1: 比較・保管は hash のみ（本文は fingerprint 関数内で digest して捨てる）
+    const fingerprint = await feedbackSubmitFingerprint(category, body);
     // sessionStorage 再読（別タブ / 直前 remount と同期）
     const stickyAmbiguous = ambiguousSubmitFingerprintRef.current ?? readAmbiguousFingerprint();
     if (stickyAmbiguous !== null) {

@@ -475,6 +475,76 @@ describe("AccountSettingsSection", () => {
     expect(locationReplaceMock).not.toHaveBeenCalled();
   });
 
+  it("AP6: ok:false auth_required + Auth gone probes and completes cleanup", async () => {
+    // 二タブ DELETE 敗者: 勝者削除後の auth_required は session-gone なら成功同等
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "auth_required",
+            message: "Authentication required",
+          },
+        }),
+        { status: 401, headers: { "content-type": "application/json" } },
+      ),
+    );
+    getSessionMock.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    await waitFor(() => {
+      expect(clearLocalAuthAndDraftsMock).toHaveBeenCalled();
+    });
+    expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+    expect(getSessionMock).toHaveBeenCalled();
+  });
+
+  it("AP6: ok:false auth_required + Auth still present shows error (no false success)", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "auth_required",
+            message: "Authentication required",
+          },
+        }),
+        { status: 401, headers: { "content-type": "application/json" } },
+      ),
+    );
+    // getSession に session あり + getUser 成功 → gone ではない
+    getSessionMock.mockResolvedValue({
+      data: { session: { access_token: "still-here" } },
+      error: null,
+    });
+    getUserMock.mockResolvedValue({
+      data: { user: { id: "u1" } },
+      error: null,
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    expect(
+      await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
+    ).toBeVisible();
+    expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
   it("AP1: getUser never-settle is timed out so pending clears (no dialog stuck)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

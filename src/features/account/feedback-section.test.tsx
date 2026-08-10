@@ -175,7 +175,10 @@ describe("FeedbackSection", () => {
     await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
     await user.click(screen.getByRole("button", { name: "送信する" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
-    expect(sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toContain(text);
+    const stored = sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    // AP1: 平文本文は残さず SHA-256 hex のみ
+    expect(stored).toMatch(/^[0-9a-f]{64}$/u);
+    expect(stored).not.toContain(text);
 
     unmount();
     fetchMock.mockClear();
@@ -185,6 +188,42 @@ describe("FeedbackSection", () => {
     await user.click(screen.getByRole("button", { name: "送信する" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("同じ内容を再送すると重複");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("AP1: ambiguous fingerprint storage never contains free-form body plaintext", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    const piiBody = "氏名やメールを含む曖昧失敗本文です。再送抑止の指紋確認用。";
+    render(<FeedbackSection />);
+    await expandFeedback(user);
+    await user.type(screen.getByLabelText("内容（10〜2000文字）"), piiBody);
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+    const stored = sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    expect(stored).toMatch(/^[0-9a-f]{64}$/u);
+    expect(stored).not.toContain(piiBody);
+    expect(stored).not.toContain("feature_request");
+  });
+
+  it("AP1: legacy plaintext fingerprint in sessionStorage is discarded on remount", async () => {
+    const user = userEvent.setup();
+    const piiBody = "旧形式で残った平文指紋は受理せず再送を許可する本文です。";
+    sessionStorage.setItem(
+      FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY,
+      `feature_request\n${piiBody}`,
+    );
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, data: { id: "feedback-legacy" } }),
+    });
+    render(<FeedbackSection />);
+    // remount 相当の初回 read で旧平文を捨てる
+    expect(sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toBeNull();
+    await expandFeedback(user);
+    await user.type(screen.getByLabelText("内容（10〜2000文字）"), piiBody);
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("フィードバックを受け付けました");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("AP6: fetch never-settle is timed out so pending clears", async () => {
