@@ -317,9 +317,51 @@ export const pendingShoppingCommandClaimLockName = (
 ) => `kondate:shopping:command-claim:${kind}:${targetId}`;
 
 /**
+ * SHOP1: create sheet 再送で sticky を再利用するか。
+ * mode だけを照合する。activeListId / expectedListVersion は適用成功で必ず進むため
+ * 不一致だけで key を捨てると、適用済み+応答ロスト後の手動 sheet 再送が新 UUID になり
+ * mode=new は active archive→第二リスト（dual-create / 進捗 wipe）に倒れる。
+ * 同一 body+key を server early-replay / findMutationReplay に当てる。
+ * ユーザーが mode を選び直したときだけ false → rebuild（SHOP6）。
+ */
+export function isCreateShoppingStickyReusable(
+  saved: CreateShoppingListRequest,
+  intent: Pick<CreateShoppingListRequest, "mode">,
+): boolean {
+  return saved.mode === intent.mode;
+}
+
+/**
+ * SHOP1: reconcile sheet 再送で sticky を再利用するか。
+ * expectedListVersion は適用で進むため照合しない（version 不一致だけで key 破棄しない）。
+ * approval / source が変わったときだけ false → rebuild（SHOP6）。
+ */
+export function isReconcileShoppingStickyReusable(
+  saved: ReconcileShoppingListRequest,
+  intent: Pick<ReconcileShoppingListRequest, "sourceMenuId" | "sourceMenuVersion" | "approval">,
+): boolean {
+  const sorted = (xs: readonly string[]) => [...xs].toSorted();
+  return (
+    saved.sourceMenuId === intent.sourceMenuId &&
+    saved.sourceMenuVersion === intent.sourceMenuVersion &&
+    JSON.stringify({
+      addKeys: sorted(saved.approval.addKeys),
+      replaceItemIds: sorted(saved.approval.replaceItemIds),
+      removeItemIds: sorted(saved.approval.removeItemIds),
+    }) ===
+      JSON.stringify({
+        addKeys: sorted(intent.approval.addKeys),
+        replaceItemIds: sorted(intent.approval.replaceItemIds),
+        removeItemIds: sorted(intent.approval.removeItemIds),
+      })
+  );
+}
+
+/**
  * create/reconcile sticky の読取→mint→書込。
  * mode / approval などユーザーがシートで選び直した意図と一致しない sticky は
  * 破棄して rebuild する（同一 targetId でも誤 mode 再送を防ぐ）。
+ * version 不一致だけでは捨てないこと（isCreate/ReconcileShoppingStickyReusable を参照）。
  * isReusable 省略時は TTL 内なら常に再利用（resume 経路向け）。
  */
 export function persistedShoppingCommand<T>(

@@ -42,6 +42,8 @@ import {
   claimShoppingCommand,
   clearShoppingCommand,
   fetchReconcilableMenuSource,
+  isCreateShoppingStickyReusable,
+  isReconcileShoppingStickyReusable,
   previewShoppingDiff,
   reconcileCommandTargetId,
 } from "@/features/shopping/api/shopping-api";
@@ -360,7 +362,8 @@ export function HouseholdMenuDetailBody({
     if (error instanceof Error && "code" in error) {
       const code = error.code;
       // SHOP2: list_version_conflict は並行敗者が共有 sticky（勝者の復旧鍵）を wipe しない。
-      // 真の stale でも sticky を残し、シート再 open 時 isReusable で version rebuild。
+      // 真の stale でも sticky を残し、同一 key+body を server early-replay / concurrent find に当てる。
+      // SHOP1: version 不一致だけで isReusable が key を捨てない（mode/approval のみ照合）。
       // SHOP1 (adversarial): current_safety_revalidation_required も sticky を保持する。
       // 適用済み create/reconcile + 応答ロスト後に safety が一時 invalid になると
       // replay が 409 になる。ここで clear するとユーザー再送が新 idempotency key になり、
@@ -435,7 +438,7 @@ export function HouseholdMenuDetailBody({
     // SHOP8: list blocked 中は create resume 自体も止め、submit 内の append ガードと二重に閉じる。
     // mode=new の自動再開は gate 復帰後（またはシート手動送信）に委ねる。
     // SHOP1: create シート表示中は resume しない。sheet onSubmit の isReusable
-    // （mode/list/version 照合 rebuild）を focus/online がすり抜けて旧 sticky を
+    // （mode 照合 rebuild）を focus/online がすり抜けて旧 sticky を
     // 飛ばす dual-intent 窓を閉じる。シート閉じ後に enabled 復帰で再試行。
     // SHOP6: suppress は sessionStorage。remount で shoppingSheet が null でも
     // 選び直し中の旧 sticky 自動 POST を抑止する。
@@ -815,11 +818,8 @@ export function HouseholdMenuDetailBody({
                   expectedListVersion: input.expectedListVersion,
                   idempotencyKey,
                 }),
-                // SHOP6: mode / 対象 list が変わったら sticky を捨てて新 key で rebuild
-                (saved) =>
-                  saved.mode === input.mode &&
-                  saved.activeListId === input.activeListId &&
-                  saved.expectedListVersion === input.expectedListVersion,
+                // SHOP6: mode 変更だけ sticky を捨てて新 key。SHOP1: version/listId は照合しない。
+                (saved) => isCreateShoppingStickyReusable(saved, { mode: input.mode }),
               ).then((command) => {
                 void submitCreate(command);
               });
@@ -871,25 +871,13 @@ export function HouseholdMenuDetailBody({
                     idempotencyKey,
                     approval,
                   }),
-                  // SHOP6: approval / version が変わったら sticky を捨てて新 key で rebuild
-                  (saved) => {
-                    const sorted = (xs: readonly string[]) => [...xs].toSorted();
-                    return (
-                      saved.expectedListVersion === activeList.version &&
-                      saved.sourceMenuId === menuId &&
-                      saved.sourceMenuVersion === target.sourceMenuVersion &&
-                      JSON.stringify({
-                        addKeys: sorted(saved.approval.addKeys),
-                        replaceItemIds: sorted(saved.approval.replaceItemIds),
-                        removeItemIds: sorted(saved.approval.removeItemIds),
-                      }) ===
-                        JSON.stringify({
-                          addKeys: sorted(approval.addKeys),
-                          replaceItemIds: sorted(approval.replaceItemIds),
-                          removeItemIds: sorted(approval.removeItemIds),
-                        })
-                    );
-                  },
+                  // SHOP6: approval/source 変更だけ rebuild。SHOP1: expectedListVersion は照合しない。
+                  (saved) =>
+                    isReconcileShoppingStickyReusable(saved, {
+                      sourceMenuId: menuId,
+                      sourceMenuVersion: target.sourceMenuVersion,
+                      approval,
+                    }),
                 ).then((command) => {
                   void submitReconcile(listId, command, stickyTargetId);
                 });

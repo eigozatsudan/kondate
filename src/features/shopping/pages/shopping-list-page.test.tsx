@@ -8,6 +8,8 @@ import {
   householdSafetyRevisionStorageKey,
 } from "@/features/household/household-queries";
 import {
+  createShoppingListRequestSchema,
+  reconcileShoppingListRequestSchema,
   shoppingItemMutationRequestSchema,
   type ShoppingDiff,
   type ShoppingItem,
@@ -28,6 +30,8 @@ import {
   clearPendingItemMutation,
   clearShoppingCommand,
   fetchReconcilableMenuSource,
+  isCreateShoppingStickyReusable,
+  isReconcileShoppingStickyReusable,
   pendingItemMutationClaimLockName,
   pendingItemMutationStorageKey,
   pendingShoppingCommandClaimLockName,
@@ -1622,6 +1626,143 @@ describe("persistedShoppingCommand", () => {
       (saved) => saved.mode === "append",
     );
     expect(second).toEqual(first);
+  });
+
+  it("reuses create sticky when only list version / activeListId advanced (SHOP1 sheet re-submit)", () => {
+    // 適用済み create + 応答ロスト後、list version と activeListId は進む。
+    // mode が同じなら key+body を固定し server early-replay に当てる（新 key dual-create を防ぐ）。
+    const OLD_LIST_ID = "40000000-0000-4000-8000-0000000000a1";
+    const NEW_LIST_ID = "40000000-0000-4000-8000-0000000000a2";
+    const first = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      createShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "new" as const,
+        activeListId: OLD_LIST_ID,
+        expectedListVersion: 1,
+        idempotencyKey,
+      }),
+    );
+    const second = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      createShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "new" as const,
+        // sheet は現在の active を渡すが、sticky 再利用時は旧 body のまま返す
+        activeListId: NEW_LIST_ID,
+        expectedListVersion: 2,
+        idempotencyKey,
+      }),
+      (saved) => isCreateShoppingStickyReusable(saved, { mode: "new" }),
+    );
+    expect(second).toEqual(first);
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    expect(second.expectedListVersion).toBe(1);
+    expect(second.activeListId).toBe(OLD_LIST_ID);
+  });
+
+  it("discards create sticky when mode changes even if version matches (SHOP6 via SHOP1 helper)", () => {
+    const first = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      createShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "append" as const,
+        activeListId: LIST_ID,
+        expectedListVersion: 3,
+        idempotencyKey,
+      }),
+    );
+    const rebuilt = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      createShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "new" as const,
+        activeListId: LIST_ID,
+        expectedListVersion: 3,
+        idempotencyKey,
+      }),
+      (saved) => isCreateShoppingStickyReusable(saved, { mode: "new" }),
+    );
+    expect(rebuilt.mode).toBe("new");
+    expect(rebuilt.idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
+  it("reuses reconcile sticky when only expectedListVersion advanced (SHOP1 sheet re-submit)", () => {
+    const first = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+      }),
+    );
+    const second = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 4,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+      }),
+      (saved) =>
+        isReconcileShoppingStickyReusable(saved, {
+          sourceMenuId: MENU_ID,
+          sourceMenuVersion: 2,
+          approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+        }),
+    );
+    expect(second).toEqual(first);
+    expect(second.expectedListVersion).toBe(3);
+  });
+
+  it("discards reconcile sticky when approval changes (SHOP6 via SHOP1 helper)", () => {
+    const first = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+      }),
+    );
+    const rebuilt = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["b"], replaceItemIds: [], removeItemIds: [] },
+      }),
+      (saved) =>
+        isReconcileShoppingStickyReusable(saved, {
+          sourceMenuId: MENU_ID,
+          sourceMenuVersion: 2,
+          approval: { addKeys: ["b"], replaceItemIds: [], removeItemIds: [] },
+        }),
+    );
+    expect(rebuilt.approval.addKeys).toEqual(["b"]);
+    expect(rebuilt.idempotencyKey).not.toBe(first.idempotencyKey);
   });
 
   it("clears and never sends a record older than 24 hours by one millisecond", () => {
