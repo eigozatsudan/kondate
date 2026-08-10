@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { deleteAccountEnvelopeSchema } from "@shared/contracts/account";
 import { withTimeout } from "@/features/auth/async-timeout";
 import {
@@ -121,6 +121,8 @@ export function AccountSettingsSection() {
   const [pending, setPending] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // AP4: React 再描画前の二重 DELETE を同期ガード（pending state だけでは足りない。FeedbackSection と同型）
+  const deleteInFlightRef = useRef(false);
 
   async function handleSignOut(): Promise<void> {
     if (signingOut) return;
@@ -198,7 +200,9 @@ export function AccountSettingsSection() {
   }
 
   async function handleConfirmDelete(confirmation: "削除する"): Promise<void> {
-    if (pending) return;
+    // AP4: 連打 / 二重 pointer は同一 render 閉包で pending===false を二重通過し得る
+    if (pending || deleteInFlightRef.current) return;
+    deleteInFlightRef.current = true;
     setPending(true);
     setErrorMessage(null);
     // fetch 開始前の requireAccessToken 失敗では session probe を成功扱いにしない
@@ -283,6 +287,7 @@ export function AccountSettingsSection() {
     } finally {
       abortDelete();
       setPending(false);
+      deleteInFlightRef.current = false;
     }
   }
 

@@ -600,4 +600,38 @@ describe("AccountSettingsSection", () => {
       expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
     });
   });
+
+  it("AP4: double confirm does not issue parallel DELETE", async () => {
+    // pending state 再描画前の連打でも inFlight ref が第二 DELETE を拒否する
+    const user = userEvent.setup();
+    let resolveDelete: ((value: Response) => void) | undefined;
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveDelete = resolve;
+        }),
+    );
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    const submit = screen.getByRole("button", { name: "完全に削除する" });
+    // 同一 tick の二重 pointer（disabled 再描画前）
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    resolveDelete?.(
+      new Response(JSON.stringify({ ok: true, data: { deleted: true } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await waitFor(() => {
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
