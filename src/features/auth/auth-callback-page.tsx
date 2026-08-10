@@ -6,7 +6,7 @@ import {
   startAuthContinuationCompletionWait,
 } from "./auth-continuation-completion";
 import {
-  isAuthContinuationExchangeInFlight,
+  isAuthContinuationExchangeBusy,
   startAuthContinuationRecovery,
 } from "./auth-continuation-recovery";
 import { getPublicEnv } from "@/shared/config/public-env";
@@ -167,16 +167,17 @@ export function AuthCallbackPage({
           ? undefined
           : (readAuthFlow(flowIdForWatch, window.localStorage)?.returnTo ?? undefined);
       const watchedReturnTo = fromStorage ?? hangWatchReturnToRef.current;
-      // C15: late exchange 成功と watchdog の競合を同期で解決する。
-      // completion 済み → success leave。exchange in-flight 中は secret を焼かず login-error のみ
-      // （gateway が後から completion を publish し、他タブ / login の listener が拾える）。
+      // C15/C9: late exchange 成功と watchdog の競合を同期で解決する。
+      // completion 済み → success leave。exchange in-flight / callback-prelease 中は secret を焼かず
+      // login-error のみ（gateway が後から completion を publish し、他タブ / login の listener が拾える）。
+      // C9: claim 成功〜exchange lease 取得前は in-flight が無いが pre-lease で保護する。
       if (flowIdForWatch !== null) {
         const completion = readAuthContinuationCompletion(flowIdForWatch);
         if (completion !== null) {
           leaveSuccess(completion.returnTo);
           return;
         }
-        const exchangeBusy = isAuthContinuationExchangeInFlight(
+        const exchangeBusy = isAuthContinuationExchangeBusy(
           flowIdForWatch,
           window.localStorage,
           Date.now(),
@@ -235,8 +236,8 @@ export function AuthCallbackPage({
               leaveSuccess(completion.returnTo);
               return;
             }
-            if (isAuthContinuationExchangeInFlight(next.flowId, window.localStorage, Date.now())) {
-              // exchange 中は secret を残し login-error のみ（completion bus が後から救える）
+            if (isAuthContinuationExchangeBusy(next.flowId, window.localStorage, Date.now())) {
+              // exchange / pre-lease 中は secret を残し login-error のみ（completion bus が後から救える）
               stopAwaiting();
               leaveLoginError(authError, next.returnTo);
               return;

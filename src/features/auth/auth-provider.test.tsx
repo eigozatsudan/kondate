@@ -178,7 +178,7 @@ describe("AuthProvider", () => {
 
     expect(
       JSON.parse(
-        window.localStorage.getItem("kondate.auth.supabase.continuation-complete") ?? "null",
+        window.localStorage.getItem("kondate.auth.supabase.continuation-complete.flow-1") ?? "null",
       ),
     ).toEqual({ flowId: "flow-1", returnTo: "/onboarding" });
   });

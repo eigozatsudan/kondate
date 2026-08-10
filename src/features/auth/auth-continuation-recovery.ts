@@ -164,6 +164,46 @@ export function releaseAuthContinuationCallbackPreLease(flowId: string, storage:
   }
 }
 
+/**
+ * C9: hangWatchdog / failClosed が exchange lease 取得前（claim 中〜acquire 遅延）でも
+ * secret を焼かないよう、callback-prelease の有効性を見る。
+ * completeCallback 同一ブラウザ経路では deposit 前から pre-lease が立つ。
+ */
+export function isAuthContinuationCallbackPreLeaseHeld(
+  flowId: string,
+  storage: Storage,
+  nowMs: number = Date.now(),
+): boolean {
+  try {
+    const raw = storage.getItem(callbackPreLeaseKey(flowId));
+    if (raw === null) return false;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) {
+      storage.removeItem(callbackPreLeaseKey(flowId));
+      return false;
+    }
+    const id = "flowId" in parsed ? parsed.flowId : null;
+    const instanceId = "instanceId" in parsed ? parsed.instanceId : null;
+    const refreshedAt = "refreshedAt" in parsed ? parsed.refreshedAt : null;
+    if (
+      id !== flowId ||
+      instanceId !== CALLBACK_PRE_LEASE_INSTANCE_ID ||
+      typeof refreshedAt !== "number" ||
+      !Number.isFinite(refreshedAt)
+    ) {
+      storage.removeItem(callbackPreLeaseKey(flowId));
+      return false;
+    }
+    if (nowMs - refreshedAt > TARGET_RECOVERY_LEASE_TTL_MS) {
+      storage.removeItem(callbackPreLeaseKey(flowId));
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function readExchangeInFlight(
   storage: Storage,
   flowId: string,
@@ -405,6 +445,21 @@ export function isAuthContinuationExchangeInFlight(
   nowMs: number = Date.now(),
 ): boolean {
   return readExchangeInFlight(storage, flowId, nowMs) !== null;
+}
+
+/**
+ * C15/C9: hangWatchdog が secret を焼いてよいか。
+ * exchange in-flight または callback-prelease（claim〜exchange 前）なら焼かない。
+ */
+export function isAuthContinuationExchangeBusy(
+  flowId: string,
+  storage: Storage,
+  nowMs: number = Date.now(),
+): boolean {
+  return (
+    isAuthContinuationExchangeInFlight(flowId, storage, nowMs) ||
+    isAuthContinuationCallbackPreLeaseHeld(flowId, storage, nowMs)
+  );
 }
 
 function readLastPollAt(storage: Storage): number {

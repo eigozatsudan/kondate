@@ -89,6 +89,16 @@ describe("auth flow storage", () => {
     expect(sanitizeLoginReturnPath("/pantry")).toBe("/pantry");
   });
 
+  it("C6: login self-return path covers trailing slash and hash variants", () => {
+    expect(isAuthSelfReturnPath("/login/")).toBe(true);
+    expect(isAuthSelfReturnPath("/login/#frag")).toBe(true);
+    expect(isAuthSelfReturnPath("/login#frag")).toBe(true);
+    expect(isAuthSelfReturnPath("/login/?next=1")).toBe(true);
+    expect(sanitizeLoginReturnPath("/login/")).toBe("/welcome");
+    expect(sanitizeLoginReturnPath("/login#x")).toBe("/welcome");
+    expect(isAuthSelfReturnPath("/login-help")).toBe(false);
+  });
+
   it("U1-M1 rejects protocol-relative and embedded // when reading a tampered flow", () => {
     const storage = new MapStorage();
     const flowId = "10000000-0000-4000-8000-000000000099";

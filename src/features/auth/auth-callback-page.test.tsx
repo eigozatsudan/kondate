@@ -24,7 +24,7 @@ vi.mock("./auth-continuation-completion", async (importOriginal) => {
   return { ...actual, publishAuthContinuationCompletion: vi.fn() };
 });
 
-// C15 hangWatchdog / failClosed が isAuthContinuationExchangeInFlight を呼ぶ。
+// C15/C9 hangWatchdog / failClosed が isAuthContinuationExchangeBusy を呼ぶ。
 // 完全差し替え mock だと export 欠落で TypeError → leave 経路が壊れる。
 vi.mock("./auth-continuation-recovery", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./auth-continuation-recovery")>();
@@ -238,7 +238,7 @@ it("keeps waiting when another same-browser tab wins the one-time claim", async 
 
 it("uses completion published before the losing callback starts waiting", async () => {
   window.localStorage.setItem(
-    "kondate.auth.supabase.continuation-complete",
+    "kondate.auth.supabase.continuation-complete.flow-1",
     JSON.stringify({ flowId: "flow-1", returnTo: "/onboarding" }),
   );
   const gateway: AuthGateway = {
@@ -660,6 +660,64 @@ it("C6: hangWatchdog fails closed at server expiresAt when shorter than local TT
       "/login?authError=unbound_callback&returnTo=%2Fonboarding",
     );
   } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("C9: hangWatchdog does not clear secret while callback-prelease is held (post-claim gap)", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  try {
+    const flowId = "10000000-0000-4000-8000-0000000000c9";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: "2026-07-13T00:00:00.000Z",
+        expiresAt: "2026-07-13T00:00:30.000Z",
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.callback-owner.${flowId}`,
+      "2026-07-13T00:00:00.000Z",
+    );
+    // claim 成功〜exchange lease 前: exchange in-flight は無いが pre-lease が立つ
+    window.localStorage.setItem(
+      `kondate.auth.supabase.claim-poll-target-lease.${flowId}.callback-prelease`,
+      JSON.stringify({
+        flowId,
+        instanceId: "callback-prelease",
+        refreshedAt: Date.now(),
+        pending: false,
+      }),
+    );
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
+      resumeFlow: vi.fn(),
+    };
+    vi.mocked(clearAuthFlow).mockClear();
+    const { leaveAuthCallback } = renderCallback(gateway, {
+      ttlMs: 300_000,
+      initialEntry: `/auth/callback?flow=${flowId}`,
+    });
+    await act(async () => Promise.resolve());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    // UI は unbound へ落ちるが secret は焼かない（late exchange / completion が救える）
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+    );
+    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
+  } finally {
+    window.localStorage.clear();
     vi.useRealTimers();
   }
 });

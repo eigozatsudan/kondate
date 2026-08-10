@@ -136,9 +136,17 @@ export function sanitizeReturnPath(value: string | null | undefined): string {
 /**
  * 認証完了後の復帰先に載せるとループや無意味な中間遷移になる自己参照パス。
  * open redirect ではなく UX/状態機械の対称性（session-expiry / callback エラーと同型）。
+ * AuthProvider の login surface（`/login` exact と `/login/` 接頭）と揃え、
+ * sanitize 後の trailing slash / query / hash も自己参照として落とす（C6）。
  */
 export function isAuthSelfReturnPath(path: string): boolean {
-  return path === "/login" || path.startsWith("/login?") || path.startsWith("/auth/callback");
+  return (
+    path === "/login" ||
+    path.startsWith("/login?") ||
+    path.startsWith("/login/") ||
+    path.startsWith("/login#") ||
+    path.startsWith("/auth/callback")
+  );
 }
 
 /**

@@ -1104,7 +1104,7 @@ it("C4: publishes continuation completion when resumeFlow completes", async () =
     returnTo: "/onboarding",
   });
   expect(
-    JSON.parse(storage.getItem("kondate.auth.supabase.continuation-complete") ?? "null"),
+    JSON.parse(storage.getItem(`kondate.auth.supabase.continuation-complete.${flow.id}`) ?? "null"),
   ).toEqual({ flowId: flow.id, returnTo: "/onboarding" });
 });
 
@@ -1125,7 +1125,7 @@ it("C1: keeps secret when completion setItem fails after exchange success", asyn
   });
   const originalSetItem = storage.setItem.bind(storage);
   storage.setItem = (key: string, value: string) => {
-    if (key === "kondate.auth.supabase.continuation-complete") {
+    if (key === `kondate.auth.supabase.continuation-complete.${flow.id}`) {
       throw new Error("quota exceeded");
     }
     originalSetItem(key, value);
@@ -1138,7 +1138,7 @@ it("C1: keeps secret when completion setItem fails after exchange success", asyn
   });
   // C1: publish 前に clearClaimed しない。setItem 失敗時も secret が残り re-claim / 再 publish 可能
   expect(readAuthFlow(flow.id, storage)?.secret).toBe(flow.secret);
-  expect(storage.getItem("kondate.auth.supabase.continuation-complete")).toBeNull();
+  expect(storage.getItem(`kondate.auth.supabase.continuation-complete.${flow.id}`)).toBeNull();
 });
 
 it("C11: after inflight resume soft TTL a later resume can start a new run", async () => {
@@ -1712,8 +1712,63 @@ it("C4/C5: provider exchange failure without session stays terminal unbound afte
       returnTo: "/onboarding",
       flowId: flow.id,
     });
-    // loser probes only（3 回）。開始前・pre-exchange は session を見ない
-    expect(client.auth.getSession).toHaveBeenCalledTimes(3);
+    // baseline 1 回 + loser probes 3 回。開始前・pre-exchange complete 判定では session を見ない
+    expect(client.auth.getSession).toHaveBeenCalledTimes(4);
+    expect(readAuthFlow(flow.id, storage)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("C1: exchange hard-fail with pre-existing unchanged session stays terminal (no false complete)", async () => {
+  vi.useFakeTimers();
+  try {
+    const storage = new MapStorage();
+    const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
+    const api = continuationApiMock({ claim });
+    // 既ログイン（Alice）。exchange 失敗後も同一 session が残る → complete してはいけない
+    const existingSession = {
+      access_token: "old-tok",
+      refresh_token: "old-ref",
+      expires_in: 3600,
+      token_type: "bearer",
+      user: { id: "alice-user" },
+    };
+    const client = authClientMock({
+      exchangeResult: {
+        data: null,
+        error: { message: "invalid code", name: "AuthApiError", status: 400 } as AuthError,
+      },
+      getSessionResult: {
+        data: { session: existingSession },
+        error: null,
+      },
+    });
+    const gateway = createAuthGateway(
+      client as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, {
+      ...fixedFlowDeps,
+      now: () => new Date(),
+    });
+
+    const pending = gateway.resumeFlow(flow.id);
+    await vi.advanceTimersByTimeAsync(EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS + 20 + 400);
+    for (let index = 0; index < 40; index += 1) await Promise.resolve();
+
+    await expect(pending).resolves.toEqual({
+      kind: "error",
+      code: "unbound_callback",
+      returnTo: "/onboarding",
+      flowId: flow.id,
+    });
+    expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+    // completion を当該 flow で公開しない（false complete 防止）
+    expect(storage.getItem("kondate.auth.supabase.continuation-complete")).toBeNull();
+    expect(storage.getItem(`kondate.auth.supabase.continuation-complete.${flow.id}`)).toBeNull();
     expect(readAuthFlow(flow.id, storage)).toBeNull();
   } finally {
     vi.useRealTimers();

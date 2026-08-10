@@ -229,17 +229,64 @@ function isExpired(error: AuthError | null, url: URL): boolean {
 }
 
 /**
+ * C4/C1: exchange 直前の session 指紋。
+ * - absent: 未ログイン
+ * - present: 既に session あり（キーは userId:access_token）
+ * - unknown: getSession 失敗 → session 経路では complete しない（completion bus のみ）
+ */
+type SessionProbeBaseline =
+  { kind: "absent" } | { kind: "present"; key: string } | { kind: "unknown" };
+
+/** loser probe 用。token 変化 or 新規出現だけ sibling 成功とみなす。 */
+function sessionProbeKey(
+  session: { access_token?: string; user?: { id?: string } } | null,
+): string | null {
+  if (session === null) return null;
+  const token = session.access_token;
+  if (typeof token !== "string" || token.length === 0) return null;
+  const userId = session.user?.id;
+  return `${typeof userId === "string" ? userId : ""}:${token}`;
+}
+
+async function captureSessionProbeBaseline(
+  client: BrowserSupabaseClient,
+): Promise<SessionProbeBaseline> {
+  try {
+    const sessionResult = await client.auth.getSession();
+    const key = sessionProbeKey(sessionResult.data.session);
+    return key === null ? { kind: "absent" } : { kind: "present", key };
+  } catch {
+    return { kind: "unknown" };
+  }
+}
+
+/**
+ * C1: baseline と異なる session だけ dual-exchange sibling 成功とみなす。
+ * 同一指紋 = 既ログインの pre-existing session → false complete しない。
+ */
+function isSessionChangedFromBaseline(
+  baseline: SessionProbeBaseline,
+  currentKey: string | null,
+): boolean {
+  if (currentKey === null) return false;
+  if (baseline.kind === "unknown") return false;
+  if (baseline.kind === "absent") return true;
+  return baseline.key !== currentKey;
+}
+
+/**
  * C4: dual exchange / loser 収束用。
  * - completion bus: 常に見てよい（当該 flow の完了印）。
  * - session: exchange 開始後（または claim 後）だけ見る。
  *   開始前に session を見ると「既ログイン中の新規 magic/OAuth」を誤って complete してしまう。
+ * - C1: session 経路は baseline から変化したときだけ complete（pre-existing 据え置きを拒否）。
  */
 async function resolveAlreadyAuthenticated(
   flowId: string,
   returnTo: string,
   storage: Storage,
   client: BrowserSupabaseClient,
-  options: { checkSession: boolean },
+  options: { checkSession: boolean; baseline?: SessionProbeBaseline },
 ): Promise<AuthCallbackResult | null> {
   const existingCompletion = readAuthContinuationCompletion(flowId, storage);
   if (existingCompletion !== null) {
@@ -254,22 +301,28 @@ async function resolveAlreadyAuthenticated(
   if (!options.checkSession) return null;
   try {
     const sessionResult = await client.auth.getSession();
-    if (sessionResult.data.session !== null) {
-      const safeReturnTo = sanitizeReturnPath(returnTo);
-      try {
-        publishAuthContinuationCompletion({ flowId, returnTo: safeReturnTo }, storage);
-      } catch {
-        // setItem 失敗でも session は確立済み
-      }
-      return {
-        kind: "complete",
-        continuation: "same_browser",
-        returnTo: safeReturnTo,
-        flowId,
-      };
+    const session = sessionResult.data.session;
+    if (session === null) return null;
+    const currentKey = sessionProbeKey(session);
+    // baseline 未指定は fail-closed（session だけで complete しない）。loser probe は必ず渡す。
+    const baseline = options.baseline ?? { kind: "unknown" };
+    if (!isSessionChangedFromBaseline(baseline, currentKey)) {
+      return null;
     }
+    const safeReturnTo = sanitizeReturnPath(returnTo);
+    try {
+      publishAuthContinuationCompletion({ flowId, returnTo: safeReturnTo }, storage);
+    } catch {
+      // setItem 失敗でも session は確立済み
+    }
+    return {
+      kind: "complete",
+      continuation: "same_browser",
+      returnTo: safeReturnTo,
+      flowId,
+    };
   } catch {
-    // getSession 失敗は「未確立」とみなし caller が exchange を続ける
+    // getSession 失敗は「未確立」とみなし caller が terminal / 次 probe へ
   }
   return null;
 }
@@ -587,6 +640,8 @@ export function createAuthGateway(
     }
     // exchange 失敗（provider 拒否）だけ terminal。claim 成功後も secret は exchange 成功まで残す（C3/C4）。
     let exchangeStarted = false;
+    // C1: exchange 直前 fingerprint。catch の loser probe から参照するため try 外で保持する。
+    let sessionBaseline: SessionProbeBaseline = { kind: "unknown" };
     // C3/R2: タブ横断 dual exchange 抑止用。claim 成功後に acquire（locks + 確認遅延）し、
     // 完了/terminal で解放する。R3: 生存中は heartbeat で TTL を延長する。
     const exchangeInstanceId = `exchange-${flow.id}-${Math.random().toString(36).slice(2, 10)}`;
@@ -641,6 +696,8 @@ export function createAuthGateway(
       if (preExchangeDone !== null) {
         return preExchangeDone;
       }
+      // C1: exchange 直前の session 指紋。loser probe は「変化した session」だけ complete する。
+      sessionBaseline = await captureSessionProbeBaseline(client);
       exchangeStarted = true;
       const result =
         flow.sessionExchange === "oauth_mock"
@@ -691,6 +748,7 @@ export function createAuthGateway(
       if (exchangeStarted && !isRetryableTransport) {
         // C4/C5: dual exchange loser や getSession ラグでも sibling 成功を取りこぼさない。
         // 短間隔で completion / session を再検査してから terminal clear する。
+        // C1: session は baseline から変化したときだけ complete（pre-existing 据え置きは拒否）。
         for (let probe = 0; probe < EXCHANGE_LOSER_SESSION_PROBE_ATTEMPTS; probe += 1) {
           if (probe > 0) {
             await sleepMs(EXCHANGE_LOSER_SESSION_PROBE_GAP_MS);
@@ -700,7 +758,7 @@ export function createAuthGateway(
             flow.returnTo,
             storage,
             client,
-            { checkSession: true },
+            { checkSession: true, baseline: sessionBaseline },
           );
           if (recovered !== null) return recovered;
         }
