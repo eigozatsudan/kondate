@@ -301,6 +301,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
   /**
    * entitlement → applyQuotaPlan → planQuota のみで limits を決める。
    * env Free 固定や defense.max* を default にしない（A9）。
+   * reserve / quality ゲート専用。障害時は 503（枠の権威を落とさない）。
    */
   const resolvePlanLimits = async () => {
     try {
@@ -312,6 +313,22 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
         throw toEntitlementUnavailableHttpError(error);
       }
       throw toEntitlementUnavailableHttpError(error);
+    }
+  };
+
+  /**
+   * G8: reserve 後の終端化・status 投影用 limits。
+   * live entitlement 障害で finalize / status RPC を止めない（枠の権威は reserve のみ）。
+   * 障害時は Free 投影へフォールバックする（残枠表示が保守側にズレうる。G18 residual と同型）。
+   * quota ロック値（3|10 / 6|20 / 4|8）自体は変えない。
+   */
+  const resolveProjectionLimits = async (): Promise<ReturnType<typeof limitsForPlan>> => {
+    try {
+      const entitlement = await loadEntitlement(user.userId);
+      const quotaPlan = applyQuotaPlan(entitlement, env.billingEnabled);
+      return limitsForPlan(quotaPlan);
+    } catch {
+      return limitsForPlan("free");
     }
   };
 
@@ -476,8 +493,9 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
     async markSent(requestId: string) {
       // sent / code は短期窓拒否時に付加される。通常成功は sent=true。
       // extras 解析失敗時は status!==processing なら fail-closed で sent=false。
+      // G8: mark RPC を先に確定し、投影 fill は entitlement 非依存（障害時 Free 投影）。
       const raw = await rpc("mark_ai_global_sent", { p_request_id: requestId });
-      const { limits } = await resolvePlanLimits();
+      const limits = await resolveProjectionLimits();
       const limit = limits.successPerDay;
       const record = parseRequestPayload(raw, limit);
       const extras = z
@@ -515,30 +533,26 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
       });
     },
     async fail(requestId: string, code: string, retryAt: string | null) {
-      const { limits } = await resolvePlanLimits();
-      const limit = limits.successPerDay;
-      return parseRequestPayload(
-        await rpc("finalize_ai_generation_failure", {
-          p_request_id: requestId,
-          p_failure_code: code,
-          p_retry_at: retryAt,
-        }),
-        limit,
-      );
+      // G8: finalize を live entitlement より先に確定し、投影 fill だけ best-effort にする。
+      const raw = await rpc("finalize_ai_generation_failure", {
+        p_request_id: requestId,
+        p_failure_code: code,
+        p_retry_at: retryAt,
+      });
+      const limits = await resolveProjectionLimits();
+      return parseRequestPayload(raw, limits.successPerDay);
     },
     async conflict(requestId: string, conflicts: unknown[]) {
       // 永続化境界へは閉じた code 配列だけを渡し、message/conditionRefs は載せない
       const parsed = conflictPayloadSchema.parse(conflicts);
       const codes = [...new Set(parsed.map((conflict) => conflict.code))];
-      const { limits } = await resolvePlanLimits();
-      const limit = limits.successPerDay;
-      return parseRequestPayload(
-        await rpc("finalize_ai_generation_conflict", {
-          p_request_id: requestId,
-          p_conflict_codes: codes,
-        }),
-        limit,
-      );
+      // G8: conflict 終端 RPC を entitlement 障害で止めない。
+      const raw = await rpc("finalize_ai_generation_conflict", {
+        p_request_id: requestId,
+        p_conflict_codes: codes,
+      });
+      const limits = await resolveProjectionLimits();
+      return parseRequestPayload(raw, limits.successPerDay);
     },
     async succeed(input: GenerationSuccessInput, options: GenerationSucceedOptions) {
       // 残 deadline を同一 RPC セッションの statement_timeout に載せ、背景継続させない。
@@ -548,29 +562,28 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
         throw new GenerationFinalizeTimeoutError();
       }
       // idea は null version / 空 target をそのまま渡し、サム値へ置換しない
-      const { limits } = await resolvePlanLimits();
-      const limit = limits.successPerDay;
-      return parseRequestPayload(
-        await rpc("finalize_ai_generation_success_deadline_bounded", {
-          p_timeout_ms: timeoutMs,
-          p_request_id: input.requestId,
-          p_menu: jsonValueSchema.parse(input.menu),
-          p_preference_snapshot: jsonValueSchema.parse(input.preferenceSnapshot),
-          p_safety_snapshot: jsonValueSchema.parse(input.safetySnapshot),
-          p_safety_fingerprint: input.safetyFingerprint,
-          p_allergen_version: input.allergenVersion,
-          p_food_rule_version: input.foodRuleVersion,
-          p_target_members: jsonValueSchema.parse(input.targetMembers),
-          p_expired_checks: jsonValueSchema.parse(input.expiredChecks),
-          p_source_menu_id: input.sourceMenuId,
-          p_change_reason: input.changeReason,
-          p_change_reason_custom: input.changeReasonCustom,
-        }),
-        limit,
-      );
+      // G8: 成功 finalize を entitlement 障害で止めない（投影 fill のみ best-effort）。
+      const raw = await rpc("finalize_ai_generation_success_deadline_bounded", {
+        p_timeout_ms: timeoutMs,
+        p_request_id: input.requestId,
+        p_menu: jsonValueSchema.parse(input.menu),
+        p_preference_snapshot: jsonValueSchema.parse(input.preferenceSnapshot),
+        p_safety_snapshot: jsonValueSchema.parse(input.safetySnapshot),
+        p_safety_fingerprint: input.safetyFingerprint,
+        p_allergen_version: input.allergenVersion,
+        p_food_rule_version: input.foodRuleVersion,
+        p_target_members: jsonValueSchema.parse(input.targetMembers),
+        p_expired_checks: jsonValueSchema.parse(input.expiredChecks),
+        p_source_menu_id: input.sourceMenuId,
+        p_change_reason: input.changeReason,
+        p_change_reason_custom: input.changeReasonCustom,
+      });
+      const limits = await resolveProjectionLimits();
+      return parseRequestPayload(raw, limits.successPerDay);
     },
     async status(idempotencyKey: string) {
-      const { limits } = await resolvePlanLimits();
+      // G8: 投影 limits は best-effort。entitlement 障害でも status RPC（stale cleanup 含む）を通す。
+      const limits = await resolveProjectionLimits();
       return requestPayloadSchema.parse(
         await rpc("get_ai_generation_status", {
           p_user_id: user.userId,

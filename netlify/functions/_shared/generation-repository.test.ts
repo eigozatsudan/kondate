@@ -767,6 +767,57 @@ describe("createGenerationRepository regeneration reserve", () => {
     expect(rpcMock).not.toHaveBeenCalled();
   });
 
+  // G8: reserve 後の終端化・status は live entitlement 障害でも RPC に到達する（枠ロックは緩めない）。
+  it.each([
+    {
+      name: "fail",
+      rpcName: "finalize_ai_generation_failure" as const,
+      invoke: (repository: GenerationRepository) =>
+        repository.fail(requestId, "generation_timeout", retryAt),
+      expectedArgs: failArgs,
+    },
+    {
+      name: "conflict",
+      rpcName: "finalize_ai_generation_conflict" as const,
+      invoke: (repository: GenerationRepository) => repository.conflict(requestId, conflicts),
+      expectedArgs: conflictArgs,
+    },
+    {
+      name: "succeed",
+      rpcName: "finalize_ai_generation_success_deadline_bounded" as const,
+      invoke: (repository: GenerationRepository) =>
+        repository.succeed(succeedInput, { remainingMs: 2_000 }),
+      expectedArgs: { p_timeout_ms: 2_000, ...succeedArgs },
+    },
+    {
+      name: "markSent",
+      rpcName: "mark_ai_global_sent" as const,
+      invoke: (repository: GenerationRepository) => repository.markSent(requestId),
+      expectedArgs: markSentArgs,
+    },
+    {
+      name: "status",
+      rpcName: "get_ai_generation_status" as const,
+      invoke: (repository: GenerationRepository) => repository.status(idempotencyKey),
+      // entitlement 障害時は Free 投影で status RPC を通す
+      expectedArgs: statusArgs,
+    },
+  ])(
+    "G8: $name still reaches RPC when loadEntitlement is unavailable",
+    async (testCase) => {
+      loadEntitlementMock.mockRejectedValue(new BillingEntitlementUnavailableError());
+      rpcMock.mockResolvedValueOnce({ data: privateRecord, error: null });
+      const repository = createGenerationRepository(user);
+
+      await expect(testCase.invoke(repository)).resolves.toMatchObject({
+        status: "processing",
+        request_id: requestId,
+      });
+      expect(rpcMock).toHaveBeenCalledOnce();
+      expect(rpcMock).toHaveBeenCalledWith(testCase.rpcName, testCase.expectedArgs);
+    },
+  );
+
   it("status() passes plan success limit not env Free-only when plus entitled", async () => {
     loadEntitlementMock.mockResolvedValue(plusEntitlement);
     getServerEnvMock.mockReturnValue({

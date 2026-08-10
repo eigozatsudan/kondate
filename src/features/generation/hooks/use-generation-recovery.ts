@@ -601,9 +601,11 @@ export function useGenerationRecovery(
           read() !== null
         ) {
           void retryStatus();
+          // G16: retry を実際に発行したときだけ attempt を進める。
+          // hidden / オフラインで skip した tick では据え置きし、復帰後の間隔を伸ばさない。
+          offlineRetryAttemptRef.current = Math.min(attempt + 1, 8);
         }
-        // 成功して phase が変わっても cleanup で cancelled になる。失敗継続時のみ attempt を進める。
-        offlineRetryAttemptRef.current = Math.min(attempt + 1, 8);
+        // 成功して phase が変わっても cleanup で cancelled になる。
         arm();
       }, delay);
     };

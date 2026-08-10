@@ -638,6 +638,47 @@ describe("useGenerationRecovery", () => {
     }
   });
 
+  // G16: hidden 中に retry 無しで attempt を進めると復帰後の間隔が 60s まで伸びる。
+  // skip した tick では attempt を据え置き、復帰後は base 5s で再試行する。
+  it("G16: offline backoff does not advance attempts while document.hidden without retry", async () => {
+    vi.useFakeTimers();
+    let hidden = true;
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      enumerable: true,
+      get: () => hidden,
+    });
+    try {
+      mockStatus.mockRejectedValue(new Error("transport"));
+      realPendingGeneration.savePendingGeneration(pendingA, storage);
+      renderRecoveryAt(offlineState, pendingA);
+      mockStatus.mockClear();
+
+      // 長時間 hidden: バグ実装だと attempt が最大へ進み次 delay=60s になる。
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200_000);
+        await flushPromises();
+      });
+      expect(mockStatus).not.toHaveBeenCalled();
+
+      // visibilitychange は飛ばさず timer 経路だけを検証する。
+      hidden = false;
+      mockStatus.mockResolvedValue(processingA);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+        await flushPromises();
+      });
+      expect(mockStatus).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        enumerable: true,
+        get: () => false,
+      });
+      vi.useRealTimers();
+    }
+  });
+
   it.each([new Error("transport"), new Error("auth")])(
     "keeps current pending offline after %s and permits later status recovery",
     async (error) => {
