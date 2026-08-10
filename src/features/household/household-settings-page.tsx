@@ -940,7 +940,13 @@ export function HouseholdSettingsForm({
           );
         }
         await queryClient.invalidateQueries({ queryKey: membersKey });
-        await api.invalidateSafety();
+        // H-RR3: 削除コミット後の invalidate 失敗は soft（H3 form save / H-RR1 complete と同型）。
+        // deleteMember 自体の失敗だけ outer catch で総失敗表示する。
+        try {
+          await api.invalidateSafety();
+        } catch {
+          // 意図的 no-op: 削除済みを失敗と見せない。権威経路は live revalidate。
+        }
       } catch (error) {
         setMessage(
           error instanceof Error

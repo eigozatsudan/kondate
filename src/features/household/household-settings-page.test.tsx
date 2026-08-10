@@ -1421,6 +1421,45 @@ it("H-RR2: treats post-addDislike invalidateSafety failure as soft success", asy
   expect(screen.queryByText("安全条件の無効化に失敗しました")).not.toBeInTheDocument();
 });
 
+// H-RR3: メンバー削除コミット後の invalidate 失敗は soft。削除成功 UX を維持する
+it("H-RR3: treats post-deleteMember invalidateSafety failure as soft success", async () => {
+  const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  // 初回は2人、削除後の members invalidateQueries 再取得は残存のみ（楽観削除を巻き戻さない）
+  const listMembers = vi
+    .fn()
+    .mockResolvedValueOnce([member, secondMember])
+    .mockResolvedValue([member]);
+  const { queryClient } = await renderSettings({
+    listMembers,
+    deleteMember,
+    invalidateSafety,
+  });
+
+  // 一覧から子どもを削除（編集中の大人は残す）
+  await userEvent.click(await screen.findByRole("button", { name: "2人目の子どもを削除" }));
+  await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
+
+  await waitFor(() => {
+    expect(deleteMember).toHaveBeenCalledWith("member-2");
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("家族の設定を削除しました");
+  });
+  expect(screen.getByRole("status")).not.toHaveTextContent("削除できませんでした");
+  expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
+  // 削除コミット後の members cache から対象が消えたまま（false failure で巻き戻さない）
+  await waitFor(() => {
+    const cached = queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members("settings"));
+    expect(cached?.some((row) => row.id === "member-2")).toBe(false);
+  });
+  expect(screen.getByRole("heading", { name: "「大人」を編集中" })).toBeVisible();
+});
+
 // H12: DB の不正 enum を unchecked cast で select に載せない（空/年齢デフォルトへ）
 it("initializes form from corrupt DB enums as empty selects and age defaults", async () => {
   const corrupt: HouseholdMemberRow = {
