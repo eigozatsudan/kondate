@@ -23,7 +23,11 @@ const categoryLabels: Readonly<Record<FeedbackCategory, string>> = {
  */
 export const FEEDBACK_POST_CLIENT_TIMEOUT_MS = 30_000;
 
-/** AP5: 曖昧失敗後の fingerprint を sessionStorage に残すキー（reload / remount 耐性）。 */
+/**
+ * AP5 / AP3: 曖昧失敗後の fingerprint を localStorage に残すキー。
+ * localStorage は同一オリジンの別タブでも共有され、コメント通りの cross-tab 抑止と一致する。
+ * logout/削除 cleanup は `kondate:feedback:` 接頭辞で両 storage を掃除済み。
+ */
 export const FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY = "kondate:feedback:ambiguous-fingerprint";
 
 function mapError(code: string | undefined, fallback: string): string {
@@ -38,7 +42,7 @@ function mapError(code: string | undefined, fallback: string): string {
 /**
  * AP10 + AP1: 同一 category+body の指紋。
  * 曖昧失敗後の再送で二重 insert を抑止する。
- * AP1: free-form 本文を sessionStorage に平文で残さない（SHA-256 hex のみ保管）。
+ * AP1: free-form 本文を localStorage に平文で残さない（SHA-256 hex のみ保管）。
  */
 async function feedbackSubmitFingerprint(
   category: FeedbackCategory,
@@ -52,15 +56,28 @@ async function feedbackSubmitFingerprint(
 
 function readAmbiguousFingerprint(): string | null {
   try {
-    const value = sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    const value = localStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
     // AP1: 64 hex（SHA-256）のみ受理。旧平文残留は読まず再送抑止をやり直す（PII を再露出させない）。
     if (value !== null && /^[0-9a-f]{64}$/u.test(value)) return value;
     if (value !== null) {
-      sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+      localStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    }
+    // AP3: sessionStorage に残った旧 sticky があれば読み捨て（localStorage へ寄せる）
+    try {
+      const legacy = sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+      if (legacy !== null) {
+        sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+        if (/^[0-9a-f]{64}$/u.test(legacy)) {
+          localStorage.setItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY, legacy);
+          return legacy;
+        }
+      }
+    } catch {
+      // sessionStorage 拒否は無視
     }
     return null;
   } catch {
-    // sessionStorage 拒否時は in-memory のみにフォールバック
+    // localStorage 拒否時は in-memory のみにフォールバック
     return null;
   }
 }
@@ -68,10 +85,16 @@ function readAmbiguousFingerprint(): string | null {
 function writeAmbiguousFingerprint(fingerprint: string | null): void {
   try {
     if (fingerprint === null) {
-      sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+      localStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
     } else {
       // AP1: hash のみ。呼び出し側が plaintext を渡さない契約。
-      sessionStorage.setItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY, fingerprint);
+      localStorage.setItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY, fingerprint);
+    }
+    // AP3: 旧 sessionStorage 残留を掃除し storage 権威を local に一本化
+    try {
+      sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    } catch {
+      // ignore
     }
   } catch {
     // 拒否時は ref 側だけが効く
@@ -95,7 +118,7 @@ export function FeedbackSection() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // AP10: React 再描画前の二重 submit を同期ガード（pending state だけでは足りない）
   const submitInFlightRef = useRef(false);
-  // AP10 + AP5: in-memory と sessionStorage の両方（reload / 別タブ remount でも抑止）
+  // AP10 + AP5 / AP3: in-memory と localStorage の両方（reload / 別タブでも抑止）
   const ambiguousSubmitFingerprintRef = useRef<string | null>(readAmbiguousFingerprint());
 
   function rememberAmbiguousFingerprint(fingerprint: string): void {
@@ -114,7 +137,7 @@ export function FeedbackSection() {
 
     // AP1: 比較・保管は hash のみ（本文は fingerprint 関数内で digest して捨てる）
     const fingerprint = await feedbackSubmitFingerprint(category, body);
-    // sessionStorage 再読（別タブ / 直前 remount と同期）
+    // localStorage 再読（別タブ / 直前 remount と同期）
     const stickyAmbiguous = ambiguousSubmitFingerprintRef.current ?? readAmbiguousFingerprint();
     if (stickyAmbiguous !== null) {
       ambiguousSubmitFingerprintRef.current = stickyAmbiguous;

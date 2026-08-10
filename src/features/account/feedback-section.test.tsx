@@ -29,12 +29,14 @@ describe("FeedbackSection", () => {
     requireAccessTokenMock.mockReset();
     fetchMock.mockReset();
     requireAccessTokenMock.mockResolvedValue("token");
+    localStorage.clear();
     sessionStorage.clear();
     vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    localStorage.clear();
     sessionStorage.clear();
   });
 
@@ -166,7 +168,7 @@ describe("FeedbackSection", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("AP5: persists ambiguous fingerprint across remount via sessionStorage", async () => {
+  it("AP5/AP3: persists ambiguous fingerprint across remount via localStorage", async () => {
     const user = userEvent.setup();
     fetchMock.mockRejectedValue(new TypeError("network"));
     const text = "リロード後も同じ本文の再送を抑止する内容です。";
@@ -175,13 +177,40 @@ describe("FeedbackSection", () => {
     await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
     await user.click(screen.getByRole("button", { name: "送信する" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
-    const stored = sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    const stored = localStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
     // AP1: 平文本文は残さず SHA-256 hex のみ
     expect(stored).toMatch(/^[0-9a-f]{64}$/u);
     expect(stored).not.toContain(text);
+    // AP3: localStorage 権威（sessionStorage には書かない）
+    expect(sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toBeNull();
 
     unmount();
     fetchMock.mockClear();
+    render(<FeedbackSection />);
+    await expandFeedback(user);
+    await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("同じ内容を再送すると重複");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("AP3: sticky fingerprint is shared across tabs via localStorage (no second POST)", async () => {
+    // Tab A が ambiguous 後、別マウント（Tab B 相当）が同一 body を拒否する
+    const user = userEvent.setup();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    const text = "別タブでも同じ本文の再送を抑止する内容です。";
+    const { unmount: unmountTabA } = render(<FeedbackSection />);
+    await expandFeedback(user);
+    await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+    expect(localStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toMatch(
+      /^[0-9a-f]{64}$/u,
+    );
+    unmountTabA();
+    fetchMock.mockClear();
+
+    // Tab B: 新規 mount（in-memory ref は空、localStorage から読む）
     render(<FeedbackSection />);
     await expandFeedback(user);
     await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
@@ -199,16 +228,16 @@ describe("FeedbackSection", () => {
     await user.type(screen.getByLabelText("内容（10〜2000文字）"), piiBody);
     await user.click(screen.getByRole("button", { name: "送信する" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
-    const stored = sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    const stored = localStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
     expect(stored).toMatch(/^[0-9a-f]{64}$/u);
     expect(stored).not.toContain(piiBody);
     expect(stored).not.toContain("feature_request");
   });
 
-  it("AP1: legacy plaintext fingerprint in sessionStorage is discarded on remount", async () => {
+  it("AP1: legacy plaintext fingerprint in localStorage is discarded on remount", async () => {
     const user = userEvent.setup();
     const piiBody = "旧形式で残った平文指紋は受理せず再送を許可する本文です。";
-    sessionStorage.setItem(
+    localStorage.setItem(
       FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY,
       `feature_request\n${piiBody}`,
     );
@@ -218,7 +247,7 @@ describe("FeedbackSection", () => {
     });
     render(<FeedbackSection />);
     // remount 相当の初回 read で旧平文を捨てる
-    expect(sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toBeNull();
     await expandFeedback(user);
     await user.type(screen.getByLabelText("内容（10〜2000文字）"), piiBody);
     await user.click(screen.getByRole("button", { name: "送信する" }));
@@ -281,7 +310,7 @@ describe("FeedbackSection", () => {
 
       expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
       expect(screen.getByRole("button", { name: "閉じる" })).not.toBeDisabled();
-      expect(sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toBeTruthy();
+      expect(localStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

@@ -440,8 +440,8 @@ describe("AccountSettingsSection", () => {
     expect(locationReplaceMock).not.toHaveBeenCalled();
   });
 
-  it("AP3: explicit billing_cancel_failed still skips probe (no false success)", async () => {
-    // 明示 ok:false は Auth 残存が正。local JWT 残 + getUser が 4xx でも probe しない
+  it("AP3/AP1: billing_cancel_failed + Auth still present shows error (no false success)", async () => {
+    // Auth 残存が正 → probe しても gone=false のまま請求 fail-closed 文言を維持
     const user = userEvent.setup();
     fetchMock.mockResolvedValue(
       new Response(
@@ -455,9 +455,13 @@ describe("AccountSettingsSection", () => {
         { status: 503, headers: { "content-type": "application/json" } },
       ),
     );
+    getSessionMock.mockResolvedValue({
+      data: { session: { access_token: "still-here" } },
+      error: null,
+    });
     getUserMock.mockResolvedValue({
-      data: { user: null },
-      error: { message: "should not be used", status: 403 },
+      data: { user: { id: "u1" } },
+      error: null,
     });
 
     render(<AccountSettingsSection />);
@@ -469,10 +473,118 @@ describe("AccountSettingsSection", () => {
     expect(
       await screen.findByText(/請求が続く可能性があるため、アカウントは削除していません/),
     ).toBeVisible();
-    expect(getSessionMock).not.toHaveBeenCalled();
-    expect(getUserMock).not.toHaveBeenCalled();
+    expect(getSessionMock).toHaveBeenCalled();
     expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
     expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
+  it("AP1: ok:false account_delete_failed + Auth gone → success-equivalent cleanup", async () => {
+    // 二タブ DELETE 敗者: 勝者削除後の deleteUser 失敗は account_delete_failed。
+    // Auth 消滅済みなら residual session を残さず成功同等 cleanup。
+    const user = userEvent.setup();
+    seedOwnedStorage();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "account_delete_failed",
+            message: "削除できませんでした",
+          },
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+    getSessionMock.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    await waitFor(() => {
+      expect(clearLocalAuthAndDraftsMock).toHaveBeenCalled();
+    });
+    expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+    expect(getSessionMock).toHaveBeenCalled();
+  });
+
+  it("AP1: ok:false account_delete_failed + Auth still present shows error (no false success)", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "account_delete_failed",
+            message: "削除できませんでした",
+          },
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+    getSessionMock.mockResolvedValue({
+      data: { session: { access_token: "still-here" } },
+      error: null,
+    });
+    getUserMock.mockResolvedValue({
+      data: { user: { id: "u1" } },
+      error: null,
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    expect(
+      await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
+    ).toBeVisible();
+    expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
+  it("AP1: ok:false account_delete_after_billing_cancel_failed + Auth gone → cleanup", async () => {
+    // 敗者が cancel 済みのあと勝者 delete 完了 → 専用 code でも gone なら cleanup
+    const user = userEvent.setup();
+    seedOwnedStorage();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "account_delete_after_billing_cancel_failed",
+            message: "有料プランの解約は完了した可能性がありますが、アカウント削除に失敗しました",
+          },
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+    getSessionMock.mockResolvedValue({
+      data: { session: { access_token: "stale-jwt" } },
+      error: null,
+    });
+    getUserMock.mockResolvedValue({
+      data: { user: null },
+      error: { message: "User from sub claim in JWT does not exist", status: 403 },
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    await waitFor(() => {
+      expect(getUserMock).toHaveBeenCalled();
+      expect(clearLocalAuthAndDraftsMock).toHaveBeenCalled();
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+    });
   });
 
   it("AP6: ok:false auth_required + Auth gone probes and completes cleanup", async () => {
