@@ -76,6 +76,10 @@ const savePlannerDraftMock = vi.hoisted(() => vi.fn());
 const setOnboardingStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const getProfileMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
+/** P1/P3: flush が IncompleteDraftSaveError を投げる経路を再現する */
+const autosaveFlushMode = vi.hoisted(() => ({
+  mode: "save" as "save" | "incomplete" | "network_error",
+}));
 const navigateMock = vi.hoisted(() => vi.fn());
 const setQueryDataMock = vi.hoisted(() => vi.fn());
 // ensureQueryData 実装が cached を any にせず unknown として扱えるよう戻り値を明示する
@@ -89,6 +93,10 @@ const ensureQueryDataMock = vi.hoisted(() =>
 );
 const cancelQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const invalidateQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+/** P4: 緊急 post-flush の list 再読を観測する */
+const listPantryItemsMock = vi.hoisted(() =>
+  vi.fn(() => Promise.resolve(queryState.pantry.data ?? [])),
+);
 
 vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: queryState.userId } } }),
@@ -126,12 +134,12 @@ vi.mock("@/features/household/household-api", async (importOriginal) => {
     getProfile: getProfileMock,
   };
 });
-// P3: sticky pending 前の listPantryItems 再読は queryState.pantry を正とする
+// P3/P4: sticky pending / 緊急 post-flush 前の listPantryItems 再読は queryState.pantry を正とする
 vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/pantry/pantry-api")>();
   return {
     ...original,
-    listPantryItems: vi.fn(() => Promise.resolve(queryState.pantry.data ?? [])),
+    listPantryItems: listPantryItemsMock,
   };
 });
 vi.mock("@tanstack/react-query", () => ({
@@ -249,7 +257,16 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
       return {
         state: "saved",
         revision: 3,
-        flush: vi.fn(() => input.save(input.value, input.baselineRevision)),
+        flush: vi.fn(() => {
+          // P1/P3: Incomplete は RPC 前の意図的拒否。通信失敗とは別経路。
+          if (autosaveFlushMode.mode === "incomplete") {
+            return Promise.reject(new original.IncompleteDraftSaveError());
+          }
+          if (autosaveFlushMode.mode === "network_error") {
+            return Promise.reject(new Error("network"));
+          }
+          return input.save(input.value, input.baselineRevision);
+        }),
       };
     },
   };
@@ -498,6 +515,7 @@ vi.mock("@/features/generation/model/pending-generation-meta", async (importOrig
 });
 
 import { PlannerPage, PlannerRoutePage } from "./planner-route";
+import { runPlannerLeaveFlush } from "./planner-leave-flush";
 
 function createDeferred<T>(): {
   promise: Promise<T>;
@@ -516,6 +534,8 @@ function createDeferred<T>(): {
 beforeEach(() => {
   vi.clearAllMocks();
   autosaveInputs.length = 0;
+  autosaveFlushMode.mode = "save";
+  listPantryItemsMock.mockImplementation(() => Promise.resolve(queryState.pantry.data ?? []));
   queryState.userId = draft.userId;
   queryState.draft = draft;
   queryState.draftIsError = false;
@@ -1129,8 +1149,10 @@ it("P3: emergency flush 中に pantry が消えると post-flush 再検証で na
   // PE8: post-flush 通過前（flush 中）は session に載せない
   expect(sessionStorage.getItem(`kondate:expired-pantry-confirm:v1:${draft.userId}`)).toBeNull();
 
-  // flush 中に選択 ID が pantry から消える（削除 TOCTOU）
+  // flush 中に選択 ID が pantry から消える（削除 TOCTOU）。
+  // list 再読 mock も空を返し、post-flush ゲートが削除を検知する。
   queryState.pantry = { data: [], isError: false, isPending: false };
+  listPantryItemsMock.mockResolvedValue([]);
   view.rerender(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("pantry names")).toHaveTextContent("");
@@ -1156,6 +1178,83 @@ it("P3: emergency flush 中に pantry が消えると post-flush 再検証で na
   // post-flush 失敗経路でも PE8 session を残さない
   expect(sessionStorage.getItem(`kondate:expired-pantry-confirm:v1:${draft.userId}`)).toBeNull();
   expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+});
+
+it("P1: leave flush の IncompleteDraft は proceed（通信失敗で封鎖しない）", async () => {
+  autosaveFlushMode.mode = "incomplete";
+  render(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("P1: leave flush の通信失敗は blocked + 通信文言", async () => {
+  autosaveFlushMode.mode = "network_error";
+  render(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("blocked");
+  await vi.waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
+    );
+  });
+});
+
+it("P3: openSettings の IncompleteDraft は /settings へ proceed（通信文言で塞がない）", async () => {
+  autosaveFlushMode.mode = "incomplete";
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "家族設定" }));
+  await vi.waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith("/settings");
+  });
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("P3: openSettings の通信失敗は /settings 非遷移 + 保存失敗文言", async () => {
+  autosaveFlushMode.mode = "network_error";
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "家族設定" }));
+  await vi.waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "条件を保存できなかったため、家族設定を開けませんでした。通信を確認して再度お試しください。",
+    );
+  });
+  expect(navigateMock).not.toHaveBeenCalledWith("/settings");
+});
+
+it("P4: emergency open は post-flush で listPantryItems を再読し query cache を更新する", async () => {
+  sessionStorage.clear();
+  const freshPantry: PantryItem[] = [
+    {
+      ...pantryItem,
+      // 期限切れを解消した最新集合
+      expiresOn: "2099-01-01",
+    },
+  ];
+  listPantryItemsMock.mockResolvedValue(freshPantry);
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  listPantryItemsMock.mockClear();
+  setQueryDataMock.mockClear();
+  await user.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+
+  await vi.waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith("/emergency-menus");
+  });
+  expect(listPantryItemsMock).toHaveBeenCalled();
+  expect(setQueryDataMock).toHaveBeenCalledWith(["pantry", draft.userId], freshPantry);
 });
 
 it("P8: privacy 未同意の生成は委譲完了まで再 generate を受け付けない", async () => {

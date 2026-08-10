@@ -843,6 +843,20 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         if (!mountedRef.current || operationId !== emergencyOperationIdRef.current) {
           return;
         }
+        // P4: 生成 onSubmit と同型。sticky/navigate 前に list を再読し client cache と
+        // サーバ期限集合のズレ（PE8 session TOCTOU）を縮める。再読失敗時は既存 ref で続行。
+        if (userId !== undefined) {
+          try {
+            const freshPantry = await listPantryItems(client, userId);
+            if (!mountedRef.current || operationId !== emergencyOperationIdRef.current) {
+              return;
+            }
+            pantryRowsRef.current = freshPantry;
+            queryClient.setQueryData(pantryKeys.list(userId), freshPantry);
+          } catch {
+            // 既存 pantryRowsRef でゲート・session を組み立てる
+          }
+        }
         // P3: flush 中の pantry 削除/期限更新 TOCTOU を pantryRowsRef で再検証（生成 post-flush と同型）。
         // pre-flush 成功だけでは session に載せてから失敗したときの stale handoff が残る。
         {
@@ -878,7 +892,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         // flush 失敗や post-flush ゲート失敗で planner に留まる経路に stale 当日確認を残さない。
         // P8: 非選択・期限切れ解消後の attempt surplus は session に載せない
         // （緊急側 hasExpiredPantryConfirmation が dialog を誤抑止しないよう selected∩expired）。
-        // ここまで sync のみのため operationId 再読は不要（await は flush 直後の 1 回だけ）。
+        // list 再読 await 後なので operationId を再確認してから session/navigate する。
+        if (!mountedRef.current || operationId !== emergencyOperationIdRef.current) {
+          return;
+        }
         if (userId !== undefined) {
           const nowForSession = new Date();
           persistSessionExpiredPantryChecks(
@@ -916,6 +933,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   }, [
     attempt,
     autosave.state,
+    client,
     flushDraft,
     hasDraftConflict,
     isOpeningEmergencyMenus,
@@ -924,6 +942,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     isSubmitting,
     navigate,
     pantryQuery.data,
+    queryClient,
     userId,
     value.pantrySelections,
   ]);
@@ -952,12 +971,17 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         await flushDraft();
         if (!mountedRef.current) return;
         void navigate("/settings");
-      } catch {
-        if (mountedRef.current) {
-          setSubmissionError(
-            "条件を保存できなかったため、家族設定を開けませんでした。通信を確認して再度お試しください。",
-          );
+      } catch (error) {
+        if (!mountedRef.current) return;
+        // P3: Incomplete は意図的に非 persist な途中状態。settings は complete 不要のため
+        // アレルギー直し導線を塞がず proceed（通信失敗文言に畳まない）。
+        if (error instanceof IncompleteDraftSaveError) {
+          void navigate("/settings");
+          return;
         }
+        setSubmissionError(
+          "条件を保存できなかったため、家族設定を開けませんでした。通信を確認して再度お試しください。",
+        );
       } finally {
         settingsOpeningRef.current = false;
         if (mountedRef.current) {
@@ -996,7 +1020,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       try {
         await flushDraft();
         return "proceed";
-      } catch {
+      } catch (error) {
+        // P1: Incomplete は schema 非 persistable の意図的拒否（RPC しない）。
+        // pre-leave-flush 同様に離脱可とし、通信失敗文言で封鎖しない。
+        if (error instanceof IncompleteDraftSaveError) {
+          return "proceed";
+        }
         if (mountedRef.current) {
           setSubmissionError(
             "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
