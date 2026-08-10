@@ -91,6 +91,18 @@ describe("firstIncompletePlannerStep", () => {
       }),
     ).toBe("review");
   });
+
+  it("P5: eligible set が無いと blocked 選択でも review、渡すと audience", () => {
+    const memberId = completeQuestionAnswers.targetMemberIds[0] ?? "missing";
+    // 省略時は length のみ → home/resume が review に着地し得る
+    expect(firstIncompletePlannerStep(completeQuestionAnswers)).toBe("review");
+    // eligible を渡すと blocked ID は audience（home start の incomplete 判定と一致）
+    expect(firstIncompletePlannerStep(completeQuestionAnswers, new Set())).toBe("audience");
+    expect(firstIncompletePlannerStep(completeQuestionAnswers, new Set(["other"]))).toBe(
+      "audience",
+    );
+    expect(firstIncompletePlannerStep(completeQuestionAnswers, new Set([memberId]))).toBe("review");
+  });
 });
 
 describe("mapPlannerIssuePathToField", () => {

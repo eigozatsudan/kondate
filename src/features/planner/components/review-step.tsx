@@ -236,6 +236,8 @@ export function ReviewStep({
   const [additionalOpen, setAdditionalOpen] = useState(true);
   // P6: 日跨ぎで confirmation が無効になっても再 render まで CTA が遅れないよう、
   // 次の JST 0:00 で now を進め期限判定を再評価する（submit 再検証は従来どおり）。
+  // P1: 背景タブ throttle で setTimeout が遅れても、focus/visibility/分 interval で
+  // useUsageToday と同型に re-arm し、CTA/確認ダイアログの「昨日の now」残存を縮める。
   const [expiryNow, setExpiryNow] = useState(() => new Date());
   const headingRef = useRef<HTMLHeadingElement>(null);
   const privacyNoticeButtonRef = useRef<HTMLButtonElement>(null);
@@ -254,6 +256,9 @@ export function ReviewStep({
     if (privacyGateOpen) privacyGatePrimaryRef.current?.focus();
   }, [privacyGateOpen]);
   useEffect(() => {
+    const tick = (): void => {
+      setExpiryNow(new Date());
+    };
     let boundaryTimer: number | undefined;
     const armBoundary = (): void => {
       const delay = Math.min(
@@ -261,13 +266,20 @@ export function ReviewStep({
         86_400_000,
       );
       boundaryTimer = window.setTimeout(() => {
-        setExpiryNow(new Date());
+        tick();
         armBoundary();
       }, delay);
     };
     armBoundary();
+    // 保険: 分単位 interval + フォーカス復帰で日境界を拾う（useUsageToday と同型）
+    const intervalTimer = window.setInterval(tick, 60_000);
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
     return () => {
       if (boundaryTimer !== undefined) window.clearTimeout(boundaryTimer);
+      window.clearInterval(intervalTimer);
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
     };
   }, []);
   const pantryItemIds = new Set(pantryItems.map((item) => item.id));

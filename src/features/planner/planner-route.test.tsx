@@ -126,6 +126,14 @@ vi.mock("@/features/household/household-api", async (importOriginal) => {
     getProfile: getProfileMock,
   };
 });
+// P3: sticky pending 前の listPantryItems 再読は queryState.pantry を正とする
+vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/pantry/pantry-api")>();
+  return {
+    ...original,
+    listPantryItems: vi.fn(() => Promise.resolve(queryState.pantry.data ?? [])),
+  };
+});
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     cancelQueries: cancelQueriesMock,

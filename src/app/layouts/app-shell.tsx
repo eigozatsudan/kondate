@@ -1,12 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { NavLink, Outlet, useLocation } from "react-router";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
   invalidateHouseholdSafetyQueries,
   isHouseholdSafetyRevisionStorageKeyForUser,
 } from "@/features/household/household-queries";
+import { runPlannerLeaveFlush } from "@/features/planner/planner-leave-flush";
 
 /** パスから配色セクションを決める。ルーティング定義は変えずに面の色だけを切り替える。 */
 function sectionForPath(pathname: string): string {
@@ -105,8 +106,12 @@ export function AppShell() {
   const auth = useAuth();
   const queryClient = useQueryClient();
   const location = useLocation();
+  const navigate = useNavigate();
   const userId = auth.session?.user.id;
   const section = sectionForPath(location.pathname);
+  // P2: シェル leave の flush 中は二重 navigate を抑止（settings single-flight と同型）
+  const [navLeaving, setNavLeaving] = useState(false);
+  const navLeavingRef = useRef(false);
   useEffect(() => {
     if (userId === undefined) return undefined;
     const invalidate = () => void invalidateHouseholdSafetyQueries(queryClient, userId);
@@ -155,11 +160,33 @@ export function AppShell() {
         {sectionTitles[section] ?? sectionTitles.other}
       </div>
       <Outlet />
-      <nav className="bottom-nav" aria-label="メインメニュー">
+      <nav className="bottom-nav" aria-label="メインメニュー" aria-busy={navLeaving || undefined}>
         {items.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
+            // P2: /planner から他タブへ出るとき route の flush を await。失敗時は stay + submissionError。
+            // planner-route 未 mount（他 section）は handler null → 即 proceed。
+            onClick={(event) => {
+              if (location.pathname !== "/planner") return;
+              if (item.to === "/planner") return;
+              // 既定の NavLink 遷移を止め、flush 成功後にだけ navigate する
+              event.preventDefault();
+              if (navLeavingRef.current) return;
+              navLeavingRef.current = true;
+              setNavLeaving(true);
+              void (async () => {
+                try {
+                  const result = await runPlannerLeaveFlush();
+                  if (result === "proceed") {
+                    void navigate(item.to);
+                  }
+                } finally {
+                  navLeavingRef.current = false;
+                  setNavLeaving(false);
+                }
+              })();
+            }}
             className={({ isActive }) => {
               // D-I19 / L6: planner section（generation・menus・emergency）は献立タブを active に
               // sectionForPath の planner chrome と nav active を一致させる

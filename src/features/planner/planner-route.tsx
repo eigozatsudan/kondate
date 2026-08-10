@@ -63,6 +63,7 @@ import {
   plannerKeys,
   savePlannerDraft,
 } from "./planner-api";
+import { registerPlannerLeaveFlush } from "./planner-leave-flush";
 import { useDraftAutosave } from "./use-draft-autosave";
 
 /** ホームに載せる直近献立の件数上限（詰め込みすぎない）。 */
@@ -499,30 +500,37 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // P6: 既に mount 済みの /planner でも ?resume= 後付けでウィザードを開く（不変契約 4b の同一インスタンス）。
   // init effect は initialized 後 no-op のため、resume 文字列変化専用の経路を持つ。
   // searchParams オブジェクト参照ではなく get("resume") 結果に依存し、毎 render の再実行を避ける。
+  // P5: eligible を渡し、strip 前でも blocked ID のまま review に着地しない。
   const resumeQuery = searchParams.get("resume");
   useEffect(() => {
     if (!initialized) return;
     if (resumeQuery === null) return;
-    const firstIncomplete = firstIncompletePlannerStep(valueForResumeRef.current);
+    const eligible =
+      safetyQuery.data !== undefined ? new Set(safetyQuery.data.eligibleMemberIds) : undefined;
+    const firstIncomplete = firstIncompletePlannerStep(valueForResumeRef.current, eligible);
     if (resumeQuery === "review" && firstIncomplete === "review") {
       setStep("review");
     } else {
       setStep(firstIncomplete);
     }
     setWizardOpen(true);
-  }, [initialized, resumeQuery]);
+  }, [initialized, resumeQuery, safetyQuery.data]);
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
   // 緊急献立への遷移中に対象が消えたら navigate を中止し、無言で /emergency-menus へ落ちない。
   // P1: 生成 submit 中の strip も operationId 無効化 + abort で startGeneration を止める（緊急と同型）。
   // GP-I1 / guided §10: 選択家族が削除・未完了・利用不可になったら対象ステップへ戻す。
+  // P7: setValue は functional updater で concurrent memo/pantry 編集を last-writer-wins で潰さない。
+  // deps は targetMode/targetMemberIds に絞り、無関係な value 変更で strip を再走らせない。
+  const stripTargetMode = value.targetMode;
+  const stripTargetMemberIds = value.targetMemberIds;
   useEffect(() => {
     if (!initialized || safetyQuery.data === undefined) return;
-    if (value.targetMode === "idea") return;
+    if (stripTargetMode === "idea") return;
     const eligibleIds = new Set(safetyQuery.data.eligibleMemberIds);
-    const nextIds = value.targetMemberIds.filter((id) => eligibleIds.has(id));
-    if (nextIds.length === value.targetMemberIds.length) return;
+    const needsStrip = stripTargetMemberIds.some((id) => !eligibleIds.has(id));
+    if (!needsStrip) return;
     if (isOpeningEmergencyMenus || emergencyOpeningRef.current) {
       // strip で緊急 flight を無効化し、同期 ref も落として generate を再解放する
       emergencyOperationIdRef.current += 1;
@@ -548,14 +556,27 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
       );
     }
-    setValue({
-      ...value,
-      targetMemberIds: nextIds,
-      targetMode: nextIds.length > 0 ? "household" : null,
-      servings: null,
+    // P7: クロージャ snapshot を広げず prev を基準に members だけ差し替える
+    setValue((prev) => {
+      if (prev.targetMode === "idea") return prev;
+      const nextIds = prev.targetMemberIds.filter((id) => eligibleIds.has(id));
+      if (nextIds.length === prev.targetMemberIds.length) return prev;
+      return {
+        ...prev,
+        targetMemberIds: nextIds,
+        targetMode: nextIds.length > 0 ? "household" : null,
+        servings: null,
+      };
     });
     setStep("audience");
-  }, [initialized, isOpeningEmergencyMenus, isSubmitting, safetyQuery.data, value]);
+  }, [
+    initialized,
+    isOpeningEmergencyMenus,
+    isSubmitting,
+    safetyQuery.data,
+    stripTargetMemberIds,
+    stripTargetMode,
+  ]);
 
   const save = useCallback(
     async (next: PlannerDraftInput, revision: number) => {
@@ -954,6 +975,48 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     navigate,
   ]);
 
+  // P2: シェル下ナビ leave でも settings と同型に flush を await し、失敗を submissionError で可視化する。
+  // unmount enqueue の握りつぶしだけだと黙ってサーバ旧 revision が正本のまま残る。
+  // saving 中は flush が同一キューを await するのでガードせず join する（openSettings の early return とは別）。
+  useEffect(() => {
+    registerPlannerLeaveFlush(async () => {
+      if (
+        settingsOpeningRef.current ||
+        emergencyOpeningRef.current ||
+        privacyOpeningRef.current ||
+        isOpeningEmergencyMenus ||
+        isOpeningPrivacy ||
+        isOpeningSettings ||
+        isSubmitting ||
+        submittingRef.current ||
+        hasDraftConflict
+      ) {
+        return "blocked";
+      }
+      try {
+        await flushDraft();
+        return "proceed";
+      } catch {
+        if (mountedRef.current) {
+          setSubmissionError(
+            "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
+          );
+        }
+        return "blocked";
+      }
+    });
+    return () => {
+      registerPlannerLeaveFlush(null);
+    };
+  }, [
+    flushDraft,
+    hasDraftConflict,
+    isOpeningEmergencyMenus,
+    isOpeningPrivacy,
+    isOpeningSettings,
+    isSubmitting,
+  ]);
+
   // P3: 初回 data 未取得の失敗だけ全画面。init 後の背景 refetch 失敗は previous data で wizard 継続。
   const safetyLoadFatal = safetyQuery.isError && safetyQuery.data === undefined;
   const pantryLoadFatal = pantryQuery.isError && pantryQuery.data === undefined;
@@ -1040,7 +1103,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         remainingToday={usage.isSuccess ? usage.data.success.remaining : null}
         onStartWizard={() => {
           setWizardOpen(true);
-          setStep(firstIncompletePlannerStep(value));
+          // P5: eligible を渡し、blocked 家族 ID が残っていても review に着地しない
+          // （fatal/pending 通過後なので safetyData は利用可能）
+          setStep(firstIncompletePlannerStep(value, new Set(safetyData.eligibleMemberIds)));
         }}
         hasResumablePending={hasResumablePending}
         onResumePending={() => {
@@ -1328,6 +1393,22 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             }
             // P3: flush 後に pantry 削除/期限更新が入り得る（staleTime:0 の背景 refetch）。
             // eligibility と同型で最新 ref を再検証し、navigate+sticky pending 後の端末失敗を避ける。
+            // sticky pending 前に list を再読し、client cache とサーバ期限集合のズレ（doom C2）を縮める。
+            // 再読失敗時は既存 ref で続行（サーバ validateTransientChecks は fail-closed のまま）。
+            if (userId !== undefined) {
+              try {
+                const freshPantry = await listPantryItems(client, userId);
+                if (
+                  !isPlannerSubmitStillActive(mountedRef, submitOperationId, submitOperationIdRef)
+                ) {
+                  return;
+                }
+                pantryRowsRef.current = freshPantry;
+                queryClient.setQueryData(pantryKeys.list(userId), freshPantry);
+              } catch {
+                // 既存 pantryRowsRef でゲート・command を組み立てる
+              }
+            }
             {
               const pantryRowsLatest = pantryRowsRef.current;
               const pantryIdSetLatest = new Set(pantryRowsLatest.map((item) => item.id));
@@ -1360,6 +1441,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               }
             }
             // 生成へ渡す attempt は selected∩currently-expired のみ・非 Plus / quality 枠なしは qualityMode を落とす
+            // （上の再読後 ref を使い、sticky に載せる confirmation をサーバ集合へ近づける）
             const nowForCommand = new Date();
             const commandAttempt: PlannerAttempt = {
               ...attempt,

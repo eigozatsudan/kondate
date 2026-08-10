@@ -1,15 +1,21 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useEffect, useRef, type ReactNode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
+import { registerPlannerLeaveFlush } from "@/features/planner/planner-leave-flush";
 import { AppShell } from "./app-shell";
 
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
+
+afterEach(() => {
+  registerPlannerLeaveFlush(null);
+});
 
 const unauthenticated: AuthContextValue = {
   status: "unauthenticated",
@@ -125,5 +131,57 @@ describe("AppShell route focus (L2)", () => {
       expect(document.activeElement).toBe(dialogButton);
     });
     expect(screen.getByRole("heading", { name: "設定" })).not.toHaveFocus();
+  });
+});
+
+describe("AppShell planner leave flush (P2)", () => {
+  it("awaits leave flush and navigates only on proceed", async () => {
+    const user = userEvent.setup();
+    let resolveFlush: ((value: "proceed" | "blocked") => void) | undefined;
+    const flush = vi.fn(
+      () =>
+        new Promise<"proceed" | "blocked">((resolve) => {
+          resolveFlush = resolve;
+        }),
+    );
+    registerPlannerLeaveFlush(flush);
+    renderAppShellAt("/planner");
+
+    await user.click(screen.getByRole("link", { name: /設定/u }));
+    // flush 完了前は settings に遷移しない
+    expect(screen.getByRole("heading", { name: "献立" })).toBeVisible();
+    expect(flush).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFlush?.("proceed");
+      // flush resolve → navigate microtasks を flush
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "設定" })).toBeVisible();
+    });
+  });
+
+  it("stays on planner when leave flush is blocked", async () => {
+    const user = userEvent.setup();
+    registerPlannerLeaveFlush(() => Promise.resolve("blocked"));
+    renderAppShellAt("/planner");
+
+    await user.click(screen.getByRole("link", { name: /冷蔵庫/u }));
+    expect(screen.getByRole("heading", { name: "献立" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "冷蔵庫" })).not.toBeInTheDocument();
+  });
+
+  it("does not intercept leave when not on /planner", async () => {
+    const user = userEvent.setup();
+    const flush = vi.fn(() => Promise.resolve("blocked" as const));
+    registerPlannerLeaveFlush(flush);
+    renderAppShellAt("/pantry");
+
+    await user.click(screen.getByRole("link", { name: /設定/u }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "設定" })).toBeVisible();
+    });
+    expect(flush).not.toHaveBeenCalled();
   });
 });
