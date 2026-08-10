@@ -357,6 +357,89 @@ describe("AuthProvider", () => {
     expect(recovery).toHaveBeenCalled();
   });
 
+  it("R1: stops recovery after SPA leave from /login while authenticated", async () => {
+    window.history.replaceState(null, "", "/login");
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    // 各 start ごとに独立した stop を返し、最新 generation の stop だけを数える
+    const stops: Array<ReturnType<typeof vi.fn>> = [];
+    const recovery = vi.fn(() => {
+      const stop = vi.fn();
+      stops.push(stop);
+      return stop;
+    });
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={recovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("authenticated");
+    // loading→authenticated で effect が再評価され得るため、安定後の起点を取る
+    expect(recovery.mock.calls.length).toBeGreaterThanOrEqual(1);
+    const startsAfterAuth = recovery.mock.calls.length;
+    const activeStop = stops.at(-1);
+    expect(activeStop).toBeDefined();
+    expect(activeStop).not.toHaveBeenCalled();
+
+    // SPA 遷移（React Router と同型の pushState）。AuthProvider は Router 外だが path を追跡する。
+    await act(async () => {
+      window.history.pushState(null, "", "/settings");
+      await Promise.resolve();
+    });
+
+    expect(activeStop).toHaveBeenCalledTimes(1);
+    // authenticated + 非待機では再開しない（residual exchange 抑止）
+    expect(recovery).toHaveBeenCalledTimes(startsAfterAuth);
+  });
+
+  it("R1: restarts recovery when returning to /login while authenticated", async () => {
+    window.history.replaceState(null, "", "/login");
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    const recovery = vi.fn(() => vi.fn());
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={recovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("authenticated");
+    const startsAfterAuth = recovery.mock.calls.length;
+    expect(startsAfterAuth).toBeGreaterThanOrEqual(1);
+
+    await act(async () => {
+      window.history.pushState(null, "", "/settings");
+      await Promise.resolve();
+    });
+    expect(recovery).toHaveBeenCalledTimes(startsAfterAuth);
+
+    // 明示 re-login surface へ戻ったら multi-flow residual recovery を再開する
+    await act(async () => {
+      window.history.pushState(null, "", "/login");
+      await Promise.resolve();
+    });
+    expect(recovery.mock.calls.length).toBe(startsAfterAuth + 1);
+  });
+
   it("C5/C6: soft SIGNED_OUT clears generation drafts and owned residual (not only hard redirect)", async () => {
     window.history.replaceState(null, "", "/planner");
     window.localStorage.clear();

@@ -713,12 +713,16 @@ export function startAuthContinuationRecovery(input: {
     // claim 後 exchange hang で recovery の running を永久占有しない（timeout で解放）。
     // C4: gateway は exchange 成功まで secret を残すため、timeout 後の次周期で
     // 冪等 re-claim → 再 exchange を試せる。裏の resumeFlow が complete すれば completion を publish する。
+    // （gateway 自身の completion bus 公開。recovery の onComplete は stop 後は呼ばない — R2）
     let result: RecoveryResult;
     try {
       result = await withTimeout(input.gateway.resumeFlow(flowId), IMMEDIATE_CLAIM_TIMEOUT_MS);
     } catch {
       return;
     }
+    // R2: cleanup で stopped=true しても in-flight resumeFlow は abort できない。
+    // await 後・副作用前に再検査し、ポリシー上 stop した recovery の onComplete/onResult を捨てる。
+    if (isStopped()) return;
     if (isRecoveryComplete(result)) {
       const completeResult = {
         ...result,

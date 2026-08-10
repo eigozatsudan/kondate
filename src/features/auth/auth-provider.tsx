@@ -68,6 +68,11 @@ const COLD_START_SESSION_RETRY_MS = 1_500;
 export const COLD_START_GET_SESSION_TIMEOUT_MS = 5_000;
 /** cold-start 全体の fail-closed 上限。超えたら未ログイン扱いで UI を解放する（C5）。 */
 export const COLD_START_SESSION_DEADLINE_MS = 15_000;
+/**
+ * R1: AuthProvider は RouterProvider の外側にあり、SPA 遷移では remount も effect 再評価も起きない。
+ * history パッチで拾えない path 変化の保険として、短周期で location.pathname を同期する。
+ */
+const AUTH_RECOVERY_PATH_SYNC_MS = 500;
 
 /**
  * C5 / RR1: cold-start deadline で UI を unauthenticated にするとき、**session 永続キーのみ**消す。
@@ -122,6 +127,10 @@ export function AuthProvider({
   );
   const [session, setSession] = useState<Session | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // R1: SPA path を recovery effect の deps に載せる。Router 外のため useLocation は使えない。
+  const [locationPathname, setLocationPathname] = useState(() =>
+    typeof window === "undefined" ? "/" : window.location.pathname,
+  );
   // 一度でも getSession 成功（error === null）したら true。SIGNED_OUT でも true のまま。
   const hasResolvedSessionOnce = useRef(false);
   // cold-start の壁時計起点（マウント時）。deadline 超過で fail-closed。
@@ -210,15 +219,45 @@ export function AuthProvider({
     }
   }, [session, loaded]);
 
+  // R1: pathname を追跡し recovery の開始/停止条件を SPA 遷移でも再評価する。
+  // React Router の pushState/replaceState は popstate を発火しないため history を包む。
+  // 保険として短周期 re-check も行う（他経路の location 変更・取りこぼし用）。
+  useEffect(() => {
+    const syncPath = (): void => {
+      const next = window.location.pathname;
+      setLocationPathname((prev) => (prev === next ? prev : next));
+    };
+    const originalPushState = window.history.pushState.bind(window.history);
+    const originalReplaceState = window.history.replaceState.bind(window.history);
+    window.history.pushState = ((...args: Parameters<History["pushState"]>) => {
+      originalPushState(...args);
+      syncPath();
+    }) as History["pushState"];
+    window.history.replaceState = ((...args: Parameters<History["replaceState"]>) => {
+      originalReplaceState(...args);
+      syncPath();
+    }) as History["replaceState"];
+    window.addEventListener("popstate", syncPath);
+    const timer = window.setInterval(syncPath, AUTH_RECOVERY_PATH_SYNC_MS);
+    return () => {
+      window.history.pushState = originalPushState;
+      window.history.replaceState = originalReplaceState;
+      window.removeEventListener("popstate", syncPath);
+      window.clearInterval(timer);
+    };
+  }, []);
+
   useEffect(() => {
     const gateway = recoveryGateway ?? defaultRecoveryGateway;
-    if (gateway === undefined || window.location.pathname === "/auth/callback") return undefined;
-    const path = window.location.pathname;
+    // locationPathname を deps に含め、/login で start 後の SPA 離脱でも cleanup→stop する（R1）。
+    const path = locationPathname;
+    if (gateway === undefined || path === "/auth/callback") return undefined;
     const authWaiting = isAuthWaitingPath(path);
     // C1: 既に authenticated かつ認証待ち path 以外では residual flow の background claim/exchange を抑止する。
     // multi-flow 併存（旧 secret を焼かない C6）は維持しつつ、別アカウント code による静かな session 差し替えを防ぐ。
     // loading 中は既 session 有無が未確定のため、認証待ち path 以外では recovery を開始しない。
     // 明示 re-login（/login）中は authenticated / loading でも recovery を許可する。
+    // R1: 非待機 path へ SPA 離脱したら effect cleanup で stop（authenticated の residual 継続を閉じる）。
     if (!authWaiting && (!loaded || session !== null)) return undefined;
     const recoveryTtlMs =
       providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000;
@@ -251,6 +290,7 @@ export function AuthProvider({
   }, [
     defaultRecoveryGateway,
     loaded,
+    locationPathname,
     navigateTo,
     providedClient,
     recoveryGateway,
