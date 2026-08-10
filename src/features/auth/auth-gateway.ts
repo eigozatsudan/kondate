@@ -1,6 +1,7 @@
 import type { AuthError } from "@supabase/supabase-js";
 import { z } from "zod";
 import {
+  adjustedAuthNowMs,
   buildAuthCallbackUrl,
   clearAuthFlow,
   clearPendingAuthDeposit,
@@ -604,7 +605,12 @@ export function createAuthGateway(
       };
     }
     // C3: completeCallback の deposit budget 後も pending code があれば re-deposit してから claim。
-    const pendingDeposit = readPendingAuthDeposit(flow.id, storage, Date.now());
+    // C15: flow.clockSkewMs で now を補正し、進みすぎクライアントでも pending を flow 寿命と揃える。
+    const pendingDeposit = readPendingAuthDeposit(
+      flow.id,
+      storage,
+      adjustedAuthNowMs(Date.now(), flow.clockSkewMs),
+    );
     if (pendingDeposit !== null) {
       // RR2: 他 run が既に exchange 中なら re-deposit を重ねず recovery へ委ねる。
       if (isAuthContinuationExchangeInFlight(flow.id, storage, Date.now())) {

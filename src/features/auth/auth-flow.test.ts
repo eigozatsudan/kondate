@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adjustedAuthNowMs,
   browserSupabaseSessionStorageKey,
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
@@ -594,4 +595,44 @@ it("C3: pending deposit cache survives write/read and is cleared with the flow",
   writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z");
   clearAuthFlow(flowId, storage);
   expect(readPendingAuthDeposit(flowId, storage, nowMs)).toBeNull();
+});
+
+it("C15: pending deposit expiry uses adjustedAuthNowMs so positive clock skew does not drop early", () => {
+  const storage = new MapStorage();
+  const flowId = "10000000-0000-4000-8000-0000000000c1";
+  const wallNowMs = Date.parse("2026-07-13T00:01:00.000Z");
+  // pending は wall から 30s 後に期限。正 skew 60s なら adjusted now は wall-60s でまだ有効。
+  const expiresAtMs = wallNowMs + 30_000;
+  const clockSkewMs = 60_000;
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-skew",
+      expiresAtMs,
+    },
+    storage,
+  );
+  // 壁時計だけだとまだ有効（対照）
+  expect(readPendingAuthDeposit(flowId, storage, wallNowMs)).not.toBeNull();
+  // 壁時計を expiresAt 直前まで進めると壁時計判定では期限切れ
+  const wallNearExpiry = expiresAtMs;
+  expect(readPendingAuthDeposit(flowId, storage, wallNearExpiry)).toBeNull();
+  // 同じ wall でも adjustedAuthNowMs なら skew 分戻る → まだ有効（gateway が渡す形）
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-skew",
+      expiresAtMs,
+    },
+    storage,
+  );
+  expect(
+    readPendingAuthDeposit(flowId, storage, adjustedAuthNowMs(wallNearExpiry, clockSkewMs)),
+  ).toEqual({
+    state: "B".repeat(43),
+    code: "oauth-code-skew",
+    expiresAtMs,
+  });
 });

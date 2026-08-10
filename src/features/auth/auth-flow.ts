@@ -507,7 +507,12 @@ export function writePendingAuthDeposit(
   }
 }
 
-/** C3: 未失効の pending deposit を読む。壊れている・期限切れは削除して null。 */
+/**
+ * C3: 未失効の pending deposit を読む。壊れている・期限切れは削除して null。
+ * C15: 期限判定の nowMs は呼び出し側で `adjustedAuthNowMs(Date.now(), flow.clockSkewMs)` を渡すこと。
+ * flow deadline / hangWatchdog と同型にし、進みすぎクライアント時計で re-deposit キャッシュが先に落ちないようにする。
+ * 既定の Date.now() は skew 未知（テスト・単独読取）向け。
+ */
 export function readPendingAuthDeposit(
   flowId: string,
   storage: Storage,
