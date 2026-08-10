@@ -31,7 +31,7 @@ import {
 } from "../model/planner-labels";
 import { PantrySelector, type PantryItemsStatus } from "../pantry-selector";
 import type { PlannerSafetyMember } from "../planner-safety-member";
-import { isAudienceComplete, type PlannerStep } from "../model/planner-wizard";
+import { firstIncompletePlannerStep, type PlannerStep } from "../model/planner-wizard";
 import type { PlannerStepProps } from "./planner-wizard-props";
 
 /** Plan 2 由来の医療・治療食依頼拒否コピー（旧 PlannerForm と同一文言） */
@@ -131,6 +131,11 @@ export type ReviewStepProps = PlannerStepProps<PlannerDraftInput> & {
    */
   plan?: PlanCode | null;
   /**
+   * usage.quality.available。Plus の「くわしく作る」枠。未取得は null。
+   * P5: false のときトグルをロック。true のときだけ qualityMode を送信可。
+   */
+  qualityAvailable?: boolean | null;
+  /**
    * 日次 attempt 残（外部 AI 送信枠）。未取得は null。
    * C-I12 residual: 0 のとき主 CTA を止める。null では止めない。
    */
@@ -204,6 +209,7 @@ export function ReviewStep({
   onOpenSettings,
   usageRemaining = null,
   plan = null,
+  qualityAvailable = null,
   attemptsRemaining = null,
   globalAvailable = null,
   shortWindowRetryAt = null,
@@ -214,8 +220,13 @@ export function ReviewStep({
 }: ReviewStepProps) {
   // 残数行用の plan。未取得なら free 接頭を避けず free として扱う（usage 未取得では行自体非表示）。
   const quotaPlan: PlanCode = plan ?? "free";
-  // 品質トグルは Plus 確定時のみ操作可。null（usage 未取得）も Free 同様にロック（fail-closed）。
-  const qualityModeLocked = plan !== "plus";
+  // P5: 品質トグルは Plus かつ quality.available===true のときだけ操作可。
+  // plan/available 未取得や枠切れは Free 同様にロック（fail-closed。サーバ quality_*_limit 前に止める）。
+  const qualityModeLocked = plan !== "plus" || qualityAvailable !== true;
+  // P7: household 対象が現行 eligible に含まれるか（blocked / 削除済み ID の偽 complete 抑止）
+  const eligibleMemberIdSet = new Set(
+    safetyMembers.filter((member) => member.blockedReason === null).map((member) => member.id),
+  );
   const [avoidIngredientText, setAvoidIngredientText] = useState(value.avoidIngredients.join("、"));
   // 上限超過を silent truncate せずローカルエラーで止める（schema fieldErrors と別経路）
   const [avoidIngredientLocalError, setAvoidIngredientLocalError] = useState<string | null>(null);
@@ -310,12 +321,13 @@ export function ReviewStep({
   // attemptsRemaining === null（未取得）では行を出してよい。0 のときだけ隠す。
   const showSuccessRemaining =
     usageRemaining !== null && usageRemaining > 0 && attemptsRemaining !== 0;
-  // P2/P8: audience 未完成（0人 / 人数未設定 / 未選択）では主 CTA・緊急 CTA を一枚目で止める。
-  // サーバ/flush の fail-closed に加え、確認 UI でも生成・緊急へ進めない。
-  const audienceIncomplete = !isAudienceComplete(value);
+  // P2/P7/P8: 必須質問未完成（空 mainIngredients / audience 0人・非 eligible 等）では
+  // 主 CTA を一枚目で止める。サーバ schema / flush fail-closed に加え確認 UI でも進めない。
+  const requiredQuestionsIncomplete =
+    firstIncompletePlannerStep(value, eligibleMemberIdSet) !== "review";
   const generateDisabled =
     disabled ||
-    audienceIncomplete ||
+    requiredQuestionsIncomplete ||
     hasUnavailablePantrySelections ||
     hasUnconfirmedExpiredPantry ||
     medicalBlocked ||
@@ -819,13 +831,18 @@ export function ReviewStep({
               </span>
               <span id="quality-mode-hint" className="quality-mode-hint">
                 {qualityModeLocked
-                  ? "くわしい AI での作成は Plus で使えます"
+                  ? plan === "plus"
+                    ? qualityAvailable === false
+                      ? "くわしい作成の回数の上限に達しました。通常の作成は利用できます"
+                      : "くわしい作成の利用可否を確認しています"
+                    : "くわしい AI での作成は Plus で使えます"
                   : "Plus のくわしい AI で、より丁寧な献立を作ります（1 日の回数に限りがあります）"}
               </span>
             </label>
             {/* quality の </label> の直後。idea の role=note より前。note と wizard-actions の間に置かない。
-          label 内に入れない（checkbox の accessible name 汚染防止）。生 a で Harness が Router 外でも可。 */}
-            {qualityModeLocked ? (
+          label 内に入れない（checkbox の accessible name 汚染防止）。生 a で Harness が Router 外でも可。
+          Plus 枠切れでは「Plus を見る」を出さない（既に Plus）。Free / plan 未取得のみリンク。 */}
+            {qualityModeLocked && plan !== "plus" ? (
               <p className="quality-mode-plus-link-wrap">
                 <a href="/plus" className="ui-text-link">
                   Plus を見る
@@ -930,7 +947,7 @@ export function ReviewStep({
               onOpenEmergencyMenus !== undefined && (
                 <Button
                   variant="secondary"
-                  disabled={disabled || audienceIncomplete}
+                  disabled={disabled || requiredQuestionsIncomplete}
                   onClick={onOpenEmergencyMenus}
                 >
                   AIを使わない緊急献立を見る

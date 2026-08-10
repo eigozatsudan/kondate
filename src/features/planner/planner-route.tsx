@@ -48,6 +48,7 @@ import {
 import type { PlannerSafetyMember } from "./planner-safety-member";
 import {
   createPlannerAttempt,
+  currentlyExpiredPantryItemIds,
   filterExpiredPantryChecksForSelections,
   hasCurrentExpiredConfirmation,
   isPastEnteredExpiry,
@@ -256,9 +257,11 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
 export function PlannerRoutePage() {
   const userId = useAuth().session?.user.id;
   const navigate = useNavigate();
-  // P3: startGeneration 内でも plan を参照し qualityMode を再 clamp（onSubmit 一枚依存を避ける）
+  // P3: startGeneration 内でも plan / quality.available を参照し qualityMode を再 clamp
+  // （onSubmit 一枚依存を避ける）
   const usage = useUsageToday(userId ?? "");
   const planCode = usage.isSuccess ? usage.data.plan : null;
+  const qualityAvailable = usage.isSuccess ? usage.data.quality.available : null;
   const startGeneration = useCallback(
     (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
       if (userId === undefined) return Promise.resolve(false);
@@ -278,14 +281,16 @@ export function PlannerRoutePage() {
         // submission 通過後の経路では通常到達しない。pending を書かず生成開始も止める。
         throw new Error("target_mode_required");
       }
-      // P1: 送信 confirmation は選択中 pantry のみ（attempt 残存 extra を載せない）
-      // P2/P3: Free / 非 Plus / plan 未取得では qualityMode を必ず false
+      // P1: 送信 confirmation は選択中 ∩ 期限切れのみ（attempt 残存 surplus を載せない）
+      // onSubmit が selected∩expired 済みの checks を渡す前提。ここは選択中のみ再絞り。
+      // P2/P3/P5: Free / 非 Plus / plan 未取得 / quality 枠なしでは qualityMode を必ず false
       // （onSubmit clamp をすり抜けた注入・将来呼び出しでも pending に true を載せない）
       const pending = createPendingGeneration(
         {
           commandVersion: "generation-command.v3",
           kind: "new_menu",
-          qualityMode: planCode === "plus" && attempt.qualityMode,
+          qualityMode:
+            planCode === "plus" && qualityAvailable === true && attempt.qualityMode,
           request: {
             idempotencyKey: attempt.idempotencyKey,
             draftId: draft.id,
@@ -294,6 +299,8 @@ export function PlannerRoutePage() {
             expiredPantryConfirmations: filterExpiredPantryChecksForSelections(
               attempt.expiredPantryChecks,
               draft.pantrySelections,
+              // 期限切れは onSubmit 済み。選択 ∩ 残 checks で非選択 extra だけ落とす
+              new Set(attempt.expiredPantryChecks.map((check) => check.pantryItemId)),
             ),
           },
         },
@@ -323,7 +330,7 @@ export function PlannerRoutePage() {
       void navigate("/generation");
       return Promise.resolve(true);
     },
-    [navigate, planCode, userId],
+    [navigate, planCode, qualityAvailable, userId],
   );
   return <PlannerPage startGeneration={startGeneration} />;
 }
@@ -432,13 +439,15 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     pantryRowsRef.current = pantryQuery.data;
   }, [pantryQuery.data]);
 
-  // P2: Free / plan 未取得へ降格したら attempt.qualityMode を false に同期（UI checked と state のズレ防止）
+  // P2/P5: Free / plan 未取得 / quality 枠なしへ降格したら qualityMode を false に同期
+  // （UI checked と state のズレ防止。サーバ quality_*_limit 前の sticky true を避ける）
   const planCode = usage.isSuccess ? usage.data.plan : null;
+  const qualityAvailable = usage.isSuccess ? usage.data.quality.available : null;
   useEffect(() => {
-    if (planCode === "plus") return;
+    if (planCode === "plus" && qualityAvailable === true) return;
     if (!attempt.qualityMode) return;
     setAttempt((current) => (current.qualityMode ? { ...current, qualityMode: false } : current));
-  }, [attempt.qualityMode, planCode]);
+  }, [attempt.qualityMode, planCode, qualityAvailable]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -847,9 +856,20 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         }
         // PE8: post-flush 通過後・navigate 直前だけ session に載せる。
         // flush 失敗や post-flush ゲート失敗で planner に留まる経路に stale 当日確認を残さない。
+        // P8: 非選択・期限切れ解消後の attempt surplus は session に載せない
+        // （緊急側 hasExpiredPantryConfirmation が dialog を誤抑止しないよう selected∩expired）。
         // ここまで sync のみのため operationId 再読は不要（await は flush 直後の 1 回だけ）。
         if (userId !== undefined) {
-          persistSessionExpiredPantryChecks(userId, attempt.expiredPantryChecks, new Date());
+          const nowForSession = new Date();
+          persistSessionExpiredPantryChecks(
+            userId,
+            filterExpiredPantryChecksForSelections(
+              attempt.expiredPantryChecks,
+              saved.pantrySelections,
+              currentlyExpiredPantryItemIds(pantryRowsRef.current, nowForSession),
+            ),
+            nowForSession,
+          );
         }
         void navigate("/emergency-menus");
       } catch (error) {
@@ -1098,6 +1118,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         }
         usageRemaining={usage.isSuccess ? usage.data.success.remaining : null}
         plan={usage.isSuccess ? usage.data.plan : null}
+        // P5: Plus quality 枠。未取得は null（トグルは plan 未取得と同様ロック）
+        qualityAvailable={usage.isSuccess ? usage.data.quality.available : null}
         attemptsRemaining={usage.isSuccess ? usage.data.attempts.remaining : null}
         globalAvailable={usage.isSuccess ? usage.data.globalAvailable : null}
         shortWindowRetryAt={
@@ -1338,13 +1360,16 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
                 return;
               }
             }
-            // 生成へ渡す attempt は選択中 confirmation のみ・非 Plus は qualityMode を落とす
+            // 生成へ渡す attempt は selected∩currently-expired のみ・非 Plus / quality 枠なしは qualityMode を落とす
+            const nowForCommand = new Date();
             const commandAttempt: PlannerAttempt = {
               ...attempt,
-              qualityMode: planCode === "plus" && attempt.qualityMode,
+              qualityMode:
+                planCode === "plus" && qualityAvailable === true && attempt.qualityMode,
               expiredPantryChecks: filterExpiredPantryChecksForSelections(
                 attempt.expiredPantryChecks,
                 saved.pantrySelections,
+                currentlyExpiredPantryItemIds(pantryRowsRef.current, nowForCommand),
               ),
             };
             const controller = new AbortController();

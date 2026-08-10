@@ -152,7 +152,10 @@ export function createPlannerAttempt(): PlannerAttempt {
   };
 }
 
-export function isPastEnteredExpiry(item: PantryItem, now: Date): boolean {
+export function isPastEnteredExpiry(
+  item: Pick<PantryItem, "expiresOn">,
+  now: Date,
+): boolean {
   return item.expiresOn !== null && item.expiresOn < getJstDateKey(now);
 }
 
@@ -203,14 +206,33 @@ export function confirmExpiredPantryItem(
 }
 
 /**
+ * 入力期限が過去の pantryItemId 集合（サーバ expired 集合と同型）。
+ * soft 更新で期限が延びた ID はここに入らない。
+ */
+export function currentlyExpiredPantryItemIds(
+  items: readonly Pick<PantryItem, "id" | "expiresOn">[],
+  now: Date,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const item of items) {
+    if (isPastEnteredExpiry(item, now)) ids.add(item.id);
+  }
+  return ids;
+}
+
+/**
  * サーバ validateTransientChecks は「選択中 ∩ 期限切れ」と confirmation の exact-set を要求する。
  * 同一 attempt 内で確認済み→解除しても checks を attempt に残し再選択時 dialog を抑止する設計のため、
- * 送信直前に選択中 ID へ絞り込む（P1: 非選択 extra を載せない）。
+ * 送信・緊急 handoff 直前に selected ∩ currently-expired へ絞り込む
+ * （P1: 非選択 extra と期限切れ解消後の surplus confirmation を載せない）。
  */
 export function filterExpiredPantryChecksForSelections(
   checks: readonly ExpiredPantryCheck[],
   selections: readonly { pantryItemId: string }[],
+  currentlyExpiredIds: ReadonlySet<string>,
 ): ExpiredPantryCheck[] {
   const selected = new Set(selections.map((selection) => selection.pantryItemId));
-  return checks.filter((check) => selected.has(check.pantryItemId));
+  return checks.filter(
+    (check) => selected.has(check.pantryItemId) && currentlyExpiredIds.has(check.pantryItemId),
+  );
 }

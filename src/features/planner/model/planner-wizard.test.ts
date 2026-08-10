@@ -130,6 +130,13 @@ describe("isAudienceComplete", () => {
     expect(isAudienceComplete({ ...completeQuestionAnswers, targetMemberIds: [] })).toBe(false);
   });
 
+  it("P7: eligibleMemberIds を渡すと非 eligible 選択は未完成", () => {
+    const memberId = completeQuestionAnswers.targetMemberIds[0] ?? "missing";
+    expect(isAudienceComplete(completeQuestionAnswers, new Set([memberId]))).toBe(true);
+    expect(isAudienceComplete(completeQuestionAnswers, new Set())).toBe(false);
+    expect(isAudienceComplete(completeQuestionAnswers, new Set(["other-id"]))).toBe(false);
+  });
+
   it("idea は servings 必須、null は未完成", () => {
     expect(
       isAudienceComplete({
