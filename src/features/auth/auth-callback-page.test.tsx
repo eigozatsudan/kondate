@@ -722,6 +722,78 @@ it("C9: hangWatchdog does not clear secret while callback-prelease is held (post
   }
 });
 
+it("C-RR2: AUTH-R1 awaiting + pre-lease near-TTL failClosed does not clear secret", async () => {
+  // C4/RR1 と同型の awaiting 期限経路に、AUTH-R1 が立てる pre-lease を載せたもの。
+  // gateway テストが pre-lease 武装を固定。ここでは busy 時に clearAuthFlow しないことを固定。
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
+  try {
+    // UUID は hex のみ（z.uuid）。非 hex だと readAuthFlow が null になり期限クリップが外れる
+    const flowId = "10000000-0000-4000-8000-0000000000c2";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: "2026-07-13T00:00:00.000Z",
+        expiresAt: "2026-07-13T00:00:30.000Z",
+        clockSkewMs: 60_000,
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.callback-owner.${flowId}`,
+      "2026-07-13T00:00:00.000Z",
+    );
+    // AUTH-R1 が strip reload で立てる pre-lease（claim→exchange ギャップ保護）
+    window.localStorage.setItem(
+      `kondate.auth.supabase.claim-poll-target-lease.${flowId}.callback-prelease`,
+      JSON.stringify({
+        flowId,
+        instanceId: "callback-prelease",
+        refreshedAt: Date.now(),
+        pending: false,
+      }),
+    );
+    vi.mocked(clearAuthFlow).mockClear();
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId,
+        returnTo: "/onboarding",
+      }),
+      resumeFlow: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId,
+        returnTo: "/onboarding",
+      }),
+    };
+    const { leaveAuthCallback } = renderCallback(gateway, {
+      ttlMs: 300_000,
+      initialEntry: `/auth/callback?flow=${flowId}`,
+    });
+    await act(async () => Promise.resolve());
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    // UI は unbound へ。pre-lease busy のため secret は焼かない（C4/RR1 は clear される対照）
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+    );
+    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
+  } finally {
+    window.localStorage.clear();
+    vi.useRealTimers();
+  }
+});
+
 it("C4: hangWatchdog accounts for clockSkewMs so secret is not burned early", async () => {
   vi.useFakeTimers();
   // クライアント時計が 60s 進んでいる想定（skew +60s）。サーバ期限は wall+30s 相当を保持。

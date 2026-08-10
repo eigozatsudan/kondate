@@ -694,6 +694,10 @@ it("AUTH-R1: stripped callback reload keeps local secret and resumes awaiting_co
   });
   expect(deposit).not.toHaveBeenCalled();
   expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+  // C-RR2: claim→exchange 前の hangWatchdog が secret を焼かないよう pre-lease を立てる
+  expect(
+    storage.getItem(`kondate.auth.supabase.claim-poll-target-lease.${flow.id}.callback-prelease`),
+  ).not.toBeNull();
 });
 
 it("AUTH-R1: stripped callback without local secret stays unbound", async () => {

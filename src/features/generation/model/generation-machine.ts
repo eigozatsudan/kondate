@@ -84,10 +84,13 @@ export function generationReducer(
       ? state
       : { phase: "offline", previous: state, effect: "wait_online" };
   }
-  if (event.type === "online") {
-    return { phase: "checking", effect: "status" };
-  }
-  if (event.type === "recover") {
+  if (event.type === "online" || event.type === "recover") {
+    // G15: サーバ終端 failed / constraint_conflict はメッセージ表示のため pending を残す。
+    // online / TOKEN_REFRESHED 経由の recover で checking に落とすと UI thrash になる。
+    // offline 包み（phase === "offline"）からの online は下の checking へ進む。
+    if (state.phase === "failed" || state.phase === "constraint_conflict") {
+      return state;
+    }
     return { phase: "checking", effect: "status" };
   }
   if (event.type === "submit") {

@@ -750,6 +750,64 @@ describe("useGenerationRecovery", () => {
     expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
   });
 
+  // G15: サーバ終端はメッセージ表示のため pending を保持する。pending 残存中の
+  // online / TOKEN_REFRESHED でも checking thrash しない（C1 は clear 後のみ固定）。
+  it("G15: keeps failed UI with pending still present when window online fires", async () => {
+    realPendingGeneration.savePendingGeneration(pendingA, storage);
+    mockStatus.mockResolvedValue(failedA);
+    const recovery = renderHook(
+      () =>
+        useGenerationRecovery({
+          state: failedState,
+          token: {
+            ownerUserId: USER_ID,
+            idempotencyKey: KEY_A,
+            epoch: 0,
+            phase: "failed",
+          },
+        }),
+      { wrapper: recoveryWrapper },
+    );
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("failed");
+    expect(recovery.result.current.state).toMatchObject(failedState);
+    expect(mockStatus).not.toHaveBeenCalled();
+    expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
+  });
+
+  it("G15: keeps constraint_conflict UI with pending when TOKEN_REFRESHED fires", async () => {
+    realPendingGeneration.savePendingGeneration(pendingA, storage);
+    mockStatus.mockResolvedValue(constraintConflictA);
+    const recovery = renderHook(
+      () =>
+        useGenerationRecovery({
+          state: constraintConflictState,
+          token: {
+            ownerUserId: USER_ID,
+            idempotencyKey: KEY_A,
+            epoch: 0,
+            phase: "constraint_conflict",
+          },
+        }),
+      { wrapper: recoveryWrapper },
+    );
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    await act(async () => {
+      emitAuth("TOKEN_REFRESHED", { user: { id: USER_ID } } as Session);
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("constraint_conflict");
+    expect(recovery.result.current.state).toMatchObject(constraintConflictState);
+    expect(mockStatus).not.toHaveBeenCalled();
+    expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
+  });
+
   it("recovers offline to processing on online when pending still present", async () => {
     realPendingGeneration.savePendingGeneration(pendingA, storage);
     mockStatus.mockResolvedValue(processingA);

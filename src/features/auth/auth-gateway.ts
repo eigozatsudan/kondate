@@ -447,6 +447,10 @@ export function createAuthGateway(
       // deposit 済み想定で claim/recovery を再開し、clearAuthFlow で秘密を焼かない。
       if (state === null || code === null) {
         if (stored !== null) {
+          // C-RR2: 同一ブラウザ strip reload でも callback-prelease を立て、claim→exchange
+          // lease 取得前の hangWatchdog / failClosed が secret を焼かない（C9 と同型）。
+          // awaiting 手渡しのため heartbeat は止めない（target recovery と併存可。TTL で失効）。
+          startAuthContinuationCallbackPreLease(flowId, storage);
           return {
             kind: "awaiting_completion",
             flowId,
