@@ -127,6 +127,55 @@ const COMPLETE_CALLBACK_ALLOWED_QUERY_KEYS = new Set([
   "error_code",
 ]);
 
+/**
+ * GoTrue の PKCE エラー redirect が fragment に載せ得るキー（prepErrorRedirectURL）。
+ * query 側と同型の error_* / message のみ。session 材料は含めない。
+ */
+const COMPLETE_CALLBACK_ALLOWED_HASH_KEYS = new Set([
+  "error",
+  "error_description",
+  "error_uri",
+  "error_code",
+  "message",
+]);
+
+/** fragment にあれば即 fail-closed する implicit grant 系（C7）。 */
+const COMPLETE_CALLBACK_REJECT_HASH_KEYS = new Set([
+  "access_token",
+  "refresh_token",
+  "provider_token",
+  "provider_refresh_token",
+  "token_type",
+  "expires_in",
+  "expires_at",
+]);
+
+/**
+ * C7 / iOS magic-link:
+ * - access_token 等の implicit fragment は従来どおり unbound（取り込まない）。
+ * - GoTrue PKCE の失敗 redirect は query と fragment の両方に error_* を載せる
+ *   （prepErrorRedirectURL）。旧実装は hash 非空だけで unbound にし、
+ *   otp_expired / 再利用を「確認できませんでした」に誤写していた。
+ * - Gmail リンク保護が /verify を先に踏むとトークン消費 → ユーザー開封時は
+ *   error+hash 付き redirect になりやすく、本分岐が必須。
+ */
+function isRejectedAuthCallbackHash(hash: string): boolean {
+  if (hash === "" || hash === "#") return false;
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (raw === "") return false;
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(raw);
+  } catch {
+    return true;
+  }
+  for (const key of params.keys()) {
+    if (COMPLETE_CALLBACK_REJECT_HASH_KEYS.has(key)) return true;
+    if (!COMPLETE_CALLBACK_ALLOWED_HASH_KEYS.has(key)) return true;
+  }
+  return false;
+}
+
 export type SentMagicLink = {
   flowId: string;
   email: string;
@@ -404,7 +453,11 @@ export function createAuthGateway(
     },
 
     async completeCallback(url) {
-      if (url.hash !== "") return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+      // C7: implicit token fragment と未知 fragment は fail-closed。
+      // GoTrue PKCE の error-only fragment は許可し、query の error_code 判定へ進む。
+      if (isRejectedAuthCallbackHash(url.hash)) {
+        return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+      }
       // C7: 許可クエリ以外（access_token 等）は fail-closed
       for (const key of url.searchParams.keys()) {
         if (!COMPLETE_CALLBACK_ALLOWED_QUERY_KEYS.has(key)) {

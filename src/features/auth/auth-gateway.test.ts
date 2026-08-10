@@ -373,7 +373,7 @@ it("C6: keeps the prior magic-link flow secret when switching to Google", async 
   expect(readAuthFlow("10000000-0000-4000-8000-000000000002", storage)).not.toBeNull();
 });
 
-it("rejects a callback URL carrying a hash fragment without exchanging it", async () => {
+it("C7: rejects a callback URL with implicit access_token in the hash without exchanging", async () => {
   const client = authClientMock();
   const gateway = createAuthGateway(
     client as unknown as BrowserSupabaseClient,
@@ -389,6 +389,61 @@ it("rejects a callback URL carrying a hash fragment without exchanging it", asyn
   expect(result).toEqual({ kind: "error", code: "unbound_callback", returnTo: "/planner" });
   expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
   expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
+});
+
+it("C7: rejects unknown hash keys fail-closed (not only access_token)", async () => {
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock(),
+    new MapStorage(),
+    gatewayDeps(),
+  );
+  const result = await gateway.completeCallback(
+    new URL("http://127.0.0.1:5173/auth/callback?flow=flow-1&state=state-1&code=code-1#evil=1"),
+  );
+  expect(result).toEqual({ kind: "error", code: "unbound_callback", returnTo: "/planner" });
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+});
+
+it("iOS/Gmail: GoTrue PKCE error fragment + otp_expired query maps to expired (not unbound)", async () => {
+  // gotrue prepErrorRedirectURL: PKCE 失敗は query と fragment の両方に error_* を載せる。
+  // 旧実装は hash 非空だけで unbound にし、再利用・期限切れを誤表示していた。
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock(),
+    new MapStorage(),
+    gatewayDeps(),
+  );
+  const fragment =
+    "error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired";
+  const result = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired#${fragment}`,
+    ),
+  );
+  expect(result).toEqual({ kind: "expired", flowId: "", returnTo: "/planner" });
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+});
+
+it("iOS/Gmail: PKCE error fragment with matching local flow state maps to expired", async () => {
+  const storage = new MapStorage();
+  const api = continuationApiMock();
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+  const fragment = "error=access_denied&error_code=otp_expired&error_description=Expired";
+  const result = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&error=access_denied&error_code=otp_expired#${fragment}`,
+    ),
+  );
+  expect(result).toEqual({ kind: "expired", flowId: flow.id, returnTo: "/onboarding" });
 });
 
 it("maps a provider error=access_denied to oauth_cancelled", async () => {
