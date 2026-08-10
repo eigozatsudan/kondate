@@ -1482,6 +1482,7 @@ it.each([
       expect(updateMember).toHaveBeenCalledWith(
         "member-1",
         expect.objectContaining({ allergy_status: "registered" }),
+        expect.any(String),
       );
     });
     const [addCallOrder] = addAllergy.mock.invocationCallOrder;
@@ -1588,6 +1589,7 @@ it("keeps only the deferred registered status over newer member query values", a
         portion_size: "small",
         spice_level: "mild",
       }),
+      expect.any(String),
     );
   });
   expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
@@ -1608,6 +1610,7 @@ it.each(["none", "unconfirmed"] as const)(
       expect(updateMember).toHaveBeenCalledWith(
         member.id,
         expect.objectContaining({ allergy_status: allergyStatus }),
+        expect.any(String),
       );
     });
     await act(async () => {
@@ -1779,6 +1782,7 @@ it("disables the allergy status until existing allergies finish loading", async 
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 });
@@ -1814,6 +1818,7 @@ it("keeps newer edits in the registered save after a delayed standard allergy ad
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ display_name: "保護者", spice_level: "mild" }),
+      expect.any(String),
     );
   });
   await act(async () => {
@@ -1978,6 +1983,7 @@ it("keeps an allergy add locked for its member across switching until success", 
   expect(updateMember).toHaveBeenCalledWith(
     member.id,
     expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
   );
 });
 
@@ -2163,6 +2169,7 @@ it("keeps allergy operations disabled after failure and enables them only after 
     expect(updateMember).toHaveBeenCalledWith(
       member.id,
       expect.objectContaining({ allergy_status: "none" }),
+      expect.any(String),
     );
   });
 });
@@ -2186,6 +2193,7 @@ it("saves a registered allergy status immediately when an allergy already exists
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 });
@@ -2219,6 +2227,7 @@ it("keeps explicitly empty saved preferences when loading and saving another fie
         ease_preferences: [],
         required_safety_constraints: [],
       }),
+      expect.any(String),
     );
   });
 });
@@ -2276,6 +2285,7 @@ it("0件確認中のsafe保存後はregisteredを送らず追加成功後に再�
       2,
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      "2026-07-11T00:00:00.000Z"
     );
   });
 });
@@ -2309,6 +2319,7 @@ it("最初のアレルギー追加成功後に保留したregisteredを保存す
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
   await waitFor(() => {
@@ -2337,6 +2348,7 @@ it("既存registered家族はアレルギー取得中でも通常の編集を保
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ display_name: "保護者", allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 });
@@ -2376,6 +2388,7 @@ it("自由登録アレルギー追加成功後に保留したregisteredを保存
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 });
@@ -2464,6 +2477,7 @@ it("アレルギー追加中の別フィールド変更を最新snapshotで保�
         allergy_status: "registered",
         display_name: "更新後",
       }),
+      expect.any(String),
     );
   });
 });
@@ -2514,6 +2528,7 @@ it("registered保存中の別フィールド変更を後続の最新snapshotで�
         allergy_status: "registered",
         display_name: "更新後",
       }),
+      "2026-07-11T00:00:00.000Z"
     );
   });
   await waitFor(() => {
@@ -2572,6 +2587,7 @@ it("完了ロック後はregisteredの後続保存を追加せず最新snapshot�
       allergy_status: "registered",
       display_name: "更新後",
     }),
+    expect.any(String),
   );
   expect(queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members("settings"))).toEqual(
     [latestRegisteredMember],
@@ -2617,6 +2633,7 @@ it("registered保存中のnone変更を後続保存して最終状態へ反映�
       2,
       "member-1",
       expect.objectContaining({ allergy_status: "none" }),
+      "2026-07-11T00:00:00.000Z",
     );
   });
   await waitFor(() => {
@@ -2666,11 +2683,13 @@ it("アレルギー追加中に家族を往復してもregisteredを表示し元
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
   expect(updateMember).not.toHaveBeenCalledWith(
     "member-2",
     expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
   );
 });
 
@@ -2706,6 +2725,7 @@ it("registered保存中に家族を往復しても成功後の表示とcacheを�
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 
@@ -2728,6 +2748,7 @@ it("registered保存中に家族を往復しても成功後の表示とcacheを�
   expect(updateMember).not.toHaveBeenCalledWith(
     "member-2",
     expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
   );
 });
 
@@ -2842,6 +2863,7 @@ it.each(["standard", "custom"] as const)(
         2,
         "member-1",
         expect.objectContaining({ allergy_status: "registered", display_name: "更新後" }),
+        expect.any(String),
       );
     });
   },
@@ -2860,6 +2882,7 @@ it("applies age defaults when the user selects an age band", async () => {
         ease_preferences: ["small_pieces", "boneless", "soft"],
         required_safety_constraints: ["remove_bones", "cut_small"],
       }),
+      expect.any(String),
     );
   });
 });
@@ -2874,6 +2897,7 @@ it("persists an edit that only changes the display name", async () => {
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ display_name: "保護者" }),
+      expect.any(String),
     );
   });
 });
@@ -3003,6 +3027,7 @@ it("uses the latest member query values after switching away and back", async ()
         portion_size: "small",
         spice_level: "mild",
       }),
+      expect.any(String),
     );
   });
 });

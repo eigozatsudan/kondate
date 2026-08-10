@@ -97,11 +97,26 @@ export async function updateHouseholdMemberDraft(
   return data;
 }
 
+/**
+ * H5: complete 行の更新は updated_at 楽観ロック（pantry と同型 CAS）。
+ * dual-tab の古い form が allergy_status 等を LWW 上書きするのを防ぐ。
+ * 0 行は競合（他タブ更新 or 非 complete）として ConflictError。
+ */
+export class HouseholdMemberVersionConflictError extends Error {
+  readonly code = "household_member_version_conflict" as const;
+
+  constructor() {
+    super("家族設定が他の画面で更新されています。最新の内容を確認してください");
+    this.name = "HouseholdMemberVersionConflictError";
+  }
+}
+
 export async function updateCompleteHouseholdMember(
   client: BrowserSupabaseClient,
   userId: string,
   memberId: string,
   patch: HouseholdMemberPatch,
+  expectedUpdatedAt: string,
 ): Promise<HouseholdMemberRow> {
   const { data, error } = await client
     .from("household_members")
@@ -109,9 +124,11 @@ export async function updateCompleteHouseholdMember(
     .eq("id", memberId)
     .eq("user_id", userId)
     .eq("status", "complete")
+    .eq("updated_at", expectedUpdatedAt)
     .select("*")
-    .single();
+    .maybeSingle();
   if (error !== null) throw dataError("家族設定を保存できませんでした");
+  if (data === null) throw new HouseholdMemberVersionConflictError();
   return data;
 }
 

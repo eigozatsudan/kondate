@@ -136,7 +136,12 @@ export interface HouseholdSettingsApi {
   listMembers(): Promise<HouseholdMemberRow[]>;
   createDraft(sortOrder: number): Promise<HouseholdMemberRow>;
   updateDraft(memberId: string, patch: HouseholdMemberPatch): Promise<HouseholdMemberRow>;
-  updateMember(memberId: string, patch: HouseholdMemberPatch): Promise<HouseholdMemberRow>;
+  /** expectedUpdatedAt: H5 complete 行 CAS（表示中 updated_at）。競合時は ConflictError。 */
+  updateMember(
+    memberId: string,
+    patch: HouseholdMemberPatch,
+    expectedUpdatedAt: string,
+  ): Promise<HouseholdMemberRow>;
   completeMember(memberId: string): Promise<HouseholdMemberRow>;
   deleteMember(memberId: string): Promise<void>;
   listCatalog(): Promise<AllergenCatalogRow[]>;
@@ -181,8 +186,8 @@ function createHouseholdSettingsApi(
     // H9: 無条件 INSERT ではなく onboarding と同 RPC（既存 draft 再利用・profile 直列化）
     createDraft: (sortOrder) => startHouseholdOnboarding(client, sortOrder),
     updateDraft: (memberId, patch) => updateHouseholdMemberDraft(client, userId, memberId, patch),
-    updateMember: (memberId, patch) =>
-      updateCompleteHouseholdMember(client, userId, memberId, patch),
+    updateMember: (memberId, patch, expectedUpdatedAt) =>
+      updateCompleteHouseholdMember(client, userId, memberId, patch, expectedUpdatedAt),
     completeMember: (memberId) => completeHouseholdMember(client, userId, memberId),
     deleteMember: (memberId) => deleteHouseholdMember(client, userId, memberId),
     listCatalog: () => listAllergenCatalog(client),
@@ -263,6 +268,9 @@ export function HouseholdSettingsForm({
   }, [dismissToast]);
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsFormValue>());
+  // H5: complete 更新の CAS 基準 updated_at。同一タブ直列 save では成功後に進める。
+  // keepLocalSnapshot 中はサーバ再読込で上書きせず、古い form の誤上書きを競合として落とす。
+  const completeMemberUpdatedAtRef = useRef(new Map<string, string>());
   const editRevisionsByMemberRef = useRef(new Map<string, number>());
   const operationTokensByMemberRef = useRef(new Map<string, number>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
@@ -406,6 +414,12 @@ export function HouseholdSettingsForm({
             ? pendingIntent.values
             : { ...baseValues, allergyStatus: pendingIntent.values.allergyStatus };
       valuesByMemberRef.current.set(selected.id, initialValues);
+      // ローカル編集中は CAS 基準をサーバ最新へ進めない（他タブ更新との衝突を検知するため）
+      if (!keepLocalSnapshot) {
+        completeMemberUpdatedAtRef.current.set(selected.id, latestSelected.updated_at);
+      } else if (!completeMemberUpdatedAtRef.current.has(selected.id)) {
+        completeMemberUpdatedAtRef.current.set(selected.id, latestSelected.updated_at);
+      }
       setValues(initialValues);
     }
   }, [membersKey, pendingOperationVersion, queryClient, selected]);
@@ -486,10 +500,16 @@ export function HouseholdSettingsForm({
       }
       try {
         const patch = toMemberPatch(parsed.data);
+        // H5: complete は表示中 updated_at で CAS。直列 queue 内では成功後に基準を進める。
+        const expectedUpdatedAt =
+          completeMemberUpdatedAtRef.current.get(member.id) ?? member.updated_at;
         const saved =
           member.status === "draft"
             ? await api.updateDraft(member.id, patch)
-            : await api.updateMember(member.id, patch);
+            : await api.updateMember(member.id, patch, expectedUpdatedAt);
+        if (member.status === "complete") {
+          completeMemberUpdatedAtRef.current.set(member.id, saved.updated_at);
+        }
         if (isLatestSaveRevision(lineage)) {
           const cachedMember = { ...saved, ...patch };
           queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>

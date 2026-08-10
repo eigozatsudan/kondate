@@ -63,7 +63,7 @@ export const STORED_MENU_SELECT = `
     usage_status,planned_quantity,inventory_quantity_snapshot,shortage_quantity,unit,unused_reason),
   menu_label_confirmations!menu_label_confirmations_menu_owner_fkey(
     source_type,source_id,source_path,source_text_snapshot,allergen_id,
-    anonymous_member_ref,dictionary_version,confirmation_status,confirmed_at,confirmed_by)
+    anonymous_member_ref,dictionary_version,is_current,confirmation_status,confirmed_at,confirmed_by)
 ` as const;
 
 export function buildStoredMenuQuery(
@@ -71,11 +71,15 @@ export function buildStoredMenuQuery(
   userId: string,
   menuId: string,
 ) {
+  // H3: browser getMenuResult と同型。is_current 以外（reconcile アーカイブ）を embed に載せない。
+  // 履歴込み total が validatedMenuSchema.labelConfirmations.max(200) を超え parse 失敗する可用性破壊を防ぐ。
+  // !inner は付けない — current 0 件の献立も親行は返す（埋め込み行だけ絞る）。
   return client
     .from("menus")
     .select(STORED_MENU_SELECT)
     .eq("id", menuId)
     .eq("user_id", userId)
+    .eq("menu_label_confirmations.is_current", true)
     .maybeSingle();
 }
 
@@ -226,18 +230,21 @@ export async function loadStoredMenu(
       unusedReason: item.unused_reason,
     })),
     // sourceText は永続スナップショットのみ。動的再構成しない。
-    labelConfirmations: data.menu_label_confirmations.map((item) => ({
-      sourceType: item.source_type,
-      sourceId: item.source_id,
-      sourcePath: item.source_path,
-      sourceText: item.source_text_snapshot,
-      allergenId: item.allergen_id,
-      anonymousMemberRef: item.anonymous_member_ref,
-      dictionaryVersion: item.dictionary_version,
-      confirmationStatus: item.confirmation_status,
-      confirmedAt: item.confirmed_at,
-      confirmedBy: item.confirmed_by,
-    })),
+    // H3: PostgREST の is_current 絞りに加え、万一 non-current が混入しても契約 max(200) 前に落とす。
+    labelConfirmations: data.menu_label_confirmations
+      .filter((item) => item.is_current)
+      .map((item) => ({
+        sourceType: item.source_type,
+        sourceId: item.source_id,
+        sourcePath: item.source_path,
+        sourceText: item.source_text_snapshot,
+        allergenId: item.allergen_id,
+        anonymousMemberRef: item.anonymous_member_ref,
+        dictionaryVersion: item.dictionary_version,
+        confirmationStatus: item.confirmation_status,
+        confirmedAt: item.confirmed_at,
+        confirmedBy: item.confirmed_by,
+      })),
   });
 
   // PostgREST 返却順や文字列順は権威にせず、regex 制約の数値 suffix で並べる。

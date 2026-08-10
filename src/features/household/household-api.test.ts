@@ -4,8 +4,10 @@ import {
   addCustomMemberAllergy,
   createHouseholdMemberDraft,
   deleteMemberAllergy,
+  HouseholdMemberVersionConflictError,
   setOnboardingStatus,
   startHouseholdOnboarding,
+  updateCompleteHouseholdMember,
 } from "./household-api";
 
 function chain(data: unknown, error: unknown = null) {
@@ -14,11 +16,20 @@ function chain(data: unknown, error: unknown = null) {
     order: vi.fn(),
     select: vi.fn(),
     single: vi.fn(),
+    maybeSingle: vi.fn(),
     insert: vi.fn(),
+    update: vi.fn(),
   };
-  for (const method of [result.eq, result.order, result.select, result.insert])
+  for (const method of [
+    result.eq,
+    result.order,
+    result.select,
+    result.insert,
+    result.update,
+  ])
     method.mockReturnValue(result);
   result.single.mockResolvedValue({ data, error });
+  result.maybeSingle.mockResolvedValue({ data, error });
   return result;
 }
 
@@ -122,4 +133,55 @@ it("setOnboardingStatus omits p_expected_status when not requested", async () =>
   expect(rpc).toHaveBeenCalledWith("set_onboarding_status", {
     p_status: "in_progress",
   });
+});
+
+// H5: complete 更新は updated_at CAS（pantry と同型）。0 行は競合。
+it("updateCompleteHouseholdMember CAS-guards with expectedUpdatedAt", async () => {
+  const saved = {
+    id: "member-1",
+    status: "complete",
+    allergy_status: "registered",
+    updated_at: "2026-07-12T00:00:00.000Z",
+  };
+  const updateChain = chain(saved);
+  const client = { from: vi.fn().mockReturnValue(updateChain) } as never;
+  const patch = { allergy_status: "registered" as const };
+
+  await expect(
+    updateCompleteHouseholdMember(
+      client,
+      "user-1",
+      "member-1",
+      patch,
+      "2026-07-11T00:00:00.000Z",
+    ),
+  ).resolves.toBe(saved);
+
+  expect(updateChain.update).toHaveBeenCalledWith(patch);
+  expect(updateChain.eq.mock.calls).toEqual([
+    ["id", "member-1"],
+    ["user_id", "user-1"],
+    ["status", "complete"],
+    ["updated_at", "2026-07-11T00:00:00.000Z"],
+  ]);
+  expect(updateChain.maybeSingle).toHaveBeenCalled();
+});
+
+it("updateCompleteHouseholdMember throws conflict when CAS misses (H5)", async () => {
+  const updateChain = chain(null);
+  const client = { from: vi.fn().mockReturnValue(updateChain) } as never;
+
+  await expect(
+    updateCompleteHouseholdMember(
+      client,
+      "user-1",
+      "member-1",
+      { allergy_status: "none" },
+      "2026-07-11T00:00:00.000Z",
+    ),
+  ).rejects.toMatchObject({
+    name: "HouseholdMemberVersionConflictError",
+    code: "household_member_version_conflict",
+  });
+  expect(HouseholdMemberVersionConflictError).toBeDefined();
 });
