@@ -611,18 +611,19 @@ export async function loadRegenerationExecutionContext(
     }
   }
 
-  const versions = new Map([...group, ...recent].map((item) => [item.menu.menuId, item]));
-  // source 自身も除外集合へ（group に含まれない場合の保険）
-  if (!versions.has(source.menu.menuId)) {
-    versions.set(source.menu.menuId, source);
+  // source 自身も除外集合へ（group に含まれない場合の保険）。build 共通化で finalize 再読と一致。
+  const derivationMenusForExclusion = [...group, ...recent];
+  const existingDerivationMenus = buildExistingDerivationMenus(
+    derivationMenusForExclusion,
+    source.menu,
+  );
+  // excludedDishIds は ID 集合（シグネチャ集合とは別用途）。build と同じ source 保険で組む。
+  const menusForExcludedDishIds = new Map(
+    derivationMenusForExclusion.map((item) => [item.menu.menuId, item.menu]),
+  );
+  if (!menusForExcludedDishIds.has(source.menu.menuId)) {
+    menusForExcludedDishIds.set(source.menu.menuId, source.menu);
   }
-  const existingDerivationMenus = [...versions.values()].map((item) => ({
-    menuId: item.menu.menuId,
-    menuSignature: createMenuSignature({
-      dishes: item.menu.dishes.map(dishSignatureInput),
-    }),
-    dishSignatures: item.menu.dishes.map((dish) => createDishSignature(dishSignatureInput(dish))),
-  }));
 
   // G3: 保持料理の pantrySelectionId を現行 submission の pantry_N へ写して artifacts / prompt に載せる
   const pantrySelectionIdToRef = buildPantrySelectionIdToRef(
@@ -652,8 +653,8 @@ export async function loadRegenerationExecutionContext(
     retainedDishIds: source.menu.dishes
       .filter((dish) => dish.id !== replaceDishId)
       .map((dish) => dish.id),
-    excludedDishIds: [...versions.values()].flatMap((item) =>
-      item.menu.dishes.map((dish) => dish.id),
+    excludedDishIds: [...menusForExcludedDishIds.values()].flatMap((menu) =>
+      menu.dishes.map((dish) => dish.id),
     ),
     sourceSafetyFingerprint: source.safetyFingerprint,
     sourcePreferenceSnapshot: preferenceSnapshotSchema.parse(source.preferenceSnapshot),
@@ -1156,6 +1157,56 @@ function collectAggregateOwnedIds(menu: ValidatedMenu): Set<string> {
   for (const row of menu.adaptations) ids.add(row.id);
   for (const row of menu.pantryUsage) ids.add(row.selectionId);
   return ids;
+}
+
+/** derivation 除外集合の 1 エントリ（prompt exclusion / duplicate 判定の共通形） */
+export type ExistingDerivationMenuEntry = {
+  menuId: string;
+  menuSignature: string;
+  dishSignatures: readonly string[];
+};
+
+/**
+ * group+recent（＋source 保険）から material exclusion 集合を組み立てる。
+ * load 時と finalize 直前再読で同じ写像を使い、判定基準の dual-source を避ける。
+ */
+export function buildExistingDerivationMenus(
+  menus: readonly { menu: Pick<ValidatedMenu, "menuId" | "dishes"> }[],
+  sourceMenu: Pick<ValidatedMenu, "menuId" | "dishes">,
+): readonly ExistingDerivationMenuEntry[] {
+  const versions = new Map<string, Pick<ValidatedMenu, "menuId" | "dishes">>();
+  for (const item of menus) {
+    versions.set(item.menu.menuId, item.menu);
+  }
+  // source 自身も除外集合へ（group に含まれない場合の保険）
+  if (!versions.has(sourceMenu.menuId)) {
+    versions.set(sourceMenu.menuId, sourceMenu);
+  }
+  return [...versions.values()].map((menu) => ({
+    menuId: menu.menuId,
+    menuSignature: createMenuSignature({
+      dishes: menu.dishes.map(dishSignatureInput),
+    }),
+    dishSignatures: menu.dishes.map((dish) => createDishSignature(dishSignatureInput(dish))),
+  }));
+}
+
+/**
+ * HR3: succeed 直前用。load 時 snapshot 以降に finalize された sibling を取り込む。
+ * assign_regeneration_lineage は version 採番のみで material 再検査しないため、
+ * アプリ層で group+recent を再読して isRegenerationDuplicate に渡す。
+ */
+export async function reloadExistingDerivationMenus(
+  deps: Pick<LoaderDeps, "loadGroup" | "loadRecent">,
+  user: AuthenticatedUser,
+  derivationGroupId: string,
+  sourceMenu: ValidatedMenu,
+): Promise<readonly ExistingDerivationMenuEntry[]> {
+  const [group, recent] = await Promise.all([
+    deps.loadGroup(user, derivationGroupId),
+    deps.loadRecent(user, 20),
+  ]);
+  return buildExistingDerivationMenus([...group, ...recent], sourceMenu);
 }
 
 /**
