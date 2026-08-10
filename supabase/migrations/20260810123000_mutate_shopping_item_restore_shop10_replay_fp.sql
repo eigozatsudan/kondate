@@ -1,7 +1,8 @@
--- SHOP10: mutate_shopping_item の 30 日 idempotent early replay 前に list safety を再確認する。
--- 従来は hash 一致なら lock_and_check 無しで 200 replay を返し、世帯変更後の同一 key 再送でも
--- 旧応答が通った。create/reconcile の service 層再検証と同型の fail-closed を SQL 直叩き経路にも付ける。
--- 最新定義ベース: 20260730130000_shopping_undo_edited_and_dead_append.sql
+-- SHOP7 の live-FP early-replay は SHOP10 と衝突するため撤回する。
+-- 適用済み mutation の early replay は client expected FP で safety を再確認し、
+-- 世帯変更後の同一 key 再送を shopping_safety_fingerprint_changed で fail-closed する（SHOP10）。
+-- sticky 失応答の復旧はクライアント側（safety 変化で clear / revalidate）に任せる。
+-- ベース: 20260801180000_mutate_shopping_item_replay_safety.sql
 
 create or replace function public.mutate_shopping_item(
   p_list_id uuid,p_expected_list_version integer,p_expected_safety_fingerprint text,
