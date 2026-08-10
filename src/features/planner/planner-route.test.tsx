@@ -1475,6 +1475,34 @@ it("privacy notice への遷移操作は review resume 付きの returnTo を組
   });
 });
 
+it("P10: privacy の IncompleteDraft は resume=review へ proceed（通信文言で塞がない）", async () => {
+  autosaveFlushMode.mode = "incomplete";
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "privacy notice" }));
+  await vi.waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
+  });
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("P10: privacy の通信失敗は非遷移 + 保存失敗文言", async () => {
+  autosaveFlushMode.mode = "network_error";
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "privacy notice" }));
+  await vi.waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "献立条件を保存できなかったため、説明画面へ進めませんでした。",
+    );
+  });
+  expect(navigateMock).not.toHaveBeenCalledWith(
+    "/privacy?returnTo=%2Fplanner%3Fresume%3Dreview",
+  );
+});
+
 describe("PlannerRoutePage", () => {
   it("献立を作る操作で pending を保存し POST を待たずに作成状況画面へ移動する", async () => {
     const user = userEvent.setup();

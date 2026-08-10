@@ -3,9 +3,12 @@ import {
   confirmExpiredPantryItem,
   createPlannerAttempt,
   currentlyExpiredPantryItemIds,
+  expiredPantryConfirmSessionKey,
   filterExpiredPantryChecksForSelections,
+  hasCurrentExpiredConfirmation,
   hasExpiredPantryConfirmation,
   hasSessionExpiredPantryConfirmation,
+  loadSessionExpiredPantryChecks,
   persistSessionExpiredPantryChecks,
   persistSessionExpiredPantryConfirmation,
 } from "./expired-pantry-checks";
@@ -77,4 +80,51 @@ it("PE8: persistSessionExpiredPantryChecks merges attempt checks for CTA handoff
   const attempt = confirmExpiredPantryItem(createPlannerAttempt(), "x", now);
   persistSessionExpiredPantryChecks(userId, attempt.expiredPantryChecks, now);
   expect(hasSessionExpiredPantryConfirmation(userId, "x", now)).toBe(true);
+});
+
+it("P7: session の不正 checkedAt は drop し getJstDateKey throw せず未確認扱い", () => {
+  const now = new Date("2026-07-11T03:00:00.000Z");
+  const userId = "72000000-0000-4000-8000-000000000001";
+  sessionStorage.setItem(
+    expiredPantryConfirmSessionKey(userId),
+    JSON.stringify({
+      dayKey: "2026-07-11",
+      checks: [
+        { pantryItemId: "bad", checkedAt: "nope" },
+        { pantryItemId: "good", checkedAt: "2026-07-11T03:00:00.000Z" },
+      ],
+    }),
+  );
+  // 例外にならず、不正件は落として有効件だけ残る（サーバ Number.isNaN 同型 fail-closed）
+  expect(loadSessionExpiredPantryChecks(userId, now)).toEqual([
+    { pantryItemId: "good", checkedAt: "2026-07-11T03:00:00.000Z" },
+  ]);
+  expect(hasExpiredPantryConfirmation(null, userId, "bad", now)).toBe(false);
+  expect(hasExpiredPantryConfirmation(null, userId, "good", now)).toBe(true);
+});
+
+it("P7: attempt 上の不正 checkedAt も hasCurrentExpiredConfirmation が false（throw しない）", () => {
+  const now = new Date("2026-07-11T03:00:00.000Z");
+  const attempt = {
+    ...createPlannerAttempt(),
+    expiredPantryChecks: [{ pantryItemId: "x", checkedAt: "not-a-date" }],
+  };
+  expect(hasCurrentExpiredConfirmation(attempt, "x", now)).toBe(false);
+  expect(hasExpiredPantryConfirmation(attempt, undefined, "x", now)).toBe(false);
+});
+
+it("P7: persistSessionExpiredPantryChecks は不正 checkedAt を session に書かない", () => {
+  const now = new Date("2026-07-11T03:00:00.000Z");
+  const userId = "72000000-0000-4000-8000-000000000001";
+  persistSessionExpiredPantryChecks(
+    userId,
+    [
+      { pantryItemId: "bad", checkedAt: "x" },
+      { pantryItemId: "good", checkedAt: "2026-07-11T03:00:00.000Z" },
+    ],
+    now,
+  );
+  expect(loadSessionExpiredPantryChecks(userId, now)).toEqual([
+    { pantryItemId: "good", checkedAt: "2026-07-11T03:00:00.000Z" },
+  ]);
 });

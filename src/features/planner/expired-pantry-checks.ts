@@ -5,6 +5,17 @@ import { getJstDateKey } from "@shared/time/jst";
 // サーバ GenerationContext の expiredPantryChecks と同形。browser は contracts を正とする。
 export type ExpiredPantryCheck = ExpiredPantryConfirmation;
 
+/**
+ * P7: checkedAt が有効 Date かつ today（JST）と一致するか。
+ * 破損 session / 不正 ISO は Number.isNaN で drop（サーバ validateTransientChecks と同型 fail-closed＝未確認）。
+ * Invalid Date を getJstDateKey に渡すと formatToParts が RangeError になり得るため先に弾く。
+ */
+function isCheckedAtOnJstDay(checkedAt: string, today: string): boolean {
+  const date = new Date(checkedAt);
+  if (Number.isNaN(date.getTime())) return false;
+  return getJstDateKey(date) === today;
+}
+
 export type PlannerAttempt = {
   idempotencyKey: string;
   expiredPantryChecks: readonly ExpiredPantryCheck[];
@@ -56,9 +67,14 @@ function readSessionExpiredEnvelope(userId: string): SessionExpiredConfirmEnvelo
       ) {
         continue;
       }
+      const checkedAt = (entry as { checkedAt: string }).checkedAt;
+      // P7: 文字列型だけでは不足。Invalid Date は parse 時点で drop（後段 getJstDateKey throw を防ぐ）
+      if (Number.isNaN(new Date(checkedAt).getTime())) {
+        continue;
+      }
       checks.push({
         pantryItemId: (entry as { pantryItemId: string }).pantryItemId,
-        checkedAt: (entry as { checkedAt: string }).checkedAt,
+        checkedAt,
       });
     }
     return { dayKey: (parsed as { dayKey: string }).dayKey, checks };
@@ -95,7 +111,7 @@ export function loadSessionExpiredPantryChecks(
     }
     return [];
   }
-  return envelope.checks.filter((item) => getJstDateKey(new Date(item.checkedAt)) === today);
+  return envelope.checks.filter((item) => isCheckedAtOnJstDay(item.checkedAt, today));
 }
 
 /** 1 件の当日確認を session に追記（同一 pantryItemId は上書き）。 */
@@ -126,7 +142,8 @@ export function persistSessionExpiredPantryChecks(
   const existing = [...loadSessionExpiredPantryChecks(userId, now)];
   const byId = new Map(existing.map((item) => [item.pantryItemId, item]));
   for (const check of checks) {
-    if (getJstDateKey(new Date(check.checkedAt)) !== today) continue;
+    // P7: 不正 checkedAt は skip（サーバ同型）
+    if (!isCheckedAtOnJstDay(check.checkedAt, today)) continue;
     byId.set(check.pantryItemId, check);
   }
   writeSessionExpiredEnvelope(userId, { dayKey: today, checks: [...byId.values()] });
@@ -139,8 +156,7 @@ export function hasSessionExpiredPantryConfirmation(
 ): boolean {
   const today = getJstDateKey(now);
   return loadSessionExpiredPantryChecks(userId, now).some(
-    (item) =>
-      item.pantryItemId === pantryItemId && getJstDateKey(new Date(item.checkedAt)) === today,
+    (item) => item.pantryItemId === pantryItemId && isCheckedAtOnJstDay(item.checkedAt, today),
   );
 }
 
@@ -163,8 +179,7 @@ export function hasCurrentExpiredConfirmation(
 ): boolean {
   const today = getJstDateKey(now);
   return attempt.expiredPantryChecks.some(
-    (item) =>
-      item.pantryItemId === pantryItemId && getJstDateKey(new Date(item.checkedAt)) === today,
+    (item) => item.pantryItemId === pantryItemId && isCheckedAtOnJstDay(item.checkedAt, today),
   );
 }
 

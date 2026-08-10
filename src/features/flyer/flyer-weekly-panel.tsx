@@ -28,6 +28,12 @@ export type FlyerWeeklyPanelProps = {
    */
   privacyConsentLoadFailed?: boolean;
   onRetryPrivacyConsent?: () => void;
+  /**
+   * P2: planner 埋め込み時は review の privacy 導線と同型に flush + resume=review を route が所有する。
+   * 渡されたときは素の Link ではなく button で委譲（dirty 下書きの silent unmount を避ける）。
+   * 未指定時は resume=review 付き Link にフォールバック（flush は呼び出し側責務）。
+   */
+  onOpenPrivacyNotice?: () => void;
 };
 
 /** PE1: remount / 他タブでも同一画像の Idempotency-Key を再利用するための TTL（24h）。 */
@@ -271,6 +277,7 @@ export function FlyerWeeklyPanel({
   hasAcceptedPrivacy = false,
   privacyConsentLoadFailed = false,
   onRetryPrivacyConsent,
+  onOpenPrivacyNotice,
 }: FlyerWeeklyPanelProps) {
   const inputId = useId();
   const { session } = useAuth();
@@ -346,9 +353,22 @@ export function FlyerWeeklyPanel({
       <section className="stack card" data-testid="flyer-weekly-privacy" aria-labelledby={inputId}>
         <h2 id={inputId}>チラシから 1 週間の献立</h2>
         <p>AI を使う前に、利用説明の確認が必要です。</p>
-        <Link className="primary-button" to="/privacy?returnTo=%2Fplanner">
-          AI情報の説明を見る
-        </Link>
+        {/* P2: planner は onOpenPrivacyNotice（flush + resume=review）。未配線時は resume 付き Link。 */}
+        {onOpenPrivacyNotice !== undefined ? (
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => {
+              onOpenPrivacyNotice();
+            }}
+          >
+            AI情報の説明を見る
+          </button>
+        ) : (
+          <Link className="primary-button" to="/privacy?returnTo=%2Fplanner%3Fresume%3Dreview">
+            AI情報の説明を見る
+          </Link>
+        )}
       </section>
     );
   }

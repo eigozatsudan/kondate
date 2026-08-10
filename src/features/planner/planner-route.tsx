@@ -769,7 +769,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       // encodeURIComponent した固定文字列を使う（"/planner?resume=review"）。
       void navigate("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
       return true;
-    } catch {
+    } catch (error) {
+      // P10: Incomplete は schema 非 persistable の意図的拒否（RPC しない）。
+      // leave/settings と同型で privacy 往復を通信文言で塞がない。
+      if (error instanceof IncompleteDraftSaveError) {
+        if (!mountedRef.current) return false;
+        void navigate("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
+        return true;
+      }
       if (mountedRef.current) {
         setSubmissionError("献立条件を保存できなかったため、説明画面へ進めませんでした。");
       }
@@ -1102,6 +1109,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       hasAcceptedPrivacy={hasAcceptedPrivacy}
       privacyConsentLoadFailed={privacyConsentLoadFailed}
       onRetryPrivacyConsent={retryPrivacyConsent}
+      // P2: review の privacy 導線と同型（flush + resume=review）。素 Link だと dirty 未 flush。
+      onOpenPrivacyNotice={openPrivacyNotice}
     />
   );
   // history 未取得・失敗時は空。mock が非配列を返しても壊さない。

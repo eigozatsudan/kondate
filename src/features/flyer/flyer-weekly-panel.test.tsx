@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FLYER_LOCKED_PREVIEW_COPY } from "@shared/contracts/flyer-weekly";
@@ -70,8 +71,29 @@ describe("FlyerWeeklyPanel", () => {
     );
     expect(screen.getByTestId("flyer-weekly-privacy")).toBeVisible();
     expect(screen.queryByTestId("flyer-weekly-upload")).toBeNull();
+    // 未配線時は resume=review 付き Link（flush は呼び出し側）
     const privacyLink = screen.getByRole("link", { name: "AI情報の説明を見る" });
-    expect(privacyLink).toHaveAttribute("href", "/privacy?returnTo=%2Fplanner");
+    expect(privacyLink).toHaveAttribute(
+      "href",
+      "/privacy?returnTo=%2Fplanner%3Fresume%3Dreview",
+    );
+  });
+
+  it("P2: onOpenPrivacyNotice があるとき privacy CTA は button で委譲（素 Link ではない）", async () => {
+    const user = userEvent.setup();
+    const onOpenPrivacyNotice = vi.fn();
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel
+          plusEntitled
+          hasAcceptedPrivacy={false}
+          onOpenPrivacyNotice={onOpenPrivacyNotice}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("link", { name: "AI情報の説明を見る" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "AI情報の説明を見る" }));
+    expect(onOpenPrivacyNotice).toHaveBeenCalledTimes(1);
   });
 
   it("AP5: Plus with omitted hasAcceptedPrivacy is fail-closed (privacy gate, not upload)", () => {
