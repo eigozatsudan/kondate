@@ -78,6 +78,12 @@ export const flyerWeeklyIssueMessages = {
 /** Free locked preview 用の固定文言（L10-3） */
 export const FLYER_LOCKED_PREVIEW_COPY = "チラシ写真から 1 週間の献立は Plus の機能です" as const;
 
+/**
+ * チラシ週間献立の UI 入口（プランナー枠・成功後 upsell）を出すか。
+ * 有料プラン方針が固まるまで false。API・契約・コンポーネント実装は残し、表示だけ止める。
+ */
+export const FLYER_WEEKLY_UI_ENABLED: boolean = false;
+
 /** usage-today の flyerWeekly 投影形（balance: consumed + remaining === limit） */
 export const flyerWeeklyUsageSchema = z
   .object({

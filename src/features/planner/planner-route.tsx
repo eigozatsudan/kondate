@@ -34,6 +34,7 @@ import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import { historyKeys, listHistoryGroups } from "@/features/history/api/history-api";
 import { getCurrentPrivacyConsent, hasCurrentPrivacyConsent } from "@/features/privacy/privacy-api";
 import { privacyKeys } from "@/features/privacy/privacy-queries";
+import { FLYER_WEEKLY_UI_ENABLED } from "@shared/contracts/flyer-weekly";
 import { FlyerWeeklyPanel } from "@/features/flyer/flyer-weekly-panel";
 import { PlannerWizard } from "./components/planner-wizard";
 import { medicalRequestBlockedMessage } from "./components/review-step";
@@ -1103,7 +1104,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const pantryData = pantryQuery.data;
   const hasResumablePending =
     userId !== undefined && readPendingGeneration(userId, new Date()) !== null;
-  const flyerFooter = (
+  // 有料プラン方針が固まるまでチラシ入口は非表示（契約フラグで再開可能）
+  const flyerFooter = FLYER_WEEKLY_UI_ENABLED ? (
     <FlyerWeeklyPanel
       plusEntitled={usage.isSuccess ? usage.data.plusEntitled : false}
       hasAcceptedPrivacy={hasAcceptedPrivacy}
@@ -1112,7 +1114,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       // P2: review の privacy 導線と同型（flush + resume=review）。素 Link だと dirty 未 flush。
       onOpenPrivacyNotice={openPrivacyNotice}
     />
-  );
+  ) : null;
   // history 未取得・失敗時は空。mock が非配列を返しても壊さない。
   const historyGroups = Array.isArray(historyQuery.data) ? historyQuery.data : [];
   const recentMenus = historyGroups.slice(0, HOME_RECENT_MENU_LIMIT).map((group) => ({
