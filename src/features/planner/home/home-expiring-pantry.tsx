@@ -1,8 +1,12 @@
-import type { JSX } from "react";
-import { Link } from "react-router";
+import type { JSX, MouseEvent } from "react";
+import { Link, useNavigate } from "react-router";
 import { Badge, type BadgeTone } from "@/shared/ui/feedback";
 import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
+import {
+  navigateAfterPlannerLeaveFlush,
+  shouldInterceptPlannerLeaveClick,
+} from "../planner-leave-flush";
 
 /** ホームに載せる期限注意食材 1 件（route が notice まで解決して渡す）。 */
 export type HomeExpiringPantryItem = {
@@ -20,10 +24,18 @@ export type HomeExpiringPantryProps = {
 /**
  * 期限が近い／切れた食材の気づき枠。表示専用。
  * 安全保証は出さず、冷蔵庫タブへの導線と Badge による注意だけを示す。
+ * P1: 冷蔵庫 Link は leave-flush を await してから遷移（下ナビと同型。失敗は stay）。
  */
 export function HomeExpiringPantry({ items }: HomeExpiringPantryProps): JSX.Element | null {
+  const navigate = useNavigate();
   // 該当が無いときはセクションごと出さず、ホームを詰め込まない。
   if (items.length === 0) return null;
+
+  const onPantryClick = (event: MouseEvent<HTMLAnchorElement>): void => {
+    if (!shouldInterceptPlannerLeaveClick(event)) return;
+    event.preventDefault();
+    void navigateAfterPlannerLeaveFlush(navigate, "/pantry");
+  };
 
   return (
     <Surface as="section" tone="notice" aria-labelledby="home-expiring-heading">
@@ -50,7 +62,7 @@ export function HomeExpiringPantry({ items }: HomeExpiringPantryProps): JSX.Elem
               </li>
             ))}
           </Stack>
-          <Link className="button-link min-h-11" to="/pantry">
+          <Link className="button-link min-h-11" to="/pantry" onClick={onPantryClick}>
             冷蔵庫を見る
           </Link>
         </Stack>

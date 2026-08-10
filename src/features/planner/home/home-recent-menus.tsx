@@ -1,8 +1,12 @@
-import type { JSX } from "react";
-import { Link } from "react-router";
+import type { JSX, MouseEvent } from "react";
+import { Link, useNavigate } from "react-router";
 import { Button } from "@/shared/ui/button";
 import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
+import {
+  navigateAfterPlannerLeaveFlush,
+  shouldInterceptPlannerLeaveClick,
+} from "../planner-leave-flush";
 
 /** ホームに並べる直近献立 1 件分（route が組み立てる表示用）。 */
 export type HomeRecentMenuItem = {
@@ -22,6 +26,7 @@ export type HomeRecentMenusProps = {
 /**
  * 直近の献立一覧。表示専用。
  * 1 タップで /menus/:id へ戻れる導線だけを持つ（削除・お気に入りは履歴タブ側）。
+ * P1: 各 Link は leave-flush を await してから遷移（下ナビと同型。失敗は stay）。
  */
 export function HomeRecentMenus({
   menus,
@@ -29,6 +34,16 @@ export function HomeRecentMenus({
   error = false,
   onRetry,
 }: HomeRecentMenusProps): JSX.Element {
+  const navigate = useNavigate();
+
+  const onMenuClick =
+    (to: string) =>
+    (event: MouseEvent<HTMLAnchorElement>): void => {
+      if (!shouldInterceptPlannerLeaveClick(event)) return;
+      event.preventDefault();
+      void navigateAfterPlannerLeaveFlush(navigate, to);
+    };
+
   return (
     <Surface as="section" tone="sunken" aria-labelledby="home-recent-heading">
       <Inset pad={5}>
@@ -58,13 +73,16 @@ export function HomeRecentMenus({
           ) : null}
           {!loading && !error && menus.length > 0 ? (
             <Stack as="ul" gap={2} aria-label="直近の献立一覧">
-              {menus.map((menu) => (
-                <li key={menu.id} className="home-recent-item">
-                  <Link className="home-recent-link min-h-11" to={`/menus/${menu.id}`}>
-                    {menu.title.length > 0 ? menu.title : "献立"}
-                  </Link>
-                </li>
-              ))}
+              {menus.map((menu) => {
+                const to = `/menus/${menu.id}`;
+                return (
+                  <li key={menu.id} className="home-recent-item">
+                    <Link className="home-recent-link min-h-11" to={to} onClick={onMenuClick(to)}>
+                      {menu.title.length > 0 ? menu.title : "献立"}
+                    </Link>
+                  </li>
+                );
+              })}
             </Stack>
           ) : null}
         </Stack>

@@ -175,8 +175,10 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 it("retained cache の refetch 完了だけでは入力を置換せず明示操作後だけ最新行へ切り替える", async () => {
-  const deferredRefetch = createDeferred<PlannerDraft>();
-  getPlannerDraftMock.mockReturnValue(deferredRefetch.promise);
+  // P4: isSaving は autosave saving を載せない。競合 UI は onConflict→hasDraftConflict で止める。
+  // save() の undelete 用 getPlannerDraft と conflict refetch が同じ mock になるため、
+  // live 行あり（revisionTwo）を即返す。deferred hang だと conflict が発火せず saving 固着する。
+  getPlannerDraftMock.mockResolvedValue(revisionTwo);
   savePlannerDraftMock
     .mockRejectedValueOnce(new DraftRevisionConflictError())
     // savePlannerDraft(client, userId, input, revision) の実シグネチャに合わせる
@@ -200,13 +202,12 @@ it("retained cache の refetch 完了だけでは入力を置換せず明示操�
     1,
   );
   expect(screen.getByLabelText("自由メモ")).toHaveValue("Aの入力");
-  expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-
+  // conflict → live 確認 → onConflict。microtask で hasDraftConflict が立つまで待つ
   await act(async () => {
-    deferredRefetch.resolve(revisionTwo);
-    await deferredRefetch.promise;
+    await Promise.resolve();
     await Promise.resolve();
   });
+  expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
 
   // Plan 2 §5: refetch 完了だけではローカル入力を置換しない。明示操作後だけ最新行へ切替える。
   expect(queryClient.getQueryData(plannerKeys.draft(userId))).toEqual(revisionTwo);

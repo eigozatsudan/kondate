@@ -1,13 +1,27 @@
 import type { ReactElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { registerPlannerLeaveFlush } from "../planner-leave-flush";
 import { HomeRecentMenus } from "./home-recent-menus";
 
-function renderWithRouter(ui: ReactElement) {
-  const router = createMemoryRouter([{ path: "*", element: ui }]);
+afterEach(() => {
+  registerPlannerLeaveFlush(null);
+});
+
+function renderWithRouter(ui: ReactElement, initialPath = "/planner") {
+  const router = createMemoryRouter(
+    [
+      { path: "/planner", element: ui },
+      {
+        path: "/menus/:menuId",
+        element: <h1>献立詳細</h1>,
+      },
+    ],
+    { initialEntries: [initialPath] },
+  );
   return render(<RouterProvider router={router} />);
 }
 
@@ -47,5 +61,22 @@ describe("HomeRecentMenus", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/読み込めませんでした/u);
     await user.click(screen.getByRole("button", { name: "もう一度読み込む" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("P1: menu link awaits leave-flush before navigating", async () => {
+    const user = userEvent.setup();
+    const flush = vi.fn().mockResolvedValue("proceed" as const);
+    registerPlannerLeaveFlush(flush);
+    renderWithRouter(
+      <HomeRecentMenus
+        menus={[{ id: "11111111-1111-4111-8111-111111111111", title: "鶏肉のさっぱり煮" }]}
+      />,
+    );
+
+    await user.click(screen.getByRole("link", { name: "鶏肉のさっぱり煮" }));
+    expect(flush).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "献立詳細" })).toBeInTheDocument();
+    });
   });
 });

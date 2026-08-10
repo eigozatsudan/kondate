@@ -64,7 +64,7 @@ import {
   plannerKeys,
   savePlannerDraft,
 } from "./planner-api";
-import { registerPlannerLeaveFlush } from "./planner-leave-flush";
+import { navigateAfterPlannerLeaveFlush, registerPlannerLeaveFlush } from "./planner-leave-flush";
 import { useDraftAutosave } from "./use-draft-autosave";
 
 /** ホームに載せる直近献立の件数上限（詰め込みすぎない）。 */
@@ -419,6 +419,19 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const settingsOpeningRef = useRef(false);
   // P1: 緊急献立 open の同期 single-flight（state 再描画前に generate と二重 flight しない）
   const emergencyOpeningRef = useRef(false);
+  // P2: leave-flush handler は mount 時のみ register。state は ref で読み stale クロージャと
+  // deps 更新時 cleanup→null の窓を避ける（submittingRef と同型）。
+  const hasDraftConflictRef = useRef(false);
+  const isOpeningEmergencyMenusRef = useRef(false);
+  const isOpeningPrivacyRef = useRef(false);
+  const isOpeningSettingsRef = useRef(false);
+  const flushDraftRef = useRef<() => Promise<PlannerDraft>>(async () => {
+    throw new Error("flush_not_ready");
+  });
+  hasDraftConflictRef.current = hasDraftConflict;
+  isOpeningEmergencyMenusRef.current = isOpeningEmergencyMenus;
+  isOpeningPrivacyRef.current = isOpeningPrivacy;
+  isOpeningSettingsRef.current = isOpeningSettings;
   // P1: 利用者 reset 直後だけ route が flush を await する印（conflict resolve の resetToken とは分離）
   const resetFlushGenerationRef = useRef(0);
   const pendingResetFlushRef = useRef(false);
@@ -616,6 +629,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   }, [refetchDraft]);
   const onConflict = useCallback(async (): Promise<void> => {
     generationAbortControllerRef.current?.abort();
+    // P2: setState 再描画前に leave-flush が conflict を読めるよう ref を先に武装
+    hasDraftConflictRef.current = true;
     setHasDraftConflict(true);
     setLatestConflictDraft(undefined);
     await loadLatestConflictDraft();
@@ -661,6 +676,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     queryClient.setQueryData(plannerKeys.draft(userId ?? "missing"), saved);
     return saved;
   }, [flushAutosave, onConflict, queryClient, userId]);
+  // P2: leave-flush は mount 時 handler 固定のため、最新 flush を ref 経由で読む
+  flushDraftRef.current = flushDraft;
 
   const resolveDraftConflict = useCallback((): void => {
     // Plan 2 §5: 最新行への切替は利用者の明示操作後だけ。取得完了だけでは value を触らない。
@@ -674,6 +691,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setBaselineRevision(latestConflictDraft?.revision ?? 0);
     setResetToken((current) => current + 1);
     setLatestConflictDraft(undefined);
+    hasDraftConflictRef.current = false;
     setHasDraftConflict(false);
     setDraftConflictRefetchError(false);
   }, [latestConflictDraft, safetyQuery.data]);
@@ -691,6 +709,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setSubmissionError(null);
     setAudienceStatusError(null);
     setAttempt(createPlannerAttempt());
+    hasDraftConflictRef.current = false;
     setHasDraftConflict(false);
     setLatestConflictDraft(undefined);
     setDraftConflictRefetchError(false);
@@ -743,7 +762,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   }, [privacyQuery]);
   /**
    * privacy へ flush→navigate する本体。
-   * P6/P8: single-flight + conflict/saving/緊急 ガード。成功時 true。
+   * P6/P8: single-flight + conflict/緊急 ガード。成功時 true。
+   * P4: autosave saving 中は leave と同型で同一キューへ join（無言 early-return しない）。
    * onSubmit から await して委譲完了まで submitting を維持する。
    */
   const runPrivacyNavigation = useCallback(async (): Promise<boolean> => {
@@ -752,8 +772,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       emergencyOpeningRef.current ||
       isOpeningEmergencyMenus ||
       isOpeningSettings ||
-      hasDraftConflict ||
-      autosave.state === "saving"
+      hasDraftConflict
     ) {
       return false;
     }
@@ -788,14 +807,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         setIsOpeningPrivacy(false);
       }
     }
-  }, [
-    autosave.state,
-    flushDraft,
-    hasDraftConflict,
-    isOpeningEmergencyMenus,
-    isOpeningSettings,
-    navigate,
-  ]);
+  }, [flushDraft, hasDraftConflict, isOpeningEmergencyMenus, isOpeningSettings, navigate]);
 
   // シグネチャは () => void のまま（wizard の onOpenPrivacyNotice）。
   // 生成 submit 中の privacy ボタンは isSaving で disabled。single-flight は run 本体。
@@ -806,6 +818,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   // 設計 §5.1: AI を使わない緊急献立への導線。route が flush 後に navigate を所有する。
   // P1: privacy/settings/generate と同型の同期 single-flight（submittingRef / emergencyOpeningRef）。
+  // P4: autosave saving 中は leave と同型で同一キューへ join（無言 early-return しない）。
   const openEmergencyMenus = useCallback((): void => {
     if (
       emergencyOpeningRef.current ||
@@ -816,8 +829,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       settingsOpeningRef.current ||
       isOpeningPrivacy ||
       isOpeningSettings ||
-      hasDraftConflict ||
-      autosave.state === "saving"
+      hasDraftConflict
     ) {
       return;
     }
@@ -942,7 +954,6 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     })();
   }, [
     attempt,
-    autosave.state,
     client,
     flushDraft,
     hasDraftConflict,
@@ -959,7 +970,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   // P5: settings 遷移も privacy/緊急と同様に flush 完了を待ってから navigate する。
   // Link 直遷移だと unmount dirty flush の失敗が黙殺され、サーバ旧下書きが正本のまま残る。
-  // P6: 緊急と同型の conflict/saving/submitting/single-flight ガード。
+  // P6: 緊急と同型の conflict/submitting/single-flight ガード。
+  // P4: autosave saving 中は leave と同型で同一キューへ join（無言 early-return しない）。
   const openSettings = useCallback((): void => {
     if (
       settingsOpeningRef.current ||
@@ -968,8 +980,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       isOpeningPrivacy ||
       isSubmitting ||
       submittingRef.current ||
-      hasDraftConflict ||
-      autosave.state === "saving"
+      hasDraftConflict
     ) {
       return;
     }
@@ -1000,7 +1011,6 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       }
     })();
   }, [
-    autosave.state,
     flushDraft,
     hasDraftConflict,
     isOpeningEmergencyMenus,
@@ -1011,24 +1021,25 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   // P2: シェル下ナビ leave でも settings と同型に flush を await し、失敗を submissionError で可視化する。
   // unmount enqueue の握りつぶしだけだと黙ってサーバ旧 revision が正本のまま残る。
-  // saving 中は flush が同一キューを await するのでガードせず join する（openSettings の early return とは別）。
+  // saving 中は flush が同一キューを await するのでガードせず join する。
+  // P2: mount 時のみ register。handler は ref 経由で最新 conflict / opening / flush を読む。
+  // deps 更新のたび cleanup で null すると下ナビ click が即 proceed になる窓が残る。
   useEffect(() => {
     registerPlannerLeaveFlush(async () => {
       if (
         settingsOpeningRef.current ||
         emergencyOpeningRef.current ||
         privacyOpeningRef.current ||
-        isOpeningEmergencyMenus ||
-        isOpeningPrivacy ||
-        isOpeningSettings ||
-        isSubmitting ||
+        isOpeningEmergencyMenusRef.current ||
+        isOpeningPrivacyRef.current ||
+        isOpeningSettingsRef.current ||
         submittingRef.current ||
-        hasDraftConflict
+        hasDraftConflictRef.current
       ) {
         return "blocked";
       }
       try {
-        await flushDraft();
+        await flushDraftRef.current();
         return "proceed";
       } catch (error) {
         // P1: Incomplete は schema 非 persistable の意図的拒否（RPC しない）。
@@ -1047,14 +1058,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     return () => {
       registerPlannerLeaveFlush(null);
     };
-  }, [
-    flushDraft,
-    hasDraftConflict,
-    isOpeningEmergencyMenus,
-    isOpeningPrivacy,
-    isOpeningSettings,
-    isSubmitting,
-  ]);
+  }, []);
 
   // P3: 初回 data 未取得の失敗だけ全画面。init 後の背景 refetch 失敗は previous data で wizard 継続。
   const safetyLoadFatal = safetyQuery.isError && safetyQuery.data === undefined;
@@ -1152,7 +1156,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         hasResumablePending={hasResumablePending}
         onResumePending={() => {
           // 既存 C2 再開と同経路（pending を壊さず generation へ）。
-          void navigate("/generation?resumed=1");
+          // P1: 下ナビ leave と同型。dirty 未 flush のまま generation へ出ない。
+          void navigateAfterPlannerLeaveFlush(navigate, "/generation?resumed=1");
         }}
         recentMenus={recentMenus}
         recentMenusLoading={historyQuery.isPending}
@@ -1208,7 +1213,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         step={step}
         eligibleMembers={safetyData.members}
         isSaving={
-          autosave.state === "saving" ||
+          // P4: debounce autosave 中は leave / privacy navigate と同様に flush join で進める。
+          // saving を isSaving に載せると privacy/settings/emergency が無言 disable になる。
+          // 競合 UI は hasDraftConflict（onConflict）で止める。undelete プローブ中の固着は
+          // save() 側で live 確認後に conflict を再 throw して onConflict を発火させる。
           isSubmitting ||
           hasDraftConflict ||
           isOpeningEmergencyMenus ||

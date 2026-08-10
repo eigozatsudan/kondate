@@ -84,6 +84,10 @@ const autosaveFlushMode = vi.hoisted(
     mode: "save",
   }),
 );
+/** P4: autosave UI state。saving 中でも privacy/settings/emergency が join できることを固定 */
+const autosaveUiState = vi.hoisted((): { state: "idle" | "saving" | "saved" | "error" } => ({
+  state: "saved",
+}));
 const navigateMock = vi.hoisted(() => vi.fn());
 const setQueryDataMock = vi.hoisted(() => vi.fn());
 // ensureQueryData 実装が cached を any にせず unknown として扱えるよう戻り値を明示する
@@ -123,6 +127,7 @@ vi.mock("react-router", async (importOriginal) => {
       children?: React.ReactNode;
       className?: string;
       style?: React.CSSProperties;
+      onClick?: React.MouseEventHandler<HTMLAnchorElement>;
     }) => (
       <a href={typeof to === "string" ? to : "#"} {...rest}>
         {children}
@@ -259,7 +264,7 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
     }) => {
       autosaveInputs.push(input);
       return {
-        state: "saved",
+        state: autosaveUiState.state,
         revision: 3,
         flush: vi.fn(() => {
           // P1/P3: Incomplete は RPC 前の意図的拒否。通信失敗とは別経路。
@@ -539,6 +544,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   autosaveInputs.length = 0;
   autosaveFlushMode.mode = "save";
+  autosaveUiState.state = "saved";
   listPantryItemsMock.mockImplementation(() => Promise.resolve(queryState.pantry.data ?? []));
   queryState.userId = draft.userId;
   queryState.draft = draft;
@@ -1208,6 +1214,39 @@ it("P1: leave flush の通信失敗は blocked + 通信文言", async () => {
       "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
     );
   });
+});
+
+it("P4: autosave saving 中でも settings は flush join で /settings へ進む", async () => {
+  // 旧実装は state===saving で無言 early-return。leave と同型の join を固定する。
+  autosaveUiState.state = "saving";
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "家族設定" }));
+  await vi.waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith("/settings");
+  });
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("P4: autosave saving 中でも privacy は flush join で進む", async () => {
+  autosaveUiState.state = "saving";
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "privacy notice" }));
+  await vi.waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
+  });
+});
+
+it("P4: autosave saving 中は isSaving を true にしない（無言 disable しない）", async () => {
+  autosaveUiState.state = "saving";
+  render(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+  expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
 });
 
 it("P3: openSettings の IncompleteDraft は /settings へ proceed（通信文言で塞がない）", async () => {

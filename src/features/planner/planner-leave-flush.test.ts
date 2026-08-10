@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registerPlannerLeaveFlush, runPlannerLeaveFlush } from "./planner-leave-flush";
+import {
+  navigateAfterPlannerLeaveFlush,
+  registerPlannerLeaveFlush,
+  runPlannerLeaveFlush,
+  shouldInterceptPlannerLeaveClick,
+} from "./planner-leave-flush";
 
 afterEach(() => {
   registerPlannerLeaveFlush(null);
@@ -21,5 +26,54 @@ describe("planner-leave-flush (P2)", () => {
     registerPlannerLeaveFlush(() => Promise.resolve("blocked"));
     registerPlannerLeaveFlush(null);
     await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+  });
+});
+
+describe("planner-leave-flush SPA intercept (P1)", () => {
+  it("intercepts plain left-click only", () => {
+    expect(
+      shouldInterceptPlannerLeaveClick({
+        defaultPrevented: false,
+        button: 0,
+        metaKey: false,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldInterceptPlannerLeaveClick({
+        defaultPrevented: false,
+        button: 0,
+        metaKey: true,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldInterceptPlannerLeaveClick({
+        defaultPrevented: true,
+        button: 0,
+        metaKey: false,
+        altKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("navigates only after proceed", async () => {
+    const navigate = vi.fn();
+    registerPlannerLeaveFlush(() => Promise.resolve("proceed"));
+    await navigateAfterPlannerLeaveFlush(navigate, "/pantry");
+    expect(navigate).toHaveBeenCalledWith("/pantry");
+  });
+
+  it("does not navigate when blocked", async () => {
+    const navigate = vi.fn();
+    registerPlannerLeaveFlush(() => Promise.resolve("blocked"));
+    await navigateAfterPlannerLeaveFlush(navigate, "/pantry");
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

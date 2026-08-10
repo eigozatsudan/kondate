@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { Link, useNavigate } from "react-router";
 import type { PantryItem } from "@shared/contracts/pantry";
 import {
   collectPlannerRequestText,
@@ -21,6 +22,10 @@ import {
   isPastEnteredExpiry,
   type PlannerAttempt,
 } from "../expired-pantry-checks";
+import {
+  navigateAfterPlannerLeaveFlush,
+  shouldInterceptPlannerLeaveClick,
+} from "../planner-leave-flush";
 import { CurrentSafetySummary } from "../current-safety-summary";
 import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "../household-safety-helper-copy";
 import {
@@ -218,6 +223,8 @@ export function ReviewStep({
   hasResumablePendingGeneration = false,
   blockGenerationForStaleSafety = false,
 }: ReviewStepProps) {
+  // P1: Plus 導線も leave-flush 後に SPA 遷移（生 a 直遷移だと dirty 未 flush）
+  const navigate = useNavigate();
   // 残数行用の plan。未取得なら free 接頭を避けず free として扱う（usage 未取得では行自体非表示）。
   const quotaPlan: PlanCode = plan ?? "free";
   // P5: 品質トグルは Plus かつ quality.available===true のときだけ操作可。
@@ -811,9 +818,24 @@ export function ReviewStep({
                     )}
                   </p>
                 )}
-                {/* L10-1: Free 硬上限（成功残 0 または attempt 残 0）で Plus CTA */}
+                {/* L10-1: Free 硬上限（成功残 0 または attempt 残 0）で Plus CTA。
+                    P1: 共有 CTA の生 a を capture で leave-flush 付き SPA 遷移に差し替え
+                    （billing 側 ownership は触らず planner 出口だけ閉じる）。 */}
                 {quotaPlan === "free" && (usageRemaining === 0 || attemptsRemaining === 0) ? (
-                  <PlusHardLimitCta />
+                  <div
+                    onClickCapture={(event: MouseEvent<HTMLDivElement>) => {
+                      const target = event.target;
+                      if (!(target instanceof Element)) return;
+                      const anchor = target.closest('a[href="/plus"]');
+                      if (anchor === null) return;
+                      if (!shouldInterceptPlannerLeaveClick(event)) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void navigateAfterPlannerLeaveFlush(navigate, "/plus");
+                    }}
+                  >
+                    <PlusHardLimitCta />
+                  </div>
                 ) : null}
               </div>
             )}
@@ -852,13 +874,22 @@ export function ReviewStep({
               </span>
             </label>
             {/* quality の </label> の直後。idea の role=note より前。note と wizard-actions の間に置かない。
-          label 内に入れない（checkbox の accessible name 汚染防止）。生 a で Harness が Router 外でも可。
+          label 内に入れない（checkbox の accessible name 汚染防止）。
+          P1: leave-flush 後に SPA 遷移（生 a だと dirty 未 flush のまま /plus へ出る）。
           Plus 枠切れでは「Plus を見る」を出さない（既に Plus）。Free / plan 未取得のみリンク。 */}
             {qualityModeLocked && plan !== "plus" ? (
               <p className="quality-mode-plus-link-wrap">
-                <a href="/plus" className="ui-text-link">
+                <Link
+                  to="/plus"
+                  className="ui-text-link"
+                  onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+                    if (!shouldInterceptPlannerLeaveClick(event)) return;
+                    event.preventDefault();
+                    void navigateAfterPlannerLeaveFlush(navigate, "/plus");
+                  }}
+                >
                   Plus を見る
-                </a>
+                </Link>
               </p>
             ) : null}
             {/* 設計 §5.3: idea 注意は主操作直前（wizard-actions の直前 sibling）。
