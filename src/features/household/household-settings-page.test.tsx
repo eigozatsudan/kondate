@@ -2559,6 +2559,89 @@ it("最初のアレルギー追加成功後に保留したregisteredを保存す
   });
 });
 
+// H8 回帰: soft invalidate が allergies を再取得しても、registered コミット成功後の
+// status が「確認しています」に潰されない（E2E menu-domain-pantry chicken allergy）。
+it("H8: registered commit success status survives soft allergies invalidate during save", async () => {
+  let currentMember: HouseholdMemberRow = member;
+  let allergies: MemberAllergyRow[] = [];
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const listMembers = vi.fn(async () => [currentMember]);
+  const listAllergies = vi.fn(async () => allergies.map((row) => ({ ...row })));
+  const addStandardAllergy = vi.fn(async () => {
+    allergies = [walnutAllergy];
+    return walnutAllergy;
+  });
+  const updateMember = vi.fn(
+    async (_memberId: string, patch: HouseholdMemberPatch, _expectedUpdatedAt: string) => {
+      currentMember = {
+        ...currentMember,
+        ...patch,
+        updated_at: "2026-07-12T00:00:00.000Z",
+      };
+      return currentMember;
+    },
+  );
+  // 本番 H8 経路: invalidateSafety が allergies / members を stale にして再取得する
+  const invalidateSafety = vi.fn(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: householdKeys.members("settings") }),
+      queryClient.invalidateQueries({ queryKey: ["household", "allergies", "settings"] }),
+      queryClient.invalidateQueries({ queryKey: ["household", "dislikes", "settings"] }),
+    ]);
+  });
+  const api: HouseholdSettingsApi = {
+    listMembers,
+    createDraft: vi.fn(),
+    updateDraft: vi.fn().mockResolvedValue(member),
+    updateMember,
+    completeMember: vi.fn().mockResolvedValue(member),
+    deleteMember: vi.fn().mockResolvedValue(undefined),
+    listCatalog: vi.fn().mockResolvedValue(catalog),
+    listAllergies,
+    addStandardAllergy,
+    addCustomAllergy: vi.fn(),
+    removeAllergy: vi.fn(),
+    listDislikes: vi.fn().mockResolvedValue([]),
+    addDislike: vi.fn(),
+    removeDislike: vi.fn(),
+    invalidateSafety,
+  };
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <AppToastProvider>
+        <HouseholdSettingsForm api={api} />
+      </AppToastProvider>
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("heading", { name: "登録済みの家族" });
+  await userEvent.click(screen.getByRole("button", { name: /を編集$/u }));
+  await screen.findByRole("region", { name: "家族情報を追加・編集" });
+  await waitForAllergies(queryClient);
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
+
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
+    );
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  // soft invalidate 後も成功 status が残る（「確認しています」で潰されない）
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+  });
+  expect(screen.getByRole("status")).not.toHaveTextContent("アレルギー情報を確認しています");
+  expect(screen.getByRole("status")).not.toHaveTextContent("登録ありの場合は1つ以上選んでください");
+});
+
 it("既存registered家族はアレルギー取得中でも通常の編集を保存する", async () => {
   const registeredMember: HouseholdMemberRow = {
     ...member,

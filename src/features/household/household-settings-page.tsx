@@ -534,8 +534,13 @@ export function HouseholdSettingsForm({
         }
         if (canPublishSaveMessage(lineage)) {
           const pending = pendingRegisteredIntents.current.get(member.id);
+          // allergy_status=registered をコミット済みなら成功文言を優先する。
+          // H8 soft invalidate が allergies を再取得中、useEffect が evidence を unknown へ
+          // 落としても「確認しています」で成功 UX を潰さない（select registered → 標準追加）。
+          // registered 未コミットの safe 項目保存だけ、保留 intent の blocked 文言を出す。
+          const committedRegistered = parsed.data.allergyStatus === "registered";
           setMessage(
-            pending?.values.allergyStatus === "registered"
+            !committedRegistered && pending?.values.allergyStatus === "registered"
               ? (registeredSaveBlockedMessage(pending.registeredSaveEvidence) ??
                   "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します")
               : "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します",
