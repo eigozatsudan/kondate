@@ -442,7 +442,7 @@ describe("AuthProvider", () => {
     expect(recovery.mock.calls.length).toBe(startsAfterAuth + 1);
   });
 
-  it("C5/C6: soft SIGNED_OUT clears generation drafts and owned residual (not only hard redirect)", async () => {
+  it("C5/C6/C7: soft SIGNED_OUT clears drafts/feedback but preserves in-flight flow secret", async () => {
     window.history.replaceState(null, "", "/planner");
     window.localStorage.clear();
     window.localStorage.setItem(
@@ -452,6 +452,21 @@ describe("AuthProvider", () => {
     window.localStorage.setItem(
       "kondate:feedback:ambiguous-fingerprint",
       "bug_report\nアレルギー free-form",
+    );
+    // C7: soft 失効は進行中 continuation を焼かない（cold-start RR1 と同型）
+    const flowId = "10000000-0000-4000-8000-0000000000c7";
+    const flowKey = `kondate.auth.flow.${flowId}`;
+    window.localStorage.setItem(
+      flowKey,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "http://127.0.0.1:5173",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
     );
     const authListeners: Array<(event: string, next: Session | null) => void> = [];
     const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
@@ -483,6 +498,7 @@ describe("AuthProvider", () => {
     expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
     expect(window.localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(window.localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
+    expect(window.localStorage.getItem(flowKey)).not.toBeNull();
   });
 
   it("C5: cold-start never-authenticated unauthenticated does not wipe sibling flow (RR1 intact)", async () => {
@@ -569,7 +585,7 @@ describe("AuthProvider", () => {
       );
       await Promise.resolve();
     });
-    // 別 flow 完了では navigate しない（session 再取得のみ）
+    // 別 flow 完了でも完了印が storage に無い Spoof → navigate しない（session 再取得のみ）
     expect(navigateTo).not.toHaveBeenCalled();
     expect(getSession).toHaveBeenCalledTimes(2);
 
@@ -582,6 +598,65 @@ describe("AuthProvider", () => {
       );
       await Promise.resolve();
     });
+    expect(navigateTo).toHaveBeenCalledWith("/onboarding");
+  });
+
+  it("C1: multi-flow cross-tab StorageEvent navigates after winner cleared matching flow", async () => {
+    // 本番順: publish は setItem(completion) → clearAuthFlow 後に他タブへ storage が届く
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    const flowA = "10000000-0000-4000-8000-0000000000a1";
+    const flowB = "20000000-0000-4000-8000-0000000000b2";
+    const nowIso = new Date().toISOString();
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowA}`,
+      JSON.stringify({
+        id: flowA,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/planner",
+        sessionExchange: "supabase",
+        startedAt: nowIso,
+      }),
+    );
+    // flow B は勝者タブが既に clear 済み（残さない）
+    const completionKey = `kondate.auth.supabase.continuation-complete.${flowB}`;
+    window.localStorage.setItem(
+      completionKey,
+      JSON.stringify({ flowId: flowB, returnTo: "/onboarding" }),
+    );
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    const navigateTo = vi.fn();
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        navigateTo={navigateTo}
+        startRecovery={() => vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+
+    await act(async () => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: completionKey,
+          newValue: JSON.stringify({ flowId: flowB, returnTo: "/onboarding" }),
+        }),
+      );
+      await Promise.resolve();
+    });
+    // A が残っていても B の完了印があれば B の returnTo へ（URL returnTo フォールバックを避ける）
     expect(navigateTo).toHaveBeenCalledWith("/onboarding");
   });
 

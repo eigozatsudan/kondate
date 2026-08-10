@@ -794,9 +794,9 @@ it("C-RR2: AUTH-R1 awaiting + pre-lease near-TTL failClosed does not clear secre
   }
 });
 
-it("C4: hangWatchdog accounts for clockSkewMs so secret is not burned early", async () => {
+it("C9/C12: hangWatchdog does not extend past wall serverExpires via positive clockSkewMs", async () => {
   vi.useFakeTimers();
-  // クライアント時計が 60s 進んでいる想定（skew +60s）。サーバ期限は wall+30s 相当を保持。
+  // wall は既に serverExpires 超過。正 skew でも remaining は wall 上限で 0（安全側）。
   vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
   try {
     const flowId = "10000000-0000-4000-8000-000000000001";
@@ -829,15 +829,11 @@ it("C4: hangWatchdog accounts for clockSkewMs so secret is not burned early", as
       initialEntry: `/auth/callback?flow=${flowId}`,
     });
     await act(async () => Promise.resolve());
-    // skew 非適用なら remaining=0 で即 leave。補正後は server 期限まで待つ。
-    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    // remaining 0 の setTimeout を発火
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(29_000);
+      await vi.advanceTimersByTimeAsync(0);
     });
-    expect(leaveAuthCallback).not.toHaveBeenCalled();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
-    });
+    // wall 超過時は即 leave（lease と同型の wall 基準）
     expect(leaveAuthCallback).toHaveBeenCalledWith(
       "/login?authError=unbound_callback&returnTo=%2Fonboarding",
     );
@@ -846,9 +842,9 @@ it("C4: hangWatchdog accounts for clockSkewMs so secret is not burned early", as
   }
 });
 
-it("C4/RR1: awaiting_completion wait accounts for clockSkewMs so secret is not burned early", async () => {
+it("C9/C12: awaiting_completion wait does not extend past wall serverExpires via positive clockSkewMs", async () => {
   vi.useFakeTimers();
-  // hangWatchdog C4 と同型: クライアント +60s 進み。awaiting_completion 経路の wait も skew 補正する。
+  // hangWatchdog と同型: wall が serverExpires 超過なら正 skew でも即 failClosed。
   vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
   try {
     const flowId = "10000000-0000-4000-8000-000000000001";
@@ -870,7 +866,6 @@ it("C4/RR1: awaiting_completion wait accounts for clockSkewMs so secret is not b
       `kondate.auth.supabase.callback-owner.${flowId}`,
       "2026-07-13T00:00:00.000Z",
     );
-    // 前テストの mock 呼び出しを捨て、本ケースだけの clear 有無を見る
     vi.mocked(clearAuthFlow).mockClear();
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
@@ -891,22 +886,13 @@ it("C4/RR1: awaiting_completion wait accounts for clockSkewMs so secret is not b
       initialEntry: `/auth/callback?flow=${flowId}`,
     });
     await act(async () => Promise.resolve());
-    // skew 非適用なら completion wait が remaining=0 で即 failClosed。補正後は server 期限まで待つ。
-    expect(leaveAuthCallback).not.toHaveBeenCalled();
-    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(29_000);
+      await vi.advanceTimersByTimeAsync(0);
     });
-    expect(leaveAuthCallback).not.toHaveBeenCalled();
-    // failClosed → clearAuthFlow が期限前に発火していないこと（secret 焼却の代理）
-    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
-    });
+    // hangWatchdog が wall 超過で即 leave（completion wait も remaining 0）
     expect(leaveAuthCallback).toHaveBeenCalledWith(
       "/login?authError=unbound_callback&returnTo=%2Fonboarding",
     );
-    expect(vi.mocked(clearAuthFlow)).toHaveBeenCalledWith(flowId);
   } finally {
     vi.useRealTimers();
   }

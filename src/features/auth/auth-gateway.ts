@@ -10,6 +10,7 @@ import {
   createAuthFlow,
   readAuthFlow,
   readPendingAuthDeposit,
+  sanitizeLoginReturnPath,
   sanitizeReturnPath,
   writePendingAuthDeposit,
   createContinuationApi,
@@ -310,7 +311,8 @@ async function resolveAlreadyAuthenticated(
     if (!isSessionChangedFromBaseline(baseline, currentKey)) {
       return null;
     }
-    const safeReturnTo = sanitizeReturnPath(returnTo);
+    // C10: completion に載せる returnTo は自己参照 path を落とす
+    const safeReturnTo = sanitizeLoginReturnPath(returnTo);
     try {
       publishAuthContinuationCompletion({ flowId, returnTo: safeReturnTo }, storage);
     } catch {
@@ -628,7 +630,11 @@ export function createAuthGateway(
               secret: flow.secret,
             }),
           );
-          if (redepositOutcome === "ok") {
+          // C8: ok に加え terminal（非リトライ 4xx）でも pending を消す。
+          // completeCallback 初回 deposit の terminal 分岐と対称にし、recovery poll 経由の
+          // 無限 re-deposit と IP rate 自己消費・code 平文の TTL までの残置を閉じる。
+          // timeout/transient は late 204 / 窓明け再試行のため残置（意図的）。
+          if (redepositOutcome === "ok" || redepositOutcome === "terminal") {
             clearPendingAuthDeposit(flow.id, storage);
           }
         } finally {
@@ -729,8 +735,9 @@ export function createAuthGateway(
           : client.auth.exchangeCodeForSession(claimedCode.code);
       const { error } = await result;
       if (error !== null) throw new Error("provider exchange failed");
-      // F-AUTH-002: claim 成功の returnTo も再 sanitize（create 経路の防御を二重化）
-      const safeReturnTo = sanitizeReturnPath(claimedCode.returnTo);
+      // F-AUTH-002 / C10: claim 成功の returnTo も Login create と同型で再 sanitize
+      // （自己参照 path を completion / navigate に載せない）
+      const safeReturnTo = sanitizeLoginReturnPath(claimedCode.returnTo);
       // C1 / C10: secret 消去は publishAuthContinuationCompletion（setItem 成功後の clear）に一本化。
       // 先に clearClaimed すると setItem 失敗時に他タブ re-claim 不能・completion 未公開でスタックする。
       // C4: withTimeout で結果が discard されても storage 経由で recovery/listener が拾えるよう公開。

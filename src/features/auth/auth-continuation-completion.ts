@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { adjustedAuthNowMs, clearAuthFlow, sanitizeReturnPath } from "./auth-flow";
+import { authDeadlineRemainingMs, clearAuthFlow, sanitizeLoginReturnPath } from "./auth-flow";
 
 /**
  * C7: flow 単位の完了印。単一グローバルキーだと並行 flow の後着 publish が先着を上書きし、
@@ -31,8 +31,12 @@ function isCompletionStorageKey(key: string | null): boolean {
   return key === legacyCompletionStorageKey || key.startsWith(completionStoragePrefix);
 }
 
+/**
+ * C10: completion の returnTo も Login create と同型で自己参照 path を落とす。
+ * sanitizeReturnPath だけだと /login・/auth/callback が残り、待ちタブが self へ navigate し得る。
+ */
 function toSafeCompletion(completion: AuthContinuationCompletion): AuthContinuationCompletion {
-  return { ...completion, returnTo: sanitizeReturnPath(completion.returnTo) };
+  return { ...completion, returnTo: sanitizeLoginReturnPath(completion.returnTo) };
 }
 
 function parseCompletionPayload(raw: unknown): AuthContinuationCompletion | null {
@@ -161,10 +165,10 @@ export function startAuthContinuationCompletionWait(input: {
     serverExpiresMs !== null && Number.isFinite(serverExpiresMs)
       ? Math.min(localDeadlineMs, serverExpiresMs)
       : localDeadlineMs;
-  // C4 / RR1: wall Date.now() ではなく adjustedAuthNowMs で remaining を算出し、
-  // hangWatchdog と対称に進みすぎクライアントの早期 onExpire を防ぐ。
+  // C4 / C9 / C12: authDeadlineRemainingMs で hangWatchdog と対称。
+  // 正 skew 改ざんによる wall 期限後の延命を閉じ、lease（wall）と一貫させる。
   const remainingMs = Number.isFinite(deadlineMs)
-    ? Math.max(0, deadlineMs - adjustedAuthNowMs(Date.now(), input.clockSkewMs))
+    ? authDeadlineRemainingMs(deadlineMs, Date.now(), input.clockSkewMs)
     : 0;
   const timer = window.setTimeout(() => {
     if (finished) return;

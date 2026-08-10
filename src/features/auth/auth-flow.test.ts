@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   adjustedAuthNowMs,
+  authDeadlineRemainingMs,
   browserSupabaseSessionStorageKey,
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
@@ -318,20 +319,29 @@ describe("auth flow storage", () => {
     expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
   });
 
-  it("C6 keeps secret when client clock is ahead but skew-adjusted deadline remains", () => {
+  it("C6 keeps secret within server wall when local deadline would clear without skew", () => {
     const storage = new MapStorage();
     const flowId = "10000000-0000-4000-8000-000000000001";
-    // 壁時計は 00:10。startedAt/expires は 00:00〜00:05。skew=+10m なら adjusted now=00:00 で有効。
-    const skewMs = 10 * 60 * 1_000;
-    writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z", "2026-07-13T00:05:00.000Z", skewMs);
+    // local deadline 00:05、server 00:10。wall 00:06 は local 超過だが server 内。
+    // skew=+2m なら adjusted=00:04 で local 期限内 → 温存（C6）。
+    const skewMs = 2 * 60 * 1_000;
+    writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z", "2026-07-13T00:10:00.000Z", skewMs);
     expect(
-      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:10:00.000Z"), 300_000),
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:06:00.000Z"), 300_000),
     ).toHaveLength(1);
     expect(readAuthFlow(flowId, storage)?.secret).toBe("A".repeat(43));
-    // skew 補正後もサーバ期限を超えたら消す
-    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:16:00.000Z"), 300_000)).toEqual(
+  });
+
+  it("C9: positive clockSkewMs does not keep secret past wall serverExpiresAt", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    // 改ざん +48h skew でも wall がサーバ期限を超えたら消す（安全側）
+    const skewMs = 48 * 60 * 60 * 1_000;
+    writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z", "2026-07-13T00:05:00.000Z", skewMs);
+    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:05:00.001Z"), 300_000)).toEqual(
       [],
     );
+    expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
   });
 
   it("C6 estimates positive skew when client now is ahead of server implied now", () => {
@@ -595,6 +605,18 @@ it("C3: pending deposit cache survives write/read and is cleared with the flow",
   writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z");
   clearAuthFlow(flowId, storage);
   expect(readPendingAuthDeposit(flowId, storage, nowMs)).toBeNull();
+});
+
+it("C9/C12: authDeadlineRemainingMs caps positive skew to wall-based remaining", () => {
+  const deadlineMs = Date.parse("2026-07-13T00:05:00.000Z");
+  const wallNowMs = Date.parse("2026-07-13T00:04:00.000Z");
+  // 正 skew でも wall 残り（60s）を超えない
+  expect(authDeadlineRemainingMs(deadlineMs, wallNowMs, 48 * 60 * 60 * 1_000)).toBe(60_000);
+  expect(authDeadlineRemainingMs(deadlineMs, wallNowMs, 0)).toBe(60_000);
+  // 負 skew はより短い remaining（安全側・早期失効）
+  expect(authDeadlineRemainingMs(deadlineMs, wallNowMs, -30_000)).toBe(30_000);
+  // wall 超過は 0
+  expect(authDeadlineRemainingMs(deadlineMs, deadlineMs + 1, 60_000)).toBe(0);
 });
 
 it("C15: pending deposit expiry uses adjustedAuthNowMs so positive clock skew does not drop early", () => {

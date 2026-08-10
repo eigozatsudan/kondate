@@ -347,6 +347,27 @@ export function adjustedAuthNowMs(wallNowMs: number, clockSkewMs?: number | null
 }
 
 /**
+ * C9 / C12: hangWatchdog / completion wait の remaining を安全側で算出する。
+ *
+ * - 負 skew: adjusted が wall より進む → 短い remaining（早期失効）
+ * - 正 skew（正当な進みすぎ時計 or 改ざん）: wall 基準を上限にし、
+ *   lease TTL（wall `Date.now()`）より長く待たない。改ざん +48h で watchdog が
+ *   サーバ期限後まで延命する非対称を閉じる。
+ *
+ * 正当なクライアント進み時計では wall がサーバ期限に先に達し得る（最大 skew 相当の
+ * 早期発火）。秘密の期限後長期残存より安全側を優先する。
+ */
+export function authDeadlineRemainingMs(
+  deadlineMs: number,
+  wallNowMs: number,
+  clockSkewMs?: number | null,
+): number {
+  if (!Number.isFinite(deadlineMs) || !Number.isFinite(wallNowMs)) return 0;
+  const adjustedNowMs = adjustedAuthNowMs(wallNowMs, clockSkewMs);
+  return Math.max(0, Math.min(deadlineMs - adjustedNowMs, deadlineMs - wallNowMs));
+}
+
+/**
  * create 応答の expiresAt とクライアント now から skew を推定する（C6）。
  * serverImpliedNow ≈ expiresAt − ttl。client が進みすぎなら正の skew。
  */
@@ -385,6 +406,12 @@ function normalizeAuthClock(
     const nowMs = wallNowMs - clampClockSkewMs(clockSkewMs);
 
     const serverExpiresMs = parseServerExpiresMs(serverExpiresAt);
+    // C9: サーバ絶対期限は wall で hard cap。storage 改ざんの正 skew で
+    // サーバ expires 後もローカル secret が残る経路を閉じる（安全側・早期失効）。
+    if (serverExpiresMs !== null && wallNowMs > serverExpiresMs) {
+      clearAuthFlowClockState(flowId, storage);
+      return null;
+    }
 
     const markerKey = `${clockRebasePrefix}${flowId}`;
     const rawMarker = storage.getItem(markerKey);

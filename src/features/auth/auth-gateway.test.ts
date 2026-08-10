@@ -1356,6 +1356,48 @@ it("C3: resumeFlow re-deposits from pending cache after prior 429 exhaust", asyn
   }
 });
 
+it("C8: resumeFlow re-deposit terminal clears pending deposit (symmetric with completeCallback)", async () => {
+  vi.useFakeTimers();
+  try {
+    const storage = new MapStorage();
+    // 非リトライ 4xx → terminal。pending を残すと recovery poll が rate を自己消費する
+    const deposit = vi.fn().mockRejectedValue(new ContinuationHttpError(400));
+    const claim = vi.fn().mockRejectedValue(new ContinuationHttpError(404));
+    const api = continuationApiMock({ deposit, claim });
+    const client = authClientMock();
+    const gateway = createAuthGateway(
+      client as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const flow = await createAuthFlow("/onboarding", api, storage, {
+      ...fixedFlowDeps,
+      now: () => new Date(),
+    });
+    writePendingAuthDeposit(
+      flow.id,
+      {
+        state: flow.state,
+        code: "stale-oauth-code",
+        expiresAtMs: Date.now() + 120_000,
+      },
+      storage,
+    );
+    expect(storage.getItem(`kondate.auth.supabase.pending-deposit.${flow.id}`)).not.toBeNull();
+
+    const resumePending = gateway.resumeFlow(flow.id);
+    await vi.advanceTimersByTimeAsync(EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS + 20);
+    for (let index = 0; index < 30; index += 1) await Promise.resolve();
+    await resumePending;
+
+    expect(deposit).toHaveBeenCalled();
+    expect(storage.getItem(`kondate.auth.supabase.pending-deposit.${flow.id}`)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("RR2: soft TTL keeps overlapping resume joined so re-deposit is not doubled", async () => {
   vi.useFakeTimers();
   try {

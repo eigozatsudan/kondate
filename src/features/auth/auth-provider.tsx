@@ -10,11 +10,12 @@ import {
 } from "./auth-continuation-recovery";
 import {
   publishAuthContinuationCompletion,
+  readAuthContinuationCompletion,
   startAuthContinuationCompletionListener,
 } from "./auth-continuation-completion";
 import { withTimeout } from "./async-timeout";
 import { createAuthGateway } from "./auth-gateway";
-import { clearOwnedLocalDataBestEffort } from "./auth-cleanup";
+import { clearSoftSessionResidualBestEffort } from "./auth-cleanup";
 import {
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
@@ -30,18 +31,21 @@ function isAuthWaitingPath(pathname: string): boolean {
 }
 
 /**
- * C16 / C14 / C7: returnTo へ navigate してよいか。
+ * C16 / C14 / C7 / C1: returnTo へ navigate してよいか。
  * - 認証待ち path 以外は session 再取得のみ（設定等の強制遷移を避ける）
- * - 待ち flow があるときは flowId 一致時のみ（別 flow 完了・改ざん payload を拒否）
- * - waiting 空は secret 消去後の完了印拾いを許す（C12 と整合）
+ * - 待ち flow に flowId 一致があれば navigate（same-tab: clear 前 CustomEvent）
+ * - waiting 空は secret 消去後の完了印拾いを許す
+ * - C1 multi-flow: 勝者タブの publish は completion 書込→clear 後に他タブへ StorageEvent が届く。
+ *   他 flow が残っていても、当該 flowId の完了印が読めるなら正当な完了として navigate する
+ *   （残っている他 flow だけを見て抑止すると completion.returnTo を捨て URL returnTo に落ちる）。
  */
 function shouldNavigateOnAuthComplete(flowId: string): boolean {
   if (!isAuthWaitingPath(window.location.pathname)) return false;
   const waiting = listUnexpiredAuthFlows(window.localStorage, new Date());
-  if (waiting.length > 0 && !waiting.some((flow) => flow.id === flowId)) {
-    return false;
-  }
-  return true;
+  if (waiting.some((flow) => flow.id === flowId)) return true;
+  if (waiting.length === 0) return true;
+  // multi-flow かつ当該 flow は clear 済み: 完了印が残っていれば cross-tab の正規順序
+  return readAuthContinuationCompletion(flowId, window.localStorage) !== null;
 }
 
 export type AuthProviderClient = {
@@ -201,10 +205,11 @@ export function AuthProvider({
     };
   }, [client, refreshSession]);
 
-  // C5/C6: authenticated → unauthenticated（SIGNED_OUT / refresh 失効の getSession null 等）で
-  // 共有端末に free-form 草稿・feedback fingerprint・auth residual を残さない。
-  // 明示 logout / redirectToLoginForExpiredSession と同系の owned 一掃を中央で best-effort 実行する。
-  // cold-start 未ログイン fail-closed（RR1: session キーのみ）とは区別し、hadAuthenticated 時だけ走らせる。
+  // C5/C6/C7: authenticated → unauthenticated（SIGNED_OUT / refresh 失効の getSession null 等）で
+  // 共有端末に free-form 草稿・feedback fingerprint・session を残さない。
+  // C7: 進行中 continuation（flow secret / pending-deposit）は cold-start RR1 と同型で温存する。
+  // 他タブの create 直後 flow を soft cleanup が一掃して unbound にする窓を閉じる。
+  // 明示 logout / アカウント削除は clearLocalAuthAndDrafts（全所有キー）のまま。
   useEffect(() => {
     if (session !== null) {
       hadAuthenticatedSessionRef.current = true;
@@ -213,7 +218,7 @@ export function AuthProvider({
     if (!loaded || !hadAuthenticatedSessionRef.current) return;
     hadAuthenticatedSessionRef.current = false;
     try {
-      clearOwnedLocalDataBestEffort();
+      clearSoftSessionResidualBestEffort();
     } catch {
       // storage 障害でも UI の unauthenticated 遷移は続行
     }

@@ -149,13 +149,12 @@ it("R3: completion wait expires at serverExpiresAt when shorter than local TTL",
   vi.useRealTimers();
 });
 
-it("C4/RR1: completion wait accounts for clockSkewMs so secret is not burned early", () => {
+it("C9/C12: completion wait does not extend past wall serverExpires via positive clockSkewMs", () => {
   vi.useFakeTimers();
-  // クライアント時計が 60s 進んでいる想定（skew +60s）。サーバ期限は wall で既に過ぎている。
+  // wall は serverExpires 超過。正 skew でも remaining は wall 上限で 0。
   vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
   const onComplete = vi.fn();
   const onExpire = vi.fn();
-  // skew 非適用なら remaining=0 で即 onExpire。補正後は server 期限まで待つ（hangWatchdog C4 同型）。
   const stop = startAuthContinuationCompletionWait({
     flowId: "flow-1",
     startedAt: "2026-07-13T00:00:00.000Z",
@@ -166,14 +165,23 @@ it("C4/RR1: completion wait accounts for clockSkewMs so secret is not burned ear
     onExpire,
   });
 
-  expect(onExpire).not.toHaveBeenCalled();
-  vi.advanceTimersByTime(29_999);
-  expect(onExpire).not.toHaveBeenCalled();
-  vi.advanceTimersByTime(1);
+  vi.advanceTimersByTime(0);
   expect(onExpire).toHaveBeenCalledOnce();
   expect(onComplete).not.toHaveBeenCalled();
   stop();
   vi.useRealTimers();
+});
+
+it("C10: publish sanitizes self-path returnTo to /welcome", () => {
+  const storage = window.localStorage;
+  const flowId = "flow-self-return";
+  storage.removeItem(`kondate.auth.supabase.continuation-complete.${flowId}`);
+  publishAuthContinuationCompletion({ flowId, returnTo: "/login?x=1" }, storage);
+  expect(readAuthContinuationCompletion(flowId, storage)).toEqual({
+    flowId,
+    returnTo: "/welcome",
+  });
+  storage.removeItem(`kondate.auth.supabase.continuation-complete.${flowId}`);
 });
 
 it("cancels expiry after completion arrives before the existing flow TTL", () => {

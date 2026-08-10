@@ -15,7 +15,7 @@ import {
   takeCapturedAuthCallbackUrl,
 } from "./auth-callback-url-capture";
 import {
-  adjustedAuthNowMs,
+  authDeadlineRemainingMs,
   clearAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthContinuationCallbackStartedAt,
@@ -149,10 +149,11 @@ export function AuthCallbackPage({
       serverExpiresMs !== null && Number.isFinite(serverExpiresMs)
         ? Math.min(localDeadlineMs, serverExpiresMs)
         : localDeadlineMs;
-    // C4: normalizeAuthClock と同型で clockSkewMs を差し引き、進みすぎクライアントの早期焼却を防ぐ
-    const remainingMs = Math.max(
-      0,
-      deadlineMs - adjustedAuthNowMs(Date.now(), flowForDeadline?.clockSkewMs),
+    // C4 / C9 / C12: authDeadlineRemainingMs（wall 上限 + 負 skew 早期失効）
+    const remainingMs = authDeadlineRemainingMs(
+      deadlineMs,
+      Date.now(),
+      flowForDeadline?.clockSkewMs,
     );
     const hangWatchdog = window.setTimeout(() => {
       if (leftRef.current) return;
