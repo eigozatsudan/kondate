@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
@@ -45,6 +45,30 @@ const items = [
   { to: "/shopping", label: "買い物", icon: "shopping" },
   { to: "/settings", label: "設定", icon: "settings" },
 ] as const;
+
+/**
+ * 下タブの視覚 active（nav-item-active）と aria-current を同一述語で決める。
+ * NavLink のルート match だけだと /generation・/menus/*・/emergency-menus や
+ * /history/:id で class だけ拡張したときに SR 現在地が外れる（L2）。
+ */
+function isBottomNavItemActive(itemTo: (typeof items)[number]["to"], pathname: string): boolean {
+  if (pathname === itemTo) return true;
+  // D-I19 / L6 / L2: planner section の非 /planner パスも献立タブを current に
+  if (
+    itemTo === "/planner" &&
+    (pathname === "/generation" ||
+      pathname.startsWith("/menus/") ||
+      pathname === "/emergency-menus" ||
+      pathname.startsWith("/emergency-menus/"))
+  ) {
+    return true;
+  }
+  // 履歴詳細は履歴タブを current に（従来 historyChild）
+  if (itemTo === "/history" && pathname.startsWith("/history/")) {
+    return true;
+  }
+  return false;
+}
 
 /** ラベルと併用する装飾アイコン。仕様が禁じるのはアイコン単独の主要操作。 */
 function NavIcon({ name }: { name: (typeof items)[number]["icon"] }) {
@@ -161,52 +185,49 @@ export function AppShell() {
       </div>
       <Outlet />
       <nav className="bottom-nav" aria-label="メインメニュー" aria-busy={navLeaving || undefined}>
-        {items.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            // P2: /planner から他タブへ出るとき route の flush を await。失敗時は stay + submissionError。
-            // planner-route 未 mount（他 section）は handler null → 即 proceed。
-            onClick={(event) => {
-              if (location.pathname !== "/planner") return;
-              if (item.to === "/planner") return;
-              // 既定の NavLink 遷移を止め、flush 成功後にだけ navigate する
-              event.preventDefault();
-              if (navLeavingRef.current) return;
-              navLeavingRef.current = true;
-              setNavLeaving(true);
-              void (async () => {
-                try {
-                  const result = await runPlannerLeaveFlush();
-                  if (result === "proceed") {
-                    void navigate(item.to);
+        {/* L9: leave-flush 中は aria-busy と対の polite status（何を待つかを SR に伝える） */}
+        {navLeaving ? (
+          <p role="status" aria-live="polite" className="sr-only">
+            保存しています…
+          </p>
+        ) : null}
+        {items.map((item) => {
+          const active = isBottomNavItemActive(item.to, location.pathname);
+          return (
+            <Link
+              key={item.to}
+              to={item.to}
+              // P2: /planner から他タブへ出るとき route の flush を await。失敗時は stay + submissionError。
+              // planner-route 未 mount（他 section）は handler null → 即 proceed。
+              onClick={(event) => {
+                if (location.pathname !== "/planner") return;
+                if (item.to === "/planner") return;
+                // 既定の Link 遷移を止め、flush 成功後にだけ navigate する
+                event.preventDefault();
+                if (navLeavingRef.current) return;
+                navLeavingRef.current = true;
+                setNavLeaving(true);
+                void (async () => {
+                  try {
+                    const result = await runPlannerLeaveFlush();
+                    if (result === "proceed") {
+                      void navigate(item.to);
+                    }
+                  } finally {
+                    navLeavingRef.current = false;
+                    setNavLeaving(false);
                   }
-                } finally {
-                  navLeavingRef.current = false;
-                  setNavLeaving(false);
-                }
-              })();
-            }}
-            className={({ isActive }) => {
-              // D-I19 / L6: planner section（generation・menus・emergency）は献立タブを active に
-              // sectionForPath の planner chrome と nav active を一致させる
-              const sectionActive =
-                item.to === "/planner" &&
-                (location.pathname === "/generation" ||
-                  location.pathname.startsWith("/menus/") ||
-                  location.pathname === "/emergency-menus" ||
-                  location.pathname.startsWith("/emergency-menus/"));
-              const historyChild =
-                item.to === "/history" && location.pathname.startsWith("/history/");
-              return isActive || sectionActive || historyChild
-                ? "nav-item nav-item-active"
-                : "nav-item";
-            }}
-          >
-            <NavIcon name={item.icon} />
-            <span className="nav-item-label">{item.label}</span>
-          </NavLink>
-        ))}
+                })();
+              }}
+              // L2: class と aria-current を同一述語で連動（NavLink の match では section パスを拾えない）
+              className={active ? "nav-item nav-item-active" : "nav-item"}
+              aria-current={active ? "page" : undefined}
+            >
+              <NavIcon name={item.icon} />
+              <span className="nav-item-label">{item.label}</span>
+            </Link>
+          );
+        })}
       </nav>
     </div>
   );

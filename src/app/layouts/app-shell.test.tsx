@@ -30,9 +30,11 @@ function renderAppShellAt(path: string, children?: { path: string; element: Reac
         element: <AppShell />,
         children: children ?? [
           { path: "/planner", element: <h1>献立</h1> },
+          { path: "/generation", element: <h1>生成中</h1> },
           { path: "/pantry", element: <h1>冷蔵庫</h1> },
           { path: "/menus/:menuId", element: <h1>献立結果</h1> },
           { path: "/history", element: <h1>履歴</h1> },
+          { path: "/history/:menuId", element: <h1>履歴詳細</h1> },
           { path: "/shopping", element: <h1>買い物</h1> },
           { path: "/settings", element: <h1>設定</h1> },
           { path: "/plus", element: <h1>Plus LP</h1> },
@@ -80,6 +82,33 @@ describe("AppShell section tinting", () => {
     renderAppShellAt("/emergency-menus");
     const planner = screen.getByRole("link", { name: /献立/u });
     expect(planner.className).toContain("nav-item-active");
+  });
+
+  it.each(["/generation", "/menus/abc", "/emergency-menus"] as const)(
+    "L2: links aria-current=page with planner visual active on %s",
+    (path) => {
+      // 視覚 active と SR 現在地を一致させる（NavLink match だけでは付かない）
+      renderAppShellAt(path);
+      const planner = screen.getByRole("link", { name: /献立/u });
+      expect(planner.className).toContain("nav-item-active");
+      expect(planner).toHaveAttribute("aria-current", "page");
+      // 他タブに誤 current が付かない
+      expect(screen.getByRole("link", { name: /冷蔵庫/u })).not.toHaveAttribute("aria-current");
+      expect(screen.getByRole("link", { name: /履歴/u })).not.toHaveAttribute("aria-current");
+    },
+  );
+
+  it("L2: keeps aria-current=page on /planner exact", () => {
+    renderAppShellAt("/planner");
+    expect(screen.getByRole("link", { name: /献立/u })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("L2: history child routes set aria-current on history tab", () => {
+    renderAppShellAt("/history/m1");
+    const history = screen.getByRole("link", { name: /履歴/u });
+    expect(history.className).toContain("nav-item-active");
+    expect(history).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /献立/u })).not.toHaveAttribute("aria-current");
   });
 
   it("falls back to other for routes without a section", () => {
@@ -160,6 +189,42 @@ describe("AppShell planner leave flush (P2)", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "設定" })).toBeVisible();
     });
+  });
+
+  it("L9: exposes polite status while leave-flush is pending", async () => {
+    const user = userEvent.setup();
+    let resolveFlush: ((value: "proceed" | "blocked") => void) | undefined;
+    registerPlannerLeaveFlush(
+      () =>
+        new Promise<"proceed" | "blocked">((resolve) => {
+          resolveFlush = resolve;
+        }),
+    );
+    renderAppShellAt("/planner");
+
+    const nav = screen.getByRole("navigation", { name: "メインメニュー" });
+    expect(nav).not.toHaveAttribute("aria-busy");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: /設定/u }));
+    // aria-busy と対の polite status 文言（何を待つかを伝える）
+    expect(nav).toHaveAttribute("aria-busy", "true");
+    const status = screen.getByRole("status");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(status).toHaveTextContent("保存しています…");
+
+    await act(async () => {
+      resolveFlush?.("proceed");
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "設定" })).toBeVisible();
+    });
+    // 完了後は busy / status を外す
+    expect(screen.getByRole("navigation", { name: "メインメニュー" })).not.toHaveAttribute(
+      "aria-busy",
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("stays on planner when leave flush is blocked", async () => {
