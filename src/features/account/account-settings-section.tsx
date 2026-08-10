@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { deleteAccountEnvelopeSchema } from "@shared/contracts/account";
 import { withTimeout } from "@/features/auth/async-timeout";
 import {
@@ -121,6 +121,8 @@ export function AccountSettingsSection() {
   const [pending, setPending] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // AP4: React 再描画前の二重 DELETE を同期ガード（pending state だけでは足りない。FeedbackSection と同型）
+  const deleteInFlightRef = useRef(false);
 
   async function handleSignOut(): Promise<void> {
     if (signingOut) return;
@@ -198,7 +200,9 @@ export function AccountSettingsSection() {
   }
 
   async function handleConfirmDelete(confirmation: "削除する"): Promise<void> {
-    if (pending) return;
+    // AP4: 連打 / 二重 pointer は同一 render 閉包で pending===false を二重通過し得る
+    if (pending || deleteInFlightRef.current) return;
+    deleteInFlightRef.current = true;
     setPending(true);
     setErrorMessage(null);
     // fetch 開始前の requireAccessToken 失敗では session probe を成功扱いにしない
@@ -262,7 +266,15 @@ export function AccountSettingsSection() {
         return;
       }
       if (!parsed.data.ok) {
-        // 明示失敗（billing_cancel 等）は Auth 残存が正。probe で成功扱いしない
+        // AP1: ok:false 全 code で session-gone probe。
+        // 二タブ敗者は account_delete_failed / account_delete_after_billing_cancel_failed /
+        // auth_required のいずれでも、勝者が Auth hard delete 済みなら gone=true → 成功同等 cleanup。
+        // billing_cancel* で Auth 残存が正のときは gone=false のまま mapDeleteError
+        // （請求 fail-closed を壊さない。誤成功忌避は probe 偽側）。
+        if (await isAuthSessionGone()) {
+          await completeAccountDeletedLocally();
+          return;
+        }
         setErrorMessage(mapDeleteError(parsed.data.error.code));
         return;
       }
@@ -283,6 +295,7 @@ export function AccountSettingsSection() {
     } finally {
       abortDelete();
       setPending(false);
+      deleteInFlightRef.current = false;
     }
   }
 

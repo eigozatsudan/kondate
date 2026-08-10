@@ -5,10 +5,17 @@ import {
   readAuthContinuationCompletion,
   startAuthContinuationCompletionWait,
 } from "./auth-continuation-completion";
-import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
+import {
+  isAuthContinuationExchangeBusy,
+  startAuthContinuationRecovery,
+} from "./auth-continuation-recovery";
 import { getPublicEnv } from "@/shared/config/public-env";
 import {
-  adjustedAuthNowMs,
+  captureAndStripAuthCallbackUrl,
+  takeCapturedAuthCallbackUrl,
+} from "./auth-callback-url-capture";
+import {
+  authDeadlineRemainingMs,
   clearAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthContinuationCallbackStartedAt,
@@ -92,18 +99,10 @@ export function AuthCallbackPage({
     const callbackTtlMs = ttlMs ?? getPublicEnv().authContinuationTtlMs;
 
     if (callbackPromise.current === null) {
-      const callbackUrl = new URL(window.location.href);
-      // C5/C8: 可視 URL は flow 以外を全削除（gateway の allowlist 処理とは別層）。
-      // code / access_token 等がアドレスバー・history・同一タブ Referer に残らないようにする。
-      // 初回ナビゲーション URL のエッジログはインフラ管轄（アプリ JS では消せない）。
-      const visibleUrl = new URL(callbackUrl);
-      for (const key of [...visibleUrl.searchParams.keys()]) {
-        if (key !== "flow") {
-          visibleUrl.searchParams.delete(key);
-        }
-      }
-      visibleUrl.hash = "";
-      window.history.replaceState(window.history.state, "", visibleUrl);
+      // C7: main bootstrap で未 strip ならここで capture+strip（テスト経路の防御二層）。
+      // エッジ access log の初回 URL はインフラ管轄（アプリでは除去不能）。
+      captureAndStripAuthCallbackUrl();
+      const callbackUrl = takeCapturedAuthCallbackUrl();
       const flowId = callbackUrl.searchParams.get("flow");
       callbackFlowId.current = flowId;
       const canContinue =
@@ -150,10 +149,11 @@ export function AuthCallbackPage({
       serverExpiresMs !== null && Number.isFinite(serverExpiresMs)
         ? Math.min(localDeadlineMs, serverExpiresMs)
         : localDeadlineMs;
-    // C4: normalizeAuthClock と同型で clockSkewMs を差し引き、進みすぎクライアントの早期焼却を防ぐ
-    const remainingMs = Math.max(
-      0,
-      deadlineMs - adjustedAuthNowMs(Date.now(), flowForDeadline?.clockSkewMs),
+    // C4 / C9 / C12: authDeadlineRemainingMs（wall 上限 + 負 skew 早期失効）
+    const remainingMs = authDeadlineRemainingMs(
+      deadlineMs,
+      Date.now(),
+      flowForDeadline?.clockSkewMs,
     );
     const hangWatchdog = window.setTimeout(() => {
       if (leftRef.current) return;
@@ -168,7 +168,25 @@ export function AuthCallbackPage({
           ? undefined
           : (readAuthFlow(flowIdForWatch, window.localStorage)?.returnTo ?? undefined);
       const watchedReturnTo = fromStorage ?? hangWatchReturnToRef.current;
-      if (flowIdForWatch !== null) clearAuthFlow(flowIdForWatch);
+      // C15/C9: late exchange 成功と watchdog の競合を同期で解決する。
+      // completion 済み → success leave。exchange in-flight / callback-prelease 中は secret を焼かず
+      // login-error のみ（gateway が後から completion を publish し、他タブ / login の listener が拾える）。
+      // C9: claim 成功〜exchange lease 取得前は in-flight が無いが pre-lease で保護する。
+      if (flowIdForWatch !== null) {
+        const completion = readAuthContinuationCompletion(flowIdForWatch);
+        if (completion !== null) {
+          leaveSuccess(completion.returnTo);
+          return;
+        }
+        const exchangeBusy = isAuthContinuationExchangeBusy(
+          flowIdForWatch,
+          window.localStorage,
+          Date.now(),
+        );
+        if (!exchangeBusy) {
+          clearAuthFlow(flowIdForWatch);
+        }
+      }
       leaveLoginError("unbound_callback", watchedReturnTo);
     }, remainingMs);
 
@@ -211,6 +229,21 @@ export function AuthCallbackPage({
         };
         const failClosed = (authError: "magic_link_expired" | "unbound_callback"): void => {
           if (finished) return;
+          // C15: onExpire と late exchange の競合 — completion があれば success へ
+          if (authError === "unbound_callback") {
+            const completion = readAuthContinuationCompletion(next.flowId);
+            if (completion !== null) {
+              stopAwaiting();
+              leaveSuccess(completion.returnTo);
+              return;
+            }
+            if (isAuthContinuationExchangeBusy(next.flowId, window.localStorage, Date.now())) {
+              // exchange / pre-lease 中は secret を残し login-error のみ（completion bus が後から救える）
+              stopAwaiting();
+              leaveLoginError(authError, next.returnTo);
+              return;
+            }
+          }
           stopAwaiting();
           clearAuthFlow(next.flowId);
           leaveLoginError(authError, next.returnTo);

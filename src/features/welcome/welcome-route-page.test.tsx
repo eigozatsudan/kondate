@@ -19,7 +19,11 @@ vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
 
-import { WelcomeRoutePage, WELCOME_START_RECONCILE_GRACE_MS } from "./welcome-route-page";
+import {
+  WelcomeRoutePage,
+  WELCOME_START_CAS_SETTLE_MS,
+  WELCOME_START_RECONCILE_GRACE_MS,
+} from "./welcome-route-page";
 
 const userId = "72000000-0000-4000-8000-000000000001";
 
@@ -280,6 +284,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
 
   it("L1: post-grace CAS hang keeps single-flight; opposite CTA does not issue second CAS", async () => {
     // C5+grace 後も zombie CAS が pending の間は双方 CTA を閉じ、opposite が dual-flight しない
+    // （第二 deadline 前までは single-flight 維持。永久待ちは L1 CAS settle 上限で切る）
     let resolveCas: ((value: { onboarding_status: string }) => void) | undefined;
     getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
     setOnboardingStatusMock.mockImplementation(
@@ -330,6 +335,35 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     expect(setOnboardingStatusMock).toHaveBeenCalledWith(expect.anything(), userId, "skipped", {
       expectedStatus: "not_started",
     });
+  });
+
+  it("L1: post-grace CAS never-settle past second deadline re-enables CTA", async () => {
+    // 第二 deadline 超過で single-flight を解除し、永久「準備しています…」閉塞を避ける
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    setOnboardingStatusMock.mockImplementation(() => new Promise(() => undefined));
+    renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(setOnboardingStatusMock).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          COLD_START_SESSION_DEADLINE_MS +
+            WELCOME_START_RECONCILE_GRACE_MS +
+            WELCOME_START_CAS_SETTLE_MS,
+        );
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("開始できませんでした");
+      expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "家族情報を登録する" })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("L2: unmount during start does not zombie-navigate after late CAS", async () => {
@@ -402,8 +436,8 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     getProfileMock.mockReturnValue(new Promise(() => undefined));
     renderWelcome();
     const pending = await screen.findByText("状態を確認しています…");
-    expect(pending).toHaveAttribute("aria-busy", "true");
-    expect(pending).toHaveAttribute("aria-live", "polite");
+    expect(pending.closest("main")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
   });
 
   it("L4: successful idea start replaces history (back does not return to welcome)", async () => {

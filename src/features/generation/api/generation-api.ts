@@ -18,6 +18,13 @@ import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
  */
 export { GENERATION_POST_CLIENT_TIMEOUT_MS };
 
+/**
+ * 生成 status GET のクライアント abort 上限（ms）。
+ * POST と同じ budget 正本を共有する（G18: hung GET が statusInFlight を永久占有しない）。
+ * Abort 時は recovery が offline 扱いで pending 維持し、次の poll/retry で再取得する。
+ */
+export const GENERATION_STATUS_CLIENT_TIMEOUT_MS = GENERATION_POST_CLIENT_TIMEOUT_MS;
+
 /** Function エラー code: SafeLog closedErrorCode と同形（S9）。 */
 const functionErrorCodeSchema = z.string().regex(/^[a-z][a-z0-9_]{0,79}$/u);
 /** 利用者向け message 天井。巨大プロキシ改変を構造拒否。 */
@@ -97,12 +104,17 @@ export function postGeneration(
 
 export async function getGenerationStatus(
   idempotencyKey: string,
-  deps: { fetchImpl?: typeof fetch } = {},
+  deps: { fetchImpl?: typeof fetch; statusTimeoutMs?: number } = {},
 ): Promise<GenerationStatusData> {
   const expectedIdempotencyKey = z.uuid().parse(idempotencyKey);
+  // G18: status も AbortSignal.timeout を付け、hung proxy で statusInFlight が永久に残らないようにする
+  const timeoutMs = deps.statusTimeoutMs ?? GENERATION_STATUS_CLIENT_TIMEOUT_MS;
   return await call(
     `/api/generations/${encodeURIComponent(expectedIdempotencyKey)}/status`,
-    { method: "GET" },
+    {
+      method: "GET",
+      signal: AbortSignal.timeout(timeoutMs),
+    },
     expectedIdempotencyKey,
     deps.fetchImpl ?? fetch,
   );

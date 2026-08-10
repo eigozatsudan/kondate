@@ -10,6 +10,7 @@ import type {
   MemberAllergyRow,
   MemberDislikeRow,
 } from "./household-api";
+import { HouseholdMemberVersionConflictError } from "./household-api";
 import { householdKeys } from "./household-queries";
 import { HouseholdSettingsForm, type HouseholdSettingsApi } from "./household-settings-page";
 import {
@@ -1292,6 +1293,234 @@ it("saves a changed safety field and invalidates dependents", async () => {
   });
 });
 
+// H3: DB コミット後の invalidate 失敗は soft。保存成功メッセージを維持する
+it("H3: treats post-commit invalidateSafety failure as soft success", async () => {
+  const updateMember = vi.fn().mockResolvedValue({
+    ...member,
+    age_band: "age_3_5",
+    updated_at: "2026-07-12T00:00:00.000Z",
+  });
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  await renderSettings({ updateMember, invalidateSafety });
+
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+  });
+  expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
+  expect(screen.getByRole("status")).not.toHaveTextContent("保存できませんでした");
+});
+
+// H9: CAS 衝突後は members 再取得と CAS 基準更新で再衝突ループを閉じる
+it("H9: after version conflict, refetches members and advances CAS so retry succeeds", async () => {
+  const serverAfterOtherTab: HouseholdMemberRow = {
+    ...member,
+    display_name: "他タブ更新",
+    allergy_status: "unconfirmed",
+    updated_at: "2026-07-20T00:00:00.000Z",
+  };
+  const listMembers = vi
+    .fn()
+    .mockResolvedValueOnce([member])
+    .mockResolvedValue([serverAfterOtherTab]);
+  const updateMember = vi
+    .fn()
+    .mockRejectedValueOnce(new HouseholdMemberVersionConflictError())
+    .mockImplementation(
+      (_memberId: string, patch: HouseholdMemberPatch, expectedUpdatedAt: string) => {
+        expect(expectedUpdatedAt).toBe(serverAfterOtherTab.updated_at);
+        return Promise.resolve({
+          ...serverAfterOtherTab,
+          ...patch,
+          updated_at: "2026-07-21T00:00:00.000Z",
+        });
+      },
+    );
+  await renderSettings({ listMembers, updateMember });
+
+  // 初回 save は T0 基準で CAS miss
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(1);
+  });
+  expect(updateMember.mock.calls[0]?.[2]).toBe(member.updated_at);
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "家族設定が他の画面で更新されています。最新の内容を確認してください",
+    );
+  });
+  // members 再取得後、form は他タブの正本へ戻る
+  await waitFor(() => {
+    expect(screen.getByLabelText("呼び名")).toHaveValue("他タブ更新");
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("unconfirmed");
+  });
+  expect(listMembers.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+  // 再編集は新 CAS 基準で成功する（T0 固定の再衝突ループに入らない）
+  await userEvent.selectOptions(screen.getByLabelText("食べる量"), "small");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(2);
+  });
+  expect(updateMember.mock.calls[1]?.[2]).toBe(serverAfterOtherTab.updated_at);
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+  });
+});
+
+// H-RR1: draft complete 後の invalidate 失敗も soft。完了成功 UX を維持する
+it("H-RR1: treats post-completeMember invalidateSafety failure as soft success", async () => {
+  const draft: HouseholdMemberRow = {
+    ...member,
+    id: "draft-1",
+    status: "draft",
+    display_name: "追加中",
+  };
+  const completed: HouseholdMemberRow = { ...draft, status: "complete" };
+  const completeMember = vi.fn().mockResolvedValue(completed);
+  const updateDraft = vi.fn().mockResolvedValue(draft);
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  const { queryClient } = await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    updateDraft,
+    completeMember,
+    invalidateSafety,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledWith(draft.id);
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+  });
+  expect(screen.getByRole("status")).not.toHaveTextContent("完了できませんでした");
+  expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
+  // complete コミット後の members cache は complete のまま（false failure で巻き戻さない）
+  await waitFor(() => {
+    const cached = queryClient.getQueryData<HouseholdMemberRow[]>(
+      householdKeys.members("settings"),
+    );
+    expect(cached?.find((row) => row.id === draft.id)?.status).toBe("complete");
+  });
+  await waitFor(() => {
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+});
+
+// H-RR2: アレルギー削除コミット後の invalidate 失敗は soft（削除は適用済み）
+it("H-RR2: treats post-removeAllergy invalidateSafety failure as soft success", async () => {
+  const registeredMember = { ...member, allergy_status: "registered" as const };
+  const customAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "えんどう豆たんぱく",
+    custom_confirmed: true,
+  };
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([registeredMember]),
+    listAllergies: vi.fn().mockResolvedValue([standardAllergy, customAllergy]),
+    removeAllergy,
+    invalidateSafety,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  // AllergyEditor onError 経由の総失敗文言を出さない（soft 成功時は status 自体が無いこともある）
+  expect(screen.queryByText("アレルギーを削除できませんでした")).not.toBeInTheDocument();
+  expect(screen.queryByText("安全条件の無効化に失敗しました")).not.toBeInTheDocument();
+  expect(screen.queryByText("アレルギー情報を更新できませんでした")).not.toBeInTheDocument();
+});
+
+// H-RR2: 苦手追加コミット後の invalidate 失敗は soft（入力クリア＝成功 UX）
+it("H-RR2: treats post-addDislike invalidateSafety failure as soft success", async () => {
+  const added: MemberDislikeRow = {
+    id: "dislike-1",
+    user_id: "user-1",
+    member_id: member.id,
+    ingredient_name: "ピーマン",
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  const addDislike = vi.fn().mockResolvedValue(added);
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  await renderSettings({ addDislike, invalidateSafety });
+
+  await userEvent.type(await screen.findByLabelText("苦手食材を追加"), "ピーマン");
+  await userEvent.click(screen.getByRole("button", { name: "苦手食材を追加" }));
+
+  await waitFor(() => {
+    expect(addDislike).toHaveBeenCalledWith(member.id, "ピーマン");
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  // 成功コールバックで入力が空になり、失敗メッセージは出ない
+  await waitFor(() => {
+    expect(screen.getByLabelText("苦手食材を追加")).toHaveValue("");
+  });
+  expect(screen.queryByText("苦手食材を追加できませんでした")).not.toBeInTheDocument();
+  expect(screen.queryByText("安全条件の無効化に失敗しました")).not.toBeInTheDocument();
+});
+
+// H-RR3: メンバー削除コミット後の invalidate 失敗は soft。削除成功 UX を維持する
+it("H-RR3: treats post-deleteMember invalidateSafety failure as soft success", async () => {
+  const secondMember = { ...member, id: "member-2", display_name: "子ども", sort_order: 1 };
+  const deleteMember = vi.fn().mockResolvedValue(undefined);
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  // 初回は2人、削除後の members invalidateQueries 再取得は残存のみ（楽観削除を巻き戻さない）
+  const listMembers = vi
+    .fn()
+    .mockResolvedValueOnce([member, secondMember])
+    .mockResolvedValue([member]);
+  const { queryClient } = await renderSettings({
+    listMembers,
+    deleteMember,
+    invalidateSafety,
+  });
+
+  // 一覧から子どもを削除（編集中の大人は残す）
+  await userEvent.click(await screen.findByRole("button", { name: "2人目の子どもを削除" }));
+  await userEvent.click(screen.getByRole("button", { name: "家族だけを削除" }));
+
+  await waitFor(() => {
+    expect(deleteMember).toHaveBeenCalledWith("member-2");
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("家族の設定を削除しました");
+  });
+  expect(screen.getByRole("status")).not.toHaveTextContent("削除できませんでした");
+  expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
+  // 削除コミット後の members cache から対象が消えたまま（false failure で巻き戻さない）
+  await waitFor(() => {
+    const cached = queryClient.getQueryData<HouseholdMemberRow[]>(
+      householdKeys.members("settings"),
+    );
+    expect(cached?.some((row) => row.id === "member-2")).toBe(false);
+  });
+  expect(screen.getByRole("heading", { name: "「大人」を編集中" })).toBeVisible();
+});
+
 // H12: DB の不正 enum を unchecked cast で select に載せない（空/年齢デフォルトへ）
 it("initializes form from corrupt DB enums as empty selects and age defaults", async () => {
   const corrupt: HouseholdMemberRow = {
@@ -1482,6 +1711,7 @@ it.each([
       expect(updateMember).toHaveBeenCalledWith(
         "member-1",
         expect.objectContaining({ allergy_status: "registered" }),
+        expect.any(String),
       );
     });
     const [addCallOrder] = addAllergy.mock.invocationCallOrder;
@@ -1588,6 +1818,7 @@ it("keeps only the deferred registered status over newer member query values", a
         portion_size: "small",
         spice_level: "mild",
       }),
+      expect.any(String),
     );
   });
   expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
@@ -1608,6 +1839,7 @@ it.each(["none", "unconfirmed"] as const)(
       expect(updateMember).toHaveBeenCalledWith(
         member.id,
         expect.objectContaining({ allergy_status: allergyStatus }),
+        expect.any(String),
       );
     });
     await act(async () => {
@@ -1779,6 +2011,7 @@ it("disables the allergy status until existing allergies finish loading", async 
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 });
@@ -1814,6 +2047,7 @@ it("keeps newer edits in the registered save after a delayed standard allergy ad
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ display_name: "保護者", spice_level: "mild" }),
+      expect.any(String),
     );
   });
   await act(async () => {
@@ -1978,6 +2212,7 @@ it("keeps an allergy add locked for its member across switching until success", 
   expect(updateMember).toHaveBeenCalledWith(
     member.id,
     expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
   );
 });
 
@@ -2163,6 +2398,7 @@ it("keeps allergy operations disabled after failure and enables them only after 
     expect(updateMember).toHaveBeenCalledWith(
       member.id,
       expect.objectContaining({ allergy_status: "none" }),
+      expect.any(String),
     );
   });
 });
@@ -2186,6 +2422,7 @@ it("saves a registered allergy status immediately when an allergy already exists
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 });
@@ -2219,6 +2456,7 @@ it("keeps explicitly empty saved preferences when loading and saving another fie
         ease_preferences: [],
         required_safety_constraints: [],
       }),
+      expect.any(String),
     );
   });
 });
@@ -2276,6 +2514,7 @@ it("0件確認中のsafe保存後はregisteredを送らず追加成功後に再�
       2,
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      "2026-07-11T00:00:00.000Z",
     );
   });
 });
@@ -2309,6 +2548,7 @@ it("最初のアレルギー追加成功後に保留したregisteredを保存す
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
   await waitFor(() => {
@@ -2317,6 +2557,88 @@ it("最初のアレルギー追加成功後に保留したregisteredを保存す
   await waitFor(() => {
     expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
   });
+});
+
+// H8 回帰: soft invalidate が allergies を再取得しても、registered コミット成功後の
+// status が「確認しています」に潰されない（E2E menu-domain-pantry chicken allergy）。
+it("H8: registered commit success status survives soft allergies invalidate during save", async () => {
+  let currentMember: HouseholdMemberRow = member;
+  let allergies: MemberAllergyRow[] = [];
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // require-await 回避: Promise を返す同期モックに揃える（同ファイル内の他 H 系テストと同様）
+  const listMembers = vi.fn(() => Promise.resolve([currentMember]));
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+  const addStandardAllergy = vi.fn(() => {
+    allergies = [walnutAllergy];
+    return Promise.resolve(walnutAllergy);
+  });
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) => {
+    currentMember = {
+      ...currentMember,
+      ...patch,
+      updated_at: "2026-07-12T00:00:00.000Z",
+    };
+    return Promise.resolve(currentMember);
+  });
+  // 本番 H8 経路: invalidateSafety が allergies / members を stale にして再取得する
+  const invalidateSafety = vi.fn(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: householdKeys.members("settings") }),
+      queryClient.invalidateQueries({ queryKey: ["household", "allergies", "settings"] }),
+      queryClient.invalidateQueries({ queryKey: ["household", "dislikes", "settings"] }),
+    ]);
+  });
+  const api: HouseholdSettingsApi = {
+    listMembers,
+    createDraft: vi.fn(),
+    updateDraft: vi.fn().mockResolvedValue(member),
+    updateMember,
+    completeMember: vi.fn().mockResolvedValue(member),
+    deleteMember: vi.fn().mockResolvedValue(undefined),
+    listCatalog: vi.fn().mockResolvedValue(catalog),
+    listAllergies,
+    addStandardAllergy,
+    addCustomAllergy: vi.fn(),
+    removeAllergy: vi.fn(),
+    listDislikes: vi.fn().mockResolvedValue([]),
+    addDislike: vi.fn(),
+    removeDislike: vi.fn(),
+    invalidateSafety,
+  };
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <AppToastProvider>
+        <HouseholdSettingsForm api={api} />
+      </AppToastProvider>
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("heading", { name: "登録済みの家族" });
+  await userEvent.click(screen.getByRole("button", { name: /を編集$/u }));
+  await screen.findByRole("region", { name: "家族情報を追加・編集" });
+  await waitForAllergies(queryClient);
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
+
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
+    );
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  // soft invalidate 後も成功 status が残る（「確認しています」で潰されない）
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+  });
+  expect(screen.getByRole("status")).not.toHaveTextContent("アレルギー情報を確認しています");
+  expect(screen.getByRole("status")).not.toHaveTextContent("登録ありの場合は1つ以上選んでください");
 });
 
 it("既存registered家族はアレルギー取得中でも通常の編集を保存する", async () => {
@@ -2337,6 +2659,7 @@ it("既存registered家族はアレルギー取得中でも通常の編集を保
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ display_name: "保護者", allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 });
@@ -2376,6 +2699,7 @@ it("自由登録アレルギー追加成功後に保留したregisteredを保存
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 });
@@ -2464,6 +2788,7 @@ it("アレルギー追加中の別フィールド変更を最新snapshotで保�
         allergy_status: "registered",
         display_name: "更新後",
       }),
+      expect.any(String),
     );
   });
 });
@@ -2514,6 +2839,7 @@ it("registered保存中の別フィールド変更を後続の最新snapshotで�
         allergy_status: "registered",
         display_name: "更新後",
       }),
+      "2026-07-11T00:00:00.000Z",
     );
   });
   await waitFor(() => {
@@ -2572,6 +2898,7 @@ it("完了ロック後はregisteredの後続保存を追加せず最新snapshot�
       allergy_status: "registered",
       display_name: "更新後",
     }),
+    expect.any(String),
   );
   expect(queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members("settings"))).toEqual(
     [latestRegisteredMember],
@@ -2617,6 +2944,7 @@ it("registered保存中のnone変更を後続保存して最終状態へ反映�
       2,
       "member-1",
       expect.objectContaining({ allergy_status: "none" }),
+      "2026-07-11T00:00:00.000Z",
     );
   });
   await waitFor(() => {
@@ -2666,11 +2994,13 @@ it("アレルギー追加中に家族を往復してもregisteredを表示し元
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
   expect(updateMember).not.toHaveBeenCalledWith(
     "member-2",
     expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
   );
 });
 
@@ -2706,6 +3036,7 @@ it("registered保存中に家族を往復しても成功後の表示とcacheを�
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
     );
   });
 
@@ -2728,6 +3059,7 @@ it("registered保存中に家族を往復しても成功後の表示とcacheを�
   expect(updateMember).not.toHaveBeenCalledWith(
     "member-2",
     expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
   );
 });
 
@@ -2842,6 +3174,7 @@ it.each(["standard", "custom"] as const)(
         2,
         "member-1",
         expect.objectContaining({ allergy_status: "registered", display_name: "更新後" }),
+        expect.any(String),
       );
     });
   },
@@ -2860,6 +3193,7 @@ it("applies age defaults when the user selects an age band", async () => {
         ease_preferences: ["small_pieces", "boneless", "soft"],
         required_safety_constraints: ["remove_bones", "cut_small"],
       }),
+      expect.any(String),
     );
   });
 });
@@ -2874,6 +3208,7 @@ it("persists an edit that only changes the display name", async () => {
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({ display_name: "保護者" }),
+      expect.any(String),
     );
   });
 });
@@ -3003,6 +3338,7 @@ it("uses the latest member query values after switching away and back", async ()
         portion_size: "small",
         spice_level: "mild",
       }),
+      expect.any(String),
     );
   });
 });

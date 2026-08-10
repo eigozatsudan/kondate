@@ -554,6 +554,12 @@ export function useGenerationRecovery(
     const recover = () => {
       if (read() === null) return;
       const token = lifecycleRef.current;
+      // G15: サーバ終端で pending をメッセージ表示用に保持している間、online /
+      // TOKEN_REFRESHED で checking 再入 + status re-fetch すると UI thrash する。
+      // サーバ終端は不変なので recheck もしない（processing 中の recover は従来どおり）。
+      if (token !== null && (token.phase === "failed" || token.phase === "constraint_conflict")) {
+        return;
+      }
       if (token !== null) token.phase = "checking";
       dispatch({ type: "online" });
       void retryStatus();
@@ -601,9 +607,11 @@ export function useGenerationRecovery(
           read() !== null
         ) {
           void retryStatus();
+          // G16: retry を実際に発行したときだけ attempt を進める。
+          // hidden / オフラインで skip した tick では据え置きし、復帰後の間隔を伸ばさない。
+          offlineRetryAttemptRef.current = Math.min(attempt + 1, 8);
         }
-        // 成功して phase が変わっても cleanup で cancelled になる。失敗継続時のみ attempt を進める。
-        offlineRetryAttemptRef.current = Math.min(attempt + 1, 8);
+        // 成功して phase が変わっても cleanup で cancelled になる。
         arm();
       }, delay);
     };

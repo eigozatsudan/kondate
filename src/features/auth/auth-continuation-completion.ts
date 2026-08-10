@@ -1,7 +1,16 @@
 import { z } from "zod";
-import { adjustedAuthNowMs, clearAuthFlow, sanitizeReturnPath } from "./auth-flow";
+import { authDeadlineRemainingMs, clearAuthFlow, sanitizeLoginReturnPath } from "./auth-flow";
 
-const completionStorageKey = "kondate.auth.supabase.continuation-complete";
+/**
+ * C7: flow 単位の完了印。単一グローバルキーだと並行 flow の後着 publish が先着を上書きし、
+ * 待ち側が TTL まで complete を見失う。prefix 配下は ownedAuthStoragePrefixes で logout 掃除される。
+ */
+const completionStoragePrefix = "kondate.auth.supabase.continuation-complete.";
+/**
+ * 旧単一キー。読み取りのみ後方互換（デプロイ跨ぎの in-flight タブ）。
+ * 新規 publish は per-flow キーのみ。
+ */
+const legacyCompletionStorageKey = "kondate.auth.supabase.continuation-complete";
 /** same-tab 通知用。storage イベントは書き込みタブでは発火しないため CustomEvent を併用する。 */
 const completionEventName = "kondate.auth.supabase.continuation-complete";
 const completionSchema = z
@@ -13,8 +22,21 @@ const completionSchema = z
 
 export type AuthContinuationCompletion = z.infer<typeof completionSchema>;
 
+function completionStorageKeyFor(flowId: string): string {
+  return `${completionStoragePrefix}${flowId}`;
+}
+
+function isCompletionStorageKey(key: string | null): boolean {
+  if (key === null) return false;
+  return key === legacyCompletionStorageKey || key.startsWith(completionStoragePrefix);
+}
+
+/**
+ * C10: completion の returnTo も Login create と同型で自己参照 path を落とす。
+ * sanitizeReturnPath だけだと /login・/auth/callback が残り、待ちタブが self へ navigate し得る。
+ */
 function toSafeCompletion(completion: AuthContinuationCompletion): AuthContinuationCompletion {
-  return { ...completion, returnTo: sanitizeReturnPath(completion.returnTo) };
+  return { ...completion, returnTo: sanitizeLoginReturnPath(completion.returnTo) };
 }
 
 function parseCompletionPayload(raw: unknown): AuthContinuationCompletion | null {
@@ -29,17 +51,32 @@ export function readAuthContinuationCompletion(
   flowId: string,
   storage: Storage = window.localStorage,
 ): AuthContinuationCompletion | null {
-  const raw = storage.getItem(completionStorageKey);
-  if (raw === null) return null;
+  // per-flow を優先。無いときだけ legacy 単一キー（flowId 一致時のみ）。
+  const perFlowRaw = storage.getItem(completionStorageKeyFor(flowId));
+  if (perFlowRaw !== null) {
+    try {
+      const completion = parseCompletionPayload(JSON.parse(perFlowRaw));
+      if (completion === null || completion.flowId !== flowId) {
+        storage.removeItem(completionStorageKeyFor(flowId));
+        return null;
+      }
+      return completion;
+    } catch {
+      storage.removeItem(completionStorageKeyFor(flowId));
+      return null;
+    }
+  }
+  const legacyRaw = storage.getItem(legacyCompletionStorageKey);
+  if (legacyRaw === null) return null;
   try {
-    const completion = parseCompletionPayload(JSON.parse(raw));
+    const completion = parseCompletionPayload(JSON.parse(legacyRaw));
     if (completion === null) {
-      storage.removeItem(completionStorageKey);
+      storage.removeItem(legacyCompletionStorageKey);
       return null;
     }
     return completion.flowId === flowId ? completion : null;
   } catch {
-    storage.removeItem(completionStorageKey);
+    storage.removeItem(legacyCompletionStorageKey);
     return null;
   }
 }
@@ -51,7 +88,8 @@ export function publishAuthContinuationCompletion(
   const safe = toSafeCompletion(completion);
   // C10: completion を先に書く。setItem 失敗時は throw のまま secret を残し、
   // 他タブが re-claim / 再 publish できる余地を残す（clear→setItem 順だと secret だけ消える）。
-  storage.setItem(completionStorageKey, JSON.stringify(safe));
+  // C7: per-flow キーへ書き、並行 flow の完了印を上書きしない。
+  storage.setItem(completionStorageKeyFor(safe.flowId), JSON.stringify(safe));
   // storage イベントは書き込み同一タブでは発火しない。late publish を wait/listener が拾えるよう same-tab 通知する。
   window.dispatchEvent(new CustomEvent(completionEventName, { detail: safe }));
   clearAuthFlow(completion.flowId, storage);
@@ -67,7 +105,7 @@ export function startAuthContinuationCompletionListener(input: {
   };
 
   const onStorage = (event: StorageEvent): void => {
-    if (event.key !== completionStorageKey || event.newValue === null) return;
+    if (!isCompletionStorageKey(event.key) || event.newValue === null) return;
     try {
       deliver(JSON.parse(event.newValue));
     } catch {
@@ -127,10 +165,10 @@ export function startAuthContinuationCompletionWait(input: {
     serverExpiresMs !== null && Number.isFinite(serverExpiresMs)
       ? Math.min(localDeadlineMs, serverExpiresMs)
       : localDeadlineMs;
-  // C4 / RR1: wall Date.now() ではなく adjustedAuthNowMs で remaining を算出し、
-  // hangWatchdog と対称に進みすぎクライアントの早期 onExpire を防ぐ。
+  // C4 / C9 / C12: authDeadlineRemainingMs で hangWatchdog と対称。
+  // 正 skew 改ざんによる wall 期限後の延命を閉じ、lease（wall）と一貫させる。
   const remainingMs = Number.isFinite(deadlineMs)
-    ? Math.max(0, deadlineMs - adjustedAuthNowMs(Date.now(), input.clockSkewMs))
+    ? authDeadlineRemainingMs(deadlineMs, Date.now(), input.clockSkewMs)
     : 0;
   const timer = window.setTimeout(() => {
     if (finished) return;

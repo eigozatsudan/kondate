@@ -1,15 +1,21 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useEffect, useRef, type ReactNode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
+import { registerPlannerLeaveFlush } from "@/features/planner/planner-leave-flush";
 import { AppShell } from "./app-shell";
 
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
+
+afterEach(() => {
+  registerPlannerLeaveFlush(null);
+});
 
 const unauthenticated: AuthContextValue = {
   status: "unauthenticated",
@@ -24,9 +30,11 @@ function renderAppShellAt(path: string, children?: { path: string; element: Reac
         element: <AppShell />,
         children: children ?? [
           { path: "/planner", element: <h1>献立</h1> },
+          { path: "/generation", element: <h1>生成中</h1> },
           { path: "/pantry", element: <h1>冷蔵庫</h1> },
           { path: "/menus/:menuId", element: <h1>献立結果</h1> },
           { path: "/history", element: <h1>履歴</h1> },
+          { path: "/history/:menuId", element: <h1>履歴詳細</h1> },
           { path: "/shopping", element: <h1>買い物</h1> },
           { path: "/settings", element: <h1>設定</h1> },
           { path: "/plus", element: <h1>Plus LP</h1> },
@@ -74,6 +82,33 @@ describe("AppShell section tinting", () => {
     renderAppShellAt("/emergency-menus");
     const planner = screen.getByRole("link", { name: /献立/u });
     expect(planner.className).toContain("nav-item-active");
+  });
+
+  it.each(["/generation", "/menus/abc", "/emergency-menus"] as const)(
+    "L2: links aria-current=page with planner visual active on %s",
+    (path) => {
+      // 視覚 active と SR 現在地を一致させる（NavLink match だけでは付かない）
+      renderAppShellAt(path);
+      const planner = screen.getByRole("link", { name: /献立/u });
+      expect(planner.className).toContain("nav-item-active");
+      expect(planner).toHaveAttribute("aria-current", "page");
+      // 他タブに誤 current が付かない
+      expect(screen.getByRole("link", { name: /冷蔵庫/u })).not.toHaveAttribute("aria-current");
+      expect(screen.getByRole("link", { name: /履歴/u })).not.toHaveAttribute("aria-current");
+    },
+  );
+
+  it("L2: keeps aria-current=page on /planner exact", () => {
+    renderAppShellAt("/planner");
+    expect(screen.getByRole("link", { name: /献立/u })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("L2: history child routes set aria-current on history tab", () => {
+    renderAppShellAt("/history/m1");
+    const history = screen.getByRole("link", { name: /履歴/u });
+    expect(history.className).toContain("nav-item-active");
+    expect(history).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /献立/u })).not.toHaveAttribute("aria-current");
   });
 
   it("falls back to other for routes without a section", () => {
@@ -125,5 +160,93 @@ describe("AppShell route focus (L2)", () => {
       expect(document.activeElement).toBe(dialogButton);
     });
     expect(screen.getByRole("heading", { name: "設定" })).not.toHaveFocus();
+  });
+});
+
+describe("AppShell planner leave flush (P2)", () => {
+  it("awaits leave flush and navigates only on proceed", async () => {
+    const user = userEvent.setup();
+    let resolveFlush: ((value: "proceed" | "blocked") => void) | undefined;
+    const flush = vi.fn(
+      () =>
+        new Promise<"proceed" | "blocked">((resolve) => {
+          resolveFlush = resolve;
+        }),
+    );
+    registerPlannerLeaveFlush(flush);
+    renderAppShellAt("/planner");
+
+    await user.click(screen.getByRole("link", { name: /設定/u }));
+    // flush 完了前は settings に遷移しない
+    expect(screen.getByRole("heading", { name: "献立" })).toBeVisible();
+    expect(flush).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFlush?.("proceed");
+      // flush resolve → navigate microtasks を flush
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "設定" })).toBeVisible();
+    });
+  });
+
+  it("L9: exposes polite status while leave-flush is pending", async () => {
+    const user = userEvent.setup();
+    let resolveFlush: ((value: "proceed" | "blocked") => void) | undefined;
+    registerPlannerLeaveFlush(
+      () =>
+        new Promise<"proceed" | "blocked">((resolve) => {
+          resolveFlush = resolve;
+        }),
+    );
+    renderAppShellAt("/planner");
+
+    const nav = screen.getByRole("navigation", { name: "メインメニュー" });
+    expect(nav).not.toHaveAttribute("aria-busy");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: /設定/u }));
+    // aria-busy と対の polite status 文言（何を待つかを伝える）
+    expect(nav).toHaveAttribute("aria-busy", "true");
+    const status = screen.getByRole("status");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(status).toHaveTextContent("保存しています…");
+
+    await act(async () => {
+      resolveFlush?.("proceed");
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "設定" })).toBeVisible();
+    });
+    // 完了後は busy / status を外す
+    expect(screen.getByRole("navigation", { name: "メインメニュー" })).not.toHaveAttribute(
+      "aria-busy",
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("stays on planner when leave flush is blocked", async () => {
+    const user = userEvent.setup();
+    registerPlannerLeaveFlush(() => Promise.resolve("blocked"));
+    renderAppShellAt("/planner");
+
+    await user.click(screen.getByRole("link", { name: /冷蔵庫/u }));
+    expect(screen.getByRole("heading", { name: "献立" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "冷蔵庫" })).not.toBeInTheDocument();
+  });
+
+  it("does not intercept leave when not on /planner", async () => {
+    const user = userEvent.setup();
+    const flush = vi.fn(() => Promise.resolve("blocked" as const));
+    registerPlannerLeaveFlush(flush);
+    renderAppShellAt("/pantry");
+
+    await user.click(screen.getByRole("link", { name: /設定/u }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "設定" })).toBeVisible();
+    });
+    expect(flush).not.toHaveBeenCalled();
   });
 });

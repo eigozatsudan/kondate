@@ -5,6 +5,17 @@ import { getJstDateKey } from "@shared/time/jst";
 // サーバ GenerationContext の expiredPantryChecks と同形。browser は contracts を正とする。
 export type ExpiredPantryCheck = ExpiredPantryConfirmation;
 
+/**
+ * P7: checkedAt が有効 Date かつ today（JST）と一致するか。
+ * 破損 session / 不正 ISO は Number.isNaN で drop（サーバ validateTransientChecks と同型 fail-closed＝未確認）。
+ * Invalid Date を getJstDateKey に渡すと formatToParts が RangeError になり得るため先に弾く。
+ */
+function isCheckedAtOnJstDay(checkedAt: string, today: string): boolean {
+  const date = new Date(checkedAt);
+  if (Number.isNaN(date.getTime())) return false;
+  return getJstDateKey(date) === today;
+}
+
 export type PlannerAttempt = {
   idempotencyKey: string;
   expiredPantryChecks: readonly ExpiredPantryCheck[];
@@ -56,9 +67,14 @@ function readSessionExpiredEnvelope(userId: string): SessionExpiredConfirmEnvelo
       ) {
         continue;
       }
+      const checkedAt = (entry as { checkedAt: string }).checkedAt;
+      // P7: 文字列型だけでは不足。Invalid Date は parse 時点で drop（後段 getJstDateKey throw を防ぐ）
+      if (Number.isNaN(new Date(checkedAt).getTime())) {
+        continue;
+      }
       checks.push({
         pantryItemId: (entry as { pantryItemId: string }).pantryItemId,
-        checkedAt: (entry as { checkedAt: string }).checkedAt,
+        checkedAt,
       });
     }
     return { dayKey: (parsed as { dayKey: string }).dayKey, checks };
@@ -95,7 +111,7 @@ export function loadSessionExpiredPantryChecks(
     }
     return [];
   }
-  return envelope.checks.filter((item) => getJstDateKey(new Date(item.checkedAt)) === today);
+  return envelope.checks.filter((item) => isCheckedAtOnJstDay(item.checkedAt, today));
 }
 
 /** 1 件の当日確認を session に追記（同一 pantryItemId は上書き）。 */
@@ -126,7 +142,8 @@ export function persistSessionExpiredPantryChecks(
   const existing = [...loadSessionExpiredPantryChecks(userId, now)];
   const byId = new Map(existing.map((item) => [item.pantryItemId, item]));
   for (const check of checks) {
-    if (getJstDateKey(new Date(check.checkedAt)) !== today) continue;
+    // P7: 不正 checkedAt は skip（サーバ同型）
+    if (!isCheckedAtOnJstDay(check.checkedAt, today)) continue;
     byId.set(check.pantryItemId, check);
   }
   writeSessionExpiredEnvelope(userId, { dayKey: today, checks: [...byId.values()] });
@@ -139,8 +156,7 @@ export function hasSessionExpiredPantryConfirmation(
 ): boolean {
   const today = getJstDateKey(now);
   return loadSessionExpiredPantryChecks(userId, now).some(
-    (item) =>
-      item.pantryItemId === pantryItemId && getJstDateKey(new Date(item.checkedAt)) === today,
+    (item) => item.pantryItemId === pantryItemId && isCheckedAtOnJstDay(item.checkedAt, today),
   );
 }
 
@@ -152,7 +168,7 @@ export function createPlannerAttempt(): PlannerAttempt {
   };
 }
 
-export function isPastEnteredExpiry(item: PantryItem, now: Date): boolean {
+export function isPastEnteredExpiry(item: Pick<PantryItem, "expiresOn">, now: Date): boolean {
   return item.expiresOn !== null && item.expiresOn < getJstDateKey(now);
 }
 
@@ -163,8 +179,7 @@ export function hasCurrentExpiredConfirmation(
 ): boolean {
   const today = getJstDateKey(now);
   return attempt.expiredPantryChecks.some(
-    (item) =>
-      item.pantryItemId === pantryItemId && getJstDateKey(new Date(item.checkedAt)) === today,
+    (item) => item.pantryItemId === pantryItemId && isCheckedAtOnJstDay(item.checkedAt, today),
   );
 }
 
@@ -203,14 +218,33 @@ export function confirmExpiredPantryItem(
 }
 
 /**
+ * 入力期限が過去の pantryItemId 集合（サーバ expired 集合と同型）。
+ * soft 更新で期限が延びた ID はここに入らない。
+ */
+export function currentlyExpiredPantryItemIds(
+  items: readonly Pick<PantryItem, "id" | "expiresOn">[],
+  now: Date,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const item of items) {
+    if (isPastEnteredExpiry(item, now)) ids.add(item.id);
+  }
+  return ids;
+}
+
+/**
  * サーバ validateTransientChecks は「選択中 ∩ 期限切れ」と confirmation の exact-set を要求する。
  * 同一 attempt 内で確認済み→解除しても checks を attempt に残し再選択時 dialog を抑止する設計のため、
- * 送信直前に選択中 ID へ絞り込む（P1: 非選択 extra を載せない）。
+ * 送信・緊急 handoff 直前に selected ∩ currently-expired へ絞り込む
+ * （P1: 非選択 extra と期限切れ解消後の surplus confirmation を載せない）。
  */
 export function filterExpiredPantryChecksForSelections(
   checks: readonly ExpiredPantryCheck[],
   selections: readonly { pantryItemId: string }[],
+  currentlyExpiredIds: ReadonlySet<string>,
 ): ExpiredPantryCheck[] {
   const selected = new Set(selections.map((selection) => selection.pantryItemId));
-  return checks.filter((check) => selected.has(check.pantryItemId));
+  return checks.filter(
+    (check) => selected.has(check.pantryItemId) && currentlyExpiredIds.has(check.pantryItemId),
+  );
 }

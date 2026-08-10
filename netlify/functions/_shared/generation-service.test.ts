@@ -2134,6 +2134,8 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     );
     expect(execution.startedAtMonotonicMs).toBe(timing.requestStartedAtMonotonicMs);
     expect(execution.kind).toBe(regen.kind);
+    // HR3: 本番 deps は finalize 直前 exclusion 再読を必ず配線する
+    expect(typeof deps.reloadRegenerationExclusion).toBe("function");
   });
 });
 
@@ -2426,6 +2428,92 @@ describe("runGeneration regeneration duplicate gating", () => {
       error: { code: "duplicate_output" },
       quota: { consumed: false },
     });
+    expect(repository.succeed).not.toHaveBeenCalled();
+    expect(repository.fail).toHaveBeenCalledWith(requestId, "duplicate_output", null);
+  });
+
+  it("HR3: fails duplicate_output when concurrent sibling appears only at finalize reload", async () => {
+    // load 時 exclusion は空（compose は通る）が、succeed 直前 reload で同一 material が現れる TOCTOU
+    const menu = makeValidatedMenu();
+    const dishSig = (dish: (typeof menu.dishes)[number]) => ({
+      role: dish.role,
+      name: dish.name,
+      primaryIngredients: dish.ingredients.map((item) => item.name),
+    });
+    const wholeRegenerationCommand = {
+      commandVersion: "generation-command.v3" as const,
+      kind: "regenerate_menu" as const,
+      qualityMode: false,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: "88000000-0000-4000-8000-000000000001",
+        changeReason: "simpler" as const,
+        changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-29.v1" as const,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const siblingEntry = {
+      menuId: "99000000-0000-4000-8000-000000000099",
+      menuSignature: createMenuSignature({ dishes: menu.dishes.map(dishSig) }),
+      dishSignatures: menu.dishes.map((dish) => createDishSignature(dishSig(dish))),
+    };
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
+      kind: "regenerate_menu",
+      command: wholeRegenerationCommand,
+      requestId,
+      generationContext: makeGenerationContext(),
+      expectedSafetyFingerprint: "fp",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: wholeRegenerationCommand.request.sourceMenuId,
+        sourceMenu: menu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: menu.dishes.map((dish) => dish.id),
+        excludedDishIds: menu.dishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        // load 時点では sibling 未確定
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    vi.mocked(validateGeneratedMenu).mockReturnValue({
+      ok: true,
+      menu,
+      labelConfirmations: [],
+      safetyFingerprint: "sha256:test",
+      preferenceGaps: [],
+    });
+    const repository = makeRepository();
+    const reloadRegenerationExclusion = vi.fn(() => Promise.resolve([siblingEntry]));
+    const depsWithFinalizeDuplicate = makeDeps({
+      repository,
+      loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+      reloadRegenerationExclusion,
+      callOpenRouter: vi.fn(() =>
+        Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        }),
+      ),
+    });
+
+    const result = await runGeneration(depsWithFinalizeDuplicate, wholeRegenerationCommand);
+    expect(result).toMatchObject({
+      status: "failed",
+      error: { code: "duplicate_output" },
+      quota: { consumed: false },
+    });
+    expect(reloadRegenerationExclusion).toHaveBeenCalledTimes(1);
     expect(repository.succeed).not.toHaveBeenCalled();
     expect(repository.fail).toHaveBeenCalledWith(requestId, "duplicate_output", null);
   });

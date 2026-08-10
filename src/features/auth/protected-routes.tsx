@@ -1,4 +1,5 @@
 import { Navigate, Outlet, useLocation } from "react-router";
+import { LivePendingMain } from "@/shared/ui/feedback";
 import { useAuthLoadingDeadline } from "./use-auth-loading-deadline";
 import { useAuth } from "./use-auth";
 import { sanitizeReturnPath } from "./auth-flow";
@@ -9,12 +10,8 @@ export function RequireSession() {
   const { showLoading, loadingTimedOut } = useAuthLoadingDeadline(auth.status);
 
   if (showLoading) {
-    // L6: RootGate / Welcome / RootEntry の pending と同型。保護 deep-link の C5 待ちを SR に通知
-    return (
-      <main className="page-frame" aria-busy="true" aria-live="polite">
-        ログイン状態を確認しています…
-      </main>
-    );
+    // L6/L10: RootGate / Welcome / RootEntry の pending と同型。保護 deep-link の C5 待ちを SR に通知
+    return <LivePendingMain message="ログイン状態を確認しています…" />;
   }
   // L1: C5 15s 超過の loading も未ログインとして login へ（AuthProvider 主経路の二次防衛）
   if (loadingTimedOut || auth.status === "unauthenticated" || auth.session === null) {

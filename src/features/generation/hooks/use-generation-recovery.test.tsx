@@ -638,6 +638,47 @@ describe("useGenerationRecovery", () => {
     }
   });
 
+  // G16: hidden 中に retry 無しで attempt を進めると復帰後の間隔が 60s まで伸びる。
+  // skip した tick では attempt を据え置き、復帰後は base 5s で再試行する。
+  it("G16: offline backoff does not advance attempts while document.hidden without retry", async () => {
+    vi.useFakeTimers();
+    let hidden = true;
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      enumerable: true,
+      get: () => hidden,
+    });
+    try {
+      mockStatus.mockRejectedValue(new Error("transport"));
+      realPendingGeneration.savePendingGeneration(pendingA, storage);
+      renderRecoveryAt(offlineState, pendingA);
+      mockStatus.mockClear();
+
+      // 長時間 hidden: バグ実装だと attempt が最大へ進み次 delay=60s になる。
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200_000);
+        await flushPromises();
+      });
+      expect(mockStatus).not.toHaveBeenCalled();
+
+      // visibilitychange は飛ばさず timer 経路だけを検証する。
+      hidden = false;
+      mockStatus.mockResolvedValue(processingA);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+        await flushPromises();
+      });
+      expect(mockStatus).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        enumerable: true,
+        get: () => false,
+      });
+      vi.useRealTimers();
+    }
+  });
+
   it.each([new Error("transport"), new Error("auth")])(
     "keeps current pending offline after %s and permits later status recovery",
     async (error) => {
@@ -684,6 +725,64 @@ describe("useGenerationRecovery", () => {
   });
 
   it("keeps constraint_conflict UI after pending clear when TOKEN_REFRESHED fires", async () => {
+    const recovery = renderHook(
+      () =>
+        useGenerationRecovery({
+          state: constraintConflictState,
+          token: {
+            ownerUserId: USER_ID,
+            idempotencyKey: KEY_A,
+            epoch: 0,
+            phase: "constraint_conflict",
+          },
+        }),
+      { wrapper: recoveryWrapper },
+    );
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    await act(async () => {
+      emitAuth("TOKEN_REFRESHED", { user: { id: USER_ID } } as Session);
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("constraint_conflict");
+    expect(recovery.result.current.state).toMatchObject(constraintConflictState);
+    expect(mockStatus).not.toHaveBeenCalled();
+    expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
+  });
+
+  // G15: サーバ終端はメッセージ表示のため pending を保持する。pending 残存中の
+  // online / TOKEN_REFRESHED でも checking thrash しない（C1 は clear 後のみ固定）。
+  it("G15: keeps failed UI with pending still present when window online fires", async () => {
+    realPendingGeneration.savePendingGeneration(pendingA, storage);
+    mockStatus.mockResolvedValue(failedA);
+    const recovery = renderHook(
+      () =>
+        useGenerationRecovery({
+          state: failedState,
+          token: {
+            ownerUserId: USER_ID,
+            idempotencyKey: KEY_A,
+            epoch: 0,
+            phase: "failed",
+          },
+        }),
+      { wrapper: recoveryWrapper },
+    );
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("failed");
+    expect(recovery.result.current.state).toMatchObject(failedState);
+    expect(mockStatus).not.toHaveBeenCalled();
+    expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
+  });
+
+  it("G15: keeps constraint_conflict UI with pending when TOKEN_REFRESHED fires", async () => {
+    realPendingGeneration.savePendingGeneration(pendingA, storage);
+    mockStatus.mockResolvedValue(constraintConflictA);
     const recovery = renderHook(
       () =>
         useGenerationRecovery({

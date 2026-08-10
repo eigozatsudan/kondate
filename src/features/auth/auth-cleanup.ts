@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/shared/types/database";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
 import { withTimeout } from "./async-timeout";
-import { clearOwnedAuthStorage } from "./auth-flow";
+import { clearBrowserSupabaseSessionStorage, clearOwnedAuthStorage } from "./auth-flow";
 
 export type ClearLocalAuthOptions = {
   /**
@@ -100,6 +100,50 @@ export function clearOwnedLocalDataBestEffort(): void {
       continue;
     }
     for (const key of keys) {
+      if (!isOwnedBrowserStorageKey(key)) continue;
+      try {
+        storage.removeItem(key);
+      } catch {
+        // 1 キー失敗で他キー掃除を止めない
+      }
+    }
+  }
+}
+
+/**
+ * soft 失効（authenticated → session null）専用の残渣掃除（C7）。
+ *
+ * free-form 草稿・feedback・session 永続・マジックリンク UI は消すが、
+ * `kondate.auth.flow.*` / pending-deposit / completion / callback-owner 等の
+ * continuation 系は温存する（cold-start RR1 と同型の「進行中ログイン優先」）。
+ *
+ * 明示 logout / アカウント削除の second pass（clearOwnedLocalDataBestEffort）とは非対称。
+ * 共有端末で secret を残す residual は明示 logout 経路で閉じる。
+ */
+export function clearSoftSessionResidualBestEffort(): void {
+  for (const storage of [localStorage, sessionStorage]) {
+    // session 永続のみ（flow secret は触らない）
+    try {
+      clearBrowserSupabaseSessionStorage(storage);
+    } catch {
+      // best-effort
+    }
+    for (const key of MAGIC_LINK_RESIDUAL_KEYS) {
+      try {
+        storage.removeItem(key);
+      } catch {
+        // 個別キー失敗は許容
+      }
+    }
+    let keys: string[] = [];
+    try {
+      keys = Object.keys(storage);
+    } catch {
+      continue;
+    }
+    for (const key of keys) {
+      // kondate.auth.* の continuation 系は残す（C7）
+      if (key.startsWith("kondate.auth.")) continue;
       if (!isOwnedBrowserStorageKey(key)) continue;
       try {
         storage.removeItem(key);

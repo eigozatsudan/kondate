@@ -37,12 +37,18 @@ export type PlannerFieldName =
  * 呼び出し側（route/wizard）はこの結果をそのままstep遷移先として使うため、
  * ここで判定した回答済みフィールドの値そのものは変更しない
  * （「resumes ... without losing answers」の前提）。
+ *
+ * eligibleMemberIds を渡すと household の対象が現行 eligibility に含まれるかも見る（P7）。
+ * strip effect 前の CTA 偽有効を review / 編集戻りで抑止する。
  */
-export function firstIncompletePlannerStep(draft: PlannerDraftInput): PlannerStep {
+export function firstIncompletePlannerStep(
+  draft: PlannerDraftInput,
+  eligibleMemberIds?: ReadonlySet<string>,
+): PlannerStep {
   if (draft.mealType === null) return "meal";
   if (draft.mainIngredients.length === 0) return "ingredients";
   if (draft.cuisineGenre === null) return "cuisine";
-  if (!isAudienceComplete(draft)) return "audience";
+  if (!isAudienceComplete(draft, eligibleMemberIds)) return "audience";
   return "review";
 }
 
@@ -50,12 +56,39 @@ export function firstIncompletePlannerStep(draft: PlannerDraftInput): PlannerSte
  * audience（対象家族/人数）の回答が完成しているかどうかを判定する。
  * shared/contracts/planner.tsのrefineTargetAndServingsが強制する不変条件
  * （household: 対象1人以上・servings未指定 / idea: 対象0人・servings必須）
- * をUI側のresume判定にもそのまま反映させる。
+ * をUI側のresume判定・確認CTA・編集戻りガードにもそのまま反映させる（P2/P8）。
+ *
+ * eligibleMemberIds を渡した household では、選択 ID がすべて eligibility 内であることも要求する（P7）。
+ * 省略時は length のみ（hydrate / route strip 前の単純 resume 用）。
  */
-function isAudienceComplete(draft: PlannerDraftInput): boolean {
-  if (draft.targetMode === "household") return draft.targetMemberIds.length > 0;
+export function isAudienceComplete(
+  draft: PlannerDraftInput,
+  eligibleMemberIds?: ReadonlySet<string>,
+): boolean {
+  if (draft.targetMode === "household") {
+    if (draft.targetMemberIds.length === 0) return false;
+    if (eligibleMemberIds !== undefined) {
+      return draft.targetMemberIds.every((id) => eligibleMemberIds.has(id));
+    }
+    return true;
+  }
   if (draft.targetMode === "idea") return draft.servings !== null;
   return false;
+}
+
+/**
+ * audience を mode 未選択の整合形へ中立化する（P3）。
+ * idea↔household 切替直後の incomplete を RPC 可能な形に落とし、
+ * サーバに旧 complete mode が残り続けるのを防ぐ。
+ * meal/ingredients 等の他フィールドは保持する。
+ */
+export function neutralizeAudienceForPersistence(draft: PlannerDraftInput): PlannerDraftInput {
+  return {
+    ...draft,
+    targetMode: null,
+    targetMemberIds: [],
+    servings: null,
+  };
 }
 
 /**

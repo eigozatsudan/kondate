@@ -16,9 +16,7 @@ import {
   clearShoppingCommand,
   createShoppingList,
   fetchActiveShoppingList,
-  pendingShoppingCommandEnvelopeSchema,
-  pendingShoppingCommandStorageKey,
-  pendingShoppingCommandTtlMs,
+  readPendingShoppingCommand,
   reconcileShoppingListRequest,
   revalidateActiveShoppingList,
 } from "../api/shopping-api";
@@ -264,11 +262,17 @@ export type ResumeShoppingCommandOptions<T> = {
   enabled?: boolean;
 };
 
+/** SHOP8: 同一 kind+target の resume POST をタブ間で直列化する Web Locks 名 */
+export const shoppingResumeClaimLockName = (kind: "create" | "reconcile", targetId: string) =>
+  `kondate:shopping:resume:${kind}:${targetId}`;
+
 /**
  * 送信済みかどうか分からない create / reconcile を、再読込・復帰・オンライン復帰の
  * いずれでも「同じバイト列・同じ idempotency key」で高々1本だけ再送する。
  * 成功（応答の parse と使用中リストの読み直し）が済むまで記録は消さない。
  * enabled=false のあいだは送信せず pending を保持する（safety gate と dual-gate）。
+ * SHOP8: 同一 sticky の multi-tab 並行 resume は Web Locks で直列化し、
+ * finish/fail/navigate の競合を抑える（サーバ冪等は維持、クライアント UX を安定化）。
  */
 export function useResumeShoppingCommand<T>({
   kind,
@@ -279,35 +283,36 @@ export function useResumeShoppingCommand<T>({
 }: ResumeShoppingCommandOptions<T>) {
   const inFlight = useRef(false);
   const submitRef = useRef(submit);
+  // enabled も ref で保持し、ロック待ち後に最新値を再確認する（クロージャ固定値では再確認にならない）。
+  const enabledRef = useRef(enabled);
   // 描画中に ref を書き換えない（破棄される並行描画でも書き換わってしまうため）。
   useEffect(() => {
     submitRef.current = submit;
   }, [submit]);
+  useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
 
   const resume = useCallback(async () => {
     // HR9: actionsEnabled 等が false のときは送らず pending を残す
     if (!enabled || inFlight.current || targetId === null) return;
-    const key = pendingShoppingCommandStorageKey(kind, targetId);
-    const saved = sessionStorage.getItem(key);
-    if (saved === null) return;
-    // 壊れた記録・時計が巻き戻った記録・24時間超の記録は、送信する前に必ず捨てる。
-    let command: T | null = null;
-    try {
-      const parsed = pendingShoppingCommandEnvelopeSchema(schema).safeParse(JSON.parse(saved));
-      if (parsed.success) {
-        const age = Date.now() - parsed.data.createdAtMs;
-        if (age >= 0 && age <= pendingShoppingCommandTtlMs) command = parsed.data.command;
-      }
-    } catch {
-      command = null;
-    }
-    if (command === null) {
-      sessionStorage.removeItem(key);
-      return;
-    }
+    const run = async (): Promise<void> => {
+      // ロック取得後にも enabled / sticky を再確認（待ち行列中の無効化・clear に追従）
+      if (!enabledRef.current) return;
+      // SHOP3: local 正本を先に読む（他タブの失応答 sticky も同じ key で再送）。
+      // 壊れた / TTL 超過 / 時計巻き戻しは read 側で当該 Storage から掃除済み。
+      const command = readPendingShoppingCommand(kind, targetId, schema);
+      if (command === null) return;
+      await submitRef.current(command);
+    };
     inFlight.current = true;
     try {
-      await submitRef.current(command);
+      const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+      if (locks !== undefined && typeof locks.request === "function") {
+        await locks.request(shoppingResumeClaimLockName(kind, targetId), () => run());
+      } else {
+        await run();
+      }
     } finally {
       inFlight.current = false;
     }

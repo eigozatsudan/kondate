@@ -27,6 +27,10 @@ describe("stored menu PostgREST query types", () => {
     expectTypeOf<
       StoredMenuSelectRow["menu_label_confirmations"][number]["source_text_snapshot"]
     >().toEqualTypeOf<string>();
+    // H3: is_current を select し map 側で non-current を落とす
+    expectTypeOf<
+      StoredMenuSelectRow["menu_label_confirmations"][number]["is_current"]
+    >().toEqualTypeOf<boolean>();
   });
 });
 /* eslint-enable @typescript-eslint/no-deprecated */

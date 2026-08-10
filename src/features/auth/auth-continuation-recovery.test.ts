@@ -170,6 +170,43 @@ describe("auth continuation recovery", () => {
     expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
   });
 
+  it("R2: does not call onComplete/onResult after stop during in-flight resumeFlow", async () => {
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    const storage = flowStorage([flowId]);
+    let resolveResume:
+      ((result: { kind: "complete"; flowId: string; returnTo: string }) => void) | undefined;
+    const gateway = {
+      resumeFlow: vi.fn(
+        () =>
+          new Promise<{ kind: "complete"; flowId: string; returnTo: string }>((resolve) => {
+            resolveResume = resolve;
+          }),
+      ),
+    };
+    const onComplete = vi.fn();
+    const onResult = vi.fn();
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete,
+      onResult,
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+    expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+    expect(resolveResume).toBeTypeOf("function");
+
+    // in-flight 中に cleanup（effect stop / policy 遷移）
+    stop();
+    resolveResume?.({ kind: "complete", flowId, returnTo: "/planner" });
+    await flushPromises();
+
+    // R2: stop 後の complete 副作用を捨てる（exchange abort はしないが onComplete は抑止）
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
   it("does not start a claim when cleanup runs before an acquired lock callback", async () => {
     const storage = new MapStorage();
     storage.setItem(

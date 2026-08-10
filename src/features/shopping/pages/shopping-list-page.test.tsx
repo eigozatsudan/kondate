@@ -8,6 +8,8 @@ import {
   householdSafetyRevisionStorageKey,
 } from "@/features/household/household-queries";
 import {
+  createShoppingListRequestSchema,
+  reconcileShoppingListRequestSchema,
   shoppingItemMutationRequestSchema,
   type ShoppingDiff,
   type ShoppingItem,
@@ -23,15 +25,24 @@ import { shoppingKeys, useResumeShoppingCommand } from "../hooks/use-shopping-li
 import { categoryLabel } from "../category-label";
 import { ShoppingListPage } from "./shopping-list-page";
 import {
+  claimItemMutationSticky,
+  claimShoppingCommand,
   clearPendingItemMutation,
   clearShoppingCommand,
   fetchReconcilableMenuSource,
+  isCreateShoppingStickyReusable,
+  isReconcileShoppingStickyReusable,
+  pendingItemMutationClaimLockName,
   pendingItemMutationStorageKey,
+  pendingShoppingCommandClaimLockName,
   pendingShoppingCommandStorageKey,
   pendingShoppingCommandTtlMs,
   persistedShoppingCommand,
   readPendingItemMutation,
+  readPendingShoppingCommand,
+  reconcileCommandTargetId,
   writePendingItemMutation,
+  type PendingItemMutationSticky,
 } from "../api/shopping-api";
 import { historyPathForShopping } from "../shopping-intent";
 import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
@@ -1048,6 +1059,75 @@ describe("ShoppingListPage mutations", () => {
     expect(mutateShoppingItem.mock.calls[1]?.[0]).toEqual(mutateShoppingItem.mock.calls[0]?.[0]);
   });
 
+  it("rebuilds sticky expectedSafetyFingerprint on same key after household FP change (SHOP3)", async () => {
+    // 適用済み+応答ロスト後に sticky が旧 FP を固定し、SHOP10 early が reject し続ける穴。
+    // preflight の live FP へ同一 key で書き戻して再送する。
+    // intentKey は form が組み立てる payload（既定 storeSection=other 等）と一致させる。
+    const stickyRequest = shoppingItemMutationRequestSchema.parse({
+      operation: "add_manual",
+      itemId: null,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey: "40000000-0000-4000-8000-0000000000c3",
+      payload: {
+        displayName: "大根",
+        normalizedName: "大根",
+        storeSection: "other",
+        quantityValue: null,
+        quantityText: "1本",
+        unit: null,
+        pantryCheckRequired: false,
+      },
+    });
+    const intentKey = JSON.stringify({
+      operation: "add_manual",
+      itemId: null,
+      payload: stickyRequest.payload,
+    });
+    writePendingItemMutation(LIST_ID, { intentKey, request: stickyRequest });
+    await renderPage(makeShoppingList([makeItem()]));
+    // gate ready 後の preflight だけ live FP を新値に（renderPage 既定は FINGERPRINT）
+    revalidateActiveShoppingList.mockResolvedValue(validSafety(NEXT_FINGERPRINT));
+    mutateShoppingItem.mockResolvedValueOnce({
+      listId: LIST_ID,
+      version: 2,
+      itemId: "40000000-0000-4000-8000-0000000000c4",
+      replayed: false,
+    });
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "大根");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1本");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
+    });
+    const sent = mutateShoppingItem.mock.calls[0]?.[0];
+    expect(sent?.idempotencyKey).toBe(stickyRequest.idempotencyKey);
+    expect(sent?.expectedSafetyFingerprint).toBe(NEXT_FINGERPRINT);
+    expect(sent?.expectedListVersion).toBe(1);
+  });
+
+  it("abandons form after idempotency_payload_mismatch so FP-rebuild dual-add is avoided (SHOP3)", async () => {
+    // FP rebuild 後に適用済み hash mismatch → sticky を捨てフォームも閉じる。
+    mutateShoppingItem.mockRejectedValueOnce(
+      Object.assign(new Error("mismatch"), { code: "idempotency_payload_mismatch" }),
+    );
+    await renderPage(makeShoppingList([makeItem()]));
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "白菜");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1/4個");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("反映済みの可能性");
+    });
+    expect(readPendingItemMutation(LIST_ID)).toBeNull();
+    // フォーム abandon: 同じ内容の新 key 再送を誘発しない
+    expect(screen.queryByLabelText("項目名")).toBeNull();
+  });
+
   it("reuses item mutation sticky from sessionStorage after remount (SHOP2)", async () => {
     const stickyRequest = shoppingItemMutationRequestSchema.parse({
       operation: "add_manual",
@@ -1246,6 +1326,28 @@ describe("CreateListSheet", () => {
     expect(
       screen.getByText(/新しいリストにすると、いまの買い物リスト（4件）は消えます/u),
     ).toBeInTheDocument();
+  });
+
+  it("disables append and defaults to new when reconcilable (SHOP4)", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <CreateListSheet
+        activeList={{ id: LIST_ID, version: 3, itemCount: 4 }}
+        pending={false}
+        safetyBlocked={false}
+        disableAppend
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/今のリストへ追加/u)).toBeDisabled();
+    expect(screen.getByText(/買い物リストの差分を見る/u)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "作成する" }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      mode: "new",
+      activeListId: LIST_ID,
+      expectedListVersion: 3,
+    });
   });
 
   it("submits a new list with null expectations when none is active", async () => {
@@ -1526,6 +1628,143 @@ describe("persistedShoppingCommand", () => {
     expect(second).toEqual(first);
   });
 
+  it("reuses create sticky when only list version / activeListId advanced (SHOP1 sheet re-submit)", () => {
+    // 適用済み create + 応答ロスト後、list version と activeListId は進む。
+    // mode が同じなら key+body を固定し server early-replay に当てる（新 key dual-create を防ぐ）。
+    const OLD_LIST_ID = "40000000-0000-4000-8000-0000000000a1";
+    const NEW_LIST_ID = "40000000-0000-4000-8000-0000000000a2";
+    const first = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      createShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "new" as const,
+        activeListId: OLD_LIST_ID,
+        expectedListVersion: 1,
+        idempotencyKey,
+      }),
+    );
+    const second = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      createShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "new" as const,
+        // sheet は現在の active を渡すが、sticky 再利用時は旧 body のまま返す
+        activeListId: NEW_LIST_ID,
+        expectedListVersion: 2,
+        idempotencyKey,
+      }),
+      (saved) => isCreateShoppingStickyReusable(saved, { mode: "new" }),
+    );
+    expect(second).toEqual(first);
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    expect(second.expectedListVersion).toBe(1);
+    expect(second.activeListId).toBe(OLD_LIST_ID);
+  });
+
+  it("discards create sticky when mode changes even if version matches (SHOP6 via SHOP1 helper)", () => {
+    const first = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      createShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "append" as const,
+        activeListId: LIST_ID,
+        expectedListVersion: 3,
+        idempotencyKey,
+      }),
+    );
+    const rebuilt = persistedShoppingCommand(
+      "create",
+      MENU_ID,
+      createShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        menuId: MENU_ID,
+        mode: "new" as const,
+        activeListId: LIST_ID,
+        expectedListVersion: 3,
+        idempotencyKey,
+      }),
+      (saved) => isCreateShoppingStickyReusable(saved, { mode: "new" }),
+    );
+    expect(rebuilt.mode).toBe("new");
+    expect(rebuilt.idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
+  it("reuses reconcile sticky when only expectedListVersion advanced (SHOP1 sheet re-submit)", () => {
+    const first = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+      }),
+    );
+    const second = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 4,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+      }),
+      (saved) =>
+        isReconcileShoppingStickyReusable(saved, {
+          sourceMenuId: MENU_ID,
+          sourceMenuVersion: 2,
+          approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+        }),
+    );
+    expect(second).toEqual(first);
+    expect(second.expectedListVersion).toBe(3);
+  });
+
+  it("discards reconcile sticky when approval changes (SHOP6 via SHOP1 helper)", () => {
+    const first = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+      }),
+    );
+    const rebuilt = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["b"], replaceItemIds: [], removeItemIds: [] },
+      }),
+      (saved) =>
+        isReconcileShoppingStickyReusable(saved, {
+          sourceMenuId: MENU_ID,
+          sourceMenuVersion: 2,
+          approval: { addKeys: ["b"], replaceItemIds: [], removeItemIds: [] },
+        }),
+    );
+    expect(rebuilt.approval.addKeys).toEqual(["b"]);
+    expect(rebuilt.idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
   it("clears and never sends a record older than 24 hours by one millisecond", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
@@ -1552,6 +1791,96 @@ describe("persistedShoppingCommand", () => {
     expect(command.menuId).toBe(MENU_ID);
     clearShoppingCommand("create", MENU_ID);
     expect(sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID))).toBeNull();
+    expect(localStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID))).toBeNull();
+  });
+
+  it("writes create sticky to localStorage so another tab reuses the same key (SHOP3)", () => {
+    const first = persistedShoppingCommand("create", MENU_ID, schema, build);
+    const key = pendingShoppingCommandStorageKey("create", MENU_ID);
+    expect(localStorage.getItem(key)).not.toBeNull();
+    expect(sessionStorage.getItem(key)).not.toBeNull();
+    // Tab B: session 空、local だけ残る
+    sessionStorage.removeItem(key);
+    const fromOtherTab = readPendingShoppingCommand("create", MENU_ID, schema);
+    expect(fromOtherTab).toEqual(first);
+    // promote 後 session にも戻る
+    expect(sessionStorage.getItem(key)).not.toBeNull();
+  });
+
+  it("reuses localStorage create sticky via persistedShoppingCommand (SHOP3 multi-tab mint)", () => {
+    const first = persistedShoppingCommand("create", MENU_ID, schema, build);
+    sessionStorage.removeItem(pendingShoppingCommandStorageKey("create", MENU_ID));
+    const second = persistedShoppingCommand("create", MENU_ID, schema, build);
+    expect(second).toEqual(first);
+  });
+
+  it("builds reconcile sticky target as listId:sourceMenuId (SHOP9)", () => {
+    expect(reconcileCommandTargetId(LIST_ID, MENU_ID)).toBe(`${LIST_ID}:${MENU_ID}`);
+  });
+});
+
+describe("claimShoppingCommand (SHOP2 pre-write concurrent mint)", () => {
+  afterEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  const schema = z.object({ menuId: z.uuid(), idempotencyKey: z.uuid() }).strict();
+
+  it("serializes concurrent first claims via Web Locks so both tabs share one key", async () => {
+    type Claimed = { menuId: string; idempotencyKey: string };
+    type LockRequest = {
+      name: string;
+      callback: () => Claimed;
+      resolve: (value: Claimed) => void;
+      reject: (reason?: unknown) => void;
+    };
+    const queue: LockRequest[] = [];
+    let running = false;
+    const pump = () => {
+      if (running) return;
+      const next = queue.shift();
+      if (next === undefined) return;
+      running = true;
+      void Promise.resolve()
+        .then(() => next.callback())
+        .then((value) => {
+          next.resolve(value);
+        })
+        .catch((error: unknown) => {
+          next.reject(error);
+        })
+        .finally(() => {
+          running = false;
+          pump();
+        });
+    };
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: (name: string, callback: () => Claimed) =>
+          new Promise<Claimed>((resolve, reject) => {
+            expect(name).toBe(pendingShoppingCommandClaimLockName("create", MENU_ID));
+            queue.push({ name, callback, resolve, reject });
+            pump();
+          }),
+      },
+    });
+
+    const [a, b] = await Promise.all([
+      claimShoppingCommand("create", MENU_ID, schema, () => ({
+        menuId: MENU_ID,
+        idempotencyKey: "40000000-0000-4000-8000-0000000000a1",
+      })),
+      claimShoppingCommand("create", MENU_ID, schema, () => ({
+        menuId: MENU_ID,
+        idempotencyKey: "40000000-0000-4000-8000-0000000000b1",
+      })),
+    ]);
+    expect(a.idempotencyKey).toBe(b.idempotencyKey);
+    expect(readPendingShoppingCommand("create", MENU_ID, schema)?.idempotencyKey).toBe(
+      a.idempotencyKey,
+    );
   });
 });
 
@@ -1597,14 +1926,19 @@ describe("useResumeShoppingCommand", () => {
   const command: ResumeCommand = { menuId: MENU_ID, idempotencyKey: IDEMPOTENCY_KEY };
   const storageKey = pendingShoppingCommandStorageKey("create", MENU_ID);
   const seed = (createdAtMs: number) => {
-    sessionStorage.setItem(storageKey, JSON.stringify({ createdAtMs, command }));
+    // SHOP3: resume は local 正本も読む。両 Storage を揃えて seed する。
+    const raw = JSON.stringify({ createdAtMs, command });
+    sessionStorage.setItem(storageKey, raw);
+    localStorage.setItem(storageKey, raw);
   };
 
   beforeEach(() => {
     sessionStorage.clear();
+    localStorage.clear();
   });
   afterEach(() => {
     sessionStorage.clear();
+    localStorage.clear();
   });
 
   it("replays a committed but lost command byte-identically without a second user click", async () => {
@@ -1656,6 +1990,7 @@ describe("useResumeShoppingCommand", () => {
 
     await waitFor(() => {
       expect(sessionStorage.getItem(storageKey)).toBeNull();
+      expect(localStorage.getItem(storageKey)).toBeNull();
     });
     expect(submit).not.toHaveBeenCalled();
   });
@@ -1670,12 +2005,14 @@ describe("useResumeShoppingCommand", () => {
 
     await waitFor(() => {
       expect(sessionStorage.getItem(storageKey)).toBeNull();
+      expect(localStorage.getItem(storageKey)).toBeNull();
     });
     expect(submit).not.toHaveBeenCalled();
   });
 
   it("discards and never sends a corrupt record", async () => {
     sessionStorage.setItem(storageKey, "{ not json");
+    localStorage.setItem(storageKey, "{ not json");
     const submit = vi.fn<Submit>(() => Promise.resolve());
 
     renderHook(() =>
@@ -1684,8 +2021,24 @@ describe("useResumeShoppingCommand", () => {
 
     await waitFor(() => {
       expect(sessionStorage.getItem(storageKey)).toBeNull();
+      expect(localStorage.getItem(storageKey)).toBeNull();
     });
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("resumes from localStorage-only sticky written by another tab (SHOP3)", async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ createdAtMs: Date.now(), command }));
+    sessionStorage.removeItem(storageKey);
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+
+    renderHook(() =>
+      useResumeShoppingCommand({ kind: "create", targetId: MENU_ID, schema, submit }),
+    );
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+    expect(JSON.stringify(submit.mock.calls[0]?.[0])).toBe(JSON.stringify(command));
   });
 
   it("reads no record at all when there is no target", async () => {
@@ -1783,6 +2136,167 @@ describe("useResumeShoppingCommand", () => {
     await waitFor(() => {
       expect(submit).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("claimItemMutationSticky (SHOP6 pre-write concurrent mint)", () => {
+  afterEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  const buildRequest = (idempotencyKey: string) =>
+    shoppingItemMutationRequestSchema.parse({
+      operation: "add_manual",
+      itemId: null,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey,
+      payload: {
+        displayName: "にんじん",
+        normalizedName: "にんじん",
+        storeSection: "produce",
+        quantityValue: 1,
+        quantityText: "1本",
+        unit: "本",
+        pantryCheckRequired: false,
+      },
+    });
+
+  it("reuses existing sticky for the same intentKey without minting", async () => {
+    const existing = buildRequest("40000000-0000-4000-8000-0000000000c1");
+    writePendingItemMutation(LIST_ID, {
+      intentKey: "intent-a",
+      request: existing,
+    });
+    const claimed = await claimItemMutationSticky(LIST_ID, "intent-a", () =>
+      buildRequest(crypto.randomUUID()),
+    );
+    expect(claimed.request.idempotencyKey).toBe(existing.idempotencyKey);
+  });
+
+  it("serializes concurrent first claims via Web Locks so both tabs share one key", async () => {
+    // navigator.locks を簡易直列キューでモックし、両タブ同時 mint が同一 key になることを固定
+    type LockRequest = {
+      name: string;
+      callback: () => PendingItemMutationSticky | Promise<PendingItemMutationSticky>;
+      resolve: (value: PendingItemMutationSticky) => void;
+      reject: (reason?: unknown) => void;
+    };
+    const queue: LockRequest[] = [];
+    let running = false;
+    const pump = () => {
+      if (running) return;
+      const next = queue.shift();
+      if (next === undefined) return;
+      running = true;
+      void Promise.resolve()
+        .then(() => next.callback())
+        .then((value) => {
+          next.resolve(value);
+        })
+        .catch((error: unknown) => {
+          next.reject(error);
+        })
+        .finally(() => {
+          running = false;
+          pump();
+        });
+    };
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: (name: string, callback: () => PendingItemMutationSticky) =>
+          new Promise<PendingItemMutationSticky>((resolve, reject) => {
+            expect(name).toBe(pendingItemMutationClaimLockName(LIST_ID));
+            queue.push({ name, callback, resolve, reject });
+            pump();
+          }),
+      },
+    });
+
+    const intentKey = JSON.stringify({
+      operation: "add_manual",
+      itemId: null,
+      payload: { displayName: "にんじん" },
+    });
+    // 両タブが sticky 空の状態でほぼ同時に claim を開始
+    const [a, b] = await Promise.all([
+      claimItemMutationSticky(LIST_ID, intentKey, () =>
+        buildRequest("40000000-0000-4000-8000-0000000000a1"),
+      ),
+      claimItemMutationSticky(LIST_ID, intentKey, () =>
+        buildRequest("40000000-0000-4000-8000-0000000000b1"),
+      ),
+    ]);
+    // 直列化により後続は先勝ち sticky を再利用（別 UUID の dual mint にならない）
+    expect(a.request.idempotencyKey).toBe(b.request.idempotencyKey);
+    expect(readPendingItemMutation(LIST_ID)?.request.idempotencyKey).toBe(a.request.idempotencyKey);
+  });
+
+  it("falls back to write-then-reread when Web Locks is unavailable", async () => {
+    vi.stubGlobal("navigator", {});
+    const intentKey = "intent-fallback";
+    const claimed = await claimItemMutationSticky(LIST_ID, intentKey, () =>
+      buildRequest("40000000-0000-4000-8000-0000000000f1"),
+    );
+    expect(claimed.intentKey).toBe(intentKey);
+    expect(readPendingItemMutation(LIST_ID)?.request.idempotencyKey).toBe(
+      "40000000-0000-4000-8000-0000000000f1",
+    );
+  });
+
+  it("does not clobber foreign intent sticky when claiming a different intent (SHOP2)", async () => {
+    // Tab A add_manual 失応答後、Tab B が set_checked しても A の key が残ること。
+    // 単 slot 上書きだと A 再試行が新 UUID → dual-add になる。
+    const intentA = "intent-add-tofu";
+    const intentB = "intent-set-checked";
+    const stickyA = buildRequest("40000000-0000-4000-8000-0000000000a1");
+    writePendingItemMutation(LIST_ID, { intentKey: intentA, request: stickyA });
+
+    const claimedB = await claimItemMutationSticky(LIST_ID, intentB, () =>
+      shoppingItemMutationRequestSchema.parse({
+        operation: "set_checked",
+        itemId: ITEM_ID,
+        listId: LIST_ID,
+        expectedListVersion: 1,
+        expectedSafetyFingerprint: FINGERPRINT,
+        idempotencyKey: "40000000-0000-4000-8000-0000000000b1",
+        payload: { isChecked: true },
+      }),
+    );
+    expect(claimedB.intentKey).toBe(intentB);
+    expect(claimedB.request.idempotencyKey).toBe("40000000-0000-4000-8000-0000000000b1");
+    // 異 intent の slot は残る
+    expect(readPendingItemMutation(LIST_ID, intentA)?.request.idempotencyKey).toBe(
+      stickyA.idempotencyKey,
+    );
+    // 元 intent の再 claim は新 UUID を mint せず A を返す
+    const reclaimedA = await claimItemMutationSticky(LIST_ID, intentA, () =>
+      buildRequest(crypto.randomUUID()),
+    );
+    expect(reclaimedA.request.idempotencyKey).toBe(stickyA.idempotencyKey);
+  });
+
+  it("clears only the targeted intent slot leaving foreign sticky intact (SHOP2)", () => {
+    const requestA = buildRequest("40000000-0000-4000-8000-0000000000a2");
+    const requestB = shoppingItemMutationRequestSchema.parse({
+      operation: "set_checked",
+      itemId: ITEM_ID,
+      listId: LIST_ID,
+      expectedListVersion: 1,
+      expectedSafetyFingerprint: FINGERPRINT,
+      idempotencyKey: "40000000-0000-4000-8000-0000000000b2",
+      payload: { isChecked: true },
+    });
+    writePendingItemMutation(LIST_ID, { intentKey: "intent-a", request: requestA });
+    writePendingItemMutation(LIST_ID, { intentKey: "intent-b", request: requestB });
+    clearPendingItemMutation(LIST_ID, "intent-a");
+    expect(readPendingItemMutation(LIST_ID, "intent-a")).toBeNull();
+    expect(readPendingItemMutation(LIST_ID, "intent-b")?.request.idempotencyKey).toBe(
+      requestB.idempotencyKey,
+    );
   });
 });
 

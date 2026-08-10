@@ -50,7 +50,11 @@ type ClaimTransitionInput = {
   origin: string;
   now: string;
 };
-/** claim 成功時の payload。RPC が行を返した後に読めない場合は "gone"（ciphertext は既に burned）。 */
+/**
+ * claim 成功時の payload。
+ * C3: RPC は ciphertext を expires_at まで保持し冪等 re-claim する。
+ * 行を返した後に bytea/IV が読めない場合だけ "gone"（破損等。burn 消去ではない）。
+ */
 type ClaimTransitionResult = { ciphertext: Uint8Array; iv: Uint8Array; returnTo: string };
 type ClaimTransition = (
   input: ClaimTransitionInput,
@@ -160,7 +164,7 @@ export function createHandler(
       });
       // claim 前の未存在・binding 不一致・未 deposit は 404（クライアントはリトライ可）
       if (result === null) return continuationUnavailable();
-      // RPC は成功したが payload（bytea）が読めない — 旧 burn 行や破損 → 410
+      // RPC は成功したが payload（bytea）が読めない — 破損等 → 410（C3: burn 消去ではない）
       if (result === "gone") return continuationGone();
       // decrypt / 応答検証失敗は 404 だとクライアントが無限リトライするため 410 で terminal。
       try {

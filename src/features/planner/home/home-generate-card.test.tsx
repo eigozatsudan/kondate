@@ -42,4 +42,27 @@ describe("HomeGenerateCard", () => {
     await user.click(screen.getByRole("button", { name: "作成中の献立を続ける" }));
     expect(onResumePending).toHaveBeenCalledTimes(1);
   });
+
+  it("P9: remainingToday===0 では新規開始 CTA を無効化し再開は残す", async () => {
+    const user = userEvent.setup();
+    const onStart = vi.fn();
+    const onResumePending = vi.fn();
+    const { rerender } = render(<HomeGenerateCard remainingToday={0} onStart={onStart} />);
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "今日の献立をつくる" }));
+    expect(onStart).not.toHaveBeenCalled();
+
+    rerender(
+      <HomeGenerateCard
+        remainingToday={0}
+        onStart={onStart}
+        hasResumablePending
+        onResumePending={onResumePending}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "作成中の献立を続ける" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "作成中の献立を続ける" }));
+    expect(onResumePending).toHaveBeenCalledTimes(1);
+  });
 });

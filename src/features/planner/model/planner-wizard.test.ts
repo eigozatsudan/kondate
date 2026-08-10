@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
 import {
   firstIncompletePlannerStep,
+  isAudienceComplete,
   mapPlannerIssuePathToField,
+  neutralizeAudienceForPersistence,
   normalizeAudienceForModeChange,
 } from "./planner-wizard";
 
@@ -89,6 +91,18 @@ describe("firstIncompletePlannerStep", () => {
       }),
     ).toBe("review");
   });
+
+  it("P5: eligible set が無いと blocked 選択でも review、渡すと audience", () => {
+    const memberId = completeQuestionAnswers.targetMemberIds[0] ?? "missing";
+    // 省略時は length のみ → home/resume が review に着地し得る
+    expect(firstIncompletePlannerStep(completeQuestionAnswers)).toBe("review");
+    // eligible を渡すと blocked ID は audience（home start の incomplete 判定と一致）
+    expect(firstIncompletePlannerStep(completeQuestionAnswers, new Set())).toBe("audience");
+    expect(firstIncompletePlannerStep(completeQuestionAnswers, new Set(["other"]))).toBe(
+      "audience",
+    );
+    expect(firstIncompletePlannerStep(completeQuestionAnswers, new Set([memberId]))).toBe("review");
+  });
 });
 
 describe("mapPlannerIssuePathToField", () => {
@@ -119,6 +133,62 @@ describe("mapPlannerIssuePathToField", () => {
 
   it("returns null for an empty path", () => {
     expect(mapPlannerIssuePathToField([])).toBeNull();
+  });
+});
+
+describe("isAudienceComplete", () => {
+  it("household は1人以上で完成、0人は未完成", () => {
+    expect(isAudienceComplete(completeQuestionAnswers)).toBe(true);
+    expect(isAudienceComplete({ ...completeQuestionAnswers, targetMemberIds: [] })).toBe(false);
+  });
+
+  it("P7: eligibleMemberIds を渡すと非 eligible 選択は未完成", () => {
+    const memberId = completeQuestionAnswers.targetMemberIds[0] ?? "missing";
+    expect(isAudienceComplete(completeQuestionAnswers, new Set([memberId]))).toBe(true);
+    expect(isAudienceComplete(completeQuestionAnswers, new Set())).toBe(false);
+    expect(isAudienceComplete(completeQuestionAnswers, new Set(["other-id"]))).toBe(false);
+  });
+
+  it("idea は servings 必須、null は未完成", () => {
+    expect(
+      isAudienceComplete({
+        ...completeQuestionAnswers,
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 2,
+      }),
+    ).toBe(true);
+    expect(
+      isAudienceComplete({
+        ...completeQuestionAnswers,
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("targetMode 未選択は未完成", () => {
+    expect(
+      isAudienceComplete({
+        ...completeQuestionAnswers,
+        targetMode: null,
+        targetMemberIds: [],
+        servings: null,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("neutralizeAudienceForPersistence", () => {
+  it("P3: meal 等を残しつつ audience だけ null/空へ中立化する", () => {
+    const next = neutralizeAudienceForPersistence(completeQuestionAnswers);
+    expect(next.mealType).toBe("dinner");
+    expect(next.mainIngredients).toEqual(["鶏肉"]);
+    expect(next.cuisineGenre).toBe("japanese");
+    expect(next.targetMode).toBeNull();
+    expect(next.targetMemberIds).toEqual([]);
+    expect(next.servings).toBeNull();
   });
 });
 

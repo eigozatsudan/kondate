@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  adjustedAuthNowMs,
+  authDeadlineRemainingMs,
+  browserSupabaseSessionStorageKey,
   clearAuthFlow,
+  clearBrowserSupabaseSessionStorage,
+  clearPendingAuthDeposit,
   ContinuationResponseLostError,
   createContinuationApi,
   createAuthFlow,
@@ -12,8 +17,10 @@ import {
   ownedAuthStoragePrefixes,
   readAuthContinuationCallbackStartedAt,
   readAuthFlow,
+  readPendingAuthDeposit,
   sanitizeLoginReturnPath,
   sanitizeReturnPath,
+  writePendingAuthDeposit,
 } from "./auth-flow";
 
 const fixedFlowDeps = {
@@ -41,6 +48,25 @@ describe("auth flow storage", () => {
   it("keeps the locked owned storage prefixes", () => {
     expect(ownedAuthStoragePrefixes).toEqual(["kondate.auth.flow.", "kondate.auth.supabase"]);
   });
+  it("RR1: clearBrowserSupabaseSessionStorage removes only the exact session key", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-0000000000bb";
+    storage.setItem(browserSupabaseSessionStorageKey, '{"access_token":"t"}');
+    storage.setItem(`kondate.auth.flow.${flowId}`, '{"id":"x"}');
+    storage.setItem(`kondate.auth.supabase.pending-deposit.${flowId}`, '{"code":"c"}');
+    storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, "2026-07-11T00:00:00.000Z");
+    storage.setItem("kondate.auth.supabase.continuation-complete", '{"flowId":"x"}');
+    storage.setItem("user-preference.theme", "dark");
+
+    clearBrowserSupabaseSessionStorage(storage);
+
+    expect(storage.getItem(browserSupabaseSessionStorageKey)).toBeNull();
+    expect(storage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
+    expect(storage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).not.toBeNull();
+    expect(storage.getItem(`kondate.auth.supabase.callback-owner.${flowId}`)).not.toBeNull();
+    expect(storage.getItem("kondate.auth.supabase.continuation-complete")).not.toBeNull();
+    expect(storage.getItem("user-preference.theme")).toBe("dark");
+  });
   it("accepts only same-origin path values", () => {
     expect(sanitizeReturnPath("/planner?resume=1")).toBe("/planner?resume=1");
     expect(sanitizeReturnPath("https://attacker.example")).toBe("/planner");
@@ -63,6 +89,16 @@ describe("auth flow storage", () => {
     expect(sanitizeLoginReturnPath("/login")).toBe("/welcome");
     expect(sanitizeLoginReturnPath("/auth/callback?flow=1")).toBe("/welcome");
     expect(sanitizeLoginReturnPath("/pantry")).toBe("/pantry");
+  });
+
+  it("C6: login self-return path covers trailing slash and hash variants", () => {
+    expect(isAuthSelfReturnPath("/login/")).toBe(true);
+    expect(isAuthSelfReturnPath("/login/#frag")).toBe(true);
+    expect(isAuthSelfReturnPath("/login#frag")).toBe(true);
+    expect(isAuthSelfReturnPath("/login/?next=1")).toBe(true);
+    expect(sanitizeLoginReturnPath("/login/")).toBe("/welcome");
+    expect(sanitizeLoginReturnPath("/login#x")).toBe("/welcome");
+    expect(isAuthSelfReturnPath("/login-help")).toBe(false);
   });
 
   it("U1-M1 rejects protocol-relative and embedded // when reading a tampered flow", () => {
@@ -283,20 +319,29 @@ describe("auth flow storage", () => {
     expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
   });
 
-  it("C6 keeps secret when client clock is ahead but skew-adjusted deadline remains", () => {
+  it("C6 keeps secret within server wall when local deadline would clear without skew", () => {
     const storage = new MapStorage();
     const flowId = "10000000-0000-4000-8000-000000000001";
-    // 壁時計は 00:10。startedAt/expires は 00:00〜00:05。skew=+10m なら adjusted now=00:00 で有効。
-    const skewMs = 10 * 60 * 1_000;
-    writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z", "2026-07-13T00:05:00.000Z", skewMs);
+    // local deadline 00:05、server 00:10。wall 00:06 は local 超過だが server 内。
+    // skew=+2m なら adjusted=00:04 で local 期限内 → 温存（C6）。
+    const skewMs = 2 * 60 * 1_000;
+    writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z", "2026-07-13T00:10:00.000Z", skewMs);
     expect(
-      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:10:00.000Z"), 300_000),
+      listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:06:00.000Z"), 300_000),
     ).toHaveLength(1);
     expect(readAuthFlow(flowId, storage)?.secret).toBe("A".repeat(43));
-    // skew 補正後もサーバ期限を超えたら消す
-    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:16:00.000Z"), 300_000)).toEqual(
+  });
+
+  it("C9: positive clockSkewMs does not keep secret past wall serverExpiresAt", () => {
+    const storage = new MapStorage();
+    const flowId = "10000000-0000-4000-8000-000000000001";
+    // 改ざん +48h skew でも wall がサーバ期限を超えたら消す（安全側）
+    const skewMs = 48 * 60 * 60 * 1_000;
+    writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z", "2026-07-13T00:05:00.000Z", skewMs);
+    expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:05:00.001Z"), 300_000)).toEqual(
       [],
     );
+    expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
   });
 
   it("C6 estimates positive skew when client now is ahead of server implied now", () => {
@@ -375,7 +420,7 @@ it("preserves an unavailable claim HTTP status without reading sensitive respons
 });
 
 it("R1: claim 2xx with unreadable body surfaces ContinuationResponseLostError", async () => {
-  // HTTP 成功後の body 欠落は burn 済み近似の印対象（素の TypeError と区別）
+  // C3/C10: HTTP 成功後の body 欠落は冪等 re-claim 対象（burn 消去ではない。素の TypeError と区別）
   const api = createContinuationApi(() => {
     const response = {
       ok: true,
@@ -517,3 +562,99 @@ function writeFlow(
     }),
   );
 }
+
+it("C3: pending deposit cache survives write/read and is cleared with the flow", () => {
+  const storage = new MapStorage();
+  const flowId = "10000000-0000-4000-8000-000000000001";
+  const nowMs = Date.parse("2026-07-13T00:00:00.000Z");
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-1",
+      expiresAtMs: nowMs + 60_000,
+    },
+    storage,
+  );
+  expect(readPendingAuthDeposit(flowId, storage, nowMs)).toEqual({
+    state: "B".repeat(43),
+    code: "oauth-code-1",
+    expiresAtMs: nowMs + 60_000,
+  });
+  expect(readPendingAuthDeposit(flowId, storage, nowMs + 60_000)).toBeNull();
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-2",
+      expiresAtMs: nowMs + 120_000,
+    },
+    storage,
+  );
+  clearPendingAuthDeposit(flowId, storage);
+  expect(readPendingAuthDeposit(flowId, storage, nowMs)).toBeNull();
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-3",
+      expiresAtMs: nowMs + 120_000,
+    },
+    storage,
+  );
+  writeFlow(storage, flowId, "2026-07-13T00:00:00.000Z");
+  clearAuthFlow(flowId, storage);
+  expect(readPendingAuthDeposit(flowId, storage, nowMs)).toBeNull();
+});
+
+it("C9/C12: authDeadlineRemainingMs caps positive skew to wall-based remaining", () => {
+  const deadlineMs = Date.parse("2026-07-13T00:05:00.000Z");
+  const wallNowMs = Date.parse("2026-07-13T00:04:00.000Z");
+  // 正 skew でも wall 残り（60s）を超えない
+  expect(authDeadlineRemainingMs(deadlineMs, wallNowMs, 48 * 60 * 60 * 1_000)).toBe(60_000);
+  expect(authDeadlineRemainingMs(deadlineMs, wallNowMs, 0)).toBe(60_000);
+  // 負 skew はより短い remaining（安全側・早期失効）
+  expect(authDeadlineRemainingMs(deadlineMs, wallNowMs, -30_000)).toBe(30_000);
+  // wall 超過は 0
+  expect(authDeadlineRemainingMs(deadlineMs, deadlineMs + 1, 60_000)).toBe(0);
+});
+
+it("C15: pending deposit expiry uses adjustedAuthNowMs so positive clock skew does not drop early", () => {
+  const storage = new MapStorage();
+  const flowId = "10000000-0000-4000-8000-0000000000c1";
+  const wallNowMs = Date.parse("2026-07-13T00:01:00.000Z");
+  // pending は wall から 30s 後に期限。正 skew 60s なら adjusted now は wall-60s でまだ有効。
+  const expiresAtMs = wallNowMs + 30_000;
+  const clockSkewMs = 60_000;
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-skew",
+      expiresAtMs,
+    },
+    storage,
+  );
+  // 壁時計だけだとまだ有効（対照）
+  expect(readPendingAuthDeposit(flowId, storage, wallNowMs)).not.toBeNull();
+  // 壁時計を expiresAt 直前まで進めると壁時計判定では期限切れ
+  const wallNearExpiry = expiresAtMs;
+  expect(readPendingAuthDeposit(flowId, storage, wallNearExpiry)).toBeNull();
+  // 同じ wall でも adjustedAuthNowMs なら skew 分戻る → まだ有効（gateway が渡す形）
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "oauth-code-skew",
+      expiresAtMs,
+    },
+    storage,
+  );
+  expect(
+    readPendingAuthDeposit(flowId, storage, adjustedAuthNowMs(wallNearExpiry, clockSkewMs)),
+  ).toEqual({
+    state: "B".repeat(43),
+    code: "oauth-code-skew",
+    expiresAtMs,
+  });
+});

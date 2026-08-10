@@ -196,6 +196,7 @@ function rawStoredMenuRow(overrides: Record<string, unknown> = {}) {
         allergen_id: "wheat",
         anonymous_member_ref: "member_1",
         dictionary_version: "jp-caa-2026-04.v1",
+        is_current: true,
         confirmation_status: "confirmed",
         confirmed_at: "2026-07-11T01:00:00.000Z",
         confirmed_by: CONFIRMED_BY,
@@ -208,6 +209,7 @@ function rawStoredMenuRow(overrides: Record<string, unknown> = {}) {
         allergen_id: "wheat",
         anonymous_member_ref: "member_1",
         dictionary_version: "jp-caa-2026-04.v1",
+        is_current: true,
         confirmation_status: "pending",
         confirmed_at: null,
         confirmed_by: null,
@@ -250,6 +252,8 @@ describe("STORED_MENU_SELECT", () => {
     ] as const) {
       expect(STORED_MENU_SELECT).not.toMatch(new RegExp(`\\b${relation}\\s*\\(`, "u"));
     }
+    // H3: is_current を select し map 側でも non-current を落とせるようにする
+    expect(STORED_MENU_SELECT).toContain("is_current");
   });
 });
 
@@ -262,9 +266,11 @@ describe("loadStoredMenu", () => {
     const client = mockClient({ data: rawStoredMenuRow(), error: null });
     const aggregate = await loadStoredMenu(client as never, USER_ID, MENU_ID);
 
+    // H3: browser getMenuResult と同型の is_current 絞り（!inner なし）
     expect(client.eqCalls).toEqual([
       ["id", MENU_ID],
       ["user_id", USER_ID],
+      ["menu_label_confirmations.is_current", true],
     ]);
     expect(aggregate.userId).toBe(USER_ID);
     expect(aggregate.safetyFingerprint).toBe("b".repeat(64));
@@ -316,6 +322,48 @@ describe("loadStoredMenu", () => {
       householdMemberId: MEMBER1_ID,
       displayName: "子ども",
       displayNameSnapshot: "きろく1",
+    });
+  });
+
+  it("H3: drops non-current label confirmations so archived rows cannot blow max(200)", async () => {
+    // PostgREST が is_current を漏らしでも map 側 filter で契約超過を防ぐ
+    const archived = Array.from({ length: 201 }, (_, index) => ({
+      source_type: "ingredient" as const,
+      source_id: INGREDIENT1_ID,
+      source_path: "dishes.0.ingredients.0.name",
+      source_text_snapshot: `archived-${String(index)}`,
+      allergen_id: "wheat",
+      anonymous_member_ref: "member_1",
+      dictionary_version: "jp-caa-2026-04.v1",
+      is_current: false,
+      confirmation_status: "pending" as const,
+      confirmed_at: null,
+      confirmed_by: null,
+    }));
+    const current = {
+      source_type: "ingredient" as const,
+      source_id: INGREDIENT1_ID,
+      source_path: "dishes.0.ingredients.0.name",
+      source_text_snapshot: "ごはん",
+      allergen_id: "wheat",
+      anonymous_member_ref: "member_1",
+      dictionary_version: "jp-caa-2026-04.v1",
+      is_current: true,
+      confirmation_status: "pending" as const,
+      confirmed_at: null,
+      confirmed_by: null,
+    };
+    const client = mockClient({
+      data: rawStoredMenuRow({
+        menu_label_confirmations: [...archived, current],
+      }),
+      error: null,
+    });
+    const aggregate = await loadStoredMenu(client as never, USER_ID, MENU_ID);
+    expect(aggregate.menu.labelConfirmations).toHaveLength(1);
+    expect(aggregate.menu.labelConfirmations[0]).toMatchObject({
+      sourceText: "ごはん",
+      confirmationStatus: "pending",
     });
   });
 

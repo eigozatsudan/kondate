@@ -22,6 +22,8 @@ export type HomeGenerateCardProps = {
 /**
  * ホームの生成導線。表示専用。
  * 主ボタン名は「献立を作る」と衝突させない（mobile-accessibility の件数固定契約）。
+ * P9: remainingToday===0 のとき新規開始 CTA を止め、ウィザード完走後の usage ブロックへ
+ * 誘導する死に道を減らす。未取得 (null) は誤停止しない。進行中 pending の再開は残す。
  */
 export function HomeGenerateCard({
   remainingToday,
@@ -30,6 +32,8 @@ export function HomeGenerateCard({
   onResumePending,
   disabled = false,
 }: HomeGenerateCardProps): JSX.Element {
+  // 成功残 0 のときだけ新規開始を止める。null は C-I12 と同型で fail-open。
+  const startDisabled = disabled || remainingToday === 0;
   return (
     <Surface as="section" tone="plain" aria-labelledby="home-generate-heading">
       <Inset pad={5}>
@@ -55,12 +59,12 @@ export function HomeGenerateCard({
               <Button variant="primary" size="large" disabled={disabled} onClick={onResumePending}>
                 作成中の献立を続ける
               </Button>
-              <Button variant="secondary" disabled={disabled} onClick={onStart}>
+              <Button variant="secondary" disabled={startDisabled} onClick={onStart}>
                 今日の献立をつくる
               </Button>
             </Stack>
           ) : (
-            <Button variant="primary" size="large" disabled={disabled} onClick={onStart}>
+            <Button variant="primary" size="large" disabled={startDisabled} onClick={onStart}>
               今日の献立をつくる
             </Button>
           )}

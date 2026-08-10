@@ -4,6 +4,7 @@ import { getProfile, type ProfileRow } from "@/features/household/household-api"
 import { householdKeys } from "@/features/household/household-queries";
 import { useProfilePendingDeadline } from "@/features/household/use-profile-pending-deadline";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { LivePendingMain } from "@/shared/ui/feedback";
 import { useAuth } from "./use-auth";
 
 function RetryableProfileAlert({ profileQuery }: { profileQuery: UseQueryResult<ProfileRow> }) {
@@ -44,12 +45,8 @@ export function RootEntryPage() {
   const { showPending, pendingTimedOut } = useProfilePendingDeadline(profileQuery.isPending);
 
   if (showPending) {
-    // L10: 待ち UI は SR に busy/live を通知
-    return (
-      <main className="page-frame" aria-busy="true" aria-live="polite">
-        状態を確認しています…
-      </main>
-    );
+    // L10: 待ち UI は SR に busy/status を通知（初期 live は mount 後に埋める）
+    return <LivePendingMain message="状態を確認しています…" />;
   }
 
   if (profileQuery.isError || pendingTimedOut) {

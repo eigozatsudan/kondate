@@ -109,8 +109,8 @@ it("L10: pending main exposes aria-busy and aria-live", () => {
   useQueryMock.mockReturnValue({ isPending: true, isError: false, data: undefined });
   renderWithRouter();
   const pending = screen.getByText(/確認/u);
-  expect(pending).toHaveAttribute("aria-busy", "true");
-  expect(pending).toHaveAttribute("aria-live", "polite");
+  expect(pending.closest("main")).toHaveAttribute("aria-busy", "true");
+  expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
 });
 
 it("query error は not_started へ推測変換せず再試行操作を持つ alert に留まりredirectしない", () => {

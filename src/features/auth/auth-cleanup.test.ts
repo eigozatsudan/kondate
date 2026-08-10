@@ -5,6 +5,7 @@ import { householdSafetyRevisionStorageKey } from "@/features/household/househol
 import {
   clearLocalAuthAndDrafts,
   clearOwnedLocalDataBestEffort,
+  clearSoftSessionResidualBestEffort,
   SIGN_OUT_TIMEOUT_MS,
 } from "./auth-cleanup";
 
@@ -140,6 +141,21 @@ describe("clearLocalAuthAndDrafts", () => {
       expect(storage.getItem("kondate:preferences")).toBe("keep-me");
     }
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
+  });
+
+  it("C7: clearSoftSessionResidualBestEffort clears drafts/session but keeps flow secret", () => {
+    seedOwnedKeys(localStorage);
+    localStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
+    clearSoftSessionResidualBestEffort();
+    expect(localStorage.getItem("kondate.auth.supabase")).toBeNull();
+    expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
+    expect(localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
+    expect(localStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
+    // 進行中 continuation は温存
+    expect(
+      localStorage.getItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001"),
+    ).not.toBeNull();
+    expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
   });
 
   it("AP1: clears kondate:feedback free-form fingerprint on logout and best-effort pass", async () => {

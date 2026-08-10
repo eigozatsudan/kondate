@@ -2,11 +2,12 @@ import { act, render, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import { AuthCallbackPage } from "./auth-callback-page";
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
 import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
+import { resetAuthCallbackUrlCaptureForTests } from "./auth-callback-url-capture";
 import {
   clearAuthFlow,
   markAuthContinuationCallbackOwner,
@@ -23,9 +24,15 @@ vi.mock("./auth-continuation-completion", async (importOriginal) => {
   return { ...actual, publishAuthContinuationCompletion: vi.fn() };
 });
 
-vi.mock("./auth-continuation-recovery", () => ({
-  startAuthContinuationRecovery: vi.fn(() => () => undefined),
-}));
+// C15/C9 hangWatchdog / failClosed が isAuthContinuationExchangeBusy を呼ぶ。
+// 完全差し替え mock だと export 欠落で TypeError → leave 経路が壊れる。
+vi.mock("./auth-continuation-recovery", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./auth-continuation-recovery")>();
+  return {
+    ...actual,
+    startAuthContinuationRecovery: vi.fn(() => () => undefined),
+  };
+});
 
 vi.mock("./auth-flow", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./auth-flow")>();
@@ -40,6 +47,15 @@ vi.mock("./auth-flow", async (importOriginal) => {
 const createAuthGatewayMock = vi.mocked(createAuthGateway);
 const startAuthContinuationRecoveryMock = vi.mocked(startAuthContinuationRecovery);
 
+afterEach(() => {
+  resetAuthCallbackUrlCaptureForTests();
+  // C7 capture が window.history を見るため、前テストの replaceState が残ると flow UUID が混線する
+  window.history.replaceState(null, "", "/");
+  startAuthContinuationRecoveryMock.mockClear();
+  vi.mocked(publishAuthContinuationCompletion).mockClear();
+  vi.mocked(clearAuthFlow).mockClear();
+});
+
 function renderCallback(
   gateway: AuthGateway,
   options?: {
@@ -50,6 +66,13 @@ function renderCallback(
   },
 ) {
   const leaveAuthCallback = options?.leaveAuthCallback ?? vi.fn();
+  // C7: captureAndStripAuthCallbackUrl は window.location を見る。
+  // MemoryRouter の entry だけでは jsdom の location が更新されないため揃える。
+  // 既に history を明示設定したテスト（code 付き URL 等）は上書きしない。
+  const initialEntry = options?.initialEntry ?? "/auth/callback?flow=flow-1";
+  if (!window.location.pathname.startsWith("/auth/callback")) {
+    window.history.replaceState(null, "", initialEntry);
+  }
   const callbackElement =
     options?.ttlMs === undefined ? (
       <AuthCallbackPage gateway={gateway} leaveAuthCallback={leaveAuthCallback} />
@@ -70,7 +93,7 @@ function renderCallback(
       { path: "/login", element: <h1>ログイン</h1> },
       { path: "/planner", element: <h1>献立</h1> },
     ],
-    { initialEntries: [options?.initialEntry ?? "/auth/callback?flow=flow-1"] },
+    { initialEntries: [initialEntry] },
   );
   const ui = options?.strict ? (
     <StrictMode>
@@ -215,7 +238,7 @@ it("keeps waiting when another same-browser tab wins the one-time claim", async 
 
 it("uses completion published before the losing callback starts waiting", async () => {
   window.localStorage.setItem(
-    "kondate.auth.supabase.continuation-complete",
+    "kondate.auth.supabase.continuation-complete.flow-1",
     JSON.stringify({ flowId: "flow-1", returnTo: "/onboarding" }),
   );
   const gateway: AuthGateway = {
@@ -641,9 +664,139 @@ it("C6: hangWatchdog fails closed at server expiresAt when shorter than local TT
   }
 });
 
-it("C4: hangWatchdog accounts for clockSkewMs so secret is not burned early", async () => {
+it("C9: hangWatchdog does not clear secret while callback-prelease is held (post-claim gap)", async () => {
   vi.useFakeTimers();
-  // クライアント時計が 60s 進んでいる想定（skew +60s）。サーバ期限は wall+30s 相当を保持。
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  try {
+    const flowId = "10000000-0000-4000-8000-0000000000c9";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: "2026-07-13T00:00:00.000Z",
+        expiresAt: "2026-07-13T00:00:30.000Z",
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.callback-owner.${flowId}`,
+      "2026-07-13T00:00:00.000Z",
+    );
+    // claim 成功〜exchange lease 前: exchange in-flight は無いが pre-lease が立つ
+    window.localStorage.setItem(
+      `kondate.auth.supabase.claim-poll-target-lease.${flowId}.callback-prelease`,
+      JSON.stringify({
+        flowId,
+        instanceId: "callback-prelease",
+        refreshedAt: Date.now(),
+        pending: false,
+      }),
+    );
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
+      resumeFlow: vi.fn(),
+    };
+    vi.mocked(clearAuthFlow).mockClear();
+    const { leaveAuthCallback } = renderCallback(gateway, {
+      ttlMs: 300_000,
+      initialEntry: `/auth/callback?flow=${flowId}`,
+    });
+    await act(async () => Promise.resolve());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    // UI は unbound へ落ちるが secret は焼かない（late exchange / completion が救える）
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+    );
+    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
+  } finally {
+    window.localStorage.clear();
+    vi.useRealTimers();
+  }
+});
+
+it("C-RR2: AUTH-R1 awaiting + pre-lease near-TTL failClosed does not clear secret", async () => {
+  // C4/RR1 と同型の awaiting 期限経路に、AUTH-R1 が立てる pre-lease を載せたもの。
+  // gateway テストが pre-lease 武装を固定。ここでは busy 時に clearAuthFlow しないことを固定。
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
+  try {
+    // UUID は hex のみ（z.uuid）。非 hex だと readAuthFlow が null になり期限クリップが外れる
+    const flowId = "10000000-0000-4000-8000-0000000000c2";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: "2026-07-13T00:00:00.000Z",
+        expiresAt: "2026-07-13T00:00:30.000Z",
+        clockSkewMs: 60_000,
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.callback-owner.${flowId}`,
+      "2026-07-13T00:00:00.000Z",
+    );
+    // AUTH-R1 が strip reload で立てる pre-lease（claim→exchange ギャップ保護）
+    window.localStorage.setItem(
+      `kondate.auth.supabase.claim-poll-target-lease.${flowId}.callback-prelease`,
+      JSON.stringify({
+        flowId,
+        instanceId: "callback-prelease",
+        refreshedAt: Date.now(),
+        pending: false,
+      }),
+    );
+    vi.mocked(clearAuthFlow).mockClear();
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId,
+        returnTo: "/onboarding",
+      }),
+      resumeFlow: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId,
+        returnTo: "/onboarding",
+      }),
+    };
+    const { leaveAuthCallback } = renderCallback(gateway, {
+      ttlMs: 300_000,
+      initialEntry: `/auth/callback?flow=${flowId}`,
+    });
+    await act(async () => Promise.resolve());
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    // UI は unbound へ。pre-lease busy のため secret は焼かない（C4/RR1 は clear される対照）
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+    );
+    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
+  } finally {
+    window.localStorage.clear();
+    vi.useRealTimers();
+  }
+});
+
+it("C9/C12: hangWatchdog does not extend past wall serverExpires via positive clockSkewMs", async () => {
+  vi.useFakeTimers();
+  // wall は既に serverExpires 超過。正 skew でも remaining は wall 上限で 0（安全側）。
   vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
   try {
     const flowId = "10000000-0000-4000-8000-000000000001";
@@ -676,15 +829,11 @@ it("C4: hangWatchdog accounts for clockSkewMs so secret is not burned early", as
       initialEntry: `/auth/callback?flow=${flowId}`,
     });
     await act(async () => Promise.resolve());
-    // skew 非適用なら remaining=0 で即 leave。補正後は server 期限まで待つ。
-    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    // remaining 0 の setTimeout を発火
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(29_000);
+      await vi.advanceTimersByTimeAsync(0);
     });
-    expect(leaveAuthCallback).not.toHaveBeenCalled();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
-    });
+    // wall 超過時は即 leave（lease と同型の wall 基準）
     expect(leaveAuthCallback).toHaveBeenCalledWith(
       "/login?authError=unbound_callback&returnTo=%2Fonboarding",
     );
@@ -693,9 +842,9 @@ it("C4: hangWatchdog accounts for clockSkewMs so secret is not burned early", as
   }
 });
 
-it("C4/RR1: awaiting_completion wait accounts for clockSkewMs so secret is not burned early", async () => {
+it("C9/C12: awaiting_completion wait does not extend past wall serverExpires via positive clockSkewMs", async () => {
   vi.useFakeTimers();
-  // hangWatchdog C4 と同型: クライアント +60s 進み。awaiting_completion 経路の wait も skew 補正する。
+  // hangWatchdog と同型: wall が serverExpires 超過なら正 skew でも即 failClosed。
   vi.setSystemTime(new Date("2026-07-13T00:01:00.000Z"));
   try {
     const flowId = "10000000-0000-4000-8000-000000000001";
@@ -717,7 +866,6 @@ it("C4/RR1: awaiting_completion wait accounts for clockSkewMs so secret is not b
       `kondate.auth.supabase.callback-owner.${flowId}`,
       "2026-07-13T00:00:00.000Z",
     );
-    // 前テストの mock 呼び出しを捨て、本ケースだけの clear 有無を見る
     vi.mocked(clearAuthFlow).mockClear();
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
@@ -738,22 +886,13 @@ it("C4/RR1: awaiting_completion wait accounts for clockSkewMs so secret is not b
       initialEntry: `/auth/callback?flow=${flowId}`,
     });
     await act(async () => Promise.resolve());
-    // skew 非適用なら completion wait が remaining=0 で即 failClosed。補正後は server 期限まで待つ。
-    expect(leaveAuthCallback).not.toHaveBeenCalled();
-    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(29_000);
+      await vi.advanceTimersByTimeAsync(0);
     });
-    expect(leaveAuthCallback).not.toHaveBeenCalled();
-    // failClosed → clearAuthFlow が期限前に発火していないこと（secret 焼却の代理）
-    expect(vi.mocked(clearAuthFlow)).not.toHaveBeenCalled();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
-    });
+    // hangWatchdog が wall 超過で即 leave（completion wait も remaining 0）
     expect(leaveAuthCallback).toHaveBeenCalledWith(
       "/login?authError=unbound_callback&returnTo=%2Fonboarding",
     );
-    expect(vi.mocked(clearAuthFlow)).toHaveBeenCalledWith(flowId);
   } finally {
     vi.useRealTimers();
   }

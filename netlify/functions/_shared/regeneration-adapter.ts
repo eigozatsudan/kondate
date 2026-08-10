@@ -209,6 +209,8 @@ export function createRegenerationLoaderDeps(
           input.now,
         );
       submission = liveSubmission;
+      // HR4: 新 version の revalidation baseline は source の古い snapshot ではなく
+      // 今回の live submission（idea は memberPreferences 空）を載せる。
       const ideaContext: IdeaGenerationContext = {
         targetMode: "idea",
         submission: submission as Extract<PlannerSubmission, { targetMode: "idea" }>,
@@ -220,14 +222,7 @@ export function createRegenerationLoaderDeps(
         foodRuleVersion: null,
         expiredPantryChecks,
         idempotencyKey: input.idempotencyKey,
-        preferenceSnapshot: z
-          .record(z.string(), z.unknown())
-          .parse(
-            typeof input.stored.preferenceSnapshot === "object" &&
-              input.stored.preferenceSnapshot !== null
-              ? input.stored.preferenceSnapshot
-              : {},
-          ),
+        preferenceSnapshot: { submission, memberPreferences: [] },
         safetySnapshot: ideaSafetySnapshot,
       };
       return ideaContext;
@@ -273,6 +268,9 @@ export function createRegenerationLoaderDeps(
     submission = liveSubmission;
 
     // buildStoredGenerationContext は household 専用の non-null safety を返す
+    // HR4: succeed が永続する preference_snapshot は source コピーではなく live envelope。
+    // 旧 source snapshot を載せると prefs A→B 後の再生成成功でも mount 再検証が
+    // sticky preference_changed を出し続ける。新規生成と同型で { submission, memberPreferences }。
     const householdContext: HouseholdGenerationContext = {
       ...base,
       targetMode: "household",
@@ -280,14 +278,10 @@ export function createRegenerationLoaderDeps(
       pantryItems,
       expiredPantryChecks,
       idempotencyKey: input.idempotencyKey,
-      preferenceSnapshot: z
-        .record(z.string(), z.unknown())
-        .parse(
-          typeof input.stored.preferenceSnapshot === "object" &&
-            input.stored.preferenceSnapshot !== null
-            ? input.stored.preferenceSnapshot
-            : {},
-        ),
+      preferenceSnapshot: {
+        submission,
+        memberPreferences: base.memberPreferences,
+      },
       safetySnapshot: base.safety,
       allergenVersion: base.safety.dictionaryVersion,
       foodRuleVersion: base.safety.foodRuleVersion,

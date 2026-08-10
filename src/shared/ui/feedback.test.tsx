@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { Badge, EmptyState, Skeleton } from "./feedback";
+import { Badge, EmptyState, LivePendingMain, Skeleton } from "./feedback";
 import { Button } from "./button";
 
 describe("Skeleton", () => {
@@ -22,6 +22,15 @@ describe("Skeleton", () => {
   });
 });
 
+describe("LivePendingMain", () => {
+  it("L10: marks main busy and fills role=status after mount for SR announce", () => {
+    render(<LivePendingMain message="ログイン状態を確認しています…" />);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("ログイン状態を確認しています…");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(status.closest("main")).toHaveAttribute("aria-busy", "true");
+  });
+});
 describe("EmptyState", () => {
   it("renders title, body and action", () => {
     render(

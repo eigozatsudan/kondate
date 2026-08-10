@@ -1222,6 +1222,50 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
       "true",
     );
   });
+
+  it("HR5: clears idea accepted chrome when result.isSelected becomes false", async () => {
+    // 兄弟案採用で isSelected が false になったとき、household と同型で accepted を落とす。
+    // 複数案時は primary が「この献立にする」に戻り、notice も消える（旧実装は residual true で残る）。
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    listDerivationVersionsMock.mockResolvedValue([
+      {
+        id: MENU_ID,
+        version: 1,
+        title: "案A",
+        isSelected: true,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        parentMenuId: null,
+      },
+      {
+        id: "30000000-0000-4000-8000-000000000002",
+        version: 2,
+        title: "案B",
+        isSelected: false,
+        createdAt: "2026-07-11T01:00:00.000Z",
+        parentMenuId: MENU_ID,
+      },
+    ]);
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({ targetMode: "idea", isSelected: true }),
+    );
+
+    renderHistoryDetail({ queryClient });
+
+    expect(await screen.findByText("この献立にしました")).toBeVisible();
+    expect(screen.getByRole("link", { name: "履歴一覧に戻る" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "この献立にする" })).toBeNull();
+
+    act(() => {
+      queryClient.setQueryData(
+        ["menu-result", USER_ID, MENU_ID, "history"],
+        makeMenuResultViewModel({ targetMode: "idea", isSelected: false }),
+      );
+    });
+
+    expect(await screen.findByRole("button", { name: "この献立にする" })).toBeVisible();
+    expect(screen.queryByText("この献立にしました")).toBeNull();
+    expect(screen.queryByRole("link", { name: "履歴一覧に戻る" })).toBeNull();
+  });
 });
 
 describe("MenuResultPage shared revalidation gate", () => {

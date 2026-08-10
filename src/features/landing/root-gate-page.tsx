@@ -3,6 +3,7 @@ import { COLD_START_SESSION_DEADLINE_MS } from "@/features/auth/auth-provider";
 import { RootEntryPage } from "@/features/auth/root-entry-page";
 import { useAuthLoadingDeadline } from "@/features/auth/use-auth-loading-deadline";
 import { useAuth } from "@/features/auth/use-auth";
+import { LivePendingMain } from "@/shared/ui/feedback";
 
 /** cold-start / auth 解決中だけ。chunk 待ちや deadline 後の UI とは文言を分ける（L1）。 */
 const SESSION_CHECK_COPY = "ログイン状態を確認しています…" as const;
@@ -49,9 +50,11 @@ function FreeLandingChunkGate() {
       // L3: layout より後の同一 tick で loaded が立つ場合に備え、
       // macrotask 直後に再確認してから timedOut にする。
       window.queueMicrotask(() => {
-        if (!loadedRef.current) {
-          setTimedOut(true);
-        }
+        // L3: setState 適用直前にも loaded を再確認し、timer×Suspense 交差の sticky 誤 timeout を抑止
+        setTimedOut((wasTimedOut) => {
+          if (loadedRef.current) return wasTimedOut;
+          return true;
+        });
       });
     }, COLD_START_SESSION_DEADLINE_MS);
     return () => {
@@ -62,45 +65,51 @@ function FreeLandingChunkGate() {
     };
   }, [timedOut]);
 
-  if (timedOut) {
-    return (
-      <main className="page-frame stack">
-        <p className="error-message" role="alert">
-          {LANDING_CHUNK_TIMEOUT_COPY}
-        </p>
-        <button
-          className="secondary-button min-h-11"
-          type="button"
-          onClick={() => {
-            window.location.reload();
-          }}
-        >
-          再読み込み
-        </button>
-      </main>
-    );
-  }
-
+  // L3: timeout UI を出しても Suspense ツリーは unmount しない。
+  // timer microtask が setTimedOut(true) した直後に chunk が settle しても
+  // probe の layoutEffect が loadedRef + setTimedOut(false) で成功 UI へ戻せる。
   return (
-    <Suspense
-      fallback={
-        // L10: chunk 待ちも busy/live で SR に状態を通知
-        <main className="page-frame" aria-busy="true" aria-live="polite">
-          {LANDING_CHUNK_FALLBACK_COPY}
+    <>
+      {timedOut ? (
+        <main className="page-frame stack">
+          <p className="error-message" role="alert">
+            {LANDING_CHUNK_TIMEOUT_COPY}
+          </p>
+          <button
+            className="secondary-button min-h-11"
+            type="button"
+            onClick={() => {
+              window.location.reload();
+            }}
+          >
+            再読み込み
+          </button>
         </main>
-      }
-    >
-      <FreeLandingLoadProbe
-        onLoaded={() => {
-          loadedRef.current = true;
-          // L3: commit 時点で timer を止め、deadline 誤爆を防ぐ
-          if (timerIdRef.current !== undefined) {
-            window.clearTimeout(timerIdRef.current);
-            timerIdRef.current = undefined;
+      ) : null}
+      <div hidden={timedOut} aria-hidden={timedOut || undefined}>
+        <Suspense
+          fallback={
+            timedOut ? null : (
+              // L10: chunk 待ちも busy + status で SR に状態を通知（初期 live は mount 後に埋める）
+              <LivePendingMain message={LANDING_CHUNK_FALLBACK_COPY} />
+            )
           }
-        }}
-      />
-    </Suspense>
+        >
+          <FreeLandingLoadProbe
+            onLoaded={() => {
+              loadedRef.current = true;
+              // L3: commit 時点で timer を止め、deadline 誤爆を防ぐ
+              if (timerIdRef.current !== undefined) {
+                window.clearTimeout(timerIdRef.current);
+                timerIdRef.current = undefined;
+              }
+              // L3: microtask が既に setTimedOut(true) を予約していても成功 mount を優先して戻す
+              setTimedOut(false);
+            }}
+          />
+        </Suspense>
+      </div>
+    </>
   );
 }
 
@@ -114,12 +123,8 @@ export function RootGatePage() {
   const { showLoading, loadingTimedOut } = useAuthLoadingDeadline(auth.status);
 
   if (showLoading) {
-    // L10: セッション確認待ちを SR に通知
-    return (
-      <main className="page-frame" aria-busy="true" aria-live="polite">
-        {SESSION_CHECK_COPY}
-      </main>
-    );
+    // L10: セッション確認待ちを SR に通知（初期 live は mount 後に埋める）
+    return <LivePendingMain message={SESSION_CHECK_COPY} />;
   }
 
   // L1: loading が C5 期限を超えたら未ログイン相当（Free LP）へ fail-closed。

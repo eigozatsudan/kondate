@@ -162,6 +162,30 @@ describe("generationReducer", () => {
     expect(generationReducer(offline, { type: "online" })).toEqual(checking);
   });
 
+  // G15: terminal failed / constraint_conflict は pending 保持中でも online/recover で thrash しない
+  it.each(["online", "recover"] as const)(
+    "G15: keeps failed phase on %s (no checking thrash)",
+    (type) => {
+      expect(generationReducer(failed, { type })).toBe(failed);
+    },
+  );
+
+  it.each(["online", "recover"] as const)(
+    "G15: keeps constraint_conflict phase on %s (no checking thrash)",
+    (type) => {
+      expect(generationReducer(conflict, { type })).toBe(conflict);
+    },
+  );
+
+  it("G15: offline with previous failed still rechecks on online", () => {
+    const offlineFailed: GenerationClientState = {
+      phase: "offline",
+      previous: failed,
+      effect: "wait_online",
+    };
+    expect(generationReducer(offlineFailed, { type: "online" })).toEqual(checking);
+  });
+
   it.each([checking, submitting, processing, offline, succeeded, failed, conflict])(
     "clears $phase to idle",
     (state) => {

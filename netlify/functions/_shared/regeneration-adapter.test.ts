@@ -147,6 +147,24 @@ describe("createRegenerationLoaderDeps", () => {
     expect(context.safetySnapshot).toBe(currentSafety);
     expect(context.safety).toBe(currentSafety);
     expect(getSupabaseAdmin).toHaveBeenCalled();
+    // HR4: preference_snapshot は source コピーではなく live memberPreferences envelope
+    // expect.objectContaining を object リテラル内に置くと no-unsafe-assignment になるため分離する
+    expect(context.preferenceSnapshot.submission).toMatchObject({
+      targetMode: "household",
+      targetMemberIds: [memberId],
+    });
+    expect(context.preferenceSnapshot.memberPreferences).toEqual([
+      {
+        householdMemberId: memberId,
+        anonymousMemberRef: "member_1",
+        portionSize: "regular",
+        spiceLevel: "regular",
+        easePreferences: [],
+        dislikes: [],
+      },
+    ]);
+    // source の古い memberPreferences: [] を引き継がない
+    expect(context.preferenceSnapshot).not.toEqual(stored.preferenceSnapshot);
 
     await expect(
       deps.buildCurrentContext({
@@ -158,6 +176,101 @@ describe("createRegenerationLoaderDeps", () => {
         now: new Date("2026-07-11T00:00:00.000Z"),
       }),
     ).rejects.toMatchObject({ code: "invalid_request", status: 422 });
+  });
+
+  it("HR4: household regen preferenceSnapshot uses live prefs not source snapshot", async () => {
+    // prefs A（source）→ live B のあと再生成しても sticky preference_changed にならないよう
+    // succeed 用 snapshot は live memberPreferences を載せる。
+    const sourcePrefs = [
+      {
+        householdMemberId: memberId,
+        anonymousMemberRef: "member_1",
+        portionSize: "small" as const,
+        spiceLevel: "mild" as const,
+        easePreferences: [] as const,
+        dislikes: ["旧嫌い"] as const,
+      },
+    ];
+    const livePrefs = [
+      {
+        householdMemberId: memberId,
+        anonymousMemberRef: "member_1",
+        portionSize: "large" as const,
+        spiceLevel: "none" as const,
+        easePreferences: ["soft"] as const,
+        dislikes: ["新嫌い"] as const,
+      },
+    ];
+    const stored = makeStored({
+      preferenceSnapshot: {
+        submission: {
+          mealType: "breakfast",
+          mainIngredients: ["ごはん"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: [memberId],
+          servings: null,
+          timeLimitMinutes: 15,
+          budgetPreference: "standard",
+          ingredientPreference: null,
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [],
+        },
+        memberPreferences: sourcePrefs,
+      },
+    });
+    const currentSafety = makeCurrentSafetyContext();
+    vi.mocked(buildStoredGenerationContext).mockResolvedValue({
+      targetMode: "household",
+      submission: {
+        mealType: "breakfast",
+        mainIngredients: [],
+        cuisineGenre: "japanese",
+        targetMode: "household",
+        targetMemberIds: [memberId],
+        servings: null,
+        timeLimitMinutes: null,
+        budgetPreference: null,
+        ingredientPreference: null,
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+      },
+      safety: currentSafety,
+      pantryItems: [],
+      memberPreferences: livePrefs,
+      targetMembers: [
+        {
+          householdMemberId: memberId,
+          anonymousRef: "member_1",
+          displayNameSnapshot: "家族1",
+        },
+      ],
+      allergenVersion: currentSafety.dictionaryVersion,
+      foodRuleVersion: currentSafety.foodRuleVersion,
+      expiredPantryChecks: [],
+      idempotencyKey: "82000000-0000-4000-8000-0000000000hr",
+      preferenceSnapshot: stored.preferenceSnapshot as Readonly<Record<string, unknown>>,
+      safetySnapshot: {},
+    });
+
+    const deps = createRegenerationLoaderDeps(user, { requestStartedAtMonotonicMs: 100 });
+    const context = await deps.buildCurrentContext({
+      user,
+      stored,
+      authorityTargetMode: "household",
+      idempotencyKey: "82000000-0000-4000-8000-0000000000hr",
+      expiredPantryConfirmations: [],
+      now: new Date("2026-07-11T00:00:00.000Z"),
+    });
+
+    expect(context.preferenceSnapshot.memberPreferences).toEqual(livePrefs);
+    expect(context.preferenceSnapshot.memberPreferences).not.toEqual(sourcePrefs);
+    // expect.objectContaining を object リテラル内に置くと no-unsafe-assignment になるため分離する
+    expect(context.preferenceSnapshot.submission).toMatchObject({
+      targetMode: "household",
+    });
   });
 
   it("builds idea context without household safety or stored generation builder", async () => {

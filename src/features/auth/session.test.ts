@@ -3,6 +3,7 @@ import {
   ACCESS_TOKEN_GET_SESSION_TIMEOUT_MS,
   ACCESS_TOKEN_REFRESH_TIMEOUT_MS,
   AuthSessionExpiredError,
+  AuthSessionProbeTimeoutError,
   AuthSessionRequiredError,
   isAuthSessionFailure,
   requireAccessToken,
@@ -103,7 +104,7 @@ describe("requireAccessToken", () => {
     expect(client.auth.refreshSession).not.toHaveBeenCalled();
   });
 
-  it("throws AuthSessionExpiredError when refreshSession never settles (A1)", async () => {
+  it("C9: throws AuthSessionProbeTimeoutError when refreshSession never settles (not expired)", async () => {
     vi.useFakeTimers();
     const client = {
       auth: {
@@ -122,12 +123,13 @@ describe("requireAccessToken", () => {
     };
 
     const pending = requireAccessToken(client as never);
-    const expectation = expect(pending).rejects.toBeInstanceOf(AuthSessionExpiredError);
+    const expectation = expect(pending).rejects.toBeInstanceOf(AuthSessionProbeTimeoutError);
     await vi.advanceTimersByTimeAsync(ACCESS_TOKEN_REFRESH_TIMEOUT_MS);
     await expectation;
+    expect(isAuthSessionFailure(new AuthSessionProbeTimeoutError())).toBe(false);
   });
 
-  it("AP2: throws AuthSessionExpiredError when getSession never settles", async () => {
+  it("C9/AP2: throws AuthSessionProbeTimeoutError when getSession never settles (not expired)", async () => {
     vi.useFakeTimers();
     const client = {
       auth: {
@@ -137,10 +139,11 @@ describe("requireAccessToken", () => {
     };
 
     const pending = requireAccessToken(client as never);
-    const expectation = expect(pending).rejects.toBeInstanceOf(AuthSessionExpiredError);
+    const expectation = expect(pending).rejects.toBeInstanceOf(AuthSessionProbeTimeoutError);
     await vi.advanceTimersByTimeAsync(ACCESS_TOKEN_GET_SESSION_TIMEOUT_MS);
     await expectation;
     expect(client.auth.refreshSession).not.toHaveBeenCalled();
+    expect(isAuthSessionFailure(new AuthSessionProbeTimeoutError())).toBe(false);
   });
 
   it("C10: refreshes when expires_at is missing so a stale token is not trusted", async () => {
@@ -176,6 +179,7 @@ describe("isAuthSessionFailure", () => {
   it.each([
     [new AuthSessionRequiredError(), true],
     [new AuthSessionExpiredError(), true],
+    [new AuthSessionProbeTimeoutError(), false],
     [new Error("auth_required"), true],
     [new Error("ログインが必要です"), true],
     [new Error("model_unavailable"), false],

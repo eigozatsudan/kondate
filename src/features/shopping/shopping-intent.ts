@@ -1,9 +1,5 @@
 import { createShoppingListRequestSchema } from "@shared/contracts/shopping";
-import {
-  pendingShoppingCommandEnvelopeSchema,
-  pendingShoppingCommandStorageKey,
-  pendingShoppingCommandTtlMs,
-} from "./api/shopping-api";
+import { clearShoppingCommand, readPendingShoppingCommand } from "./api/shopping-api";
 
 /** URL クエリで買い物作成 intent を示すパラメータ名（固定: for） */
 export const SHOPPING_INTENT_PARAM = "for" as const;
@@ -95,30 +91,19 @@ export function cancelPendingIntentClear(menuId: string): void {
 }
 
 /**
- * resume 優先: 有効な create envelope が sessionStorage にあるか。
+ * resume 優先: 有効な create envelope が local/session にあるか（SHOP3 跨タブ正本）。
  * 壊れた JSON・Zod 不一致・TTL 超過・時計巻き戻しは false（未検査 cast なし）。
  */
 export function hasPendingCreateCommand(menuId: string): boolean {
-  const raw = sessionStorage.getItem(pendingShoppingCommandStorageKey("create", menuId));
-  if (raw === null) return false;
-  let json: unknown;
-  try {
-    json = JSON.parse(raw) as unknown;
-  } catch {
-    return false;
-  }
-  const parsed = pendingShoppingCommandEnvelopeSchema(createShoppingListRequestSchema).safeParse(
-    json,
-  );
-  if (!parsed.success) return false;
-  const age = Date.now() - parsed.data.createdAtMs;
-  return age >= 0 && age <= pendingShoppingCommandTtlMs;
+  return readPendingShoppingCommand("create", menuId, createShoppingListRequestSchema) !== null;
 }
 
 /**
- * SHOP6: create/reconcile シートを開いているあいだ resume を止める印。
- * React の shoppingSheet は remount で消えるが sessionStorage は残るため、
+ * SHOP6 + SHOP3: create/reconcile シートを開いているあいだ resume を止める印。
+ * React の shoppingSheet は remount で消えるが Storage は残るため、
  * モード/approval 選び直し中のハードリロードで旧 sticky が自動 POST される窓を閉じる。
+ * localStorage 正本で他タブにも suppress を共有し、Tab A シート表示中に Tab B が
+ * auto-resume する dual-intent 窓を閉じる（item sticky SHOP4 と同型）。
  * Cancel / 成功 / code 付き fail / menu-detail 真 unmount（SHOP1 遅延 clear）で明示 clear
  * → sticky は残したまま resume 再送を再開できる（pause-not-abandon）。
  */
@@ -126,19 +111,45 @@ export function shoppingResumeSuppressKey(kind: "create" | "reconcile", targetId
   return `kondate:shopping:resume-suppress:v1:${kind}:${targetId}`;
 }
 
+function readResumeSuppressFlag(storage: Storage, key: string): boolean {
+  try {
+    return storage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeResumeSuppressFlag(storage: Storage, key: string, present: boolean): void {
+  try {
+    if (present) storage.setItem(key, "1");
+    else storage.removeItem(key);
+  } catch {
+    /* Quota / private mode */
+  }
+}
+
 export function isShoppingResumeSuppressed(
   kind: "create" | "reconcile",
   targetId: string,
 ): boolean {
-  return sessionStorage.getItem(shoppingResumeSuppressKey(kind, targetId)) === "1";
+  const key = shoppingResumeSuppressKey(kind, targetId);
+  // local 正本: 他タブの sheet open を共有。session は同一タブ mirror / 旧残滓。
+  // session→local の promote はしない（他タブが clear したあとに session 残滓で
+  // suppress が永久に残る窓を作るため）。
+  if (readResumeSuppressFlag(localStorage, key)) return true;
+  return readResumeSuppressFlag(sessionStorage, key);
 }
 
 export function markShoppingResumeSuppress(kind: "create" | "reconcile", targetId: string): void {
-  sessionStorage.setItem(shoppingResumeSuppressKey(kind, targetId), "1");
+  const key = shoppingResumeSuppressKey(kind, targetId);
+  writeResumeSuppressFlag(localStorage, key, true);
+  writeResumeSuppressFlag(sessionStorage, key, true);
 }
 
 export function clearShoppingResumeSuppress(kind: "create" | "reconcile", targetId: string): void {
-  sessionStorage.removeItem(shoppingResumeSuppressKey(kind, targetId));
+  const key = shoppingResumeSuppressKey(kind, targetId);
+  writeResumeSuppressFlag(localStorage, key, false);
+  writeResumeSuppressFlag(sessionStorage, key, false);
 }
 
 /**
@@ -175,29 +186,18 @@ export function cancelPendingResumeSuppressClear(
 }
 
 /**
- * SHOP2: list gate blocked 中は create resume が enabled=false のため
- * submitCreate 内の append clear が到達しない。blocked 遷移時に mode=append
- * sticky だけを捨て、forceNew 誘導と ready 復帰後の旧 append 自動再送を防ぐ。
+ * SHOP2 + SHOP1: list gate が真に invalid/unverifiable（phase=blocked / error）のとき
+ * create resume が enabled=false のため submitCreate 内の append clear が到達しない。
+ * その遷移でのみ mode=append sticky を捨て、forceNew 誘導と ready 復帰後の旧 append
+ * 自動再送を防ぐ。一時的な phase=checking（focus / Realtime hard recheck）では
+ * 呼ばないこと — 呼ばれると失応答 append 復旧鍵を捨てる（SHOP1）。
  * mode=new は D-C1 どおり保持する。
  * @returns true のとき append sticky を捨てた
  */
 export function discardAppendCreateCommandIfPresent(menuId: string): boolean {
-  const key = pendingShoppingCommandStorageKey("create", menuId);
-  const raw = sessionStorage.getItem(key);
-  if (raw === null) return false;
-  let json: unknown;
-  try {
-    json = JSON.parse(raw) as unknown;
-  } catch {
-    return false;
-  }
-  const parsed = pendingShoppingCommandEnvelopeSchema(createShoppingListRequestSchema).safeParse(
-    json,
-  );
-  if (!parsed.success) return false;
-  const age = Date.now() - parsed.data.createdAtMs;
-  if (age < 0 || age > pendingShoppingCommandTtlMs) return false;
-  if (parsed.data.command.mode !== "append") return false;
-  sessionStorage.removeItem(key);
+  const command = readPendingShoppingCommand("create", menuId, createShoppingListRequestSchema);
+  if (command === null) return false;
+  if (command.mode !== "append") return false;
+  clearShoppingCommand("create", menuId);
   return true;
 }

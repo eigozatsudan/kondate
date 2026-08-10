@@ -80,10 +80,12 @@ import type { GenerationExecutionContext } from "./generation-service.js";
 import type { StoredMenuAggregate } from "./stored-menu-loader.js";
 import {
   buildDishRegenerationPrompt,
+  buildExistingDerivationMenus,
   buildPantrySelectionIdToRef,
   isRegenerationDuplicate,
   loadRegenerationExecutionContext,
   materializeDishRegenerationCandidate,
+  reloadExistingDerivationMenus,
   toRetainedDishPrompt,
   type LoaderDeps,
 } from "./regeneration-context.js";
@@ -716,6 +718,47 @@ describe("loadRegenerationExecutionContext", () => {
     );
     expect(householdDeps.buildCurrentContext).toHaveBeenCalledWith(
       expect.objectContaining({ authorityTargetMode: "household" }),
+    );
+  });
+});
+
+describe("buildExistingDerivationMenus / reloadExistingDerivationMenus", () => {
+  it("includes source when absent from group+recent and maps signatures", () => {
+    const source = makeStoredMenu();
+    const other = makeStoredMenu({
+      menu: makeValidatedMenu({
+        menuId: "b1000000-0000-4000-8000-000000000002",
+      }),
+    });
+    const built = buildExistingDerivationMenus([other], source.menu);
+    expect(built).toHaveLength(2);
+    expect(built.map((item) => item.menuId).sort()).toEqual(
+      [source.menu.menuId, other.menu.menuId].sort(),
+    );
+    const sourceEntry = built.find((item) => item.menuId === source.menu.menuId);
+    expect(sourceEntry?.dishSignatures).toHaveLength(source.menu.dishes.length);
+    expect(sourceEntry?.menuSignature.length).toBeGreaterThan(0);
+  });
+
+  it("HR3: reloadExistingDerivationMenus re-reads group+recent via deps", async () => {
+    const source = makeStoredMenu();
+    const concurrentSibling = makeStoredMenu({
+      menu: makeValidatedMenu({
+        menuId: "c1000000-0000-4000-8000-000000000003",
+      }),
+    });
+    const loadGroup = vi.fn(() => Promise.resolve([source, concurrentSibling]));
+    const loadRecent = vi.fn(() => Promise.resolve([]));
+    const result = await reloadExistingDerivationMenus(
+      { loadGroup, loadRecent },
+      user,
+      source.derivationGroupId,
+      source.menu,
+    );
+    expect(loadGroup).toHaveBeenCalledWith(user, source.derivationGroupId);
+    expect(loadRecent).toHaveBeenCalledWith(user, 20);
+    expect(result.map((item) => item.menuId).sort()).toEqual(
+      [source.menu.menuId, concurrentSibling.menu.menuId].sort(),
     );
   });
 });

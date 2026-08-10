@@ -26,6 +26,7 @@ import {
   deleteHouseholdMember,
   deleteMemberAllergy,
   deleteMemberDislike,
+  HouseholdMemberVersionConflictError,
   listAllergenCatalog,
   listAllergenAliases,
   listHouseholdMembers,
@@ -135,8 +136,18 @@ const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
 export interface HouseholdSettingsApi {
   listMembers(): Promise<HouseholdMemberRow[]>;
   createDraft(sortOrder: number): Promise<HouseholdMemberRow>;
-  updateDraft(memberId: string, patch: HouseholdMemberPatch): Promise<HouseholdMemberRow>;
-  updateMember(memberId: string, patch: HouseholdMemberPatch): Promise<HouseholdMemberRow>;
+  /** expectedUpdatedAt: H2 draft 行 CAS（表示中 updated_at）。競合時は ConflictError。 */
+  updateDraft(
+    memberId: string,
+    patch: HouseholdMemberPatch,
+    expectedUpdatedAt: string,
+  ): Promise<HouseholdMemberRow>;
+  /** expectedUpdatedAt: H5 complete 行 CAS（表示中 updated_at）。競合時は ConflictError。 */
+  updateMember(
+    memberId: string,
+    patch: HouseholdMemberPatch,
+    expectedUpdatedAt: string,
+  ): Promise<HouseholdMemberRow>;
   completeMember(memberId: string): Promise<HouseholdMemberRow>;
   deleteMember(memberId: string): Promise<void>;
   listCatalog(): Promise<AllergenCatalogRow[]>;
@@ -180,9 +191,10 @@ function createHouseholdSettingsApi(
     listMembers: () => listHouseholdMembers(client, userId),
     // H9: 無条件 INSERT ではなく onboarding と同 RPC（既存 draft 再利用・profile 直列化）
     createDraft: (sortOrder) => startHouseholdOnboarding(client, sortOrder),
-    updateDraft: (memberId, patch) => updateHouseholdMemberDraft(client, userId, memberId, patch),
-    updateMember: (memberId, patch) =>
-      updateCompleteHouseholdMember(client, userId, memberId, patch),
+    updateDraft: (memberId, patch, expectedUpdatedAt) =>
+      updateHouseholdMemberDraft(client, userId, memberId, patch, expectedUpdatedAt),
+    updateMember: (memberId, patch, expectedUpdatedAt) =>
+      updateCompleteHouseholdMember(client, userId, memberId, patch, expectedUpdatedAt),
     completeMember: (memberId) => completeHouseholdMember(client, userId, memberId),
     deleteMember: (memberId) => deleteHouseholdMember(client, userId, memberId),
     listCatalog: () => listAllergenCatalog(client),
@@ -263,10 +275,15 @@ export function HouseholdSettingsForm({
   }, [dismissToast]);
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsFormValue>());
+  // H2/H5: draft・complete 更新の CAS 基準 updated_at。同一タブ直列 save では成功後に進める。
+  // keepLocalSnapshot 中はサーバ再読込で上書きせず、古い form の誤上書きを競合として落とす。
+  const completeMemberUpdatedAtRef = useRef(new Map<string, string>());
   const editRevisionsByMemberRef = useRef(new Map<string, number>());
   const operationTokensByMemberRef = useRef(new Map<string, number>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
   const failedSaveMemberIdsRef = useRef(new Set<string>());
+  // H9: CAS 衝突後に members 再同期済みの member。queueSave が failedSave 固定しないため。
+  const versionConflictRecoveredMemberIdsRef = useRef(new Set<string>());
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
   const dislikeMutationPendingMemberIdsRef = useRef(new Set<string>());
   const deletingMemberIdsRef = useRef(new Set<string>());
@@ -406,6 +423,12 @@ export function HouseholdSettingsForm({
             ? pendingIntent.values
             : { ...baseValues, allergyStatus: pendingIntent.values.allergyStatus };
       valuesByMemberRef.current.set(selected.id, initialValues);
+      // ローカル編集中は CAS 基準をサーバ最新へ進めない（他タブ更新との衝突を検知するため）
+      if (!keepLocalSnapshot) {
+        completeMemberUpdatedAtRef.current.set(selected.id, latestSelected.updated_at);
+      } else if (!completeMemberUpdatedAtRef.current.has(selected.id)) {
+        completeMemberUpdatedAtRef.current.set(selected.id, latestSelected.updated_at);
+      }
       setValues(initialValues);
     }
   }, [membersKey, pendingOperationVersion, queryClient, selected]);
@@ -486,10 +509,14 @@ export function HouseholdSettingsForm({
       }
       try {
         const patch = toMemberPatch(parsed.data);
+        // H2/H5: draft・complete とも表示中 updated_at で CAS。直列 queue 内では成功後に基準を進める。
+        const expectedUpdatedAt =
+          completeMemberUpdatedAtRef.current.get(member.id) ?? member.updated_at;
         const saved =
           member.status === "draft"
-            ? await api.updateDraft(member.id, patch)
-            : await api.updateMember(member.id, patch);
+            ? await api.updateDraft(member.id, patch, expectedUpdatedAt)
+            : await api.updateMember(member.id, patch, expectedUpdatedAt);
+        completeMemberUpdatedAtRef.current.set(member.id, saved.updated_at);
         if (isLatestSaveRevision(lineage)) {
           const cachedMember = { ...saved, ...patch };
           queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
@@ -498,11 +525,22 @@ export function HouseholdSettingsForm({
             ),
           );
         }
-        await api.invalidateSafety();
+        // H3: DB コミット後の invalidate 失敗は soft。保存成功として返し、依存は次操作で再取得。
+        // 権威経路（生成/confirm）は live revalidate するため stale cache は fail-closed 側。
+        try {
+          await api.invalidateSafety();
+        } catch {
+          // 意図的 no-op: ユーザーに保存失敗と見せない
+        }
         if (canPublishSaveMessage(lineage)) {
           const pending = pendingRegisteredIntents.current.get(member.id);
+          // allergy_status=registered をコミット済みなら成功文言を優先する。
+          // H8 soft invalidate が allergies を再取得中、useEffect が evidence を unknown へ
+          // 落としても「確認しています」で成功 UX を潰さない（select registered → 標準追加）。
+          // registered 未コミットの safe 項目保存だけ、保留 intent の blocked 文言を出す。
+          const committedRegistered = parsed.data.allergyStatus === "registered";
           setMessage(
-            pending?.values.allergyStatus === "registered"
+            !committedRegistered && pending?.values.allergyStatus === "registered"
               ? (registeredSaveBlockedMessage(pending.registeredSaveEvidence) ??
                   "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します")
               : "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します",
@@ -510,6 +548,29 @@ export function HouseholdSettingsForm({
         }
         return true;
       } catch (error) {
+        // H9: CAS miss 後に keepLocalSnapshot が T0 を固定し再衝突し続けるのを防ぐ。
+        // pantry conflict refresh と同型で members を再取得し、CAS 基準をサーバ最新へ進める。
+        if (error instanceof HouseholdMemberVersionConflictError) {
+          versionConflictRecoveredMemberIdsRef.current.add(member.id);
+          failedSaveMemberIdsRef.current.delete(member.id);
+          try {
+            await queryClient.refetchQueries({ queryKey: membersKey, exact: true });
+          } catch {
+            // refetch 失敗でも競合メッセージは出す（次操作で再取得を期待）
+          }
+          const latest = queryClient
+            .getQueryData<HouseholdMemberRow[]>(membersKey)
+            ?.find((row) => row.id === member.id);
+          if (latest !== undefined) {
+            completeMemberUpdatedAtRef.current.set(member.id, latest.updated_at);
+            // ローカル snapshot をサーバ正本へ戻し、useEffect の keepLocal でも stale form を残さない
+            const serverValues = memberValue(latest);
+            valuesByMemberRef.current.set(member.id, serverValues);
+            if (selectedMemberIdRef.current === member.id) {
+              setValues(serverValues);
+            }
+          }
+        }
         if (canPublishSaveMessage(lineage)) {
           setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
         }
@@ -612,8 +673,16 @@ export function HouseholdSettingsForm({
         .catch(() => false)
         .then((saved) => {
           if (!skipped && isLatestSaveRevision(lineage)) {
-            if (saved) failedSaveMemberIdsRef.current.delete(member.id);
-            else failedSaveMemberIdsRef.current.add(member.id);
+            if (saved) {
+              failedSaveMemberIdsRef.current.delete(member.id);
+              versionConflictRecoveredMemberIdsRef.current.delete(member.id);
+            } else if (versionConflictRecoveredMemberIdsRef.current.has(member.id)) {
+              // H9: CAS 衝突は members 再同期済み。failedSave 固定で再衝突ループにしない。
+              failedSaveMemberIdsRef.current.delete(member.id);
+              versionConflictRecoveredMemberIdsRef.current.delete(member.id);
+            } else {
+              failedSaveMemberIdsRef.current.add(member.id);
+            }
           }
           return saved;
         })
@@ -706,13 +775,19 @@ export function HouseholdSettingsForm({
       });
       const registeredStatusSaved = await savePendingRegisteredStatus(memberId);
       if (registeredStatusSaved === false) {
+        // H3 / H-RR2: アレルギー書き込み後の invalidate 失敗は soft（依存は次操作で再取得）
         try {
           await api.invalidateSafety();
         } catch {
           return;
         }
       } else if (registeredStatusSaved === undefined) {
-        await api.invalidateSafety();
+        // H-RR2: allergy-only finalize も form save と同型の soft-handle（非対称を解消）
+        try {
+          await api.invalidateSafety();
+        } catch {
+          // 意図的 no-op: 追加済みアレルギーを失敗表示にしない
+        }
       }
     },
     [api, queryClient, savePendingRegisteredStatus, userId],
@@ -904,7 +979,13 @@ export function HouseholdSettingsForm({
           );
         }
         await queryClient.invalidateQueries({ queryKey: membersKey });
-        await api.invalidateSafety();
+        // H-RR3: 削除コミット後の invalidate 失敗は soft（H3 form save / H-RR1 complete と同型）。
+        // deleteMember 自体の失敗だけ outer catch で総失敗表示する。
+        try {
+          await api.invalidateSafety();
+        } catch {
+          // 意図的 no-op: 削除済みを失敗と見せない。権威経路は live revalidate。
+        }
       } catch (error) {
         setMessage(
           error instanceof Error
@@ -1026,12 +1107,19 @@ export function HouseholdSettingsForm({
       const saved = await save(selected, parsed.data, lineage);
       if (!saved) {
         if (completionHasNoLaterEdits()) {
-          failedSaveMemberIdsRef.current.add(selected.id);
+          // H9: CAS 衝突後は save 側で再同期済み。failedSave 固定しない。
+          if (versionConflictRecoveredMemberIdsRef.current.has(selected.id)) {
+            failedSaveMemberIdsRef.current.delete(selected.id);
+            versionConflictRecoveredMemberIdsRef.current.delete(selected.id);
+          } else {
+            failedSaveMemberIdsRef.current.add(selected.id);
+          }
         }
         return;
       }
       if (completionHasNoLaterEdits()) {
         failedSaveMemberIdsRef.current.delete(selected.id);
+        versionConflictRecoveredMemberIdsRef.current.delete(selected.id);
         pendingRegisteredIntents.current.delete(selected.id);
       }
       if (selected.status === "draft") {
@@ -1042,7 +1130,13 @@ export function HouseholdSettingsForm({
               current.map((member) => (member.id === completed.id ? completed : member)),
             );
           }
-          await api.invalidateSafety();
+          // H-RR1: complete コミット後の invalidate 失敗は soft（H3 form save と同型）。
+          // completeMember 自体の失敗だけ outer catch で総失敗表示する。
+          try {
+            await api.invalidateSafety();
+          } catch {
+            // 意図的 no-op: 完了済みを失敗と見せない。権威経路は live revalidate。
+          }
           if (canPublishSaveMessage(lineage)) {
             setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
           }
@@ -1610,7 +1704,12 @@ export function HouseholdSettingsForm({
                       refetchToken.settled = true;
                       setAllergyRefetchEpoch((current) => current + 1);
                     }
-                    await api.invalidateSafety();
+                    // H-RR2: 削除コミット後の invalidate 失敗は soft（H3 form save と同型）
+                    try {
+                      await api.invalidateSafety();
+                    } catch {
+                      // 意図的 no-op: 削除済みアレルギーを失敗表示にしない
+                    }
                   })
                 }
                 onError={(error) => {
@@ -1739,7 +1838,12 @@ export function HouseholdSettingsForm({
                       await queryClient.invalidateQueries({
                         queryKey: householdKeys.dislikes(userId, memberId),
                       });
-                      await api.invalidateSafety();
+                      // H-RR2: 追加コミット後の invalidate 失敗は soft（H3 form save と同型）
+                      try {
+                        await api.invalidateSafety();
+                      } catch {
+                        // 意図的 no-op: 追加済み苦手を失敗表示にしない
+                      }
                     },
                     "苦手食材を追加できませんでした",
                     () => {
@@ -1768,7 +1872,12 @@ export function HouseholdSettingsForm({
                             await queryClient.invalidateQueries({
                               queryKey: householdKeys.dislikes(userId, memberId),
                             });
-                            await api.invalidateSafety();
+                            // H-RR2: 削除コミット後の invalidate 失敗は soft（H3 form save と同型）
+                            try {
+                              await api.invalidateSafety();
+                            } catch {
+                              // 意図的 no-op: 削除済み苦手を失敗表示にしない
+                            }
                           },
                           "苦手食材を削除できませんでした",
                         );

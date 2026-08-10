@@ -1,8 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import type { PantryItemsStatus } from "../pantry-selector";
 import type { PantryItem } from "@shared/contracts/pantry";
-import { plannerSteps, type PlannerFieldName } from "../model/planner-wizard";
+import {
+  firstIncompletePlannerStep,
+  isAudienceComplete,
+  plannerSteps,
+  type PlannerFieldName,
+} from "../model/planner-wizard";
 import { AudienceStep } from "./audience-step";
 import { CuisineStep } from "./cuisine-step";
 import { IngredientStep } from "./ingredient-step";
@@ -68,6 +73,11 @@ export type PlannerWizardExtraProps = {
   usageRemaining?: number | null;
   /** usage.plan。formatPlanQuotaCopy / L10 CTA 用（未取得は null） */
   plan?: "free" | "plus" | null;
+  /**
+   * usage.quality.available。Plus 品質トグル用（未取得は null）。
+   * false のときは「くわしく作る」をロックし qualityMode を落とす（P5）。
+   */
+  qualityAvailable?: boolean | null;
   /** C-I12 residual: 日次 attempt 残（未取得は null） */
   attemptsRemaining?: number | null;
   /** C-I12 residual: アプリ全体の受付可否（未取得は null） */
@@ -166,6 +176,7 @@ export function PlannerWizard({
   onReset,
   usageRemaining = null,
   plan = null,
+  qualityAvailable = null,
   attemptsRemaining = null,
   globalAvailable = null,
   shortWindowRetryAt = null,
@@ -177,6 +188,16 @@ export function PlannerWizard({
 }: PlannerWizardComponentProps) {
   // このref自体はfocus対象を探すためだけに使い、値そのものは保持しない。
   const containerRef = useRef<HTMLElement>(null);
+  // P7: CTA / 編集戻りで eligibility を同期判定（strip effect 前の偽 complete を抑止）
+  const eligibleMemberIdSet = useMemo(
+    () =>
+      new Set(
+        eligibleMembers
+          .filter((member) => member.blockedReason === null)
+          .map((member) => member.id),
+      ),
+    [eligibleMembers],
+  );
 
   // 前 step の scrollY が残ると短い step の「次へ」が fixed bottom-nav 下に重なる（iPhone SE）。
   // heading focus だけでは preventScroll 系やレイアウト前 focus で足りないことがあるため明示する。
@@ -186,6 +207,8 @@ export function PlannerWizard({
   // idea audience 確定の single-flight。ref は同期ガード、state は disabled 表示用。
   const confirmingIdeaAudienceRef = useRef(false);
   const [confirmingIdeaAudience, setConfirmingIdeaAudience] = useState(false);
+  // P1: await 中の reset/unmount で親 onStepChange("review") を捨てる世代トークン
+  const ideaConfirmGenerationRef = useRef(0);
   // 確認画面の「変更」から飛んだとき true。次へ／戻るで確認へ直行する。
   const [returnToReviewAfterEdit, setReturnToReviewAfterEdit] = useState(false);
   // 浮遊トーストの表示。親の autosaveState が "saved" のままでも 3 秒で消す。
@@ -208,15 +231,33 @@ export function PlannerWizard({
     };
   }, [autosaveState]);
 
+  // P1: unmount（resetToken remount 含む）で in-flight idea 確定の goToStep を無効化する
+  useEffect(() => {
+    return () => {
+      ideaConfirmGenerationRef.current += 1;
+    };
+  }, []);
+
   const goToStep = (next: (typeof plannerSteps)[number]): void => {
     onStepChange(next);
+  };
+
+  /**
+   * 確認からの編集戻り先。必須質問（meal/ingredients/cuisine/audience+eligibility）が
+   * 未完成のまま review に戻さない（P2/P7）。
+   * firstIncomplete が review のときだけ確認へ戻し、空 mainIngredients や
+   * 非 eligible 対象でも生成 CTA が有効になる経路を塞ぐ。
+   */
+  const returnToReviewIfQuestionsComplete = (): void => {
+    setReturnToReviewAfterEdit(false);
+    const incomplete = firstIncompletePlannerStep(draft, eligibleMemberIdSet);
+    goToStep(incomplete);
   };
 
   /** 通常の順送り先。確認からの編集中なら review へ戻す。 */
   const advanceFromEditOr = (sequentialNext: (typeof plannerSteps)[number]): void => {
     if (returnToReviewAfterEdit) {
-      setReturnToReviewAfterEdit(false);
-      goToStep("review");
+      returnToReviewIfQuestionsComplete();
       return;
     }
     goToStep(sequentialNext);
@@ -225,8 +266,7 @@ export function PlannerWizard({
   /** 通常の戻り先。確認からの編集中なら review へ戻す（編集をやめる）。 */
   const backFromEditOr = (sequentialBack: (typeof plannerSteps)[number]): void => {
     if (returnToReviewAfterEdit) {
-      setReturnToReviewAfterEdit(false);
-      goToStep("review");
+      returnToReviewIfQuestionsComplete();
       return;
     }
     goToStep(sequentialBack);
@@ -323,7 +363,8 @@ export function PlannerWizard({
         <button
           className="wizard-reset-button"
           type="button"
-          disabled={isSaving}
+          // P1: idea 確定 await 中は reset を塞ぎ、空下書き + 遅延 review 遷移の競合を避ける
+          disabled={isSaving || confirmingIdeaAudience}
           onClick={() => {
             // 誤タップで下書きを消さないよう、ブラウザ確認後にだけ route へ委譲する
             if (
@@ -478,14 +519,18 @@ export function PlannerWizard({
             if (draft.targetMode === "idea" && onIdeaAudienceConfirmed !== undefined) {
               confirmingIdeaAudienceRef.current = true;
               setConfirmingIdeaAudience(true);
+              // P1: reset/unmount で generation が進んだら goToStep しない
+              const confirmGeneration = ++ideaConfirmGenerationRef.current;
               void (async () => {
                 try {
                   await onIdeaAudienceConfirmed();
                 } catch {
+                  if (confirmGeneration !== ideaConfirmGenerationRef.current) return;
                   confirmingIdeaAudienceRef.current = false;
                   setConfirmingIdeaAudience(false);
                   return;
                 }
+                if (confirmGeneration !== ideaConfirmGenerationRef.current) return;
                 confirmingIdeaAudienceRef.current = false;
                 setConfirmingIdeaAudience(false);
                 // idea の next 先は常に review（編集戻りでも同じ）
@@ -495,6 +540,11 @@ export function PlannerWizard({
               return;
             }
             setReturnToReviewAfterEdit(false);
+            // household 等: 未完成 audience / 非 eligible のまま review へ進めない（P2/P7）
+            if (!isAudienceComplete(draft, eligibleMemberIdSet)) {
+              goToStep(firstIncompletePlannerStep(draft, eligibleMemberIdSet));
+              return;
+            }
             goToStep("review");
           }}
           disabled={isSaving || confirmingIdeaAudience}
@@ -552,6 +602,7 @@ export function PlannerWizard({
         {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
         usageRemaining={usageRemaining}
         plan={plan}
+        qualityAvailable={qualityAvailable}
         attemptsRemaining={attemptsRemaining}
         globalAvailable={globalAvailable}
         shortWindowRetryAt={shortWindowRetryAt}

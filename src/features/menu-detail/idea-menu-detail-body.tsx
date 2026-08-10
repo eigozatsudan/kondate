@@ -135,12 +135,12 @@ export function IdeaMenuDetailBody({
     setIsFavorite(result.isFavorite);
   }, [result.isFavorite]);
 
+  // HR5: household と同型。menuId 切替と isSelected 変化の両方で accepted を同期する。
+  // isSelected true のときだけ true に上げる旧 effect だと、兄弟案の採用で
+  // 本案が isSelected:false になっても「採用しました」primary が残る。
   useEffect(() => {
     setAccepted(result.isSelected);
-  }, [menuId]);
-  useEffect(() => {
-    if (result.isSelected) setAccepted(true);
-  }, [result.isSelected]);
+  }, [menuId, result.isSelected]);
 
   const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;

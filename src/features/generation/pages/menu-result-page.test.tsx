@@ -617,7 +617,34 @@ describe("MenuResultPage", () => {
     expect(await screen.findByRole("heading", { name: "献立変更の差分" })).toBeVisible();
   });
 
-  it("clears the approval and asks for a new one when the reconcile fails with a code", async () => {
+  it("discards create sticky on list_version_conflict so true-stale can remint (SHOP1)", async () => {
+    // server が mutation 無しで version 409 を返した時点で未適用確定。
+    // sticky keep すると expectedListVersion 固定の永久 409 になるため item 対称で drop。
+    // 適用済み+lost は concurrent find が 200 にするため client 409 経路に乗らない。
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.createShoppingList.mockRejectedValue(
+      Object.assign(new Error("買い物リストが更新されました"), { code: "list_version_conflict" }),
+    );
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const createButton = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
+    await waitFor(() => {
+      expect(createButton).toBeEnabled();
+    });
+    await userEvent.click(createButton);
+    const newChoice = screen.queryByRole("radio", { name: "新しいリストにする" });
+    if (newChoice !== null) await userEvent.click(newChoice);
+    await userEvent.click(screen.getByRole("button", { name: "作成する" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "買い物リストの状態が変わりました。もう一度確認してください",
+    );
+    const stickyKey = pendingShoppingCommandStorageKey("create", VALID_MENU_ID);
+    expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).toBeNull();
+  });
+
+  it("discards reconcile sticky on list_version_conflict so true-stale can remint (SHOP1)", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
     shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({
       sourceMenuId: VALID_MENU_ID,
@@ -640,9 +667,71 @@ describe("MenuResultPage", () => {
       "買い物リストの状態が変わりました。もう一度確認してください",
     );
     expect(screen.queryByRole("heading", { name: "献立変更の差分" })).not.toBeInTheDocument();
-    expect(
-      sessionStorage.getItem(pendingShoppingCommandStorageKey("reconcile", SHOPPING_LIST_ID)),
-    ).toBeNull();
+    // SHOP1: version 409 は未適用確定 → sticky drop（safety 409 keep とは非対称）
+    const stickyKey = pendingShoppingCommandStorageKey(
+      "reconcile",
+      `${SHOPPING_LIST_ID}:${VALID_MENU_ID}`,
+    );
+    expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).toBeNull();
+  });
+
+  it("keeps create sticky on current_safety_revalidation_required for same-key resume (SHOP1)", async () => {
+    // 適用済み create の応答ロスト後に safety が invalid になると replay が 409 になる。
+    // sticky を clear すると再作成が新 key になり mode=new で dual-create / 進捗 wipe する。
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.createShoppingList.mockRejectedValue(
+      Object.assign(new Error("買い物リストの状態が変わったため、もう一度確認してください"), {
+        code: "current_safety_revalidation_required",
+      }),
+    );
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const createButton = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
+    await waitFor(() => {
+      expect(createButton).toBeEnabled();
+    });
+    await userEvent.click(createButton);
+    const newChoice = screen.queryByRole("radio", { name: "新しいリストにする" });
+    if (newChoice !== null) await userEvent.click(newChoice);
+    await userEvent.click(screen.getByRole("button", { name: "作成する" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "買い物リストの状態が変わりました。もう一度確認してください",
+    );
+    const stickyKey = pendingShoppingCommandStorageKey("create", VALID_MENU_ID);
+    expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).not.toBeNull();
+  });
+
+  it("keeps reconcile sticky on current_safety_revalidation_required for same-key resume (SHOP1)", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({
+      sourceMenuId: VALID_MENU_ID,
+      sourceMenuVersion: 2,
+    });
+    shoppingApi.reconcileShoppingListRequest.mockRejectedValue(
+      Object.assign(new Error("買い物リストの状態が変わったため、もう一度確認してください"), {
+        code: "current_safety_revalidation_required",
+      }),
+    );
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const reconcile = await screen.findByRole("button", { name: "買い物リストの差分を見る" });
+    await waitFor(() => {
+      expect(reconcile).toBeEnabled();
+    });
+    await userEvent.click(reconcile);
+    await userEvent.click(await screen.findByRole("button", { name: "選んだ変更を反映" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "買い物リストの状態が変わりました。もう一度確認してください",
+    );
+    const stickyKey = pendingShoppingCommandStorageKey(
+      "reconcile",
+      `${SHOPPING_LIST_ID}:${VALID_MENU_ID}`,
+    );
+    expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).not.toBeNull();
   });
 
   describe("idea result boundary", () => {

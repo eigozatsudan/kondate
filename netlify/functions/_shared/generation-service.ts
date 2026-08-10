@@ -71,6 +71,7 @@ import {
   isRegenerationDuplicate,
   loadRegenerationExecutionContext,
   materializeDishRegenerationCandidate,
+  reloadExistingDerivationMenus,
 } from "./regeneration-context.js";
 import { maybeEnqueueShareJob } from "./share-enqueue.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
@@ -154,6 +155,14 @@ export type GenerationDependencies = {
     requestId: string,
     deadlineAtMonotonicMs: number,
   ): Promise<GenerationExecutionContext>;
+  /**
+   * HR3: 再生成 succeed 直前に derivation exclusion を再読する。
+   * load 時 snapshot と AI 往復のあいだに並行 finalize された sibling を取り込む。
+   * 未指定時は execution 上の snapshot のみで再判定（unit の差し替え用）。
+   */
+  reloadRegenerationExclusion?(
+    execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" | "regenerate_dish" }>,
+  ): Promise<RegenerationExecutionPayload["existingDerivationMenus"]>;
   validatePreflight(context: GenerationContext, now: Date): GenerationPreflightResult;
   buildMessages(context: GenerationExecutionContext): readonly OpenRouterMessage[];
   callOpenRouter(
@@ -528,6 +537,18 @@ export function createGenerationDeps(
         deadlineAtMonotonicMs,
       );
     },
+    // HR3: createGenerationDeps 経由の再生成だけ finalize 直前に exclusion を再読する
+    reloadRegenerationExclusion: async (execution) => {
+      const loader = createRegenerationLoaderDeps(user, {
+        requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
+      });
+      return reloadExistingDerivationMenus(
+        loader,
+        user,
+        execution.regeneration.derivationGroupId,
+        execution.regeneration.sourceMenu,
+      );
+    },
   };
 }
 
@@ -861,6 +882,49 @@ export async function runGeneration(
   try {
     const execution = await deps.loadExecutionContext(command, requestId, deadlineAtMonotonicMs);
     const context = execution.generationContext;
+    /**
+     * HR3: compose は load 時 exclusion snapshot で早期弾き。succeed 直前に再読し、
+     * AI 往復中に並行 finalize された sibling との material 衝突を duplicate_output にする。
+     * reload 未配線（unit makeDeps）時は snapshot のみで再判定し、本番 createGenerationDeps は再読する。
+     * reload〜commit の極小窓は assign_regeneration_lineage が material を見ない技術残差。
+     */
+    const failIfDuplicateAtFinalize = async (
+      menu: ValidatedMenu,
+    ): Promise<GenerationStatusData | null> => {
+      if (execution.kind === "new_menu") return null;
+      const regenExecution: Extract<
+        GenerationExecutionContext,
+        { kind: "regenerate_menu" | "regenerate_dish" }
+      > = execution;
+      const freshMenus =
+        deps.reloadRegenerationExclusion !== undefined
+          ? await deps.reloadRegenerationExclusion(regenExecution)
+          : regenExecution.regeneration.existingDerivationMenus;
+      // kind は維持したまま exclusion だけ差し替え（spread で discriminant が崩れないよう再構築）
+      const rechecked: Extract<
+        GenerationExecutionContext,
+        { kind: "regenerate_menu" | "regenerate_dish" }
+      > =
+        regenExecution.kind === "regenerate_menu"
+          ? {
+              ...regenExecution,
+              regeneration: {
+                ...regenExecution.regeneration,
+                existingDerivationMenus: freshMenus,
+              },
+            }
+          : {
+              ...regenExecution,
+              regeneration: {
+                ...regenExecution.regeneration,
+                existingDerivationMenus: freshMenus,
+              },
+            };
+      if (isRegenerationDuplicate(menu, rechecked)) {
+        return await fail("duplicate_output", null);
+      }
+      return null;
+    };
     const preflight = deps.validatePreflight(context, deps.now());
     if (!preflight.ok) {
       if (preflight.terminal === "constraint_conflict") {
@@ -1016,6 +1080,8 @@ export async function runGeneration(
       if (output.kind === "valid") {
         const timedOut = await abortIfDeadlineExceeded();
         if (timedOut !== null) return timedOut;
+        const duplicateAtFinalize = await failIfDuplicateAtFinalize(output.checked.menu);
+        if (duplicateAtFinalize !== null) return duplicateAtFinalize;
         return await succeedOrConflict(
           buildSuccessInput(requestId, output.checked.menu, context, execution),
         );
@@ -1089,6 +1155,10 @@ export async function runGeneration(
     }
     const repairedTimedOut = await abortIfDeadlineExceeded();
     if (repairedTimedOut !== null) return repairedTimedOut;
+    const repairedDuplicateAtFinalize = await failIfDuplicateAtFinalize(
+      repairedOutput.checked.menu,
+    );
+    if (repairedDuplicateAtFinalize !== null) return repairedDuplicateAtFinalize;
     return await succeedOrConflict(
       buildSuccessInput(requestId, repairedOutput.checked.menu, context, execution),
     );

@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { GenerationCommand, GenerationStatusData } from "@shared/contracts/generation";
 import {
   GENERATION_POST_CLIENT_TIMEOUT_MS,
+  GENERATION_STATUS_CLIENT_TIMEOUT_MS,
   generationEndpointFor,
   getGenerationStatus,
   postGeneration,
@@ -173,16 +174,51 @@ describe("generation API", () => {
     },
   );
 
-  it("gets status with a validated encoded key", async () => {
+  it("gets status with a validated encoded key and a client abort budget", async () => {
     const fetchImpl = vi.fn(() => Promise.resolve(response({ ok: true, data: processing })));
     await expect(getGenerationStatus(IDEMPOTENCY_KEY, { fetchImpl })).resolves.toEqual(processing);
-    expect(fetchImpl).toHaveBeenCalledWith(`/api/generations/${IDEMPOTENCY_KEY}/status`, {
-      method: "GET",
-      headers: {
-        Authorization: "Bearer access-token",
-        "Content-Type": "application/json",
-      },
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const call = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = call;
+    expect(url).toBe(`/api/generations/${IDEMPOTENCY_KEY}/status`);
+    expect(init.method).toBe("GET");
+    expect(init.headers).toEqual({
+      Authorization: "Bearer access-token",
+      "Content-Type": "application/json",
     });
+    // G18: hung GET が statusInFlight を永久占有しないよう POST と同系の AbortSignal
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(GENERATION_STATUS_CLIENT_TIMEOUT_MS).toBe(GENERATION_POST_CLIENT_TIMEOUT_MS);
+    expect(GENERATION_STATUS_CLIENT_TIMEOUT_MS).toBe(58_000);
+  });
+
+  it("G18: aborts a hung status GET when the client timeout fires", async () => {
+    const fetchImpl = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal ?? null;
+          if (signal === null) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+          if (signal.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    // 実壁時計を短くして AbortSignal.timeout を確定させる（本番既定は 58s）
+    await expect(
+      getGenerationStatus(IDEMPOTENCY_KEY, { fetchImpl, statusTimeoutMs: 20 }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an invalid GET key before auth or fetch", async () => {

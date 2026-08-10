@@ -10,11 +10,43 @@ import {
 } from "./auth-continuation-recovery";
 import {
   publishAuthContinuationCompletion,
+  readAuthContinuationCompletion,
   startAuthContinuationCompletionListener,
 } from "./auth-continuation-completion";
 import { withTimeout } from "./async-timeout";
 import { createAuthGateway } from "./auth-gateway";
-import { clearAuthFlow, listUnexpiredAuthFlows } from "./auth-flow";
+import { clearSoftSessionResidualBestEffort } from "./auth-cleanup";
+import {
+  clearAuthFlow,
+  clearBrowserSupabaseSessionStorage,
+  listUnexpiredAuthFlows,
+} from "./auth-flow";
+
+/**
+ * 認証待ち UI（login / callback）かどうか。
+ * C16 / C14: completion 後の強制 navigate をこの path に限定し、設定編集中の未保存 UI を捨てない。
+ */
+function isAuthWaitingPath(pathname: string): boolean {
+  return pathname === "/login" || pathname.startsWith("/login/") || pathname === "/auth/callback";
+}
+
+/**
+ * C16 / C14 / C7 / C1: returnTo へ navigate してよいか。
+ * - 認証待ち path 以外は session 再取得のみ（設定等の強制遷移を避ける）
+ * - 待ち flow に flowId 一致があれば navigate（same-tab: clear 前 CustomEvent）
+ * - waiting 空は secret 消去後の完了印拾いを許す
+ * - C1 multi-flow: 勝者タブの publish は completion 書込→clear 後に他タブへ StorageEvent が届く。
+ *   他 flow が残っていても、当該 flowId の完了印が読めるなら正当な完了として navigate する
+ *   （残っている他 flow だけを見て抑止すると completion.returnTo を捨て URL returnTo に落ちる）。
+ */
+function shouldNavigateOnAuthComplete(flowId: string): boolean {
+  if (!isAuthWaitingPath(window.location.pathname)) return false;
+  const waiting = listUnexpiredAuthFlows(window.localStorage, new Date());
+  if (waiting.some((flow) => flow.id === flowId)) return true;
+  if (waiting.length === 0) return true;
+  // multi-flow かつ当該 flow は clear 済み: 完了印が残っていれば cross-tab の正規順序
+  return readAuthContinuationCompletion(flowId, window.localStorage) !== null;
+}
 
 export type AuthProviderClient = {
   auth: Pick<BrowserSupabaseClient["auth"], "getSession" | "onAuthStateChange">;
@@ -40,6 +72,39 @@ const COLD_START_SESSION_RETRY_MS = 1_500;
 export const COLD_START_GET_SESSION_TIMEOUT_MS = 5_000;
 /** cold-start 全体の fail-closed 上限。超えたら未ログイン扱いで UI を解放する（C5）。 */
 export const COLD_START_SESSION_DEADLINE_MS = 15_000;
+/**
+ * R1: AuthProvider は RouterProvider の外側にあり、SPA 遷移では remount も effect 再評価も起きない。
+ * history パッチで拾えない path 変化の保険として、短周期で location.pathname を同期する。
+ */
+const AUTH_RECOVERY_PATH_SYNC_MS = 500;
+
+/**
+ * C5 / RR1: cold-start deadline で UI を unauthenticated にするとき、**session 永続キーのみ**消す。
+ *
+ * C5 の目的（「未ログイン UI + 端末に refresh 残存 → focus で復活」）は session キー削除で足りる。
+ * 旧 clearOwnedAuthStorage は flow secret / pending-deposit / callback-owner まで origin 共有領域から
+ * 一掃し、他タブの進行中 OAuth を unbound にした（RR1）。
+ *
+ * Tradeoff（意図的）:
+ * - session キー自体は origin 共有のため、このタブの fail-closed で他タブの persist token も消える。
+ *   他タブはメモリ上 session が残る間は動き得るが、reload 後は再ログインが必要になり得る。
+ * - flow secret / pending-deposit / completion は温存し、並行ログイン・recovery を優先する。
+ * - signOut は getSession hang と同系で固着し得るため storage のみ同期 clear（best-effort）。
+ * - 明示 logout は auth-cleanup 経由の clearOwnedAuthStorage（全所有キー）のまま。
+ */
+function clearPersistedAuthOnColdStartFailClosed(): void {
+  if (typeof window === "undefined") return;
+  try {
+    clearBrowserSupabaseSessionStorage(window.localStorage);
+  } catch {
+    // storage 障害でも UI 解放は続行
+  }
+  try {
+    clearBrowserSupabaseSessionStorage(window.sessionStorage);
+  } catch {
+    // 同上
+  }
+}
 
 function publishCompletionSafely(completion: { flowId: string; returnTo: string }): void {
   try {
@@ -66,10 +131,17 @@ export function AuthProvider({
   );
   const [session, setSession] = useState<Session | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // R1: SPA path を recovery effect の deps に載せる。Router 外のため useLocation は使えない。
+  const [locationPathname, setLocationPathname] = useState(() =>
+    typeof window === "undefined" ? "/" : window.location.pathname,
+  );
   // 一度でも getSession 成功（error === null）したら true。SIGNED_OUT でも true のまま。
   const hasResolvedSessionOnce = useRef(false);
   // cold-start の壁時計起点（マウント時）。deadline 超過で fail-closed。
   const coldStartBeganAtMs = useRef<number | null>(null);
+  // C5/C6: このタブで一度でも authenticated になったか。soft SIGNED_OUT 時の草稿掃除判定用。
+  // cold-start 未ログイン（RR1）では false のまま → flow/pending を焼かない。
+  const hadAuthenticatedSessionRef = useRef(false);
   const refreshSession = useCallback(async (): Promise<void> => {
     const beganAt = coldStartBeganAtMs.current ?? Date.now();
     coldStartBeganAtMs.current = beganAt;
@@ -94,6 +166,7 @@ export function AuthProvider({
       }
       // 一時エラーの累積も cold-start deadline で fail-closed（C5）
       if (Date.now() - beganAt >= COLD_START_SESSION_DEADLINE_MS) {
+        clearPersistedAuthOnColdStartFailClosed();
         setSession(null);
         setLoaded(true);
       }
@@ -117,8 +190,10 @@ export function AuthProvider({
       if (!hasResolvedSessionOnce.current) void refreshSession();
     }, COLD_START_SESSION_RETRY_MS);
     // C5: hang/一時失敗の再試行を打ち切り、未ログインとして UI を解放する全体上限
+    // persist token も同期 clear し、focus 復活で「いつの間にかログイン」を防ぐ
     const coldStartDeadlineTimer = window.setTimeout(() => {
       if (hasResolvedSessionOnce.current) return;
+      clearPersistedAuthOnColdStartFailClosed();
       setSession(null);
       setLoaded(true);
     }, COLD_START_SESSION_DEADLINE_MS);
@@ -130,9 +205,65 @@ export function AuthProvider({
     };
   }, [client, refreshSession]);
 
+  // C5/C6/C7: authenticated → unauthenticated（SIGNED_OUT / refresh 失効の getSession null 等）で
+  // 共有端末に free-form 草稿・feedback fingerprint・session を残さない。
+  // C7: 進行中 continuation（flow secret / pending-deposit）は cold-start RR1 と同型で温存する。
+  // 他タブの create 直後 flow を soft cleanup が一掃して unbound にする窓を閉じる。
+  // 明示 logout / アカウント削除は clearLocalAuthAndDrafts（全所有キー）のまま。
+  useEffect(() => {
+    if (session !== null) {
+      hadAuthenticatedSessionRef.current = true;
+      return;
+    }
+    if (!loaded || !hadAuthenticatedSessionRef.current) return;
+    hadAuthenticatedSessionRef.current = false;
+    try {
+      clearSoftSessionResidualBestEffort();
+    } catch {
+      // storage 障害でも UI の unauthenticated 遷移は続行
+    }
+  }, [session, loaded]);
+
+  // R1: pathname を追跡し recovery の開始/停止条件を SPA 遷移でも再評価する。
+  // React Router の pushState/replaceState は popstate を発火しないため history を包む。
+  // 保険として短周期 re-check も行う（他経路の location 変更・取りこぼし用）。
+  useEffect(() => {
+    const syncPath = (): void => {
+      const next = window.location.pathname;
+      setLocationPathname((prev) => (prev === next ? prev : next));
+    };
+    const originalPushState = window.history.pushState.bind(window.history);
+    const originalReplaceState = window.history.replaceState.bind(window.history);
+    window.history.pushState = ((...args: Parameters<History["pushState"]>) => {
+      originalPushState(...args);
+      syncPath();
+    }) as History["pushState"];
+    window.history.replaceState = ((...args: Parameters<History["replaceState"]>) => {
+      originalReplaceState(...args);
+      syncPath();
+    }) as History["replaceState"];
+    window.addEventListener("popstate", syncPath);
+    const timer = window.setInterval(syncPath, AUTH_RECOVERY_PATH_SYNC_MS);
+    return () => {
+      window.history.pushState = originalPushState;
+      window.history.replaceState = originalReplaceState;
+      window.removeEventListener("popstate", syncPath);
+      window.clearInterval(timer);
+    };
+  }, []);
+
   useEffect(() => {
     const gateway = recoveryGateway ?? defaultRecoveryGateway;
-    if (gateway === undefined || window.location.pathname === "/auth/callback") return undefined;
+    // locationPathname を deps に含め、/login で start 後の SPA 離脱でも cleanup→stop する（R1）。
+    const path = locationPathname;
+    if (gateway === undefined || path === "/auth/callback") return undefined;
+    const authWaiting = isAuthWaitingPath(path);
+    // C1: 既に authenticated かつ認証待ち path 以外では residual flow の background claim/exchange を抑止する。
+    // multi-flow 併存（旧 secret を焼かない C6）は維持しつつ、別アカウント code による静かな session 差し替えを防ぐ。
+    // loading 中は既 session 有無が未確定のため、認証待ち path 以外では recovery を開始しない。
+    // 明示 re-login（/login）中は authenticated / loading でも recovery を許可する。
+    // R1: 非待機 path へ SPA 離脱したら effect cleanup で stop（authenticated の residual 継続を閉じる）。
+    if (!authWaiting && (!loaded || session !== null)) return undefined;
     const recoveryTtlMs =
       providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000;
     const storage = window.localStorage;
@@ -143,7 +274,11 @@ export function AuthProvider({
       onComplete: (result) => {
         publishCompletionSafely({ flowId: result.flowId, returnTo: result.returnTo });
         void refreshSession();
-        if (result.returnTo.startsWith("/")) navigateTo(result.returnTo);
+        // C14 / C1: completion listener（C16）と同型の path / waiting ガード。
+        // 設定編集中などでの強制 navigate を避ける。
+        if (result.returnTo.startsWith("/") && shouldNavigateOnAuthComplete(result.flowId)) {
+          navigateTo(result.returnTo);
+        }
       },
       // C4: AuthCallbackPage の onResult→failClosed と同型。terminal 結果で当該 flow を焼く
       // （resumeFlow 側 clear の二重化。flowId 無しの error は gateway クリアに委ねる）。
@@ -159,10 +294,13 @@ export function AuthProvider({
     });
   }, [
     defaultRecoveryGateway,
+    loaded,
+    locationPathname,
     navigateTo,
     providedClient,
     recoveryGateway,
     refreshSession,
+    session,
     startRecovery,
   ]);
 
@@ -173,14 +311,8 @@ export function AuthProvider({
           void refreshSession();
           // C16: 認証待ち画面のタブだけ returnTo へ遷移する。
           // 設定編集中などの他タブを強制 navigate して未保存 UI を捨てない。
-          const path = window.location.pathname;
-          if (path === "/login" || path.startsWith("/login/") || path === "/auth/callback") {
-            // C7: 端末に待ち flow があるときは flowId 一致時のみ navigate。
-            // 別 flow 完了や改ざん payload で意図しない returnTo へ飛ばない。
-            const waiting = listUnexpiredAuthFlows(window.localStorage, new Date());
-            if (waiting.length > 0 && !waiting.some((flow) => flow.id === result.flowId)) {
-              return;
-            }
+          // C7: 端末に待ち flow があるときは flowId 一致時のみ navigate。
+          if (shouldNavigateOnAuthComplete(result.flowId)) {
             navigateTo(result.returnTo);
           }
         },

@@ -55,8 +55,12 @@ export async function invalidateHouseholdSafetyQueries(
   queryClient: QueryClient,
   userId: string,
 ): Promise<void> {
+  // allergies / dislikes は memberId 付きキー。user 単位 prefix で dual-tab 一覧も追随させる（H8）。
+  // members と同様 userId 束縛し、共有端末で他アカウントの cache を誤って落とさない。
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: householdKeys.members(userId) }),
+    queryClient.invalidateQueries({ queryKey: ["household", "allergies", userId] }),
+    queryClient.invalidateQueries({ queryKey: ["household", "dislikes", userId] }),
     ...Object.values(householdSafetyQueryPrefixes).map((queryKey) =>
       queryClient.invalidateQueries({ queryKey }),
     ),

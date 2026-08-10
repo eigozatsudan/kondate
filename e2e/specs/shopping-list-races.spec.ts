@@ -310,8 +310,9 @@ test("pending create envelope does not create a list after household safety chan
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
 
-  // E2E6: code 付き 4xx 後は failShoppingCommand が create envelope を消し、
-  // ユーザー向け状態変化メッセージを出す（clear 退行・resume 再送ループを検出）
+  // E2E6 / SHOP1: current_safety_revalidation_required では sticky を残し
+  // （適用済み+応答ロスト後の新 key dual-create を防ぐ）、resume-suppress で
+  // auto-resume の 409 ループを止める。ユーザー向け状態変化メッセージは出す。
   await expect
     .poll(
       async () =>
@@ -324,7 +325,7 @@ test("pending create envelope does not create a list after household safety chan
         ),
       { timeout: 15_000 },
     )
-    .toBe(false);
+    .toBe(true);
   await expect(
     page.getByText("買い物リストの状態が変わりました。もう一度確認してください"),
   ).toBeVisible({ timeout: 15_000 });
@@ -340,7 +341,8 @@ test("pending create envelope does not create a list after household safety chan
 /**
  * E2E7: reconcile sessionStorage pending × household safety 横断。
  * create pending×safety と同型で、差分反映 POST を保留したまま safety を崩し、
- * 解放後の reconcile がリストを書き換えない・pending が消えることを固定する。
+ * 解放後の reconcile がリストを書き換えないこと、および SHOP1 どおり sticky を
+ * 保持（新 key dual-apply 防止）することを固定する。
  */
 test("pending reconcile envelope does not apply after household safety changes", async ({
   authenticatedPage: page,
@@ -404,7 +406,8 @@ test("pending reconcile envelope does not apply after household safety changes",
   await expect.poll(() => reconcileRejects.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
   expectSafetyContractReject(reconcileRejects, "reconcile after safety change");
 
-  // code 付き失敗で envelope 消去 + 状態変化メッセージ
+  // SHOP1: safety 409 でも reconcile sticky を保持（新 key dual-apply 防止）。
+  // suppress で auto-resume ループは止め、状態変化メッセージを出す。
   await expect
     .poll(
       async () =>
@@ -413,7 +416,7 @@ test("pending reconcile envelope does not apply after household safety changes",
         ),
       { timeout: 15_000 },
     )
-    .toBe(false);
+    .toBe(true);
   await expect(
     page.getByText("買い物リストの状態が変わりました。もう一度確認してください"),
   ).toBeVisible({ timeout: 15_000 });

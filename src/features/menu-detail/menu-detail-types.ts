@@ -1,3 +1,4 @@
+import { FLYER_WEEKLY_UI_ENABLED } from "@shared/contracts/flyer-weekly";
 import type { RevalidationResult } from "@/features/history/api/revalidation-api";
 import type { RevalidationPhaseName } from "@/features/history/hooks/use-menu-revalidation";
 
@@ -37,7 +38,8 @@ export type MenuDetailSurface = {
 /** 生成直後結果画面（/menus/:menuId） */
 export const generationMenuDetailSurface: MenuDetailSurface = {
   pathForMenuId: (menuId) => `/menus/${menuId}`,
-  showFlyerUpsell: true,
+  // チラシ UI 全体オフに合わせて成功後 upsell も止める
+  showFlyerUpsell: FLYER_WEEKLY_UI_ENABLED,
   ideaAcceptedPrimaryLabel: "作った献立を見る",
 };
 

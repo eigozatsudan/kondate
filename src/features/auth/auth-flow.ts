@@ -68,9 +68,27 @@ export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.sup
 const flowPrefix = ownedAuthStoragePrefixes[0];
 const callbackOwnerPrefix = `${ownedAuthStoragePrefixes[1]}.callback-owner.`;
 const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
+/**
+ * C3: URL strip 後も 429/5xx 再 deposit できるよう、同一ブラウザに短寿命で code を保持する。
+ * owned prefix 配下なので logout の clearOwnedAuthStorage で消える。
+ * cold-start fail-closed（RR1）は session キーのみ消し、pending は温存する。
+ */
+const pendingDepositPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
 const defaultAuthContinuationTtlMs = 300_000;
 /** C6: create 時 skew の異常値をクリップ（手動時刻の極端なズレでも無限延命しない） */
 const MAX_ABS_CLOCK_SKEW_MS = 48 * 60 * 60 * 1_000;
+
+const pendingDepositSchema = z
+  .object({
+    state: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+    // IdP code 長はプロバイダ差がある。deposit API と同程度上限。
+    code: z.string().min(1).max(2_048),
+    // Zod v4 では number 既定が有限値のみ（.finite() は no-op かつ deprecated）
+    expiresAtMs: z.number(),
+  })
+  .strict();
+
+export type PendingAuthDeposit = z.infer<typeof pendingDepositSchema>;
 
 function base64url(bytes: Uint8Array): string {
   let binary = "";
@@ -118,9 +136,17 @@ export function sanitizeReturnPath(value: string | null | undefined): string {
 /**
  * 認証完了後の復帰先に載せるとループや無意味な中間遷移になる自己参照パス。
  * open redirect ではなく UX/状態機械の対称性（session-expiry / callback エラーと同型）。
+ * AuthProvider の login surface（`/login` exact と `/login/` 接頭）と揃え、
+ * sanitize 後の trailing slash / query / hash も自己参照として落とす（C6）。
  */
 export function isAuthSelfReturnPath(path: string): boolean {
-  return path === "/login" || path.startsWith("/login?") || path.startsWith("/auth/callback");
+  return (
+    path === "/login" ||
+    path.startsWith("/login?") ||
+    path.startsWith("/login/") ||
+    path.startsWith("/login#") ||
+    path.startsWith("/auth/callback")
+  );
 }
 
 /**
@@ -321,6 +347,27 @@ export function adjustedAuthNowMs(wallNowMs: number, clockSkewMs?: number | null
 }
 
 /**
+ * C9 / C12: hangWatchdog / completion wait の remaining を安全側で算出する。
+ *
+ * - 負 skew: adjusted が wall より進む → 短い remaining（早期失効）
+ * - 正 skew（正当な進みすぎ時計 or 改ざん）: wall 基準を上限にし、
+ *   lease TTL（wall `Date.now()`）より長く待たない。改ざん +48h で watchdog が
+ *   サーバ期限後まで延命する非対称を閉じる。
+ *
+ * 正当なクライアント進み時計では wall がサーバ期限に先に達し得る（最大 skew 相当の
+ * 早期発火）。秘密の期限後長期残存より安全側を優先する。
+ */
+export function authDeadlineRemainingMs(
+  deadlineMs: number,
+  wallNowMs: number,
+  clockSkewMs?: number | null,
+): number {
+  if (!Number.isFinite(deadlineMs) || !Number.isFinite(wallNowMs)) return 0;
+  const adjustedNowMs = adjustedAuthNowMs(wallNowMs, clockSkewMs);
+  return Math.max(0, Math.min(deadlineMs - adjustedNowMs, deadlineMs - wallNowMs));
+}
+
+/**
  * create 応答の expiresAt とクライアント now から skew を推定する（C6）。
  * serverImpliedNow ≈ expiresAt − ttl。client が進みすぎなら正の skew。
  */
@@ -359,6 +406,12 @@ function normalizeAuthClock(
     const nowMs = wallNowMs - clampClockSkewMs(clockSkewMs);
 
     const serverExpiresMs = parseServerExpiresMs(serverExpiresAt);
+    // C9: サーバ絶対期限は wall で hard cap。storage 改ざんの正 skew で
+    // サーバ expires 後もローカル secret が残る経路を閉じる（安全側・早期失効）。
+    if (serverExpiresMs !== null && wallNowMs > serverExpiresMs) {
+      clearAuthFlowClockState(flowId, storage);
+      return null;
+    }
 
     const markerKey = `${clockRebasePrefix}${flowId}`;
     const rawMarker = storage.getItem(markerKey);
@@ -452,12 +505,93 @@ function clearAuthFlowClockState(flowId: string, storage: Storage): void {
     `${flowPrefix}${flowId}`,
     `${callbackOwnerPrefix}${flowId}`,
     `${clockRebasePrefix}${flowId}`,
+    `${pendingDepositPrefix}${flowId}`,
   ]) {
     try {
       storage.removeItem(key);
     } catch {
       // fail-closed cleanupは他の保存値の削除を続け、個別Storage失敗を外へ漏らさない。
     }
+  }
+}
+
+/**
+ * C3: completeCallback が deposit 前に code を短寿命保存する。
+ * recovery / resumeFlow が transient 尽きたあとも re-deposit できる。
+ * expiresAtMs は continuation TTL と揃える（期限後は読まない）。
+ */
+export function writePendingAuthDeposit(
+  flowId: string,
+  pending: PendingAuthDeposit,
+  storage: Storage,
+): void {
+  const parsed = pendingDepositSchema.safeParse(pending);
+  if (!parsed.success) return;
+  try {
+    storage.setItem(`${pendingDepositPrefix}${flowId}`, JSON.stringify(parsed.data));
+  } catch {
+    // quota 等ではメモリ上の completeCallback 再試行のみに依存する
+  }
+}
+
+/**
+ * C3: 未失効の pending deposit を読む。壊れている・期限切れは削除して null。
+ * C15: 期限判定の nowMs は呼び出し側で `adjustedAuthNowMs(Date.now(), flow.clockSkewMs)` を渡すこと。
+ * flow deadline / hangWatchdog と同型にし、進みすぎクライアント時計で re-deposit キャッシュが先に落ちないようにする。
+ * 既定の Date.now() は skew 未知（テスト・単独読取）向け。
+ */
+export function readPendingAuthDeposit(
+  flowId: string,
+  storage: Storage,
+  nowMs: number = Date.now(),
+): PendingAuthDeposit | null {
+  try {
+    const raw = storage.getItem(`${pendingDepositPrefix}${flowId}`);
+    if (raw === null) return null;
+    const parsed = pendingDepositSchema.safeParse(JSON.parse(raw) as unknown);
+    if (!parsed.success) {
+      storage.removeItem(`${pendingDepositPrefix}${flowId}`);
+      return null;
+    }
+    if (parsed.data.expiresAtMs <= nowMs) {
+      storage.removeItem(`${pendingDepositPrefix}${flowId}`);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    try {
+      storage.removeItem(`${pendingDepositPrefix}${flowId}`);
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+}
+
+export function clearPendingAuthDeposit(flowId: string, storage: Storage): void {
+  try {
+    storage.removeItem(`${pendingDepositPrefix}${flowId}`);
+  } catch {
+    // TTL で収束
+  }
+}
+
+/**
+ * Browser Supabase の session 永続キー（createBrowserSupabaseClient の storageKey と一致）。
+ * ownedAuthStoragePrefixes[1] と同じ文字列だが、logout の prefix 一掃ではなく **exact key** として扱う。
+ */
+export const browserSupabaseSessionStorageKey = ownedAuthStoragePrefixes[1];
+
+/**
+ * C5 / RR1: cold-start fail-closed 専用。session 永続キーだけを消す。
+ * clearOwnedAuthStorage は flow secret / pending-deposit / callback-owner まで origin 共有領域から
+ * 一掃するため、他タブの進行中ログインを unbound にする（RR1）。logout 経路は従来どおり全所有キー。
+ */
+export function clearBrowserSupabaseSessionStorage(storage: Storage): void {
+  try {
+    storage.removeItem(browserSupabaseSessionStorageKey);
+  } catch {
+    // best-effort（storage 障害でも呼び出し側の UI 解放を妨げない）
   }
 }
 
@@ -602,8 +736,10 @@ export async function createAuthFlow(
   try {
     storage.setItem(`${flowPrefix}${flow.id}`, JSON.stringify(flow));
   } catch {
-    // C15: 永続化失敗時は秘密をメモリにも残さない（呼び出し側は開始失敗として扱う）。
-    // サーバ行の即時取消 RPC は無いため TTL 掃除に委ねる（孤児行は秘密ハッシュのみ）。
+    // C11 / 旧 C15: 永続化失敗時は秘密をメモリにも残さない（呼び出し側は開始失敗として扱う）。
+    // ContinuationApi に cancel は無く、サーバ行の即時取消はできない。
+    // 孤児行は state/secret ハッシュのみ（平文秘密なし）で expires_at TTL 掃除に委ねる。
+    // create レート枠は消費されるが、秘密漏洩面は無い（residual-intentional / TTL）。
     throw new Error("auth_flow_persist_failed");
   }
   return flow;
