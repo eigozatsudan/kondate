@@ -617,7 +617,34 @@ describe("MenuResultPage", () => {
     expect(await screen.findByRole("heading", { name: "献立変更の差分" })).toBeVisible();
   });
 
-  it("keeps reconcile sticky on list_version_conflict so concurrent winner can resume (SHOP2)", async () => {
+  it("discards create sticky on list_version_conflict so true-stale can remint (SHOP1)", async () => {
+    // server が mutation 無しで version 409 を返した時点で未適用確定。
+    // sticky keep すると expectedListVersion 固定の永久 409 になるため item 対称で drop。
+    // 適用済み+lost は concurrent find が 200 にするため client 409 経路に乗らない。
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.createShoppingList.mockRejectedValue(
+      Object.assign(new Error("買い物リストが更新されました"), { code: "list_version_conflict" }),
+    );
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const createButton = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
+    await waitFor(() => {
+      expect(createButton).toBeEnabled();
+    });
+    await userEvent.click(createButton);
+    const newChoice = screen.queryByRole("radio", { name: "新しいリストにする" });
+    if (newChoice !== null) await userEvent.click(newChoice);
+    await userEvent.click(screen.getByRole("button", { name: "作成する" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "買い物リストの状態が変わりました。もう一度確認してください",
+    );
+    const stickyKey = pendingShoppingCommandStorageKey("create", VALID_MENU_ID);
+    expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).toBeNull();
+  });
+
+  it("discards reconcile sticky on list_version_conflict so true-stale can remint (SHOP1)", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
     shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({
       sourceMenuId: VALID_MENU_ID,
@@ -640,12 +667,12 @@ describe("MenuResultPage", () => {
       "買い物リストの状態が変わりました。もう一度確認してください",
     );
     expect(screen.queryByRole("heading", { name: "献立変更の差分" })).not.toBeInTheDocument();
-    // SHOP2: list_version_conflict では共有 sticky を wipe しない（SHOP9: list+menu 粒度）
+    // SHOP1: version 409 は未適用確定 → sticky drop（safety 409 keep とは非対称）
     const stickyKey = pendingShoppingCommandStorageKey(
       "reconcile",
       `${SHOPPING_LIST_ID}:${VALID_MENU_ID}`,
     );
-    expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).not.toBeNull();
+    expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).toBeNull();
   });
 
   it("keeps create sticky on current_safety_revalidation_required for same-key resume (SHOP1)", async () => {

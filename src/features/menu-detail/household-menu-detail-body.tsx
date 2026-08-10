@@ -361,16 +361,21 @@ export function HouseholdMenuDetailBody({
   const failShoppingCommand = (kind: "create" | "reconcile", targetId: string, error: unknown) => {
     if (error instanceof Error && "code" in error) {
       const code = error.code;
-      // SHOP2: list_version_conflict は並行敗者が共有 sticky（勝者の復旧鍵）を wipe しない。
-      // 真の stale でも sticky を残し、同一 key+body を server early-replay / concurrent find に当てる。
-      // SHOP1: version 不一致だけで isReusable が key を捨てない（mode/approval のみ照合）。
-      // SHOP1 (adversarial): current_safety_revalidation_required も sticky を保持する。
+      // SHOP1 (adversarial residual / fixable): list_version_conflict は server が
+      // early find / concurrent find とも mutation 無しと確定した未適用 409。
+      // 同一 key を keep すると expectedListVersion 固定のまま永久 409 になるため、
+      // item 経路と同様 sticky+suppress を捨てる。次回 sheet は現行 version で新 key。
+      // 適用済み+応答ロストは server が 200 replay するため client に 409 として来ない。
+      // version rebuild（同一 key で expectedListVersion だけ載せ替え）は hash 変更で
+      // dual-create を再発させるので行わない。isReusable の version 非照合は維持。
+      //
+      // current_safety_revalidation_required は sticky を保持する。
       // 適用済み create/reconcile + 応答ロスト後に safety が一時 invalid になると
       // replay が 409 になる。ここで clear するとユーザー再送が新 idempotency key になり、
       // mode=new は active を archive して第二リストを作る（進捗 wipe / dual-create）。
       // suppress で auto-resume の 409 ループは止め、safety 復帰後の同一 key 再送を残す。
-      // 他 code は sticky+suppress clear。
-      if (code === "list_version_conflict" || code === "current_safety_revalidation_required") {
+      // 他 code（list_version_conflict 含む）は sticky+suppress clear。
+      if (code === "current_safety_revalidation_required") {
         markShoppingResumeSuppress(kind, targetId);
       } else {
         clearShoppingCommand(kind, targetId);
