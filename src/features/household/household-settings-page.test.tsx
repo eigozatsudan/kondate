@@ -10,6 +10,7 @@ import type {
   MemberAllergyRow,
   MemberDislikeRow,
 } from "./household-api";
+import { HouseholdMemberVersionConflictError } from "./household-api";
 import { householdKeys } from "./household-queries";
 import { HouseholdSettingsForm, type HouseholdSettingsApi } from "./household-settings-page";
 import {
@@ -1314,6 +1315,62 @@ it("H3: treats post-commit invalidateSafety failure as soft success", async () =
   });
   expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
   expect(screen.getByRole("status")).not.toHaveTextContent("保存できませんでした");
+});
+
+// H9: CAS 衝突後は members 再取得と CAS 基準更新で再衝突ループを閉じる
+it("H9: after version conflict, refetches members and advances CAS so retry succeeds", async () => {
+  const serverAfterOtherTab: HouseholdMemberRow = {
+    ...member,
+    display_name: "他タブ更新",
+    allergy_status: "unconfirmed",
+    updated_at: "2026-07-20T00:00:00.000Z",
+  };
+  const listMembers = vi
+    .fn()
+    .mockResolvedValueOnce([member])
+    .mockResolvedValue([serverAfterOtherTab]);
+  const updateMember = vi
+    .fn()
+    .mockRejectedValueOnce(new HouseholdMemberVersionConflictError())
+    .mockImplementation(
+      (_memberId: string, patch: HouseholdMemberPatch, expectedUpdatedAt: string) => {
+        expect(expectedUpdatedAt).toBe(serverAfterOtherTab.updated_at);
+        return Promise.resolve({
+          ...serverAfterOtherTab,
+          ...patch,
+          updated_at: "2026-07-21T00:00:00.000Z",
+        });
+      },
+    );
+  await renderSettings({ listMembers, updateMember });
+
+  // 初回 save は T0 基準で CAS miss
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(1);
+  });
+  expect(updateMember.mock.calls[0]?.[2]).toBe(member.updated_at);
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "家族設定が他の画面で更新されています。最新の内容を確認してください",
+    );
+  });
+  // members 再取得後、form は他タブの正本へ戻る
+  await waitFor(() => {
+    expect(screen.getByLabelText("呼び名")).toHaveValue("他タブ更新");
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("unconfirmed");
+  });
+  expect(listMembers.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+  // 再編集は新 CAS 基準で成功する（T0 固定の再衝突ループに入らない）
+  await userEvent.selectOptions(screen.getByLabelText("食べる量"), "small");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(2);
+  });
+  expect(updateMember.mock.calls[1]?.[2]).toBe(serverAfterOtherTab.updated_at);
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+  });
 });
 
 // H-RR1: draft complete 後の invalidate 失敗も soft。完了成功 UX を維持する

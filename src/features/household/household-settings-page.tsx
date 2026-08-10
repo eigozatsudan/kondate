@@ -26,6 +26,7 @@ import {
   deleteHouseholdMember,
   deleteMemberAllergy,
   deleteMemberDislike,
+  HouseholdMemberVersionConflictError,
   listAllergenCatalog,
   listAllergenAliases,
   listHouseholdMembers,
@@ -281,6 +282,8 @@ export function HouseholdSettingsForm({
   const operationTokensByMemberRef = useRef(new Map<string, number>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
   const failedSaveMemberIdsRef = useRef(new Set<string>());
+  // H9: CAS 衝突後に members 再同期済みの member。queueSave が failedSave 固定しないため。
+  const versionConflictRecoveredMemberIdsRef = useRef(new Set<string>());
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
   const dislikeMutationPendingMemberIdsRef = useRef(new Set<string>());
   const deletingMemberIdsRef = useRef(new Set<string>());
@@ -540,6 +543,29 @@ export function HouseholdSettingsForm({
         }
         return true;
       } catch (error) {
+        // H9: CAS miss 後に keepLocalSnapshot が T0 を固定し再衝突し続けるのを防ぐ。
+        // pantry conflict refresh と同型で members を再取得し、CAS 基準をサーバ最新へ進める。
+        if (error instanceof HouseholdMemberVersionConflictError) {
+          versionConflictRecoveredMemberIdsRef.current.add(member.id);
+          failedSaveMemberIdsRef.current.delete(member.id);
+          try {
+            await queryClient.refetchQueries({ queryKey: membersKey, exact: true });
+          } catch {
+            // refetch 失敗でも競合メッセージは出す（次操作で再取得を期待）
+          }
+          const latest = queryClient
+            .getQueryData<HouseholdMemberRow[]>(membersKey)
+            ?.find((row) => row.id === member.id);
+          if (latest !== undefined) {
+            completeMemberUpdatedAtRef.current.set(member.id, latest.updated_at);
+            // ローカル snapshot をサーバ正本へ戻し、useEffect の keepLocal でも stale form を残さない
+            const serverValues = memberValue(latest);
+            valuesByMemberRef.current.set(member.id, serverValues);
+            if (selectedMemberIdRef.current === member.id) {
+              setValues(serverValues);
+            }
+          }
+        }
         if (canPublishSaveMessage(lineage)) {
           setMessage(error instanceof Error ? error.message : "家族設定を保存できませんでした");
         }
@@ -642,8 +668,16 @@ export function HouseholdSettingsForm({
         .catch(() => false)
         .then((saved) => {
           if (!skipped && isLatestSaveRevision(lineage)) {
-            if (saved) failedSaveMemberIdsRef.current.delete(member.id);
-            else failedSaveMemberIdsRef.current.add(member.id);
+            if (saved) {
+              failedSaveMemberIdsRef.current.delete(member.id);
+              versionConflictRecoveredMemberIdsRef.current.delete(member.id);
+            } else if (versionConflictRecoveredMemberIdsRef.current.has(member.id)) {
+              // H9: CAS 衝突は members 再同期済み。failedSave 固定で再衝突ループにしない。
+              failedSaveMemberIdsRef.current.delete(member.id);
+              versionConflictRecoveredMemberIdsRef.current.delete(member.id);
+            } else {
+              failedSaveMemberIdsRef.current.add(member.id);
+            }
           }
           return saved;
         })
@@ -1068,12 +1102,19 @@ export function HouseholdSettingsForm({
       const saved = await save(selected, parsed.data, lineage);
       if (!saved) {
         if (completionHasNoLaterEdits()) {
-          failedSaveMemberIdsRef.current.add(selected.id);
+          // H9: CAS 衝突後は save 側で再同期済み。failedSave 固定しない。
+          if (versionConflictRecoveredMemberIdsRef.current.has(selected.id)) {
+            failedSaveMemberIdsRef.current.delete(selected.id);
+            versionConflictRecoveredMemberIdsRef.current.delete(selected.id);
+          } else {
+            failedSaveMemberIdsRef.current.add(selected.id);
+          }
         }
         return;
       }
       if (completionHasNoLaterEdits()) {
         failedSaveMemberIdsRef.current.delete(selected.id);
+        versionConflictRecoveredMemberIdsRef.current.delete(selected.id);
         pendingRegisteredIntents.current.delete(selected.id);
       }
       if (selected.status === "draft") {
