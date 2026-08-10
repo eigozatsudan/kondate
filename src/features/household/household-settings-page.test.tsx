@@ -1350,7 +1350,9 @@ it("H-RR1: treats post-completeMember invalidateSafety failure as soft success",
   expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
   // complete コミット後の members cache は complete のまま（false failure で巻き戻さない）
   await waitFor(() => {
-    const cached = queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members("settings"));
+    const cached = queryClient.getQueryData<HouseholdMemberRow[]>(
+      householdKeys.members("settings"),
+    );
     expect(cached?.find((row) => row.id === draft.id)?.status).toBe("complete");
   });
   await waitFor(() => {
@@ -1454,7 +1456,9 @@ it("H-RR3: treats post-deleteMember invalidateSafety failure as soft success", a
   expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
   // 削除コミット後の members cache から対象が消えたまま（false failure で巻き戻さない）
   await waitFor(() => {
-    const cached = queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members("settings"));
+    const cached = queryClient.getQueryData<HouseholdMemberRow[]>(
+      householdKeys.members("settings"),
+    );
     expect(cached?.some((row) => row.id === "member-2")).toBe(false);
   });
   expect(screen.getByRole("heading", { name: "「大人」を編集中" })).toBeVisible();

@@ -148,22 +148,21 @@ describe("createRegenerationLoaderDeps", () => {
     expect(context.safety).toBe(currentSafety);
     expect(getSupabaseAdmin).toHaveBeenCalled();
     // HR4: preference_snapshot は source コピーではなく live memberPreferences envelope
-    expect(context.preferenceSnapshot).toMatchObject({
-      submission: expect.objectContaining({
-        targetMode: "household",
-        targetMemberIds: [memberId],
-      }),
-      memberPreferences: [
-        {
-          householdMemberId: memberId,
-          anonymousMemberRef: "member_1",
-          portionSize: "regular",
-          spiceLevel: "regular",
-          easePreferences: [],
-          dislikes: [],
-        },
-      ],
+    // expect.objectContaining を object リテラル内に置くと no-unsafe-assignment になるため分離する
+    expect(context.preferenceSnapshot.submission).toMatchObject({
+      targetMode: "household",
+      targetMemberIds: [memberId],
     });
+    expect(context.preferenceSnapshot.memberPreferences).toEqual([
+      {
+        householdMemberId: memberId,
+        anonymousMemberRef: "member_1",
+        portionSize: "regular",
+        spiceLevel: "regular",
+        easePreferences: [],
+        dislikes: [],
+      },
+    ]);
     // source の古い memberPreferences: [] を引き継がない
     expect(context.preferenceSnapshot).not.toEqual(stored.preferenceSnapshot);
 
@@ -268,8 +267,9 @@ describe("createRegenerationLoaderDeps", () => {
 
     expect(context.preferenceSnapshot.memberPreferences).toEqual(livePrefs);
     expect(context.preferenceSnapshot.memberPreferences).not.toEqual(sourcePrefs);
-    expect(context.preferenceSnapshot).toMatchObject({
-      submission: expect.objectContaining({ targetMode: "household" }),
+    // expect.objectContaining を object リテラル内に置くと no-unsafe-assignment になるため分離する
+    expect(context.preferenceSnapshot.submission).toMatchObject({
+      targetMode: "household",
     });
   });
 
