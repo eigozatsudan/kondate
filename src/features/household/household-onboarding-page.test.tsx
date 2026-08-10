@@ -4,7 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AppToastProvider } from "@/shared/ui/app-toast";
 import type { OnboardingStatus } from "@shared/contracts/domain";
-import type { HouseholdDraftPatch, HouseholdMemberRow, ProfileRow } from "./household-api";
+import {
+  HouseholdMemberVersionConflictError,
+  type HouseholdDraftPatch,
+  type HouseholdMemberRow,
+  type ProfileRow,
+} from "./household-api";
 import { HouseholdOnboardingForm, type HouseholdOnboardingApi } from "./household-onboarding-page";
 import { UNSUPPORTED_DIET_KIND_LABELS } from "./unsupported-diet-copy";
 
@@ -525,6 +530,72 @@ it("does not complete or report saved when the final queued save fails", async (
   ).toBeInTheDocument();
   expect(completeMember).not.toHaveBeenCalled();
   expect(screen.queryByText("保存済み")).not.toBeInTheDocument();
+});
+
+// H8: CAS 衝突後は members 再取得と draftUpdatedAtRef 更新で再衝突ループを閉じる
+// （settings H9 と同型の onboarding draft 回復）
+it("H8: after draft version conflict, refetches members and advances CAS so retry succeeds", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
+  const serverAfterOtherTab: HouseholdMemberRow = {
+    ...draft,
+    allergy_status: "unconfirmed",
+    updated_at: "2026-07-20T00:00:00.000Z",
+  };
+  const updateDraft = vi
+    .fn()
+    .mockImplementationOnce(async () => {
+      // 他タブが先に draft を更新した想定。refetch が正本を返すよう state を進める
+      membersState.upsert(serverAfterOtherTab);
+      throw new HouseholdMemberVersionConflictError();
+    })
+    .mockImplementation(
+      (_memberId: string, patch: HouseholdDraftPatch, expectedUpdatedAt: string) => {
+        expect(expectedUpdatedAt).toBe(serverAfterOtherTab.updated_at);
+        const saved: HouseholdMemberRow = {
+          ...serverAfterOtherTab,
+          ...patch,
+          updated_at: "2026-07-21T00:00:00.000Z",
+        };
+        membersState.upsert(saved);
+        return Promise.resolve(saved);
+      },
+    );
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    updateDraft,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  // 初回 save は T0 基準で CAS miss
+  await user.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledTimes(1);
+  });
+  expect(updateDraft.mock.calls[0]?.[2]).toBe(draft.updated_at);
+  expect(
+    await screen.findByText("保存できませんでした。選び直して再試行してください。"),
+  ).toBeInTheDocument();
+  // members 再取得後、form は他タブの正本へ戻る（楽観 age_band を捨てる）
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("unconfirmed");
+    expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
+  });
+  // 初期 load + conflict 後 refetch で 2 回以上
+  expect(membersState.listMembers.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+  // 再編集は新 CAS 基準で成功する（T0 固定の再衝突ループに入らない）
+  await user.selectOptions(screen.getByLabelText("年齢のめやす"), "age_3_5");
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledTimes(2);
+  });
+  expect(updateDraft.mock.calls[1]?.[2]).toBe(serverAfterOtherTab.updated_at);
+  await waitFor(() => {
+    expect(screen.getByText("保存済み")).toBeInTheDocument();
+  });
+  expect(screen.getByLabelText("年齢のめやす")).toHaveValue("age_3_5");
 });
 
 it("任意性が明確な文言を表示し、旧「必須設定」表現を残さない", async () => {

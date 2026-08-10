@@ -17,6 +17,7 @@ import {
   completeHouseholdMember,
   deleteMemberAllergy,
   getProfile,
+  HouseholdMemberVersionConflictError,
   listAllergenAliases,
   listAllergenCatalog,
   listHouseholdMembers,
@@ -408,8 +409,30 @@ export function HouseholdOnboardingForm({
           setSaveState("saved");
         }
         return true;
-      } catch {
+      } catch (error) {
+        // H8: CAS miss 後に draftUpdatedAtRef が T0 固定で再衝突し続けるのを防ぐ。
+        // settings H9 と同型で members を再取得し、CAS 基準と form をサーバ正本へ進める。
+        if (error instanceof HouseholdMemberVersionConflictError) {
+          try {
+            await queryClient.refetchQueries({
+              queryKey: householdKeys.members(userId),
+              exact: true,
+            });
+          } catch {
+            // refetch 失敗でも failed 表示は出す（次操作で再取得を期待）
+          }
+          const latest = queryClient
+            .getQueryData<HouseholdMemberRow[]>(householdKeys.members(userId))
+            ?.find((row) => row.id === memberId);
+          if (latest !== undefined) {
+            draftUpdatedAtRef.current = latest.updated_at;
+          }
+        }
         if (saveVersion === latestSaveVersion.current) {
+          // 競合時は楽観 patch を捨て、refetch 後のサーバ正本に合わせる
+          if (error instanceof HouseholdMemberVersionConflictError) {
+            pendingSavePatch.current = {};
+          }
           setSaveState("failed");
         }
         return false;
