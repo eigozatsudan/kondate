@@ -125,8 +125,8 @@ describe("AuthProvider", () => {
   });
 
   it("accepts an injectable recovery boundary without creating an auth gateway", async () => {
-    // フルスイートで他 spec が /auth/callback に置換したまま残ると recovery が抑止される（C1/callback 委譲）
-    window.history.replaceState(null, "", "/");
+    // C2: residual recovery は /login のみ。非待機 path では gateway 注入だけでも start しない。
+    window.history.replaceState(null, "", "/login");
     const client = {
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
@@ -186,8 +186,12 @@ describe("AuthProvider", () => {
   });
 
   it("refreshes the session after recovery completion when publishing fails", async () => {
+    // C1/C6: residual recovery は unauthenticated + /login のみ start する
     window.history.replaceState(null, "", "/login");
-    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce({ data: { session: null }, error: null })
+      .mockResolvedValueOnce({ data: { session }, error: null });
     const client = {
       auth: {
         getSession,
@@ -216,7 +220,8 @@ describe("AuthProvider", () => {
           <Probe />
         </AuthProvider>,
       );
-      await screen.findByText("authenticated");
+      await screen.findByText("unauthenticated");
+      expect(completeRecovery).toBeTypeOf("function");
 
       await act(async () => {
         completeRecovery?.({ kind: "complete", flowId: "flow-1", returnTo: "/onboarding" });
@@ -271,8 +276,8 @@ describe("AuthProvider", () => {
   });
 
   it("C14: recovery onComplete navigates only on auth waiting paths (same guard as C16)", async () => {
-    window.history.replaceState(null, "", "/settings");
-    // unauthenticated にすれば C1 抑止を跨いで onComplete を直接発火できる
+    // C2: recovery は /login でのみ start するため、まず login で onComplete を掴み非待機へ移す
+    window.history.replaceState(null, "", "/login");
     const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
     const client = {
       auth: {
@@ -299,6 +304,11 @@ describe("AuthProvider", () => {
     );
     await screen.findByText("unauthenticated");
     expect(completeRecovery).toBeTypeOf("function");
+
+    await act(async () => {
+      window.history.pushState(null, "", "/settings");
+      await Promise.resolve();
+    });
 
     await act(async () => {
       completeRecovery?.({ kind: "complete", flowId: "flow-1", returnTo: "/onboarding" });
@@ -335,7 +345,9 @@ describe("AuthProvider", () => {
     expect(recovery).not.toHaveBeenCalled();
   });
 
-  it("C1: starts recovery on /login even when already authenticated (explicit re-login)", async () => {
+  it("C1/C6: does not start residual recovery on /login when already authenticated", async () => {
+    // LoginPage は authenticated で即 Navigate。recovery を許可すると stop 後の in-flight
+    // exchange が onAuthStateChange で無言 session 差し替えする（C1/C6）。
     window.history.replaceState(null, "", "/login");
     const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
     const client = {
@@ -356,12 +368,37 @@ describe("AuthProvider", () => {
       </AuthProvider>,
     );
     await screen.findByText("authenticated");
-    expect(recovery).toHaveBeenCalled();
+    expect(recovery).not.toHaveBeenCalled();
   });
 
-  it("R1: stops recovery after SPA leave from /login while authenticated", async () => {
+  it("C2: does not start residual recovery on /planner when unauthenticated", async () => {
+    // soft 失効後の共有端末で、非待機 path の silent claim/exchange を抑止する。
+    window.history.replaceState(null, "", "/planner");
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    const recovery = vi.fn(() => vi.fn());
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={recovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    expect(recovery).not.toHaveBeenCalled();
+  });
+
+  it("R1: stops recovery after SPA leave from unauthenticated /login", async () => {
     window.history.replaceState(null, "", "/login");
-    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
     const client = {
       auth: {
         getSession,
@@ -385,10 +422,9 @@ describe("AuthProvider", () => {
         <Probe />
       </AuthProvider>,
     );
-    await screen.findByText("authenticated");
-    // loading→authenticated で effect が再評価され得るため、安定後の起点を取る
+    await screen.findByText("unauthenticated");
     expect(recovery.mock.calls.length).toBeGreaterThanOrEqual(1);
-    const startsAfterAuth = recovery.mock.calls.length;
+    const startsAfterLoad = recovery.mock.calls.length;
     const activeStop = stops.at(-1);
     expect(activeStop).toBeDefined();
     expect(activeStop).not.toHaveBeenCalled();
@@ -400,13 +436,13 @@ describe("AuthProvider", () => {
     });
 
     expect(activeStop).toHaveBeenCalledTimes(1);
-    // authenticated + 非待機では再開しない（residual exchange 抑止）
-    expect(recovery).toHaveBeenCalledTimes(startsAfterAuth);
+    // 非待機 path では再開しない（C2）
+    expect(recovery).toHaveBeenCalledTimes(startsAfterLoad);
   });
 
-  it("R1: restarts recovery when returning to /login while authenticated", async () => {
+  it("R1: restarts recovery when returning to unauthenticated /login", async () => {
     window.history.replaceState(null, "", "/login");
-    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
     const client = {
       auth: {
         getSession,
@@ -424,22 +460,22 @@ describe("AuthProvider", () => {
         <Probe />
       </AuthProvider>,
     );
-    await screen.findByText("authenticated");
-    const startsAfterAuth = recovery.mock.calls.length;
-    expect(startsAfterAuth).toBeGreaterThanOrEqual(1);
+    await screen.findByText("unauthenticated");
+    const startsAfterLoad = recovery.mock.calls.length;
+    expect(startsAfterLoad).toBeGreaterThanOrEqual(1);
 
     await act(async () => {
       window.history.pushState(null, "", "/settings");
       await Promise.resolve();
     });
-    expect(recovery).toHaveBeenCalledTimes(startsAfterAuth);
+    expect(recovery).toHaveBeenCalledTimes(startsAfterLoad);
 
-    // 明示 re-login surface へ戻ったら multi-flow residual recovery を再開する
+    // 認証待ち surface へ戻ったら residual recovery を再開する
     await act(async () => {
       window.history.pushState(null, "", "/login");
       await Promise.resolve();
     });
-    expect(recovery.mock.calls.length).toBe(startsAfterAuth + 1);
+    expect(recovery.mock.calls.length).toBe(startsAfterLoad + 1);
   });
 
   it("C5/C6/C7: soft SIGNED_OUT clears drafts/feedback but preserves in-flight flow secret", async () => {
@@ -453,9 +489,10 @@ describe("AuthProvider", () => {
       "kondate:feedback:ambiguous-fingerprint",
       "bug_report\nアレルギー free-form",
     );
-    // C7: soft 失効は進行中 continuation を焼かない（cold-start RR1 と同型）
+    // C7: soft 失効は進行中 continuation secret を焼かない（cold-start RR1 と同型）
     const flowId = "10000000-0000-4000-8000-0000000000c7";
     const flowKey = `kondate.auth.flow.${flowId}`;
+    const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
     window.localStorage.setItem(
       flowKey,
       JSON.stringify({
@@ -468,6 +505,16 @@ describe("AuthProvider", () => {
         startedAt: new Date().toISOString(),
       }),
     );
+    // C3/C10: pending code / PKCE verifier は soft でも消す
+    window.localStorage.setItem(
+      pendingKey,
+      JSON.stringify({
+        state: "B".repeat(43),
+        code: "authorization-code-plain",
+        expiresAtMs: Date.now() + 60_000,
+      }),
+    );
+    window.localStorage.setItem("kondate.auth.supabase-code-verifier", "pkce-verifier");
     const authListeners: Array<(event: string, next: Session | null) => void> = [];
     const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
     const client = {
@@ -499,6 +546,8 @@ describe("AuthProvider", () => {
     expect(window.localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(window.localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
     expect(window.localStorage.getItem(flowKey)).not.toBeNull();
+    expect(window.localStorage.getItem(pendingKey)).toBeNull();
+    expect(window.localStorage.getItem("kondate.auth.supabase-code-verifier")).toBeNull();
   });
 
   it("C5: cold-start never-authenticated unauthenticated does not wipe sibling flow (RR1 intact)", async () => {

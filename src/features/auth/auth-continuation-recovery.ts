@@ -523,19 +523,27 @@ function readActiveTargetLeases(
       lease === undefined
         ? undefined
         : `${TARGET_RECOVERY_LEASE_PREFIX}${lease.flowId}.${lease.instanceId}`;
-    const age = lease === undefined ? Number.NaN : nowMs - lease.refreshedAt;
-    if (
-      lease === undefined ||
-      expectedKey !== key ||
-      age < 0 ||
-      age > TARGET_RECOVERY_LEASE_TTL_MS
-    ) {
+    if (lease === undefined || expectedKey !== key) {
       storage.removeItem(key);
       continue;
     }
-    const flowLeases = leases.get(lease.flowId) ?? [];
-    flowLeases.push(lease);
-    leases.set(lease.flowId, flowLeases);
+    // C9 / U1-I3 対称: 未来 refreshedAt（時計戻り・タブ間粗時刻）は即削除せず now に正規化する。
+    // 旧 age<0 削除は callback-owned を短時間 orphan 扱いし dual exchange 窓を開いていた。
+    let activeLease = lease;
+    const age = nowMs - activeLease.refreshedAt;
+    if (age < 0) {
+      activeLease = { ...activeLease, refreshedAt: nowMs };
+      if (!writeStorageValue(storage, key, JSON.stringify(activeLease))) {
+        storage.removeItem(key);
+        continue;
+      }
+    } else if (age > TARGET_RECOVERY_LEASE_TTL_MS) {
+      storage.removeItem(key);
+      continue;
+    }
+    const flowLeases = leases.get(activeLease.flowId) ?? [];
+    flowLeases.push(activeLease);
+    leases.set(activeLease.flowId, flowLeases);
   }
   return leases;
 }

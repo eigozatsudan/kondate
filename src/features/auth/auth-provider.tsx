@@ -88,7 +88,8 @@ const AUTH_RECOVERY_PATH_SYNC_MS = 500;
  * Tradeoff（意図的）:
  * - session キー自体は origin 共有のため、このタブの fail-closed で他タブの persist token も消える。
  *   他タブはメモリ上 session が残る間は動き得るが、reload 後は再ログインが必要になり得る。
- * - flow secret / pending-deposit / completion は温存し、並行ログイン・recovery を優先する。
+ * - flow secret / completion は温存し、並行ログイン・recovery を優先する。
+ * - soft 失効（別 effect）は pending-deposit / PKCE verifier を追加で消す（C3/C10）。cold-start は触らない。
  * - signOut は getSession hang と同系で固着し得るため storage のみ同期 clear（best-effort）。
  * - 明示 logout は auth-cleanup 経由の clearOwnedAuthStorage（全所有キー）のまま。
  */
@@ -207,8 +208,8 @@ export function AuthProvider({
 
   // C5/C6/C7: authenticated → unauthenticated（SIGNED_OUT / refresh 失効の getSession null 等）で
   // 共有端末に free-form 草稿・feedback fingerprint・session を残さない。
-  // C7: 進行中 continuation（flow secret / pending-deposit）は cold-start RR1 と同型で温存する。
-  // 他タブの create 直後 flow を soft cleanup が一掃して unbound にする窓を閉じる。
+  // C7: flow secret / completion / callback-owner は温存（他タブ create 直後を unbound にしない）。
+  // C3/C10: pending-deposit と PKCE verifier は soft でも消す（共有端末の code 残渣）。
   // 明示 logout / アカウント削除は clearLocalAuthAndDrafts（全所有キー）のまま。
   useEffect(() => {
     if (session !== null) {
@@ -256,14 +257,18 @@ export function AuthProvider({
     const gateway = recoveryGateway ?? defaultRecoveryGateway;
     // locationPathname を deps に含め、/login で start 後の SPA 離脱でも cleanup→stop する（R1）。
     const path = locationPathname;
-    if (gateway === undefined || path === "/auth/callback") return undefined;
-    const authWaiting = isAuthWaitingPath(path);
-    // C1: 既に authenticated かつ認証待ち path 以外では residual flow の background claim/exchange を抑止する。
-    // multi-flow 併存（旧 secret を焼かない C6）は維持しつつ、別アカウント code による静かな session 差し替えを防ぐ。
-    // loading 中は既 session 有無が未確定のため、認証待ち path 以外では recovery を開始しない。
-    // 明示 re-login（/login）中は authenticated / loading でも recovery を許可する。
-    // R1: 非待機 path へ SPA 離脱したら effect cleanup で stop（authenticated の residual 継続を閉じる）。
-    if (!authWaiting && (!loaded || session !== null)) return undefined;
+    if (gateway === undefined) return undefined;
+    // /auth/callback は AuthCallbackPage の target recovery に委譲（二重 claim を避ける）。
+    if (path === "/auth/callback") return undefined;
+    // C1 / C2 / C6:
+    // - residual recovery は認証待ち path（実質 /login）かつ unauthenticated + loaded のみ。
+    // - authenticated の /login は LoginPage が即 Navigate するため recovery 不要。許可すると
+    //   stop 後も abort できない in-flight exchange が onAuthStateChange 経由で無言差し替えする（C1/C6）。
+    // - unauthenticated の /planner 等で recovery すると soft 失効後の他 flow residual が
+    //   待機 UI 無しで complete し得る（C2）。completion listener が cross-tab 完了を拾う。
+    // R1: 非待機 path へ SPA 離脱したら effect cleanup で stop。
+    if (!isAuthWaitingPath(path)) return undefined;
+    if (!loaded || session !== null) return undefined;
     const recoveryTtlMs =
       providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000;
     const storage = window.localStorage;

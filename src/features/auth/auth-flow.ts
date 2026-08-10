@@ -71,7 +71,8 @@ const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
 /**
  * C3: URL strip 後も 429/5xx 再 deposit できるよう、同一ブラウザに短寿命で code を保持する。
  * owned prefix 配下なので logout の clearOwnedAuthStorage で消える。
- * cold-start fail-closed（RR1）は session キーのみ消し、pending は温存する。
+ * cold-start fail-closed（RR1）は session キーのみ消し pending は温存。
+ * soft 失効（clearSoftSessionResidualBestEffort）は pending を消す（共有端末 code 残渣 — C3）。
  */
 const pendingDepositPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
 const defaultAuthContinuationTtlMs = 300_000;

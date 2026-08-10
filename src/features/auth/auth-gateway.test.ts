@@ -419,6 +419,32 @@ it("maps any other provider error to auth_callback_failed", async () => {
   expect(result).toEqual({ kind: "error", code: "auth_callback_failed", returnTo: "/planner" });
 });
 
+it("C5: code-less provider error with matching state does not burn a live stored flow", async () => {
+  const storage = new MapStorage();
+  const api = continuationApiMock();
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+
+  const result = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&error=access_denied`,
+    ),
+  );
+
+  expect(result).toEqual({
+    kind: "error",
+    code: "oauth_cancelled",
+    returnTo: "/onboarding",
+  });
+  // C5: state 一致でも code 無し error では secret を即焼かない（DoS 縮退）
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+});
+
 // C1 (adversarial f2cb7b0b): spoofable URL error_code は state 束縛前に expired で秘密を焼かない
 it("C1: spoofed error_code without matching state does not burn a live stored flow", async () => {
   const storage = new MapStorage();

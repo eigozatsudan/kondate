@@ -1012,6 +1012,45 @@ describe("auth continuation recovery", () => {
     stop();
   });
 
+  it("C9: normalizes a future target-lease refreshedAt without treating callback-owned as orphan", async () => {
+    // 旧 age<0 削除は lease 全滅 → orphan claim 窓。last-poll と同型で now 正規化して温存する。
+    const nowMs = Date.now();
+    const flowId = "10000000-0000-4000-8000-0000000000c9";
+    const storage = flowStorage([flowId], nowMs);
+    const startedAt = new Date(nowMs).toISOString();
+    storage.setItem(`kondate.auth.supabase.callback-owner.${flowId}`, startedAt);
+    const leaseKey = `kondate.auth.supabase.claim-poll-target-lease.${flowId}.liveinstance01`;
+    storage.setItem(
+      leaseKey,
+      JSON.stringify({
+        flowId,
+        instanceId: "liveinstance01",
+        refreshedAt: nowMs + 60_000,
+        pending: false,
+      }),
+    );
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      now: () => new Date(nowMs),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    // callback-owned + 有効 lease のため global は claim しない
+    expect(gateway.resumeFlow).not.toHaveBeenCalled();
+    const raw = storage.getItem(leaseKey);
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw ?? "null") as { refreshedAt: number };
+    expect(parsed.refreshedAt).toBe(nowMs);
+    stop();
+  });
+
   it("U1-I3 claims on the next cycle after normalizing a future last-poll timestamp", async () => {
     let nowMs = Date.now();
     const storage = flowStorage(["10000000-0000-4000-8000-000000000001"], nowMs);

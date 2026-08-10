@@ -296,20 +296,15 @@ export function AuthCallbackPage({
         });
         stopWaiting = stopAwaiting;
       } else if (next.kind === "expired") {
-        if (callbackFlowId.current !== null) clearAuthFlow(callbackFlowId.current);
+        // C5: code 無し expired でも secret を即焼かない（state 漏洩経由の DoS を縮める）。
+        // 正当な期限切れも TTL / 明示 logout / ユーザー再開始で収束する。
         leaveLoginError("magic_link_expired", next.returnTo);
       } else {
         // kind === "error"（網羅的に残りは error のみ）
-        // AUTH-1: unbound_callback では秘密を焼かない。
+        // AUTH-1 / C5: unbound と同様、code 無し provider error でも秘密を焼かない。
         // gateway は state mismatch / hash / deposit 失敗で意図的に clear しない。
-        // ページ側の無条件 clear は公開 flow UUID 経由の in-flight 秘密破壊（DoS）になる。
-        // provider 端末エラー（oauth_cancelled / auth_callback_failed）だけ端末 secret を消す。
-        if (
-          callbackFlowId.current !== null &&
-          (next.code === "oauth_cancelled" || next.code === "auth_callback_failed")
-        ) {
-          clearAuthFlow(callbackFlowId.current);
-        }
+        // 以前の oauth_cancelled / auth_callback_failed 即 clear は state 一致だけで
+        // in-flight 秘密を破壊できた（redirect 初回 URL 観測前提の可用性 DoS）。
         leaveLoginError(next.code, next.returnTo);
       }
     });

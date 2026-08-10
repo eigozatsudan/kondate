@@ -435,7 +435,10 @@ export function createAuthGateway(
           if (stored !== null && state !== stored.state) {
             return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
           }
-          if (flowId !== null) clearAuthFlow(flowId, storage);
+          // C5: code 無し provider error では secret を即焼かない。
+          // state は redirect 初回 URL に載り得るため、一致だけを根拠に clear すると
+          // ログ観測者による in-flight 秘密破壊 DoS になる。正当 cancel も TTL / 明示 logout で収束。
+          // （AuthCallbackPage 側も oauth_cancelled / auth_callback_failed で clear しない。）
           return {
             kind: "error",
             code: providerError === "access_denied" ? "oauth_cancelled" : "auth_callback_failed",

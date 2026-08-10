@@ -470,6 +470,37 @@ it("maps a targeted recovery expiry to the existing callback terminal flow", asy
   );
 });
 
+it("C5: code-less oauth_cancelled / expired results do not clear the terminal flow secret", async () => {
+  const flowId = "10000000-0000-4000-8000-0000000000c5";
+  for (const result of [
+    {
+      kind: "error" as const,
+      code: "oauth_cancelled" as const,
+      returnTo: "/onboarding",
+      flowId,
+    },
+    { kind: "expired" as const, flowId, returnTo: "/onboarding" },
+  ]) {
+    vi.mocked(clearAuthFlow).mockClear();
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockResolvedValue(result),
+      resumeFlow: vi.fn(),
+    };
+    const { leaveAuthCallback } = renderCallback(gateway, {
+      initialEntry: `/auth/callback?flow=${flowId}`,
+    });
+    await act(async () => Promise.resolve());
+    const expectedError = result.kind === "expired" ? "magic_link_expired" : "oauth_cancelled";
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      `/login?authError=${expectedError}&returnTo=%2Fonboarding`,
+    );
+    // C5: state 一致の code 無し error/expired でも即 burn しない
+    expect(clearAuthFlow).not.toHaveBeenCalled();
+  }
+});
+
 it("handles the original callback result after StrictMode remounts the effect", async () => {
   let resolveCallback: ((result: AuthCallbackResult) => void) | undefined;
   const callbackResult = new Promise<AuthCallbackResult>((resolve) => {
