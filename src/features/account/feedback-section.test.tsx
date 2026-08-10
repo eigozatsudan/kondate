@@ -237,10 +237,7 @@ describe("FeedbackSection", () => {
   it("AP1: legacy plaintext fingerprint in localStorage is discarded on remount", async () => {
     const user = userEvent.setup();
     const piiBody = "旧形式で残った平文指紋は受理せず再送を許可する本文です。";
-    localStorage.setItem(
-      FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY,
-      `feature_request\n${piiBody}`,
-    );
+    localStorage.setItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY, `feature_request\n${piiBody}`);
     fetchMock.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ ok: true, data: { id: "feedback-legacy" } }),

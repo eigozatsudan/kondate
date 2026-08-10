@@ -1498,9 +1498,7 @@ it("P10: privacy の通信失敗は非遷移 + 保存失敗文言", async () => 
       "献立条件を保存できなかったため、説明画面へ進めませんでした。",
     );
   });
-  expect(navigateMock).not.toHaveBeenCalledWith(
-    "/privacy?returnTo=%2Fplanner%3Fresume%3Dreview",
-  );
+  expect(navigateMock).not.toHaveBeenCalledWith("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
 });
 
 describe("PlannerRoutePage", () => {

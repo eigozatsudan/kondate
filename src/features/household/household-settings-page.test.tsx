@@ -2565,22 +2565,21 @@ it("H8: registered commit success status survives soft allergies invalidate duri
   let currentMember: HouseholdMemberRow = member;
   let allergies: MemberAllergyRow[] = [];
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const listMembers = vi.fn(async () => [currentMember]);
-  const listAllergies = vi.fn(async () => allergies.map((row) => ({ ...row })));
-  const addStandardAllergy = vi.fn(async () => {
+  // require-await 回避: Promise を返す同期モックに揃える（同ファイル内の他 H 系テストと同様）
+  const listMembers = vi.fn(() => Promise.resolve([currentMember]));
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+  const addStandardAllergy = vi.fn(() => {
     allergies = [walnutAllergy];
-    return walnutAllergy;
+    return Promise.resolve(walnutAllergy);
   });
-  const updateMember = vi.fn(
-    async (_memberId: string, patch: HouseholdMemberPatch, _expectedUpdatedAt: string) => {
-      currentMember = {
-        ...currentMember,
-        ...patch,
-        updated_at: "2026-07-12T00:00:00.000Z",
-      };
-      return currentMember;
-    },
-  );
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) => {
+    currentMember = {
+      ...currentMember,
+      ...patch,
+      updated_at: "2026-07-12T00:00:00.000Z",
+    };
+    return Promise.resolve(currentMember);
+  });
   // 本番 H8 経路: invalidateSafety が allergies / members を stale にして再取得する
   const invalidateSafety = vi.fn(async () => {
     await Promise.all([

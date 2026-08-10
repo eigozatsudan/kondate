@@ -73,10 +73,7 @@ describe("FlyerWeeklyPanel", () => {
     expect(screen.queryByTestId("flyer-weekly-upload")).toBeNull();
     // 未配線時は resume=review 付き Link（flush は呼び出し側）
     const privacyLink = screen.getByRole("link", { name: "AI情報の説明を見る" });
-    expect(privacyLink).toHaveAttribute(
-      "href",
-      "/privacy?returnTo=%2Fplanner%3Fresume%3Dreview",
-    );
+    expect(privacyLink).toHaveAttribute("href", "/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
   });
 
   it("P2: onOpenPrivacyNotice があるとき privacy CTA は button で委譲（素 Link ではない）", async () => {
