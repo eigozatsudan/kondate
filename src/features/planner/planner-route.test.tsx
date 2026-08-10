@@ -77,9 +77,13 @@ const setOnboardingStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue(undef
 const getProfileMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
 /** P1/P3: flush が IncompleteDraftSaveError を投げる経路を再現する */
-const autosaveFlushMode = vi.hoisted(() => ({
-  mode: "save" as "save" | "incomplete" | "network_error",
-}));
+const autosaveFlushMode = vi.hoisted(
+  (): {
+    mode: "save" | "incomplete" | "network_error";
+  } => ({
+    mode: "save",
+  }),
+);
 const navigateMock = vi.hoisted(() => vi.fn());
 const setQueryDataMock = vi.hoisted(() => vi.fn());
 // ensureQueryData 実装が cached を any にせず unknown として扱えるよう戻り値を明示する

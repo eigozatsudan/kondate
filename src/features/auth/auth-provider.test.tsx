@@ -125,6 +125,8 @@ describe("AuthProvider", () => {
   });
 
   it("accepts an injectable recovery boundary without creating an auth gateway", async () => {
+    // フルスイートで他 spec が /auth/callback に置換したまま残ると recovery が抑止される（C1/callback 委譲）
+    window.history.replaceState(null, "", "/");
     const client = {
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),

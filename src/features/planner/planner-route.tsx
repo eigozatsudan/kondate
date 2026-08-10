@@ -848,7 +848,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         if (userId !== undefined) {
           try {
             const freshPantry = await listPantryItems(client, userId);
-            if (!mountedRef.current || operationId !== emergencyOperationIdRef.current) {
+            // await 跨ぎ: CFA が mounted/operationId を畳まないよう関数経由で再読
+            if (!isPlannerOperationStillActive(mountedRef, operationId, emergencyOperationIdRef)) {
               return;
             }
             pantryRowsRef.current = freshPantry;
@@ -893,7 +894,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         // P8: 非選択・期限切れ解消後の attempt surplus は session に載せない
         // （緊急側 hasExpiredPantryConfirmation が dialog を誤抑止しないよう selected∩expired）。
         // list 再読 await 後なので operationId を再確認してから session/navigate する。
-        if (!mountedRef.current || operationId !== emergencyOperationIdRef.current) {
+        // CFA が 843 の判定で畳まないよう submit と同型の関数経由。
+        if (!isPlannerOperationStillActive(mountedRef, operationId, emergencyOperationIdRef)) {
           return;
         }
         if (userId !== undefined) {
@@ -1417,7 +1419,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               }
             }
             // await 跨ぎで strip が operationId を進めている可能性がある（ref は制御フロー外）
-            if (!isPlannerSubmitStillActive(mountedRef, submitOperationId, submitOperationIdRef)) {
+            if (
+              !isPlannerOperationStillActive(mountedRef, submitOperationId, submitOperationIdRef)
+            ) {
               return;
             }
             // P3: flush 後に pantry 削除/期限更新が入り得る（staleTime:0 の背景 refetch）。
@@ -1428,7 +1432,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               try {
                 const freshPantry = await listPantryItems(client, userId);
                 if (
-                  !isPlannerSubmitStillActive(mountedRef, submitOperationId, submitOperationIdRef)
+                  !isPlannerOperationStillActive(
+                    mountedRef,
+                    submitOperationId,
+                    submitOperationIdRef,
+                  )
                 ) {
                   return;
                 }
@@ -1525,12 +1533,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 }
 
 /** await 跨ぎの strip/unmount を ref 再読で検知する（制御フロー解析に畳まれないよう関数経由）。 */
-function isPlannerSubmitStillActive(
+function isPlannerOperationStillActive(
   mountedRef: { current: boolean },
-  submitOperationId: number,
-  submitOperationIdRef: { current: number },
+  operationId: number,
+  operationIdRef: { current: number },
 ): boolean {
-  return mountedRef.current && submitOperationId === submitOperationIdRef.current;
+  return mountedRef.current && operationId === operationIdRef.current;
 }
 
 /** idea → skipped 書込の失敗理由。UI は code で文言を分岐する。 */

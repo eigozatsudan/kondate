@@ -238,7 +238,8 @@ describe("FeedbackSection", () => {
         "送信が返らないとき閉じられるようにする本文です。",
       );
       await user.click(screen.getByRole("button", { name: "送信する" }));
-      expect(screen.getByRole("button", { name: "送信しています…" })).toBeDisabled();
+      // fingerprint の await 後に pending が立つ。フルスイート負荷下では同期 getBy がレースし得る
+      expect(await screen.findByRole("button", { name: "送信しています…" })).toBeDisabled();
 
       await vi.advanceTimersByTimeAsync(FEEDBACK_POST_CLIENT_TIMEOUT_MS + 50);
 
@@ -273,7 +274,8 @@ describe("FeedbackSection", () => {
         "本文が返らないとき閉じられるようにするフィードバックです。",
       );
       await user.click(screen.getByRole("button", { name: "送信する" }));
-      expect(screen.getByRole("button", { name: "送信しています…" })).toBeDisabled();
+      // AP6 と同型。fingerprint await 後の pending を findBy で待ちフルスイート負荷のレースを避ける
+      expect(await screen.findByRole("button", { name: "送信しています…" })).toBeDisabled();
 
       await vi.advanceTimersByTimeAsync(FEEDBACK_POST_CLIENT_TIMEOUT_MS + 50);
 
