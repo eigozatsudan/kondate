@@ -122,7 +122,12 @@ export interface HouseholdOnboardingApi {
   listMembers: () => Promise<HouseholdMemberRow[]>;
   getProfile: () => Promise<ProfileRow>;
   createDraft: (sortOrder: number) => Promise<HouseholdMemberRow>;
-  updateDraft: (memberId: string, patch: HouseholdDraftPatch) => Promise<HouseholdMemberRow>;
+  /** expectedUpdatedAt: H2 draft CAS（表示中 updated_at）。競合時は ConflictError。 */
+  updateDraft: (
+    memberId: string,
+    patch: HouseholdDraftPatch,
+    expectedUpdatedAt: string,
+  ) => Promise<HouseholdMemberRow>;
   completeMember: (memberId: string) => Promise<HouseholdMemberRow>;
   listAllergies: (memberId: string) => Promise<Awaited<ReturnType<typeof listMemberAllergies>>>;
   listCatalog?: () => Promise<Awaited<ReturnType<typeof listAllergenCatalog>>>;
@@ -146,7 +151,8 @@ function createHouseholdApi(userId: string): HouseholdOnboardingApi {
     listMembers: () => listHouseholdMembers(client, userId),
     getProfile: () => getProfile(client, userId),
     createDraft: (sortOrder) => startHouseholdOnboarding(client, sortOrder),
-    updateDraft: (memberId, patch) => updateHouseholdMemberDraft(client, userId, memberId, patch),
+    updateDraft: (memberId, patch, expectedUpdatedAt) =>
+      updateHouseholdMemberDraft(client, userId, memberId, patch, expectedUpdatedAt),
     completeMember: (memberId) => completeHouseholdMember(client, userId, memberId),
     listAllergies: (memberId) => listMemberAllergies(client, userId, memberId),
     listCatalog: () => listAllergenCatalog(client),
@@ -191,6 +197,8 @@ export function HouseholdOnboardingForm({
   const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const pendingSavePatch = useRef<HouseholdDraftPatch>({});
   const latestSaveVersion = useRef(0);
+  // H2: draft CAS 基準 updated_at。同一タブ直列 save では成功後に進める。
+  const draftUpdatedAtRef = useRef<string | undefined>(undefined);
   const [customAllergy, setCustomAllergy] = useState("");
   const [customConfirmed, setCustomConfirmed] = useState(false);
   const [completeError, setCompleteError] = useState(false);
@@ -235,6 +243,12 @@ export function HouseholdOnboardingForm({
   });
   const members = membersQuery.data ?? [];
   const draft = members.find((member) => member.status === "draft") ?? null;
+  // draft 切替時は CAS 基準をリセット（別メンバーの updated_at を載せない）。
+  // 同一 draft のサーバ再読込 updated_at では進めない（直列 save 成功時のみ save 側が進める）。
+  useEffect(() => {
+    draftUpdatedAtRef.current = draft?.updated_at;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- id 切替のみ。updated_at は save 成功で進める
+  }, [draft?.id]);
   const completeMembers = members.filter((member) => member.status === "complete");
   const onboardingStatus = profileQuery.data?.onboarding_status;
   // complete / skipped / 未取得では skip CTA を出さない（RPC 遷移表）
@@ -384,7 +398,10 @@ export function HouseholdOnboardingForm({
       setSaveState("saving");
       const patchToSave = { ...pendingSavePatch.current };
       try {
-        const saved = await api.updateDraft(memberId, patchToSave);
+        // H2: 表示中 / 直列成功後の updated_at で CAS
+        const expectedUpdatedAt = draftUpdatedAtRef.current ?? draft.updated_at;
+        const saved = await api.updateDraft(memberId, patchToSave, expectedUpdatedAt);
+        draftUpdatedAtRef.current = saved.updated_at;
         if (saveVersion === latestSaveVersion.current) {
           pendingSavePatch.current = {};
           replaceMember(saved);

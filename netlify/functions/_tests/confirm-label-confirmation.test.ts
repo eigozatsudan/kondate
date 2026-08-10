@@ -112,6 +112,34 @@ describe("confirm-label-confirmation", () => {
     });
   });
 
+  // H5: confirmation_status は pending|confirmed に enum 閉じ
+  it("fails closed when confirmation_status is not pending or confirmed (H5)", async () => {
+    rpc.mockResolvedValue({
+      data: [
+        {
+          id: "48000000-0000-4000-8000-000000000001",
+          confirmation_status: "archived",
+          confirmed_at: null,
+          confirmed_by: null,
+        },
+      ],
+      error: null,
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedSafetyFingerprint: "a".repeat(64) }),
+      }),
+      context,
+    );
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "confirmation_failed" },
+    });
+  });
+
   it("returns the same closed 404 for a stale fingerprint or archived confirmation", async () => {
     // Plan 3 の3引数 RPC が empty setof を返したとき、古い警告の確認を閉じる
     rpc.mockResolvedValue({ data: [], error: null });

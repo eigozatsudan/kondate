@@ -12,9 +12,10 @@ const bodySchema = z
   })
   .strict();
 // RPC setof 行を 200 応答前に検証する（未検査 cast 禁止）。余分な列は許容する。
+// H5: confirmation_status は browser 契約と同型に enum 閉じ（未知 status は fail-closed 500）
 const confirmationRowSchema = z.looseObject({
   id: z.uuid(),
-  confirmation_status: z.string().min(1),
+  confirmation_status: z.enum(["pending", "confirmed"]),
   confirmed_at: z.iso.datetime({ offset: true }).nullable(),
   confirmed_by: z.uuid().nullable(),
 });

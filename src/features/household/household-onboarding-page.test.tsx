@@ -294,10 +294,15 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
 
   await user.selectOptions(await screen.findByLabelText(unsupportedDietStatusLabel), "present");
 
-  expect(updateDraft).toHaveBeenNthCalledWith(1, "member-1", {
-    unsupported_diet_status: "present",
-    unsupported_diet_kinds: [],
-  });
+  expect(updateDraft).toHaveBeenNthCalledWith(
+    1,
+    "member-1",
+    {
+      unsupported_diet_status: "present",
+      unsupported_diet_kinds: [],
+    },
+    draft.updated_at,
+  );
   const completeButton = screen.getByRole("button", { name: "この家族の設定を完了する" });
   expect(completeButton).not.toBeDisabled();
   await user.click(completeButton);
@@ -309,9 +314,14 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
     await screen.findByRole("checkbox", { name: UNSUPPORTED_DIET_KIND_LABELS.weaning_food }),
   );
 
-  expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", {
-    unsupported_diet_kinds: ["weaning_food"],
-  });
+  expect(updateDraft).toHaveBeenNthCalledWith(
+    2,
+    "member-1",
+    {
+      unsupported_diet_kinds: ["weaning_food"],
+    },
+    draft.updated_at,
+  );
   expect(completeButton).toBeEnabled();
 });
 
@@ -367,6 +377,7 @@ it("serializes rapid draft updates in input order", async () => {
     2,
     "member-1",
     expect.objectContaining({ age_band: "adult", allergy_status: "none" }),
+    draft.updated_at,
   );
 });
 
@@ -391,13 +402,23 @@ it("preserves rapid changes to the same field while the first save is pending", 
 
   expect(displayName).toHaveValue("母娘");
   expect(updateDraft).toHaveBeenCalledTimes(1);
-  expect(updateDraft).toHaveBeenNthCalledWith(1, "member-1", { display_name: "母" });
+  expect(updateDraft).toHaveBeenNthCalledWith(
+    1,
+    "member-1",
+    { display_name: "母" },
+    draft.updated_at,
+  );
 
-  firstUpdate.resolve({ ...draft, display_name: "母" });
+  firstUpdate.resolve({ ...draft, display_name: "母", updated_at: "2026-07-11T00:00:01.000Z" });
   await waitFor(() => {
     expect(updateDraft).toHaveBeenCalledTimes(2);
   });
-  expect(updateDraft).toHaveBeenNthCalledWith(2, "member-1", { display_name: "母娘" });
+  expect(updateDraft).toHaveBeenNthCalledWith(
+    2,
+    "member-1",
+    { display_name: "母娘" },
+    "2026-07-11T00:00:01.000Z",
+  );
   expect(displayName).toHaveValue("母娘");
 });
 
@@ -470,6 +491,7 @@ it("retries unsaved fields with a later queued save after an earlier save fails"
       age_band: "adult",
       allergy_status: "none",
     }),
+    draft.updated_at,
   );
   expect(await screen.findByText("保存済み")).toBeInTheDocument();
 });

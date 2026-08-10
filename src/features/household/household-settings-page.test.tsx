@@ -1292,6 +1292,30 @@ it("saves a changed safety field and invalidates dependents", async () => {
   });
 });
 
+// H3: DB コミット後の invalidate 失敗は soft。保存成功メッセージを維持する
+it("H3: treats post-commit invalidateSafety failure as soft success", async () => {
+  const updateMember = vi.fn().mockResolvedValue({
+    ...member,
+    age_band: "age_3_5",
+    updated_at: "2026-07-12T00:00:00.000Z",
+  });
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  await renderSettings({ updateMember, invalidateSafety });
+
+  await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+  });
+  expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
+  expect(screen.getByRole("status")).not.toHaveTextContent("保存できませんでした");
+});
+
 // H12: DB の不正 enum を unchecked cast で select に載せない（空/年齢デフォルトへ）
 it("initializes form from corrupt DB enums as empty selects and age defaults", async () => {
   const corrupt: HouseholdMemberRow = {

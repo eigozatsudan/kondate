@@ -79,11 +79,17 @@ export async function startHouseholdOnboarding(
   return data;
 }
 
+/**
+ * H2: draft 行も complete と同型の updated_at CAS。
+ * dual-tab の古い form が allergy_status 等を LWW 上書きするのを防ぐ。
+ * 0 行は競合（他タブ更新 or 非 draft）として ConflictError。
+ */
 export async function updateHouseholdMemberDraft(
   client: BrowserSupabaseClient,
   userId: string,
   memberId: string,
   patch: HouseholdDraftPatch,
+  expectedUpdatedAt: string,
 ): Promise<HouseholdMemberRow> {
   const { data, error } = await client
     .from("household_members")
@@ -91,9 +97,11 @@ export async function updateHouseholdMemberDraft(
     .eq("id", memberId)
     .eq("user_id", userId)
     .eq("status", "draft")
+    .eq("updated_at", expectedUpdatedAt)
     .select("*")
-    .single();
+    .maybeSingle();
   if (error !== null) throw dataError("家族情報を保存できませんでした");
+  if (data === null) throw new HouseholdMemberVersionConflictError();
   return data;
 }
 
@@ -102,6 +110,7 @@ export async function updateHouseholdMemberDraft(
  * dual-tab の古い form が allergy_status 等を LWW 上書きするのを防ぐ。
  * 0 行は競合（他タブ更新 or 非 complete）として ConflictError。
  */
+// draft / complete 双方の CAS miss で共有（H2 / H5）
 export class HouseholdMemberVersionConflictError extends Error {
   readonly code = "household_member_version_conflict" as const;
 

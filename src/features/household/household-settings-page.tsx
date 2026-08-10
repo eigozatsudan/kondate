@@ -135,7 +135,12 @@ const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
 export interface HouseholdSettingsApi {
   listMembers(): Promise<HouseholdMemberRow[]>;
   createDraft(sortOrder: number): Promise<HouseholdMemberRow>;
-  updateDraft(memberId: string, patch: HouseholdMemberPatch): Promise<HouseholdMemberRow>;
+  /** expectedUpdatedAt: H2 draft 行 CAS（表示中 updated_at）。競合時は ConflictError。 */
+  updateDraft(
+    memberId: string,
+    patch: HouseholdMemberPatch,
+    expectedUpdatedAt: string,
+  ): Promise<HouseholdMemberRow>;
   /** expectedUpdatedAt: H5 complete 行 CAS（表示中 updated_at）。競合時は ConflictError。 */
   updateMember(
     memberId: string,
@@ -185,7 +190,8 @@ function createHouseholdSettingsApi(
     listMembers: () => listHouseholdMembers(client, userId),
     // H9: 無条件 INSERT ではなく onboarding と同 RPC（既存 draft 再利用・profile 直列化）
     createDraft: (sortOrder) => startHouseholdOnboarding(client, sortOrder),
-    updateDraft: (memberId, patch) => updateHouseholdMemberDraft(client, userId, memberId, patch),
+    updateDraft: (memberId, patch, expectedUpdatedAt) =>
+      updateHouseholdMemberDraft(client, userId, memberId, patch, expectedUpdatedAt),
     updateMember: (memberId, patch, expectedUpdatedAt) =>
       updateCompleteHouseholdMember(client, userId, memberId, patch, expectedUpdatedAt),
     completeMember: (memberId) => completeHouseholdMember(client, userId, memberId),
@@ -268,7 +274,7 @@ export function HouseholdSettingsForm({
   }, [dismissToast]);
   const saveQueue = useRef(Promise.resolve(true));
   const valuesByMemberRef = useRef(new Map<string, HouseholdSettingsFormValue>());
-  // H5: complete 更新の CAS 基準 updated_at。同一タブ直列 save では成功後に進める。
+  // H2/H5: draft・complete 更新の CAS 基準 updated_at。同一タブ直列 save では成功後に進める。
   // keepLocalSnapshot 中はサーバ再読込で上書きせず、古い form の誤上書きを競合として落とす。
   const completeMemberUpdatedAtRef = useRef(new Map<string, string>());
   const editRevisionsByMemberRef = useRef(new Map<string, number>());
@@ -500,16 +506,14 @@ export function HouseholdSettingsForm({
       }
       try {
         const patch = toMemberPatch(parsed.data);
-        // H5: complete は表示中 updated_at で CAS。直列 queue 内では成功後に基準を進める。
+        // H2/H5: draft・complete とも表示中 updated_at で CAS。直列 queue 内では成功後に基準を進める。
         const expectedUpdatedAt =
           completeMemberUpdatedAtRef.current.get(member.id) ?? member.updated_at;
         const saved =
           member.status === "draft"
-            ? await api.updateDraft(member.id, patch)
+            ? await api.updateDraft(member.id, patch, expectedUpdatedAt)
             : await api.updateMember(member.id, patch, expectedUpdatedAt);
-        if (member.status === "complete") {
-          completeMemberUpdatedAtRef.current.set(member.id, saved.updated_at);
-        }
+        completeMemberUpdatedAtRef.current.set(member.id, saved.updated_at);
         if (isLatestSaveRevision(lineage)) {
           const cachedMember = { ...saved, ...patch };
           queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
@@ -518,7 +522,13 @@ export function HouseholdSettingsForm({
             ),
           );
         }
-        await api.invalidateSafety();
+        // H3: DB コミット後の invalidate 失敗は soft。保存成功として返し、依存は次操作で再取得。
+        // 権威経路（生成/confirm）は live revalidate するため stale cache は fail-closed 側。
+        try {
+          await api.invalidateSafety();
+        } catch {
+          // 意図的 no-op: ユーザーに保存失敗と見せない
+        }
         if (canPublishSaveMessage(lineage)) {
           const pending = pendingRegisteredIntents.current.get(member.id);
           setMessage(

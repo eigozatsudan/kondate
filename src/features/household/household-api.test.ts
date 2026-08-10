@@ -8,6 +8,7 @@ import {
   setOnboardingStatus,
   startHouseholdOnboarding,
   updateCompleteHouseholdMember,
+  updateHouseholdMemberDraft,
 } from "./household-api";
 
 function chain(data: unknown, error: unknown = null) {
@@ -172,4 +173,48 @@ it("updateCompleteHouseholdMember throws conflict when CAS misses (H5)", async (
     code: "household_member_version_conflict",
   });
   expect(HouseholdMemberVersionConflictError).toBeDefined();
+});
+
+// H2: draft も complete と同型 CAS。0 行は競合。
+it("updateHouseholdMemberDraft CAS-guards with expectedUpdatedAt (H2)", async () => {
+  const saved = {
+    id: "member-1",
+    status: "draft",
+    allergy_status: "registered",
+    updated_at: "2026-07-12T00:00:00.000Z",
+  };
+  const updateChain = chain(saved);
+  const client = { from: vi.fn().mockReturnValue(updateChain) } as never;
+  const patch = { allergy_status: "registered" as const };
+
+  await expect(
+    updateHouseholdMemberDraft(client, "user-1", "member-1", patch, "2026-07-11T00:00:00.000Z"),
+  ).resolves.toBe(saved);
+
+  expect(updateChain.update).toHaveBeenCalledWith(patch);
+  expect(updateChain.eq.mock.calls).toEqual([
+    ["id", "member-1"],
+    ["user_id", "user-1"],
+    ["status", "draft"],
+    ["updated_at", "2026-07-11T00:00:00.000Z"],
+  ]);
+  expect(updateChain.maybeSingle).toHaveBeenCalled();
+});
+
+it("updateHouseholdMemberDraft throws conflict when CAS misses (H2)", async () => {
+  const updateChain = chain(null);
+  const client = { from: vi.fn().mockReturnValue(updateChain) } as never;
+
+  await expect(
+    updateHouseholdMemberDraft(
+      client,
+      "user-1",
+      "member-1",
+      { allergy_status: "none" },
+      "2026-07-11T00:00:00.000Z",
+    ),
+  ).rejects.toMatchObject({
+    name: "HouseholdMemberVersionConflictError",
+    code: "household_member_version_conflict",
+  });
 });
