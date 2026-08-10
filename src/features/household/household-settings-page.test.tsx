@@ -1316,6 +1316,111 @@ it("H3: treats post-commit invalidateSafety failure as soft success", async () =
   expect(screen.getByRole("status")).not.toHaveTextContent("保存できませんでした");
 });
 
+// H-RR1: draft complete 後の invalidate 失敗も soft。完了成功 UX を維持する
+it("H-RR1: treats post-completeMember invalidateSafety failure as soft success", async () => {
+  const draft: HouseholdMemberRow = {
+    ...member,
+    id: "draft-1",
+    status: "draft",
+    display_name: "追加中",
+  };
+  const completed: HouseholdMemberRow = { ...draft, status: "complete" };
+  const completeMember = vi.fn().mockResolvedValue(completed);
+  const updateDraft = vi.fn().mockResolvedValue(draft);
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  const { queryClient } = await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    updateDraft,
+    completeMember,
+    invalidateSafety,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledWith(draft.id);
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+  });
+  expect(screen.getByRole("status")).not.toHaveTextContent("完了できませんでした");
+  expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
+  // complete コミット後の members cache は complete のまま（false failure で巻き戻さない）
+  await waitFor(() => {
+    const cached = queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members("settings"));
+    expect(cached?.find((row) => row.id === draft.id)?.status).toBe("complete");
+  });
+  await waitFor(() => {
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+});
+
+// H-RR2: アレルギー削除コミット後の invalidate 失敗は soft（削除は適用済み）
+it("H-RR2: treats post-removeAllergy invalidateSafety failure as soft success", async () => {
+  const registeredMember = { ...member, allergy_status: "registered" as const };
+  const customAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "えんどう豆たんぱく",
+    custom_confirmed: true,
+  };
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([registeredMember]),
+    listAllergies: vi.fn().mockResolvedValue([standardAllergy, customAllergy]),
+    removeAllergy,
+    invalidateSafety,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  // AllergyEditor onError 経由の総失敗文言を出さない（soft 成功時は status 自体が無いこともある）
+  expect(screen.queryByText("アレルギーを削除できませんでした")).not.toBeInTheDocument();
+  expect(screen.queryByText("安全条件の無効化に失敗しました")).not.toBeInTheDocument();
+  expect(screen.queryByText("アレルギー情報を更新できませんでした")).not.toBeInTheDocument();
+});
+
+// H-RR2: 苦手追加コミット後の invalidate 失敗は soft（入力クリア＝成功 UX）
+it("H-RR2: treats post-addDislike invalidateSafety failure as soft success", async () => {
+  const added: MemberDislikeRow = {
+    id: "dislike-1",
+    user_id: "user-1",
+    member_id: member.id,
+    ingredient_name: "ピーマン",
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  const addDislike = vi.fn().mockResolvedValue(added);
+  const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
+  await renderSettings({ addDislike, invalidateSafety });
+
+  await userEvent.type(await screen.findByLabelText("苦手食材を追加"), "ピーマン");
+  await userEvent.click(screen.getByRole("button", { name: "苦手食材を追加" }));
+
+  await waitFor(() => {
+    expect(addDislike).toHaveBeenCalledWith(member.id, "ピーマン");
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  // 成功コールバックで入力が空になり、失敗メッセージは出ない
+  await waitFor(() => {
+    expect(screen.getByLabelText("苦手食材を追加")).toHaveValue("");
+  });
+  expect(screen.queryByText("苦手食材を追加できませんでした")).not.toBeInTheDocument();
+  expect(screen.queryByText("安全条件の無効化に失敗しました")).not.toBeInTheDocument();
+});
+
 // H12: DB の不正 enum を unchecked cast で select に載せない（空/年齢デフォルトへ）
 it("initializes form from corrupt DB enums as empty selects and age defaults", async () => {
   const corrupt: HouseholdMemberRow = {

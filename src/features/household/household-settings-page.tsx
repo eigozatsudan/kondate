@@ -736,13 +736,19 @@ export function HouseholdSettingsForm({
       });
       const registeredStatusSaved = await savePendingRegisteredStatus(memberId);
       if (registeredStatusSaved === false) {
+        // H3 / H-RR2: アレルギー書き込み後の invalidate 失敗は soft（依存は次操作で再取得）
         try {
           await api.invalidateSafety();
         } catch {
           return;
         }
       } else if (registeredStatusSaved === undefined) {
-        await api.invalidateSafety();
+        // H-RR2: allergy-only finalize も form save と同型の soft-handle（非対称を解消）
+        try {
+          await api.invalidateSafety();
+        } catch {
+          // 意図的 no-op: 追加済みアレルギーを失敗表示にしない
+        }
       }
     },
     [api, queryClient, savePendingRegisteredStatus, userId],
@@ -1072,7 +1078,13 @@ export function HouseholdSettingsForm({
               current.map((member) => (member.id === completed.id ? completed : member)),
             );
           }
-          await api.invalidateSafety();
+          // H-RR1: complete コミット後の invalidate 失敗は soft（H3 form save と同型）。
+          // completeMember 自体の失敗だけ outer catch で総失敗表示する。
+          try {
+            await api.invalidateSafety();
+          } catch {
+            // 意図的 no-op: 完了済みを失敗と見せない。権威経路は live revalidate。
+          }
           if (canPublishSaveMessage(lineage)) {
             setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
           }
@@ -1640,7 +1652,12 @@ export function HouseholdSettingsForm({
                       refetchToken.settled = true;
                       setAllergyRefetchEpoch((current) => current + 1);
                     }
-                    await api.invalidateSafety();
+                    // H-RR2: 削除コミット後の invalidate 失敗は soft（H3 form save と同型）
+                    try {
+                      await api.invalidateSafety();
+                    } catch {
+                      // 意図的 no-op: 削除済みアレルギーを失敗表示にしない
+                    }
                   })
                 }
                 onError={(error) => {
@@ -1769,7 +1786,12 @@ export function HouseholdSettingsForm({
                       await queryClient.invalidateQueries({
                         queryKey: householdKeys.dislikes(userId, memberId),
                       });
-                      await api.invalidateSafety();
+                      // H-RR2: 追加コミット後の invalidate 失敗は soft（H3 form save と同型）
+                      try {
+                        await api.invalidateSafety();
+                      } catch {
+                        // 意図的 no-op: 追加済み苦手を失敗表示にしない
+                      }
                     },
                     "苦手食材を追加できませんでした",
                     () => {
@@ -1798,7 +1820,12 @@ export function HouseholdSettingsForm({
                             await queryClient.invalidateQueries({
                               queryKey: householdKeys.dislikes(userId, memberId),
                             });
-                            await api.invalidateSafety();
+                            // H-RR2: 削除コミット後の invalidate 失敗は soft（H3 form save と同型）
+                            try {
+                              await api.invalidateSafety();
+                            } catch {
+                              // 意図的 no-op: 削除済み苦手を失敗表示にしない
+                            }
                           },
                           "苦手食材を削除できませんでした",
                         );
