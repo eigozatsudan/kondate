@@ -1051,6 +1051,49 @@ describe("auth continuation recovery", () => {
     stop();
   });
 
+  it("C-R4: future target-lease normalize write failure does not remove lease or open orphan claim", async () => {
+    // C9 正規化の setItem 失敗で remove すると callback-owned が orphan 扱い → dual-claim 窓。
+    // 書込失敗時はキーを残し、メモリ上は now 正規化して active 扱いする（fail-closed）。
+    const nowMs = Date.now();
+    const flowId = "10000000-0000-4000-8000-0000000000c4";
+    const storage = new ThrowingTargetLeaseNormalizeStorage(flowId);
+    addFlow(storage, flowId, nowMs);
+    storage.setItem(
+      `kondate.auth.supabase.callback-owner.${flowId}`,
+      new Date(nowMs).toISOString(),
+    );
+    const leaseKey = `kondate.auth.supabase.claim-poll-target-lease.${flowId}.liveinstance01`;
+    // 初期書込は許可してから、正規化 write だけ失敗させる
+    storage.allowLeaseWrites = true;
+    storage.setItem(
+      leaseKey,
+      JSON.stringify({
+        flowId,
+        instanceId: "liveinstance01",
+        refreshedAt: nowMs + 60_000,
+        pending: false,
+      }),
+    );
+    storage.allowLeaseWrites = false;
+
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      onComplete: vi.fn(),
+      now: () => new Date(nowMs),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    expect(gateway.resumeFlow).not.toHaveBeenCalled();
+    // remove されていない（未来値のまま残る。次回読取で再正規化を試みる）
+    expect(storage.getItem(leaseKey)).not.toBeNull();
+    stop();
+  });
+
   it("U1-I3 claims on the next cycle after normalizing a future last-poll timestamp", async () => {
     let nowMs = Date.now();
     const storage = flowStorage(["10000000-0000-4000-8000-000000000001"], nowMs);
@@ -1748,6 +1791,25 @@ class ThrowingCoordinationStorage extends MapStorage {
 
   override setItem(key: string, value: string): void {
     if (key.includes(`claim-poll-${this.failedKey}`)) throw new Error("storage unavailable");
+    super.setItem(key, value);
+  }
+}
+
+/** C-R4: target-lease 正規化 write だけ失敗させ、remove されないことを検証する */
+class ThrowingTargetLeaseNormalizeStorage extends MapStorage {
+  allowLeaseWrites = true;
+
+  constructor(private readonly flowId: string) {
+    super();
+  }
+
+  override setItem(key: string, value: string): void {
+    if (
+      !this.allowLeaseWrites &&
+      key.startsWith(`kondate.auth.supabase.claim-poll-target-lease.${this.flowId}.`)
+    ) {
+      throw new Error("quota exceeded");
+    }
     super.setItem(key, value);
   }
 }

@@ -529,14 +529,13 @@ function readActiveTargetLeases(
     }
     // C9 / U1-I3 対称: 未来 refreshedAt（時計戻り・タブ間粗時刻）は即削除せず now に正規化する。
     // 旧 age<0 削除は callback-owned を短時間 orphan 扱いし dual exchange 窓を開いていた。
+    // C-R4: 正規化の write が失敗しても remove しない（quota 等で lease 全滅→orphan claim と同型の窓を避ける）。
+    // メモリ上は now 正規化済みとして温存し、次回読取で再書込を試みる。
     let activeLease = lease;
     const age = nowMs - activeLease.refreshedAt;
     if (age < 0) {
       activeLease = { ...activeLease, refreshedAt: nowMs };
-      if (!writeStorageValue(storage, key, JSON.stringify(activeLease))) {
-        storage.removeItem(key);
-        continue;
-      }
+      void writeStorageValue(storage, key, JSON.stringify(activeLease));
     } else if (age > TARGET_RECOVERY_LEASE_TTL_MS) {
       storage.removeItem(key);
       continue;

@@ -1,4 +1,4 @@
-import type { Session } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { act, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ const session = { access_token: "token", user: { id: "user-1" } } as Session;
 type AuthSubscription = ReturnType<
   AuthProviderClient["auth"]["onAuthStateChange"]
 >["data"]["subscription"];
+type AuthStateListener = (event: AuthChangeEvent, next: Session | null) => void;
 
 function createAuthSubscription(): AuthSubscription {
   return {
@@ -371,6 +372,73 @@ describe("AuthProvider", () => {
     expect(recovery).not.toHaveBeenCalled();
   });
 
+  it("C-R1: rejects late residual exchange session swap after another user already won", async () => {
+    // residual recovery start → A 確立（recovery stop）→ 後着 B の onAuthStateChange を捨てる。
+    window.history.replaceState(null, "", "/login");
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const setSession = vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null });
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        setSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+    const recovery = vi.fn(() => vi.fn());
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={recovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    expect(recovery.mock.calls.length).toBeGreaterThanOrEqual(1);
+
+    // 別経路（magic/OAuth A）が先に complete
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionA);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-a");
+
+    // residual B の exchange が後から settle（navigate 無しの無言差し替え経路）
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+    });
+
+    // React 状態は A のまま。勝者 token を setSession で戻そうとする
+    expect(screen.getByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-a");
+    expect(setSession).toHaveBeenCalledWith({
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+    });
+  });
+
   it("C2: does not start residual recovery on /planner when unauthenticated", async () => {
     // soft 失効後の共有端末で、非待機 path の silent claim/exchange を抑止する。
     window.history.replaceState(null, "", "/planner");
@@ -515,12 +583,12 @@ describe("AuthProvider", () => {
       }),
     );
     window.localStorage.setItem("kondate.auth.supabase-code-verifier", "pkce-verifier");
-    const authListeners: Array<(event: string, next: Session | null) => void> = [];
+    const authListeners: AuthStateListener[] = [];
     const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
     const client = {
       auth: {
         getSession,
-        onAuthStateChange: (cb: (event: string, next: Session | null) => void) => {
+        onAuthStateChange: (cb: AuthStateListener) => {
           authListeners.push(cb);
           return { data: { subscription: createAuthSubscription() } };
         },
