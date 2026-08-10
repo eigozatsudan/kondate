@@ -45,7 +45,9 @@ export const householdSafetyQueryPrefixes = {
   currentSafety: ["current-safety"],
   menuResult: ["menu-result"],
   history: ["history"],
-  historyRevalidation: ["history-revalidation"],
+  // 実キーは use-menu-revalidation の ["menu-revalidation", menuId]。
+  // 旧名 "history-revalidation" はリポジトリ内に消費者なし（HR3: 死んだ DiD 配線の修正）。
+  historyRevalidation: ["menu-revalidation"],
   generation: ["generation"],
   shopping: ["shopping"],
   // 緊急献立候補は家族安全条件に依存するため、settings/onboarding 更新時に必ず無効化する。

@@ -1,7 +1,9 @@
 import { QueryClient } from "@tanstack/react-query";
 import { expect, it } from "vitest";
+import { menuRevalidationQueryKey } from "@/features/history/hooks/use-menu-revalidation";
 import {
   householdKeys,
+  householdSafetyQueryPrefixes,
   householdSafetyRevisionKey,
   householdSafetyRevisionStorageKey,
   invalidateHouseholdSafetyQueries,
@@ -55,6 +57,29 @@ it("H8: soft invalidate marks allergies and dislikes for the same user as stale"
   expect(queryClient.getQueryState(dislikesKey)?.isInvalidated).toBe(true);
   // 他 user の allergies は prefix が一致しないため触れない
   expect(queryClient.getQueryState(otherUserAllergiesKey)?.isInvalidated).toBe(false);
+
+  queryClient.clear();
+});
+
+it("HR3: historyRevalidation prefix matches menu-revalidation query keys", async () => {
+  // 実キーは menuRevalidationQueryKey(menuId) = ["menu-revalidation", menuId]。
+  // 旧 "history-revalidation" では invalidate がヒットせず DiD が死んでいた。
+  expect(householdSafetyQueryPrefixes.historyRevalidation).toEqual(["menu-revalidation"]);
+  expect(menuRevalidationQueryKey("menu-1")).toEqual(["menu-revalidation", "menu-1"]);
+
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const userId = "user-a";
+  const menuRevalidationKey = menuRevalidationQueryKey("menu-1");
+  const deadLegacyKey = ["history-revalidation", "menu-1"] as const;
+
+  queryClient.setQueryData(menuRevalidationKey, { status: "valid" });
+  queryClient.setQueryData(deadLegacyKey, { status: "valid" });
+
+  await invalidateHouseholdSafetyQueries(queryClient, userId);
+
+  expect(queryClient.getQueryState(menuRevalidationKey)?.isInvalidated).toBe(true);
+  // 旧プレフィックスはもう invalidate 対象外（消費者なし）
+  expect(queryClient.getQueryState(deadLegacyKey)?.isInvalidated).toBe(false);
 
   queryClient.clear();
 });

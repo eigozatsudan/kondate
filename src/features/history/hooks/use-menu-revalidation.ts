@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
+  householdSafetyQueryPrefixes,
   isHouseholdSafetyRevisionStorageKeyForUser,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -15,8 +16,9 @@ export type RevalidationPhase =
   | { phase: "checked"; result: RevalidationResult }
   | { phase: "error"; message: string };
 
+/** RQ キー。prefix は householdSafetyQueryPrefixes.historyRevalidation と一致させる（HR3）。 */
 export function menuRevalidationQueryKey(menuId: string) {
-  return ["menu-revalidation", menuId] as const;
+  return [...householdSafetyQueryPrefixes.historyRevalidation, menuId] as const;
 }
 
 /**
