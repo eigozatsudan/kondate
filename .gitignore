@@ -3,6 +3,8 @@ dist/
 coverage/
 .env
 .env.tmp-*
+# admin 本番 DB URL。`.env` パターンだけでは一致しない
+.env.admin
 .run-e2e.lock
 infra/.supabase-refresh.*
 infra/.supabase-refresh.lock

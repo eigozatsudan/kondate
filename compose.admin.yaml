@@ -1,0 +1,15 @@
+# 本編 compose.yaml とは分離。ローカル専用の運用管理コンソールのみ。
+# project 名に -admin を付け本編スタックと衝突させない。
+# DB 秘密は .env.admin（project 名解決には使わない）。
+name: "${KONDATE_COMPOSE_PROJECT_NAME:-kondate}-admin"
+
+services:
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    env_file:
+      - .env.admin
+    ports:
+      - "127.0.0.1:5193:5193"
+    restart: "no"

@@ -14,6 +14,7 @@ export default tseslint.config(
       "test-results",
       "infra/supabase",
       ".worktrees",
+      "admin/**",
       "src/shared/types/database.generated.ts",
       "eslint.config.js",
     ],
