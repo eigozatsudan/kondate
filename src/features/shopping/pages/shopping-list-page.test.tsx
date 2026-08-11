@@ -1173,7 +1173,8 @@ describe("ShoppingListPage mutations", () => {
       expect(mutateShoppingItem).toHaveBeenCalledTimes(2);
     });
     expect(mutateShoppingItem.mock.calls[1]?.[0].operation).toBe("add_manual");
-    expect(mutateShoppingItem.mock.calls[1]?.[0].payload.displayName).toBe("白菜");
+    const secondPayload = mutateShoppingItem.mock.calls[1]?.[0].payload;
+    expect(secondPayload).toMatchObject({ displayName: "白菜" });
   });
 
   it("mismatch guard helpers arm then release same intentKey (SHOP1 unit)", () => {
