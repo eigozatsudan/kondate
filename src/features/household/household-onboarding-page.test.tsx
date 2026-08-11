@@ -544,10 +544,10 @@ it("H8: after draft version conflict, refetches members and advances CAS so retr
   };
   const updateDraft = vi
     .fn()
-    .mockImplementationOnce(async () => {
+    .mockImplementationOnce(() => {
       // 他タブが先に draft を更新した想定。refetch が正本を返すよう state を進める
       membersState.upsert(serverAfterOtherTab);
-      throw new HouseholdMemberVersionConflictError();
+      return Promise.reject(new HouseholdMemberVersionConflictError());
     })
     .mockImplementation(
       (_memberId: string, patch: HouseholdDraftPatch, expectedUpdatedAt: string) => {

@@ -425,9 +425,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const isOpeningEmergencyMenusRef = useRef(false);
   const isOpeningPrivacyRef = useRef(false);
   const isOpeningSettingsRef = useRef(false);
-  const flushDraftRef = useRef<() => Promise<PlannerDraft>>(async () => {
-    throw new Error("flush_not_ready");
-  });
+  const flushDraftRef = useRef<() => Promise<PlannerDraft>>(() =>
+    Promise.reject(new Error("flush_not_ready")),
+  );
   hasDraftConflictRef.current = hasDraftConflict;
   isOpeningEmergencyMenusRef.current = isOpeningEmergencyMenus;
   isOpeningPrivacyRef.current = isOpeningPrivacy;

@@ -5,6 +5,7 @@
  */
 import { expect, test } from "../fixtures/auth";
 import type { Page } from "@playwright/test";
+import { FLYER_WEEKLY_UI_ENABLED } from "../../shared/contracts/flyer-weekly";
 
 const freeOpenEntitlement = {
   ok: true as const,
@@ -148,15 +149,26 @@ test("delete account dialog mentions paid-plan cancellation", async ({
   ).toBeVisible({ timeout: 10_000 });
 });
 
-test("planner shows Free flyer locked preview with Plus CTA", async ({
+test("planner Free flyer entry respects FLYER_WEEKLY_UI_ENABLED", async ({
   completedOnboardingPage: page,
 }) => {
   await mockEntitlement(page, freeOpenEntitlement);
   await page.goto("/planner");
-  // Free locked preview（Task7 UI）。見出しまたは Plus 導線のどちらかで確認
-  await expect(page.getByRole("link", { name: "Plus を見る" }).first()).toBeVisible({
+  // h1（PageHeader）と h2（生成カード）が同名のため level で絞る
+  await expect(page.getByRole("heading", { name: "今日の献立", level: 1 })).toBeVisible({
     timeout: 15_000,
   });
+  // 契約フラグが false の間はチラシ入口を出さない（有料プラン方針確定まで）。
+  // true に戻したら Free locked preview + Plus CTA を検証する。
+  if (FLYER_WEEKLY_UI_ENABLED) {
+    await expect(page.getByTestId("flyer-weekly-locked")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("link", { name: "Plus を見る" }).first()).toBeVisible({
+      timeout: 15_000,
+    });
+  } else {
+    await expect(page.getByTestId("flyer-weekly-locked")).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Plus を見る" })).toHaveCount(0);
+  }
 });
 
 test("Plus entitlement mock shows plan label and portal path on settings", async ({

@@ -53,11 +53,13 @@ export function shouldInterceptPlannerLeaveClick(event: {
  * 呼び出し側は onClick で preventDefault 済みであること。
  */
 export async function navigateAfterPlannerLeaveFlush(
-  navigate: (to: string) => void,
+  // React Router の NavigateFunction は void | Promise<void> を返すため、
+  // void 固定にすると no-misused-promises が呼び出し側で発火する。
+  navigate: (to: string) => void | Promise<void>,
   to: string,
 ): Promise<void> {
   const result = await runPlannerLeaveFlush();
   if (result === "proceed") {
-    navigate(to);
+    await navigate(to);
   }
 }
