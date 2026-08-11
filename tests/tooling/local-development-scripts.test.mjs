@@ -69,11 +69,17 @@ async function installDockerRecorder(root) {
   await writeFile(
     join(bin, "docker-signal-waiter.mjs"),
     [
-      'import { writeFileSync } from "node:fs";',
+      'import { mkdirSync, writeFileSync } from "node:fs";',
+      'import { join } from "node:path";',
       'const ignore = process.env.DOCKER_IGNORE_SIGNAL === "1";',
       'process.on("SIGHUP", () => { if (!ignore) process.exit(129); });',
       'process.on("SIGINT", () => { if (!ignore) process.exit(130); });',
       'process.on("SIGTERM", () => { if (!ignore) process.exit(143); });',
+      // dual body 待機: 各 waiter が自分の pid ファイルをディレクトリへ書く
+      "if (process.env.E2E_BODY_READY_DIR) {",
+      "  mkdirSync(process.env.E2E_BODY_READY_DIR, { recursive: true });",
+      "  writeFileSync(join(process.env.E2E_BODY_READY_DIR, String(process.pid)), `${process.pid}\\n`);",
+      "}",
       "if (process.env.DOCKER_READY_FILE) writeFileSync(process.env.DOCKER_READY_FILE, `${process.pid}\\n`);",
       "if (process.env.DOCKER_SIGNAL_PARENT_ON_START) {",
       "  process.kill(process.ppid, process.env.DOCKER_SIGNAL_PARENT_ON_START);",
@@ -129,8 +135,14 @@ async function installDockerRecorder(root) {
       '    if [ -n "${DOCKER_DAEMON_CHILD_FILE:-}" ]; then',
       '      exec node "$(dirname "$0")/docker-e2e-cli.mjs"',
       "    fi",
+      // E2E_WAIT_SKIP_FIRST=1: 先頭 e2e（setup）は即成功、2 本目以降だけ signal 待機
+      // （案 B dual body の signal 配送テスト用）
       '    if [ "${E2E_WAIT_FOR_SIGNAL:-}" = "1" ]; then',
-      '      exec node "$(dirname "$0")/docker-signal-waiter.mjs"',
+      '      if [ "${E2E_WAIT_SKIP_FIRST:-}" = "1" ] && [ ! -f "$DOCKER_LOG_DIR/.e2e-wait-skip-first" ]; then',
+      '        : > "$DOCKER_LOG_DIR/.e2e-wait-skip-first"',
+      "      else",
+      '        exec node "$(dirname "$0")/docker-signal-waiter.mjs"',
+      "      fi",
       "    fi",
       '    if [ -n "${E2E_SUCCESS_READY_FILE:-}" ]; then',
       '      printf "%s\\n" "$$" > "$E2E_SUCCESS_READY_FILE"',
@@ -138,7 +150,19 @@ async function installDockerRecorder(root) {
       '    if [ -n "${E2E_SUCCESS_DELAY:-}" ]; then',
       '      sleep "$E2E_SUCCESS_DELAY"',
       "    fi",
-      '    exit "${E2E_STATUS:-0}"',
+      // project 別 exit（mobile 優先集約の回帰用。未設定時は E2E_STATUS）
+      "    e2e_project=",
+      "    for e2e_arg do",
+      '      case "$e2e_arg" in',
+      "        --project=*) e2e_project=${e2e_arg#--project=} ;;",
+      "      esac",
+      "    done",
+      '    case "$e2e_project" in',
+      '      mobile-chromium) exit "${E2E_STATUS_MOBILE:-${E2E_STATUS:-0}}" ;;',
+      '      desktop-chromium) exit "${E2E_STATUS_DESKTOP:-${E2E_STATUS:-0}}" ;;',
+      '      setup) exit "${E2E_STATUS_SETUP:-${E2E_STATUS:-0}}" ;;',
+      '      *) exit "${E2E_STATUS:-0}" ;;',
+      "    esac",
       "    ;;",
       '  *"kill --signal SIGKILL e2e"*)',
       '    if [ "${E2E_KILL_STATUS:-0}" -ne 0 ]; then exit "$E2E_KILL_STATUS"; fi',
@@ -337,7 +361,8 @@ function expectedE2EInvocations(
   // → cleanup で app ログ採取 → 失敗時のみ e2e kill/rm →
   //   ローカルは auth/app 復元、CI=true は restore 省略（GHA / ci.sh が volumes down）
   // 先頭の裸 `--` は run-e2e.sh が shift して捨てる（docs の `./scripts/run-e2e.sh -- path` 慣習）。
-  const { skipRecreate = false, ci = false } = options;
+  // bodyRan: setup 成功後に mobile||desktop body まで到達した失敗（signal 中断・body exit 非 0）
+  const { skipRecreate = false, ci = false, bodyRan = false } = options;
   const normalizedArguments =
     arguments_.length > 0 && arguments_[0] === "--" ? arguments_.slice(1) : [...arguments_];
   arguments_ = normalizedArguments;
@@ -410,9 +435,34 @@ function expectedE2EInvocations(
     playwrightRuns = [
       [...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...smokeArgs],
     ];
+  } else if (cleanupE2EContainers && bodyRan) {
+    // setup 成功後に dual body まで到達してから失敗（signal 中断・body 非 0）
+    playwrightRuns = [
+      setupRun,
+      [
+        ...compose,
+        ...e2eComposeFiles,
+        "run",
+        "--rm",
+        "--no-deps",
+        "e2e",
+        "--project=mobile-chromium",
+        ...arguments_,
+      ],
+      [
+        ...compose,
+        ...e2eComposeFiles,
+        "run",
+        "--rm",
+        "--no-deps",
+        "e2e",
+        "--project=desktop-chromium",
+        ...arguments_,
+      ],
+    ];
   } else if (cleanupE2EContainers) {
     // full 失敗・signal: setup が fail-closed（`|| return`）なので後続は走らない。
-    // mock の E2E_STATUS / E2E_WAIT_FOR_SIGNAL は先頭 e2e（setup）に効く。
+    // mock の E2E_STATUS / E2E_WAIT_FOR_SIGNAL（SKIP_FIRST なし）は先頭 e2e（setup）に効く。
     playwrightRuns = [setupRun];
   } else if (hasProject) {
     playwrightRuns = [
@@ -618,6 +668,26 @@ async function waitForFile(path) {
     await delay(10);
   }
   assert.fail(`timed out waiting for ${path}`);
+}
+
+/** dual body 待機: E2E_BODY_READY_DIR に count 本の pid ファイルが揃うまで待つ */
+async function waitForReadyPids(readyDir, count = 2) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const names = await readdir(readyDir).catch(() => []);
+    if (names.length >= count) {
+      const pids = await Promise.all(
+        names.map(async (name) => Number((await readFile(join(readyDir, name), "utf8")).trim())),
+      );
+      assert.equal(
+        pids.every((pid) => Number.isSafeInteger(pid) && pid > 0),
+        true,
+        `invalid ready pids: ${pids.join(",")}`,
+      );
+      return pids;
+    }
+    await delay(10);
+  }
+  assert.fail(`timed out waiting for ${String(count)} ready pids in ${readyDir}`);
 }
 
 async function waitForCompletion(completion, timeout = 2_000) {
@@ -1029,7 +1099,7 @@ test("E2E runner reports a lock release failure after a successful run", async (
 });
 
 test("E2E runner restores the base stack after every forwarded signal", async (t) => {
-  // 単一 --project で e2e 待機に割り込み、dual mobile/desktop 分岐を避ける
+  // 単一 --project で e2e 待機に割り込み（setup なしの 1 body）。dual は別テスト。
   const e2eArgs = ["--project=mobile-chromium"];
   for (const fixture of [
     { signal: "SIGHUP", status: 129 },
@@ -1086,6 +1156,115 @@ test("E2E runner restores the base stack after every forwarded signal", async (t
       );
     });
   }
+});
+
+// 案 B P1: full（--project 未指定）の mobile||desktop 並列中に親 signal が両 body へ届くこと
+test("E2E runner forwards signal to both mobile and desktop body processes", async (t) => {
+  for (const fixture of [
+    { signal: "SIGHUP", status: 129 },
+    { signal: "SIGINT", status: 130 },
+    { signal: "SIGTERM", status: 143 },
+  ]) {
+    await t.test(fixture.signal, async (subtest) => {
+      const root = await createDatabaseScriptFixture("run-e2e.sh");
+      subtest.after(() => rm(root, { recursive: true, force: true }));
+      const bin = await installDockerRecorder(root);
+      const logDir = join(root, `dual ${fixture.signal} log`);
+      const bodyReadyDir = join(root, `dual ${fixture.signal} body ready`);
+      await mkdir(logDir);
+      await mkdir(bodyReadyDir);
+      // --project 未指定 → setup 後に mobile||desktop 並列
+      const child = spawn(join(root, "scripts", "run-e2e.sh"), [], {
+        cwd: tmpdir(),
+        env: {
+          ...process.env,
+          CI: "",
+          KONDATE_E2E_SKIP_RECREATE: "",
+          KONDATE_E2E_SUITE: "full",
+          COMPOSE_PROJECT_NAME: "shared",
+          DOCKER_LOG_DIR: logDir,
+          E2E_WAIT_FOR_SIGNAL: "1",
+          // setup だけ即成功し、body 2 本が waiter になる
+          E2E_WAIT_SKIP_FIRST: "1",
+          E2E_BODY_READY_DIR: bodyReadyDir,
+          KONDATE_E2E_SIGNAL_GRACE_SECONDS: "0.2",
+          PATH: `${bin}:${process.env.PATH}`,
+        },
+        stdio: "ignore",
+      });
+      const completion = new Promise((resolveClose, rejectClose) => {
+        child.once("error", rejectClose);
+        child.once("close", (code, signal) => resolveClose({ code, signal }));
+      });
+      let bodyPids = [];
+      subtest.after(() => {
+        if (isProcessAlive(child.pid)) process.kill(child.pid, "SIGKILL");
+        for (const pid of bodyPids) if (isProcessAlive(pid)) process.kill(pid, "SIGKILL");
+      });
+
+      bodyPids = await waitForReadyPids(bodyReadyDir, 2);
+      process.kill(child.pid, fixture.signal);
+
+      assert.deepEqual(await waitForCompletion(completion, 3_000), {
+        code: fixture.status,
+        signal: null,
+      });
+      for (const pid of bodyPids) assert.equal(isProcessAlive(pid), false);
+      assertE2EInvocationsEqual(
+        await readDockerInvocations(logDir),
+        expectedE2EInvocations(root, await expectedProjectName(root), [], true, "full", {
+          bodyRan: true,
+        }),
+      );
+    });
+  }
+});
+
+// 案 B P1: dual body の exit は mobile 非 0 を desktop より優先する
+test("E2E runner prefers mobile non-zero status over desktop when both body runs finish", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "mobile prefer exit log");
+
+  await assert.rejects(
+    runE2E(root, bin, logDir, [], {
+      E2E_STATUS_MOBILE: "23",
+      E2E_STATUS_DESKTOP: "0",
+      TMPDIR: root,
+    }),
+    (error) => error && typeof error === "object" && error.code === 23,
+  );
+
+  assertE2EInvocationsEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], true, "full", {
+      bodyRan: true,
+    }),
+  );
+});
+
+test("E2E runner returns desktop status when mobile body succeeds and desktop fails", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "desktop fail exit log");
+
+  await assert.rejects(
+    runE2E(root, bin, logDir, [], {
+      E2E_STATUS_MOBILE: "0",
+      E2E_STATUS_DESKTOP: "42",
+      TMPDIR: root,
+    }),
+    (error) => error && typeof error === "object" && error.code === 42,
+  );
+
+  assertE2EInvocationsEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], true, "full", {
+      bodyRan: true,
+    }),
+  );
 });
 
 test("E2E runner force-kills a child that ignores two forwarded signals", async (t) => {

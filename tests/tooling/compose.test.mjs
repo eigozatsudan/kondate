@@ -383,6 +383,12 @@ test("runs e2e through the same privilege-dropping entrypoint", async () => {
   assert.doesNotMatch(e2e, /^ {4}command:/mu);
   assert.match(e2e, /^ {6}LOCAL_UID: "\$\{LOCAL_UID:-1000\}"$/mu);
   assert.match(e2e, /^ {6}LOCAL_GID: "\$\{LOCAL_GID:-1000\}"$/mu);
+  // 案 B P2: project 並列時の成果物分離 env（run-e2e が前置き上書き）
+  assert.match(e2e, /^ {6}KONDATE_E2E_OUTPUT_DIR: "\$\{KONDATE_E2E_OUTPUT_DIR:-test-results\}"$/mu);
+  assert.match(
+    e2e,
+    /^ {6}KONDATE_E2E_HTML_REPORT: "\$\{KONDATE_E2E_HTML_REPORT:-playwright-report\}"$/mu,
+  );
 });
 
 test("e2e image installs Playwright browsers to a HOME-independent path", async () => {
@@ -469,6 +475,11 @@ test("runs E2E through the base and E2E Compose files in override order", async 
   assert.match(runner, /--project=mobile-chromium/u);
   assert.match(runner, /--project=desktop-chromium/u);
   assert.match(runner, /reset-e2e-ai-quota\.sh/u);
+  // 案 B P2: 並列時の成果物 prefix（退行で両 process が既定 test-results に書かない）
+  assert.match(runner, /KONDATE_E2E_OUTPUT_DIR=test-results\/mobile-chromium/u);
+  assert.match(runner, /KONDATE_E2E_HTML_REPORT=playwright-report\/mobile-chromium/u);
+  assert.match(runner, /KONDATE_E2E_OUTPUT_DIR=test-results\/desktop-chromium/u);
+  assert.match(runner, /KONDATE_E2E_HTML_REPORT=playwright-report\/desktop-chromium/u);
   // 直列二段 + 中間 reset の退行を拒否
   assert.doesNotMatch(
     runner,
@@ -555,6 +566,9 @@ test("documents the Docker-only clean initialization and verification workflow",
   // Phase 3: workers / E2E limit / SKIP_RECREATE（開発専用・CI 禁止）
   // docs 文言の "workers: 2" を確認（数値 20 への部分一致を避ける）
   assert.match(guide, /workers:\s*2(?!\d)/u);
+  // 案 B P3: 壁時計 ≈ max は非 AI 主因。生成は行ロックで直列化し得る
+  assert.match(guide, /非 AI|UI 系/u);
+  assert.match(guide, /単一行ロック|行ロック/u);
   assert.match(guide, /fullyParallel:\s*true/u);
   assert.match(guide, /GLOBAL_DAILY_AI_LIMIT/u);
   assert.match(guide, /\*\*20\*\*/u);

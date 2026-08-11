@@ -79,10 +79,11 @@ DB型生成は稼働中の公式Postgres Metaサービスを使用します。�
 #### Playwright 並列（Phase 3 + project 並列）
 
 - `playwright.config.ts` は `workers: 2` と `fullyParallel: true` を固定する（CI で workers を 1 に落とす分岐はない）。
-- **full**（`--project` 未指定）は `run-e2e.sh` が `mobile-chromium` と `desktop-chromium` を **同一 wrapper 内で並列**起動する（壁時計 ≈ max(mobile, desktop)）。`setup` は直前に 1 回だけ直列。
-- 並列時の成果物は `test-results/{mobile,desktop}-chromium` と `playwright-report/{mobile,desktop}-chromium` に分離する（env: `KONDATE_E2E_OUTPUT_DIR` / `KONDATE_E2E_HTML_REPORT`）。
-- 実効ブラウザ並列は最大 **workers × 2 project**（4）。生成密集・race・共有 storageState・Realtime signal 系の file は `test.describe.configure({ mode: "serial" })` で worker 内 serial を維持する。
-- 短縮の主因は UI 系の並列化と project 並列。アプリ全体の AI 共有枠は単一行ロックのため、生成予約は直列化し得る。
+- **full**（`--project` 未指定）は `run-e2e.sh` が `mobile-chromium` と `desktop-chromium` を **同一 wrapper 内で並列**起動する。`setup` は直前に 1 回だけ直列。
+- **壁時計の見方:** 非 AI の UI 区間では ≈ **max(mobile, desktop)** に寄せられる。一方、アプリ全体の AI 共有枠は **単一行ロック**（`private.ai_global_daily_usage` の `FOR UPDATE`）のため、生成予約は process を跨いでも直列化し得る。生成密集 file の `test.describe.configure({ mode: "serial" })` は **単一 Playwright process 内**のみ有効で、mobile\|\|desktop の process 間排他にはならない。
+- 並列時の成果物は `test-results/{mobile,desktop}-chromium` と `playwright-report/{mobile,desktop}-chromium` に分離する（env: `KONDATE_E2E_OUTPUT_DIR` / `KONDATE_E2E_HTML_REPORT`）。ホストにこれらを export したまま単一 project 実行すると既定パスが上書きされるので、通常は export しない。
+- 実効ブラウザ並列は最大 **workers × 2 project**（4）。race・共有 storageState・Realtime signal 系の file も process 内 serial を維持する。
+- 短縮の主因は **UI 系**の workers 並列と project 並列。AI 生成区間の短縮は行ロック residual により限定的。
 
 #### AI 日次枠（local compose vs E2E）
 
