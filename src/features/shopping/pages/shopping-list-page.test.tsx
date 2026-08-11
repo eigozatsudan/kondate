@@ -27,11 +27,13 @@ import { ShoppingListPage } from "./shopping-list-page";
 import {
   claimItemMutationSticky,
   claimShoppingCommand,
+  clearItemMutationMismatchGuard,
   clearPendingItemMutation,
   clearShoppingCommand,
   fetchReconcilableMenuSource,
   isCreateShoppingStickyReusable,
   isReconcileShoppingStickyReusable,
+  markItemMutationMismatchGuard,
   pendingItemMutationClaimLockName,
   pendingItemMutationStorageKey,
   pendingShoppingCommandClaimLockName,
@@ -41,6 +43,7 @@ import {
   readPendingItemMutation,
   readPendingShoppingCommand,
   reconcileCommandTargetId,
+  shouldBlockItemMutationAfterMismatch,
   writePendingItemMutation,
   type PendingItemMutationSticky,
 } from "../api/shopping-api";
@@ -1126,6 +1129,66 @@ describe("ShoppingListPage mutations", () => {
     expect(readPendingItemMutation(LIST_ID)).toBeNull();
     // フォーム abandon: 同じ内容の新 key 再送を誘発しない
     expect(screen.queryByLabelText("項目名")).toBeNull();
+  });
+
+  it("blocks first same-content re-add after mismatch then allows second confirm (SHOP1)", async () => {
+    // mismatch abandon → 手動再入力 dual-add を 1 回確認ブロックで縮退（RLS/冪等非緩和）。
+    mutateShoppingItem.mockRejectedValueOnce(
+      Object.assign(new Error("mismatch"), { code: "idempotency_payload_mismatch" }),
+    );
+    await renderPage(makeShoppingList([makeItem()]));
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "白菜");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1/4個");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("反映済みの可能性");
+    });
+    expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText("項目名")).toBeNull();
+
+    // 同内容を再入力して 1 回目 → 送信せず確認文言（新 UUID mint しない）
+    await user.click(screen.getByRole("button", { name: "＋ 項目を追加" }));
+    await user.type(screen.getByLabelText("項目名"), "白菜");
+    await user.clear(screen.getByLabelText("分量表記"));
+    await user.type(screen.getByLabelText("分量表記"), "1/4個");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("もう一度「追加する」");
+    });
+    expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
+    // フォームは保持（確認後の 2 回目を同じ内容で押せる）
+    expect(screen.getByLabelText("項目名")).toHaveValue("白菜");
+
+    // 2 回目 → 新 key で送信許可（意図的再追加）
+    mutateShoppingItem.mockResolvedValueOnce({
+      listId: LIST_ID,
+      version: 2,
+      itemId: "40000000-0000-4000-8000-0000000000ce",
+      replayed: false,
+    });
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+    await waitFor(() => {
+      expect(mutateShoppingItem).toHaveBeenCalledTimes(2);
+    });
+    expect(mutateShoppingItem.mock.calls[1]?.[0].operation).toBe("add_manual");
+    expect(mutateShoppingItem.mock.calls[1]?.[0].payload.displayName).toBe("白菜");
+  });
+
+  it("mismatch guard helpers arm then release same intentKey (SHOP1 unit)", () => {
+    clearItemMutationMismatchGuard(LIST_ID);
+    const intentKey = JSON.stringify({
+      operation: "add_manual",
+      itemId: null,
+      payload: { displayName: "白菜" },
+    });
+    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
+    markItemMutationMismatchGuard(LIST_ID, intentKey);
+    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
+    // 2 回目は許可してガード解除
+    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
+    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
   });
 
   it("reuses item mutation sticky from sessionStorage after remount (SHOP2)", async () => {

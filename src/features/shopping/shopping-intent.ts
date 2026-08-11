@@ -153,6 +153,52 @@ export function clearShoppingResumeSuppress(kind: "create" | "reconcile", target
 }
 
 /**
+ * SHOP2 (adversarial): hard reload / クラッシュでは React unmount の
+ * scheduleResumeSuppressClear が走らず、local/session の resume-suppress と
+ * 失応答 sticky が同居したまま auto-resume が 24h TTL まで凍る。
+ * document（performance.timeOrigin）あたり target 1 回だけ suppress を落とす。
+ * - SPA remount / StrictMode: 同一 timeOrigin なので 2 回目以降は no-op（シート選び直し中の suppress を壊さない）
+ * - hard reload: 新しい JS 文脈 + 新しい timeOrigin で clear が再武装
+ * - シート open 中の mount では呼び出し側が shoppingSheet を見て skip すること
+ * - current_safety 等の意図的 suppress も reload 後は 1 回 resume を試し、再 409 なら
+ *   failShoppingCommand が再 mark する（永久 pause より復旧優先）
+ * sticky 本体は触らない（pause-not-abandon の鍵は維持）。
+ */
+const resumeSuppressDocumentBootTokens = new Map<string, number>();
+
+function resumeSuppressDocumentBootKey(kind: "create" | "reconcile", targetId: string): string {
+  return `${kind}:${targetId}`;
+}
+
+function documentTimeOriginMs(): number {
+  if (typeof performance !== "undefined" && typeof performance.timeOrigin === "number") {
+    return performance.timeOrigin;
+  }
+  return 0;
+}
+
+/**
+ * @returns true のとき実際に suppress を clear した
+ */
+export function clearResumeSuppressOnDocumentBoot(
+  kind: "create" | "reconcile",
+  targetId: string,
+): boolean {
+  const token = documentTimeOriginMs();
+  const mapKey = resumeSuppressDocumentBootKey(kind, targetId);
+  if (resumeSuppressDocumentBootTokens.get(mapKey) === token) return false;
+  resumeSuppressDocumentBootTokens.set(mapKey, token);
+  if (!isShoppingResumeSuppressed(kind, targetId)) return false;
+  clearShoppingResumeSuppress(kind, targetId);
+  return true;
+}
+
+/** テスト用: document boot トークンを捨て、同一 timeOrigin でも再 clear できるようにする */
+export function resetResumeSuppressDocumentBootForTests(): void {
+  resumeSuppressDocumentBootTokens.clear();
+}
+
+/**
  * SHOP1: resume-suppress の unmount 遅延 clear（intent clear と同型）。
  * Cancel なし abandon-navigate で suppress が残り sticky 復旧が凍る穴を閉じる。
  * StrictMode remount では cancel が先に走り、シート選び直し中の suppress は残す（SHOP6）。

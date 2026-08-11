@@ -59,6 +59,7 @@ import {
 } from "@/features/shopping/hooks/use-shopping-list";
 import {
   cancelPendingResumeSuppressClear,
+  clearResumeSuppressOnDocumentBoot,
   clearShoppingResumeSuppress,
   discardAppendCreateCommandIfPresent,
   hasPendingCreateCommand,
@@ -214,6 +215,8 @@ export function HouseholdMenuDetailBody({
   const [shoppingSheet, setShoppingSheet] = useState<"create" | "reconcile" | null>(null);
   const [shoppingDiff, setShoppingDiff] = useState<ShoppingDiff | null>(null);
   const [shoppingError, setShoppingError] = useState<string | null>(null);
+  // SHOP2: document boot で orphan suppress を clear したあと enabled を再評価するための tick
+  const [resumeSuppressBootTick, setResumeSuppressBootTick] = useState(0);
   const activeList = shoppingList.data ?? null;
   // 使用中リストの操作（差分反映など）は safety gate で止める。
   // ただし mode=new の新規作成は、削除済み献立で gate が恒久 blocked でも可能にする（D-C1）。
@@ -286,6 +289,28 @@ export function HouseholdMenuDetailBody({
       scheduleResumeSuppressClear("create", menuId);
     };
   }, [menuId]);
+
+  // SHOP2 (adversarial): hard reload 後に unmount clear が走らず suppress が残る穴。
+  // document boot 1 回だけ create/reconcile suppress を落とす。シート open 中は触らない
+  // （選び直し中の sticky auto POST 抑止を維持）。StrictMode 2 回目は token で no-op。
+  // Storage だけ変えても render が走らないため、実際に clear したときだけ tick して
+  // useResumeShoppingCommand の enabled（isShoppingResumeSuppressed）を再評価する。
+  useEffect(() => {
+    if (menuId.length === 0) return;
+    let cleared = false;
+    if (shoppingSheet !== "create") {
+      cleared = clearResumeSuppressOnDocumentBoot("create", menuId) || cleared;
+    }
+    const listId = activeList?.id;
+    if (listId !== undefined && shoppingSheet !== "reconcile") {
+      cleared =
+        clearResumeSuppressOnDocumentBoot(
+          "reconcile",
+          reconcileCommandTargetId(listId, menuId),
+        ) || cleared;
+    }
+    if (cleared) setResumeSuppressBootTick((n) => n + 1);
+  }, [menuId, shoppingSheet, activeList?.id]);
 
   // SHOP1 + SHOP9: reconcile suppress は listId:sourceMenuId 粒度。
   // create とは deps を分け、activeList 変化で create suppress を誤 clear しない。
@@ -448,11 +473,14 @@ export function HouseholdMenuDetailBody({
     // SHOP6: suppress は sessionStorage。remount で shoppingSheet が null でも
     // 選び直し中の旧 sticky 自動 POST を抑止する。
     // Cancel または menu-detail 真 unmount（SHOP1 遅延 clear）で suppress を落とし sticky 再送。
+    // resumeSuppressBootTick: Storage clear 後の setState でこの render が再走し suppress を読み直す。
     enabled:
       actionsEnabled &&
       !shoppingGate.blocked &&
       shoppingSheet !== "create" &&
-      !isShoppingResumeSuppressed("create", menuId),
+      !isShoppingResumeSuppressed("create", menuId) &&
+      // tick 参照（常に true）。未使用警告回避と clear 後 re-render の意図を固定。
+      resumeSuppressBootTick >= 0,
   });
   useResumeShoppingCommand({
     kind: "reconcile",
@@ -474,7 +502,11 @@ export function HouseholdMenuDetailBody({
       !shoppingGate.blocked &&
       shoppingSheet !== "reconcile" &&
       (activeList === null ||
-        !isShoppingResumeSuppressed("reconcile", reconcileCommandTargetId(activeList.id, menuId))),
+        !isShoppingResumeSuppressed(
+          "reconcile",
+          reconcileCommandTargetId(activeList.id, menuId),
+        )) &&
+      resumeSuppressBootTick >= 0,
   });
 
   const firstDishId = result.menu.dishes[0]?.id ?? null;

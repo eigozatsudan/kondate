@@ -654,6 +654,130 @@ export async function claimItemMutationSticky(
   return run();
 }
 
+/**
+ * SHOP1 (adversarial): FP rebuild → idempotency_payload_mismatch → form abandon のあと、
+ * 利用者が同内容を手動再入力すると新 UUID で dual-add する窓を縮退する。
+ * サーバ content 冪等や RLS/idempotency ロックは触らず、同一 intentKey の再送を
+ * **1 回目は確認ブロック・2 回目で許可**するクライアント DiD。
+ * sticky TTL と同窓（24h）。session 正本（同一タブ再入力が主 path）。
+ */
+export const itemMutationMismatchGuardStorageKey = (listId: string) =>
+  `kondate:shopping:item-mismatch-guard:v1:${listId}`;
+
+const itemMutationMismatchGuardEntrySchema = z
+  .object({
+    intentKey: z.string().min(1),
+    /** pending = 未確認 / armed = 警告表示済みで次送信を許可 */
+    state: z.enum(["pending", "armed"]),
+    atMs: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const itemMutationMismatchGuardStoreSchema = z
+  .object({
+    v: z.literal(1),
+    entries: z.array(itemMutationMismatchGuardEntrySchema),
+  })
+  .strict();
+
+type ItemMutationMismatchGuardEntry = z.infer<typeof itemMutationMismatchGuardEntrySchema>;
+
+function readMismatchGuardEntries(listId: string, nowMs: number): ItemMutationMismatchGuardEntry[] {
+  const key = itemMutationMismatchGuardStorageKey(listId);
+  let raw: string | null = null;
+  try {
+    raw = sessionStorage.getItem(key);
+  } catch {
+    return [];
+  }
+  if (raw === null) return [];
+  try {
+    const parsed = itemMutationMismatchGuardStoreSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
+      removeStorageBestEffort(sessionStorage, key);
+      return [];
+    }
+    const live = parsed.data.entries.filter((entry) => {
+      const age = nowMs - entry.atMs;
+      return age >= 0 && age <= pendingShoppingCommandTtlMs;
+    });
+    if (live.length === 0) {
+      removeStorageBestEffort(sessionStorage, key);
+      return [];
+    }
+    return live;
+  } catch {
+    removeStorageBestEffort(sessionStorage, key);
+    return [];
+  }
+}
+
+function writeMismatchGuardEntries(
+  listId: string,
+  entries: ItemMutationMismatchGuardEntry[],
+): void {
+  const key = itemMutationMismatchGuardStorageKey(listId);
+  if (entries.length === 0) {
+    removeStorageBestEffort(sessionStorage, key);
+    return;
+  }
+  writeStorageBestEffort(sessionStorage, key, JSON.stringify({ v: 1 as const, entries }));
+}
+
+/** mismatch abandon 直後に呼ぶ。同一 intent の次 1 回を確認ブロック対象にする。 */
+export function markItemMutationMismatchGuard(listId: string, intentKey: string): void {
+  const nowMs = Date.now();
+  const others = readMismatchGuardEntries(listId, nowMs).filter(
+    (entry) => entry.intentKey !== intentKey,
+  );
+  writeMismatchGuardEntries(listId, [
+    ...others,
+    { intentKey, state: "pending", atMs: nowMs },
+  ]);
+}
+
+/**
+ * add_manual 再送前に呼ぶ。
+ * @returns true のとき送信を止める（pending→armed へ進め警告を出す）。
+ *          false のとき送信してよい（ガード無し、または armed を消費して解除）。
+ */
+export function shouldBlockItemMutationAfterMismatch(listId: string, intentKey: string): boolean {
+  const nowMs = Date.now();
+  const entries = readMismatchGuardEntries(listId, nowMs);
+  const hit = entries.find((entry) => entry.intentKey === intentKey);
+  if (hit === undefined) return false;
+  if (hit.state === "pending") {
+    writeMismatchGuardEntries(
+      listId,
+      entries.map((entry) =>
+        entry.intentKey === intentKey
+          ? { intentKey, state: "armed" as const, atMs: nowMs }
+          : entry,
+      ),
+    );
+    return true;
+  }
+  // armed: 2 回目は許可しガードを外す（意図的な再追加）
+  writeMismatchGuardEntries(
+    listId,
+    entries.filter((entry) => entry.intentKey !== intentKey),
+  );
+  return false;
+}
+
+/** テスト・成功後掃除用 */
+export function clearItemMutationMismatchGuard(listId: string, intentKey?: string): void {
+  if (intentKey === undefined) {
+    removeStorageBestEffort(sessionStorage, itemMutationMismatchGuardStorageKey(listId));
+    return;
+  }
+  const nowMs = Date.now();
+  writeMismatchGuardEntries(
+    listId,
+    readMismatchGuardEntries(listId, nowMs).filter((entry) => entry.intentKey !== intentKey),
+  );
+}
+
 export type ReconcilableMenuSource = { sourceMenuId: string; sourceMenuVersion: number };
 
 /**

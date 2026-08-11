@@ -3,6 +3,7 @@ import {
   beginShoppingIntentCycle,
   cancelPendingIntentClear,
   cancelPendingResumeSuppressClear,
+  clearResumeSuppressOnDocumentBoot,
   clearShoppingIntentCycle,
   clearShoppingResumeSuppress,
   clearShoppingSheetExpected,
@@ -17,6 +18,7 @@ import {
   markShoppingResumeSuppress,
   markShoppingSheetAutoOpened,
   menusPathForShopping,
+  resetResumeSuppressDocumentBootForTests,
   scheduleIntentClear,
   scheduleResumeSuppressClear,
   shoppingDidAutoOpenKey,
@@ -32,12 +34,14 @@ const LIST = "41000000-0000-4000-8000-000000000001";
 beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
+  resetResumeSuppressDocumentBootForTests();
   vi.useFakeTimers();
 });
 afterEach(() => {
   vi.useRealTimers();
   sessionStorage.clear();
   localStorage.clear();
+  resetResumeSuppressDocumentBootForTests();
 });
 
 describe("shopping-intent paths", () => {
@@ -285,5 +289,39 @@ describe("resume suppress unmount clear (SHOP1)", () => {
     vi.advanceTimersByTime(0);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
     expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(true);
+  });
+});
+
+describe("clearResumeSuppressOnDocumentBoot (SHOP2 hard reload)", () => {
+  // hard reload 後: unmount clear が走らず suppress と sticky が同居して auto-resume が凍る穴。
+  it("clears orphan suppress once per document boot", () => {
+    markShoppingResumeSuppress("create", MENU);
+    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+    // 同一 document（StrictMode remount / SPA）では 2 回目 no-op
+    markShoppingResumeSuppress("create", MENU);
+    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(false);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
+  });
+
+  it("does not clear other kind/target and is no-op when already clear", () => {
+    markShoppingResumeSuppress("create", MENU);
+    markShoppingResumeSuppress("reconcile", LIST);
+    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+    expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(true);
+    expect(clearResumeSuppressOnDocumentBoot("reconcile", LIST)).toBe(true);
+    expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(false);
+    // 既に clear 済みでも boot token は消費済み → false
+    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(false);
+  });
+
+  it("re-arms after reset so simulated hard reload can clear again", () => {
+    markShoppingResumeSuppress("create", MENU);
+    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    markShoppingResumeSuppress("create", MENU);
+    resetResumeSuppressDocumentBootForTests();
+    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
   });
 });

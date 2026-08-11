@@ -9,10 +9,13 @@ import { normalizeIngredientName } from "@shared/shopping/normalize";
 import { reviewedShoppingAliases } from "@shared/shopping/reviewed-aliases";
 import {
   claimItemMutationSticky,
+  clearItemMutationMismatchGuard,
   clearPendingItemMutation,
+  markItemMutationMismatchGuard,
   mutateShoppingItem,
   readPendingItemMutation,
   revalidateActiveShoppingList,
+  shouldBlockItemMutationAfterMismatch,
   writePendingItemMutation,
   type PendingItemMutationSticky,
 } from "../api/shopping-api";
@@ -70,6 +73,7 @@ export function ShoppingListPage() {
   // SHOP2 (adversarial): ref / Storage は intentKey 単位 multi-slot。異 intent を clobber しない。
   // SHOP3 (adversarial): preflight の live FP が sticky と違うときは **同一 key のまま FP だけ
   // 書き戻して**再送する。適用済みなら hash mismatch → form abandon で dual-add を避ける。
+  // SHOP1 (adversarial): mismatch 後の手動再入力は mismatch guard で 1 回確認ブロック（RLS 非緩和）。
   const pendingItemMutationRef = useRef(new Map<string, PendingItemMutationSticky>());
   const [itemMutationPending, setItemMutationPending] = useState(false);
 
@@ -177,6 +181,17 @@ export function ShoppingListPage() {
     let shouldClearUi = false;
     try {
       setMutationError(null);
+      // SHOP1: mismatch abandon 後の同内容手動再入力。1 回目は送信せず確認を求め dual-add を縮退。
+      // 2 回目（armed 消費）で新 key 送信を許可。RLS / request_hash 冪等は非緩和。
+      if (
+        value.operation === "add_manual" &&
+        shouldBlockItemMutationAfterMismatch(list.id, intentKey)
+      ) {
+        setMutationError(
+          "同じ内容はすでにリストへ追加済みの可能性があります。リストを確認し、まだ無ければもう一度「追加する」を押してください",
+        );
+        return false;
+      }
       const live = await revalidateActiveShoppingList(list.id);
       // discriminated union: status==="valid" なら safetyFingerprint は非 null
       // sticky は捨てない（SHOP3: 適用済みロスト後の preflight invalid でも鍵を固定）。
@@ -223,6 +238,7 @@ export function ShoppingListPage() {
       await mutateShoppingItem(request);
       // 成功（replay 含む）したら sticky を捨て、次の意図的な同内容 add は新 key になる
       dropItemMutationSticky(list.id, intentKey);
+      clearItemMutationMismatchGuard(list.id, intentKey);
       shouldClearUi = true;
       // 成功時のみ確認行用 id を更新（失敗後の refetch でも pending を汚さない）
       if (
@@ -263,8 +279,12 @@ export function ShoppingListPage() {
         error.code === "idempotency_payload_mismatch"
       ) {
         // SHOP3: FP rebuild 後の hash mismatch は「旧 body で適用済み」の強い信号。
-        // sticky を捨てフォームも閉じ、同一内容の新 key dual-add を避ける。
+        // sticky を捨てフォームも閉じ、同一内容の即時新 key dual-add を避ける。
+        // SHOP1: 手動再入力 dual-add は mismatch guard（1 回確認ブロック）でさらに縮退。
         dropItemMutationSticky(list.id, intentKey);
+        if (value.operation === "add_manual") {
+          markItemMutationMismatchGuard(list.id, intentKey);
+        }
         setMutationError(
           "すでにリストへ反映済みの可能性があります。リストを確認してから操作してください",
         );
