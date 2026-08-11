@@ -87,10 +87,7 @@ const requiredSmokeTitles = [
     "e2e/specs/generation-recovery-results.spec.ts",
     "shows result details and keeps major regions within their parent",
   ],
-  [
-    "e2e/specs/shopping-list.spec.ts",
-    "shows server-owned diff and preserves protected rows",
-  ],
+  ["e2e/specs/shopping-list.spec.ts", "shows server-owned diff and preserves protected rows"],
   [
     "e2e/specs/shopping-list-races.spec.ts",
     "reuses one idempotency key after the first response is lost",
@@ -99,10 +96,7 @@ const requiredSmokeTitles = [
     "e2e/specs/history-safety-change.spec.ts",
     "automatically revalidates on mount and blocks stale history after safety changes",
   ],
-  [
-    "e2e/specs/history-regeneration.spec.ts",
-    "does not consume a success for duplicate output",
-  ],
+  ["e2e/specs/history-regeneration.spec.ts", "does not consume a success for duplicate output"],
   [
     "e2e/specs/menu-domain-pantry.spec.ts",
     "pantry CRUD, restored planner, attempt-local expiry check, and all reviewed meals",

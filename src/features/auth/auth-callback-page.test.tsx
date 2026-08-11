@@ -411,7 +411,7 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
       returnTo: "/onboarding",
     }),
     resumeFlow,
-      confirmMagicLink: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
   const stopRecovery = vi.fn();
   startAuthContinuationRecoveryMock.mockImplementationOnce(() => stopRecovery);
@@ -574,7 +574,7 @@ it("C5: code-less oauth_cancelled / expired results do not clear the terminal fl
       completeCallback: vi.fn().mockResolvedValue(result),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
-  };
+    };
     const { leaveAuthCallback } = renderCallback(gateway, {
       initialEntry: `/auth/callback?flow=${flowId}`,
     });
@@ -728,7 +728,7 @@ it("fails closed when completeCallback never settles past the continuation TTL",
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
-  };
+    };
     const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
     await act(async () => Promise.resolve());
     expect(leaveAuthCallback).not.toHaveBeenCalled();
@@ -769,7 +769,7 @@ it("C6: hangWatchdog fails closed at server expiresAt when shorter than local TT
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
-  };
+    };
     const { leaveAuthCallback } = renderCallback(gateway, {
       ttlMs: 300_000,
       initialEntry: `/auth/callback?flow=${flowId}`,
@@ -826,7 +826,7 @@ it("C9: hangWatchdog does not clear secret while callback-prelease is held (post
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
-  };
+    };
     vi.mocked(clearAuthFlow).mockClear();
     const { leaveAuthCallback } = renderCallback(gateway, {
       ttlMs: 300_000,
@@ -950,7 +950,7 @@ it("C9/C12: hangWatchdog does not extend past wall serverExpires via positive cl
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
-  };
+    };
     const { leaveAuthCallback } = renderCallback(gateway, {
       ttlMs: 300_000,
       initialEntry: `/auth/callback?flow=${flowId}`,
@@ -1041,7 +1041,7 @@ it("C14: deposited WebView switches to expired retry UI after hang watchdog TTL"
       }),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
-  };
+    };
     const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
     // fake timers 下では findBy* の wait が hang するため flush 後に getBy*
     await act(async () => Promise.resolve());

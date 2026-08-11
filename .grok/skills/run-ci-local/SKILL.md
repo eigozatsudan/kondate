@@ -80,11 +80,11 @@ description: >
 
 ### 3. 再実行の範囲
 
-| 失敗ステップ                              | 再実行の起点                                            |
-| ----------------------------------------- | ------------------------------------------------------- |
-| 1–6（env / compose / health / provision） | 失敗ステップから 19 まで                                |
-| 7–14、16–19（テスト・監査・ビルド）       | **失敗したステップから** 19 まで                        |
-| 15（db:types）                            | 型の正当更新後、15 の `git diff` から続行。不正なら停止 |
+| 失敗ステップ                              | 再実行の起点                                                 |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| 1–6（env / compose / health / provision） | 失敗ステップから 19 まで                                     |
+| 7–14、16–19（テスト・監査・ビルド）       | **失敗したステップから** 19 まで                             |
+| 15（db:types）                            | 型の正当更新後、15 の `git diff` から続行。不正なら停止      |
 | 16（E2E）                                 | スタックが壊れていなければ 16 から。auth/app 異常なら 4 から |
 
 - 修正が**前のステップの成果物に影響**する場合（例: 共有型・compose・env 契約・`run-e2e.sh` / Playwright config）は、影響を受ける最初のステップからやり直す
@@ -172,12 +172,12 @@ docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs
 
 **列挙に含める E2E 関連 tooling（退行防止）**
 
-| ファイル | 役割 |
-| --- | --- |
-| `tests/tooling/e2e-smoke-tags.test.mjs` | `@smoke` / `@mobile-only` 静的ガード |
-| `tests/tooling/e2e-ai-quota-parallel.test.mjs` | per-test global AI truncate 禁止 + `workers: 2` + suite 開始 reset / parallel 関数 |
-| `tests/tooling/local-development-scripts.test.mjs` | `run-e2e.sh` シーケンス（案 B: dual body signal・mobile 優先 exit 含む） |
-| `tests/tooling/compose.test.mjs` | suite 分岐・parallel 関数・成果物 env pin 等 |
+| ファイル                                           | 役割                                                                               |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `tests/tooling/e2e-smoke-tags.test.mjs`            | `@smoke` / `@mobile-only` 静的ガード                                               |
+| `tests/tooling/e2e-ai-quota-parallel.test.mjs`     | per-test global AI truncate 禁止 + `workers: 2` + suite 開始 reset / parallel 関数 |
+| `tests/tooling/local-development-scripts.test.mjs` | `run-e2e.sh` シーケンス（案 B: dual body signal・mobile 優先 exit 含む）           |
+| `tests/tooling/compose.test.mjs`                   | suite 分岐・parallel 関数・成果物 env pin 等                                       |
 
 ※ `scripts/ci.sh` が `eslint-primitive-rule.test.mjs` を追加している場合がある。**GHA 同等を厳密に再現するときは ci.yml 列挙のみ**。ローカルで ci.sh 完全一致が必要ならその 1 ファイルを追加してよいが、食い違いは報告する。
 
@@ -239,20 +239,20 @@ git diff --exit-code -- src/shared/types/database.generated.ts
 
 環境変数を workflow / `ci.sh` と同じく付与する:
 
-| 変数 | 値 | 意味 |
-| --- | --- | --- |
-| `LOCAL_MOCK_MODELS` | `mock/kondate-primary:free,mock/kondate-repair:free` | E2E は mock 経路に閉じる |
-| `KONDATE_ASSERT_PRIVACY_LOGS` | `1` | Function ログの privacy assert |
-| `PLAYWRIGHT_DISABLE_TRACE` | `1` | trace/video 無効（DOM・通信を残さない） |
-| `KONDATE_E2E_SUITE` | 未設定 or `full`（既定）/ `smoke` | 下記スイート選択 |
+| 変数                          | 値                                                   | 意味                                    |
+| ----------------------------- | ---------------------------------------------------- | --------------------------------------- |
+| `LOCAL_MOCK_MODELS`           | `mock/kondate-primary:free,mock/kondate-repair:free` | E2E は mock 経路に閉じる                |
+| `KONDATE_ASSERT_PRIVACY_LOGS` | `1`                                                  | Function ログの privacy assert          |
+| `PLAYWRIGHT_DISABLE_TRACE`    | `1`                                                  | trace/video 無効（DOM・通信を残さない） |
+| `KONDATE_E2E_SUITE`           | 未設定 or `full`（既定）/ `smoke`                    | 下記スイート選択                        |
 
 **スイート選択（ローカル）**
 
-| 目的 | 指定 | 実行モデル（`run-e2e.sh`） |
-| --- | --- | --- |
+| 目的                                      | 指定                               | 実行モデル（`run-e2e.sh`）                                                                                                                                                       |
+| ----------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GHA push / release 相当（**skill 既定**） | 未設定 or `KONDATE_E2E_SUITE=full` | `setup` 1 回 → **mobile \|\| desktop 並列**（案 B）。AI 共有枠 reset は **suite 開始 1 回**のみ（中間 reset なし）。E2E 上限は `compose.e2e.yaml` の `GLOBAL_DAILY_AI_LIMIT=500` |
-| GHA PR 相当（短縮） | `KONDATE_E2E_SUITE=smoke` | setup 省略（現状）→ **mobile のみ** + `--grep=@smoke`。desktop 段なし |
-| 開発反復（任意・CI 禁止） | `KONDATE_E2E_SKIP_RECREATE=1` | 開始時 force-recreate 省略。**`CI=true` と併用不可** |
+| GHA PR 相当（短縮）                       | `KONDATE_E2E_SUITE=smoke`          | setup 省略（現状）→ **mobile のみ** + `--grep=@smoke`。desktop 段なし                                                                                                            |
+| 開発反復（任意・CI 禁止）                 | `KONDATE_E2E_SKIP_RECREATE=1`      | 開始時 force-recreate 省略。**`CI=true` と併用不可**                                                                                                                             |
 
 **既定コマンド（full）**
 

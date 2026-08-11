@@ -465,7 +465,7 @@ it("C9: clears magic-link residual sessionStorage when already authenticated", (
       completeCallback: vi.fn(),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
-  };
+    };
 
     render(
       <MemoryRouter initialEntries={["/login"]}>
@@ -508,7 +508,7 @@ it.each([
       completeCallback: vi.fn(),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
-  };
+    };
 
     render(
       <MemoryRouter initialEntries={[entry]}>

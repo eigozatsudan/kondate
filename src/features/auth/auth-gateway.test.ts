@@ -262,9 +262,7 @@ it("token_hash magic: strip reload restores needs_confirmation from pending", as
   );
   // strip 後相当: flow のみ
   await expect(
-    gateway.completeCallback(
-      new URL(`http://127.0.0.1:5173/auth/callback?flow=${flow.id}`),
-    ),
+    gateway.completeCallback(new URL(`http://127.0.0.1:5173/auth/callback?flow=${flow.id}`)),
   ).resolves.toEqual({
     kind: "needs_confirmation",
     flowId: flow.id,

@@ -297,8 +297,8 @@ function normalizeMagicOtpType(value: string | null): "email" | "magiclink" | nu
   return null;
 }
 
-function verifyOtpType(_otpType: "email" | "magiclink"): "email" {
-  // supabase-js: magiclink type は deprecated。email で magic / signup OTP を扱う。
+/** supabase-js: magiclink type は deprecated。email で magic / signup OTP を扱う。 */
+function verifyOtpType(): "email" {
   return "email";
 }
 
@@ -313,8 +313,7 @@ function shouldExchangeClaimedAsTokenHash(
   claimed: string,
 ): boolean {
   if (credentialKind !== "token_hash") return false;
-  const uuidLike =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(claimed);
+  const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(claimed);
   return !uuidLike;
 }
 
@@ -739,7 +738,8 @@ export function createAuthGateway(
     },
 
     async confirmMagicLink(input) {
-      const { flowId, tokenHash, otpType, state } = input;
+      // otpType は ConfirmMagicLinkInput 互換で受け取るが、verifyOtp は常に email に正規化する
+      const { flowId, tokenHash, state } = input;
       if (tokenHash.length < 16) {
         return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
       }
@@ -792,7 +792,7 @@ export function createAuthGateway(
         // deposit 失敗でも URL 由来 token_hash で verify を試みる（continuation TTL 切れ等）。
         try {
           const result = await withTimeout(
-            establishSessionFromTokenHash(flowId, tokenHash, otpType),
+            establishSessionFromTokenHash(flowId, tokenHash),
             IMMEDIATE_CLAIM_TIMEOUT_MS,
           );
           if (result.kind === "awaiting_completion") {
@@ -813,7 +813,7 @@ export function createAuthGateway(
     async resumeFlow(flowId) {
       const existing = inflightResumeByFlowId.get(flowId);
       if (existing !== undefined) {
-        return existing.promise as Promise<AuthResumeResult>;
+        return existing.promise;
       }
       // C11: generation で Map 除去を世代一致に限定（soft TTL / settle の競合でも後続を壊さない）
       const generation = (inflightResumeGeneration += 1);
@@ -990,7 +990,7 @@ export function createAuthGateway(
             ? // magic token_hash: claim した平文は OTP hash。PKCE code exchange ではない。
               client.auth.verifyOtp({
                 token_hash: claimedCode.code,
-                type: verifyOtpType("email"),
+                type: verifyOtpType(),
               })
             : client.auth.exchangeCodeForSession(claimedCode.code);
       const { error } = await result;
@@ -1108,7 +1108,6 @@ export function createAuthGateway(
   async function establishSessionFromTokenHash(
     flowId: string,
     tokenHash: string,
-    otpType: "email" | "magiclink",
   ): Promise<AuthResumeResult> {
     const flow = readAuthFlow(flowId, storage);
     if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
@@ -1164,7 +1163,7 @@ export function createAuthGateway(
       exchangeStarted = true;
       const { error } = await client.auth.verifyOtp({
         token_hash: tokenHash,
-        type: verifyOtpType(otpType),
+        type: verifyOtpType(),
       });
       if (error !== null) {
         if (isExpired(error, new URL("http://local/"))) {

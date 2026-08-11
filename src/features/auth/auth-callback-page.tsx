@@ -358,7 +358,8 @@ export function AuthCallbackPage({
         // C5: code 無し expired でも secret を即焼かない（state 漏洩経由の DoS を縮める）。
         // 正当な期限切れも TTL / 明示 logout / ユーザー再開始で収束する。
         leaveLoginError("magic_link_expired", next.returnTo);
-      } else if (next.kind === "error") {
+      } else {
+        // 残りは kind: "error" のみ（discriminated union の網羅）。
         // AUTH-1 / C5: unbound と同様、code 無し provider error でも秘密を焼かない。
         // gateway は state mismatch / hash / deposit 失敗で意図的に clear しない。
         // 以前の oauth_cancelled / auth_callback_failed 即 clear は state 一致だけで
@@ -388,7 +389,8 @@ export function AuthCallbackPage({
                 メールのリンクを開けました。下のボタンを押すとログインが完了します。プレビューや自動確認だけではログインしません。
               </p>
               <p className="type-small">
-                iPhone の長押しプレビューだけで開いたあとにエラーになることがあります。この画面で「ログインを完了する」を押してください。
+                iPhone
+                の長押しプレビューだけで開いたあとにエラーになることがあります。この画面で「ログインを完了する」を押してください。
               </p>
             </>
           )}
