@@ -1,7 +1,8 @@
 #!/bin/sh
 # E2Eテスト用Composeプロファイルを起動し、Playwrightコンテナ(e2e)を実行して、
 # 成功・失敗・中断のいずれの経路でも必ずE2E専用コンテナを片付け、
-# 通常の開発スタック(auth/app)を元の状態に復元するラッパー。
+# ローカルでは通常の開発スタック(auth/app)を元の状態に復元するラッパー。
+# CI=true のときは GHA / ci.sh が直後に down --volumes するため restore を省略する。
 #
 # 多重起動防止のディレクトリロック(lock_dir)、二重の後始末を避けるための
 # シグナル処理（1回目は猶予期間中に子の自然終了を待ち、2回目以降は即killする）、
@@ -14,6 +15,14 @@ set -eu
 script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
 repo_root=$(CDPATH= cd -P "$script_dir/.." && pwd)
 cd "$repo_root"
+
+# KONDATE_E2E_SKIP_RECREATE は開発反復専用（開始時 force-recreate 省略）。
+# CI で有効だと auth rate-limit カウンタや古い app env のまま full が走るため、
+# CI=true との同時指定はロック取得前に fail-closed で拒否する（Spec §7.7）。
+if [ "${CI:-}" = "true" ] && [ "${KONDATE_E2E_SKIP_RECREATE:-}" = "1" ]; then
+  echo "KONDATE_E2E_SKIP_RECREATE=1 is development-only and cannot be combined with CI=true" >&2
+  exit 2
+fi
 
 project_name=$("$script_dir/compose-project-name.sh" "$repo_root")
 "$script_dir/ensure-compose-project-env.sh" "$repo_root" "$project_name"
@@ -194,9 +203,10 @@ run_child() {
   return "$child_status"
 }
 
-# E2E用コンテナをkill・削除し、通常の開発スタック(auth/app)を
-# force-recreateで復元する。成否に関わらず全ステップを実行し、
-# 最初に発生した失敗のステータスを返す。
+# E2E用コンテナをkill・削除し、ローカルでは通常の開発スタック(auth/app)を
+# force-recreateで復元する。CI=true では GHA / ci.sh が直後に down --volumes
+# するため restore を省略し壁時計を短縮する。成否に関わらず必要なステップを
+# 実行し、最初に発生した失敗のステータスを返す。
 cleanup() {
   original_status=$1
   cleanup_started=1
@@ -242,7 +252,11 @@ cleanup() {
       removal_status=$?
     fi
   fi
-  if run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+  # ローカル: 開発継続のため通常構成へ force-recreate 復元。
+  # CI: runner / ci.sh が直後に volumes ごと落とすので restore の --wait を省略。
+  if [ "${CI:-}" = "true" ]; then
+    :
+  elif run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" \
     up -d --wait --force-recreate --no-deps auth app; then
     :
@@ -429,6 +443,7 @@ e2e_args_only_setup_project() {
 # 通常の開発スタックを起動したうえで、E2E専用プロファイルのauthを追加起動し、
 # openrouter-mock/kong/oauth-mock/appをE2E向け設定で強制再作成してから、
 # 実際のPlaywrightテストランナー(e2e)を実行する。
+# KONDATE_E2E_SKIP_RECREATE=1 のときは force-recreate を飛ばす（開発反復のみ）。
 run_e2e_commands() {
   # 慣習的な `./scripts/run-e2e.sh -- e2e/specs/foo.spec.ts` の先頭 `--` は
   # docker compose / playwright に渡すとフィルタが効かないことがあるため捨てる。
@@ -438,19 +453,33 @@ run_e2e_commands() {
   fi
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" up -d --wait || return $?
-  # auth は rate-limit カウンタをプロセス内に持つため、E2E 開始時に強制再作成する。
-  # compose.e2e.yaml のメール送信上限も合わせて効かせる。
-  run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
-    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
-    up -d --wait --force-recreate auth || return $?
+  if [ "${KONDATE_E2E_SKIP_RECREATE:-}" = "1" ]; then
+    # 開発反復用: 既存コンテナを E2E override で up するだけ（rate-limit や
+    # 古い env が残るリスクあり。CI では同時指定を入口で拒否済み）。
+    run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+      -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+      up -d --wait auth || return $?
+  else
+    # auth は rate-limit カウンタをプロセス内に持つため、E2E 開始時に強制再作成する。
+    # compose.e2e.yaml のメール送信上限も合わせて効かせる。
+    run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+      -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+      up -d --wait --force-recreate auth || return $?
+  fi
   # アプリ全体で共有するAI日次枠はJST日付単位でDBに積み上がる。
-  # 同一日の再実行と、1スイート内の mobile+desktop 二重実行の両方で
-  # GLOBAL_DAILY_AI_LIMIT=20 を跨がないよう、共有枠だけを初期化する
+  # E2E は compose.e2e で GLOBAL_DAILY_AI_LIMIT=500（製品 compose は 20 のまま）。
+  # 同一日の再実行と mobile+desktop 二段の累積に備え、共有枠だけを初期化する
   # （上限値そのものは変更しない。ユーザ単位枠はテストごと新規ユーザで独立）。
   run_child "$script_dir/reset-e2e-ai-quota.sh" || return $?
-  run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
-    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
-    up -d --wait --force-recreate --no-deps openrouter-mock kong oauth-mock app || return $?
+  if [ "${KONDATE_E2E_SKIP_RECREATE:-}" = "1" ]; then
+    run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+      -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+      up -d --wait --no-deps openrouter-mock kong oauth-mock app || return $?
+  else
+    run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
+      -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+      up -d --wait --force-recreate --no-deps openrouter-mock kong oauth-mock app || return $?
+  fi
 
   # KONDATE_E2E_SUITE=full|smoke（未設定は full）。smoke は mobile 1 段のみで
   # @smoke タグに絞り、project 境界の quota reset と desktop 段を踏まない。
@@ -489,7 +518,7 @@ run_e2e_commands() {
 
   # full: 呼び出し側が --project を指定していれば setup 後にそのまま1回実行する。
   # 未指定では mobile → 枠リセット → desktop の 2 段実行にし、
-  # 1 プロセス内の累積送信が 20 を超えて後半だけ落ちるのを防ぐ。
+  # 1 suite 内の共有 AI 枠累積で後半だけ落ちるのを防ぐ。
   # どちらか一方が失敗しても他方は最後まで走らせ、診断用の失敗一覧を揃える。
   if e2e_args_have_project "$@"; then
     run_playwright "$@" || return $?

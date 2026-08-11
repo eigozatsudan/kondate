@@ -290,14 +290,18 @@ function expectedE2EInvocations(
   arguments_ = [],
   cleanupE2EContainers = true,
   suite = "full",
+  options = {},
 ) {
   // scripts/run-e2e.sh の現行シーケンスに合わせる:
-  // base up → force-recreate auth → AI 枠リセット → E2E app 群 recreate →
+  // base up → force-recreate auth（SKIP_RECREATE 時は up のみ）→ AI 枠リセット →
+  // E2E app 群 recreate（SKIP 時は force-recreate なし）→
   // full: setup（storageState）1 回 →（--project 未指定なら mobile → 枠リセット → desktop）
   // smoke: setup 省略（reused が smoke に載るまで）→ mobile-chromium 1 段 + --grep=@smoke
   // --project=setup のみのときは setup を二重起動しない
-  // → cleanup で app ログ採取 → 失敗時のみ e2e kill/rm → auth/app 復元
+  // → cleanup で app ログ採取 → 失敗時のみ e2e kill/rm →
+  //   ローカルは auth/app 復元、CI=true は restore 省略（GHA / ci.sh が volumes down）
   // 先頭の裸 `--` は run-e2e.sh が shift して捨てる（docs の `./scripts/run-e2e.sh -- path` 慣習）。
+  const { skipRecreate = false, ci = false } = options;
   const normalizedArguments =
     arguments_.length > 0 && arguments_[0] === "--" ? arguments_.slice(1) : [...arguments_];
   arguments_ = normalizedArguments;
@@ -406,23 +410,57 @@ function expectedE2EInvocations(
     ];
   }
 
+  const authUp = skipRecreate
+    ? [...compose, ...e2eComposeFiles, "up", "-d", "--wait", "auth"]
+    : [...compose, ...e2eComposeFiles, "up", "-d", "--wait", "--force-recreate", "auth"];
+  const appGroupUp = skipRecreate
+    ? [
+        ...compose,
+        ...e2eComposeFiles,
+        "up",
+        "-d",
+        "--wait",
+        "--no-deps",
+        "openrouter-mock",
+        "kong",
+        "oauth-mock",
+        "app",
+      ]
+    : [
+        ...compose,
+        ...e2eComposeFiles,
+        "up",
+        "-d",
+        "--wait",
+        "--force-recreate",
+        "--no-deps",
+        "openrouter-mock",
+        "kong",
+        "oauth-mock",
+        "app",
+      ];
+  // CI は restore 省略。ローカルは通常構成へ force-recreate 復元。
+  const restore = ci
+    ? []
+    : [
+        [
+          ...compose,
+          ...baseComposeFile,
+          "up",
+          "-d",
+          "--wait",
+          "--force-recreate",
+          "--no-deps",
+          "auth",
+          "app",
+        ],
+      ];
+
   return [
     [...compose, ...baseComposeFile, "up", "-d", "--wait"],
-    [...compose, ...e2eComposeFiles, "up", "-d", "--wait", "--force-recreate", "auth"],
+    authUp,
     quotaReset,
-    [
-      ...compose,
-      ...e2eComposeFiles,
-      "up",
-      "-d",
-      "--wait",
-      "--force-recreate",
-      "--no-deps",
-      "openrouter-mock",
-      "kong",
-      "oauth-mock",
-      "app",
-    ],
+    appGroupUp,
     ...playwrightRuns,
     // cleanup は成否に関わらず Function ログを host へ採取する
     [...compose, ...baseComposeFile, "logs", "--no-color", "app"],
@@ -432,17 +470,7 @@ function expectedE2EInvocations(
           [...compose, ...e2eComposeFiles, "rm", "--force", "e2e"],
         ]
       : []),
-    [
-      ...compose,
-      ...baseComposeFile,
-      "up",
-      "-d",
-      "--wait",
-      "--force-recreate",
-      "--no-deps",
-      "auth",
-      "app",
-    ],
+    ...restore,
   ];
 }
 
@@ -528,6 +556,11 @@ async function runE2E(root, bin, logDir, arguments_ = [], extraEnv = {}) {
       ...process.env,
       // ホスト環境の suite 指定で full 期待が崩れないよう既定を固定する
       KONDATE_E2E_SUITE: "full",
+      // ホスト CI=true で restore 省略期待が壊れないよう既定は非 CI。
+      // CI 経路テストは extraEnv で CI: "true" を渡す。
+      CI: "",
+      // 開発用 SKIP もホストから漏れないよう既定オフ（CI 同時拒否テストは extraEnv で付与）
+      KONDATE_E2E_SKIP_RECREATE: "",
       ...extraEnv,
       COMPOSE_PROJECT_NAME: "shared",
       DOCKER_LOG_DIR: logDir,
@@ -735,6 +768,95 @@ test("E2E runner rejects an invalid KONDATE_E2E_SUITE", async (t) => {
   );
 });
 
+// Spec §7.7: CI=true と KONDATE_E2E_SKIP_RECREATE=1 の同時指定は exit 2（Docker 未起動）
+test("E2E runner rejects KONDATE_E2E_SKIP_RECREATE when CI=true", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "ci skip recreate reject log");
+
+  await assert.rejects(
+    runE2E(root, bin, logDir, [], {
+      CI: "true",
+      KONDATE_E2E_SKIP_RECREATE: "1",
+      TMPDIR: root,
+    }),
+    (error) =>
+      error &&
+      typeof error === "object" &&
+      error.code === 2 &&
+      String(error.stderr ?? "").includes("development-only") &&
+      String(error.stderr ?? "").includes("CI=true"),
+  );
+
+  // 早期 fail-closed: lock / docker を触らない
+  assert.deepEqual(await readDockerInvocations(logDir), []);
+  await assert.rejects(access(await expectedE2ELockDir(root)));
+});
+
+// CI=true では終了時 auth/app force-recreate 復元を省略する（GHA / ci.sh が volumes down）
+test("E2E runner skips auth/app restore cleanup when CI=true", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "ci cleanup skip restore log");
+
+  await runE2E(root, bin, logDir, ["--grep", "ci-path"], {
+    CI: "true",
+    E2E_STATUS: "0",
+    TMPDIR: root,
+  });
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(
+      root,
+      await expectedProjectName(root),
+      ["--grep", "ci-path"],
+      false,
+      "full",
+      { ci: true },
+    ),
+  );
+  // restore 用の force-recreate auth app が無いことを二重確認
+  const invocations = await readDockerInvocations(logDir);
+  const restore = invocations.filter(
+    (args) =>
+      args.includes("up") &&
+      args.includes("--force-recreate") &&
+      args.includes("auth") &&
+      args.includes("app") &&
+      !args.includes("compose.e2e.yaml"),
+  );
+  assert.equal(restore.length, 0);
+});
+
+// 開発反復用: 開始時 force-recreate を飛ばす（終了時 restore はローカルどおり維持）
+test("E2E runner skips start force-recreate when KONDATE_E2E_SKIP_RECREATE=1", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "skip recreate start log");
+
+  await runE2E(root, bin, logDir, ["--grep", "skip-recreate"], {
+    KONDATE_E2E_SKIP_RECREATE: "1",
+    E2E_STATUS: "0",
+    TMPDIR: root,
+  });
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(
+      root,
+      await expectedProjectName(root),
+      ["--grep", "skip-recreate"],
+      false,
+      "full",
+      { skipRecreate: true },
+    ),
+  );
+});
+
 test("E2E runner serializes runs from the same checkout and releases its lock", async (t) => {
   const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -756,6 +878,8 @@ test("E2E runner serializes runs from the same checkout and releases its lock", 
     cwd: tmpdir(),
     env: {
       ...process.env,
+      CI: "",
+      KONDATE_E2E_SKIP_RECREATE: "",
       KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: firstLogDir,
       DOCKER_READY_FILE: readyFile,
@@ -834,6 +958,8 @@ test("E2E runner reports a lock release failure after a successful run", async (
     cwd: tmpdir(),
     env: {
       ...process.env,
+      CI: "",
+      KONDATE_E2E_SKIP_RECREATE: "",
       KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: logDir,
       E2E_SUCCESS_DELAY: "0.3",
@@ -884,6 +1010,8 @@ test("E2E runner restores the base stack after every forwarded signal", async (t
         cwd: tmpdir(),
         env: {
           ...process.env,
+          CI: "",
+          KONDATE_E2E_SKIP_RECREATE: "",
           KONDATE_E2E_SUITE: "full",
           COMPOSE_PROJECT_NAME: "shared",
           DOCKER_LOG_DIR: logDir,
@@ -941,6 +1069,8 @@ test("E2E runner force-kills a child that ignores two forwarded signals", async 
         cwd: tmpdir(),
         env: {
           ...process.env,
+          CI: "",
+          KONDATE_E2E_SKIP_RECREATE: "",
           KONDATE_E2E_SUITE: "full",
           DOCKER_IGNORE_SIGNAL: "1",
           DOCKER_LOG_DIR: logDir,
@@ -1001,6 +1131,8 @@ test("E2E runner watchdog kills a child that ignores one forwarded signal", asyn
         cwd: tmpdir(),
         env: {
           ...process.env,
+          CI: "",
+          KONDATE_E2E_SKIP_RECREATE: "",
           KONDATE_E2E_SUITE: "full",
           DOCKER_IGNORE_SIGNAL: "1",
           DOCKER_LOG_DIR: logDir,
@@ -1086,6 +1218,8 @@ test("E2E runner bounds repeated signals while restoring the base stack", async 
     cwd: tmpdir(),
     env: {
       ...process.env,
+      CI: "",
+      KONDATE_E2E_SKIP_RECREATE: "",
       KONDATE_E2E_SUITE: "full",
       DOCKER_IGNORE_SIGNAL: "1",
       DOCKER_LOG_DIR: logDir,
@@ -1134,6 +1268,8 @@ test("E2E runner bounds one signal while a base restoration is stuck", async (t)
     cwd: tmpdir(),
     env: {
       ...process.env,
+      CI: "",
+      KONDATE_E2E_SKIP_RECREATE: "",
       KONDATE_E2E_SUITE: "full",
       DOCKER_IGNORE_SIGNAL: "1",
       DOCKER_LOG_DIR: logDir,
@@ -1251,6 +1387,8 @@ test("E2E runner kills and removes a daemon-side E2E child before restoring", as
     cwd: tmpdir(),
     env: {
       ...process.env,
+      CI: "",
+      KONDATE_E2E_SKIP_RECREATE: "",
       KONDATE_E2E_SUITE: "full",
       DOCKER_DAEMON_CHILD_FILE: daemonChildFile,
       DOCKER_DAEMON_REMOVED_FILE: removedFile,
@@ -1314,6 +1452,8 @@ test("E2E runner escalates a second signal across the cleanup phase", async (t) 
     cwd: tmpdir(),
     env: {
       ...process.env,
+      CI: "",
+      KONDATE_E2E_SKIP_RECREATE: "",
       KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: logDir,
       DOCKER_READY_FILE: e2eReadyFile,
@@ -1363,6 +1503,8 @@ test("E2E runner rearms its watchdog for a stuck restore after an E2E signal", a
     cwd: tmpdir(),
     env: {
       ...process.env,
+      CI: "",
+      KONDATE_E2E_SKIP_RECREATE: "",
       KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: logDir,
       DOCKER_READY_FILE: e2eReadyFile,
@@ -1417,6 +1559,8 @@ test("E2E runner rearms its watchdog for a stuck restore after an rm signal", as
     cwd: tmpdir(),
     env: {
       ...process.env,
+      CI: "",
+      KONDATE_E2E_SKIP_RECREATE: "",
       KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: logDir,
       E2E_CLEANUP_READY_FILE: cleanupReadyFile,

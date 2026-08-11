@@ -474,7 +474,13 @@ test("runs E2E through the base and E2E Compose files in override order", async 
   assert.match(runner, /--profile e2e[\s\\]*kill --signal SIGKILL e2e/u);
   assert.match(runner, /--profile e2e[\s\\]*rm --force e2e/u);
   assert.doesNotMatch(runner, /rm --force --stop e2e/u);
+  // ローカル restore は force-recreate を維持。CI=true では restore を省略する分岐。
   assert.match(runner, /up -d --wait --force-recreate --no-deps auth app/u);
+  assert.match(runner, /\[ "\$\{CI:-\}" = "true" \]/u);
+  // 開発反復用 SKIP_RECREATE。CI 同時指定は入口で exit 2。
+  assert.match(runner, /KONDATE_E2E_SKIP_RECREATE/u);
+  assert.match(runner, /development-only and cannot be combined with CI=true/u);
+  assert.match(runner, /\[ "\$\{KONDATE_E2E_SKIP_RECREATE:-\}" = "1" \]/u);
   assert.match(runner, /lock_dir=\$repo_root\/\.run-e2e\.lock/u);
   assert.match(runner, /if mkdir "\$lock_dir"/u);
   assert.match(
@@ -536,6 +542,16 @@ test("documents the Docker-only clean initialization and verification workflow",
   assert.match(guide, /E2E終了後.*通常構成のAuthとappを復元/u);
   assert.match(guide, /E2Eの終了statusを保持/u);
   assert.match(guide, /同じcheckout.*並行実行.*拒否/u);
+  // Phase 3: workers / E2E limit / SKIP_RECREATE（開発専用・CI 禁止）
+  assert.match(guide, /workers:\s*2/u);
+  assert.match(guide, /fullyParallel:\s*true/u);
+  assert.match(guide, /GLOBAL_DAILY_AI_LIMIT/u);
+  assert.match(guide, /\*\*20\*\*/u);
+  assert.match(guide, /compose\.e2e\.yaml/u);
+  assert.match(guide, /\*\*500\*\*/u);
+  assert.match(guide, /KONDATE_E2E_SKIP_RECREATE/u);
+  assert.match(guide, /開発専用/u);
+  assert.match(guide, /CI=true/u);
   assert.match(
     guide,
     /SIGKILL.*repository rootの`\.run-e2e\.lock`.*E2Eプロセスがないことを確認.*手動で削除/u,
