@@ -41,26 +41,95 @@
 
 ---
 
-## 前提（DB 側）
+## 前提（DB 側）— なぜ必要か
 
-対象 DB に次が済んでいること。
+このコンソールはデータベースを **読むだけ** します。  
+管理者用の `postgres` パスワードを使うと、誤操作やバグで本番データを書き換えられる危険があるため、**閲覧専用の DB ユーザー**（名前: `kondate_ops_readonly`）だけを使います。
 
-1. migration  
-   `supabase/migrations/20260811180000_ops_readonly_role.sql`  
-   （ロール NOLOGIN + 6 表 SELECT GRANT + `user_feedback` RLS policy + ops 索引）
-2. ロールを **LOGIN** 化しパスワード設定  
-   - **ローカル Compose:** リポジトリルートで  
-     `OPS_READONLY_DB_PASSWORD=… ./scripts/provision-ops-readonly-role.sh`  
-   - **本番 / staging:** [`docs/deployment/supabase.md`](../docs/deployment/supabase.md) §6.1
+そのユーザーは最初から用意されていません。**環境ごとに次の 2 段階を済ませてから**、接続文字列を `.env.admin` に書いて起動します。
 
-SELECT 対象表（migration 固定）:
+```text
+① スキーマ適用（migration）
+   → DB に「閲覧専用ユーザー」と「読める表の許可」を作る
 
-- `public.user_feedback`
-- `private.ai_generation_requests`
-- `private.ai_global_daily_usage`
-- `private.billing_subscriptions`
-- `private.billing_webhook_events`
-- `private.share_generalization_jobs`
+② パスワードを付けてログイン可能にする
+   → そのユーザーで実際に接続できるようにする
+
+③ ADMIN_DATABASE_URL に ② の接続文字列を書く → コンソール起動
+```
+
+① だけだとログインできません。② だけだとユーザー自体がありません。**両方必須**です。
+
+### 手順 A — ローカルの Docker Postgres を見る場合
+
+本編ローカル DB（`docker compose` の `db`）を対象にするとき。
+
+1. **本編スタックを起動し、マイグレーションが当たっていること**  
+   いつもどおり `docker compose up` や `./scripts/reset-local-db.sh` などで migrate が成功している状態にします。  
+   関係するファイル: `supabase/migrations/20260811180000_ops_readonly_role.sql`
+
+2. **閲覧専用ユーザーにパスワードを付ける**（リポジトリの **ルート** で）:
+
+   ```bash
+   OPS_READONLY_DB_PASSWORD='ここに強いパスワード' ./scripts/provision-ops-readonly-role.sh
+   ```
+
+   成功すると `provision-ops-readonly-role: ok` と出ます。
+
+3. **`.env.admin` に接続文字列を書く**（port は環境の DB 公開 port に合わせる。下は例）:
+
+   ```text
+   ADMIN_DATABASE_URL=postgresql://kondate_ops_readonly:上と同じパスワード@127.0.0.1:54322/postgres?sslmode=disable
+   ADMIN_ALLOW_INSECURE_LOCAL_DB=1
+   ```
+
+   `sslmode=disable` と `ADMIN_ALLOW_INSECURE_LOCAL_DB=1` は **ローカル専用** です。本番 URL では使いません。
+
+### 手順 B — 本番（または staging）の Supabase を見る場合
+
+1. **対象プロジェクトに migration を適用済みであること**  
+   普段の DB デプロイで `20260811180000_ops_readonly_role.sql` が入っていること。未適用なら先に適用する。
+
+2. **閲覧専用ユーザーをログイン可能にする**  
+   詳細（パスワードを履歴に残さない等）は  
+   [`docs/deployment/supabase.md`](../docs/deployment/supabase.md) の **§6.1**。  
+   要点:
+
+   - ユーザー名は `kondate_ops_readonly`
+   - ログイン可 + パスワード設定
+   - 管理者 `postgres` の URL を `.env.admin` に書かない
+
+3. **Session pooler の接続文字列を `.env.admin` に書く**（推奨）:
+
+   ```text
+   postgresql://kondate_ops_readonly.<20文字のproject-ref>:<パスワード>@….pooler.supabase.com:5432/postgres?sslmode=require
+   ```
+
+   - port は **5432**（**6543 は使わない**）
+   - `sslmode=require`（または verify-ca / verify-full）
+
+### このユーザーが読めるデータ（参考）
+
+運用で見るログ・集計に必要な表だけ許可しています（書き込み権限は付きません）。
+
+| 用途 | 何を読むか |
+| --- | --- |
+| 不具合・要望 | フィードバック |
+| 生成ログ | AI 生成の成否・失敗コード・所要時間など |
+| 全体の AI 枠 | 日次の予約・送信件数 |
+| 課金状態 | Plus 相当の status 集計（Stripe の ID は画面に出さない） |
+| 共有パイプライン | 共有 job の状態・滞留 |
+
+献立の中身・アレルギー詳細・メールアドレスなどには **権限を付けていません**。
+
+### うまくいかないとき（DB まわり）
+
+| 症状 | よくある原因 |
+| --- | --- |
+| 起動直後に落ちる / `database_url_invalid` | URL が `postgres` ユーザー、port 6543、sslmode 不足 |
+| `permission denied` / 起動 canary 失敗 | ① migration 未適用、または ② LOGIN 化・パスワード忘れ |
+| feedback だけいつも 0 件 | migration 未適用の古い DB（RLS 用の SELECT 許可が無い） |
+| ローカルで TLS エラー | 本番向け URL をローカル DB に使っている → 手順 A を使う |
 
 ---
 
