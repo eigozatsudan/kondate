@@ -1,7 +1,8 @@
 -- kondate_ops_readonly: SELECT のみ・user_feedback は RLS 下で行可視
+-- 6 GRANT 表すべてで INSERT/UPDATE/DELETE privilege が無いことを固定する
 \ir 000_helpers.sql
 begin;
-select plan(20);
+select plan(38);
 
 select ok(
   exists (select 1 from pg_roles where rolname = 'kondate_ops_readonly'),
@@ -26,44 +27,107 @@ select is(
   'ops role is NOINHERIT'
 );
 
+-- 6 ops 表: SELECT 可 / INSERT・UPDATE・DELETE 不可
 select ok(
-  not has_table_privilege('kondate_ops_readonly', 'private.ai_generation_requests', 'INSERT'),
-  'ops has no INSERT on ai_generation_requests'
+  has_table_privilege('kondate_ops_readonly', 'public.user_feedback', 'SELECT'),
+  'ops has SELECT grant on user_feedback'
 );
-
 select ok(
   not has_table_privilege('kondate_ops_readonly', 'public.user_feedback', 'INSERT'),
   'ops has no INSERT on user_feedback'
 );
-
 select ok(
-  has_table_privilege('kondate_ops_readonly', 'public.user_feedback', 'SELECT'),
-  'ops has SELECT grant on user_feedback'
+  not has_table_privilege('kondate_ops_readonly', 'public.user_feedback', 'UPDATE'),
+  'ops has no UPDATE on user_feedback'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'public.user_feedback', 'DELETE'),
+  'ops has no DELETE on user_feedback'
 );
 
 select ok(
   has_table_privilege('kondate_ops_readonly', 'private.ai_generation_requests', 'SELECT'),
   'ops has SELECT grant on ai_generation_requests'
 );
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.ai_generation_requests', 'INSERT'),
+  'ops has no INSERT on ai_generation_requests'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.ai_generation_requests', 'UPDATE'),
+  'ops has no UPDATE on ai_generation_requests'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.ai_generation_requests', 'DELETE'),
+  'ops has no DELETE on ai_generation_requests'
+);
 
 select ok(
   has_table_privilege('kondate_ops_readonly', 'private.ai_global_daily_usage', 'SELECT'),
   'ops has SELECT grant on ai_global_daily_usage'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.ai_global_daily_usage', 'INSERT'),
+  'ops has no INSERT on ai_global_daily_usage'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.ai_global_daily_usage', 'UPDATE'),
+  'ops has no UPDATE on ai_global_daily_usage'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.ai_global_daily_usage', 'DELETE'),
+  'ops has no DELETE on ai_global_daily_usage'
 );
 
 select ok(
   has_table_privilege('kondate_ops_readonly', 'private.billing_subscriptions', 'SELECT'),
   'ops has SELECT grant on billing_subscriptions'
 );
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.billing_subscriptions', 'INSERT'),
+  'ops has no INSERT on billing_subscriptions'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.billing_subscriptions', 'UPDATE'),
+  'ops has no UPDATE on billing_subscriptions'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.billing_subscriptions', 'DELETE'),
+  'ops has no DELETE on billing_subscriptions'
+);
 
 select ok(
   has_table_privilege('kondate_ops_readonly', 'private.billing_webhook_events', 'SELECT'),
   'ops has SELECT grant on billing_webhook_events'
 );
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.billing_webhook_events', 'INSERT'),
+  'ops has no INSERT on billing_webhook_events'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.billing_webhook_events', 'UPDATE'),
+  'ops has no UPDATE on billing_webhook_events'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.billing_webhook_events', 'DELETE'),
+  'ops has no DELETE on billing_webhook_events'
+);
 
 select ok(
   has_table_privilege('kondate_ops_readonly', 'private.share_generalization_jobs', 'SELECT'),
   'ops has SELECT grant on share_generalization_jobs'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.share_generalization_jobs', 'INSERT'),
+  'ops has no INSERT on share_generalization_jobs'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.share_generalization_jobs', 'UPDATE'),
+  'ops has no UPDATE on share_generalization_jobs'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.share_generalization_jobs', 'DELETE'),
+  'ops has no DELETE on share_generalization_jobs'
 );
 
 select ok(
