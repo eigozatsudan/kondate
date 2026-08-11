@@ -1,14 +1,18 @@
 /**
  * admin サーバ入口。
  * 起動検証 → listen。静的は client production build を同一 origin で配信する。
+ * 静的配信は root 封じ込め付き（safe-static）で、bare serveStatic に依存しない。
  */
 import { serve } from "@hono/node-server";
-import { serveStatic } from "@hono/node-server/serve-static";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, connectionHostLabel } from "./config.js";
 import { createPool, runStartupDbChecks } from "./db.js";
 import { createApp } from "./app.js";
+import {
+  createSafeStaticMiddleware,
+  createSpaFallbackMiddleware,
+} from "./lib/safe-static.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
@@ -21,9 +25,9 @@ async function main(): Promise<void> {
   }
 
   const pool = createPool(config);
-  await runStartupDbChecks(pool);
+  // 起動 canary が返した実 session_user を health / dashboard 表示に使う（hardcode しない）
+  const { sessionUser } = await runStartupDbChecks(pool);
 
-  const sessionUser = "kondate_ops_readonly";
   const app = createApp({
     pool,
     config,
@@ -38,20 +42,9 @@ async function main(): Promise<void> {
       "[admin] dist/client がありません。API のみ起動します（本番 Docker では build 済み想定）。",
     );
   } else {
-    app.use(
-      "/*",
-      serveStatic({
-        root: "./dist/client",
-      }),
-    );
-    // SPA フォールバック（API 以外）
-    app.get("*", async (c, next) => {
-      const path = new URL(c.req.url).pathname;
-      if (path.startsWith("/api/")) {
-        return next();
-      }
-      return serveStatic({ path: "./dist/client/index.html" })(c, next);
-    });
+    app.use("/*", createSafeStaticMiddleware(clientRoot));
+    // SPA フォールバック（API 以外・root 内 index.html のみ）
+    app.get("*", createSpaFallbackMiddleware(clientRoot));
   }
 
   // 接続先表示用（userinfo 無し）

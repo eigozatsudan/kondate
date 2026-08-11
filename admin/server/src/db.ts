@@ -206,10 +206,18 @@ export async function withReadOnly<T>(
   }
 }
 
+export type StartupDbCheckResult = {
+  /** 実測 session_user（bare または role.ref）。health / dashboard 表示に渡す */
+  sessionUser: string;
+};
+
 /**
  * listen 前に必須。失敗時は process を落とす前提の closed throw。
+ * 成功時は実測 session_user を返し、呼び出し側が hardcode しないこと。
  */
-export async function runStartupDbChecks(pool: pg.Pool): Promise<void> {
+export async function runStartupDbChecks(
+  pool: pg.Pool,
+): Promise<StartupDbCheckResult> {
   const client = await pool.connect();
   try {
     const userRes = await client.query<{
@@ -217,9 +225,16 @@ export async function runStartupDbChecks(pool: pg.Pool): Promise<void> {
       current_user: string;
     }>("select session_user::text as session_user, current_user::text as current_user");
     const row = userRes.rows[0];
-    if (!row || !isOpsReadonlySessionUser(row.session_user)) {
+    // Spec §7.3-2: session_user と current_user の両方を ops ロールとして検証
+    if (
+      !row ||
+      !isOpsReadonlySessionUser(row.session_user) ||
+      !isOpsReadonlySessionUser(row.current_user)
+    ) {
       databaseStartupFailed();
     }
+
+    const sessionUser = row.session_user;
 
     const timeoutRes = await client.query<{ v: string }>(
       "select current_setting('statement_timeout') as v",
@@ -262,8 +277,14 @@ export async function runStartupDbChecks(pool: pg.Pool): Promise<void> {
       databaseStartupFailed();
     }
 
+    // INSERT / UPDATE を代表 2 表で privilege 検査（誤 GRANT の false-green を防ぐ）
     const privRes = await client.query<{ ok: boolean }>(
-      `select not has_table_privilege(current_user, 'private.ai_generation_requests', 'INSERT') as ok`,
+      `select
+         not has_table_privilege(current_user, 'private.ai_generation_requests', 'INSERT')
+         and not has_table_privilege(current_user, 'private.ai_generation_requests', 'UPDATE')
+         and not has_table_privilege(current_user, 'public.user_feedback', 'INSERT')
+         and not has_table_privilege(current_user, 'public.user_feedback', 'UPDATE')
+         as ok`,
     );
     if (privRes.rows[0]?.ok !== true) {
       databaseStartupFailed();
@@ -273,6 +294,8 @@ export async function runStartupDbChecks(pool: pg.Pool): Promise<void> {
     await client.query(
       "select id from public.user_feedback limit 1",
     );
+
+    return { sessionUser };
   } catch (e) {
     if (e instanceof Error && e.message.includes("database_startup")) {
       throw e;
