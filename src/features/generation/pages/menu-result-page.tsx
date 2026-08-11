@@ -14,6 +14,7 @@ import { Skeleton } from "@/shared/ui/feedback";
 import { PageHeader } from "@/shared/ui/page-header";
 import { Stack } from "@/shared/ui/stack";
 import { getMenuResult } from "../api/menu-result-api";
+import { useReconcileTerminalPendingOnMenu } from "../hooks/use-reconcile-terminal-pending-on-menu";
 
 export type { MenuResultPageRevalidationView };
 
@@ -28,9 +29,10 @@ type MenuResultPageProps = {
  *
  * G2: 献立読込成功だけでは pending を clear しない。
  * /menus/:menuId は履歴・買い物 intent の共通入口であり、idempotencyKey 照合なしの
- * clear は offline/processing 中の別 key 復旧を焼く。成功時の clear は recovery が
- * succeeded + idempotencyKey 照合後に行い `/menus/{id}?recovered=1` へ遷移する。
- * 結果 menuId は pending に載らないため、ここでの key 照合 clear は行わない（最小修復）。
+ * clear は offline/processing 中の別 key 復旧を焼く。
+ * G-R1: 成功読込後に status GET し、pending key の succeeded.menuId が本ページと
+ * 一致するときだけ clear（key+menu 照合。G2 の無条件 clear は戻さない）。
+ * recovery の navigate clear（`?recovered=1`）も従来どおり有効。
  */
 export function MenuResultPage({ revalidation: injected }: MenuResultPageProps = {}) {
   const auth = useAuth();
@@ -51,6 +53,8 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
     enabled: menuId !== null && auth.status === "authenticated" && userId !== undefined,
     staleTime: 30_000,
   });
+  // G-R1: hooks は early return 前。失敗/読込中は menuLoaded=false で status を叩かない。
+  useReconcileTerminalPendingOnMenu(userId, menuId, query.isSuccess);
 
   if (!parsed.success || menuId === null) return <Navigate to="/planner" replace />;
   if (query.isError)

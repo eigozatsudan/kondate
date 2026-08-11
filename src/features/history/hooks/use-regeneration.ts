@@ -8,6 +8,7 @@ import {
   readPendingGeneration,
   savePendingGeneration,
 } from "@/features/generation/model/pending-generation";
+import { reconcileTerminalPendingGeneration } from "@/features/generation/model/reconcile-terminal-pending";
 import { isRevalidationActionable, type RevalidationResult } from "../api/revalidation-api";
 import type { RevalidationPhaseName } from "./use-menu-revalidation";
 
@@ -63,19 +64,20 @@ export function useRegeneration(input: UseRegenerationInput) {
         !(input.isSoftRechecking ?? false);
 
   const startWhole = useCallback(
-    (reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {
+    async (reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {
       if (!canRegenerate || userId === undefined) {
         return Promise.reject(new Error("revalidation_required"));
       }
-      // 単一スロット kondate:generation:v2 を上書きすると、進行中の作成 ID が失われ
-      // generation_in_progress 端末で pending ごと消える（C2）。既存 pending は再開のみ。
-      // 終端（failed 等）の pending は RecoveryLinks の onClear と結果/履歴詳細の
-      // clearPendingGeneration で消す前提。残っていれば /generation で再開表示する。
-      // HR5: 別献立からの再生成でも silent 上書きはしない。/generation?resumed=1 で
-      // 「進行中の作成を再開」「新条件では作り直していない」を GenerationPage が明示する。
+      // 単一スロットを上書きすると進行中の作成 ID が失われる（C2）。進行中は再開のみ。
+      // G-R1: terminal 済み sticky は status GET で clear し新規再生成を許す。
+      // processing / status 失敗は keep→再開（G1/G2。無条件 clear しない）。
+      // HR5: 別献立からの再生成でも silent 上書きはしない。
       if (readPendingGeneration(userId, new Date()) !== null) {
-        void navigate("/generation?resumed=1");
-        return Promise.resolve({ kind: "resumed_existing" });
+        const outcome = await reconcileTerminalPendingGeneration(userId);
+        if (outcome === "kept") {
+          void navigate("/generation?resumed=1");
+          return { kind: "resumed_existing" };
+        }
       }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
@@ -99,20 +101,23 @@ export function useRegeneration(input: UseRegenerationInput) {
       );
       savePendingGeneration(pending);
       void navigate("/generation");
-      return Promise.resolve({ kind: "started" });
+      return { kind: "started" };
     },
     [canRegenerate, menuId, navigate, userId],
   );
 
   const startDish = useCallback(
-    (dishId: string, reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {
+    async (dishId: string, reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {
       if (!canRegenerate || userId === undefined) {
         return Promise.reject(new Error("revalidation_required"));
       }
-      // HR5 / C2: 既存 pending は上書きせず再開導線へ（GenerationPage が説明表示）
+      // HR5 / C2 / G-R1: 進行中は再開。terminal は clear して新規を許す。
       if (readPendingGeneration(userId, new Date()) !== null) {
-        void navigate("/generation?resumed=1");
-        return Promise.resolve({ kind: "resumed_existing" });
+        const outcome = await reconcileTerminalPendingGeneration(userId);
+        if (outcome === "kept") {
+          void navigate("/generation?resumed=1");
+          return { kind: "resumed_existing" };
+        }
       }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;

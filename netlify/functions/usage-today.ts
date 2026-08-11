@@ -28,6 +28,32 @@ type FlyerWeeklyRpc = {
   weekStartJst?: string;
 };
 
+/**
+ * consumed/remaining 片方欠落を balance（consumed+remaining=limit）へ閉じる。
+ * G8 quality / G-R3 flyer 共通:
+ * - remaining 欠落 + consumed あり → remaining = limit - consumed
+ * - 両方欠落 → 使い切り（consumed=limit, remaining=0）で fail-closed
+ * 枠ロック値自体は変えない（quality 3/20、flyer 2/6）。
+ */
+function projectBalanceBucket(
+  bucket: { consumed?: number; remaining?: number } | undefined,
+  limit: number,
+): { consumed: number; remaining: number } {
+  const consumed = bucket?.consumed;
+  const remaining = bucket?.remaining;
+  if (consumed !== undefined && remaining !== undefined) {
+    return { consumed, remaining };
+  }
+  if (consumed !== undefined) {
+    return { consumed, remaining: Math.max(0, limit - consumed) };
+  }
+  if (remaining !== undefined) {
+    return { consumed: Math.max(0, limit - remaining), remaining };
+  }
+  // 両方欠落: 残あり誤表示を避けて使い切り扱い
+  return { consumed: limit, remaining: 0 };
+}
+
 function mergeFlyerWeeklyProjection(flyer: FlyerWeeklyRpc | undefined): {
   successConsumed: number;
   successLimit: 2;
@@ -51,41 +77,39 @@ function mergeFlyerWeeklyProjection(flyer: FlyerWeeklyRpc | undefined): {
           jst.setUTCDate(jst.getUTCDate() + mondayOffset);
           return jst.toISOString().slice(0, 10);
         })();
-  return {
-    successConsumed: flyer?.successConsumed ?? 0,
+  // G-R3: 欠落時フル残ではなく G8 同型の balance / 使い切り投影
+  // exactOptionalPropertyTypes: undefined を明示プロパティに載せない
+  const successInput: { consumed?: number; remaining?: number } = {};
+  if (flyer?.successConsumed !== undefined) successInput.consumed = flyer.successConsumed;
+  if (flyer?.successRemaining !== undefined) successInput.remaining = flyer.successRemaining;
+  const triesInput: { consumed?: number; remaining?: number } = {};
+  if (flyer?.triesConsumed !== undefined) triesInput.consumed = flyer.triesConsumed;
+  if (flyer?.triesRemaining !== undefined) triesInput.remaining = flyer.triesRemaining;
+  const success = projectBalanceBucket(
+    Object.keys(successInput).length > 0 ? successInput : undefined,
     successLimit,
-    successRemaining: flyer?.successRemaining ?? successLimit,
-    triesConsumed: flyer?.triesConsumed ?? 0,
+  );
+  const tries = projectBalanceBucket(
+    Object.keys(triesInput).length > 0 ? triesInput : undefined,
     triesLimit,
-    triesRemaining: flyer?.triesRemaining ?? triesLimit,
+  );
+  return {
+    successConsumed: success.consumed,
+    successLimit,
+    successRemaining: success.remaining,
+    triesConsumed: tries.consumed,
+    triesLimit,
+    triesRemaining: tries.remaining,
     weekStartJst,
   };
 }
 
-/**
- * quality の consumed/remaining 片方欠落を balance（consumed+remaining=limit）へ閉じる。
- * G8: remaining 欠落で limit フル残に寄せると available 過大になるため、
- * - remaining 欠落 + consumed あり → remaining = limit - consumed
- * - 両方欠落 → 使い切り（consumed=limit, remaining=0）で fail-closed
- * 枠ロック値（3/20）自体は変えない。
- */
+/** quality バケット投影（projectBalanceBucket の薄い alias）。 */
 function projectQualityBucket(
   bucket: { consumed?: number; remaining?: number } | undefined,
   limit: number,
 ): { consumed: number; remaining: number } {
-  const consumed = bucket?.consumed;
-  const remaining = bucket?.remaining;
-  if (consumed !== undefined && remaining !== undefined) {
-    return { consumed, remaining };
-  }
-  if (consumed !== undefined) {
-    return { consumed, remaining: Math.max(0, limit - consumed) };
-  }
-  if (remaining !== undefined) {
-    return { consumed: Math.max(0, limit - remaining), remaining };
-  }
-  // 両方欠落: 残あり誤表示を避けて使い切り扱い
-  return { consumed: limit, remaining: 0 };
+  return projectBalanceBucket(bucket, limit);
 }
 
 /** RPC quality 投影 + plusEntitled から available を合成する */

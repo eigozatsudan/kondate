@@ -503,6 +503,16 @@ const pendingGenerationMock = vi.hoisted(() => ({
   clearPendingGeneration: vi.fn(),
   savePendingGenerationMeta: vi.fn(),
 }));
+// G-R1: pending 再開判定で status GET する。既定 reject → keep → resume（hung 回避）
+const getGenerationStatusMock = vi.hoisted(() => vi.fn());
+vi.mock("@/features/generation/api/generation-api", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/generation/api/generation-api")>();
+  return {
+    ...original,
+    getGenerationStatus: getGenerationStatusMock,
+  };
+});
 vi.mock("@/features/generation/model/pending-generation", async (importOriginal) => {
   const original =
     await importOriginal<typeof import("@/features/generation/model/pending-generation")>();
@@ -590,6 +600,9 @@ beforeEach(() => {
   pendingGenerationMock.readPendingGeneration.mockReset();
   pendingGenerationMock.clearPendingGeneration.mockReset();
   pendingGenerationMock.savePendingGenerationMeta.mockReset();
+  getGenerationStatusMock.mockReset();
+  // status 不明は keep→resume（G-R1 / G1）。進行中 fixture は各テストで上書き。
+  getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
   pendingGenerationMock.createPendingGeneration.mockImplementation(
     (command: unknown, ownerUserId: string) => ({

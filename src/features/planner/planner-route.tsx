@@ -29,6 +29,7 @@ import {
   readPendingGeneration,
   savePendingGeneration,
 } from "@/features/generation/model/pending-generation";
+import { reconcileTerminalPendingGeneration } from "@/features/generation/model/reconcile-terminal-pending";
 import { savePendingGenerationMeta } from "@/features/generation/model/pending-generation-meta";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import { historyKeys, listHistoryGroups } from "@/features/history/api/history-api";
@@ -265,16 +266,22 @@ export function PlannerRoutePage() {
   const planCode = usage.isSuccess ? usage.data.plan : null;
   const qualityAvailable = usage.isSuccess ? usage.data.quality.available : null;
   const startGeneration = useCallback(
-    (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
-      if (userId === undefined) return Promise.resolve(false);
+    async (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
+      if (userId === undefined) return false;
       // 進行中 pending を上書きすると作成 ID が失われる（C2）。既存は再開のみ。
       // false を返し startNewAttempt を抑止する。true だと未消費 attempt
       // （期限確認など）が回転して捨てられる。
+      // G-R1: terminal 済み sticky は status GET で clear し、新規作成を許す。
+      // processing / status 失敗は keep→再開（G1/G2 維持。無条件 clear しない）。
       if (readPendingGeneration(userId, new Date()) !== null) {
-        if (signal.aborted) return Promise.resolve(false);
-        // 新規条件は送っていない。review の pending 注意文 + /generation?resumed=1 で明示する
-        void navigate("/generation?resumed=1");
-        return Promise.resolve(false);
+        const outcome = await reconcileTerminalPendingGeneration(userId);
+        if (outcome === "kept") {
+          if (signal.aborted) return false;
+          // 新規条件は送っていない。review の pending 注意文 + /generation?resumed=1 で明示する
+          void navigate("/generation?resumed=1");
+          return false;
+        }
+        // cleared / none: 下へ進み新 pending を書く
       }
       // P2: mode 判定は savePendingGeneration より前。throw 後に sticky pending を残さない。
       // household 補助文用 meta も new_menu のみ・draft.targetMode を正本に upsert。

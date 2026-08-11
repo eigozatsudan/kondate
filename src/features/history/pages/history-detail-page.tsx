@@ -3,6 +3,7 @@ import { Link, Navigate, useParams } from "react-router";
 import { z } from "zod";
 import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { getMenuResult } from "@/features/generation/api/menu-result-api";
+import { useReconcileTerminalPendingOnMenu } from "@/features/generation/hooks/use-reconcile-terminal-pending-on-menu";
 import { useAuth } from "@/features/auth/use-auth";
 import { HouseholdMenuDetailBody } from "@/features/menu-detail/household-menu-detail-body";
 import { IdeaMenuDetailBody } from "@/features/menu-detail/idea-menu-detail-body";
@@ -26,6 +27,10 @@ type HistoryDetailPageProps = {
 /**
  * 履歴詳細。menu aggregate（権威ある targetMode）を取得した後に
  * menu-detail 共通 body へ分岐する。
+ *
+ * G2/C1: 進行中 pending を無条件 clear しない（別献立閲覧で recovery を焼かない）。
+ * G-R1: 成功読込後に status GET し、pending key の succeeded.menuId が本ページと
+ * 一致するときだけ clear（結果 URL と同型の key+menu 照合）。
  */
 export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageProps = {}) {
   const auth = useAuth();
@@ -43,10 +48,8 @@ export function HistoryDetailPage({ revalidation: injected }: HistoryDetailPageP
     enabled: menuId !== null && auth.status === "authenticated" && userId !== undefined,
     staleTime: 30_000,
   });
-  // pending はここでは消さない。
-  // 進行中の生成中に履歴詳細を開くと recovery ハンドルが消え /generation が idle→planner
-  // に落ちる（敵対的レビュー C1）。terminal 掃除は RecoveryLinks / 成功 navigate /
-  // use-regeneration 側に任せる。
+  // G-R1: hooks は early return 前。無条件 clear はしない。
+  useReconcileTerminalPendingOnMenu(userId, menuId, menuQuery.isSuccess);
 
   if (!parsed.success || menuId === null) return <Navigate to="/history" replace />;
 

@@ -18,6 +18,7 @@ import { MenuResultPage } from "./menu-result-page";
 
 const getMenuResultMock = vi.hoisted(() => vi.fn());
 const clearPendingGenerationMock = vi.hoisted(() => vi.fn());
+const getGenerationStatusMock = vi.hoisted(() => vi.fn());
 const revalidateMenuMock = vi.hoisted(() => vi.fn());
 const getUsageTodayMock = vi.hoisted(() => vi.fn());
 const confirmLabelConfirmationMock = vi.hoisted(() => vi.fn());
@@ -25,6 +26,14 @@ const acceptMenuVersionMock = vi.hoisted(() => vi.fn());
 const listDerivationVersionsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/menu-result-api", () => ({ getMenuResult: getMenuResultMock }));
+// G-R1: 成功読込後の status 照合。既定は reject で pending keep（G2 回帰を汚さない・hung 回避）
+vi.mock("../api/generation-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../api/generation-api")>();
+  return {
+    ...original,
+    getGenerationStatus: getGenerationStatusMock,
+  };
+});
 vi.mock("@/features/history/api/history-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/history/api/history-api")>();
   return {
@@ -221,6 +230,7 @@ function renderPage(
 beforeEach(() => {
   vi.clearAllMocks();
   sessionStorage.clear();
+  getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
   listPantryItemsMock.mockResolvedValue([]);
   // jsdom 向け native dialog ポリフィル（再生成理由ダイアログ用）
   if (typeof HTMLDialogElement !== "undefined") {

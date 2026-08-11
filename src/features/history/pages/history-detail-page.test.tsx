@@ -23,6 +23,7 @@ import { HistoryDetailPage, type HistoryDetailRevalidationView } from "./history
 const revalidateMenuMock = vi.hoisted(() => vi.fn());
 const getMenuResultMock = vi.hoisted(() => vi.fn());
 const getUsageTodayMock = vi.hoisted(() => vi.fn());
+const getGenerationStatusMock = vi.hoisted(() => vi.fn());
 const acceptMenuVersionMock = vi.hoisted(() => vi.fn());
 const confirmLabelConfirmationMock = vi.hoisted(() => vi.fn());
 const deletePantryItemMock = vi.hoisted(() => vi.fn());
@@ -57,6 +58,15 @@ vi.mock("@/features/generation/api/menu-result-api", () => ({
 vi.mock("@/features/generation/api/usage-today-api", () => ({
   getUsageToday: getUsageTodayMock,
 }));
+// G-R1: 履歴詳細の成功読込後 status 照合。既定 reject で keep（hung 回避）
+vi.mock("@/features/generation/api/generation-api", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/generation/api/generation-api")>();
+  return {
+    ...original,
+    getGenerationStatus: getGenerationStatusMock,
+  };
+});
 vi.mock("@/features/generation/api/confirm-label-api", () => ({
   confirmLabelConfirmation: confirmLabelConfirmationMock,
 }));
@@ -360,6 +370,7 @@ function fireSafetySignal(
 beforeEach(() => {
   vi.clearAllMocks();
   sessionStorage.clear();
+  getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
   // jsdom 向け native dialog ポリフィル（再生成理由ダイアログ用）
   if (typeof HTMLDialogElement !== "undefined") {
     HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {

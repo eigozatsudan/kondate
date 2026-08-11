@@ -180,9 +180,30 @@ function RecoveryLinks({
   );
 }
 
+/**
+ * markSent 後 fail で attempt 消費を issueMessages が開示する code。
+ * success 未減の NotConsumedNotice と並立すると「回数は減っていない」優先で即リトライし得る（G-R2）。
+ * 枠返却・retryable・数値は不変。UI 二重信号のみ抑止。
+ */
+const ATTEMPT_DISCLOSED_FAILURE_CODES = new Set([
+  "generation_timeout",
+  "model_unavailable",
+  "invalid_ai_response",
+]);
+
 /** 未消費時の共通1行（message 本文に埋め込まない。設計 L 未減 UI）。 */
-function NotConsumedNotice({ consumed }: { consumed: boolean }) {
+function NotConsumedNotice({
+  consumed,
+  errorCode,
+}: {
+  consumed: boolean;
+  /** failed のみ。attempt 開示 code では notice を出さない（G-R2）。 */
+  errorCode?: string;
+}) {
   if (consumed) return null;
+  if (errorCode !== undefined && ATTEMPT_DISCLOSED_FAILURE_CODES.has(errorCode)) {
+    return null;
+  }
   return <p>献立は完成していないので、作成回数は減っていません</p>;
 }
 
@@ -441,7 +462,7 @@ export function GenerationStatusPanel({
           message={state.data.error.message}
           {...(userId === undefined ? {} : { userId })}
         />
-        <NotConsumedNotice consumed={state.data.quota.consumed} />
+        <NotConsumedNotice consumed={state.data.quota.consumed} errorCode={state.data.error.code} />
         <TerminalQuotaBlock
           {...(userId === undefined ? {} : { userId })}
           remaining={state.data.quota.remaining}

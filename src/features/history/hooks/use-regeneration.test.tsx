@@ -391,6 +391,7 @@ describe("useRegeneration", () => {
 
   // C2: 進行中 pending を再生成で上書きすると generation_in_progress 端末で
   // 元の作成 ID が消える。既存 pending があるときは保存せず /generation へ戻す。
+  // G-R1: status が processing のときだけ再開（terminal は clear して新規可）。
   it("does not overwrite existing pending on startWhole; navigates to resume", async () => {
     const existing = createPendingGeneration(
       {
@@ -408,6 +409,19 @@ describe("useRegeneration", () => {
       USER_ID,
     );
     savePendingGeneration(existing);
+    statusMock.mockResolvedValue({
+      status: "processing",
+      idempotencyKey: existing.request.idempotencyKey,
+      requestId: "50000000-0000-4000-8000-000000000099",
+      startedAt: "2026-07-11T00:00:00.000Z",
+      quota: {
+        consumed: false,
+        remaining: 2,
+        userDailyLimit: 3,
+        limitKind: null,
+        retryAt: null,
+      },
+    } satisfies GenerationStatusData);
     const { result } = renderHook(
       () =>
         useRegeneration({
@@ -453,6 +467,19 @@ describe("useRegeneration", () => {
       USER_ID,
     );
     savePendingGeneration(existing);
+    statusMock.mockResolvedValue({
+      status: "processing",
+      idempotencyKey: existing.request.idempotencyKey,
+      requestId: "50000000-0000-4000-8000-000000000088",
+      startedAt: "2026-07-11T00:00:00.000Z",
+      quota: {
+        consumed: false,
+        remaining: 2,
+        userDailyLimit: 3,
+        limitKind: null,
+        retryAt: null,
+      },
+    } satisfies GenerationStatusData);
     const { result } = renderHook(
       () =>
         useRegeneration({
@@ -476,5 +503,67 @@ describe("useRegeneration", () => {
     if (after === null) throw new Error("pending required");
     expect(after.request.idempotencyKey).toBe(existing.request.idempotencyKey);
     expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+  });
+
+  it("G-R1: terminal failed pending is cleared so startWhole can create new regenerate", async () => {
+    const existing = createPendingGeneration(
+      {
+        commandVersion: "generation-command.v3",
+        kind: "new_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: "10000000-0000-4000-8000-000000000077",
+          draftId: "20000000-0000-4000-8000-000000000001",
+          draftRevision: 1,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      USER_ID,
+    );
+    savePendingGeneration(existing);
+    statusMock.mockResolvedValue({
+      status: "failed",
+      idempotencyKey: existing.request.idempotencyKey,
+      requestId: "50000000-0000-4000-8000-000000000077",
+      completedAt: "2026-07-11T00:00:01.000Z",
+      error: {
+        code: "generation_timeout",
+        message: "作成に時間がかかりました。",
+        retryable: true,
+      },
+      quota: {
+        consumed: false,
+        remaining: 2,
+        userDailyLimit: 3,
+        limitKind: null,
+        retryAt: null,
+      },
+    } satisfies GenerationStatusData);
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "household",
+          menuId: MENU_ID,
+          phase: "checked",
+          result: validRevalidation,
+        }),
+      { wrapper },
+    );
+    let startResult: Awaited<ReturnType<typeof result.current.startWhole>> | undefined;
+    await act(async () => {
+      startResult = await result.current.startWhole({
+        changeReason: "simpler",
+        changeReasonCustom: null,
+      });
+    });
+    expect(startResult).toEqual({ kind: "started" });
+    const after = readPendingGeneration(USER_ID, new Date());
+    expect(after).not.toBeNull();
+    if (after === null) throw new Error("pending required");
+    // 旧 terminal key ではなく新しい regenerate pending
+    expect(after.request.idempotencyKey).not.toBe(existing.request.idempotencyKey);
+    expect(after.kind).toBe("regenerate_menu");
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 });

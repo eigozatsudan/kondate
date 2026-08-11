@@ -290,6 +290,119 @@ describe("usage-today", () => {
     expect(body.data.quality.available).toBe(true);
   });
 
+  // G-R3: flyer remaining 欠落はフル残ではなく balance / 使い切り（G8 quality 同型）
+  it("G-R3: missing flyerWeekly object projects exhausted counters not full remaining", async () => {
+    getServerEnvMock.mockReturnValue({
+      openRouter: { globalDailyLimit: 20 },
+      quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: false,
+      billingEnabled: true,
+    });
+    loadEntitlementMock.mockResolvedValue({
+      ...freeEntitlement,
+      plan: "plus" as const,
+      plusEntitled: true,
+      status: "active" as const,
+      dbPlusEntitled: true,
+    });
+    rpcMock.mockResolvedValue({
+      data: {
+        success: { consumed: 1, limit: 10, remaining: 9 },
+        attempts: { sent: 1, limit: 20, remaining: 19 },
+        shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
+        quality: {
+          day: { consumed: 0, limit: 3, remaining: 3 },
+          month: { consumed: 0, limit: 20, remaining: 20 },
+        },
+        // flyerWeekly キー無し → フル残ではなく使い切り
+        globalAvailable: true,
+        retryAt: null,
+      },
+      error: null,
+    });
+    const response = await usageToday(
+      new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ok: true;
+      data: {
+        flyerWeekly: {
+          successConsumed: number;
+          successLimit: number;
+          successRemaining: number;
+          triesConsumed: number;
+          triesLimit: number;
+          triesRemaining: number;
+        };
+      };
+    };
+    expect(body.data.flyerWeekly).toMatchObject({
+      successConsumed: 2,
+      successLimit: 2,
+      successRemaining: 0,
+      triesConsumed: 6,
+      triesLimit: 6,
+      triesRemaining: 0,
+    });
+  });
+
+  it("G-R3: missing flyer successRemaining derives from consumed not full limit", async () => {
+    getServerEnvMock.mockReturnValue({
+      openRouter: { globalDailyLimit: 20 },
+      quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: false,
+      billingEnabled: true,
+    });
+    loadEntitlementMock.mockResolvedValue({
+      ...freeEntitlement,
+      plan: "plus" as const,
+      plusEntitled: true,
+      status: "active" as const,
+      dbPlusEntitled: true,
+    });
+    rpcMock.mockResolvedValue({
+      data: {
+        success: { consumed: 1, limit: 10, remaining: 9 },
+        attempts: { sent: 1, limit: 20, remaining: 19 },
+        shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
+        quality: {
+          day: { consumed: 0, limit: 3, remaining: 3 },
+          month: { consumed: 0, limit: 20, remaining: 20 },
+        },
+        flyerWeekly: {
+          successConsumed: 1,
+          // successRemaining 欠落 → limit - consumed
+          triesConsumed: 2,
+          triesRemaining: 4,
+          weekStartJst: "2026-07-27",
+        },
+        globalAvailable: true,
+        retryAt: null,
+      },
+      error: null,
+    });
+    const response = await usageToday(
+      new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ok: true;
+      data: {
+        flyerWeekly: {
+          successConsumed: number;
+          successRemaining: number;
+          triesConsumed: number;
+          triesRemaining: number;
+        };
+      };
+    };
+    expect(body.data.flyerWeekly.successConsumed).toBe(1);
+    expect(body.data.flyerWeekly.successRemaining).toBe(1);
+    expect(body.data.flyerWeekly.triesConsumed).toBe(2);
+    expect(body.data.flyerWeekly.triesRemaining).toBe(4);
+  });
+
   it("G8: missing quality object projects exhausted and available false", async () => {
     getServerEnvMock.mockReturnValue({
       openRouter: { globalDailyLimit: 20 },

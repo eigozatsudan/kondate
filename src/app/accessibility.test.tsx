@@ -34,6 +34,7 @@ const MENU_ID = "30000000-0000-4000-8000-000000000001";
 
 const getMenuResultMock = vi.hoisted(() => vi.fn());
 const getUsageTodayMock = vi.hoisted(() => vi.fn());
+const getGenerationStatusMock = vi.hoisted(() => vi.fn());
 const revalidateMenuMock = vi.hoisted(() => vi.fn());
 const shoppingApiMocks = vi.hoisted(() => ({
   fetchActiveShoppingList: vi.fn(),
@@ -52,6 +53,16 @@ vi.mock("@/features/generation/api/menu-result-api", () => ({
 vi.mock("@/features/generation/api/usage-today-api", () => ({
   getUsageToday: getUsageTodayMock,
 }));
+
+// G-R1: MenuResultPage 成功後 status 照合。既定 reject で keep（axe suite hung 回避）
+vi.mock("@/features/generation/api/generation-api", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/generation/api/generation-api")>();
+  return {
+    ...original,
+    getGenerationStatus: getGenerationStatusMock,
+  };
+});
 
 vi.mock("@/features/history/api/revalidation-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/history/api/revalidation-api")>();
@@ -127,6 +138,8 @@ const unauthenticated: AuthContextValue = {
 
 beforeEach(() => {
   getMenuResultMock.mockReset();
+  getGenerationStatusMock.mockReset();
+  getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
   getUsageTodayMock.mockReset();
   revalidateMenuMock.mockReset();
   shoppingApiMocks.fetchActiveShoppingList.mockReset();

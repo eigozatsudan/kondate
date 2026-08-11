@@ -565,6 +565,27 @@ describe("GenerationStatusPanel", () => {
     expect(screen.queryByText("成功回数には含まれません")).toBeNull();
   });
 
+  it("G-R2: hides not-consumed notice when attempt-disclosed fail code even if success unconsumed", () => {
+    // markSent 後 timeout: success 未減 + attempt 消費開示が並立すると「回数は減っていない」優先で溶融する
+    const timeoutFailed: GenerationClientState = {
+      phase: "failed",
+      data: {
+        ...failedData,
+        error: {
+          code: "generation_timeout",
+          message:
+            "作成に時間がかかりました。受付後に完了できなかったため、続けて試すと本日の受付上限に達しやすくなります。",
+          retryable: true,
+        },
+        quota: { ...quota, consumed: false },
+      },
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={timeoutFailed} />);
+    expect(screen.getByText(/受付上限に達しやすくなります/u)).toBeVisible();
+    expect(screen.queryByText("献立は完成していないので、作成回数は減っていません")).toBeNull();
+  });
+
   it("shows a status message while checking saved progress", () => {
     render(<GenerationStatusPanel state={{ phase: "checking", effect: "status" }} />);
     expect(screen.getByRole("status")).toHaveTextContent("保存した作成状況を確認しています");
