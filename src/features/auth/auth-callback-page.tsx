@@ -77,6 +77,8 @@ export function AuthCallbackPage({
   const callbackFlowId = useRef<string | null>(null);
   // 二重 leave を防ぐ（StrictMode 再実行や complete + recovery 競合）
   const leftRef = useRef(false);
+  // confirm 二重タップ: state 更新前の第2タップを同期で落とす（I-3）
+  const confirmInFlightRef = useRef(false);
   // deposited / needs_confirmation は案内を読み終わるまで watchdog で強制 leave しない（C14）
   const stayOnDepositedRef = useRef(false);
   // hangWatchdog は storage に flow が無いケースでも returnTo を落とさない（テスト・strip 後）
@@ -118,13 +120,17 @@ export function AuthCallbackPage({
       return;
     }
     if (next.kind === "awaiting_completion") {
-      // confirm 後の awaiting は稀。確認中 UI に戻し recovery は effect 外のため unbound へ寄せる。
-      leaveLoginError("unbound_callback", next.returnTo);
+      // I-4: 一時的 awaiting を unbound に落とさない。needs_confirmation UI を維持し再タップ可能にする。
+      // token_hash は React state / pending に残り、OTP 未受理なら再試行できる。
+      return;
     }
   };
 
   const confirmMagicLink = (): void => {
-    if (result?.kind !== "needs_confirmation" || confirmPending || leftRef.current) return;
+    if (result?.kind !== "needs_confirmation" || leftRef.current) return;
+    // 同期 ref で二重起動を止め、state の confirmPending は a11y/disabled 用
+    if (confirmInFlightRef.current) return;
+    confirmInFlightRef.current = true;
     setConfirmPending(true);
     void activeGateway
       .confirmMagicLink({
@@ -140,6 +146,7 @@ export function AuthCallbackPage({
         leaveLoginError("unbound_callback", result.returnTo);
       })
       .finally(() => {
+        confirmInFlightRef.current = false;
         setConfirmPending(false);
       });
   };

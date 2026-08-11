@@ -141,6 +141,9 @@ const COMPLETE_CALLBACK_ALLOWED_HASH_KEYS = new Set([
   "error_uri",
   "error_code",
   "message",
+  // GoTrue v2.189.0 prepErrorRedirectURL / prepRedirectURL が常に hq.Set("sb", "") する
+  // （Supabase Auth 識別子）。未許可だと otp_expired 等が unbound に誤写される。
+  "sb",
 ]);
 
 /** fragment にあれば即 fail-closed する implicit grant 系（C7）。 */
@@ -553,6 +556,19 @@ export function createAuthGateway(
         if (stored !== null && state !== null && state !== stored.state) {
           return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
         }
+        // C-ML1: strip 後リロードでも確認できるよう pending に短寿命保存（verify はまだしない）。
+        // secret 無し（WebView）でも state があれば保存し、同タブ再表示に耐える。
+        if (state !== null) {
+          const pendingExpiresAtMs =
+            stored?.expiresAt !== undefined
+              ? new Date(stored.expiresAt).getTime()
+              : Date.now() + deps.getPublicEnv().authContinuationTtlMs;
+          writePendingAuthDeposit(
+            flowId,
+            { state, code: tokenHash, expiresAtMs: pendingExpiresAtMs },
+            storage,
+          );
+        }
         return {
           kind: "needs_confirmation",
           flowId,
@@ -595,9 +611,26 @@ export function createAuthGateway(
       if (flowId === null) {
         return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
       }
-      // AUTH-R1: strip 後のリロードでは code/state が消える。同ブラウザに未失効 secret があれば
-      // deposit 済み想定で claim/recovery を再開し、clearAuthFlow で秘密を焼かない。
+      // AUTH-R1: strip 後のリロードでは code/state/token_hash が消える。
       if (state === null || code === null) {
+        // C-ML1: token_hash magic は confirm 前に pending へ載せている。strip 後も確認 UI を再構成する。
+        if (stored?.credentialKind === "token_hash") {
+          const pending = readPendingAuthDeposit(
+            flowId,
+            storage,
+            adjustedAuthNowMs(Date.now(), stored.clockSkewMs),
+          );
+          if (pending !== null && pending.code.length >= 16) {
+            return {
+              kind: "needs_confirmation",
+              flowId,
+              returnTo,
+              tokenHash: pending.code,
+              otpType: "email",
+              state: pending.state,
+            };
+          }
+        }
         if (stored !== null) {
           // C-RR2: 同一ブラウザ strip reload でも callback-prelease を立て、claim→exchange
           // lease 取得前の hangWatchdog / failClosed が secret を焼かない（C9 と同型）。

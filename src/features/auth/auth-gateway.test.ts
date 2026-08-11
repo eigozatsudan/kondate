@@ -235,11 +235,44 @@ it("token_hash magic: completeCallback needs user confirmation without verifyOtp
     otpType: "email",
     state: flow.state,
   });
-  // プレビュー耐性: 表示時点では deposit / verify しない
+  // プレビュー耐性: 表示時点では server deposit / verify しない（pending のみ）
   expect(deposit).not.toHaveBeenCalled();
   expect(client.auth.verifyOtp).not.toHaveBeenCalled();
   expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
   expect(readAuthFlow(flow.id, storage)).not.toBeNull();
+});
+
+it("token_hash magic: strip reload restores needs_confirmation from pending", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    continuationApiMock(),
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "d".repeat(40);
+  await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
+    ),
+  );
+  // strip 後相当: flow のみ
+  await expect(
+    gateway.completeCallback(
+      new URL(`http://127.0.0.1:5173/auth/callback?flow=${flow.id}`),
+    ),
+  ).resolves.toEqual({
+    kind: "needs_confirmation",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+    tokenHash,
+    otpType: "email",
+    state: flow.state,
+  });
 });
 
 it("token_hash magic: confirmMagicLink same-browser verifyOtp and completes", async () => {
@@ -472,7 +505,7 @@ it("C7: rejects unknown hash keys fail-closed (not only access_token)", async ()
 });
 
 it("iOS/Gmail: GoTrue PKCE error fragment + otp_expired query maps to expired (not unbound)", async () => {
-  // gotrue prepErrorRedirectURL: PKCE 失敗は query と fragment の両方に error_* を載せる。
+  // gotrue v2.189.0 prepErrorRedirectURL: query + fragment に error_* と空の sb= を載せる。
   // 旧実装は hash 非空だけで unbound にし、再利用・期限切れを誤表示していた。
   const client = authClientMock();
   const gateway = createAuthGateway(
@@ -482,7 +515,7 @@ it("iOS/Gmail: GoTrue PKCE error fragment + otp_expired query maps to expired (n
     gatewayDeps(),
   );
   const fragment =
-    "error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired";
+    "error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired&sb=";
   const result = await gateway.completeCallback(
     new URL(
       `http://127.0.0.1:5173/auth/callback?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired#${fragment}`,
@@ -502,7 +535,8 @@ it("iOS/Gmail: PKCE error fragment with matching local flow state maps to expire
     gatewayDeps(),
   );
   const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
-  const fragment = "error=access_denied&error_code=otp_expired&error_description=Expired";
+  // 本番形: fragment 末尾に sb=（GoTrue 識別子）
+  const fragment = "error=access_denied&error_code=otp_expired&error_description=Expired&sb=";
   const result = await gateway.completeCallback(
     new URL(
       `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&error=access_denied&error_code=otp_expired#${fragment}`,

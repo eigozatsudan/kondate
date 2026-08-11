@@ -170,6 +170,42 @@ it("token_hash magic: shows confirm CTA and only then calls confirmMagicLink", a
   });
 });
 
+it("token_hash magic: rapid double confirm invokes confirmMagicLink once", async () => {
+  const user = userEvent.setup();
+  let resolveConfirm: ((value: AuthCallbackResult) => void) | undefined;
+  const confirmMagicLink = vi.fn().mockImplementation(
+    () =>
+      new Promise<AuthCallbackResult>((resolve) => {
+        resolveConfirm = resolve;
+      }),
+  );
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "needs_confirmation",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+      tokenHash: "a".repeat(40),
+      otpType: "email",
+      state: "A".repeat(43),
+    }),
+    resumeFlow: vi.fn(),
+    confirmMagicLink,
+  };
+  renderCallback(gateway);
+  const button = await screen.findByRole("button", { name: "ログインを完了する" });
+  await user.click(button);
+  await user.click(button);
+  expect(confirmMagicLink).toHaveBeenCalledOnce();
+  resolveConfirm?.({
+    kind: "complete",
+    continuation: "same_browser",
+    flowId: "flow-1",
+    returnTo: "/onboarding",
+  });
+});
+
 it("removes callback credentials from the browser URL before completing the callback", () => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
