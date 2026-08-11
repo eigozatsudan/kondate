@@ -141,10 +141,14 @@ export function AccountSettingsSection() {
   /**
    * AP10/AP3: 削除 API 成功後に JSON/HTTP が端末側で欠落すると dialog エラーのままになる。
    * Admin hard delete は他端末の local JWT を消さないため、getSession（local のみ）だけでは
-   * サーバ削除成功を検出できない。local session が null なら gone。残っていれば getUser で
-   * Auth サーバへ確認し、user 不在 / 4xx なら削除済みとみなして成功同等 cleanup へ寄せる。
-   * getSession/getUser の一時エラー・5xx・timeout・ネットワーク系は不明扱い
-   * （誤成功・請求 fail-closed を壊さない。AP3 residual-intentional）。
+   * サーバ削除成功を検出できない。残 JWT があるときだけ getUser で Auth サーバへ確認し、
+   * user 不在 / 401・403 なら削除済みとみなして成功同等 cleanup へ寄せる。
+   *
+   * AP1（誤成功忌避）:
+   * - local `session === null` は Auth hard delete の証拠ではない（同時 logout / soft
+   *   SIGNED_OUT / storage 消滅でも起きる）。サーバ実在確認に進めないため **不明=false**。
+   * - getUser の任意 4xx は広げすぎ（429 等）→ **401/403 のみ** gone。
+   * - 5xx / status 無し / timeout / ネットワークは不明（偽陰性 residual-intentional）。
    *
    * AP1: probe 自体に timeout を付け、never-settle で pending/ダイアログが固着しないようにする。
    * AP8: `{ user: null, error: null }` のランタイム形も gone 扱い（型上の non-null 前提に依存しない）。
@@ -160,7 +164,8 @@ export function AccountSettingsSection() {
         AUTH_SESSION_PROBE_TIMEOUT_MS,
       );
       if (sessionResult.error !== null) return false;
-      if (sessionResult.data.session === null) return true;
+      // AP1: local session 欠落だけでは Auth 削除済みとみなさない（billing_cancel 偽成功を閉じる）
+      if (sessionResult.data.session === null) return false;
 
       // local JWT 残存: Auth サーバでユーザー実在を確認（AP3）
       const { data, error } = await withTimeout(
@@ -168,9 +173,9 @@ export function AccountSettingsSection() {
         AUTH_SESSION_PROBE_TIMEOUT_MS,
       );
       if (error !== null) {
-        // AuthApiError 等の 4xx は JWT 無効・ユーザー削除済み。status 無し / 5xx は不明
+        // 401/403 のみ JWT 無効・ユーザー削除済み寄り。429 など他 4xx / 5xx / status 無しは不明
         const status = error.status;
-        if (typeof status === "number" && status >= 400 && status < 500) {
+        if (status === 401 || status === 403) {
           return true;
         }
         return false;
@@ -266,22 +271,28 @@ export function AccountSettingsSection() {
         return;
       }
       if (!parsed.data.ok) {
-        // AP1: ok:false 全 code で session-gone probe。
-        // 二タブ敗者は account_delete_failed / account_delete_after_billing_cancel_failed /
-        // auth_required のいずれでも、勝者が Auth hard delete 済みなら gone=true → 成功同等 cleanup。
-        // billing_cancel* で Auth 残存が正のときは gone=false のまま mapDeleteError
-        // （請求 fail-closed を壊さない。誤成功忌避は probe 偽側）。
+        const errorCode = parsed.data.error.code;
+        // AP1: billing_cancel_failed はサーバが Auth 未削除を保証する。
+        // session null / getUser 4xx を Auth 削除済みと誤認して accountDeleted=1 にしない。
+        // 請求 fail-closed 文言を必ず出し、成功同等 cleanup を禁止する。
+        if (errorCode === "billing_cancel_failed") {
+          setErrorMessage(mapDeleteError(errorCode));
+          return;
+        }
+        // 二タブ敗者: account_delete_failed / account_delete_after_billing_cancel_failed /
+        // auth_required は、勝者が Auth hard delete 済みなら strict probe で成功同等 cleanup。
+        // probe は residual JWT + getUser(401/403|user null) のみ（session null 短絡なし）。
         if (await isAuthSessionGone()) {
           await completeAccountDeletedLocally();
           return;
         }
-        setErrorMessage(mapDeleteError(parsed.data.error.code));
+        setErrorMessage(mapDeleteError(errorCode));
         return;
       }
       // サーバー削除成功後のローカル掃除は best-effort。Auth は消えているので成功遷移する。
       await completeAccountDeletedLocally();
     } catch (error) {
-      // AP10: ネットワーク切断等。DELETE 到達後に session が消えていれば成功同等
+      // AP10: ネットワーク切断等。DELETE 到達後に Auth hard delete 済み（strict probe）なら成功同等
       if (requestStarted && (await isAuthSessionGone())) {
         await completeAccountDeletedLocally();
         return;

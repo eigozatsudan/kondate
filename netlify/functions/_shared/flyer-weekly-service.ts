@@ -572,10 +572,19 @@ export async function runFlyerWeekly(
     mapFailureHttp(code, reserve.retry_at ?? null);
   }
 
-  if (reserve.status === "succeeded" && reserve.result != null) {
-    const menu = weeklyFlyerMenuSchema.parse(reserve.result) as WeeklyFlyerMenuResult;
-    // PE2: 冪等 replay でも現行 safety を再 assert。成功後アレルギー追加で旧献立を出さない。
-    // 既 terminal は finalize しない（破壊禁止）。拒否のみ。
+  // PE13: succeeded は result 有無に関わらず mark パイプラインへ落とさない。
+  // result null / Zod 非適合は fail-closed（壊れた成功行に再入場して 500 ループしない）。
+  // 4xx internal_error でクライアント sticky を clear（PE1 隣接: 同一 key 束縛を断つ）。
+  // 健全な result は PE2 どおり現行 safety を再 assert（terminal 非破壊・拒否のみ）。
+  if (reserve.status === "succeeded") {
+    if (reserve.result == null) {
+      throw new HttpError(400, "internal_error", issueMessages.internal_error);
+    }
+    const parsedResult = weeklyFlyerMenuSchema.safeParse(reserve.result);
+    if (!parsedResult.success) {
+      throw new HttpError(400, "internal_error", issueMessages.internal_error);
+    }
+    const menu = parsedResult.data as WeeklyFlyerMenuResult;
     const inspectionSafety = await loadFlyerInspectionSafety(admin, deps.user.userId);
     assertFlyerMenuAgainstSafety(menu, inspectionSafety);
     return { menu, requestId: reserve.request_id ?? requestIdForLog };
@@ -815,7 +824,15 @@ export async function runFlyerWeeklyWithReserveStub(options: {
       errorCode: reserve.failure_code ?? "internal_error",
     };
   }
+  // PE13: succeeded は result 欠損・壊結果でも mark / OpenRouter に落とさない
   if (reserve.status === "succeeded") {
+    if (reserve.result == null) {
+      return { openRouterCalls: 0, errorCode: "internal_error" };
+    }
+    const parsed = weeklyFlyerMenuSchema.safeParse(reserve.result);
+    if (!parsed.success) {
+      return { openRouterCalls: 0, errorCode: "internal_error" };
+    }
     return { openRouterCalls: 0 };
   }
   // PE1: 冪等 hit の processing はパイプライン再入場しない

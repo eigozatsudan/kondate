@@ -256,14 +256,22 @@ export async function fingerprintFlyerImage(file: File): Promise<string | null> 
   return `${meta}:${(rolling >>> 0).toString(16)}`;
 }
 
-/** PE3: 再試行で同一 key を保つエラー（finalize 成功後の 5xx 欠落・processing 等）。 */
+/**
+ * 再試行で同一 key を保つか。
+ * PE1: ledger が terminal failed の code（timeout / model_unavailable）は clear。
+ * 同一 key は failed 再生のみで新 processing を reserve できないため、新 key で再試行する。
+ * PE3: processing / 曖昧 5xx は keep — finalize 成功後の応答欠落で新 key にすると
+ * 週次 try を二重消費し得る。通信断（catch）も呼び出し側で keep。
+ * PE13: 壊れた succeeded はサーバが 4xx internal_error を返す → ここは keep しない。
+ */
 function shouldKeepFlyerSticky(errorCode: string | undefined, status: number): boolean {
+  // PE1: terminal failed の明示 code は 503 でも sticky を捨てる（再 reserve 可能にする）
+  if (errorCode === "generation_timeout" || errorCode === "model_unavailable") {
+    return false;
+  }
+  // 5xx（structured internal_error 含む）は transport / 途中障害として keep
   if (status >= 500) return true;
-  return (
-    errorCode === "generation_in_progress" ||
-    errorCode === "internal_error" ||
-    errorCode === "generation_timeout"
-  );
+  return errorCode === "generation_in_progress";
 }
 
 /**
@@ -446,8 +454,9 @@ export function FlyerWeeklyPanel({
       if (!response.ok || !parsed.success) {
         const err = errorSchema.safeParse(raw);
         const errorCode = err.success ? err.data.error?.code : undefined;
-        // PE3: 5xx / processing / timeout は sticky 維持。finalize 成功後の応答欠落で
-        // 新 key にすると週次 try を二重消費する。4xx の確定失敗だけ破棄。
+        // PE1: terminal failed（generation_timeout 等）は sticky clear → 新 key で再 reserve。
+        // PE3: processing / 5xx(internal_error) は sticky 維持。finalize 成功後の応答欠落で
+        // 新 key にすると週次 try を二重消費する。4xx の確定失敗も破棄。
         // PE4 (ambiguous body): HTTP 200 だが body が Zod で閉じられないときは成功/transport 曖昧。
         // catch（通信断）と同様に sticky を残し、同一画像の再送で二重 try を防ぐ。
         const ambiguousOkBody = response.ok && !parsed.success;

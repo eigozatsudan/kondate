@@ -363,6 +363,130 @@ describe("FlyerWeeklyPanel", () => {
     expect(secondKey).toBe(firstKey);
   });
 
+  it("PE1: clears sticky on generation_timeout so same image re-reserves with a new key", async () => {
+    // terminal failed を sticky 維持すると同一 key の failed 再生のみになり再 reserve 不能
+    const timeoutMessage = "時間内に完了しませんでした。もう一度お試しください。";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "generation_timeout",
+            message: timeoutMessage,
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const file = new File(["pe1-timeout-bytes"], "flyer.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(screen.getByText(timeoutMessage)).toBeVisible();
+    });
+    const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    // terminal 後は Storage からも捨てる
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)).toBeNull();
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const secondKey = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("PE1: clears sticky on model_unavailable (terminal failed 503)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "model_unavailable",
+            message: "モデルを利用できません。",
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const file = new File(["pe1-model-unavail"], "flyer.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(screen.getByText("モデルを利用できません。")).toBeVisible();
+    });
+    const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)).toBeNull();
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const secondKey = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("PE13: clears sticky on 4xx internal_error (corrupt succeeded terminal)", async () => {
+    // サーバ PE13 は壊れた succeeded を 400 internal_error で返す。5xx keep と分離して clear。
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "internal_error",
+            message: "献立を作成できませんでした。",
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled hasAcceptedPrivacy />
+      </MemoryRouter>,
+    );
+    const input = document.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const file = new File(["pe13-corrupt-bytes"], "flyer.jpg", { type: "image/jpeg" });
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(screen.getByText("献立を作成できませんでした。")).toBeVisible();
+    });
+    const firstKey = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)).toBeNull();
+    fireEvent.change(input!, { target: { files: [file] } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    const secondKey = (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> }).headers[
+      "Idempotency-Key"
+    ];
+    expect(secondKey).not.toBe(firstKey);
+  });
+
   it("PE1: remount reuses sticky Idempotency-Key from storage for same image", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

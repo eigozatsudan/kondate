@@ -143,6 +143,65 @@ describe("flyer-weekly-service", () => {
     expect(openRouterSender).toHaveBeenCalledOnce();
   });
 
+  it("PE1: failed generation_timeout is terminal replay without OpenRouter", async () => {
+    // cleanup→failed 後の同一 key は failed 再生のみ（reopen なし）。クライアント sticky clear と対。
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+    const result = await runFlyerWeeklyWithReserveStub({
+      reserveResult: {
+        request_id: "00000000-0000-4000-8000-000000000001",
+        idempotency_key: "k",
+        status: "failed",
+        failure_code: "generation_timeout",
+        replayed: true,
+      },
+      openRouterSender,
+      plusEntitled: true,
+      billingEnabled: true,
+    });
+    expect(result.errorCode).toBe("generation_timeout");
+    expect(result.openRouterCalls).toBe(0);
+    expect(openRouterSender).not.toHaveBeenCalled();
+  });
+
+  it("PE13: succeeded with null result does not enter mark/OpenRouter", async () => {
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+    const result = await runFlyerWeeklyWithReserveStub({
+      reserveResult: {
+        request_id: "00000000-0000-4000-8000-000000000001",
+        idempotency_key: "k",
+        status: "succeeded",
+        result: null,
+        replayed: true,
+      },
+      openRouterSender,
+      plusEntitled: true,
+      billingEnabled: true,
+    });
+    expect(result.errorCode).toBe("internal_error");
+    expect(result.openRouterCalls).toBe(0);
+    expect(openRouterSender).not.toHaveBeenCalled();
+  });
+
+  it("PE13: succeeded with corrupt result does not enter mark/OpenRouter", async () => {
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+    const result = await runFlyerWeeklyWithReserveStub({
+      reserveResult: {
+        request_id: "00000000-0000-4000-8000-000000000001",
+        idempotency_key: "k",
+        status: "succeeded",
+        // days 欠落など Zod 非適合
+        result: { weekStartJst: "2026-07-27" },
+        replayed: true,
+      },
+      openRouterSender,
+      plusEntitled: true,
+      billingEnabled: true,
+    });
+    expect(result.errorCode).toBe("internal_error");
+    expect(result.openRouterCalls).toBe(0);
+    expect(openRouterSender).not.toHaveBeenCalled();
+  });
+
   it("PE11: flyer_invalid_ai_response discloses try may be consumed", () => {
     expect(flyerWeeklyIssueMessages.flyer_invalid_ai_response).toContain("試行回数");
   });
