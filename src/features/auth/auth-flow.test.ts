@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   adjustedAuthNowMs,
+  AUTH_CONTINUATION_CODE_MAX_LENGTH,
   authDeadlineRemainingMs,
   browserSupabaseSessionStorageKey,
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
   clearPendingAuthDeposit,
+  clearSiblingUnexpiredAuthFlows,
   ContinuationResponseLostError,
   createContinuationApi,
   createAuthFlow,
   estimateAuthClockSkewMs,
   isAuthContinuationCallbackOwned,
+  isAuthFlowUserDismissed,
   isAuthSelfReturnPath,
   listUnexpiredAuthFlows,
   markAuthContinuationCallbackOwner,
+  markAuthFlowUserDismissed,
   ownedAuthStoragePrefixes,
   readAuthContinuationCallbackStartedAt,
   readAuthFlow,
@@ -406,6 +410,81 @@ describe("auth flow storage", () => {
     expect(isAuthContinuationCallbackOwned(expiredOwnerId, storage, now, 300_000)).toBe(false);
     expect(storage.length).toBe(0);
   });
+});
+
+it("C1: clearSiblingUnexpiredAuthFlows drops other unexpired secrets", () => {
+  const storage = new MapStorage();
+  const flowA = "10000000-0000-4000-8000-0000000000a1";
+  const flowB = "20000000-0000-4000-8000-0000000000b2";
+  const nowIso = "2026-07-13T00:00:00.000Z";
+  for (const id of [flowA, flowB]) {
+    storage.setItem(
+      `kondate.auth.flow.${id}`,
+      JSON.stringify({
+        id,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/planner",
+        sessionExchange: "supabase",
+        startedAt: nowIso,
+      }),
+    );
+  }
+  clearSiblingUnexpiredAuthFlows(flowB, storage, new Date(nowIso), 300_000);
+  expect(storage.getItem(`kondate.auth.flow.${flowA}`)).toBeNull();
+  expect(storage.getItem(`kondate.auth.flow.${flowB}`)).not.toBeNull();
+});
+
+it("C3: user-dismissed flows are excluded from listUnexpiredAuthFlows", () => {
+  const storage = new MapStorage();
+  const flowId = "10000000-0000-4000-8000-0000000000c3";
+  storage.setItem(
+    `kondate.auth.flow.${flowId}`,
+    JSON.stringify({
+      id: flowId,
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+      origin: "https://app.test",
+      returnTo: "/planner",
+      sessionExchange: "supabase",
+      startedAt: "2026-07-13T00:00:00.000Z",
+    }),
+  );
+  markAuthFlowUserDismissed(flowId, storage);
+  expect(isAuthFlowUserDismissed(flowId, storage)).toBe(true);
+  expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:00:00.000Z"), 300_000)).toEqual(
+    [],
+  );
+  clearAuthFlow(flowId, storage);
+  expect(isAuthFlowUserDismissed(flowId, storage)).toBe(false);
+});
+
+it("C6: pending deposit rejects codes longer than deposit max", () => {
+  const storage = new MapStorage();
+  const flowId = "10000000-0000-4000-8000-0000000000c6";
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "x".repeat(AUTH_CONTINUATION_CODE_MAX_LENGTH + 1),
+      expiresAtMs: Date.now() + 60_000,
+    },
+    storage,
+  );
+  expect(readPendingAuthDeposit(flowId, storage)).toBeNull();
+  writePendingAuthDeposit(
+    flowId,
+    {
+      state: "B".repeat(43),
+      code: "x".repeat(AUTH_CONTINUATION_CODE_MAX_LENGTH),
+      expiresAtMs: Date.now() + 60_000,
+    },
+    storage,
+  );
+  expect(readPendingAuthDeposit(flowId, storage)?.code).toHaveLength(
+    AUTH_CONTINUATION_CODE_MAX_LENGTH,
+  );
 });
 
 it("preserves an unavailable claim HTTP status without reading sensitive response details", async () => {

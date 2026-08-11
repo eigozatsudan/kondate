@@ -22,7 +22,8 @@ const claimRequestSchema = z
   .strict();
 const claimResponseSchema = z
   .object({
-    code: z.string().min(1).max(2_048),
+    // C6: deposit authorizationCodeSchema.max(512) と揃える（client pending も 512）
+    code: z.string().min(1).max(512),
     // C8: client sanitize と同型で `\` / 制御文字も拒否
     returnTo: z
       .string()

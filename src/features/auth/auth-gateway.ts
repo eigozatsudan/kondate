@@ -8,6 +8,7 @@ import {
   ContinuationHttpError,
   ContinuationResponseLostError,
   createAuthFlow,
+  isAuthFlowUserDismissed,
   readAuthFlow,
   readPendingAuthDeposit,
   sanitizeLoginReturnPath,
@@ -18,6 +19,7 @@ import {
   type ContinuationApi,
 } from "./auth-flow";
 import {
+  clearAuthContinuationCompletion,
   publishAuthContinuationCompletion,
   readAuthContinuationCompletion,
 } from "./auth-continuation-completion";
@@ -405,13 +407,33 @@ async function resolveAlreadyAuthenticated(
 ): Promise<AuthResumeResult | null> {
   const existingCompletion = readAuthContinuationCompletion(flowId, storage);
   if (existingCompletion !== null) {
-    clearAuthFlow(flowId, storage);
-    return {
-      kind: "complete",
-      continuation: "same_browser",
-      returnTo: existingCompletion.returnTo,
-      flowId,
-    };
+    // C9: completion 印は TTL 内でも、live session が無い soft residual 後は complete にしない。
+    // session 確認は checkSession 経路と同型（開始前の誤 complete は baseline 側で防ぐ）。
+    if (!options.checkSession) {
+      clearAuthFlow(flowId, storage);
+      return {
+        kind: "complete",
+        continuation: "same_browser",
+        returnTo: existingCompletion.returnTo,
+        flowId,
+      };
+    }
+    try {
+      const sessionResult = await client.auth.getSession();
+      if (sessionResult.data.session !== null) {
+        clearAuthFlow(flowId, storage);
+        return {
+          kind: "complete",
+          continuation: "same_browser",
+          returnTo: existingCompletion.returnTo,
+          flowId,
+        };
+      }
+    } catch {
+      // getSession 失敗は stale 印として破棄
+    }
+    clearAuthContinuationCompletion(flowId, storage);
+    // fall through to session baseline 判定
   }
   if (!options.checkSession) return null;
   try {
@@ -583,7 +605,7 @@ export function createAuthGateway(
       if (!hasCodeAndState && isExpired(null, url)) {
         // C1: ローカル flow があるときは provider-error と同様に state 照合してから expired を受理。
         // flow UUID だけで error_code を付けた未束縛 URL は unbound（秘密を焼かない）。
-        // AuthCallbackPage は kind=expired で clear するため、ここで state 束縛しないと DoS になる。
+        // AuthCallbackPage は kind=expired で secret を焼かない（C5）。state 束縛しないと DoS になる。
         if (stored !== null && state !== stored.state) {
           return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
         }
@@ -600,15 +622,26 @@ export function createAuthGateway(
           // state は redirect 初回 URL に載り得るため、一致だけを根拠に clear すると
           // ログ観測者による in-flight 秘密破壊 DoS になる。正当 cancel も TTL / 明示 logout で収束。
           // （AuthCallbackPage 側も oauth_cancelled / auth_callback_failed で clear しない。）
+          // C3: flowId を載せ page が user-dismiss 印を付け、遅延 success の silent complete を防ぐ。
           return {
             kind: "error",
             code: providerError === "access_denied" ? "oauth_cancelled" : "auth_callback_failed",
             returnTo,
+            ...(flowId !== null ? { flowId } : {}),
           };
         }
       }
       if (flowId === null) {
         return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+      }
+      // C3: cancel/期限切れ UI で dismiss 済みの flow は deposit/claim しない（secret は温存）
+      if (isAuthFlowUserDismissed(flowId, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo,
+          flowId,
+        };
       }
       // AUTH-R1: strip 後のリロードでは code/state/token_hash が消える。
       if (state === null || code === null) {
@@ -846,10 +879,14 @@ export function createAuthGateway(
   async function runResumeFlow(flowId: string): Promise<AuthResumeResult> {
     const flow = readAuthFlow(flowId, storage);
     if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+    // C3: dismiss 済みは residual recovery でも拾わない（secret は TTL まで残る）
+    if (isAuthFlowUserDismissed(flow.id, storage)) {
+      return { kind: "error", code: "oauth_cancelled", returnTo: flow.returnTo, flowId: flow.id };
+    }
     // C4: 当該 flow の completion 済みなら claim/exchange しない。
-    // session は見ない（既ログイン中の新規 login を誤 complete しない）。
-    // completion 読取は同期のままにし、C-R3 の in-flight join が claim 開始前に
-    // 余分な microtask を挟まないようにする（await すると concurrent resume の claim 回数検証が崩れる）。
+    // C9: completion 読取は **同期のまま**（C-R3 in-flight join が claim 前に microtask を挟まない）。
+    // live session 確認は await が必要で join 検証を崩すため行わず、completion TTL（read 側）で
+    // soft residual 後の無期限 short-circuit を閉じる。session 非検証は意図的。
     const existingCompletion = readAuthContinuationCompletion(flow.id, storage);
     if (existingCompletion !== null) {
       clearAuthFlow(flow.id, storage);

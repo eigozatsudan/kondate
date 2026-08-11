@@ -38,3 +38,26 @@ it("C7: is idempotent and ignores non-callback paths", () => {
   expect(replaced).toEqual(["/auth/callback?flow=f"]);
   expect(takeCapturedAuthCallbackUrl().searchParams.get("code")).toBe("c");
 });
+
+it("C7: SPA leave+reenter recaptures a new callback URL", () => {
+  const replaced: string[] = [];
+  captureAndStripAuthCallbackUrl(
+    "http://127.0.0.1:5173/auth/callback?flow=f1&code=first",
+    (url) => {
+      replaced.push(url);
+    },
+  );
+  expect(takeCapturedAuthCallbackUrl().searchParams.get("code")).toBe("first");
+  // callback 外へ出ると sticky 解除
+  captureAndStripAuthCallbackUrl("http://127.0.0.1:5173/login", (url) => {
+    replaced.push(url);
+  });
+  captureAndStripAuthCallbackUrl(
+    "http://127.0.0.1:5173/auth/callback?flow=f2&code=second",
+    (url) => {
+      replaced.push(url);
+    },
+  );
+  expect(takeCapturedAuthCallbackUrl().searchParams.get("code")).toBe("second");
+  expect(replaced).toEqual(["/auth/callback?flow=f1", "/auth/callback?flow=f2"]);
+});

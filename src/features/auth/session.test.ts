@@ -6,6 +6,7 @@ import {
   AuthSessionProbeTimeoutError,
   AuthSessionRequiredError,
   isAuthSessionFailure,
+  isAuthSessionProbeTimeout,
   requireAccessToken,
 } from "./session";
 
@@ -187,5 +188,14 @@ describe("isAuthSessionFailure", () => {
     [null, false],
   ] as const)("classifies %s as %s", (error, expected) => {
     expect(isAuthSessionFailure(error)).toBe(expected);
+  });
+});
+
+describe("isAuthSessionProbeTimeout", () => {
+  it("C12: detects probe timeout without treating it as session failure", () => {
+    expect(isAuthSessionProbeTimeout(new AuthSessionProbeTimeoutError())).toBe(true);
+    expect(isAuthSessionProbeTimeout(new Error("auth_session_probe_timeout"))).toBe(true);
+    expect(isAuthSessionProbeTimeout(new AuthSessionExpiredError())).toBe(false);
+    expect(isAuthSessionFailure(new AuthSessionProbeTimeoutError())).toBe(false);
   });
 });

@@ -457,6 +457,7 @@ it("C9: clears magic-link residual sessionStorage when already authenticated", (
     status: "authenticated",
     session: { user: { id: "user-1" } } as never,
     refreshSession: vi.fn(),
+    sessionProbeDegraded: false,
   });
   try {
     const gateway: AuthGateway = {
@@ -480,6 +481,7 @@ it("C9: clears magic-link residual sessionStorage when already authenticated", (
       status: "unauthenticated",
       session: null,
       refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
     });
     sessionStorage.removeItem("kondate.auth.lastMagicEmail");
     sessionStorage.removeItem("kondate.auth.magicSentUi");

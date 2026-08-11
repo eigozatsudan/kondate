@@ -179,11 +179,15 @@ describe("AuthProvider", () => {
       await Promise.resolve();
     });
 
-    expect(
-      JSON.parse(
-        window.localStorage.getItem("kondate.auth.supabase.continuation-complete.flow-1") ?? "null",
-      ),
-    ).toEqual({ flowId: "flow-1", returnTo: "/onboarding" });
+    const stored = JSON.parse(
+      window.localStorage.getItem("kondate.auth.supabase.continuation-complete.flow-1") ?? "null",
+    ) as { flowId: string; returnTo: string; completedAt: string };
+    expect(stored).toMatchObject({
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    });
+    expect(typeof stored.completedAt).toBe("string");
+    expect(stored.completedAt.length).toBeGreaterThan(0);
   });
 
   it("refreshes the session after recovery completion when publishing fails", async () => {
@@ -202,8 +206,26 @@ describe("AuthProvider", () => {
     let completeRecovery:
       ((result: { kind: "complete"; flowId: string; returnTo: string }) => void) | undefined;
     const navigateTo = vi.fn();
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
-      throw new Error(`secret:${"A".repeat(43)}`);
+    // completion キーへの setItem だけ失敗させる（他の storage 書込を巻き込まない）
+    // unbound-method を避けるため property descriptor 経由で native を保持する
+    const setItemDescriptor = Object.getOwnPropertyDescriptor(Storage.prototype, "setItem");
+    if (setItemDescriptor?.value === undefined) {
+      throw new Error("Storage.prototype.setItem is missing");
+    }
+    const originalSetItem = setItemDescriptor.value as (
+      this: Storage,
+      key: string,
+      value: string,
+    ) => void;
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      key: string,
+      value: string,
+    ): void {
+      if (key.startsWith("kondate.auth.supabase.continuation-complete")) {
+        throw new Error(`secret:${"A".repeat(43)}`);
+      }
+      originalSetItem.call(this, key, value);
     });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -265,7 +287,11 @@ describe("AuthProvider", () => {
       window.dispatchEvent(
         new StorageEvent("storage", {
           key: "kondate.auth.supabase.continuation-complete",
-          newValue: JSON.stringify({ flowId: "flow-1", returnTo: "/onboarding" }),
+          newValue: JSON.stringify({
+            flowId: "flow-1",
+            returnTo: "/onboarding",
+            completedAt: new Date().toISOString(),
+          }),
         }),
       );
       await Promise.resolve();
@@ -372,6 +398,59 @@ describe("AuthProvider", () => {
     expect(recovery).not.toHaveBeenCalled();
   });
 
+  it("C2: rejects multi-tab callback session clobber outside residual recovery", async () => {
+    // residual 外（/planner 認証済み）でも pin により別 user の無言差し替えを拒否する
+    window.history.replaceState(null, "", "/planner");
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const setSession = vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null });
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null }),
+        setSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-a");
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-a");
+    expect(setSession).toHaveBeenCalledWith({
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+    });
+  });
+
   it("C-R1: rejects late residual exchange session swap after another user already won", async () => {
     // residual recovery start → A 確立（recovery stop）→ 後着 B の onAuthStateChange を捨てる。
     window.history.replaceState(null, "", "/login");
@@ -465,7 +544,10 @@ describe("AuthProvider", () => {
   });
 
   it("R1: stops recovery after SPA leave from unauthenticated /login", async () => {
+    // 直前テストが /planner 等に path を残していても初期化を確実にする
+    window.localStorage.clear();
     window.history.replaceState(null, "", "/login");
+    expect(window.location.pathname).toBe("/login");
     const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
     const client = {
       auth: {
@@ -491,7 +573,10 @@ describe("AuthProvider", () => {
       </AuthProvider>,
     );
     await screen.findByText("unauthenticated");
-    expect(recovery.mock.calls.length).toBeGreaterThanOrEqual(1);
+    // path sync effect が history を包むまで待つ（並列/順序汚染で初回 effect が遅れることがある）
+    await vi.waitFor(() => {
+      expect(recovery.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
     const startsAfterLoad = recovery.mock.calls.length;
     const activeStop = stops.at(-1);
     expect(activeStop).toBeDefined();
@@ -697,7 +782,11 @@ describe("AuthProvider", () => {
       window.dispatchEvent(
         new StorageEvent("storage", {
           key: "kondate.auth.supabase.continuation-complete",
-          newValue: JSON.stringify({ flowId: otherFlowId, returnTo: "/planner" }),
+          newValue: JSON.stringify({
+            flowId: otherFlowId,
+            returnTo: "/planner",
+            completedAt: new Date().toISOString(),
+          }),
         }),
       );
       await Promise.resolve();
@@ -710,7 +799,11 @@ describe("AuthProvider", () => {
       window.dispatchEvent(
         new StorageEvent("storage", {
           key: "kondate.auth.supabase.continuation-complete",
-          newValue: JSON.stringify({ flowId: waitingFlowId, returnTo: "/onboarding" }),
+          newValue: JSON.stringify({
+            flowId: waitingFlowId,
+            returnTo: "/onboarding",
+            completedAt: new Date().toISOString(),
+          }),
         }),
       );
       await Promise.resolve();
@@ -741,7 +834,11 @@ describe("AuthProvider", () => {
     const completionKey = `kondate.auth.supabase.continuation-complete.${flowB}`;
     window.localStorage.setItem(
       completionKey,
-      JSON.stringify({ flowId: flowB, returnTo: "/onboarding" }),
+      JSON.stringify({
+        flowId: flowB,
+        returnTo: "/onboarding",
+        completedAt: nowIso,
+      }),
     );
     const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
     const client = {
@@ -768,7 +865,11 @@ describe("AuthProvider", () => {
       window.dispatchEvent(
         new StorageEvent("storage", {
           key: completionKey,
-          newValue: JSON.stringify({ flowId: flowB, returnTo: "/onboarding" }),
+          newValue: JSON.stringify({
+            flowId: flowB,
+            returnTo: "/onboarding",
+            completedAt: nowIso,
+          }),
         }),
       );
       await Promise.resolve();

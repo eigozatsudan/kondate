@@ -189,6 +189,7 @@ function authValue(userId: string | null, status: AuthContextValue["status"] = "
     status,
     session: userId === null ? null : ({ user: { id: userId } } as AuthContextValue["session"]),
     refreshSession: vi.fn(),
+    sessionProbeDegraded: false,
   } satisfies AuthContextValue;
 }
 

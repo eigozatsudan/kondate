@@ -4,7 +4,6 @@ import { getPublicEnv } from "@/shared/config/public-env";
 import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
 import { AuthContext, type AuthContextValue } from "./auth-context";
 import {
-  EXCHANGE_IN_FLIGHT_TTL_MS,
   startAuthContinuationRecovery,
   type AuthContinuationRecoveryGateway,
   type RecoveryResult,
@@ -22,9 +21,13 @@ import {
   clearBrowserSupabaseSessionStorage,
   listUnexpiredAuthFlows,
 } from "./auth-flow";
+import { resetAuthCallbackUrlCaptureIfLeftCallback } from "./auth-callback-url-capture";
 
 /**
- * C-R1: residual recovery 起動中〜stop 後の後着 exchange による無言 user 差し替えを抑止する。
+ * C-R1 / C2: 確立済み user の無言差し替えを抑止する session pin。
+ *
+ * C-R1: residual recovery 起動中〜後着 exchange の user 差し替え。
+ * C2: residual 外 multi-tab callback 完了による last-writer clobber も同じ pin で拒否する。
  *
  * stop は in-flight `resumeFlow`/`exchangeCodeForSession` を abort できない（R2）。
  * unauthenticated `/login` で recovery が claim→exchange を開始した直後に別経路で session=A が
@@ -32,17 +35,16 @@ import {
  * 差し替え、`onAuthStateChange` の無条件 `setSession` で React 状態も B になる。
  *
  * 防衛:
- * - residual recovery が start した世代を arm し、最初に確立した session の user を pin する
- * - arm 中（stop 後は EXCHANGE_IN_FLIGHT_TTL まで）に別 user が来たら setSession を捨てる
- * - 可能なら pin した token を `setSession` でクライアントへ戻す（UI と API トークンの乖離防止）
+ * - 最初に確立した session の user を pin する（residual arm 有無に依存しない — C2）
+ * - pin 中に別 user が来たら setSession を捨て、可能なら pin token を復元する
  * - session null（logout / 失効）で解除。意図的なアカウント切替は一度 unauthenticated を経由する
+ * - residual recovery 起動中は pin 前の first-writer も同様（C-R1）
  */
 type ResidualSessionGuard = {
+  /** residual recovery 稼働中（first session 待ち含む） */
   armed: boolean;
   pinnedUserId: string | null;
   pinnedSession: Session | null;
-  /** stop 後の guard 期限。null は recovery 稼働中（無期限 pin 候補） */
-  guardUntilMs: number | null;
 };
 
 function createResidualSessionGuard(): ResidualSessionGuard {
@@ -50,7 +52,6 @@ function createResidualSessionGuard(): ResidualSessionGuard {
     armed: false,
     pinnedUserId: null,
     pinnedSession: null,
-    guardUntilMs: null,
   };
 }
 
@@ -58,15 +59,14 @@ function clearResidualSessionGuard(guard: ResidualSessionGuard): void {
   guard.armed = false;
   guard.pinnedUserId = null;
   guard.pinnedSession = null;
-  guard.guardUntilMs = null;
 }
 
-function isResidualGuardActive(guard: ResidualSessionGuard, nowMs: number): boolean {
-  if (!guard.armed) return false;
-  if (guard.guardUntilMs === null) return true;
-  if (nowMs <= guard.guardUntilMs) return true;
-  clearResidualSessionGuard(guard);
-  return false;
+/**
+ * C2 / C-R1: pin 済み、または residual recovery arm 中はガード有効。
+ * 旧 guardUntilMs は常時 pin（authenticated 中）に置き換え、callback 後着 clobber 窓を閉じる。
+ */
+function isSessionPinActive(guard: ResidualSessionGuard): boolean {
+  return guard.pinnedUserId !== null || guard.armed;
 }
 
 /**
@@ -196,28 +196,31 @@ export function AuthProvider({
   // C5/C6: このタブで一度でも authenticated になったか。soft SIGNED_OUT 時の草稿掃除判定用。
   // cold-start 未ログイン（RR1）では false のまま → flow/pending を焼かない。
   const hadAuthenticatedSessionRef = useRef(false);
-  // C-R1: residual recovery と後着 exchange の session 世代ガード
+  // C-R1 / C2: residual recovery と multi-tab callback 後着の session 世代ガード
   const residualSessionGuardRef = useRef<ResidualSessionGuard>(createResidualSessionGuard());
+  // C12: probe timeout 中は authenticated shell が stale になり得る。storage は焼かず UX のみ。
+  const [sessionProbeDegraded, setSessionProbeDegraded] = useState(false);
 
   /**
-   * C-R1: session 適用の単一入口。residual recovery arm 中の別 user 差し替えを拒否する。
+   * C-R1 / C2: session 適用の単一入口。pin 済み / residual arm 中の別 user 差し替えを拒否する。
    * @returns 適用したか（false = 後着差し替えを抑止）
    */
   const applyAuthSession = useCallback(
-    (nextSession: Session | null, nowMs: number = Date.now()): boolean => {
+    (nextSession: Session | null): boolean => {
       const guard = residualSessionGuardRef.current;
       if (nextSession === null) {
         clearResidualSessionGuard(guard);
+        setSessionProbeDegraded(false);
         setSession(null);
         return true;
       }
-      if (isResidualGuardActive(guard, nowMs)) {
+      if (isSessionPinActive(guard)) {
         if (guard.pinnedUserId === null) {
-          // residual recovery 起動後の最初の session を勝者として pin
+          // residual recovery 起動後 or 初回確立: 最初の session を勝者として pin
           guard.pinnedUserId = nextSession.user.id;
           guard.pinnedSession = nextSession;
         } else if (nextSession.user.id !== guard.pinnedUserId) {
-          // 後着 residual exchange 等による無言差し替えを拒否
+          // 後着 residual / multi-tab callback 等による無言差し替えを拒否（C-R1 / C2）
           const pinned = guard.pinnedSession;
           const restore = client.auth.setSession;
           if (
@@ -244,7 +247,12 @@ export function AuthProvider({
           // 同一 user の TOKEN_REFRESHED 等: pin を新しい token で更新
           guard.pinnedSession = nextSession;
         }
+      } else {
+        // pin 無しの初回 session（cold-start 等）
+        guard.pinnedUserId = nextSession.user.id;
+        guard.pinnedSession = nextSession;
       }
+      setSessionProbeDegraded(false);
       setSession(nextSession);
       return true;
     },
@@ -264,6 +272,7 @@ export function AuthProvider({
       if (error === null) {
         applyAuthSession(data.session);
         hasResolvedSessionOnce.current = true;
+        setSessionProbeDegraded(false);
         setLoaded(true);
         return;
       }
@@ -280,7 +289,11 @@ export function AuthProvider({
         setLoaded(true);
       }
     } catch {
-      // timeout / never-settle: 初回成功前は loading 継続。全体上限は deadline タイマーが担当。
+      // C12: timeout / never-settle。storage は焼かず、authenticated なら degraded UX のみ。
+      // 初回成功前は loading 継続。全体上限は deadline タイマーが担当。
+      if (hasResolvedSessionOnce.current && residualSessionGuardRef.current.pinnedUserId !== null) {
+        setSessionProbeDegraded(true);
+      }
     }
   }, [applyAuthSession, client]);
 
@@ -339,6 +352,8 @@ export function AuthProvider({
   useEffect(() => {
     const syncPath = (): void => {
       const next = window.location.pathname;
+      // C7: callback 外へ出たら capture sticky を解除（SPA soft-nav 再入場用）
+      resetAuthCallbackUrlCaptureIfLeftCallback(next);
       setLocationPathname((prev) => (prev === next ? prev : next));
     };
     const originalPushState = window.history.pushState.bind(window.history);
@@ -380,10 +395,9 @@ export function AuthProvider({
     const recoveryTtlMs =
       providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000;
     const storage = window.localStorage;
-    // C-R1: residual recovery 起動で arm。stop 後も pin 済みなら exchange TTL まで別 user を拒否。
+    // C-R1: residual recovery 起動で arm（first session 待ち）。C2 で pin は authenticated 中ずっと有効。
     const guard = residualSessionGuardRef.current;
     guard.armed = true;
-    guard.guardUntilMs = null;
     const stopRecovery = startRecovery({
       gateway,
       storage,
@@ -412,11 +426,9 @@ export function AuthProvider({
     return () => {
       stopRecovery();
       const g = residualSessionGuardRef.current;
-      if (g.pinnedUserId !== null) {
-        // 勝者確立後の stop: in-flight exchange settle 窓だけ pin を延命
-        g.guardUntilMs = Date.now() + EXCHANGE_IN_FLIGHT_TTL_MS;
-      } else {
-        // session 未確立のまま stop（path 離脱等）: arm 解除
+      // arm のみ解除。pin 済み（authenticated）なら C2 でそのまま別 user を拒否し続ける。
+      g.armed = false;
+      if (g.pinnedUserId === null) {
         clearResidualSessionGuard(g);
       }
     };
@@ -453,8 +465,10 @@ export function AuthProvider({
       status: !loaded ? "loading" : session === null ? "unauthenticated" : "authenticated",
       session,
       refreshSession,
+      // C12: probe timeout 中。session オブジェクトは残り得るが API は fail-closed。
+      sessionProbeDegraded,
     }),
-    [loaded, refreshSession, session],
+    [loaded, refreshSession, session, sessionProbeDegraded],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -179,7 +179,11 @@ describe("clearLocalAuthAndDrafts", () => {
     );
     localStorage.setItem(
       `kondate.auth.supabase.continuation-complete.${flowId}`,
-      JSON.stringify({ flowId, returnTo: "/planner" }),
+      JSON.stringify({
+        flowId,
+        returnTo: "/planner",
+        completedAt: new Date().toISOString(),
+      }),
     );
     localStorage.setItem("kondate:preferences", "keep-me");
 

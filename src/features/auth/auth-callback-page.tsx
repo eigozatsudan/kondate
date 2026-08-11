@@ -18,6 +18,7 @@ import {
   authDeadlineRemainingMs,
   clearAuthFlow,
   markAuthContinuationCallbackOwner,
+  markAuthFlowUserDismissed,
   readAuthContinuationCallbackStartedAt,
   readAuthFlow,
   isAuthSelfReturnPath,
@@ -98,6 +99,33 @@ export function AuthCallbackPage({
     leaveOnce(loginErrorHref(code, returnTo));
   };
 
+  /**
+   * C3: cancel / 期限切れ terminal UI から抜けるとき secret は焼かず dismiss 印だけ付ける。
+   * 遅延 success URL が来ても completeCallback が silent complete しない。
+   */
+  const dismissFlowBestEffort = (flowId: string | undefined): void => {
+    if (flowId === undefined || flowId === "") return;
+    try {
+      markAuthFlowUserDismissed(flowId);
+    } catch {
+      // storage 障害は TTL 収束に委ねる
+    }
+  };
+
+  /**
+   * C8: 「最初からやり直す」は当該 flow secret を消し、/login residual recovery が拾わないようにする。
+   */
+  const restartFromLogin = (flowId: string | undefined): void => {
+    if (flowId !== undefined && flowId !== "") {
+      try {
+        clearAuthFlow(flowId);
+      } catch {
+        // best-effort
+      }
+    }
+    leaveOnce("/login");
+  };
+
   const applyTerminalResult = (next: AuthCallbackResult): void => {
     hangWatchReturnToRef.current = next.returnTo;
     if (next.kind === "complete") {
@@ -112,10 +140,12 @@ export function AuthCallbackPage({
       return;
     }
     if (next.kind === "expired") {
+      dismissFlowBestEffort(next.flowId);
       leaveLoginError("magic_link_expired", next.returnTo);
       return;
     }
     if (next.kind === "error") {
+      dismissFlowBestEffort(next.flowId);
       leaveLoginError(next.code, next.returnTo);
       return;
     }
@@ -356,7 +386,8 @@ export function AuthCallbackPage({
         stopWaiting = stopAwaiting;
       } else if (next.kind === "expired") {
         // C5: code 無し expired でも secret を即焼かない（state 漏洩経由の DoS を縮める）。
-        // 正当な期限切れも TTL / 明示 logout / ユーザー再開始で収束する。
+        // C3: dismiss 印で遅延 success の silent complete を防ぎ、TTL / 明示 logout / やり直すで収束。
+        dismissFlowBestEffort(next.flowId);
         leaveLoginError("magic_link_expired", next.returnTo);
       } else {
         // 残りは kind: "error" のみ（discriminated union の網羅）。
@@ -364,6 +395,8 @@ export function AuthCallbackPage({
         // gateway は state mismatch / hash / deposit 失敗で意図的に clear しない。
         // 以前の oauth_cancelled / auth_callback_failed 即 clear は state 一致だけで
         // in-flight 秘密を破壊できた（redirect 初回 URL 観測前提の可用性 DoS）。
+        // C3: dismiss 印のみ（secret 温存ロックは維持）。
+        dismissFlowBestEffort(next.flowId);
         leaveLoginError(next.code, next.returnTo);
       }
     });
@@ -399,7 +432,8 @@ export function AuthCallbackPage({
               type="button"
               className="primary-button min-h-11"
               onClick={() => {
-                leaveOnce("/login");
+                // C8: やり直すは当該 flow を clear（residual recovery が拾わない）
+                restartFromLogin(result.flowId);
               }}
             >
               最初からやり直す
@@ -447,12 +481,12 @@ export function AuthCallbackPage({
             </>
           )}
           {/* B-C1: WebView 内で session を作らず、continuation も再消費しない。新規ログインのみ。 */}
+          {/* C8: やり直すは当該 flow を clear（same-browser secret 残存 → residual recovery を閉じる） */}
           <button
             type="button"
             className="primary-button min-h-11"
             onClick={() => {
-              // ユーザー操作後は SPA navigate でもよいが、iOS 一貫性のためフル遷移する
-              leaveOnce("/login");
+              restartFromLogin(result.flowId);
             }}
           >
             最初からやり直す

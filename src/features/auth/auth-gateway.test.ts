@@ -14,6 +14,7 @@ import {
   ContinuationResponseLostError,
   createAuthFlow,
   markAuthContinuationCallbackOwner,
+  markAuthFlowUserDismissed,
   readAuthFlow,
   writePendingAuthDeposit,
   type ContinuationApi,
@@ -554,7 +555,13 @@ it("maps a provider error=access_denied to oauth_cancelled", async () => {
   const result = await gateway.completeCallback(
     new URL("http://127.0.0.1:5173/auth/callback?flow=flow-1&error=access_denied"),
   );
-  expect(result).toEqual({ kind: "error", code: "oauth_cancelled", returnTo: "/planner" });
+  // C3: flowId を載せ page が dismiss 印を付けられるようにする
+  expect(result).toEqual({
+    kind: "error",
+    code: "oauth_cancelled",
+    returnTo: "/planner",
+    flowId: "flow-1",
+  });
 });
 
 it("maps any other provider error to auth_callback_failed", async () => {
@@ -568,7 +575,12 @@ it("maps any other provider error to auth_callback_failed", async () => {
   const result = await gateway.completeCallback(
     new URL("http://127.0.0.1:5173/auth/callback?flow=flow-1&error=server_error"),
   );
-  expect(result).toEqual({ kind: "error", code: "auth_callback_failed", returnTo: "/planner" });
+  expect(result).toEqual({
+    kind: "error",
+    code: "auth_callback_failed",
+    returnTo: "/planner",
+    flowId: "flow-1",
+  });
 });
 
 it("C5: code-less provider error with matching state does not burn a live stored flow", async () => {
@@ -592,9 +604,39 @@ it("C5: code-less provider error with matching state does not burn a live stored
     kind: "error",
     code: "oauth_cancelled",
     returnTo: "/onboarding",
+    flowId: flow.id,
   });
   // C5: state 一致でも code 無し error では secret を即焼かない（DoS 縮退）
   expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+});
+
+it("C3: dismissed flow rejects late success completeCallback without burning secret", async () => {
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const api = continuationApiMock({ deposit });
+  const gateway = createAuthGateway(
+    authClientMock() as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, fixedFlowDeps);
+  markAuthFlowUserDismissed(flow.id, storage);
+
+  const result = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=late-success-code`,
+    ),
+  );
+
+  expect(result).toEqual({
+    kind: "error",
+    code: "oauth_cancelled",
+    returnTo: "/onboarding",
+    flowId: flow.id,
+  });
+  expect(readAuthFlow(flow.id, storage)).toEqual(flow);
+  expect(deposit).not.toHaveBeenCalled();
 });
 
 // C1 (adversarial f2cb7b0b): spoofable URL error_code は state 束縛前に expired で秘密を焼かない
@@ -1285,9 +1327,15 @@ it("C4: publishes continuation completion when resumeFlow completes", async () =
     flowId: flow.id,
     returnTo: "/onboarding",
   });
-  expect(
-    JSON.parse(storage.getItem(`kondate.auth.supabase.continuation-complete.${flow.id}`) ?? "null"),
-  ).toEqual({ flowId: flow.id, returnTo: "/onboarding" });
+  const stored = JSON.parse(
+    storage.getItem(`kondate.auth.supabase.continuation-complete.${flow.id}`) ?? "null",
+  ) as { flowId: string; returnTo: string; completedAt: string };
+  expect(stored).toMatchObject({
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(typeof stored.completedAt).toBe("string");
+  expect(stored.completedAt.length).toBeGreaterThan(0);
 });
 
 it("C1: keeps secret when completion setItem fails after exchange success", async () => {

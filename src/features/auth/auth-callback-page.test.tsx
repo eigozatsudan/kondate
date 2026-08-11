@@ -319,7 +319,11 @@ it("keeps waiting when another same-browser tab wins the one-time claim", async 
 it("uses completion published before the losing callback starts waiting", async () => {
   window.localStorage.setItem(
     "kondate.auth.supabase.continuation-complete.flow-1",
-    JSON.stringify({ flowId: "flow-1", returnTo: "/onboarding" }),
+    JSON.stringify({
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+      completedAt: new Date().toISOString(),
+    }),
   );
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
@@ -586,6 +590,30 @@ it("C5: code-less oauth_cancelled / expired results do not clear the terminal fl
     // C5: state 一致の code 無し error/expired でも即 burn しない
     expect(clearAuthFlow).not.toHaveBeenCalled();
   }
+});
+
+it("C8: restart from deposited UI clears the flow secret", async () => {
+  const user = userEvent.setup();
+  const flowId = "10000000-0000-4000-8000-0000000000c8";
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "deposited",
+      continuation: "original_browser",
+      returnTo: "/onboarding",
+      flowId,
+    }),
+    resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
+  };
+  const { leaveAuthCallback } = renderCallback(gateway, {
+    initialEntry: `/auth/callback?flow=${flowId}`,
+  });
+  expect(await screen.findByRole("button", { name: "最初からやり直す" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "最初からやり直す" }));
+  expect(clearAuthFlow).toHaveBeenCalledWith(flowId);
+  expect(leaveAuthCallback).toHaveBeenCalledWith("/login");
 });
 
 it("handles the original callback result after StrictMode remounts the effect", async () => {

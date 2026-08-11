@@ -21,6 +21,7 @@ const unauthenticated: AuthContextValue = {
   status: "unauthenticated",
   session: null,
   refreshSession: vi.fn(),
+  sessionProbeDegraded: false,
 };
 
 function renderAppShellAt(path: string, children?: { path: string; element: ReactNode }[]) {

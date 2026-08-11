@@ -37,18 +37,29 @@ it("expires callback ownership at the existing auth flow TTL", () => {
 });
 
 it("notifies another tab when the callback tab completes the bound flow", () => {
+  // C9: storage 経由は completedAt TTL を見る。固定過去日時だと今から見て期限切れになる。
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
   const onComplete = vi.fn();
   const stop = startAuthContinuationCompletionListener({ onComplete });
 
-  window.dispatchEvent(
-    new StorageEvent("storage", {
-      key: "kondate.auth.supabase.continuation-complete.flow-1",
-      newValue: JSON.stringify({ flowId: "flow-1", returnTo: "/onboarding" }),
-    }),
-  );
+  try {
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "kondate.auth.supabase.continuation-complete.flow-1",
+        newValue: JSON.stringify({
+          flowId: "flow-1",
+          returnTo: "/onboarding",
+          completedAt: "2026-07-13T00:00:00.000Z",
+        }),
+      }),
+    );
 
-  expect(onComplete).toHaveBeenCalledWith({ flowId: "flow-1", returnTo: "/onboarding" });
-  stop();
+    expect(onComplete).toHaveBeenCalledWith({ flowId: "flow-1", returnTo: "/onboarding" });
+  } finally {
+    stop();
+    vi.useRealTimers();
+  }
 });
 
 it("notifies the same tab when publish completes the bound flow", () => {
@@ -200,7 +211,11 @@ it("cancels expiry after completion arrives before the existing flow TTL", () =>
   window.dispatchEvent(
     new StorageEvent("storage", {
       key: "kondate.auth.supabase.continuation-complete.flow-1",
-      newValue: JSON.stringify({ flowId: "flow-1", returnTo: "/onboarding" }),
+      newValue: JSON.stringify({
+        flowId: "flow-1",
+        returnTo: "/onboarding",
+        completedAt: "2026-07-13T00:00:00.000Z",
+      }),
     }),
   );
   vi.advanceTimersByTime(300_000);
@@ -288,11 +303,15 @@ it("publishes only a safe same-origin return path", () => {
     window.localStorage,
   );
 
-  expect(
-    JSON.parse(
-      window.localStorage.getItem("kondate.auth.supabase.continuation-complete.flow-1") ?? "null",
-    ),
-  ).toEqual({ flowId: "flow-1", returnTo: "/planner" });
+  const stored = JSON.parse(
+    window.localStorage.getItem("kondate.auth.supabase.continuation-complete.flow-1") ?? "null",
+  ) as { flowId: string; returnTo: string; completedAt: string };
+  expect(stored).toMatchObject({
+    flowId: "flow-1",
+    returnTo: "/planner",
+  });
+  expect(typeof stored.completedAt).toBe("string");
+  expect(stored.completedAt.length).toBeGreaterThan(0);
   expect(readAuthContinuationCompletion("flow-1")).toEqual({
     flowId: "flow-1",
     returnTo: "/planner",
@@ -321,13 +340,69 @@ it("C7: reads legacy single-key completion when per-flow key is absent", () => {
   const storage = new MapStorage();
   storage.setItem(
     "kondate.auth.supabase.continuation-complete",
-    JSON.stringify({ flowId: "legacy-flow", returnTo: "/planner" }),
+    JSON.stringify({
+      flowId: "legacy-flow",
+      returnTo: "/planner",
+      completedAt: new Date().toISOString(),
+    }),
   );
   expect(readAuthContinuationCompletion("legacy-flow", storage)).toEqual({
     flowId: "legacy-flow",
     returnTo: "/planner",
   });
   expect(readAuthContinuationCompletion("other-flow", storage)).toBeNull();
+});
+
+it("C1: publish clears sibling unexpired flow secrets", () => {
+  const storage = new MapStorage();
+  const flowA = "10000000-0000-4000-8000-0000000000a1";
+  const flowB = "20000000-0000-4000-8000-0000000000b2";
+  const nowIso = new Date().toISOString();
+  for (const id of [flowA, flowB]) {
+    storage.setItem(
+      `kondate.auth.flow.${id}`,
+      JSON.stringify({
+        id,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/planner",
+        sessionExchange: "supabase",
+        startedAt: nowIso,
+      }),
+    );
+  }
+  publishAuthContinuationCompletion({ flowId: flowB, returnTo: "/onboarding" }, storage);
+  expect(storage.getItem(`kondate.auth.flow.${flowA}`)).toBeNull();
+  expect(storage.getItem(`kondate.auth.flow.${flowB}`)).toBeNull();
+  expect(readAuthContinuationCompletion(flowB, storage)).toEqual({
+    flowId: flowB,
+    returnTo: "/onboarding",
+  });
+});
+
+it("C9: expires completion after AUTH_CONTINUATION_COMPLETION_TTL_MS", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  const storage = new MapStorage();
+  publishAuthContinuationCompletion({ flowId: "flow-ttl", returnTo: "/planner" }, storage);
+  expect(readAuthContinuationCompletion("flow-ttl", storage)).toEqual({
+    flowId: "flow-ttl",
+    returnTo: "/planner",
+  });
+  vi.setSystemTime(new Date("2026-07-13T00:05:00.001Z"));
+  expect(readAuthContinuationCompletion("flow-ttl", storage)).toBeNull();
+  expect(storage.getItem("kondate.auth.supabase.continuation-complete.flow-ttl")).toBeNull();
+  vi.useRealTimers();
+});
+
+it("C9: rejects completion without completedAt (legacy fail-closed)", () => {
+  const storage = new MapStorage();
+  storage.setItem(
+    "kondate.auth.supabase.continuation-complete.flow-old",
+    JSON.stringify({ flowId: "flow-old", returnTo: "/planner" }),
+  );
+  expect(readAuthContinuationCompletion("flow-old", storage)).toBeNull();
 });
 
 it("C10: keeps flow secret when completion setItem fails before clear", () => {

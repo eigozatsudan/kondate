@@ -50,6 +50,7 @@ function authValue(userId: string | null): AuthContextValue {
     status: userId === null ? "unauthenticated" : "authenticated",
     session: userId === null ? null : ({ user: { id: userId } } as AuthContextValue["session"]),
     refreshSession: vi.fn(),
+    sessionProbeDegraded: false,
   };
 }
 

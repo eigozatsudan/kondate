@@ -115,12 +115,14 @@ const authenticated: AuthContextValue = {
     user: { id: USER_ID },
   } as AuthContextValue["session"],
   refreshSession: vi.fn(),
+  sessionProbeDegraded: false,
 };
 
 const unauthenticated: AuthContextValue = {
   status: "unauthenticated",
   session: null,
   refreshSession: vi.fn(),
+  sessionProbeDegraded: false,
 };
 
 beforeEach(() => {

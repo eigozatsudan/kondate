@@ -18,7 +18,17 @@ export function RequireSession() {
     const returnTo = sanitizeReturnPath(`${location.pathname}${location.search}`);
     return <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace />;
   }
-  return <Outlet />;
+  return (
+    <>
+      {/* C12: probe timeout 中は shell を維持しつつ再試行を促す（storage clear しない） */}
+      {auth.sessionProbeDegraded ? (
+        <p className="page-frame type-small" role="status">
+          接続の確認に時間がかかっています。画面をそのままにするか、再読み込みしてからもう一度お試しください。
+        </p>
+      ) : null}
+      <Outlet />
+    </>
+  );
 }
 
 // RequireCompletedOnboarding は Plan 7 Task 6 で撤去した。

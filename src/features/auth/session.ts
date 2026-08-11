@@ -105,3 +105,12 @@ export function isAuthSessionFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return error.message === "auth_required" || error.message === "ログインが必要です";
 }
+
+/**
+ * C12: probe timeout 専用判定。isAuthSessionFailure とは排他（storage clear / 再ログイン誘導しない）。
+ * 呼び出し側は offline/retry UX を出し、Authenticated shell が stale になり得ることを示す。
+ */
+export function isAuthSessionProbeTimeout(error: unknown): boolean {
+  if (error instanceof AuthSessionProbeTimeoutError) return true;
+  return error instanceof Error && error.message === "auth_session_probe_timeout";
+}

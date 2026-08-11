@@ -86,15 +86,26 @@ const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
  * soft 失効（clearSoftSessionResidualBestEffort）は pending を消す（共有端末 code 残渣 — C3）。
  */
 const pendingDepositPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
+/**
+ * C3: cancel UI / 期限切れ二次 UI 後にユーザーが明示再開するまで
+ * 同一 flow の遅延 success を silent complete しない印。
+ * secret は焼かない（C5 DoS 縮退ロック）。owned prefix 配下で logout 掃除される。
+ */
+const userDismissedPrefix = `${ownedAuthStoragePrefixes[1]}.flow-user-dismissed.`;
 const defaultAuthContinuationTtlMs = 300_000;
+/**
+ * C6: deposit API（`auth-continuation-deposit` authorizationCodeSchema.max(512)）と揃える。
+ * pending / claim が 2048 だけ広いと deposit 400 → re-deposit ループになる。
+ */
+export const AUTH_CONTINUATION_CODE_MAX_LENGTH = 512;
 /** C6: create 時 skew の異常値をクリップ（手動時刻の極端なズレでも無限延命しない） */
 const MAX_ABS_CLOCK_SKEW_MS = 48 * 60 * 60 * 1_000;
 
 const pendingDepositSchema = z
   .object({
     state: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
-    // IdP code 長はプロバイダ差がある。deposit API と同程度上限。
-    code: z.string().min(1).max(2_048),
+    // IdP code 長はプロバイダ差がある。deposit API と同上限（C6）。
+    code: z.string().min(1).max(AUTH_CONTINUATION_CODE_MAX_LENGTH),
     // Zod v4 では number 既定が有限値のみ（.finite() は no-op かつ deprecated）
     expiresAtMs: z.number(),
   })
@@ -320,6 +331,8 @@ export function listUnexpiredAuthFlows(
   );
   for (const key of keys) {
     const id = key.slice(flowPrefix.length);
+    // C3: cancel UI 後の dismiss 済みは residual recovery / multi-flow 列挙から外す
+    if (isAuthFlowUserDismissed(id, storage)) continue;
     const flow = readAuthFlow(id, storage);
     if (flow === null) continue;
     const normalized = normalizeAuthClock(
@@ -522,12 +535,61 @@ function clearAuthFlowClockState(flowId: string, storage: Storage): void {
     `${callbackOwnerPrefix}${flowId}`,
     `${clockRebasePrefix}${flowId}`,
     `${pendingDepositPrefix}${flowId}`,
+    `${userDismissedPrefix}${flowId}`,
   ]) {
     try {
       storage.removeItem(key);
     } catch {
       // fail-closed cleanupは他の保存値の削除を続け、個別Storage失敗を外へ漏らさない。
     }
+  }
+}
+
+/**
+ * C3: cancel / 期限切れ UI 後のユーザー明示 dismiss。
+ * secret は残すが completeCallback / residual recovery は当該 flow を拾わない。
+ */
+export function markAuthFlowUserDismissed(
+  flowId: string,
+  storage: Storage = window.localStorage,
+): void {
+  if (flowId === "") return;
+  try {
+    storage.setItem(`${userDismissedPrefix}${flowId}`, "1");
+  } catch {
+    // storage 障害時は TTL / 明示 logout に委ねる
+  }
+}
+
+/** C3: dismiss 済み flow か（残存 secret があっても silent complete しない） */
+export function isAuthFlowUserDismissed(
+  flowId: string,
+  storage: Storage = window.localStorage,
+): boolean {
+  if (flowId === "") return false;
+  try {
+    return storage.getItem(`${userDismissedPrefix}${flowId}`) !== null;
+  } catch {
+    // 読めないときは fail-closed（dismiss 扱いにはしない — 可用性を優先）
+    return false;
+  }
+}
+
+/**
+ * C1: ログイン完了後に他 flow の unexpired secret を捨てる。
+ * multi-flow 併存（C6 再送温存）× soft residual 後の residual recovery が
+ * **別ユーザー**になり得る flow を拾う経路を閉じる。
+ * 完了済み flow 自身は publish 側で clear 済みでもよい（冪等）。
+ */
+export function clearSiblingUnexpiredAuthFlows(
+  completedFlowId: string,
+  storage: Storage,
+  now: Date = new Date(),
+  ttlMs = defaultAuthContinuationTtlMs,
+): void {
+  for (const flow of listUnexpiredAuthFlows(storage, now, ttlMs)) {
+    if (flow.id === completedFlowId) continue;
+    clearAuthFlow(flow.id, storage);
   }
 }
 
@@ -666,7 +728,8 @@ const createResponseSchema = z
 /** サーバ claim 応答と同型。sanitize 前のパースで protocol-relative / `\` 等を落とす（C8） */
 const claimResponseSchema = z
   .object({
-    code: z.string().min(1).max(2_048),
+    // C6: deposit max(512) と揃える（長く受けすぎて client だけ成功にしない）
+    code: z.string().min(1).max(AUTH_CONTINUATION_CODE_MAX_LENGTH),
     returnTo: z.string().max(500).refine(isSafeAuthReturnTo, { message: "invalid_return_to" }),
   })
   .strict();

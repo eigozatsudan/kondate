@@ -11,6 +11,7 @@ vi.mock("./use-auth", () => ({
     status: "unauthenticated",
     session: null,
     refreshSession: vi.fn(),
+    sessionProbeDegraded: false,
   })),
 }));
 
@@ -50,6 +51,7 @@ it("L1: after C5 deadline while still loading, fail-closed to login", async () =
       status: "loading",
       session: null,
       refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
     });
     const router = createMemoryRouter(
       [
@@ -81,6 +83,7 @@ it("L6: loading main exposes aria-busy and aria-live", () => {
     status: "loading",
     session: null,
     refreshSession: vi.fn(),
+    sessionProbeDegraded: false,
   });
   const router = createMemoryRouter(
     [

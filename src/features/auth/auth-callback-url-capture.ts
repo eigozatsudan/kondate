@@ -11,8 +11,21 @@ let capturedCallbackUrl: URL | null = null;
 let stripApplied = false;
 
 /**
+ * C7: `/auth/callback` 以外へ出たら module sticky を解除する。
+ * SPA soft-nav 再入場で 2 回目の code を recapture できるようにする。
+ * 本番 leave は location.replace 既定でフルリロードするため通常は不要だが、
+ * テスト / 将来 router の soft-nav に備える defense-in-depth。
+ */
+export function resetAuthCallbackUrlCaptureIfLeftCallback(pathname: string): void {
+  if (pathname === "/auth/callback" || pathname.startsWith("/auth/callback/")) return;
+  capturedCallbackUrl = null;
+  stripApplied = false;
+}
+
+/**
  * pathname が /auth/callback のときだけ、code/state 等を history から除き閉包に保持する。
  * 冪等。main とページ側の二重呼び出しに耐える。
+ * callback 外の href では sticky を解除する（C7 SPA 再入場）。
  */
 export function captureAndStripAuthCallbackUrl(
   href: string = typeof window !== "undefined" ? window.location.href : "",
@@ -21,7 +34,6 @@ export function captureAndStripAuthCallbackUrl(
     window.history.replaceState(window.history.state, "", url);
   },
 ): void {
-  if (stripApplied) return;
   if (href === "") return;
   let url: URL;
   try {
@@ -29,7 +41,12 @@ export function captureAndStripAuthCallbackUrl(
   } catch {
     return;
   }
-  if (url.pathname !== "/auth/callback") return;
+  if (url.pathname !== "/auth/callback") {
+    // C7: callback 外では sticky を落とし、次の入場で recapture 可能にする
+    resetAuthCallbackUrlCaptureIfLeftCallback(url.pathname);
+    return;
+  }
+  if (stripApplied) return;
   stripApplied = true;
   // 初回だけ完全 URL を保持（StrictMode 二重読取でも同じ code を completeCallback へ渡す）
   if (capturedCallbackUrl === null) {
