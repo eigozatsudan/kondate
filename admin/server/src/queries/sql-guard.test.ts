@@ -11,10 +11,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 const FORBIDDEN = [
   /identity_key/i,
+  // request_hmac は request_hmac_version も部分一致で拾うが、正本として両方明示
   /request_hmac/i,
-  /stripe_subscription_id/i,
-  /stripe_customer_id/i,
-  /stripe_event_id/i,
+  /request_hmac_version/i,
+  // Stripe 系は列名を個別に、および汎用 stripe_* パターンで塞ぐ
+  /stripe_price_id/i,
+  /stripe_[a-z0-9_]+/i,
   /auth\.users/i,
   /menu_payload/i,
 ];
