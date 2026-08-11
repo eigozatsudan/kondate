@@ -360,7 +360,7 @@ ALTER ROLE kondate_ops_readonly SET default_transaction_read_only = on;
 | --- | --- |
 | schema `public` | `USAGE` |
 | schema `private` | `USAGE` |
-| `public.user_feedback` | `SELECT` |
+| `public.user_feedback` | `SELECT` + RLS policy `FOR SELECT TO kondate_ops_readonly USING (true)`（**GRANT だけでは 0 行**） |
 | `private.ai_generation_requests` | `SELECT` |
 | `private.ai_global_daily_usage` | `SELECT` |
 | `private.billing_subscriptions` | `SELECT` |

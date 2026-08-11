@@ -9,7 +9,8 @@
 **Tech Stack:** Node 24、Hono、`pg`、Zod、React 19、Vite、Tailwind 4、Vitest、pgTAP、Docker Compose
 
 **Spec:** `docs/superpowers/specs/2026-08-11-local-ops-admin-console-design.md`（レビュー反映・案 A 改訂後）  
-**Reviews (spec):** `docs/superpowers/reviews/2026-08-11-local-ops-admin-console-{primary,adversarial,secondary}.md`
+**Reviews (spec):** `docs/superpowers/reviews/2026-08-11-local-ops-admin-console-{primary,adversarial,secondary}.md`  
+**Reviews (plan):** `docs/superpowers/reviews/2026-08-11-local-ops-admin-console-plan-{primary,adversarial,secondary}.md`（**本改訂は plan 二次 must-fix 反映済み**）
 
 ## Global Constraints
 
@@ -27,13 +28,13 @@
 
 | パス | 責務 |
 | --- | --- |
-| `supabase/migrations/20260811180000_ops_readonly_role.sql` | ロール・GRANT・索引 |
-| `supabase/tests/database/ops_readonly_role.test.sql` | pgTAP |
-| `scripts/provision-ops-readonly-role.sh` | ローカル LOGIN パスワード |
-| `.gitignore` / `.dockerignore` | `.env.admin` |
+| `supabase/migrations/20260811180000_ops_readonly_role.sql` | ロール・GRANT・RLS policy・索引 |
+| `supabase/tests/database/ops_readonly_role.test.sql` | pgTAP（行可視 + DML 拒否） |
+| `scripts/provision-ops-readonly-role.sh` | ローカル LOGIN パスワード（単一ロール） |
+| `.gitignore` / `.dockerignore` / `admin/.dockerignore` | `.env.admin` 等 |
 | `eslint.config.js` / `package.json` format | `admin/**` 除外 |
-| `compose.admin.yaml` | admin サービス |
-| `tests/tooling/admin-compose.test.mjs` | ports / ignore 契約 |
+| `compose.admin.yaml` | admin サービス（project 名は `-admin` 接尾辞） |
+| `tests/tooling/admin-compose.test.mjs` | ports / ignore / format prune 契約 |
 | `admin/package.json` 他 | 独立パッケージ |
 | `admin/shared/schemas.ts` | Zod DTO |
 | `admin/server/src/db.ts` | pool + READ ONLY + URL 検証 |
@@ -55,10 +56,12 @@
 - Modify: `package.json`（`format` / `format:check` の find に admin prune）
 - Create: `compose.admin.yaml`
 - Create: `.env.admin.example`
+- Create: `admin/.dockerignore`
 - Create: `tests/tooling/admin-compose.test.mjs`
 
 **Interfaces:**
 - Compose service 名: `admin`
+- Compose project 名: `${KONDATE_COMPOSE_PROJECT_NAME:-kondate}-admin`（本編 project と衝突させない。`.env.admin` は DB 秘密専用で project 名の正本ではない）
 - Ports 文字列: 正確に `127.0.0.1:5193:5193`
 - Env 例キー: `ADMIN_DATABASE_URL`, `ADMIN_PORT`, `ADMIN_BIND_HOST`, `ADMIN_LOCAL_TOKEN`, `ADMIN_ALLOW_INSECURE_LOCAL_DB`
 
@@ -99,7 +102,22 @@ test("eslint ignores admin", () => {
   const text = readFileSync(join(root, "eslint.config.js"), "utf8");
   assert.match(text, /admin\/\*\*/);
 });
+
+test("root format scripts prune ./admin", () => {
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  for (const key of ["format", "format:check"]) {
+    assert.match(pkg.scripts[key], /'-path' ['"]\.\/admin['"] '-prune'| -path '\.\/admin' -prune /);
+  }
+});
+
+test("admin/.dockerignore exists for build context", () => {
+  const text = readFileSync(join(root, "admin/.dockerignore"), "utf8");
+  assert.match(text, /\.env/);
+  assert.match(text, /node_modules/);
+});
 ```
+
+（format prune の assert は実装後の実際の find 文字列に合わせてよいが、**`./admin` と `prune` の両方が format / format:check に含まれること**は必須。）
 
 - [ ] **Step 2: テスト実行（失敗を確認）**
 
@@ -115,12 +133,22 @@ Expected: FAIL（compose / ignore 未整備）
 .env.admin
 ```
 
-`.dockerignore` に `.env.admin` を追加。
+ルート `.dockerignore` に `.env.admin` を追加（root context 用の保険）。
+
+**必須:** `admin/.dockerignore`（`build.context: ./admin` ではルート `.dockerignore` は使われない）:
+
+```
+node_modules
+dist
+.env
+.env.*
+*.log
+```
 
 `eslint.config.js` の `ignores` に `"admin/**"`。
 
-`package.json` の `format` / `format:check` の find に  
-`-path './admin' -prune -o` を既存 prune 列の後に挿入（admin 配下を format 対象外）。
+`package.json` の `format` / `format:check` の find に、既存 prune と同様の形で  
+`-path './admin' -prune -o` を挿入（admin 配下を format 対象外）。
 
 `compose.admin.yaml`:
 
@@ -133,19 +161,22 @@ services:
       context: ./admin
       dockerfile: Dockerfile
     env_file:
-      - .env.admin
+      - path: .env.admin
+        required: false
     ports:
       - "127.0.0.1:5193:5193"
     restart: "no"
 ```
 
-（`KONDATE_COMPOSE_PROJECT_NAME` が未設定でも名前が付くよう default 可。本編と project 衝突を避ける `-admin` 接尾辞。）
+（`env_file` の `required: false` が Compose 版で使えない場合は通常の `env_file: [.env.admin]` とし、build のみなら file 無しでよい旨を README に書く。project 名は本編と別。`.env.admin` を project 名解決に使わない。）
 
 `.env.admin.example`:
 
 ```bash
 # 実値をコミットしない。ユーザーは kondate_ops_readonly の Session pooler URL。
-ADMIN_DATABASE_URL=postgresql://kondate_ops_readonly.[ref]:[password]@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require
+# direct: postgresql://kondate_ops_readonly:[password]@db.[ref].supabase.co:5432/postgres?sslmode=require
+# session pooler: postgresql://kondate_ops_readonly.[ref]:[password]@aws-0-….pooler.supabase.com:5432/postgres?sslmode=require
+ADMIN_DATABASE_URL=
 ADMIN_PORT=5193
 ADMIN_BIND_HOST=0.0.0.0
 # 推奨: 高エントロピー。設定時は API が Bearer を要求
@@ -161,7 +192,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .gitignore .dockerignore eslint.config.js package.json compose.admin.yaml .env.admin.example tests/tooling/admin-compose.test.mjs
+git add .gitignore .dockerignore admin/.dockerignore eslint.config.js package.json compose.admin.yaml .env.admin.example tests/tooling/admin-compose.test.mjs
 git commit -m "chore(admin): リポジトリ境界と compose.admin 骨格を追加する"
 ```
 
@@ -177,61 +208,32 @@ git commit -m "chore(admin): リポジトリ境界と compose.admin 骨格を追
 - Modify: `docs/deployment/supabase.md`（§ に ops readonly 用意手順を短く追記）
 
 **Interfaces:**
-- Role name: `kondate_ops_readonly`（exact）
+- Role name: `kondate_ops_readonly`（exact、**単一ロール**。maintenance のような executor/login 二段は使わない）
+- Attributes: `NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`、provision 後 `CONNECTION LIMIT 4`
 - `statement_timeout`: `15s`
 - `default_transaction_read_only`: `on`
-- SELECT 対象表（exact）:
-  - `public.user_feedback`
-  - `private.ai_generation_requests`
-  - `private.ai_global_daily_usage`
-  - `private.billing_subscriptions`
-  - `private.billing_webhook_events`
-  - `private.share_generalization_jobs`
+- SELECT 対象表（exact）: 下記 6 表のみ
+- **Critical:** `public.user_feedback` は RLS 有効のため **`GRANT SELECT` だけでは常に 0 行**。  
+  `to kondate_ops_readonly` の `FOR SELECT USING (true)` policy が必須。
 - Indexes:
   - `ai_generation_requests_ops_created_id_idx` on `(created_at desc, id desc)`
   - `user_feedback_ops_created_id_idx` on `(created_at desc, id desc)`
 
-- [ ] **Step 1: RED — pgTAP 骨格（ロール未作成で fail）**
+- [ ] **Step 1: RED — pgTAP（行可視を必須。`lives_ok(SELECT…)` だけでは不足）**
 
-`ops_readonly_role.test.sql` の要点:
+`ops_readonly_role.test.sql` の必須ケース:
 
-```sql
-begin;
-select plan(12);
+1. ロール存在・`rolsuper=false`・`rolbypassrls=false`・`rolinherit=false`
+2. seed: `service_role` または table owner で `user_feedback` に 1 行 insert（既存 test helper に合わせる）
+3. `set local role kondate_ops_readonly` 後  
+   `isnt_empty('select id from public.user_feedback where id = <seed>', 'ops sees feedback rows under RLS')`
+4. 6 表それぞれ: SELECT が permission エラーにならない / 代表列が読める
+5. 6 表それぞれ: INSERT（または UPDATE/DELETE のいずれか）が `42501` 等で失敗
+6. `set local role kondate_ops_readonly` 後 `auth.users` SELECT が失敗（schema USAGE 無し）
+7. 書き込み系 RPC（例: `public.run_kondate_maintenance`）の EXECUTE が失敗
+8. `has_table_privilege('kondate_ops_readonly', 'private.ai_generation_requests', 'INSERT')` is false
 
-select ok(
-  exists (select 1 from pg_roles where rolname = 'kondate_ops_readonly'),
-  'kondate_ops_readonly role exists'
-);
-
-select is(
-  (select rolsuper from pg_roles where rolname = 'kondate_ops_readonly'),
-  false,
-  'not superuser'
-);
-
--- SET ROLE して SELECT 可 / INSERT 不可
-select lives_ok(
-  $$ set local role kondate_ops_readonly;
-     select id from public.user_feedback limit 1; $$,
-  'ops can select user_feedback'
-);
-
-select throws_ok(
-  $$ set local role kondate_ops_readonly;
-     insert into public.user_feedback (user_id, category, body)
-     values ('00000000-0000-0000-0000-000000000001', 'other', 'x1234567890'); $$,
-  '42501',
-  NULL,
-  'ops cannot insert user_feedback'
-);
-
--- private 生成台帳 SELECT 可、auth.users は不可 等を同様に
-select * from finish();
-rollback;
-```
-
-（`throws_ok` の SQLSTATE は環境で `42501`。実装時に合わせて調整。）
+`lives_ok` のみで「SELECT 可」と断言しないこと。
 
 - [ ] **Step 2: migration を書く**
 
@@ -244,6 +246,7 @@ begin
   if not exists (select 1 from pg_roles where rolname = 'kondate_ops_readonly') then
     create role kondate_ops_readonly
       nologin
+      noinherit
       nosuperuser
       nocreatedb
       nocreaterole
@@ -266,6 +269,14 @@ grant select on private.billing_subscriptions to kondate_ops_readonly;
 grant select on private.billing_webhook_events to kondate_ops_readonly;
 grant select on private.share_generalization_jobs to kondate_ops_readonly;
 
+-- RLS: policy 無しだと non-owner は 0 行（false-green の温床）
+drop policy if exists user_feedback_ops_readonly_select on public.user_feedback;
+create policy user_feedback_ops_readonly_select
+  on public.user_feedback
+  for select
+  to kondate_ops_readonly
+  using (true);
+
 create index if not exists ai_generation_requests_ops_created_id_idx
   on private.ai_generation_requests (created_at desc, id desc);
 
@@ -273,23 +284,32 @@ create index if not exists user_feedback_ops_created_id_idx
   on public.user_feedback (created_at desc, id desc);
 ```
 
-- [ ] **Step 3: provision script**
+- [ ] **Step 3: provision script（単一ロール LOGIN 化）**
 
-`scripts/provision-ops-readonly-role.sh` — maintenance と同型:
+`scripts/provision-ops-readonly-role.sh`:
 
-- 環境変数 `OPS_READONLY_DB_PASSWORD`（なければ `.env` から）
-- `create/alter role ... login password ... connection limit 4`
-- `nologin` ロールを `login` に昇格（local 用）
-- パスワードを argv に載せない
+- 前提: migration 済みで NOLOGIN ロール + GRANT が存在
+- 環境変数 `OPS_READONLY_DB_PASSWORD`（なければ `.env`）
+- `ALTER ROLE kondate_ops_readonly WITH LOGIN PASSWORD … NOINHERIT CONNECTION LIMIT 4`
+- **executor への GRANT はしない**（maintenance と混同しない）
+- パスワードを argv / xtrace に載せない
 - 成功時 `provision-ops-readonly-role: ok`
+
+**本番手順（docs/deployment/supabase.md に exact で書く）:**
+
+1. migration 適用（ロール NOLOGIN + GRANT + policy + index）
+2. 管理者 psql で `ALTER ROLE kondate_ops_readonly WITH LOGIN PASSWORD … CONNECTION LIMIT 4`（stdin 経由）
+3. Session pooler URL を  
+   `postgresql://kondate_ops_readonly.<project-ref>:<password>@…pooler…:5432/postgres?sslmode=require`  
+   で組み立て `.env.admin` のみに保存
+4. admin 起動 canary が通ることを確認
 
 - [ ] **Step 4: db-test**
 
 Run: `docker compose --profile test run --rm db-test`  
-（または人間に依頼し要約を受領。エージェントが重い場合は `ops_readonly_role` のみを含む run 方針を Task report に記載）  
-Expected: `ops_readonly_role` 関連 PASS
+Expected: `ops_readonly_role` PASS（行可視含む）
 
-- [ ] **Step 5: matrix / deploy 文書を 5–15 行追記**
+- [ ] **Step 5: matrix / deploy 文書を追記**（policy 行・LOGIN 手順・6 表 SELECT only）
 
 - [ ] **Step 6: Commit**
 
@@ -384,7 +404,16 @@ describe("admin DTOs", () => {
 });
 ```
 
-- [ ] **Step 2: admin package を作成し依存を入れる**
+- [ ] **Step 2: admin package を作成し依存を入れる（lock をコミット）**
+
+**Install の正（どれか1つを Task report に記録し、`admin/package-lock.json` を必ずコミット）:**
+
+```bash
+docker compose run --rm --no-deps -v "$PWD/admin:/admin" -w /admin node:24-bookworm-slim npm install
+```
+
+または worktree ホストに Node 24 がある場合のみ `cd admin && npm install`。  
+root `app` イメージの `/workspace` に admin を無理に混ぜて `npm install` しない（本編 lock を汚さない）。
 
 `admin/package.json` scripts:
 
@@ -492,13 +521,17 @@ export async function runStartupDbChecks(pool: pg.Pool): Promise<void>;
 //  - has_table_privilege INSERT = false on ai_generation_requests
 ```
 
-**URL reject 規則（exact）:**
+**URL 受理規則（maintenance-env と同型・prefix 禁止）:**
 
-- username local-part が `kondate_ops_readonly` で始まらない / 一致しない → reject  
-  （pooler 形 `kondate_ops_readonly.<ref>` は username 全体を見て prefix または exact を許可）
-- port === `6543` → reject
-- 本番相当: `sslmode` が `require|verify-ca|verify-full` 以外 → reject（`allowInsecureLocalDb` 時のみ disable 可）
-- username が `postgres` → reject
+`localLoginUser = "kondate_ops_readonly"` 固定。
+
+- **accept only:**
+  1. `username === "kondate_ops_readonly"` かつ direct host 形（local または `db.<ref>.supabase.co`）
+  2. `username === "kondate_ops_readonly." + projectRef`（projectRef は **ちょうど 20 文字** `[a-z0-9]{20}`）かつ pooler host（`*.pooler.supabase.com`）
+- **reject:** 任意 prefix（例: `kondate_ops_readonly_evil`）、`postgres`、他ロール名、port `6543`
+- 本番相当: query `sslmode` が `require|verify-ca|verify-full` 以外 → reject  
+  （`allowInsecureLocalDb=true` のときのみ `sslmode=disable` + loopback/docker ホストを許可）
+- node-pg: `ssl: { rejectUnauthorized: true }` を本番経路の既定とする（`maintenance-db.ts` に準拠。local insecure フラグ時のみ ssl off）
 
 - [ ] **Step 1: RED — db.test.ts（assertDatabaseUrl）**
 
@@ -525,12 +558,22 @@ describe("assertDatabaseUrl", () => {
     ).toThrow(/kondate_ops_readonly/);
   });
 
-  it("accepts session 5432 with sslmode=require", () => {
+  it("accepts session pooler with exact role.ref username", () => {
+    const ref = "abcdefghij1234567890"; // 20 chars
     const u = assertDatabaseUrl(
-      "postgresql://kondate_ops_readonly.abc:x@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
+      `postgresql://kondate_ops_readonly.${ref}:x@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require`,
       { allowInsecureLocalDb: false },
     );
     expect(u.port).toBe("5432");
+  });
+
+  it("rejects username prefix abuse", () => {
+    expect(() =>
+      assertDatabaseUrl(
+        "postgresql://kondate_ops_readonly_evil:x@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require",
+        { allowInsecureLocalDb: false },
+      ),
+    ).toThrow(/kondate_ops_readonly/);
   });
 });
 ```
@@ -717,7 +760,16 @@ where status = 'running'
   and coalesce(heartbeat_at, claimed_at) < now() - interval '15 minutes'
 ```
 
-- [ ] **Step 1: RED — sql-guard.test.ts** が queries を import または fs 読取して禁止トークンを検出
+- [ ] **Step 1: RED — sql-guard.test.ts**
+
+`admin/server/src/queries/*.ts` を **filesystem で読み**（自己参照配列に頼らない）、各ファイルの SQL 文字列に次が **無い**ことを assert:
+
+- `select *` / `SELECT *`（空白差は正規化して検出）
+- `identity_key`
+- `request_hmac`
+- `stripe_subscription_id` / `stripe_customer_id` / `stripe_event_id`
+- `auth.users`
+- `menu_payload`
 
 - [ ] **Step 2: 各 query を列列挙 SQL で実装し routes に接続**
 
@@ -917,8 +969,25 @@ TBD / 「後で」なし。SQL・DTO・reject 規則は exact。UI コンポー�
 - DTO camelCase in JSON; DB snake_case only inside queries/mappers
 - Error envelope: `{ ok: false, error: { code, message } }` / success `{ ok: true, data: ... }` に Task 6 で統一
 
+## Plan review must-fix（二次反映済み）
+
+| ID | 反映箇所 |
+| --- | --- |
+| MF-C1 user_feedback RLS policy + 行可視 pgTAP | Task 2 |
+| MF-C2 username exact / role.ref only | Task 4 |
+| MF-I1 単一ロール provision・本番 LOGIN 手順 | Task 2 |
+| MF-I2 format prune tooling | Task 1 |
+| MF-I3 sql-guard が実ファイル読取 | Task 6 |
+| MF-I4 `admin/.dockerignore` | Task 1 |
+| MF-I5 node-pg TLS | Task 4 |
+| MF-I6 6 表 DML + RPC pgTAP | Task 2 |
+| MF-I7 NOINHERIT + connection limit | Task 2 |
+| MF-I8 admin lock の install 正本 | Task 3 |
+| MF-I9 compose project vs `.env.admin` | Task 1 |
+
 ---
 
 ## Execution
 
-Plan 保存後: **subagent-driven-development** で Task 1 から順に実装（worktree 隔離）。
+**subagent-driven-development** + **using-git-worktrees** で Task 1 から順に実装。  
+各 Task 完了ごとに focused verify と commit。
