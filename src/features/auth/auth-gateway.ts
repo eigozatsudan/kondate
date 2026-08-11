@@ -457,16 +457,15 @@ async function restoreSessionAfterDiscardedExchange(
         refresh_token: baseline.refreshToken,
       });
       // C-R10: SDK は throw せず error を返すことがある。AuthProvider pin 復元と同型に検査する
-      if (result.error !== null) {
+      if (result.error === null) {
         return;
       }
-      return;
+      // C-R12: restore 失敗後も fingerprint 一致なら loser clear（pin 復元は AuthProvider 側）
     } catch {
-      // 復元失敗は AuthProvider pin に委ねる（fail-open on storage thrash）
-      return;
+      // C-R12: throw 後も同様に clear へフォールスルー
     }
   }
-  // C-R9: restore できない窓で loser session が共有 storage に残るのを縮退
+  // C-R9 / C-R12: restore 不能・失敗で loser session が共有 storage に残るのを縮退
   await clearDiscardedExchangeSessionIfStillPresent(client, discardedExchangeSessionKey);
 }
 

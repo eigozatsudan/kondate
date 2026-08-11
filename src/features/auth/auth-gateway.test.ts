@@ -2537,6 +2537,12 @@ it("C-R10: baseline restore treats setSession error as failure (no throw)", asyn
     refresh_token: "pin-refresh",
     user: { id: "user-pin" },
   };
+  const loserSession = {
+    access_token: "loser-access",
+    refresh_token: "loser-refresh",
+    user: { id: "user-loser" },
+  };
+  let liveSession: typeof pinSession | typeof loserSession = pinSession;
   let releaseExchange: (() => void) | undefined;
   const exchangeGate = new Promise<void>((resolve) => {
     releaseExchange = resolve;
@@ -2544,18 +2550,18 @@ it("C-R10: baseline restore treats setSession error as failure (no throw)", asyn
   const claim = vi.fn().mockResolvedValue({ code: "auth-code-loser", returnTo: "/onboarding" });
   const api = continuationApiMock({ claim });
   const client = authClientMock({
-    getSessionResult: {
-      data: { session: pinSession },
-      error: null,
-    },
     setSessionResult: {
       data: { session: null },
       error: { message: "setSession failed", name: "AuthError", status: 400 } as AuthError,
     },
   });
+  client.auth.getSession = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve({ data: { session: liveSession }, error: null }));
   client.auth.exchangeCodeForSession = vi.fn().mockImplementation(async () => {
     await exchangeGate;
-    return { data: { session: { user: { id: "user-loser" } } }, error: null };
+    liveSession = loserSession;
+    return { data: { session: loserSession }, error: null };
   });
   const gateway = createAuthGateway(
     client as unknown as BrowserSupabaseClient,
@@ -2584,6 +2590,69 @@ it("C-R10: baseline restore treats setSession error as failure (no throw)", asyn
     access_token: "pin-access",
     refresh_token: "pin-refresh",
   });
-  // error 経路は restore 失敗扱い。present 分岐のため C-R9 clear には落ちない
-  expect(client.auth.signOut).not.toHaveBeenCalled();
+  // C-R10 + C-R12: error 経路は throw せず restore 失敗 → loser 指紋一致なら clear
+  expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+});
+
+it("C-R12: present restore failure then clears when getSession still has discarded exchange", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const pinSession = {
+    access_token: "pin-access",
+    refresh_token: "pin-refresh",
+    user: { id: "user-pin" },
+  };
+  const loserSession = {
+    access_token: "loser-access",
+    refresh_token: "loser-refresh",
+    user: { id: "user-loser" },
+  };
+  // baseline は pin、exchange 後は loser が storage に残る（restore 失敗を固定）
+  let liveSession: typeof pinSession | typeof loserSession = pinSession;
+  let releaseExchange: (() => void) | undefined;
+  const exchangeGate = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-loser", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock({
+    setSessionResult: {
+      data: { session: null },
+      error: { message: "setSession failed", name: "AuthError", status: 400 } as AuthError,
+    },
+  });
+  client.auth.getSession = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve({ data: { session: liveSession }, error: null }));
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(async () => {
+    await exchangeGate;
+    liveSession = loserSession;
+    return { data: { session: loserSession }, error: null };
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flowA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(flowA.id);
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.exchangeCodeForSession.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  clearAuthFlowForTest(flowA.id, storage);
+  releaseExchange?.();
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flowA.id,
+    returnTo: "/onboarding",
+  });
+  expect(client.auth.setSession).toHaveBeenCalled();
+  // C-R12: restore error 後、loser 指紋が残っていれば local clear
+  expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
 });
