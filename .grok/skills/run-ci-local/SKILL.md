@@ -16,11 +16,16 @@ description: >
 ## 方針
 
 - **正本**: `.github/workflows/ci.yml`（手順・コマンド文字列を変えない。workflow が更新されたらこの skill も追従する）
+- **補助正本（ローカル集約）**: `scripts/ci.sh` はゲート順の固定用。**食い違うときは ci.yml を優先**し、skill と ci.sh の差分は報告する（例: `ci.sh` だけが追加している tooling ファイル）
 - **実行順**: 下記ステップを上から順に。**最初の失敗でそのパスを止め**、修正サイクルへ入る
 - **スキップ（GitHub 専用）**:
   - `actions/checkout`
-  - 失敗時 artifact アップロード（この workflow には無いが、将来追加分も対象）
+  - 失敗時 artifact アップロード（Playwright HTML / trace は載せない方針のまま）
   - `Tear down and remove ephemeral secrets`（`docker compose down --volumes` と `rm -f .env`）— ローカル開発環境を壊さない
+- **GHA との意図的差分（ローカル）**:
+  - GHA は `env.CI: "true"`。本 skill は**既定で `CI` を立てない**（`run-e2e.sh` が auth/app を restore し、作業ツリーを開発継続可能に保つ）
+  - GHA の E2E は PR=`smoke` / push main=`full`。ローカル既定は **full**（`ci.sh` と同じ）。短縮するときだけ `KONDATE_E2E_SUITE=smoke`
+  - **`CI=true` と `KONDATE_E2E_SKIP_RECREATE=1` の同時指定は禁止**（`run-e2e.sh` が exit 2）。本 skill でも併用しない
 - **失敗時の切り分け**（修正前に推奨）: CI の `Show container health on failure` 相当
   ```bash
   docker compose ps -a
@@ -45,7 +50,11 @@ description: >
 1. 失敗ステップ番号・名前・コマンド・終了コードを記録する
 2. ログから**根本原因**を特定する（最初の error / FAIL 行を優先）
 3. インフラ系（compose / health / provision）なら container health を取る
-4. 修正方針を短く述べてから着手する
+4. E2E 失敗時は次も見る（案 B 以降）:
+   - full は **setup → mobile-chromium \|\| desktop-chromium 並列**（`run_playwright_mobile_desktop_parallel`）
+   - 成果物は `test-results/{mobile,desktop}-chromium` と `playwright-report/{mobile,desktop}-chromium`（既定パスと混同しない）
+   - 生成密集の timeout は AI 共有枠の**単一行ロック** residual の可能性（製品 limit を触らない）
+5. 修正方針を短く述べてから着手する
 
 ### 2. 修正してよいもの / いけないもの
 
@@ -60,6 +69,7 @@ description: >
 
 - テスト・lint ルールの無効化、アサーション削除、`eslint-disable` の安易な追加で「通すだけ」の対応
 - 設計書・ロック契約・quota・origin・RLS・機密の緩和や仕様変更
+  - 例: 製品 `compose.yaml` の `GLOBAL_DAILY_AI_LIMIT=20` 変更、E2E 専用 500 の製品面への持ち込み、per-test global AI truncate の復活、`workers` の調査なし CI 分岐
 - 無関係ファイルの大規模リファクタ
 - 依存関係の追加・削除・ダウングレード（ユーザー確認なし）
 - シークレットのコミット、`.env` の削除・上書き生成（既存 `.env` がある場合）
@@ -75,8 +85,9 @@ description: >
 | 1–6（env / compose / health / provision） | 失敗ステップから 19 まで                                |
 | 7–14、16–19（テスト・監査・ビルド）       | **失敗したステップから** 19 まで                        |
 | 15（db:types）                            | 型の正当更新後、15 の `git diff` から続行。不正なら停止 |
+| 16（E2E）                                 | スタックが壊れていなければ 16 から。auth/app 異常なら 4 から |
 
-- 修正が**前のステップの成果物に影響**する場合（例: 共有型・compose・env 契約）は、影響を受ける最初のステップからやり直す
+- 修正が**前のステップの成果物に影響**する場合（例: 共有型・compose・env 契約・`run-e2e.sh` / Playwright config）は、影響を受ける最初のステップからやり直す
 - 1 サイクルで直したあと、**残りの全ステップを最後まで通す**（途中成功だけで「CI 完了」としない）
 - フルパスを最初からやり直す必要はないが、スタックを壊した修正をしたら 4 からやり直す
 
@@ -104,10 +115,11 @@ description: >
 1. Docker / Docker Compose が使えること
 2. `.env` が無い場合のみ `./scripts/generate-local-secrets.sh` を実行する（既存 `.env` は上書きしない）
 3. 既存スタックがあっても、CI 同様 `docker compose up -d --wait --wait-timeout 600` で揃える
+4. E2E full は壁時計が長い（案 B で project 並列化済みでも setup + max(mobile, desktop) + 生成行ロック residual）。**step 16 は特に長い**想定で timeout を余裕をもって取る（GHA job 上限 90 分）
 
 ## 実行ステップ（この順・このコマンド）
 
-各ステップの前に短いラベルを報告する（例: `[3/17] docker compose config`）。番号はスキップを除いたローカル用。
+各ステップの前に短いラベルを報告する（例: `[3/19] docker compose config`）。番号はスキップを除いたローカル用。
 
 ### 1. シークレット（`.env` が無いときだけ）
 
@@ -152,11 +164,22 @@ curl --fail --silent --show-error http://127.0.0.1:8788/health
 
 ### 7. Local-safe Node script unit tests
 
+Node 24 は directory 引数をモジュールとして解決するため、**明示 `.mjs` 列挙**（workflow と同一。欠落・追加があれば **ci.yml を正**として合わせる）。
+
 ```bash
-docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs tests/tooling/local-development-scripts.test.mjs tests/tooling/project-config.test.mjs tools/e2e-function-server.test.mjs scripts/assert-privacy-logs.test.mjs scripts/verify-release-evidence.test.mjs scripts/verify-openrouter-models.test.mjs scripts/benchmark-paid-openrouter-models.test.mjs scripts/provision-maintenance-role.test.mjs scripts/csp-headers.test.mjs scripts/emit-deploy-headers.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs scripts/verify-acceptance-matrix.test.mjs
+docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs tests/tooling/local-development-scripts.test.mjs tests/tooling/project-config.test.mjs tests/tooling/e2e-smoke-tags.test.mjs tests/tooling/e2e-ai-quota-parallel.test.mjs tools/e2e-function-server.test.mjs scripts/assert-privacy-logs.test.mjs scripts/verify-release-evidence.test.mjs scripts/verify-openrouter-models.test.mjs scripts/benchmark-paid-openrouter-models.test.mjs scripts/provision-maintenance-role.test.mjs scripts/csp-headers.test.mjs scripts/emit-deploy-headers.test.mjs scripts/preflight-production.test.mjs scripts/smoke-production.test.mjs scripts/verify-production-deploy.test.mjs scripts/verify-browser-secrets.test.mjs scripts/verify-acceptance-matrix.test.mjs
 ```
 
-（workflow のファイル列挙と同一。欠落・追加があれば **ci.yml を正**として合わせる）
+**列挙に含める E2E 関連 tooling（退行防止）**
+
+| ファイル | 役割 |
+| --- | --- |
+| `tests/tooling/e2e-smoke-tags.test.mjs` | `@smoke` / `@mobile-only` 静的ガード |
+| `tests/tooling/e2e-ai-quota-parallel.test.mjs` | per-test global AI truncate 禁止 + `workers: 2` + suite 開始 reset / parallel 関数 |
+| `tests/tooling/local-development-scripts.test.mjs` | `run-e2e.sh` シーケンス（案 B: dual body signal・mobile 優先 exit 含む） |
+| `tests/tooling/compose.test.mjs` | suite 分岐・parallel 関数・成果物 env pin 等 |
+
+※ `scripts/ci.sh` が `eslint-primitive-rule.test.mjs` を追加している場合がある。**GHA 同等を厳密に再現するときは ci.yml 列挙のみ**。ローカルで ci.sh 完全一致が必要ならその 1 ファイルを追加してよいが、食い違いは報告する。
 
 ### 8. format:check
 
@@ -214,15 +237,44 @@ git diff --exit-code -- src/shared/types/database.generated.ts
 
 ### 16. E2E + プライバシーログ検証
 
-環境変数を workflow と同じく付与する:
+環境変数を workflow / `ci.sh` と同じく付与する:
 
-- `LOCAL_MOCK_MODELS=mock/kondate-primary:free,mock/kondate-repair:free`
-- `KONDATE_ASSERT_PRIVACY_LOGS=1`
-- `PLAYWRIGHT_DISABLE_TRACE=1`
+| 変数 | 値 | 意味 |
+| --- | --- | --- |
+| `LOCAL_MOCK_MODELS` | `mock/kondate-primary:free,mock/kondate-repair:free` | E2E は mock 経路に閉じる |
+| `KONDATE_ASSERT_PRIVACY_LOGS` | `1` | Function ログの privacy assert |
+| `PLAYWRIGHT_DISABLE_TRACE` | `1` | trace/video 無効（DOM・通信を残さない） |
+| `KONDATE_E2E_SUITE` | 未設定 or `full`（既定）/ `smoke` | 下記スイート選択 |
+
+**スイート選択（ローカル）**
+
+| 目的 | 指定 | 実行モデル（`run-e2e.sh`） |
+| --- | --- | --- |
+| GHA push / release 相当（**skill 既定**） | 未設定 or `KONDATE_E2E_SUITE=full` | `setup` 1 回 → **mobile \|\| desktop 並列**（案 B）。AI 共有枠 reset は **suite 開始 1 回**のみ（中間 reset なし）。E2E 上限は `compose.e2e.yaml` の `GLOBAL_DAILY_AI_LIMIT=500` |
+| GHA PR 相当（短縮） | `KONDATE_E2E_SUITE=smoke` | setup 省略（現状）→ **mobile のみ** + `--grep=@smoke`。desktop 段なし |
+| 開発反復（任意・CI 禁止） | `KONDATE_E2E_SKIP_RECREATE=1` | 開始時 force-recreate 省略。**`CI=true` と併用不可** |
+
+**既定コマンド（full）**
 
 ```bash
 LOCAL_MOCK_MODELS=mock/kondate-primary:free,mock/kondate-repair:free KONDATE_ASSERT_PRIVACY_LOGS=1 PLAYWRIGHT_DISABLE_TRACE=1 ./scripts/run-e2e.sh
 ```
+
+**smoke（PR 相当に寄せるとき）**
+
+```bash
+LOCAL_MOCK_MODELS=mock/kondate-primary:free,mock/kondate-repair:free KONDATE_ASSERT_PRIVACY_LOGS=1 PLAYWRIGHT_DISABLE_TRACE=1 KONDATE_E2E_SUITE=smoke ./scripts/run-e2e.sh
+```
+
+**E2E 失敗時の読み方（案 B）**
+
+- ログに mobile / desktop の Playwright 出力が**交錯**し得る（2 process の list reporter）
+- HTML / test-results は project 別に分かれる（`test-results/mobile-chromium` 等）。単一 `test-results/` だけを見ない
+- `serial` は **process 内**のみ。生成密集は process 間でも AI 行ロックで待ち得る
+- wrapper 多重は `.run-e2e.lock` で拒否。1 wrapper 内の mobile\|\|desktop は想定内
+- ホストに `KONDATE_E2E_OUTPUT_DIR` / `KONDATE_E2E_HTML_REPORT` を export したままにしない（setup / 単 project の成果物パスがずれる）
+
+**ログ節約**: full の生ログはファイルへリダイレクトし、`passed` / `failed` / 終了コードと失敗タイトルだけを会話に載せる。
 
 ### 17. npm audit（production、high 以上）
 
@@ -246,7 +298,7 @@ docker compose run --rm --no-deps app sh -c 'npm exec --offline netlify -- build
 
 ## 完了報告
 
-- **成功（修正なし）**: 全ステップ PASS。実行一覧を簡潔に
+- **成功（修正なし）**: 全ステップ PASS。実行一覧を簡潔に（E2E が full か smoke かを明記）
 - **成功（修正あり）**: 全ステップ PASS + 各 fix cycle で直した内容・変更ファイル・再実行起点
 - **打ち切り**: 失敗ステップ、試行回数、実施した修正、未解決理由、ユーザーへの判断依頼
 - いずれの場合もスタックは落さない（ローカル継続利用を優先）
@@ -255,6 +307,8 @@ docker compose run --rm --no-deps app sh -c 'npm exec --offline netlify -- build
 ## 注意
 
 - ログが巨大なときはファイルにリダイレクトし、失敗行・末尾だけを読む（トークン節約）。全 suite の生ログを会話に貼らない
-- workflow と skill のコマンドが食い違ったら **ci.yml を優先**し、skill 更新を提案する
-- タイムアウト: 単一ステップが極端に長い場合は状況を報告し、ユーザーに継続可否を確認してよい（CI の job は 90 分）
+- workflow と skill のコマンドが食い違ったら **ci.yml を優先**し、skill をこのファイルで更新する
+- `scripts/ci.sh` と `ci.yml` の tooling 列挙差があれば、skill は yml に合わせたうえで差分を 1 行報告する
+- タイムアウト: 単一ステップが極端に長い場合（特に step 16 full E2E）は状況を報告し、ユーザーに継続可否を確認してよい（CI の job は 90 分）
 - 「通すため」の仕様緩和より、**正しい修正**を優先する。迷ったら止めて聞く
+- E2E を「速くする」ために製品 quota・RLS・workers 定数・中間 AI truncate を戻すことはしない
