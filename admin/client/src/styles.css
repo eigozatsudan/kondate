@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  font-family:
+    "Hiragino Sans",
+    "Noto Sans JP",
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #f4f6f8;
+  color: #1a1a1a;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+}

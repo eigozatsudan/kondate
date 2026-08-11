@@ -57,7 +57,7 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `public.shopping_label_confirmations` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.shopping_list_sources` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.shopping_lists` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
-| `public.user_feedback` | postgres | none | none | ALL | on + deny-all policy | Function+service_role only; free-form body rate-limited via SECURITY DEFINER RPC; 30-day retention |
+| `public.user_feedback` | postgres | none | none | ALL | on + deny-all (authenticated/anon) + `user_feedback_ops_readonly_select` (SELECT to `kondate_ops_readonly`) | Function+service_role write; ops readonly SELECT for local admin; free-form body rate-limited; 30-day retention |
 | `public.user_share_consents` | postgres | none | none | ALL | on + deny-all policy | share consent ledger; browser via SECURITY DEFINER RPC only (`upsert_my_share_consent` / `get_my_share_consent`); CASCADE on auth delete |
 
 ## Column write grants (browser roles)

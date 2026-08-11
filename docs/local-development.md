@@ -118,3 +118,21 @@ wrapperはローカルstackを停止してから、vendor更新だけrootで実�
 repository内の `./scripts/refresh-supabase.sh` 実体パスから実行してください。portableな実体パス解決を保証できないため、symbolic link経由の起動はサポートしません。
 
 wrapper完了後はPostgresタグの整合性テストを実行してください。PG15データの移行とロールバックはサポートしません。
+
+## 運用管理コンソール（ローカル専用・閲覧のみ）
+
+本番（または staging）Postgres を **SELECT 専用ロール** `kondate_ops_readonly` で読む内部 UI です。本編 `compose.yaml` とは分離し、`compose.admin.yaml` のみで起動します。
+
+**手順・禁止事項・画面一覧・トラブルシュートの正本:** [`admin/README.md`](../admin/README.md)
+
+### 最短起動
+
+```bash
+cp .env.admin.example .env.admin
+# ADMIN_DATABASE_URL に kondate_ops_readonly の Session pooler URL（5432 / sslmode=require）
+docker compose -f compose.admin.yaml up --build
+# http://127.0.0.1:5193
+```
+
+- 共有 PC では起動しない。`postgres` URL 不可。`.env.admin` は git 管理外。
+- ロール準備はローカル `./scripts/provision-ops-readonly-role.sh`、本番は [deployment/supabase.md](./deployment/supabase.md) §6.1。
