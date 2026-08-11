@@ -160,11 +160,18 @@ test("E2E project grepInvert skips mobile-only and desktop-only tags per project
   // Spec §4.1: project skip の単一入口は config の grepInvert のみ
   // （fixture beforeEach ではなく、全 import 経路の tag に効かせる）
   const config = await readFile("playwright.config.ts", "utf8");
-  assert.match(config, /grepInvert:\s*\/@desktop-only\//u);
-  assert.match(config, /grepInvert:\s*\/@mobile-only\//u);
-  // mobile は @desktop-only を除外、desktop は @mobile-only を除外
-  assert.match(config, /name:\s*"mobile-chromium"[\s\S]*?grepInvert:\s*\/@desktop-only\//u);
-  assert.match(config, /name:\s*"desktop-chromium"[\s\S]*?grepInvert:\s*\/@mobile-only\//u);
+  // project ブロック単位で極性を固定する（[\s\S]*? の跨ぎで逆転を許さない）
+  const mobileBlock = /name:\s*"mobile-chromium"\s*,\s*use:[\s\S]*?grepInvert:\s*(\/[^/]+\/)/u.exec(
+    config,
+  );
+  const desktopBlock =
+    /name:\s*"desktop-chromium"\s*,\s*use:[\s\S]*?grepInvert:\s*(\/[^/]+\/)/u.exec(config);
+  assert.ok(mobileBlock, "mobile-chromium project with grepInvert is missing");
+  assert.ok(desktopBlock, "desktop-chromium project with grepInvert is missing");
+  assert.equal(mobileBlock[1], "/@desktop-only/", "mobile must invert @desktop-only only");
+  assert.equal(desktopBlock[1], "/@mobile-only/", "desktop must invert @mobile-only only");
+  // 逆転配置（mobile が @mobile-only を invert 等）を明示拒否
+  assert.notEqual(mobileBlock[1], desktopBlock[1], "projects must not share the same grepInvert");
 });
 
 test("E2E uses one worker for the shared local auth stack", async () => {

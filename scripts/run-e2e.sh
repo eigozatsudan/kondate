@@ -394,6 +394,12 @@ e2e_args_have_grep() {
 # openrouter-mock/kong/oauth-mock/appをE2E向け設定で強制再作成してから、
 # 実際のPlaywrightテストランナー(e2e)を実行する。
 run_e2e_commands() {
+  # 慣習的な `./scripts/run-e2e.sh -- e2e/specs/foo.spec.ts` の先頭 `--` は
+  # docker compose / playwright に渡すとフィルタが効かないことがあるため捨てる。
+  # Playwright 自身のオプション終端としては使わない（パスは位置引数で渡す）。
+  if [ "${1-}" = "--" ]; then
+    shift
+  fi
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" up -d --wait || return $?
   # auth は rate-limit カウンタをプロセス内に持つため、E2E 開始時に強制再作成する。

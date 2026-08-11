@@ -296,6 +296,10 @@ function expectedE2EInvocations(
   // full: （--project 未指定なら mobile → 枠リセット → desktop）
   // smoke: mobile-chromium 1 段 + --grep=@smoke（呼び出し側指定は二重付与しない）
   // → cleanup で app ログ採取 → 失敗時のみ e2e kill/rm → auth/app 復元
+  // 先頭の裸 `--` は run-e2e.sh が shift して捨てる（docs の `./scripts/run-e2e.sh -- path` 慣習）。
+  const normalizedArguments =
+    arguments_.length > 0 && arguments_[0] === "--" ? arguments_.slice(1) : [...arguments_];
+  arguments_ = normalizedArguments;
   const compose = ["compose", "--project-directory", root, "--project-name", projectName];
   const baseComposeFile = ["-f", join(root, "compose.yaml")];
   const e2eComposeFiles = [
@@ -625,6 +629,36 @@ test("E2E runner smoke suite respects caller --project and --grep", async (t) =>
   assert.deepEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), args, false, "smoke"),
+  );
+});
+
+// docs 慣習の先頭裸 `--` は playwright に渡さず捨て、パスを位置引数として残す
+test("E2E runner strips a leading bare -- before playwright args", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "leading dashdash log");
+  const args = ["--", "e2e/specs/foundation.spec.ts", "--project=mobile-chromium"];
+
+  await runE2E(root, bin, logDir, args, {
+    E2E_STATUS: "0",
+    TMPDIR: root,
+  });
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root), args, false),
+  );
+  const invocations = await readDockerInvocations(logDir);
+  const playwright = invocations.find((row) => row.includes("e2e") && row.includes("run"));
+  assert.ok(playwright, "playwright/e2e run invocation missing");
+  // 先頭 `--` は破棄され、パスと --project が残る
+  assert.ok(playwright.includes("e2e/specs/foundation.spec.ts"));
+  assert.ok(playwright.includes("--project=mobile-chromium"));
+  assert.equal(
+    playwright.filter((part) => part === "--").length,
+    0,
+    "bare -- must not reach docker/playwright args",
   );
 });
 
