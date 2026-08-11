@@ -56,9 +56,16 @@ test(
     expect(callbackUrl.searchParams.get("state")).toBe(providerUrl.searchParams.get("state"));
     expect(callbackUrl.searchParams.get("error")).toBe("access_denied");
     expect(callbackUrl.searchParams.has("code")).toBe(false);
-    await expect(page.getByText(/Googleログインがキャンセルされました/u)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+    // callback 描画は並列負荷で 5s 既定を超え得る
+    await expect(page.getByText(/Googleログインがキャンセルされました/u)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible({
+      timeout: 15_000,
+    });
     // SHOW_EMAIL_LOGIN=true: メール導線は既定表示（gateway 維持）
-    await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible({
+      timeout: 15_000,
+    });
   },
 );

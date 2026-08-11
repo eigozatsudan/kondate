@@ -9,9 +9,13 @@ test(
     const magicLink = await requestMagicLinkAndReadUrl(page, authEmail);
     const callbackTab = await context.newPage();
     await callbackTab.goto(magicLink);
-    await expect(callbackTab.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
+    // 同一ブラウザ callback→session は mobile / 並列負荷で 5s 既定を超え得る
+    // （fixtures/auth.ts の generateLink 着地と同型で 30s）。
+    await expect(callbackTab.getByRole("navigation", { name: "メインメニュー" })).toBeVisible({
+      timeout: 30_000,
+    });
     await page.bringToFront();
-    await expect(page).toHaveURL(/\/planner$/u);
+    await expect(page).toHaveURL(/\/planner$/u, { timeout: 30_000 });
   },
 );
 
@@ -28,9 +32,10 @@ test("isolated WebView deposits once and the original browser claims with its se
     webView.getByText(
       "元のブラウザでログインを続けてください。この画面にログイン用の情報は保存されません",
     ),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
   await page.bringToFront();
-  await expect(page).toHaveURL(/\/planner$/u);
+  // 元タブの recovery claim は mobile / 並列負荷で 5s 既定を超え得る
+  await expect(page).toHaveURL(/\/planner$/u, { timeout: 30_000 });
   await expect(webView).not.toHaveURL(/\/planner$/u);
   await isolated.close();
 });

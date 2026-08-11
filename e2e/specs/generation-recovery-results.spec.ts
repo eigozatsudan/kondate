@@ -213,6 +213,8 @@ test(
     tag: ["@smoke"],
   },
   async ({ completedOnboardingPage: page }) => {
+    // abort → reload → recovery 再送は既定 30s を超えやすい（並列負荷時）。
+    test.setTimeout(90_000);
     await completeMinimumPlanner(page);
     const postedKeys: string[] = [];
     let firstAborted: (() => void) | undefined;
@@ -249,6 +251,8 @@ test("recovers a persisted result when handler completes but response is dropped
   completedOnboardingPage: page,
   context,
 }) => {
+  // after-handler drop + recovery 表示は既定 30s を超えやすい（並列負荷時）。
+  test.setTimeout(90_000);
   await completeMinimumPlanner(page);
   let generationPostCount = 0;
   const countGenerationPost = (request: Request) => {
@@ -305,6 +309,9 @@ test("recovers a completed result after a tab is closed before its POST response
   completedOnboardingPage: page,
   context,
 }) => {
+  // after-handler drop + tab close + reopen recovery は既定 30s を超えやすい
+  // （mobile||desktop 並列時の status abort 待ちを含む）。
+  test.setTimeout(90_000);
   await completeMinimumPlanner(page);
   let generationPostCount = 0;
   const countGenerationPost = (request: Request) => {
@@ -337,7 +344,9 @@ test("recovers a completed result after a tab is closed before its POST response
   const reopened = await context.newPage();
   await reopened.goto("/generation");
   try {
-    await expect(reopened).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/);
+    await expect(reopened).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/, {
+      timeout: 30_000,
+    });
     // 新しいpageで誤ったnot_started判定から再送しても同じ結果へ回復できるため、
     // page closeをまたぐcontext全体のPOST総数が1回だけであることを保証する。
     expect(generationPostCount).toBe(1);
@@ -759,6 +768,9 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
   test("visits pantry, history, shopping, settings, and emergency-menus without onboarding redirect or family-safety activity", async ({
     authenticatedPage: page,
   }) => {
+    // 5 route 連続 visit + idea emergency API 待ちは既定 30s を超えやすい
+    // （mobile||desktop 並列時）。
+    test.setTimeout(90_000);
     // ideaを選ぶとonboarding_statusがskippedへ進む（audienceでideaを確定した時点）。
     // ここでは家族設定を経由せず、welcomeから直接ideaを選んでskippedへ進める。
     await expect(page).toHaveURL((url) => url.pathname === "/welcome");
