@@ -11,6 +11,7 @@ import { createHostGuard } from "./middleware/host.js";
 import { apiGetOnly } from "./middleware/method.js";
 import { createTokenGuard } from "./middleware/token.js";
 import { healthHandler } from "./routes/health.js";
+import { registerApiRoutes } from "./routes/register.js";
 
 export type CreateAppDeps = {
   pool: Pool | null;
@@ -18,7 +19,9 @@ export type CreateAppDeps = {
   /** 起動検証済みなら true。health の degraded 表示に使う */
   dbReady?: boolean;
   sessionUser?: string | null;
-  /** Task 6 以降: API ルート登録 */
+  /** テスト用: false で業務 API を載せない */
+  mountApiRoutes?: boolean;
+  /** テスト用 override */
   registerRoutes?: (app: Hono, deps: CreateAppDeps) => void;
 };
 
@@ -48,6 +51,12 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   if (deps.registerRoutes) {
     deps.registerRoutes(app, deps);
+  } else if (deps.mountApiRoutes !== false) {
+    registerApiRoutes(app, {
+      pool: deps.pool,
+      config: deps.config,
+      sessionUser,
+    });
   }
 
   app.notFound((c) => {
