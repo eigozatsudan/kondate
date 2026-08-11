@@ -150,9 +150,26 @@ test("local secret wrapper uses the repository Compose file from any working dir
 
 test("E2E mobile project uses Chromium while preserving the iPhone viewport", async () => {
   const config = await readFile("playwright.config.ts", "utf8");
+  // multi-line project 定義でも iPhone SE viewport + Chromium を維持する
+  assert.match(config, /name:\s*"mobile-chromium"/u);
+  assert.match(config, /devices\["iPhone SE"\]/u);
+  assert.match(config, /browserName:\s*"chromium"/u);
+});
+
+test("E2E project grepInvert skips mobile-only and desktop-only tags per project", async () => {
+  // Spec §4.1: project skip の単一入口は config の grepInvert のみ
+  // （fixture beforeEach ではなく、全 import 経路の tag に効かせる）
+  const config = await readFile("playwright.config.ts", "utf8");
+  assert.match(config, /grepInvert:\s*\/@desktop-only\//u);
+  assert.match(config, /grepInvert:\s*\/@mobile-only\//u);
+  // mobile は @desktop-only を除外、desktop は @mobile-only を除外
   assert.match(
     config,
-    /name: "mobile-chromium", use: \{ \.\.\.devices\["iPhone SE"\], browserName: "chromium" \}/u,
+    /name:\s*"mobile-chromium"[\s\S]*?grepInvert:\s*\/@desktop-only\//u,
+  );
+  assert.match(
+    config,
+    /name:\s*"desktop-chromium"[\s\S]*?grepInvert:\s*\/@mobile-only\//u,
   );
 });
 

@@ -20,7 +20,18 @@ export default defineConfig({
     video: process.env.PLAYWRIGHT_DISABLE_TRACE === "1" ? "off" : "retain-on-failure",
   },
   projects: [
-    { name: "mobile-chromium", use: { ...devices["iPhone SE"], browserName: "chromium" } },
-    { name: "desktop-chromium", use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "mobile-chromium",
+      use: { ...devices["iPhone SE"], browserName: "chromium" },
+      // @desktop-only は desktop project 専用。config の grepInvert が skip の単一入口
+      // （fixture beforeEach には載せない。raw @playwright/test import にも効く）。
+      grepInvert: /@desktop-only/,
+    },
+    {
+      name: "desktop-chromium",
+      use: { ...devices["Desktop Chrome"] },
+      // @mobile-only は mobile project 専用（例: mobile-accessibility の二重実行を防ぐ）。
+      grepInvert: /@mobile-only/,
+    },
   ],
 });
