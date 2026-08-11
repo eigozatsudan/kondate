@@ -8,7 +8,8 @@
 
 **Tech Stack:** Playwright 1.61、Compose e2e profile、GitHub Actions、`scripts/run-e2e.sh`、Vitest/node:test tooling、Docker `app` 経由の静的検証。
 
-**Spec:** `docs/superpowers/specs/2026-08-11-e2e-runtime-reduction-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-11-e2e-runtime-reduction-design.md`（**レビュー反映後**）  
+**Reviews:** `docs/superpowers/reviews/2026-08-11-e2e-runtime-reduction-{primary,adversarial,secondary}.md`
 
 ## Global Constraints
 
@@ -25,14 +26,14 @@
 
 | ファイル | 責務 |
 | --- | --- |
-| `e2e/fixtures/project-filter.ts` | **新規** `@mobile-only` / `@desktop-only` の skip 集約 |
-| `e2e/fixtures/auth.ts` | タグ連携、Phase 2 seed / storageState / quota 範囲 |
+| `playwright.config.ts` | `grepInvert`、setup project（dependsOn なし）、workers |
+| `e2e/fixtures/auth.ts` | Phase 2 seed / storageState / quota 範囲 / generateLink |
 | `e2e/fixtures/seed-onboarding.ts` | **新規 (P2)** service role で完了状態を投入 |
 | `e2e/fixtures/session-auth.ts` | **新規 (P2/P3)** storageState 読取・session 注入 |
 | `e2e/fixtures/reset-global-ai-quota.ts` | 生成直前専用ヘルパ名の明確化（P2） |
 | `e2e/specs/*.spec.ts` | `@smoke` 等タグ、fixture 切替 |
-| `playwright.config.ts` | setup project、workers、dependsOn |
-| `scripts/run-e2e.sh` | `KONDATE_E2E_SUITE`、CI cleanup 短縮 |
+| `scripts/run-e2e.sh` | `KONDATE_E2E_SUITE`、setup 1 回、CI cleanup 短縮 |
+| `tests/tooling/e2e-smoke-tags.test.mjs` | **新規** smoke 必須ファイル×最低本数 |
 | `compose.e2e.yaml` | E2E 専用 `GLOBAL_DAILY_AI_LIMIT`（P3） |
 | `.github/workflows/ci.yml` / `scripts/ci.sh` | smoke/full |
 | `tests/tooling/compose.test.mjs` 他 | シーケンス・suite 契約の固定 |
@@ -43,128 +44,43 @@
 
 # Phase 1 — タグ・project 役割・CI レーン
 
-### Task 1: project フィルタヘルパと tooling 契約
+### Task 1: project フィルタを config `grepInvert` に固定
 
 **Files:**
-- Create: `e2e/fixtures/project-filter.ts`
-- Create: `e2e/fixtures/project-filter.test.ts`（任意。Playwright 外なら node:test ではなく、フィルタ関数を pure にして vitest でも可。本 Task では **pure 関数 + vitest** を採用）
-- Modify: `e2e/fixtures/auth.ts`（filter を全 auth ベース test に接続）
+- Modify: `playwright.config.ts`
+- Modify: `tests/tooling/project-config.test.mjs`（grepInvert の存在を固定してよい）
 
 **Interfaces:**
-- Produces:
+- Spec §4.1: skip の単一入口は **config のみ**（fixture beforeEach は使わない）
+
+- [ ] **Step 1: playwright.config.ts の projects を更新**
 
 ```ts
-/** testInfo.tags と project.name から skip すべきなら理由文字列、否则 null */
-export function projectSkipReason(
-  projectName: string,
-  tags: readonly string[],
-): string | null;
+projects: [
+  {
+    name: "mobile-chromium",
+    use: { ...devices["iPhone SE"], browserName: "chromium" },
+    grepInvert: /@desktop-only/,
+  },
+  {
+    name: "desktop-chromium",
+    use: { ...devices["Desktop Chrome"] },
+    grepInvert: /@mobile-only/,
+  },
+],
 ```
 
-- 規則: `tags` に `@mobile-only` があり `projectName !== "mobile-chromium"` → skip 理由  
-  `@desktop-only` があり `projectName !== "desktop-chromium"` → skip 理由  
-  両方ある場合は `"@mobile-only and @desktop-only are mutually exclusive"` を返し skip（fail-closed）
+（Phase 2 で setup project を足すときも mobile/desktop から `dependencies` を付けない。）
 
-- [ ] **Step 1: pure 関数と単体テストを書く**
+- [ ] **Step 2: tooling で grepInvert を固定（任意だが推奨）**
 
-`e2e/fixtures/project-filter.ts`:
+`project-config.test.mjs` に `grepInvert` と `@mobile-only` / `@desktop-only` の文字列が config にあることを assert。
 
-```ts
-export function projectSkipReason(
-  projectName: string,
-  tags: readonly string[],
-): string | null {
-  const mobileOnly = tags.includes("@mobile-only");
-  const desktopOnly = tags.includes("@desktop-only");
-  if (mobileOnly && desktopOnly) {
-    return "@mobile-only and @desktop-only are mutually exclusive";
-  }
-  if (mobileOnly && projectName !== "mobile-chromium") {
-    return "tagged @mobile-only";
-  }
-  if (desktopOnly && projectName !== "desktop-chromium") {
-    return "tagged @desktop-only";
-  }
-  return null;
-}
-```
-
-`e2e/fixtures/project-filter.test.ts`（Vitest）:
-
-```ts
-import { describe, expect, it } from "vitest";
-import { projectSkipReason } from "./project-filter";
-
-describe("projectSkipReason", () => {
-  it("skips mobile-only on desktop project", () => {
-    expect(projectSkipReason("desktop-chromium", ["@mobile-only"])).toBe(
-      "tagged @mobile-only",
-    );
-  });
-  it("allows mobile-only on mobile project", () => {
-    expect(projectSkipReason("mobile-chromium", ["@mobile-only"])).toBeNull();
-  });
-  it("rejects both only-tags", () => {
-    expect(
-      projectSkipReason("mobile-chromium", ["@mobile-only", "@desktop-only"]),
-    ).toMatch(/mutually exclusive/u);
-  });
-});
-```
-
-- [ ] **Step 2: テスト RED 確認（ファイル未作成なら実装後 GREEN でよい。TDD なら先に test）**
-
-Run:
+- [ ] **Step 3: Commit**
 
 ```bash
-docker compose run --rm --no-deps app npx vitest run e2e/fixtures/project-filter.test.ts
-```
-
-Expected: PASS
-
-- [ ] **Step 3: auth ベースに beforeEach で接続**
-
-`e2e/fixtures/auth.ts` の `export const test = base.extend...` の直後、または `base` をラップして:
-
-```ts
-import { projectSkipReason } from "./project-filter";
-
-// extend 定義の後:
-test.beforeEach(({}, testInfo) => {
-  const reason = projectSkipReason(testInfo.project.name, testInfo.tags);
-  if (reason !== null) {
-    testInfo.skip(true, reason);
-  }
-});
-```
-
-**注意:** `history.ts` / `shopping.ts` が `authTest.extend` している場合、auth の `beforeEach` が子に伝播するか Playwright 版で確認する。伝播しない場合は **各 extend 出口**（history/shopping/acceptance が export する `test`）にも同じ `beforeEach` を付けるか、`project-filter` を import する共通 `installProjectFilter(test)` を呼ぶ。
-
-`installProjectFilter` 推奨形（`any` 禁止。引数は各 fixture が export する `test` をそのまま渡す）:
-
-```ts
-import type { test as baseTest } from "@playwright/test";
-
-type PlaywrightTest = typeof baseTest;
-
-export function installProjectFilter(test: PlaywrightTest): void {
-  test.beforeEach(({}, testInfo) => {
-    const reason = projectSkipReason(testInfo.project.name, testInfo.tags);
-    if (reason !== null) {
-      testInfo.skip(true, reason);
-    }
-  });
-}
-```
-
-extend 後の `test` が `typeof baseTest` と合わない場合は、`beforeEach` だけを持つ最小インターフェース（`{ beforeEach: typeof baseTest.beforeEach }`）に合わせる。**`any` は使わない。**
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add e2e/fixtures/project-filter.ts e2e/fixtures/project-filter.test.ts e2e/fixtures/auth.ts
-# history/shopping を触った場合はそれも含める
-git commit -m "feat(e2e): project タグによる mobile/desktop フィルタを追加する"
+git add playwright.config.ts tests/tooling/project-config.test.mjs
+git commit -m "feat(e2e): project の grepInvert で mobile/desktop only を分ける"
 ```
 
 ---
@@ -214,25 +130,39 @@ test(
 | `shopping-list.spec.ts` | preserves protected rows 1 に `@smoke` |
 | `shopping-list-races.spec.ts` | reuses one idempotency key 1 に `@smoke` |
 | `history-safety-change.spec.ts` | automatically revalidates on mount 1 に `@smoke` |
+| `history-regeneration.spec.ts` | **does not consume a success for duplicate output に `@smoke`（MVP #13）** |
+| `menu-domain-pantry.spec.ts` | **pantry CRUD… 1 本に `@smoke`（MVP #9）** |
 | `onboarding.spec.ts` | 全 test に `@smoke` |
 | `settings.spec.ts` | adds, edits, and deletes… 1 に `@smoke` |
 
-`account-deletion` / `billing-plus` / `menu-domain-pantry` / `history-regeneration` は **smoke を付けない**。
+`account-deletion` / `billing-plus` は **smoke を付けない**。
 
-- [ ] **Step 3: タグ漏れの静的ガード（軽量）**
+- [ ] **Step 3: タグ漏れの静的ガード（必須・最低本数）**
 
-`tests/tooling/e2e-smoke-tags.test.mjs`（node:test）を新規作成し、少なくとも次を固定する:
+`tests/tooling/e2e-smoke-tags.test.mjs`（node:test）で Spec §4.2 表の **必須ファイル × 最低本数**を固定する（「`@smoke` ≥1」だけでは不合格）。
 
-- `e2e/specs` 配下に `@smoke` 文字列が **1 件以上**ある
-- `mobile-accessibility.spec.ts` に `@mobile-only` がある
-- （任意）smoke 必須ファイルリストに `@smoke` が含まれる
+例（実装時に exact 本数を表と一致させる）:
 
-CI の node:test 列挙（`ci.yml` / `ci.sh` / 既存の Local-safe Node script ステップ）にパスを **1 行追加**する。`project-config` が列挙を固定している場合は同じリストを更新。
+```js
+const required = [
+  ["e2e/specs/foundation.spec.ts", 1],
+  ["e2e/specs/oauth-mock.spec.ts", 2],
+  ["e2e/specs/full-journey.spec.ts", 2],
+  ["e2e/specs/history-regeneration.spec.ts", 1],
+  ["e2e/specs/menu-domain-pantry.spec.ts", 1],
+  // …表の残り
+];
+// 各ファイル内の tag: に '@smoke' が含まれる test 定義数 ≥ 最低本数
+```
+
+`mobile-accessibility.spec.ts` に `@mobile-only` があることも assert。
+
+CI の node:test 列挙（`ci.yml` / `ci.sh` / `project-config` が列挙を固定している場合）にパスを追加。
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add e2e/specs tests/tooling/e2e-smoke-tags.test.mjs scripts/ci.sh .github/workflows/ci.yml
+git add e2e/specs tests/tooling/e2e-smoke-tags.test.mjs scripts/ci.sh .github/workflows/ci.yml tests/tooling/project-config.test.mjs
 git commit -m "feat(e2e): smoke と mobile-only タグを付与する"
 ```
 
@@ -250,11 +180,11 @@ git commit -m "feat(e2e): smoke と mobile-only タグを付与する"
 - 呼び出し側が既に `--project` を含む場合は project を追加しない（現行 `e2e_args_have_project` を再利用・拡張）
 - 呼び出し側が既に `--grep` / `-g` を含む場合は grep を追加しない
 
-- [ ] **Step 1: ヘルパを run-e2e.sh に追加**
+- [ ] **Step 1: `e2e_args_have_grep` と完成形の引数組立**
 
-`e2e_args_have_grep()` を `e2e_args_have_project` と同様に実装。
+`e2e_args_have_project` と同様に `--grep` / `-g` / `--grep=*` を検出。
 
-`run_e2e_commands` 内、Playwright 起動直前:
+`run_e2e_commands` 内（stack 起動・quota 初期化の後）:
 
 ```sh
 suite=${KONDATE_E2E_SUITE:-full}
@@ -266,48 +196,50 @@ case "$suite" in
     ;;
 esac
 
-# smoke: 1 project のみ。mobile→desktop の 2 段を使わない。
 if [ "$suite" = "smoke" ]; then
-  set -- "$@"
-  extra=
-  if ! e2e_args_have_project "$@"; then
-    # run_playwright に渡す配列を組み立てる
-    :
+  # 1 段のみ。desktop 段・project 境界 reset なし（開始時 reset は済）。
+  smoke_args="$*"
+  if ! e2e_args_have_project $smoke_args; then
+    # shell の配列が無い /bin/sh では、明示的に前置する:
+    # run_playwright --project=mobile-chromium ...user args...
+    set -- --project=mobile-chromium "$@"
   fi
+  if ! e2e_args_have_grep "$@"; then
+    set -- "$@" --grep=@smoke
+  fi
+  run_playwright "$@" || return $?
+  return 0
+fi
+
+# full: 現行どおり（project 指定あり → 1 回 / なし → mobile → reset → desktop）
+if e2e_args_have_project "$@"; then
+  run_playwright "$@" || return $?
+else
+  mobile_status=0
+  desktop_status=0
+  run_playwright --project=mobile-chromium "$@" || mobile_status=$?
+  run_child "$script_dir/reset-e2e-ai-quota.sh" || return $?
+  run_playwright --project=desktop-chromium "$@" || desktop_status=$?
+  # 現行と同様に mobile 失敗を優先して return
+  ...
 fi
 ```
 
-実装の明確形（推奨）:
+**固定:** grep 形式は **`--grep=@smoke`**（等号付き）。呼び出し側が `--grep` / `--project` を既に付けていれば二重付与しない。
 
-```sh
-build_playwright_args() {
-  # 引数: 元の "$@"
-  # smoke かつ --project 無し → --project=mobile-chromium を先頭付近に追加
-  # smoke かつ --grep 無し → --grep=@smoke を追加
-  # full は引数をそのまま
-}
-```
+- [ ] **Step 2: tooling テストを更新（必須）**
 
-full かつ project 無しのとき、**現行どおり** mobile 実行 → `reset-e2e-ai-quota.sh` → desktop 実行を維持。
-
-smoke のときは **1 回だけ** `run_playwright`（desktop 段なし、途中 quota reset なしでよい。開始時 reset は残す）。
-
-- [ ] **Step 2: tooling テストを更新**
-
-`compose.test.mjs` の run-e2e 断言に次を追加:
-
-- `KONDATE_E2E_SUITE` または `smoke` 分岐がスクリプトに存在する
-- 不正 suite で exit する文言がある
-
-既存の force-recreate / lock 断言は維持。
+| ファイル | 更新内容 |
+| --- | --- |
+| `tests/tooling/compose.test.mjs` | `KONDATE_E2E_SUITE`、`must be full or smoke`、smoke 時 desktop 二段を踏まないこと |
+| `tests/tooling/local-development-scripts.test.mjs` | `expectedE2EInvocations` を suite 分岐。smoke: playwright 1 回・中間 quota reset なし。full: 現行 mobile→reset→desktop |
 
 Run:
 
 ```bash
 docker compose run --rm --no-deps app node --test tests/tooling/compose.test.mjs
+docker compose run --rm --no-deps app node --test tests/tooling/local-development-scripts.test.mjs
 ```
-
-（ファイルが大きい場合は該当 test 名だけに絞れるなら絞る）
 
 Expected: PASS
 
@@ -382,7 +314,9 @@ git commit -m "ci: PR の E2E を smoke、それ以外を full にする"
 | smoke（PR 相当） | `KONDATE_E2E_SUITE=smoke ./scripts/run-e2e.sh` |
 | 1 ファイル | `./scripts/run-e2e.sh -- e2e/specs/foo.spec.ts --project=mobile-chromium` |
 
-stale lock の説明は残す。
+**必須の注意文:** 「PR の smoke は受け入れ E2E 全量の代替ではない。full は push / `ci.sh` / release-checklist。account-deletion 等は full のみ。」
+
+stale lock の説明は残す。`docs/README.md` の local-development 行に smoke/full を括弧追記してよい。
 
 - [ ] **Step 2: 人間または Verifier が実測**
 
@@ -434,23 +368,27 @@ export async function seedCompletedOnboardingState(page: Page): Promise<void>;
 - 投入対象は実装のスキーマに合わせる（`profiles` / `household_members` / `privacy_consents` 等）。**実装が正**。不足カラムは migrations と generated types を読んで埋める。
 - seed 後 `page.goto("/planner")` と heading/URL アサーション。
 
-- [ ] **Step 1: seed 関数を実装**
+- [ ] **Step 1: seed 関数を実装（必須契約）**
 
-（具体 SQL/REST は実装時に `src` の onboarding 完了条件と DB 制約を読む。Plan に偽スキーマを固定しない。）
+参照（実装が正）:
+
+- `e2e/fixtures/acceptance.ts` の `createServiceAdmin` / owned seed パターン
+- `shared/contracts/domain.ts` の `privacyNoticeVersion`（現行 **`2026-07-29.v1`** — 契約更新時は追随）
+- 最低投入: 対象 user の profile onboarding 完了相当、`household_members` ≥1、`privacy_consents.notice_version = privacyNoticeVersion`
+
+service role を page に渡さない。seed 後 `page.goto("/planner")` で welcome に戻らないことを assert。
 
 - [ ] **Step 2: `completedOnboardingPage` を切替**
 
 ```ts
 completedOnboardingPage: async ({ authenticatedPage: page }, provide) => {
   await seedCompletedOnboardingState(page);
-  // 生成系に進む test 向け: 明示ヘルパへ移行するまでの間、
-  // Phase 2 Task 8 完了前は reset を残してもよい。Task 8 で生成専用に移す。
-  await resetGlobalAiQuotaForE2e();
+  // Task 8 まで: 生成直前 reset へ移す前はここで ensureAiQuota してもよい
   await provide(page);
 },
 ```
 
-UI クリック（家族情報を登録する…）は **削除**。
+UI クリック（家族情報を登録する…）は **削除**。`onboarding.spec.ts` / full-journey household は seed を使わない。
 
 - [ ] **Step 3: 焦点 E2E**
 
@@ -488,44 +426,42 @@ export const STORAGE_STATE_PATH = "e2e/.auth/user.json";
 export async function applyReusedStorageState(/* config use */): Promise<void>;
 ```
 
-`playwright.config.ts` 概形:
+`playwright.config.ts` 概形（**dependencies は付けない** — Spec §6.3）:
 
 ```ts
 projects: [
   {
     name: "setup",
-    testMatch: /auth\.setup\.ts/,
-    // workers 1 相当
+    testMatch: /auth\.setup\.ts$/,
   },
   {
     name: "mobile-chromium",
-    dependencies: ["setup"],
     use: { ...devices["iPhone SE"], browserName: "chromium" },
+    grepInvert: /@desktop-only/,
   },
   {
     name: "desktop-chromium",
-    dependencies: ["setup"],
     use: { ...devices["Desktop Chrome"] },
+    grepInvert: /@mobile-only/,
   },
 ],
 ```
 
-**run-e2e.sh との関係:** setup も同じ Playwright プロセス内で `dependencies` により先に走る。mobile→desktop の **2 段実行**では setup が **2 回**走りうる。対策（いずれか一方を Plan 実装で固定）:
-
-1. **推奨:** full の 2 段実行をやめ、単一 `playwright test` で両 project を走らせる（Phase 1 の mobile→desktop 分割を、AI 枠が E2E で十分になる Phase 3 まで残す必要がある場合は、setup を `run-e2e.sh` から **1 回だけ** `npx playwright test --project=setup` してから本実行、storage を reuse）。
-2. または setup を idempotent にし、既存 `user.json` が新鮮ならスキップ。
-
-Phase 2 時点では global limit 20 のままなので **2 段実行は維持**しやすい。その場合:
+**run-e2e.sh（固定シーケンス）:**
 
 ```sh
-# run-e2e.sh 概念
+# full かつ --project 未指定
 run_playwright --project=setup
-run_playwright --project=mobile-chromium  # setup を dependencies から外す
-reset quota
-run_playwright --project=desktop-chromium
+run_playwright --project=mobile-chromium "$@"
+reset-e2e-ai-quota.sh
+run_playwright --project=desktop-chromium "$@"
+
+# smoke
+run_playwright --project=setup
+run_playwright --project=mobile-chromium --grep=@smoke "$@"
 ```
 
-config の `dependencies` と shell 分割が二重にならないよう **shell 側で setup を明示 1 回**し、mobile/desktop project から `dependencies` を外す方を推奨。
+`tests/tooling/local-development-scripts.test.mjs` の `expectedE2EInvocations` に **setup 1 回**を必須挿入。
 
 - [ ] **Step 1: gitignore**
 
@@ -649,53 +585,55 @@ git commit -m "refactor(e2e): 並列前提で test ごとの AI 枠 truncate を
 
 ---
 
-### Task 11: workers≥2 と @serial
+### Task 11: workers≥2 と @serial（Task 10 と同一 PR 推奨）
 
 **Files:**
-- Modify: `playwright.config.ts`（`workers: process.env.CI ? 2 : 2`, `fullyParallel: true`）
+- Modify: `playwright.config.ts`（`workers: 2`, `fullyParallel: true` — **定数**。`process.env.CI ?` 分岐は使わない）
+- Modify: `tests/tooling/project-config.test.mjs`（`workers: 1` 固定を **新契約**へ: `workers: 2` と `fullyParallel: true`、動的 CI 分岐パターンは引き続き禁止）
+- Create または Modify: tooling で test/fixture 入口の global truncate 呼び出し 0 を固定（Task 10 と共有）
 - Modify: `e2e/specs/shopping-list-races.spec.ts` 等
 
 ```ts
 test.describe.configure({ mode: "serial" });
-// または describe に tag @serial と configure
 ```
 
-- [ ] **Step 1: workers 2 + fullyParallel true**
-- [ ] **Step 2: race 系を serial describe に**
-- [ ] **Step 3: storageState 共有 test は同一 worker serial または ephemeral に戻す**
-- [ ] **Step 4: full を 2 回**
+- [ ] **Step 0: Task 10 完了（per-test truncate 0）を確認。未完了なら本 Task を開始しない**
+- [ ] **Step 1: workers 2 + fullyParallel true + project-config 更新**
+- [ ] **Step 2: race 系・同一 storageState describe を serial に**
+- [ ] **Step 3: full を 2 回**
 
 ```bash
 ./scripts/run-e2e.sh
 ./scripts/run-e2e.sh
 ```
 
-Expected: 2 連続 green。flaky なら workers を一時 1 に戻さず原因（共有状態）を修正。
+Expected: 2 連続 green。flaky なら共有状態を修正（workers を 1 に戻して緑にするだけの逃げは不可）。
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
+git add playwright.config.ts tests/tooling/project-config.test.mjs e2e/specs
 git commit -m "feat(e2e): workers 並列と serial 区間を導入する"
 ```
 
 ---
 
-### Task 12: 認証高速化（Admin / session 注入）
+### Task 12: 認証高速化（Admin generateLink 固定）
 
 **Files:**
 - Modify: `e2e/fixtures/session-auth.ts` / `auth.ts`
-- ephemeral の過半数を Mailpit なしに
+- 必要なら `e2e/specs/auth-recovery.spec.ts` または setup で Mailpit 成功 path を 1 本保証
 
-**方式（1 つだけ実装）:** Spec §7.5。推奨は **Admin generateLink または session 注入**。
+**方式（固定）:** Spec §7.5 — Supabase Admin **`generateLink`（magiclink）** で URL 取得 → ブラウザで開く。session 手注入はしない。
 
-- [ ] **Step 1: `loginAsNewUser(page, email)` を Mailpit なしで実装**
-- [ ] **Step 2: `authenticatedPage` の既定を高速経路に。`@ephemeral-auth` でも高速経路を使う（使い捨て user は維持）**
-- [ ] **Step 3: oauth-mock / auth-callback は **現行 UI/メール path を維持****（高速化しない）**
+- [ ] **Step 1: `loginAsNewUser(page, email)` を generateLink で実装**
+- [ ] **Step 2: `authenticatedPage` の既定を高速経路に（使い捨て user は維持）**
+- [ ] **Step 3: oauth-mock / auth-callback は UI path 維持。Mailpit 成功 path ≥1 本を smoke または full に残す**
 - [ ] **Step 4: full 2 連続 green**
 - [ ] **Step 5: Commit**
 
 ```bash
-git commit -m "feat(e2e): 使い捨て認証を Mailpit なし経路にする"
+git commit -m "feat(e2e): 使い捨て認証を Admin generateLink 経路にする"
 ```
 
 ---
@@ -748,19 +686,21 @@ AGENTS.md の完全ゲート（db:test / e2e / build 全部）は **Phase 完了
 
 ---
 
-## Plan self-review
+## Plan self-review（レビュー反映後）
 
 | Spec 節 | 対応 Task |
 | --- | --- |
-| §4 タグ / smoke セット | Task 1–2 |
-| §4.3 suite モード | Task 3 |
-| §5 CI / docs | Task 4–5 |
-| §6 seed / storageState / quota 範囲 | Task 6–8 |
-| §7 limit / workers / 認証 / cleanup | Task 9–13 |
-| §8 成功指標 | 各 Phase 完了ゲート + Task 5/8/13 の実測 |
-| 非目的（製品 limit 不変） | Task 9 の tooling で compose.yaml=20 を固定 |
+| §4 タグ / smoke / grepInvert | Task 1–2 |
+| §4.3 suite モード | Task 3 + local-development-scripts ゴールデン |
+| §5 CI / C1 merge 前提 / docs | Task 4–5 |
+| §6 seed / setup shell 1 回 / quota | Task 6–8 |
+| §7 limit / C2 fail-closed / workers / generateLink / cleanup | Task 9–13 |
+| §8–9 成功指標・リスク | Phase ゲート + Task 5/8/13 実測 |
+| 製品 limit 不変 | Task 9 tooling |
 
-Placeholder なし。Phase 2 の setup と run-e2e 2 段の二重実行は Task 7 で **shell 側 setup 1 回**に固定。
+**レビューで塞いだ穴:** Task 1 は fixture filter ではなく config `grepInvert`。smoke に #9/#13。Task 3 は完成形 shell。Task 7 は `dependencies` 禁止。Task 11 は project-config + Task 10 同一 PR。Task 12 は generateLink 固定。
+
+**残る実装時の注意:** Task 3 の `/bin/sh` 引数再構築は portable に注意（配列が使えない）。tooling の mock docker と実 argv を必ず一致させる。
 
 ---
 

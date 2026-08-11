@@ -1,9 +1,11 @@
 # E2E 実行時間短縮 設計
 
 **日付:** 2026-08-11  
-**状態:** 草案（実装前）  
+**状態:** レビュー反映後（1次 / 敵対的 / 2次。実装前）  
 **適用面:** Playwright E2E（`e2e/`）、`scripts/run-e2e.sh`、CI（`.github/workflows/ci.yml` / `scripts/ci.sh`）、E2E 用 Compose override（`compose.e2e.yaml`）、受け入れマトリクス表記の整合  
-**関連分析:** ローカル adversarial quality pass ログで full suite が mobile ≈14 分 + desktop ≈15 分（合計 ≈30 分 Playwright 本体）
+**関連分析:** ローカル adversarial quality pass ログで full suite が mobile ≈14 分 + desktop ≈15 分（合計 ≈30 分 Playwright 本体）  
+**レビュー記録:**  
+`docs/superpowers/reviews/2026-08-11-e2e-runtime-reduction-{primary,adversarial,secondary}.md`
 
 ## 1. 目的と非目的
 
@@ -13,11 +15,11 @@
 
 | フェーズ | 主な手段 | 目標壁時計（目安） |
 | --- | --- | --- |
-| **Phase 1** | タグ・project 役割分担・PR スモーク | PR smoke: **≤12 分** / full（両 project）: **≤22 分** |
-| **Phase 2** | storageState・seed onboarding・quota reset 範囲縮小 | full: **≤15 分** |
-| **Phase 3** | E2E 専用枠戦略・workers 並列・認証注入 | full: **≤10 分**（workers≥2 で green 安定時） |
+| **Phase 1** | タグ・project 役割分担・PR スモーク | PR smoke: **≤12 分（必須）** / full: desktop a11y 0 + 相対短縮（**≤22 分は stretch**） |
+| **Phase 2** | storageState・seed onboarding・quota reset 範囲縮小 | full: **≤15 分**（stretch） |
+| **Phase 3** | E2E 専用枠戦略・workers 並列・認証注入 | full: **≤10 分**は stretch。必須は workers≥2 で 2 連続 green + 生成系 serial / UI 並列での相対短縮（§7.4・§9） |
 
-目標は **目安**であり、ハードウェア差で前後する。受け入れは「相対短縮 + flaky 非増 + ゲート契約維持」で判定する（§7）。
+目標は **目安**であり、ハードウェア差と global AI 行ロック（§9）で前後する。受け入れは「相対短縮 + flaky 非増 + ゲート契約維持」で判定する。
 
 ### 非目的
 
@@ -93,33 +95,38 @@ Playwright ネイティブの `tag` を使う（`--grep @smoke` で選択）。
 
 - 1 test に複数タグ可（例: `@smoke` + 既定 full）。
 - `@mobile-only` と `@desktop-only` を同時に付けない。
-- skip 実装は **1 か所**に集約する（`e2e/fixtures/project-filter.ts` または auth base の `beforeEach`）。spec ごとに `test.skip` を散らさない。
+- **project skip の単一入口（必須）:** `playwright.config.ts` の project 定義で  
+  - `mobile-chromium`: `grepInvert: /@desktop-only/`  
+  - `desktop-chromium`: `grepInvert: /@mobile-only/`  
+  に固定する（fixture `beforeEach` 分散や raw `@playwright/test` 漏れを避ける）。spec 内の散発 `test.skip` で project 役割を表現しない。
 
 ### 4.2 `@smoke` 固定セット（Phase 1）
 
-PR の壁時計目標を守るため、smoke は **おおむね 12〜18 本 × mobile 1 project** に収める。  
-次を **最低限** 含める（title は実装の exact title。幅付きは 320 の 1 本だけ smoke）:
+PR の壁時計目標を守るため、smoke は **おおむね 14〜22 本 × mobile 1 project** に収める。  
+次を **最低限** 含める（title は実装の exact title。幅付きは 320 の 1 本だけ smoke）。
 
-| 領域 | Spec ファイル | 含める内容（方針） |
-| --- | --- | --- |
-| 基盤 | `foundation.spec.ts` | 全 test |
-| OAuth mock | `oauth-mock.spec.ts` | success 1 本 + cancel 1 本（ファイルが 2 本なら両方） |
-| Full journey | `full-journey.spec.ts` | household + idea の **両方**（受け入れの主 path） |
-| Auth callback | `auth-callback-security.spec.ts` | cancel と expired の **2 本**（残りは full） |
-| Auth recovery | `auth-recovery.spec.ts` | same-browser の **1 本** |
-| Generation | `generation-recovery-results.spec.ts` | recovery 系 **1 本** + result details **1 本** |
-| Shopping | `shopping-list.spec.ts` | protected rows **1 本** |
-| Shopping race | `shopping-list-races.spec.ts` | idempotency または safety change **1 本** |
-| History safety | `history-safety-change.spec.ts` | auto revalidate **1 本** |
-| Onboarding | `onboarding.spec.ts` | 全 test（1 本） |
-| Settings | `settings.spec.ts` | member CRUD **1 本** |
-| Mobile a11y | `mobile-accessibility.spec.ts` | **320px の household wizard+result のみ** |
-| Account deletion | `account-deletion.spec.ts` | **full のみ**（smoke に入れない。重い・破壊的） |
-| Billing | `billing-plus.spec.ts` | smoke **0 本**（unit / 設定表示は RTL に寄せ済みのものが多い。full で担保） |
-| Menu pantry | `menu-domain-pantry.spec.ts` | smoke **0 本**（full。必要なら Phase 1 後に 1 本追加検討） |
-| History regen | `history-regeneration.spec.ts` | smoke **0 本**（full） |
+**レビュー反映（C1 / 2次）:** e2e-only 受け入れ path を PR から完全に外さない。MVP #9 / #13 は各 **1 本** smoke に含める。
 
-**変更手続き:** smoke セットを増減する PR は (1) 本表を更新 (2) 実測時間が PR 目標を超えないこと (3) 外した path が full または unit/pgTAP で覆われていることを PR 説明に書く。
+| 領域 | Spec ファイル | 最低本数 | 含める内容（方針） |
+| --- | --- | --- | --- |
+| 基盤 | `foundation.spec.ts` | 全 | 全 test |
+| OAuth mock | `oauth-mock.spec.ts` | 2 | success + cancel（ファイルが 2 本なら両方） |
+| Full journey | `full-journey.spec.ts` | 2 | household + idea |
+| Auth callback | `auth-callback-security.spec.ts` | 2 | cancel + expired（残り full） |
+| Auth recovery | `auth-recovery.spec.ts` | 1 | same-browser |
+| Generation | `generation-recovery-results.spec.ts` | 2 | recovery 1 + result details 1 |
+| Shopping | `shopping-list.spec.ts` | 1 | protected rows |
+| Shopping race | `shopping-list-races.spec.ts` | 1 | idempotency または safety change |
+| History safety | `history-safety-change.spec.ts` | 1 | auto revalidate |
+| History regen | `history-regeneration.spec.ts` | **1** | **二重 success 消費禁止（MVP #13 e2e-only）** |
+| Menu pantry | `menu-domain-pantry.spec.ts` | **1** | **pantry CRUD / restored planner 系 1 本（MVP #9）** |
+| Onboarding | `onboarding.spec.ts` | 1 | 全 test（1 本） |
+| Settings | `settings.spec.ts` | 1 | member CRUD |
+| Mobile a11y | `mobile-accessibility.spec.ts` | 1 | **320px household wizard+result のみ** |
+| Account deletion | `account-deletion.spec.ts` | 0 | **full のみ**（重い・破壊的。Notes 所有） |
+| Billing | `billing-plus.spec.ts` | 0 | full（表示は RTL バックアップ多） |
+
+**機械的固定（必須）:** `tests/tooling/e2e-smoke-tags.test.mjs` が上表の **必須ファイル × 最低本数**をソース上の `@smoke` 付与から検証する。「`@smoke` が 1 件以上」だけでは不十分。セット変更 PR は (1) 本表 (2) 当該 tooling (3) 実測が PR 目標を超えないこと (4) 外した path の full/unit/pgTAP カバーを PR 説明に書く。
 
 ### 4.3 スイート実行モード
 
@@ -154,29 +161,41 @@ PR の壁時計目標を守るため、smoke は **おおむね 12〜18 本 × m
 
 **受け入れ G7 / MVP #21:** owning は `mobile-accessibility` の width 付き title のまま。desktop で回していた同一マトリクスは **重複**であり、mobile project に寄せる。マトリクスの title パターンは変えず、実行 project だけ変える。
 
-### 5.3 CI
+### 5.3 CI と merge ゲート（レビュー C1 反映）
 
 | トリガ | E2E |
 | --- | --- |
-| `pull_request` | `KONDATE_E2E_SUITE=smoke` で `./scripts/run-e2e.sh` |
-| `push` to workflow 対象ブランチ | full（現行と同じ env + `./scripts/run-e2e.sh`） |
-| `scripts/ci.sh` | **full 既定**（ローカル release ゲート）。`KONDATE_E2E_SUITE=smoke` で短縮可と `docs/local-development.md` に記載 |
+| `pull_request` | `KONDATE_E2E_SUITE=smoke` で `./scripts/run-e2e.sh`（§4.2 拡張 smoke） |
+| `push` to workflow 対象ブランチ | **full**（現行 env + `./scripts/run-e2e.sh`） |
+| `scripts/ci.sh` | **full 既定**（ローカル release ゲート）。`KONDATE_E2E_SUITE=smoke` で短縮可 |
 
-`project-config.test.mjs` の共有ゲート順は、両方に `./scripts/run-e2e.sh` が残る限り維持する。workflow 内の条件分岐で引数だけ変えてよい。
+**固定する運用前提（隠さない）:**
+
+1. **PR green ≠ acceptance 全量 E2E。** smoke は早期シグナルであり、full suite と matrix 全 e2e owning の代替ではない。
+2. **full は merge 後の `push` でも走る**が、それだけでは **merge 阻止にはならない**（事後検知）。  
+   - 本設計の既定は **§4.2 拡張 smoke**（選択肢 B: e2e-only 重要 path を PR に残す）で merge-time の穴を縮小する。  
+   - account-deletion / billing 全量 / a11y 全幅 / race 全量は **full / release** 依存のまま。  
+   - リポジトリ外の GitHub branch protection で「PR の verify 必須」を付けることは推奨だが、**本 repo 内に protection 設定は無い**。運用で merge queue や push full 必須にする場合は `docs/local-development.md` に 1 行追記する。
+3. **release / `scripts/ci.sh` / AGENTS 検証フローは full のまま**（`docs/testing/release-checklist.md` の `./scripts/run-e2e.sh` を smoke に差し替えない）。
+
+`project-config.test.mjs` の共有ゲート順は、両方に `./scripts/run-e2e.sh` が残る限り維持する。
 
 ### 5.4 ドキュメント
 
-- `docs/local-development.md`: smoke / full / 焦点実行のコマンド表。
-- `README.md` に 1 行ある場合は `./scripts/run-e2e.sh` と smoke の存在を追記してよい（過剰に長くしない）。
-- acceptance-matrix: owning file/title が変わらない限り必須更新なし。変わったら同時更新。
+- `docs/local-development.md`: smoke / full / 焦点実行のコマンド表 + **「PR smoke ≠ acceptance 全量」**。
+- `docs/README.md` の local-development 行に smoke/full を括弧追記してよい。
+- `README.md` に 1 行ある場合は smoke の存在を追記してよい。
+- acceptance-matrix: owning file/title が変わらない限り必須更新なし。変わったら同時更新。Notes に「#13 / #9 の 1 本は smoke、残り full」を 1 行足してよい。
 
 ### 5.5 Phase 1 完了条件
 
-- [ ] 全 `@smoke` test にタグが付き、`KONDATE_E2E_SUITE=smoke` で mobile のみ・grep 一致だけが走る
-- [ ] `mobile-accessibility` が desktop project で 0 実行
+- [ ] §4.2 必須ファイル×最低本数が tooling で固定され、smoke が下限を満たす
+- [ ] `KONDATE_E2E_SUITE=smoke` で mobile のみ・`@smoke` のみ（desktop 段なし）
+- [ ] `mobile-accessibility` が desktop project で 0 実行（config `grepInvert`）
 - [ ] PR workflow が smoke、push / `ci.sh` 既定が full
-- [ ] tooling テスト（compose / run-e2e シーケンス / CI ゲート順）が緑
-- [ ] full を 1 回以上計測し、Phase 0 比で短縮していること（または desktop a11y 削減分の説明）
+- [ ] tooling（compose / expectedE2EInvocations の smoke 分岐 / CI ゲート順 / smoke タグ）が緑
+- [ ] docs に PR smoke ≠ acceptance 全量が書かれている
+- [ ] full を 1 回以上計測し、desktop a11y 0 実行を確認（≤22 分は stretch）
 
 ## 6. Phase 2 — 認証再利用と seed
 
@@ -207,38 +226,52 @@ magic-link + UI onboarding の固定費を減らし、full を **≤15 分**目�
 
 Phase 2 では **無理に全部 B にしない。** 効果が大きい・汚染が少ないものから移す。
 
-### 6.3 setup project
+### 6.3 setup project（実行モデル固定・レビュー F1）
 
-`playwright.config.ts` に setup project を追加する案:
+**採用モデル（1 方式のみ）:** Playwright の `dependencies: ["setup"]` は **使わない**。  
+`run-e2e.sh` が shell で起動順を制御する（現行の mobile → desktop **2 プロセス**を Phase 2 でも維持するため）。
 
 ```text
-setup (依存なし) → mobile-chromium / desktop-chromium が setup に dependsOn
+# full（KONDATE_E2E_SUITE=full、--project 未指定）
+run_playwright --project=setup          # 1 回だけ。storageState を e2e/.auth/user.json へ
+run_playwright --project=mobile-chromium
+reset-e2e-ai-quota.sh
+run_playwright --project=desktop-chromium
+
+# smoke
+run_playwright --project=setup          # 1 回（reused fixture を使う smoke がある場合）
+run_playwright --project=mobile-chromium --grep=@smoke
+# desktop 段なし
 ```
 
-- setup は **1 worker** で magic-link 1 回（または Admin で session 相当を確立）し、`e2e/.auth/user.json`（gitignored）へ `storageState` を書く。
-- 通常 project は `storageState` を読む fixture を opt-in で使う。
+- setup project: `testMatch` で `auth.setup.ts` のみ。**1 worker**。magic-link または Admin 経路で 1 ユーザを作り `storageState` を書く。
+- mobile/desktop project: **setup に dependsOn しない**。reused fixture はファイルが存在するときだけ `storageState` を読む。
 - setup 失敗時は suite 全体 fail（fail-closed）。
-
-**Gitignore:** `e2e/.auth/` を ignore。秘密・本番トークンを置かない（ローカル GoTrue のみ）。
+- **Gitignore:** `e2e/.auth/`。tracked されていれば tooling で fail。
+- **`@ephemeral-auth`:** 破壊的 / auth 専用 spec は allowlist 静的テストで必須タグ。reused を誤適用しない。
 
 ### 6.4 completed onboarding の seed
 
 | 現状 | 変更後 |
 | --- | --- |
-| UI: 家族設定開始 → 1 人目 → privacy | **既定:** service role / REST + 必要最小 SQL で profile・member・privacy_consents 等を投入し `/planner` へ |
+| UI: 家族設定開始 → 1 人目 → privacy | **既定:** service role / REST で完了状態を投入し `/planner` へ |
 | UI path の回帰 | `onboarding.spec.ts` と `full-journey` household が **UI 完了 path を所有**したまま残す |
 
-seed ヘルパは `e2e/fixtures/` に置き、service role キーを page に渡さない（現行 `acceptance.ts` / history seed と同方針）。
+**seed 必須契約（レビュー F6 / I2）:**
+
+- 参照: `e2e/fixtures/acceptance.ts` の admin パターン、`shared/contracts/domain.ts` の `privacyNoticeVersion`（現行値 **`2026-07-29.v1`** を seed の `privacy_consents.notice_version` に固定。契約が更新されたら実装に追随）。
+- 最低: 対象 user の `profiles`（onboarding 完了相当）、`household_members` ≥1（allergy none 相当）、`privacy_consents` 現行 version 行。
+- service role キーを page に渡さない。
+- seed 直後: `/planner` に留まり welcome へ戻されないこと（焦点 E2E または fixture 内 assert）。
 
 ### 6.5 global AI quota reset の範囲
 
-| 現状 | 変更後 |
+| 現状 | 変更後（Phase 2） |
 | --- | --- |
-| `authenticatedPage` / `completedOnboardingPage` / `ideaModePage` の **毎回** truncate | **生成・外部 AI 送信を行う test の直前のみ**（明示ヘルパ `ensureAiQuotaForGeneration()`） |
-| suite 境界の `reset-e2e-ai-quota.sh` | **維持**（mobile↔desktop 境界と日跨ぎ再実行） |
+| fixture 入口の **毎回** truncate | **生成・外部 AI 送信直前のみ** `ensureAiQuotaForGeneration()` |
+| suite 境界の `reset-e2e-ai-quota.sh` | **維持** |
 
-非生成 UI テストは PG truncate 往復をしない。  
-誤って生成 test が reset を忘れ枠枯れする場合は **その test を red にし**、ヘルパ必須をコメントと review で担保する（自動検出は Phase 2 任意: 生成 URL を監視して未 reset なら fail は overkill ならやらない）。
+Phase 3 では test ごと truncate を **完全廃止**する（§7.3）。Phase 2 の間は workers=1 のままなので生成直前 reset は安全。
 
 ### 6.6 Phase 2 完了条件
 
@@ -260,44 +293,45 @@ seed ヘルパは `e2e/fixtures/` に置き、service role キーを page に渡
 | 面 | 値 |
 | --- | --- |
 | 通常 local `compose.yaml` | **20 のまま**（変更しない） |
-| E2E override `compose.e2e.yaml` の app | **製品 max 以下の十分大きな値**（推奨 **500** = `GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX`、または full 並列に足りる最小の切りの良い数。Plan 実装時に「1 suite の最大外部送信見積 × safety factor」をコメントで固定） |
+| E2E override `compose.e2e.yaml` の app | **製品 max 以下**。初期値は **500**（`GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX`）可。compose.e2e コメントで「運用推奨 20 や本番推奨とは別。E2E 並列用の ENV 上書き。製品 max 一杯であり 1 suite 送信見積 × safety factor を超えないこと」を必須化 |
 | 本番 / preflight | 変更しない |
 
-**意図:** 並列実行中に worker 間で truncate しなくても枠枯渇しないようにする。  
-**禁止:** アプリコードの製品 max 定義を「E2E のため」に上げること。ENV オーバーライドのみ。
+**意図:** 並列中に truncate なしでも枠枯渇しにくくする。  
+**禁止:** アプリの製品 max 定義を E2E のために上げる。ENV のみ。  
+**quota theater residual:** E2E は limit=20 の枯渇 UX を証明しない（現状も fixture truncate で 20 到達を避けている）。MVP #17 は unit/pgTAP 所有。docs に「local 通常 20 / E2E は compose.e2e 上書き」を書く。
 
-### 7.3 truncate 戦略の再定義
+### 7.3 truncate 戦略と workers の fail-closed（レビュー C2）
 
-Phase 2 の「生成前 reset」は、Phase 3 では:
+Phase 3 では:
 
-- **既定:** E2E の高い `GLOBAL_DAILY_AI_LIMIT` の下では **suite 開始時と project 境界の reset のみ**（test ごと truncate 廃止）
-- 並列 truncate は **禁止**（他 worker のカウンタを消す）
-- どうしても isolation が要る場合は **ユーザ単位枠**に依存（新規ユーザは Phase 2 ephemeral で独立）し、global は触らない
+- **suite 開始時と project 境界（shell）の reset のみ**
+- **test 本体・fixture 入口での `truncate private.ai_global_daily_usage` は 0**
+- **workers > 1 を入れる PR では** tooling が次を fail-closed する:
+  1. `ensureAiQuotaForGeneration` / `resetGlobalAiQuotaForE2e` の test/fixture 入口呼び出しが 0（shell スクリプト境界のみ許可）
+  2. `playwright.config.ts` の `workers` が定数 2（または許可集合）であり、調査なしの `process.env.CI ? { workers: 1 }` パターンを復活させない（`project-config.test.mjs` を新契約へ更新）
+
+Task 10（truncate 廃止）と Task 11（workers）は **同一 PR にまとめる**か、workers 変更 PR で (1) が red なら merge 不可。
 
 ### 7.4 workers と serial
 
 | 設定 | Phase 3 目標 |
 | --- | --- |
-| `workers` | CI/local とも **2** から開始。安定後 3〜4 を検討（ホスト CPU 依存） |
-| `fullyParallel` | **true** を目標。`@serial` describe は `test.describe.configure({ mode: "serial" })` |
-| `@serial` 対象 | shopping-list-races の相互依存、同一 storageState ユーザを共有する describe、明示コメントがあるもの |
+| `workers` | **2**（定数）。安定後 3〜4 は別 PR |
+| `fullyParallel` | **true** |
+| `@serial` 必須候補 | `shopping-list-races.spec.ts` 全体、同一 storageState を共有する describe、`history-safety-change` で Realtime/focus が相互依存する場合、生成が密集する describe |
 
-Mailpit / GoTrue:
+**global 行ロック residual（F7）:** `private.ai_global_daily_usage` の単一行 `FOR UPDATE` により、limit を上げても **予約はアプリ全体で直列化**され得る。workers≥2 の短縮は主に **非生成 UI** で効く。生成重い file は serial / 低並列を許容する。≤10 分未達時の主因候補に行ロックを挙げる。
 
-- 並列 magic-link を減らすため、Phase 2 の storageState / Phase 3 の **Admin session 注入**を優先。
-- 残る ephemeral magic-link は worker 数に対してレートに余裕があることを compose.e2e の既存引き上げと合わせて確認。
+Mailpit / GoTrue: storageState と §7.5 の高速経路で並列 magic-link を減らす。
 
-### 7.5 認証注入（Admin / session）
+### 7.5 認証注入（方式固定）
 
-目標: ephemeral でも Mailpit を踏まずにログイン相当を確立するオプション。
+**採用方式（1 つのみ）:** Supabase Admin **`generateLink`（magiclink）で URL を取得しブラウザで開く**。Mailpit を踏まない。GoTrue 依存は残る。
 
-| 方式 | 採用判断 |
-| --- | --- |
-| Supabase Admin `generateLink` / magiclink を API で取得しブラウザで開く | Mailpit より安定しうる。GoTrue 依存は残る |
-| service role で user 作成 + ブラウザに session を注入（`page.addInitScript` / context storage） | 最速。実装コストと supabase-js セッション形状の固定が必要 |
-| 現行 Mailpit | fallback。setup と少数 ephemeral のみ |
-
-**採用:** Plan 実装時に **1 方式を選び**、他は追わない（YAGNI）。失敗時は fail-closed。
+- session 形状の手注入（`addInitScript`）は **採用しない**（YAGNI・セッション drift リスク）。
+- **現行 Mailpit 成功 path** は setup または `@smoke` / full 固定で **最低 1 本**残す（auth 成功回帰の網を消さない）。
+- `oauth-mock` / `auth-callback-security` / cancel・expired は **UI path 維持**（高速化しない）。
+- 失敗時は fail-closed（フォールバックで Mailpit に黙って戻さない。setup 失敗は suite 失敗）。
 
 ### 7.6 sharding（本 Phase の任意・既定オフ）
 
@@ -308,18 +342,19 @@ Mailpit / GoTrue:
 
 | 項目 | 方針 |
 | --- | --- |
-| 開始時 force-recreate | 既定維持（auth カウンタ・E2E env）。`KONDATE_E2E_SKIP_RECREATE=1` は **開発反復用のオプトインのみ**。CI では使わない |
-| CI 終了時の auth/app 復元 | GHA は直後に `docker compose down --volumes` するため、**CI 検出時は restore を短縮**してよい（Plan で `CI=true` 分岐）。ローカルは現行 restore を維持 |
-| tooling テスト | recreate シーケンス断言を「CI 以外」または新シーケンスに合わせて更新 |
+| 開始時 force-recreate | 既定維持。`KONDATE_E2E_SKIP_RECREATE=1` は **開発反復用のみ**。**`CI=true` と同時指定は exit 2**（導入 Task で tooling 固定。Task 13 まで遅延しない） |
+| CI 終了時の auth/app 復元 | GHA は直後に `down --volumes` するため CI 時は restore 短縮可。ローカルは現行 restore |
+| tooling テスト | `expectedE2EInvocations` と compose 正規表現を新シーケンスに合わせて更新 |
 
 ### 7.8 Phase 3 完了条件
 
-- [ ] `compose.e2e.yaml` のみ高い `GLOBAL_DAILY_AI_LIMIT`、通常 compose は 20
-- [ ] `workers ≥ 2` で full が 2 連続 green
-- [ ] test ごとの global truncate が廃止（または serial 区間のみ明示）
-- [ ] 認証の高速経路が ephemeral の過半数で使われている、または storageState + 残 Mailpit の方針が文書化されている
-- [ ] full 実測が目安 ≤10 分、または workers とハードウェア上の限界を PR で説明
-- [ ] 製品 preflight / 本番 env 契約のテストが依然緑
+- [ ] `compose.e2e.yaml` のみ高い `GLOBAL_DAILY_AI_LIMIT`、通常 compose は 20（tooling 固定）
+- [ ] per-test global truncate 0 の tooling が緑
+- [ ] `workers: 2` + `fullyParallel: true` で full が **同一 SHA 2 連続 green**
+- [ ] generateLink 高速経路が ephemeral 既定、Mailpit 成功 path ≥1 本
+- [ ] 生成系は serial 許容。短縮は UI 並列中心で説明可能
+- [ ] ≤10 分は stretch。未達なら行ロック / ハードウェアを PR で説明
+- [ ] 製品 preflight / 本番 env 契約テストが緑
 
 ## 8. 成功指標と回帰ガード
 
@@ -351,17 +386,21 @@ Mailpit / GoTrue:
 
 | リスク | 緩和 |
 | --- | --- |
-| smoke が薄く main だけ red | full を push ゲートに残す。smoke セット変更に表更新を必須化 |
-| storageState 共有で偽 green / 汚染 | `@ephemeral-auth` 必須リスト。破壊的 test は setup を使わない |
-| 並列で global 枠・Mailpit flaky | Phase 3 で limit 上書き + 認証注入。workers は 2 から |
-| tooling テストが run-e2e 文字列に固定 | シーケンス変更時に `tests/tooling/*.mjs` を同時更新 |
-| 受け入れ title 変更漏れ | verify-acceptance-matrix を CI で既に実行していることを利用 |
+| PR smoke のみで merge-time に full が走らない | §4.2 拡張 smoke（#9/#13 各 1 本）+ §5.3 明示。full は push/release。account-deletion は full 依存 |
+| storageState 共有で偽 green / 汚染 | `@ephemeral-auth` allowlist 静的テスト。破壊的 test は setup 不使用 |
+| workers×test ごと truncate で枠破壊 | §7.3 fail-closed。Task 10+11 同一 PR または truncate 残存で workers 禁止 |
+| global 行ロックで生成が直列 | §7.4: UI 並列中心、生成 serial、≤10 分は stretch |
+| Mailpit / 並列 flaky | generateLink + storageState。Mailpit 成功 ≥1 本 |
+| tooling 文字列ピン | 各 Task の Files に compose / local-development-scripts / project-config を必須列挙 |
+| 受け入れ title 変更漏れ | verify-acceptance-matrix（既存 CI） |
+| SKIP_RECREATE が CI で有効 | CI 同時指定 exit 2 + tooling |
+| E2E limit 500 と製品 20 の混同 | compose.e2e コメント + docs。MVP #17 は unit/pgTAP |
 
 ## 10. ファイル影響マップ（概略）
 
 | パス | Phase | 変更概要 |
 | --- | --- | --- |
-| `playwright.config.ts` | 1–3 | tags 利用、setup project、workers、dependsOn |
+| `playwright.config.ts` | 1–3 | `grepInvert`、setup project（dependsOn **なし**）、workers、fullyParallel |
 | `scripts/run-e2e.sh` | 1, 3 | suite モード、CI 時 cleanup 短縮 |
 | `compose.e2e.yaml` | 3 | `GLOBAL_DAILY_AI_LIMIT` E2E 専用 |
 | `.github/workflows/ci.yml` / `scripts/ci.sh` | 1 | smoke/full 分岐、ゲート順テスト追随 |
