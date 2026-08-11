@@ -458,16 +458,22 @@ test("runs E2E through the base and E2E Compose files in override order", async 
   assert.match(runner, /must be full or smoke/u);
   assert.match(runner, /e2e_args_have_grep/u);
   assert.match(runner, /--grep=@smoke/u);
-  // smoke は mobile 1 段 + @smoke のみ（desktop 二段・中間 reset を踏まない分岐）
+  // smoke は mobile 1 段 + @smoke のみ（desktop 並列・中間 reset を踏まない分岐）
   assert.match(runner, /suite=\$\{KONDATE_E2E_SUITE:-full\}/u);
   assert.match(runner, /\[ "\$suite" = "smoke" \]/u);
   // Spec §6.3: shell が setup を 1 回走らせてから mobile/desktop（dependsOn なし）
   assert.match(runner, /--project=setup/u);
   assert.match(runner, /e2e_args_only_setup_project/u);
-  // full suite は mobile → desktop の 2 段（共有 AI 枠リセット込み）
+  // full suite は mobile || desktop 並列（案 B）。中間枠 reset なし、開始時 reset のみ
+  assert.match(runner, /run_playwright_mobile_desktop_parallel/u);
   assert.match(runner, /--project=mobile-chromium/u);
   assert.match(runner, /--project=desktop-chromium/u);
   assert.match(runner, /reset-e2e-ai-quota\.sh/u);
+  // 直列二段 + 中間 reset の退行を拒否
+  assert.doesNotMatch(
+    runner,
+    /run_playwright --project=mobile-chromium[\s\S]*reset-e2e-ai-quota\.sh[\s\S]*run_playwright --project=desktop-chromium/u,
+  );
   assert.match(runner, /logs --no-color app/u);
   assert.doesNotMatch(runner, /exec docker compose/u);
   assert.match(runner, /trap cleanup_on_exit EXIT/u);
@@ -485,8 +491,11 @@ test("runs E2E through the base and E2E Compose files in override order", async 
   assert.match(runner, /if mkdir "\$lock_dir"/u);
   assert.match(
     runner,
-    /launch_in_progress=1\s+"\$@" &\s+child_pid=\$!\s+launch_in_progress=0\s+if \[ "\$signal_pending" -eq 1 \]; then\s+signal_pending=0\s+deliver_signal/u,
+    /launch_in_progress=1\s+"\$@" &\s+child_pid=\$!\s+child_pids=\s+launch_in_progress=0\s+if \[ "\$signal_pending" -eq 1 \]; then\s+signal_pending=0\s+deliver_signal/u,
   );
+  // 案 B: mobile||desktop 並列用の child_pids 配送
+  assert.match(runner, /for_each_child_pid/u);
+  assert.match(runner, /run_playwright_mobile_desktop_parallel/u);
   assert.match(runner, /kill -s KILL/u);
   assert.match(runner, /KONDATE_E2E_SIGNAL_GRACE_SECONDS/u);
   assert.match(runner, /watchdog_pid/u);
@@ -496,7 +505,8 @@ test("runs E2E through the base and E2E Compose files in override order", async 
     runner,
     /stop_requested=1[\s\S]*sleep "\$signal_grace_seconds" &[\s\S]*timer_pid=\$![\s\S]*if \[ "\$stop_requested" -eq 1 \]/u,
   );
-  assert.match(runner, /child_pid=\s+cancel_watchdog/u);
+  // wait 完了後に clear_child_pids（child_pid/child_pids 両方）してから cancel_watchdog
+  assert.match(runner, /clear_child_pids\s+cancel_watchdog/u);
 });
 
 test("documents the Docker-only clean initialization and verification workflow", async () => {

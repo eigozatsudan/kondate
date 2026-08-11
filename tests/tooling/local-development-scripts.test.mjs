@@ -113,7 +113,9 @@ async function installDockerRecorder(root) {
       "#!/bin/sh",
       "set -eu",
       "index=1",
-      'while [ -e "$DOCKER_LOG_DIR/$index" ]; do index=$((index + 1)); done',
+      // mobile||desktop 並列で index 競合を mkdir で防ぐ
+      "# allocate log index atomically (parallel mobile/desktop docker)",
+      'while ! mkdir "$DOCKER_LOG_DIR/$index.lock" 2>/dev/null; do index=$((index + 1)); done',
       'for argument do printf "%s\\0" "$argument"; done > "$DOCKER_LOG_DIR/$index"',
       'if [ "${DOCKER_WAIT_AT:-}" = "$index" ]; then',
       '  printf "%s\\n" "$$" > "$DOCKER_READY_FILE"',
@@ -196,14 +198,48 @@ async function installDockerRecorder(root) {
 
 async function readDockerInvocations(logDir) {
   const files = await readdir(logDir);
-  files.sort((left, right) => Number(left) - Number(right));
+  // 並列 docker が残す index.lock ディレクトリは invocation ではない
+  const logFiles = files.filter((name) => /^\d+$/u.test(name));
+  logFiles.sort((left, right) => Number(left) - Number(right));
   return Promise.all(
-    files.map(async (file) => {
+    logFiles.map(async (file) => {
       const encoded = await readFile(join(logDir, file), "utf8");
       assert.equal(encoded.endsWith("\0"), true);
       return encoded.slice(0, -1).split("\0");
     }),
   );
+}
+
+/** full の mobile||desktop 並列で body run のログ順が入れ替わっても比較できるよう正規化する */
+function canonicalizeE2EInvocations(invocations) {
+  const isMobileOrDesktopBodyRun = (args) => {
+    if (!args.includes("run") || !args.includes("e2e")) return false;
+    if (!args.includes("--rm") || !args.includes("--no-deps")) return false;
+    return (
+      args.includes("--project=mobile-chromium") || args.includes("--project=desktop-chromium")
+    );
+  };
+  const bodyIndexes = [];
+  for (let index = 0; index < invocations.length; index += 1) {
+    if (isMobileOrDesktopBodyRun(invocations[index])) bodyIndexes.push(index);
+  }
+  if (bodyIndexes.length < 2) return invocations;
+  const sortedBodies = bodyIndexes
+    .map((index) => invocations[index])
+    .sort((left, right) => {
+      const leftKey = left.includes("--project=mobile-chromium") ? 0 : 1;
+      const rightKey = right.includes("--project=mobile-chromium") ? 0 : 1;
+      return leftKey - rightKey;
+    });
+  const next = invocations.map((args) => [...args]);
+  bodyIndexes.forEach((index, order) => {
+    next[index] = sortedBodies[order];
+  });
+  return next;
+}
+
+function assertE2EInvocationsEqual(actual, expected) {
+  assert.deepEqual(canonicalizeE2EInvocations(actual), canonicalizeE2EInvocations(expected));
 }
 
 function expectedRefreshInvocations(root, projectName) {
@@ -295,7 +331,7 @@ function expectedE2EInvocations(
   // scripts/run-e2e.sh の現行シーケンスに合わせる:
   // base up → force-recreate auth（SKIP_RECREATE 時は up のみ）→ AI 枠リセット →
   // E2E app 群 recreate（SKIP 時は force-recreate なし）→
-  // full: setup（storageState）1 回 →（--project 未指定なら mobile → 枠リセット → desktop）
+  // full: setup（storageState）1 回 →（--project 未指定なら mobile || desktop 並列。中間枠 reset なし）
   // smoke: setup 省略（reused が smoke に載るまで）→ mobile-chromium 1 段 + --grep=@smoke
   // --project=setup のみのときは setup を二重起動しない
   // → cleanup で app ログ採取 → 失敗時のみ e2e kill/rm →
@@ -384,6 +420,8 @@ function expectedE2EInvocations(
       [...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...arguments_],
     ];
   } else {
+    // mobile || desktop 並列（中間 quota reset なし）。ログ順は非決定のため
+    // assertE2EInvocations 側で body run を project 名で正規化する。
     playwrightRuns = [
       setupRun,
       [
@@ -396,7 +434,6 @@ function expectedE2EInvocations(
         "--project=mobile-chromium",
         ...arguments_,
       ],
-      quotaReset,
       [
         ...compose,
         ...e2eComposeFiles,
@@ -649,7 +686,7 @@ test("E2E runner restores the base stack and preserves success or failure", asyn
           (error) => error && typeof error === "object" && error.code === fixture.e2eStatus,
         );
 
-      assert.deepEqual(
+      assertE2EInvocationsEqual(
         await readDockerInvocations(logDir),
         expectedE2EInvocations(
           root,
@@ -676,7 +713,7 @@ test("E2E runner smoke suite runs a single mobile project with @smoke grep", asy
     TMPDIR: root,
   });
 
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false, "smoke"),
   );
@@ -697,7 +734,7 @@ test("E2E runner smoke suite respects caller --project and --grep", async (t) =>
     TMPDIR: root,
   });
 
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), args, false, "smoke"),
   );
@@ -716,7 +753,7 @@ test("E2E runner strips a leading bare -- before playwright args", async (t) => 
     TMPDIR: root,
   });
 
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), args, false),
   );
@@ -807,7 +844,7 @@ test("E2E runner skips auth/app restore cleanup when CI=true", async (t) => {
     TMPDIR: root,
   });
 
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(
       root,
@@ -844,7 +881,7 @@ test("E2E runner skips start force-recreate when KONDATE_E2E_SKIP_RECREATE=1", a
     TMPDIR: root,
   });
 
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(
       root,
@@ -909,7 +946,7 @@ test("E2E runner serializes runs from the same checkout and releases its lock", 
   await assert.rejects(access(await expectedE2ELockDir(root)));
 
   await runE2E(root, bin, thirdLogDir, [], { TMPDIR: thirdTmpDir });
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(thirdLogDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
@@ -925,7 +962,7 @@ test("E2E runner recovers a stale empty checkout lock before invoking Docker", a
 
   await runE2E(root, bin, logDir, [], { TMPDIR: root });
 
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
@@ -985,7 +1022,7 @@ test("E2E runner reports a lock release failure after a successful run", async (
   const result = await waitForCompletion(completion);
   assert.equal(result.signal, null);
   assert.notEqual(result.code, 0);
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
@@ -1043,7 +1080,7 @@ test("E2E runner restores the base stack after every forwarded signal", async (t
         signal: null,
       });
       assert.equal(isProcessAlive(fakeDockerPid), false);
-      assert.deepEqual(
+      assertE2EInvocationsEqual(
         await readDockerInvocations(logDir),
         expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
       );
@@ -1105,7 +1142,7 @@ test("E2E runner force-kills a child that ignores two forwarded signals", async 
         signal: null,
       });
       assert.equal(isProcessAlive(fakeDockerPid), false);
-      assert.deepEqual(
+      assertE2EInvocationsEqual(
         await readDockerInvocations(logDir),
         expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
       );
@@ -1167,7 +1204,7 @@ test("E2E runner watchdog kills a child that ignores one forwarded signal", asyn
       });
       for (const pid of [fakeDockerPid, watchdogPid, timerPid])
         assert.equal(isProcessAlive(pid), false);
-      assert.deepEqual(
+      assertE2EInvocationsEqual(
         await readDockerInvocations(logDir),
         expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
       );
@@ -1199,7 +1236,7 @@ test("E2E runner reaps a child that signals during launch", async (t) => {
 
       const fakeDockerPid = Number((await readFile(readyFile, "utf8")).trim());
       assert.equal(isProcessAlive(fakeDockerPid), false);
-      assert.deepEqual(
+      assertE2EInvocationsEqual(
         await readDockerInvocations(logDir),
         expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
       );
@@ -1251,7 +1288,7 @@ test("E2E runner bounds repeated signals while restoring the base stack", async 
 
   assert.deepEqual(await waitForCompletion(completion), { code: 143, signal: null });
   assert.equal(isProcessAlive(fakeDockerPid), false);
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
@@ -1303,7 +1340,7 @@ test("E2E runner bounds one signal while a base restoration is stuck", async (t)
   assert.deepEqual(await waitForCompletion(completion), { code: 143, signal: null });
   for (const pid of [fakeDockerPid, watchdogPid, timerPid])
     assert.equal(isProcessAlive(pid), false);
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
@@ -1349,7 +1386,7 @@ test("E2E runner skips removed E2E container cleanup after a successful run", as
 
   await runE2E(root, bin, logDir, [], { E2E_KILL_STATUS: "45", E2E_RM_STATUS: "46" });
 
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
@@ -1367,7 +1404,7 @@ test("E2E runner reports a base stack restoration failure after a successful run
     (error) => error && typeof error === "object" && error.code === 47,
   );
 
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
@@ -1419,7 +1456,7 @@ test("E2E runner kills and removes a daemon-side E2E child before restoring", as
   await waitForProcessExit(daemonChildPid);
   assert.equal(isProcessAlive(dockerCliPid), false);
   assert.equal(await readFile(removedFile, "utf8"), "removed\n");
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
   );
@@ -1433,7 +1470,7 @@ test("E2E runner does not remove the completed E2E container", async (t) => {
 
   await runE2E(root, bin, logDir, [], { E2E_RM_STATUS: "46" });
 
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );
@@ -1484,7 +1521,7 @@ test("E2E runner escalates a second signal across the cleanup phase", async (t) 
 
   assert.deepEqual(await waitForCompletion(completion, 500), { code: 143, signal: null });
   assert.equal(isProcessAlive(cleanupPid), false);
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
   );
@@ -1540,7 +1577,7 @@ test("E2E runner rearms its watchdog for a stuck restore after an E2E signal", a
   assert.deepEqual(await waitForCompletion(completion, 500), { code: 143, signal: null });
   for (const pid of [e2ePid, restorePid, watchdogPid, timerPid])
     assert.equal(isProcessAlive(pid), false);
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), e2eArgs),
   );
@@ -1599,7 +1636,7 @@ test("E2E runner rearms its watchdog for a stuck restore after an rm signal", as
   assert.equal(await readFile(removalMarker, "utf8"), "removed\n");
   for (const pid of [removalPid, restorePid, watchdogPid, timerPid])
     assert.equal(isProcessAlive(pid), false);
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root)),
   );
@@ -1623,7 +1660,7 @@ test("E2E runner prioritizes cleanup signal over an E2E failure", async (t) => {
   );
 
   assert.equal(await readFile(successMarker, "utf8"), "restored\n");
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root)),
   );
@@ -1647,7 +1684,7 @@ test("E2E runner preserves a signal delivered as cleanup completes", async (t) =
   );
 
   assert.equal(await readFile(successMarker, "utf8"), "restored\n");
-  assert.deepEqual(
+  assertE2EInvocationsEqual(
     await readDockerInvocations(logDir),
     expectedE2EInvocations(root, await expectedProjectName(root), [], false),
   );

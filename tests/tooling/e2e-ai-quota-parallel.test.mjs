@@ -70,7 +70,7 @@ test("e2e tree has zero per-test global AI truncate call sites", async () => {
   );
 });
 
-test("shell boundary still resets global AI quota for suite/project edges", async () => {
+test("shell boundary still resets global AI quota at suite start", async () => {
   const resetScript = await readFile("scripts/reset-e2e-ai-quota.sh", "utf8");
   const runE2e = await readFile("scripts/run-e2e.sh", "utf8");
 
@@ -83,7 +83,13 @@ test("shell boundary still resets global AI quota for suite/project edges", asyn
   assert.match(
     runE2e,
     /reset-e2e-ai-quota\.sh/u,
-    "run-e2e.sh must invoke the AI quota reset at suite/project boundaries",
+    "run-e2e.sh must invoke the AI quota reset at suite start",
+  );
+  // 案 B: mobile||desktop 並列のため project 境界の中間 reset は持たない
+  assert.match(
+    runE2e,
+    /run_playwright_mobile_desktop_parallel/u,
+    "full suite must launch mobile and desktop in parallel",
   );
 });
 

@@ -5,6 +5,8 @@ export default defineConfig({
   // Phase 3: UI 中心の並列化。race / 共有 storageState / 生成密集 file は
   // 各 spec で test.describe.configure({ mode: "serial" }) を付ける。
   // 定数 2。process.env.CI で workers を分岐しない（調査なしの 1 固定退行を禁止）。
+  // full は run-e2e.sh が mobile||desktop を別プロセスで並列起動するため、
+  // 実効ブラウザ並列は最大 workers×2。成果物は env で project ごとに分離する。
   fullyParallel: true,
   // ローカルもretryを1回に上げる。browserはnetwork_mode:host経由でViteの
   // 非バンドルmoduleを数百件取得するため、host側のnetwork構成変更で
@@ -13,7 +15,18 @@ export default defineConfig({
   // アプリ race / helper 非決定性を 2 回目 green で隠さないこと（テスト自体を決定論的に保つ）。
   retries: process.env.CI ? 2 : 1,
   workers: 2,
-  reporter: [["list"], ["html", { open: "never" }]],
+  // run-e2e 並列時は KONDATE_E2E_OUTPUT_DIR で project ごとに分ける
+  outputDir: process.env.KONDATE_E2E_OUTPUT_DIR ?? "test-results",
+  reporter: [
+    ["list"],
+    [
+      "html",
+      {
+        open: "never",
+        outputFolder: process.env.KONDATE_E2E_HTML_REPORT ?? "playwright-report",
+      },
+    ],
+  ],
   use: {
     baseURL: "http://127.0.0.1:5173",
     // CI では trace/video を無効化し、DOM・入力・通信 header/body を artifact に載せない。

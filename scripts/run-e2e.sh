@@ -10,6 +10,10 @@
 # 全体が長く複雑になっている。読む際は「run_child = 子プロセスの起動と
 # シグナル/終了待ち」「cleanup = E2Eコンテナの後始末」「finish = ロック解放と
 # 最終exit」の3層構造として捉えるとよい。
+#
+# full の本体は mobile-chromium と desktop-chromium を同一 wrapper 内で並列起動する
+# （案 B: 壁時計 ≈ max(mobile, desktop)）。setup は直前に 1 回だけ直列。
+# 中間 AI 枠 reset はしない（開始時 1 回 + compose.e2e の GLOBAL_DAILY 500）。
 set -eu
 
 script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
@@ -39,7 +43,9 @@ if ! printf '%s\n' "$signal_grace_seconds" | grep -Eq '^(0|[1-9][0-9]*)([.][0-9]
 fi
 
 wrapper_pid=$$
+# 単一待ち用。並列待ち中は child_pids（空白区切り）も併用する。
 child_pid=
+child_pids=
 watchdog_pid=
 launch_in_progress=0
 termination_status=0
@@ -48,6 +54,32 @@ signal_count=0
 signal_pending=0
 cleanup_started=0
 lock_acquired=0
+
+# アクティブな子 PID があるか（単一 / 並列のどちらでも）。
+has_active_children() {
+  [ -n "$child_pid" ] || [ -n "$child_pids" ]
+}
+
+# シグナル配送・強制 kill 用に、所有中の子へコマンドを適用する。
+# 並列中は child_pids（空白区切り）、通常は child_pid 単体。
+# 意図的に word-split する（PID は整数のみ）。
+for_each_child_pid() {
+  if [ -n "$child_pids" ]; then
+    for pid in $child_pids; do
+      "$@" "$pid" || true
+    done
+    return
+  fi
+  if [ -n "$child_pid" ]; then
+    "$@" "$child_pid" || true
+  fi
+}
+
+# 所有 PID 一覧を空にする（wait 完了後）。
+clear_child_pids() {
+  child_pid=
+  child_pids=
+}
 
 # signal_grace_seconds経過しても子プロセスが自然終了しない場合に、
 # 現在のwrapperプロセス自身へALRMを送って強制killを促すサブシェル。
@@ -115,27 +147,26 @@ cancel_watchdog() {
 
 # watchdogからのALRM受信時に呼ばれる: 猶予切れなので現在の子を強制killする。
 force_child_after_grace() {
-  if [ -n "$child_pid" ]; then
-    # wrapperが現在所有するPIDだけを参照し、watchdog側で古いPIDを保持しない。
-    kill -s KILL "$child_pid" 2>/dev/null || true
-  fi
+  # wrapperが現在所有するPIDだけを参照し、watchdog側で古いPIDを保持しない。
+  for_each_child_pid kill -s KILL
 }
 trap force_child_after_grace ALRM
 
 # 受信したシグナルを現在の子プロセスへ実際に転送する。1回目は対象シグナルを
 # 送って猶予期間だけ待ち、2回目以降（再度Ctrl-C等）はためらわず強制killする。
+# mobile||desktop 並列中は両方へ同じシグナルを送る。
 deliver_signal() {
-  if [ -z "$child_pid" ]; then
+  if ! has_active_children; then
     return
   fi
   if [ "$signal_count" -gt 1 ]; then
     # 再入力後は復元中でも待機を打ち切り、孤児を残さず回収へ進める。
-    kill -s KILL "$child_pid" 2>/dev/null || true
+    for_each_child_pid kill -s KILL
   elif [ "$cleanup_started" -eq 1 ]; then
     # 初回signalでは復元を中断せず、grace期限まで正常完了を待つ。
     start_watchdog
   else
-    kill -s "$active_signal" "$child_pid" 2>/dev/null || true
+    for_each_child_pid kill -s "$active_signal"
     start_watchdog
   fi
 }
@@ -153,7 +184,7 @@ record_signal() {
     active_signal=$signal
   fi
   signal_count=$((signal_count + 1))
-  if [ -n "$child_pid" ]; then
+  if has_active_children; then
     deliver_signal
   else
     signal_pending=1
@@ -163,6 +194,26 @@ trap 'record_signal HUP 129' HUP
 trap 'record_signal INT 130' INT
 trap 'record_signal TERM 143' TERM
 
+# 1 PID の終了を、シグナル割り込みで wait が壊れても回収できるまで待つ。
+# 終了コードを stdout ではなく return で返す（ログ汚染を避ける）。
+wait_registered_pid() {
+  wait_target=$1
+  wait_status=0
+  while :; do
+    if wait "$wait_target"; then
+      wait_status=0
+      break
+    else
+      wait_status=$?
+    fi
+    if kill -0 "$wait_target" 2>/dev/null; then
+      continue
+    fi
+    break
+  done
+  return "$wait_status"
+}
+
 # コマンドをバックグラウンドで起動し、終了(またはシグナルによる中断)まで
 # 待つ共通ヘルパー。cleanupフェーズ以外で既に中断が確定していれば
 # 新規コマンドを起動せず即座に失敗を返す。
@@ -171,9 +222,11 @@ run_child() {
     return "$termination_status"
   fi
   # fork直後にtrapが動いても、PID公開後に保留signalを配送する。
+  # 直列経路は child_pid のみ（child_pids は空のまま）で従来のシグナル契約を維持する。
   launch_in_progress=1
   "$@" &
   child_pid=$!
+  child_pids=
   launch_in_progress=0
   if [ "$signal_pending" -eq 1 ]; then
     signal_pending=0
@@ -183,19 +236,9 @@ run_child() {
     # cleanupの子が切り替わっても、記録済みsignalのgrace期限を各子へ適用する。
     start_watchdog
   fi
-  while :; do
-    if wait "$child_pid"; then
-      child_status=0
-      break
-    else
-      child_status=$?
-    fi
-    if kill -0 "$child_pid" 2>/dev/null; then
-      continue
-    fi
-    break
-  done
-  child_pid=
+  wait_registered_pid "$child_pid"
+  child_status=$?
+  clear_child_pids
   cancel_watchdog
   if [ "$termination_status" -ne 0 ] && [ "$cleanup_started" -eq 0 ]; then
     return "$termination_status"
@@ -374,10 +417,68 @@ else
 fi
 
 # Playwright e2e コンテナを1回起動する（引数はそのまま playwright test へ渡す）。
+# 呼び出し側の環境変数 KONDATE_E2E_OUTPUT_DIR / KONDATE_E2E_HTML_REPORT を
+# compose が e2e サービスへ渡す（成果物ディレクトリ分離用。CLI 引数は変えない）。
 run_playwright() {
   run_child docker compose --project-directory "$repo_root" --project-name "$project_name" \
     -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
     run --rm --no-deps e2e "$@"
+}
+
+# full 本体: mobile と desktop を同一 wrapper 内で並列起動する（案 B）。
+# どちらかが先に落ちても他方は最後まで走らせ、診断用の失敗一覧を揃える。
+# 終了コードは従来どおり mobile 非 0 を優先し、次に desktop を返す。
+run_playwright_mobile_desktop_parallel() {
+  if [ "$termination_status" -ne 0 ] && [ "$cleanup_started" -eq 0 ]; then
+    return "$termination_status"
+  fi
+
+  launch_in_progress=1
+  # 成果物を project ごとに分離（並列時の test-results / html report 競合を防ぐ）。
+  # compose.yaml の e2e.environment がホスト env を補間してコンテナへ渡す。
+  KONDATE_E2E_OUTPUT_DIR=test-results/mobile-chromium \
+    KONDATE_E2E_HTML_REPORT=playwright-report/mobile-chromium \
+    docker compose --project-directory "$repo_root" --project-name "$project_name" \
+    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+    run --rm --no-deps e2e --project=mobile-chromium "$@" &
+  mobile_pid=$!
+
+  KONDATE_E2E_OUTPUT_DIR=test-results/desktop-chromium \
+    KONDATE_E2E_HTML_REPORT=playwright-report/desktop-chromium \
+    docker compose --project-directory "$repo_root" --project-name "$project_name" \
+    -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
+    run --rm --no-deps e2e --project=desktop-chromium "$@" &
+  desktop_pid=$!
+
+  child_pids="$mobile_pid $desktop_pid"
+  child_pid=$mobile_pid
+  launch_in_progress=0
+
+  if [ "$signal_pending" -eq 1 ]; then
+    signal_pending=0
+    deliver_signal
+  fi
+
+  mobile_status=0
+  desktop_status=0
+  wait_registered_pid "$mobile_pid" || mobile_status=$?
+  # mobile 終了後は desktop だけを所有 PID としてシグナル配送対象にする
+  child_pids=$desktop_pid
+  child_pid=$desktop_pid
+  wait_registered_pid "$desktop_pid" || desktop_status=$?
+  clear_child_pids
+  cancel_watchdog
+
+  if [ "$termination_status" -ne 0 ] && [ "$cleanup_started" -eq 0 ]; then
+    return "$termination_status"
+  fi
+  if [ "$mobile_status" -ne 0 ]; then
+    return "$mobile_status"
+  fi
+  if [ "$desktop_status" -ne 0 ]; then
+    return "$desktop_status"
+  fi
+  return 0
 }
 
 # 呼び出し側が --project を既に指定しているか（単一プロジェクト実行の制御用）。
@@ -517,25 +618,13 @@ run_e2e_commands() {
   run_playwright --project=setup || return $?
 
   # full: 呼び出し側が --project を指定していれば setup 後にそのまま1回実行する。
-  # 未指定では mobile → 枠リセット → desktop の 2 段実行にし、
-  # 1 suite 内の共有 AI 枠累積で後半だけ落ちるのを防ぐ。
-  # どちらか一方が失敗しても他方は最後まで走らせ、診断用の失敗一覧を揃える。
+  # 未指定では mobile || desktop を並列起動する（案 B）。
+  # AI 共有枠は開始時 reset + compose.e2e GLOBAL_DAILY=500 のみ（中間 reset なし）。
+  # auth メール枠は compose.e2e の上限引き上げと開始時 force-recreate で賄う。
   if e2e_args_have_project "$@"; then
     run_playwright "$@" || return $?
   else
-    mobile_status=0
-    desktop_status=0
-    run_playwright --project=mobile-chromium "$@" || mobile_status=$?
-    # project 境界で AI 共有枠を空にする（auth メール枠は compose.e2e の上限引き上げと
-    # 開始時 force-recreate で賄う。ここでの auth 再作成は JWT/Kong と競合しやすい）。
-    run_child "$script_dir/reset-e2e-ai-quota.sh" || return $?
-    run_playwright --project=desktop-chromium "$@" || desktop_status=$?
-    if [ "$mobile_status" -ne 0 ]; then
-      return "$mobile_status"
-    fi
-    if [ "$desktop_status" -ne 0 ]; then
-      return "$desktop_status"
-    fi
+    run_playwright_mobile_desktop_parallel "$@" || return $?
   fi
 }
 

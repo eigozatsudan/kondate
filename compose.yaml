@@ -195,6 +195,10 @@ services:
     environment:
       LOCAL_UID: "${LOCAL_UID:-1000}"
       LOCAL_GID: "${LOCAL_GID:-1000}"
+      # full の mobile||desktop 並列時、run-e2e.sh が project ごとに上書きする。
+      # 未設定時は従来どおりリポジトリ直下の既定パス。
+      KONDATE_E2E_OUTPUT_DIR: "${KONDATE_E2E_OUTPUT_DIR:-test-results}"
+      KONDATE_E2E_HTML_REPORT: "${KONDATE_E2E_HTML_REPORT:-playwright-report}"
     # app と同じく root→LOCAL_UID。Playwright のキャッシュ解決にも passwd/home が必要。
     # entrypoint に playwright まで含め、compose run e2e の追加引数が末尾連結される形を保つ。
     user: "0:0"
