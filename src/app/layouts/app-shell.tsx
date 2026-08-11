@@ -6,6 +6,7 @@ import {
   householdSafetyChangedEvent,
   invalidateHouseholdSafetyQueries,
   isHouseholdSafetyRevisionStorageKeyForUser,
+  subscribeHouseholdSafetyBroadcast,
 } from "@/features/household/household-queries";
 import { runPlannerLeaveFlush } from "@/features/planner/planner-leave-flush";
 
@@ -145,9 +146,12 @@ export function AppShell() {
     };
     window.addEventListener("storage", onStorage);
     window.addEventListener(householdSafetyChangedEvent, invalidate);
+    // H-R3: setItem 失敗時 storage が飛ばないため BC で他タブ invalidate を補う
+    const unsubscribeBroadcast = subscribeHouseholdSafetyBroadcast(userId, invalidate);
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener(householdSafetyChangedEvent, invalidate);
+      unsubscribeBroadcast();
     };
   }, [queryClient, userId]);
 

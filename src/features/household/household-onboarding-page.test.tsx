@@ -887,6 +887,76 @@ it("single-flights completeMember on double complete click (H7)", async () => {
   });
 });
 
+// H-R2: complete 成功後の invalidate 成否を settings H4 と同型コピーで次アクションへ出す
+it("H-R2: shows refresh ok message after complete when invalidate succeeds", async () => {
+  const user = userEvent.setup();
+  const completableDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const membersState = createMembersApiState([completableDraft]);
+  const completeMember = vi.fn(() => {
+    const completed = { ...completableDraft, status: "complete" as const };
+    membersState.upsert(completed);
+    return Promise.resolve(completed);
+  });
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    completeMember,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+  await waitFor(() => {
+    expect(
+      screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" }),
+    ).toBeInTheDocument();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+});
+
+it("H-R2: shows manual reload guidance when complete invalidate fails", async () => {
+  const user = userEvent.setup();
+  const completableDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const membersState = createMembersApiState([completableDraft]);
+  const completeMember = vi.fn(() => {
+    const completed = { ...completableDraft, status: "complete" as const };
+    membersState.upsert(completed);
+    return Promise.resolve(completed);
+  });
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    completeMember,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // invalidateQueries を throw させ soft 失敗経路を固定（settings H4 と同型）
+  const originalInvalidate = client.invalidateQueries.bind(client);
+  vi.spyOn(client, "invalidateQueries").mockImplementation(async (filters) => {
+    await originalInvalidate(filters);
+    throw new Error("invalidate failed");
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+  await waitFor(() => {
+    expect(
+      screen.getByRole("heading", { level: 1, name: "1人目の登録が完了しました" }),
+    ).toBeInTheDocument();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("画面の再確認に失敗したため");
+  expect(screen.getByRole("status")).toHaveTextContent("再読み込み");
+  // complete 自体は成功しているので次アクション CTA は出る
+  expect(screen.getByRole("button", { name: "献立を始める" })).toBeInTheDocument();
+});
+
 // H2: onboarding にも residual 警告（settings 相当）
 it("H2: shows residual allergy warning when none status still has allergies", async () => {
   const residualDraft: HouseholdMemberRow = {

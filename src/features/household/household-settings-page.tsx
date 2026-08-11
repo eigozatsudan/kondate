@@ -120,7 +120,9 @@ function registeredSaveBlockedMessage(
   evidence: PendingRegisteredIntent["registeredSaveEvidence"],
 ): string | undefined {
   if (evidence === "known-empty") return "登録ありの場合は1つ以上選んでください";
-  if (evidence === "unknown") return "アレルギー情報を確認しています";
+  // H-R1: allergy-insert は list 確認前の窓。registered PATCH 不可の間は確認中と同等に扱う。
+  if (evidence === "unknown" || evidence === "allergy-insert")
+    return "アレルギー情報を確認しています";
   if (evidence === "query-error")
     return "アレルギー情報を確認できませんでした。もう一度お試しください";
   return undefined;
@@ -738,10 +740,11 @@ export function HouseholdSettingsForm({
           }
           const current = pendingRegisteredIntents.current.get(memberId);
           if (current !== pending) return false;
+          // H-R1: registered PATCH は list 非空確定後の allergy-query のみ許可。
+          // allergy-insert は fetch 前の仮証跡で、H8 empty 確定前の concurrent save を防ぐ。
           if (
             current.values.allergyStatus === "registered" &&
-            current.registeredSaveEvidence !== "allergy-query" &&
-            current.registeredSaveEvidence !== "allergy-insert"
+            current.registeredSaveEvidence !== "allergy-query"
           ) {
             delete current.inFlight;
             if (selectedMemberIdRef.current === memberId) {
@@ -763,8 +766,7 @@ export function HouseholdSettingsForm({
             }
             if (
               latest.values.allergyStatus === "registered" &&
-              latest.registeredSaveEvidence !== "allergy-query" &&
-              latest.registeredSaveEvidence !== "allergy-insert"
+              latest.registeredSaveEvidence !== "allergy-query"
             ) {
               skipReason = "blocked";
               if (selectedMemberIdRef.current === memberId) {
@@ -1304,9 +1306,8 @@ export function HouseholdSettingsForm({
     const pending = pendingRegisteredIntents.current.get(selected.id);
     if (pending === undefined) return;
     valuesByMemberRef.current.set(selected.id, pending.values);
-    const canSaveRegistered =
-      pending.registeredSaveEvidence === "allergy-query" ||
-      pending.registeredSaveEvidence === "allergy-insert";
+    // H-R1: list 確認済み（allergy-query）だけ registered PATCH。allergy-insert は不可。
+    const canSaveRegistered = pending.registeredSaveEvidence === "allergy-query";
     if (canSaveRegistered) {
       void savePendingRegisteredStatus(selected.id);
       return;

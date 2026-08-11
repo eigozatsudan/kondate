@@ -5,6 +5,7 @@ import {
   householdSafetyChangedEvent,
   householdSafetyQueryPrefixes,
   isHouseholdSafetyRevisionStorageKeyForUser,
+  subscribeHouseholdSafetyBroadcast,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { revalidateMenu, type RevalidationResult } from "../api/revalidation-api";
@@ -204,6 +205,11 @@ export function useMenuRevalidation(menuId: string) {
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
     document.addEventListener("visibilitychange", onFocus);
+    // H-R3: setItem 失敗時の cross-tab hard を BroadcastChannel で補う
+    const unsubscribeBroadcast =
+      userId !== undefined && userId.length > 0
+        ? subscribeHouseholdSafetyBroadcast(userId, hard)
+        : () => {};
     return () => {
       window.removeEventListener(householdSafetyChangedEvent, hard);
       window.removeEventListener("storage", stored);
@@ -211,6 +217,7 @@ export function useMenuRevalidation(menuId: string) {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       document.removeEventListener("visibilitychange", onFocus);
+      unsubscribeBroadcast();
       if (timer !== undefined) window.clearInterval(timer);
       void channel.unsubscribe();
     };

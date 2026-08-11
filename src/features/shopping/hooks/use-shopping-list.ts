@@ -10,6 +10,7 @@ import {
   householdSafetyChangedEvent,
   householdSafetyQueryPrefixes,
   isHouseholdSafetyRevisionStorageKeyForUser,
+  subscribeHouseholdSafetyBroadcast,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
@@ -148,6 +149,11 @@ export function useShoppingSafetyGate() {
     window.addEventListener("online", changed);
     window.addEventListener("offline", offline);
     document.addEventListener("visibilitychange", visible);
+    // H-R3: setItem 失敗時の cross-tab hard を BroadcastChannel で補う
+    const unsubscribeBroadcast =
+      userId !== undefined && userId.length > 0
+        ? subscribeHouseholdSafetyBroadcast(userId, changed)
+        : () => {};
     const poll = window.setInterval(() => {
       // SHOP6: poll は soft（ready 維持）。hard は focus/Realtime/household 側。
       if (document.visibilityState === "visible" && navigator.onLine) void softRefresh();
@@ -201,9 +207,10 @@ export function useShoppingSafetyGate() {
       window.removeEventListener("online", changed);
       window.removeEventListener("offline", offline);
       document.removeEventListener("visibilitychange", visible);
+      unsubscribeBroadcast();
       if (channel !== null) void client.removeChannel(channel);
     };
-  }, [refresh, softRefresh]);
+  }, [refresh, softRefresh, userId]);
   useEffect(() => {
     void refresh();
   }, [refresh]);

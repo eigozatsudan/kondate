@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { expect, it, vi } from "vitest";
 import { menuRevalidationQueryKey } from "@/features/history/hooks/use-menu-revalidation";
 import {
+  HOUSEHOLD_SAFETY_BROADCAST_CHANNEL,
   householdKeys,
   householdSafetyChangedEvent,
   householdSafetyQueryPrefixes,
@@ -11,6 +12,8 @@ import {
   invalidateHouseholdSafetyQueries,
   isHouseholdSafetyRevisionStorageKey,
   isHouseholdSafetyRevisionStorageKeyForUser,
+  postHouseholdSafetyBroadcast,
+  subscribeHouseholdSafetyBroadcast,
 } from "./household-queries";
 
 it("accepts legacy fixed key and any user-scoped prefix for cleanup (broad matcher)", () => {
@@ -114,4 +117,92 @@ it("H3: fires revision and event even when query invalidate throws", async () =>
 
   window.removeEventListener(householdSafetyChangedEvent, eventSpy);
   queryClient.clear();
+});
+
+/** テスト用: postMessage を購読者へ配送する最小 BroadcastChannel スタブ */
+class FakeBroadcastChannel {
+  static channels = new Map<string, Set<FakeBroadcastChannel>>();
+  onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+  readonly name: string;
+
+  constructor(name: string) {
+    this.name = name;
+    const set = FakeBroadcastChannel.channels.get(name) ?? new Set();
+    set.add(this);
+    FakeBroadcastChannel.channels.set(name, set);
+  }
+
+  postMessage(data: unknown): void {
+    const peers = FakeBroadcastChannel.channels.get(this.name);
+    if (peers === undefined) return;
+    for (const peer of peers) {
+      // 同一タブには届けない（ブラウザ仕様）
+      if (peer === this) continue;
+      peer.onmessage?.({ data } as MessageEvent<unknown>);
+    }
+  }
+
+  close(): void {
+    FakeBroadcastChannel.channels.get(this.name)?.delete(this);
+  }
+
+  static reset(): void {
+    FakeBroadcastChannel.channels.clear();
+  }
+}
+
+it("H-R3: posts BroadcastChannel even when revision setItem throws", async () => {
+  FakeBroadcastChannel.reset();
+  vi.stubGlobal("BroadcastChannel", FakeBroadcastChannel);
+
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const userId = "user-hr3";
+  const received: unknown[] = [];
+  const unsubscribe = subscribeHouseholdSafetyBroadcast(userId, () => {
+    received.push("hard");
+  });
+  // 他 peer として直接 post を拾う検証用リスナ
+  const peer = new FakeBroadcastChannel(HOUSEHOLD_SAFETY_BROADCAST_CHANNEL);
+  peer.onmessage = (event) => {
+    received.push(event.data);
+  };
+
+  const setItemSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota exceeded");
+  });
+
+  await invalidateHouseholdSafetyDependents(queryClient, userId);
+
+  // setItem 失敗でも BC で他タブ相当へ届く（H-R3）
+  expect(received.some((item) => item === "hard")).toBe(true);
+  expect(
+    received.some(
+      (item) => typeof item === "object" && item !== null && Reflect.get(item, "userId") === userId,
+    ),
+  ).toBe(true);
+
+  unsubscribe();
+  peer.close();
+  setItemSpy.mockRestore();
+  FakeBroadcastChannel.reset();
+  vi.unstubAllGlobals();
+  queryClient.clear();
+});
+
+it("H-R3: ignores BroadcastChannel messages for other users", () => {
+  FakeBroadcastChannel.reset();
+  vi.stubGlobal("BroadcastChannel", FakeBroadcastChannel);
+
+  const onChange = vi.fn();
+  const unsubscribe = subscribeHouseholdSafetyBroadcast("user-a", onChange);
+  // 他 user は無視（H12 と同方向）
+  postHouseholdSafetyBroadcast("user-b");
+  expect(onChange).not.toHaveBeenCalled();
+  // post は別 channel インスタンス経由なので購読側へ届く
+  postHouseholdSafetyBroadcast("user-a");
+  expect(onChange).toHaveBeenCalledTimes(1);
+
+  unsubscribe();
+  FakeBroadcastChannel.reset();
+  vi.unstubAllGlobals();
 });

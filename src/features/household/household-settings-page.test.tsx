@@ -3560,3 +3560,65 @@ it("H8: does not save registered when allergy-insert leaves empty list", async (
     expect.any(String),
   );
 });
+
+// H-R1: allergy-insert（list 確認前）中の form 編集が registered PATCH を起こさない
+it("H-R1: does not save registered while allergy-insert list confirmation is in flight", async () => {
+  let holdList = false;
+  let resolveHeldList: ((rows: MemberAllergyRow[]) => void) | undefined;
+  const listAllergies = vi.fn(() => {
+    if (holdList) {
+      return new Promise<MemberAllergyRow[]>((resolve) => {
+        resolveHeldList = resolve;
+      });
+    }
+    return Promise.resolve([]);
+  });
+  const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
+  const updateMember = vi
+    .fn()
+    .mockImplementation((_memberId: string, patch: HouseholdMemberPatch) =>
+      Promise.resolve({ ...member, ...patch }),
+    );
+  const { queryClient } = await renderSettings({
+    listAllergies,
+    addStandardAllergy,
+    updateMember,
+  });
+
+  await waitForAllergies(queryClient);
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+
+  // finalizeAllergyChange の fetchQuery 窓を止める（allergy-insert 期間）
+  holdList = true;
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(resolveHeldList).toBeTypeOf("function");
+  });
+
+  // 窓中に基本情報を触っても registered は確定しない（H-R1）
+  fireEvent.change(screen.getByLabelText("辛さ"), { target: { value: "mild" } });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(updateMember).not.toHaveBeenCalledWith(
+    "member-1",
+    expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
+  );
+
+  // list empty で H8 どおり registered を止める
+  await act(async () => {
+    resolveHeldList?.([]);
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
+  });
+  expect(updateMember).not.toHaveBeenCalledWith(
+    "member-1",
+    expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
+  );
+});

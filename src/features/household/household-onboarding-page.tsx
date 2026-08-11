@@ -56,6 +56,30 @@ import {
   UNSUPPORTED_DIET_UNCONFIRMED_HELP,
 } from "./unsupported-diet-copy";
 
+/** 保存成功かつ依存 cache 再確認まで完了したときの利用者向け文言（settings H4 と同型） */
+const HOUSEHOLD_SAVED_REFRESH_OK =
+  "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します";
+/**
+ * complete 成功後の invalidate 失敗文言。
+ * 「再確認します」と断言せず、手動再読込を促す（H-R2 / settings H4）。
+ */
+const HOUSEHOLD_SAVED_REFRESH_FAILED =
+  "家族設定を保存しました。画面の再確認に失敗したため、献立・履歴を開き直すか再読み込みしてください。";
+
+/** invalidateSafety の soft 成否。throw は外へ出さない（H-R2）。 */
+async function tryInvalidateSafety(invalidate: () => Promise<void>): Promise<"ok" | "failed"> {
+  try {
+    await invalidate();
+    return "ok";
+  } catch {
+    return "failed";
+  }
+}
+
+function householdSavedMessage(refresh: "ok" | "failed"): string {
+  return refresh === "ok" ? HOUSEHOLD_SAVED_REFRESH_OK : HOUSEHOLD_SAVED_REFRESH_FAILED;
+}
+
 /** オンボーディング必須フィールドの field error（settings schema と同文言系） */
 type OnboardingFieldErrors = {
   ageBand?: string;
@@ -207,6 +231,8 @@ export function HouseholdOnboardingForm({
   const [customAllergy, setCustomAllergy] = useState("");
   const [customConfirmed, setCustomConfirmed] = useState(false);
   const [completeError, setCompleteError] = useState(false);
+  // H-R2: complete 成功後の invalidate 成否。次アクション画面で settings 同型コピーを出す。
+  const [safetyRefreshMessage, setSafetyRefreshMessage] = useState<string | null>(null);
   const [skipError, setSkipError] = useState(false);
   const [skipPending, setSkipPending] = useState(false);
   // completeMember / finish / skip 中の連打防止（state は CTA disabled 用）
@@ -607,6 +633,7 @@ export function HouseholdOnboardingForm({
       }
       setFieldErrors({});
       dismissToast();
+      setSafetyRefreshMessage(null);
       let completed: HouseholdMemberRow;
       try {
         completed = await api.completeMember(memberId);
@@ -621,11 +648,12 @@ export function HouseholdOnboardingForm({
       // complete 成功後は家族安全依存 query を必ず無効化し、
       // localStorage 失敗時でも revision/event 経由で緊急献立などを更新する。
       // ここでは setProgress / navigate しない（次アクション画面へ）。
-      try {
-        await invalidateHouseholdSafetyDependents(queryClient, userId);
-      } finally {
-        endActionPending();
-      }
+      // H-R2: invalidate 成否を settings H4 と同型の soft コピーに分岐（throw を unhandled にしない）。
+      const refresh = await tryInvalidateSafety(() =>
+        invalidateHouseholdSafetyDependents(queryClient, userId),
+      );
+      setSafetyRefreshMessage(householdSavedMessage(refresh));
+      endActionPending();
     });
   };
 
@@ -712,6 +740,15 @@ export function HouseholdOnboardingForm({
         </h1>
         <p>{n}人の設定が完了しています。</p>
         <p>ほかの家族も続けて登録できます。あとから設定の「家族設定」でも追加できます。</p>
+        {safetyRefreshMessage !== null ? (
+          <p
+            className={safetyRefreshMessage.includes("失敗") ? "error-message" : "status-message"}
+            role="status"
+            aria-live={safetyRefreshMessage.includes("失敗") ? "assertive" : "polite"}
+          >
+            {safetyRefreshMessage}
+          </p>
+        ) : null}
         {startMutation.isError ? (
           <p className="error-message" role="alert">
             家族設定を開始できませんでした。通信を確認して再試行してください。
