@@ -451,6 +451,56 @@ describe("AuthProvider", () => {
     });
   });
 
+  it("C-R2: pin restore is rate-limited to reduce multi-tab thrash", async () => {
+    window.history.replaceState(null, "", "/planner");
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const setSession = vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null });
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null }),
+        setSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+
+    // cooldown 内の連続 clobber は 1 回だけ setSession restore
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+        listener("SIGNED_IN", sessionB);
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+    });
+
+    expect(document.title).toBe("user-a");
+    expect(setSession).toHaveBeenCalledTimes(1);
+  });
+
   it("C-R1: rejects late residual exchange session swap after another user already won", async () => {
     // residual recovery start → A 確立（recovery stop）→ 後着 B の onAuthStateChange を捨てる。
     window.history.replaceState(null, "", "/login");

@@ -92,6 +92,11 @@ const pendingDepositPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
  * secret は焼かない（C5 DoS 縮退ロック）。owned prefix 配下で logout 掃除される。
  */
 const userDismissedPrefix = `${ownedAuthStoragePrefixes[1]}.flow-user-dismissed.`;
+/**
+ * C-R3: storage setItem 失敗時も page lifetime で dismiss を fail-closed に保つ。
+ * secret は焼かない（C5 DoS ロック維持）。他タブは storage 印または TTL に依存。
+ */
+const dismissedFlowIdsMemory = new Set<string>();
 const defaultAuthContinuationTtlMs = 300_000;
 /**
  * C6: deposit API（`auth-continuation-deposit` authorizationCodeSchema.max(512)）と揃える。
@@ -543,21 +548,25 @@ function clearAuthFlowClockState(flowId: string, storage: Storage): void {
       // fail-closed cleanupは他の保存値の削除を続け、個別Storage失敗を外へ漏らさない。
     }
   }
+  // C-R3: storage 印と memory 印を同期して落とす（restart clear 後に dismiss が残らない）
+  dismissedFlowIdsMemory.delete(flowId);
 }
 
 /**
  * C3: cancel / 期限切れ UI 後のユーザー明示 dismiss。
  * secret は残すが completeCallback / residual recovery は当該 flow を拾わない。
+ * C-R3: setItem 失敗でも memory 印で同一ページの遅延 success を拒否する。
  */
 export function markAuthFlowUserDismissed(
   flowId: string,
   storage: Storage = window.localStorage,
 ): void {
   if (flowId === "") return;
+  dismissedFlowIdsMemory.add(flowId);
   try {
     storage.setItem(`${userDismissedPrefix}${flowId}`, "1");
   } catch {
-    // storage 障害時は TTL / 明示 logout に委ねる
+    // storage 障害: memory 印で complete/resume を拒否（TTL / 明示 logout も併用）
   }
 }
 
@@ -567,12 +576,19 @@ export function isAuthFlowUserDismissed(
   storage: Storage = window.localStorage,
 ): boolean {
   if (flowId === "") return false;
+  // C-R3: memory を優先（setItem 失敗・getItem 失敗でも同一タブでは dismiss 扱い）
+  if (dismissedFlowIdsMemory.has(flowId)) return true;
   try {
     return storage.getItem(`${userDismissedPrefix}${flowId}`) !== null;
   } catch {
-    // 読めないときは fail-closed（dismiss 扱いにはしない — 可用性を優先）
+    // storage 読めないが memory にも無い → 可用性優先（未 dismiss）
     return false;
   }
+}
+
+/** テスト専用: page-lifetime dismiss memory を隔離する */
+export function resetAuthFlowUserDismissedMemoryForTests(): void {
+  dismissedFlowIdsMemory.clear();
 }
 
 /**

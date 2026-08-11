@@ -10,6 +10,44 @@
 let capturedCallbackUrl: URL | null = null;
 let stripApplied = false;
 
+/** capture 対象の認可パラメータ（strip 後 URL との区別用） */
+const AUTH_CALLBACK_SECRET_PARAMS = [
+  "code",
+  "token_hash",
+  "access_token",
+  "error",
+  "error_code",
+] as const;
+
+function authCallbackHasSecrets(url: URL): boolean {
+  for (const key of AUTH_CALLBACK_SECRET_PARAMS) {
+    if (url.searchParams.has(key)) return true;
+  }
+  // implicit fragment（稀）
+  if (url.hash.includes("access_token") || url.hash.includes("code=")) return true;
+  return false;
+}
+
+/**
+ * C-R5: 同一 entry（StrictMode 二重呼び出し）か。flow + 認可系 query が一致すれば同一。
+ */
+function isSameAuthCallbackEntry(a: URL, b: URL): boolean {
+  const keys = [
+    "flow",
+    "code",
+    "state",
+    "token_hash",
+    "type",
+    "error",
+    "error_code",
+    "error_description",
+  ];
+  for (const key of keys) {
+    if ((a.searchParams.get(key) ?? null) !== (b.searchParams.get(key) ?? null)) return false;
+  }
+  return a.hash === b.hash;
+}
+
 /**
  * C7: `/auth/callback` 以外へ出たら module sticky を解除する。
  * SPA soft-nav 再入場で 2 回目の code を recapture できるようにする。
@@ -24,7 +62,8 @@ export function resetAuthCallbackUrlCaptureIfLeftCallback(pathname: string): voi
 
 /**
  * pathname が /auth/callback のときだけ、code/state 等を history から除き閉包に保持する。
- * 冪等。main とページ側の二重呼び出しに耐える。
+ * 同一 entry では冪等（StrictMode / main+page 二重呼び出し）。
+ * C-R5: leave 無しの soft-nav で **別 code/query** が来たら recapture する。
  * callback 外の href では sticky を解除する（C7 SPA 再入場）。
  */
 export function captureAndStripAuthCallbackUrl(
@@ -46,12 +85,17 @@ export function captureAndStripAuthCallbackUrl(
     resetAuthCallbackUrlCaptureIfLeftCallback(url.pathname);
     return;
   }
-  if (stripApplied) return;
-  stripApplied = true;
-  // 初回だけ完全 URL を保持（StrictMode 二重読取でも同じ code を completeCallback へ渡す）
-  if (capturedCallbackUrl === null) {
-    capturedCallbackUrl = new URL(url.href);
+  if (stripApplied) {
+    // strip 済み visible URL（secrets 無し）の再呼び出し → sticky 維持
+    if (!authCallbackHasSecrets(url)) return;
+    // 同一 entry の二重 capture → 冪等
+    if (capturedCallbackUrl !== null && isSameAuthCallbackEntry(capturedCallbackUrl, url)) {
+      return;
+    }
+    // C-R5: 別 code/query の soft-nav 再入場 → recapture
   }
+  stripApplied = true;
+  capturedCallbackUrl = new URL(url.href);
   const visible = new URL(url.href);
   for (const key of [...visible.searchParams.keys()]) {
     if (key !== "flow") {

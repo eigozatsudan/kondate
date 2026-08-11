@@ -392,6 +392,17 @@ function isSessionChangedFromBaseline(
 }
 
 /**
+ * C-R1: in-flight resume が sibling clear 後もメモリ secret で exchange しないための再確認。
+ * R2 どおり claim/exchange 自体は abort 不可 → **結果適用直前**で discard する。
+ * - 当該 flow の completion がある → discard せず complete へ（呼び出し側）
+ * - flow 行が storage に無い → sibling clear / 外部 clear 済み → discard
+ */
+function isInFlightResumeDiscardedByStorage(flowId: string, storage: Storage): boolean {
+  if (readAuthContinuationCompletion(flowId, storage) !== null) return false;
+  return readAuthFlow(flowId, storage) === null;
+}
+
+/**
  * C4: dual exchange / loser 収束用。
  * - completion bus: 常に見てよい（当該 flow の完了印）。
  * - session: exchange 開始後（または claim 後）だけ見る。
@@ -407,17 +418,8 @@ async function resolveAlreadyAuthenticated(
 ): Promise<AuthResumeResult | null> {
   const existingCompletion = readAuthContinuationCompletion(flowId, storage);
   if (existingCompletion !== null) {
-    // C9: completion 印は TTL 内でも、live session が無い soft residual 後は complete にしない。
-    // session 確認は checkSession 経路と同型（開始前の誤 complete は baseline 側で防ぐ）。
-    if (!options.checkSession) {
-      clearAuthFlow(flowId, storage);
-      return {
-        kind: "complete",
-        continuation: "same_browser",
-        returnTo: existingCompletion.returnTo,
-        flowId,
-      };
-    }
+    // C9 / C-R4: completion 印は TTL 内でも、live session が無い soft residual 後は complete にしない。
+    // checkSession:false（pre-exchange）でも completion 単独 complete は禁止。
     try {
       const sessionResult = await client.auth.getSession();
       if (sessionResult.data.session !== null) {
@@ -430,10 +432,19 @@ async function resolveAlreadyAuthenticated(
         };
       }
     } catch {
-      // getSession 失敗は stale 印として破棄
+      // getSession 失敗は session 無しと同型
     }
+    if (!options.checkSession) {
+      // pre-exchange: 印を残し re-exchange しない（dual exchange / コード二重消費を避ける）。
+      // resume 先頭 short-circuit 側が stale 印 clear + re-claim を担当する（C-R4）。
+      return {
+        kind: "awaiting_completion",
+        flowId,
+        returnTo: existingCompletion.returnTo,
+      };
+    }
+    // loser probe: stale 印を落として baseline session 判定へ
     clearAuthContinuationCompletion(flowId, storage);
-    // fall through to session baseline 判定
   }
   if (!options.checkSession) return null;
   try {
@@ -884,18 +895,28 @@ export function createAuthGateway(
       return { kind: "error", code: "oauth_cancelled", returnTo: flow.returnTo, flowId: flow.id };
     }
     // C4: 当該 flow の completion 済みなら claim/exchange しない。
-    // C9: completion 読取は **同期のまま**（C-R3 in-flight join が claim 前に microtask を挟まない）。
-    // live session 確認は await が必要で join 検証を崩すため行わず、completion TTL（read 側）で
-    // soft residual 後の無期限 short-circuit を閉じる。session 非検証は意図的。
+    // C9: completion **有無**の読取は同期（in-flight join が Map 登録前に分岐しない）。
+    // C-R4: complete 返却前に live session を確認する。null なら stale 印を捨て re-claim へ
+    // （soft residual 後の RequireSession bounce を TTL 窓内でも閉じる）。
+    // join 契約: 複数 resume は同一 Promise を共有するため、先頭 run だけがここを通る。
     const existingCompletion = readAuthContinuationCompletion(flow.id, storage);
     if (existingCompletion !== null) {
-      clearAuthFlow(flow.id, storage);
-      return {
-        kind: "complete",
-        continuation: "same_browser",
-        returnTo: existingCompletion.returnTo,
-        flowId: flow.id,
-      };
+      try {
+        const sessionResult = await client.auth.getSession();
+        if (sessionResult.data.session !== null) {
+          clearAuthFlow(flow.id, storage);
+          return {
+            kind: "complete",
+            continuation: "same_browser",
+            returnTo: existingCompletion.returnTo,
+            flowId: flow.id,
+          };
+        }
+      } catch {
+        // getSession 失敗は stale 扱い
+      }
+      // session 無し: completion を落として claim へ進む（deposit が残っていれば回復）
+      clearAuthContinuationCompletion(flow.id, storage);
     }
     // C3: completeCallback の deposit budget 後も pending code があれば re-deposit してから claim。
     // C15: flow.clockSkewMs で now を補正し、進みすぎクライアントでも pending を flow 寿命と揃える。
@@ -934,15 +955,28 @@ export function createAuthGateway(
       }
       // timeout/transient / re-deposit スキップ: pending を残し claim を試みる（late 204 の可能性）
       // re-deposit await 後も sibling completion があれば dual exchange を避ける
+      // C-R4: live session 無しの stale completion は complete にしない
       const afterRedepositCompletion = readAuthContinuationCompletion(flow.id, storage);
       if (afterRedepositCompletion !== null) {
-        clearAuthFlow(flow.id, storage);
-        return {
-          kind: "complete",
-          continuation: "same_browser",
-          returnTo: afterRedepositCompletion.returnTo,
-          flowId: flow.id,
-        };
+        try {
+          const sessionResult = await client.auth.getSession();
+          if (sessionResult.data.session !== null) {
+            clearAuthFlow(flow.id, storage);
+            return {
+              kind: "complete",
+              continuation: "same_browser",
+              returnTo: afterRedepositCompletion.returnTo,
+              flowId: flow.id,
+            };
+          }
+        } catch {
+          // stale 扱い
+        }
+        clearAuthContinuationCompletion(flow.id, storage);
+      }
+      // C-R1: redeposit 中に sibling clear されていたら claim/exchange しない
+      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
     }
     // exchange 失敗（provider 拒否）だけ terminal。claim 成功後も secret は exchange 成功まで残す（C3/C4）。
@@ -955,9 +989,15 @@ export function createAuthGateway(
     let holdsExchangeLease = false;
     let stopExchangeHeartbeat: (() => void) | undefined;
     try {
+      // C-R1: claim 直前にも storage を再確認（redeposit await 中の sibling clear）
+      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
+      // storage 上の最新 secret/state を優先（クリア済みは上で discard）
+      const claimFlow = readAuthFlow(flow.id, storage) ?? flow;
       const claimedCode = await continuationApi.claim(flow.id, {
-        secret: flow.secret,
-        state: flow.state,
+        secret: claimFlow.secret,
+        state: claimFlow.state,
       });
       // C3/C4: claim はサーバ側で冪等再提示。secret は exchange 成功後に破棄し、
       // body 欠落や exchange hang でも recovery が再 claim → 再 exchange できる。
@@ -990,9 +1030,10 @@ export function createAuthGateway(
         holdsExchangeLease = false;
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
-      // C4: lease 取得後〜exchange 直前は completion bus のみ再確認。
-      // session は見ない（既ログイン中の新規 OAuth/magic を old session で complete しない）。
-      // session 検査は provider exchange 失敗後の loser probe に限定する。
+      // C4: lease 取得後〜exchange 直前は completion bus を再確認。
+      // C-R4: completion があっても live session 無しなら complete にしない（resolve 内）。
+      // session 単独での complete はしない（既ログイン中の新規 OAuth/magic を old session で complete しない）。
+      // session 検査（baseline）は provider exchange 失敗後の loser probe に限定する。
       const preExchangeDone = await resolveAlreadyAuthenticated(
         flow.id,
         flow.returnTo,
@@ -1003,11 +1044,19 @@ export function createAuthGateway(
       if (preExchangeDone !== null) {
         return preExchangeDone;
       }
+      // C-R1: sibling clear 後はメモリ secret / claimed code で exchange しない（結果適用 discard）
+      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
       // C1: exchange 直前の session 指紋。loser probe は「変化した session」だけ complete する。
       sessionBaseline = await captureSessionProbeBaseline(client);
+      // baseline await 後の最終 discard（C-R1）
+      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
       exchangeStarted = true;
       const result =
-        flow.sessionExchange === "oauth_mock"
+        claimFlow.sessionExchange === "oauth_mock"
           ? await (async () => {
               const provider = deps.getPublicEnv();
               if (provider.oauthMockOrigin !== "http://127.0.0.1:8788") {
@@ -1023,7 +1072,7 @@ export function createAuthGateway(
                 localCredentialsSchema.parse(await response.json()),
               );
             })()
-          : shouldExchangeClaimedAsTokenHash(flow.credentialKind, claimedCode.code)
+          : shouldExchangeClaimedAsTokenHash(claimFlow.credentialKind, claimedCode.code)
             ? // magic token_hash: claim した平文は OTP hash。PKCE code exchange ではない。
               client.auth.verifyOtp({
                 token_hash: claimedCode.code,
@@ -1034,7 +1083,7 @@ export function createAuthGateway(
       if (error !== null) {
         // token_hash 期限切れは resume でも expired に写す（unbound より再送 UI へ）
         if (
-          shouldExchangeClaimedAsTokenHash(flow.credentialKind, claimedCode.code) &&
+          shouldExchangeClaimedAsTokenHash(claimFlow.credentialKind, claimedCode.code) &&
           isExpired(error, new URL("http://local/"))
         ) {
           clearAuthFlow(flow.id, storage);
@@ -1045,6 +1094,13 @@ export function createAuthGateway(
       // F-AUTH-002 / C10: claim 成功の returnTo も Login create と同型で再 sanitize
       // （自己参照 path を completion / navigate に載せない）
       const safeReturnTo = sanitizeLoginReturnPath(claimedCode.returnTo);
+      // C-R1: exchange 後も sibling が先に publish して当該 flow を消していたら
+      // 自 complete を bus に載せない（navigate/onComplete の loser 適用を抑止）。
+      // session は既に置換済みになり得るが、C2 pin が React を守り storage は次の restore に委ねる。
+      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        clearPendingAuthDeposit(flow.id, storage);
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
       // C1 / C10: secret 消去は publishAuthContinuationCompletion（setItem 成功後の clear）に一本化。
       // 先に clearClaimed すると setItem 失敗時に他タブ re-claim 不能・completion 未公開でスタックする。
       // C4: withTimeout で結果が discard されても storage 経由で recovery/listener が拾えるよう公開。
@@ -1148,15 +1204,24 @@ export function createAuthGateway(
   ): Promise<AuthResumeResult> {
     const flow = readAuthFlow(flowId, storage);
     if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+    // C-R4: completion short-circuit も live session 必須（resumeFlow と同型）
     const existingCompletion = readAuthContinuationCompletion(flow.id, storage);
     if (existingCompletion !== null) {
-      clearAuthFlow(flow.id, storage);
-      return {
-        kind: "complete",
-        continuation: "same_browser",
-        returnTo: existingCompletion.returnTo,
-        flowId: flow.id,
-      };
+      try {
+        const sessionResult = await client.auth.getSession();
+        if (sessionResult.data.session !== null) {
+          clearAuthFlow(flow.id, storage);
+          return {
+            kind: "complete",
+            continuation: "same_browser",
+            returnTo: existingCompletion.returnTo,
+            flowId: flow.id,
+          };
+        }
+      } catch {
+        // stale 扱い
+      }
+      clearAuthContinuationCompletion(flow.id, storage);
     }
     const exchangeInstanceId = `exchange-${flow.id}-${Math.random().toString(36).slice(2, 10)}`;
     let holdsExchangeLease = false;

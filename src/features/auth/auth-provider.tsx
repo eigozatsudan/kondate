@@ -39,19 +39,36 @@ import { resetAuthCallbackUrlCaptureIfLeftCallback } from "./auth-callback-url-c
  * - pin 中に別 user が来たら setSession を捨て、可能なら pin token を復元する
  * - session null（logout / 失効）で解除。意図的なアカウント切替は一度 unauthenticated を経由する
  * - residual recovery 起動中は pin 前の first-writer も同様（C-R1）
+ * - C-R2: multi-tab 別 account 並立は製品非対応。setSession 復元は cooldown + 窓上限で thrash を抑える
  */
 type ResidualSessionGuard = {
   /** residual recovery 稼働中（first session 待ち含む） */
   armed: boolean;
   pinnedUserId: string | null;
   pinnedSession: Session | null;
+  /** C-R2: 直近の pin 復元時刻（setSession thrash 抑制） */
+  lastRestoreAtMs: number;
+  /** C-R2: 復元回数窓の起点 */
+  restoreWindowStartedAtMs: number;
+  /** C-R2: 窓内の復元試行回数 */
+  restoreCountInWindow: number;
 };
+
+/** C-R2: 連続 setSession 復元の最短間隔（ms） */
+const PIN_RESTORE_COOLDOWN_MS = 2_000;
+/** C-R2: 復元回数を数える窓（ms） */
+const PIN_RESTORE_WINDOW_MS = 10_000;
+/** C-R2: 窓内の最大 restore 試行（超過後は React pin のみ維持） */
+const PIN_RESTORE_MAX_PER_WINDOW = 3;
 
 function createResidualSessionGuard(): ResidualSessionGuard {
   return {
     armed: false,
     pinnedUserId: null,
     pinnedSession: null,
+    lastRestoreAtMs: 0,
+    restoreWindowStartedAtMs: 0,
+    restoreCountInWindow: 0,
   };
 }
 
@@ -59,6 +76,29 @@ function clearResidualSessionGuard(guard: ResidualSessionGuard): void {
   guard.armed = false;
   guard.pinnedUserId = null;
   guard.pinnedSession = null;
+  guard.lastRestoreAtMs = 0;
+  guard.restoreWindowStartedAtMs = 0;
+  guard.restoreCountInWindow = 0;
+}
+
+/**
+ * C-R2: pin 復元 setSession を発行してよいか。
+ * multi-tab が互いに相手 user を弾いて setSession し合う thrash を有界にする。
+ * React 状態の pin 一貫性は restore 有無に依存しない。
+ */
+function shouldAttemptPinSessionRestore(guard: ResidualSessionGuard, nowMs: number): boolean {
+  if (nowMs - guard.lastRestoreAtMs < PIN_RESTORE_COOLDOWN_MS) return false;
+  if (
+    guard.restoreWindowStartedAtMs === 0 ||
+    nowMs - guard.restoreWindowStartedAtMs > PIN_RESTORE_WINDOW_MS
+  ) {
+    guard.restoreWindowStartedAtMs = nowMs;
+    guard.restoreCountInWindow = 0;
+  }
+  if (guard.restoreCountInWindow >= PIN_RESTORE_MAX_PER_WINDOW) return false;
+  guard.restoreCountInWindow += 1;
+  guard.lastRestoreAtMs = nowMs;
+  return true;
 }
 
 /**
@@ -221,6 +261,7 @@ export function AuthProvider({
           guard.pinnedSession = nextSession;
         } else if (nextSession.user.id !== guard.pinnedUserId) {
           // 後着 residual / multi-tab callback 等による無言差し替えを拒否（C-R1 / C2）
+          // C-R2: 同一 user の pin token だけを restore。cooldown/上限で multi-tab thrash を抑える。
           const pinned = guard.pinnedSession;
           const restore = client.auth.setSession;
           if (
@@ -229,7 +270,8 @@ export function AuthProvider({
             typeof pinned.access_token === "string" &&
             typeof pinned.refresh_token === "string" &&
             pinned.access_token.length > 0 &&
-            pinned.refresh_token.length > 0
+            pinned.refresh_token.length > 0 &&
+            shouldAttemptPinSessionRestore(guard, Date.now())
           ) {
             // Supabase 内部 session も B に置換済みのことがあるため、勝者 token を best-effort で戻す
             void restore

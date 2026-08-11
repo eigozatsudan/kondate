@@ -16,6 +16,7 @@ import {
   markAuthContinuationCallbackOwner,
   markAuthFlowUserDismissed,
   readAuthFlow,
+  resetAuthFlowUserDismissedMemoryForTests,
   writePendingAuthDeposit,
   type ContinuationApi,
 } from "./auth-flow";
@@ -36,6 +37,7 @@ async function flushResumeUntilExchange(): Promise<void> {
 afterEach(() => {
   // モジュール共有 in-flight Map をテスト間で隔離（C4 hang 等が次ケースへ漏れないようにする）
   resetInflightResumeForTests();
+  resetAuthFlowUserDismissedMemoryForTests();
 });
 
 class MapStorage implements Storage {
@@ -1874,10 +1876,23 @@ it("C4/C5: resume short-circuits to complete when sibling already published comp
   const storage = new MapStorage();
   const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });
   const api = continuationApiMock({ claim });
+  // C-R4: short-circuit complete は live session があるときだけ
   const client = authClientMock({
     exchangeResult: {
       data: null,
       error: { message: "code already used", name: "AuthApiError", status: 400 } as AuthError,
+    },
+    getSessionResult: {
+      data: {
+        session: {
+          access_token: "live-tok",
+          refresh_token: "live-ref",
+          expires_in: 3600,
+          token_type: "bearer",
+          user: { id: "winner-user" },
+        },
+      },
+      error: null,
     },
   });
   const gateway = createAuthGateway(
@@ -1909,6 +1924,97 @@ it("C4/C5: resume short-circuits to complete when sibling already published comp
   expect(claim).not.toHaveBeenCalled();
   expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
   expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("C-R4: completion short-circuit without live session falls through (no false complete)", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockRejectedValue(new ContinuationHttpError(404));
+  const api = continuationApiMock({ claim });
+  // soft residual 後: completion 残存・session null
+  const client = authClientMock({
+    getSessionResult: { data: { session: null }, error: null },
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+  const flowKey = `kondate.auth.flow.${flow.id}`;
+  const flowSnapshot = storage.getItem(flowKey);
+  if (flowSnapshot === null) throw new Error("expected flow");
+  publishAuthContinuationCompletion({ flowId: flow.id, returnTo: "/onboarding" }, storage);
+  storage.setItem(flowKey, flowSnapshot);
+
+  // complete にせず re-claim へ。404 は awaiting（RequireSession bounce の false complete を閉じる）
+  await expect(gateway.resumeFlow(flow.id)).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(claim).toHaveBeenCalledOnce();
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+});
+
+it("C-R1: discards in-flight resume exchange after sibling clear of flow secret", async () => {
+  const storage = new MapStorage();
+  let releaseClaim: (() => void) | undefined;
+  const claimGate = new Promise<void>((resolve) => {
+    releaseClaim = resolve;
+  });
+  const claim = vi.fn().mockImplementation(async () => {
+    await claimGate;
+    return { code: "auth-code-late", returnTo: "/onboarding" };
+  });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flowA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+  // 並行 flow B を立て、A の claim 中に B complete → sibling clear A
+  const flowBId = "20000000-0000-4000-8000-0000000000b2";
+  storage.setItem(
+    `kondate.auth.flow.${flowBId}`,
+    JSON.stringify({
+      id: flowBId,
+      secret: "C".repeat(43),
+      state: "D".repeat(43),
+      origin: "http://127.0.0.1:5173",
+      returnTo: "/planner",
+      sessionExchange: "supabase",
+      startedAt: new Date().toISOString(),
+    }),
+  );
+
+  const pending = gateway.resumeFlow(flowA.id);
+  // claim が secret を掴んだあと exchange 前に sibling clear
+  for (let i = 0; i < 50 && claim.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(claim).toHaveBeenCalled();
+  publishAuthContinuationCompletion({ flowId: flowBId, returnTo: "/planner" }, storage);
+  expect(readAuthFlow(flowA.id, storage)).toBeNull();
+
+  releaseClaim?.();
+  await flushResumeUntilExchange();
+  // C-R1: exchange せず discard（awaiting）。別 user session を立てない
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flowA.id,
+    returnTo: "/onboarding",
+  });
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
 });
 
 it("C4: existing session alone does not skip claim/exchange (new login while signed-in)", async () => {

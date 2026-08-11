@@ -13,6 +13,7 @@ import {
   clearAuthFlow,
   markAuthContinuationCallbackOwner,
   readAuthContinuationCallbackStartedAt,
+  resetAuthFlowUserDismissedMemoryForTests,
 } from "./auth-flow";
 
 vi.mock("./auth-gateway", async (importOriginal) => {
@@ -50,6 +51,7 @@ const startAuthContinuationRecoveryMock = vi.mocked(startAuthContinuationRecover
 
 afterEach(() => {
   resetAuthCallbackUrlCaptureForTests();
+  resetAuthFlowUserDismissedMemoryForTests();
   // C7 capture が window.history を見るため、前テストの replaceState が残ると flow UUID が混線する
   window.history.replaceState(null, "", "/");
   startAuthContinuationRecoveryMock.mockClear();

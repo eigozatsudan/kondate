@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   adjustedAuthNowMs,
   AUTH_CONTINUATION_CODE_MAX_LENGTH,
@@ -22,10 +22,15 @@ import {
   readAuthContinuationCallbackStartedAt,
   readAuthFlow,
   readPendingAuthDeposit,
+  resetAuthFlowUserDismissedMemoryForTests,
   sanitizeLoginReturnPath,
   sanitizeReturnPath,
   writePendingAuthDeposit,
 } from "./auth-flow";
+
+afterEach(() => {
+  resetAuthFlowUserDismissedMemoryForTests();
+});
 
 const fixedFlowDeps = {
   randomBytes: () => new Uint8Array(32).fill(7),
@@ -456,6 +461,35 @@ it("C3: user-dismissed flows are excluded from listUnexpiredAuthFlows", () => {
   expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:00:00.000Z"), 300_000)).toEqual(
     [],
   );
+  clearAuthFlow(flowId, storage);
+  expect(isAuthFlowUserDismissed(flowId, storage)).toBe(false);
+});
+
+it("C-R3: dismiss mark survives storage setItem failure via page-lifetime memory", () => {
+  const flowId = "10000000-0000-4000-8000-0000000000r3";
+  const storage: Storage = {
+    get length() {
+      return 0;
+    },
+    clear() {
+      /* no-op */
+    },
+    getItem() {
+      return null;
+    },
+    key() {
+      return null;
+    },
+    removeItem() {
+      /* no-op */
+    },
+    setItem() {
+      throw new Error("quota exceeded");
+    },
+  };
+  markAuthFlowUserDismissed(flowId, storage);
+  // storage には書けなくても memory で dismiss 扱い（silent complete 拒否）
+  expect(isAuthFlowUserDismissed(flowId, storage)).toBe(true);
   clearAuthFlow(flowId, storage);
   expect(isAuthFlowUserDismissed(flowId, storage)).toBe(false);
 });
