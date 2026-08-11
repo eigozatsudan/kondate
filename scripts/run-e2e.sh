@@ -390,6 +390,42 @@ e2e_args_have_grep() {
   return 1
 }
 
+# --project が setup のみか（デバッグ用の単独実行。二重 setup を避ける）。
+# --project=setup / --project setup の両方を扱い、他 project が混在すれば false。
+e2e_args_only_setup_project() {
+  saw_project=0
+  pending_value=0
+  for arg in "$@"; do
+    if [ "$pending_value" -eq 1 ]; then
+      pending_value=0
+      saw_project=1
+      if [ "$arg" != "setup" ]; then
+        return 1
+      fi
+      continue
+    fi
+    case "$arg" in
+      --project=setup)
+        saw_project=1
+        ;;
+      --project=*)
+        return 1
+        ;;
+      --project)
+        pending_value=1
+        ;;
+    esac
+  done
+  if [ "$pending_value" -eq 1 ]; then
+    # --project の値が欠落している場合は「setup のみ」とみなさない
+    return 1
+  fi
+  if [ "$saw_project" -eq 1 ]; then
+    return 0
+  fi
+  return 1
+}
+
 # 通常の開発スタックを起動したうえで、E2E専用プロファイルのauthを追加起動し、
 # openrouter-mock/kong/oauth-mock/appをE2E向け設定で強制再作成してから、
 # 実際のPlaywrightテストランナー(e2e)を実行する。
@@ -427,8 +463,16 @@ run_e2e_commands() {
       ;;
   esac
 
+  # Spec §6.3: Playwright dependencies は使わず、shell が setup を 1 回だけ走らせる。
+  # --project=setup のみのデバッグ実行では二重起動しない。
+  if e2e_args_only_setup_project "$@"; then
+    run_playwright "$@" || return $?
+    return 0
+  fi
+  run_playwright --project=setup || return $?
+
   if [ "$suite" = "smoke" ]; then
-    # 1 段のみ。desktop 段・project 境界 reset なし（開始時 reset は済）。
+    # setup 後に 1 段のみ。desktop 段・project 境界 reset なし（開始時 reset は済）。
     # 呼び出し側の --project / --grep は二重付与しない。
     if ! e2e_args_have_project "$@"; then
       set -- --project=mobile-chromium "$@"
@@ -440,7 +484,7 @@ run_e2e_commands() {
     return 0
   fi
 
-  # full: 呼び出し側が --project を指定していればそのまま1回実行する。
+  # full: 呼び出し側が --project を指定していれば setup 後にそのまま1回実行する。
   # 未指定では mobile → 枠リセット → desktop の 2 段実行にし、
   # 1 プロセス内の累積送信が 20 を超えて後半だけ落ちるのを防ぐ。
   # どちらか一方が失敗しても他方は最後まで走らせ、診断用の失敗一覧を揃える。

@@ -293,8 +293,10 @@ function expectedE2EInvocations(
 ) {
   // scripts/run-e2e.sh の現行シーケンスに合わせる:
   // base up → force-recreate auth → AI 枠リセット → E2E app 群 recreate →
+  // setup（storageState）1 回 →
   // full: （--project 未指定なら mobile → 枠リセット → desktop）
   // smoke: mobile-chromium 1 段 + --grep=@smoke（呼び出し側指定は二重付与しない）
+  // --project=setup のみのときは setup を二重起動しない
   // → cleanup で app ログ採取 → 失敗時のみ e2e kill/rm → auth/app 復元
   // 先頭の裸 `--` は run-e2e.sh が shift して捨てる（docs の `./scripts/run-e2e.sh -- path` 慣習）。
   const normalizedArguments =
@@ -329,21 +331,59 @@ function expectedE2EInvocations(
     (arg) => arg === "--grep" || arg === "-g" || String(arg).startsWith("--grep="),
   );
 
+  // shell の e2e_args_only_setup_project と同じ判定: 指定 project が setup のみ
+  const projectNames = [];
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const arg = String(arguments_[index]);
+    if (arg === "--project") {
+      projectNames.push(String(arguments_[index + 1] ?? ""));
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--project=")) {
+      projectNames.push(arg.slice("--project=".length));
+    }
+  }
+  const onlySetupProject =
+    projectNames.length > 0 && projectNames.every((name) => name === "setup");
+
+  const setupRun = [
+    ...compose,
+    ...e2eComposeFiles,
+    "run",
+    "--rm",
+    "--no-deps",
+    "e2e",
+    "--project=setup",
+  ];
+
   let playwrightRuns;
-  if (suite === "smoke") {
-    // smoke: playwright 1 回・中間 quota reset なし（開始時 reset は済）
+  if (onlySetupProject) {
+    // デバッグ用: setup だけを 1 回（前置 setup なし）
+    playwrightRuns = [
+      [...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...arguments_],
+    ];
+  } else if (cleanupE2EContainers) {
+    // 失敗・signal 中断系: setup が fail-closed（`|| return`）なので後続 playwright は走らない。
+    // mock の E2E_STATUS / E2E_WAIT_FOR_SIGNAL は先頭 e2e（setup）に効く。
+    playwrightRuns = [setupRun];
+  } else if (suite === "smoke") {
+    // smoke 成功: setup + 本体 1 回・中間 quota reset なし（開始時 reset は済）
     const smokeArgs = [...arguments_];
     if (!hasProject) smokeArgs.unshift("--project=mobile-chromium");
     if (!hasGrep) smokeArgs.push("--grep=@smoke");
     playwrightRuns = [
+      setupRun,
       [...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...smokeArgs],
     ];
   } else if (hasProject) {
     playwrightRuns = [
+      setupRun,
       [...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...arguments_],
     ];
   } else {
     playwrightRuns = [
+      setupRun,
       [
         ...compose,
         ...e2eComposeFiles,
@@ -592,7 +632,7 @@ test("E2E runner restores the base stack and preserves success or failure", asyn
   }
 });
 
-// smoke: playwright 1 回のみ（desktop 段・中間 quota reset なし）。@smoke を自動付与する。
+// smoke: setup + mobile 本体 1 回（desktop 段・中間 quota reset なし）。@smoke を自動付与する。
 test("E2E runner smoke suite runs a single mobile project with @smoke grep", async (t) => {
   const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -650,7 +690,11 @@ test("E2E runner strips a leading bare -- before playwright args", async (t) => 
     expectedE2EInvocations(root, await expectedProjectName(root), args, false),
   );
   const invocations = await readDockerInvocations(logDir);
-  const playwright = invocations.find((row) => row.includes("e2e") && row.includes("run"));
+  // setup 前置のあと本体 run がある。パス付きの本体を拾う
+  const playwright = invocations.find(
+    (row) =>
+      row.includes("e2e") && row.includes("run") && row.includes("e2e/specs/foundation.spec.ts"),
+  );
   assert.ok(playwright, "playwright/e2e run invocation missing");
   // 先頭 `--` は破棄され、パスと --project が残る
   assert.ok(playwright.includes("e2e/specs/foundation.spec.ts"));

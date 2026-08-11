@@ -20,6 +20,12 @@ export default defineConfig({
     video: process.env.PLAYWRIGHT_DISABLE_TRACE === "1" ? "off" : "retain-on-failure",
   },
   projects: [
+    // storageState 書き込み専用。mobile/desktop から dependencies は付けない
+    // （Spec §6.3: shell が setup を 1 回だけ走らせる）。
+    {
+      name: "setup",
+      testMatch: /auth\.setup\.ts$/,
+    },
     {
       name: "mobile-chromium",
       use: { ...devices["iPhone SE"], browserName: "chromium" },

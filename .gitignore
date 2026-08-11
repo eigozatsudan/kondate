@@ -11,6 +11,8 @@ infra/.supabase-refresh.lock
 supabase/.temp
 playwright-report/
 test-results/
+# E2E setup project の storageState（セッショントークンを含むためコミット禁止）
+e2e/.auth/
 .DS_Store
 *.log
 .e2e-function.log

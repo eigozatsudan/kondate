@@ -2,8 +2,11 @@
  * Plus / 課金 UI の受け入れシナリオ（mock entitlement）。
  * 本番 Stripe は呼ばない。Functions は e2e-function-server の allowlist 経由。
  * BILLING_ENABLED=false のローカル既定でも、page.route で entitlement を差し替え UI を検証する。
+ *
+ * 表示系のみのため setup の storageState（reusedCompletedPage）を使う。
+ * 破壊的 / ユーザ isolation が要る課金操作を足す場合は auth.ts の ephemeral へ戻す。
  */
-import { expect, test } from "../fixtures/auth";
+import { expect, test } from "../fixtures/session-auth";
 import type { Page } from "@playwright/test";
 import { FLYER_WEEKLY_UI_ENABLED } from "../../shared/contracts/flyer-weekly";
 
@@ -107,7 +110,7 @@ async function mockUsageTodayPlus(page: Page): Promise<void> {
 test.setTimeout(180_000);
 
 test("settings shows Free plan and coming-soon gate when product surfaces are open", async ({
-  completedOnboardingPage: page,
+  reusedCompletedPage: page,
 }) => {
   await mockEntitlement(page, freeOpenEntitlement);
   await page.goto("/settings");
@@ -119,7 +122,7 @@ test("settings shows Free plan and coming-soon gate when product surfaces are op
 });
 
 test("settings shows trial end warning when entitlement is trialing", async ({
-  completedOnboardingPage: page,
+  reusedCompletedPage: page,
 }) => {
   await mockEntitlement(page, trialingEntitlement);
   await page.goto("/settings");
@@ -131,7 +134,7 @@ test("settings shows trial end warning when entitlement is trialing", async ({
 });
 
 test("delete account dialog mentions paid-plan cancellation", async ({
-  completedOnboardingPage: page,
+  reusedCompletedPage: page,
 }) => {
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({ timeout: 15_000 });
@@ -150,7 +153,7 @@ test("delete account dialog mentions paid-plan cancellation", async ({
 });
 
 test("planner Free flyer entry respects FLYER_WEEKLY_UI_ENABLED", async ({
-  completedOnboardingPage: page,
+  reusedCompletedPage: page,
 }) => {
   await mockEntitlement(page, freeOpenEntitlement);
   await page.goto("/planner");
@@ -172,7 +175,7 @@ test("planner Free flyer entry respects FLYER_WEEKLY_UI_ENABLED", async ({
 });
 
 test("Plus entitlement mock shows plan label and portal path on settings", async ({
-  completedOnboardingPage: page,
+  reusedCompletedPage: page,
 }) => {
   await mockEntitlement(page, plusActiveEntitlement);
   await mockUsageTodayPlus(page);
@@ -183,7 +186,7 @@ test("Plus entitlement mock shows plan label and portal path on settings", async
 });
 
 test("Free hard-limit CTA copy is available from settings Plus section", async ({
-  completedOnboardingPage: page,
+  reusedCompletedPage: page,
 }) => {
   // 生成を 3 回回して hard limit にするのは flaky なため、
   // Free 向け Plus CTA 文面（Plus なら 1 日最大 10 回）が設定のプラン節に出ることを固定する。
@@ -199,7 +202,7 @@ test("Free hard-limit CTA copy is available from settings Plus section", async (
 });
 
 test("Plus usage mock projects success limit 10 on settings plan section", async ({
-  completedOnboardingPage: page,
+  reusedCompletedPage: page,
 }) => {
   // webhook 実注入の E2E 代替: entitlement + usage mock 後に Plus 契約 UI が載ることを固定。
   // Free CTA の「1 日最大 10 回」は !entitled 時のみ。Plus ではポータル導線が正。

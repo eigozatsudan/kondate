@@ -457,6 +457,9 @@ test("runs E2E through the base and E2E Compose files in override order", async 
   // smoke は mobile 1 段 + @smoke のみ（desktop 二段・中間 reset を踏まない分岐）
   assert.match(runner, /suite=\$\{KONDATE_E2E_SUITE:-full\}/u);
   assert.match(runner, /\[ "\$suite" = "smoke" \]/u);
+  // Spec §6.3: shell が setup を 1 回走らせてから mobile/desktop（dependsOn なし）
+  assert.match(runner, /--project=setup/u);
+  assert.match(runner, /e2e_args_only_setup_project/u);
   // full suite は mobile → desktop の 2 段（共有 AI 枠リセット込み）
   assert.match(runner, /--project=mobile-chromium/u);
   assert.match(runner, /--project=desktop-chromium/u);
