@@ -6,6 +6,7 @@ import {
   requestWholeRegeneration,
   selectHouseholdAudienceWithMember,
 } from "../fixtures/history";
+import { chooseCreateListModeNew } from "../fixtures/shopping";
 import { z } from "zod";
 
 // Spec §7.4: 生成が密集するジャーニー。global 行ロック residual と mock scenario を安定させるため serial。
@@ -60,7 +61,7 @@ test(
     await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
     // C-I4: メンバー明示選択 + 成功 autosave 完了を待ってから次へ（未保存 draft で生成しない）
     await selectHouseholdAudienceWithMember(page);
-    // 二度目は既選択の early-return 境界。チェック維持を固定する（POST 0 回でも UI は選択済み）。
+    // 二度目は既選択の early-return 境界。UI checked に加え server draft member_ids 非空も helper 内で固定（E2E7）。
     await selectHouseholdAudienceWithMember(page);
     await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
     await clickWizardNext(page);
@@ -100,23 +101,35 @@ test(
     await labelConfirm.click();
 
     // 先に source から買い物リストを作成し、後段の新案 reconcile の土台にする。
-    // 単一案 (confirmedSingle) では買い物が主操作・採用が補助になり得る。
-    // ready コピーは accepted 時のみ出るため、CTA 有効 + recheck idle で進める。
-    const acceptSource = page.getByRole("button", { name: "この献立にする" });
-    if (
-      (await acceptSource.isVisible().catch(() => false)) &&
-      (await acceptSource.isEnabled().catch(() => false))
-    ) {
-      await acceptSource.click();
-    }
-    // soft recheck / mount recheck 中は買い物 CTA が disabled
+    // soft recheck / mount recheck 中は採用・買い物 CTA が disabled。idle 後に settle する。
     await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
       timeout: 90_000,
     });
     await expect(page.getByText("現在の家族設定で確認しています")).toHaveCount(0, {
       timeout: 90_000,
     });
+    const acceptSource = page.getByRole("button", { name: "この献立にする" });
     const shopCreate = page.getByRole("button", { name: "材料の買い物リストを作る" });
+    // versions+gate settle: 採用か買い物のどちらかが有効になるまで待つ
+    await expect
+      .poll(
+        async () => {
+          const shopOk = await shopCreate.isEnabled().catch(() => false);
+          const acceptOk = await acceptSource.isEnabled().catch(() => false);
+          return shopOk || acceptOk;
+        },
+        { timeout: 90_000 },
+      )
+      .toBe(true);
+    // E2E1: soft skip 禁止。CTA が見える経路では必須で採用する。
+    // versions 未確定・一瞬 disabled を isVisible().catch で吸うと採用 POST 0 のまま create まで green。
+    // 単一案 (confirmedSingle) でも補助に「この献立にする」が出る。既 isSelected なら count 0。
+    if ((await acceptSource.count()) > 0) {
+      await expect(acceptSource).toBeEnabled({ timeout: 30_000 });
+      await acceptSource.click();
+      // 採用後は CTA が消える（accepted / 買い物 primary 昇格）
+      await expect(acceptSource).toHaveCount(0, { timeout: 30_000 });
+    }
     await expect(shopCreate).toBeEnabled({ timeout: 90_000 });
     // 作成シートは click で <dialog> が opener を覆う。開閉は見出しで固定する。
     const createSheetHeading = page.getByRole("heading", { name: "買い物リストを作る" });
@@ -124,10 +137,8 @@ test(
       await shopCreate.click();
     }
     await expect(createSheetHeading).toBeVisible({ timeout: 60_000 });
-    const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
-    if (await newChoice.isVisible().catch(() => false)) {
-      await newChoice.check();
-    }
+    // E2E8: mode=new を helper 正本で確定（soft skip で append 既定のまま進まない）
+    await chooseCreateListModeNew(page);
     // list 初回 fetch 完了後に CTA が有効になる
     const createConfirm = page.getByRole("button", { name: "作成する" });
     await expect(createConfirm).toBeEnabled({ timeout: 60_000 });

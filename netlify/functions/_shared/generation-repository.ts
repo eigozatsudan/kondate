@@ -9,6 +9,7 @@ import {
   type GenerationRequestLookup,
   type ValidatedMenu,
 } from "../../../shared/contracts/generation.js";
+import { planQuota } from "../../../shared/contracts/plan-quota.js";
 import type { GenerationTargetMember } from "../../../shared/safety/generation-context.js";
 import { ideaSafetySnapshot } from "../../../shared/safety/idea-fingerprint.js";
 import type { Database } from "../../../src/shared/types/database.js";
@@ -107,8 +108,12 @@ const requestPayloadSchema = z
     processing_expires_at: z.iso.datetime({ offset: true }).nullable().optional(),
     completed_menu_id: z.uuid().nullable().optional(),
     remaining: z.number().int().min(0).optional(),
-    // Free 3 / Plus 10。RPC は常に p_user_limit を返すため必須（欠落時 Free 3 へ fail-open しない・S11）
-    user_daily_limit: z.union([z.literal(3), z.literal(10)]),
+    // Free / Plus 成功日次。planQuota 正本連結（S3）。RPC は常に p_user_limit を返すため必須
+    //（欠落時 Free へ fail-open しない・S11）
+    user_daily_limit: z.union([
+      z.literal(planQuota.free.successPerDay),
+      z.literal(planQuota.plus.successPerDay),
+    ]),
     consumed: z.boolean().optional(),
     terminal_details: z.record(z.string(), z.unknown()).nullable().optional(),
     actual_model_ids: z.array(z.string()).optional(),
@@ -125,7 +130,14 @@ export type QuotaRequestRecord = z.infer<typeof requestPayloadSchema>;
  * S11 の必須化に合わせ、呼び出し側が送信した plan limit で欠落だけを埋める。
  * 既に返っている値は上書きしない（status 経路の fail-closed テストも壊さない）。
  */
-function parseRequestPayload(raw: unknown, fillUserDailyLimit?: 3 | 10): QuotaRequestRecord {
+type UserDailySuccessLimit =
+  | typeof planQuota.free.successPerDay
+  | typeof planQuota.plus.successPerDay;
+
+function parseRequestPayload(
+  raw: unknown,
+  fillUserDailyLimit?: UserDailySuccessLimit,
+): QuotaRequestRecord {
   if (
     fillUserDailyLimit !== undefined &&
     raw !== null &&

@@ -260,7 +260,7 @@ test("main returns closed codes without secret leakage", () => {
   assert.doesNotMatch(lines[0], new RegExp(password));
 });
 
-// 製品 max は plan-quota.ts の globalDailyAiLimitProductMax（現状 500）と preflight ミラーが正本。
+// 製品 max は plan-quota-constants.mjs 単一正本（TS plan-quota / preflight が同一 import）。
 test("accepts GLOBAL_DAILY_AI_LIMIT up to product max 500 and rejects 501", () => {
   assert.deepEqual(validateProductionEnv(completeEnv({ GLOBAL_DAILY_AI_LIMIT: "500" })), {
     projectRef,

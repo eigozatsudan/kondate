@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { HttpError, invalidRequest, parseJson, parseJsonRequest, requireOrigin } from "./http.js";
+import {
+  closedHttpErrorDetails,
+  handleError,
+  HttpError,
+  invalidRequest,
+  parseJson,
+  parseJsonRequest,
+  requireOrigin,
+} from "./http.js";
 
 describe("continuation HTTP boundary", () => {
   it("requires the exact JSON content type and canonical origin", async () => {
@@ -90,5 +98,58 @@ describe("parseJson content-type and field error closing", () => {
       code: "invalid_request",
       details: { fields: { name: ["invalid"] } },
     });
+  });
+});
+
+describe("S8 closedHttpErrorDetails / handleError", () => {
+  it("keeps only fields(invalid) and release_failed true; drops free-text keys", () => {
+    expect(
+      closedHttpErrorDetails({
+        fields: { name: ["入力「太郎」は不可: canary@example.com"] },
+        release_failed: true,
+        raw: "<user body>",
+        message: "内部 stack trace",
+        allergy: ["卵"],
+      }),
+    ).toEqual({
+      fields: { name: ["invalid"] },
+      release_failed: true,
+    });
+  });
+
+  it("handleError does not echo free-text details on the wire", async () => {
+    const response = handleError(
+      new HttpError(400, "invalid_request", "入力内容を確認してください", {
+        raw: "secret-body canary@example.com",
+        fields: { meal: ["unexpected free text 太郎"] },
+        release_failed: true,
+      }),
+    );
+    const body = (await response.json()) as {
+      ok: false;
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(body.error.details).toEqual({
+      fields: { meal: ["invalid"] },
+      release_failed: true,
+    });
+    const text = JSON.stringify(body);
+    expect(text).not.toContain("canary@example.com");
+    expect(text).not.toContain("太郎");
+    expect(text).not.toContain("secret-body");
+  });
+
+  it("omits details entirely when only unknown keys were provided", async () => {
+    const response = handleError(
+      new HttpError(500, "request_failed", "処理を完了できませんでした", {
+        stack: "Error: boom",
+        prompt: "sensitive",
+      }),
+    );
+    const body = (await response.json()) as {
+      ok: false;
+      error: { details?: unknown };
+    };
+    expect(body.error.details).toBeUndefined();
   });
 });

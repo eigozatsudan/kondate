@@ -98,14 +98,50 @@ export async function generateShoppingMenu(page: Page): Promise<string> {
   return parsed[1];
 }
 
+/**
+ * 作成シートで mode=new を確定する。
+ * - active list 無し（初回）: mode radio 非表示が正常。append 選択肢も 0 件を固定。
+ * - active list あり: radio 表示 + 「新しいリストにする」必須 check（soft skip 禁止）。
+ * soft isVisible だけで append 既定のまま進むと、後段 reconcile / 中身 assert が偽 green になる（E2E8）。
+ */
+export async function chooseCreateListModeNew(page: Page): Promise<void> {
+  const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
+  const appendChoice = page.getByRole("radio", { name: /今のリストへ追加/u });
+  if ((await newChoice.count()) > 0) {
+    await expect(newChoice).toBeVisible({ timeout: 15_000 });
+    await newChoice.check();
+    await expect(newChoice).toBeChecked();
+    return;
+  }
+  // 初回 create: radio 群が無いこと（mode=new 既定）。radio 必須退行（常時非表示）を別経路で
+  // 検出するため、active があるテストは radio 表示を必須にすること。
+  await expect(appendChoice).toHaveCount(0);
+  await expect(newChoice).toHaveCount(0);
+}
+
 /** 献立結果画面から買い物リストを作成し、/shopping へ遷移させる */
 export async function createListFromMenu(page: Page, menuId: string): Promise<void> {
   await page.goto(`/menus/${menuId}`);
-  // 献立再検証と買い物安全ゲートが開くまで待つ（disabled のまま click すると 180s タイムアウトする）
-  // soft recheck / リスト fetch 中は CTA が disabled。ready を待ってから開く。
+  // full-journey と同型: soft recheck / mount recheck の両方を idle にする（E2E3）。
+  // 片方だけ待つなのは、製品が両コピーを出し分けるため（household-menu-detail-body）。
   await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
     timeout: 90_000,
   });
+  await expect(page.getByText("現在の家族設定で確認しています")).toHaveCount(0, {
+    timeout: 90_000,
+  });
+  // 再検証完了コピーが出るまで待つ（URL 遷移直後の shallow ready を避ける）
+  await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({
+    timeout: 30_000,
+  });
+  // 小麦 mock 経路では labelConfirmation が出る。見える場合は必須で確認する（黙って飛ばさない）。
+  const labelConfirm = page.getByRole("button", {
+    name: "本人が商品の原材料表示を確認しました",
+  });
+  if ((await labelConfirm.count()) > 0) {
+    await expect(labelConfirm).toBeVisible({ timeout: 30_000 });
+    await labelConfirm.click();
+  }
   const createButton = page.getByRole("button", { name: "材料の買い物リストを作る" });
   await expect(createButton).toBeEnabled({ timeout: 60_000 });
   const createSheetHeading = page.getByRole("heading", { name: "買い物リストを作る" });
@@ -113,10 +149,12 @@ export async function createListFromMenu(page: Page, menuId: string): Promise<vo
     await createButton.click();
   }
   await expect(createSheetHeading).toBeVisible({ timeout: 60_000 });
-  const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
-  if (await newChoice.isVisible()) await newChoice.check();
-  await page.getByRole("button", { name: "作成する" }).click();
-  await expect(page).toHaveURL(/\/shopping$/u);
+  await chooseCreateListModeNew(page);
+  const createConfirm = page.getByRole("button", { name: "作成する" });
+  await expect(createConfirm).toBeEnabled({ timeout: 60_000 });
+  await createConfirm.click();
+  // full-journey と同型: Playwright 既定 5s では create 往復が足りない（E2E3）
+  await expect(page).toHaveURL(/\/shopping$/u, { timeout: 60_000 });
   // 安全ゲート ready まで操作を開始しない（制御付き checkbox は gate 中 disabled）
   await expect(page.getByRole("checkbox", { name: /を購入済みにする/u }).first()).toBeEnabled({
     timeout: 60_000,

@@ -7,6 +7,9 @@ import { HttpError } from "./http.js";
  *
  * 緊急献立フィールド（path / matchMode / emptyReason / candidateCount / mealType /
  * mainIngredientCount）は非PII の列挙・件数のみ。食材名・アレルギー本文は載せない。
+ *
+ * S1: 許可 string キーも実行時に形・長さ・列挙で閉じる。誤配線の free-text は
+ * 省略または閉じたフォールバックへ潰し、ログへ載せない。
  */
 export type SafeLogEvent = {
   level: "info" | "warn" | "error";
@@ -95,9 +98,69 @@ function closedErrorCode(raw: string): string {
 }
 
 /**
+ * 相関 ID / requestId。UUID・短い opaque トークンのみ。
+ * 空白・@・日本語 free-text は拒否 → 必須フィールドはフォールバック。
+ */
+function closedRequestId(raw: string): string {
+  if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(raw)) return raw;
+  return "invalid_request_id";
+}
+
+/**
+ * OpenRouter model id 形（vendor/model:tag）。evidenceModelIdSchema と同趣旨。
+ * free-text / メール混入は省略。
+ */
+function closedModelId(raw: string): string | undefined {
+  if (raw.length >= 1 && raw.length <= 200 && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u.test(raw)) {
+    return raw;
+  }
+  return undefined;
+}
+
+/** Stripe Subscription status の閉じた列挙。未知・free-text は省略。 */
+const CLOSED_BILLING_STATUSES = new Set([
+  "none",
+  "trialing",
+  "active",
+  "past_due",
+  "canceled",
+  "unpaid",
+  "incomplete",
+  "incomplete_expired",
+  "paused",
+]);
+
+function closedBillingStatus(raw: string): string | undefined {
+  if (CLOSED_BILLING_STATUSES.has(raw)) return raw;
+  return undefined;
+}
+
+/** opaque Stripe customer id（cus_…）。プレフィックス外・空白・@ 混入は省略。 */
+function closedStripeCustomerId(raw: string): string | undefined {
+  // ローカル/テストも cus_test_delete_1 形。空白・記号 free-text は拒否。
+  if (/^cus_[A-Za-z0-9_]{1,120}$/u.test(raw)) return raw;
+  return undefined;
+}
+
+/** opaque Stripe subscription id（sub_…）。 */
+function closedStripeSubscriptionId(raw: string): string | undefined {
+  if (/^sub_[A-Za-z0-9_]{1,120}$/u.test(raw)) return raw;
+  return undefined;
+}
+
+/** 共有 job の opaque UUID。形外は省略。 */
+function closedJobId(raw: string): string | undefined {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(raw)) {
+    return raw.toLowerCase();
+  }
+  return undefined;
+}
+
+/**
  * 許可フィールドだけをシリアライズするロガーを返す。
  * 未定義の任意キーは無視され、JSON に混入しない。
- * code は closedErrorCode で閉じ、HTTP 境界以外の generation ログも free-text を載せない。
+ * code / failureCode は closedErrorCode で閉じ、
+ * その他の許可 string も形・列挙で閉じ（S1: free-text を載せない）。
  */
 export const createSafeLogger =
   (write: LogWriter = console.log) =>
@@ -105,11 +168,14 @@ export const createSafeLogger =
     // null は緊急献立の matchMode / emptyReason 用（省略と区別するため明示シリアライズ）
     const record: Record<string, string | number | null> = {
       level: event.level,
-      request_id: event.requestId,
+      request_id: closedRequestId(event.requestId),
       code: closedErrorCode(event.code),
       duration_ms: Math.max(0, Math.trunc(event.durationMs)),
     };
-    if (event.modelId !== undefined) record.model_id = event.modelId;
+    if (event.modelId !== undefined) {
+      const modelId = closedModelId(event.modelId);
+      if (modelId !== undefined) record.model_id = modelId;
+    }
     if (event.staleReservationsFinalized !== undefined) {
       record.stale_reservations_finalized = event.staleReservationsFinalized;
     }
@@ -148,17 +214,24 @@ export const createSafeLogger =
     if (event.mainIngredientCount !== undefined) {
       record.main_ingredient_count = Math.max(0, Math.trunc(event.mainIngredientCount));
     }
-    // billing: 非 PII の列挙・opaque id のみ
+    // billing: 非 PII の列挙・opaque id のみ（値も実行時に閉じる）
     if (event.plan !== undefined) record.plan = event.plan;
-    if (event.billingStatus !== undefined) record.billing_status = event.billingStatus;
+    if (event.billingStatus !== undefined) {
+      const billingStatus = closedBillingStatus(event.billingStatus);
+      if (billingStatus !== undefined) record.billing_status = billingStatus;
+    }
     if (event.priceInterval !== undefined) record.price_interval = event.priceInterval;
     if (event.qualityMode !== undefined) record.quality_mode = event.qualityMode ? 1 : 0;
     if (event.flyer !== undefined) record.flyer = event.flyer ? 1 : 0;
     if (event.stripeCustomerId !== undefined) {
-      record.stripe_customer_id = event.stripeCustomerId;
+      const stripeCustomerId = closedStripeCustomerId(event.stripeCustomerId);
+      if (stripeCustomerId !== undefined) record.stripe_customer_id = stripeCustomerId;
     }
     if (event.stripeSubscriptionId !== undefined) {
-      record.stripe_subscription_id = event.stripeSubscriptionId;
+      const stripeSubscriptionId = closedStripeSubscriptionId(event.stripeSubscriptionId);
+      if (stripeSubscriptionId !== undefined) {
+        record.stripe_subscription_id = stripeSubscriptionId;
+      }
     }
     if (event.alertMetric !== undefined) {
       record.alert_metric = Math.max(0, Math.trunc(event.alertMetric));
@@ -171,7 +244,8 @@ export const createSafeLogger =
     }
     // 共有 worker / 緊急: opaque id と閉じたコード・件数のみ（自由文キーは型で拒否）
     if (event.jobId !== undefined) {
-      record.job_id = event.jobId;
+      const jobId = closedJobId(event.jobId);
+      if (jobId !== undefined) record.job_id = jobId;
     }
     if (event.failureCode !== undefined) {
       record.failure_code = closedErrorCode(event.failureCode);

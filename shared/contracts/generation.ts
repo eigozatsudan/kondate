@@ -802,9 +802,12 @@ export type GenerationRequestLookup =
 export const generationQuotaSchema = z
   .object({
     consumed: z.boolean(),
-    // 防御天井は Plus 最大成功数。製品 limit は 3|10 のみ
+    // 防御天井は Plus 最大成功数。製品 limit は planQuota free|plus 正本のみ（S3）
     remaining: z.number().int().min(0).max(planQuota.defense.maxSuccessPerDay),
-    userDailyLimit: z.union([z.literal(3), z.literal(10)]),
+    userDailyLimit: z.union([
+      z.literal(planQuota.free.successPerDay),
+      z.literal(planQuota.plus.successPerDay),
+    ]),
     limitKind: z.enum(quotaLimitKinds).nullable(),
     retryAt: isoDateTimeSchema.nullable(),
   })
@@ -878,21 +881,31 @@ export const usageTodayDataSchema = z
     success: z
       .object({
         consumed: z.number().int().min(0).max(planQuota.defense.maxSuccessPerDay),
-        limit: z.union([z.literal(3), z.literal(10)]),
+        // 製品 limit は planQuota free|plus 正本（S3: quality/flyer と同型の連結）
+        limit: z.union([
+          z.literal(planQuota.free.successPerDay),
+          z.literal(planQuota.plus.successPerDay),
+        ]),
         remaining: z.number().int().min(0).max(planQuota.defense.maxSuccessPerDay),
       })
       .strict(),
     attempts: z
       .object({
         sent: z.number().int().min(0).max(planQuota.defense.maxAttemptsPerDay),
-        limit: z.union([z.literal(6), z.literal(20)]),
+        limit: z.union([
+          z.literal(planQuota.free.attemptsPerDay),
+          z.literal(planQuota.plus.attemptsPerDay),
+        ]),
         remaining: z.number().int().min(0).max(planQuota.defense.maxAttemptsPerDay),
       })
       .strict(),
     shortWindow: z
       .object({
         sent: z.number().int().min(0).max(planQuota.defense.maxShortWindow),
-        limit: z.union([z.literal(4), z.literal(8)]),
+        limit: z.union([
+          z.literal(planQuota.free.shortWindowLimit),
+          z.literal(planQuota.plus.shortWindowLimit),
+        ]),
         remaining: z.number().int().min(0).max(planQuota.defense.maxShortWindow),
         retryAt: isoDateTimeSchema.nullable(),
       })

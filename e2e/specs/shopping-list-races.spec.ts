@@ -4,6 +4,7 @@ import {
   reconcileShoppingListRequestSchema,
 } from "../../shared/contracts/shopping";
 import {
+  chooseCreateListModeNew,
   createListFromMenu,
   deferMatchingRequest,
   expect,
@@ -276,8 +277,8 @@ test("pending create envelope does not create a list after household safety chan
   const createButton = page.getByRole("button", { name: "材料の買い物リストを作る" });
   await expect(createButton).toBeEnabled({ timeout: 60_000 });
   await createButton.click();
-  const newChoice = page.getByRole("radio", { name: "新しいリストにする" });
-  if (await newChoice.isVisible()) await newChoice.check();
+  // E2E8: mode=new soft skip 禁止（active 残存時の append 既定で pending create 契約が崩れる）
+  await chooseCreateListModeNew(page);
   await page.getByRole("button", { name: "作成する" }).click();
 
   // pending create envelope が sessionStorage に残ること（POST 保留中）

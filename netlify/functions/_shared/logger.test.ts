@@ -399,3 +399,94 @@ describe("closedErrorCode on all logger sinks", () => {
     expect(parsed.code).toBe("request_failed");
   });
 });
+
+describe("S1 closed allowed string values", () => {
+  it("collapses free-text requestId and omits free-text modelId / billingStatus", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "error",
+      requestId: "vendor said: canary@example.com / 太郎",
+      code: "openrouter_unavailable",
+      durationMs: 1,
+      modelId: 'vendor said: "egg" allergy canary@example.com',
+      billingStatus: "active; name=太郎 email=canary@example.com",
+    });
+    const line = write.mock.calls[0]![0] as string;
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      level: "error",
+      request_id: "invalid_request_id",
+      code: "openrouter_unavailable",
+      duration_ms: 1,
+    });
+    expect(line).not.toContain("canary@example.com");
+    expect(line).not.toContain("太郎");
+    expect(line).not.toContain("egg");
+    expect(parsed).not.toHaveProperty("model_id");
+    expect(parsed).not.toHaveProperty("billing_status");
+  });
+
+  it("keeps closed billingStatus enum and opaque Stripe / job ids; drops free-text ids", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "info",
+      requestId: "bill-s1",
+      code: "billing_webhook_ok",
+      durationMs: 5,
+      billingStatus: "past_due",
+      stripeCustomerId: "cus_abc123",
+      stripeSubscriptionId: "sub_xyz789",
+      jobId: "d1000000-0000-4000-8000-000000000001",
+    });
+    expect(JSON.parse(write.mock.calls[0]![0] as string)).toEqual({
+      level: "info",
+      request_id: "bill-s1",
+      code: "billing_webhook_ok",
+      duration_ms: 5,
+      billing_status: "past_due",
+      stripe_customer_id: "cus_abc123",
+      stripe_subscription_id: "sub_xyz789",
+      job_id: "d1000000-0000-4000-8000-000000000001",
+    });
+
+    const writeBad = vi.fn();
+    createSafeLogger(writeBad)({
+      level: "warn",
+      requestId: "bill-s1-bad",
+      code: "billing_webhook_ok",
+      durationMs: 1,
+      stripeCustomerId: "not-a-customer email=canary@example.com",
+      stripeSubscriptionId: "sub_ has space",
+      jobId: "not-a-uuid free text",
+      billingStatus: "completely_unknown_status",
+    });
+    const badLine = writeBad.mock.calls[0]![0] as string;
+    const badParsed = JSON.parse(badLine) as Record<string, unknown>;
+    expect(badParsed).toEqual({
+      level: "warn",
+      request_id: "bill-s1-bad",
+      code: "billing_webhook_ok",
+      duration_ms: 1,
+    });
+    expect(badLine).not.toContain("canary@example.com");
+    expect(badLine).not.toContain("free text");
+    expect(badParsed).not.toHaveProperty("stripe_customer_id");
+    expect(badParsed).not.toHaveProperty("stripe_subscription_id");
+    expect(badParsed).not.toHaveProperty("job_id");
+    expect(badParsed).not.toHaveProperty("billing_status");
+  });
+
+  it("keeps valid modelId shape matching OpenRouter id pattern", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "info",
+      requestId: "req-model",
+      code: "succeeded",
+      durationMs: 2,
+      modelId: "vendor/model:free",
+    });
+    expect(JSON.parse(write.mock.calls[0]![0] as string)).toMatchObject({
+      model_id: "vendor/model:free",
+    });
+  });
+});

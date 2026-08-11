@@ -118,15 +118,48 @@ function isJsonContentType(header: string | null): boolean {
  * fieldErrors の path 名は残し、メッセージは入力本文を埋め込まない固定語に閉じる。
  * 将来の refine が free-text を message に載せてもクライアントへエコーしない。
  */
-function closedFieldErrors(
+export function closedFieldErrors(
   fieldErrors: Record<string, string[] | undefined>,
 ): Record<string, string[]> {
   const closed: Record<string, string[]> = {};
   for (const [path, messages] of Object.entries(fieldErrors)) {
     if (messages === undefined || messages.length === 0) continue;
+    // path 名も free-text を避ける（識別子のみ）
+    if (!/^[A-Za-z_][A-Za-z0-9_.[\]]{0,79}$/u.test(path)) continue;
     closed[path] = messages.map(() => "invalid");
   }
   return closed;
+}
+
+/**
+ * S8: HttpError.details を閉じた schema のみに正規化する。
+ * - fields: path → ["invalid"] のみ（parseJson と対称）
+ * - release_failed: true のみ（billing checkout B6）
+ * 未知キー・free-text 値・ネスト任意 Record は落とす。
+ */
+export function closedHttpErrorDetails(
+  details: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (details === undefined) return undefined;
+  const closed: Record<string, unknown> = {};
+  const rawFields = details.fields;
+  if (rawFields !== undefined && rawFields !== null && typeof rawFields === "object") {
+    const fieldSource: Record<string, string[] | undefined> = {};
+    for (const [path, value] of Object.entries(rawFields as Record<string, unknown>)) {
+      if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
+        fieldSource[path] = value;
+      } else if (value !== undefined) {
+        // 配列以外の形でも path だけ残し message は閉じる
+        fieldSource[path] = ["invalid"];
+      }
+    }
+    const fields = closedFieldErrors(fieldSource);
+    if (Object.keys(fields).length > 0) closed.fields = fields;
+  }
+  if (details.release_failed === true) {
+    closed.release_failed = true;
+  }
+  return Object.keys(closed).length === 0 ? undefined : closed;
 }
 
 export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
@@ -159,12 +192,13 @@ export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Prom
 
 export function handleError(error: unknown): Response {
   if (error instanceof HttpError) {
+    const details = closedHttpErrorDetails(error.details);
     return json(error.status, {
       ok: false,
       error: {
         code: error.code,
         message: error.message,
-        ...(error.details === undefined ? {} : { details: error.details }),
+        ...(details === undefined ? {} : { details }),
       },
     });
   }

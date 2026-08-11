@@ -34,10 +34,13 @@ describe("planQuota", () => {
     });
   });
 
-  it("exports a single product max for GLOBAL_DAILY_AI_LIMIT (ENV-only; SQL has no range gate)", () => {
-    // 運用値は ENV だけで上げられる。製品 max の引き上げはこの定数（+ preflight ミラー）のみ。
+  it("exports a single product max for GLOBAL_DAILY_AI_LIMIT (ENV-only; SQL has no range gate)", async () => {
+    // 運用値は ENV だけで上げられる。製品 max の正本は plan-quota-constants.mjs（S4）。
+    const { GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX: fromMjs } =
+      await import("./plan-quota-constants.mjs");
     expect(planQuota.globalDailyAiLimitProductMax).toBe(500);
     expect(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX).toBe(planQuota.globalDailyAiLimitProductMax);
+    expect(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX).toBe(fromMjs);
     expect(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX).toBeGreaterThanOrEqual(80);
   });
 

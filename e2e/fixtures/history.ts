@@ -67,10 +67,36 @@ export async function clickWizardNext(page: Page): Promise<void> {
 }
 
 /**
+ * generation_drafts の target_member_ids が 1 件以上であることを REST で固定する。
+ * audience helper の early-return 経路でも UI checked と server draft の desync を偽 green にしない。
+ */
+async function expectDraftTargetMembersNonEmpty(page: Page): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const headers = await localRestHeaders(page);
+        const response = await page.request.get(
+          "http://127.0.0.1:8000/rest/v1/generation_drafts?select=target_member_ids&limit=1",
+          { headers },
+        );
+        if (!response.ok()) return 0;
+        const rows = z
+          .array(z.object({ target_member_ids: z.array(z.string()) }))
+          .parse(await response.json());
+        return rows[0]?.target_member_ids.length ?? 0;
+      },
+      { timeout: 15_000 },
+    )
+    .toBeGreaterThan(0);
+}
+
+/**
  * C-I4: 「家族に合わせて作る」はメンバーを自動選択しない。
  * household + 0 members は save_generation_draft の DB CHECK で拒否されるため、
  * eligible メンバーを明示チェックし、member_ids 非空の成功 POST を同期点にする。
  * radio のみの失敗 POST は body で除外する。
+ * 既 checked の early-return でも server draft の member_ids 非空を REST で検証する
+ * （UI だけ選択済み・draft 空の desync を成功扱いにしない）。
  */
 export async function selectHouseholdAudienceWithMember(
   page: Page,
@@ -79,9 +105,13 @@ export async function selectHouseholdAudienceWithMember(
   await page.getByRole("radio", { name: "家族に合わせて作る" }).check();
   const member = page.getByRole("checkbox", { name: memberName });
   await expect(member).toBeVisible();
-  // 復元済みdraftなどで目的のメンバーが選択済みなら、新しい保存操作は発生しない。
-  // response waiterを作る前に完了し、存在しないPOSTを待ち続けない。
-  if (await member.isChecked()) return;
+  // 復元済み draft などで目的のメンバーが選択済みなら新しい保存操作は発生しない。
+  // response waiter を張らず return するが、server draft 同期は必ず検証する（E2E7）。
+  if (await member.isChecked()) {
+    await expect(member).toBeChecked();
+    await expectDraftTargetMembersNonEmpty(page);
+    return;
+  }
   // メンバー確定後の成功保存だけを待つ（radio 単独の CHECK 失敗 POST は無視）
   const audienceSaveResponse = page.waitForResponse((response) => {
     if (response.request().method() !== "POST") return false;
@@ -99,6 +129,8 @@ export async function selectHouseholdAudienceWithMember(
   });
   await member.check();
   expect((await audienceSaveResponse).ok()).toBe(true);
+  // POST 成功後も永続行を照合（handler 成功だが draft 未反映の窓を閉じる）
+  await expectDraftTargetMembersNonEmpty(page);
 }
 
 /** 登録済み一覧のみのとき編集フォームを開く（editorOpen 既定 false 対応） */

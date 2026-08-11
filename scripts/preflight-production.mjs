@@ -8,6 +8,7 @@ import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX } from "../shared/contracts/plan-quota-constants.mjs";
 import { assertProductionCspMatchesSupabaseUrl, buildDeployHeadersFile } from "./csp-headers.mjs";
 
 // TS の parseOpenRouterModels / parseManagedSupabaseProjectRef と
@@ -296,9 +297,8 @@ export function validateProductionEnv(env) {
   requirePositiveIntegerString(env, "AI_PROCESSING_STALE_SECONDS", 180);
   requirePositiveIntegerString(env, "VITE_MAGIC_LINK_RESEND_SECONDS");
   const globalLimit = requirePositiveIntegerString(env, "GLOBAL_DAILY_AI_LIMIT");
-  // 製品 max のミラー: shared/contracts/plan-quota.ts の globalDailyAiLimitProductMax
+  // 製品 max は plan-quota-constants.mjs 単一正本（S4）。TS plan-quota と同一 import。
   // SQL は範囲拒否しない。運用値は ENV のみで上げる。製品 max を超える運用は先に定数を上げる。
-  const GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX = 500;
   if (globalLimit > GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX) {
     throw new Error("GLOBAL_DAILY_AI_LIMIT_invalid");
   }

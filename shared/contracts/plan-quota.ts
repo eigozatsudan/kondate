@@ -1,3 +1,9 @@
+/**
+ * 製品 max の mjs 正本（preflight と共有）。TS 側はこの import を介して単一点化（S4）。
+ * 数値そのものの無断変更は禁止。
+ */
+import { GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX as productMaxFromShared } from "./plan-quota-constants.mjs";
+
 /** プラン別製品上限と DB/Zod 防御天井。設計 2026-07-29 L6–L9。 */
 export const planQuota = {
   free: {
@@ -31,15 +37,16 @@ export const planQuota = {
   },
   /**
    * アプリ全体の外部 AI 日次枠（GLOBAL_DAILY_AI_LIMIT）の製品 max。
-   * 正本は env.ts の Zod と preflight のミラー。SQL は p_global_limit を範囲拒否しない。
+   * 正本は plan-quota-constants.mjs（本オブジェクト経由 + preflight が同一 import）。
+   * SQL は p_global_limit を範囲拒否しない。
    *
    * - 運用値の引き上げ（例: 80→200）: Netlify ENV のみ。コード・SQL 不要。
-   * - 製品 max 自体の引き上げ（例: 500→1000）: この定数 + preflight のミラー + 文書のみ。
+   * - 製品 max 自体の引き上げ（例: 500→1000）: plan-quota-constants.mjs のみ + 文書。
    */
-  globalDailyAiLimitProductMax: 500,
+  globalDailyAiLimitProductMax: productMaxFromShared,
 } as const;
 
-/** 上記 max の単独 export（env / テスト用） */
+/** 上記 max の単独 export（env / テスト用）。mjs 正本と同一参照。 */
 export const GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX = planQuota.globalDailyAiLimitProductMax;
 
 export type PlanCode = "free" | "plus";

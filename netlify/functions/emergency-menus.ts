@@ -25,7 +25,7 @@ import {
   loadEmergencyCurrentSafety,
   type EmergencyCurrentSafety,
 } from "./_shared/current-safety.js";
-import { handleError, json, methodNotAllowed } from "./_shared/http.js";
+import { closedFieldErrors, handleError, json, methodNotAllowed } from "./_shared/http.js";
 import { safeLog } from "./_shared/logger.js";
 import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
 
@@ -375,12 +375,15 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
         pantryItemIds: url.searchParams.get("pantryItemIds") ?? undefined,
       });
       if (!rawParsed.success) {
+        // S8: Zod 既定 message を wire に出さない（parseJson の closedFieldErrors と対称）
         return json(400, {
           ok: false,
           error: {
             code: "invalid_request",
             message: "検索条件を確認してください",
-            details: { fields: z.flattenError(rawParsed.error).fieldErrors },
+            details: {
+              fields: closedFieldErrors(z.flattenError(rawParsed.error).fieldErrors),
+            },
           },
         });
       }

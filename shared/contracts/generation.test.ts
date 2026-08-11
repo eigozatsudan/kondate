@@ -16,6 +16,7 @@ import {
   newMenuGenerationRequestSchema,
   regenerateDishRequestSchema,
   regenerateMenuRequestSchema,
+  planQuota,
   releaseQuota,
   toAiGenerationResponse,
   generationQuotaSchema,
@@ -513,6 +514,74 @@ describe("usageTodayDataSchema", () => {
         retryAt: null,
       }).success,
     ).toBe(false);
+  });
+
+  it("S3: userDailyLimit and usage limit unions are planQuota free|plus literals", () => {
+    const freeLimit = generationQuotaSchema.parse({
+      consumed: false,
+      remaining: planQuota.free.successPerDay,
+      userDailyLimit: planQuota.free.successPerDay,
+      limitKind: null,
+      retryAt: null,
+    });
+    expect(freeLimit.userDailyLimit).toBe(planQuota.free.successPerDay);
+    const plusLimit = generationQuotaSchema.parse({
+      consumed: false,
+      remaining: 0,
+      userDailyLimit: planQuota.plus.successPerDay,
+      limitKind: null,
+      retryAt: null,
+    });
+    expect(plusLimit.userDailyLimit).toBe(planQuota.plus.successPerDay);
+    // 非製品 limit（例: 5）は wire で拒否（planQuota に無い）
+    expect(
+      generationQuotaSchema.safeParse({
+        consumed: false,
+        remaining: 0,
+        userDailyLimit: 5,
+        limitKind: null,
+        retryAt: null,
+      }).success,
+    ).toBe(false);
+
+    // usageToday success/attempts/shortWindow limit も planQuota 連結（数値は不変）
+    const usage = usageTodayDataSchema.parse({
+      ...availableUsageTodayFixture,
+      plan: "plus",
+      plusEntitled: true,
+      success: {
+        consumed: 0,
+        limit: planQuota.plus.successPerDay,
+        remaining: planQuota.plus.successPerDay,
+      },
+      attempts: {
+        sent: 0,
+        limit: planQuota.plus.attemptsPerDay,
+        remaining: planQuota.plus.attemptsPerDay,
+      },
+      shortWindow: {
+        sent: 0,
+        limit: planQuota.plus.shortWindowLimit,
+        remaining: planQuota.plus.shortWindowLimit,
+        retryAt: null,
+      },
+      quality: {
+        day: {
+          consumed: 0,
+          limit: planQuota.quality.perDay,
+          remaining: planQuota.quality.perDay,
+        },
+        month: {
+          consumed: 0,
+          limit: planQuota.quality.perMonth,
+          remaining: planQuota.quality.perMonth,
+        },
+        available: true,
+      },
+    });
+    expect(usage.success.limit).toBe(planQuota.plus.successPerDay);
+    expect(usage.attempts.limit).toBe(planQuota.plus.attemptsPerDay);
+    expect(usage.shortWindow.limit).toBe(planQuota.plus.shortWindowLimit);
   });
 });
 
