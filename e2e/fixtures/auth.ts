@@ -55,17 +55,13 @@ export const test = base.extend<AuthFixtures>({
   },
 
   completedOnboardingPage: async ({ authenticatedPage: page }, provide) => {
-    // welcomeから家族導線を選んでから家族設定を完了する。家族設定の完了は
-    // 現在プライバシー同意と切り離されており、直接/plannerへ遷移する。
-    // この後で/privacyを独立して開いて同意を保存する。
-    await page.getByRole("button", { name: "家族情報を登録する" }).click();
-    await completeMinimumOnboarding(page);
-    await expect(page).toHaveURL((url) => url.pathname === "/planner");
-    await page.goto("/privacy?returnTo=%2Fplanner");
-    await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
-    await page.getByRole("button", { name: "確認して進む" }).click();
-    await expect(page).toHaveURL((url) => url.pathname === "/planner");
-    // GLOBAL 日次 20 はスイート全体で共有。製品上限は据え置き、カウンタのみ空にする。
+    // UI クリック経路は onboarding.spec / full-journey household が担う。
+    // 完了済み前提の fixture は DB seed で profile・家族1名・privacy を一括投入する。
+    // service role は page に渡さない（seed-onboarding 内で .env から読む）。
+    const { seedCompletedOnboardingState } = await import("./seed-onboarding");
+    await seedCompletedOnboardingState(page);
+    // Task 8 まで: 生成直前 reset へ移す前はここで GLOBAL 枠を空にする。
+    // 製品上限は据え置き、カウンタのみ空にする。
     const { resetGlobalAiQuotaForE2e } = await import("./reset-global-ai-quota");
     await resetGlobalAiQuotaForE2e();
     await provide(page);
