@@ -1293,7 +1293,7 @@ it("saves a changed safety field and invalidates dependents", async () => {
   });
 });
 
-// H3: DB コミット後の invalidate 失敗は soft。保存成功メッセージを維持する
+// H3/H4: DB コミット後の invalidate 失敗は soft（保存成功）。ただし「再確認します」は出さない
 it("H3: treats post-commit invalidateSafety failure as soft success", async () => {
   const updateMember = vi.fn().mockResolvedValue({
     ...member,
@@ -1311,8 +1311,11 @@ it("H3: treats post-commit invalidateSafety failure as soft success", async () =
     expect(invalidateSafety).toHaveBeenCalled();
   });
   await waitFor(() => {
-    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+    // H4: 保存済みだが再確認失敗を明示（false assurance を縮める）
+    expect(screen.getByRole("status")).toHaveTextContent("家族設定を保存しました");
+    expect(screen.getByRole("status")).toHaveTextContent("画面の再確認に失敗");
   });
+  expect(screen.getByRole("status")).not.toHaveTextContent("最新条件で再確認します");
   expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
   expect(screen.getByRole("status")).not.toHaveTextContent("保存できませんでした");
 });
@@ -1401,8 +1404,11 @@ it("H-RR1: treats post-completeMember invalidateSafety failure as soft success",
     expect(invalidateSafety).toHaveBeenCalled();
   });
   await waitFor(() => {
-    expect(screen.getByRole("status")).toHaveTextContent("最新条件で再確認します");
+    // H4: complete 成功だが再確認失敗を明示
+    expect(screen.getByRole("status")).toHaveTextContent("家族設定を保存しました");
+    expect(screen.getByRole("status")).toHaveTextContent("画面の再確認に失敗");
   });
+  expect(screen.getByRole("status")).not.toHaveTextContent("最新条件で再確認します");
   expect(screen.getByRole("status")).not.toHaveTextContent("完了できませんでした");
   expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
   // complete コミット後の members cache は complete のまま（false failure で巻き戻さない）
@@ -1427,11 +1433,16 @@ it("H-RR2: treats post-removeAllergy invalidateSafety failure as soft success", 
     custom_name: "えんどう豆たんぱく",
     custom_confirmed: true,
   };
+  // H5: 削除後 list は残存行のみ（silent success 検知用に再取得する）
+  const listAllergies = vi
+    .fn()
+    .mockResolvedValueOnce([standardAllergy, customAllergy])
+    .mockResolvedValue([customAllergy]);
   const removeAllergy = vi.fn().mockResolvedValue(undefined);
   const invalidateSafety = vi.fn().mockRejectedValue(new Error("安全条件の無効化に失敗しました"));
   await renderSettings({
     listMembers: vi.fn().mockResolvedValue([registeredMember]),
-    listAllergies: vi.fn().mockResolvedValue([standardAllergy, customAllergy]),
+    listAllergies,
     removeAllergy,
     invalidateSafety,
   });
@@ -1444,10 +1455,13 @@ it("H-RR2: treats post-removeAllergy invalidateSafety failure as soft success", 
   await waitFor(() => {
     expect(invalidateSafety).toHaveBeenCalled();
   });
-  // AllergyEditor onError 経由の総失敗文言を出さない（soft 成功時は status 自体が無いこともある）
+  // AllergyEditor onError 経由の総失敗文言を出さない。H4: 再確認失敗は status に出す
   expect(screen.queryByText("アレルギーを削除できませんでした")).not.toBeInTheDocument();
   expect(screen.queryByText("安全条件の無効化に失敗しました")).not.toBeInTheDocument();
   expect(screen.queryByText("アレルギー情報を更新できませんでした")).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("画面の再確認に失敗");
+  });
 });
 
 // H-RR2: 苦手追加コミット後の invalidate 失敗は soft（入力クリア＝成功 UX）
@@ -1472,12 +1486,15 @@ it("H-RR2: treats post-addDislike invalidateSafety failure as soft success", asy
   await waitFor(() => {
     expect(invalidateSafety).toHaveBeenCalled();
   });
-  // 成功コールバックで入力が空になり、失敗メッセージは出ない
+  // 成功コールバックで入力が空。H4: 再確認失敗は status に出す
   await waitFor(() => {
     expect(screen.getByLabelText("苦手食材を追加")).toHaveValue("");
   });
   expect(screen.queryByText("苦手食材を追加できませんでした")).not.toBeInTheDocument();
   expect(screen.queryByText("安全条件の無効化に失敗しました")).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("画面の再確認に失敗");
+  });
 });
 
 // H-RR3: メンバー削除コミット後の invalidate 失敗は soft。削除成功 UX を維持する
@@ -1507,7 +1524,9 @@ it("H-RR3: treats post-deleteMember invalidateSafety failure as soft success", a
     expect(invalidateSafety).toHaveBeenCalled();
   });
   await waitFor(() => {
+    // H4: 削除成功 + 再確認失敗を併記
     expect(screen.getByRole("status")).toHaveTextContent("家族の設定を削除しました");
+    expect(screen.getByRole("status")).toHaveTextContent("画面の再確認に失敗");
   });
   expect(screen.getByRole("status")).not.toHaveTextContent("削除できませんでした");
   expect(screen.getByRole("status")).not.toHaveTextContent("安全条件の無効化に失敗しました");
@@ -1689,9 +1708,29 @@ it.each([
   async ({ allergyKind }) => {
     const registeredMember = { ...member, allergy_status: "registered" as const };
     const updateMember = vi.fn().mockResolvedValue(registeredMember);
-    const addStandardAllergy = vi.fn().mockResolvedValue(undefined);
-    const addCustomAllergy = vi.fn().mockResolvedValue(undefined);
-    await renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
+    let allergies: MemberAllergyRow[] = [];
+    const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+    const addStandardAllergy = vi.fn().mockImplementation(() => {
+      allergies = [standardAllergy];
+      return Promise.resolve(standardAllergy);
+    });
+    const addCustomAllergy = vi.fn().mockImplementation(() => {
+      const customRow: MemberAllergyRow = {
+        ...standardAllergy,
+        id: "allergy-custom",
+        allergen_id: null,
+        custom_name: "えんどう豆たんぱく",
+        custom_confirmed: true,
+      };
+      allergies = [customRow];
+      return Promise.resolve(customRow);
+    });
+    await renderSettings({
+      listAllergies,
+      updateMember,
+      addStandardAllergy,
+      addCustomAllergy,
+    });
 
     await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
 
@@ -1733,19 +1772,28 @@ it.each([
     const earlierSave = new Promise<HouseholdMemberRow>((resolve) => {
       resolveEarlierSave = resolve;
     });
+    let allergies: MemberAllergyRow[] = [];
+    const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
     const updateMember = vi
       .fn()
       .mockReturnValueOnce(earlierSave)
       .mockResolvedValue({ ...member, allergy_status: "registered" });
-    const addStandardAllergy = vi.fn().mockResolvedValue(standardAllergy);
-    const addCustomAllergy = vi.fn().mockResolvedValue({
-      ...standardAllergy,
-      id: "allergy-custom",
-      allergen_id: null,
-      custom_name: "えんどう豆たんぱく",
-      custom_confirmed: true,
+    const addStandardAllergy = vi.fn().mockImplementation(() => {
+      allergies = [standardAllergy];
+      return Promise.resolve(standardAllergy);
     });
-    await renderSettings({ updateMember, addStandardAllergy, addCustomAllergy });
+    const addCustomAllergy = vi.fn().mockImplementation(() => {
+      const customRow: MemberAllergyRow = {
+        ...standardAllergy,
+        id: "allergy-custom",
+        allergen_id: null,
+        custom_name: "えんどう豆たんぱく",
+        custom_confirmed: true,
+      };
+      allergies = [customRow];
+      return Promise.resolve(customRow);
+    });
+    await renderSettings({ listAllergies, updateMember, addStandardAllergy, addCustomAllergy });
 
     await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "age_3_5");
     await waitFor(() => {
@@ -2018,6 +2066,8 @@ it("disables the allergy status until existing allergies finish loading", async 
 
 it("keeps newer edits in the registered save after a delayed standard allergy add", async () => {
   let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
   const addStandardAllergy = vi.fn(
     () =>
       new Promise<MemberAllergyRow>((resolve) => {
@@ -2036,7 +2086,7 @@ it("keeps newer edits in the registered save after a delayed standard allergy ad
         allergy_status: patch.allergy_status ?? member.allergy_status,
       });
     });
-  await renderSettings({ addStandardAllergy, updateMember });
+  await renderSettings({ listAllergies, addStandardAllergy, updateMember });
 
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
@@ -2051,6 +2101,7 @@ it("keeps newer edits in the registered save after a delayed standard allergy ad
     );
   });
   await act(async () => {
+    allergies = [standardAllergy];
     resolveAdd?.(standardAllergy);
     await Promise.resolve();
   });
@@ -2099,6 +2150,7 @@ it.each([
   "saves a delayed allergy transition with the initiating member when the next member has $label",
   async ({ secondMember, secondAllergies }) => {
     let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+    let member1Allergies: MemberAllergyRow[] = [];
     const addStandardAllergy = vi.fn(
       () =>
         new Promise<MemberAllergyRow>((resolve) => {
@@ -2119,7 +2171,11 @@ it.each([
     await renderSettings({
       listMembers: vi.fn().mockResolvedValue([member, secondMember]),
       listAllergies: vi.fn((memberId: string) =>
-        Promise.resolve(memberId === member.id ? [] : secondAllergies),
+        Promise.resolve(
+          memberId === member.id
+            ? member1Allergies.map((row) => ({ ...row }))
+            : secondAllergies.map((row) => ({ ...row })),
+        ),
       ),
       addStandardAllergy,
       updateMember,
@@ -2137,6 +2193,7 @@ it.each([
     });
 
     await act(async () => {
+      member1Allergies = [standardAllergy];
       resolveAdd?.(standardAllergy);
       await Promise.resolve();
     });
@@ -2163,6 +2220,13 @@ it("keeps an allergy add locked for its member across switching until success", 
     sort_order: 1,
   };
   let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  let allergiesByMember: Record<string, MemberAllergyRow[]> = {
+    [member.id]: [],
+    [secondMember.id]: [],
+  };
+  const listAllergies = vi.fn((memberId: string) =>
+    Promise.resolve((allergiesByMember[memberId] ?? []).map((row) => ({ ...row }))),
+  );
   const addStandardAllergy = vi.fn(
     () =>
       new Promise<MemberAllergyRow>((resolve) => {
@@ -2174,7 +2238,7 @@ it("keeps an allergy add locked for its member across switching until success", 
   );
   await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
-    listAllergies: vi.fn().mockResolvedValue([]),
+    listAllergies,
     addStandardAllergy,
     updateMember,
   });
@@ -2199,6 +2263,7 @@ it("keeps an allergy add locked for its member across switching until success", 
   expect(addStandardAllergy).toHaveBeenCalledTimes(1);
 
   await act(async () => {
+    allergiesByMember = { ...allergiesByMember, [member.id]: [standardAllergy] };
     resolveAdd?.(standardAllergy);
     await Promise.resolve();
   });
@@ -2478,6 +2543,8 @@ it("0件確認中のsafe保存後はregisteredを送らず追加成功後に再�
     allergy_status: "registered",
   };
   let resolveNoneUpdate: ((saved: HouseholdMemberRow) => void) | undefined;
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
   const updateMember = vi
     .fn()
     .mockImplementationOnce(
@@ -2487,8 +2554,15 @@ it("0件確認中のsafe保存後はregisteredを送らず追加成功後に再�
         }),
     )
     .mockResolvedValueOnce(registeredMember);
-  const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
-  const { queryClient } = await renderSettings({ addStandardAllergy, updateMember });
+  const addStandardAllergy = vi.fn().mockImplementation(() => {
+    allergies = [walnutAllergy];
+    return Promise.resolve(walnutAllergy);
+  });
+  const { queryClient } = await renderSettings({
+    listAllergies,
+    addStandardAllergy,
+    updateMember,
+  });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -2521,6 +2595,8 @@ it("0件確認中のsafe保存後はregisteredを送らず追加成功後に再�
 
 it("最初のアレルギー追加成功後に保留したregisteredを保存する", async () => {
   let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
   const addStandardAllergy = vi.fn(
     () =>
       new Promise<MemberAllergyRow>((resolve) => {
@@ -2528,6 +2604,7 @@ it("最初のアレルギー追加成功後に保留したregisteredを保存す
       }),
   );
   const { queryClient, updateMember, invalidateSafety } = await renderSettings({
+    listAllergies,
     addStandardAllergy,
   });
 
@@ -2540,6 +2617,8 @@ it("最初のアレルギー追加成功後に保留したregisteredを保存す
   expect(updateMember).not.toHaveBeenCalled();
 
   await act(async () => {
+    // H8: 追加後 list が非空であること（empty のまま evidence だけで registered を進めない）
+    allergies = [walnutAllergy];
     resolveAdd?.(walnutAllergy);
     await Promise.resolve();
   });
@@ -2680,13 +2759,20 @@ it("標準アレルギー追加失敗時はregisteredも成功表示も保存し
 });
 
 it("自由登録アレルギー追加成功後に保留したregisteredを保存する", async () => {
-  const addCustomAllergy = vi.fn().mockResolvedValue({
+  const customRow: MemberAllergyRow = {
     ...walnutAllergy,
+    id: "allergy-mango",
     allergen_id: null,
     custom_name: "マンゴー",
     custom_confirmed: true,
+  };
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+  const addCustomAllergy = vi.fn().mockImplementation(() => {
+    allergies = [customRow];
+    return Promise.resolve(customRow);
   });
-  const { queryClient, updateMember } = await renderSettings({ addCustomAllergy });
+  const { queryClient, updateMember } = await renderSettings({ listAllergies, addCustomAllergy });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -2734,15 +2820,22 @@ it("自由登録INSERT失敗時は入力と確認状態を保持する", async (
 });
 
 it("自由登録INSERT成功後のregistered保存失敗では入力をクリアする", async () => {
-  const addCustomAllergy = vi.fn().mockResolvedValue({
+  const customRow: MemberAllergyRow = {
     ...walnutAllergy,
+    id: "allergy-mango",
     allergen_id: null,
     custom_name: "マンゴー",
     custom_aliases: ["南国果実"],
     custom_confirmed: true,
+  };
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+  const addCustomAllergy = vi.fn().mockImplementation(() => {
+    allergies = [customRow];
+    return Promise.resolve(customRow);
   });
   const updateMember = vi.fn().mockRejectedValue(new Error("家族設定の保存に失敗しました"));
-  const { queryClient } = await renderSettings({ addCustomAllergy, updateMember });
+  const { queryClient } = await renderSettings({ listAllergies, addCustomAllergy, updateMember });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -2761,13 +2854,18 @@ it("自由登録INSERT成功後のregistered保存失敗では入力をクリア
 
 it("アレルギー追加中の別フィールド変更を最新snapshotで保存する", async () => {
   let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
   const addStandardAllergy = vi.fn(
     () =>
       new Promise<MemberAllergyRow>((resolve) => {
         resolveAdd = resolve;
       }),
   );
-  const { queryClient, updateMember } = await renderSettings({ addStandardAllergy });
+  const { queryClient, updateMember } = await renderSettings({
+    listAllergies,
+    addStandardAllergy,
+  });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -2777,6 +2875,7 @@ it("アレルギー追加中の別フィールド変更を最新snapshotで保�
   expect(updateMember).not.toHaveBeenCalled();
 
   await act(async () => {
+    allergies = [walnutAllergy];
     resolveAdd?.(walnutAllergy);
     await Promise.resolve();
   });
@@ -2963,6 +3062,13 @@ it("アレルギー追加中に家族を往復してもregisteredを表示し元
     sort_order: 1,
   };
   let resolveAdd: ((allergy: MemberAllergyRow) => void) | undefined;
+  let allergiesByMember: Record<string, MemberAllergyRow[]> = {
+    [member.id]: [],
+    [secondMember.id]: [],
+  };
+  const listAllergies = vi.fn((memberId: string) =>
+    Promise.resolve((allergiesByMember[memberId] ?? []).map((row) => ({ ...row }))),
+  );
   const addStandardAllergy = vi.fn(
     () =>
       new Promise<MemberAllergyRow>((resolve) => {
@@ -2972,6 +3078,7 @@ it("アレルギー追加中に家族を往復してもregisteredを表示し元
   const updateMember = vi.fn().mockResolvedValue(member);
   const { queryClient } = await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
+    listAllergies,
     addStandardAllergy,
     updateMember,
   });
@@ -2986,6 +3093,7 @@ it("アレルギー追加中に家族を往復してもregisteredを表示し元
   expect(await screen.findByLabelText("アレルギーの確認")).toHaveValue("registered");
 
   await act(async () => {
+    allergiesByMember = { ...allergiesByMember, [member.id]: [walnutAllergy] };
     resolveAdd?.(walnutAllergy);
     await Promise.resolve();
   });
@@ -3097,8 +3205,17 @@ it("registered保存失敗後に家族を往復してもローカル値を保持
 
 it("アレルギー追加後のregistered保存失敗を成功表示で上書きしない", async () => {
   const updateMember = vi.fn().mockRejectedValue(new Error("家族設定の保存に失敗しました"));
-  const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
-  const { queryClient } = await renderSettings({ addStandardAllergy, updateMember });
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+  const addStandardAllergy = vi.fn().mockImplementation(() => {
+    allergies = [walnutAllergy];
+    return Promise.resolve(walnutAllergy);
+  });
+  const { queryClient } = await renderSettings({
+    listAllergies,
+    addStandardAllergy,
+    updateMember,
+  });
 
   await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
@@ -3118,6 +3235,8 @@ it.each(["standard", "custom"] as const)(
       allergy_status: "registered",
       display_name: "更新後",
     };
+    let allergies: MemberAllergyRow[] = [];
+    const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
     const updateMember = vi
       .fn()
       .mockRejectedValueOnce(new Error("家族設定の保存に失敗しました"))
@@ -3126,14 +3245,23 @@ it.each(["standard", "custom"] as const)(
       .fn()
       .mockRejectedValueOnce(new Error("安全条件の無効化に失敗しました"))
       .mockResolvedValue(undefined);
-    const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
-    const addCustomAllergy = vi.fn().mockResolvedValue({
-      ...walnutAllergy,
-      allergen_id: null,
-      custom_name: "マンゴー",
-      custom_confirmed: true,
+    const addStandardAllergy = vi.fn().mockImplementation(() => {
+      allergies = [walnutAllergy];
+      return Promise.resolve(walnutAllergy);
+    });
+    const addCustomAllergy = vi.fn().mockImplementation(() => {
+      const customRow: MemberAllergyRow = {
+        ...walnutAllergy,
+        id: "allergy-mango",
+        allergen_id: null,
+        custom_name: "マンゴー",
+        custom_confirmed: true,
+      };
+      allergies = [customRow];
+      return Promise.resolve(customRow);
     });
     const { queryClient } = await renderSettings({
+      listAllergies,
       addCustomAllergy,
       addStandardAllergy,
       invalidateSafety,
@@ -3341,4 +3469,86 @@ it("uses the latest member query values after switching away and back", async ()
       expect.any(String),
     );
   });
+});
+
+// H1: allergies list error でも residual 未確認警告を出す（empty fallback で消さない）
+it("H1: shows residual unverified warning when allergy list fails on none status", async () => {
+  const listAllergies = vi.fn().mockRejectedValue(new Error("list failed"));
+  await renderSettings({ listAllergies });
+
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent("アレルギー情報を読み込めませんでした");
+  });
+  // なしのまま一覧 error → residual 断定不能の警告
+  expect(
+    screen.getByText(/アレルギー一覧を確認できないため、以前の登録が残っている可能性/u),
+  ).toBeVisible();
+});
+
+// H1: success で residual 行があるときの従来警告
+it("H1: shows residual warning when none status still has allergies", async () => {
+  await renderSettings({
+    listAllergies: vi.fn().mockResolvedValue([standardAllergy]),
+  });
+  await waitFor(() => {
+    expect(screen.getByText(/以前登録したアレルギーが残っています/u)).toBeVisible();
+  });
+});
+
+// H5: silent delete 後に行が残る場合は利用者へ説明
+it("H5: surfaces delete miss when allergy row remains after RPC success", async () => {
+  const registeredMember = { ...member, allergy_status: "registered" as const };
+  const customAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "えんどう豆たんぱく",
+    custom_confirmed: true,
+  };
+  // 削除後も両方残る（silent success）
+  const listAllergies = vi.fn().mockResolvedValue([standardAllergy, customAllergy]);
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([registeredMember]),
+    listAllergies,
+    removeAllergy,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "アレルギーの削除を反映できませんでした",
+    );
+  });
+});
+
+// H8: 追加後も一覧 empty なら registered を確定しない
+it("H8: does not save registered when allergy-insert leaves empty list", async () => {
+  const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
+  // 追加後も list は常に空（競合削除・再取得 empty）
+  const listAllergies = vi.fn().mockResolvedValue([]);
+  const { queryClient, updateMember } = await renderSettings({
+    listAllergies,
+    addStandardAllergy,
+  });
+
+  await waitForAllergies(queryClient);
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
+  });
+  expect(updateMember).not.toHaveBeenCalledWith(
+    "member-1",
+    expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
+  );
 });

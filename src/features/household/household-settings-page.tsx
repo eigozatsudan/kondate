@@ -54,6 +54,10 @@ import {
 } from "./household-settings-schema";
 import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-queries";
 import {
+  RESIDUAL_ALLERGY_UNVERIFIED_WARNING,
+  RESIDUAL_ALLERGY_WARNING,
+} from "./household-allergy-copy";
+import {
   ADD_SCOPE_NOTICE_BODY,
   ADD_SCOPE_NOTICE_CANCEL,
   ADD_SCOPE_NOTICE_CONTINUE,
@@ -114,6 +118,30 @@ function registeredSaveBlockedMessage(
   if (evidence === "query-error")
     return "アレルギー情報を確認できませんでした。もう一度お試しください";
   return undefined;
+}
+
+/** 保存成功かつ依存 cache 再確認まで完了したときの利用者向け文言（H4） */
+const HOUSEHOLD_SAVED_REFRESH_OK =
+  "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します";
+/**
+ * DB コミットは成功したが invalidateSafety が失敗したときの文言。
+ * 「再確認します」と断言せず、手動再読込を促す（H4）。保存失敗とは見せない。
+ */
+const HOUSEHOLD_SAVED_REFRESH_FAILED =
+  "家族設定を保存しました。画面の再確認に失敗したため、献立・履歴を開き直すか再読み込みしてください。";
+
+/** invalidateSafety の soft 成否。成功コピー分岐用（H3/H4）。throw は外へ出さない。 */
+async function tryInvalidateSafety(invalidate: () => Promise<void>): Promise<"ok" | "failed"> {
+  try {
+    await invalidate();
+    return "ok";
+  } catch {
+    return "failed";
+  }
+}
+
+function householdSavedMessage(refresh: "ok" | "failed"): string {
+  return refresh === "ok" ? HOUSEHOLD_SAVED_REFRESH_OK : HOUSEHOLD_SAVED_REFRESH_FAILED;
 }
 
 /** schema 定義順の先頭 field error（validation toast / form alert の正本） */
@@ -525,25 +553,22 @@ export function HouseholdSettingsForm({
             ),
           );
         }
-        // H3: DB コミット後の invalidate 失敗は soft。保存成功として返し、依存は次操作で再取得。
-        // 権威経路（生成/confirm）は live revalidate するため stale cache は fail-closed 側。
-        try {
-          await api.invalidateSafety();
-        } catch {
-          // 意図的 no-op: ユーザーに保存失敗と見せない
-        }
+        // H3: DB コミット後の invalidate 失敗は soft（保存成功として返す）。
+        // revision/event は invalidateHouseholdSafetyDependents 内で query より先に発火する。
+        // 権威経路（生成/confirm）は live revalidate。H4: 成功コピーは invalidate 成否で分ける。
+        const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
         if (canPublishSaveMessage(lineage)) {
           const pending = pendingRegisteredIntents.current.get(member.id);
           // allergy_status=registered をコミット済みなら成功文言を優先する。
-          // H8 soft invalidate が allergies を再取得中、useEffect が evidence を unknown へ
+          // soft invalidate が allergies を再取得中、useEffect が evidence を unknown へ
           // 落としても「確認しています」で成功 UX を潰さない（select registered → 標準追加）。
           // registered 未コミットの safe 項目保存だけ、保留 intent の blocked 文言を出す。
           const committedRegistered = parsed.data.allergyStatus === "registered";
           setMessage(
             !committedRegistered && pending?.values.allergyStatus === "registered"
               ? (registeredSaveBlockedMessage(pending.registeredSaveEvidence) ??
-                  "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します")
-              : "家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します",
+                  householdSavedMessage(refresh))
+              : householdSavedMessage(refresh),
           );
         }
         return true;
@@ -773,22 +798,42 @@ export function HouseholdSettingsForm({
       await queryClient.invalidateQueries({
         queryKey: householdKeys.allergies(userId, memberId),
       });
+      // H8: allergy-insert 後も一覧が空なら registered を確定しない（draft の針 0 中間を縮める）。
+      // 追加直後はサーバ再取得を正とし、空のまま evidence だけで status を進めない。
+      const listed =
+        queryClient.getQueryData<MemberAllergyRow[]>(householdKeys.allergies(userId, memberId)) ??
+        [];
+      if (listed.length === 0) {
+        if (pending !== undefined && pending.values.allergyStatus === "registered") {
+          pending.registeredSaveEvidence = "known-empty";
+          if (selectedMemberIdRef.current === memberId) {
+            setMessage("登録ありの場合は1つ以上選んでください");
+          }
+        }
+        const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
+        if (
+          selectedMemberIdRef.current === memberId &&
+          pending === undefined &&
+          refresh === "failed"
+        ) {
+          setMessage(HOUSEHOLD_SAVED_REFRESH_FAILED);
+        }
+        return;
+      }
+      if (pending !== undefined) pending.registeredSaveEvidence = "allergy-query";
       const registeredStatusSaved = await savePendingRegisteredStatus(memberId);
       if (registeredStatusSaved === false) {
-        // H3 / H-RR2: アレルギー書き込み後の invalidate 失敗は soft（依存は次操作で再取得）
-        try {
-          await api.invalidateSafety();
-        } catch {
-          return;
-        }
+        // H3 / H-RR2: registered PATCH 失敗でもアレルギー行は残る。soft invalidate のみ。
+        // save 側の失敗メッセージを再確認失敗で上書きしない。
+        await tryInvalidateSafety(() => api.invalidateSafety());
       } else if (registeredStatusSaved === undefined) {
-        // H-RR2: allergy-only finalize も form save と同型の soft-handle（非対称を解消）
-        try {
-          await api.invalidateSafety();
-        } catch {
-          // 意図的 no-op: 追加済みアレルギーを失敗表示にしない
+        // allergy-only finalize（intent 無し）: form save と同型の soft-handle
+        const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
+        if (selectedMemberIdRef.current === memberId && refresh === "failed") {
+          setMessage(HOUSEHOLD_SAVED_REFRESH_FAILED);
         }
       }
+      // registeredStatusSaved === true のとき invalidate/成功文言は save 経路が担当
     },
     [api, queryClient, savePendingRegisteredStatus, userId],
   );
@@ -980,11 +1025,17 @@ export function HouseholdSettingsForm({
         }
         await queryClient.invalidateQueries({ queryKey: membersKey });
         // H-RR3: 削除コミット後の invalidate 失敗は soft（H3 form save / H-RR1 complete と同型）。
-        // deleteMember 自体の失敗だけ outer catch で総失敗表示する。
-        try {
-          await api.invalidateSafety();
-        } catch {
-          // 意図的 no-op: 削除済みを失敗と見せない。権威経路は live revalidate。
+        // deleteMember 自体の失敗だけ outer catch で総失敗表示する。H4: 再確認失敗を併記。
+        const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
+        if (refresh === "failed") {
+          const base = options.asCancelDraft
+            ? "家族の追加をやめました"
+            : target.status === "draft"
+              ? "入力途中の家族をリストから外しました"
+              : "家族の設定を削除しました";
+          setMessage(
+            `${base} 画面の再確認に失敗したため、献立・履歴を開き直すか再読み込みしてください。`,
+          );
         }
       } catch (error) {
         setMessage(
@@ -1131,14 +1182,10 @@ export function HouseholdSettingsForm({
             );
           }
           // H-RR1: complete コミット後の invalidate 失敗は soft（H3 form save と同型）。
-          // completeMember 自体の失敗だけ outer catch で総失敗表示する。
-          try {
-            await api.invalidateSafety();
-          } catch {
-            // 意図的 no-op: 完了済みを失敗と見せない。権威経路は live revalidate。
-          }
+          // completeMember 自体の失敗だけ outer catch で総失敗表示する。H4: コピーは成否で分ける。
+          const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
           if (canPublishSaveMessage(lineage)) {
-            setMessage("家族設定が変わりました。献立・履歴・買い物リストは最新条件で再確認します");
+            setMessage(householdSavedMessage(refresh));
           }
           if (canCloseCompletedEditor()) {
             setEditorOpen(false);
@@ -1286,10 +1333,8 @@ export function HouseholdSettingsForm({
       return;
     }
     if (allergiesQuery.data.length === 0) {
-      if (pending.registeredSaveEvidence === "allergy-insert") {
-        void savePendingRegisteredStatus(selectedMemberId);
-        return;
-      }
+      // H8: allergy-insert でも empty なら registered を確定しない（draft 針 0 中間を縮める）。
+      // finalizeAllergyChange 側でも一覧確認後にのみ evidence を allergy-query へ上げる。
       pending.registeredSaveEvidence = "known-empty";
       setMessage("登録ありの場合は1つ以上選んでください");
       return;
@@ -1649,10 +1694,18 @@ export function HouseholdSettingsForm({
                 </button>
               </div>
             )}
+            {/* H1: residual は success 時の length、error 時は未確認警告（empty fallback で residual を消さない） */}
             {(values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
+              allergiesQuery.isSuccess &&
               currentAllergies.length > 0 && (
                 <p className="type-small" role="status">
-                  以前登録したアレルギーが残っています。献立生成の安全判定では引き続き使われます。「登録あり」に戻して編集するか、不要なら登録ありから削除してください。
+                  {RESIDUAL_ALLERGY_WARNING}
+                </p>
+              )}
+            {(values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
+              allergiesQuery.isError && (
+                <p className="type-small" role="status">
+                  {RESIDUAL_ALLERGY_UNVERIFIED_WARNING}
                 </p>
               )}
             {values.allergyStatus === "registered" && (
@@ -1685,6 +1738,19 @@ export function HouseholdSettingsForm({
                       return;
                     }
                     await api.removeAllergy(allergyId);
+                    // H5: RPC は所有外でも silent success。再取得で行残存を検知し利用者へ示す（RPC 契約は変えない）。
+                    const afterRemove = await queryClient.fetchQuery({
+                      queryKey: householdKeys.allergies(userId, selected.id),
+                      queryFn: () => api.listAllergies(selected.id),
+                    });
+                    if (afterRemove.some((row) => row.id === allergyId)) {
+                      if (selectedMemberIdRef.current === selected.id) {
+                        setMessage(
+                          "アレルギーの削除を反映できませんでした。一覧を再読み込みして確認してください。",
+                        );
+                      }
+                      return;
+                    }
                     const pending = pendingRegisteredIntents.current.get(selected.id);
                     const refetchToken = { settled: false };
                     if (pending?.values.allergyStatus === "registered") {
@@ -1694,9 +1760,7 @@ export function HouseholdSettingsForm({
                       pending.revision += 1;
                       pending.allergyRefetchToken = refetchToken;
                     }
-                    await queryClient.invalidateQueries({
-                      queryKey: householdKeys.allergies(userId, selected.id),
-                    });
+                    // fetchQuery 済みだが pending intent 用に epoch を進め、useEffect を走らせる
                     if (
                       pendingRegisteredIntents.current.get(selected.id) === pending &&
                       pending?.allergyRefetchToken === refetchToken
@@ -1705,10 +1769,10 @@ export function HouseholdSettingsForm({
                       setAllergyRefetchEpoch((current) => current + 1);
                     }
                     // H-RR2: 削除コミット後の invalidate 失敗は soft（H3 form save と同型）
-                    try {
-                      await api.invalidateSafety();
-                    } catch {
-                      // 意図的 no-op: 削除済みアレルギーを失敗表示にしない
+                    // H4: 再確認失敗は利用者へ見せる（削除自体は適用済み）
+                    const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
+                    if (selectedMemberIdRef.current === selected.id && refresh === "failed") {
+                      setMessage(HOUSEHOLD_SAVED_REFRESH_FAILED);
                     }
                   })
                 }
@@ -1839,10 +1903,10 @@ export function HouseholdSettingsForm({
                         queryKey: householdKeys.dislikes(userId, memberId),
                       });
                       // H-RR2: 追加コミット後の invalidate 失敗は soft（H3 form save と同型）
-                      try {
-                        await api.invalidateSafety();
-                      } catch {
-                        // 意図的 no-op: 追加済み苦手を失敗表示にしない
+                      // H4: 再確認失敗は status に出す（追加自体は適用済み・入力クリアは維持）
+                      const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
+                      if (selectedMemberIdRef.current === memberId && refresh === "failed") {
+                        setMessage(HOUSEHOLD_SAVED_REFRESH_FAILED);
                       }
                     },
                     "苦手食材を追加できませんでした",
@@ -1873,10 +1937,10 @@ export function HouseholdSettingsForm({
                               queryKey: householdKeys.dislikes(userId, memberId),
                             });
                             // H-RR2: 削除コミット後の invalidate 失敗は soft（H3 form save と同型）
-                            try {
-                              await api.invalidateSafety();
-                            } catch {
-                              // 意図的 no-op: 削除済み苦手を失敗表示にしない
+                            // H4: 再確認失敗は status に出す（削除自体は適用済み）
+                            const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
+                            if (selectedMemberIdRef.current === memberId && refresh === "failed") {
+                              setMessage(HOUSEHOLD_SAVED_REFRESH_FAILED);
                             }
                           },
                           "苦手食材を削除できませんでした",

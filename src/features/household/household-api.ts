@@ -340,8 +340,8 @@ export async function deleteMemberDislike(
 /**
  * アレルギー削除。RPC は所有行が無い／他人 ID でも例外を返さず void 成功する
  * （他人の存在を応答から漏らさない・意図的 silent success。H8 / migration コメントと同契約）。
- * 行が残るケースは fail-closed 寄り（針が残る）。呼び出し側は invalidate/refetch で一覧を DB に合わせること。
- * 契約変更（boolean 戻り等）は行わず、クライアント確認は query 再取得に委ねる。
+ * 行が残るケースは fail-closed 寄り（針が残る）。呼び出し側は refetch で行残存を検知し
+ * 利用者へ説明する（H5）。契約変更（boolean 戻り等）は行わない。
  */
 export async function deleteMemberAllergy(
   client: BrowserSupabaseClient,

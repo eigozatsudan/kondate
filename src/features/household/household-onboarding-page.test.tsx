@@ -886,3 +886,76 @@ it("single-flights completeMember on double complete click (H7)", async () => {
     ).toBeInTheDocument();
   });
 });
+
+// H2: onboarding にも residual 警告（settings 相当）
+it("H2: shows residual allergy warning when none status still has allergies", async () => {
+  const residualDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const eggAllergy = {
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([residualDraft]),
+    listAllergies: vi.fn().mockResolvedValue([eggAllergy]),
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />);
+
+  await waitFor(() => {
+    expect(screen.getByText(/以前登録したアレルギーが残っています/u)).toBeVisible();
+  });
+});
+
+// H7: catalog 未ロード中は AllergyEditor を出さない
+it("H7: waits for catalog before showing AllergyEditor", async () => {
+  const registeredDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "registered",
+    unsupported_diet_status: "none",
+  };
+  let resolveCatalog: ((value: unknown[]) => void) | undefined;
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([registeredDraft]),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    listCatalog: vi.fn(
+      () =>
+        new Promise<unknown[]>((resolve) => {
+          resolveCatalog = resolve;
+        }),
+    ),
+    listAliases: vi.fn().mockResolvedValue([]),
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />);
+
+  await waitFor(() => {
+    expect(screen.getByText(/アレルギー候補を読み込んでいます/u)).toBeVisible();
+  });
+  expect(screen.queryByRole("region", { name: "アレルギー編集" })).not.toBeInTheDocument();
+
+  await waitFor(() => {
+    expect(resolveCatalog).toBeDefined();
+  });
+  resolveCatalog?.([
+    {
+      id: "egg",
+      display_name: "卵",
+      regulatory_class: "standard",
+      catalog_version: "2026-07-11",
+      created_at: "2026-07-11T00:00:00.000Z",
+    },
+  ]);
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+  });
+});

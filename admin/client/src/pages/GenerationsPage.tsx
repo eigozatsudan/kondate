@@ -23,6 +23,31 @@ function formatJson(value: unknown): string {
   }
 }
 
+/** API の UTC ISO を JST の `YYYY-MM-DD HH:mm:ss` に整形する（表示専用） */
+function formatJstDateTime(iso: string | null | undefined): string {
+  if (iso == null || iso === "") return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  // sv-SE は YYYY-MM-DD HH:mm:ss 形式で、JST 固定表示に向く
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(d);
+}
+
+/** duration_ms を秒表示に変換（整数秒はそのまま、端数は小数1桁） */
+function formatDurationSec(durationMs: number | null | undefined): string {
+  if (durationMs == null) return "—";
+  const sec = durationMs / 1000;
+  return Number.isInteger(sec) ? String(sec) : sec.toFixed(1);
+}
+
 export function GenerationsPage() {
   const [range, setRange] = useState(defaultDateRange);
   const [status, setStatus] = useState("");
@@ -100,34 +125,36 @@ export function GenerationsPage() {
         columns={[
           {
             key: "createdAt",
-            header: "created_at",
-            render: (r) => <span className="mono whitespace-nowrap">{r.createdAt}</span>,
+            header: "作成日時（JST）",
+            render: (r) => (
+              <span className="mono whitespace-nowrap">{formatJstDateTime(r.createdAt)}</span>
+            ),
           },
-          { key: "status", header: "status", render: (r) => r.status },
-          { key: "kind", header: "request_kind", render: (r) => r.requestKind },
-          { key: "fail", header: "failure_code", render: (r) => r.failureCode ?? "—" },
+          { key: "status", header: "ステータス", render: (r) => r.status },
+          { key: "kind", header: "リクエスト種別", render: (r) => r.requestKind },
+          { key: "fail", header: "失敗コード", render: (r) => r.failureCode ?? "—" },
           {
             key: "dur",
-            header: "ms",
-            render: (r) => (r.durationMs == null ? "—" : String(r.durationMs)),
+            header: "秒",
+            render: (r) => formatDurationSec(r.durationMs),
           },
           {
             key: "models",
-            header: "models",
+            header: "モデル",
             render: (r) => r.actualModelIds.join(", ") || "—",
           },
           {
             key: "qm",
-            header: "quality",
+            header: "品質モード",
             render: (r) => (r.qualityMode ? "yes" : "no"),
           },
           {
             key: "repair",
-            header: "repair",
+            header: "修復試行",
             render: (r) => (r.repairAttempted ? "yes" : "no"),
           },
-          { key: "user", header: "user_id", render: (r) => <UuidText value={r.userId} /> },
-          { key: "id", header: "id", render: (r) => <UuidText value={r.id} /> },
+          { key: "user", header: "ユーザーID", render: (r) => <UuidText value={r.userId} /> },
+          { key: "id", header: "ID", render: (r) => <UuidText value={r.id} /> },
           {
             key: "open",
             header: "",
@@ -171,24 +198,24 @@ export function GenerationsPage() {
               <p>request_kind: {detail.data.requestKind}</p>
               <p>failure_code: {detail.data.failureCode ?? "—"}</p>
               <p>
-                created_at:{" "}
-                <span className="mono">{detail.data.createdAt}</span>
+                作成日時（JST）:{" "}
+                <span className="mono">{formatJstDateTime(detail.data.createdAt)}</span>
               </p>
               <p>
-                started_at:{" "}
-                <span className="mono">{detail.data.startedAt ?? "—"}</span>
+                開始（JST）:{" "}
+                <span className="mono">{formatJstDateTime(detail.data.startedAt)}</span>
               </p>
               <p>
-                completed_at:{" "}
-                <span className="mono">{detail.data.completedAt ?? "—"}</span>
+                完了（JST）:{" "}
+                <span className="mono">{formatJstDateTime(detail.data.completedAt)}</span>
               </p>
               <p>
-                processing_expires_at:{" "}
+                処理期限（JST）:{" "}
                 <span className="mono">
-                  {detail.data.processingExpiresAt ?? "—"}
+                  {formatJstDateTime(detail.data.processingExpiresAt)}
                 </span>
               </p>
-              <p>duration_ms: {detail.data.durationMs ?? "—"}</p>
+              <p>所要時間（秒）: {formatDurationSec(detail.data.durationMs)}</p>
               <p>
                 actual_model_ids:{" "}
                 {detail.data.actualModelIds.join(", ") || "—"}

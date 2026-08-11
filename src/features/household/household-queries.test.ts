@@ -1,11 +1,13 @@
 import { QueryClient } from "@tanstack/react-query";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { menuRevalidationQueryKey } from "@/features/history/hooks/use-menu-revalidation";
 import {
   householdKeys,
+  householdSafetyChangedEvent,
   householdSafetyQueryPrefixes,
   householdSafetyRevisionKey,
   householdSafetyRevisionStorageKey,
+  invalidateHouseholdSafetyDependents,
   invalidateHouseholdSafetyQueries,
   isHouseholdSafetyRevisionStorageKey,
   isHouseholdSafetyRevisionStorageKeyForUser,
@@ -81,5 +83,37 @@ it("HR3: historyRevalidation prefix matches menu-revalidation query keys", async
   // 旧プレフィックスはもう invalidate 対象外（消費者なし）
   expect(queryClient.getQueryState(deadLegacyKey)?.isInvalidated).toBe(false);
 
+  queryClient.clear();
+});
+
+it("H6: does not include dead current-safety prefix", () => {
+  // 死んだ DiD キーを再導入しない（消費者は menu-revalidation / emergency-menus 等）
+  expect(householdSafetyQueryPrefixes).not.toHaveProperty("currentSafety");
+  expect(Object.values(householdSafetyQueryPrefixes)).not.toContainEqual(["current-safety"]);
+});
+
+it("H3: fires revision and event even when query invalidate throws", async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const userId = "user-h3";
+  const eventSpy = vi.fn();
+  window.addEventListener(householdSafetyChangedEvent, eventSpy);
+
+  // invalidateQueries を throw させる（RQ 本体は通常 throw しないが soft 失敗経路を固定）
+  const originalInvalidate = queryClient.invalidateQueries.bind(queryClient);
+  vi.spyOn(queryClient, "invalidateQueries").mockImplementation(async (filters) => {
+    await originalInvalidate(filters);
+    throw new Error("invalidate failed");
+  });
+
+  await expect(invalidateHouseholdSafetyDependents(queryClient, userId)).rejects.toThrow(
+    "invalidate failed",
+  );
+
+  expect(eventSpy).toHaveBeenCalled();
+  expect(localStorage.getItem(householdSafetyRevisionKey(userId))).toMatch(
+    /^[0-9a-f-]{36}$/iu,
+  );
+
+  window.removeEventListener(householdSafetyChangedEvent, eventSpy);
   queryClient.clear();
 });

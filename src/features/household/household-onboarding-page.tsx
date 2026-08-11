@@ -35,6 +35,10 @@ import { defaultsForAgeBand } from "./household-defaults";
 import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-queries";
 import { AllergyEditor } from "./allergy-editor";
 import {
+  RESIDUAL_ALLERGY_UNVERIFIED_WARNING,
+  RESIDUAL_ALLERGY_WARNING,
+} from "./household-allergy-copy";
+import {
   ADD_SCOPE_NOTICE_BODY,
   ADD_SCOPE_NOTICE_CANCEL,
   ADD_SCOPE_NOTICE_CONTINUE,
@@ -859,6 +863,20 @@ export function HouseholdOnboardingForm({
           </select>
         </label>
 
+        {/* H2: settings 相当の residual 警告。なし／未確認でも member_allergies 残存を説明する */}
+        {(draft.allergy_status === "none" || draft.allergy_status === "unconfirmed") &&
+          allergiesQuery.isSuccess &&
+          allergies.length > 0 && (
+            <p className="type-small" role="status">
+              {RESIDUAL_ALLERGY_WARNING}
+            </p>
+          )}
+        {(draft.allergy_status === "none" || draft.allergy_status === "unconfirmed") &&
+          allergiesQuery.isError && (
+            <p className="type-small" role="status">
+              {RESIDUAL_ALLERGY_UNVERIFIED_WARNING}
+            </p>
+          )}
         {draft.allergy_status === "registered" && allergiesQuery.isError && (
           <div className="stack" role="alert">
             <p className="error-message">アレルギー一覧を読み込めませんでした。</p>
@@ -878,46 +896,85 @@ export function HouseholdOnboardingForm({
             {allergyError}
           </p>
         )}
-        {draft.allergy_status === "registered" && api.listCatalog !== undefined && (
-          <AllergyEditor
-            memberId={draft.id}
-            catalog={catalogQuery.data ?? []}
-            aliases={aliasesQuery.data ?? []}
-            allergies={allergies}
-            // H6: complete/finish/skip 中は settings と同型に Editor を閉じ、allergy 境界レースを防ぐ
-            disabled={actionPending}
-            addStandard={async (memberId, allergenId) => {
-              // actionPending 中は disabled だが、遅延 invoker が残っても API を叩かない
-              if (actionPendingRef.current) return;
-              setAllergyError(null);
-              await api.addStandardAllergy?.(memberId, allergenId);
-              await queryClient.invalidateQueries({
-                queryKey: householdKeys.allergies(userId, memberId),
-              });
-            }}
-            addCustom={async (memberId, name, aliases) => {
-              if (actionPendingRef.current) return;
-              setAllergyError(null);
-              await api.addCustomAllergy(memberId, name, aliases);
-              await queryClient.invalidateQueries({
-                queryKey: householdKeys.allergies(userId, memberId),
-              });
-            }}
-            remove={async (allergyId) => {
-              if (actionPendingRef.current) return;
-              setAllergyError(null);
-              await api.removeAllergy?.(allergyId);
-              await queryClient.invalidateQueries({
-                queryKey: householdKeys.allergies(userId, draft.id),
-              });
-            }}
-            onError={(error) => {
-              setAllergyError(
-                error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
-              );
-            }}
-          />
-        )}
+        {/* H7: catalog/aliases 成功まで Editor を出さない（settings の全画面待ちと同趣旨の fail-early）。
+            未提供の API はゲート対象外（disabled query の isPending 永続を避ける）。 */}
+        {draft.allergy_status === "registered" &&
+          api.listCatalog !== undefined &&
+          (catalogQuery.isPending ||
+            (api.listAliases !== undefined && aliasesQuery.isPending)) && (
+            <p className="type-small" role="status">
+              アレルギー候補を読み込んでいます…
+            </p>
+          )}
+        {draft.allergy_status === "registered" &&
+          api.listCatalog !== undefined &&
+          (catalogQuery.isError || (api.listAliases !== undefined && aliasesQuery.isError)) &&
+          !catalogQuery.isPending &&
+          !(api.listAliases !== undefined && aliasesQuery.isPending) && (
+            <div className="stack" role="alert">
+              <p className="error-message">アレルギー候補を読み込めませんでした。</p>
+              <button
+                className="secondary-button min-h-11"
+                type="button"
+                onClick={() => {
+                  void catalogQuery.refetch();
+                  if (api.listAliases !== undefined) void aliasesQuery.refetch();
+                }}
+              >
+                再試行
+              </button>
+            </div>
+          )}
+        {draft.allergy_status === "registered" &&
+          api.listCatalog !== undefined &&
+          catalogQuery.isSuccess &&
+          (api.listAliases === undefined || aliasesQuery.isSuccess) && (
+            <AllergyEditor
+              memberId={draft.id}
+              catalog={catalogQuery.data}
+              aliases={aliasesQuery.data ?? []}
+              allergies={allergies}
+              // H6: complete/finish/skip 中は settings と同型に Editor を閉じ、allergy 境界レースを防ぐ
+              disabled={actionPending}
+              addStandard={async (memberId, allergenId) => {
+                // actionPending 中は disabled だが、遅延 invoker が残っても API を叩かない
+                if (actionPendingRef.current) return;
+                setAllergyError(null);
+                await api.addStandardAllergy?.(memberId, allergenId);
+                await queryClient.invalidateQueries({
+                  queryKey: householdKeys.allergies(userId, memberId),
+                });
+              }}
+              addCustom={async (memberId, name, aliases) => {
+                if (actionPendingRef.current) return;
+                setAllergyError(null);
+                await api.addCustomAllergy(memberId, name, aliases);
+                await queryClient.invalidateQueries({
+                  queryKey: householdKeys.allergies(userId, memberId),
+                });
+              }}
+              remove={async (allergyId) => {
+                if (actionPendingRef.current) return;
+                setAllergyError(null);
+                // H5: silent RPC 後に再取得で行残存を検知（settings と同型）
+                await api.removeAllergy?.(allergyId);
+                const afterRemove = await queryClient.fetchQuery({
+                  queryKey: householdKeys.allergies(userId, draft.id),
+                  queryFn: () => api.listAllergies(draft.id),
+                });
+                if (afterRemove.some((row) => row.id === allergyId)) {
+                  setAllergyError(
+                    "アレルギーの削除を反映できませんでした。一覧を再読み込みして確認してください。",
+                  );
+                }
+              }}
+              onError={(error) => {
+                setAllergyError(
+                  error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
+                );
+              }}
+            />
+          )}
         {draft.allergy_status === "registered" && api.listCatalog === undefined && (
           <fieldset className="stack" disabled={actionPending}>
             <legend>登録するアレルギー</legend>

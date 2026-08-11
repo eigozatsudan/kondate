@@ -42,7 +42,8 @@ export function isHouseholdSafetyRevisionStorageKeyForUser(
   return key === householdSafetyRevisionStorageKey || key === householdSafetyRevisionKey(userId);
 }
 export const householdSafetyQueryPrefixes = {
-  currentSafety: ["current-safety"],
+  // H6: 旧 ["current-safety"] は src 内に RQ 消費者が無く死んだ DiD だったため削除。
+  // history 再検証は historyRevalidation（menu-revalidation）。server current-safety は Function 側。
   menuResult: ["menu-result"],
   history: ["history"],
   // 実キーは use-menu-revalidation の ["menu-revalidation", menuId]。
@@ -69,15 +70,21 @@ export async function invalidateHouseholdSafetyQueries(
   ]);
 }
 
+/**
+ * 家族安全条件の変更後に依存 cache を無効化し、他タブ／履歴ゲートへ revision+event を届ける。
+ * H3: revision/event は query invalidate より先に発火する。invalidate が throw しても
+ * Realtime 欠落時の hard recheck 窓（最大〜60s soft poll）を縮める。
+ * 呼び出し側は query 失敗を soft 扱いにしてよいが、成功コピーは invalidate 成否と分ける（H4）。
+ */
 export async function invalidateHouseholdSafetyDependents(
   queryClient: QueryClient,
   userId: string,
 ): Promise<void> {
-  await invalidateHouseholdSafetyQueries(queryClient, userId);
   try {
     localStorage.setItem(householdSafetyRevisionKey(userId), crypto.randomUUID());
   } catch {
-    // Current-tab query invalidation still prevents a stale action when storage is unavailable.
+    // storage 不可でも event と query invalidate は続ける
   }
   window.dispatchEvent(new CustomEvent(householdSafetyChangedEvent));
+  await invalidateHouseholdSafetyQueries(queryClient, userId);
 }
