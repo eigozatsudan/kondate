@@ -525,6 +525,7 @@ docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run typecheck
 docker compose run --rm --no-deps app npm run format:check
 ./scripts/run-e2e.sh
+# PR 相当の短縮: KONDATE_E2E_SUITE=smoke ./scripts/run-e2e.sh（full の代替ではない。詳細は docs/local-development.md）
 ```
 
 ローカルDBのschemaを変更した場合は、DB型を再生成して差分を確認します。

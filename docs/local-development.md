@@ -65,6 +65,16 @@ docker compose run --rm --no-deps app npm run typecheck
 
 DB型生成は稼働中の公式Postgres Metaサービスを使用します。コンテナ内でPodmanを起動せず、応答を検証してから生成ファイルを原子的に置き換えます。
 
+### E2E スイートの選び方
+
+| 目的 | コマンド |
+| --- | --- |
+| full（release 相当） | `./scripts/run-e2e.sh` |
+| smoke（PR 相当） | `KONDATE_E2E_SUITE=smoke ./scripts/run-e2e.sh` |
+| 1 ファイル | `./scripts/run-e2e.sh -- e2e/specs/foo.spec.ts --project=mobile-chromium` |
+
+**注意:** PR の smoke は受け入れ E2E 全量の代替ではない。full は push / `ci.sh` / release-checklist。account-deletion 等は full のみ。
+
 E2E wrapperは専用overrideのAuthをhealthyまで待機し、Kong、OAuth mock、appを再作成してからPlaywrightを起動します。同じcheckoutからの並行実行は、共有するone-off、Auth、appを互いに変更しないようDocker起動前に拒否します。E2E終了後は成功、失敗、signalのいずれでもone-offを即時停止・削除してから通常構成のAuthとappを復元し、復元に成功した場合はE2Eの終了statusを保持します。通常のstack定義は変更しません。
 
 SIGKILLでwrapperが終了するとrepository rootの`.run-e2e.lock`にstale lockが残り、次回実行は安全側に停止します。該当checkoutのE2Eプロセスがないことを確認してから、そのlock directoryを手動で削除してください。

@@ -18,7 +18,7 @@
 
 | 目的 | パス |
 | --- | --- |
-| ローカル開発・検証・Supabase refresh | [local-development.md](./local-development.md) |
+| ローカル開発・検証・Supabase refresh（E2E smoke/full） | [local-development.md](./local-development.md) |
 | 本番デプロイ（CLI 初回〜更新） | [deployment/README.md](./deployment/README.md) |
 | Netlify / env / CSP / preflight | [deployment/netlify.md](./deployment/netlify.md) |
 | Managed Supabase / Auth / migrate | [deployment/supabase.md](./deployment/supabase.md) |
