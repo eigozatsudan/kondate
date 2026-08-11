@@ -12,6 +12,10 @@ services:
       OPENROUTER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
       OPENROUTER_PLUS_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
       OPENROUTER_FLYER_MODELS: mock/kondate-primary:free,mock/kondate-repair:free
+      # 運用推奨 20 や本番推奨とは別。E2E 並列用の ENV 上書き。
+      # 製品 max（GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX=500）一杯。
+      # 1 suite 送信見積 × safety factor を超えないこと。
+      GLOBAL_DAILY_AI_LIMIT: "500"
     command: ["node", "tools/run-e2e-app.mjs"]
   auth:
     environment:

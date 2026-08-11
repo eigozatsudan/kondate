@@ -420,6 +420,10 @@ test("uses the isolated E2E Function server without changing the public origin",
     composeE2e,
     /OPENROUTER_FLYER_MODELS: mock\/kondate-primary:free,mock\/kondate-repair:free/u,
   );
+  // 通常 compose の製品 local 既定 20 は維持し、E2E だけ製品 max 500 で上書きする
+  assert.match(compose, /^\s{6}GLOBAL_DAILY_AI_LIMIT: "20"$/mu);
+  assert.doesNotMatch(composeE2e, /GLOBAL_DAILY_AI_LIMIT: "20"/u);
+  assert.match(composeE2e, /^\s{6}GLOBAL_DAILY_AI_LIMIT: "500"$/mu);
   // environment 直下に意図コメントがあっても SMTP 頻度は固定
   assert.match(
     composeE2e,
