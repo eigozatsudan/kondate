@@ -183,8 +183,9 @@ test("E2E project grepInvert skips mobile-only and desktop-only tags per project
 test("E2E uses two workers and fullyParallel (Phase 3 constants)", async () => {
   const config = await readFile("playwright.config.ts", "utf8");
   // Spec §7.3–7.4: workers は定数 2。調査なしの CI 分岐で 1 に落とす退行を禁止。
-  assert.match(config, /workers: 2/u);
-  assert.match(config, /fullyParallel:\s*true/u);
+  // 行末まで固定し workers: 20 等の部分一致偽緑を防ぐ（\b だけでは "2," は通るが "20" を弾く）。
+  assert.match(config, /^\s*workers:\s*2\s*,?\s*$/mu);
+  assert.match(config, /^\s*fullyParallel:\s*true\s*,?\s*$/mu);
   assert.doesNotMatch(config, /workers:\s*1\b/u);
   assert.doesNotMatch(config, /process\.env\.CI \? \{ workers: 1 \}/u);
   assert.doesNotMatch(config, /process\.env\.CI\s*\?\s*.*workers/u);
@@ -276,6 +277,9 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
   // Spec §4.2: @smoke 必須ファイル×最低本数の静的ガードを CI が実行すること
   assert.match(script, /tests\/tooling\/e2e-smoke-tags\.test\.mjs/u);
   assert.match(workflow, /tests\/tooling\/e2e-smoke-tags\.test\.mjs/u);
+  // Spec §7.3: per-test global AI truncate 0 + workers 定数 2 の fail-closed を CI が実行すること
+  assert.match(script, /tests\/tooling\/e2e-ai-quota-parallel\.test\.mjs/u);
+  assert.match(workflow, /tests\/tooling\/e2e-ai-quota-parallel\.test\.mjs/u);
   assert.match(script, /tools\/e2e-function-server\.test\.mjs/u);
   assert.match(workflow, /tools\/e2e-function-server\.test\.mjs/u);
   assert.match(script, /assert-privacy-logs\.test\.mjs/u);

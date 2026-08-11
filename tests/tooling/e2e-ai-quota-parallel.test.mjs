@@ -89,8 +89,9 @@ test("shell boundary still resets global AI quota for suite/project edges", asyn
 
 test("playwright workers are constant 2 with fullyParallel (no CI workers ternary)", async () => {
   const config = await readFile("playwright.config.ts", "utf8");
-  assert.match(config, /workers:\s*2/u);
-  assert.match(config, /fullyParallel:\s*true/u);
+  // workers: 20 が workers: 2 に部分一致して偽緑にならないよう行単位で固定
+  assert.match(config, /^\s*workers:\s*2\s*,?\s*$/mu);
+  assert.match(config, /^\s*fullyParallel:\s*true\s*,?\s*$/mu);
   // 過去の process.env.CI ? { workers: 1 } 退行を二重に拒否
   assert.doesNotMatch(config, /process\.env\.CI \? \{ workers: 1 \}/u);
   assert.doesNotMatch(config, /workers:\s*1\b/u);

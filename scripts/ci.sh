@@ -22,6 +22,7 @@ docker compose run --rm --no-deps app node --test \
   tests/tooling/local-development-scripts.test.mjs \
   tests/tooling/project-config.test.mjs \
   tests/tooling/e2e-smoke-tags.test.mjs \
+  tests/tooling/e2e-ai-quota-parallel.test.mjs \
   tests/tooling/eslint-primitive-rule.test.mjs \
   tools/e2e-function-server.test.mjs \
   scripts/assert-privacy-logs.test.mjs \

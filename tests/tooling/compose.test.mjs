@@ -543,7 +543,8 @@ test("documents the Docker-only clean initialization and verification workflow",
   assert.match(guide, /E2Eの終了statusを保持/u);
   assert.match(guide, /同じcheckout.*並行実行.*拒否/u);
   // Phase 3: workers / E2E limit / SKIP_RECREATE（開発専用・CI 禁止）
-  assert.match(guide, /workers:\s*2/u);
+  // docs 文言の "workers: 2" を確認（数値 20 への部分一致を避ける）
+  assert.match(guide, /workers:\s*2(?!\d)/u);
   assert.match(guide, /fullyParallel:\s*true/u);
   assert.match(guide, /GLOBAL_DAILY_AI_LIMIT/u);
   assert.match(guide, /\*\*20\*\*/u);
