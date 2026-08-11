@@ -334,6 +334,8 @@ export async function requestWholeRegeneration(
   options: { targetMode?: "household" | "idea" } = {},
 ): Promise<void> {
   const targetMode = options.targetMode ?? "household";
+  // 再生成も外部 AI 送信。呼び出し側 seed の ensure に頼らず直前で共有枠を空にする。
+  await ensureAiQuotaForGeneration();
   // 結果画面の再生成コントロールを使う（履歴詳細と同等の UI）
   await openMenuResultForRegeneration(page, menuId, targetMode);
   await expect(page.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled({
@@ -354,6 +356,7 @@ export async function requestDishRegeneration(
   options: { targetMode?: "household" | "idea" } = {},
 ): Promise<void> {
   const targetMode = options.targetMode ?? "household";
+  await ensureAiQuotaForGeneration();
   await openMenuResultForRegeneration(page, menuId, targetMode);
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled({
     timeout: 15_000,

@@ -104,8 +104,14 @@ test("ignores local temporary and refresh files from Git and Docker contexts", a
       );
     }
   }
+  // Spec §6.3: storageState 成果物は gitignore 必須（秘密・セッション混入防止）。
+  // app イメージに git が無いため ls-files による tracked 検査はここでは行わない。
+  // ignore が無いと誤 add を止められないので、ここが fail-closed の主ゲート。
+  assert.ok(
+    gitignore.split(/\r?\n/u).includes("e2e/.auth/"),
+    "e2e/.auth/ must be gitignored (Playwright storageState)",
+  );
 });
-
 test("local secret wrapper uses the repository Compose file from any working directory", async () => {
   const root = resolve();
   const cwd = await mkdtemp(join(tmpdir(), "kondate-local-secrets-wrapper-"));

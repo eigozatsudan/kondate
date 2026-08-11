@@ -293,9 +293,8 @@ function expectedE2EInvocations(
 ) {
   // scripts/run-e2e.sh の現行シーケンスに合わせる:
   // base up → force-recreate auth → AI 枠リセット → E2E app 群 recreate →
-  // setup（storageState）1 回 →
-  // full: （--project 未指定なら mobile → 枠リセット → desktop）
-  // smoke: mobile-chromium 1 段 + --grep=@smoke（呼び出し側指定は二重付与しない）
+  // full: setup（storageState）1 回 →（--project 未指定なら mobile → 枠リセット → desktop）
+  // smoke: setup 省略（reused が smoke に載るまで）→ mobile-chromium 1 段 + --grep=@smoke
   // --project=setup のみのときは setup を二重起動しない
   // → cleanup で app ログ採取 → 失敗時のみ e2e kill/rm → auth/app 復元
   // 先頭の裸 `--` は run-e2e.sh が shift して捨てる（docs の `./scripts/run-e2e.sh -- path` 慣習）。
@@ -363,19 +362,18 @@ function expectedE2EInvocations(
     playwrightRuns = [
       [...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...arguments_],
     ];
-  } else if (cleanupE2EContainers) {
-    // 失敗・signal 中断系: setup が fail-closed（`|| return`）なので後続 playwright は走らない。
-    // mock の E2E_STATUS / E2E_WAIT_FOR_SIGNAL は先頭 e2e（setup）に効く。
-    playwrightRuns = [setupRun];
   } else if (suite === "smoke") {
-    // smoke 成功: setup + 本体 1 回・中間 quota reset なし（開始時 reset は済）
+    // smoke: setup 省略。本体 1 回のみ（失敗時も先頭 e2e が mock に効く）。
     const smokeArgs = [...arguments_];
     if (!hasProject) smokeArgs.unshift("--project=mobile-chromium");
     if (!hasGrep) smokeArgs.push("--grep=@smoke");
     playwrightRuns = [
-      setupRun,
       [...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...smokeArgs],
     ];
+  } else if (cleanupE2EContainers) {
+    // full 失敗・signal: setup が fail-closed（`|| return`）なので後続は走らない。
+    // mock の E2E_STATUS / E2E_WAIT_FOR_SIGNAL は先頭 e2e（setup）に効く。
+    playwrightRuns = [setupRun];
   } else if (hasProject) {
     playwrightRuns = [
       setupRun,
@@ -632,7 +630,7 @@ test("E2E runner restores the base stack and preserves success or failure", asyn
   }
 });
 
-// smoke: setup + mobile 本体 1 回（desktop 段・中間 quota reset なし）。@smoke を自動付与する。
+// smoke: mobile 本体 1 回のみ（setup 省略・desktop 段・中間 quota reset なし）。@smoke を自動付与する。
 test("E2E runner smoke suite runs a single mobile project with @smoke grep", async (t) => {
   const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));

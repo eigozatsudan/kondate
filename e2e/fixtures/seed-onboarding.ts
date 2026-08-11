@@ -51,11 +51,16 @@ export async function seedCompletedOnboardingState(page: Page): Promise<void> {
   const userId = userIdFromAccessToken(accessToken);
   const admin = await createServiceAdmin();
 
-  // 1) 完了メンバーを先に入れる（set_onboarding_status 相当の前提を DB 上で満たす）
+  // 1) 完了メンバーを先に入れる（set_onboarding_status 相当の前提を DB 上で満たす）。
+  // portion_size / spice_level は DB の status=complete CHECK では任意だが、
+  // 生成の requireCompleteMember / complete_household_member は非 null 必須。
+  // UI 再編集で偶然埋まる経路に依存しないよう seed で正値を入れる。
   const { error: memberError } = await admin.from("household_members").insert({
     user_id: userId,
     status: "complete",
     age_band: "adult",
+    portion_size: "regular",
+    spice_level: "regular",
     allergy_status: "none",
     unsupported_diet_status: "none",
     display_name: "家族1",

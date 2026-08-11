@@ -469,11 +469,11 @@ run_e2e_commands() {
     run_playwright "$@" || return $?
     return 0
   fi
-  run_playwright --project=setup || return $?
 
   if [ "$suite" = "smoke" ]; then
-    # setup 後に 1 段のみ。desktop 段・project 境界 reset なし（開始時 reset は済）。
-    # 呼び出し側の --project / --grep は二重付与しない。
+    # smoke に reused storageState 利用者が居ない間は setup を省略する
+    # （現状 @smoke は billing-plus を含まない。reused を smoke に載せたら setup を戻す）。
+    # 1 段のみ。desktop 段・project 境界 reset なし（開始時 reset は済）。
     if ! e2e_args_have_project "$@"; then
       set -- --project=mobile-chromium "$@"
     fi
@@ -483,6 +483,9 @@ run_e2e_commands() {
     run_playwright "$@" || return $?
     return 0
   fi
+
+  # full: storageState（reusedCompletedPage）のため setup を 1 回走らせてから本体へ。
+  run_playwright --project=setup || return $?
 
   # full: 呼び出し側が --project を指定していれば setup 後にそのまま1回実行する。
   # 未指定では mobile → 枠リセット → desktop の 2 段実行にし、
