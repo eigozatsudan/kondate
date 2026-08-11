@@ -2317,8 +2317,9 @@ it("C-R6: token_hash post-verify sibling clear discards complete (no publish)", 
   client.auth.verifyOtp = vi.fn().mockImplementation(
     () =>
       new Promise((resolve) => {
-        releaseVerify = () =>
+        releaseVerify = () => {
           resolve({ data: { session: { user: { id: "user-loser" } } }, error: null });
+        };
       }),
   );
   const gateway = createAuthGateway(

@@ -400,10 +400,10 @@ async function restoreSessionAfterDiscardedExchange(
 ): Promise<void> {
   if (baseline.kind !== "present") return;
   if (baseline.accessToken.length === 0 || baseline.refreshToken.length === 0) return;
-  const setSession = client.auth.setSession;
-  if (typeof setSession !== "function") return;
+  if (typeof client.auth.setSession !== "function") return;
   try {
-    await setSession.call(client.auth, {
+    // method call のまま呼び unbound-method を避ける（this は client.auth）
+    await client.auth.setSession({
       access_token: baseline.accessToken,
       refresh_token: baseline.refreshToken,
     });
