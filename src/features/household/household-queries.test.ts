@@ -110,9 +110,7 @@ it("H3: fires revision and event even when query invalidate throws", async () =>
   );
 
   expect(eventSpy).toHaveBeenCalled();
-  expect(localStorage.getItem(householdSafetyRevisionKey(userId))).toMatch(
-    /^[0-9a-f-]{36}$/iu,
-  );
+  expect(localStorage.getItem(householdSafetyRevisionKey(userId))).toMatch(/^[0-9a-f-]{36}$/iu);
 
   window.removeEventListener(householdSafetyChangedEvent, eventSpy);
   queryClient.clear();

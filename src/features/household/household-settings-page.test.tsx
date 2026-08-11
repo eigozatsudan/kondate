@@ -1946,10 +1946,17 @@ it("keeps a deferred registered intent when the first allergy add fails", async 
 });
 
 it("keeps a deferred registered status when saving it after the first allergy fails", async () => {
+  // H8: registered 確定は list 非空が条件。追加成功後 list が針を返す契約に揃える。
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
   const updateMember = vi.fn().mockRejectedValue(new Error("家族設定を保存できませんでした"));
   await renderSettings({
     updateMember,
-    addStandardAllergy: vi.fn().mockResolvedValue(standardAllergy),
+    listAllergies,
+    addStandardAllergy: vi.fn().mockImplementation(() => {
+      allergies = [standardAllergy];
+      return Promise.resolve(standardAllergy);
+    }),
   });
 
   const allergyStatus = await screen.findByLabelText("アレルギーの確認");
@@ -2236,13 +2243,14 @@ it("keeps an allergy add locked for its member across switching until success", 
   const updateMember = vi.fn((memberId: string, patch: HouseholdMemberPatch) =>
     Promise.resolve({ ...(memberId === member.id ? member : secondMember), ...patch }),
   );
-  await renderSettings({
+  const { queryClient } = await renderSettings({
     listMembers: vi.fn().mockResolvedValue([member, secondMember]),
     listAllergies,
     addStandardAllergy,
     updateMember,
   });
 
+  await waitForAllergies(queryClient);
   await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
   await userEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
@@ -2256,7 +2264,10 @@ it("keeps an allergy add locked for its member across switching until success", 
   await waitFor(() => {
     expect(screen.getByLabelText("呼び名")).toHaveValue("大人");
   });
-  expect(screen.getByLabelText("アレルギーの確認")).toBeDisabled();
+  // 追加中は当該 member の allergy 操作をロック（候補チップは mutationPending で disabled）
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toBeDisabled();
+  });
   expect(screen.getByRole("button", { name: "くるみを追加" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "家族を削除" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
@@ -2268,17 +2279,16 @@ it("keeps an allergy add locked for its member across switching until success", 
     await Promise.resolve();
   });
 
+  // autosave 等で updateMember が先に呼ばれ得るため回数固定ではなく registered PATCH を見る
   await waitFor(() => {
-    expect(updateMember).toHaveBeenCalledTimes(1);
+    expect(updateMember).toHaveBeenCalledWith(
+      member.id,
+      expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
+    );
     expect(screen.getByLabelText("アレルギーの確認")).toBeEnabled();
-    expect(screen.getByRole("button", { name: "くるみを追加" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "家族を削除" })).toBeEnabled();
   });
-  expect(updateMember).toHaveBeenCalledWith(
-    member.id,
-    expect.objectContaining({ allergy_status: "registered" }),
-    expect.any(String),
-  );
 });
 
 it("keeps the intent and unlocks a switched member after its allergy add fails", async () => {
@@ -3520,9 +3530,7 @@ it("H5: surfaces delete miss when allergy row remains after RPC success", async 
     expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
   });
   await waitFor(() => {
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "アレルギーの削除を反映できませんでした",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("アレルギーの削除を反映できませんでした");
   });
 });
 

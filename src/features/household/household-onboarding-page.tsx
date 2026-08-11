@@ -900,8 +900,7 @@ export function HouseholdOnboardingForm({
             未提供の API はゲート対象外（disabled query の isPending 永続を避ける）。 */}
         {draft.allergy_status === "registered" &&
           api.listCatalog !== undefined &&
-          (catalogQuery.isPending ||
-            (api.listAliases !== undefined && aliasesQuery.isPending)) && (
+          (catalogQuery.isPending || (api.listAliases !== undefined && aliasesQuery.isPending)) && (
             <p className="type-small" role="status">
               アレルギー候補を読み込んでいます…
             </p>

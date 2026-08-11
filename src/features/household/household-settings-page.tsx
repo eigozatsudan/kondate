@@ -82,6 +82,12 @@ type PendingRegisteredIntent = {
   registeredSaveEvidence:
     "known-empty" | "unknown" | "query-error" | "allergy-query" | "allergy-insert";
   inFlight?: Promise<boolean | undefined>;
+  /**
+   * registered PATCH がこの revision で失敗した印。
+   * useEffect の自動再試行を止め、失敗文言を成功／再確認文言で上書きしない。
+   * ユーザー編集で revision が進むか、allergy 追加 finalize が evidence を更新したときに解除する。
+   */
+  failedSaveRevision?: number;
 };
 
 type SaveLineage = {
@@ -778,6 +784,8 @@ export function HouseholdSettingsForm({
           if (latest !== pending) return saved;
           if (!saved) {
             delete latest.inFlight;
+            // 同一 revision での useEffect 自動再試行を抑制（失敗文言維持）。
+            latest.failedSaveRevision = latest.revision;
             return false;
           }
           if (latest.revision === revision) {
@@ -794,15 +802,41 @@ export function HouseholdSettingsForm({
   const finalizeAllergyChange = useCallback(
     async (memberId: string): Promise<void> => {
       const pending = pendingRegisteredIntents.current.get(memberId);
-      if (pending !== undefined) pending.registeredSaveEvidence = "allergy-insert";
-      await queryClient.invalidateQueries({
-        queryKey: householdKeys.allergies(userId, memberId),
-      });
+      if (pending !== undefined) {
+        pending.registeredSaveEvidence = "allergy-insert";
+        // 新しい allergy 証拠で再保存を許可（直前 PATCH 失敗の suppress を解除）
+        delete pending.failedSaveRevision;
+      }
+      // 切替後は対象 member の allergies query が inactive になり得る。
+      // invalidateQueries の既定 refetchType=active では再取得されず、
+      // getQueryData が追加前の空配列のまま残る → H8 が誤って registered を止める。
+      // fetchQuery で選択中かどうかに依らずサーバ一覧を正本として取り直す（H5 remove と同型）。
+      let listed: MemberAllergyRow[];
+      try {
+        listed = await queryClient.fetchQuery({
+          queryKey: householdKeys.allergies(userId, memberId),
+          queryFn: () => api.listAllergies(memberId),
+        });
+      } catch {
+        // 一覧再取得失敗時は registered を確定しない（H8 と同方向の fail-closed）
+        if (pending !== undefined && pending.values.allergyStatus === "registered") {
+          pending.registeredSaveEvidence = "query-error";
+          if (selectedMemberIdRef.current === memberId) {
+            setMessage("アレルギー情報を確認できませんでした。もう一度お試しください");
+          }
+        }
+        const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
+        if (
+          selectedMemberIdRef.current === memberId &&
+          pending === undefined &&
+          refresh === "failed"
+        ) {
+          setMessage(HOUSEHOLD_SAVED_REFRESH_FAILED);
+        }
+        return;
+      }
       // H8: allergy-insert 後も一覧が空なら registered を確定しない（draft の針 0 中間を縮める）。
       // 追加直後はサーバ再取得を正とし、空のまま evidence だけで status を進めない。
-      const listed =
-        queryClient.getQueryData<MemberAllergyRow[]>(householdKeys.allergies(userId, memberId)) ??
-        [];
       if (listed.length === 0) {
         if (pending !== undefined && pending.values.allergyStatus === "registered") {
           pending.registeredSaveEvidence = "known-empty";
@@ -825,6 +859,7 @@ export function HouseholdSettingsForm({
       if (registeredStatusSaved === false) {
         // H3 / H-RR2: registered PATCH 失敗でもアレルギー行は残る。soft invalidate のみ。
         // save 側の失敗メッセージを再確認失敗で上書きしない。
+        // soft invalidate が allergies を再取得しても failedSaveRevision で自動再試行しない。
         await tryInvalidateSafety(() => api.invalidateSafety());
       } else if (registeredStatusSaved === undefined) {
         // allergy-only finalize（intent 無し）: form save と同型の soft-handle
@@ -1336,10 +1371,18 @@ export function HouseholdSettingsForm({
       // H8: allergy-insert でも empty なら registered を確定しない（draft 針 0 中間を縮める）。
       // finalizeAllergyChange 側でも一覧確認後にのみ evidence を allergy-query へ上げる。
       pending.registeredSaveEvidence = "known-empty";
-      setMessage("登録ありの場合は1つ以上選んでください");
+      // PATCH 失敗文言を known-empty で上書きしない（H4 と同方向）
+      if (pending.failedSaveRevision !== pending.revision) {
+        setMessage("登録ありの場合は1つ以上選んでください");
+      }
       return;
     }
     pending.registeredSaveEvidence = "allergy-query";
+    // 同一 revision で PATCH 失敗済みなら自動再試行しない（失敗文言を成功で上書きしない）。
+    // ユーザー編集（revision++）や allergy finalize（failedSaveRevision 解除）で再送する。
+    if (pending.failedSaveRevision === pending.revision) {
+      return;
+    }
     void savePendingRegisteredStatus(selectedMemberId);
   }, [
     allergiesQuery.data,

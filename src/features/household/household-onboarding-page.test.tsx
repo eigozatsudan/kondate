@@ -924,13 +924,20 @@ it("H7: waits for catalog before showing AllergyEditor", async () => {
     allergy_status: "registered",
     unsupported_diet_status: "none",
   };
-  let resolveCatalog: ((value: unknown[]) => void) | undefined;
+  type CatalogRow = {
+    id: string;
+    display_name: string;
+    regulatory_class: string;
+    catalog_version: string;
+    created_at: string;
+  };
+  let resolveCatalog: ((value: CatalogRow[]) => void) | undefined;
   const api = baseApi({
     listMembers: vi.fn().mockResolvedValue([registeredDraft]),
     listAllergies: vi.fn().mockResolvedValue([]),
     listCatalog: vi.fn(
       () =>
-        new Promise<unknown[]>((resolve) => {
+        new Promise<CatalogRow[]>((resolve) => {
           resolveCatalog = resolve;
         }),
     ),
