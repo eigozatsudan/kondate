@@ -241,6 +241,83 @@ describe("validateStoredMenuCurrentSafety", () => {
     expect(result.issues.some((issue) => /allergen|allergy/i.test(issue.code))).toBe(false);
   });
 
+  // HR5: historical preference 行欠落は未知 baseline → preference_changed（valid のままにしない）
+  it("HR5: empty historical memberPreferences reports preference_changed (unknown baseline)", async () => {
+    const stored = makeStored({
+      preferenceSnapshot: { memberPreferences: [] },
+    });
+    // pantry は一致させて preference だけを観測する
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [{ id: PANTRY_ITEM_ID, quantity: 200 }], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await validateStoredMenuCurrentSafety({
+      ownerClient: ownerClient as never,
+      admin: {} as never,
+      stored,
+      userId: USER_ID,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+    expect(result.changedDetails).toContain("preference_changed");
+  });
+
+  it("HR5: missing historical preference row for a live target reports preference_changed", async () => {
+    // 別 member だけ載った snapshot は target 行欠落と同じ（旧集約の部分欠落）
+    const otherMemberId = "55000000-0000-4000-8000-000000000088";
+    const stored = makeStored({
+      preferenceSnapshot: {
+        memberPreferences: [
+          {
+            householdMemberId: otherMemberId,
+            anonymousMemberRef: "member_9",
+            portionSize: "regular",
+            spiceLevel: "regular",
+            easePreferences: [],
+            dislikes: [],
+          },
+        ],
+      },
+    });
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [{ id: PANTRY_ITEM_ID, quantity: 200 }], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "large",
+            spice_level: "mild",
+            ease_preferences: ["soft"],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await validateStoredMenuCurrentSafety({
+      ownerClient: ownerClient as never,
+      admin: {} as never,
+      stored,
+      userId: USER_ID,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+    expect(result.changedDetails).toContain("preference_changed");
+  });
+
   // H5: 履歴にラベル確認 UI が無いため soft pantry 命中も invalid（flyer 同型 fail-closed）
   it("H5: marks invalid when soft pantry alias matches registered allergen (mayonnaise/egg)", async () => {
     vi.mocked(loadCurrentSafetyContext).mockResolvedValue(

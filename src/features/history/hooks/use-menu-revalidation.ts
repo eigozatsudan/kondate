@@ -250,13 +250,19 @@ export function useMenuRevalidation(menuId: string) {
         : "現在の家族設定で確認できませんでした";
 
   const refetch = useCallback(() => {
-    // エラー画面の「もう一度確認」は hard（操作再開前に閉じたゲートを取り直す）
+    // エラー画面の「もう一度確認」は hard と同型（操作再開前に閉じたゲートを取り直す）。
+    // HR8: offline なら hold 維持・POST しない（beginHardRecheck と対称。
+    // 無条件 clear + resetQueries だと sticky hold 契約が崩れ error/再 POST になる）。
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      beginOfflineHold();
+      return;
+    }
     requestGenerationRef.current += 1;
     setIsOfflineHold(false);
     setForcedChecking(true);
     void cache.cancelQueries({ queryKey, exact: true });
     return cache.resetQueries({ queryKey, exact: true });
-  }, [cache, queryKey]);
+  }, [beginOfflineHold, cache, queryKey]);
 
   // offline hold 中だけ true（online hard 開始で下ろす）。テスト注入互換のため phase と独立
   const offlineHoldActive = isOfflineHold && phase === "checking";

@@ -51,15 +51,32 @@ export function shouldInterceptPlannerLeaveClick(event: {
 /**
  * leave-flush 成功後だけ navigate する。blocked 時は stay（route が submissionError）。
  * 呼び出し側は onClick で preventDefault 済みであること。
+ *
+ * P6: シェル下ナビの navLeavingRef と同型の single-flight。
+ * ホーム直近献立・冷蔵庫・再開 CTA・review Plus の連打で flush 並列・先 proceed の to 上書きを防ぐ。
+ * 連打の 2 回目以降は先行 flight 完了まで無視（先行 to を優先）。
  */
+let navigateAfterLeaveInFlight = false;
+
 export async function navigateAfterPlannerLeaveFlush(
   // React Router の NavigateFunction は void | Promise<void> を返すため、
   // void 固定にすると no-misused-promises が呼び出し側で発火する。
   navigate: (to: string) => void | Promise<void>,
   to: string,
 ): Promise<void> {
-  const result = await runPlannerLeaveFlush();
-  if (result === "proceed") {
-    await navigate(to);
+  if (navigateAfterLeaveInFlight) return;
+  navigateAfterLeaveInFlight = true;
+  try {
+    const result = await runPlannerLeaveFlush();
+    if (result === "proceed") {
+      await navigate(to);
+    }
+  } finally {
+    navigateAfterLeaveInFlight = false;
   }
+}
+
+/** テスト用: single-flight フラグを解除する（register null と併用）。 */
+export function resetPlannerLeaveNavigateFlightForTests(): void {
+  navigateAfterLeaveInFlight = false;
 }

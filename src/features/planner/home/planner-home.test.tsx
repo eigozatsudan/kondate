@@ -40,4 +40,19 @@ describe("PlannerHome", () => {
     await user.click(screen.getByRole("button", { name: "今日の献立をつくる" }));
     expect(onStartWizard).toHaveBeenCalledTimes(1);
   });
+
+  it("P1: route の hard error を role=alert で表示する", () => {
+    renderWithRouter(
+      <PlannerHome
+        remainingToday={null}
+        onStartWizard={vi.fn()}
+        recentMenus={[]}
+        expiringItems={[]}
+        error="条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。"
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
+    );
+  });
 });

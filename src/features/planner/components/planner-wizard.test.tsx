@@ -1202,6 +1202,29 @@ describe("PlannerWizard review step", () => {
     ).toBeVisible();
   });
 
+  it("P3: idea 確認でも共有安全免責を表示する", () => {
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "idea",
+          servings: 1,
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。",
+      ),
+    ).toBeVisible();
+    // 既存の idea note（主操作直前）は維持
+    expect(screen.getByRole("note")).toHaveTextContent(/家族の年齢・アレルギーは確認されません/);
+  });
+
   it("household 確認の安全条件は対象に選んだ家族だけを出す", () => {
     const otherMember: PlannerSafetyMember = {
       id: "70000000-0000-4000-8000-000000000099",

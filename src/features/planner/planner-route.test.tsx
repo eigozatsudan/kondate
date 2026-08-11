@@ -76,10 +76,10 @@ const savePlannerDraftMock = vi.hoisted(() => vi.fn());
 const setOnboardingStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const getProfileMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
-/** P1/P3: flush が IncompleteDraftSaveError を投げる経路を再現する */
+/** P1/P3/P2: flush が Incomplete / 通信失敗 / revision conflict を投げる経路を再現する */
 const autosaveFlushMode = vi.hoisted(
   (): {
-    mode: "save" | "incomplete" | "network_error";
+    mode: "save" | "incomplete" | "network_error" | "conflict";
   } => ({
     mode: "save",
   }),
@@ -255,6 +255,7 @@ vi.mock("./planner-api", async (importOriginal) => {
 });
 vi.mock("./use-draft-autosave", async (importOriginal) => {
   const original = await importOriginal<typeof import("./use-draft-autosave")>();
+  const { DraftRevisionConflictError } = await import("./planner-api");
   return {
     ...original,
     useDraftAutosave: (input: {
@@ -273,6 +274,10 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
           }
           if (autosaveFlushMode.mode === "network_error") {
             return Promise.reject(new Error("network"));
+          }
+          // P2: 実 autosave は onConflict 後に DraftRevisionConflictError を再 throw
+          if (autosaveFlushMode.mode === "conflict") {
+            return Promise.reject(new DraftRevisionConflictError());
           }
           return input.save(input.value, input.baselineRevision);
         }),
@@ -1227,6 +1232,54 @@ it("P1: leave flush の通信失敗は blocked + 通信文言", async () => {
       "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
     );
   });
+});
+
+it("P1: home 面でも leave flush 通信失敗を role=alert で表示する", async () => {
+  // 空下書き + pending なし → ホーム着地（wizard の error スロットに依存しない）
+  queryState.draft = null;
+  pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+  autosaveFlushMode.mode = "network_error";
+  render(<PlannerRoutePage />);
+  await vi.waitFor(() => {
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeInTheDocument();
+  });
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("blocked");
+  await vi.waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
+    );
+  });
+});
+
+it("P2: leave flush の DraftRevisionConflictError は通信文言を立てない", async () => {
+  autosaveFlushMode.mode = "conflict";
+  render(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("blocked");
+  expect(
+    screen.queryByText(
+      "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
+    ),
+  ).toBeNull();
+});
+
+it("P7: soft safety/pantry 中は緊急 open を止める", async () => {
+  queryState.pantry = { data: [pantryItem], isError: false, isPending: false };
+  const view = render(<PlannerPage startGeneration={vi.fn()} />);
+  queryState.pantry = { data: [pantryItem], isError: true, isPending: false };
+  view.rerender(<PlannerPage startGeneration={vi.fn()} />);
+
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+
+  expect(navigateMock).not.toHaveBeenCalledWith("/emergency-menus");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "家族または冷蔵庫の最新情報を再取得してから緊急献立を開いてください。",
+  );
 });
 
 it("P4: autosave saving 中でも settings は flush join で /settings へ進む", async () => {

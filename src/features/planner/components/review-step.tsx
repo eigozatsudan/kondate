@@ -26,7 +26,10 @@ import {
   navigateAfterPlannerLeaveFlush,
   shouldInterceptPlannerLeaveClick,
 } from "../planner-leave-flush";
-import { CurrentSafetySummary } from "../current-safety-summary";
+import {
+  CURRENT_SAFETY_DISCLAIMER,
+  CurrentSafetySummary,
+} from "../current-safety-summary";
 import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "../household-safety-helper-copy";
 import {
   cuisineGenreLabel,
@@ -387,6 +390,12 @@ export function ReviewStep({
                 <p>{HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY}</p>
               </>
             )}
+            {/*
+              idea でも共有免責を出す（props コメント「idea でも免責文を見せるため」と実装を一致）。
+              household の CurrentSafetySummary 内と同じ CURRENT_SAFETY_DISCLAIMER 単一ソース。
+              role=note の idea 注意は主操作直前 sibling 契約のため、免責は確認上部に置く。
+            */}
+            {value.targetMode === "idea" ? <p>{CURRENT_SAFETY_DISCLAIMER}</p> : null}
             <dl className="wizard-review-list">
               {/*
           項目名 | 回答。変更ボタンは dd 内に置き definition-list を満たす。
@@ -990,7 +999,10 @@ export function ReviewStep({
               onOpenEmergencyMenus !== undefined && (
                 <Button
                   variant="secondary"
-                  disabled={disabled || requiredQuestionsIncomplete}
+                  // P7: 生成主 CTA と同型。safety/pantry soft 中は previous 期限データで進めない
+                  disabled={
+                    disabled || requiredQuestionsIncomplete || blockGenerationForStaleSafety
+                  }
                   onClick={onOpenEmergencyMenus}
                 >
                   AIを使わない緊急献立を見る

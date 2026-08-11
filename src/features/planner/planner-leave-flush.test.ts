@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   navigateAfterPlannerLeaveFlush,
   registerPlannerLeaveFlush,
+  resetPlannerLeaveNavigateFlightForTests,
   runPlannerLeaveFlush,
   shouldInterceptPlannerLeaveClick,
 } from "./planner-leave-flush";
 
 afterEach(() => {
   registerPlannerLeaveFlush(null);
+  resetPlannerLeaveNavigateFlightForTests();
 });
 
 describe("planner-leave-flush (P2)", () => {
@@ -75,5 +77,24 @@ describe("planner-leave-flush SPA intercept (P1)", () => {
     registerPlannerLeaveFlush(() => Promise.resolve("blocked"));
     await navigateAfterPlannerLeaveFlush(navigate, "/pantry");
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("P6: single-flight で連打時は先行 to のみ navigate し handler は1回", async () => {
+    let resolveFlush: ((value: "proceed" | "blocked") => void) | undefined;
+    const flushPromise = new Promise<"proceed" | "blocked">((resolve) => {
+      resolveFlush = resolve;
+    });
+    const handler = vi.fn(() => flushPromise);
+    registerPlannerLeaveFlush(handler);
+    const navigate = vi.fn();
+
+    const first = navigateAfterPlannerLeaveFlush(navigate, "/menus/a");
+    const second = navigateAfterPlannerLeaveFlush(navigate, "/menus/b");
+    resolveFlush?.("proceed");
+    await Promise.all([first, second]);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith("/menus/a");
   });
 });

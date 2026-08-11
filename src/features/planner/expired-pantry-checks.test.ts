@@ -22,11 +22,12 @@ afterEach(() => {
 });
 
 it("filterExpiredPantryChecksForSelections は選択中 ∩ 現在期限切れだけを残す (P1)", () => {
+  const now = new Date("2026-07-11T03:00:00.000Z");
   const attempt = createPlannerAttempt();
   const withChecks = confirmExpiredPantryItem(
-    confirmExpiredPantryItem(attempt, "a", new Date("2026-07-11T03:00:00.000Z")),
+    confirmExpiredPantryItem(attempt, "a", now),
     "b",
-    new Date("2026-07-11T03:00:00.000Z"),
+    now,
   );
   // 選択中でも現在期限切れでない ID は surplus として落とす（expiresOn soft 更新後）
   expect(
@@ -34,6 +35,7 @@ it("filterExpiredPantryChecksForSelections は選択中 ∩ 現在期限切れ�
       withChecks.expiredPantryChecks,
       [{ pantryItemId: "a" }, { pantryItemId: "b" }],
       new Set(["b"]),
+      now,
     ),
   ).toEqual([{ pantryItemId: "b", checkedAt: "2026-07-11T03:00:00.000Z" }]);
   // 非選択は期限切れでも落とす
@@ -42,11 +44,34 @@ it("filterExpiredPantryChecksForSelections は選択中 ∩ 現在期限切れ�
       withChecks.expiredPantryChecks,
       [{ pantryItemId: "b" }],
       new Set(["a", "b"]),
+      now,
     ),
   ).toEqual([{ pantryItemId: "b", checkedAt: "2026-07-11T03:00:00.000Z" }]);
   expect(
-    filterExpiredPantryChecksForSelections(withChecks.expiredPantryChecks, [], new Set(["a", "b"])),
+    filterExpiredPantryChecksForSelections(
+      withChecks.expiredPantryChecks,
+      [],
+      new Set(["a", "b"]),
+      now,
+    ),
   ).toEqual([]);
+});
+
+it("P8: filterExpiredPantryChecksForSelections は JST 当日以外の checkedAt を落とす", () => {
+  const today = new Date("2026-07-11T03:00:00.000Z"); // JST 2026-07-11
+  const checks = [
+    { pantryItemId: "a", checkedAt: "2026-07-10T03:00:00.000Z" }, // 昨日
+    { pantryItemId: "b", checkedAt: "2026-07-11T03:00:00.000Z" }, // 当日
+    { pantryItemId: "c", checkedAt: "not-a-date" },
+  ];
+  expect(
+    filterExpiredPantryChecksForSelections(
+      checks,
+      [{ pantryItemId: "a" }, { pantryItemId: "b" }, { pantryItemId: "c" }],
+      new Set(["a", "b", "c"]),
+      today,
+    ),
+  ).toEqual([{ pantryItemId: "b", checkedAt: "2026-07-11T03:00:00.000Z" }]);
 });
 
 it("currentlyExpiredPantryItemIds は入力期限が過去の ID だけを返す (P1)", () => {

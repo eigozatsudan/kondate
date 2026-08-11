@@ -359,7 +359,14 @@ function detectChangedDetails(
       continue;
     }
     const historical = snapshotPrefs.find((item) => item.householdMemberId === memberId);
-    if (historical === undefined) continue;
+    // HR5: historical 行欠落（空 memberPreferences / 旧集約 / parse 失敗後の空配列）は
+    // 未知 baseline。continue すると portion/spice/ease/dislikes の live 差分が
+    // preference_changed に出ず status=valid のまま false-confidence になる。
+    // live 欠落と対称に preference_changed を付与する（safety open 化はしない）。
+    if (historical === undefined) {
+      details.add("preference_changed");
+      continue;
+    }
     const easeLeft = [...(historical.easePreferences ?? [])].sort().join("\u0000");
     const easeRight = [...live.easePreferences].sort().join("\u0000");
     const dislikeLeft = [...(historical.dislikes ?? [])].sort().join("\u0000");

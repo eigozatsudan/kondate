@@ -823,6 +823,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         void navigate("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
         return true;
       }
+      // P2: revision conflict は onConflict が競合 chrome を武装済み。
+      // 通信障害文言と並立させず chrome に一本化する。
+      if (error instanceof DraftRevisionConflictError) {
+        return false;
+      }
       if (mountedRef.current) {
         setSubmissionError("献立条件を保存できなかったため、説明画面へ進めませんでした。");
       }
@@ -857,6 +862,17 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       isOpeningSettings ||
       hasDraftConflict
     ) {
+      return;
+    }
+    // P7: 生成主 CTA と同型。safety/pantry soft 失敗中は previous 期限データで緊急を進めない。
+    const staleSafetyPantry =
+      initialized &&
+      ((safetyQuery.isError && safetyQuery.data !== undefined) ||
+        (pantryQuery.isError && pantryQuery.data !== undefined));
+    if (staleSafetyPantry) {
+      setSubmissionError(
+        "家族または冷蔵庫の最新情報を再取得してから緊急献立を開いてください。",
+      );
       return;
     }
     // PE4: 生成と同型。未確認の期限切れ pantry があるうちは緊急へ進めない。
@@ -952,6 +968,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               attempt.expiredPantryChecks,
               saved.pantrySelections,
               currentlyExpiredPantryItemIds(pantryRowsRef.current, nowForSession),
+              nowForSession,
             ),
             nowForSession,
           );
@@ -961,11 +978,16 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         if (mountedRef.current && operationId === emergencyOperationIdRef.current) {
           // C-I14: 緊急導線の保存失敗は生成失敗と別文言（生成していないのに「生成」と言わない）。
           // idea+人数未設定の Incomplete は通信障害と誤認しない
-          setSubmissionError(
-            error instanceof IncompleteDraftSaveError
-              ? "人数など必要な条件が未設定のため、緊急献立を開けませんでした。確認画面で内容を見直してください。"
-              : "条件を保存できなかったため、緊急献立を開けませんでした。通信を確認して再度お試しください。",
-          );
+          // P2: revision conflict は onConflict の競合 chrome に一本化（通信文言を立てない）
+          if (error instanceof IncompleteDraftSaveError) {
+            setSubmissionError(
+              "人数など必要な条件が未設定のため、緊急献立を開けませんでした。確認画面で内容を見直してください。",
+            );
+          } else if (!(error instanceof DraftRevisionConflictError)) {
+            setSubmissionError(
+              "条件を保存できなかったため、緊急献立を開けませんでした。通信を確認して再度お試しください。",
+            );
+          }
         }
       } finally {
         // 遷移後もフラグを落とす。route が残る経路で isSaving が固着し wizard が死ぬのを防ぐ。
@@ -983,13 +1005,17 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     client,
     flushDraft,
     hasDraftConflict,
+    initialized,
     isOpeningEmergencyMenus,
     isOpeningPrivacy,
     isOpeningSettings,
     isSubmitting,
     navigate,
     pantryQuery.data,
+    pantryQuery.isError,
     queryClient,
+    safetyQuery.data,
+    safetyQuery.isError,
     userId,
     value.pantrySelections,
   ]);
@@ -1026,6 +1052,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           void navigate("/settings");
           return;
         }
+        // P2: revision conflict は onConflict の競合 chrome に一本化（通信文言を立てない）
+        if (error instanceof DraftRevisionConflictError) {
+          return;
+        }
         setSubmissionError(
           "条件を保存できなかったため、家族設定を開けませんでした。通信を確認して再度お試しください。",
         );
@@ -1052,16 +1082,35 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // deps 更新のたび cleanup で null すると下ナビ click が即 proceed になる窓が残る。
   useEffect(() => {
     registerPlannerLeaveFlush(async () => {
+      // P4: ガード blocked は無言 stay にせず理由を可視化する。
+      // 競合中は chrome に委任し、home では chrome が無いため wizard を開く。
+      if (hasDraftConflictRef.current) {
+        if (mountedRef.current) {
+          setWizardOpen(true);
+        }
+        return "blocked";
+      }
       if (
         settingsOpeningRef.current ||
         emergencyOpeningRef.current ||
         privacyOpeningRef.current ||
         isOpeningEmergencyMenusRef.current ||
         isOpeningPrivacyRef.current ||
-        isOpeningSettingsRef.current ||
-        submittingRef.current ||
-        hasDraftConflictRef.current
+        isOpeningSettingsRef.current
       ) {
+        if (mountedRef.current) {
+          setSubmissionError(
+            "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
+          );
+        }
+        return "blocked";
+      }
+      if (submittingRef.current) {
+        if (mountedRef.current) {
+          setSubmissionError(
+            "献立の作成処理中のため、移動できませんでした。完了後にもう一度お試しください。",
+          );
+        }
         return "blocked";
       }
       try {
@@ -1072,6 +1121,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         // pre-leave-flush 同様に離脱可とし、通信失敗文言で封鎖しない。
         if (error instanceof IncompleteDraftSaveError) {
           return "proceed";
+        }
+        // P2: revision conflict は onConflict が競合 chrome を武装済み。
+        // 通信障害文言と並立させず、home では wizard を開いて chrome を見せる。
+        if (error instanceof DraftRevisionConflictError) {
+          if (mountedRef.current) {
+            setWizardOpen(true);
+          }
+          return "blocked";
         }
         if (mountedRef.current) {
           setSubmissionError(
@@ -1192,6 +1249,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         }}
         expiringItems={expiringItems}
         footer={flyerFooter}
+        // P1: leave-flush / strip / 明示保存失敗を home でも role=alert で可視化（wizard と同型）
+        error={submissionError}
         banner={
           backgroundRefetchErrorMessage !== null ? (
             <div className="home-soft-banner stack">
@@ -1531,6 +1590,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
                 attempt.expiredPantryChecks,
                 saved.pantrySelections,
                 currentlyExpiredPantryItemIds(pantryRowsRef.current, nowForCommand),
+                nowForCommand,
               ),
             };
             const controller = new AbortController();

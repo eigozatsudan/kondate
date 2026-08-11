@@ -19,6 +19,11 @@ export type PlannerHomeProps = {
   footer?: ReactNode;
   /** 背景 refetch 失敗など、route 側の soft バナー。 */
   banner?: ReactNode;
+  /**
+   * leave-flush / eligibility strip / 明示保存失敗など route 側の hard エラー。
+   * wizard の error と同型で role=alert。soft banner とは分離する。
+   */
+  error?: string | null;
   /** 主 CTA を止める（遷移中など）。 */
   disabled?: boolean;
 };
@@ -39,6 +44,7 @@ export function PlannerHome({
   expiringItems,
   footer = null,
   banner = null,
+  error = null,
   disabled = false,
 }: PlannerHomeProps): JSX.Element {
   return (
@@ -49,6 +55,7 @@ export function PlannerHome({
           lead="いま作りたい献立の入口です。質問に答えて新しい案をつくるか、直近の献立を見返せます。"
         />
         {banner}
+        {error !== null && error !== "" ? <p role="alert">{error}</p> : null}
         <HomeGenerateCard
           remainingToday={remainingToday}
           onStart={onStartWizard}

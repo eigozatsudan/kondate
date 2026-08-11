@@ -686,6 +686,51 @@ describe("useMenuRevalidation", () => {
     onlineSpy.mockRestore();
   });
 
+  it("HR8: refetch while offline keeps hold without POST (same as hard recheck)", async () => {
+    // エラー画面「もう一度確認」が hold を無条件解除して POST すると sticky hold 契約が崩れる。
+    // beginHardRecheck と同型: offline なら hold 維持・POST しない。
+    const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    const { result, unmount } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const callsAfterMount = revalidateMenuMock.mock.calls.length;
+
+    onlineSpy.mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.isOfflineHold).toBe(true);
+
+    act(() => {
+      void result.current.refetch();
+    });
+    // hold は sticky。追加 POST なし・error へ落ちない
+    expect(revalidateMenuMock.mock.calls.length).toBe(callsAfterMount);
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.isOfflineHold).toBe(true);
+    expect(result.current.errorMessage).toBeUndefined();
+
+    // online 復帰 hard で初めて再 POST
+    onlineSpy.mockReturnValue(true);
+    const onlineFlight = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(onlineFlight.promise);
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(result.current.isOfflineHold).toBe(false);
+    expect(result.current.phase).toBe("checking");
+    act(() => {
+      onlineFlight.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    unmount();
+    onlineSpy.mockRestore();
+  });
+
   it("does not hard recheck on SUBSCRIBED alone", async () => {
     const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
     await waitFor(() => {
