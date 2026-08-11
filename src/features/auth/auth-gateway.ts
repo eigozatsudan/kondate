@@ -418,11 +418,11 @@ async function clearDiscardedExchangeSessionIfStillPresent(
       // best-effort
     }
   }
-  const signOut = client.auth.signOut;
-  if (typeof signOut === "function") {
+  if (typeof client.auth.signOut === "function") {
     try {
       // hang でも discard 経路を永久待ちにしない（A2 と同型）
-      await withTimeout(signOut.call(client.auth, { scope: "local" }), 2_000);
+      // method call のまま呼び unbound-method を避ける
+      await withTimeout(client.auth.signOut({ scope: "local" }), 2_000);
     } catch {
       // storage は上で消済み。メモリ clear 失敗は AuthProvider / 次回 getSession に委ねる
     }
