@@ -250,7 +250,8 @@ describe("generationIssueCodes and issueMessages", () => {
       "AIが混み合っています。作成を受け付けたあと完了できなかったため、しばらくしてからお試しください。",
     invalid_ai_response:
       "献立を正しく確認できませんでした。続けて試すと本日の受付上限に達しやすくなります。",
-    generation_timeout: "作成に時間がかかりました。",
+    generation_timeout:
+      "作成に時間がかかりました。受付後に完了できなかったため、続けて試すと本日の受付上限に達しやすくなります。",
     internal_error: "献立を作成できませんでした。",
     duplicate_output: "元の献立とほぼ同じ案だったため保存しませんでした。",
   } as const;

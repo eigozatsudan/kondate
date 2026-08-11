@@ -1057,7 +1057,9 @@ const nonConflictIssueMessages = {
   // G11: invalid 連発で attempt が先に尽き得ることを平易に示す（枠返却はしない）
   invalid_ai_response:
     "献立を正しく確認できませんでした。続けて試すと本日の受付上限に達しやすくなります。",
-  generation_timeout: "作成に時間がかかりました。",
+  // G4 residual: markSent 後 timeout も attempt 非返却。retryable UI との溶融を平易に再強調
+  generation_timeout:
+    "作成に時間がかかりました。受付後に完了できなかったため、続けて試すと本日の受付上限に達しやすくなります。",
   internal_error: "献立を作成できませんでした。",
   duplicate_output: "元の献立とほぼ同じ案だったため保存しませんでした。",
   idempotency_payload_mismatch: "前回と異なる内容で再送できません。もう一度操作してください",

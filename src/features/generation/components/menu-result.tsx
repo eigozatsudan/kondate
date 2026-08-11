@@ -197,7 +197,8 @@ export function MenuResult({
       result.labelConfirmations.find((item) => item.confirmationId === confirmationId)
         ?.requirementSafetyFingerprint;
     if (fingerprint === undefined) {
-      setLiveMessage("確認を保存できませんでした");
+      // G9: 専用 code は写像拡大しない。stale/条件変更の再確認導線だけ汎用文言へ補足する
+      setLiveMessage("確認を保存できませんでした。条件が変わった場合は献立を開き直してください。");
       return;
     }
     setBusy(true);
@@ -207,8 +208,9 @@ export function MenuResult({
       // 「確認済み＝安全」と誤読させない。手続きの記録完了だけを伝える。
       setLiveMessage("原材料表示の確認を記録しました");
     } catch {
-      // 古い警告・stale fingerprint はゲート再閉鎖を呼び出し側に委ねる
-      setLiveMessage("確認を保存できませんでした");
+      // 古い警告・stale fingerprint はゲート再閉鎖を呼び出し側に委ねる。
+      // G9: confirmation_not_found 畳み込みのまま、条件変更時の開き直しを促す
+      setLiveMessage("確認を保存できませんでした。条件が変わった場合は献立を開き直してください。");
     } finally {
       setConfirmingId(null);
       setBusy(false);

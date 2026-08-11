@@ -299,7 +299,7 @@ describe("MenuResultPage", () => {
     expect(clearPendingGenerationMock).not.toHaveBeenCalled();
   });
 
-  it("読み込みが成功したら結果を表示し、復旧用の保存内容を後始末する", async () => {
+  it("読み込みが成功したら結果を表示する（G2: 成功読込だけでは pending を clear しない）", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
 
     renderPage(`/menus/${VALID_MENU_ID}`);
@@ -309,9 +309,18 @@ describe("MenuResultPage", () => {
     expect(getMenuResultMock).toHaveBeenCalledWith(VALID_MENU_ID, {
       includePreferenceGaps: true,
     });
-    await waitFor(() => {
-      expect(clearPendingGenerationMock).toHaveBeenCalledTimes(1);
-    });
+    // G2: 履歴/買い物経由の別献立表示で recovery キーを焼かない。
+    // clear は recovery が succeeded + idempotencyKey 照合後に行う。
+    expect(clearPendingGenerationMock).not.toHaveBeenCalled();
+  });
+
+  it("G2: shopping intent 付き成功読込でも clearPendingGeneration しない", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+
+    renderPage(`/menus/${VALID_MENU_ID}?for=shopping`);
+
+    expect(await screen.findByRole("heading", { name: "献立ができました" })).toBeVisible();
+    expect(clearPendingGenerationMock).not.toHaveBeenCalled();
   });
 
   it("ラベル確認の免責文をページ内で1回だけ表示する", async () => {

@@ -335,6 +335,21 @@ it("shows the label-confirm action and calls the confirm handler", async () => {
   );
 });
 
+// G9: 専用 code は増やさず、条件変更時の開き直しを汎用 live message で補足する
+it("G9: label confirm failure live message prompts reopen on condition change", async () => {
+  const onConfirmLabel = vi.fn(() => Promise.reject(new Error("confirmation_not_found")));
+  const actions = makeActions({ onConfirmLabel });
+  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  await userEvent.click(
+    screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+  );
+  expect(
+    await screen.findByText(
+      "確認を保存できませんでした。条件が変わった場合は献立を開き直してください。",
+    ),
+  ).toBeVisible();
+});
+
 it("keeps post-cook controls closed until the dialog is opened", () => {
   render(<MenuResult result={makeMenuResultViewModel()} actions={makeActions()} />);
   expect(screen.queryByRole("dialog", { name: "使った食材の在庫を更新" })).toBeNull();

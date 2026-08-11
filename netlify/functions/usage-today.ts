@@ -62,6 +62,32 @@ function mergeFlyerWeeklyProjection(flyer: FlyerWeeklyRpc | undefined): {
   };
 }
 
+/**
+ * quality の consumed/remaining 片方欠落を balance（consumed+remaining=limit）へ閉じる。
+ * G8: remaining 欠落で limit フル残に寄せると available 過大になるため、
+ * - remaining 欠落 + consumed あり → remaining = limit - consumed
+ * - 両方欠落 → 使い切り（consumed=limit, remaining=0）で fail-closed
+ * 枠ロック値（3/20）自体は変えない。
+ */
+function projectQualityBucket(
+  bucket: { consumed?: number; remaining?: number } | undefined,
+  limit: number,
+): { consumed: number; remaining: number } {
+  const consumed = bucket?.consumed;
+  const remaining = bucket?.remaining;
+  if (consumed !== undefined && remaining !== undefined) {
+    return { consumed, remaining };
+  }
+  if (consumed !== undefined) {
+    return { consumed, remaining: Math.max(0, limit - consumed) };
+  }
+  if (remaining !== undefined) {
+    return { consumed: Math.max(0, limit - remaining), remaining };
+  }
+  // 両方欠落: 残あり誤表示を避けて使い切り扱い
+  return { consumed: limit, remaining: 0 };
+}
+
 /** RPC quality 投影 + plusEntitled から available を合成する */
 function mergeQualityProjection(
   quality: QualityRpc | undefined,
@@ -73,22 +99,20 @@ function mergeQualityProjection(
 } {
   const dayLimit = planQuota.quality.perDay;
   const monthLimit = planQuota.quality.perMonth;
-  const dayConsumed = quality?.day?.consumed ?? 0;
-  const monthConsumed = quality?.month?.consumed ?? 0;
-  const dayRemaining = quality?.day?.remaining ?? dayLimit;
-  const monthRemaining = quality?.month?.remaining ?? monthLimit;
+  const day = projectQualityBucket(quality?.day, dayLimit);
+  const month = projectQualityBucket(quality?.month, monthLimit);
   return {
     day: {
-      consumed: dayConsumed,
+      consumed: day.consumed,
       limit: dayLimit,
-      remaining: dayRemaining,
+      remaining: day.remaining,
     },
     month: {
-      consumed: monthConsumed,
+      consumed: month.consumed,
       limit: monthLimit,
-      remaining: monthRemaining,
+      remaining: month.remaining,
     },
-    available: plusEntitled && dayRemaining > 0 && monthRemaining > 0,
+    available: plusEntitled && day.remaining > 0 && month.remaining > 0,
   };
 }
 

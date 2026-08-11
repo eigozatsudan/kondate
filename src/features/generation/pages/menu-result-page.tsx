@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { Link, Navigate, useParams } from "react-router";
 import { z } from "zod";
 import { useAuth } from "@/features/auth/use-auth";
@@ -14,7 +14,6 @@ import { Skeleton } from "@/shared/ui/feedback";
 import { PageHeader } from "@/shared/ui/page-header";
 import { Stack } from "@/shared/ui/stack";
 import { getMenuResult } from "../api/menu-result-api";
-import { clearPendingGeneration } from "../model/pending-generation";
 
 export type { MenuResultPageRevalidationView };
 
@@ -26,6 +25,12 @@ type MenuResultPageProps = {
 /**
  * 生成直後の献立結果。loader と surface 差分のみを持ち、
  * idea/household の操作は menu-detail 共通 body に委譲する。
+ *
+ * G2: 献立読込成功だけでは pending を clear しない。
+ * /menus/:menuId は履歴・買い物 intent の共通入口であり、idempotencyKey 照合なしの
+ * clear は offline/processing 中の別 key 復旧を焼く。成功時の clear は recovery が
+ * succeeded + idempotencyKey 照合後に行い `/menus/{id}?recovered=1` へ遷移する。
+ * 結果 menuId は pending に載らないため、ここでの key 照合 clear は行わない（最小修復）。
  */
 export function MenuResultPage({ revalidation: injected }: MenuResultPageProps = {}) {
   const auth = useAuth();
@@ -46,9 +51,6 @@ export function MenuResultPage({ revalidation: injected }: MenuResultPageProps =
     enabled: menuId !== null && auth.status === "authenticated" && userId !== undefined,
     staleTime: 30_000,
   });
-  useEffect(() => {
-    if (query.data) clearPendingGeneration();
-  }, [query.data]);
 
   if (!parsed.success || menuId === null) return <Navigate to="/planner" replace />;
   if (query.isError)

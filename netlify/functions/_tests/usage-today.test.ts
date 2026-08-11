@@ -240,6 +240,103 @@ describe("usage-today", () => {
     expect(rpcMock).not.toHaveBeenCalled();
   });
 
+  // G8: remaining 欠落時は limit 固定フル残ではなく limit-consumed で balance を保つ
+  it("G8: missing quality remaining derives from consumed not full dayLimit alone", async () => {
+    getServerEnvMock.mockReturnValue({
+      openRouter: { globalDailyLimit: 20 },
+      quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: false,
+      billingEnabled: true,
+    });
+    loadEntitlementMock.mockResolvedValue({
+      ...freeEntitlement,
+      plan: "plus" as const,
+      plusEntitled: true,
+      status: "active" as const,
+      dbPlusEntitled: true,
+    });
+    rpcMock.mockResolvedValue({
+      data: {
+        // Plus 日次 limit は 10/20（success/attempts）。quality は 3/20 固定
+        success: { consumed: 1, limit: 10, remaining: 9 },
+        attempts: { sent: 1, limit: 20, remaining: 19 },
+        shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
+        quality: {
+          day: { consumed: 2, limit: 3 },
+          month: { consumed: 5, limit: 20 },
+        },
+        flyerWeekly: rpcUsagePayload.flyerWeekly,
+        globalAvailable: true,
+        retryAt: null,
+      },
+      error: null,
+    });
+    const response = await usageToday(
+      new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ok: true;
+      data: {
+        quality: {
+          day: { consumed: number; remaining: number; limit: number };
+          month: { consumed: number; remaining: number; limit: number };
+          available: boolean;
+        };
+      };
+    };
+    expect(body.data.quality.day).toEqual({ consumed: 2, limit: 3, remaining: 1 });
+    expect(body.data.quality.month).toEqual({ consumed: 5, limit: 20, remaining: 15 });
+    expect(body.data.quality.available).toBe(true);
+  });
+
+  it("G8: missing quality object projects exhausted and available false", async () => {
+    getServerEnvMock.mockReturnValue({
+      openRouter: { globalDailyLimit: 20 },
+      quotaIdentityHmacKey: Buffer.alloc(32, 1),
+      aiQuotaDisabled: false,
+      billingEnabled: true,
+    });
+    loadEntitlementMock.mockResolvedValue({
+      ...freeEntitlement,
+      plan: "plus" as const,
+      plusEntitled: true,
+      status: "active" as const,
+      dbPlusEntitled: true,
+    });
+    rpcMock.mockResolvedValue({
+      data: {
+        success: { consumed: 1, limit: 10, remaining: 9 },
+        attempts: { sent: 1, limit: 20, remaining: 19 },
+        shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
+        flyerWeekly: rpcUsagePayload.flyerWeekly,
+        globalAvailable: true,
+        retryAt: null,
+        // quality キー無し
+      },
+      error: null,
+    });
+    const response = await usageToday(
+      new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ok: true;
+      data: {
+        quality: {
+          day: { consumed: number; remaining: number; limit: number };
+          month: { consumed: number; remaining: number; limit: number };
+          available: boolean;
+        };
+      };
+    };
+    expect(body.data.quality).toEqual({
+      day: { consumed: 3, limit: 3, remaining: 0 },
+      month: { consumed: 20, limit: 20, remaining: 0 },
+      available: false,
+    });
+  });
+
   // F2: upgrade 後の raw 超過を cap した投影は usageTodayDataSchema を通り 200 になる
   it("returns 200 when RPC projects over-limit raw counters to the new ceilings", async () => {
     rpcMock.mockResolvedValue({
