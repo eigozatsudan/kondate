@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("protects app routes and fits the active viewport", async ({ page }) => {
+test("protects app routes and fits the active viewport", { tag: ["@smoke"] }, async ({ page }) => {
   const pageErrors: Error[] = [];
   page.on("pageerror", (error) => pageErrors.push(error));
 

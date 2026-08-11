@@ -33,18 +33,22 @@ test("regenerates whole menu, groups versions, and marks the chosen menu", async
   await expect(page.getByText("2案")).toBeVisible({ timeout: 15_000 });
 });
 
-test("does not consume a success for duplicate output", async ({ historyPage: page }) => {
-  const menuId = await seedGeneratedMenu(page);
-  await setMockScenario(page, "duplicate-menu");
-  const before = await readRemainingQuota(page);
-  await requestWholeRegeneration(page, menuId, "different_flavor");
-  // 重複は failed 終端で生成画面に留まる（成功遷移しない）
-  await expect(page).toHaveURL(/\/generation/u, { timeout: 30_000 });
-  await expect(page.getByText("元の献立とほぼ同じ案だったため保存しませんでした。")).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect.poll(() => readRemainingQuota(page), { timeout: 15_000 }).toBe(before);
-});
+test(
+  "does not consume a success for duplicate output",
+  { tag: ["@smoke"] },
+  async ({ historyPage: page }) => {
+    const menuId = await seedGeneratedMenu(page);
+    await setMockScenario(page, "duplicate-menu");
+    const before = await readRemainingQuota(page);
+    await requestWholeRegeneration(page, menuId, "different_flavor");
+    // 重複は failed 終端で生成画面に留まる（成功遷移しない）
+    await expect(page).toHaveURL(/\/generation/u, { timeout: 30_000 });
+    await expect(page.getByText("元の献立とほぼ同じ案だったため保存しませんでした。")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect.poll(() => readRemainingQuota(page), { timeout: 15_000 }).toBe(before);
+  },
+);
 
 test("idea history shows badge, notice, permitted actions, regenerates as idea without shopping", async ({
   // completed 家族あり下書きだと idea 切替の中間状態が draft CHECK に弾かれやすい。

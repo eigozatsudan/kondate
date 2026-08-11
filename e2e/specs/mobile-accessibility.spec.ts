@@ -155,93 +155,107 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
 };
 
 for (const width of [320, 375, 430]) {
-  test(`the household wizard and result fit ${String(width)}px with usable targets`, async ({
-    completedOnboardingPage: page,
-  }) => {
-    await page.setViewportSize({ width, height: 800 });
-    await ensureWheatMemberForMockSuccess(page);
-    await assertNoHorizontalScroll(page);
-    await answerSharedWizardSteps(page);
-    await answerAudienceAndReview(page, "household");
-    await ensurePrivacyThenGenerate(page, { needsPrivacyHop: false });
-    await assertNoHorizontalScroll(page);
-    await assertMajorActionHeights(page, { この献立にする: 1 });
-  });
+  // mobile project 専用。desktop 二重実行は config grepInvert で除外する。
+  // PR smoke は 320px household wizard+result の 1 本だけ（§4.2）。
+  test(
+    `the household wizard and result fit ${String(width)}px with usable targets`,
+    {
+      tag: width === 320 ? ["@mobile-only", "@smoke"] : ["@mobile-only"],
+    },
+    async ({ completedOnboardingPage: page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await ensureWheatMemberForMockSuccess(page);
+      await assertNoHorizontalScroll(page);
+      await answerSharedWizardSteps(page);
+      await answerAudienceAndReview(page, "household");
+      await ensurePrivacyThenGenerate(page, { needsPrivacyHop: false });
+      await assertNoHorizontalScroll(page);
+      await assertMajorActionHeights(page, { この献立にする: 1 });
+    },
+  );
 
-  test(`the start screen fits ${String(width)}px with usable targets`, async ({
-    authenticatedPage: page,
-  }) => {
-    await page.setViewportSize({ width, height: 800 });
-    await page.goto("/welcome");
-    await assertNoHorizontalScroll(page);
-    await assertMajorActionHeights(page, {
-      献立アイデアを考える: 1,
-      家族情報を登録する: 1,
-    });
-  });
+  test(
+    `the start screen fits ${String(width)}px with usable targets`,
+    { tag: ["@mobile-only"] },
+    async ({ authenticatedPage: page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto("/welcome");
+      await assertNoHorizontalScroll(page);
+      await assertMajorActionHeights(page, {
+        献立アイデアを考える: 1,
+        家族情報を登録する: 1,
+      });
+    },
+  );
 
-  test(`the idea wizard and result fit ${String(width)}px with usable targets`, async ({
-    ideaModePage: page,
-  }) => {
-    await page.setViewportSize({ width, height: 800 });
-    await answerSharedWizardSteps(page);
-    await answerAudienceAndReview(page, "idea");
-    await ensurePrivacyThenGenerate(page, {
-      needsPrivacyHop: true,
-      mockScenario: "idea-servings-2",
-    });
-    await expectIdeaResultSurface(page);
-    await assertNoHorizontalScroll(page);
-    await assertMajorActionHeights(page, { この献立にする: 1, 注意事項を見る: 1 });
-  });
+  test(
+    `the idea wizard and result fit ${String(width)}px with usable targets`,
+    { tag: ["@mobile-only"] },
+    async ({ ideaModePage: page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await answerSharedWizardSteps(page);
+      await answerAudienceAndReview(page, "idea");
+      await ensurePrivacyThenGenerate(page, {
+        needsPrivacyHop: true,
+        mockScenario: "idea-servings-2",
+      });
+      await expectIdeaResultSurface(page);
+      await assertNoHorizontalScroll(page);
+      await assertMajorActionHeights(page, { この献立にする: 1, 注意事項を見る: 1 });
+    },
+  );
 
   // Global Constraints require 375/430 coverage beyond wizard: shell routes + both history modes.
-  test(`shell routes fit ${String(width)}px with usable majors`, async ({
-    completedOnboardingPage: page,
-  }) => {
-    await page.setViewportSize({ width, height: 800 });
-    // Live labels from src/app/layouts/app-shell.tsx — require exact counts (no silent skip).
-    const shellNavLabels = ["献立", "冷蔵庫", "履歴", "買い物", "設定"] as const;
-    for (const { path, heading } of [
-      { path: "/pantry", heading: "食材リスト" },
-      { path: "/shopping", heading: "買い物リスト" },
-      { path: "/settings", heading: "家族設定" },
-      // live history list h1 is 「作った献立」— not the nav label 「履歴」
-      { path: "/history", heading: "作った献立" },
-    ] as const) {
-      await page.goto(path);
-      await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible({
-        timeout: 15_000,
-      });
-      await assertNoHorizontalScroll(page);
-      const nav = page.getByRole("navigation", { name: "メインメニュー" });
-      await expect(nav).toBeVisible();
-      for (const name of shellNavLabels) {
-        const item = nav.getByRole("link", { name, exact: true });
-        await expect(item, `missing shell nav link: ${name} on ${path}`).toHaveCount(1);
-        const box = await item.boundingBox();
-        expect(box, name).not.toBeNull();
-        expect(box?.height, `${name} height`).toBeGreaterThanOrEqual(44);
+  test(
+    `shell routes fit ${String(width)}px with usable majors`,
+    { tag: ["@mobile-only"] },
+    async ({ completedOnboardingPage: page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      // Live labels from src/app/layouts/app-shell.tsx — require exact counts (no silent skip).
+      const shellNavLabels = ["献立", "冷蔵庫", "履歴", "買い物", "設定"] as const;
+      for (const { path, heading } of [
+        { path: "/pantry", heading: "食材リスト" },
+        { path: "/shopping", heading: "買い物リスト" },
+        { path: "/settings", heading: "家族設定" },
+        // live history list h1 is 「作った献立」— not the nav label 「履歴」
+        { path: "/history", heading: "作った献立" },
+      ] as const) {
+        await page.goto(path);
+        await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible({
+          timeout: 15_000,
+        });
+        await assertNoHorizontalScroll(page);
+        const nav = page.getByRole("navigation", { name: "メインメニュー" });
+        await expect(nav).toBeVisible();
+        for (const name of shellNavLabels) {
+          const item = nav.getByRole("link", { name, exact: true });
+          await expect(item, `missing shell nav link: ${name} on ${path}`).toHaveCount(1);
+          const box = await item.boundingBox();
+          expect(box, name).not.toBeNull();
+          expect(box?.height, `${name} height`).toBeGreaterThanOrEqual(44);
+        }
       }
-    }
-  });
+    },
+  );
 
-  test(`history detail both modes fit ${String(width)}px`, async ({
-    completedOnboardingPage: page,
-  }) => {
-    // household + idea の二重 seed と draft autosave 待ちのため 30s 既定では足りないことがある
-    test.setTimeout(120_000);
-    await page.setViewportSize({ width, height: 800 });
-    const householdId = await seedGeneratedMenu(page);
-    await page.goto(`/history/${householdId}`);
-    await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 30_000 });
-    await assertNoHorizontalScroll(page);
-    await page.goto("/planner");
-    // history.ts: idea seed requires caller to set mock scenario (default success rejects idea).
-    await setMockScenario(page, "idea-servings-2");
-    const ideaId = await seedGeneratedIdeaMenu(page, 2);
-    await page.goto(`/history/${ideaId}`);
-    await expectIdeaResultSurface(page, { timeout: 30_000 });
-    await assertNoHorizontalScroll(page);
-  });
+  test(
+    `history detail both modes fit ${String(width)}px`,
+    { tag: ["@mobile-only"] },
+    async ({ completedOnboardingPage: page }) => {
+      // household + idea の二重 seed と draft autosave 待ちのため 30s 既定では足りないことがある
+      test.setTimeout(120_000);
+      await page.setViewportSize({ width, height: 800 });
+      const householdId = await seedGeneratedMenu(page);
+      await page.goto(`/history/${householdId}`);
+      await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 30_000 });
+      await assertNoHorizontalScroll(page);
+      await page.goto("/planner");
+      // history.ts: idea seed requires caller to set mock scenario (default success rejects idea).
+      await setMockScenario(page, "idea-servings-2");
+      const ideaId = await seedGeneratedIdeaMenu(page, 2);
+      await page.goto(`/history/${ideaId}`);
+      await expectIdeaResultSurface(page, { timeout: 30_000 });
+      await assertNoHorizontalScroll(page);
+    },
+  );
 }

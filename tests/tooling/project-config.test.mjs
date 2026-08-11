@@ -163,14 +163,8 @@ test("E2E project grepInvert skips mobile-only and desktop-only tags per project
   assert.match(config, /grepInvert:\s*\/@desktop-only\//u);
   assert.match(config, /grepInvert:\s*\/@mobile-only\//u);
   // mobile は @desktop-only を除外、desktop は @mobile-only を除外
-  assert.match(
-    config,
-    /name:\s*"mobile-chromium"[\s\S]*?grepInvert:\s*\/@desktop-only\//u,
-  );
-  assert.match(
-    config,
-    /name:\s*"desktop-chromium"[\s\S]*?grepInvert:\s*\/@mobile-only\//u,
-  );
+  assert.match(config, /name:\s*"mobile-chromium"[\s\S]*?grepInvert:\s*\/@desktop-only\//u);
+  assert.match(config, /name:\s*"desktop-chromium"[\s\S]*?grepInvert:\s*\/@mobile-only\//u);
 });
 
 test("E2E uses one worker for the shared local auth stack", async () => {
@@ -262,6 +256,9 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
   assert.match(workflow, /tests\/tooling\/local-development-scripts\.test\.mjs/u);
   assert.match(script, /tests\/tooling\/project-config\.test\.mjs/u);
   assert.match(workflow, /tests\/tooling\/project-config\.test\.mjs/u);
+  // Spec §4.2: @smoke 必須ファイル×最低本数の静的ガードを CI が実行すること
+  assert.match(script, /tests\/tooling\/e2e-smoke-tags\.test\.mjs/u);
+  assert.match(workflow, /tests\/tooling\/e2e-smoke-tags\.test\.mjs/u);
   assert.match(script, /tools\/e2e-function-server\.test\.mjs/u);
   assert.match(workflow, /tools\/e2e-function-server\.test\.mjs/u);
   assert.match(script, /assert-privacy-logs\.test\.mjs/u);

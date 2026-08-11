@@ -10,20 +10,26 @@ import { accessTokenFromPage } from "../fixtures/local-supabase";
 
 test.setTimeout(180_000);
 
-test("automatically revalidates on mount and blocks stale history after safety changes", async ({
-  historyPage: page,
-}) => {
-  const menuId = await seedGeneratedMenu(page);
-  await changeFirstMemberSafety(page);
-  await page.goto(`/history/${menuId}`);
-  // unconfirmed は snapshot unavailable → 「安全条件を読み込めませんでした」
-  await expect(page.getByRole("alert")).toContainText(/現在の(家族設定|安全条件)/u, {
-    timeout: 30_000,
-  });
-  await expect(page.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
-  // HR2: gate 閉鎖時は死んだ disabled 買い物 CTA を残さず非表示
-  await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
-});
+test(
+  "automatically revalidates on mount and blocks stale history after safety changes",
+  {
+    tag: ["@smoke"],
+  },
+  async ({ historyPage: page }) => {
+    const menuId = await seedGeneratedMenu(page);
+    await changeFirstMemberSafety(page);
+    await page.goto(`/history/${menuId}`);
+    // unconfirmed は snapshot unavailable → 「安全条件を読み込めませんでした」
+    await expect(page.getByRole("alert")).toContainText(/現在の(家族設定|安全条件)/u, {
+      timeout: 30_000,
+    });
+    await expect(
+      page.getByRole("button", { name: "この案を元に別の献立を作り直す" }),
+    ).toBeDisabled();
+    // HR2: gate 閉鎖時は死んだ disabled 買い物 CTA を残さず非表示
+    await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
+  },
+);
 
 /**
  * POST /api/menus/:menuId/revalidate の 200 応答を待つ（signal 単位で独立に張る）。

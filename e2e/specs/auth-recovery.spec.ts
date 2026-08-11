@@ -1,17 +1,19 @@
 import { expect, requestMagicLinkAndReadUrl, test } from "../fixtures/auth";
 
-test("same-browser callback restores both callback and original tabs", async ({
-  page,
-  context,
-  authEmail,
-}) => {
-  const magicLink = await requestMagicLinkAndReadUrl(page, authEmail);
-  const callbackTab = await context.newPage();
-  await callbackTab.goto(magicLink);
-  await expect(callbackTab.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
-  await page.bringToFront();
-  await expect(page).toHaveURL(/\/planner$/u);
-});
+test(
+  "same-browser callback restores both callback and original tabs",
+  {
+    tag: ["@smoke"],
+  },
+  async ({ page, context, authEmail }) => {
+    const magicLink = await requestMagicLinkAndReadUrl(page, authEmail);
+    const callbackTab = await context.newPage();
+    await callbackTab.goto(magicLink);
+    await expect(callbackTab.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
+    await page.bringToFront();
+    await expect(page).toHaveURL(/\/planner$/u);
+  },
+);
 
 test("isolated WebView deposits once and the original browser claims with its secret", async ({
   page,

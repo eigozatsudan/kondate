@@ -30,20 +30,23 @@ test("retains checked/manual items and label snapshots after history deletion", 
   await expect(page.getByRole("button", { name: "＋ 項目を追加" })).toBeDisabled();
 });
 
-test("shows server-owned diff and preserves protected rows", async ({
-  authenticatedPage: page,
-  shoppingMenuId,
-}) => {
-  await createListFromMenu(page, shoppingMenuId);
-  const checked = await markFirstItemPurchased(page);
-  const nextMenuId = await regenerateWholeMenu(page, shoppingMenuId);
-  await page.goto(`/menus/${nextMenuId}`);
-  await page.getByRole("button", { name: "買い物リストの差分を見る" }).click();
-  await expect(page.getByText("購入済み・手動変更の項目はそのまま残します。")).toBeVisible();
-  await page.getByRole("button", { name: "選んだ変更を反映" }).click();
-  await page.goto("/shopping");
-  await expect(checked).toBeChecked();
-});
+test(
+  "shows server-owned diff and preserves protected rows",
+  {
+    tag: ["@smoke"],
+  },
+  async ({ authenticatedPage: page, shoppingMenuId }) => {
+    await createListFromMenu(page, shoppingMenuId);
+    const checked = await markFirstItemPurchased(page);
+    const nextMenuId = await regenerateWholeMenu(page, shoppingMenuId);
+    await page.goto(`/menus/${nextMenuId}`);
+    await page.getByRole("button", { name: "買い物リストの差分を見る" }).click();
+    await expect(page.getByText("購入済み・手動変更の項目はそのまま残します。")).toBeVisible();
+    await page.getByRole("button", { name: "選んだ変更を反映" }).click();
+    await page.goto("/shopping");
+    await expect(checked).toBeChecked();
+  },
+);
 
 // Plan 7 Task 8: create 成功後に source を削除しても同一 mutation key は保存済み成功を返す。
 // idea 献立への新規 key 422 は generation-recovery / history の idea E2E（shopping request 0）と

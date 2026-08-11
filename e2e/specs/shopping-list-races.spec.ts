@@ -68,28 +68,31 @@ function expectSafetyContractReject(results: CapturedHttpReject[], label: string
   }
 }
 
-test("reuses one idempotency key after the first response is lost", async ({
-  authenticatedPage: page,
-  shoppingMenuId,
-}) => {
-  let calls = 0;
-  const bodies: string[] = [];
-  await page.route("**/api/shopping-lists/from-menu", async (route) => {
-    bodies.push(route.request().postData() ?? "");
-    calls += 1;
-    if (calls === 1) {
-      await route.fetch();
-      await route.abort("connectionreset");
-      return;
-    }
-    await route.continue();
-  });
-  await createListFromMenu(page, shoppingMenuId);
-  expect(calls).toBe(2);
-  const commands = bodies.map((body) => createShoppingListRequestSchema.parse(JSON.parse(body)));
-  expect(new Set(commands.map((command) => command.idempotencyKey)).size).toBe(1);
-  await expect(page.getByRole("heading", { name: "買い物リスト" })).toBeVisible();
-});
+test(
+  "reuses one idempotency key after the first response is lost",
+  {
+    tag: ["@smoke"],
+  },
+  async ({ authenticatedPage: page, shoppingMenuId }) => {
+    let calls = 0;
+    const bodies: string[] = [];
+    await page.route("**/api/shopping-lists/from-menu", async (route) => {
+      bodies.push(route.request().postData() ?? "");
+      calls += 1;
+      if (calls === 1) {
+        await route.fetch();
+        await route.abort("connectionreset");
+        return;
+      }
+      await route.continue();
+    });
+    await createListFromMenu(page, shoppingMenuId);
+    expect(calls).toBe(2);
+    const commands = bodies.map((body) => createShoppingListRequestSchema.parse(JSON.parse(body)));
+    expect(new Set(commands.map((command) => command.idempotencyKey)).size).toBe(1);
+    await expect(page.getByRole("heading", { name: "買い物リスト" })).toBeVisible();
+  },
+);
 
 test("rejects creation after current household safety changes", async ({
   authenticatedPage: page,

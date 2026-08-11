@@ -404,250 +404,254 @@ async function expectCompleteCandidate(
   ).toBe(true);
 }
 
-test("pantry CRUD, restored planner, attempt-local expiry check, and all reviewed meals", async ({
-  completedOnboardingPage: page,
-}) => {
-  // 献立帯の切替・緊急候補検証・pantry 削除/解除を含む長尺シナリオ
-  test.setTimeout(180_000);
-  await page.setViewportSize({ width: 320, height: 780 });
+test(
+  "pantry CRUD, restored planner, attempt-local expiry check, and all reviewed meals",
+  {
+    tag: ["@smoke"],
+  },
+  async ({ completedOnboardingPage: page }) => {
+    // 献立帯の切替・緊急候補検証・pantry 削除/解除を含む長尺シナリオ
+    test.setTimeout(180_000);
+    await page.setViewportSize({ width: 320, height: 780 });
 
-  await page.goto("/pantry");
-  // 追加フォームは既定で閉じており、トリガーを押してから入力する
-  await page.getByRole("button", { name: "食材を追加" }).click();
-  await page.getByRole("textbox", { name: "食材名" }).fill("キャベツ");
-  await page.getByLabel("分量").fill("1");
-  await page.getByLabel("単位").fill("個");
-  await page.getByLabel("期限日").fill("2000-01-01");
-  await page.getByLabel("期限の種類").selectOption("use_by");
-  await page.getByLabel("開封状態").selectOption("opened");
-  await page.getByRole("button", { name: "追加する" }).click();
-  await expect(page.getByRole("heading", { name: "キャベツ", exact: true })).toBeVisible();
+    await page.goto("/pantry");
+    // 追加フォームは既定で閉じており、トリガーを押してから入力する
+    await page.getByRole("button", { name: "食材を追加" }).click();
+    await page.getByRole("textbox", { name: "食材名" }).fill("キャベツ");
+    await page.getByLabel("分量").fill("1");
+    await page.getByLabel("単位").fill("個");
+    await page.getByLabel("期限日").fill("2000-01-01");
+    await page.getByLabel("期限の種類").selectOption("use_by");
+    await page.getByLabel("開封状態").selectOption("opened");
+    await page.getByRole("button", { name: "追加する" }).click();
+    await expect(page.getByRole("heading", { name: "キャベツ", exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "キャベツを編集" }).click();
-  await page.getByLabel("分量").fill("2");
-  await page.getByRole("button", { name: "変更を保存" }).click();
-  await expect(page.getByText("2個", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "キャベツを編集" }).click();
+    await page.getByLabel("分量").fill("2");
+    await page.getByRole("button", { name: "変更を保存" }).click();
+    await expect(page.getByText("2個", { exact: true })).toBeVisible();
 
-  await advanceToReviewWithHousehold(page, "夕食");
-  await openReviewOptionalDetails(page);
-  await page.getByRole("checkbox", { name: "キャベツ" }).click();
-  await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
-  await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
-  await page.getByRole("checkbox", { name: "キャベツ" }).uncheck();
-  await page.getByRole("checkbox", { name: "キャベツ" }).check();
-  await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeEnabled();
-  await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
-  await updatePlannerAndAwaitAutosave(
-    page,
-    () => page.getByLabel("キャベツの使い方").selectOption("must_use"),
-    (body) => hasPantryPriority(body, "must_use"),
-  );
+    await advanceToReviewWithHousehold(page, "夕食");
+    await openReviewOptionalDetails(page);
+    await page.getByRole("checkbox", { name: "キャベツ" }).click();
+    await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
+    await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
+    await page.getByRole("checkbox", { name: "キャベツ" }).uncheck();
+    await page.getByRole("checkbox", { name: "キャベツ" }).check();
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeEnabled();
+    await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
+    await updatePlannerAndAwaitAutosave(
+      page,
+      () => page.getByLabel("キャベツの使い方").selectOption("must_use"),
+      (body) => hasPantryPriority(body, "must_use"),
+    );
 
-  await page.reload();
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  await openReviewOptionalDetails(page);
-  // PLAN-1: 復元後は attempt 確認が空のため、既選択の期限切れで確認ダイアログが開く。
-  // dialog 閉鎖後は details が閉じていることがあるため再 open してから checked を見る。
-  await expect(page.getByRole("alertdialog")).toBeVisible({ timeout: 15_000 });
-  await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
-  await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  await openReviewOptionalDetails(page);
-  await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked({ timeout: 15_000 });
-  await expect(page.getByLabel("キャベツの使い方")).toHaveValue("must_use");
-  await updatePlannerAndAwaitAutosave(
-    page,
-    () => page.getByRole("checkbox", { name: "キャベツ" }).uncheck(),
-    (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
-  );
-  // 同一 attempt 内の確認済み期限切れは再選択で dialog を出さない
-  await page.getByRole("checkbox", { name: "キャベツ" }).check();
-  await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
-  await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
-  await updatePlannerAndAwaitAutosave(
-    page,
-    () => page.getByLabel("キャベツの使い方").selectOption("must_use"),
-    (body) => hasPantryPriority(body, "must_use"),
-  );
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await openReviewOptionalDetails(page);
+    // PLAN-1: 復元後は attempt 確認が空のため、既選択の期限切れで確認ダイアログが開く。
+    // dialog 閉鎖後は details が閉じていることがあるため再 open してから checked を見る。
+    await expect(page.getByRole("alertdialog")).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    await openReviewOptionalDetails(page);
+    await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked({ timeout: 15_000 });
+    await expect(page.getByLabel("キャベツの使い方")).toHaveValue("must_use");
+    await updatePlannerAndAwaitAutosave(
+      page,
+      () => page.getByRole("checkbox", { name: "キャベツ" }).uncheck(),
+      (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
+    );
+    // 同一 attempt 内の確認済み期限切れは再選択で dialog を出さない
+    await page.getByRole("checkbox", { name: "キャベツ" }).check();
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
+    await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
+    await updatePlannerAndAwaitAutosave(
+      page,
+      () => page.getByLabel("キャベツの使い方").selectOption("must_use"),
+      (body) => hasPantryPriority(body, "must_use"),
+    );
 
-  await updatePlannerAndAwaitAutosave(
-    page,
-    () => page.getByRole("checkbox", { name: "キャベツ" }).uncheck(),
-    (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
-  );
-  await page.reload();
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  await openReviewOptionalDetails(page);
-  await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
-  await expect(page.getByLabel("キャベツの使い方")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
+    await updatePlannerAndAwaitAutosave(
+      page,
+      () => page.getByRole("checkbox", { name: "キャベツ" }).uncheck(),
+      (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
+    );
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await openReviewOptionalDetails(page);
+    await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
+    await expect(page.getByLabel("キャベツの使い方")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 
-  // 文言は shared/emergency/fixtures.v1.ts の cut_small 肯定 stem 正本に合わせる
-  // （「一口大」だけでは stem 不一致のため「一口大以下」へ寄せた履歴がある）。
-  await expectCompleteCandidate(page, {
-    heading: "鶏肉とキャベツの塩蒸し・きゅうりの塩もみ・玉ねぎの塩スープ",
-    timeline: [
-      "0分〜（目安3分） 湯を沸かしながら材料を一口大以下に切る",
-      "3分〜（目安10分） 主菜を蒸し、同時にスープを煮る",
-      "13分〜（目安2分） 副菜の水気を絞って盛り付ける",
-    ],
-    dishes: [
-      {
-        heading: "主菜・鶏肉とキャベツの塩蒸し",
-        ingredients: [
-          ["鶏肉", "250g"],
-          ["キャベツ", "1/4個"],
-          ["塩", "少々"],
-        ],
-        steps: [
-          "鶏肉を一口大以下に切り、キャベツを食べやすい大きさに切る",
-          "フライパンに入れて塩を振り、ふたをして中心まで十分に加熱する",
-        ],
+    // 文言は shared/emergency/fixtures.v1.ts の cut_small 肯定 stem 正本に合わせる
+    // （「一口大」だけでは stem 不一致のため「一口大以下」へ寄せた履歴がある）。
+    await expectCompleteCandidate(page, {
+      heading: "鶏肉とキャベツの塩蒸し・きゅうりの塩もみ・玉ねぎの塩スープ",
+      timeline: [
+        "0分〜（目安3分） 湯を沸かしながら材料を一口大以下に切る",
+        "3分〜（目安10分） 主菜を蒸し、同時にスープを煮る",
+        "13分〜（目安2分） 副菜の水気を絞って盛り付ける",
+      ],
+      dishes: [
+        {
+          heading: "主菜・鶏肉とキャベツの塩蒸し",
+          ingredients: [
+            ["鶏肉", "250g"],
+            ["キャベツ", "1/4個"],
+            ["塩", "少々"],
+          ],
+          steps: [
+            "鶏肉を一口大以下に切り、キャベツを食べやすい大きさに切る",
+            "フライパンに入れて塩を振り、ふたをして中心まで十分に加熱する",
+          ],
+        },
+        {
+          heading: "副菜・きゅうりの塩もみ",
+          ingredients: [["きゅうり", "1本"]],
+          steps: ["きゅうりを小さく切り、塩でもみ、水気を絞る"],
+        },
+        {
+          heading: "汁物・玉ねぎの塩スープ",
+          ingredients: [["玉ねぎ", "1/2個"]],
+          steps: ["玉ねぎを小さく切り、水でやわらかく煮、塩で味を整える"],
+        },
+      ],
+      adaptation: {
+        portion: "年齢と食欲に合わせた量",
+        cutting: "鶏肉を一口大以下に切る",
+        heating: "鶏肉の中心まで十分に加熱する",
+        servingCheck: "生焼けがないことを確認する",
       },
-      {
-        heading: "副菜・きゅうりの塩もみ",
-        ingredients: [["きゅうり", "1本"]],
-        steps: ["きゅうりを小さく切り、塩でもみ、水気を絞る"],
-      },
-      {
-        heading: "汁物・玉ねぎの塩スープ",
-        ingredients: [["玉ねぎ", "1/2個"]],
-        steps: ["玉ねぎを小さく切り、水でやわらかく煮、塩で味を整える"],
-      },
-    ],
-    adaptation: {
-      portion: "年齢と食欲に合わせた量",
-      cutting: "鶏肉を一口大以下に切る",
-      heating: "鶏肉の中心まで十分に加熱する",
-      servingCheck: "生焼けがないことを確認する",
-    },
-    safetyActions: [
-      "鶏肉の中心まで十分に加熱する",
-      "鶏肉を一口大以下に切る",
-      "きゅうりを小さく切る",
-      "玉ねぎを小さく切る",
-    ],
-  });
+      safetyActions: [
+        "鶏肉の中心まで十分に加熱する",
+        "鶏肉を一口大以下に切る",
+        "きゅうりを小さく切る",
+        "玉ねぎを小さく切る",
+      ],
+    });
 
-  await savePlannerMeal(page, "朝食", "breakfast", "鮭");
-  await expectCompleteCandidate(page, {
-    heading: "鮭おにぎり・やわらか野菜",
-    timeline: [
-      "0分〜（目安3分） 鮭を焼き始め、にんじんを小さく切る",
-      "3分〜（目安9分） 野菜を煮ながら鮭の骨を完全に除く",
-      "12分〜（目安3分） 鮭をごはんに混ぜて握り、野菜を盛る",
-    ],
-    dishes: [
-      {
-        heading: "主菜・鮭おにぎり",
-        ingredients: [
-          ["ごはん", "300g"],
-          ["鮭", "1切れ"],
-        ],
-        steps: [
-          "鮭を中心まで十分に焼き、骨を完全に除いて細かくほぐす",
-          "ごはんに鮭を混ぜ、食べやすい大きさに握る",
-        ],
+    await savePlannerMeal(page, "朝食", "breakfast", "鮭");
+    await expectCompleteCandidate(page, {
+      heading: "鮭おにぎり・やわらか野菜",
+      timeline: [
+        "0分〜（目安3分） 鮭を焼き始め、にんじんを小さく切る",
+        "3分〜（目安9分） 野菜を煮ながら鮭の骨を完全に除く",
+        "12分〜（目安3分） 鮭をごはんに混ぜて握り、野菜を盛る",
+      ],
+      dishes: [
+        {
+          heading: "主菜・鮭おにぎり",
+          ingredients: [
+            ["ごはん", "300g"],
+            ["鮭", "1切れ"],
+          ],
+          steps: [
+            "鮭を中心まで十分に焼き、骨を完全に除いて細かくほぐす",
+            "ごはんに鮭を混ぜ、食べやすい大きさに握る",
+          ],
+        },
+        {
+          heading: "副菜・やわらか野菜",
+          ingredients: [
+            ["にんじん", "1/2本"],
+            ["キャベツ", "2枚"],
+          ],
+          steps: ["にんじんを小さく切り、鍋で歯ぐきでつぶせるやわらかさまで煮る"],
+        },
+      ],
+      adaptation: {
+        portion: "年齢と食欲に合わせた量",
+        cutting: "鮭を細かく刻む",
+        heating: "鮭の中心まで十分に加熱する",
+        servingCheck: "鮭の骨が残っていないことを確認する",
       },
-      {
-        heading: "副菜・やわらか野菜",
-        ingredients: [
-          ["にんじん", "1/2本"],
-          ["キャベツ", "2枚"],
-        ],
-        steps: ["にんじんを小さく切り、鍋で歯ぐきでつぶせるやわらかさまで煮る"],
+      safetyActions: ["鮭の小骨を完全に除く", "鮭を細かく刻む", "にんじんを小さく切る"],
+    });
+
+    await savePlannerMeal(page, "昼食", "lunch", "ひき肉");
+    await expectCompleteCandidate(page, {
+      heading: "鶏そぼろ丼・やわらか温野菜",
+      timeline: [
+        "0分〜（目安4分） かぼちゃを小さく切り、鶏ひき肉を火にかける",
+        "4分〜（目安8分） 鶏そぼろと温野菜を同時に十分加熱する",
+        "12分〜（目安3分） 丼と温野菜を盛り付ける",
+      ],
+      dishes: [
+        {
+          heading: "主菜・鶏そぼろ丼",
+          ingredients: [
+            ["鶏ひき肉", "200g"],
+            ["ごはん", "300g"],
+          ],
+          steps: ["鶏ひき肉をほぐしながら中心まで十分に加熱する", "ごはんに鶏そぼろをのせる"],
+        },
+        {
+          heading: "副菜・やわらか温野菜",
+          ingredients: [
+            ["かぼちゃ", "100g"],
+            ["にんじん", "1/2本"],
+          ],
+          steps: ["かぼちゃを小さく切り、歯ぐきでつぶせるやわらかさまで加熱する"],
+        },
+      ],
+      adaptation: {
+        portion: "年齢と食欲に合わせた量",
+        cutting: "鶏ひき肉を細かく刻む",
+        heating: "鶏ひき肉の中心まで十分に加熱する",
+        servingCheck: "生焼けがないことを確認する",
       },
-    ],
-    adaptation: {
-      portion: "年齢と食欲に合わせた量",
-      cutting: "鮭を細かく刻む",
-      heating: "鮭の中心まで十分に加熱する",
-      servingCheck: "鮭の骨が残っていないことを確認する",
-    },
-    safetyActions: ["鮭の小骨を完全に除く", "鮭を細かく刻む", "にんじんを小さく切る"],
-  });
+      safetyActions: [
+        "鶏ひき肉の中心まで十分に加熱する",
+        "鶏ひき肉を細かく刻む",
+        "かぼちゃを小さく切る",
+      ],
+    });
 
-  await savePlannerMeal(page, "昼食", "lunch", "ひき肉");
-  await expectCompleteCandidate(page, {
-    heading: "鶏そぼろ丼・やわらか温野菜",
-    timeline: [
-      "0分〜（目安4分） かぼちゃを小さく切り、鶏ひき肉を火にかける",
-      "4分〜（目安8分） 鶏そぼろと温野菜を同時に十分加熱する",
-      "12分〜（目安3分） 丼と温野菜を盛り付ける",
-    ],
-    dishes: [
-      {
-        heading: "主菜・鶏そぼろ丼",
-        ingredients: [
-          ["鶏ひき肉", "200g"],
-          ["ごはん", "300g"],
-        ],
-        steps: ["鶏ひき肉をほぐしながら中心まで十分に加熱する", "ごはんに鶏そぼろをのせる"],
-      },
-      {
-        heading: "副菜・やわらか温野菜",
-        ingredients: [
-          ["かぼちゃ", "100g"],
-          ["にんじん", "1/2本"],
-        ],
-        steps: ["かぼちゃを小さく切り、歯ぐきでつぶせるやわらかさまで加熱する"],
-      },
-    ],
-    adaptation: {
-      portion: "年齢と食欲に合わせた量",
-      cutting: "鶏ひき肉を細かく刻む",
-      heating: "鶏ひき肉の中心まで十分に加熱する",
-      servingCheck: "生焼けがないことを確認する",
-    },
-    safetyActions: [
-      "鶏ひき肉の中心まで十分に加熱する",
-      "鶏ひき肉を細かく刻む",
-      "かぼちゃを小さく切る",
-    ],
-  });
+    await page.goto("/planner");
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await openReviewOptionalDetails(page);
+    await page.getByRole("checkbox", { name: "キャベツ" }).click();
+    await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
+    await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
+    await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
+    await updatePlannerAndAwaitAutosave(
+      page,
+      () => page.getByLabel("キャベツの使い方").selectOption("must_use"),
+      (body) => hasPantryPriority(body, "must_use"),
+    );
 
-  await page.goto("/planner");
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  await openReviewOptionalDetails(page);
-  await page.getByRole("checkbox", { name: "キャベツ" }).click();
-  await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
-  await page.getByRole("button", { name: "実物を確認して今回だけ選ぶ" }).click();
-  await expect(page.getByRole("checkbox", { name: "キャベツ" })).toBeChecked();
-  await updatePlannerAndAwaitAutosave(
-    page,
-    () => page.getByLabel("キャベツの使い方").selectOption("must_use"),
-    (body) => hasPantryPriority(body, "must_use"),
-  );
+    await page.goto("/pantry");
+    page.once("dialog", (dialog) => {
+      void dialog.accept();
+    });
+    await page.getByRole("button", { name: "キャベツを削除" }).click();
+    await expect(page.getByRole("heading", { name: "キャベツ", exact: true })).toHaveCount(0);
+    await page.goto("/planner");
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await openReviewOptionalDetails(page);
+    await expect(page.getByRole("alert")).toContainText("冷蔵庫から削除された食材");
+    await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    // 解除ボタンは details 内。open 再確認後に明示待ちしてから autosave 同期する。
+    const clearDeleted = page.getByRole("button", { name: "削除された食材の選択を解除" });
+    await expect(clearDeleted).toBeVisible({ timeout: 15_000 });
+    await updatePlannerAndAwaitAutosave(
+      page,
+      () => clearDeleted.click(),
+      (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
+    );
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 
-  await page.goto("/pantry");
-  page.once("dialog", (dialog) => {
-    void dialog.accept();
-  });
-  await page.getByRole("button", { name: "キャベツを削除" }).click();
-  await expect(page.getByRole("heading", { name: "キャベツ", exact: true })).toHaveCount(0);
-  await page.goto("/planner");
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  await openReviewOptionalDetails(page);
-  await expect(page.getByRole("alert")).toContainText("冷蔵庫から削除された食材");
-  await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
-  // 解除ボタンは details 内。open 再確認後に明示待ちしてから autosave 同期する。
-  const clearDeleted = page.getByRole("button", { name: "削除された食材の選択を解除" });
-  await expect(clearDeleted).toBeVisible({ timeout: 15_000 });
-  await updatePlannerAndAwaitAutosave(
-    page,
-    () => clearDeleted.click(),
-    (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
-  );
-  await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
-
-  await page.reload();
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  await openReviewOptionalDetails(page);
-  await expect(page.getByText("冷蔵庫から削除された食材")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
-});
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await openReviewOptionalDetails(page);
+    await expect(page.getByText("冷蔵庫から削除された食材")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
+  },
+);
 
 // 鶏アレルギーのみでは catalog 上夕食に ≥1 候補が残る（設計 coverage）。
 // 旧テストは「条件に合う緊急献立がありません」empty を期待していたが、

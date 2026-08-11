@@ -1,54 +1,64 @@
 import { expect, test } from "@playwright/test";
 
-test("local Google success returns the bound code to the app and establishes a Supabase session", async ({
-  page,
-}) => {
-  // continuation APIは裸の"/"を拒否する契約のため、rootへの安全な戻り先として
-  // query付きrootを渡す。callback後にRootEntryPageがnot_startedを/welcomeへ導く。
-  await page.goto("/login?returnTo=%2F%3Fsource%3Doauth");
-  await page.getByRole("button", { name: "Googleで続ける" }).click();
-  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
-  const providerUrl = new URL(page.url());
-  expect(providerUrl.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:5173/auth/callback");
-  expect(providerUrl.searchParams.get("flow")).toMatch(/^[0-9a-f-]{36}$/u);
-  expect(providerUrl.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-  expect(providerUrl.href).not.toMatch(/token|password|email/iu);
+test(
+  "local Google success returns the bound code to the app and establishes a Supabase session",
+  {
+    tag: ["@smoke"],
+  },
+  async ({ page }) => {
+    // continuation APIは裸の"/"を拒否する契約のため、rootへの安全な戻り先として
+    // query付きrootを渡す。callback後にRootEntryPageがnot_startedを/welcomeへ導く。
+    await page.goto("/login?returnTo=%2F%3Fsource%3Doauth");
+    await page.getByRole("button", { name: "Googleで続ける" }).click();
+    await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+    const providerUrl = new URL(page.url());
+    expect(providerUrl.searchParams.get("redirect_uri")).toBe(
+      "http://127.0.0.1:5173/auth/callback",
+    );
+    expect(providerUrl.searchParams.get("flow")).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(providerUrl.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(providerUrl.href).not.toMatch(/token|password|email/iu);
 
-  const callbackRequest = page.waitForRequest((request) => {
-    const url = new URL(request.url());
-    return url.origin === "http://127.0.0.1:5173" && url.pathname === "/auth/callback";
-  });
-  await page.getByRole("link", { name: "Googleテスト利用者で続ける" }).click();
-  const callbackUrl = new URL((await callbackRequest).url());
-  expect(callbackUrl.searchParams.get("flow")).toBe(providerUrl.searchParams.get("flow"));
-  expect(callbackUrl.searchParams.get("state")).toBe(providerUrl.searchParams.get("state"));
-  expect(callbackUrl.searchParams.get("code")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-  expect(callbackUrl.href).not.toMatch(/access_token|refresh_token|password|email/iu);
-  // oauth-mock の固定 Google 利用者は DB に残り得るため、
-  // not_started→/welcome と complete/skipped→/planner の両方を成功経路として認める。
-  await expect(page).toHaveURL(/\/(welcome|planner)(\?|$)/u, { timeout: 30_000 });
-  expect(new URL(page.url()).searchParams.has("code")).toBe(false);
-  expect(new URL(page.url()).searchParams.has("state")).toBe(false);
-});
+    const callbackRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return url.origin === "http://127.0.0.1:5173" && url.pathname === "/auth/callback";
+    });
+    await page.getByRole("link", { name: "Googleテスト利用者で続ける" }).click();
+    const callbackUrl = new URL((await callbackRequest).url());
+    expect(callbackUrl.searchParams.get("flow")).toBe(providerUrl.searchParams.get("flow"));
+    expect(callbackUrl.searchParams.get("state")).toBe(providerUrl.searchParams.get("state"));
+    expect(callbackUrl.searchParams.get("code")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(callbackUrl.href).not.toMatch(/access_token|refresh_token|password|email/iu);
+    // oauth-mock の固定 Google 利用者は DB に残り得るため、
+    // not_started→/welcome と complete/skipped→/planner の両方を成功経路として認める。
+    await expect(page).toHaveURL(/\/(welcome|planner)(\?|$)/u, { timeout: 30_000 });
+    expect(new URL(page.url()).searchParams.has("code")).toBe(false);
+    expect(new URL(page.url()).searchParams.has("state")).toBe(false);
+  },
+);
 
-test("local Google cancellation returns through the app callback with actionable choices", async ({
-  page,
-}) => {
-  await page.goto("/login?returnTo=%2Fplanner");
-  await page.getByRole("button", { name: "Googleで続ける" }).click();
-  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
-  const providerUrl = new URL(page.url());
-  const callbackRequest = page.waitForRequest(
-    (request) => new URL(request.url()).pathname === "/auth/callback",
-  );
-  await page.getByRole("link", { name: "キャンセル" }).click();
-  const callbackUrl = new URL((await callbackRequest).url());
-  expect(callbackUrl.searchParams.get("flow")).toBe(providerUrl.searchParams.get("flow"));
-  expect(callbackUrl.searchParams.get("state")).toBe(providerUrl.searchParams.get("state"));
-  expect(callbackUrl.searchParams.get("error")).toBe("access_denied");
-  expect(callbackUrl.searchParams.has("code")).toBe(false);
-  await expect(page.getByText(/Googleログインがキャンセルされました/u)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
-  // SHOW_EMAIL_LOGIN=true: メール導線は既定表示（gateway 維持）
-  await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
-});
+test(
+  "local Google cancellation returns through the app callback with actionable choices",
+  {
+    tag: ["@smoke"],
+  },
+  async ({ page }) => {
+    await page.goto("/login?returnTo=%2Fplanner");
+    await page.getByRole("button", { name: "Googleで続ける" }).click();
+    await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+    const providerUrl = new URL(page.url());
+    const callbackRequest = page.waitForRequest(
+      (request) => new URL(request.url()).pathname === "/auth/callback",
+    );
+    await page.getByRole("link", { name: "キャンセル" }).click();
+    const callbackUrl = new URL((await callbackRequest).url());
+    expect(callbackUrl.searchParams.get("flow")).toBe(providerUrl.searchParams.get("flow"));
+    expect(callbackUrl.searchParams.get("state")).toBe(providerUrl.searchParams.get("state"));
+    expect(callbackUrl.searchParams.get("error")).toBe("access_denied");
+    expect(callbackUrl.searchParams.has("code")).toBe(false);
+    await expect(page.getByText(/Googleログインがキャンセルされました/u)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+    // SHOW_EMAIL_LOGIN=true: メール導線は既定表示（gateway 維持）
+    await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
+  },
+);
