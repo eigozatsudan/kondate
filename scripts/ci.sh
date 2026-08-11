@@ -48,6 +48,8 @@ docker compose run --rm app npm run test:maintenance-db:integration
 docker compose --profile test run --rm db-test
 docker compose run --rm app npm run db:types
 git diff --exit-code -- src/shared/types/database.generated.ts
+# ローカル release ゲートは full 既定。短縮するときだけ KONDATE_E2E_SUITE=smoke を渡す。
+export KONDATE_E2E_SUITE="${KONDATE_E2E_SUITE:-full}"
 export LOCAL_MOCK_MODELS="${LOCAL_MOCK_MODELS:-mock/kondate-primary:free,mock/kondate-repair:free}"
 export KONDATE_ASSERT_PRIVACY_LOGS=1
 export PLAYWRIGHT_DISABLE_TRACE=1

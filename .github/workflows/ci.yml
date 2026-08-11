@@ -81,6 +81,8 @@ jobs:
           KONDATE_ASSERT_PRIVACY_LOGS: "1"
           # 失敗 artifact に DOM/通信を載せない（trace/video は local のみ）
           PLAYWRIGHT_DISABLE_TRACE: "1"
+          # PR は smoke、push（main）は full（run-e2e.sh の KONDATE_E2E_SUITE）
+          KONDATE_E2E_SUITE: ${{ github.event_name == 'pull_request' && 'smoke' || 'full' }}
         run: ./scripts/run-e2e.sh
       - run: docker compose run --rm --no-deps app npm audit --omit=dev --audit-level=high
       - name: Browser build and secret scan

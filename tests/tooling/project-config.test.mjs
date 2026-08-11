@@ -293,7 +293,15 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
     assert.match(source, /mock\/kondate-primary:free,mock\/kondate-repair:free/u);
     assert.match(source, /KONDATE_ASSERT_PRIVACY_LOGS/u);
     assert.match(source, /PLAYWRIGHT_DISABLE_TRACE/u);
+    // smoke/full 分岐の入口（ゲート順は ./scripts/run-e2e.sh のまま）
+    assert.match(source, /KONDATE_E2E_SUITE/u);
   }
+  // ci.sh は full 既定（ローカル release）。workflow は PR=smoke / それ以外=full。
+  assert.match(script, /KONDATE_E2E_SUITE="\$\{KONDATE_E2E_SUITE:-full\}"/u);
+  assert.match(
+    workflow,
+    /KONDATE_E2E_SUITE:\s*\$\{\{\s*github\.event_name == 'pull_request' && 'smoke' \|\| 'full'\s*\}\}/u,
+  );
 
   // ジョブ env は CI のみ。シークレットや origin を job-level env に載せない。
   assert.match(workflow, /env:\n {6}CI: "true"/u);
