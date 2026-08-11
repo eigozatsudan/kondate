@@ -378,6 +378,18 @@ e2e_args_have_project() {
   return 1
 }
 
+# 呼び出し側が --grep / -g を既に指定しているか（smoke 時の二重付与防止用）。
+e2e_args_have_grep() {
+  for arg in "$@"; do
+    case "$arg" in
+      --grep | --grep=* | -g)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
 # 通常の開発スタックを起動したうえで、E2E専用プロファイルのauthを追加起動し、
 # openrouter-mock/kong/oauth-mock/appをE2E向け設定で強制再作成してから、
 # 実際のPlaywrightテストランナー(e2e)を実行する。
@@ -398,9 +410,33 @@ run_e2e_commands() {
     -f "$repo_root/compose.yaml" -f "$repo_root/compose.e2e.yaml" --profile e2e \
     up -d --wait --force-recreate --no-deps openrouter-mock kong oauth-mock app || return $?
 
-  # 呼び出し側が --project を指定していればそのまま1回実行する。
-  # 未指定（full suite / file 指定のみ）では mobile → 枠リセット → desktop の
-  # 2段実行にし、1プロセス内の累積送信が 20 を超えて後半だけ落ちるのを防ぐ。
+  # KONDATE_E2E_SUITE=full|smoke（未設定は full）。smoke は mobile 1 段のみで
+  # @smoke タグに絞り、project 境界の quota reset と desktop 段を踏まない。
+  suite=${KONDATE_E2E_SUITE:-full}
+  case "$suite" in
+    full | smoke) ;;
+    *)
+      echo "KONDATE_E2E_SUITE must be full or smoke" >&2
+      return 2
+      ;;
+  esac
+
+  if [ "$suite" = "smoke" ]; then
+    # 1 段のみ。desktop 段・project 境界 reset なし（開始時 reset は済）。
+    # 呼び出し側の --project / --grep は二重付与しない。
+    if ! e2e_args_have_project "$@"; then
+      set -- --project=mobile-chromium "$@"
+    fi
+    if ! e2e_args_have_grep "$@"; then
+      set -- "$@" --grep=@smoke
+    fi
+    run_playwright "$@" || return $?
+    return 0
+  fi
+
+  # full: 呼び出し側が --project を指定していればそのまま1回実行する。
+  # 未指定では mobile → 枠リセット → desktop の 2 段実行にし、
+  # 1 プロセス内の累積送信が 20 を超えて後半だけ落ちるのを防ぐ。
   # どちらか一方が失敗しても他方は最後まで走らせ、診断用の失敗一覧を揃える。
   if e2e_args_have_project "$@"; then
     run_playwright "$@" || return $?

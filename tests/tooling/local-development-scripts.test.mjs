@@ -284,11 +284,18 @@ function expectedResetInvocations(root, projectName) {
   return expectedRefreshInvocations(root, projectName).slice(2);
 }
 
-function expectedE2EInvocations(root, projectName, arguments_ = [], cleanupE2EContainers = true) {
+function expectedE2EInvocations(
+  root,
+  projectName,
+  arguments_ = [],
+  cleanupE2EContainers = true,
+  suite = "full",
+) {
   // scripts/run-e2e.sh の現行シーケンスに合わせる:
   // base up → force-recreate auth → AI 枠リセット → E2E app 群 recreate →
-  // （--project 未指定なら mobile → 枠リセット → desktop）→ cleanup で app ログ採取 →
-  // 失敗時のみ e2e kill/rm → auth/app 復元
+  // full: （--project 未指定なら mobile → 枠リセット → desktop）
+  // smoke: mobile-chromium 1 段 + --grep=@smoke（呼び出し側指定は二重付与しない）
+  // → cleanup で app ログ採取 → 失敗時のみ e2e kill/rm → auth/app 復元
   const compose = ["compose", "--project-directory", root, "--project-name", projectName];
   const baseComposeFile = ["-f", join(root, "compose.yaml")];
   const e2eComposeFiles = [
@@ -314,31 +321,48 @@ function expectedE2EInvocations(root, projectName, arguments_ = [], cleanupE2ECo
   const hasProject = arguments_.some(
     (arg) => arg === "--project" || String(arg).startsWith("--project="),
   );
-  const playwrightRuns = hasProject
-    ? [[...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...arguments_]]
-    : [
-        [
-          ...compose,
-          ...e2eComposeFiles,
-          "run",
-          "--rm",
-          "--no-deps",
-          "e2e",
-          "--project=mobile-chromium",
-          ...arguments_,
-        ],
-        quotaReset,
-        [
-          ...compose,
-          ...e2eComposeFiles,
-          "run",
-          "--rm",
-          "--no-deps",
-          "e2e",
-          "--project=desktop-chromium",
-          ...arguments_,
-        ],
-      ];
+  const hasGrep = arguments_.some(
+    (arg) => arg === "--grep" || arg === "-g" || String(arg).startsWith("--grep="),
+  );
+
+  let playwrightRuns;
+  if (suite === "smoke") {
+    // smoke: playwright 1 回・中間 quota reset なし（開始時 reset は済）
+    const smokeArgs = [...arguments_];
+    if (!hasProject) smokeArgs.unshift("--project=mobile-chromium");
+    if (!hasGrep) smokeArgs.push("--grep=@smoke");
+    playwrightRuns = [
+      [...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...smokeArgs],
+    ];
+  } else if (hasProject) {
+    playwrightRuns = [
+      [...compose, ...e2eComposeFiles, "run", "--rm", "--no-deps", "e2e", ...arguments_],
+    ];
+  } else {
+    playwrightRuns = [
+      [
+        ...compose,
+        ...e2eComposeFiles,
+        "run",
+        "--rm",
+        "--no-deps",
+        "e2e",
+        "--project=mobile-chromium",
+        ...arguments_,
+      ],
+      quotaReset,
+      [
+        ...compose,
+        ...e2eComposeFiles,
+        "run",
+        "--rm",
+        "--no-deps",
+        "e2e",
+        "--project=desktop-chromium",
+        ...arguments_,
+      ],
+    ];
+  }
 
   return [
     [...compose, ...baseComposeFile, "up", "-d", "--wait"],
@@ -460,6 +484,8 @@ async function runE2E(root, bin, logDir, arguments_ = [], extraEnv = {}) {
     timeout: 3_000,
     env: {
       ...process.env,
+      // ホスト環境の suite 指定で full 期待が崩れないよう既定を固定する
+      KONDATE_E2E_SUITE: "full",
       ...extraEnv,
       COMPOSE_PROJECT_NAME: "shared",
       DOCKER_LOG_DIR: logDir,
@@ -562,6 +588,77 @@ test("E2E runner restores the base stack and preserves success or failure", asyn
   }
 });
 
+// smoke: playwright 1 回のみ（desktop 段・中間 quota reset なし）。@smoke を自動付与する。
+test("E2E runner smoke suite runs a single mobile project with @smoke grep", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "smoke suite log");
+
+  await runE2E(root, bin, logDir, [], {
+    E2E_STATUS: "0",
+    KONDATE_E2E_SUITE: "smoke",
+    TMPDIR: root,
+  });
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root), [], false, "smoke"),
+  );
+  await assert.rejects(access(await expectedE2ELockDir(root)));
+});
+
+// 呼び出し側が --project / --grep を既に付けていれば smoke でも二重付与しない
+test("E2E runner smoke suite respects caller --project and --grep", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "smoke suite override log");
+  const args = ["--project=desktop-chromium", "--grep=custom"];
+
+  await runE2E(root, bin, logDir, args, {
+    E2E_STATUS: "0",
+    KONDATE_E2E_SUITE: "smoke",
+    TMPDIR: root,
+  });
+
+  assert.deepEqual(
+    await readDockerInvocations(logDir),
+    expectedE2EInvocations(root, await expectedProjectName(root), args, false, "smoke"),
+  );
+});
+
+// 不正な KONDATE_E2E_SUITE は stack 起動後に exit 2（cleanup で restore する）
+test("E2E runner rejects an invalid KONDATE_E2E_SUITE", async (t) => {
+  const root = await createDatabaseScriptFixture("run-e2e.sh");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = await installDockerRecorder(root);
+  const logDir = join(root, "invalid suite log");
+
+  await assert.rejects(
+    runE2E(root, bin, logDir, [], {
+      KONDATE_E2E_SUITE: "bogus",
+      TMPDIR: root,
+    }),
+    (error) => error && typeof error === "object" && error.code === 2,
+  );
+
+  // playwright を起動せず、開始時 reset 1 回のあと cleanup へ進む
+  const invocations = await readDockerInvocations(logDir);
+  const e2eRuns = invocations.filter((args) => args.includes("e2e") && args.includes("run"));
+  assert.equal(e2eRuns.length, 0);
+  assert.ok(invocations.some((args) => args.includes("logs") && args.includes("app")));
+  assert.ok(
+    invocations.some(
+      (args) =>
+        args.includes("up") &&
+        args.includes("auth") &&
+        args.includes("app") &&
+        args.includes("--force-recreate"),
+    ),
+  );
+});
+
 test("E2E runner serializes runs from the same checkout and releases its lock", async (t) => {
   const root = await createDatabaseScriptFixture("run-e2e.sh");
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -583,6 +680,7 @@ test("E2E runner serializes runs from the same checkout and releases its lock", 
     cwd: tmpdir(),
     env: {
       ...process.env,
+      KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: firstLogDir,
       DOCKER_READY_FILE: readyFile,
       E2E_WAIT_FOR_SIGNAL: "1",
@@ -660,6 +758,7 @@ test("E2E runner reports a lock release failure after a successful run", async (
     cwd: tmpdir(),
     env: {
       ...process.env,
+      KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: logDir,
       E2E_SUCCESS_DELAY: "0.3",
       E2E_SUCCESS_READY_FILE: readyFile,
@@ -709,6 +808,7 @@ test("E2E runner restores the base stack after every forwarded signal", async (t
         cwd: tmpdir(),
         env: {
           ...process.env,
+          KONDATE_E2E_SUITE: "full",
           COMPOSE_PROJECT_NAME: "shared",
           DOCKER_LOG_DIR: logDir,
           DOCKER_READY_FILE: readyFile,
@@ -765,6 +865,7 @@ test("E2E runner force-kills a child that ignores two forwarded signals", async 
         cwd: tmpdir(),
         env: {
           ...process.env,
+          KONDATE_E2E_SUITE: "full",
           DOCKER_IGNORE_SIGNAL: "1",
           DOCKER_LOG_DIR: logDir,
           DOCKER_READY_FILE: readyFile,
@@ -824,6 +925,7 @@ test("E2E runner watchdog kills a child that ignores one forwarded signal", asyn
         cwd: tmpdir(),
         env: {
           ...process.env,
+          KONDATE_E2E_SUITE: "full",
           DOCKER_IGNORE_SIGNAL: "1",
           DOCKER_LOG_DIR: logDir,
           DOCKER_READY_FILE: readyFile,
@@ -908,6 +1010,7 @@ test("E2E runner bounds repeated signals while restoring the base stack", async 
     cwd: tmpdir(),
     env: {
       ...process.env,
+      KONDATE_E2E_SUITE: "full",
       DOCKER_IGNORE_SIGNAL: "1",
       DOCKER_LOG_DIR: logDir,
       DOCKER_READY_FILE: readyFile,
@@ -955,6 +1058,7 @@ test("E2E runner bounds one signal while a base restoration is stuck", async (t)
     cwd: tmpdir(),
     env: {
       ...process.env,
+      KONDATE_E2E_SUITE: "full",
       DOCKER_IGNORE_SIGNAL: "1",
       DOCKER_LOG_DIR: logDir,
       DOCKER_READY_FILE: readyFile,
@@ -1071,6 +1175,7 @@ test("E2E runner kills and removes a daemon-side E2E child before restoring", as
     cwd: tmpdir(),
     env: {
       ...process.env,
+      KONDATE_E2E_SUITE: "full",
       DOCKER_DAEMON_CHILD_FILE: daemonChildFile,
       DOCKER_DAEMON_REMOVED_FILE: removedFile,
       DOCKER_LOG_DIR: logDir,
@@ -1133,6 +1238,7 @@ test("E2E runner escalates a second signal across the cleanup phase", async (t) 
     cwd: tmpdir(),
     env: {
       ...process.env,
+      KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: logDir,
       DOCKER_READY_FILE: e2eReadyFile,
       E2E_CLEANUP_READY_FILE: cleanupReadyFile,
@@ -1181,6 +1287,7 @@ test("E2E runner rearms its watchdog for a stuck restore after an E2E signal", a
     cwd: tmpdir(),
     env: {
       ...process.env,
+      KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: logDir,
       DOCKER_READY_FILE: e2eReadyFile,
       E2E_CLEANUP_READY_FILE: cleanupReadyFile,
@@ -1234,6 +1341,7 @@ test("E2E runner rearms its watchdog for a stuck restore after an rm signal", as
     cwd: tmpdir(),
     env: {
       ...process.env,
+      KONDATE_E2E_SUITE: "full",
       DOCKER_LOG_DIR: logDir,
       E2E_CLEANUP_READY_FILE: cleanupReadyFile,
       E2E_CLEANUP_WAIT_FOR_SIGNAL: "1",

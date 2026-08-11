@@ -449,6 +449,14 @@ test("runs E2E through the base and E2E Compose files in override order", async 
     /--profile e2e[\s\\]*up -d --wait --force-recreate --no-deps openrouter-mock kong oauth-mock app/u,
   );
   assert.match(runner, /run --rm --no-deps e2e/u);
+  // KONDATE_E2E_SUITE=full|smoke（未設定は full）。不正値は exit 2
+  assert.match(runner, /KONDATE_E2E_SUITE/u);
+  assert.match(runner, /must be full or smoke/u);
+  assert.match(runner, /e2e_args_have_grep/u);
+  assert.match(runner, /--grep=@smoke/u);
+  // smoke は mobile 1 段 + @smoke のみ（desktop 二段・中間 reset を踏まない分岐）
+  assert.match(runner, /suite=\$\{KONDATE_E2E_SUITE:-full\}/u);
+  assert.match(runner, /\[ "\$suite" = "smoke" \]/u);
   // full suite は mobile → desktop の 2 段（共有 AI 枠リセット込み）
   assert.match(runner, /--project=mobile-chromium/u);
   assert.match(runner, /--project=desktop-chromium/u);
