@@ -65,6 +65,9 @@ test(
     await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
     // privacy は fixture 済み。CTA が出ていたら契約退行なので落とし、黙ってスキップしない。
     await expect(page.getByRole("button", { name: "AI情報の説明を見る" })).toHaveCount(0);
+    // 外部 AI 送信直前のみ共有枠を空にする（fixture 入口では呼ばない）
+    const { ensureAiQuotaForGeneration } = await import("../fixtures/reset-global-ai-quota");
+    await ensureAiQuotaForGeneration();
     const generate = page.getByRole("button", { name: "献立を作る" });
     await expect(generate).toBeEnabled({ timeout: 15_000 });
     await generate.click();
@@ -273,6 +276,9 @@ test(
     await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
       timeout: 15_000,
     });
+    // 外部 AI 送信直前のみ共有枠を空にする（fixture 入口では呼ばない）
+    const { ensureAiQuotaForGeneration } = await import("../fixtures/reset-global-ai-quota");
+    await ensureAiQuotaForGeneration();
     await expect(generate).toBeEnabled({ timeout: 15_000 });
     await generate.click();
     await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });

@@ -102,8 +102,9 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
 async function completeMinimumPlanner(page: Page) {
   // local OpenRouterの固定success fixtureと同じ家族・食事条件に揃え、
   // E2EがAI応答fixtureの内容ではなく復旧flowだけを検証できるようにする。
-  const { resetGlobalAiQuotaForE2e } = await import("../fixtures/reset-global-ai-quota");
-  await resetGlobalAiQuotaForE2e();
+  // 外部 AI 送信直前のみ共有枠を空にする（fixture 入口では呼ばない）
+  const { ensureAiQuotaForGeneration } = await import("../fixtures/reset-global-ai-quota");
+  await ensureAiQuotaForGeneration();
   await page.goto("/settings");
   // moduleの取得が瞬断で欠けるとSPAがmountせず白紙のままになる。個別の
   // labelを30秒待って初めて気付くのではなく、まず画面が描画できたことを
@@ -580,6 +581,9 @@ for (const servings of [1, 20] as const) {
     const appOrigin = new URL(page.url()).origin;
     // sticky: recovery 再送でも idea-servings fixture が外れない（E2E7）
     await setMockScenario(page, `idea-servings-${String(servings)}`);
+    // 外部 AI 送信直前のみ共有枠を空にする
+    const { ensureAiQuotaForGeneration } = await import("../fixtures/reset-global-ai-quota");
+    await ensureAiQuotaForGeneration();
     const generationResponsePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&

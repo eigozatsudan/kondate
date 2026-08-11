@@ -46,11 +46,8 @@ export const test = base.extend<AuthFixtures>({
     await page.goto("/");
     await expect(page).toHaveURL((url) => url.pathname === "/welcome", { timeout: 30_000 });
     await expect(page.getByRole("heading", { name: "どちらから始めますか？" })).toBeVisible();
-    // E2E4: authenticated 起点の生成（idea full-journey / recovery boundary 等）も
-    // GLOBAL 日次枠を共有する。completedOnboarding / ideaMode 以外で reset しないと
-    // 同一 project 内の実行順だけで枠枯渇し得る。製品上限は据え置き、カウンタのみ空にする。
-    const { resetGlobalAiQuotaForE2e } = await import("./reset-global-ai-quota");
-    await resetGlobalAiQuotaForE2e();
+    // AI 共有枠の truncate は fixture 入口では行わない。
+    // 外部 AI 送信（generate）直前のみ ensureAiQuotaForGeneration を呼ぶ。
     await provide(page);
   },
 
@@ -60,10 +57,7 @@ export const test = base.extend<AuthFixtures>({
     // service role は page に渡さない（seed-onboarding 内で .env から読む）。
     const { seedCompletedOnboardingState } = await import("./seed-onboarding");
     await seedCompletedOnboardingState(page);
-    // Task 8 まで: 生成直前 reset へ移す前はここで GLOBAL 枠を空にする。
-    // 製品上限は据え置き、カウンタのみ空にする。
-    const { resetGlobalAiQuotaForE2e } = await import("./reset-global-ai-quota");
-    await resetGlobalAiQuotaForE2e();
+    // AI 共有枠の truncate は fixture 入口では行わない（生成直前のみ）。
     await provide(page);
   },
 
@@ -75,8 +69,7 @@ export const test = base.extend<AuthFixtures>({
     await page.goto("/welcome");
     await page.getByRole("button", { name: "献立アイデアを考える" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/planner");
-    const { resetGlobalAiQuotaForE2e } = await import("./reset-global-ai-quota");
-    await resetGlobalAiQuotaForE2e();
+    // AI 共有枠の truncate は fixture 入口では行わない（生成直前のみ）。
     await provide(page);
   },
 });
