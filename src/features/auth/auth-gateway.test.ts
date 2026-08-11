@@ -88,6 +88,7 @@ function authClientMock(overrides?: {
   oauthResult?: { data: unknown; error: AuthError | null };
   otpResult?: { data: unknown; error: AuthError | null };
   exchangeResult?: { data: unknown; error: AuthError | null };
+  verifyOtpResult?: { data: unknown; error: AuthError | null };
   signInWithPasswordResult?: { data: unknown; error: AuthError | null };
   /** C5: exchange 失敗時の sibling session 検査用 */
   getSessionResult?: { data: { session: unknown }; error: AuthError | null };
@@ -103,11 +104,13 @@ function authClientMock(overrides?: {
     data: { session: null },
     error: null,
   };
+  const verifyOtpResult = overrides?.verifyOtpResult ?? { data: null, error: null };
   return {
     auth: {
       signInWithOAuth: vi.fn().mockResolvedValue(oauthResult),
       signInWithOtp: vi.fn().mockResolvedValue(otpResult),
       exchangeCodeForSession: vi.fn().mockResolvedValue(exchangeResult),
+      verifyOtp: vi.fn().mockResolvedValue(verifyOtpResult),
       signInWithPassword: vi.fn().mockResolvedValue(signInWithPasswordResult),
       getSession: vi.fn().mockResolvedValue(getSessionResult),
     },
@@ -201,37 +204,67 @@ it("uses Supabase Google and never the mock URL in production mode", async () =>
   expect(fetchImpl).not.toHaveBeenCalled();
 });
 
-it("same-browser magic-link callback deposits then claims immediately", async () => {
+it("token_hash magic: completeCallback needs user confirmation without verifyOtp", async () => {
   configurePublicEnv();
   const storage = new MapStorage();
-  const claim = vi.fn().mockResolvedValue({ code: "magic-code-1", returnTo: "/onboarding" });
   const deposit = vi.fn().mockResolvedValue(undefined);
-  const api = continuationApiMock({ claim, deposit });
-  const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
   const client = authClientMock();
   const gateway = createAuthGateway(
     client as unknown as BrowserSupabaseClient,
-    api,
+    continuationApiMock({ deposit }),
     storage,
-    gatewayDeps({
-      getPublicEnv: () => ({
-        authContinuationTtlMs: 300_000,
-        authProviderMode: "oauth_mock",
-        oauthMockOrigin: "http://127.0.0.1:8788",
-      }),
-      fetchImpl,
-    }),
+    gatewayDeps(),
   );
   const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
   const flow = readAuthFlow(sent.flowId, storage);
   if (flow === null) throw new Error("magic-link flow was not stored");
+  expect(flow.credentialKind).toBe("token_hash");
 
+  const tokenHash = "a".repeat(40);
   await expect(
     gateway.completeCallback(
       new URL(
-        `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&code=code-1`,
+        `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
       ),
     ),
+  ).resolves.toEqual({
+    kind: "needs_confirmation",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+    tokenHash,
+    otpType: "email",
+    state: flow.state,
+  });
+  // プレビュー耐性: 表示時点では deposit / verify しない
+  expect(deposit).not.toHaveBeenCalled();
+  expect(client.auth.verifyOtp).not.toHaveBeenCalled();
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+  expect(readAuthFlow(flow.id, storage)).not.toBeNull();
+});
+
+it("token_hash magic: confirmMagicLink same-browser verifyOtp and completes", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock({ deposit }),
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "b".repeat(40);
+
+  await expect(
+    gateway.confirmMagicLink({
+      flowId: flow.id,
+      state: flow.state,
+      tokenHash,
+      otpType: "email",
+    }),
   ).resolves.toEqual({
     kind: "complete",
     continuation: "same_browser",
@@ -240,15 +273,47 @@ it("same-browser magic-link callback deposits then claims immediately", async ()
   });
   expect(deposit).toHaveBeenCalledWith(flow.id, {
     state: flow.state,
-    code: "code-1",
+    code: tokenHash,
     secret: flow.secret,
   });
-  expect(claim).toHaveBeenCalledWith(flow.id, { secret: flow.secret, state: flow.state });
-  // magic link の sessionExchange は supabase。mock exchange は使わない。
-  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledWith("magic-code-1");
-  expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
-  expect(fetchImpl).not.toHaveBeenCalled();
+  expect(client.auth.verifyOtp).toHaveBeenCalledWith({
+    token_hash: tokenHash,
+    type: "email",
+  });
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
   expect(readAuthFlow(flow.id, storage)).toBeNull();
+});
+
+it("token_hash magic: isolated confirm deposits without verifyOtp", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock({ deposit }),
+    storage,
+    gatewayDeps(),
+  );
+  const tokenHash = "c".repeat(40);
+  const flowId = "10000000-0000-4000-8000-000000000099";
+  const state = "A".repeat(43);
+
+  await expect(
+    gateway.confirmMagicLink({
+      flowId,
+      state,
+      tokenHash,
+      otpType: "email",
+    }),
+  ).resolves.toEqual({
+    kind: "deposited",
+    continuation: "original_browser",
+    flowId,
+    returnTo: "/planner",
+  });
+  expect(deposit).toHaveBeenCalledWith(flowId, { state, code: tokenHash });
+  expect(client.auth.verifyOtp).not.toHaveBeenCalled();
 });
 
 it("exchanges a stored Google mock flow only with the local mock provider", async () => {

@@ -14,6 +14,7 @@ import {
   sanitizeReturnPath,
   writePendingAuthDeposit,
   createContinuationApi,
+  type AuthFlow,
   type ContinuationApi,
 } from "./auth-flow";
 import {
@@ -121,6 +122,9 @@ const COMPLETE_CALLBACK_ALLOWED_QUERY_KEYS = new Set([
   "flow",
   "state",
   "code",
+  // token_hash magic: メールはアプリへ直着地（GET /verify を踏まない）。type は email / magiclink
+  "token_hash",
+  "type",
   "error",
   "error_description",
   "error_uri",
@@ -192,6 +196,19 @@ export type AuthCallbackResult =
   | { kind: "deposited"; continuation: "original_browser"; flowId: string; returnTo: string }
   | { kind: "awaiting_completion"; flowId: string; returnTo: string }
   | { kind: "expired"; flowId: string; returnTo: string }
+  /**
+   * token_hash magic: ページ表示だけでは OTP を消費しない。
+   * iOS 長押しプレビュー / Gmail 安全確認の GET では verify せず、ユーザー操作後に confirmMagicLink。
+   */
+  | {
+      kind: "needs_confirmation";
+      flowId: string;
+      returnTo: string;
+      tokenHash: string;
+      /** URL の type。verifyOtp へは email に正規化する */
+      otpType: "email" | "magiclink";
+      state: string | null;
+    }
   | {
       kind: "error";
       code: "oauth_cancelled" | "auth_callback_failed" | "unbound_callback";
@@ -199,6 +216,19 @@ export type AuthCallbackResult =
       /** C4: recovery onResult が当該 flow だけを焼けるよう任意で載せる */
       flowId?: string;
     };
+
+export type ConfirmMagicLinkInput = {
+  flowId: string;
+  tokenHash: string;
+  otpType: "email" | "magiclink";
+  state: string | null;
+};
+
+/**
+ * resumeFlow / recovery が返す結果。needs_confirmation は completeCallback 専用
+ * （ユーザー操作待ちであり claim ポーリングでは出ない）。
+ */
+export type AuthResumeResult = Exclude<AuthCallbackResult, { kind: "needs_confirmation" }>;
 
 /**
  * C-R3 / C-R5: 同一 flow の in-flight resume をプロセス内で単一化する。
@@ -216,7 +246,7 @@ export type AuthCallbackResult =
  */
 type InflightResumeEntry = {
   generation: number;
-  promise: Promise<AuthCallbackResult>;
+  promise: Promise<AuthResumeResult>;
 };
 const inflightResumeByFlowId = new Map<string, InflightResumeEntry>();
 let inflightResumeGeneration = 0;
@@ -250,7 +280,39 @@ export interface AuthGateway {
   signInWithGoogle(returnTo: string): Promise<void>;
   sendMagicLink(email: string, returnTo: string): Promise<SentMagicLink>;
   completeCallback(url: URL): Promise<AuthCallbackResult>;
-  resumeFlow(flowId: string): Promise<AuthCallbackResult>;
+  /**
+   * token_hash magic のユーザー確認後。verifyOtp(POST) で初めて OTP を消費する。
+   * 同一ブラウザは session 確立、secret 無しは deposit のみ。
+   */
+  confirmMagicLink(input: ConfirmMagicLinkInput): Promise<AuthCallbackResult>;
+  resumeFlow(flowId: string): Promise<AuthResumeResult>;
+}
+
+/** verifyOtp の type。magiclink は deprecated だがメールテンプレ互換で受け、email に正規化する。 */
+function normalizeMagicOtpType(value: string | null): "email" | "magiclink" | null {
+  if (value === "email" || value === "magiclink") return value;
+  return null;
+}
+
+function verifyOtpType(_otpType: "email" | "magiclink"): "email" {
+  // supabase-js: magiclink type は deprecated。email で magic / signup OTP を扱う。
+  return "email";
+}
+
+/**
+ * claim した平文を verifyOtp に渡すか PKCE code exchange に渡すか。
+ * - token_hash フローの正規経路: 長い hash（ハイフン無し）
+ * - 旧 / ローカル ConfirmationURL（GET /verify）: UUID 形の authorization code
+ *   → credentialKind が token_hash でも exchangeCodeForSession する（移行・e2e 両立）
+ */
+function shouldExchangeClaimedAsTokenHash(
+  credentialKind: AuthFlow["credentialKind"],
+  claimed: string,
+): boolean {
+  if (credentialKind !== "token_hash") return false;
+  const uuidLike =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(claimed);
+  return !uuidLike;
 }
 
 export type AuthGatewayDeps = {
@@ -338,7 +400,7 @@ async function resolveAlreadyAuthenticated(
   storage: Storage,
   client: BrowserSupabaseClient,
   options: { checkSession: boolean; baseline?: SessionProbeBaseline },
-): Promise<AuthCallbackResult | null> {
+): Promise<AuthResumeResult | null> {
   const existingCompletion = readAuthContinuationCompletion(flowId, storage);
   if (existingCompletion !== null) {
     clearAuthFlow(flowId, storage);
@@ -431,7 +493,15 @@ export function createAuthGateway(
 
     async sendMagicLink(email, returnTo) {
       // C6: 上記 signInWithGoogle と同型。再送で旧 secret を焼かない。
-      const flow = await createAuthFlow(returnTo, continuationApi, storage);
+      // credentialKind=token_hash: メールはアプリ着地 + verifyOtp。GET /verify 一発消費を避ける。
+      const flow = await createAuthFlow(
+        returnTo,
+        continuationApi,
+        storage,
+        undefined,
+        "supabase",
+        "token_hash",
+      );
       const emailRedirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
       try {
         const { error } = await client.auth.signInWithOtp({
@@ -467,8 +537,31 @@ export function createAuthGateway(
       const flowId = url.searchParams.get("flow");
       const state = url.searchParams.get("state");
       const code = url.searchParams.get("code");
+      const tokenHash = url.searchParams.get("token_hash");
+      const otpType = normalizeMagicOtpType(url.searchParams.get("type"));
       const stored = flowId === null ? null : readAuthFlow(flowId, storage);
       const returnTo = sanitizeReturnPath(stored?.returnTo);
+      // token_hash magic: ページ表示では消費しない（プレビュー / スキャナ耐性）。確認 UI へ。
+      // code と同時に載る異常 URL は fail-closed（どちらを優先するか曖昧）。
+      if (tokenHash !== null) {
+        if (code !== null) {
+          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+        }
+        if (flowId === null || otpType === null || tokenHash.length < 16) {
+          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+        }
+        if (stored !== null && state !== null && state !== stored.state) {
+          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+        }
+        return {
+          kind: "needs_confirmation",
+          flowId,
+          returnTo,
+          tokenHash,
+          otpType,
+          state,
+        };
+      }
       // C1: code+state があるときは spoofable な URL error_code より deposit を優先する。
       // 攻撃者が有効な code に error_code=otp_expired を足しても short-circuit で捨てない。
       const hasCodeAndState = state !== null && code !== null;
@@ -612,10 +705,82 @@ export function createAuthGateway(
       }
     },
 
+    async confirmMagicLink(input) {
+      const { flowId, tokenHash, otpType, state } = input;
+      if (tokenHash.length < 16) {
+        return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+      }
+      const stored = readAuthFlow(flowId, storage);
+      const returnTo = sanitizeReturnPath(stored?.returnTo);
+      if (stored !== null && state !== null && state !== stored.state) {
+        return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+      }
+      // クロスブラウザ（secret 無し）: token_hash を deposit し元ブラウザへ。ここでは session を作らない。
+      if (stored === null) {
+        if (state === null) {
+          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+        }
+        const depositOutcome = await depositWithRetry(() =>
+          continuationApi.deposit(flowId, { state, code: tokenHash }),
+        );
+        if (depositOutcome === "ok") {
+          return {
+            kind: "deposited",
+            continuation: "original_browser",
+            flowId,
+            returnTo: "/planner",
+          };
+        }
+        return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+      }
+      // 同一ブラウザ: deposit は他タブ用 best-effort。本丸は verifyOtp(POST) で OTP 消費 + session。
+      const stopPreLease = startAuthContinuationCallbackPreLease(flowId, storage);
+      let keepPreLeaseHeartbeat = false;
+      try {
+        const pendingExpiresAtMs =
+          stored.expiresAt !== undefined
+            ? new Date(stored.expiresAt).getTime()
+            : Date.now() + deps.getPublicEnv().authContinuationTtlMs;
+        writePendingAuthDeposit(
+          flowId,
+          { state: stored.state, code: tokenHash, expiresAtMs: pendingExpiresAtMs },
+          storage,
+        );
+        const depositOutcome = await depositWithRetry(() =>
+          continuationApi.deposit(flowId, {
+            state: stored.state,
+            code: tokenHash,
+            secret: stored.secret,
+          }),
+        );
+        if (depositOutcome === "ok") {
+          clearPendingAuthDeposit(flowId, storage);
+        }
+        // deposit 失敗でも URL 由来 token_hash で verify を試みる（continuation TTL 切れ等）。
+        try {
+          const result = await withTimeout(
+            establishSessionFromTokenHash(flowId, tokenHash, otpType),
+            IMMEDIATE_CLAIM_TIMEOUT_MS,
+          );
+          if (result.kind === "awaiting_completion") {
+            keepPreLeaseHeartbeat = true;
+          } else {
+            releaseAuthContinuationCallbackPreLease(flowId, storage);
+          }
+          return result;
+        } catch {
+          keepPreLeaseHeartbeat = true;
+          return { kind: "awaiting_completion", flowId, returnTo };
+        }
+      } finally {
+        if (!keepPreLeaseHeartbeat) stopPreLease();
+      }
+    },
+
     async resumeFlow(flowId) {
       const existing = inflightResumeByFlowId.get(flowId);
       if (existing !== undefined) {
-        return existing.promise;
+        return existing.promise as Promise<AuthResumeResult>;
       }
       // C11: generation で Map 除去を世代一致に限定（soft TTL / settle の競合でも後続を壊さない）
       const generation = (inflightResumeGeneration += 1);
@@ -645,7 +810,7 @@ export function createAuthGateway(
     },
   };
 
-  async function runResumeFlow(flowId: string): Promise<AuthCallbackResult> {
+  async function runResumeFlow(flowId: string): Promise<AuthResumeResult> {
     const flow = readAuthFlow(flowId, storage);
     if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
     // C4: 当該 flow の completion 済みなら claim/exchange しない。
@@ -788,9 +953,25 @@ export function createAuthGateway(
                 localCredentialsSchema.parse(await response.json()),
               );
             })()
-          : client.auth.exchangeCodeForSession(claimedCode.code);
+          : shouldExchangeClaimedAsTokenHash(flow.credentialKind, claimedCode.code)
+            ? // magic token_hash: claim した平文は OTP hash。PKCE code exchange ではない。
+              client.auth.verifyOtp({
+                token_hash: claimedCode.code,
+                type: verifyOtpType("email"),
+              })
+            : client.auth.exchangeCodeForSession(claimedCode.code);
       const { error } = await result;
-      if (error !== null) throw new Error("provider exchange failed");
+      if (error !== null) {
+        // token_hash 期限切れは resume でも expired に写す（unbound より再送 UI へ）
+        if (
+          shouldExchangeClaimedAsTokenHash(flow.credentialKind, claimedCode.code) &&
+          isExpired(error, new URL("http://local/"))
+        ) {
+          clearAuthFlow(flow.id, storage);
+          return { kind: "expired", flowId: flow.id, returnTo: flow.returnTo };
+        }
+        throw new Error("provider exchange failed");
+      }
       // F-AUTH-002 / C10: claim 成功の returnTo も Login create と同型で再 sanitize
       // （自己参照 path を completion / navigate に載せない）
       const safeReturnTo = sanitizeLoginReturnPath(claimedCode.returnTo);
@@ -880,6 +1061,148 @@ export function createAuthGateway(
     } finally {
       // settle 時のみ解放。exchange hang 中は Promise が終わらないので heartbeat+lease が残り、
       // 他タブ dual exchange を抑止する（C3/R3）。JS 死亡時は heartbeat 停止後 TTL で失効。
+      if (holdsExchangeLease) {
+        stopExchangeHeartbeat?.();
+        releaseAuthContinuationExchangeInFlight(flowId, storage, exchangeInstanceId);
+      }
+    }
+  }
+
+  /**
+   * 同一ブラウザ confirmMagicLink 用: claim を経ず token_hash を verifyOtp して session を立てる。
+   * resumeFlow と同じ exchange lease / completion publish 契約。
+   */
+  async function establishSessionFromTokenHash(
+    flowId: string,
+    tokenHash: string,
+    otpType: "email" | "magiclink",
+  ): Promise<AuthResumeResult> {
+    const flow = readAuthFlow(flowId, storage);
+    if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+    const existingCompletion = readAuthContinuationCompletion(flow.id, storage);
+    if (existingCompletion !== null) {
+      clearAuthFlow(flow.id, storage);
+      return {
+        kind: "complete",
+        continuation: "same_browser",
+        returnTo: existingCompletion.returnTo,
+        flowId: flow.id,
+      };
+    }
+    const exchangeInstanceId = `exchange-${flow.id}-${Math.random().toString(36).slice(2, 10)}`;
+    let holdsExchangeLease = false;
+    let stopExchangeHeartbeat: (() => void) | undefined;
+    let exchangeStarted = false;
+    let sessionBaseline: SessionProbeBaseline = { kind: "unknown" };
+    try {
+      if (
+        !(await tryAcquireAuthContinuationExchangeInFlight(
+          flow.id,
+          exchangeInstanceId,
+          storage,
+          Date.now(),
+        ))
+      ) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
+      holdsExchangeLease = true;
+      stopExchangeHeartbeat = startAuthContinuationExchangeInFlightHeartbeat(
+        flow.id,
+        exchangeInstanceId,
+        storage,
+      );
+      if (
+        !isAuthContinuationExchangeInFlightOwner(flow.id, exchangeInstanceId, storage, Date.now())
+      ) {
+        stopExchangeHeartbeat();
+        stopExchangeHeartbeat = undefined;
+        holdsExchangeLease = false;
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
+      const preExchangeDone = await resolveAlreadyAuthenticated(
+        flow.id,
+        flow.returnTo,
+        storage,
+        client,
+        { checkSession: false },
+      );
+      if (preExchangeDone !== null) return preExchangeDone;
+      sessionBaseline = await captureSessionProbeBaseline(client);
+      exchangeStarted = true;
+      const { error } = await client.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: verifyOtpType(otpType),
+      });
+      if (error !== null) {
+        if (isExpired(error, new URL("http://local/"))) {
+          clearAuthFlow(flow.id, storage);
+          return { kind: "expired", flowId: flow.id, returnTo: flow.returnTo };
+        }
+        throw new Error("provider exchange failed");
+      }
+      const safeReturnTo = sanitizeLoginReturnPath(flow.returnTo);
+      try {
+        publishAuthContinuationCompletion({ flowId: flow.id, returnTo: safeReturnTo }, storage);
+      } catch {
+        // publish 失敗時も session は確立済み。complete を返す（resume と同型）。
+      }
+      clearPendingAuthDeposit(flow.id, storage);
+      return {
+        kind: "complete",
+        continuation: "same_browser",
+        returnTo: safeReturnTo,
+        flowId: flow.id,
+      };
+    } catch (error) {
+      const isRetryableTransport =
+        error instanceof ContinuationHttpError ||
+        error instanceof ContinuationResponseLostError ||
+        error instanceof TypeError;
+      if (exchangeStarted && !isRetryableTransport) {
+        for (let probe = 0; probe < EXCHANGE_LOSER_SESSION_PROBE_ATTEMPTS; probe += 1) {
+          if (probe > 0) {
+            await sleepMs(EXCHANGE_LOSER_SESSION_PROBE_GAP_MS);
+          }
+          const recovered = await resolveAlreadyAuthenticated(
+            flow.id,
+            flow.returnTo,
+            storage,
+            client,
+            { checkSession: true, baseline: sessionBaseline },
+          );
+          if (recovered !== null) return recovered;
+        }
+        clearAuthFlow(flow.id, storage);
+        return {
+          kind: "error",
+          code: "unbound_callback",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
+      if (error instanceof ContinuationHttpError) {
+        if (error.status === 404 || error.status === 429 || error.status >= 500) {
+          return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+        }
+        clearAuthFlow(flow.id, storage);
+        return {
+          kind: "error",
+          code: "unbound_callback",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
+      if (error instanceof ContinuationResponseLostError || error instanceof TypeError) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
+      clearAuthFlow(flow.id, storage);
+      return {
+        kind: "error",
+        code: "unbound_callback",
+        returnTo: flow.returnTo,
+        flowId: flow.id,
+      };
+    } finally {
       if (holdsExchangeLease) {
         stopExchangeHeartbeat?.();
         releaseAuthContinuationExchangeInFlight(flowId, storage, exchangeInstanceId);

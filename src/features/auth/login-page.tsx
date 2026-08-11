@@ -17,7 +17,7 @@ export const LOGIN_PAGE_NOTE =
 export const LOGIN_PAGE_NOTE_WITH_EMAIL =
   "新規登録の別画面はありません。下のボタンかメールで進むと、はじめての方はアカウントができます。パスワードの設定は不要です。" as const;
 export const LOGIN_EMAIL_HINT =
-  "届いたメールのリンクを開くと入れます。はじめてのメールアドレスでも大丈夫です。" as const;
+  "届いたメールのリンクを開き、画面の「ログインを完了する」を押すと入れます。はじめてのメールアドレスでも大丈夫です。" as const;
 
 /**
  * ログイン画面のメール（マジックリンク）導線を表示する。

@@ -115,13 +115,19 @@ export async function requestMagicLinkAndReadUrl(page: Page, email: string): Pro
         const parsedMessage = messageSchema.safeParse(await detailResponse.json());
         if (!parsedMessage.success) return "";
         const body = parsedMessage.data.HTML ?? parsedMessage.data.Text ?? "";
-        const match = body.match(/https?:\/\/[^"'<>\s]+\/auth\/v1\/verify[^"'<>\s]*/u);
-        link = match?.[0].replaceAll("&amp;", "&");
+        // token_hash テンプレ（本番）: アプリ /auth/callback?...&token_hash=
+        // 旧 / ローカル既定: GoTrue ConfirmationURL の /auth/v1/verify
+        const tokenHashMatch = body.match(
+          /https?:\/\/[^"'<>\s]+\/auth\/callback\?[^"'<>\s]*token_hash=[^"'<>\s]*/u,
+        );
+        const verifyMatch = body.match(/https?:\/\/[^"'<>\s]+\/auth\/v1\/verify[^"'<>\s]*/u);
+        const raw = tokenHashMatch?.[0] ?? verifyMatch?.[0];
+        link = raw?.replaceAll("&amp;", "&");
         return link ?? "";
       },
       { timeout: 15_000, intervals: [250, 500, 1_000] },
     )
-    .toContain("/auth/v1/verify");
+    .toMatch(/\/auth\/(?:callback|v1\/verify)/u);
 
   if (link === undefined) throw new Error("Magic-link URL was not found in Mailpit");
   return link;

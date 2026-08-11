@@ -17,6 +17,13 @@ export function isSafeAuthReturnTo(value: string): boolean {
 /** U1-M1: storage 改ざん時も protocol-relative `//…` や埋め込み `//` を読まない */
 const authFlowReturnToSchema = z.string().refine(isSafeAuthReturnTo, "invalid_return_to");
 
+/**
+ * claim 後に IdP 資格をどうセッションへ換えるか。
+ * - authorization_code: OAuth / 旧 magic（GET /verify → code）の PKCE exchange
+ * - token_hash: アプリ着地 magic（GET では消費しない）。verifyOtp(POST) で換える
+ */
+const authFlowCredentialKindSchema = z.enum(["authorization_code", "token_hash"]);
+
 const authFlowSchema = z
   .object({
     id: z.uuid(),
@@ -25,6 +32,8 @@ const authFlowSchema = z
     origin: z.url(),
     returnTo: authFlowReturnToSchema,
     sessionExchange: z.enum(["supabase", "oauth_mock"]),
+    // 旧 localStorage 行は無い → authorization_code（OAuth / 旧 verify リンク）
+    credentialKind: authFlowCredentialKindSchema.optional().default("authorization_code"),
     startedAt: z.iso.datetime({ offset: true }),
     // create 応答のサーバ絶対期限。無い（旧 storage）ならローカル TTL のみ（C13）。
     expiresAt: z.iso.datetime({ offset: true }).optional(),
@@ -37,7 +46,9 @@ const authFlowSchema = z
     clockSkewMs: z.number().optional(),
   })
   .strict();
-const legacyAuthFlowSchema = authFlowSchema.omit({ sessionExchange: true }).strict();
+const legacyAuthFlowSchema = authFlowSchema
+  .omit({ sessionExchange: true, credentialKind: true })
+  .strict();
 const clockRebaseMarkerSchema = z
   .object({
     rebasedAt: z.iso.datetime({ offset: true }),
@@ -182,7 +193,11 @@ export function readAuthFlow(id: string, storage: Storage): AuthFlow | null {
     const legacy = legacyAuthFlowSchema.safeParse(value);
     if (legacy.success && legacy.data.id === id) {
       // 更新直前に開始された認証を失わないよう、旧形式は本番同等の交換先へ移行する。
-      const migrated: AuthFlow = { ...legacy.data, sessionExchange: "supabase" };
+      const migrated: AuthFlow = {
+        ...legacy.data,
+        sessionExchange: "supabase",
+        credentialKind: "authorization_code",
+      };
       storage.setItem(key, JSON.stringify(migrated));
       return migrated;
     }
@@ -709,6 +724,11 @@ export async function createAuthFlow(
   storage: Storage,
   deps: FlowDeps = browserFlowDeps,
   sessionExchange: AuthFlow["sessionExchange"] = "supabase",
+  /**
+   * magic link は token_hash（アプリ着地・POST 消費）。
+   * Google OAuth は authorization_code（既定）。
+   */
+  credentialKind: AuthFlow["credentialKind"] = "authorization_code",
 ): Promise<AuthFlow> {
   const secret = base64url(deps.randomBytes(32));
   const state = base64url(deps.randomBytes(32));
@@ -728,6 +748,7 @@ export async function createAuthFlow(
     origin: window.location.origin,
     returnTo: safeReturnTo,
     sessionExchange,
+    credentialKind,
     startedAt: clientNow.toISOString(),
     // サーバ絶対期限を保持し、ローカル clock rebase 時にクリップする（C13）
     expiresAt: created.expiresAt,

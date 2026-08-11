@@ -250,6 +250,7 @@ describe("route accessibility", () => {
       sendMagicLink: vi.fn(),
       completeCallback: vi.fn(),
       resumeFlow: vi.fn(),
+      confirmMagicLink: vi.fn(),
     };
     const { container } = render(
       <AuthContext.Provider value={unauthenticated}>

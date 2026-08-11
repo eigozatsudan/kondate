@@ -1,4 +1,5 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -117,6 +118,7 @@ it("deposits in an isolated WebView and directs the user to the original browser
       flowId: "flow-1",
     }),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
   renderCallback(gateway);
 
@@ -130,12 +132,51 @@ it("deposits in an isolated WebView and directs the user to the original browser
   expect(screen.queryByRole("heading", { name: "家族の初回設定" })).not.toBeInTheDocument();
 });
 
+it("token_hash magic: shows confirm CTA and only then calls confirmMagicLink", async () => {
+  const user = userEvent.setup();
+  const confirmMagicLink = vi.fn().mockResolvedValue({
+    kind: "complete",
+    continuation: "same_browser",
+    flowId: "flow-1",
+    returnTo: "/onboarding",
+  });
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "needs_confirmation",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+      tokenHash: "a".repeat(40),
+      otpType: "email",
+      state: "A".repeat(43),
+    }),
+    resumeFlow: vi.fn(),
+    confirmMagicLink,
+  };
+  const { leaveAuthCallback } = renderCallback(gateway);
+
+  expect(await screen.findByRole("heading", { name: "ログインを完了します" })).toBeVisible();
+  expect(confirmMagicLink).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "ログインを完了する" }));
+  expect(confirmMagicLink).toHaveBeenCalledWith({
+    flowId: "flow-1",
+    tokenHash: "a".repeat(40),
+    otpType: "email",
+    state: "A".repeat(43),
+  });
+  await waitFor(() => {
+    expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
+  });
+});
+
 it("removes callback credentials from the browser URL before completing the callback", () => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
   window.history.replaceState(
     null,
@@ -165,6 +206,7 @@ it("C5: strips unknown query keys such as access_token from the visible URL", ()
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
   window.history.replaceState(
     null,
@@ -195,6 +237,7 @@ it("creates the default gateway once and completes the callback once", async () 
       flowId: "flow-1",
     }),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
   createAuthGatewayMock.mockReturnValue(gateway);
   const leaveAuthCallback = vi.fn();
@@ -228,6 +271,7 @@ it("keeps waiting when another same-browser tab wins the one-time claim", async 
       returnTo: "/onboarding",
     }),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
   const { leaveAuthCallback, router } = renderCallback(gateway, { ttlMs: 300_000 });
 
@@ -255,6 +299,7 @@ it("uses completion published before the losing callback starts waiting", async 
       flowId: "flow-1",
       returnTo: "/onboarding",
     }),
+    confirmMagicLink: vi.fn(),
   };
   const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
 
@@ -278,6 +323,7 @@ it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", a
       flowId: "flow-1",
       returnTo: "/onboarding",
     }),
+    confirmMagicLink: vi.fn(),
   };
   const { leaveAuthCallback, view } = renderCallback(gateway, { ttlMs: 300_000 });
   await act(async () => Promise.resolve());
@@ -329,6 +375,7 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
       returnTo: "/onboarding",
     }),
     resumeFlow,
+      confirmMagicLink: vi.fn(),
   };
   const stopRecovery = vi.fn();
   startAuthContinuationRecoveryMock.mockImplementationOnce(() => stopRecovery);
@@ -390,6 +437,7 @@ it("AUTH-01: re-claims on the callback owner tab after a transient awaiting_comp
         returnTo: "/onboarding",
       }),
       resumeFlow,
+      confirmMagicLink: vi.fn(),
     };
     const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
     await act(async () => Promise.resolve());
@@ -426,6 +474,7 @@ it("fails closed when completeCallback rejects without leaking the rejection", a
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn().mockRejectedValue(rejection),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
   const unhandled = vi.fn();
   window.addEventListener("unhandledrejection", unhandled);
@@ -455,6 +504,7 @@ it("maps a targeted recovery expiry to the existing callback terminal flow", asy
       returnTo: "/onboarding",
     }),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
   const { leaveAuthCallback } = renderCallback(gateway);
 
@@ -487,7 +537,8 @@ it("C5: code-less oauth_cancelled / expired results do not clear the terminal fl
       sendMagicLink: vi.fn(),
       completeCallback: vi.fn().mockResolvedValue(result),
       resumeFlow: vi.fn(),
-    };
+      confirmMagicLink: vi.fn(),
+  };
     const { leaveAuthCallback } = renderCallback(gateway, {
       initialEntry: `/auth/callback?flow=${flowId}`,
     });
@@ -515,6 +566,7 @@ it("handles the original callback result after StrictMode remounts the effect", 
       flowId: "flow-1",
       returnTo: "/onboarding",
     }),
+    confirmMagicLink: vi.fn(),
   };
   const { leaveAuthCallback } = renderCallback(gateway, {
     initialEntry: "/auth/callback?code=code-1&state=state-1",
@@ -556,6 +608,7 @@ it("leaves after immediate completion even when publishing completion fails", as
       returnTo: "/onboarding",
     }),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   try {
@@ -585,6 +638,7 @@ it("cleans up and leaves after recovery completion when publishing fails", async
       returnTo: "/onboarding",
     }),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   try {
@@ -619,6 +673,7 @@ it("uses full-page leave for success so SPA navigate is not required", async () 
       returnTo: "/welcome",
     }),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
   const { leaveAuthCallback } = renderCallback(gateway);
   await act(async () => Promise.resolve());
@@ -636,7 +691,8 @@ it("fails closed when completeCallback never settles past the continuation TTL",
       sendMagicLink: vi.fn(),
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
-    };
+      confirmMagicLink: vi.fn(),
+  };
     const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
     await act(async () => Promise.resolve());
     expect(leaveAuthCallback).not.toHaveBeenCalled();
@@ -676,7 +732,8 @@ it("C6: hangWatchdog fails closed at server expiresAt when shorter than local TT
       sendMagicLink: vi.fn(),
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
-    };
+      confirmMagicLink: vi.fn(),
+  };
     const { leaveAuthCallback } = renderCallback(gateway, {
       ttlMs: 300_000,
       initialEntry: `/auth/callback?flow=${flowId}`,
@@ -732,7 +789,8 @@ it("C9: hangWatchdog does not clear secret while callback-prelease is held (post
       sendMagicLink: vi.fn(),
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
-    };
+      confirmMagicLink: vi.fn(),
+  };
     vi.mocked(clearAuthFlow).mockClear();
     const { leaveAuthCallback } = renderCallback(gateway, {
       ttlMs: 300_000,
@@ -803,6 +861,7 @@ it("C-RR2: AUTH-R1 awaiting + pre-lease near-TTL failClosed does not clear secre
         flowId,
         returnTo: "/onboarding",
       }),
+      confirmMagicLink: vi.fn(),
     };
     const { leaveAuthCallback } = renderCallback(gateway, {
       ttlMs: 300_000,
@@ -854,7 +913,8 @@ it("C9/C12: hangWatchdog does not extend past wall serverExpires via positive cl
       sendMagicLink: vi.fn(),
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
-    };
+      confirmMagicLink: vi.fn(),
+  };
     const { leaveAuthCallback } = renderCallback(gateway, {
       ttlMs: 300_000,
       initialEntry: `/auth/callback?flow=${flowId}`,
@@ -911,6 +971,7 @@ it("C9/C12: awaiting_completion wait does not extend past wall serverExpires via
         flowId,
         returnTo: "/onboarding",
       }),
+      confirmMagicLink: vi.fn(),
     };
     const { leaveAuthCallback } = renderCallback(gateway, {
       ttlMs: 300_000,
@@ -943,7 +1004,8 @@ it("C14: deposited WebView switches to expired retry UI after hang watchdog TTL"
         returnTo: "/planner",
       }),
       resumeFlow: vi.fn(),
-    };
+      confirmMagicLink: vi.fn(),
+  };
     const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
     // fake timers 下では findBy* の wait が hang するため flush 後に getBy*
     await act(async () => Promise.resolve());

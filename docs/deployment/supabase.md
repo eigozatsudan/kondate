@@ -84,12 +84,36 @@ Dashboard の **Settings → API Keys**（または Project の Connect ダイ�
 4. ステージングでの実 Google 成功証跡の形式は
    [google-oauth-staging.md](../testing/google-oauth-staging.md)（リポジトリ外 JSON。token / email 禁止）。
 
-### 2.2 マジックリンク用メールテンプレート
+### 2.2 マジックリンク用メールテンプレート（token_hash 必須）
 
-1. Auth → Email Templates で Magic Link（必要なら Confirmation 等）を設定する。
+1. Auth → Email Templates で **Magic Link** を設定する。
 2. 件名・本文は**日本語・平易**。氏名・メール本文の再掲・アレルギー等の PII、プロンプトは載せない。
-3. リンク先が §2 の Site URL / Redirect と矛盾しないことを確認する。
-4. テンプレートだけでは届かない。**次節の Custom SMTP が本番マジックリンクの前提**である。
+3. **リンクは Supabase の `/auth/v1/verify` を直接踏ませない。**  
+   GET `/verify` はワンタイム消費のため、iOS 長押しプレビュー・Gmail 安全確認・コピー前の先読みでトークンが死に、ユーザー操作ではログインできない。  
+   本番テンプレートは **アプリの callback に `token_hash` を載せる**（アプリがボタン操作後に `verifyOtp` POST で消費する）:
+
+   ```html
+   <h2>こんだて日和</h2>
+   <p>ログイン用のリンクをお送りします。</p>
+   <p>下のボタンを開き、画面の「ログインを完了する」を押すとサービスに入れます。</p>
+   <p><a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email">ログインする</a></p>
+   <p>ボタンが開けないときは、次のリンクをコピーしてブラウザで開いてください。</p>
+   <p>{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email</p>
+   <ul>
+     <li>パスワードの設定は不要です</li>
+     <li>はじめての方も、このリンクからアカウントができます</li>
+     <li>リンクには有効期限があります。開けないときはアプリのログイン画面からもう一度メールを送ってください</li>
+     <li>このメールに心当たりがない場合は、削除して問題ありません</li>
+   </ul>
+   ```
+
+   - `{{ .RedirectTo }}` はクライアントが渡す `emailRedirectTo`（`/auth/callback?flow=…&state=…`）と一致する。  
+     **既に `?` があるため追記は `&token_hash=…` にする**（`?` を二重にしない）。
+   - `{{ .ConfirmationURL }}`（`/auth/v1/verify?...`）は **使わない**。
+4. リンク先が §2 の Site URL / Redirect URLs と矛盾しないことを確認する。
+5. テンプレートだけでは届かない。**次節の Custom SMTP が本番マジックリンクの前提**である。
+6. デプロイ後の確認: メール HTML の href が `https://www.…/auth/callback?flow=…&state=…&token_hash=…&type=email` であること。  
+   `…supabase.co/auth/v1/verify` が残っていたらテンプレ未更新。
 
 ## 2.3 Auth メール / Custom SMTP（本番必須）
 

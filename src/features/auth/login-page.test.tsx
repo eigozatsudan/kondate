@@ -25,6 +25,7 @@ it("explains that first-time users can register on the same screen with Google a
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -50,6 +51,7 @@ it("shows email magic-link form by default without emailLogin query", () => {
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -74,6 +76,7 @@ it("places Google first and renders the complete sent state", async () => {
     }),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -99,6 +102,7 @@ it("shows visible error copy when the callback arrives unbound to a known flow",
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -133,6 +137,7 @@ it.each([
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -154,6 +159,7 @@ it("restores sent context when magic link expired and last email is known (B-I8)
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -186,6 +192,7 @@ it("does not rehydrate sent UI when accountDeleted notice must show", () => {
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -215,6 +222,7 @@ it("shows sessionExpired notice and does not rehydrate sent UI", () => {
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -246,6 +254,7 @@ it("U1-I2 rehydrates magic-link sent UI from sessionStorage after reload", async
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -274,6 +283,7 @@ it("allows retrying Google after switching from a magic link and a failed start"
     }),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -308,6 +318,7 @@ it("uses /welcome for Google and magic link when returnTo is omitted", async () 
     sendMagicLink,
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -337,6 +348,7 @@ it("preserves an explicit safe returnTo for Google and magic link", async () => 
     sendMagicLink,
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -366,6 +378,7 @@ it("C1: drops /login and /auth/callback returnTo for Google and magic link", asy
     sendMagicLink,
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   const { unmount } = render(
@@ -411,6 +424,7 @@ it("C13: discards stale magic-link residual sessionStorage past TTL", () => {
     sendMagicLink: vi.fn(),
     completeCallback: vi.fn(),
     resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
   };
 
   render(
@@ -450,7 +464,8 @@ it("C9: clears magic-link residual sessionStorage when already authenticated", (
       sendMagicLink: vi.fn(),
       completeCallback: vi.fn(),
       resumeFlow: vi.fn(),
-    };
+      confirmMagicLink: vi.fn(),
+  };
 
     render(
       <MemoryRouter initialEntries={["/login"]}>
@@ -492,7 +507,8 @@ it.each([
       sendMagicLink,
       completeCallback: vi.fn(),
       resumeFlow: vi.fn(),
-    };
+      confirmMagicLink: vi.fn(),
+  };
 
     render(
       <MemoryRouter initialEntries={[entry]}>
