@@ -98,9 +98,7 @@ const ensurePrivacyThenGenerate = async (
     });
   }
   await expect(generate).toBeEnabled({ timeout: 15_000 });
-  // 外部 AI 送信直前のみ共有枠を空にする（fixture 入口では呼ばない）
-  const { ensureAiQuotaForGeneration } = await import("../fixtures/reset-global-ai-quota");
-  await ensureAiQuotaForGeneration();
+  // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で test から truncate 禁止）
   await generate.click();
   await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({

@@ -14,6 +14,10 @@ import {
 import { openFirstMemberEditor } from "../fixtures/history";
 import type { Route } from "@playwright/test";
 
+// Spec §7.4: race 系は共有 app 経路・household 変異・route abort を前提とし並列と相性が悪い。
+// ファイル全体を serial にし、workers≥2 でも同一 file 内は 1 worker 直列にする。
+test.describe.configure({ mode: "serial" });
+
 // 献立生成を伴うため既定の30秒では足りない（既存の履歴系specと同じ扱い）。
 test.setTimeout(180_000);
 

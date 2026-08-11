@@ -14,6 +14,8 @@ import type { Locator, Page, Request, Route } from "@playwright/test";
 
 // --- 献立生成の復旧・結果表示E2Eテスト ---
 // 切断復旧、タブ再開、結果画面（/menus/:menuId）の詳細表示、320px幅でのレイアウトを検証する。
+// Spec §7.4: 生成・recovery route mock が密集するため file 全体を serial にする。
+test.describe.configure({ mode: "serial" });
 
 /**
  * welcomeから「家族設定を省略」してideaモードで4質問→人数N→privacy→reviewへ進める。
@@ -102,9 +104,7 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
 async function completeMinimumPlanner(page: Page) {
   // local OpenRouterの固定success fixtureと同じ家族・食事条件に揃え、
   // E2EがAI応答fixtureの内容ではなく復旧flowだけを検証できるようにする。
-  // 外部 AI 送信直前のみ共有枠を空にする（fixture 入口では呼ばない）
-  const { ensureAiQuotaForGeneration } = await import("../fixtures/reset-global-ai-quota");
-  await ensureAiQuotaForGeneration();
+  // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で test から truncate 禁止）
   await page.goto("/settings");
   // moduleの取得が瞬断で欠けるとSPAがmountせず白紙のままになる。個別の
   // labelを30秒待って初めて気付くのではなく、まず画面が描画できたことを
@@ -581,9 +581,7 @@ for (const servings of [1, 20] as const) {
     const appOrigin = new URL(page.url()).origin;
     // sticky: recovery 再送でも idea-servings fixture が外れない（E2E7）
     await setMockScenario(page, `idea-servings-${String(servings)}`);
-    // 外部 AI 送信直前のみ共有枠を空にする
-    const { ensureAiQuotaForGeneration } = await import("../fixtures/reset-global-ai-quota");
-    await ensureAiQuotaForGeneration();
+    // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で test から truncate 禁止）
     const generationResponsePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&

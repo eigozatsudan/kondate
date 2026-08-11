@@ -2,14 +2,17 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e/specs",
-  fullyParallel: false,
+  // Phase 3: UI 中心の並列化。race / 共有 storageState / 生成密集 file は
+  // 各 spec で test.describe.configure({ mode: "serial" }) を付ける。
+  // 定数 2。process.env.CI で workers を分岐しない（調査なしの 1 固定退行を禁止）。
+  fullyParallel: true,
   // ローカルもretryを1回に上げる。browserはnetwork_mode:host経由でViteの
   // 非バンドルmoduleを数百件取得するため、host側のnetwork構成変更で
   // ERR_NETWORK_CHANGEDが起きるとSPAがmountできず白紙のまま落ちる。
   // 環境由来の瞬断1回でsuite全体を落とさないための保険。
   // アプリ race / helper 非決定性を 2 回目 green で隠さないこと（テスト自体を決定論的に保つ）。
   retries: process.env.CI ? 2 : 1,
-  workers: 1,
+  workers: 2,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://127.0.0.1:5173",

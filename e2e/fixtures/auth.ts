@@ -46,8 +46,8 @@ export const test = base.extend<AuthFixtures>({
     await page.goto("/");
     await expect(page).toHaveURL((url) => url.pathname === "/welcome", { timeout: 30_000 });
     await expect(page.getByRole("heading", { name: "どちらから始めますか？" })).toBeVisible();
-    // AI 共有枠の truncate は fixture 入口では行わない。
-    // 外部 AI 送信（generate）直前のみ ensureAiQuotaForGeneration を呼ぶ。
+    // AI 共有枠の truncate は fixture / test から呼ばない（Phase 3: suite/project 境界の shell のみ）。
+    // 並列 workers 下で test/fixture から truncate すると他 worker の予約枠を破壊する。
     await provide(page);
   },
 
@@ -57,7 +57,7 @@ export const test = base.extend<AuthFixtures>({
     // service role は page に渡さない（seed-onboarding 内で .env から読む）。
     const { seedCompletedOnboardingState } = await import("./seed-onboarding");
     await seedCompletedOnboardingState(page);
-    // AI 共有枠の truncate は fixture 入口では行わない（生成直前のみ）。
+    // AI 共有枠の truncate は fixture / test から呼ばない（Phase 3: shell 境界のみ）。
     await provide(page);
   },
 
@@ -69,7 +69,7 @@ export const test = base.extend<AuthFixtures>({
     await page.goto("/welcome");
     await page.getByRole("button", { name: "献立アイデアを考える" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/planner");
-    // AI 共有枠の truncate は fixture 入口では行わない（生成直前のみ）。
+    // AI 共有枠の truncate は fixture / test から呼ばない（Phase 3: shell 境界のみ）。
     await provide(page);
   },
 });

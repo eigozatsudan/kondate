@@ -12,6 +12,9 @@ import {
 import { localRestHeaders } from "../fixtures/local-supabase";
 import { z } from "zod";
 
+// Spec §7.4: 生成・再生成が密集する。global 行ロック residual 下での並列 timeout を避けるため serial。
+test.describe.configure({ mode: "serial" });
+
 // 認証・生成・再生成・再検証を直列で含むため既定 30s では足りない
 // idea 経路は dish + whole の 2 回再生成を含む
 test.setTimeout(240_000);

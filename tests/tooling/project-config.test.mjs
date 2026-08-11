@@ -180,10 +180,14 @@ test("E2E project grepInvert skips mobile-only and desktop-only tags per project
   assert.notEqual(mobileBlock[1], desktopBlock[1], "projects must not share the same grepInvert");
 });
 
-test("E2E uses one worker for the shared local auth stack", async () => {
+test("E2E uses two workers and fullyParallel (Phase 3 constants)", async () => {
   const config = await readFile("playwright.config.ts", "utf8");
-  assert.match(config, /workers: 1/u);
+  // Spec §7.3–7.4: workers は定数 2。調査なしの CI 分岐で 1 に落とす退行を禁止。
+  assert.match(config, /workers: 2/u);
+  assert.match(config, /fullyParallel:\s*true/u);
+  assert.doesNotMatch(config, /workers:\s*1\b/u);
   assert.doesNotMatch(config, /process\.env\.CI \? \{ workers: 1 \}/u);
+  assert.doesNotMatch(config, /process\.env\.CI\s*\?\s*.*workers/u);
 });
 
 test("E2E retains traces video and failure screenshots only on local", async () => {

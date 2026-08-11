@@ -36,9 +36,7 @@ export async function advanceToReviewWithHousehold(page: Page): Promise<void> {
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({ timeout: 15_000 });
-  // 呼び出し側が「献立を作る」を押す直前用。外部 AI 送信前に共有枠だけ空にする。
-  const { ensureAiQuotaForGeneration } = await import("../fixtures/reset-global-ai-quota");
-  await ensureAiQuotaForGeneration();
+  // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で shots から truncate 禁止）
 }
 
 /**

@@ -1,35 +1,17 @@
-import { readFile } from "node:fs/promises";
-import { Client } from "pg";
-import { z } from "zod";
-
 /**
- * E2E 専用: アプリ全体の AI 日次共有枠カウンタだけを空にする。
+ * Phase 3（Spec §7.3）: test / fixture からアプリ全体 AI 日次枠を truncate しない。
  *
- * ローカル既定 GLOBAL_DAILY_AI_LIMIT=20 のまま。1 スイートで 20 件超の
- * 独立生成が走るため、生成直前にカウンタをリセットして実行順依存を防ぐ。
- * 上限値そのもの・ユーザ単位枠は変更しない（新規ユーザで独立）。
+ * 並列 workers 下で fixture や test 本体が共有カウンタを空にすると、
+ * 他 worker が予約済みの枠が消え、枯渇・偽 red / 稀に偽 green になる。
  *
- * fixture 入口では呼ばない。外部 AI 送信（generate）直前のみ。
- * 製品 limit は変えない。
+ * 許可される境界は shell のみ:
+ * - `scripts/reset-e2e-ai-quota.sh`（`scripts/run-e2e.sh` が suite 開始・project 境界で呼ぶ）
+ *
+ * 枯渇回避は `compose.e2e.yaml` の E2E 専用 GLOBAL_DAILY_AI_LIMIT（製品 max）に依存する。
+ * 製品 `compose.yaml` の limit や preflight は変えない。
+ *
+ * 本モジュールは意図的に truncate 実装を持たない。import して呼ばないこと。
+ * fail-closed tooling が e2e ツリー内の旧ヘルパ名と SQL truncate 呼び出し 0 を固定する。
  */
-export async function ensureAiQuotaForGeneration(): Promise<void> {
-  const envText = await readFile("/workspace/.env", "utf8").catch(async () =>
-    readFile(".env", "utf8"),
-  );
-  const password = z
-    .string()
-    .min(1)
-    .parse(/^POSTGRES_PASSWORD=(.+)$/mu.exec(envText)?.[1]?.trim());
-  const client = new Client({
-    connectionString: `postgresql://postgres:${encodeURIComponent(password)}@127.0.0.1:54322/postgres?sslmode=disable`,
-  });
-  await client.connect();
-  try {
-    await client.query("truncate private.ai_global_daily_usage");
-  } finally {
-    await client.end();
-  }
-}
 
-/** @deprecated 互換 alias。新規は ensureAiQuotaForGeneration を使う。 */
-export const resetGlobalAiQuotaForE2e = ensureAiQuotaForGeneration;
+export {};

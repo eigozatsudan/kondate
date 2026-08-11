@@ -10,6 +10,10 @@ import { expect, test } from "../fixtures/session-auth";
 import type { Page } from "@playwright/test";
 import { FLYER_WEEKLY_UI_ENABLED } from "../../shared/contracts/flyer-weekly";
 
+// Spec §7.4: 同一 storageState ユーザを全 test で共有するため serial。
+// 並列だと settings 操作や mock のタイミングが相互に干渉し得る。
+test.describe.configure({ mode: "serial" });
+
 const freeOpenEntitlement = {
   ok: true as const,
   data: {

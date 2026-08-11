@@ -8,6 +8,10 @@ import {
 } from "../fixtures/history";
 import { accessTokenFromPage } from "../fixtures/local-supabase";
 
+// Spec §7.4: Realtime / focus / poll の revalidate signal を独立観測する。
+// 生成 seed と member_allergies 変異が密集するため file 全体を serial にする。
+test.describe.configure({ mode: "serial" });
+
 test.setTimeout(180_000);
 
 test(

@@ -3,7 +3,6 @@ import { z } from "zod";
 import { expect, test as authTest } from "./auth";
 import { confirmAddScopeNotice } from "./household";
 import { accessTokenFromPage, localRestHeaders } from "./local-supabase";
-import { ensureAiQuotaForGeneration } from "./reset-global-ai-quota";
 
 type HistoryFixtures = { historyPage: Page };
 
@@ -167,8 +166,7 @@ export async function setMockScenario(page: Page, scenario: string): Promise<voi
  * 固定 success fixture と整合する条件で献立を1件生成し、menuId を返す。
  */
 export async function seedGeneratedMenu(page: Page): Promise<string> {
-  // スイート後半で GLOBAL 20 に当たらないよう、外部 AI 送信直前に共有枠だけ空にする
-  await ensureAiQuotaForGeneration();
+  // 共有 AI 枠の truncate は suite/project 境界の shell のみ（並列 worker 下で fixture から禁止）
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({
     timeout: 15_000,
@@ -334,9 +332,8 @@ export async function requestWholeRegeneration(
   options: { targetMode?: "household" | "idea" } = {},
 ): Promise<void> {
   const targetMode = options.targetMode ?? "household";
-  // 再生成も外部 AI 送信。呼び出し側 seed の ensure に頼らず直前で共有枠を空にする。
-  await ensureAiQuotaForGeneration();
   // 結果画面の再生成コントロールを使う（履歴詳細と同等の UI）
+  // 共有 AI 枠は suite/project 境界の shell reset に依存（並列時 fixture から truncate 禁止）
   await openMenuResultForRegeneration(page, menuId, targetMode);
   await expect(page.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled({
     timeout: 15_000,
@@ -356,7 +353,6 @@ export async function requestDishRegeneration(
   options: { targetMode?: "household" | "idea" } = {},
 ): Promise<void> {
   const targetMode = options.targetMode ?? "household";
-  await ensureAiQuotaForGeneration();
   await openMenuResultForRegeneration(page, menuId, targetMode);
   await expect(page.getByRole("button", { name: "この一品だけ別案にする" })).toBeEnabled({
     timeout: 15_000,
@@ -371,8 +367,7 @@ export async function requestDishRegeneration(
  * mock scenario は呼び出し側で setMockScenario する。
  */
 export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2): Promise<string> {
-  // 外部 AI 送信直前のみ共有枠を空にする（fixture 入口では呼ばない）
-  await ensureAiQuotaForGeneration();
+  // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で fixture から truncate 禁止）
   const waitDraftSave = () =>
     page.waitForResponse(
       (response) =>
