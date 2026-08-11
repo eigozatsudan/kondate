@@ -75,13 +75,13 @@ describe("assertDatabaseUrl", () => {
 });
 
 describe("buildPoolSslOptions", () => {
-  it("sets rejectUnauthorized true for production sslmode", () => {
+  it("sets rejectUnauthorized false for production pooler TLS (maintenance-compatible)", () => {
     const ref = "abcdefghij1234567890";
     const opts = buildPoolSslOptions(
       `postgresql://kondate_ops_readonly.${ref}:x@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require`,
       false,
     );
-    expect(opts.ssl).toEqual({ rejectUnauthorized: true });
+    expect(opts.ssl).toEqual({ rejectUnauthorized: false });
     expect(opts.connectionString).not.toMatch(/sslmode=/);
   });
 

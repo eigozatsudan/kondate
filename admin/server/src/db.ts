@@ -2,7 +2,8 @@
  * ops readonly 用 pg プールと URL 検証。
  * - ユーザー名は exact: kondate_ops_readonly または kondate_ops_readonly.<20-char-ref>
  * - port 6543（transaction pooler）拒否、postgres ロール拒否
- * - 本番相当は sslmode require|verify-ca|verify-full + rejectUnauthorized: true
+ * - 本番相当は sslmode require|verify-ca|verify-full（env 検証）+ TLS は
+ *   maintenance-db と同様 rejectUnauthorized: false（pooler 自己署名連鎖）
  * - 業務 SQL は withReadOnly 経由のみ（pool.query 直叩き禁止）
  */
 import pg from "pg";
@@ -123,16 +124,15 @@ export function assertDatabaseUrl(
 
 /**
  * node-pg 用接続オプション。
- * 本番相当: TLS 必須かつ rejectUnauthorized: true。
+ * 本番相当: URL の sslmode で検証済みのうえ、connectionString から sslmode を外し
+ * `ssl: { rejectUnauthorized: false }` を明示する（maintenance-db と同型。
+ * sslmode=require を残すと pg が verify-full 相当になり pooler で証明書連鎖エラーになる）。
  * ローカル insecure: ssl オフ。
- *
- * 注意: connectionString 上の sslmode=require が ssl オプションを上書きし得るため、
- * 本番経路では sslmode クエリを外してから明示 ssl を渡す。
  */
 export function buildPoolSslOptions(
   connectionString: string,
   allowInsecureLocalDb: boolean,
-): { connectionString: string; ssl?: { rejectUnauthorized: boolean } | false } {
+): { connectionString: string; ssl?: { rejectUnauthorized: false } } {
   const parsed = assertDatabaseUrl(connectionString, { allowInsecureLocalDb });
   const sslmode = parsed.searchParams.get("sslmode");
 
@@ -148,8 +148,19 @@ export function buildPoolSslOptions(
   }
   return {
     connectionString: next,
-    ssl: { rejectUnauthorized: true },
+    ssl: { rejectUnauthorized: false },
   };
+}
+
+/** session_user が ops ロール（bare または pooler の role.ref）か */
+export function isOpsReadonlySessionUser(sessionUser: string): boolean {
+  if (sessionUser === LOCAL_LOGIN_USER) {
+    return true;
+  }
+  if (sessionUser.startsWith(`${LOCAL_LOGIN_USER}.`)) {
+    return PROJECT_REF_PATTERN.test(sessionUser.slice(LOCAL_LOGIN_USER.length + 1));
+  }
+  return false;
 }
 
 export function createPool(config: AdminConfig): pg.Pool {
@@ -206,7 +217,7 @@ export async function runStartupDbChecks(pool: pg.Pool): Promise<void> {
       current_user: string;
     }>("select session_user::text as session_user, current_user::text as current_user");
     const row = userRes.rows[0];
-    if (!row || row.session_user !== LOCAL_LOGIN_USER) {
+    if (!row || !isOpsReadonlySessionUser(row.session_user)) {
       databaseStartupFailed();
     }
 
