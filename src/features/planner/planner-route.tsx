@@ -31,6 +31,7 @@ import {
 } from "@/features/generation/model/pending-generation";
 import { reconcileTerminalPendingGeneration } from "@/features/generation/model/reconcile-terminal-pending";
 import { savePendingGenerationMeta } from "@/features/generation/model/pending-generation-meta";
+import { useResumablePendingAfterReconcile } from "@/features/generation/hooks/use-resumable-pending-after-reconcile";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import { historyKeys, listHistoryGroups } from "@/features/history/api/history-api";
 import { getCurrentPrivacyConsent, hasCurrentPrivacyConsent } from "@/features/privacy/privacy-api";
@@ -353,6 +354,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const client = getBrowserSupabaseClient();
+  // G-R4: home/review の再開 UI は status reconcile 後の kept のみ（localStorage 非 null だけでは出さない）
+  const { hasResumablePending, pendingDisplayReady } = useResumablePendingAfterReconcile(userId);
   const draftQuery = useQuery({
     queryKey: plannerKeys.draft(userId ?? "missing"),
     queryFn: () => getPlannerDraft(client, userId ?? ""),
@@ -483,7 +486,16 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const valueForResumeRef = useRef(emptyDraft);
 
   useEffect(() => {
-    if (draftQuery.data === undefined || safetyQuery.data === undefined || initialized) return;
+    // G-R4: sticky pending の terminal/in-flight 照合が終わるまで init しない
+    // （照合前に home「作成中」や draft 進捗での wizard を確定させない）
+    if (
+      draftQuery.data === undefined ||
+      safetyQuery.data === undefined ||
+      initialized ||
+      !pendingDisplayReady
+    ) {
+      return;
+    }
     const sanitized = sanitizeDraft(draftQuery.data, safetyQuery.data.eligibleMemberIds);
     setValue(sanitized);
     valueForResumeRef.current = sanitized;
@@ -500,18 +512,25 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     }
     // ホーム / ウィザードの初期分岐:
     // 1) ?resume= は深リンク契約を最優先してウィザード（privacy 往復など）
-    // 2) 生成中断があるときはホームを優先し、HomeGenerateCard の再開 CTA を最上位に出す
+    // 2) 進行中 pending（G-R4: reconcile kept）があるときはホームを優先し再開 CTA を最上位に
     //    （設計意図: 生成が中断されている場合はそれが最優先で目に入ること）
     //    完全回答済み下書きは firstIncomplete が必ず "review" になるため、pending を
     //    見ずに hasDraftProgress だけで分岐するとホームの再開導線に永久に届かない。
-    // 3) pending 無しで下書き進捗があるときだけウィザードへ自動復帰
+    // 3) 再開対象 pending 無しで下書き進捗があるときだけウィザードへ自動復帰
+    //    （terminal sticky は G-R1 clear 後ここに落ち、新規作成可能な wizard へ）
     const hasResumeQuery = searchParams.get("resume") !== null;
     const hasDraftProgress = firstIncomplete !== "meal";
-    const hasResumablePendingOnInit =
-      userId !== undefined && readPendingGeneration(userId, new Date()) !== null;
-    setWizardOpen(hasResumeQuery || (hasDraftProgress && !hasResumablePendingOnInit));
+    setWizardOpen(hasResumeQuery || (hasDraftProgress && !hasResumablePending));
     setInitialized(true);
-  }, [draftQuery.data, initialized, safetyQuery.data, searchParams, userId]);
+  }, [
+    draftQuery.data,
+    hasResumablePending,
+    initialized,
+    pendingDisplayReady,
+    safetyQuery.data,
+    searchParams,
+    userId,
+  ]);
 
   // value 更新を resume 用 ref へ同期（P6 effect は searchParams 変化時だけ読む）
   useEffect(() => {
@@ -1113,8 +1132,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // fatal(error かつ data 無し) と pending を通過済み → data は利用可能（型も non-null）
   const safetyData = safetyQuery.data;
   const pantryData = pantryQuery.data;
-  const hasResumablePending =
-    userId !== undefined && readPendingGeneration(userId, new Date()) !== null;
+  // hasResumablePending は useResumablePendingAfterReconcile（G-R4: kept のみ）
   // 有料プラン方針が固まるまでチラシ入口は非表示（契約フラグで再開可能）
   const flyerFooter = FLYER_WEEKLY_UI_ENABLED ? (
     <FlyerWeeklyPanel
@@ -1248,7 +1266,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             ? usage.data.shortWindow.retryAt
             : null
         }
-        // 進行中 pending があれば「献立を作る」は再開のみ。確認画面で新条件破棄を押下前に示す
+        // G-R4: reconcile kept の進行中のみ「再開のみ」注意。terminal は出さない（clear→新規可）
         hasResumablePendingGeneration={hasResumablePending}
         autosaveState={autosave.state}
         onRetryAutosave={() => {

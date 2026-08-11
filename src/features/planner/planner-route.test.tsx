@@ -1624,6 +1624,7 @@ describe("PlannerRoutePage", () => {
   it("生成中断（pending）があるときは下書きが揃っていてもホームを優先し再開 CTA を出す", async () => {
     // 完全回答済み下書きは firstIncomplete === "review" なので、pending を見ないと
     // 常にウィザードへ落ち、HomeGenerateCard の hasResumablePending 分岐に届かない。
+    // G-R4: status 不明（既定 reject）→ keep → 再開 UI（G1）
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
       commandVersion: "generation-command.v3",
@@ -1634,7 +1635,8 @@ describe("PlannerRoutePage", () => {
     const user = userEvent.setup();
     render(<PlannerRoutePage />);
 
-    expect(screen.getByText(/作成中の献立があります/u)).toBeInTheDocument();
+    // reconcile（status GET）完了後にホーム再開 CTA
+    expect(await screen.findByText(/作成中の献立があります/u)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "作成中の献立を続ける" })).toBeInTheDocument();
     // ウィザード（mock の attempt key 等）はまだ出さない
     expect(screen.queryByLabelText("attempt key")).not.toBeInTheDocument();
@@ -1643,11 +1645,54 @@ describe("PlannerRoutePage", () => {
     expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
     // ホーム再開は pending を触らず generation へ渡す（C2 と同経路）
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+    // G-R4 display reconcile の GET 失敗 keep では clear しない（G1）
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
   });
 
-  it("?resume= 付きは pending があってもウィザードを優先する（不変契約 4b）", () => {
+  it("G-R4: terminal pending ではホームに作成中コピーを出さず下書き進捗なら wizard へ", async () => {
+    // サーバ failed 済み sticky: G-R1 clear → 再開専用 UI を出さない（新規作成可と一致）
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: { idempotencyKey: "existing" },
+    });
+    getGenerationStatusMock.mockResolvedValue({
+      status: "failed",
+      idempotencyKey: "existing",
+      requestId: "50000000-0000-4000-8000-000000000099",
+      completedAt: "2026-07-20T05:01:00.000Z",
+      error: {
+        code: "generation_timeout",
+        message: "作成に時間がかかりました。",
+        retryable: true,
+      },
+      quota: {
+        consumed: false,
+        remaining: 2,
+        userDailyLimit: 3,
+        limitKind: "user",
+        retryAt: null,
+      },
+    });
+    // clear 後は sticky 無しとして扱う（実 storage と同型）
+    pendingGenerationMock.clearPendingGeneration.mockImplementation(() => {
+      pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+    });
+    render(<PlannerRoutePage />);
+
+    // terminal clear 後は完全回答済み下書き → wizard（ホーム「作成中」は出さない）
+    expect(await screen.findByLabelText("wizard step")).toHaveTextContent("review");
+    expect(screen.queryByText(/作成中の献立があります/u)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "作成中の献立を続ける" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
+    expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalled();
+  });
+
+  it("?resume= 付きは pending があってもウィザードを優先する（不変契約 4b）", async () => {
     queryState.search = "resume=review";
+    // G-R4: status 不明 keep → review でも再開注意 true（processing 相当）
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
       commandVersion: "generation-command.v3",
@@ -1657,8 +1702,8 @@ describe("PlannerRoutePage", () => {
     });
     render(<PlannerRoutePage />);
     // ホーム再開 CTA は出さず、確認 step の wizard を出す
+    expect(await screen.findByLabelText("wizard step")).toHaveTextContent("review");
     expect(screen.queryByRole("button", { name: "作成中の献立を続ける" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
   });
 
@@ -1679,6 +1724,7 @@ describe("PlannerRoutePage", () => {
   });
 
   it("既存 pending がある状態でウィザードから生成すると上書きせず再開し attempt を回転しない", async () => {
+    // G-R4: GET 失敗 keep → ホーム再開導線。生成押下も再開のみ（新 pending を書かない）
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
       commandVersion: "generation-command.v3",
@@ -1689,7 +1735,7 @@ describe("PlannerRoutePage", () => {
     const user = userEvent.setup();
     render(<PlannerRoutePage />);
     // pending 優先でホーム着地 → 主 CTA からウィザードへ入る経路を固定する
-    await user.click(screen.getByRole("button", { name: "今日の献立をつくる" }));
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     // P2: 確認画面向けに pending 再開注意フラグを渡す（新条件破棄の押下前明示）
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
     const attemptKey = screen.getByLabelText("attempt key").textContent;
