@@ -237,6 +237,24 @@ npm exec --offline supabase -- db push --db-url "$SUPABASE_DB_URL" --include-all
 
 接続コマンドと URL は出力しない。
 
+## 6.1 運用閲覧ロール `kondate_ops_readonly`（ローカル admin コンソール）
+
+ローカル専用運用 UI（`compose.admin.yaml`）が本番/staging を **SELECT のみ**で読むための LOGIN。  
+maintenance（cleanup RPC 専用）とは **別ロール**。executor 二段は使わない。
+
+1. migration `20260811180000_ops_readonly_role.sql` を適用する（NOLOGIN + GRANT + `user_feedback` RLS SELECT policy + ops 索引）。
+2. 管理者 `psql` で履歴を無効化し、次を実行する（パスワードは stdin / 環境経由。CLI 引数禁止）:
+   - `ALTER ROLE kondate_ops_readonly WITH LOGIN PASSWORD … NOINHERIT CONNECTION LIMIT 4`
+   - `statement_timeout = 15s` と `default_transaction_read_only = on` が残っていることを確認
+3. Session pooler URL を組み立て `.env.admin` のみに保存する（リポジトリ・チケット・ログ禁止）:
+   - `postgresql://kondate_ops_readonly.<project-ref>:<password>@…pooler…:5432/postgres?sslmode=require`
+   - username は **exact** `kondate_ops_readonly` または `kondate_ops_readonly.<20-char-ref>` のみ
+   - port `6543` / transaction mode 禁止。管理者 `postgres` URL 禁止
+4. ローカル Compose では `./scripts/provision-ops-readonly-role.sh`（`OPS_READONLY_DB_PASSWORD`）で LOGIN 化できる。
+5. admin プロセス起動時 canary（`session_user`、READ ONLY、INSERT privilege 無し）が通ることを確認する。
+
+SELECT 対象は migration で固定した 6 表のみ。`auth` USAGE や書き込み RPC は付与しない。
+
 ## 7. ステージング検証と型ドリフト
 
 1. 本番ではなくステージングで DB スイートを実行する（30 日境界、4 カウント readback、実 20 秒キャンセル / ロールバック統合テストを含む）。
