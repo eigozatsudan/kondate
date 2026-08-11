@@ -118,3 +118,40 @@ wrapperはローカルstackを停止してから、vendor更新だけrootで実�
 repository内の `./scripts/refresh-supabase.sh` 実体パスから実行してください。portableな実体パス解決を保証できないため、symbolic link経由の起動はサポートしません。
 
 wrapper完了後はPostgresタグの整合性テストを実行してください。PG15データの移行とロールバックはサポートしません。
+
+## 運用管理コンソール（ローカル専用・閲覧のみ）
+
+本番（または staging）Postgres を **SELECT 専用ロール** `kondate_ops_readonly` で読む内部 UI です。本編 `compose.yaml` とは分離し、`compose.admin.yaml` のみで起動します。
+
+### 禁止事項・前提
+
+- **共有 PC では起動しない**（アプリログインなし。Host allowlist + loopback + 推奨 token のみ）。
+- `postgres` スーパーユーザ URL では起動しません。必ず `kondate_ops_readonly` の Session pooler URL（port **5432**、`sslmode=require` 等）を使う。
+- `.env.admin` にだけ秘密を置く（git 管理外）。`VITE_*` に DB URL を載せない。
+
+### 準備
+
+1. migration `20260811180000_ops_readonly_role.sql` を対象 DB に適用済みであること。
+2. ロールを LOGIN 化しパスワードを設定（ローカルは `./scripts/provision-ops-readonly-role.sh`、本番は deploy 文書参照）。
+3. 接続 URL 例:
+   - direct: `postgresql://kondate_ops_readonly:[password]@db.[ref].supabase.co:5432/postgres?sslmode=require`
+   - session pooler: `postgresql://kondate_ops_readonly.[20-char-ref]:[password]@….pooler.supabase.com:5432/postgres?sslmode=require`
+4. `.env.admin.example` をコピーして `.env.admin` を作成し `ADMIN_DATABASE_URL` 等を埋める。`ADMIN_LOCAL_TOKEN` 推奨。
+
+### 起動
+
+```bash
+cp .env.admin.example .env.admin
+# ADMIN_DATABASE_URL を readonly URL で設定
+docker compose -f compose.admin.yaml up --build
+# ブラウザ: http://127.0.0.1:5193
+```
+
+ports は **`127.0.0.1:5193:5193` 固定**（LAN 公開しない）。ビルドのみなら DB URL 無しでも `docker compose -f compose.admin.yaml build` 可能。
+
+### 検証（admin パッケージ内）
+
+```bash
+docker run --rm -v "$PWD/admin:/admin" -w /admin node:24-bookworm-slim npm test
+docker run --rm -v "$PWD/admin:/admin" -w /admin node:24-bookworm-slim npm run build
+```
