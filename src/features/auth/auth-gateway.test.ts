@@ -95,6 +95,8 @@ function authClientMock(overrides?: {
   signInWithPasswordResult?: { data: unknown; error: AuthError | null };
   /** C5: exchange 失敗時の sibling session 検査用 */
   getSessionResult?: { data: { session: unknown }; error: AuthError | null };
+  /** C-R6: discard 後 baseline 復元 */
+  setSessionResult?: { data: { session: unknown }; error: AuthError | null };
 }) {
   const oauthResult = overrides?.oauthResult ?? { data: null, error: null };
   const otpResult = overrides?.otpResult ?? { data: null, error: null };
@@ -108,6 +110,10 @@ function authClientMock(overrides?: {
     error: null,
   };
   const verifyOtpResult = overrides?.verifyOtpResult ?? { data: null, error: null };
+  const setSessionResult = overrides?.setSessionResult ?? {
+    data: { session: null },
+    error: null,
+  };
   return {
     auth: {
       signInWithOAuth: vi.fn().mockResolvedValue(oauthResult),
@@ -116,6 +122,7 @@ function authClientMock(overrides?: {
       verifyOtp: vi.fn().mockResolvedValue(verifyOtpResult),
       signInWithPassword: vi.fn().mockResolvedValue(signInWithPasswordResult),
       getSession: vi.fn().mockResolvedValue(getSessionResult),
+      setSession: vi.fn().mockResolvedValue(setSessionResult),
     },
   };
 }
@@ -2210,4 +2217,187 @@ it("C4/C5: loser exchange recovers complete when getSession lags then succeeds",
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("C-R6: post-exchange sibling clear restores baseline session and discards complete", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const pinSession = {
+    access_token: "pin-access",
+    refresh_token: "pin-refresh",
+    expires_in: 3600,
+    token_type: "bearer",
+    user: { id: "user-pin" },
+  };
+  let releaseExchange: (() => void) | undefined;
+  const exchangeGate = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-loser", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock({
+    getSessionResult: {
+      data: { session: pinSession },
+      error: null,
+    },
+  });
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(async () => {
+    await exchangeGate;
+    return { data: { session: { user: { id: "user-loser" } } }, error: null };
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flowA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+  const flowBId = "20000000-0000-4000-8000-0000000000c6";
+  storage.setItem(
+    `kondate.auth.flow.${flowBId}`,
+    JSON.stringify({
+      id: flowBId,
+      secret: "C".repeat(43),
+      state: "D".repeat(43),
+      origin: "http://127.0.0.1:5173",
+      returnTo: "/planner",
+      sessionExchange: "supabase",
+      startedAt: new Date().toISOString(),
+    }),
+  );
+
+  const pending = gateway.resumeFlow(flowA.id);
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.exchangeCodeForSession.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalled();
+  // exchange 中に sibling B complete → A の storage を clear
+  publishAuthContinuationCompletion({ flowId: flowBId, returnTo: "/planner" }, storage);
+  expect(readAuthFlow(flowA.id, storage)).toBeNull();
+
+  releaseExchange?.();
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flowA.id,
+    returnTo: "/onboarding",
+  });
+  // complete bus に A を載せない + baseline pin session へ setSession 復元
+  expect(client.auth.setSession).toHaveBeenCalledWith({
+    access_token: "pin-access",
+    refresh_token: "pin-refresh",
+  });
+});
+
+/** C-R6 テスト用: sibling clear と同型に flow 行だけ落とす（completion は触らない） */
+function clearAuthFlowForTest(flowId: string, storage: Storage): void {
+  storage.removeItem(`kondate.auth.flow.${flowId}`);
+}
+
+it("C-R6: token_hash post-verify sibling clear discards complete (no publish)", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  let releaseVerify: (() => void) | undefined;
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const client = authClientMock({
+    getSessionResult: {
+      data: {
+        session: {
+          access_token: "pin-access",
+          refresh_token: "pin-refresh",
+          user: { id: "user-pin" },
+        },
+      },
+      error: null,
+    },
+  });
+  client.auth.verifyOtp = vi.fn().mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        releaseVerify = () =>
+          resolve({ data: { session: { user: { id: "user-loser" } } }, error: null });
+      }),
+  );
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock({ deposit }),
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "c".repeat(40);
+
+  const pending = gateway.confirmMagicLink({
+    flowId: flow.id,
+    state: flow.state,
+    tokenHash,
+    otpType: "email",
+  });
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.verifyOtp.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(client.auth.verifyOtp).toHaveBeenCalled();
+  // verify 中に sibling clear
+  clearAuthFlowForTest(flow.id, storage);
+
+  releaseVerify?.();
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(client.auth.setSession).toHaveBeenCalledWith({
+    access_token: "pin-access",
+    refresh_token: "pin-refresh",
+  });
+});
+
+it("C-R6: token_hash pre-verify discard skips verifyOtp after sibling clear", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock({ deposit }),
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "d".repeat(40);
+
+  // lease 確認遅延の途中で clear し、verifyOtp 前 discard を踏む
+  const pending = gateway.confirmMagicLink({
+    flowId: flow.id,
+    state: flow.state,
+    tokenHash,
+    otpType: "email",
+  });
+  // deposit + establish 入口まで進めてから clear（readAuthFlow 成功後）
+  for (let i = 0; i < 30; i += 1) await Promise.resolve();
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 10);
+  });
+  clearAuthFlowForTest(flow.id, storage);
+  await flushResumeUntilExchange();
+
+  const result = await pending;
+  // pre-verify discard → awaiting（入口で flow が消えていたら unbound だが、遅延中 clear なら awaiting）
+  expect(result.kind === "awaiting_completion" || result.kind === "error").toBe(true);
+  if (result.kind === "awaiting_completion") {
+    expect(result).toEqual({
+      kind: "awaiting_completion",
+      flowId: flow.id,
+      returnTo: "/onboarding",
+    });
+  }
+  expect(client.auth.verifyOtp).not.toHaveBeenCalled();
 });

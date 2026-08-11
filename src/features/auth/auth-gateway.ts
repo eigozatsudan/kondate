@@ -350,9 +350,13 @@ function isExpired(error: AuthError | null, url: URL): boolean {
  * - absent: 未ログイン
  * - present: 既に session あり（キーは userId:access_token）
  * - unknown: getSession 失敗 → session 経路では complete しない（completion bus のみ）
+ *
+ * C-R6: present 時は access/refresh を保持し、exchange 後 discard で pin 相当へ setSession 復元する。
  */
 type SessionProbeBaseline =
-  { kind: "absent" } | { kind: "present"; key: string } | { kind: "unknown" };
+  | { kind: "absent" }
+  | { kind: "present"; key: string; accessToken: string; refreshToken: string }
+  | { kind: "unknown" };
 
 /** loser probe 用。token 変化 or 新規出現だけ sibling 成功とみなす。 */
 function sessionProbeKey(
@@ -370,10 +374,41 @@ async function captureSessionProbeBaseline(
 ): Promise<SessionProbeBaseline> {
   try {
     const sessionResult = await client.auth.getSession();
-    const key = sessionProbeKey(sessionResult.data.session);
-    return key === null ? { kind: "absent" } : { kind: "present", key };
+    const session = sessionResult.data.session;
+    const key = sessionProbeKey(session);
+    if (key === null || session === null) return { kind: "absent" };
+    const accessToken = typeof session.access_token === "string" ? session.access_token : "";
+    const refreshToken = typeof session.refresh_token === "string" ? session.refresh_token : "";
+    return { kind: "present", key, accessToken, refreshToken };
   } catch {
     return { kind: "unknown" };
+  }
+}
+
+/**
+ * C-R6: exchange 成功後に sibling clear で complete を discard するとき、
+ * 置換済み client/storage session を baseline（exchange 前 = pin 相当）へ best-effort 復元する。
+ *
+ * - baseline present + token あり → setSession 復元（AuthProvider pin と協調）
+ * - absent / unknown / token 不足 / setSession 失敗 → **明示 logout はしない**
+ *   （同タブで sibling 勝者が既に pin 済みの場合、signOut が勝者を壊し得るため restore 優先）
+ *   AuthProvider pin の setSession 復元に委ねる
+ */
+async function restoreSessionAfterDiscardedExchange(
+  client: BrowserSupabaseClient,
+  baseline: SessionProbeBaseline,
+): Promise<void> {
+  if (baseline.kind !== "present") return;
+  if (baseline.accessToken.length === 0 || baseline.refreshToken.length === 0) return;
+  const setSession = client.auth.setSession;
+  if (typeof setSession !== "function") return;
+  try {
+    await setSession.call(client.auth, {
+      access_token: baseline.accessToken,
+      refresh_token: baseline.refreshToken,
+    });
+  } catch {
+    // 復元失敗は AuthProvider pin に委ねる（fail-open on storage thrash）
   }
 }
 
@@ -1096,9 +1131,11 @@ export function createAuthGateway(
       const safeReturnTo = sanitizeLoginReturnPath(claimedCode.returnTo);
       // C-R1: exchange 後も sibling が先に publish して当該 flow を消していたら
       // 自 complete を bus に載せない（navigate/onComplete の loser 適用を抑止）。
-      // session は既に置換済みになり得るが、C2 pin が React を守り storage は次の restore に委ねる。
+      // C-R6: client/storage session は既に loser に置換済みになり得る → baseline へ best-effort 復元
+      // （AuthProvider pin と協調。baseline 無しは pin 側 restore に委ね、signOut は勝者破壊を避ける）。
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         clearPendingAuthDeposit(flow.id, storage);
+        await restoreSessionAfterDiscardedExchange(client, sessionBaseline);
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       // C1 / C10: secret 消去は publishAuthContinuationCompletion（setItem 成功後の clear）に一本化。
@@ -1197,6 +1234,7 @@ export function createAuthGateway(
   /**
    * 同一ブラウザ confirmMagicLink 用: claim を経ず token_hash を verifyOtp して session を立てる。
    * resumeFlow と同じ exchange lease / completion publish 契約。
+   * C-R6: runResumeFlow と同型の sibling-clear discard 再確認（pre/post verifyOtp）と baseline 復元。
    */
   async function establishSessionFromTokenHash(
     flowId: string,
@@ -1204,6 +1242,10 @@ export function createAuthGateway(
   ): Promise<AuthResumeResult> {
     const flow = readAuthFlow(flowId, storage);
     if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+    // C3: dismiss 済みは confirm 経路でも silent complete しない
+    if (isAuthFlowUserDismissed(flow.id, storage)) {
+      return { kind: "error", code: "oauth_cancelled", returnTo: flow.returnTo, flowId: flow.id };
+    }
     // C-R4: completion short-circuit も live session 必須（resumeFlow と同型）
     const existingCompletion = readAuthContinuationCompletion(flow.id, storage);
     if (existingCompletion !== null) {
@@ -1229,6 +1271,10 @@ export function createAuthGateway(
     let exchangeStarted = false;
     let sessionBaseline: SessionProbeBaseline = { kind: "unknown" };
     try {
+      // C-R6: lease 前に sibling clear 済みなら verifyOtp しない
+      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
       if (
         !(await tryAcquireAuthContinuationExchangeInFlight(
           flow.id,
@@ -1261,7 +1307,15 @@ export function createAuthGateway(
         { checkSession: false },
       );
       if (preExchangeDone !== null) return preExchangeDone;
+      // C-R6: sibling clear 後は verifyOtp しない（結果適用 discard / コード消費を避ける）
+      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
       sessionBaseline = await captureSessionProbeBaseline(client);
+      // baseline await 後の最終 discard（C-R6 / runResumeFlow と同型）
+      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
       exchangeStarted = true;
       const { error } = await client.auth.verifyOtp({
         token_hash: tokenHash,
@@ -1273,6 +1327,12 @@ export function createAuthGateway(
           return { kind: "expired", flowId: flow.id, returnTo: flow.returnTo };
         }
         throw new Error("provider exchange failed");
+      }
+      // C-R6: verify 後 sibling clear 済みなら complete を publish せず baseline へ復元
+      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        clearPendingAuthDeposit(flow.id, storage);
+        await restoreSessionAfterDiscardedExchange(client, sessionBaseline);
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       const safeReturnTo = sanitizeLoginReturnPath(flow.returnTo);
       try {

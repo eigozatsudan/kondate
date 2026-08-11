@@ -97,6 +97,44 @@ const userDismissedPrefix = `${ownedAuthStoragePrefixes[1]}.flow-user-dismissed.
  * secret は焼かない（C5 DoS ロック維持）。他タブは storage 印または TTL に依存。
  */
 const dismissedFlowIdsMemory = new Set<string>();
+/**
+ * C-R8: storage setItem が失敗しても、**既に開いている他タブ**へ dismiss を best-effort 伝播する。
+ * sessionStorage は tab group 非共有で弱い。BroadcastChannel は open tabs のみ（後から開いたタブは
+ * storage 成功または continuation TTL に依存 — design residual）。
+ */
+const AUTH_FLOW_DISMISS_BROADCAST_CHANNEL = "kondate.auth.flow-user-dismissed";
+let dismissBroadcastListenerStarted = false;
+
+function ensureAuthFlowDismissBroadcastListener(): void {
+  if (dismissBroadcastListenerStarted) return;
+  if (typeof BroadcastChannel === "undefined") return;
+  dismissBroadcastListenerStarted = true;
+  try {
+    const channel = new BroadcastChannel(AUTH_FLOW_DISMISS_BROADCAST_CHANNEL);
+    channel.onmessage = (event: MessageEvent) => {
+      const data: unknown = event.data;
+      if (typeof data !== "object" || data === null) return;
+      if (!("flowId" in data)) return;
+      const flowId: unknown = Reflect.get(data, "flowId");
+      if (typeof flowId !== "string" || flowId === "") return;
+      dismissedFlowIdsMemory.add(flowId);
+    };
+  } catch {
+    // BroadcastChannel 不可環境は memory + storage のみ
+  }
+}
+
+function broadcastAuthFlowUserDismissed(flowId: string): void {
+  if (typeof BroadcastChannel === "undefined") return;
+  try {
+    const channel = new BroadcastChannel(AUTH_FLOW_DISMISS_BROADCAST_CHANNEL);
+    channel.postMessage({ flowId });
+    channel.close();
+  } catch {
+    // best-effort（受信側 listener 未起動・環境非対応は TTL に収束）
+  }
+}
+
 const defaultAuthContinuationTtlMs = 300_000;
 /**
  * C6: deposit API（`auth-continuation-deposit` authorizationCodeSchema.max(512)）と揃える。
@@ -556,17 +594,20 @@ function clearAuthFlowClockState(flowId: string, storage: Storage): void {
  * C3: cancel / 期限切れ UI 後のユーザー明示 dismiss。
  * secret は残すが completeCallback / residual recovery は当該 flow を拾わない。
  * C-R3: setItem 失敗でも memory 印で同一ページの遅延 success を拒否する。
+ * C-R8: BroadcastChannel で open tabs へ memory 印を best-effort 伝播（storage 全滅時の cross-tab 窓を縮める）。
  */
 export function markAuthFlowUserDismissed(
   flowId: string,
   storage: Storage = window.localStorage,
 ): void {
   if (flowId === "") return;
+  ensureAuthFlowDismissBroadcastListener();
   dismissedFlowIdsMemory.add(flowId);
+  broadcastAuthFlowUserDismissed(flowId);
   try {
     storage.setItem(`${userDismissedPrefix}${flowId}`, "1");
   } catch {
-    // storage 障害: memory 印で complete/resume を拒否（TTL / 明示 logout も併用）
+    // storage 障害: memory + BroadcastChannel で complete/resume を拒否（TTL / 明示 logout も併用）
   }
 }
 
@@ -576,6 +617,8 @@ export function isAuthFlowUserDismissed(
   storage: Storage = window.localStorage,
 ): boolean {
   if (flowId === "") return false;
+  // 受信側タブも complete/resume 前に listener を立てる（C-R8）
+  ensureAuthFlowDismissBroadcastListener();
   // C-R3: memory を優先（setItem 失敗・getItem 失敗でも同一タブでは dismiss 扱い）
   if (dismissedFlowIdsMemory.has(flowId)) return true;
   try {
@@ -586,9 +629,11 @@ export function isAuthFlowUserDismissed(
   }
 }
 
-/** テスト専用: page-lifetime dismiss memory を隔離する */
+/** テスト専用: page-lifetime dismiss memory / BroadcastChannel listener 起動フラグを隔離する */
 export function resetAuthFlowUserDismissedMemoryForTests(): void {
   dismissedFlowIdsMemory.clear();
+  // 次の mark/isAuth で現在の BroadcastChannel 実装に再接続できるようにする（C-R8 テスト用）
+  dismissBroadcastListenerStarted = false;
 }
 
 /**

@@ -262,6 +262,8 @@ export function AuthProvider({
         } else if (nextSession.user.id !== guard.pinnedUserId) {
           // 後着 residual / multi-tab callback 等による無言差し替えを拒否（C-R1 / C2）
           // C-R2: 同一 user の pin token だけを restore。cooldown/上限で multi-tab thrash を抑える。
+          // C-R7: restore 見送り（cap/cooldown）や setSession 失敗時は sessionProbeDegraded を立て、
+          // React pin と共有 storage session の一時乖離を UI に最小通知する（タブ横断 pin 権威は非導入）。
           const pinned = guard.pinnedSession;
           const restore = client.auth.setSession;
           if (
@@ -270,18 +272,29 @@ export function AuthProvider({
             typeof pinned.access_token === "string" &&
             typeof pinned.refresh_token === "string" &&
             pinned.access_token.length > 0 &&
-            pinned.refresh_token.length > 0 &&
-            shouldAttemptPinSessionRestore(guard, Date.now())
+            pinned.refresh_token.length > 0
           ) {
-            // Supabase 内部 session も B に置換済みのことがあるため、勝者 token を best-effort で戻す
-            void restore
-              .call(client.auth, {
-                access_token: pinned.access_token,
-                refresh_token: pinned.refresh_token,
-              })
-              .catch(() => {
-                // 復元失敗でも React 状態は pin 維持（API は次の refresh で再同期を試みる）
-              });
+            if (shouldAttemptPinSessionRestore(guard, Date.now())) {
+              // Supabase 内部 session も B に置換済みのことがあるため、勝者 token を best-effort で戻す
+              void restore
+                .call(client.auth, {
+                  access_token: pinned.access_token,
+                  refresh_token: pinned.refresh_token,
+                })
+                .then((result) => {
+                  // setSession が error を返しても throw しない SDK 契約に備える
+                  if (result.error !== null) {
+                    setSessionProbeDegraded(true);
+                  }
+                })
+                .catch(() => {
+                  // 復元失敗でも React 状態は pin 維持。storage/Bearer 乖離を degraded で示す（C-R7）
+                  setSessionProbeDegraded(true);
+                });
+            } else {
+              // cooldown / 窓上限で restore を見送った: storage は相手 user のまま残り得る
+              setSessionProbeDegraded(true);
+            }
           }
           // React 状態は勝者のまま。B への setSession は行わない。
           return false;

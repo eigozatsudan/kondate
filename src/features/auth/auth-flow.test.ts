@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   adjustedAuthNowMs,
   AUTH_CONTINUATION_CODE_MAX_LENGTH,
@@ -492,6 +492,70 @@ it("C-R3: dismiss mark survives storage setItem failure via page-lifetime memory
   expect(isAuthFlowUserDismissed(flowId, storage)).toBe(true);
   clearAuthFlow(flowId, storage);
   expect(isAuthFlowUserDismissed(flowId, storage)).toBe(false);
+});
+
+it("C-R8: dismiss BroadcastChannel populates peer tab memory without storage", () => {
+  // open tabs のみ: 他タブ相当の postMessage で memory 印が立つ（storage 無し）
+  class FakeBroadcastChannel {
+    static channels = new Map<string, Set<FakeBroadcastChannel>>();
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    constructor(readonly name: string) {
+      const set = FakeBroadcastChannel.channels.get(name) ?? new Set();
+      set.add(this);
+      FakeBroadcastChannel.channels.set(name, set);
+    }
+    postMessage(data: unknown): void {
+      const peers = FakeBroadcastChannel.channels.get(this.name);
+      if (peers === undefined) return;
+      for (const peer of peers) {
+        if (peer === this) continue;
+        peer.onmessage?.({ data } as MessageEvent);
+      }
+    }
+    close(): void {
+      FakeBroadcastChannel.channels.get(this.name)?.delete(this);
+    }
+    static reset(): void {
+      FakeBroadcastChannel.channels.clear();
+    }
+  }
+  FakeBroadcastChannel.reset();
+  vi.stubGlobal("BroadcastChannel", FakeBroadcastChannel);
+  try {
+    const flowId = "10000000-0000-4000-8000-0000000000r8";
+    const emptyStorage: Storage = {
+      get length() {
+        return 0;
+      },
+      clear() {
+        /* no-op */
+      },
+      getItem() {
+        return null;
+      },
+      key() {
+        return null;
+      },
+      removeItem() {
+        /* no-op */
+      },
+      setItem() {
+        /* no-op — storage 印を意図的に残さない */
+      },
+    };
+    resetAuthFlowUserDismissedMemoryForTests();
+    // 受信タブ: listener 起動・memory 空・storage 印なし
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(false);
+    // 送信タブ相当: mark せず postMessage のみ（peer memory への伝播を固定）
+    const publisher = new BroadcastChannel("kondate.auth.flow-user-dismissed");
+    publisher.postMessage({ flowId });
+    publisher.close();
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(true);
+  } finally {
+    FakeBroadcastChannel.reset();
+    vi.unstubAllGlobals();
+    resetAuthFlowUserDismissedMemoryForTests();
+  }
 });
 
 it("C6: pending deposit rejects codes longer than deposit max", () => {

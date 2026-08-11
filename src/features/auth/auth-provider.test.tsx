@@ -30,7 +30,12 @@ function Probe() {
     if (auth.status === "authenticated" && auth.session !== null)
       document.title = auth.session.user.id;
   }, [auth]);
-  return <output>{auth.status}</output>;
+  return (
+    <output>
+      {auth.status}
+      {auth.sessionProbeDegraded ? ":degraded" : ""}
+    </output>
+  );
 }
 
 describe("AuthProvider", () => {
@@ -499,6 +504,56 @@ describe("AuthProvider", () => {
 
     expect(document.title).toBe("user-a");
     expect(setSession).toHaveBeenCalledTimes(1);
+    // C-R7: cooldown で restore を見送った回は degraded を立てる
+    expect(screen.getByText("authenticated:degraded")).toBeInTheDocument();
+  });
+
+  it("C-R7: pin restore failure marks sessionProbeDegraded", async () => {
+    window.history.replaceState(null, "", "/planner");
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const setSession = vi.fn().mockRejectedValue(new Error("restore failed"));
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null }),
+        setSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.title).toBe("user-a");
+    expect(await screen.findByText("authenticated:degraded")).toBeInTheDocument();
   });
 
   it("C-R1: rejects late residual exchange session swap after another user already won", async () => {
