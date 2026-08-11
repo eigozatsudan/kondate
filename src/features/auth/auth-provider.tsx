@@ -20,6 +20,7 @@ import {
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
   listUnexpiredAuthFlows,
+  startAuthFlowDismissBroadcastListener,
 } from "./auth-flow";
 import { resetAuthCallbackUrlCaptureIfLeftCallback } from "./auth-callback-url-capture";
 
@@ -354,6 +355,8 @@ export function AuthProvider({
 
   useEffect(() => {
     coldStartBeganAtMs.current = Date.now();
+    // C-R11: AuthProvider マウントで dismiss BC を eager 購読（auth-flow module load の保険）
+    startAuthFlowDismissBroadcastListener();
     void refreshSession();
     const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
       applyAuthSession(nextSession);

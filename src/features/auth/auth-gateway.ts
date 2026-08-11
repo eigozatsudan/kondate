@@ -4,6 +4,7 @@ import {
   adjustedAuthNowMs,
   buildAuthCallbackUrl,
   clearAuthFlow,
+  clearBrowserSupabaseSessionStorage,
   clearPendingAuthDeposit,
   ContinuationHttpError,
   ContinuationResponseLostError,
@@ -386,30 +387,87 @@ async function captureSessionProbeBaseline(
 }
 
 /**
- * C-R6: exchange 成功後に sibling clear で complete を discard するとき、
+ * C-R9: discard した exchange 自身の session が共有 storage に残っているときだけ local clear。
+ * 現在 session が discarded fingerprint と一致するときのみ触る（別 token の勝者を壊さない）。
+ * pin は AuthProvider 側のタブ local 権威。gateway は fingerprint 一致をその proxy とする。
+ */
+async function clearDiscardedExchangeSessionIfStillPresent(
+  client: BrowserSupabaseClient,
+  discardedExchangeSessionKey: string | null,
+): Promise<void> {
+  if (discardedExchangeSessionKey === null) return;
+  try {
+    const sessionResult = await client.auth.getSession();
+    const currentKey = sessionProbeKey(sessionResult.data.session);
+    // 既に無い、または別 session（勝者等）が載っている → 触らない
+    if (currentKey === null || currentKey !== discardedExchangeSessionKey) return;
+  } catch {
+    // probe 失敗時は fail-closed（未知状態を wipe しない）
+    return;
+  }
+  // local-only: 共有 session キー + client メモリ。global signOut はしない。
+  if (typeof window !== "undefined") {
+    try {
+      clearBrowserSupabaseSessionStorage(window.localStorage);
+    } catch {
+      // best-effort
+    }
+    try {
+      clearBrowserSupabaseSessionStorage(window.sessionStorage);
+    } catch {
+      // best-effort
+    }
+  }
+  const signOut = client.auth.signOut;
+  if (typeof signOut === "function") {
+    try {
+      // hang でも discard 経路を永久待ちにしない（A2 と同型）
+      await withTimeout(signOut.call(client.auth, { scope: "local" }), 2_000);
+    } catch {
+      // storage は上で消済み。メモリ clear 失敗は AuthProvider / 次回 getSession に委ねる
+    }
+  }
+}
+
+/**
+ * C-R6 / C-R9 / C-R10: exchange 成功後に sibling clear で complete を discard するとき、
  * 置換済み client/storage session を baseline（exchange 前 = pin 相当）へ best-effort 復元する。
  *
  * - baseline present + token あり → setSession 復元（AuthProvider pin と協調）
- * - absent / unknown / token 不足 / setSession 失敗 → **明示 logout はしない**
- *   （同タブで sibling 勝者が既に pin 済みの場合、signOut が勝者を壊し得るため restore 優先）
- *   AuthProvider pin の setSession 復元に委ねる
+ *   C-R10: setSession の `{ error }` も throw と同型の復元失敗として扱う
+ * - absent / unknown / token 不足 / setSession 無し → C-R9:
+ *   discarded exchange の session がまだ current なら local session clear
+ *   （別 token の勝者 session は fingerprint 不一致で触らない）
  */
 async function restoreSessionAfterDiscardedExchange(
   client: BrowserSupabaseClient,
   baseline: SessionProbeBaseline,
+  discardedExchangeSessionKey: string | null = null,
 ): Promise<void> {
-  if (baseline.kind !== "present") return;
-  if (baseline.accessToken.length === 0 || baseline.refreshToken.length === 0) return;
-  if (typeof client.auth.setSession !== "function") return;
-  try {
-    // method call のまま呼び unbound-method を避ける（this は client.auth）
-    await client.auth.setSession({
-      access_token: baseline.accessToken,
-      refresh_token: baseline.refreshToken,
-    });
-  } catch {
-    // 復元失敗は AuthProvider pin に委ねる（fail-open on storage thrash）
+  if (
+    baseline.kind === "present" &&
+    baseline.accessToken.length > 0 &&
+    baseline.refreshToken.length > 0 &&
+    typeof client.auth.setSession === "function"
+  ) {
+    try {
+      // method call のまま呼び unbound-method を避ける（this は client.auth）
+      const result = await client.auth.setSession({
+        access_token: baseline.accessToken,
+        refresh_token: baseline.refreshToken,
+      });
+      // C-R10: SDK は throw せず error を返すことがある。AuthProvider pin 復元と同型に検査する
+      if (result.error !== null) {
+        return;
+      }
+      return;
+    } catch {
+      // 復元失敗は AuthProvider pin に委ねる（fail-open on storage thrash）
+      return;
+    }
   }
+  // C-R9: restore できない窓で loser session が共有 storage に残るのを縮退
+  await clearDiscardedExchangeSessionIfStillPresent(client, discardedExchangeSessionKey);
 }
 
 /**
@@ -1131,11 +1189,23 @@ export function createAuthGateway(
       const safeReturnTo = sanitizeLoginReturnPath(claimedCode.returnTo);
       // C-R1: exchange 後も sibling が先に publish して当該 flow を消していたら
       // 自 complete を bus に載せない（navigate/onComplete の loser 適用を抑止）。
-      // C-R6: client/storage session は既に loser に置換済みになり得る → baseline へ best-effort 復元
-      // （AuthProvider pin と協調。baseline 無しは pin 側 restore に委ね、signOut は勝者破壊を避ける）。
+      // C-R6/C-R9: client/storage session は既に loser に置換済みになり得る
+      // → baseline present なら setSession 復元、absent/unknown なら loser fingerprint 一致時のみ local clear
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         clearPendingAuthDeposit(flow.id, storage);
-        await restoreSessionAfterDiscardedExchange(client, sessionBaseline);
+        // discard 時点の session 指紋（exchange 結果）。C-R9 clear の一致判定に使う
+        let discardedExchangeSessionKey: string | null = null;
+        try {
+          const postExchange = await client.auth.getSession();
+          discardedExchangeSessionKey = sessionProbeKey(postExchange.data.session);
+        } catch {
+          discardedExchangeSessionKey = null;
+        }
+        await restoreSessionAfterDiscardedExchange(
+          client,
+          sessionBaseline,
+          discardedExchangeSessionKey,
+        );
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       // C1 / C10: secret 消去は publishAuthContinuationCompletion（setItem 成功後の clear）に一本化。
@@ -1328,10 +1398,21 @@ export function createAuthGateway(
         }
         throw new Error("provider exchange failed");
       }
-      // C-R6: verify 後 sibling clear 済みなら complete を publish せず baseline へ復元
+      // C-R6/C-R9: verify 後 sibling clear 済みなら complete を publish せず baseline 復元 or loser clear
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         clearPendingAuthDeposit(flow.id, storage);
-        await restoreSessionAfterDiscardedExchange(client, sessionBaseline);
+        let discardedExchangeSessionKey: string | null = null;
+        try {
+          const postExchange = await client.auth.getSession();
+          discardedExchangeSessionKey = sessionProbeKey(postExchange.data.session);
+        } catch {
+          discardedExchangeSessionKey = null;
+        }
+        await restoreSessionAfterDiscardedExchange(
+          client,
+          sessionBaseline,
+          discardedExchangeSessionKey,
+        );
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       const safeReturnTo = sanitizeLoginReturnPath(flow.returnTo);

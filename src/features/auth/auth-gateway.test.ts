@@ -123,6 +123,8 @@ function authClientMock(overrides?: {
       signInWithPassword: vi.fn().mockResolvedValue(signInWithPasswordResult),
       getSession: vi.fn().mockResolvedValue(getSessionResult),
       setSession: vi.fn().mockResolvedValue(setSessionResult),
+      // C-R9: baseline absent discard 時の local session clear
+      signOut: vi.fn().mockResolvedValue({ error: null }),
     },
   };
 }
@@ -2401,4 +2403,187 @@ it("C-R6: token_hash pre-verify discard skips verifyOtp after sibling clear", as
     });
   }
   expect(client.auth.verifyOtp).not.toHaveBeenCalled();
+});
+
+it("C-R9: post-exchange discard with absent baseline clears loser session locally", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const loserSession = {
+    access_token: "loser-access",
+    refresh_token: "loser-refresh",
+    expires_in: 3600,
+    token_type: "bearer",
+    user: { id: "user-loser" },
+  };
+  // baseline capture 前は null、exchange 成功後は loser（cold start 競合を固定）
+  let liveSession: typeof loserSession | null = null;
+  let releaseExchange: (() => void) | undefined;
+  const exchangeGate = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-loser", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  client.auth.getSession = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve({ data: { session: liveSession }, error: null }));
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(async () => {
+    await exchangeGate;
+    liveSession = loserSession;
+    return { data: { session: loserSession }, error: null };
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flowA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(flowA.id);
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.exchangeCodeForSession.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalled();
+  // exchange 中に sibling clear（baseline=absent のまま）
+  clearAuthFlowForTest(flowA.id, storage);
+
+  releaseExchange?.();
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flowA.id,
+    returnTo: "/onboarding",
+  });
+  // present restore はしない。loser fingerprint 一致のため local signOut
+  expect(client.auth.setSession).not.toHaveBeenCalled();
+  expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+});
+
+it("C-R9: post-exchange discard does not signOut when current session is not the loser", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const loserSession = {
+    access_token: "loser-access",
+    refresh_token: "loser-refresh",
+    user: { id: "user-loser" },
+  };
+  const winnerSession = {
+    access_token: "winner-access",
+    refresh_token: "winner-refresh",
+    user: { id: "user-winner" },
+  };
+  // exchange 完了後の getSession 回数。1 回目=discarded key 用 loser、2 回目=一致判定で winner
+  let phase: "pre" | "post" = "pre";
+  let postExchangeReads = 0;
+  let releaseExchange: (() => void) | undefined;
+  const exchangeGate = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-loser", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  client.auth.getSession = vi.fn().mockImplementation(() => {
+    if (phase === "pre") {
+      return Promise.resolve({ data: { session: null }, error: null });
+    }
+    postExchangeReads += 1;
+    if (postExchangeReads === 1) {
+      return Promise.resolve({ data: { session: loserSession }, error: null });
+    }
+    // 勝者が既に storage を占有 → fingerprint 不一致で signOut しない
+    return Promise.resolve({ data: { session: winnerSession }, error: null });
+  });
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(async () => {
+    await exchangeGate;
+    phase = "post";
+    return { data: { session: loserSession }, error: null };
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flowA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(flowA.id);
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.exchangeCodeForSession.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  clearAuthFlowForTest(flowA.id, storage);
+  releaseExchange?.();
+
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flowA.id,
+    returnTo: "/onboarding",
+  });
+  expect(client.auth.signOut).not.toHaveBeenCalled();
+});
+
+it("C-R10: baseline restore treats setSession error as failure (no throw)", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const pinSession = {
+    access_token: "pin-access",
+    refresh_token: "pin-refresh",
+    user: { id: "user-pin" },
+  };
+  let releaseExchange: (() => void) | undefined;
+  const exchangeGate = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-loser", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock({
+    getSessionResult: {
+      data: { session: pinSession },
+      error: null,
+    },
+    setSessionResult: {
+      data: { session: null },
+      error: { message: "setSession failed", name: "AuthError", status: 400 } as AuthError,
+    },
+  });
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(async () => {
+    await exchangeGate;
+    return { data: { session: { user: { id: "user-loser" } } }, error: null };
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flowA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(flowA.id);
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.exchangeCodeForSession.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  clearAuthFlowForTest(flowA.id, storage);
+  releaseExchange?.();
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flowA.id,
+    returnTo: "/onboarding",
+  });
+  expect(client.auth.setSession).toHaveBeenCalledWith({
+    access_token: "pin-access",
+    refresh_token: "pin-refresh",
+  });
+  // error 経路は restore 失敗扱い。present 分岐のため C-R9 clear には落ちない
+  expect(client.auth.signOut).not.toHaveBeenCalled();
 });

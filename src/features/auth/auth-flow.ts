@@ -121,7 +121,17 @@ function ensureAuthFlowDismissBroadcastListener(): void {
     };
   } catch {
     // BroadcastChannel 不可環境は memory + storage のみ
+    // 起動失敗時は flag を戻し、後続 mark/isAuth で再試行できるようにする
+    dismissBroadcastListenerStarted = false;
   }
+}
+
+/**
+ * C-R11: dismiss BroadcastChannel を first mark/isAuth より前に購読する公開入口。
+ * AuthProvider マウントやテストの eager 起動に使う。module load でも呼ぶ。
+ */
+export function startAuthFlowDismissBroadcastListener(): void {
+  ensureAuthFlowDismissBroadcastListener();
 }
 
 function broadcastAuthFlowUserDismissed(flowId: string): void {
@@ -133,6 +143,12 @@ function broadcastAuthFlowUserDismissed(flowId: string): void {
   } catch {
     // best-effort（受信側 listener 未起動・環境非対応は TTL に収束）
   }
+}
+
+// C-R11: import 時点で open-tab listener を立て、first dismiss 前の broadcast 取りこぼしを減らす
+// （BroadcastChannel 非対応 / SSR は ensure 内で no-op。起動失敗は flag を戻す）
+if (typeof window !== "undefined") {
+  ensureAuthFlowDismissBroadcastListener();
 }
 
 const defaultAuthContinuationTtlMs = 300_000;

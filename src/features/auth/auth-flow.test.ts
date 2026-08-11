@@ -25,6 +25,7 @@ import {
   resetAuthFlowUserDismissedMemoryForTests,
   sanitizeLoginReturnPath,
   sanitizeReturnPath,
+  startAuthFlowDismissBroadcastListener,
   writePendingAuthDeposit,
 } from "./auth-flow";
 
@@ -494,8 +495,13 @@ it("C-R3: dismiss mark survives storage setItem failure via page-lifetime memory
   expect(isAuthFlowUserDismissed(flowId, storage)).toBe(false);
 });
 
-it("C-R8: dismiss BroadcastChannel populates peer tab memory without storage", () => {
-  // open tabs のみ: 他タブ相当の postMessage で memory 印が立つ（storage 無し）
+function installFakeBroadcastChannel(): {
+  FakeBroadcastChannel: {
+    channels: Map<string, Set<{ onmessage: ((event: MessageEvent) => void) | null }>>;
+    reset(): void;
+  };
+  emptyStorage: Storage;
+} {
   class FakeBroadcastChannel {
     static channels = new Map<string, Set<FakeBroadcastChannel>>();
     onmessage: ((event: MessageEvent) => void) | null = null;
@@ -521,28 +527,34 @@ it("C-R8: dismiss BroadcastChannel populates peer tab memory without storage", (
   }
   FakeBroadcastChannel.reset();
   vi.stubGlobal("BroadcastChannel", FakeBroadcastChannel);
+  const emptyStorage: Storage = {
+    get length() {
+      return 0;
+    },
+    clear() {
+      /* no-op */
+    },
+    getItem() {
+      return null;
+    },
+    key() {
+      return null;
+    },
+    removeItem() {
+      /* no-op */
+    },
+    setItem() {
+      /* no-op — storage 印を意図的に残さない */
+    },
+  };
+  return { FakeBroadcastChannel, emptyStorage };
+}
+
+it("C-R8: dismiss BroadcastChannel populates peer tab memory without storage", () => {
+  // open tabs のみ: 他タブ相当の postMessage で memory 印が立つ（storage 無し）
+  const { FakeBroadcastChannel, emptyStorage } = installFakeBroadcastChannel();
   try {
     const flowId = "10000000-0000-4000-8000-0000000000r8";
-    const emptyStorage: Storage = {
-      get length() {
-        return 0;
-      },
-      clear() {
-        /* no-op */
-      },
-      getItem() {
-        return null;
-      },
-      key() {
-        return null;
-      },
-      removeItem() {
-        /* no-op */
-      },
-      setItem() {
-        /* no-op — storage 印を意図的に残さない */
-      },
-    };
     resetAuthFlowUserDismissedMemoryForTests();
     // 受信タブ: listener 起動・memory 空・storage 印なし
     expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(false);
@@ -550,6 +562,26 @@ it("C-R8: dismiss BroadcastChannel populates peer tab memory without storage", (
     const publisher = new BroadcastChannel("kondate.auth.flow-user-dismissed");
     publisher.postMessage({ flowId });
     publisher.close();
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(true);
+  } finally {
+    FakeBroadcastChannel.reset();
+    vi.unstubAllGlobals();
+    resetAuthFlowUserDismissedMemoryForTests();
+  }
+});
+
+it("C-R11: eager dismiss BC listener receives broadcast before first isAuth/mark", () => {
+  // C-R8 の lazy 取りこぼし: isAuth/mark 前でも eager subscribe 済みなら memory に入る
+  const { FakeBroadcastChannel, emptyStorage } = installFakeBroadcastChannel();
+  try {
+    const flowId = "10000000-0000-4000-8000-0000000000r11";
+    resetAuthFlowUserDismissedMemoryForTests();
+    // isAuth/mark を呼ばず eager だけ起動（module load / AuthProvider マウント相当）
+    startAuthFlowDismissBroadcastListener();
+    const publisher = new BroadcastChannel("kondate.auth.flow-user-dismissed");
+    publisher.postMessage({ flowId });
+    publisher.close();
+    // storage 無しでも memory 印が立っている
     expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(true);
   } finally {
     FakeBroadcastChannel.reset();
