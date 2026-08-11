@@ -8,6 +8,11 @@
     "noEmit": true,
     "types": ["vite/client"]
   },
-  "include": ["client/src/**/*.ts", "client/src/**/*.tsx", "shared/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "client/src/**/*.ts",
+    "client/src/**/*.tsx",
+    "shared/**/*.ts",
+    "vite.config.ts"
+  ],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
