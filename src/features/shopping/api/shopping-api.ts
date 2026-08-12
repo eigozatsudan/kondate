@@ -17,7 +17,7 @@ import {
   type ShoppingList,
   type ShoppingListSafetyData,
 } from "@shared/contracts/shopping";
-import { requireAccessToken } from "@/features/auth/session";
+import { assertBrowserDataPlaneAligned, requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
 const failureSchema = z.object({
@@ -87,6 +87,8 @@ const rowLabel = (row: {
 
 export async function fetchActiveShoppingList(): Promise<ShoppingList | null> {
   const client = getBrowserSupabaseClient();
+  // R1: pin と client JWT の乖離時は PostgREST を走らせない（B の active list を A chrome で出さない）
+  await assertBrowserDataPlaneAligned(client);
   const { data, error } = await client
     .from("shopping_lists")
     .select(

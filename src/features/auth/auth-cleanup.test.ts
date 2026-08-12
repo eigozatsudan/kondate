@@ -6,7 +6,9 @@ import {
   clearLocalAuthAndDrafts,
   clearOwnedLocalDataBestEffort,
   clearSoftSessionResidualBestEffort,
+  isSoftResidualRecoverySuppressed,
   SIGN_OUT_TIMEOUT_MS,
+  SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY,
 } from "./auth-cleanup";
 
 function seedOwnedKeys(storage: Storage): void {
@@ -143,7 +145,7 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
   });
 
-  it("C4: clearSoftSessionResidualBestEffort clears drafts/session and flow secrets", () => {
+  it("C4/R3: soft residual clears drafts/session/completion but preserves sibling flow secrets", () => {
     seedOwnedKeys(localStorage);
     localStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
     clearSoftSessionResidualBestEffort();
@@ -151,14 +153,17 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
     expect(localStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
-    // C4: soft 失効でも continuation secret を残さない（共有端末 residual complete を閉じる）
+    // R3: sibling mid-login の flow secret は温存（C4 は suppress で silent complete を閉じる）
     expect(
       localStorage.getItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001"),
-    ).toBeNull();
+    ).not.toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    // C4: このタブの residual recovery を抑止
+    expect(isSoftResidualRecoverySuppressed()).toBe(true);
+    expect(sessionStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
   });
 
-  it("C4/C3/C10: soft residual clears pending, PKCE, secret, callback-owner, completion", () => {
+  it("C4/R3: soft residual clears completion; preserves pending/PKCE/secret/callback-owner", () => {
     const flowId = "10000000-0000-4000-8000-0000000000c3";
     localStorage.setItem(
       `kondate.auth.flow.${flowId}`,
@@ -189,14 +194,17 @@ describe("clearLocalAuthAndDrafts", () => {
 
     clearSoftSessionResidualBestEffort();
 
-    expect(localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).toBeNull();
-    expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBeNull();
-    expect(localStorage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
-    expect(localStorage.getItem(`kondate.auth.supabase.callback-owner.${flowId}`)).toBeNull();
+    // R3: sibling mid-login に必要なキーは温存
+    expect(localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).not.toBeNull();
+    expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe("pkce-verifier");
+    expect(localStorage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
+    expect(localStorage.getItem(`kondate.auth.supabase.callback-owner.${flowId}`)).not.toBeNull();
+    // C4: completion short-circuit は閉じる
     expect(
       localStorage.getItem(`kondate.auth.supabase.continuation-complete.${flowId}`),
     ).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    expect(isSoftResidualRecoverySuppressed()).toBe(true);
   });
 
   it("AP1: clears kondate:feedback free-form fingerprint on logout and best-effort pass", async () => {

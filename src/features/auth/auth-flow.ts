@@ -83,7 +83,8 @@ const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
  * C3: URL strip 後も 429/5xx 再 deposit できるよう、同一ブラウザに短寿命で code を保持する。
  * owned prefix 配下なので logout の clearOwnedAuthStorage で消える。
  * cold-start fail-closed（RR1）は session キーのみ消し pending は温存。
- * soft 失効（clearSoftSessionResidualBestEffort）は pending ごと auth 系を消す（C4）。
+ * soft 失効（clearSoftSessionResidualBestEffort）は R3 以降 pending を温存する
+ * （sibling mid-login）。C4 は tab-local residual recovery suppress で silent complete を閉じる。
  * dismiss（markAuthFlowUserDismissed）でも pending は即消す（C2）。
  */
 const pendingDepositPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
@@ -91,7 +92,7 @@ const pendingDepositPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
  * C3: cancel UI / 期限切れ二次 UI 後にユーザーが明示再開するまで
  * 同一 flow の遅延 success を silent complete しない印。
  * secret は焼かない（C5 DoS 縮退ロック）が、listUnexpired の TTL 正規化で期限後に掃除（C2）。
- * owned prefix 配下で logout / soft residual（C4）でも掃除される。
+ * owned prefix 配下で logout は掃除。soft residual（R3）は dismiss 印を温存する。
  */
 const userDismissedPrefix = `${ownedAuthStoragePrefixes[1]}.flow-user-dismissed.`;
 /**
@@ -910,6 +911,9 @@ export async function createAuthFlow(
    */
   credentialKind: AuthFlow["credentialKind"] = "authorization_code",
 ): Promise<AuthFlow> {
+  // R3: ユーザーが明示的に新規 login を開始したら soft residual の recovery suppress を解除する
+  // （動的 import 循環を避けず auth-cleanup を静的 import 済みの呼び出し側でもよいが、
+  //  create 成功前に解除すると suppress 中の二重 recovery を許し得るため persist 成功後に解除する）
   const secret = base64url(deps.randomBytes(32));
   const state = base64url(deps.randomBytes(32));
   // C1: /login・/auth/callback 自己参照は flow/DB に載せない（fallback は welcome）
@@ -943,6 +947,15 @@ export async function createAuthFlow(
     // 孤児行は state/secret ハッシュのみ（平文秘密なし）で expires_at TTL 掃除に委ねる。
     // create レート枠は消費されるが、秘密漏洩面は無い（residual-intentional / TTL）。
     throw new Error("auth_flow_persist_failed");
+  }
+  // R3: 新規 flow 永続化成功後に suppress 解除（このタブで意図した login を進められるようにする）
+  // auth-cleanup との循環 import を避けるため sessionStorage を直接触る（キーは cleanup と同文字列）
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
+    }
+  } catch {
+    // best-effort
   }
   return flow;
 }

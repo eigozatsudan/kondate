@@ -3,7 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/shared/types/database";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
 import { withTimeout } from "./async-timeout";
-import { clearBrowserSupabaseSessionStorage, clearOwnedAuthStorage } from "./auth-flow";
+import {
+  browserSupabaseSessionStorageKey,
+  clearBrowserSupabaseSessionStorage,
+  clearOwnedAuthStorage,
+  ownedAuthStoragePrefixes,
+} from "./auth-flow";
 
 export type ClearLocalAuthOptions = {
   /**
@@ -25,6 +30,86 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
   "kondate.auth.lastMagicEmail",
   "kondate.auth.magicSentUi",
 ] as const;
+
+/**
+ * R3: soft 失効後、このタブだけ residual recovery を抑止する sessionStorage 印。
+ * tab-local のため sibling タブの in-flight login は妨げない。
+ * C4: localStorage の flow secret を焼かなくても、soft 後の /login silent complete を閉じる。
+ */
+export const SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY =
+  "kondate.auth.soft-residual-recovery-suppress" as const;
+
+/** R3: soft residual 実行後にこのタブの residual recovery を抑止する */
+export function markSoftResidualRecoverySuppressed(): void {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY, "1");
+  } catch {
+    // storage 障害時は suppress 不能 — AuthProvider 側は best-effort
+  }
+}
+
+/** R3: 新規 login 開始・認証成功時に suppress を解除する */
+export function clearSoftResidualRecoverySuppressed(): void {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
+  } catch {
+    // best-effort
+  }
+}
+
+/** R3: このタブで soft residual 後の residual recovery を抑止中か */
+export function isSoftResidualRecoverySuppressed(): boolean {
+  if (typeof sessionStorage === "undefined") return false;
+  try {
+    return sessionStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * R3: soft residual で消してよい kondate.auth.* か。
+ * 共有端末の prior-user residual complete（C4）を閉じつつ、sibling タブ in-flight の
+ * flow secret / pending / PKCE / callback-owner は焼かない。
+ *
+ * 消す:
+ * - session 永続キー（exact）
+ * - continuation-complete（resume short-circuit）
+ * - magic-link UI
+ * - soft residual suppress 以外の auth UI 残渣で flow 継続に不要なもの
+ *
+ * 残す（sibling mid-login）:
+ * - kondate.auth.flow.*
+ * - pending-deposit / callback-owner / flow-user-dismissed / clock-rebase
+ * - PKCE verifier（storageKey 派生の -code-verifier）
+ * - soft residual suppress 印自体
+ */
+function shouldClearAuthKeyOnSoftResidual(key: string): boolean {
+  if (key === SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY) return false;
+  if ((MAGIC_LINK_RESIDUAL_KEYS as readonly string[]).includes(key)) return true;
+  if (key === browserSupabaseSessionStorageKey) return true;
+  // completion 印（per-flow / legacy）: soft 後の resume short-circuit を閉じる（C4）
+  if (
+    key === `${ownedAuthStoragePrefixes[1]}.continuation-complete` ||
+    key.startsWith(`${ownedAuthStoragePrefixes[1]}.continuation-complete.`)
+  ) {
+    return true;
+  }
+  // sibling in-flight に必要なキーは温存
+  if (key.startsWith(ownedAuthStoragePrefixes[0])) return false; // flow.
+  if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.pending-deposit.`)) return false;
+  if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.callback-owner.`)) return false;
+  if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.flow-user-dismissed.`)) return false;
+  if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.clock-rebase.`)) return false;
+  // PKCE verifier（createBrowserSupabaseClient の storageKey + "-code-verifier"）
+  if (key === `${browserSupabaseSessionStorageKey}-code-verifier`) return false;
+  if (key.startsWith(`${browserSupabaseSessionStorageKey}-code-verifier`)) return false;
+  // その他 kondate.auth.*（未知の残渣）は共有端末 hygiene で消す
+  if (key.startsWith("kondate.auth.")) return true;
+  return false;
+}
 
 function isOwnedBrowserStorageKey(key: string): boolean {
   return (
@@ -111,17 +196,20 @@ export function clearOwnedLocalDataBestEffort(): void {
 }
 
 /**
- * soft 失効（authenticated → session null）専用の残渣掃除（C4 / C3 / C10）。
+ * soft 失効（authenticated → session null）専用の残渣掃除（C4 / C3 / C10 / R3）。
  *
- * free-form 草稿・feedback・session 永続・マジックリンク UI に加え、
- * `kondate.auth.*` 全般（flow secret / pending / completion / callback-owner / PKCE 等）を消す。
+ * free-form 草稿・feedback・session 永続・マジックリンク UI・completion 印を消す。
  *
- * C4: 旧 C7 は soft で secret を温存し residual recovery が前ユーザのログインを
- * silent complete し得た。共有端末では soft 失効＝明示 logout に近い auth 残渣掃除を優先する。
+ * C4: residual recovery が前ユーザとして silent complete しないこと。
+ * 旧実装は `kondate.auth.*` 全消しで secret も焼いたが、sibling タブ in-flight login まで
+ * 巻き添えにした（R3）。R3 以降は:
+ * - flow secret / pending / PKCE / callback-owner は温存（sibling mid-login）
+ * - completion と session キーは消す（resume short-circuit / persist token）
+ * - このタブの residual recovery を sessionStorage suppress で抑止（C4 を維持）
+ *
  * cold-start 未ログイン fail-closed（RR1）は session キーのみで、この関数を呼ばない。
- *
  * 明示 logout / アカウント削除の second pass（clearOwnedLocalDataBestEffort）は
- * drafts 等も含むより広い掃除のまま。
+ * drafts 等も含むより広い掃除のまま（flow も消す）。
  */
 export function clearSoftSessionResidualBestEffort(): void {
   for (const storage of [localStorage, sessionStorage]) {
@@ -144,8 +232,9 @@ export function clearSoftSessionResidualBestEffort(): void {
       continue;
     }
     for (const key of keys) {
-      // C4: soft でも continuation secret 系を含む kondate.auth.* を全消し
       if (key.startsWith("kondate.auth.")) {
+        // R3: sibling in-flight に必要なキーは残し、C4 対象（session/completion 等）だけ消す
+        if (!shouldClearAuthKeyOnSoftResidual(key)) continue;
         try {
           storage.removeItem(key);
         } catch {
@@ -161,6 +250,8 @@ export function clearSoftSessionResidualBestEffort(): void {
       }
     }
   }
+  // C4/R3: このタブだけ residual recovery を抑止（secret を焼かずに silent complete を閉じる）
+  markSoftResidualRecoverySuppressed();
 }
 
 async function signOutBestEffort(
