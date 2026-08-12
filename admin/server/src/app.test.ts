@@ -65,6 +65,25 @@ describe("createApp security", () => {
     expect(ok.status).toBe(200);
   });
 
+  // ADM5: 正しい Bearer のみ通す（timingSafeEqual 経路）
+  it("ADM5: rejects wrong-length bearer without accepting", async () => {
+    const app = createApp({
+      pool: null,
+      config: baseConfig,
+      dbReady: false,
+      registerRoutes: (app) => {
+        app.get("/api/dashboard", (c) => c.json({ ok: true, data: {} }));
+      },
+    });
+    const wrong = await app.request("http://127.0.0.1:5193/api/dashboard", {
+      headers: {
+        host: "127.0.0.1:5193",
+        authorization: "Bearer short",
+      },
+    });
+    expect(wrong.status).toBe(401);
+  });
+
   it("allows localhost Host", async () => {
     const app = createApp({ pool: null, config: baseConfig, dbReady: true });
     const res = await app.request("http://localhost:5193/api/health", {

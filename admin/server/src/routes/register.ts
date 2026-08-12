@@ -42,8 +42,11 @@ function requirePool(pool: Pool | null): Pool {
   return pool;
 }
 
-/** 共有レシピ :id 用。8-4-4-4-12 の hex UUID のみ（ハイフンだらけの 36 文字を弾く） */
-const SHARED_RECIPE_UUID_RE =
+/**
+ * ADM7: :id 用。8-4-4-4-12 の hex UUID のみ（PG cast 500 を避ける）。
+ * shared-recipes / generations / feedback で共通。
+ */
+const ADMIN_RESOURCE_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function registerApiRoutes(app: Hono, deps: RouteDeps): void {
@@ -95,9 +98,12 @@ export function registerApiRoutes(app: Hono, deps: RouteDeps): void {
 
   app.get("/api/generations/:id", async (c) => {
     try {
-      const pool = requirePool(deps.pool);
       const id = c.req.param("id");
-      if (!id) throw notFound();
+      // ADM7: 不正 UUID は 400（shared-recipes と揃え PG cast 500 を避ける）
+      if (!id || !ADMIN_RESOURCE_UUID_RE.test(id)) {
+        throw badRequest("invalid_id", "id が不正です。");
+      }
+      const pool = requirePool(deps.pool);
       const data = await withReadOnly(pool, (client) => getGeneration(client, id));
       if (!data) throw notFound();
       return ok(c, data);
@@ -129,9 +135,12 @@ export function registerApiRoutes(app: Hono, deps: RouteDeps): void {
 
   app.get("/api/feedback/:id", async (c) => {
     try {
-      const pool = requirePool(deps.pool);
       const id = c.req.param("id");
-      if (!id) throw notFound();
+      // ADM7: 不正 UUID は 400
+      if (!id || !ADMIN_RESOURCE_UUID_RE.test(id)) {
+        throw badRequest("invalid_id", "id が不正です。");
+      }
+      const pool = requirePool(deps.pool);
       // 全文は includeBody=1 の明示時のみ（キーワード検索は未実装）
       const includeBody = c.req.query("includeBody") === "1";
       const data = await withReadOnly(pool, (client) =>
@@ -255,7 +264,7 @@ export function registerApiRoutes(app: Hono, deps: RouteDeps): void {
       try {
         const id = c.req.param("id");
         // RFC 型 UUID のみ受理（緩い 36 文字 hex+`-` は PG cast 500 を避ける）
-        if (!id || !SHARED_RECIPE_UUID_RE.test(id)) {
+        if (!id || !ADMIN_RESOURCE_UUID_RE.test(id)) {
           throw badRequest("invalid_id", "id が不正です。");
         }
         const pool = requirePool(deps.pool);
