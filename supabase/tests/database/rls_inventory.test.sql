@@ -376,7 +376,8 @@ select is_empty(
   ('public.shopping_label_confirmations', 'shopping_labels_select_own', 'SELECT'),
   ('public.shopping_list_sources', 'shopping_list_sources_select_own', 'SELECT'),
   ('public.shopping_lists', 'shopping_lists_select_own', 'SELECT'),
-  ('public.user_feedback', 'user_feedback_deny_all', 'ALL')
+  ('public.user_feedback', 'user_feedback_deny_all', 'ALL'),
+  ('public.user_feedback', 'user_feedback_ops_readonly_select', 'SELECT')
     ),
     live as (
       select n.nspname||'.'||c.relname as object,

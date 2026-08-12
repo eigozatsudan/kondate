@@ -593,8 +593,9 @@ export async function runFlyerWeekly(
   // PE1: 同一 key の processing 冪等 hit（replayed）はパイプライン再入場しない。
   // generation と同様 hydrate/in-progress のみ。budget・mark 失敗枝で
   // finalize_flyer_weekly_failure すると先着 in-flight を failed にし success 枠を解放してしまう。
+  // failed/succeeded を上で除外済みのため、ここでの status は processing に狭まっている。
   // 新規予約（replayed でない processing）だけが mark → OpenRouter へ進む。
-  if (reserve.status === "processing" && reserve.replayed === true) {
+  if (reserve.replayed === true) {
     mapFailureHttp("generation_in_progress", reserve.retry_at ?? null);
   }
 

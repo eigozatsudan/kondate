@@ -131,8 +131,7 @@ export type QuotaRequestRecord = z.infer<typeof requestPayloadSchema>;
  * 既に返っている値は上書きしない（status 経路の fail-closed テストも壊さない）。
  */
 type UserDailySuccessLimit =
-  | typeof planQuota.free.successPerDay
-  | typeof planQuota.plus.successPerDay;
+  typeof planQuota.free.successPerDay | typeof planQuota.plus.successPerDay;
 
 function parseRequestPayload(
   raw: unknown,

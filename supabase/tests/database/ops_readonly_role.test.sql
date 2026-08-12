@@ -162,12 +162,24 @@ begin
 end
 $seed$;
 
-select isnt_empty(
-  $$
-    set local role kondate_ops_readonly;
-    select id from public.user_feedback
-    where id = 'b1000000-0000-4000-8000-0000000000aa';
-  $$,
+-- isnt_empty は multi-statement 不可。SET ROLE 中は pgtap 関数も呼べない
+-- （ops に EXECUTE が無い）。DO 内で role 切替→件数を GUC に載せて外側で is()。
+do $vis$
+declare
+  n integer;
+begin
+  set local role kondate_ops_readonly;
+  select count(*)::integer into n
+  from public.user_feedback
+  where id = 'b1000000-0000-4000-8000-0000000000aa';
+  reset role;
+  perform set_config('test.ops_feedback_visible', n::text, true);
+end
+$vis$;
+
+select is(
+  current_setting('test.ops_feedback_visible', true),
+  '1',
   'ops role sees user_feedback rows under RLS'
 );
 
@@ -200,6 +212,7 @@ select lives_ok(
   $$
     set local role kondate_ops_readonly;
     select id from private.ai_generation_requests limit 1;
+    reset role;
   $$,
   'ops can select ai_generation_requests (may be empty)'
 );
@@ -208,6 +221,7 @@ select lives_ok(
   $$
     set local role kondate_ops_readonly;
     select usage_day from private.ai_global_daily_usage limit 1;
+    reset role;
   $$,
   'ops can select ai_global_daily_usage'
 );
@@ -216,6 +230,7 @@ select lives_ok(
   $$
     set local role kondate_ops_readonly;
     select user_id from private.billing_subscriptions limit 1;
+    reset role;
   $$,
   'ops can select billing_subscriptions'
 );
@@ -224,6 +239,7 @@ select lives_ok(
   $$
     set local role kondate_ops_readonly;
     select stripe_event_id from private.billing_webhook_events limit 1;
+    reset role;
   $$,
   'ops can select billing_webhook_events (column exists; app must not expose IDs)'
 );
@@ -232,6 +248,7 @@ select lives_ok(
   $$
     set local role kondate_ops_readonly;
     select id from private.share_generalization_jobs limit 1;
+    reset role;
   $$,
   'ops can select share_generalization_jobs'
 );

@@ -364,6 +364,8 @@ test(
     tag: ["@smoke"],
   },
   async ({ completedOnboardingPage: page }) => {
+    // 生成 + 材料タブ + 3 幅 viewport 溢れ走査。並列 AI 行ロック residual も加味。
+    test.setTimeout(120_000);
     await page.setViewportSize({ width: 320, height: 720 });
     await completeMinimumPlanner(page);
     await page.getByRole("button", { name: "献立を作る" }).click();

@@ -870,9 +870,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       ((safetyQuery.isError && safetyQuery.data !== undefined) ||
         (pantryQuery.isError && pantryQuery.data !== undefined));
     if (staleSafetyPantry) {
-      setSubmissionError(
-        "家族または冷蔵庫の最新情報を再取得してから緊急献立を開いてください。",
-      );
+      setSubmissionError("家族または冷蔵庫の最新情報を再取得してから緊急献立を開いてください。");
       return;
     }
     // PE4: 生成と同型。未確認の期限切れ pantry があるうちは緊急へ進めない。

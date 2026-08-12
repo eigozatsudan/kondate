@@ -164,6 +164,8 @@ for (const width of [320, 375, 430]) {
       tag: width === 320 ? ["@mobile-only", "@smoke"] : ["@mobile-only"],
     },
     async ({ completedOnboardingPage: page }) => {
+      // wizard → generate → result の layout。生成待ち込みで既定 30s 不足。
+      test.setTimeout(120_000);
       await page.setViewportSize({ width, height: 800 });
       await ensureWheatMemberForMockSuccess(page);
       await assertNoHorizontalScroll(page);
@@ -193,6 +195,7 @@ for (const width of [320, 375, 430]) {
     `the idea wizard and result fit ${String(width)}px with usable targets`,
     { tag: ["@mobile-only"] },
     async ({ ideaModePage: page }) => {
+      test.setTimeout(120_000);
       await page.setViewportSize({ width, height: 800 });
       await answerSharedWizardSteps(page);
       await answerAudienceAndReview(page, "idea");
@@ -211,6 +214,8 @@ for (const width of [320, 375, 430]) {
     `shell routes fit ${String(width)}px with usable majors`,
     { tag: ["@mobile-only"] },
     async ({ completedOnboardingPage: page }) => {
+      // 複数 path を順に walk。既定 30s では足りないことがある。
+      test.setTimeout(120_000);
       await page.setViewportSize({ width, height: 800 });
       // Live labels from src/app/layouts/app-shell.tsx — require exact counts (no silent skip).
       const shellNavLabels = ["献立", "冷蔵庫", "履歴", "買い物", "設定"] as const;

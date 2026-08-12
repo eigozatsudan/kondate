@@ -295,6 +295,7 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.shopping_list_sources` | `shopping_list_sources_select_own` | SELECT |
 | `public.shopping_lists` | `shopping_lists_select_own` | SELECT |
 | `public.user_feedback` | `user_feedback_deny_all` | ALL |
+| `public.user_feedback` | `user_feedback_ops_readonly_select` | SELECT |
 | `public.user_share_consents` | `user_share_consents_deny_all` | ALL |
 
 ## Notes

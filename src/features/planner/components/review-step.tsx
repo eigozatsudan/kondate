@@ -26,10 +26,7 @@ import {
   navigateAfterPlannerLeaveFlush,
   shouldInterceptPlannerLeaveClick,
 } from "../planner-leave-flush";
-import {
-  CURRENT_SAFETY_DISCLAIMER,
-  CurrentSafetySummary,
-} from "../current-safety-summary";
+import { CURRENT_SAFETY_DISCLAIMER, CurrentSafetySummary } from "../current-safety-summary";
 import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "../household-safety-helper-copy";
 import {
   cuisineGenreLabel,

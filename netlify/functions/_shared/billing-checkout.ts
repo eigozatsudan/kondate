@@ -7,13 +7,7 @@ import {
   type CheckoutRequest,
 } from "../../../shared/contracts/billing.js";
 import type { ServerEnv } from "./env.js";
-import {
-  closedHttpErrorDetails,
-  HttpError,
-  json,
-  methodNotAllowed,
-  parseJson,
-} from "./http.js";
+import { closedHttpErrorDetails, HttpError, json, methodNotAllowed, parseJson } from "./http.js";
 import type { SafeLogEvent } from "./logger.js";
 import { createSafeLogger } from "./logger.js";
 import { computeQuotaIdentityKey } from "./quota-identity.js";

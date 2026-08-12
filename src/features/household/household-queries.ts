@@ -74,7 +74,8 @@ export function subscribeHouseholdSafetyBroadcast(
     return () => {};
   }
   return () => {
-    channel?.close();
+    // try 成功後は channel が確定している（catch は空 unsubscribe を返す）
+    channel.close();
   };
 }
 /**

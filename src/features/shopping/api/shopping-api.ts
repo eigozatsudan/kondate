@@ -730,10 +730,7 @@ export function markItemMutationMismatchGuard(listId: string, intentKey: string)
   const others = readMismatchGuardEntries(listId, nowMs).filter(
     (entry) => entry.intentKey !== intentKey,
   );
-  writeMismatchGuardEntries(listId, [
-    ...others,
-    { intentKey, state: "pending", atMs: nowMs },
-  ]);
+  writeMismatchGuardEntries(listId, [...others, { intentKey, state: "pending", atMs: nowMs }]);
 }
 
 /**
@@ -750,9 +747,7 @@ export function shouldBlockItemMutationAfterMismatch(listId: string, intentKey: 
     writeMismatchGuardEntries(
       listId,
       entries.map((entry) =>
-        entry.intentKey === intentKey
-          ? { intentKey, state: "armed" as const, atMs: nowMs }
-          : entry,
+        entry.intentKey === intentKey ? { intentKey, state: "armed" as const, atMs: nowMs } : entry,
       ),
     );
     return true;

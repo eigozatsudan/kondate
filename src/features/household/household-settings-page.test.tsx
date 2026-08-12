@@ -3612,6 +3612,7 @@ it("H-R1: does not save registered while allergy-insert list confirmation is in 
   // list empty で H8 どおり registered を止める
   await act(async () => {
     resolveHeldList?.([]);
+    await Promise.resolve();
   });
   await waitFor(() => {
     expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");

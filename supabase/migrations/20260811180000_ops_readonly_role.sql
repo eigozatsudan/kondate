@@ -43,3 +43,9 @@ create index if not exists ai_generation_requests_ops_created_id_idx
 
 create index if not exists user_feedback_ops_created_id_idx
   on public.user_feedback (created_at desc, id desc);
+
+-- PG16+: CREATE ROLE の暗黙 admin membership は set_option=false になり得る。
+-- pgTAP が set local role で RLS 可視・DML 拒否を検証するため SET を明示許可する。
+-- INHERIT false のまま（NOINHERIT ロール方針を崩さない）。
+grant kondate_ops_readonly to postgres with inherit false, set true;
+

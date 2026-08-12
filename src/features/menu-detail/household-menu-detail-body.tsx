@@ -304,10 +304,8 @@ export function HouseholdMenuDetailBody({
     const listId = activeList?.id;
     if (listId !== undefined && shoppingSheet !== "reconcile") {
       cleared =
-        clearResumeSuppressOnDocumentBoot(
-          "reconcile",
-          reconcileCommandTargetId(listId, menuId),
-        ) || cleared;
+        clearResumeSuppressOnDocumentBoot("reconcile", reconcileCommandTargetId(listId, menuId)) ||
+        cleared;
     }
     if (cleared) setResumeSuppressBootTick((n) => n + 1);
   }, [menuId, shoppingSheet, activeList?.id]);
