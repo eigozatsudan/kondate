@@ -447,6 +447,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // proceed 時は unmount まで落さない（handler return → shell navigate の隙間に generate を許さない）。
   // P5: isLeaving state と対で isSaving に載せ、wizard 編集・生成 CTA を visually disable する。
   const leaveInFlightRef = useRef(false);
+  // timeout 後の遅延 flush が proceed ロックを再武装しないよう flight 世代で stale 判定する。
+  const leaveFlightIdRef = useRef(0);
   // P2: leave-flush handler は mount 時のみ register。state は ref で読み stale クロージャと
   // deps 更新時 cleanup→null の窓を避ける（submittingRef と同型）。
   const hasDraftConflictRef = useRef(false);
@@ -742,6 +744,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   /** 利用者の明示操作で入力を空に戻す。autosave が resetToken 経由で空下書きをサーバへ保存する（P1）。 */
   const resetPlannerDraft = useCallback((): void => {
+    // 生成成功後の navigate commit 前に sticky pending を捨てると /generation が idle へ落ちる。
+    if (submittingRef.current) {
+      return;
+    }
     generationAbortControllerRef.current?.abort();
     // 進行中の作成 ID（pending）を残すと、再「献立を作る」が C2 再開専用になり
     // offline/processing から抜けられず操作不能になる。入力リセットは作成の破棄も兼ねる。
@@ -1100,83 +1106,78 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // P2: mount 時のみ register。handler は ref 経由で最新 conflict / opening / flush を読む。
   // deps 更新のたび cleanup で null すると下ナビ click が即 proceed になる窓が残る。
   useEffect(() => {
-    registerPlannerLeaveFlush(async () => {
-      // P1: 既に leave 中なら二重 leave しない（module mutex の第二防衛）。
-      if (leaveInFlightRef.current) {
-        return "blocked";
-      }
-      // P4: ガード blocked は無言 stay にせず理由を可視化する。
-      // 競合中は chrome に委任し、home では chrome が無いため wizard を開く。
-      if (hasDraftConflictRef.current) {
-        if (mountedRef.current) {
-          setWizardOpen(true);
+    registerPlannerLeaveFlush(
+      async () => {
+        // P1: 既に leave 中なら二重 leave しない（module mutex の第二防衛）。
+        if (leaveInFlightRef.current) {
+          return "blocked";
         }
-        return "blocked";
-      }
-      if (
-        settingsOpeningRef.current ||
-        emergencyOpeningRef.current ||
-        privacyOpeningRef.current ||
-        isOpeningEmergencyMenusRef.current ||
-        isOpeningPrivacyRef.current ||
-        isOpeningSettingsRef.current
-      ) {
-        if (mountedRef.current) {
-          setSubmissionError(
-            "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
-          );
-        }
-        return "blocked";
-      }
-      if (submittingRef.current) {
-        if (mountedRef.current) {
-          setSubmissionError(
-            "献立の作成処理中のため、移動できませんでした。完了後にもう一度お試しください。",
-          );
-        }
-        return "blocked";
-      }
-      // P1: flush await 前に武装。generate/openers が mid-leave を見られるようにする。
-      // P5: isLeaving を立て isSaving 経由で CTA/編集を disable（無言 generate no-op と post-flush 編集を防ぐ）。
-      leaveInFlightRef.current = true;
-      if (mountedRef.current) {
-        setIsLeaving(true);
-      }
-      const releaseLeaveUnlessProceeding = (proceeding: boolean): void => {
-        if (!proceeding) {
-          leaveInFlightRef.current = false;
+        // P4: ガード blocked は無言 stay にせず理由を可視化する。
+        // 競合中は chrome に委任し、home では chrome が無いため wizard を開く。
+        if (hasDraftConflictRef.current) {
           if (mountedRef.current) {
-            setIsLeaving(false);
+            setWizardOpen(true);
           }
+          return "blocked";
         }
-        // proceed 時は unmount まで維持（shell navigate 前の generate 起動・編集窓を閉じる）
-      };
-      const otherOpInFlightAfterFlush = (): boolean =>
-        submittingRef.current ||
-        settingsOpeningRef.current ||
-        emergencyOpeningRef.current ||
-        privacyOpeningRef.current ||
-        isOpeningEmergencyMenusRef.current ||
-        isOpeningPrivacyRef.current ||
-        isOpeningSettingsRef.current;
-      try {
-        await flushDraftRef.current();
-        // P1: flush 成功後も generate/openers が await 中に武装していないか再確認
-        if (otherOpInFlightAfterFlush()) {
+        if (
+          settingsOpeningRef.current ||
+          emergencyOpeningRef.current ||
+          privacyOpeningRef.current ||
+          isOpeningEmergencyMenusRef.current ||
+          isOpeningPrivacyRef.current ||
+          isOpeningSettingsRef.current
+        ) {
           if (mountedRef.current) {
             setSubmissionError(
               "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
             );
           }
-          releaseLeaveUnlessProceeding(false);
           return "blocked";
         }
-        releaseLeaveUnlessProceeding(true);
-        return "proceed";
-      } catch (error) {
-        // P1: Incomplete は schema 非 persistable の意図的拒否（RPC しない）。
-        // pre-leave-flush 同様に離脱可とし、通信失敗文言で封鎖しない。
-        if (error instanceof IncompleteDraftSaveError) {
+        if (submittingRef.current) {
+          if (mountedRef.current) {
+            setSubmissionError(
+              "献立の作成処理中のため、移動できませんでした。完了後にもう一度お試しください。",
+            );
+          }
+          return "blocked";
+        }
+        // P1: flush await 前に武装。generate/openers が mid-leave を見られるようにする。
+        // P5: isLeaving を立て isSaving 経由で CTA/編集を disable（無言 generate no-op と post-flush 編集を防ぐ）。
+        const flightId = ++leaveFlightIdRef.current;
+        leaveInFlightRef.current = true;
+        if (mountedRef.current) {
+          setIsLeaving(true);
+        }
+        const isCurrentLeaveFlight = (): boolean => leaveFlightIdRef.current === flightId;
+        const releaseLeaveUnlessProceeding = (proceeding: boolean): void => {
+          if (!isCurrentLeaveFlight()) {
+            // timeout 後の遅延完了。proceed ロックを再武装しない
+            return;
+          }
+          if (!proceeding) {
+            leaveInFlightRef.current = false;
+            if (mountedRef.current) {
+              setIsLeaving(false);
+            }
+          }
+          // proceed 時は unmount まで維持（shell navigate 前の generate 起動・編集窓を閉じる）
+        };
+        const otherOpInFlightAfterFlush = (): boolean =>
+          submittingRef.current ||
+          settingsOpeningRef.current ||
+          emergencyOpeningRef.current ||
+          privacyOpeningRef.current ||
+          isOpeningEmergencyMenusRef.current ||
+          isOpeningPrivacyRef.current ||
+          isOpeningSettingsRef.current;
+        try {
+          await flushDraftRef.current();
+          if (!isCurrentLeaveFlight()) {
+            return "blocked";
+          }
+          // P1: flush 成功後も generate/openers が await 中に武装していないか再確認
           if (otherOpInFlightAfterFlush()) {
             if (mountedRef.current) {
               setSubmissionError(
@@ -1188,26 +1189,56 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           }
           releaseLeaveUnlessProceeding(true);
           return "proceed";
-        }
-        // P2: revision conflict は onConflict が競合 chrome を武装済み。
-        // 通信障害文言と並立させず、home では wizard を開いて chrome を見せる。
-        if (error instanceof DraftRevisionConflictError) {
+        } catch (error) {
+          if (!isCurrentLeaveFlight()) {
+            return "blocked";
+          }
+          // P1: Incomplete は schema 非 persistable の意図的拒否（RPC しない）。
+          // pre-leave-flush 同様に離脱可とし、通信失敗文言で封鎖しない。
+          if (error instanceof IncompleteDraftSaveError) {
+            if (otherOpInFlightAfterFlush()) {
+              if (mountedRef.current) {
+                setSubmissionError(
+                  "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
+                );
+              }
+              releaseLeaveUnlessProceeding(false);
+              return "blocked";
+            }
+            releaseLeaveUnlessProceeding(true);
+            return "proceed";
+          }
+          // P2: revision conflict は onConflict が競合 chrome を武装済み。
+          // 通信障害文言と並立させず、home では wizard を開いて chrome を見せる。
+          if (error instanceof DraftRevisionConflictError) {
+            if (mountedRef.current) {
+              setWizardOpen(true);
+            }
+            releaseLeaveUnlessProceeding(false);
+            return "blocked";
+          }
           if (mountedRef.current) {
-            setWizardOpen(true);
+            setSubmissionError(
+              "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
+            );
           }
           releaseLeaveUnlessProceeding(false);
           return "blocked";
         }
-        if (mountedRef.current) {
-          setSubmissionError(
-            "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
-          );
-        }
-        releaseLeaveUnlessProceeding(false);
-        return "blocked";
-      }
-    });
+      },
+      {
+        onTimeout: () => {
+          // withTimeout 後も handler は続く。世代を進め route ロックを同期で落とす。
+          leaveFlightIdRef.current += 1;
+          leaveInFlightRef.current = false;
+          if (mountedRef.current) {
+            setIsLeaving(false);
+          }
+        },
+      },
+    );
     return () => {
+      leaveFlightIdRef.current += 1;
       registerPlannerLeaveFlush(null);
       leaveInFlightRef.current = false;
     };
@@ -1321,6 +1352,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         footer={flyerFooter}
         // P1: leave-flush / strip / 明示保存失敗を home でも role=alert で可視化（wizard と同型）
         error={submissionError}
+        disabled={
+          isLeaving ||
+          isSubmitting ||
+          isOpeningEmergencyMenus ||
+          isOpeningPrivacy ||
+          isOpeningSettings
+        }
         banner={
           backgroundRefetchErrorMessage !== null ? (
             <div className="home-soft-banner stack">
@@ -1539,6 +1577,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           submittingRef.current = true;
           setIsSubmitting(true);
           setAudienceStatusError(null);
+          // 生成成功（/generation 遷移）後は finally で isSaving を落とさない
+          let generationProceeded = false;
           try {
             const saved = await flushDraft();
             // strip は operationId を先に無効化するので submittingRef の再読は冗長
@@ -1676,6 +1716,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               const result = await startGeneration(saved, commandAttempt, controller.signal);
               if (controller.signal.aborted || result === false) return;
               startNewAttempt();
+              // true は /generation へ遷移済み。navigate commit まで isSaving を維持する。
+              generationProceeded = result === true;
             } finally {
               if (generationAbortControllerRef.current === controller) {
                 generationAbortControllerRef.current = null;
@@ -1706,7 +1748,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             );
           } finally {
             // strip が既に operation を無効化して ref を落としている場合は上書きしない
-            if (submitOperationId === submitOperationIdRef.current) {
+            // 生成成功後は unmount まで isSaving / submittingRef を維持し reset で sticky を捨てない
+            if (submitOperationId === submitOperationIdRef.current && !generationProceeded) {
               submittingRef.current = false;
               setIsSubmitting(false);
             }

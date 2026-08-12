@@ -44,6 +44,31 @@ describe("planner-leave-flush (P2)", () => {
       vi.useRealTimers();
     }
   });
+
+  it("L12: timeout は onTimeout を同期実行し、遅延 handler の proceed は使わない", async () => {
+    vi.useFakeTimers();
+    try {
+      const onTimeout = vi.fn();
+      let resolveHandler: ((value: "proceed") => void) | undefined;
+      registerPlannerLeaveFlush(
+        () =>
+          new Promise<"proceed">((resolve) => {
+            resolveHandler = resolve;
+          }),
+        { onTimeout },
+      );
+      const pending = runPlannerLeaveFlush();
+      await vi.advanceTimersByTimeAsync(PLANNER_LEAVE_FLUSH_TIMEOUT_MS + 10);
+      await expect(pending).resolves.toBe("blocked");
+      expect(onTimeout).toHaveBeenCalledTimes(1);
+      resolveHandler?.("proceed");
+      await Promise.resolve();
+      registerPlannerLeaveFlush(() => Promise.resolve("proceed"));
+      await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("planner-leave-flush SPA intercept (P1)", () => {

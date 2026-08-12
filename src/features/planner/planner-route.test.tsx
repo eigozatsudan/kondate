@@ -433,6 +433,7 @@ vi.mock("./components/planner-wizard", () => ({
         </button>
         <button
           type="button"
+          disabled={props.isSaving}
           onClick={() => {
             props.onReset?.();
           }}
@@ -543,6 +544,7 @@ vi.mock("@/features/generation/model/pending-generation-meta", async (importOrig
 
 import { PlannerPage, PlannerRoutePage } from "./planner-route";
 import {
+  PLANNER_LEAVE_FLUSH_TIMEOUT_MS,
   registerPlannerLeaveFlush,
   resetPlannerLeaveNavigateFlightForTests,
   runPlannerLeaveFlush,
@@ -1250,6 +1252,27 @@ it("P1: leave flush の通信失敗は blocked + 通信文言", async () => {
   });
 });
 
+it("P7: leave flush 中は home CTA を disabled にする", async () => {
+  queryState.draft = null;
+  pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  render(<PlannerRoutePage />);
+  await vi.waitFor(() => {
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeEnabled();
+  });
+
+  const leavePromise = runPlannerLeaveFlush();
+  await vi.waitFor(() => {
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeDisabled();
+  });
+
+  deferred.resolve({ ...draft, revision: 4 });
+  await expect(leavePromise).resolves.toBe("proceed");
+  // proceed 後も unmount まで disabled（wizard isSaving と同型）
+  expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeDisabled();
+});
+
 it("P1: home 面でも leave flush 通信失敗を role=alert で表示する", async () => {
   // 空下書き + pending なし → ホーム着地（wizard の error スロットに依存しない）
   queryState.draft = null;
@@ -1330,6 +1353,51 @@ it("P5: leave flush 中は isSaving が true（generate disabled / 編集窓を�
   await expect(leavePromise).resolves.toBe("proceed");
   // proceed 後も unmount まで isSaving を維持（post-flush 編集窓を閉じる）
   expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+});
+
+it("P1: leave flush timeout 後はロックを落とし、遅延 proceed で固着しない", async () => {
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  const startGeneration = vi.fn().mockResolvedValue(true);
+  render(<PlannerPage startGeneration={startGeneration} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  // withTimeout の壁時計を fake で進める。実タイマー起動後に fake へ切ると
+  // 本物の 15s timeout が残って leavePromise が解決せず、次テストの single-flight を汚す。
+  vi.useFakeTimers();
+  try {
+    const leavePromise = runPlannerLeaveFlush();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PLANNER_LEAVE_FLUSH_TIMEOUT_MS + 10);
+    });
+    await expect(leavePromise).resolves.toBe("blocked");
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+  } finally {
+    vi.useRealTimers();
+  }
+
+  // timeout 後に遅延 flush が成功しても proceed ロックを再武装しない
+  deferred.resolve({ ...draft, revision: 4 });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+
+  // ロックが残ると generate が isLeaving / leaveInFlightRef で止まる。
+  // 再離脱を proceed させると成功経路がロックを再武装するので、ここでは生成だけ見る。
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  await props.onSubmit();
+  await vi.waitFor(() => {
+    expect(startGeneration).toHaveBeenCalled();
+  });
 });
 
 it("P5: leave flush が blocked なら isSaving を解除する", async () => {
@@ -1791,6 +1859,25 @@ describe("PlannerRoutePage", () => {
     });
     // POST 完了を待たず、保存直後に遷移する（再生成経路と同型）
     expect(navigateMock).toHaveBeenCalledWith("/generation");
+  });
+
+  it("P6: 生成成功直後は isSaving を維持し reset しても pending を捨てない", async () => {
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation");
+    });
+    expect(pendingGenerationMock.savePendingGeneration).toHaveBeenCalled();
+    // navigate は fire-and-forget。commit 前に isSaving が落ちると reset で sticky が消える
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+    expect(screen.getByRole("button", { name: "入力をリセット" })).toBeDisabled();
+
+    const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+    props.onReset?.();
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
   });
 
   it("P3: Free plan では attempt.qualityMode true でも pending に false を載せる", async () => {
