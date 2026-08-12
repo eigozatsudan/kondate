@@ -1258,8 +1258,13 @@ export function HouseholdSettingsForm({
       void queueSave(selected, next);
       return;
     }
+    // H12: draft でも empty registered を DB に即書きしない（onboarding H13 defer と同方向）。
+    // complete は従来どおり non-registered → registered で intent 必須。
+    // アレルゲン証拠がある draft は即 commit 可（初回追加後の再選択など）。
+    const hasAllergyEvidence = allergiesQuery.isSuccess && currentAllergies.length > 0;
     const requiresRegisteredIntent =
-      selected.status === "complete" && persistedAllergyStatus !== "registered";
+      persistedAllergyStatus !== "registered" &&
+      (selected.status === "complete" || !hasAllergyEvidence);
     if (!requiresRegisteredIntent && existingIntent === undefined) {
       void queueSave(selected, next);
       return;

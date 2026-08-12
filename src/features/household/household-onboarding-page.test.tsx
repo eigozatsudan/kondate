@@ -10,6 +10,7 @@ import {
   type HouseholdMemberRow,
   type ProfileRow,
 } from "./household-api";
+import { EASE_SOFT_NOT_SWALLOW_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { HouseholdOnboardingForm, type HouseholdOnboardingApi } from "./household-onboarding-page";
 import { UNSUPPORTED_DIET_KIND_LABELS } from "./unsupported-diet-copy";
 
@@ -1388,4 +1389,181 @@ it("HR1: does not completeMember when pending registered flush fails", async () 
     ).toBeInTheDocument();
   });
   expect(completeMember).not.toHaveBeenCalled();
+});
+
+// H14: allergy 追加 in-flight 中は complete CTA を disabled（settings と同型）
+it("H14: disables complete while an allergy addition is pending", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([
+    {
+      ...draft,
+      age_band: "adult",
+      allergy_status: "registered",
+      unsupported_diet_status: "none",
+    },
+  ]);
+  let resolveAdd: ((value: unknown) => void) | undefined;
+  const addStandardAllergy = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        resolveAdd = resolve;
+      }),
+  );
+  const completeMember = vi.fn();
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    updateDraft: vi.fn((_id, patch) => {
+      const next = {
+        ...draft,
+        ...patch,
+        age_band: "adult" as const,
+        allergy_status: "registered" as const,
+        unsupported_diet_status: "none" as const,
+      };
+      membersState.upsert(next);
+      return Promise.resolve(next);
+    }),
+    listAllergies: vi.fn().mockResolvedValue([]),
+    listCatalog: vi.fn().mockResolvedValue([
+      {
+        id: "egg",
+        display_name: "卵",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]),
+    listAliases: vi.fn().mockResolvedValue([]),
+    addStandardAllergy,
+    completeMember,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+  });
+  await user.click(screen.getByRole("button", { name: "卵を追加" }));
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalledTimes(1);
+  });
+
+  const completeButton = screen.getByRole("button", { name: "この家族の設定を完了する" });
+  expect(completeButton).toBeDisabled();
+  fireEvent.click(completeButton);
+  expect(completeMember).not.toHaveBeenCalled();
+
+  resolveAdd?.({
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  });
+  await waitFor(() => {
+    expect(completeButton).not.toBeDisabled();
+  });
+});
+
+// H16: draft アレルギー追加後に dependents soft invalidate も走る（allergies 単独 invalidate より広い）
+it("H16: soft-invalidates safety dependents after draft allergy add", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([
+    {
+      ...draft,
+      age_band: "adult",
+      allergy_status: "registered",
+      unsupported_diet_status: "none",
+    },
+  ]);
+  const addStandardAllergy = vi.fn().mockResolvedValue({
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  });
+  const listAllergies = vi
+    .fn()
+    .mockResolvedValueOnce([])
+    .mockResolvedValue([
+      {
+        id: "allergy-egg",
+        user_id: "user-1",
+        member_id: "member-1",
+        allergen_id: "egg",
+        custom_name: null,
+        custom_aliases: [] as string[],
+        custom_confirmed: false,
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]);
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    updateDraft: vi.fn((_id, patch) => {
+      const next = {
+        ...draft,
+        age_band: "adult" as const,
+        allergy_status: "registered" as const,
+        unsupported_diet_status: "none" as const,
+        ...patch,
+      };
+      membersState.upsert(next);
+      return Promise.resolve(next);
+    }),
+    listAllergies,
+    listCatalog: vi.fn().mockResolvedValue([
+      {
+        id: "egg",
+        display_name: "卵",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]),
+    listAliases: vi.fn().mockResolvedValue([]),
+    addStandardAllergy,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // dependents のうち emergency を seed し、soft invalidate で stale になることを固定
+  client.setQueryData(["emergency-menus", "user-1"], [{ id: "stale" }]);
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+  });
+  await user.click(screen.getByRole("button", { name: "卵を追加" }));
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalled();
+  });
+  await waitFor(() => {
+    expect(client.getQueryState(["emergency-menus", "user-1"])?.isInvalidated).toBe(true);
+  });
+});
+
+// H18: 年齢選択で soft 既定が入り得るため settings と同文言の嚥下非該当 disclaimer を出す
+it("H18: shows ease soft-not-swallow disclaimer after age is selected", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
+  const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
+    const next = { ...draft, ...patch };
+    membersState.upsert(next);
+    return Promise.resolve(next);
+  });
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    updateDraft,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(screen.queryByText(EASE_SOFT_NOT_SWALLOW_DISCLAIMER)).not.toBeInTheDocument();
+  await user.selectOptions(await screen.findByLabelText("年齢のめやす"), "post_weaning_to_2");
+  expect(await screen.findByText(EASE_SOFT_NOT_SWALLOW_DISCLAIMER)).toBeVisible();
 });

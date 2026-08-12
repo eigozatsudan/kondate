@@ -3534,6 +3534,77 @@ it("H5: surfaces delete miss when allergy row remains after RPC success", async 
   });
 });
 
+// H12: draft でも empty registered を DB に即書きせず、初回アレルゲン追加で commit（onboarding H13 と同方向）
+it("H12: defers empty registered allergy_status on draft until first allergen is added", async () => {
+  const draft: HouseholdMemberRow = {
+    ...member,
+    id: "draft-h12",
+    status: "draft",
+    display_name: "子ども",
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies));
+  const draftAllergy = { ...standardAllergy, id: "allergy-draft-h12", member_id: draft.id };
+  const addStandardAllergy = vi.fn().mockImplementation(() => {
+    allergies = [draftAllergy];
+    return Promise.resolve(draftAllergy);
+  });
+  const updateDraft = vi
+    .fn()
+    .mockImplementation((_memberId: string, patch: HouseholdMemberPatch) =>
+      Promise.resolve({ ...draft, ...patch }),
+    );
+  const { queryClient } = await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    listAllergies,
+    addStandardAllergy,
+    updateDraft,
+  });
+
+  await waitForAllergies(queryClient, draft.id);
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+
+  // UI は registered でも、証拠なしでは draft に registered を書かない
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
+  });
+  expect(updateDraft).not.toHaveBeenCalledWith(
+    draft.id,
+    expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
+
+  // 他項目は旧 allergy_status のまま保存できる
+  fireEvent.change(screen.getByLabelText("辛さ"), { target: { value: "mild" } });
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledWith(
+      draft.id,
+      expect.objectContaining({ spice_level: "mild", allergy_status: "none" }),
+      expect.any(String),
+    );
+  });
+  const earlyRegistered = updateDraft.mock.calls.filter(
+    (call) => call[1].allergy_status === "registered",
+  );
+  expect(earlyRegistered).toHaveLength(0);
+
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalledWith(draft.id, "walnut");
+  });
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledWith(
+      draft.id,
+      expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
+    );
+  });
+});
+
 // H8: 追加後も一覧 empty なら registered を確定しない
 it("H8: does not save registered when allergy-insert leaves empty list", async () => {
   const addStandardAllergy = vi.fn().mockResolvedValue(walnutAllergy);
