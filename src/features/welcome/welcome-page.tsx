@@ -40,6 +40,7 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
   const [actionError, setActionError] = useState<string | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const pendingStatusRef = useRef<HTMLParagraphElement>(null);
+  const actionErrorRef = useRef<HTMLParagraphElement>(null);
   const hasMounted = useRef(false);
   // L5: state 更新前の同期連打でも第二 flight を拒否する single-flight
   const startFlightRef = useRef(false);
@@ -59,6 +60,13 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
       pendingStatusRef.current?.focus();
     }
   }, [pendingAction]);
+
+  useEffect(() => {
+    // L14: 失敗時は pending 解除でフォーカスが body に落ちるため alert へ戻す
+    if (actionError !== null) {
+      actionErrorRef.current?.focus();
+    }
+  }, [actionError]);
 
   if (onboardingStatus === "complete" || onboardingStatus === "skipped") {
     return <Navigate to="/planner" replace />;
@@ -153,7 +161,7 @@ export function WelcomePage({ onboardingStatus, onStartIdea, onStartHousehold }:
       </div>
 
       {actionError !== null ? (
-        <p className="error-message" role="alert">
+        <p className="error-message" role="alert" ref={actionErrorRef} tabIndex={-1}>
           {actionError}
         </p>
       ) : null}

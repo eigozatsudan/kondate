@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { Navigate, useLocation } from "react-router";
 import { accountDeletionAnonymousShareNote } from "@/features/privacy/privacy-copy";
+import { LivePendingMain } from "@/shared/ui/feedback";
 import { createAuthGateway, type AuthGateway } from "./auth-gateway";
 import type { MagicLinkState } from "./magic-link-state";
 import { sanitizeLoginReturnPath } from "./auth-flow";
@@ -377,12 +378,9 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     return <Navigate to={returnTo} replace />;
   }
   // deadline 超過後は未ログイン UI（フォーム）へフォールスルーする
+  // L11: RootGate / RequireSession と同型の LivePendingMain（busy + status live）
   if (showLoading) {
-    return (
-      <main className="page-frame stack">
-        <p>読み込み中…</p>
-      </main>
-    );
+    return <LivePendingMain message="読み込み中…" />;
   }
 
   // 送信済み・期限切れは同一文脈（宛先・再送・変更・Google）でやり直せる（B-I8 / L174 / L644）

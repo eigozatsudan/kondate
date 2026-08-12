@@ -68,10 +68,11 @@ function FreeLandingChunkGate() {
   // L3: timeout UI を出しても Suspense ツリーは unmount しない。
   // timer microtask が setTimedOut(true) した直後に chunk が settle しても
   // probe の layoutEffect が loadedRef + setTimedOut(false) で成功 UI へ戻せる。
+  // L3 a11y: timeout 側は <main> にしない（Free LP の hidden main と dual landmark を避ける）。
   return (
     <>
       {timedOut ? (
-        <main className="page-frame stack">
+        <div className="page-frame stack" role="region" aria-label="読み込みエラー">
           <p className="error-message" role="alert">
             {LANDING_CHUNK_TIMEOUT_COPY}
           </p>
@@ -84,7 +85,7 @@ function FreeLandingChunkGate() {
           >
             再読み込み
           </button>
-        </main>
+        </div>
       ) : null}
       <div hidden={timedOut} aria-hidden={timedOut || undefined}>
         <Suspense
