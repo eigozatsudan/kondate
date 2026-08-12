@@ -105,13 +105,23 @@ describe("createDeleteAccountHandler", () => {
     vi.restoreAllMocks();
   });
 
-  function handler() {
+  function handler(
+    overrides: Partial<{
+      acquireDeleteLock: NonNullable<
+        Parameters<typeof createDeleteAccountHandler>[0]["acquireDeleteLock"]
+      >;
+      releaseDeleteLock: NonNullable<
+        Parameters<typeof createDeleteAccountHandler>[0]["releaseDeleteLock"]
+      >;
+    }> = {},
+  ) {
     return createDeleteAccountHandler({
       authenticate,
       releaseProcessingReservations,
       releaseFlyerProcessingReservations,
       cancelBillingSubscriptions,
       deleteUser,
+      ...overrides,
     });
   }
 
@@ -227,6 +237,51 @@ describe("createDeleteAccountHandler", () => {
     expect(releaseProcessingReservations.mock.invocationCallOrder[0]).toBeLessThan(
       deleteUser.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("AP1: concurrent second DELETE gets 409 account_delete_in_progress and skips cancel/delete", async () => {
+    const acquireDeleteLock = vi.fn().mockResolvedValue({
+      ok: false,
+      code: "account_delete_in_progress" as const,
+    });
+    const releaseDeleteLock = vi.fn();
+    const response = await handler({ acquireDeleteLock, releaseDeleteLock })(
+      makeDeleteRequest({ confirmation: "削除する" }),
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "account_delete_in_progress" },
+    });
+    expect(acquireDeleteLock).toHaveBeenCalledTimes(1);
+    expect(releaseProcessingReservations).not.toHaveBeenCalled();
+    expect(cancelBillingSubscriptions).not.toHaveBeenCalled();
+    expect(deleteUser).not.toHaveBeenCalled();
+    expect(releaseDeleteLock).not.toHaveBeenCalled();
+  });
+
+  it("AP1: failed delete after lock acquires releases the lock", async () => {
+    const acquireDeleteLock = vi.fn().mockResolvedValue({ ok: true as const });
+    const releaseDeleteLock = vi.fn().mockResolvedValue(undefined);
+    deleteUser.mockResolvedValue({ error: { message: "admin unavailable" } });
+    const response = await handler({ acquireDeleteLock, releaseDeleteLock })(
+      makeDeleteRequest({ confirmation: "削除する" }),
+    );
+    expect(response.status).toBe(503);
+    expect(acquireDeleteLock).toHaveBeenCalledTimes(1);
+    expect(releaseDeleteLock).toHaveBeenCalledTimes(1);
+    expect(releaseDeleteLock).toHaveBeenCalledWith(USER_ID, expect.any(String));
+  });
+
+  it("AP1: successful delete does not release lock (CASCADE path)", async () => {
+    const acquireDeleteLock = vi.fn().mockResolvedValue({ ok: true as const });
+    const releaseDeleteLock = vi.fn().mockResolvedValue(undefined);
+    const response = await handler({ acquireDeleteLock, releaseDeleteLock })(
+      makeDeleteRequest({ confirmation: "削除する" }),
+    );
+    expect(response.status).toBe(200);
+    expect(acquireDeleteLock).toHaveBeenCalledTimes(1);
+    expect(releaseDeleteLock).not.toHaveBeenCalled();
   });
 
   it("calls release_identity_and_global_for_user_processing before auth delete", async () => {
@@ -556,8 +611,14 @@ describe("production deleteUser adapter", () => {
     getStripeClientFromEnvMock.mockReset();
     requireUserMock.mockResolvedValue({ userId: USER_ID, accessToken: ACCESS_TOKEN });
     adminDeleteUserMock.mockResolvedValue({ data: { user: null }, error: null });
-    // release_identity → 0; release_flyer → 0; get_billing_customer → empty
+    // AP1 lock + release_identity → 0; release_flyer → 0; get_billing_customer → empty
     rpcMock.mockImplementation((name: string) => {
+      if (name === "acquire_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, lock_token: "tok" }, error: null });
+      }
+      if (name === "release_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, released: true }, error: null });
+      }
       if (name === "release_identity_and_global_for_user_processing") {
         return Promise.resolve({ data: 0, error: null });
       }
@@ -621,6 +682,13 @@ describe("production deleteUser adapter", () => {
       },
     });
     rpcMock.mockImplementation((name: string) => {
+      // AP1: 削除ロック取得成功
+      if (name === "acquire_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, lock_token: "tok" }, error: null });
+      }
+      if (name === "release_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, released: true }, error: null });
+      }
       if (name === "release_identity_and_global_for_user_processing") {
         return Promise.resolve({ data: 0, error: null });
       }
@@ -658,6 +726,12 @@ describe("production deleteUser adapter", () => {
       },
     });
     rpcMock.mockImplementation((name: string) => {
+      if (name === "acquire_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, lock_token: "tok" }, error: null });
+      }
+      if (name === "release_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, released: true }, error: null });
+      }
       if (name === "release_identity_and_global_for_user_processing") {
         return Promise.resolve({ data: 0, error: null });
       }
@@ -710,6 +784,12 @@ describe("production deleteUser adapter", () => {
       },
     });
     rpcMock.mockImplementation((name: string) => {
+      if (name === "acquire_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, lock_token: "tok" }, error: null });
+      }
+      if (name === "release_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, released: true }, error: null });
+      }
       if (name === "release_identity_and_global_for_user_processing") {
         return Promise.resolve({ data: 0, error: null });
       }
@@ -734,6 +814,12 @@ describe("production deleteUser adapter", () => {
 
   it("continues auth-delete when flyer release RPC fails (best-effort)", async () => {
     rpcMock.mockImplementation((name: string) => {
+      if (name === "acquire_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, lock_token: "tok" }, error: null });
+      }
+      if (name === "release_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, released: true }, error: null });
+      }
       if (name === "release_identity_and_global_for_user_processing") {
         return Promise.resolve({ data: 0, error: null });
       }

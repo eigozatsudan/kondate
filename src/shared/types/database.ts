@@ -231,6 +231,25 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
         Args: Record<string, never>;
         Returns: number;
       };
+      /**
+       * AP1: アカウント削除の user 単位 TTL lock（service_role）。
+       * 生成型未取り込みのため overlay で追加。migration 20260812200000。
+       */
+      acquire_account_delete_lock: {
+        Args: {
+          p_user_id: string;
+          p_lock_token: string;
+          p_expires_at: string;
+        };
+        Returns: unknown;
+      };
+      release_account_delete_lock: {
+        Args: {
+          p_user_id: string;
+          p_lock_token: string;
+        };
+        Returns: unknown;
+      };
     };
   };
 };

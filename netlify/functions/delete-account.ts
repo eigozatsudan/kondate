@@ -33,6 +33,19 @@ export const ACCOUNT_DELETE_FAILED_MESSAGE =
   "削除できませんでした。時間をおいてもう一度お試しください";
 
 /**
+ * AP1: 同一 user の並行 DELETE が進行中のときの文言。
+ * 二重 cancel / deleteUser を避け、先勝ち完了後の再試行を促す。
+ */
+export const ACCOUNT_DELETE_IN_PROGRESS_MESSAGE =
+  "削除処理が進行中です。完了するまでお待ちいただき、画面を更新してからもう一度お試しください";
+
+/**
+ * AP1: delete lock TTL。Function 総予算 + platform headroom を覆い、
+ * 途中 abort 後の再入場が過早に第二 cancel を始めないようにする。
+ */
+export const ACCOUNT_DELETE_LOCK_TTL_MS = FUNCTION_TOTAL_BUDGET_MS + 10_000;
+
+/**
  * cancel 結果。AP3: live sub を 1 件でも cancel 成功したときだけ
  * account_delete_after_billing_cancel_failed を返す根拠にする。
  */
@@ -62,6 +75,17 @@ function assertWithinBillingCancelBudget(startedAt: number): void {
 
 export type DeleteAccountDeps = {
   authenticate: typeof requireUser;
+  /**
+   * AP1: 同一 user の並行 DELETE を user 単位 TTL lock で直列化する。
+   * 未注入時は no-op（単体テスト互換）。本番 default は RPC を配線する。
+   */
+  acquireDeleteLock?: (
+    userId: string,
+    lockToken: string,
+    expiresAtIso: string,
+  ) => Promise<{ ok: true } | { ok: false; code: "account_delete_in_progress" | "lock_failed" }>;
+  /** AP1: 失敗経路で lock を解放。成功時は Auth CASCADE で行消滅し得る。 */
+  releaseDeleteLock?: (userId: string, lockToken: string) => Promise<void>;
   /** processing 予約を identity/global/quality から解放する（Auth 削除前） */
   releaseProcessingReservations: (userId: string) => Promise<{ error: { message: string } | null }>;
   /**
@@ -86,15 +110,37 @@ export type DeleteAccountDeps = {
  * リクエスト body の user_id は契約外（無視）であり、削除対象は常に bearer の userId のみ。
  * Auth 削除前に processing 予約解放 → flyer reserved 解放 → Stripe live sub cancel を行う。
  * Stripe cancel が失敗した場合は Auth 削除しない（請求 orphan を優先して防ぐ）。
+ * AP1: 同一 user の並行 DELETE は acquireDeleteLock で serialize（client abort ≠ server 完了）。
  */
 export const createDeleteAccountHandler =
   (deps: DeleteAccountDeps) =>
   async (request: Request): Promise<Response> => {
     if (request.method !== "DELETE") return methodNotAllowed(["DELETE"]);
+    let lockHeld: { userId: string; lockToken: string } | null = null;
+    let deleteSucceeded = false;
     try {
       const auth = await deps.authenticate(request);
       // 確認フレーズのみ検証。余分なキー（user_id 等）は Zod 既定で strip され削除対象に使わない。
       await parseJson(request, deleteAccountRequestSchema);
+
+      // AP1: cancel/delete の前に user 単位 lock。進行中は 409 で再試行を促す。
+      if (deps.acquireDeleteLock !== undefined) {
+        const lockToken = randomUUID();
+        const expiresAtIso = new Date(Date.now() + ACCOUNT_DELETE_LOCK_TTL_MS).toISOString();
+        const acquired = await deps.acquireDeleteLock(auth.userId, lockToken, expiresAtIso);
+        if (!acquired.ok) {
+          if (acquired.code === "account_delete_in_progress") {
+            throw new HttpError(
+              409,
+              "account_delete_in_progress",
+              ACCOUNT_DELETE_IN_PROGRESS_MESSAGE,
+            );
+          }
+          throw new HttpError(503, "account_delete_failed", ACCOUNT_DELETE_FAILED_MESSAGE);
+        }
+        lockHeld = { userId: auth.userId, lockToken };
+      }
+
       const release = await deps.releaseProcessingReservations(auth.userId);
       if (release.error) {
         throw new HttpError(
@@ -132,9 +178,21 @@ export const createDeleteAccountHandler =
         }
         throw new HttpError(503, "account_delete_failed", ACCOUNT_DELETE_FAILED_MESSAGE);
       }
+      // 成功時は Auth CASCADE で lock 行も消える想定。明示 release は不要。
+      deleteSucceeded = true;
+      lockHeld = null;
       return json<DeleteAccountResult>(200, { ok: true, data: { deleted: true } });
     } catch (error) {
       return handleError(error);
+    } finally {
+      // AP1: 失敗経路だけ lock を解放し、再試行を許可する（成功は CASCADE / null 化済み）
+      if (!deleteSucceeded && lockHeld !== null && deps.releaseDeleteLock !== undefined) {
+        try {
+          await deps.releaseDeleteLock(lockHeld.userId, lockHeld.lockToken);
+        } catch {
+          // release 失敗は TTL で回収。Auth 成否は既に確定している。
+        }
+      }
     }
   };
 
@@ -327,6 +385,29 @@ export default async function deleteAccount(request: Request): Promise<Response>
 
   return createDeleteAccountHandler({
     authenticate: requireUser,
+    // AP1: 並行 DELETE を private.account_delete_locks で serialize
+    acquireDeleteLock: async (userId, lockToken, expiresAtIso) => {
+      const { data, error } = await getSupabaseAdmin().rpc("acquire_account_delete_lock", {
+        p_user_id: userId,
+        p_lock_token: lockToken,
+        p_expires_at: expiresAtIso,
+      });
+      if (error !== null || data === null || typeof data !== "object") {
+        return { ok: false, code: "lock_failed" };
+      }
+      const payload = data as { ok?: unknown; failure_code?: unknown };
+      if (payload.ok === true) return { ok: true };
+      if (payload.failure_code === "account_delete_in_progress") {
+        return { ok: false, code: "account_delete_in_progress" };
+      }
+      return { ok: false, code: "lock_failed" };
+    },
+    releaseDeleteLock: async (userId, lockToken) => {
+      await getSupabaseAdmin().rpc("release_account_delete_lock", {
+        p_user_id: userId,
+        p_lock_token: lockToken,
+      });
+    },
     releaseProcessingReservations: async (userId) => {
       const { error } = await getSupabaseAdmin().rpc(
         "release_identity_and_global_for_user_processing",

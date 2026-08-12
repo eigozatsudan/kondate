@@ -9,6 +9,7 @@ import {
 } from "@shared/contracts/feedback";
 import { withTimeout } from "@/features/auth/async-timeout";
 import { requireAccessToken } from "@/features/auth/session";
+import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
 const categoryLabels: Readonly<Record<FeedbackCategory, string>> = {
@@ -24,11 +25,31 @@ const categoryLabels: Readonly<Record<FeedbackCategory, string>> = {
 export const FEEDBACK_POST_CLIENT_TIMEOUT_MS = 30_000;
 
 /**
- * AP5 / AP3: 曖昧失敗後の fingerprint を localStorage に残すキー。
- * localStorage は同一オリジンの別タブでも共有され、コメント通りの cross-tab 抑止と一致する。
+ * AP5 / AP3: 曖昧失敗後の fingerprint を localStorage に残すキー接頭辞。
+ * AP17: 実キーは userId を束縛（`…:ambiguous-fingerprint:<userId>`）。
  * logout/削除 cleanup は `kondate:feedback:` 接頭辞で両 storage を掃除済み。
+ * レガシー（user 非束縛）キーは読まず掃除対象のみ。
  */
-export const FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY = "kondate:feedback:ambiguous-fingerprint";
+export const FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX =
+  "kondate:feedback:ambiguous-fingerprint";
+
+/**
+ * @deprecated AP17: user 非束縛の旧キー。cleanup 互換とテスト移行用。新規 read/write 禁止。
+ */
+export const FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY =
+  FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX;
+
+/** AP17: user 束縛 sticky キー。userId 欠落時は null（sticky 無効・抑止しない）。 */
+export function feedbackAmbiguousFingerprintStorageKey(
+  userId: string | null | undefined,
+): string | null {
+  if (typeof userId !== "string" || userId.length === 0) return null;
+  // UUID 形のみ受け、任意文字列のキー汚染を避ける
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(userId)) {
+    return null;
+  }
+  return `${FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX}:${userId.toLowerCase()}`;
+}
 
 function mapError(code: string | undefined, fallback: string): string {
   if (code === "feedback_rate_limited") {
@@ -54,26 +75,35 @@ async function feedbackSubmitFingerprint(
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function readAmbiguousFingerprint(): string | null {
+function readAmbiguousFingerprint(userId: string | null | undefined): string | null {
+  const storageKey = feedbackAmbiguousFingerprintStorageKey(userId);
+  if (storageKey === null) return null;
   try {
-    const value = localStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+    const value = localStorage.getItem(storageKey);
     // AP1: 64 hex（SHA-256）のみ受理。旧平文残留は読まず再送抑止をやり直す（PII を再露出させない）。
     if (value !== null && /^[0-9a-f]{64}$/u.test(value)) return value;
     if (value !== null) {
-      localStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+      localStorage.removeItem(storageKey);
     }
     // AP3: sessionStorage に残った旧 sticky があれば読み捨て（localStorage へ寄せる）
     try {
-      const legacy = sessionStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+      const legacy = sessionStorage.getItem(storageKey);
       if (legacy !== null) {
-        sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+        sessionStorage.removeItem(storageKey);
         if (/^[0-9a-f]{64}$/u.test(legacy)) {
-          localStorage.setItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY, legacy);
+          localStorage.setItem(storageKey, legacy);
           return legacy;
         }
       }
     } catch {
       // sessionStorage 拒否は無視
+    }
+    // AP17: レガシー user 非束縛キーは他利用者の sticky になり得るため読まず除去のみ
+    try {
+      localStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX);
+      sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX);
+    } catch {
+      // ignore
     }
     return null;
   } catch {
@@ -82,17 +112,25 @@ function readAmbiguousFingerprint(): string | null {
   }
 }
 
-function writeAmbiguousFingerprint(fingerprint: string | null): void {
+function writeAmbiguousFingerprint(
+  userId: string | null | undefined,
+  fingerprint: string | null,
+): void {
+  const storageKey = feedbackAmbiguousFingerprintStorageKey(userId);
+  if (storageKey === null) return;
   try {
     if (fingerprint === null) {
-      localStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+      localStorage.removeItem(storageKey);
     } else {
       // AP1: hash のみ。呼び出し側が plaintext を渡さない契約。
-      localStorage.setItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY, fingerprint);
+      localStorage.setItem(storageKey, fingerprint);
     }
     // AP3: 旧 sessionStorage 残留を掃除し storage 権威を local に一本化
     try {
-      sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY);
+      sessionStorage.removeItem(storageKey);
+      // AP17: レガシー非束縛キーも掃除
+      localStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX);
+      sessionStorage.removeItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX);
     } catch {
       // ignore
     }
@@ -110,6 +148,9 @@ function writeAmbiguousFingerprint(fingerprint: string | null): void {
  * は製品開示の別途拡張余地（本修正では保管モデル自体は変えない）。
  */
 export function FeedbackSection() {
+  const auth = useAuth();
+  // AP17: sticky は session user に束縛（shared origin の prior-user 抑止を閉じる）
+  const stickyUserId = auth.session?.user.id ?? null;
   const [expanded, setExpanded] = useState(false);
   const [category, setCategory] = useState<FeedbackCategory>("feature_request");
   const [body, setBody] = useState("");
@@ -118,17 +159,24 @@ export function FeedbackSection() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // AP10: React 再描画前の二重 submit を同期ガード（pending state だけでは足りない）
   const submitInFlightRef = useRef(false);
-  // AP10 + AP5 / AP3: in-memory と localStorage の両方（reload / 別タブでも抑止）
-  const ambiguousSubmitFingerprintRef = useRef<string | null>(readAmbiguousFingerprint());
+  // AP10 + AP5 / AP3 / AP17: in-memory と user 束縛 localStorage
+  const ambiguousSubmitFingerprintRef = useRef<string | null>(null);
+  const stickyUserIdRef = useRef<string | null>(stickyUserId);
+  if (stickyUserIdRef.current !== stickyUserId) {
+    stickyUserIdRef.current = stickyUserId;
+    ambiguousSubmitFingerprintRef.current = readAmbiguousFingerprint(stickyUserId);
+  } else if (ambiguousSubmitFingerprintRef.current === null) {
+    ambiguousSubmitFingerprintRef.current = readAmbiguousFingerprint(stickyUserId);
+  }
 
   function rememberAmbiguousFingerprint(fingerprint: string): void {
     ambiguousSubmitFingerprintRef.current = fingerprint;
-    writeAmbiguousFingerprint(fingerprint);
+    writeAmbiguousFingerprint(stickyUserIdRef.current, fingerprint);
   }
 
   function clearAmbiguousFingerprint(): void {
     ambiguousSubmitFingerprintRef.current = null;
-    writeAmbiguousFingerprint(null);
+    writeAmbiguousFingerprint(stickyUserIdRef.current, null);
   }
 
   async function handleSubmit(event: SyntheticEvent<HTMLFormElement>): Promise<void> {
@@ -138,7 +186,8 @@ export function FeedbackSection() {
     // AP1: 比較・保管は hash のみ（本文は fingerprint 関数内で digest して捨てる）
     const fingerprint = await feedbackSubmitFingerprint(category, body);
     // localStorage 再読（別タブ / 直前 remount と同期）
-    const stickyAmbiguous = ambiguousSubmitFingerprintRef.current ?? readAmbiguousFingerprint();
+    const stickyAmbiguous =
+      ambiguousSubmitFingerprintRef.current ?? readAmbiguousFingerprint(stickyUserIdRef.current);
     if (stickyAmbiguous !== null) {
       ambiguousSubmitFingerprintRef.current = stickyAmbiguous;
     }
@@ -277,7 +326,8 @@ export function FeedbackSection() {
           <p className="type-small">
             使っていて不便な点や、あると助かる機能があれば教えてください。不具合の報告もこちらから送れます。送信は
             {FEEDBACK_RATE_WINDOW_HOURS}時間あたり{FEEDBACK_DAILY_LIMIT}
-            件までです。上限に達したら時間をおいてお試しください。
+            件までです。上限に達したら時間をおいてお試しください。送信時にいま開いている画面のパス（例:
+            /settings）だけを参考情報として添えます。氏名や本文以外の個人情報は自動では送りません。
           </p>
           <form className="stack" onSubmit={(event) => void handleSubmit(event)}>
             <fieldset className="stack" disabled={pending}>
