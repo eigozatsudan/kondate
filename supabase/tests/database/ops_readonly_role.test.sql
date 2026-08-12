@@ -1,8 +1,8 @@
 -- kondate_ops_readonly: SELECT のみ・user_feedback は RLS 下で行可視
--- 6 GRANT 表すべてで INSERT/UPDATE/DELETE privilege が無いことを固定する
+-- 8 GRANT 表（jobs + recipes + origins を含む）すべてで INSERT/UPDATE/DELETE privilege が無いことを固定する
 \ir 000_helpers.sql
 begin;
-select plan(38);
+select plan(50);
 
 select ok(
   exists (select 1 from pg_roles where rolname = 'kondate_ops_readonly'),
@@ -128,6 +128,68 @@ select ok(
 select ok(
   not has_table_privilege('kondate_ops_readonly', 'private.share_generalization_jobs', 'DELETE'),
   'ops has no DELETE on share_generalization_jobs'
+);
+
+select ok(
+  has_table_privilege('kondate_ops_readonly', 'private.shared_emergency_recipes', 'SELECT'),
+  'ops has SELECT grant on shared_emergency_recipes'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.shared_emergency_recipes', 'INSERT'),
+  'ops has no INSERT on shared_emergency_recipes'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.shared_emergency_recipes', 'UPDATE'),
+  'ops has no UPDATE on shared_emergency_recipes'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.shared_emergency_recipes', 'DELETE'),
+  'ops has no DELETE on shared_emergency_recipes'
+);
+
+select ok(
+  has_table_privilege('kondate_ops_readonly', 'private.shared_emergency_recipe_origins', 'SELECT'),
+  'ops has SELECT grant on shared_emergency_recipe_origins'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.shared_emergency_recipe_origins', 'INSERT'),
+  'ops has no INSERT on shared_emergency_recipe_origins'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.shared_emergency_recipe_origins', 'UPDATE'),
+  'ops has no UPDATE on shared_emergency_recipe_origins'
+);
+select ok(
+  not has_table_privilege('kondate_ops_readonly', 'private.shared_emergency_recipe_origins', 'DELETE'),
+  'ops has no DELETE on shared_emergency_recipe_origins'
+);
+
+select ok(
+  has_function_privilege(
+    'kondate_ops_readonly',
+    'private.share_recipe_title_from_payload(jsonb)',
+    'EXECUTE'
+  ),
+  'ops can execute share_recipe_title_from_payload'
+);
+
+-- 製品境界: service_role に表 SELECT を広げない
+select ok(
+  not has_table_privilege('service_role', 'private.shared_emergency_recipes', 'SELECT'),
+  'service_role still has no SELECT on shared_emergency_recipes'
+);
+select ok(
+  not has_table_privilege('service_role', 'private.shared_emergency_recipe_origins', 'SELECT'),
+  'service_role still has no SELECT on shared_emergency_recipe_origins'
+);
+
+select lives_ok(
+  $$
+    set local role kondate_ops_readonly;
+    select id, status, meal_type from private.shared_emergency_recipes limit 1;
+    reset role;
+  $$,
+  'ops can select shared_emergency_recipes columns'
 );
 
 select ok(
