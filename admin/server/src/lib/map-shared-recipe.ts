@@ -45,12 +45,18 @@ export function mapSharedRecipeListItem(row: SharedRecipeListRow): SharedRecipeL
   });
 }
 
+/** プレビュー投影対象として安全にプロパティ参照できる非 null オブジェクトか */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 /**
  * menu_payload から管理画面向け preview を投影する。
  * - schemaVersion 欠落/null → invalid_menu_payload
  * - 未知の schemaVersion → unsupported_schema_version
- * - 構造不足・Zod 失敗 → invalid_menu_payload
+ * - 構造不足・ネスト null・Zod 失敗・投影例外 → invalid_menu_payload
  * pantryUsage / labelConfirmations / 料理 UUID 等は拾わない。
+ * 呼び出し側へ例外は投げない（壊れた payload は 500 ではなく previewError に閉じる）。
  */
 export function buildPreviewFromPayload(raw: unknown): {
   preview: SharedRecipePreview | null;
@@ -76,71 +82,111 @@ export function buildPreviewFromPayload(raw: unknown): {
     return { preview: null, previewError: "invalid_menu_payload" };
   }
 
-  const picked = {
-    schemaVersion: obj.schemaVersion,
-    menuId: obj.menuId,
-    mealType: obj.mealType,
-    cuisineGenre: obj.cuisineGenre,
-    servings: obj.servings,
-    totalElapsedMinutes: obj.totalElapsedMinutes,
-    safetyTags: Array.isArray(obj.safetyTags) ? obj.safetyTags : [],
-    dishes: dishesIn.map((d) => {
-      const dish = d as Record<string, unknown>;
-      const ingredients = Array.isArray(dish.ingredients) ? dish.ingredients : [];
-      const steps = Array.isArray(dish.steps) ? dish.steps : [];
-      return {
-        role: dish.role,
-        position: dish.position,
-        name: dish.name,
-        description: dish.description,
-        cookingTimeMinutes: dish.cookingTimeMinutes,
-        ingredients: ingredients.map((i) => {
-          const ing = i as Record<string, unknown>;
-          return {
-            name: ing.name,
-            quantityText: ing.quantityText,
-            unit: ing.unit ?? null,
-            storeSection: ing.storeSection,
-          };
-        }),
-        steps: steps.map((s) => {
-          const step = s as Record<string, unknown>;
-          return { position: step.position, instruction: step.instruction };
-        }),
-      };
-    }),
-    timeline: timelineIn.map((t) => {
-      const step = t as Record<string, unknown>;
-      return {
-        position: step.position,
-        startMinute: step.startMinute,
-        durationMinutes: step.durationMinutes,
-        instruction: step.instruction,
-      };
-    }),
-    adaptations: adaptationsIn.map((a) => {
-      const ad = a as Record<string, unknown>;
-      const actions = Array.isArray(ad.safetyActions) ? ad.safetyActions : [];
-      return {
-        portionText: ad.portionText,
-        additionalCutting: ad.additionalCutting ?? null,
-        additionalHeating: ad.additionalHeating ?? null,
-        additionalSeasoning: ad.additionalSeasoning ?? null,
-        servingCheck: ad.servingCheck,
-        anonymousMemberRef: ad.anonymousMemberRef,
-        safetyActions: actions.map((x) => {
-          const act = x as Record<string, unknown>;
-          return { kind: act.kind, instruction: act.instruction };
-        }),
-      };
-    }),
-  };
+  try {
+    // dishes/timeline 等の配列要素が null のとき、プロパティ参照で TypeError になるのを防ぐ
+    for (const d of dishesIn) {
+      if (!isPlainObject(d)) {
+        return { preview: null, previewError: "invalid_menu_payload" };
+      }
+      const ingredients = Array.isArray(d.ingredients) ? d.ingredients : [];
+      const steps = Array.isArray(d.steps) ? d.steps : [];
+      for (const i of ingredients) {
+        if (!isPlainObject(i)) {
+          return { preview: null, previewError: "invalid_menu_payload" };
+        }
+      }
+      for (const s of steps) {
+        if (!isPlainObject(s)) {
+          return { preview: null, previewError: "invalid_menu_payload" };
+        }
+      }
+    }
+    for (const t of timelineIn) {
+      if (!isPlainObject(t)) {
+        return { preview: null, previewError: "invalid_menu_payload" };
+      }
+    }
+    for (const a of adaptationsIn) {
+      if (!isPlainObject(a)) {
+        return { preview: null, previewError: "invalid_menu_payload" };
+      }
+      const actions = Array.isArray(a.safetyActions) ? a.safetyActions : [];
+      for (const x of actions) {
+        if (!isPlainObject(x)) {
+          return { preview: null, previewError: "invalid_menu_payload" };
+        }
+      }
+    }
 
-  const parsed = sharedRecipePreviewSchema.safeParse(picked);
-  if (!parsed.success) {
+    const picked = {
+      schemaVersion: obj.schemaVersion,
+      menuId: obj.menuId,
+      mealType: obj.mealType,
+      cuisineGenre: obj.cuisineGenre,
+      servings: obj.servings,
+      totalElapsedMinutes: obj.totalElapsedMinutes,
+      safetyTags: Array.isArray(obj.safetyTags) ? obj.safetyTags : [],
+      dishes: dishesIn.map((d) => {
+        const dish = d as Record<string, unknown>;
+        const ingredients = Array.isArray(dish.ingredients) ? dish.ingredients : [];
+        const steps = Array.isArray(dish.steps) ? dish.steps : [];
+        return {
+          role: dish.role,
+          position: dish.position,
+          name: dish.name,
+          description: dish.description,
+          cookingTimeMinutes: dish.cookingTimeMinutes,
+          ingredients: ingredients.map((i) => {
+            const ing = i as Record<string, unknown>;
+            return {
+              name: ing.name,
+              quantityText: ing.quantityText,
+              unit: ing.unit ?? null,
+              storeSection: ing.storeSection,
+            };
+          }),
+          steps: steps.map((s) => {
+            const step = s as Record<string, unknown>;
+            return { position: step.position, instruction: step.instruction };
+          }),
+        };
+      }),
+      timeline: timelineIn.map((t) => {
+        const step = t as Record<string, unknown>;
+        return {
+          position: step.position,
+          startMinute: step.startMinute,
+          durationMinutes: step.durationMinutes,
+          instruction: step.instruction,
+        };
+      }),
+      adaptations: adaptationsIn.map((a) => {
+        const ad = a as Record<string, unknown>;
+        const actions = Array.isArray(ad.safetyActions) ? ad.safetyActions : [];
+        return {
+          portionText: ad.portionText,
+          additionalCutting: ad.additionalCutting ?? null,
+          additionalHeating: ad.additionalHeating ?? null,
+          additionalSeasoning: ad.additionalSeasoning ?? null,
+          servingCheck: ad.servingCheck,
+          anonymousMemberRef: ad.anonymousMemberRef,
+          safetyActions: actions.map((x) => {
+            const act = x as Record<string, unknown>;
+            return { kind: act.kind, instruction: act.instruction };
+          }),
+        };
+      }),
+    };
+
+    const parsed = sharedRecipePreviewSchema.safeParse(picked);
+    if (!parsed.success) {
+      return { preview: null, previewError: "invalid_menu_payload" };
+    }
+    return { preview: parsed.data, previewError: null };
+  } catch {
+    // 予期しない構造でも呼び出し側へは投げず previewError に閉じる
     return { preview: null, previewError: "invalid_menu_payload" };
   }
-  return { preview: parsed.data, previewError: null };
 }
 
 export function mapSharedRecipeDetail(

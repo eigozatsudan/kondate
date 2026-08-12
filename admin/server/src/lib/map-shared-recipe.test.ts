@@ -87,4 +87,18 @@ describe("buildPreviewFromPayload", () => {
     // dish UUID は preview から除外
     expect(json).not.toContain("44444444-4444-4444-8444-444444444444");
   });
+
+  it("returns invalid_menu_payload for dishes:[null] without throwing", () => {
+    // ネスト null 要素で投影が TypeError にならないこと（500 ではなく previewError）
+    const payload = {
+      schemaVersion: VALID_SCHEMA,
+      dishes: [null],
+      timeline: [],
+    };
+    expect(() => {
+      const r = buildPreviewFromPayload(payload);
+      expect(r.preview).toBeNull();
+      expect(r.previewError).toBe("invalid_menu_payload");
+    }).not.toThrow();
+  });
 });
