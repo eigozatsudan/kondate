@@ -99,6 +99,18 @@ describe("admin DTOs", () => {
     expect(Object.keys(parsed.items[0] ?? {})).not.toContain("preview");
   });
 
+  it("sharedRecipesResponseSchema has no preview key", () => {
+    // 一覧 DTO 契約: preview フィールドはスキーマに存在しない
+    const parsed = sharedRecipesResponseSchema.parse({
+      generatedAt: "2026-08-12T00:00:00.000Z",
+      activeCount: 0,
+      disabledCount: 0,
+      items: [],
+    });
+    expect("preview" in parsed).toBe(false);
+    expect(JSON.stringify(parsed)).not.toMatch(/menu_payload/i);
+  });
+
   it("strips forbidden keys from generation list parse output", () => {
     // Zod object は unknown key を strip する。禁止キーが出力に残らないことを実行証明する。
     const dirty = {

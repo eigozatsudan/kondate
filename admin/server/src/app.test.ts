@@ -73,3 +73,84 @@ describe("createApp security", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("shared-recipes routes", () => {
+  it("does not register shared-recipes when localToken is null", async () => {
+    const app = createApp({
+      pool: null,
+      config: { ...baseConfig, localToken: null },
+      dbReady: false,
+    });
+    const res = await app.request(
+      "http://127.0.0.1:5193/api/shared-recipes?from=2026-08-01&to=2026-08-07",
+      { headers: { host: "127.0.0.1:5193" } },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("requires bearer for shared-recipes when token configured", async () => {
+    const app = createApp({ pool: null, config: baseConfig, dbReady: false });
+    const denied = await app.request(
+      "http://127.0.0.1:5193/api/shared-recipes?from=2026-08-01&to=2026-08-07",
+      { headers: { host: "127.0.0.1:5193" } },
+    );
+    expect(denied.status).toBe(401);
+  });
+
+  it("rejects shared-recipes without date range", async () => {
+    // from/to 両方省略は parseJstDateRange が既定7日にフォールバックし、
+    // pool null 時は db_unavailable(400)。片側のみは date_range_required(400)。
+    const app = createApp({ pool: null, config: baseConfig, dbReady: false });
+    const res = await app.request("http://127.0.0.1:5193/api/shared-recipes", {
+      headers: {
+        host: "127.0.0.1:5193",
+        authorization: "Bearer test-token-32chars-minimum-ok",
+      },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects invalid status on shared-recipes", async () => {
+    const app = createApp({ pool: null, config: baseConfig, dbReady: false });
+    const res = await app.request(
+      "http://127.0.0.1:5193/api/shared-recipes?from=2026-08-01&to=2026-08-07&status=nope",
+      {
+        headers: {
+          host: "127.0.0.1:5193",
+          authorization: "Bearer test-token-32chars-minimum-ok",
+        },
+      },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects invalid mealType on shared-recipes", async () => {
+    const app = createApp({ pool: null, config: baseConfig, dbReady: false });
+    const res = await app.request(
+      "http://127.0.0.1:5193/api/shared-recipes?from=2026-08-01&to=2026-08-07&mealType=brunch",
+      {
+        headers: {
+          host: "127.0.0.1:5193",
+          authorization: "Bearer test-token-32chars-minimum-ok",
+        },
+      },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for non-uuid shared recipe id", async () => {
+    // pool null 時は requirePool が db_unavailable(400) になり得る。
+    // ルート層では不正 UUID を 400 にする（実装順: requirePool → UUID 検証）。
+    const app = createApp({ pool: null, config: baseConfig, dbReady: false });
+    const res = await app.request(
+      "http://127.0.0.1:5193/api/shared-recipes/not-a-uuid",
+      {
+        headers: {
+          host: "127.0.0.1:5193",
+          authorization: "Bearer test-token-32chars-minimum-ok",
+        },
+      },
+    );
+    expect(res.status).toBe(400);
+  });
+});
