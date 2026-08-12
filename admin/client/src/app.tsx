@@ -7,6 +7,7 @@ import { FeedbackPage } from "./pages/FeedbackPage";
 import { GenerationsPage } from "./pages/GenerationsPage";
 import { QuotaHealthPage } from "./pages/QuotaHealthPage";
 import { ShareJobsPage } from "./pages/ShareJobsPage";
+import { SharedRecipesPage } from "./pages/SharedRecipesPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +31,7 @@ export function App() {
             <Route path="quota-health" element={<QuotaHealthPage />} />
             <Route path="billing" element={<BillingPage />} />
             <Route path="share-jobs" element={<ShareJobsPage />} />
+            <Route path="shared-recipes" element={<SharedRecipesPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -17,6 +17,7 @@ const nav = [
   { to: "/quota-health", label: "利用枠" },
   { to: "/billing", label: "課金" },
   { to: "/share-jobs", label: "共有ジョブ" },
+  { to: "/shared-recipes", label: "共有レシピ" },
 ];
 
 export function Layout() {
