@@ -194,11 +194,7 @@ async function rejectIfLiveStripeSubscription(
         );
       }
       // active / trialing（DB free の list 経路）
-      throw new HttpError(
-        409,
-        "billing_checkout_use_portal",
-        "お支払い管理から手続きしてください",
-      );
+      throw new HttpError(409, "billing_checkout_use_portal", "お支払い管理から手続きしてください");
     }
   } catch (error: unknown) {
     if (error instanceof HttpError) throw error;

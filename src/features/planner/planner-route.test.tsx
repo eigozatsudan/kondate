@@ -628,12 +628,10 @@ beforeEach(() => {
     }),
   );
   // P1: claim 成功時は save 経由（既存「save が呼ばれた」アサートを維持）
-  pendingGenerationMock.claimPendingGeneration.mockImplementation(
-    async (candidate: unknown) => {
-      pendingGenerationMock.savePendingGeneration(candidate);
-      return { pending: candidate, claimed: true };
-    },
-  );
+  pendingGenerationMock.claimPendingGeneration.mockImplementation(async (candidate: unknown) => {
+    pendingGenerationMock.savePendingGeneration(candidate);
+    return { pending: candidate, claimed: true };
+  });
 });
 
 describe("idea audience 確定時の onboarding skipped 契約", () => {

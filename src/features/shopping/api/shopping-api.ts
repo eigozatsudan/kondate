@@ -603,10 +603,7 @@ async function withPendingItemMutationClaimLock<T>(listId: string, run: () => T)
  * 他 intent の slot は残す（SHOP2 multi-slot）。
  * slot 上限超過時は **書き込み対象以外** の最古 entry を落とす。
  */
-function writePendingItemMutationUnlocked(
-  listId: string,
-  sticky: PendingItemMutationSticky,
-): void {
+function writePendingItemMutationUnlocked(listId: string, sticky: PendingItemMutationSticky): void {
   const nowMs = Date.now();
   const existing = readAllPendingItemMutationEntries(listId).filter(
     (entry) => entry.intentKey !== sticky.intentKey,

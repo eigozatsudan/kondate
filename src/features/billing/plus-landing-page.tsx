@@ -182,13 +182,8 @@ export function PlusLandingPage({
         // B18: Settings と同型。Portal で手続き完了を促す
         setActionError(PLUS_LP_INCOMPLETE);
         setPortalCtaFromCheckoutBlock(true);
-      } else if (
-        code === "billing_checkout_use_portal" ||
-        code === "billing_already_entitled"
-      ) {
-        setActionError(
-          "お支払い管理から手続きしてください。新規のお申し込みはできません",
-        );
+      } else if (code === "billing_checkout_use_portal" || code === "billing_already_entitled") {
+        setActionError("お支払い管理から手続きしてください。新規のお申し込みはできません");
         setPortalCtaFromCheckoutBlock(true);
       } else {
         setActionError(CHECKOUT_GENERIC_ERROR);

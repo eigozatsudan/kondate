@@ -353,9 +353,9 @@ describe("pending generation storage", () => {
       expect(result.pending.request.idempotencyKey).toBe(OTHER_KEY);
       // setItem は呼ばれない（上書きしない）
       expect(storage.setItem).not.toHaveBeenCalled();
-      expect(readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)?.request.idempotencyKey).toBe(
-        OTHER_KEY,
-      );
+      expect(
+        readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)?.request.idempotencyKey,
+      ).toBe(OTHER_KEY);
     });
 
     it("write-then-reread adopts the storage winner when keys diverge", async () => {
@@ -453,9 +453,7 @@ describe("pending generation storage", () => {
         ]);
         // 先勝ち 1 件のみ claimed。後続は同一 sticky を adopted
         expect([resultA.claimed, resultB.claimed].filter(Boolean)).toHaveLength(1);
-        expect(resultA.pending.request.idempotencyKey).toBe(
-          resultB.pending.request.idempotencyKey,
-        );
+        expect(resultA.pending.request.idempotencyKey).toBe(resultB.pending.request.idempotencyKey);
         const stored = readPendingGeneration(USER_ID, new Date(STARTED_AT), storage);
         expect(stored?.request.idempotencyKey).toBe(resultA.pending.request.idempotencyKey);
         // ロック名が generation claim であることを固定
