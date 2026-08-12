@@ -41,8 +41,9 @@ function formatTrialEnd(iso: string | null): string | null {
 }
 
 function planLabel(data: EntitlementData, options: { trustPlus: boolean }): string {
+  // B25: plan 文字列だけでは Plus ラベルにしない（plusEntitled のみ。LP と同型の表示 DiD）
   // trustPlus=false（error）時は Plus ラベルを出さない
-  if (options.trustPlus && (data.plusEntitled || data.plan === "plus")) {
+  if (options.trustPlus && data.plusEntitled) {
     if (data.status === "trialing") return "こんだて日和 Plus（無料期間中）";
     if (data.pastDueGrace || data.status === "past_due")
       return "こんだて日和 Plus（お支払い確認中）";
@@ -111,9 +112,14 @@ export function PlanSettingsSection({
   const isIncomplete = data?.status === "incomplete";
   const trialEndLabel = formatTrialEnd(data?.trialEnd ?? null);
   // Checkout 成功後の webhook 遅延待ち中・期限後も Portal を出せる（両閉じ回避）
+  // B17: COMING_SOON 中は Checkout 経路が無いため、surfaces 開放中は Free 枝でも Portal CTA を出す
+  // （DB free + Stripe live の cold 管理導線。サーバ Portal は live 確認で許可 / true Free は 403）
   const showPortalOnFreeBranch =
     surfacesOpen &&
-    (portalCtaFromCheckoutBlock || pollAfterCheckoutSuccess || portalCtaAfterSuccessPoll);
+    (PLUS_LP_UPGRADE_COMING_SOON ||
+      portalCtaFromCheckoutBlock ||
+      pollAfterCheckoutSuccess ||
+      portalCtaAfterSuccessPoll);
 
   // 新しい success poll 開始で期限後 CTA をリセット。Plus 反映で不要になる。
   useEffect(() => {

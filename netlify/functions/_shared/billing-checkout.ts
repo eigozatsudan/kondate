@@ -160,6 +160,53 @@ async function hasUsedTrial(deps: BillingCheckoutDeps, email: string): Promise<b
 }
 
 /**
+ * Stripe 側 live sub があれば 409（Portal 誘導）。list 失敗は 503 fail-closed。
+ * B10: list ヒットを一律 already_entitled に潰さない（DB 経路と揃える）。
+ * B9: DB free でも active/trialing は use_portal（「すでに Plus」コピーと権益の不一致を避ける）。
+ * B16: sessions.create 直前の再 list にも使い TOCTOU 窓を縮める（完全閉鎖は Stripe 側 atomicity が必要）。
+ */
+async function rejectIfLiveStripeSubscription(
+  deps: BillingCheckoutDeps,
+  customerId: string,
+): Promise<void> {
+  try {
+    for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
+      const listed = await deps.stripe.subscriptions.list({
+        customer: customerId,
+        status,
+        limit: 1,
+      });
+      if (!listed.data.some((sub) => LIVE_SUB_STATUSES.has(sub.status))) {
+        continue;
+      }
+      if (status === "incomplete") {
+        throw new HttpError(
+          409,
+          "billing_checkout_incomplete",
+          "お支払い手続きが完了していません。設定からお支払い管理を開いてください",
+        );
+      }
+      if (status === "past_due") {
+        throw new HttpError(
+          409,
+          "billing_checkout_use_portal",
+          "お支払い管理から手続きしてください",
+        );
+      }
+      // active / trialing（DB free の list 経路）
+      throw new HttpError(
+        409,
+        "billing_checkout_use_portal",
+        "お支払い管理から手続きしてください",
+      );
+    }
+  } catch (error: unknown) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+  }
+}
+
+/**
  * POST /api/billing/checkout の実装。
  * 順序: entitlement 確認 → acquire(lock_token) → Customer 確定 → list → sessions.create → bind。
  * Customer 作成は lock 保護下（並行 Checkout で Customer/Session 不一致を防ぐ = A1）。
@@ -275,50 +322,12 @@ export async function runBillingCheckout(
 
     // Stripe 側の live sub がある場合は Portal 誘導（409）。
     // status 別 list（limit 1）で terminal 履歴に埋もれた live を見落とさない。
-    // list 失敗は 503 fail-closed。
-    //
-    // B10: list ヒットを一律 already_entitled に潰さない（DB 経路と揃える）。
-    // past_due → use_portal / incomplete → incomplete。
-    // B9: ここに来る時点で DB は非 entitled。active/trialing も「すでに Plus」コピーは
-    // 権益と不一致なので Portal 誘導（use_portal）に揃え、管理導線を閉じない。
-    try {
-      for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
-        const listed = await deps.stripe.subscriptions.list({
-          customer: customerId,
-          status,
-          limit: 1,
-        });
-        if (!listed.data.some((sub) => LIVE_SUB_STATUSES.has(sub.status))) {
-          continue;
-        }
-        if (status === "incomplete") {
-          throw new HttpError(
-            409,
-            "billing_checkout_incomplete",
-            "お支払い手続きが完了していません。設定からお支払い管理を開いてください",
-          );
-        }
-        if (status === "past_due") {
-          throw new HttpError(
-            409,
-            "billing_checkout_use_portal",
-            "お支払い管理から手続きしてください",
-          );
-        }
-        // active / trialing（DB free の list 経路）
-        throw new HttpError(
-          409,
-          "billing_checkout_use_portal",
-          "お支払い管理から手続きしてください",
-        );
-      }
-    } catch (error: unknown) {
-      if (error instanceof HttpError) throw error;
-      throw new HttpError(503, "request_failed", "処理を完了できませんでした");
-    }
+    await rejectIfLiveStripeSubscription(deps, customerId);
 
     const usedTrial = await hasUsedTrial(deps, user.email);
     const origin = deps.env.SERVER_SITE_ORIGIN;
+    // B16: sessions.create 直前に再 list（list→create TOCTOU を縮める DiD。dual webhook は残差）
+    await rejectIfLiveStripeSubscription(deps, customerId);
     let session: Stripe.Checkout.Session;
     try {
       session = await deps.stripe.checkout.sessions.create({

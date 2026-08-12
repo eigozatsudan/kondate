@@ -351,6 +351,8 @@ describe("runBillingCheckout", () => {
     // acquire 時は session id を渡さない
     expect(acquire![1]).not.toHaveProperty("p_stripe_checkout_session_id");
 
+    // B16: list は create 前に 2 回（初回 + re-list）。status 4 種 × 2
+    expect(subscriptionsList).toHaveBeenCalledTimes(8);
     expect(sessionsCreate).toHaveBeenCalledTimes(1);
     const createArgs = sessionsCreate.mock.calls[0]![0] as {
       mode: string;
@@ -410,6 +412,36 @@ describe("runBillingCheckout", () => {
       }),
     );
     expect(rpc.mock.calls.some(([n]) => n === "bind_billing_checkout_session")).toBe(false);
+  });
+
+  // B16: 初回 list は空、create 直前 re-list で live → 409 use_portal（Session 未作成）
+  it("B16: re-lists before sessions.create and rejects live injected after first list", async () => {
+    let listRound = 0;
+    subscriptionsList.mockImplementation((params: { status?: string }) => {
+      // 1 ラウンド = status 4 種。2 ラウンド目の active だけ live を返す
+      if (params.status === "trialing") {
+        listRound += 1;
+      }
+      if (listRound >= 2 && params.status === "active") {
+        return Promise.resolve({
+          data: [{ id: "sub_late", status: "active" }],
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "billing_checkout_use_portal" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "release_billing_checkout_lock",
+      expect.objectContaining({
+        p_user_id: USER_ID,
+        p_lock_token: LOCK_TOKEN,
+      }),
+    );
   });
 
   // B6: release が { error } を返しても silent fail しない（details.release_failed + ログ）
