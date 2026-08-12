@@ -9,6 +9,22 @@ import {
   clearOwnedAuthStorage,
   ownedAuthStoragePrefixes,
 } from "./auth-flow";
+// C4/R3/R4: suppress 正本は leaf に置き auth-flow 循環を避ける。公開 API は本モジュールから re-export。
+import {
+  markSoftResidualRecoverySuppressed,
+  SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY,
+} from "./soft-residual-recovery-suppress";
+
+/**
+ * C4/R3/R4: soft residual suppress の公開入口（正本は soft-residual-recovery-suppress）。
+ * clear 時は R4 re-arm イベントを発火し、AuthProvider residual を同一マウントで再開する。
+ */
+export {
+  clearSoftResidualRecoverySuppressed,
+  isSoftResidualRecoverySuppressed,
+  markSoftResidualRecoverySuppressed,
+  SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY,
+} from "./soft-residual-recovery-suppress";
 
 export type ClearLocalAuthOptions = {
   /**
@@ -30,77 +46,6 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
   "kondate.auth.lastMagicEmail",
   "kondate.auth.magicSentUi",
 ] as const;
-
-/**
- * C4/R3: soft 失効後、origin 共有の residual recovery を抑止する localStorage 印。
- *
- * r2 の sessionStorage 印は soft したタブだけを抑止し、新タブ / 他の /login タブが
- * 共有 localStorage の flow secret + pending で prior user を silent complete できた（C4 residual）。
- * 本印は localStorage 共有でその窓を閉じる。
- *
- * R3: flow secret / pending / PKCE / callback-owner は焼かない。
- * sibling mid-login の /auth/callback target recovery は residual 抑止の対象外（AuthProvider が
- * /auth/callback では residual を起動しない）。明示 createAuthFlow 成功・session 適用成功・
- * logout owned 掃除で解除する。
- */
-export const SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY =
-  "kondate.auth.soft-residual-recovery-suppress" as const;
-
-/** C4: soft residual 実行後に origin 共有の residual recovery を抑止する */
-export function markSoftResidualRecoverySuppressed(): void {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY, "1");
-  } catch {
-    // storage 障害時は suppress 不能 — AuthProvider 側は best-effort
-  }
-}
-
-/**
- * C4/R3: 新規 login 開始・認証成功時に suppress を解除する。
- * r2 時代の sessionStorage 残骸も一緒に落とす（同一タブ fail-closed の保険）。
- */
-export function clearSoftResidualRecoverySuppressed(): void {
-  for (const storage of [
-    typeof localStorage !== "undefined" ? localStorage : null,
-    typeof sessionStorage !== "undefined" ? sessionStorage : null,
-  ]) {
-    if (storage === null) continue;
-    try {
-      storage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
-    } catch {
-      // best-effort
-    }
-  }
-}
-
-/**
- * C4: soft residual 後の residual recovery を抑止中か（origin 共有 localStorage を正とする）。
- * r2 tab-local 印が残っていれば同一タブでは fail-closed で true（移行残骸）。
- */
-export function isSoftResidualRecoverySuppressed(): boolean {
-  try {
-    if (
-      typeof localStorage !== "undefined" &&
-      localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY) === "1"
-    ) {
-      return true;
-    }
-  } catch {
-    // fall through to sessionStorage legacy
-  }
-  try {
-    if (
-      typeof sessionStorage !== "undefined" &&
-      sessionStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY) === "1"
-    ) {
-      return true;
-    }
-  } catch {
-    return false;
-  }
-  return false;
-}
 
 /**
  * R3: soft residual で消してよい kondate.auth.* か。

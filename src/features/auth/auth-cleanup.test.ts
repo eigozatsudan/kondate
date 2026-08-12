@@ -5,11 +5,13 @@ import { householdSafetyRevisionStorageKey } from "@/features/household/househol
 import {
   clearLocalAuthAndDrafts,
   clearOwnedLocalDataBestEffort,
+  clearSoftResidualRecoverySuppressed,
   clearSoftSessionResidualBestEffort,
   isSoftResidualRecoverySuppressed,
   SIGN_OUT_TIMEOUT_MS,
   SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY,
 } from "./auth-cleanup";
+import { SOFT_RESIDUAL_RECOVERY_REARM_EVENT } from "./soft-residual-recovery-suppress";
 
 function seedOwnedKeys(storage: Storage): void {
   storage.setItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001", '{"id":"flow"}');
@@ -221,6 +223,27 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(
       localStorage.getItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001"),
     ).not.toBeNull();
+  });
+
+  it("R4: clearSoftResidualRecoverySuppressed dispatches rearm only when suppress was set", () => {
+    // rearm イベントは suppress が立っていた clear だけ（無印 clear では発火しない）
+    const events: Event[] = [];
+    const onRearm = (e: Event): void => {
+      events.push(e);
+    };
+    window.addEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+    try {
+      clearSoftResidualRecoverySuppressed();
+      expect(events).toHaveLength(0);
+
+      localStorage.setItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY, "1");
+      clearSoftResidualRecoverySuppressed();
+      expect(isSoftResidualRecoverySuppressed()).toBe(false);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe(SOFT_RESIDUAL_RECOVERY_REARM_EVENT);
+    } finally {
+      window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+    }
   });
 
   it("AP1: clears kondate:feedback free-form fingerprint on logout and best-effort pass", async () => {

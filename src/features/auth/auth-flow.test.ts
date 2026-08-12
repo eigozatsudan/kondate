@@ -389,6 +389,27 @@ describe("auth flow storage", () => {
     expect(flow.expiresAt).toBe("2026-07-11T00:05:00Z");
   });
 
+  it("R4: createAuthFlow clears soft residual suppress and dispatches rearm", async () => {
+    const { SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY, SOFT_RESIDUAL_RECOVERY_REARM_EVENT } =
+      await import("./soft-residual-recovery-suppress");
+    window.localStorage.setItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY, "1");
+    const events: Event[] = [];
+    const onRearm = (e: Event): void => {
+      events.push(e);
+    };
+    window.addEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+    try {
+      const api = continuationApiMock();
+      await createAuthFlow("/onboarding", api, new MapStorage(), fixedFlowDeps);
+      expect(window.localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBeNull();
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe(SOFT_RESIDUAL_RECOVERY_REARM_EVENT);
+    } finally {
+      window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+      window.localStorage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
+    }
+  });
+
   it("removes non-finite and over-TTL flow and callback timestamps", () => {
     const storage = new MapStorage();
     const invalidFlowId = "10000000-0000-4000-8000-000000000001";

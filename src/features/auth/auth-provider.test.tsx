@@ -9,6 +9,7 @@ import {
   type AuthProviderClient,
 } from "./auth-provider";
 import { clearSoftResidualRecoverySuppressed } from "./auth-cleanup";
+import { createAuthFlow } from "./auth-flow";
 import { resetAccessTokenPinGateForTests } from "./session";
 import { useAuth } from "./use-auth";
 
@@ -44,8 +45,9 @@ describe("AuthProvider", () => {
   afterEach(() => {
     // R1: module pin ゲートが他テストへ漏れないようにする
     resetAccessTokenPinGateForTests();
-    // C4/R3: soft residual 共有 suppress が次テストの residual recovery を止めないようにする
-    clearSoftResidualRecoverySuppressed();
+    // C4/R3: soft residual 共有 suppress が次テストを止めないようにする。
+    // clearSoftResidualRecoverySuppressed は R4 re-arm を発火するため、teardown では
+    // storage を直接落としてマウント中 Provider への act 外 setState を避ける。
     try {
       window.localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
@@ -995,6 +997,119 @@ describe("AuthProvider", () => {
     expect(
       window.localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`),
     ).not.toBeNull();
+  });
+
+  it("R4: clearSoftResidual after soft re-arms residual recovery on same /login mount", async () => {
+    // soft residual → suppress で residual 停止 → 意図的 clear（createAuthFlow 相当）で同一マウント再武装
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const startRecovery = vi.fn(() => vi.fn());
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const authListeners: AuthStateListener[] = [];
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("authenticated");
+    const startsWhileAuth = startRecovery.mock.calls.length;
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_OUT", null);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    // C4: suppress 中は residual を開始しない
+    expect(startRecovery.mock.calls.length).toBe(startsWhileAuth);
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+
+    // R4: createAuthFlow / clearSoft 相当 — remount なしで re-arm
+    await act(async () => {
+      clearSoftResidualRecoverySuppressed();
+      await Promise.resolve();
+    });
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBeNull();
+    expect(startRecovery.mock.calls.length).toBeGreaterThan(startsWhileAuth);
+  });
+
+  it("R4: createAuthFlow after soft re-arms residual recovery without remount", async () => {
+    // soft → /login suppress → createAuthFlow 成功で suppress clear + re-arm（マジックリンク待機の典型）
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const startRecovery = vi.fn(() => vi.fn());
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const authListeners: AuthStateListener[] = [];
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("authenticated");
+    const startsWhileAuth = startRecovery.mock.calls.length;
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_OUT", null);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(startRecovery.mock.calls.length).toBe(startsWhileAuth);
+
+    const api = {
+      create: vi.fn(() =>
+        Promise.resolve({
+          id: "10000000-0000-4000-8000-0000000000a4",
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        }),
+      ),
+      deposit: vi.fn(() => Promise.resolve(undefined)),
+      claim: vi.fn(() => Promise.reject(new Error("not deposited"))),
+    };
+
+    await act(async () => {
+      await createAuthFlow("/onboarding", api, window.localStorage, {
+        now: () => new Date("2026-08-12T00:00:00.000Z"),
+        randomBytes: (size = 32) => new Uint8Array(size).fill(7),
+      });
+      await Promise.resolve();
+    });
+
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBeNull();
+    // 意図的 login 開始後は同一 /login マウントで residual が再武装される
+    expect(startRecovery.mock.calls.length).toBeGreaterThan(startsWhileAuth);
   });
 
   it("C5: cold-start never-authenticated unauthenticated does not wipe sibling flow (RR1 intact)", async () => {

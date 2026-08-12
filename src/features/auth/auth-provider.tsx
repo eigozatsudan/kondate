@@ -21,6 +21,7 @@ import {
   isSoftResidualRecoverySuppressed,
   SIGN_OUT_TIMEOUT_MS,
 } from "./auth-cleanup";
+import { SOFT_RESIDUAL_RECOVERY_REARM_EVENT } from "./soft-residual-recovery-suppress";
 import {
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
@@ -241,6 +242,9 @@ export function AuthProvider({
   const [locationPathname, setLocationPathname] = useState(() =>
     typeof window === "undefined" ? "/" : window.location.pathname,
   );
+  // R4: soft residual suppress 解除（createAuthFlow / clearSoft…）後に residual effect を再評価する tick。
+  // suppress 自体は storage のみで deps に載らないため、clear 経路が re-arm イベントを発火する。
+  const [residualRecoveryRearmTick, setResidualRecoveryRearmTick] = useState(0);
   // 一度でも getSession 成功（error === null）したら true。SIGNED_OUT でも true のまま。
   const hasResolvedSessionOnce = useRef(false);
   // cold-start の壁時計起点（マウント時）。deadline 超過で fail-closed。
@@ -535,6 +539,19 @@ export function AuthProvider({
     };
   }, []);
 
+  // R4: createAuthFlow / clearSoftResidualRecoverySuppressed が suppress を落としたあと、
+  // residual effect を同一マウントで再評価する（storage 変更だけでは deps が動かない）。
+  // C4: suppress 中はイベントが来ない（clear 時のみ re-arm）。prior-user silent complete は閉じたまま。
+  useEffect(() => {
+    const onRearm = (): void => {
+      setResidualRecoveryRearmTick((n) => n + 1);
+    };
+    window.addEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+    return () => {
+      window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+    };
+  }, []);
+
   useEffect(() => {
     const gateway = recoveryGateway ?? defaultRecoveryGateway;
     // locationPathname を deps に含め、/login で start 後の SPA 離脱でも cleanup→stop する（R1）。
@@ -552,7 +569,7 @@ export function AuthProvider({
     if (!isAuthWaitingPath(path)) return undefined;
     if (!loaded || session !== null) return undefined;
     // C4/R3: soft residual 後は origin 共有 suppress で residual recovery を抑止
-    // （secret 温存でも新タブ含む silent complete しない。解除は createAuthFlow / session 適用）
+    // （secret 温存でも新タブ含む silent complete しない。解除は createAuthFlow / session 適用 + R4 re-arm）
     if (isSoftResidualRecoverySuppressed()) return undefined;
     const recoveryTtlMs =
       providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000;
@@ -601,6 +618,8 @@ export function AuthProvider({
     navigateTo,
     providedClient,
     recoveryGateway,
+    // R4: suppress clear 後の re-arm 信号（意図的 login 開始で residual を再開）
+    residualRecoveryRearmTick,
     refreshSession,
     session,
     startRecovery,
