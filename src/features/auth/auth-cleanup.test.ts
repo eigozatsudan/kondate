@@ -153,14 +153,14 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
     expect(localStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
-    // R3: sibling mid-login の flow secret は温存（C4 は suppress で silent complete を閉じる）
+    // R3: sibling mid-login の flow secret は温存（C4 は共有 suppress で silent complete を閉じる）
     expect(
       localStorage.getItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001"),
     ).not.toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
-    // C4: このタブの residual recovery を抑止
+    // C4: origin 共有 localStorage で residual recovery を抑止（新タブからも見える）
     expect(isSoftResidualRecoverySuppressed()).toBe(true);
-    expect(sessionStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
+    expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
   });
 
   it("C4/R3: soft residual clears completion; preserves pending/PKCE/secret/callback-owner", () => {
@@ -205,6 +205,22 @@ describe("clearLocalAuthAndDrafts", () => {
     ).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
     expect(isSoftResidualRecoverySuppressed()).toBe(true);
+    expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
+  });
+
+  it("C4: soft residual suppress is shared via localStorage (new-tab visible; sessionStorage empty)", () => {
+    // soft したタブと新タブを模擬: localStorage のみ共有、sessionStorage は空
+    seedOwnedKeys(localStorage);
+    clearSoftSessionResidualBestEffort();
+    expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
+    sessionStorage.clear();
+    // 新タブ相当: sessionStorage が空でも共有 suppress が効く
+    expect(sessionStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBeNull();
+    expect(isSoftResidualRecoverySuppressed()).toBe(true);
+    // R3: secret は残ったまま（新タブ residual は suppress で止め、secret burn ではない）
+    expect(
+      localStorage.getItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001"),
+    ).not.toBeNull();
   });
 
   it("AP1: clears kondate:feedback free-form fingerprint on logout and best-effort pass", async () => {

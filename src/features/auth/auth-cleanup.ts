@@ -32,41 +32,74 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
 ] as const;
 
 /**
- * R3: soft 失効後、このタブだけ residual recovery を抑止する sessionStorage 印。
- * tab-local のため sibling タブの in-flight login は妨げない。
- * C4: localStorage の flow secret を焼かなくても、soft 後の /login silent complete を閉じる。
+ * C4/R3: soft 失効後、origin 共有の residual recovery を抑止する localStorage 印。
+ *
+ * r2 の sessionStorage 印は soft したタブだけを抑止し、新タブ / 他の /login タブが
+ * 共有 localStorage の flow secret + pending で prior user を silent complete できた（C4 residual）。
+ * 本印は localStorage 共有でその窓を閉じる。
+ *
+ * R3: flow secret / pending / PKCE / callback-owner は焼かない。
+ * sibling mid-login の /auth/callback target recovery は residual 抑止の対象外（AuthProvider が
+ * /auth/callback では residual を起動しない）。明示 createAuthFlow 成功・session 適用成功・
+ * logout owned 掃除で解除する。
  */
 export const SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY =
   "kondate.auth.soft-residual-recovery-suppress" as const;
 
-/** R3: soft residual 実行後にこのタブの residual recovery を抑止する */
+/** C4: soft residual 実行後に origin 共有の residual recovery を抑止する */
 export function markSoftResidualRecoverySuppressed(): void {
-  if (typeof sessionStorage === "undefined") return;
+  if (typeof localStorage === "undefined") return;
   try {
-    sessionStorage.setItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY, "1");
+    localStorage.setItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY, "1");
   } catch {
     // storage 障害時は suppress 不能 — AuthProvider 側は best-effort
   }
 }
 
-/** R3: 新規 login 開始・認証成功時に suppress を解除する */
+/**
+ * C4/R3: 新規 login 開始・認証成功時に suppress を解除する。
+ * r2 時代の sessionStorage 残骸も一緒に落とす（同一タブ fail-closed の保険）。
+ */
 export function clearSoftResidualRecoverySuppressed(): void {
-  if (typeof sessionStorage === "undefined") return;
-  try {
-    sessionStorage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
-  } catch {
-    // best-effort
+  for (const storage of [
+    typeof localStorage !== "undefined" ? localStorage : null,
+    typeof sessionStorage !== "undefined" ? sessionStorage : null,
+  ]) {
+    if (storage === null) continue;
+    try {
+      storage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
+    } catch {
+      // best-effort
+    }
   }
 }
 
-/** R3: このタブで soft residual 後の residual recovery を抑止中か */
+/**
+ * C4: soft residual 後の residual recovery を抑止中か（origin 共有 localStorage を正とする）。
+ * r2 tab-local 印が残っていれば同一タブでは fail-closed で true（移行残骸）。
+ */
 export function isSoftResidualRecoverySuppressed(): boolean {
-  if (typeof sessionStorage === "undefined") return false;
   try {
-    return sessionStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY) === "1";
+    if (
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY) === "1"
+    ) {
+      return true;
+    }
+  } catch {
+    // fall through to sessionStorage legacy
+  }
+  try {
+    if (
+      typeof sessionStorage !== "undefined" &&
+      sessionStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY) === "1"
+    ) {
+      return true;
+    }
   } catch {
     return false;
   }
+  return false;
 }
 
 /**
@@ -80,13 +113,14 @@ export function isSoftResidualRecoverySuppressed(): boolean {
  * - magic-link UI
  * - soft residual suppress 以外の auth UI 残渣で flow 継続に不要なもの
  *
- * 残す（sibling mid-login）:
+ * 残す（sibling mid-login / C4 suppress）:
  * - kondate.auth.flow.*
  * - pending-deposit / callback-owner / flow-user-dismissed / clock-rebase
  * - PKCE verifier（storageKey 派生の -code-verifier）
- * - soft residual suppress 印自体
+ * - soft residual suppress 印自体（localStorage 共有; mark 後に再設定）
  */
 function shouldClearAuthKeyOnSoftResidual(key: string): boolean {
+  // C4 共有 suppress 印は soft 掃除ループで落とさない（直後 mark と二重化してよい）
   if (key === SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY) return false;
   if ((MAGIC_LINK_RESIDUAL_KEYS as readonly string[]).includes(key)) return true;
   if (key === browserSupabaseSessionStorageKey) return true;
@@ -205,7 +239,7 @@ export function clearOwnedLocalDataBestEffort(): void {
  * 巻き添えにした（R3）。R3 以降は:
  * - flow secret / pending / PKCE / callback-owner は温存（sibling mid-login）
  * - completion と session キーは消す（resume short-circuit / persist token）
- * - このタブの residual recovery を sessionStorage suppress で抑止（C4 を維持）
+ * - residual recovery を origin 共有 localStorage suppress で抑止（C4: 新タブ含む）
  *
  * cold-start 未ログイン fail-closed（RR1）は session キーのみで、この関数を呼ばない。
  * 明示 logout / アカウント削除の second pass（clearOwnedLocalDataBestEffort）は
@@ -250,7 +284,7 @@ export function clearSoftSessionResidualBestEffort(): void {
       }
     }
   }
-  // C4/R3: このタブだけ residual recovery を抑止（secret を焼かずに silent complete を閉じる）
+  // C4: origin 共有 suppress（secret を焼かずに新タブ含む residual silent complete を閉じる）
   markSoftResidualRecoverySuppressed();
 }
 

@@ -84,7 +84,8 @@ const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
  * owned prefix 配下なので logout の clearOwnedAuthStorage で消える。
  * cold-start fail-closed（RR1）は session キーのみ消し pending は温存。
  * soft 失効（clearSoftSessionResidualBestEffort）は R3 以降 pending を温存する
- * （sibling mid-login）。C4 は tab-local residual recovery suppress で silent complete を閉じる。
+ * （sibling mid-login）。C4 は origin 共有 localStorage residual recovery suppress で
+ * 新タブ含む silent complete を閉じる（secret は焼かない）。
  * dismiss（markAuthFlowUserDismissed）でも pending は即消す（C2）。
  */
 const pendingDepositPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
@@ -911,9 +912,9 @@ export async function createAuthFlow(
    */
   credentialKind: AuthFlow["credentialKind"] = "authorization_code",
 ): Promise<AuthFlow> {
-  // R3: ユーザーが明示的に新規 login を開始したら soft residual の recovery suppress を解除する
-  // （動的 import 循環を避けず auth-cleanup を静的 import 済みの呼び出し側でもよいが、
-  //  create 成功前に解除すると suppress 中の二重 recovery を許し得るため persist 成功後に解除する）
+  // C4/R3: ユーザーが明示的に新規 login を開始したら soft residual の recovery suppress を解除する
+  // （create 成功前に解除すると suppress 中の二重 residual recovery を許し得るため
+  //  persist 成功後に解除する）
   const secret = base64url(deps.randomBytes(32));
   const state = base64url(deps.randomBytes(32));
   // C1: /login・/auth/callback 自己参照は flow/DB に載せない（fallback は welcome）
@@ -948,9 +949,12 @@ export async function createAuthFlow(
     // create レート枠は消費されるが、秘密漏洩面は無い（residual-intentional / TTL）。
     throw new Error("auth_flow_persist_failed");
   }
-  // R3: 新規 flow 永続化成功後に suppress 解除（このタブで意図した login を進められるようにする）
-  // auth-cleanup との循環 import を避けるため sessionStorage を直接触る（キーは cleanup と同文字列）
+  // C4/R3: 新規 flow 永続化成功後に共有 suppress 解除（意図した login の residual を再開可）
+  // auth-cleanup との循環 import を避けるため storage を直接触る（キーは cleanup と同文字列）
   try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
+    }
     if (typeof sessionStorage !== "undefined") {
       sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
     }

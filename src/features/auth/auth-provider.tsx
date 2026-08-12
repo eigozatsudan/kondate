@@ -407,7 +407,7 @@ export function AuthProvider({
       setAccessTokenPinDataPlaneBlocked(false);
       expectPinMismatchSignedOutRef.current = false;
       setSessionProbeDegraded(false);
-      // R3: 認証成功で soft residual の residual recovery suppress を解除
+      // C4/R3: 認証成功で soft residual の共有 residual recovery suppress を解除
       clearSoftResidualRecoverySuppressed();
       setSession(nextSession);
       return true;
@@ -488,7 +488,8 @@ export function AuthProvider({
   // C5/C6/C4/R3: authenticated → unauthenticated（SIGNED_OUT / refresh 失効の getSession null 等）で
   // 共有端末に free-form 草稿・feedback fingerprint・session を残さない。
   // C4: soft 失効後の /login residual recovery silent complete を閉じる
-  // （R3: flow secret は sibling mid-login のため温存し、tab-local suppress で recovery を抑止）。
+  // （R3: flow secret は sibling mid-login のため温存し、origin 共有 localStorage suppress で
+  //  新タブ含む residual recovery を抑止。/auth/callback target recovery は対象外）。
   // 明示 logout / アカウント削除は clearLocalAuthAndDrafts（全所有キー）のまま。
   useEffect(() => {
     if (session !== null) {
@@ -550,7 +551,8 @@ export function AuthProvider({
     // R1: 非待機 path へ SPA 離脱したら effect cleanup で stop。
     if (!isAuthWaitingPath(path)) return undefined;
     if (!loaded || session !== null) return undefined;
-    // R3/C4: soft residual 後はこのタブの residual recovery を抑止（secret 温存でも silent complete しない）
+    // C4/R3: soft residual 後は origin 共有 suppress で residual recovery を抑止
+    // （secret 温存でも新タブ含む silent complete しない。解除は createAuthFlow / session 適用）
     if (isSoftResidualRecoverySuppressed()) return undefined;
     const recoveryTtlMs =
       providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000;

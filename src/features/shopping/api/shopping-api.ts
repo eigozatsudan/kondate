@@ -169,6 +169,9 @@ export async function mutateShoppingItem(
   input: ShoppingItemMutationRequest,
 ): Promise<ShoppingItemMutationResponse> {
   const parsed = shoppingItemMutationRequestSchema.parse(input);
+  const client = getBrowserSupabaseClient();
+  // R1: pin と client JWT 乖離時は auth.uid() スコープの mutate RPC を B として走らせない
+  await assertBrowserDataPlaneAligned(client);
   const args = {
     p_list_id: parsed.listId,
     p_expected_list_version: parsed.expectedListVersion,
@@ -181,7 +184,7 @@ export async function mutateShoppingItem(
     p_idempotency_key: parsed.idempotencyKey,
     p_payload: parsed.payload,
   };
-  const { data, error } = await getBrowserSupabaseClient().rpc("mutate_shopping_item", args);
+  const { data, error } = await client.rpc("mutate_shopping_item", args);
   if (error !== null) {
     if (error.message.includes("list_version_conflict")) {
       throw Object.assign(new Error("買い物リストが更新されました"), {
@@ -787,6 +790,8 @@ export async function fetchReconcilableMenuSource(
   listId: string,
 ): Promise<ReconcilableMenuSource | null> {
   const client = getBrowserSupabaseClient();
+  // R1: pin 乖離時は menus / shopping_list_sources を B の JWT で読まない
+  await assertBrowserDataPlaneAligned(client);
   const menu = await client
     .from("menus")
     .select("id,derivation_group_id,version")

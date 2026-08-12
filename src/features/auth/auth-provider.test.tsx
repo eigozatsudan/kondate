@@ -44,9 +44,10 @@ describe("AuthProvider", () => {
   afterEach(() => {
     // R1: module pin ゲートが他テストへ漏れないようにする
     resetAccessTokenPinGateForTests();
-    // R3: soft residual suppress が次テストの residual recovery を止めないようにする
+    // C4/R3: soft residual 共有 suppress が次テストの residual recovery を止めないようにする
     clearSoftResidualRecoverySuppressed();
     try {
+      window.localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
     } catch {
       // ignore
@@ -903,8 +904,8 @@ describe("AuthProvider", () => {
     expect(window.localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe(
       "pkce-verifier",
     );
-    // C4: this tab's residual recovery suppressed
-    expect(window.sessionStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+    // C4: origin 共有 localStorage で residual recovery を抑止（新タブからも見える）
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
   });
 
   it("R3/C4: soft residual suppress prevents residual recovery start on /login", async () => {
@@ -939,9 +940,61 @@ describe("AuthProvider", () => {
       await Promise.resolve();
     });
     expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
-    // soft residual 後は suppress により recovery を開始しない
+    // soft residual 後は共有 suppress により recovery を開始しない
     expect(startRecovery.mock.calls.length).toBe(startsWhileAuth);
-    expect(window.sessionStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+  });
+
+  it("C4: shared soft residual suppress blocks residual recovery even with empty sessionStorage (new tab)", async () => {
+    // soft 後に新タブで /login を開いた状況: localStorage に suppress のみ、sessionStorage 空
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const flowId = "10000000-0000-4000-8000-0000000000c4";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "http://127.0.0.1:5173",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.pending-deposit.${flowId}`,
+      JSON.stringify({
+        state: "B".repeat(43),
+        code: "authorization-code-plain",
+        expiresAtMs: Date.now() + 60_000,
+      }),
+    );
+    // 前タブの soft residual が書いた共有 suppress（sessionStorage は新タブで空）
+    window.localStorage.setItem("kondate.auth.soft-residual-recovery-suppress", "1");
+    const startRecovery = vi.fn(() => vi.fn());
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider client={client} startRecovery={startRecovery}>
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    // 新タブでも共有 suppress により residual recovery を開始しない（prior user silent complete を閉じる）
+    expect(startRecovery).not.toHaveBeenCalled();
+    // R3: secret/pending は残っている（burn ではなく suppress）
+    expect(window.localStorage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
+    expect(
+      window.localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`),
+    ).not.toBeNull();
   });
 
   it("C5: cold-start never-authenticated unauthenticated does not wipe sibling flow (RR1 intact)", async () => {

@@ -1,5 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchReconcilableMenuSource } from "./shopping-api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AuthSessionPinMismatchError,
+  resetAccessTokenPinGateForTests,
+  setAccessTokenPinnedUserId,
+} from "@/features/auth/session";
+import { fetchReconcilableMenuSource, mutateShoppingItem } from "./shopping-api";
 
 const getBrowserSupabaseClientMock = vi.hoisted(() => vi.fn());
 
@@ -20,6 +25,7 @@ const LIST_ID = "41000000-0000-4000-8000-000000000001";
 function mockClient(options: {
   menuRow: { id: string; derivation_group_id: string; version: number } | null;
   sourceRows?: readonly { source_derivation_group_id: string; source_menu_version: number }[];
+  sessionUserId?: string;
 }) {
   const eqCalls: [string, unknown][] = [];
   const menuChain = {
@@ -38,20 +44,37 @@ function mockClient(options: {
     }
     return { select: vi.fn(() => menuChain) };
   });
-  return { from, eqCalls };
+  const sessionUserId = options.sessionUserId ?? "user-a";
+  const auth = {
+    getSession: vi.fn().mockResolvedValue({
+      data: {
+        session: {
+          access_token: "token",
+          user: { id: sessionUserId },
+        },
+      },
+      error: null,
+    }),
+  };
+  return { from, eqCalls, auth };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetAccessTokenPinGateForTests();
+});
+
+afterEach(() => {
+  resetAccessTokenPinGateForTests();
 });
 
 describe("fetchReconcilableMenuSource", () => {
   it("filters the menu query to target_mode='household' as a defense-in-depth layer", async () => {
-    const { from, eqCalls } = mockClient({
+    const { from, eqCalls, auth } = mockClient({
       menuRow: { id: MENU_ID, derivation_group_id: "group-1", version: 2 },
       sourceRows: [{ source_derivation_group_id: "group-1", source_menu_version: 1 }],
     });
-    getBrowserSupabaseClientMock.mockReturnValue({ from });
+    getBrowserSupabaseClientMock.mockReturnValue({ from, auth });
 
     const result = await fetchReconcilableMenuSource(MENU_ID, LIST_ID);
 
@@ -63,11 +86,59 @@ describe("fetchReconcilableMenuSource", () => {
   });
 
   it("returns null when the menu row is not visible under the household filter (e.g. idea menu)", async () => {
-    const { from } = mockClient({ menuRow: null });
-    getBrowserSupabaseClientMock.mockReturnValue({ from });
+    const { from, auth } = mockClient({ menuRow: null });
+    getBrowserSupabaseClientMock.mockReturnValue({ from, auth });
 
     const result = await fetchReconcilableMenuSource(MENU_ID, LIST_ID);
 
     expect(result).toBeNull();
+  });
+
+  it("R1: refuses PostgREST when pin user differs from client session", async () => {
+    setAccessTokenPinnedUserId("user-a");
+    const from = vi.fn();
+    const auth = {
+      getSession: vi.fn().mockResolvedValue({
+        data: {
+          session: { access_token: "token-b", user: { id: "user-b" } },
+        },
+        error: null,
+      }),
+    };
+    getBrowserSupabaseClientMock.mockReturnValue({ from, auth });
+
+    await expect(fetchReconcilableMenuSource(MENU_ID, LIST_ID)).rejects.toBeInstanceOf(
+      AuthSessionPinMismatchError,
+    );
+    expect(from).not.toHaveBeenCalled();
+  });
+});
+
+describe("mutateShoppingItem", () => {
+  it("R1: refuses mutate RPC when pin user differs from client session", async () => {
+    setAccessTokenPinnedUserId("user-a");
+    const rpc = vi.fn();
+    const auth = {
+      getSession: vi.fn().mockResolvedValue({
+        data: {
+          session: { access_token: "token-b", user: { id: "user-b" } },
+        },
+        error: null,
+      }),
+    };
+    getBrowserSupabaseClientMock.mockReturnValue({ rpc, auth });
+
+    await expect(
+      mutateShoppingItem({
+        listId: LIST_ID,
+        expectedListVersion: 1,
+        expectedSafetyFingerprint: "a".repeat(64),
+        operation: "set_checked",
+        itemId: "42000000-0000-4000-8000-000000000001",
+        idempotencyKey: "43000000-0000-4000-8000-000000000001",
+        payload: { isChecked: true },
+      }),
+    ).rejects.toBeInstanceOf(AuthSessionPinMismatchError);
+    expect(rpc).not.toHaveBeenCalled();
   });
 });
