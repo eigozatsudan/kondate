@@ -47,7 +47,7 @@ describe("confirmLabelConfirmation", () => {
         method: "POST",
         cache: "no-store",
         body: JSON.stringify({ expectedSafetyFingerprint: FINGERPRINT }),
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as AbortSignal,
       }),
     );
     expect(CONFIRM_LABEL_CLIENT_TIMEOUT_MS).toBe(30_000);

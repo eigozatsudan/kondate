@@ -516,7 +516,7 @@ it("keeps a removed row and proposes its larger known delta or unknown review it
   });
   // 同 unit の ambiguous 所要は exact 不一致でも unit 一致 fallback で review（在庫確認）
   next.items[0] = {
-    ...next.items[0]!,
+    ...next.items[0],
     quantityValue: null,
     quantityText: "適量",
     unit: "本",
@@ -526,7 +526,7 @@ it("keeps a removed row and proposes its larger known delta or unknown review it
     unit: "本",
   });
   // SHOP12: unit 不一致（本 vs null）は protected review に紐づけない
-  next.items[0] = { ...next.items[0]!, quantityValue: null, quantityText: "適量", unit: null };
+  next.items[0] = { ...next.items[0], quantityValue: null, quantityText: "適量", unit: null };
   const crossUnit = computeShoppingDiff(makeShoppingList([removed]), next);
   expect(crossUnit.add[0]).toMatchObject({
     quantityText: "適量",

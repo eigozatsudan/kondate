@@ -103,7 +103,7 @@ describe("AudienceStep layout and selected safety summary", () => {
       { length: PLANNER_TARGET_MEMBER_LIMIT + 1 },
       (_, index) => ({
         id: `70000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-        displayName: `家族${index + 1}`,
+        displayName: `家族${String(index + 1)}`,
         ageBandLabel: "大人",
         allergyLabel: "アレルギーなし",
         safetyLabels: [],

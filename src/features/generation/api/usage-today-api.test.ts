@@ -59,7 +59,7 @@ describe("getUsageToday", () => {
         method: "GET",
         cache: "no-store",
         headers: { Authorization: "Bearer access-token" },
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as AbortSignal,
       }),
     );
     expect(USAGE_TODAY_CLIENT_TIMEOUT_MS).toBe(30_000);
