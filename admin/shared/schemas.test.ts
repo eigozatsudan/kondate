@@ -3,6 +3,8 @@ import {
   generationListItemSchema,
   generationDetailSchema,
   feedbackDetailSchema,
+  sharedRecipeListItemSchema,
+  sharedRecipesResponseSchema,
   FORBIDDEN_DTO_KEYS,
 } from "./schemas.js";
 
@@ -19,6 +21,19 @@ const safeGenerationRow = {
   userId: "22222222-2222-4222-8222-222222222222",
 };
 
+const safeSharedRecipeListItem = {
+  id: "11111111-1111-4111-8111-111111111111",
+  createdAt: "2026-08-12T00:00:00.000Z",
+  status: "active" as const,
+  mealType: "dinner" as const,
+  totalElapsedMinutes: 15,
+  title: "肉じゃが",
+  standardAllergenIds: [] as string[],
+  eligibleAgeBands: ["adult"],
+  contributorUserId: null,
+  sourceMenuId: null,
+};
+
 describe("admin DTOs", () => {
   it("parses a safe generation row", () => {
     expect(generationListItemSchema.parse(safeGenerationRow).status).toBe(
@@ -31,6 +46,57 @@ describe("admin DTOs", () => {
     expect(FORBIDDEN_DTO_KEYS).toContain("request_hmac");
     expect(FORBIDDEN_DTO_KEYS).toContain("stripe_price_id");
     expect(FORBIDDEN_DTO_KEYS).toContain("request_hmac_version");
+  });
+
+  it("forbids menu_payload keys on DTO surface", () => {
+    expect(FORBIDDEN_DTO_KEYS).toContain("menu_payload");
+    expect(FORBIDDEN_DTO_KEYS).toContain("menuPayload");
+  });
+
+  it("parses shared recipe list item without raw payload", () => {
+    const item = sharedRecipeListItemSchema.parse({
+      id: "11111111-1111-4111-8111-111111111111",
+      createdAt: "2026-08-12T00:00:00.000Z",
+      status: "active",
+      mealType: "dinner",
+      totalElapsedMinutes: 15,
+      title: "肉じゃが",
+      standardAllergenIds: [],
+      eligibleAgeBands: ["adult"],
+      contributorUserId: null,
+      sourceMenuId: null,
+    });
+    expect(item.title).toBe("肉じゃが");
+    expect(JSON.stringify(item)).not.toMatch(/menu_payload/i);
+  });
+
+  it("shared recipes list response has no preview or menu_payload", () => {
+    // 一覧はメタのみ。preview / 生 menu_payload は detail 経路に限定する。
+    const dirty = {
+      generatedAt: "2026-08-12T00:00:00.000Z",
+      activeCount: 1,
+      disabledCount: 0,
+      items: [
+        {
+          ...safeSharedRecipeListItem,
+          menu_payload: { secret: true },
+          menuPayload: { secret: true },
+          preview: { should: "not-appear-on-list" },
+        },
+      ],
+      menu_payload: { leak: true },
+      preview: { leak: true },
+    };
+
+    const parsed = sharedRecipesResponseSchema.parse(dirty);
+    const serialized = JSON.stringify(parsed);
+
+    expect(serialized).not.toMatch(/menu_payload/i);
+    expect(serialized).not.toMatch(/"preview"/);
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0]?.title).toBe("肉じゃが");
+    expect(Object.keys(parsed)).not.toContain("preview");
+    expect(Object.keys(parsed.items[0] ?? {})).not.toContain("preview");
   });
 
   it("strips forbidden keys from generation list parse output", () => {
