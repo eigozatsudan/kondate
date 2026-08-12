@@ -736,7 +736,7 @@ describe("AuthProvider", () => {
     expect(recovery.mock.calls.length).toBe(startsAfterLoad + 1);
   });
 
-  it("C5/C6/C7: soft SIGNED_OUT clears drafts/feedback but preserves in-flight flow secret", async () => {
+  it("C4: soft SIGNED_OUT clears drafts/feedback and in-flight flow secrets", async () => {
     window.history.replaceState(null, "", "/planner");
     window.localStorage.clear();
     window.localStorage.setItem(
@@ -747,7 +747,7 @@ describe("AuthProvider", () => {
       "kondate:feedback:ambiguous-fingerprint",
       "bug_report\nアレルギー free-form",
     );
-    // C7: soft 失効は進行中 continuation secret を焼かない（cold-start RR1 と同型）
+    // C4: soft 失効でも continuation secret を消し、共有端末 residual complete を閉じる
     const flowId = "10000000-0000-4000-8000-0000000000c7";
     const flowKey = `kondate.auth.flow.${flowId}`;
     const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
@@ -763,7 +763,6 @@ describe("AuthProvider", () => {
         startedAt: new Date().toISOString(),
       }),
     );
-    // C3/C10: pending code / PKCE verifier は soft でも消す
     window.localStorage.setItem(
       pendingKey,
       JSON.stringify({
@@ -803,7 +802,7 @@ describe("AuthProvider", () => {
     expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
     expect(window.localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(window.localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
-    expect(window.localStorage.getItem(flowKey)).not.toBeNull();
+    expect(window.localStorage.getItem(flowKey)).toBeNull();
     expect(window.localStorage.getItem(pendingKey)).toBeNull();
     expect(window.localStorage.getItem("kondate.auth.supabase-code-verifier")).toBeNull();
   });

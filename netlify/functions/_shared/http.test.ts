@@ -11,7 +11,7 @@ import {
 } from "./http.js";
 
 describe("continuation HTTP boundary", () => {
-  it("requires the exact JSON content type and canonical origin", async () => {
+  it("requires a JSON content type and canonical origin", async () => {
     const request = new Request("https://functions.test", {
       method: "POST",
       headers: { "content-type": "application/json", origin: "https://app.test" },
@@ -20,6 +20,27 @@ describe("continuation HTTP boundary", () => {
     await expect(parseJsonRequest(request)).resolves.toEqual({ value: "ok" });
     expect(requireOrigin(request, "https://app.test")).toBe(true);
     expect(requireOrigin(request, "https://other.test")).toBe(false);
+  });
+
+  it("C8: accepts application/json with charset parameters", async () => {
+    const request = new Request("https://functions.test", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        origin: "https://app.test",
+      },
+      body: JSON.stringify({ value: "ok" }),
+    });
+    await expect(parseJsonRequest(request)).resolves.toEqual({ value: "ok" });
+  });
+
+  it("rejects non-JSON content type for parseJsonRequest", async () => {
+    const request = new Request("https://functions.test", {
+      method: "POST",
+      headers: { "content-type": "text/plain", origin: "https://app.test" },
+      body: JSON.stringify({ value: "ok" }),
+    });
+    await expect(parseJsonRequest(request)).rejects.toThrow("invalid_request");
   });
 
   it("returns only a closed error for invalid requests", async () => {

@@ -143,7 +143,7 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
   });
 
-  it("C7: clearSoftSessionResidualBestEffort clears drafts/session but keeps flow secret", () => {
+  it("C4: clearSoftSessionResidualBestEffort clears drafts/session and flow secrets", () => {
     seedOwnedKeys(localStorage);
     localStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
     clearSoftSessionResidualBestEffort();
@@ -151,14 +151,14 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
     expect(localStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
-    // 進行中 continuation secret は温存（C7）
+    // C4: soft 失効でも continuation secret を残さない（共有端末 residual complete を閉じる）
     expect(
       localStorage.getItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001"),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
   });
 
-  it("C3/C10: soft residual clears pending-deposit and PKCE verifier but keeps flow secret", () => {
+  it("C4/C3/C10: soft residual clears pending, PKCE, secret, callback-owner, completion", () => {
     const flowId = "10000000-0000-4000-8000-0000000000c3";
     localStorage.setItem(
       `kondate.auth.flow.${flowId}`,
@@ -189,16 +189,13 @@ describe("clearLocalAuthAndDrafts", () => {
 
     clearSoftSessionResidualBestEffort();
 
-    // C3: authorization code 平文を残さない
     expect(localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).toBeNull();
-    // C10: PKCE verifier も soft で消す
     expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBeNull();
-    // C7: secret / callback-owner / completion は温存
-    expect(localStorage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
-    expect(localStorage.getItem(`kondate.auth.supabase.callback-owner.${flowId}`)).not.toBeNull();
+    expect(localStorage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
+    expect(localStorage.getItem(`kondate.auth.supabase.callback-owner.${flowId}`)).toBeNull();
     expect(
       localStorage.getItem(`kondate.auth.supabase.continuation-complete.${flowId}`),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
   });
 

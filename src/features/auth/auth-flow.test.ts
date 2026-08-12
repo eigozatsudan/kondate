@@ -15,6 +15,7 @@ import {
   isAuthContinuationCallbackOwned,
   isAuthFlowUserDismissed,
   isAuthSelfReturnPath,
+  isSafeAuthReturnTo,
   listUnexpiredAuthFlows,
   markAuthContinuationCallbackOwner,
   markAuthFlowUserDismissed,
@@ -88,6 +89,13 @@ describe("auth flow storage", () => {
     // B-I3: collapse 後に "//…" になる入力は拒否
     expect(sanitizeReturnPath("/planner/..//evil.example")).toBe("/planner");
     expect(sanitizeReturnPath("/x/..//evil.example")).toBe("/planner");
+  });
+  it("C7: sanitizeReturnPath rejects control characters like isSafeAuthReturnTo", () => {
+    expect(sanitizeReturnPath("/\u0001planner")).toBe("/planner");
+    expect(sanitizeReturnPath("/planner\u007f")).toBe("/planner");
+    expect(isSafeAuthReturnTo("/\u0001planner")).toBe(false);
+    // 安全な path は従来どおり
+    expect(sanitizeReturnPath("/planner")).toBe("/planner");
   });
 
   it("C1: login return path drops auth self-references", () => {
@@ -463,6 +471,41 @@ it("C3: user-dismissed flows are excluded from listUnexpiredAuthFlows", () => {
     [],
   );
   clearAuthFlow(flowId, storage);
+  expect(isAuthFlowUserDismissed(flowId, storage)).toBe(false);
+});
+
+it("C2: dismiss clears pending deposit immediately and TTL purges secret via listUnexpired", () => {
+  const storage = new MapStorage();
+  const flowId = "10000000-0000-4000-8000-0000000000c2";
+  const startedAt = "2026-07-13T00:00:00.000Z";
+  storage.setItem(
+    `kondate.auth.flow.${flowId}`,
+    JSON.stringify({
+      id: flowId,
+      secret: "A".repeat(43),
+      state: "B".repeat(43),
+      origin: "https://app.test",
+      returnTo: "/planner",
+      sessionExchange: "supabase",
+      startedAt,
+    }),
+  );
+  writePendingAuthDeposit(
+    flowId,
+    { state: "B".repeat(43), code: "authorization-code-plain", expiresAtMs: Date.now() + 60_000 },
+    storage,
+  );
+  markAuthFlowUserDismissed(flowId, storage);
+  // dismiss 時点で pending は消える（secret は TTL まで残る）
+  expect(readPendingAuthDeposit(flowId, storage)).toBeNull();
+  expect(storage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
+  expect(listUnexpiredAuthFlows(storage, new Date(startedAt), 300_000)).toEqual([]);
+
+  // TTL 超過後の列挙で secret も掃除される
+  expect(listUnexpiredAuthFlows(storage, new Date("2026-07-13T00:06:00.000Z"), 300_000)).toEqual(
+    [],
+  );
+  expect(storage.getItem(`kondate.auth.flow.${flowId}`)).toBeNull();
   expect(isAuthFlowUserDismissed(flowId, storage)).toBe(false);
 });
 

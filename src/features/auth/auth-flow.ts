@@ -83,13 +83,15 @@ const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
  * C3: URL strip 後も 429/5xx 再 deposit できるよう、同一ブラウザに短寿命で code を保持する。
  * owned prefix 配下なので logout の clearOwnedAuthStorage で消える。
  * cold-start fail-closed（RR1）は session キーのみ消し pending は温存。
- * soft 失効（clearSoftSessionResidualBestEffort）は pending を消す（共有端末 code 残渣 — C3）。
+ * soft 失効（clearSoftSessionResidualBestEffort）は pending ごと auth 系を消す（C4）。
+ * dismiss（markAuthFlowUserDismissed）でも pending は即消す（C2）。
  */
 const pendingDepositPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
 /**
  * C3: cancel UI / 期限切れ二次 UI 後にユーザーが明示再開するまで
  * 同一 flow の遅延 success を silent complete しない印。
- * secret は焼かない（C5 DoS 縮退ロック）。owned prefix 配下で logout 掃除される。
+ * secret は焼かない（C5 DoS 縮退ロック）が、listUnexpired の TTL 正規化で期限後に掃除（C2）。
+ * owned prefix 配下で logout / soft residual（C4）でも掃除される。
  */
 const userDismissedPrefix = `${ownedAuthStoragePrefixes[1]}.flow-user-dismissed.`;
 /**
@@ -183,6 +185,7 @@ export function sanitizeReturnPath(value: string | null | undefined): string {
   // - 裸 "/" は RootEntry（welcome/planner 分岐）へ戻すために許可する
   // - "/planner/..//evil" のような collapse 後 "//evil" は拒否する
   // - protocol-relative "//host" は拒否する
+  // - C7: 制御文字は isSafeAuthReturnTo / サーバ Zod と同型で拒否（fallback /planner）
   if (value === undefined || value === null || value === "") {
     return "/planner";
   }
@@ -190,6 +193,10 @@ export function sanitizeReturnPath(value: string | null | undefined): string {
     return "/";
   }
   if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+    return "/planner";
+  }
+  // eslint-disable-next-line no-control-regex -- returnTo に制御文字を許さない（C7）
+  if (/[\u0000-\u001f\u007f]/u.test(value)) {
     return "/planner";
   }
   try {
@@ -200,6 +207,11 @@ export function sanitizeReturnPath(value: string | null | undefined): string {
     const { pathname } = parsed;
     // collapse 後に protocol-relative や不正パスになったら拒否
     if (pathname.startsWith("//") || pathname.includes("\\") || pathname.includes("//")) {
+      return "/planner";
+    }
+    // C7: 正規化後の path/search/hash にも制御文字が残らないこと
+    // eslint-disable-next-line no-control-regex -- 同上
+    if (/[\u0000-\u001f\u007f]/u.test(`${pathname}${parsed.search}${parsed.hash}`)) {
       return "/planner";
     }
     if (pathname === "/") {
@@ -391,7 +403,31 @@ export function listUnexpiredAuthFlows(
   for (const key of keys) {
     const id = key.slice(flowPrefix.length);
     // C3: cancel UI 後の dismiss 済みは residual recovery / multi-flow 列挙から外す
-    if (isAuthFlowUserDismissed(id, storage)) continue;
+    // C2: ただし dismiss 後も TTL 正規化は走らせ、期限超過で secret/pending を掃除する
+    // （list 結果には載せない。cancel 経路で pending は即消し、secret は TTL まで DoS ロック）
+    if (isAuthFlowUserDismissed(id, storage)) {
+      const dismissedFlow = readAuthFlow(id, storage);
+      if (dismissedFlow === null) {
+        // secret が既に無い orphan dismiss 印だけ残っている場合も掃除
+        clearAuthFlowClockState(id, storage);
+        continue;
+      }
+      normalizeAuthClock(
+        id,
+        dismissedFlow.startedAt,
+        storage,
+        now,
+        ttlMs,
+        (rebasedAt) => {
+          storage.setItem(key, JSON.stringify({ ...dismissedFlow, startedAt: rebasedAt }));
+          const ownerKey = `${callbackOwnerPrefix}${id}`;
+          if (storage.getItem(ownerKey) !== null) storage.setItem(ownerKey, rebasedAt);
+        },
+        dismissedFlow.expiresAt,
+        dismissedFlow.clockSkewMs,
+      );
+      continue;
+    }
     const flow = readAuthFlow(id, storage);
     if (flow === null) continue;
     const normalized = normalizeAuthClock(
@@ -608,7 +644,9 @@ function clearAuthFlowClockState(flowId: string, storage: Storage): void {
 
 /**
  * C3: cancel / 期限切れ UI 後のユーザー明示 dismiss。
- * secret は残すが completeCallback / residual recovery は当該 flow を拾わない。
+ * secret は残すが completeCallback / residual recovery は当該 flow を拾わない（C5 DoS ロック）。
+ * C2: pending authorization code は dismiss 時点で消し、共有端末に code 平文を残さない。
+ * secret 自体は listUnexpiredAuthFlows の TTL 正規化で期限後に掃除される。
  * C-R3: setItem 失敗でも memory 印で同一ページの遅延 success を拒否する。
  * C-R8: BroadcastChannel で open tabs へ memory 印を best-effort 伝播（storage 全滅時の cross-tab 窓を縮める）。
  */
@@ -625,6 +663,8 @@ export function markAuthFlowUserDismissed(
   } catch {
     // storage 障害: memory + BroadcastChannel で complete/resume を拒否（TTL / 明示 logout も併用）
   }
+  // C2: dismiss 時点で pending code を落とす（secret は TTL まで残し DoS ロックを維持）
+  clearPendingAuthDeposit(flowId, storage);
 }
 
 /** C3: dismiss 済み flow か（残存 secret があっても silent complete しない） */

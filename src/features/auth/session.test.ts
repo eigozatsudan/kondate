@@ -8,15 +8,19 @@ import {
   isAuthSessionFailure,
   isAuthSessionProbeTimeout,
   requireAccessToken,
+  resetAccessTokenPinGateForTests,
+  setAccessTokenPinnedUserId,
 } from "./session";
 
 describe("requireAccessToken", () => {
   beforeEach(() => {
     vi.useRealTimers();
+    resetAccessTokenPinGateForTests();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    resetAccessTokenPinGateForTests();
   });
 
   it("returns the access token when the session is still fresh", async () => {
@@ -173,6 +177,84 @@ describe("requireAccessToken", () => {
 
     await expect(requireAccessToken(client as never)).resolves.toBe("refreshed-token");
     expect(client.auth.refreshSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("C1: refuses Bearer when React pin user differs from shared client session user", async () => {
+    // pin=A のまま multi-tab clobber で client が B を保持する経路
+    setAccessTokenPinnedUserId("user-a");
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: {
+            session: {
+              access_token: "token-b",
+              expires_at: Math.floor(Date.now() / 1000) + 3600,
+              user: { id: "user-b" },
+            },
+          },
+          error: null,
+        }),
+        refreshSession: vi.fn(),
+      },
+    };
+
+    await expect(requireAccessToken(client as never)).rejects.toBeInstanceOf(
+      AuthSessionExpiredError,
+    );
+    expect(client.auth.refreshSession).not.toHaveBeenCalled();
+  });
+
+  it("C1: issues Bearer when pin user matches client session user", async () => {
+    setAccessTokenPinnedUserId("user-a");
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: {
+            session: {
+              access_token: "token-a",
+              expires_at: Math.floor(Date.now() / 1000) + 3600,
+              user: { id: "user-a" },
+            },
+          },
+          error: null,
+        }),
+        refreshSession: vi.fn(),
+      },
+    };
+
+    await expect(requireAccessToken(client as never)).resolves.toBe("token-a");
+  });
+
+  it("C1: refuses refreshed Bearer when refresh settles as a different user than pin", async () => {
+    setAccessTokenPinnedUserId("user-a");
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: {
+            session: {
+              access_token: "stale-a",
+              expires_at: Math.floor(Date.now() / 1000) - 1,
+              user: { id: "user-a" },
+            },
+          },
+          error: null,
+        }),
+        refreshSession: vi.fn().mockResolvedValue({
+          data: {
+            session: {
+              access_token: "token-b",
+              expires_at: Math.floor(Date.now() / 1000) + 3600,
+              user: { id: "user-b" },
+            },
+          },
+          error: null,
+        }),
+      },
+    };
+
+    await expect(requireAccessToken(client as never)).rejects.toBeInstanceOf(
+      AuthSessionExpiredError,
+    );
   });
 });
 

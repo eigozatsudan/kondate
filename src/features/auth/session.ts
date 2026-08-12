@@ -49,9 +49,38 @@ export const ACCESS_TOKEN_REFRESH_TIMEOUT_MS = 5_000;
 export const ACCESS_TOKEN_GET_SESSION_TIMEOUT_MS = 5_000;
 
 /**
+ * C1: AuthProvider の React session pin と共有 Supabase client の Bearer 乖離を防ぐゲート。
+ * pin 済み user と getSession/refresh の user が不一致なら Function 向け token を出さない。
+ * AuthProvider.applyAuthSession が更新する。module 単体テストは resetAccessTokenPinGateForTests。
+ */
+let accessTokenPinnedUserId: string | null = null;
+
+/** C1: pin の user id を requireAccessToken と共有する（null = pin 無し / 未ログイン） */
+export function setAccessTokenPinnedUserId(userId: string | null): void {
+  accessTokenPinnedUserId = userId;
+}
+
+/** テスト専用: pin ゲートを初期化する */
+export function resetAccessTokenPinGateForTests(): void {
+  accessTokenPinnedUserId = null;
+}
+
+/**
+ * C1: session の user が pin と一致するか。pin 無しは常に true。
+ * user.id 欠落は不一致扱い（fail-closed）。
+ */
+function sessionMatchesAccessTokenPin(session: { user?: { id?: string } | null }): boolean {
+  if (accessTokenPinnedUserId === null) return true;
+  const userId = session.user?.id;
+  return typeof userId === "string" && userId === accessTokenPinnedUserId;
+}
+
+/**
  * Function / PostgREST 向けの Bearer を返す。
  * getSession はローカルキャッシュのみなので、期限切れ直前・期限切れは refreshSession で
  * サーバ側失効（他端末での強制ログアウト等）も検知する。
+ * C1: AuthProvider pin 済み user と client session user が食い違うときは token を出さない
+ * （multi-tab clobber 後の React-A / Bearer-B を fail-closed）。
  */
 export async function requireAccessToken(client: BrowserSupabaseClient): Promise<string> {
   // AP2: getSession が never-settle でも UI を止めない（AuthProvider cold-start と同型）
@@ -69,6 +98,11 @@ export async function requireAccessToken(client: BrowserSupabaseClient): Promise
   if (error !== null || data.session === null) throw new AuthSessionRequiredError();
 
   const session = data.session;
+  // C1: pin と client storage の user が不一致なら Bearer を発行しない
+  if (!sessionMatchesAccessTokenPin(session)) {
+    throw new AuthSessionExpiredError();
+  }
+
   // expires_at 欠落・非 number は期限不明とみなし refresh を試みる（C10）
   const needsRefresh =
     typeof session.expires_at !== "number" ||
@@ -86,6 +120,10 @@ export async function requireAccessToken(client: BrowserSupabaseClient): Promise
     throw new AuthSessionProbeTimeoutError();
   }
   if (refreshed.error !== null || refreshed.data.session === null) {
+    throw new AuthSessionExpiredError();
+  }
+  // C1: refresh 後も pin と一致する token だけ返す（refresh が他 user を返した場合を閉じる）
+  if (!sessionMatchesAccessTokenPin(refreshed.data.session)) {
     throw new AuthSessionExpiredError();
   }
   return refreshed.data.session.access_token;

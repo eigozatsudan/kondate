@@ -111,34 +111,20 @@ export function clearOwnedLocalDataBestEffort(): void {
 }
 
 /**
- * soft 失効で消してよい auth 派生キーか（C3 / C10）。
- * - pending-deposit: authorization code 平文（共有端末で secret と揃うと claim/exchange 可能）
- * - `kondate.auth.supabase-*`（ハイフン）: PKCE code-verifier 等の storageKey 派生
- *
- * flow secret / callback-owner / completion / clock-rebase / claim-poll は
- * `kondate.auth.supabase.`（ドット）配下または flow prefix として温存（C7）。
- */
-function isSoftClearableAuthDerivedKey(key: string): boolean {
-  if (key.startsWith("kondate.auth.supabase.pending-deposit.")) return true;
-  // exact session キーは clearBrowserSupabaseSessionStorage 側。ここは suffix 派生のみ。
-  if (key.startsWith("kondate.auth.supabase-")) return true;
-  return false;
-}
-
-/**
- * soft 失効（authenticated → session null）専用の残渣掃除（C7 / C3 / C10）。
+ * soft 失効（authenticated → session null）専用の残渣掃除（C4 / C3 / C10）。
  *
  * free-form 草稿・feedback・session 永続・マジックリンク UI に加え、
- * pending authorization code と PKCE verifier を消す（共有端末の code 残渣 — C3/C10）。
- * `kondate.auth.flow.*` / completion / callback-owner 等の continuation secret 系は
- * 温存する（cold-start RR1 と同型の「進行中ログイン優先」— C7）。
+ * `kondate.auth.*` 全般（flow secret / pending / completion / callback-owner / PKCE 等）を消す。
  *
- * 明示 logout / アカウント削除の second pass（clearOwnedLocalDataBestEffort）とは非対称。
- * 共有端末で secret を残す residual は明示 logout 経路で閉じる。
+ * C4: 旧 C7 は soft で secret を温存し residual recovery が前ユーザのログインを
+ * silent complete し得た。共有端末では soft 失効＝明示 logout に近い auth 残渣掃除を優先する。
+ * cold-start 未ログイン fail-closed（RR1）は session キーのみで、この関数を呼ばない。
+ *
+ * 明示 logout / アカウント削除の second pass（clearOwnedLocalDataBestEffort）は
+ * drafts 等も含むより広い掃除のまま。
  */
 export function clearSoftSessionResidualBestEffort(): void {
   for (const storage of [localStorage, sessionStorage]) {
-    // session 永続のみ（flow secret は触らない）
     try {
       clearBrowserSupabaseSessionStorage(storage);
     } catch {
@@ -158,8 +144,8 @@ export function clearSoftSessionResidualBestEffort(): void {
       continue;
     }
     for (const key of keys) {
-      // C3/C10: pending code / PKCE verifier は soft でも消す（secret 温存契約 C7 とは別枠）
-      if (isSoftClearableAuthDerivedKey(key)) {
+      // C4: soft でも continuation secret 系を含む kondate.auth.* を全消し
+      if (key.startsWith("kondate.auth.")) {
         try {
           storage.removeItem(key);
         } catch {
@@ -167,8 +153,6 @@ export function clearSoftSessionResidualBestEffort(): void {
         }
         continue;
       }
-      // その他 kondate.auth.*（flow secret / callback-owner / completion 等）は残す（C7）
-      if (key.startsWith("kondate.auth.")) continue;
       if (!isOwnedBrowserStorageKey(key)) continue;
       try {
         storage.removeItem(key);

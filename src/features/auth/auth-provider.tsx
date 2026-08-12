@@ -23,6 +23,7 @@ import {
   startAuthFlowDismissBroadcastListener,
 } from "./auth-flow";
 import { resetAuthCallbackUrlCaptureIfLeftCallback } from "./auth-callback-url-capture";
+import { setAccessTokenPinnedUserId } from "./session";
 
 /**
  * C-R1 / C2: 確立済み user の無言差し替えを抑止する session pin。
@@ -251,6 +252,8 @@ export function AuthProvider({
       const guard = residualSessionGuardRef.current;
       if (nextSession === null) {
         clearResidualSessionGuard(guard);
+        // C1: pin 解除と同時に Function Bearer ゲートも閉じる
+        setAccessTokenPinnedUserId(null);
         setSessionProbeDegraded(false);
         setSession(null);
         return true;
@@ -265,6 +268,8 @@ export function AuthProvider({
           // C-R2: 同一 user の pin token だけを restore。cooldown/上限で multi-tab thrash を抑える。
           // C-R7: restore 見送り（cap/cooldown）や setSession 失敗時は sessionProbeDegraded を立て、
           // React pin と共有 storage session の一時乖離を UI に最小通知する（タブ横断 pin 権威は非導入）。
+          // C1: pin user は setAccessTokenPinnedUserId 済みのまま。client が B でも
+          // requireAccessToken は pin 不一致で Bearer を出さない（fail-closed）。
           const pinned = guard.pinnedSession;
           const restore = client.auth.setSession;
           if (
@@ -308,6 +313,8 @@ export function AuthProvider({
         guard.pinnedUserId = nextSession.user.id;
         guard.pinnedSession = nextSession;
       }
+      // C1: 適用成功時だけ Function 向け pin を同期（拒否経路では勝者 pin を維持）
+      setAccessTokenPinnedUserId(guard.pinnedUserId);
       setSessionProbeDegraded(false);
       setSession(nextSession);
       return true;
@@ -385,10 +392,10 @@ export function AuthProvider({
     };
   }, [applyAuthSession, client, refreshSession]);
 
-  // C5/C6/C7: authenticated → unauthenticated（SIGNED_OUT / refresh 失効の getSession null 等）で
-  // 共有端末に free-form 草稿・feedback fingerprint・session を残さない。
-  // C7: flow secret / completion / callback-owner は温存（他タブ create 直後を unbound にしない）。
-  // C3/C10: pending-deposit と PKCE verifier は soft でも消す（共有端末の code 残渣）。
+  // C5/C6/C4: authenticated → unauthenticated（SIGNED_OUT / refresh 失効の getSession null 等）で
+  // 共有端末に free-form 草稿・feedback fingerprint・session・continuation secret を残さない。
+  // C4: soft 失効でも flow secret / completion / callback-owner を消し、/login residual recovery が
+  // 前ユーザとして silent complete する経路を閉じる（明示 logout と同型の auth 残渣掃除）。
   // 明示 logout / アカウント削除は clearLocalAuthAndDrafts（全所有キー）のまま。
   useEffect(() => {
     if (session !== null) {

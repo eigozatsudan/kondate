@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IMMEDIATE_CLAIM_TIMEOUT_MS } from "./async-timeout";
 import {
   EXCHANGE_IN_FLIGHT_TTL_MS,
+  isAuthContinuationCallbackPreLeaseHeld,
   isAuthContinuationExchangeInFlight,
   isAuthContinuationExchangeInFlightOwner,
   releaseAuthContinuationCallbackPreLease,
@@ -1586,6 +1587,40 @@ describe("auth continuation exchange in-flight lease (R2/R3)", () => {
       instanceId: "tab-a",
       refreshedAt: nowMs,
     });
+
+    stop();
+    expect(clearIntervalMock).toHaveBeenCalled();
+  });
+
+  it("C3: pre-lease beats on freeze/pagehide even when document is hidden", () => {
+    const storage = new MapStorage();
+    let now = new Date(0);
+    const setIntervalMock = ((handler: TimerHandler) => {
+      void handler;
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof setInterval;
+    const clearIntervalMock = vi.fn() as unknown as typeof clearInterval;
+
+    const stop = startAuthContinuationCallbackPreLease(
+      flowId,
+      storage,
+      () => now,
+      setIntervalMock,
+      clearIntervalMock,
+    );
+    expect(isAuthContinuationCallbackPreLeaseHeld(flowId, storage, 0)).toBe(true);
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden" as DocumentVisibilityState,
+    });
+    now = new Date(60_000);
+    document.dispatchEvent(new Event("freeze"));
+    expect(isAuthContinuationCallbackPreLeaseHeld(flowId, storage, 60_000)).toBe(true);
+
+    now = new Date(90_000);
+    window.dispatchEvent(new Event("pagehide"));
+    expect(isAuthContinuationCallbackPreLeaseHeld(flowId, storage, 90_000)).toBe(true);
 
     stop();
     expect(clearIntervalMock).toHaveBeenCalled();

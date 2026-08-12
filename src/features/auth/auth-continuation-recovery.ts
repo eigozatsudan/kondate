@@ -127,6 +127,8 @@ function resolveExchangeLockManager(
  * C-R5: callback 同一ブラウザの deposit/即時 resume 中に target lease 相当を立て、
  * 他タブ global recovery が orphan 扱いして dual exchange しないようにする。
  * 5s 間隔で heartbeat（lease TTL は IMMEDIATE_CLAIM_TIMEOUT+床）。返却関数は heartbeat のみ止める。
+ * C3: exchange in-flight heartbeat と同型で focus/visibility/freeze/pagehide/pageshow でも
+ * 1 拍延命し、モバイル bg throttle で setInterval が止まっても orphan dual claim 窓を縮める。
  * terminal 時は releaseAuthContinuationCallbackPreLease で消す。awaiting 手渡しでは残し、
  * target recovery の自前 lease と併存させてよい。
  */
@@ -150,8 +152,29 @@ export function startAuthContinuationCallbackPreLease(
   const timer = setIntervalFn(() => {
     write();
   }, MIN_CLAIM_POLL_GAP_MS);
+  // C3: bg throttle で interval が止まる前に freeze/pagehide/非表示遷移でも 1 拍延命し、
+  // 復帰時（resume/pageshow/focus/visible）も即 beat。exchange heartbeat（C5）と同型。
+  const wake = (): void => {
+    write();
+  };
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    window.addEventListener("focus", wake);
+    document.addEventListener("visibilitychange", wake);
+    document.addEventListener("freeze", wake);
+    document.addEventListener("resume", wake);
+    window.addEventListener("pagehide", wake);
+    window.addEventListener("pageshow", wake);
+  }
   return () => {
     clearIntervalFn(timer);
+    if (typeof window !== "undefined" && typeof document !== "undefined") {
+      window.removeEventListener("focus", wake);
+      document.removeEventListener("visibilitychange", wake);
+      document.removeEventListener("freeze", wake);
+      document.removeEventListener("resume", wake);
+      window.removeEventListener("pagehide", wake);
+      window.removeEventListener("pageshow", wake);
+    }
   };
 }
 
