@@ -131,9 +131,9 @@ export function MenuActions({
             {!accepted && confirmedSingle && canCreateShoppingList ? (
               <Button
                 variant="secondary"
-                // canCreateShoppingList が true のとき actionsEnabled も true（型上冗長）。
-                // soft-flight race は親 onAccept 内の ref 再確認で閉じる（HR8）。
-                disabled={acceptPending}
+                // canCreate 中も soft 再突入で actionsEnabled が落ちる窓がある。
+                // disabled を acceptPending だけにすると enabled 見た目のまま onAccept が no-op する。
+                disabled={acceptPending || !actionsEnabled}
                 onClick={onAccept}
               >
                 この献立にする
