@@ -223,8 +223,15 @@ test(
     });
     let first = true;
     await page.route("**/api/generations/menu", async (route) => {
-      const body = route.request().postDataJSON() as { idempotencyKey: string };
-      postedKeys.push(body.idempotencyKey);
+      // G9: wire は generationCommandV3 全体。idempotencyKey は request 配下（top-level ではない）
+      const body = route.request().postDataJSON() as {
+        request?: { idempotencyKey?: unknown };
+      };
+      const key = body.request?.idempotencyKey;
+      if (typeof key !== "string" || key.length === 0) {
+        throw new Error("expected request.idempotencyKey on generation POST body");
+      }
+      postedKeys.push(key);
       if (first) {
         first = false;
         await route.abort("connectionreset");
@@ -244,6 +251,10 @@ test(
     // 実際に2回のPOSTが発生し、両方が同じkeyであることを明示的に検証する。
     expect(postedKeys.length).toBe(2);
     expect(postedKeys[0]).toBe(postedKeys[1]);
+    // 誤った top-level 読みは undefined===undefined で常に通る。実キーが UUID であることを担保する
+    expect(postedKeys[0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
   },
 );
 

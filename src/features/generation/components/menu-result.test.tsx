@@ -325,21 +325,43 @@ it("shows the label-confirm action and calls the confirm handler", async () => {
   const result = makeMenuResultViewModel();
   const confirmation = result.labelConfirmations[0];
   if (confirmation === undefined) throw new Error("fixture must contain a confirmation");
-  render(<MenuResult result={result} actions={actions} />);
+  const liveFingerprint = "live-safety-fingerprint-from-revalidation";
+  render(
+    <MenuResult result={result} actions={actions} currentSafetyFingerprint={liveFingerprint} />,
+  );
   await userEvent.click(
     screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
   );
-  expect(onConfirmLabel).toHaveBeenCalledWith(
-    confirmation.confirmationId,
-    confirmation.requirementSafetyFingerprint,
+  expect(onConfirmLabel).toHaveBeenCalledWith(confirmation.confirmationId, liveFingerprint);
+});
+
+// G14: currentSafetyFingerprint 欠落時は保存 requirement にフォールバックせず POST しない
+it("G14: label confirm without live fingerprint does not POST stored requirement FP", async () => {
+  const onConfirmLabel = vi.fn(() => Promise.resolve());
+  const actions = makeActions({ onConfirmLabel });
+  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  await userEvent.click(
+    screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
   );
+  expect(onConfirmLabel).not.toHaveBeenCalled();
+  expect(
+    await screen.findByText(
+      "確認を保存できませんでした。条件が変わった場合は献立を開き直してください。",
+    ),
+  ).toBeVisible();
 });
 
 // G9: 専用 code は増やさず、条件変更時の開き直しを汎用 live message で補足する
 it("G9: label confirm failure live message prompts reopen on condition change", async () => {
   const onConfirmLabel = vi.fn(() => Promise.reject(new Error("confirmation_not_found")));
   const actions = makeActions({ onConfirmLabel });
-  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  render(
+    <MenuResult
+      result={makeMenuResultViewModel()}
+      actions={actions}
+      currentSafetyFingerprint="live-fp"
+    />,
+  );
   await userEvent.click(
     screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
   );
