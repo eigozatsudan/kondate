@@ -159,6 +159,60 @@ export function savePendingGeneration(
   }
 }
 
+/**
+ * dual-tab claim 用。shopping の pendingShoppingCommandClaimLockName と同型。
+ * ロック保持は sticky mint のみ（navigate / POST は外）。
+ */
+export const pendingGenerationClaimLockName = "kondate:generation:v3:claim" as const;
+
+export type ClaimPendingGenerationResult = {
+  pending: PendingGeneration;
+  /**
+   * true: 自タブが first-writer として sticky を確保した。
+   * false: 既存または他タブ勝者の sticky を採用（上書きしない。C2 再開）。
+   */
+  claimed: boolean;
+};
+
+type PendingGenerationClaimStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/**
+ * P1: dual-tab localStorage pending の check-then-act last-writer-wins を閉じる。
+ * shopping の claimShoppingCommand / claimItemMutationSticky と同型:
+ * - Web Locks で読取→書込を直列化（pre-write TOCTOU を閉じる）
+ * - Locks 非対応は書込後 re-read で storage 正本を優先（残差: ロック無し同時 mint）
+ * C2: 既に有効 pending があるときは上書きせず claimed=false（同一タブ再開と同契約）。
+ * recovery 中の requestId 更新など「同一 sticky の上書き」は savePendingGeneration を直接使う。
+ */
+export async function claimPendingGeneration(
+  candidate: PendingGeneration,
+  currentUserId: string,
+  now: Date = new Date(),
+  storage: PendingGenerationClaimStorage = localStorage,
+): Promise<ClaimPendingGenerationResult> {
+  const run = (): ClaimPendingGenerationResult => {
+    const existing = readPendingGeneration(currentUserId, now, storage);
+    if (existing !== null) {
+      return { pending: existing, claimed: false };
+    }
+    savePendingGeneration(candidate, storage);
+    // 書込後 re-read: Locks 無し競合で他タブが後勝ちした場合は共有 sticky を優先する
+    const again = readPendingGeneration(currentUserId, now, storage);
+    if (again === null) {
+      // setItem 成功後に読めない異常。candidate を自 claim として返し呼び出し側が進める
+      return { pending: candidate, claimed: true };
+    }
+    const claimed = again.request.idempotencyKey === candidate.request.idempotencyKey;
+    return { pending: again, claimed };
+  };
+
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+  if (locks !== undefined && typeof locks.request === "function") {
+    return locks.request(pendingGenerationClaimLockName, () => run());
+  }
+  return run();
+}
+
 export function clearPendingGeneration(
   storage: PendingGenerationRemoveStorage = localStorage,
 ): void {

@@ -507,6 +507,8 @@ const pendingGenerationMock = vi.hoisted(() => ({
   readPendingGeneration: vi.fn(),
   clearPendingGeneration: vi.fn(),
   savePendingGenerationMeta: vi.fn(),
+  // P1: dual-tab claim。既定は first-writer 成功（save を経由して既存アサートを維持）
+  claimPendingGeneration: vi.fn(),
 }));
 // G-R1: pending 再開判定で status GET する。既定 reject → keep → resume（hung 回避）
 const getGenerationStatusMock = vi.hoisted(() => vi.fn());
@@ -527,6 +529,7 @@ vi.mock("@/features/generation/model/pending-generation", async (importOriginal)
     savePendingGeneration: pendingGenerationMock.savePendingGeneration,
     readPendingGeneration: pendingGenerationMock.readPendingGeneration,
     clearPendingGeneration: pendingGenerationMock.clearPendingGeneration,
+    claimPendingGeneration: pendingGenerationMock.claimPendingGeneration,
   };
 });
 vi.mock("@/features/generation/model/pending-generation-meta", async (importOriginal) => {
@@ -612,6 +615,7 @@ beforeEach(() => {
   pendingGenerationMock.readPendingGeneration.mockReset();
   pendingGenerationMock.clearPendingGeneration.mockReset();
   pendingGenerationMock.savePendingGenerationMeta.mockReset();
+  pendingGenerationMock.claimPendingGeneration.mockReset();
   getGenerationStatusMock.mockReset();
   // status 不明は keep→resume（G-R1 / G1）。進行中 fixture は各テストで上書き。
   getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
@@ -622,6 +626,13 @@ beforeEach(() => {
       createdAt: "2026-07-11T00:00:00.000Z",
       ...(command as object),
     }),
+  );
+  // P1: claim 成功時は save 経由（既存「save が呼ばれた」アサートを維持）
+  pendingGenerationMock.claimPendingGeneration.mockImplementation(
+    async (candidate: unknown) => {
+      pendingGenerationMock.savePendingGeneration(candidate);
+      return { pending: candidate, claimed: true };
+    },
   );
 });
 
@@ -1301,6 +1312,53 @@ it("P1: leave flush 中は generate をガードし startGeneration / 二重 flu
   expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
 });
 
+it("P5: leave flush 中は isSaving が true（generate disabled / 編集窓を閉じる）", async () => {
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  render(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+  expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+
+  const leavePromise = runPlannerLeaveFlush();
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+  });
+  // mock wizard の生成ボタンも isSaving で disabled
+  expect(screen.getByRole("button", { name: "生成" })).toBeDisabled();
+
+  deferred.resolve({ ...draft, revision: 4 });
+  await expect(leavePromise).resolves.toBe("proceed");
+  // proceed 後も unmount まで isSaving を維持（post-flush 編集窓を閉じる）
+  expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+});
+
+it("P5: leave flush が blocked なら isSaving を解除する", async () => {
+  let rejectSave: ((error: Error) => void) | undefined;
+  savePlannerDraftMock.mockImplementationOnce(
+    () =>
+      new Promise<PlannerDraft>((_resolve, reject) => {
+        rejectSave = reject;
+      }),
+  );
+  render(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  const leavePromise = runPlannerLeaveFlush();
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+  });
+
+  rejectSave?.(new Error("network"));
+  await expect(leavePromise).resolves.toBe("blocked");
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+  });
+});
+
 it("P1: leave flush 中は emergency / settings をガードする", async () => {
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
@@ -1885,9 +1943,48 @@ describe("PlannerRoutePage", () => {
     });
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
     // resume は return false → startNewAttempt しない（期限確認を捨てない）
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByLabelText("check count")).toHaveTextContent("1");
+  });
+
+  it("P1: claim 負け（dual-tab 他 sticky）は上書きせず resumed 再開し attempt を回さない", async () => {
+    // pre-read は null（両タブ同時 null 観測後の claim 競合）。claim だけ他タブ sticky を返す。
+    const otherPending = {
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3" as const,
+      kind: "new_menu" as const,
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    };
+    pendingGenerationMock.claimPendingGeneration.mockResolvedValue({
+      pending: otherPending,
+      claimed: false,
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(pendingGenerationMock.claimPendingGeneration).toHaveBeenCalled();
+    // 負けタブは meta を書かず・clear しない（勝者 sticky を壊さない）
+    expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    // return false → startNewAttempt しない
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey ?? "");
   });
 
   it("入力をリセットすると進行中 pending も捨てる", async () => {

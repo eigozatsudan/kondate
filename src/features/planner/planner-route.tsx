@@ -24,10 +24,10 @@ import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import { expiryNotice } from "@/features/pantry/pantry-page";
 import {
+  claimPendingGeneration,
   clearPendingGeneration,
   createPendingGeneration,
   readPendingGeneration,
-  savePendingGeneration,
 } from "@/features/generation/model/pending-generation";
 import { reconcileTerminalPendingGeneration } from "@/features/generation/model/reconcile-terminal-pending";
 import { savePendingGenerationMeta } from "@/features/generation/model/pending-generation-meta";
@@ -295,7 +295,7 @@ export function PlannerRoutePage() {
       // onSubmit が selected∩expired 済みの checks を渡す前提。ここは選択中のみ再絞り。
       // P2/P3/P5: Free / 非 Plus / plan 未取得 / quality 枠なしでは qualityMode を必ず false
       // （onSubmit clamp をすり抜けた注入・将来呼び出しでも pending に true を載せない）
-      const pending = createPendingGeneration(
+      const candidate = createPendingGeneration(
         {
           commandVersion: "generation-command.v3",
           kind: "new_menu",
@@ -315,10 +315,20 @@ export function PlannerRoutePage() {
         },
         userId,
       );
-      savePendingGeneration(pending);
+      // P1: dual-tab check-then-act を claim（Web Locks + 書込後 re-read）で閉じる。
+      // 無条件 save だと他タブの進行中 sticky を last-writer で消す。負けたら C2 再開のみ。
+      const claim = await claimPendingGeneration(candidate, userId, new Date());
+      if (!claim.claimed) {
+        if (signal.aborted) return false;
+        // 他タブ（または先行）の sticky を上書きしていない。resumed で明示する
+        void navigate("/generation?resumed=1");
+        return false;
+      }
+      const pending = claim.pending;
       // savePendingGeneration 本体は targetMode を知らないため meta はここで書く。
       // P2: body→meta は非アトミック。meta が QuotaExceeded 等で throw すると body だけ sticky
       // に残り C2 再開導線と矛盾する。meta 失敗時は body+meta をまとめて消してから再 throw。
+      // claimed 時のみ meta を書き、負けタブは他 sticky の meta を触らない。
       try {
         savePendingGenerationMeta({
           kind: "new_menu",
@@ -331,13 +341,13 @@ export function PlannerRoutePage() {
         clearPendingGeneration();
         throw error;
       }
-      // strip/abort が pending 保存後に走った場合は sticky 再開導線を残さない
+      // strip/abort が claim 後に走った場合は自タブ sticky 再開導線を残さない
       if (signal.aborted) {
         clearPendingGeneration();
-        return Promise.resolve(false);
+        return false;
       }
       void navigate("/generation");
-      return Promise.resolve(true);
+      return true;
     },
     [navigate, planCode, qualityAvailable, userId],
   );
@@ -416,6 +426,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // P6/P8: privacy・settings 遷移中は isSaving に載せ二重 flush/navigate を抑止
   const [isOpeningPrivacy, setIsOpeningPrivacy] = useState(false);
   const [isOpeningSettings, setIsOpeningSettings] = useState(false);
+  // P5: leave-flush 中も isSaving に載せる（generate 無言 no-op / post-flush 編集窓を閉じる）
+  // ref は同期ガード、state は disabled 再描画用（privacy/settings と同型）。
+  const [isLeaving, setIsLeaving] = useState(false);
   const generationAbortControllerRef = useRef<AbortController | null>(null);
   // 緊急献立遷移の single-flight と unmount 後の遅延 navigate 抑止。
   const mountedRef = useRef(true);
@@ -432,6 +445,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // P1: leave-flush 中の同期 single-flight。generate/settings/privacy/emergency が mid-leave に
   // 起動しないよう武装し、post-flush でも submitting/opening を再確認する。
   // proceed 時は unmount まで落さない（handler return → shell navigate の隙間に generate を許さない）。
+  // P5: isLeaving state と対で isSaving に載せ、wizard 編集・生成 CTA を visually disable する。
   const leaveInFlightRef = useRef(false);
   // P2: leave-flush handler は mount 時のみ register。state は ref で読み stale クロージャと
   // deps 更新時 cleanup→null の窓を避ける（submittingRef と同型）。
@@ -1123,12 +1137,19 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         return "blocked";
       }
       // P1: flush await 前に武装。generate/openers が mid-leave を見られるようにする。
+      // P5: isLeaving を立て isSaving 経由で CTA/編集を disable（無言 generate no-op と post-flush 編集を防ぐ）。
       leaveInFlightRef.current = true;
+      if (mountedRef.current) {
+        setIsLeaving(true);
+      }
       const releaseLeaveUnlessProceeding = (proceeding: boolean): void => {
         if (!proceeding) {
           leaveInFlightRef.current = false;
+          if (mountedRef.current) {
+            setIsLeaving(false);
+          }
         }
-        // proceed 時は unmount まで維持（shell navigate 前の generate 起動窓を閉じる）
+        // proceed 時は unmount まで維持（shell navigate 前の generate 起動・編集窓を閉じる）
       };
       const otherOpInFlightAfterFlush = (): boolean =>
         submittingRef.current ||
@@ -1350,11 +1371,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           // saving を isSaving に載せると privacy/settings/emergency が無言 disable になる。
           // 競合 UI は hasDraftConflict（onConflict）で止める。undelete プローブ中の固着は
           // save() 側で live 確認後に conflict を再 throw して onConflict を発火させる。
+          // P5: leave-flush 中は privacy/settings と同型で isSaving に載せ、generate の見た目有効
+          // ＋無言 early-return、および proceed 後 unmount 前の編集窓を閉じる。
           isSubmitting ||
           hasDraftConflict ||
           isOpeningEmergencyMenus ||
           isOpeningPrivacy ||
-          isOpeningSettings
+          isOpeningSettings ||
+          isLeaving
         }
         // P4: safety/pantry soft 失敗中は stale 送信を禁止（主 CTA のみ。編集は previous data で継続）
         blockGenerationForStaleSafety={staleBackgroundSafetyPantry}
