@@ -176,7 +176,7 @@ docker compose -f compose.admin.yaml build
 | `ADMIN_DATABASE_URL`            | はい                          | `kondate_ops_readonly` の Postgres URL                                                                                                                                              |
 | `ADMIN_PORT`                    | いいえ                        | 既定 `5193`                                                                                                                                                                         |
 | `ADMIN_BIND_HOST`               | いいえ                        | コンテナ内既定 `0.0.0.0`（ホスト公開は compose が `127.0.0.1` 固定）                                                                                                                |
-| `ADMIN_LOCAL_TOKEN`             | 推奨（共有レシピは **必須**） | 高エントロピー。設定時は `/api/*` が `Authorization: Bearer …` 必須（`/api/health` は除外可）。**共有レシピ** (`/api/shared-recipes*`) はトークン未設定でも 401（token 必須ルート） |
+| `ADMIN_LOCAL_TOKEN`             | 推奨（共有レシピは **必須**） | 高エントロピー。設定時は `/api/*` が `Authorization: Bearer …` 必須（`/api/health` は除外可）。**共有レシピ** (`/api/shared-recipes*`) は token **未設定だとルート未登録 → 404**。token 設定済みで Bearer 欠落・不一致のときだけ **401** |
 | `ADMIN_ALLOW_INSECURE_LOCAL_DB` | ローカルのみ                  | `1` のとき loopback 等 + `sslmode=disable` を許可。本番 URL では使わない                                                                                                            |
 
 ### `ADMIN_DATABASE_URL` の受理形
@@ -277,8 +277,9 @@ docker compose --profile test run --rm db-test
 | `permission denied`            | migration 未適用、または GRANT 対象外の表を触っていないか                                                  |
 | feedback が常に 0 件           | RLS policy `user_feedback_ops_readonly_select` があるか（migration）                                       |
 | ブラウザで Host 400            | `http://127.0.0.1:5193` または `http://localhost:5193` で開く                                              |
-| API 401                        | `ADMIN_LOCAL_TOKEN` 設定時は UI の token 欄に同じ値を入れる（sessionStorage）。共有レシピは token **必須** |
-| 共有レシピ 401                 | `.env.admin` に `ADMIN_LOCAL_TOKEN` を設定し、UI に同じ値を入れる                                          |
+| API 401                        | `ADMIN_LOCAL_TOKEN` 設定時は UI の token 欄に同じ値を入れる（sessionStorage）                              |
+| 共有レシピ 404                 | `ADMIN_LOCAL_TOKEN` **未設定** → `/api/shared-recipes*` はルート未登録（404）。`.env.admin` に token を設定して再起動 |
+| 共有レシピ 401                 | token は設定済みだが Bearer 欠落・不一致。UI の token 欄に `.env.admin` と同じ値を入れる                   |
 | compose が `.env.admin` で失敗 | ファイルを作成済みか（`env_file` 必須）                                                                    |
 | 意図しない DB を見ている       | 起動前に `ADMIN_DATABASE_URL` の host を目視（本番誤接続防止）                                             |
 
