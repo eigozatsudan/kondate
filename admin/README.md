@@ -2,13 +2,14 @@
 
 ローカル専用の **閲覧のみ** 運用 UI です。本番（または staging）の Postgres を SELECT 専用ロール `kondate_ops_readonly` で参照し、生成・枠・課金・共有・フィードバックの健全性を把握します。
 
-| 項目 | 内容 |
-| --- | --- |
-| 公開 URL | `http://127.0.0.1:5193` のみ（LAN 公開しない） |
-| 本編アプリ | 非依存。`compose.yaml` とは別の `compose.admin.yaml` |
-| デプロイ | **しない**（Netlify / 本番 URL に載せない） |
-| 認証 | アプリログインなし。Host allowlist + loopback。**`ADMIN_LOCAL_TOKEN` 推奨** |
-| 操作 | GET / SELECT のみ。書き込み API・書き込み RPC なし |
+| 項目       | 内容                                                                                                      |
+| ---------- | --------------------------------------------------------------------------------------------------------- |
+| 公開 URL   | `http://127.0.0.1:5193` のみ（LAN 公開しない）                                                            |
+| 本編アプリ | 非依存。`compose.yaml` とは別の `compose.admin.yaml`                                                      |
+| デプロイ   | **しない**（Netlify / 本番 URL に載せない）                                                               |
+| 認証       | アプリログインなし。Host allowlist + loopback。**`ADMIN_LOCAL_TOKEN` 推奨**（共有レシピ API は **必須**） |
+| 操作       | GET / SELECT のみ。書き込み API・書き込み RPC なし                                                        |
+| 検証の既定 | **local DB**（`docker compose` の本編 Postgres）。本番 URL は明示時のみ                                   |
 
 設計の正本: [`docs/superpowers/specs/2026-08-11-local-ops-admin-console-design.md`](../docs/superpowers/specs/2026-08-11-local-ops-admin-console-design.md)
 
@@ -23,19 +24,22 @@
 5. **`VITE_*` に DB URL やパスワードを載せない**。
 6. feedback 本文は利用者の自由記述。**スクショ・チャット・外部共有しない**。
 7. 識別表示は **`user_id`（UUID）のみ**。email / 氏名 / `identity_key` は出さない。
+8. 共有レシピは **生 `menu_payload` を出さない**。プレビューはサーバー側で正規化した DTO のみ。**外部共有・転載禁止**。
+9. **`.env.admin` は本番（または staging）を指し得る**。起動前に `ADMIN_DATABASE_URL` の host を目視確認する。
 
 ---
 
 ## 画面一覧
 
-| 画面 | 内容 |
-| --- | --- |
-| ダッシュボード | 当日・直近の生成 status、全体枠、FB 件数、stuck、共有滞留、課金 status 集計 |
-| 生成ログ | `ai_generation_requests` 一覧・詳細（status / failure_code / model / 所要時間等） |
-| 不具合・要望 | `user_feedback`（既定は本文先頭 80 字。全文は明示操作後） |
-| 利用枠・健全性 | グローバル日次、stuck、failure_code ランキング、上限付近 user |
-| 課金概況 | status 集計・任意一覧（Stripe ID は出さない） |
-| 共有パイプライン | share job 一覧・滞留（lease **15 分**） |
+| 画面             | 内容                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| ダッシュボード   | 当日・直近の生成 status、全体枠、FB 件数、stuck、共有滞留、課金 status 集計                   |
+| 生成ログ         | `ai_generation_requests` 一覧・詳細（status / failure_code / model / 所要時間等）             |
+| 不具合・要望     | `user_feedback`（既定は本文先頭 80 字。全文は明示操作後）                                     |
+| 利用枠・健全性   | グローバル日次、stuck、failure_code ランキング、上限付近 user                                 |
+| 課金概況         | status 集計・任意一覧（Stripe ID は出さない）                                                 |
+| 共有パイプライン | share job 一覧・滞留（lease **15 分**）                                                       |
+| 共有レシピ       | 共有レシピ一覧・詳細・プレビュー（`menu_payload` 生データなし。`ADMIN_LOCAL_TOKEN` **必須**） |
 
 日付は **JST**。一覧の日付範囲は必須（既定 7 日、上限 31 日）。
 
@@ -112,24 +116,25 @@
 
 運用で見るログ・集計に必要な表だけ許可しています（書き込み権限は付きません）。
 
-| 用途 | 何を読むか |
-| --- | --- |
-| 不具合・要望 | フィードバック |
-| 生成ログ | AI 生成の成否・失敗コード・所要時間など |
-| 全体の AI 枠 | 日次の予約・送信件数 |
-| 課金状態 | Plus 相当の status 集計（Stripe の ID は画面に出さない） |
-| 共有パイプライン | 共有 job の状態・滞留 |
+| 用途             | 何を読むか                                                        |
+| ---------------- | ----------------------------------------------------------------- |
+| 不具合・要望     | フィードバック                                                    |
+| 生成ログ         | AI 生成の成否・失敗コード・所要時間など                           |
+| 全体の AI 枠     | 日次の予約・送信件数                                              |
+| 課金状態         | Plus 相当の status 集計（Stripe の ID は画面に出さない）          |
+| 共有パイプライン | 共有 job の状態・滞留                                             |
+| 共有レシピ       | レシピ一覧・詳細用の許可列（生 `menu_payload` は API に載せない） |
 
-献立の中身・アレルギー詳細・メールアドレスなどには **権限を付けていません**。
+献立の生 JSON・アレルギー詳細・メールアドレスなどには **権限を付けていません**（共有レシピのプレビューは許可列と title 関数経由の正規化 DTO のみ）。
 
 ### うまくいかないとき（DB まわり）
 
-| 症状 | よくある原因 |
-| --- | --- |
-| 起動直後に落ちる / `database_url_invalid` | URL が `postgres` ユーザー、port 6543、sslmode 不足 |
-| `permission denied` / 起動 canary 失敗 | ① migration 未適用、または ② LOGIN 化・パスワード忘れ |
-| feedback だけいつも 0 件 | migration 未適用の古い DB（RLS 用の SELECT 許可が無い） |
-| ローカルで TLS エラー | 本番向け URL をローカル DB に使っている → 手順 A を使う |
+| 症状                                      | よくある原因                                            |
+| ----------------------------------------- | ------------------------------------------------------- |
+| 起動直後に落ちる / `database_url_invalid` | URL が `postgres` ユーザー、port 6543、sslmode 不足     |
+| `permission denied` / 起動 canary 失敗    | ① migration 未適用、または ② LOGIN 化・パスワード忘れ   |
+| feedback だけいつも 0 件                  | migration 未適用の古い DB（RLS 用の SELECT 許可が無い） |
+| ローカルで TLS エラー                     | 本番向け URL をローカル DB に使っている → 手順 A を使う |
 
 ---
 
@@ -141,6 +146,7 @@
 # 1. 環境ファイル
 cp .env.admin.example .env.admin
 # エディタで ADMIN_DATABASE_URL 等を設定（下記「環境変数」）
+# ⚠ .env.admin は本番 host を指し得る → 起動前に host を目視確認すること
 
 # 2. 起動
 docker compose -f compose.admin.yaml up --build
@@ -165,13 +171,13 @@ docker compose -f compose.admin.yaml build
 
 ## 環境変数（`.env.admin`）
 
-| 変数 | 必須 | 説明 |
-| --- | --- | --- |
-| `ADMIN_DATABASE_URL` | はい | `kondate_ops_readonly` の Postgres URL |
-| `ADMIN_PORT` | いいえ | 既定 `5193` |
-| `ADMIN_BIND_HOST` | いいえ | コンテナ内既定 `0.0.0.0`（ホスト公開は compose が `127.0.0.1` 固定） |
-| `ADMIN_LOCAL_TOKEN` | 推奨 | 高エントロピー。設定時は `/api/*` が `Authorization: Bearer …` 必須（`/api/health` は除外可） |
-| `ADMIN_ALLOW_INSECURE_LOCAL_DB` | ローカルのみ | `1` のとき loopback 等 + `sslmode=disable` を許可。本番 URL では使わない |
+| 変数                            | 必須                          | 説明                                                                                                                                                                                |
+| ------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_DATABASE_URL`            | はい                          | `kondate_ops_readonly` の Postgres URL                                                                                                                                              |
+| `ADMIN_PORT`                    | いいえ                        | 既定 `5193`                                                                                                                                                                         |
+| `ADMIN_BIND_HOST`               | いいえ                        | コンテナ内既定 `0.0.0.0`（ホスト公開は compose が `127.0.0.1` 固定）                                                                                                                |
+| `ADMIN_LOCAL_TOKEN`             | 推奨（共有レシピは **必須**） | 高エントロピー。設定時は `/api/*` が `Authorization: Bearer …` 必須（`/api/health` は除外可）。**共有レシピ** (`/api/shared-recipes*`) はトークン未設定でも 401（token 必須ルート） |
+| `ADMIN_ALLOW_INSECURE_LOCAL_DB` | ローカルのみ                  | `1` のとき loopback 等 + `sslmode=disable` を許可。本番 URL では使わない                                                                                                            |
 
 ### `ADMIN_DATABASE_URL` の受理形
 
@@ -237,8 +243,17 @@ npm start
 
 ## 検証
 
+**既定は local DB**（本編 `docker compose` の Postgres + migration）。本番 URL での検証は意図したときだけ。
+
 ```bash
-# admin パッケージ（Docker 経由の例）
+# admin パッケージ（ホスト Node 24）
+cd admin
+npm test
+npm run typecheck
+npm run lint
+npm run format:check
+
+# Docker 経由の例
 docker run --rm -v "$PWD/admin:/admin" -w /admin node:24-bookworm-slim npm ci
 docker run --rm -v "$PWD/admin:/admin" -w /admin node:24-bookworm-slim npm test
 docker run --rm -v "$PWD/admin:/admin" -w /admin node:24-bookworm-slim npm run typecheck
@@ -247,34 +262,34 @@ docker run --rm -v "$PWD/admin:/admin" -w /admin node:24-bookworm-slim npm run l
 # リポジトリ境界（ports / ignore / format prune）
 node --test tests/tooling/admin-compose.test.mjs
 
-# DB ロール（本編スタック + migration 適用後）
+# DB ロール（本編スタック + migration 適用後・local）
 docker compose --profile test run --rm db-test
-# → ops_readonly_role.test.sql
+# → ops_readonly_role.test.sql（共有レシピ GRANT / DML 不可を含む）
 ```
-
-ホストに Node 24 がある場合は `cd admin && npm test` でも可。
 
 ---
 
 ## トラブルシュート
 
-| 症状 | 確認 |
-| --- | --- |
-| 起動即 exit | `ADMIN_DATABASE_URL` 未設定 / `postgres` ユーザー / port 6543 / sslmode 不正 / ロールが LOGIN 未化 |
-| `permission denied` | migration 未適用、または GRANT 対象外の表を触っていないか |
-| feedback が常に 0 件 | RLS policy `user_feedback_ops_readonly_select` があるか（migration） |
-| ブラウザで Host 400 | `http://127.0.0.1:5193` または `http://localhost:5193` で開く |
-| API 401 | `ADMIN_LOCAL_TOKEN` 設定時は UI の token 欄に同じ値を入れる（sessionStorage） |
-| compose が `.env.admin` で失敗 | ファイルを作成済みか（`env_file` 必須） |
+| 症状                           | 確認                                                                                                       |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| 起動即 exit                    | `ADMIN_DATABASE_URL` 未設定 / `postgres` ユーザー / port 6543 / sslmode 不正 / ロールが LOGIN 未化         |
+| `permission denied`            | migration 未適用、または GRANT 対象外の表を触っていないか                                                  |
+| feedback が常に 0 件           | RLS policy `user_feedback_ops_readonly_select` があるか（migration）                                       |
+| ブラウザで Host 400            | `http://127.0.0.1:5193` または `http://localhost:5193` で開く                                              |
+| API 401                        | `ADMIN_LOCAL_TOKEN` 設定時は UI の token 欄に同じ値を入れる（sessionStorage）。共有レシピは token **必須** |
+| 共有レシピ 401                 | `.env.admin` に `ADMIN_LOCAL_TOKEN` を設定し、UI に同じ値を入れる                                          |
+| compose が `.env.admin` で失敗 | ファイルを作成済みか（`env_file` 必須）                                                                    |
+| 意図しない DB を見ている       | 起動前に `ADMIN_DATABASE_URL` の host を目視（本番誤接続防止）                                             |
 
 ---
 
 ## 関連ドキュメント
 
-| 文書 | 内容 |
-| --- | --- |
-| [docs/local-development.md](../docs/local-development.md#運用管理コンソールローカル専用閲覧のみ) | ローカル開発全体の中の短い節 |
-| [docs/deployment/supabase.md](../docs/deployment/supabase.md) §6.1 | 本番での `kondate_ops_readonly` LOGIN 手順 |
-| [docs/testing/database-access-matrix.md](../docs/testing/database-access-matrix.md) | 表権限 |
-| [docs/superpowers/specs/2026-08-11-local-ops-admin-console-design.md](../docs/superpowers/specs/2026-08-11-local-ops-admin-console-design.md) | 設計 |
-| [docs/superpowers/plans/2026-08-11-local-ops-admin-console.md](../docs/superpowers/plans/2026-08-11-local-ops-admin-console.md) | 実装計画 |
+| 文書                                                                                                                                          | 内容                                       |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| [docs/local-development.md](../docs/local-development.md#運用管理コンソールローカル専用閲覧のみ)                                              | ローカル開発全体の中の短い節               |
+| [docs/deployment/supabase.md](../docs/deployment/supabase.md) §6.1                                                                            | 本番での `kondate_ops_readonly` LOGIN 手順 |
+| [docs/testing/database-access-matrix.md](../docs/testing/database-access-matrix.md)                                                           | 表権限                                     |
+| [docs/superpowers/specs/2026-08-11-local-ops-admin-console-design.md](../docs/superpowers/specs/2026-08-11-local-ops-admin-console-design.md) | 設計                                       |
+| [docs/superpowers/plans/2026-08-11-local-ops-admin-console.md](../docs/superpowers/plans/2026-08-11-local-ops-admin-console.md)               | 実装計画                                   |
