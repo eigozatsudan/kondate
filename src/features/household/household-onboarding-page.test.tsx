@@ -1321,6 +1321,84 @@ it("HR1: flushes pending registered before completeMember", async () => {
   });
 });
 
+// HR1: 初回追加後の deferred registered commit 失敗 + H16 soft invalidate 後も
+// 登録あり / AllergyEditor を落とさない（members サーバ正本は non-registered のまま）
+it("HR1: keeps deferred registered UI after commit fails and soft members invalidate", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
+  let currentDraft = draft;
+  const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
+    if (patch.allergy_status === "registered") {
+      // registered だけ失敗。members API 正本は non-registered のまま
+      return Promise.reject(new Error("registered commit failed"));
+    }
+    currentDraft = {
+      ...currentDraft,
+      ...patch,
+      updated_at: "2026-07-11T00:00:05.000Z",
+    };
+    membersState.upsert(currentDraft);
+    return Promise.resolve(currentDraft);
+  });
+  const eggAllergy = {
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  const addStandardAllergy = vi.fn().mockResolvedValue(eggAllergy);
+  const listAllergies = vi.fn().mockResolvedValueOnce([]).mockResolvedValue([eggAllergy]);
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    updateDraft,
+    listAllergies,
+    listCatalog: vi.fn().mockResolvedValue([
+      {
+        id: "egg",
+        display_name: "卵",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]),
+    listAliases: vi.fn().mockResolvedValue([]),
+    addStandardAllergy,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
+  await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+  });
+  await user.click(screen.getByRole("button", { name: "卵を追加" }));
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalledWith("member-1", "egg");
+  });
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
+    );
+  });
+  // soft invalidate → listMembers refetch 後も UI は registered / Editor を維持
+  await waitFor(() => {
+    expect(membersState.listMembers.mock.calls.length).toBeGreaterThan(1);
+  });
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+  });
+  // サーバ正本は non-registered のまま（fail-closed。再選択なしで UI intent だけ残る）
+  expect(currentDraft.allergy_status).not.toBe("registered");
+});
+
 // HR1: complete 前 flush 失敗時は completeMember を呼ばず failed 表示
 it("HR1: does not completeMember when pending registered flush fails", async () => {
   const user = userEvent.setup();

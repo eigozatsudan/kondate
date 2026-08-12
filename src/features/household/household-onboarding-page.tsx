@@ -445,9 +445,20 @@ export function HouseholdOnboardingForm({
    * H16: draft アレルギー変更後も dependents を soft invalidate。
    * draft は snapshot 対象外だが、同一 user の allergies/dislikes/緊急献立などの
    * soft 窓を縮める（complete 後経路と同型。失敗は沈黙 soft）。
+   * HR1: members invalidate はサーバ正本で registered 未コミット状態に戻し得る。
+   * deferred registered が残っているときは replaceMember で UI/complete 検証用に再載せる
+   * （allergy 行は DB 残存の fail-closed。complete 前 flush 失敗も従来どおり塞ぐ）。
    */
   const softInvalidateAfterDraftAllergyChange = async (): Promise<void> => {
+    const memberId = draft?.id;
     await tryInvalidateSafety(() => invalidateHouseholdSafetyDependents(queryClient, userId));
+    if (!pendingRegisteredRef.current || memberId === undefined) return;
+    const latest = queryClient
+      .getQueryData<HouseholdMemberRow[]>(householdKeys.members(userId))
+      ?.find((row) => row.id === memberId);
+    if (latest !== undefined) {
+      replaceMember(latest);
+    }
   };
 
   const save = (patch: HouseholdDraftPatch) => {
@@ -716,10 +727,16 @@ export function HouseholdOnboardingForm({
           return;
         }
       }
-      // click 後の楽観更新を含め、キャッシュ上の最新 draft / allergies で検証する
+      // click 後の楽観更新を含め、キャッシュ上の最新 draft / allergies で検証する。
+      // HR1: deferred registered 未コミット中は members 正本が non-registered でも
+      // UI 意図どおり registered として検証し、直後の flush へ進める。
       const membersNow =
         queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members(userId)) ?? [];
-      const draftNow = membersNow.find((member) => member.id === memberId) ?? draft;
+      const rawDraftNow = membersNow.find((member) => member.id === memberId) ?? draft;
+      const draftNow =
+        pendingRegisteredRef.current && rawDraftNow.status === "draft"
+          ? { ...rawDraftNow, allergy_status: "registered" as const }
+          : rawDraftNow;
       const allergiesNow =
         queryClient.getQueryData<MemberAllergyRow[]>(householdKeys.allergies(userId, memberId)) ??
         allergies;
