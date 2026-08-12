@@ -30,7 +30,10 @@ import {
   readPendingGeneration,
 } from "@/features/generation/model/pending-generation";
 import { reconcileTerminalPendingGeneration } from "@/features/generation/model/reconcile-terminal-pending";
-import { savePendingGenerationMeta } from "@/features/generation/model/pending-generation-meta";
+import {
+  readPendingGenerationMeta,
+  savePendingGenerationMeta,
+} from "@/features/generation/model/pending-generation-meta";
 import { useResumablePendingAfterReconcile } from "@/features/generation/hooks/use-resumable-pending-after-reconcile";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import { historyKeys, listHistoryGroups } from "@/features/history/api/history-api";
@@ -73,6 +76,10 @@ import { useDraftAutosave } from "./use-draft-autosave";
 const HOME_RECENT_MENU_LIMIT = 5;
 /** ホームに載せる期限注意食材の件数上限。 */
 const HOME_EXPIRING_PANTRY_LIMIT = 5;
+/** 負けタブが勝ちタブの body→meta 完了 / rollback を待つ上限。 */
+const CLAIM_LOSER_WAIT_MS = 160;
+/** 負けタブの pending / meta 再読間隔。 */
+const CLAIM_LOSER_POLL_MS = 16;
 
 const emptyDraft: PlannerDraftInput = {
   mealType: null,
@@ -320,7 +327,11 @@ export function PlannerRoutePage() {
       const claim = await claimPendingGeneration(candidate, userId, new Date());
       if (!claim.claimed) {
         if (signal.aborted) return false;
-        // 他タブ（または先行）の sticky を上書きしていない。resumed で明示する
+        // 勝ちタブの body→meta は非アトミック。即 resumed すると meta throw / abort
+        // の clear 後に空 pending で generation へ入り idle→planner になる。
+        // sticky が残る（meta 完了 or 期限まで body 存続）ときだけ再開する。
+        const winnerReady = await waitForWinnerPendingSticky(userId, signal);
+        if (signal.aborted || !winnerReady) return false;
         void navigate("/generation?resumed=1");
         return false;
       }
@@ -1758,6 +1769,30 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       />
     </>
   );
+}
+
+/**
+ * claim 負け後、勝ちタブの非アトミック body→meta が終わるまで短く待つ。
+ * meta 失敗や abort で clear されると pending が消える。その状態で
+ * /generation?resumed=1 すると idle→planner で両タブが作成 ID を失う。
+ * pending が消えたら false（generation へ飛ばさない）。
+ * meta が揃うか、期限まで pending が残れば true。
+ */
+async function waitForWinnerPendingSticky(userId: string, signal: AbortSignal): Promise<boolean> {
+  const deadline = Date.now() + CLAIM_LOSER_WAIT_MS;
+  const maxAttempts = Math.ceil(CLAIM_LOSER_WAIT_MS / CLAIM_LOSER_POLL_MS) + 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (signal.aborted) return false;
+    const pending = readPendingGeneration(userId, new Date());
+    if (pending === null) return false;
+    const meta = readPendingGenerationMeta(userId, new Date());
+    if (meta !== null) return true;
+    if (Date.now() >= deadline) break;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, CLAIM_LOSER_POLL_MS);
+    });
+  }
+  return readPendingGeneration(userId, new Date()) !== null;
 }
 
 /** await 跨ぎの strip/unmount を ref 再読で検知する（制御フロー解析に畳まれないよう関数経由）。 */

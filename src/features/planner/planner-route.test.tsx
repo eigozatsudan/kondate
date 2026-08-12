@@ -508,6 +508,7 @@ const pendingGenerationMock = vi.hoisted(() => ({
   readPendingGeneration: vi.fn(),
   clearPendingGeneration: vi.fn(),
   savePendingGenerationMeta: vi.fn(),
+  readPendingGenerationMeta: vi.fn(),
   // P1: dual-tab claim。既定は first-writer 成功（save を経由して既存アサートを維持）
   claimPendingGeneration: vi.fn(),
 }));
@@ -539,6 +540,7 @@ vi.mock("@/features/generation/model/pending-generation-meta", async (importOrig
   return {
     ...original,
     savePendingGenerationMeta: pendingGenerationMock.savePendingGenerationMeta,
+    readPendingGenerationMeta: pendingGenerationMock.readPendingGenerationMeta,
   };
 });
 
@@ -617,11 +619,13 @@ beforeEach(() => {
   pendingGenerationMock.readPendingGeneration.mockReset();
   pendingGenerationMock.clearPendingGeneration.mockReset();
   pendingGenerationMock.savePendingGenerationMeta.mockReset();
+  pendingGenerationMock.readPendingGenerationMeta.mockReset();
   pendingGenerationMock.claimPendingGeneration.mockReset();
   getGenerationStatusMock.mockReset();
   // status 不明は keep→resume（G-R1 / G1）。進行中 fixture は各テストで上書き。
   getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+  pendingGenerationMock.readPendingGenerationMeta.mockReturnValue(null);
   pendingGenerationMock.createPendingGeneration.mockImplementation(
     (command: unknown, ownerUserId: string) => ({
       ownerUserId,
@@ -2036,6 +2040,56 @@ describe("PlannerRoutePage", () => {
 
   it("P1: claim 負け（dual-tab 他 sticky）は上書きせず resumed 再開し attempt を回さない", async () => {
     // pre-read は null（両タブ同時 null 観測後の claim 競合）。claim だけ他タブ sticky を返す。
+    // P3: 負けタブは winner の sticky/meta が読めることを確認してから resumed する。
+    const otherPending = {
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3" as const,
+      kind: "new_menu" as const,
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    };
+    // init / claim 前は pending なし（reconcile 再開に落とさない）。
+    // claim 負け後だけ winner の sticky/meta を読めるようにする。
+    pendingGenerationMock.claimPendingGeneration.mockImplementation(async () => {
+      pendingGenerationMock.readPendingGeneration.mockReturnValue(otherPending);
+      pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+        kind: "new_menu",
+        targetMode: "household",
+        idempotencyKey: otherPending.request.idempotencyKey,
+        ownerUserId: draft.userId,
+        createdAt: otherPending.createdAt,
+      });
+      return { pending: otherPending, claimed: false };
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(pendingGenerationMock.claimPendingGeneration).toHaveBeenCalled();
+    // 負けタブは meta を書かず・clear しない（勝者 sticky を壊さない）
+    expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    // return false → startNewAttempt しない
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
+  });
+
+  it("P3: claim 負け後に winner が rollback して pending が空なら resumed しない", async () => {
+    // 勝ちタブが savePendingGenerationMeta throw / abort で clear したあと、
+    // 負けタブが空 pending のまま /generation?resumed=1 すると idle→planner で
+    // 両タブが作成 ID を失う。pending が読めないなら generation へ飛ばさない。
     const otherPending = {
       ownerUserId: draft.userId,
       createdAt: "2026-07-11T00:00:00.000Z",
@@ -2054,6 +2108,8 @@ describe("PlannerRoutePage", () => {
       pending: otherPending,
       claimed: false,
     });
+    pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue(null);
     const user = userEvent.setup();
     render(<PlannerRoutePage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
@@ -2061,14 +2117,56 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(pendingGenerationMock.claimPendingGeneration).toHaveBeenCalled();
     });
-    expect(pendingGenerationMock.claimPendingGeneration).toHaveBeenCalled();
-    // 負けタブは meta を書かず・clear しない（勝者 sticky を壊さない）
-    expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
-    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+    });
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
-    // return false → startNewAttempt しない
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
+  });
+
+  it("P3: claim 負け待ちのあいだに winner が clear したら空 resume しない", async () => {
+    const otherPending = {
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3" as const,
+      kind: "new_menu" as const,
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    };
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue(null);
+    // init は pending なし（wizard を出す）。claim 後だけ winner body→rollback を再現する。
+    pendingGenerationMock.claimPendingGeneration.mockImplementation(async () => {
+      let pendingReads = 0;
+      pendingGenerationMock.readPendingGeneration.mockImplementation(() => {
+        pendingReads += 1;
+        return pendingReads === 1 ? otherPending : null;
+      });
+      return { pending: otherPending, claimed: false };
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(pendingGenerationMock.claimPendingGeneration).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+    });
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
   });
 
