@@ -121,6 +121,11 @@ export function RegenerationSheet({
   const reasons =
     targetMode === "idea" ? allReasons.filter(([value]) => value !== "child_friendly") : allReasons;
 
+  // HRV10: soft 開始と同 tick の submit が stale actionsEnabled=true のまま onSubmit しないよう
+  // accept の actionsEnabledRef と同型に最新値を読む
+  const actionsEnabledRef = useRef(actionsEnabled);
+  actionsEnabledRef.current = actionsEnabled;
+
   // 親が mount した時点で modal を開く。unmount 時は close して top-layer を解放する。
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -137,6 +142,14 @@ export function RegenerationSheet({
 
   const submit = form.handleSubmit(async (raw) => {
     form.clearErrors();
+    // HRV10: disabled 属性より先に飛んだ submit / 閉じていないクロージャを止める
+    if (!actionsEnabledRef.current) {
+      form.setError("changeReason", {
+        message:
+          "家族条件の再確認が終わるまで別案は作れません。しばらくしてからもう一度お試しください。",
+      });
+      return;
+    }
     // FormValues の未選択は ""（defaultValues）。空なら送信させない
     if (raw.changeReason === "") {
       form.setError("changeReason", { message: "理由を選んでください" });

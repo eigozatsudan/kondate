@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { privacyNoticeVersion, type ChangeReason } from "@shared/contracts/domain";
 import type { ExpiredPantryConfirmation } from "@shared/contracts/generation";
@@ -63,9 +63,14 @@ export function useRegeneration(input: UseRegenerationInput) {
         // soft 飛行中は旧 actionable のまま POST しない（HR1）
         !(input.isSoftRechecking ?? false);
 
+  // HRV10: soft/hard と同フレームでも start* が stale な canRegenerate=true を閉じないよう
+  // accept の actionsEnabledRef と同型に最新値を読む（server は再検証で DiD）
+  const canRegenerateRef = useRef(canRegenerate);
+  canRegenerateRef.current = canRegenerate;
+
   const startWhole = useCallback(
     async (reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {
-      if (!canRegenerate || userId === undefined) {
+      if (!canRegenerateRef.current || userId === undefined) {
         return Promise.reject(new Error("revalidation_required"));
       }
       // 単一スロットを上書きすると進行中の作成 ID が失われる（C2）。進行中は再開のみ。
@@ -78,6 +83,10 @@ export function useRegeneration(input: UseRegenerationInput) {
           void navigate("/generation?resumed=1");
           return { kind: "resumed_existing" };
         }
+      }
+      // soft が reconcile 待ちのあいだに入った場合も pending を書かない
+      if (!canRegenerateRef.current) {
+        return Promise.reject(new Error("revalidation_required"));
       }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
@@ -103,12 +112,12 @@ export function useRegeneration(input: UseRegenerationInput) {
       void navigate("/generation");
       return { kind: "started" };
     },
-    [canRegenerate, menuId, navigate, userId],
+    [menuId, navigate, userId],
   );
 
   const startDish = useCallback(
     async (dishId: string, reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {
-      if (!canRegenerate || userId === undefined) {
+      if (!canRegenerateRef.current || userId === undefined) {
         return Promise.reject(new Error("revalidation_required"));
       }
       // HR5 / C2 / G-R1: 進行中は再開。terminal は clear して新規を許す。
@@ -118,6 +127,10 @@ export function useRegeneration(input: UseRegenerationInput) {
           void navigate("/generation?resumed=1");
           return { kind: "resumed_existing" };
         }
+      }
+      // soft が reconcile 待ちのあいだに入った場合も pending を書かない
+      if (!canRegenerateRef.current) {
+        return Promise.reject(new Error("revalidation_required"));
       }
       const changeReasonCustom =
         reason.changeReason === "custom" ? reason.changeReasonCustom : null;
@@ -143,7 +156,7 @@ export function useRegeneration(input: UseRegenerationInput) {
       void navigate("/generation");
       return Promise.resolve({ kind: "started" });
     },
-    [canRegenerate, menuId, navigate, userId],
+    [menuId, navigate, userId],
   );
 
   return { canRegenerate, startWhole, startDish };

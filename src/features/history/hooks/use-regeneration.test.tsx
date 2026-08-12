@@ -143,6 +143,31 @@ describe("useRegeneration", () => {
     expect(postMock).not.toHaveBeenCalled();
   });
 
+  // HRV10: soft 開始後も旧 startWhole クロージャが canRegenerate=true を握ったまま pending を書かない
+  it("HRV10: stale startWhole re-reads canRegenerate after soft recheck starts", async () => {
+    const { result, rerender } = renderHook(
+      ({ isSoftRechecking }: { isSoftRechecking: boolean }) =>
+        useRegeneration({
+          targetMode: "household",
+          menuId: MENU_ID,
+          phase: "checked",
+          result: validRevalidation,
+          isSoftRechecking,
+        }),
+      { wrapper, initialProps: { isSoftRechecking: false } },
+    );
+    expect(result.current.canRegenerate).toBe(true);
+    // soft 前のコールバック identity を保持（useCallback が deps から canRegenerate を外している）
+    const staleStartWhole = result.current.startWhole;
+    rerender({ isSoftRechecking: true });
+    expect(result.current.canRegenerate).toBe(false);
+    await expect(
+      staleStartWhole({ changeReason: "simpler", changeReasonCustom: null }),
+    ).rejects.toThrow("revalidation_required");
+    expect(readPendingGeneration(USER_ID, new Date())).toBeNull();
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
   it("persists regenerate_menu pending and navigates to /generation without POSTing here", async () => {
     const { result } = renderHook(
       () =>

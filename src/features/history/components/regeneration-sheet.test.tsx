@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TargetMode } from "@shared/contracts/planner";
@@ -108,6 +108,40 @@ describe("RegenerationSheet", () => {
     await userEvent.click(screen.getByRole("button", { name: "別案を作る" }));
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("理由を選んでください");
+  });
+
+  // HRV10: actionsEnabled が false になったあと form submit しても onSubmit しない
+  it("HRV10: blocks submit when actionsEnabled flips false mid-open", async () => {
+    const onSubmit = vi.fn(() => Promise.resolve());
+    const { rerender } = render(
+      <RegenerationSheet
+        targetMode="household"
+        usage={usageView(3)}
+        actionsEnabled
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByLabelText("もっと簡単に"));
+    rerender(
+      <RegenerationSheet
+        targetMode="household"
+        usage={usageView(3)}
+        actionsEnabled={false}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+    // disabled でも form requestSubmit / キーボード経路を模して submit を発火する
+    const form = screen.getByRole("dialog").querySelector("form");
+    expect(form).not.toBeNull();
+    await act(async () => {
+      fireEvent.submit(form!);
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/家族条件の再確認が終わるまで/);
+    });
   });
 
   it("submits a preset reason with null custom text", async () => {

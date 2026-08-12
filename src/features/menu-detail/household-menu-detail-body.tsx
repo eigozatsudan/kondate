@@ -837,8 +837,9 @@ export function HouseholdMenuDetailBody({
             // SHOP4: reconcilable 時は append を閉じ、差分 CTA へ誘導（mode=new は維持）
             disableAppend={reconcileTarget.data !== null && reconcileTarget.data !== undefined}
             onSubmit={(input) => {
-              // 表示中 isFetching では止めない（safetyBlocked と同じく actions のみ）
-              if (!actionsEnabled || createList.isPending) return;
+              // HRV10: soft 開始と同 tick でも stale actionsEnabled=true で create しない
+              // （accept の actionsEnabledRef と同型。表示中 isFetching では止めない）
+              if (!actionsEnabledRef.current || createList.isPending) return;
               // SHOP2: mint を Web Locks で直列化し multi-tab 別 UUID を閉じる
               void claimShoppingCommand(
                 "create",
