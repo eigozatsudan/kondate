@@ -490,14 +490,52 @@ export function HouseholdOnboardingForm({
     return queuedSave;
   };
 
-  /** H13: 初回アレルゲン追加後に deferred registered を DB へコミット */
-  const commitPendingRegisteredIfNeeded = async (): Promise<void> => {
-    if (!pendingRegisteredRef.current) return;
+  /**
+   * H13 / HR1: deferred registered を DB へコミット。
+   * complete 直前は actionPendingRef で save() が no-op するため、その場合は updateDraft を直接叩く。
+   * @returns pending が無い・またはコミット成功なら true。失敗で pending が残れば false。
+   */
+  const commitPendingRegisteredIfNeeded = async (): Promise<boolean> => {
+    if (!pendingRegisteredRef.current) return true;
+    if (draft === null) return false;
+
+    // complete/skip 連打ガード中は save() が即 true で戻るため、complete flush は直接 API へ
+    if (actionPendingRef.current) {
+      try {
+        const expectedUpdatedAt = draftUpdatedAtRef.current ?? draft.updated_at;
+        const saved = await api.updateDraft(
+          draft.id,
+          { allergy_status: "registered" },
+          expectedUpdatedAt,
+        );
+        draftUpdatedAtRef.current = saved.updated_at;
+        pendingRegisteredRef.current = false;
+        replaceMember(saved);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
     const ok = await save({ allergy_status: "registered" });
     if (ok) {
       pendingRegisteredRef.current = false;
     }
+    return ok;
   };
+
+  // HR1: settings の allergy-query 自動コミットと同方向。
+  // registered 選択時に一覧未成功で pending にしたあと、非空一覧が届いたら DB へ書く。
+  useEffect(() => {
+    if (draft === null) return;
+    if (!pendingRegisteredRef.current) return;
+    if (!allergiesQuery.isSuccess) return;
+    if (allergies.length === 0) return;
+    if (actionPendingRef.current) return;
+    void commitPendingRegisteredIfNeeded();
+    // commit は ref/draft 最新を読む。length / isSuccess / draft.id 変化だけ再評価する
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pending 中の証拠到着のみ
+  }, [draft?.id, allergiesQuery.isSuccess, allergies.length]);
 
   /**
    * skip/complete は profile の既知 status を expected にした CAS。
@@ -630,13 +668,27 @@ export function HouseholdOnboardingForm({
     beginActionPending();
     setCompleteError(false);
     const memberId = draft.id;
-    void saveQueue.current.then(async (saved) => {
-      // 下書き保存失敗時は無言 return せず、失敗表示を明示して再試行可能にする。
-      // ネットワーク失敗は既存 status 行のみ（toast なし）
-      if (!saved) {
-        setSaveState("failed");
-        endActionPending();
-        return;
+    // HR1: 直前 save が false でも complete を永久に塞がない。
+    // actionPending 中は save() が no-op のため、残 patch と deferred registered をここで直接 flush する。
+    void saveQueue.current.then(async () => {
+      // キュー消化後に残った field patch（失敗した registered 含む）を complete 前に再送
+      if (Object.keys(pendingSavePatch.current).length > 0) {
+        try {
+          const expectedUpdatedAt = draftUpdatedAtRef.current ?? draft.updated_at;
+          const patchToSave = { ...pendingSavePatch.current };
+          const savedRow = await api.updateDraft(memberId, patchToSave, expectedUpdatedAt);
+          draftUpdatedAtRef.current = savedRow.updated_at;
+          pendingSavePatch.current = {};
+          replaceMember(savedRow);
+          if (patchToSave.allergy_status === "registered") {
+            pendingRegisteredRef.current = false;
+          }
+          setSaveState("saved");
+        } catch {
+          setSaveState("failed");
+          endActionPending();
+          return;
+        }
       }
       // click 後の楽観更新を含め、キャッシュ上の最新 draft / allergies で検証する
       const membersNow =
@@ -660,6 +712,13 @@ export function HouseholdOnboardingForm({
       setFieldErrors({});
       dismissToast();
       setSafetyRefreshMessage(null);
+      // HR1: pending registered を complete 前に flush（actionPending 中は commit が直接 updateDraft）
+      const registeredFlushed = await commitPendingRegisteredIfNeeded();
+      if (!registeredFlushed) {
+        setSaveState("failed");
+        endActionPending();
+        return;
+      }
       let completed: HouseholdMemberRow;
       try {
         completed = await api.completeMember(memberId);
