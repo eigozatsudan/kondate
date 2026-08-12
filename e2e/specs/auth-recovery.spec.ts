@@ -43,16 +43,23 @@ test("isolated WebView deposits once and the original browser claims with its se
 test("Google cancel and expired links return actionable login choices", async ({ page }) => {
   // C7: callback 許可クエリに returnTo は無い（unknown key → unbound_callback）。
   // returnTo は stored flow 由来。error 系は flow 無しでも oauth_cancelled / expired へ写る。
+  // callback→login 描画は並列負荷で 5s 既定を超え得る（oauth-mock / auth-callback-security と同型 15s）。
   await page.goto("/auth/callback?error=access_denied");
-  await expect(page.getByText(/Googleログインがキャンセルされました/u)).toBeVisible();
+  await expect(page.getByText(/Googleログインがキャンセルされました/u)).toBeVisible({
+    timeout: 15_000,
+  });
   await page.goto("/auth/callback?error=access_denied&error_code=otp_expired");
-  await expect(page.getByText(/期限切れか、すでに使用/u)).toBeVisible();
+  await expect(page.getByText(/期限切れか、すでに使用/u)).toBeVisible({
+    timeout: 15_000,
+  });
   // expired 状態の CTA（idle の「Googleで続ける」「ログイン用メールを送る」ではない）。
   // 直前にメール未送信だと宛先が空で「メールアドレスを入力して再送」になる。
-  await expect(page.getByRole("button", { name: "Googleに切り替える" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Googleに切り替える" })).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(
     page.getByRole("button", {
       name: /ログイン用メールを再送|メールアドレスを入力して再送|秒後に再送/u,
     }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
 });
