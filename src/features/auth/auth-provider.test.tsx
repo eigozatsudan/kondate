@@ -181,11 +181,14 @@ describe("AuthProvider", () => {
     } satisfies AuthProviderClient;
     let completeRecovery:
       ((result: { kind: "complete"; flowId: string; returnTo: string }) => void) | undefined;
+    // location.assign の jsdom 未実装による間欠汚染を避ける（完了印の検証が主目的）
+    const navigateTo = vi.fn();
 
     render(
       <AuthProvider
         client={client}
         recoveryGateway={{ resumeFlow: vi.fn() }}
+        navigateTo={navigateTo}
         startRecovery={(input) => {
           completeRecovery = input.onComplete;
           return vi.fn();
@@ -646,6 +649,148 @@ describe("AuthProvider", () => {
     // React pin は A のまま（SIGNED_OUT を cleanup として消費）
     expect(document.title).toBe("user-a");
     expect(await screen.findByText("authenticated:degraded")).toBeInTheDocument();
+  });
+
+  it("C1: dual pin-mismatch cleanup nulls keep pin and do not soft-wipe drafts", async () => {
+    // boolean expect だと 2 回目の SIGNED_OUT/null が pin を落とし soft residual で草稿を焼く
+    window.history.replaceState(null, "", "/planner");
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "kondate:generation:v2",
+      JSON.stringify({ kind: "regenerate_menu", request: { changeReason: "下書き" } }),
+    );
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const sessionC = {
+      access_token: "token-c",
+      refresh_token: "refresh-c",
+      user: { id: "user-c" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const setSession = vi
+      .fn()
+      .mockResolvedValue({ data: { session: null }, error: { message: "no" } });
+    const signOut = vi.fn().mockImplementation(() => {
+      for (const listener of authListeners) {
+        listener("SIGNED_OUT", null);
+      }
+      return Promise.resolve({ error: null });
+    });
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null }),
+        setSession,
+        signOut,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+        listener("SIGNED_IN", sessionC);
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(signOut.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(document.title).toBe("user-a");
+    expect(screen.getByText(/authenticated/)).toBeInTheDocument();
+    // soft residual wipe が走っていないこと
+    expect(window.localStorage.getItem("kondate:generation:v2")).not.toBeNull();
+  });
+
+  it("C12: recoverDegradedSession forces residual clear to re-auth without elevating", async () => {
+    window.history.replaceState(null, "", "/planner");
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const setSession = vi.fn().mockRejectedValue(new Error("restore failed"));
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null }),
+        setSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    function RecoverProbe() {
+      const auth = useAuth();
+      return (
+        <div>
+          <output>
+            {auth.status}
+            {auth.sessionProbeDegraded ? ":degraded" : ""}
+          </output>
+          <button type="button" onClick={() => auth.recoverDegradedSession?.()}>
+            recover
+          </button>
+        </div>
+      );
+    }
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <RecoverProbe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated:degraded")).toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "recover" }).click();
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
   });
 
   it("C-R1: rejects late residual exchange session swap after another user already won", async () => {
@@ -1147,6 +1292,49 @@ describe("AuthProvider", () => {
     await screen.findByText("unauthenticated");
     expect(window.localStorage.getItem(flowKey)).not.toBeNull();
     expect(window.localStorage.getItem("kondate:generation:v2")).toBe('{"kind":"x"}');
+  });
+
+  it("C8: idle /login with no unexpired flows does not navigate on foreign completion", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    const navigateTo = vi.fn();
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        navigateTo={navigateTo}
+        startRecovery={() => vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+
+    await act(async () => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "kondate.auth.supabase.continuation-complete.flow-foreign",
+          newValue: JSON.stringify({
+            flowId: "flow-foreign",
+            returnTo: "/onboarding",
+            completedAt: new Date().toISOString(),
+          }),
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    // waiting 空の idle /login は foreign/stale completion だけで returnTo へ yank しない
+    expect(navigateTo).not.toHaveBeenCalled();
+    expect(getSession).toHaveBeenCalledTimes(2);
   });
 
   it("C7: completion listener navigates on /login only when flowId matches a waiting flow", async () => {

@@ -126,21 +126,29 @@ function isAuthWaitingPath(pathname: string): boolean {
 }
 
 /**
- * C16 / C14 / C7 / C1: returnTo へ navigate してよいか。
+ * C16 / C14 / C7 / C1 / C8: returnTo へ navigate してよいか。
  * - 認証待ち path 以外は session 再取得のみ（設定等の強制遷移を避ける）
  * - 待ち flow に flowId 一致があれば navigate（same-tab: clear 前 CustomEvent）
- * - waiting 空は secret 消去後の完了印拾いを許す
  * - C1 multi-flow: 勝者タブの publish は completion 書込→clear 後に他タブへ StorageEvent が届く。
  *   他 flow が残っていても、当該 flowId の完了印が読めるなら正当な完了として navigate する
  *   （残っている他 flow だけを見て抑止すると completion.returnTo を捨て URL returnTo に落ちる）。
+ * - C8: waiting 空の idle /login は foreign/stale completion だけでは navigate しない。
+ *   residual recovery 等このタブ所有の完了（ownedByThisTab）のみ許可する。
+ *   same-tab CustomEvent は publish が clear 前に配送するため flowId 一致で拾える。
  */
-function shouldNavigateOnAuthComplete(flowId: string): boolean {
+function shouldNavigateOnAuthComplete(
+  flowId: string,
+  options?: { ownedByThisTab?: boolean },
+): boolean {
   if (!isAuthWaitingPath(window.location.pathname)) return false;
   const waiting = listUnexpiredAuthFlows(window.localStorage, new Date());
   if (waiting.some((flow) => flow.id === flowId)) return true;
-  if (waiting.length === 0) return true;
-  // multi-flow かつ当該 flow は clear 済み: 完了印が残っていれば cross-tab の正規順序
-  return readAuthContinuationCompletion(flowId, window.localStorage) !== null;
+  if (waiting.length > 0) {
+    // multi-flow かつ当該 flow は clear 済み: 完了印が残っていれば cross-tab の正規順序
+    return readAuthContinuationCompletion(flowId, window.localStorage) !== null;
+  }
+  // waiting 空: このタブが完了を所有している場合のみ（idle yank を閉じる）
+  return options?.ownedByThisTab === true;
 }
 
 export type AuthProviderClient = {
@@ -257,28 +265,30 @@ export function AuthProvider({
   // C12: probe timeout 中は authenticated shell が stale になり得る。storage は焼かず UX のみ。
   const [sessionProbeDegraded, setSessionProbeDegraded] = useState(false);
   /**
-   * R1: pin mismatch で client から B を落とす signOut が発火する SIGNED_OUT を、
-   * React pin 解除・soft residual に誤接続しない印。
-   * cleanup 開始で true、次の session=null を 1 回消費して false（遅延 SIGNED_OUT にも耐える）。
+   * R1 / C1: pin mismatch で client から B を落とす signOut が発火する SIGNED_OUT を、
+   * React pin 解除・soft residual に誤接続しない期待カウンタ。
+   * cleanup 開始で +1、session=null ごとに 1 消費（boolean だと二重 cleanup の 2 回目 null が pin を落とす）。
    */
-  const expectPinMismatchSignedOutRef = useRef(false);
+  const expectPinMismatchSignedOutCountRef = useRef(0);
   /**
    * R1: pin reject の世代。連続 clobber で先発 restore 成功が後発 degraded を消さないようにする。
    */
   const pinRejectGenerationRef = useRef(0);
+  /** C12: pin restore cap 後の再試行タイマー（マウント寿命） */
+  const pinRestoreRetryTimerRef = useRef<number | null>(null);
 
   /**
    * R1: pin と食い違う client session（B）を data plane から落とす。
    * signOut が使えるなら local signOut（memory+storage）。無ければ session 永続キーのみ同期 clear。
-   * SIGNED_OUT は expectPinMismatchSignedOutRef で pin 維持する。
+   * SIGNED_OUT は expectPinMismatchSignedOutCountRef で pin 維持する。
    */
   const clearMismatchedClientSessionBestEffort = useCallback(async (): Promise<void> => {
     setAccessTokenPinDataPlaneBlocked(true);
     try {
       const signOut = client.auth.signOut;
       if (typeof signOut === "function") {
-        // signOut が発火する SIGNED_OUT を 1 回だけ pin 維持で消費する
-        expectPinMismatchSignedOutRef.current = true;
+        // signOut が発火する SIGNED_OUT を 1 回分 pin 維持で消費する（二重 cleanup は refcount）
+        expectPinMismatchSignedOutCountRef.current += 1;
         try {
           await withTimeout(
             Promise.resolve(signOut.call(client.auth, { scope: "local" })).catch(() => undefined),
@@ -305,7 +315,7 @@ export function AuthProvider({
         }
       }
     } catch {
-      // best-effort: flag は次の null で消費、または restore 成功で不要化
+      // best-effort: count は次の null で消費、または restore 成功でリセット
     }
   }, [client]);
 
@@ -317,14 +327,19 @@ export function AuthProvider({
     (nextSession: Session | null): boolean => {
       const guard = residualSessionGuardRef.current;
       if (nextSession === null) {
-        // R1: pin mismatch cleanup の signOut による SIGNED_OUT は React pin を落とさない。
+        // R1/C1: pin mismatch cleanup の signOut による SIGNED_OUT は React pin を落とさない。
         // client から B JWT を消すための一時 null。UI は pin A + degraded のまま data plane 閉鎖。
-        // 1 回だけ消費し、続く真の soft 失効 null は通常どおり pin 解除する。
-        if (expectPinMismatchSignedOutRef.current && guard.pinnedUserId !== null) {
-          expectPinMismatchSignedOutRef.current = false;
+        // refcount で 1 回ずつ消費し、二重 cleanup の 2 回目 null でも pin を落とさない。
+        // 期待が尽きた後の真の soft 失効 null は通常どおり pin 解除する。
+        if (expectPinMismatchSignedOutCountRef.current > 0 && guard.pinnedUserId !== null) {
+          expectPinMismatchSignedOutCountRef.current -= 1;
           setAccessTokenPinDataPlaneBlocked(true);
           setSessionProbeDegraded(true);
           return false;
+        }
+        if (pinRestoreRetryTimerRef.current !== null) {
+          window.clearTimeout(pinRestoreRetryTimerRef.current);
+          pinRestoreRetryTimerRef.current = null;
         }
         clearResidualSessionGuard(guard);
         // C1: pin 解除と同時に Function Bearer ゲートも閉じる
@@ -352,6 +367,42 @@ export function AuthProvider({
           setSessionProbeDegraded(true);
           const pinned = guard.pinnedSession;
           const restore = client.auth.setSession;
+          const schedulePinRestoreRetry = (pinnedSession: Session): void => {
+            // C12: 窓上限で restore を見送ったあと、窓明けに 1 回だけ再試行する。
+            // 永続 thrash を避けるためタイマーは 1 本。成功しなければ degraded UX + 手動再ログイン。
+            if (typeof window === "undefined") return;
+            if (pinRestoreRetryTimerRef.current !== null) {
+              window.clearTimeout(pinRestoreRetryTimerRef.current);
+            }
+            pinRestoreRetryTimerRef.current = window.setTimeout(() => {
+              pinRestoreRetryTimerRef.current = null;
+              if (rejectGeneration !== pinRejectGenerationRef.current) return;
+              const g = residualSessionGuardRef.current;
+              if (g.pinnedUserId === null || g.pinnedSession === null) return;
+              const retryRestore = client.auth.setSession;
+              if (typeof retryRestore !== "function") return;
+              if (!shouldAttemptPinSessionRestore(g, Date.now())) return;
+              void (async () => {
+                try {
+                  const result = await retryRestore.call(client.auth, {
+                    access_token: pinnedSession.access_token,
+                    refresh_token: pinnedSession.refresh_token,
+                  });
+                  if (rejectGeneration !== pinRejectGenerationRef.current) return;
+                  if (result.error !== null) {
+                    setAccessTokenPinDataPlaneBlocked(true);
+                    setSessionProbeDegraded(true);
+                    return;
+                  }
+                  setAccessTokenPinDataPlaneBlocked(false);
+                } catch {
+                  if (rejectGeneration !== pinRejectGenerationRef.current) return;
+                  setAccessTokenPinDataPlaneBlocked(true);
+                  setSessionProbeDegraded(true);
+                }
+              })();
+            }, PIN_RESTORE_WINDOW_MS);
+          };
           void (async () => {
             // R1: まず B を data plane から落とす（shopping/planner が auth.uid()=B で動く窓を閉じる）
             await clearMismatchedClientSessionBestEffort();
@@ -369,6 +420,8 @@ export function AuthProvider({
             }
             if (!shouldAttemptPinSessionRestore(guard, Date.now())) {
               // cooldown / 窓上限: client は既に clear 済み。React pin + blocked のまま。
+              // C12: 窓明けに再 probe し、固着 UX を緩和する
+              schedulePinRestoreRetry(pinned);
               return;
             }
             try {
@@ -380,6 +433,8 @@ export function AuthProvider({
               if (result.error !== null) {
                 setAccessTokenPinDataPlaneBlocked(true);
                 setSessionProbeDegraded(true);
+                // C12: 失敗後も窓明け再試行（token 一時不整合の回復余地）
+                schedulePinRestoreRetry(pinned);
                 return;
               }
               // restore 成功: data plane block は必ず下ろす（client は A に戻った）。
@@ -392,6 +447,7 @@ export function AuthProvider({
               // 復元失敗でも React 状態は pin 維持。data plane は閉じたまま（C-R7 / R1）
               setAccessTokenPinDataPlaneBlocked(true);
               setSessionProbeDegraded(true);
+              schedulePinRestoreRetry(pinned);
             }
           })();
           // React 状態は勝者のまま。B への setSession は行わない。
@@ -409,7 +465,11 @@ export function AuthProvider({
       setAccessTokenPinnedUserId(guard.pinnedUserId);
       // R1: 一致する session を適用できたので data plane を再開
       setAccessTokenPinDataPlaneBlocked(false);
-      expectPinMismatchSignedOutRef.current = false;
+      expectPinMismatchSignedOutCountRef.current = 0;
+      if (pinRestoreRetryTimerRef.current !== null) {
+        window.clearTimeout(pinRestoreRetryTimerRef.current);
+        pinRestoreRetryTimerRef.current = null;
+      }
       setSessionProbeDegraded(false);
       // C4/R3: 認証成功で soft residual の共有 residual recovery suppress を解除
       clearSoftResidualRecoverySuppressed();
@@ -418,6 +478,44 @@ export function AuthProvider({
     },
     [clearMismatchedClientSessionBestEffort, client],
   );
+
+  /**
+   * C12: authenticated+degraded 固着から再ログイン可能な未認証へ落とす。
+   * data plane は既に fail-closed。権限昇格はせず pin/expect を破棄して soft residual 経路へ。
+   * client 残留 JWT も best-effort で落とし、pin 解除後に B のまま data plane が開かないようにする。
+   */
+  const recoverDegradedSession = useCallback((): void => {
+    if (pinRestoreRetryTimerRef.current !== null) {
+      window.clearTimeout(pinRestoreRetryTimerRef.current);
+      pinRestoreRetryTimerRef.current = null;
+    }
+    // in-flight restore / expect null を無効化し、次の null を真の soft 失効として適用する
+    pinRejectGenerationRef.current += 1;
+    expectPinMismatchSignedOutCountRef.current = 0;
+    applyAuthSession(null);
+    // pin 解除後の client JWT 掃除。expect は立てない（既に unauthenticated）。
+    void (async () => {
+      const signOut = client.auth.signOut;
+      if (typeof signOut === "function") {
+        try {
+          await withTimeout(
+            Promise.resolve(signOut.call(client.auth, { scope: "local" })).catch(() => undefined),
+            SIGN_OUT_TIMEOUT_MS,
+          );
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      if (typeof window !== "undefined") {
+        try {
+          clearBrowserSupabaseSessionStorage(window.localStorage);
+        } catch {
+          // ignore
+        }
+      }
+    })();
+  }, [applyAuthSession, client]);
 
   const refreshSession = useCallback(async (): Promise<void> => {
     const beganAt = coldStartBeganAtMs.current ?? Date.now();
@@ -586,7 +684,11 @@ export function AuthProvider({
         void refreshSession();
         // C14 / C1: completion listener（C16）と同型の path / waiting ガード。
         // 設定編集中などでの強制 navigate を避ける。
-        if (result.returnTo.startsWith("/") && shouldNavigateOnAuthComplete(result.flowId)) {
+        // C8: residual recovery 完了はこのタブ所有。waiting 空（secret 消去後）でも returnTo へ。
+        if (
+          result.returnTo.startsWith("/") &&
+          shouldNavigateOnAuthComplete(result.flowId, { ownedByThisTab: true })
+        ) {
           navigateTo(result.returnTo);
         }
       },
@@ -641,6 +743,16 @@ export function AuthProvider({
     [navigateTo, refreshSession],
   );
 
+  // C12: pin restore 再試行タイマーをアンマウントで破棄
+  useEffect(() => {
+    return () => {
+      if (pinRestoreRetryTimerRef.current !== null) {
+        window.clearTimeout(pinRestoreRetryTimerRef.current);
+        pinRestoreRetryTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status: !loaded ? "loading" : session === null ? "unauthenticated" : "authenticated",
@@ -648,8 +760,9 @@ export function AuthProvider({
       refreshSession,
       // C12: probe timeout 中。session オブジェクトは残り得るが API は fail-closed。
       sessionProbeDegraded,
+      recoverDegradedSession,
     }),
-    [loaded, refreshSession, session, sessionProbeDegraded],
+    [loaded, recoverDegradedSession, refreshSession, session, sessionProbeDegraded],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
