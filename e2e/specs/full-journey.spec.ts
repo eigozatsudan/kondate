@@ -30,7 +30,11 @@ test(
     tag: ["@smoke"],
   },
   async ({ completedOnboardingPage: page }) => {
-    await page.setViewportSize({ width: 320, height: 720 });
+    // E2E5: mobile project のみ 320 を固定。desktop-chromium は Desktop Chrome 幅のまま
+    // 走らせ、layout 退行を dual-project の vacuous green にしない。
+    if (test.info().project.name === "mobile-chromium") {
+      await page.setViewportSize({ width: 320, height: 720 });
+    }
 
     // 小麦ラベル確認が必要な mock success 用メンバーを整える
     await page.goto("/settings");
@@ -237,7 +241,10 @@ test(
     tag: ["@smoke"],
   },
   async ({ authenticatedPage: page }) => {
-    await page.setViewportSize({ width: 320, height: 720 });
+    // E2E5: mobile のみ 320 固定。desktop project では Desktop Chrome 幅を保つ。
+    if (test.info().project.name === "mobile-chromium") {
+      await page.setViewportSize({ width: 320, height: 720 });
+    }
 
     const shoppingRequests: string[] = [];
     page.on("request", (request) => {
@@ -331,7 +338,8 @@ test(
     await expect(page.getByRole("button", { name: "買い物リストの差分を見る" })).toHaveCount(0);
 
     expect(shoppingRequests).toEqual([]);
-    // 製品の shopping intent / pending create は sessionStorage（localStorage では vacuous）
+    // SHOP3: pending create/reconcile は local 正本 + session mirror。
+    // idea 経路ではどちらにも kondate:shopping: が残らないこと。
     const shoppingSessionKeys = await page.evaluate(() =>
       Object.keys(sessionStorage).filter((key) => key.startsWith("kondate:shopping:")),
     );
