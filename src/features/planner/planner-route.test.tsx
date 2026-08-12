@@ -628,9 +628,9 @@ beforeEach(() => {
     }),
   );
   // P1: claim 成功時は save 経由（既存「save が呼ばれた」アサートを維持）
-  pendingGenerationMock.claimPendingGeneration.mockImplementation(async (candidate: unknown) => {
+  pendingGenerationMock.claimPendingGeneration.mockImplementation((candidate: unknown) => {
     pendingGenerationMock.savePendingGeneration(candidate);
-    return { pending: candidate, claimed: true };
+    return Promise.resolve({ pending: candidate, claimed: true });
   });
 });
 
@@ -1982,7 +1982,7 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
     // return false → startNewAttempt しない
-    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey ?? "");
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
   });
 
   it("入力をリセットすると進行中 pending も捨てる", async () => {

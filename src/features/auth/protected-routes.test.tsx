@@ -100,7 +100,7 @@ it("L6: loading main exposes aria-busy and aria-live", () => {
   expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
 });
 
-it("C12: degraded session shows re-auth recovery action when recoverDegradedSession is provided", async () => {
+it("C12: degraded session shows re-auth recovery action when recoverDegradedSession is provided", () => {
   const recoverDegradedSession = vi.fn();
   vi.mocked(useAuth).mockReturnValue({
     status: "authenticated",
@@ -123,7 +123,7 @@ it("C12: degraded session shows re-auth recovery action when recoverDegradedSess
     screen.getByText(/安全のため一部の操作を止めています|接続の確認に時間がかかっています/),
   ).toBeInTheDocument();
   const button = screen.getByRole("button", { name: "ログインし直す" });
-  await act(async () => {
+  act(() => {
     button.click();
   });
   expect(recoverDegradedSession).toHaveBeenCalledOnce();

@@ -1,7 +1,7 @@
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AuthProvider,
   COLD_START_GET_SESSION_TIMEOUT_MS,
@@ -42,6 +42,17 @@ function Probe() {
 }
 
 describe("AuthProvider", () => {
+  beforeEach(() => {
+    // residual recovery は /login + 非 suppress 前提。前テストの path / 印を毎回落とす。
+    window.history.replaceState(null, "", "/");
+    try {
+      window.localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
+      window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
+    } catch {
+      // ignore
+    }
+  });
+
   afterEach(() => {
     // R1: module pin ゲートが他テストへ漏れないようにする
     resetAccessTokenPinGateForTests();
@@ -198,6 +209,10 @@ describe("AuthProvider", () => {
       </AuthProvider>,
     );
     await screen.findByText("unauthenticated");
+    // residual recovery effect 登録を待つ（loaded 後 effect は paint 後）
+    await waitFor(() => {
+      expect(completeRecovery).toBeTypeOf("function");
+    });
 
     await act(async () => {
       completeRecovery?.({ kind: "complete", flowId: "flow-1", returnTo: "/onboarding" });
@@ -269,7 +284,10 @@ describe("AuthProvider", () => {
         </AuthProvider>,
       );
       await screen.findByText("unauthenticated");
-      expect(completeRecovery).toBeTypeOf("function");
+      // residual recovery effect 登録を待つ（loaded 後 effect は paint 後）
+      await waitFor(() => {
+        expect(completeRecovery).toBeTypeOf("function");
+      });
 
       await act(async () => {
         completeRecovery?.({ kind: "complete", flowId: "flow-1", returnTo: "/onboarding" });
@@ -355,7 +373,10 @@ describe("AuthProvider", () => {
       </AuthProvider>,
     );
     await screen.findByText("unauthenticated");
-    expect(completeRecovery).toBeTypeOf("function");
+    // residual recovery effect 登録を待つ（loaded 後 effect は paint 後）
+    await waitFor(() => {
+      expect(completeRecovery).toBeTypeOf("function");
+    });
 
     await act(async () => {
       window.history.pushState(null, "", "/settings");

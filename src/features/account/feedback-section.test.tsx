@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FEEDBACK_DAILY_LIMIT, FEEDBACK_RATE_WINDOW_HOURS } from "@shared/contracts/feedback";
 import {
-  FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY,
+  FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX,
   FEEDBACK_POST_CLIENT_TIMEOUT_MS,
   FeedbackSection,
   feedbackAmbiguousFingerprintStorageKey,
@@ -200,8 +200,8 @@ describe("FeedbackSection", () => {
     expect(stored).not.toContain(text);
     // AP3: localStorage 権威（sessionStorage には書かない）
     expect(sessionStorage.getItem(stickyKey)).toBeNull();
-    // AP17: レガシー非束縛キーには書かない
-    expect(localStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY)).toBeNull();
+    // AP17: レガシー非束縛キー（PREFIX と同値）には書かない
+    expect(localStorage.getItem(FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX)).toBeNull();
 
     unmount();
     fetchMock.mockClear();

@@ -24,6 +24,7 @@ import {
 const navigateMock = vi.hoisted(() => vi.fn());
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const requireAccessTokenMock = vi.hoisted(() => vi.fn().mockResolvedValue("token"));
+const useAuthMock = vi.hoisted(() => vi.fn());
 
 const emptySearchParams = new URLSearchParams();
 const setSearchParamsMock = vi.hoisted(() => vi.fn());
@@ -46,6 +47,10 @@ vi.mock("@/features/auth/auth-cleanup", () => ({
 vi.mock("@/features/auth/session", () => ({
   requireAccessToken: requireAccessTokenMock,
 }));
+// FeedbackSection が useAuth を要求する。家族 CRUD は AuthProvider に依存させない。
+vi.mock("@/features/auth/use-auth", () => ({
+  useAuth: useAuthMock,
+}));
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({ auth: {} }),
 }));
@@ -64,8 +69,15 @@ beforeEach(() => {
   navigateMock.mockReset();
   clearLocalAuthAndDraftsMock.mockReset();
   requireAccessTokenMock.mockReset();
+  useAuthMock.mockReset();
   clearLocalAuthAndDraftsMock.mockResolvedValue(undefined);
   requireAccessTokenMock.mockResolvedValue("token");
+  useAuthMock.mockReturnValue({
+    status: "authenticated",
+    session: { user: { id: "user-1" }, access_token: "token" },
+    refreshSession: vi.fn(),
+    sessionProbeDegraded: false,
+  });
   if (typeof HTMLDialogElement !== "undefined") {
     HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
       this.setAttribute("open", "");
@@ -3587,9 +3599,10 @@ it("H12: defers empty registered allergy_status on draft until first allergen is
       expect.any(String),
     );
   });
-  const earlyRegistered = updateDraft.mock.calls.filter(
-    (call) => call[1].allergy_status === "registered",
-  );
+  const earlyRegistered = updateDraft.mock.calls.filter((call) => {
+    const patch = call[1] as HouseholdMemberPatch;
+    return patch.allergy_status === "registered";
+  });
   expect(earlyRegistered).toHaveLength(0);
 
   await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));

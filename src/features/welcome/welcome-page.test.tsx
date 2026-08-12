@@ -99,10 +99,8 @@ it("L14: failed start focuses the alert for keyboard users", async () => {
   render(
     <WelcomePage
       onboardingStatus="not_started"
-      onStartIdea={async () => {
-        throw new Error("start failed");
-      }}
-      onStartHousehold={async () => undefined}
+      onStartIdea={() => Promise.reject(new Error("start failed"))}
+      onStartHousehold={() => Promise.resolve()}
     />,
   );
   await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));

@@ -301,9 +301,10 @@ test("pending create envelope does not create a list after household safety chan
 
   // E2E1: 同一 origin の peer タブは session 空でも localStorage sticky を共有する。
   // page.close + create resume の完全経路は重いため本 pass では sticky 共有まで固定する。
+  // about:blank では localStorage が SecurityError になるため app origin を開く。
   const peer = await page.context().newPage();
   try {
-    await peer.goto("about:blank");
+    await peer.goto("/");
     const peerSticky = await peer.evaluate((menuId) => {
       const match = (storage: Storage) =>
         Object.keys(storage).filter(

@@ -8,7 +8,10 @@
       "properties": {
         "outcome": {
           "type": "string",
-          "enum": ["success", "constraint_conflict"]
+          "enum": [
+            "success",
+            "constraint_conflict"
+          ]
         },
         "menu": {
           "anyOf": [
@@ -21,11 +24,20 @@
                 },
                 "mealType": {
                   "type": "string",
-                  "enum": ["breakfast", "lunch", "dinner"]
+                  "enum": [
+                    "breakfast",
+                    "lunch",
+                    "dinner"
+                  ]
                 },
                 "cuisineGenre": {
                   "type": "string",
-                  "enum": ["japanese", "western", "chinese", "any"]
+                  "enum": [
+                    "japanese",
+                    "western",
+                    "chinese",
+                    "any"
+                  ]
                 },
                 "servings": {
                   "type": "integer",
@@ -58,7 +70,13 @@
                       },
                       "role": {
                         "type": "string",
-                        "enum": ["main", "side", "soup", "staple", "other"]
+                        "enum": [
+                          "main",
+                          "side",
+                          "soup",
+                          "staple",
+                          "other"
+                        ]
                       },
                       "position": {
                         "type": "integer",
@@ -193,7 +211,11 @@
                               "maxLength": 500
                             }
                           },
-                          "required": ["stepRef", "position", "instruction"],
+                          "required": [
+                            "stepRef",
+                            "position",
+                            "instruction"
+                          ],
                           "additionalProperties": false
                         }
                       }
@@ -230,12 +252,12 @@
                       "startMinute": {
                         "type": "integer",
                         "minimum": 0,
-                        "maximum": 9007199254740991
+                        "maximum": 180
                       },
                       "durationMinutes": {
                         "type": "integer",
                         "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
+                        "maximum": 180
                       },
                       "instruction": {
                         "type": "string",
@@ -431,11 +453,17 @@
                       },
                       "priority": {
                         "type": "string",
-                        "enum": ["must_use", "prefer_use"]
+                        "enum": [
+                          "must_use",
+                          "prefer_use"
+                        ]
                       },
                       "usageStatus": {
                         "type": "string",
-                        "enum": ["used", "unused"]
+                        "enum": [
+                          "used",
+                          "unused"
+                        ]
                       },
                       "plannedQuantity": {
                         "anyOf": [
@@ -503,7 +531,13 @@
                     "properties": {
                       "sourceType": {
                         "type": "string",
-                        "enum": ["dish", "ingredient", "recipe_step", "adaptation", "timeline"]
+                        "enum": [
+                          "dish",
+                          "ingredient",
+                          "recipe_step",
+                          "adaptation",
+                          "timeline"
+                        ]
                       },
                       "sourceRef": {
                         "anyOf": [
@@ -618,7 +652,11 @@
                     }
                   }
                 },
-                "required": ["code", "message", "conditionRefs"],
+                "required": [
+                  "code",
+                  "message",
+                  "conditionRefs"
+                ],
                 "additionalProperties": false
               }
             },
@@ -628,7 +666,11 @@
           ]
         }
       },
-      "required": ["outcome", "menu", "conflicts"],
+      "required": [
+        "outcome",
+        "menu",
+        "conflicts"
+      ],
       "additionalProperties": false
     }
   }

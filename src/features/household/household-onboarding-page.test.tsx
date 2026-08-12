@@ -1490,8 +1490,8 @@ it("H14: disables complete while an allergy addition is pending", async () => {
   const completeMember = vi.fn();
   const api = baseApi({
     listMembers: membersState.listMembers,
-    updateDraft: vi.fn((_id, patch) => {
-      const next = {
+    updateDraft: vi.fn((_id: string, patch: HouseholdDraftPatch) => {
+      const next: HouseholdMemberRow = {
         ...draft,
         ...patch,
         age_band: "adult" as const,
@@ -1584,8 +1584,8 @@ it("H16: soft-invalidates safety dependents after draft allergy add", async () =
     ]);
   const api = baseApi({
     listMembers: membersState.listMembers,
-    updateDraft: vi.fn((_id, patch) => {
-      const next = {
+    updateDraft: vi.fn((_id: string, patch: HouseholdDraftPatch) => {
+      const next: HouseholdMemberRow = {
         ...draft,
         age_band: "adult" as const,
         allergy_status: "registered" as const,

@@ -135,7 +135,7 @@ describe("RegenerationSheet", () => {
     // disabled でも form requestSubmit / キーボード経路を模して submit を発火する
     const form = screen.getByRole("dialog").querySelector("form");
     expect(form).not.toBeNull();
-    await act(async () => {
+    act(() => {
       fireEvent.submit(form!);
     });
     expect(onSubmit).not.toHaveBeenCalled();

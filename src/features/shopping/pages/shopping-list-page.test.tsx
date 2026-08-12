@@ -2467,7 +2467,7 @@ describe("claimItemMutationSticky (SHOP6 pre-write concurrent mint)", () => {
     type LockRequest = {
       name: string;
       callback: () => void | Promise<void>;
-      resolve: (value: void) => void;
+      resolve: (value?: undefined) => void;
       reject: (reason?: unknown) => void;
     };
     const queue: LockRequest[] = [];
