@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(40);
+select plan(43);
 
 select tests.create_supabase_user('11111111-1111-1111-1111-111111111111', 'one@example.invalid');
 select tests.create_supabase_user('22222222-2222-2222-2222-222222222222', 'two@example.invalid');
@@ -8,7 +8,8 @@ select tests.create_supabase_user('22222222-2222-2222-2222-222222222222', 'two@e
 select tests.authenticate_as('11111111-1111-1111-1111-111111111111');
 set local role authenticated;
 
-select lives_ok(
+-- H11: authenticated の raw INSERT を拒否（作成は start_household_onboarding のみ）。
+select throws_ok(
   $sql$
     insert into public.household_members (
       id, user_id, age_band, portion_size, spice_level, allergy_status, unsupported_diet_status
@@ -18,12 +19,9 @@ select lives_ok(
       'adult', 'regular', 'regular', 'none', 'none'
     )
   $sql$,
-  'owner can insert a draft member'
-);
-select is(
-  (select count(*)::integer from public.household_members),
-  1,
-  'owner sees their member'
+  '42501',
+  null,
+  'authenticated cannot raw-insert household_members (H11 RPC-only)'
 );
 select throws_ok(
   $sql$
@@ -32,8 +30,45 @@ select throws_ok(
   $sql$,
   '42501',
   null,
-  'owner cannot insert for another user'
+  'authenticated cannot raw-insert for another user either'
 );
+select ok(
+  not has_table_privilege('authenticated', 'public.household_members', 'insert'),
+  'authenticated has no household_members INSERT grant (H11)'
+);
+select ok(
+  not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'household_members'
+      and policyname = 'members_insert_own'
+  ),
+  'members_insert_own policy was dropped, not only made unreachable by revoke (H11)'
+);
+select lives_ok(
+  $sql$select public.start_household_onboarding(0)$sql$,
+  'start_household_onboarding still creates a draft after INSERT revoke (H11)'
+);
+select is(
+  (select count(*)::integer from public.household_members),
+  1,
+  'owner sees the RPC-created member'
+);
+
+-- 以降の境界テストは固定 UUID の draft を postgres 側で seed（authenticated 経路は RPC）。
+reset role;
+delete from public.household_members
+where user_id = '11111111-1111-1111-1111-111111111111';
+insert into public.household_members (
+  id, user_id, age_band, portion_size, spice_level, allergy_status, unsupported_diet_status
+) values (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  '11111111-1111-1111-1111-111111111111',
+  'adult', 'regular', 'regular', 'none', 'none'
+);
+select tests.authenticate_as('11111111-1111-1111-1111-111111111111');
+set local role authenticated;
+
 select lives_ok(
   $sql$select public.complete_household_member('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')$sql$,
   'required fields permit completion'

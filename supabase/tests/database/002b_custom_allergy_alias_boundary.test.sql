@@ -6,14 +6,14 @@ select tests.create_supabase_user(
   '44444444-4444-4444-4444-444444444444',
   'custom-allergy@example.invalid'
 );
-select tests.authenticate_as('44444444-4444-4444-4444-444444444444');
-set local role authenticated;
-
+-- H11: authenticated は raw INSERT 不可。メンバー seed は postgres。
 insert into public.household_members (id, user_id)
 values (
   'dddddddd-dddd-dddd-dddd-dddddddddddd',
   '44444444-4444-4444-4444-444444444444'
 );
+select tests.authenticate_as('44444444-4444-4444-4444-444444444444');
+set local role authenticated;
 
 select has_function(
   'public',

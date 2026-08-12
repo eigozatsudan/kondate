@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(34);
+select plan(36);
 
 select tests.create_supabase_user(
   '44444444-4444-4444-4444-444444444444',
@@ -35,12 +35,25 @@ select is(
   'retry does not create a duplicate draft'
 );
 
-insert into public.household_members(user_id, status, sort_order)
-values ('44444444-4444-4444-4444-444444444444', 'draft', 5);
+-- H11: authenticated raw INSERT は拒否。第二 draft は RPC でも作らず既存 draft を再利用する。
+select throws_ok(
+  $sql$
+    insert into public.household_members(user_id, status, sort_order)
+    values ('44444444-4444-4444-4444-444444444444', 'draft', 5)
+  $sql$,
+  '42501',
+  null,
+  'authenticated cannot raw-insert a second unfinished member (H11)'
+);
 select is(
   (select count(*)::integer from public.household_members),
-  2,
-  'settings can still add another unfinished family member'
+  1,
+  'second start path keeps a single draft (H11 multi-draft closed)'
+);
+select is(
+  (select id from public.start_household_onboarding(5)),
+  (select id from public.household_members order by created_at, id limit 1),
+  'start_household_onboarding reuses the existing draft instead of creating another'
 );
 
 reset role;
@@ -156,6 +169,8 @@ select is(
 );
 drop table onboarding_idempotent_check;
 
+-- H11: complete メンバー fixture は postgres で seed（authenticated raw INSERT 不可）。
+reset role;
 insert into public.household_members (
   id, user_id, status, age_band, allergy_status, unsupported_diet_status
 ) values (
@@ -163,6 +178,8 @@ insert into public.household_members (
   '88888888-8888-8888-8888-888888888888',
   'complete', 'adult', 'none', 'none'
 );
+select tests.authenticate_as('88888888-8888-8888-8888-888888888888');
+set local role authenticated;
 select lives_ok(
   $$ select public.set_onboarding_status('complete') $$,
   '家族1人が完全ならprivacy同意なしでcompleteへ遷移できる'
