@@ -97,17 +97,30 @@ describe("shared-recipes routes", () => {
     expect(denied.status).toBe(401);
   });
 
-  it("rejects shared-recipes without date range", async () => {
-    // from/to 両方省略は parseJstDateRange が既定7日にフォールバックし、
-    // pool null 時は db_unavailable(400)。片側のみは date_range_required(400)。
+  it("rejects shared-recipes without date range with date_range_required", async () => {
+    // pool null でも date 検証が先。code を固定して db_unavailable の偽 green を防ぐ
     const app = createApp({ pool: null, config: baseConfig, dbReady: false });
-    const res = await app.request("http://127.0.0.1:5193/api/shared-recipes", {
-      headers: {
-        host: "127.0.0.1:5193",
-        authorization: "Bearer test-token-32chars-minimum-ok",
-      },
-    });
-    expect(res.status).toBe(400);
+    const headers = {
+      host: "127.0.0.1:5193",
+      authorization: "Bearer test-token-32chars-minimum-ok",
+    };
+    const bothMissing = await app.request(
+      "http://127.0.0.1:5193/api/shared-recipes",
+      { headers },
+    );
+    expect(bothMissing.status).toBe(400);
+    expect(
+      ((await bothMissing.json()) as { error: { code: string } }).error.code,
+    ).toBe("date_range_required");
+
+    const oneSided = await app.request(
+      "http://127.0.0.1:5193/api/shared-recipes?from=2026-08-01",
+      { headers },
+    );
+    expect(oneSided.status).toBe(400);
+    expect(
+      ((await oneSided.json()) as { error: { code: string } }).error.code,
+    ).toBe("date_range_required");
   });
 
   it("rejects invalid status on shared-recipes", async () => {
@@ -122,6 +135,9 @@ describe("shared-recipes routes", () => {
       },
     );
     expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      "invalid_status",
+    );
   });
 
   it("rejects invalid mealType on shared-recipes", async () => {
@@ -136,21 +152,35 @@ describe("shared-recipes routes", () => {
       },
     );
     expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      "invalid_meal_type",
+    );
   });
 
   it("returns 400 for non-uuid shared recipe id", async () => {
-    // pool null 時は requirePool が db_unavailable(400) になり得る。
-    // ルート層では不正 UUID を 400 にする（実装順: requirePool → UUID 検証）。
+    // UUID 検証は requirePool より先。pool null でも invalid_id になる
     const app = createApp({ pool: null, config: baseConfig, dbReady: false });
-    const res = await app.request(
+    const headers = {
+      host: "127.0.0.1:5193",
+      authorization: "Bearer test-token-32chars-minimum-ok",
+    };
+    const short = await app.request(
       "http://127.0.0.1:5193/api/shared-recipes/not-a-uuid",
-      {
-        headers: {
-          host: "127.0.0.1:5193",
-          authorization: "Bearer test-token-32chars-minimum-ok",
-        },
-      },
+      { headers },
     );
-    expect(res.status).toBe(400);
+    expect(short.status).toBe(400);
+    expect(
+      ((await short.json()) as { error: { code: string } }).error.code,
+    ).toBe("invalid_id");
+
+    // 36 文字だが 8-4-4-4-12 でない（旧 regex は通過して PG cast 500 になり得た）
+    const hyphens = await app.request(
+      "http://127.0.0.1:5193/api/shared-recipes/------------------------------------",
+      { headers },
+    );
+    expect(hyphens.status).toBe(400);
+    expect(
+      ((await hyphens.json()) as { error: { code: string } }).error.code,
+    ).toBe("invalid_id");
   });
 });

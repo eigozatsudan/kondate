@@ -9,8 +9,11 @@ import type {
   SharedRecipesResponse,
 } from "../../../shared/schemas";
 
-/** 401/404 を token 未設定・API 無効の案内に寄せる（一覧・詳細共通） */
-function formatApiError(err: unknown): string {
+/**
+ * 一覧の 404 はルート未登録（token 無効）寄り。
+ * 詳細の 404 は行不存在（API は有効で一覧は取れている前提）。
+ */
+function formatApiError(err: unknown, context: "list" | "detail"): string {
   const message = err instanceof Error ? err.message : "API エラー";
   if (message.includes("認証が必要") || message.includes("401")) {
     return "認証が必要です。ヘッダーの API トークンを設定してください。";
@@ -20,7 +23,10 @@ function formatApiError(err: unknown): string {
     message.includes("予期しない応答 (404)") ||
     message.includes("404")
   ) {
-    return "共有レシピ API が無効か、対象が見つかりません。ADMIN_LOCAL_TOKEN の設定を確認してください。";
+    if (context === "detail") {
+      return "対象の共有レシピが見つかりません。";
+    }
+    return "共有レシピ API が無効です。ADMIN_LOCAL_TOKEN の設定を確認してください。";
   }
   return message;
 }
@@ -102,7 +108,9 @@ export function SharedRecipesPage() {
         </label>
       </div>
       {list.isError && (
-        <p className="text-sm text-red-700">{formatApiError(list.error)}</p>
+        <p className="text-sm text-red-700">
+          {formatApiError(list.error, "list")}
+        </p>
       )}
       <DataTable
         rows={list.data?.items ?? []}
@@ -188,7 +196,7 @@ export function SharedRecipesPage() {
           {detail.isLoading && <p className="text-sm">読み込み中…</p>}
           {detail.isError && (
             <p className="text-sm text-red-700">
-              {formatApiError(detail.error)}
+              {formatApiError(detail.error, "detail")}
             </p>
           )}
           {detail.data && (

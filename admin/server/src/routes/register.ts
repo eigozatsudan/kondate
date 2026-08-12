@@ -42,6 +42,10 @@ function requirePool(pool: Pool | null): Pool {
   return pool;
 }
 
+/** 共有レシピ :id 用。8-4-4-4-12 の hex UUID のみ（ハイフンだらけの 36 文字を弾く） */
+const SHARED_RECIPE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function registerApiRoutes(app: Hono, deps: RouteDeps): void {
   app.get("/api/dashboard", async (c) => {
     try {
@@ -206,6 +210,13 @@ export function registerApiRoutes(app: Hono, deps: RouteDeps): void {
       try {
         // クエリ検証を pool 取得より先に行い、不正入力を DB 不在でも 400 にできる
         const q = c.req.query();
+        // Spec §7.1: from/to 必須（親 jst の「双方省略=直近7日」は共有レシピでは使わない）
+        if (!q.from || !q.to) {
+          throw badRequest(
+            "date_range_required",
+            "日付範囲 from と to は必須です。",
+          );
+        }
         const range = parseJstDateRange({ from: q.from, to: q.to });
         const status =
           q.status === "active" || q.status === "disabled"
@@ -243,8 +254,8 @@ export function registerApiRoutes(app: Hono, deps: RouteDeps): void {
     app.get("/api/shared-recipes/:id", async (c) => {
       try {
         const id = c.req.param("id");
-        // UUID 形式のみ受理（詳細は getSharedRecipe が null → 404）
-        if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
+        // RFC 型 UUID のみ受理（緩い 36 文字 hex+`-` は PG cast 500 を避ける）
+        if (!id || !SHARED_RECIPE_UUID_RE.test(id)) {
           throw badRequest("invalid_id", "id が不正です。");
         }
         const pool = requirePool(deps.pool);
