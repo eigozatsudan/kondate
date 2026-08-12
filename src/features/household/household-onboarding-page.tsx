@@ -228,6 +228,12 @@ export function HouseholdOnboardingForm({
   const latestSaveVersion = useRef(0);
   // H2: draft CAS 基準 updated_at。同一タブ直列 save では成功後に進める。
   const draftUpdatedAtRef = useRef<string | undefined>(undefined);
+  /**
+   * H13: アレルギー 0 件のまま `allergy_status=registered` を DB に書かない。
+   * settings の pendingRegisteredIntents と同方向。UI は registered 表示し、
+   * 初回アレルゲン追加成功時に初めて PATCH する。complete ゲートは従来どおり 0 件拒否。
+   */
+  const pendingRegisteredRef = useRef(false);
   const [customAllergy, setCustomAllergy] = useState("");
   const [customConfirmed, setCustomConfirmed] = useState(false);
   const [completeError, setCompleteError] = useState(false);
@@ -278,6 +284,8 @@ export function HouseholdOnboardingForm({
   // 同一 draft のサーバ再読込 updated_at では進めない（直列 save 成功時のみ save 側が進める）。
   useEffect(() => {
     draftUpdatedAtRef.current = draft?.updated_at;
+    // 別 draft へ移るときは pending registered も捨てる（H13）
+    pendingRegisteredRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- id 切替のみ。updated_at は save 成功で進める
   }, [draft?.id]);
   const completeMembers = members.filter((member) => member.status === "complete");
@@ -302,8 +310,13 @@ export function HouseholdOnboardingForm({
   const allergies = allergiesQuery.data ?? [];
 
   const replaceMember = (member: HouseholdMemberRow) => {
+    // H13: pending 中はサーバ正本が registered 以外でも UI を registered に保つ
+    const next =
+      pendingRegisteredRef.current && member.status === "draft"
+        ? { ...member, allergy_status: "registered" as const }
+        : member;
     queryClient.setQueryData<HouseholdMemberRow[]>(householdKeys.members(userId), (current = []) =>
-      current.map((item) => (item.id === member.id ? member : item)),
+      current.map((item) => (item.id === next.id ? next : item)),
     );
   };
 
@@ -456,6 +469,10 @@ export function HouseholdOnboardingForm({
             ?.find((row) => row.id === memberId);
           if (latest !== undefined) {
             draftUpdatedAtRef.current = latest.updated_at;
+            // H13: refetch 後も deferred registered の UI 選択を落とさない
+            if (pendingRegisteredRef.current) {
+              replaceMember(latest);
+            }
           }
         }
         if (saveVersion === latestSaveVersion.current) {
@@ -472,6 +489,53 @@ export function HouseholdOnboardingForm({
     saveQueue.current = queuedSave;
     return queuedSave;
   };
+
+  /**
+   * H13 / HR1: deferred registered を DB へコミット。
+   * complete 直前は actionPendingRef で save() が no-op するため、その場合は updateDraft を直接叩く。
+   * @returns pending が無い・またはコミット成功なら true。失敗で pending が残れば false。
+   */
+  const commitPendingRegisteredIfNeeded = async (): Promise<boolean> => {
+    if (!pendingRegisteredRef.current) return true;
+    if (draft === null) return false;
+
+    // complete/skip 連打ガード中は save() が即 true で戻るため、complete flush は直接 API へ
+    if (actionPendingRef.current) {
+      try {
+        const expectedUpdatedAt = draftUpdatedAtRef.current ?? draft.updated_at;
+        const saved = await api.updateDraft(
+          draft.id,
+          { allergy_status: "registered" },
+          expectedUpdatedAt,
+        );
+        draftUpdatedAtRef.current = saved.updated_at;
+        pendingRegisteredRef.current = false;
+        replaceMember(saved);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    const ok = await save({ allergy_status: "registered" });
+    if (ok) {
+      pendingRegisteredRef.current = false;
+    }
+    return ok;
+  };
+
+  // HR1: settings の allergy-query 自動コミットと同方向。
+  // registered 選択時に一覧未成功で pending にしたあと、非空一覧が届いたら DB へ書く。
+  useEffect(() => {
+    if (draft === null) return;
+    if (!pendingRegisteredRef.current) return;
+    if (!allergiesQuery.isSuccess) return;
+    if (allergies.length === 0) return;
+    if (actionPendingRef.current) return;
+    void commitPendingRegisteredIfNeeded();
+    // commit は ref/draft 最新を読む。length / isSuccess / draft.id 変化だけ再評価する
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pending 中の証拠到着のみ
+  }, [draft?.id, allergiesQuery.isSuccess, allergies.length]);
 
   /**
    * skip/complete は profile の既知 status を expected にした CAS。
@@ -604,13 +668,27 @@ export function HouseholdOnboardingForm({
     beginActionPending();
     setCompleteError(false);
     const memberId = draft.id;
-    void saveQueue.current.then(async (saved) => {
-      // 下書き保存失敗時は無言 return せず、失敗表示を明示して再試行可能にする。
-      // ネットワーク失敗は既存 status 行のみ（toast なし）
-      if (!saved) {
-        setSaveState("failed");
-        endActionPending();
-        return;
+    // HR1: 直前 save が false でも complete を永久に塞がない。
+    // actionPending 中は save() が no-op のため、残 patch と deferred registered をここで直接 flush する。
+    void saveQueue.current.then(async () => {
+      // キュー消化後に残った field patch（失敗した registered 含む）を complete 前に再送
+      if (Object.keys(pendingSavePatch.current).length > 0) {
+        try {
+          const expectedUpdatedAt = draftUpdatedAtRef.current ?? draft.updated_at;
+          const patchToSave = { ...pendingSavePatch.current };
+          const savedRow = await api.updateDraft(memberId, patchToSave, expectedUpdatedAt);
+          draftUpdatedAtRef.current = savedRow.updated_at;
+          pendingSavePatch.current = {};
+          replaceMember(savedRow);
+          if (patchToSave.allergy_status === "registered") {
+            pendingRegisteredRef.current = false;
+          }
+          setSaveState("saved");
+        } catch {
+          setSaveState("failed");
+          endActionPending();
+          return;
+        }
       }
       // click 後の楽観更新を含め、キャッシュ上の最新 draft / allergies で検証する
       const membersNow =
@@ -634,6 +712,13 @@ export function HouseholdOnboardingForm({
       setFieldErrors({});
       dismissToast();
       setSafetyRefreshMessage(null);
+      // HR1: pending registered を complete 前に flush（actionPending 中は commit が直接 updateDraft）
+      const registeredFlushed = await commitPendingRegisteredIfNeeded();
+      if (!registeredFlushed) {
+        setSaveState("failed");
+        endActionPending();
+        return;
+      }
       let completed: HouseholdMemberRow;
       try {
         completed = await api.completeMember(memberId);
@@ -890,6 +975,29 @@ export function HouseholdOnboardingForm({
             }
             onChange={(event) => {
               const value = event.target.value;
+              if (value === "registered") {
+                // H13: アレルゲン証拠が無い registered は DB に書かず UI のみ進める
+                // （settings pendingRegistered + H-R1 と同方向。complete は 0 件拒否のまま）
+                const hasAllergyEvidence = allergiesQuery.isSuccess && allergies.length > 0;
+                if (!hasAllergyEvidence) {
+                  pendingRegisteredRef.current = true;
+                  // この select は draft 画面内のみ。UI のみ registered へ進め DB は後で commit
+                  queryClient.setQueryData<HouseholdMemberRow[]>(
+                    householdKeys.members(userId),
+                    (current = []) =>
+                      current.map((item) =>
+                        item.id === draft.id
+                          ? { ...item, allergy_status: "registered" as const }
+                          : item,
+                      ),
+                  );
+                  return;
+                }
+                pendingRegisteredRef.current = false;
+                void save({ allergy_status: "registered" });
+                return;
+              }
+              pendingRegisteredRef.current = false;
               void save({ allergy_status: value === "" ? null : value });
             }}
           >
@@ -980,6 +1088,8 @@ export function HouseholdOnboardingForm({
                 await queryClient.invalidateQueries({
                   queryKey: householdKeys.allergies(userId, memberId),
                 });
+                // H13: 初回追加で deferred registered を DB へ
+                await commitPendingRegisteredIfNeeded();
               }}
               addCustom={async (memberId, name, aliases) => {
                 if (actionPendingRef.current) return;
@@ -988,6 +1098,7 @@ export function HouseholdOnboardingForm({
                 await queryClient.invalidateQueries({
                   queryKey: householdKeys.allergies(userId, memberId),
                 });
+                await commitPendingRegisteredIfNeeded();
               }}
               remove={async (allergyId) => {
                 if (actionPendingRef.current) return;
@@ -1049,6 +1160,7 @@ export function HouseholdOnboardingForm({
                       queryKey: householdKeys.allergies(userId, draft.id),
                     }),
                   )
+                  .then(() => commitPendingRegisteredIfNeeded())
                   .then(() => {
                     setCustomAllergy("");
                     setCustomConfirmed(false);

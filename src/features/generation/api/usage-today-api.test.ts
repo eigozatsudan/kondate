@@ -9,7 +9,7 @@ vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
 
-import { getUsageToday } from "./usage-today-api";
+import { getUsageToday, USAGE_TODAY_CLIENT_TIMEOUT_MS } from "./usage-today-api";
 
 describe("getUsageToday", () => {
   beforeEach(() => {
@@ -53,11 +53,45 @@ describe("getUsageToday", () => {
       attempts: { limit: 6 },
       shortWindow: { limit: 4 },
     });
-    expect(fetchImpl).toHaveBeenCalledWith("/api/usage/today", {
-      method: "GET",
-      cache: "no-store",
-      headers: { Authorization: "Bearer access-token" },
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/usage/today",
+      expect.objectContaining({
+        method: "GET",
+        cache: "no-store",
+        headers: { Authorization: "Bearer access-token" },
+        signal: expect.any(AbortSignal) as AbortSignal,
+      }),
+    );
+    expect(USAGE_TODAY_CLIENT_TIMEOUT_MS).toBe(30_000);
+  });
+
+  // G15: hung proxy で usage クエリが永久 pending にならない
+  it("G15: aborts a hung usage GET when the client timeout fires", async () => {
+    const fetchImpl = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal ?? null;
+          if (signal === null) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+          if (signal.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    await expect(getUsageToday({ fetchImpl, timeoutMs: 20 })).rejects.toMatchObject({
+      name: "AbortError",
     });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   // F5: 旧 5/12・残数不整合・余剰 field・error envelope をクライアントで拒否

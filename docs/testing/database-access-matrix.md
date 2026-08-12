@@ -37,7 +37,7 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `public.food_safety_rules` | postgres | none | SELECT | ALL | on + policies | shared safety catalog; authenticated SELECT only |
 | `public.generation_drafts` | postgres | none | SELECT | ALL | on + policies | owner SELECT; mutate via save/delete RPC |
 | `public.generation_pantry_selections` | postgres | none | SELECT | ALL | on + policies | draft child; owner SELECT |
-| `public.household_members` | postgres | none | DELETE, INSERT, SELECT, UPDATE | ALL | on + policies | user-owned browser CRUD via RLS |
+| `public.household_members` | postgres | none | DELETE, SELECT, UPDATE | ALL | on + policies | owner SELECT/UPDATE/DELETE via RLS; INSERT via `start_household_onboarding` RPC only (H11) |
 | `public.member_allergies` | postgres | none | INSERT, SELECT | ALL | on + policies | owner SELECT+INSERT; delete via RPC |
 | `public.member_dislikes` | postgres | none | DELETE, INSERT, SELECT, UPDATE | ALL | on + policies | user-owned browser CRUD via RLS |
 | `public.menu_label_confirmations` | postgres | none | SELECT | ALL | on + policies | owner SELECT; confirm via RPC |
@@ -66,35 +66,20 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 
 | object | column | authenticated | reason |
 | --- | --- | --- | --- |
-| `public.household_members` | `age_band` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `age_band` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `allergy_status` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `allergy_status` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `created_at` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `created_at` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `display_name` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `display_name` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `ease_preferences` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `ease_preferences` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `id` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `id` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `portion_size` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `portion_size` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `required_safety_constraints` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `required_safety_constraints` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `sort_order` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `sort_order` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `spice_level` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `spice_level` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `status` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `status` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `unsupported_diet_kinds` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `unsupported_diet_kinds` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `unsupported_diet_status` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `unsupported_diet_status` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `updated_at` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `updated_at` | UPDATE | mirrors table/column GRANT |
-| `public.household_members` | `user_id` | INSERT | mirrors table/column GRANT |
 | `public.household_members` | `user_id` | UPDATE | mirrors table/column GRANT |
 | `public.member_allergies` | `allergen_id` | INSERT | mirrors table/column GRANT |
 | `public.member_allergies` | `created_at` | INSERT | mirrors table/column GRANT |
@@ -263,7 +248,6 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.generation_drafts` | `generation_drafts_owner_select` | SELECT |
 | `public.generation_pantry_selections` | `generation_pantry_selections_owner_select` | SELECT |
 | `public.household_members` | `members_delete_own` | DELETE |
-| `public.household_members` | `members_insert_own` | INSERT |
 | `public.household_members` | `members_select_own` | SELECT |
 | `public.household_members` | `members_update_own` | UPDATE |
 | `public.member_allergies` | `allergies_insert_own` | INSERT |

@@ -97,4 +97,57 @@ describe("planner-leave-flush SPA intercept (P1)", () => {
     expect(navigate).toHaveBeenCalledTimes(1);
     expect(navigate).toHaveBeenCalledWith("/menus/a");
   });
+
+  it("P2: runPlannerLeaveFlush が shell∩navigateAfter 共有 single-flight（後続は blocked・handler 1回）", async () => {
+    let resolveFlush: ((value: "proceed" | "blocked") => void) | undefined;
+    const flushPromise = new Promise<"proceed" | "blocked">((resolve) => {
+      resolveFlush = resolve;
+    });
+    const handler = vi.fn(() => flushPromise);
+    registerPlannerLeaveFlush(handler);
+    const navigateShell = vi.fn();
+    const navigateHome = vi.fn();
+
+    // shell 経路: runPlannerLeaveFlush を直接
+    const shellLeave = (async () => {
+      const result = await runPlannerLeaveFlush();
+      if (result === "proceed") navigateShell("/pantry");
+    })();
+    // home 経路: navigateAfter 経由（同一 module mutex）
+    const homeLeave = navigateAfterPlannerLeaveFlush(navigateHome, "/menus/a");
+
+    resolveFlush?.("proceed");
+    await Promise.all([shellLeave, homeLeave]);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(navigateShell).toHaveBeenCalledTimes(1);
+    expect(navigateShell).toHaveBeenCalledWith("/pantry");
+    // 後続 flight は blocked → home は navigate しない
+    expect(navigateHome).not.toHaveBeenCalled();
+  });
+
+  it("P2: 逆順（navigateAfter 先行）でも handler 1回・後続 shell は blocked", async () => {
+    let resolveFlush: ((value: "proceed" | "blocked") => void) | undefined;
+    const flushPromise = new Promise<"proceed" | "blocked">((resolve) => {
+      resolveFlush = resolve;
+    });
+    const handler = vi.fn(() => flushPromise);
+    registerPlannerLeaveFlush(handler);
+    const navigateShell = vi.fn();
+    const navigateHome = vi.fn();
+
+    const homeLeave = navigateAfterPlannerLeaveFlush(navigateHome, "/menus/a");
+    const shellLeave = (async () => {
+      const result = await runPlannerLeaveFlush();
+      if (result === "proceed") navigateShell("/pantry");
+    })();
+
+    resolveFlush?.("proceed");
+    await Promise.all([homeLeave, shellLeave]);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(navigateHome).toHaveBeenCalledTimes(1);
+    expect(navigateHome).toHaveBeenCalledWith("/menus/a");
+    expect(navigateShell).not.toHaveBeenCalled();
+  });
 });

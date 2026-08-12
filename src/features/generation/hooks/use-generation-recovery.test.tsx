@@ -983,6 +983,76 @@ describe("useGenerationRecovery", () => {
     expect(mockDispatches).not.toContainEqual({ type: "network_error" });
   });
 
+  // G17: synthetic failed の userDailyLimit は Free 3 固定にせず、usage キャッシュの Plus 上限を写す
+  it("G17: synthetic failed embeds Plus userDailyLimit from usage cache", async () => {
+    const { planQuota } = await import("@shared/contracts/plan-quota");
+    const { usageTodayQueryKey } = await import("./use-usage-today");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(usageTodayQueryKey(USER_ID), {
+      plan: "plus" as const,
+      plusEntitled: true,
+      success: {
+        consumed: 1,
+        limit: planQuota.plus.successPerDay,
+        remaining: 9,
+      },
+      attempts: { sent: 0, limit: 20, remaining: 20 },
+      shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
+      quality: {
+        day: { consumed: 0, limit: 3, remaining: 3 },
+        month: { consumed: 0, limit: 20, remaining: 20 },
+        available: true,
+      },
+      flyerWeekly: {
+        successConsumed: 0,
+        successLimit: 2,
+        successRemaining: 2,
+        triesConsumed: 0,
+        triesLimit: 6,
+        triesRemaining: 6,
+        weekStartJst: "2026-07-27",
+      },
+      globalAvailable: true,
+      retryAt: null,
+    });
+    mockPost.mockRejectedValueOnce(new Error("draft_not_found"));
+    const recovery = renderHook(() => useGenerationRecovery(), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    });
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(recovery.result.current.state.phase).toBe("failed");
+    if (recovery.result.current.state.phase !== "failed") {
+      throw new Error("expected failed");
+    }
+    expect(recovery.result.current.state.data.quota.userDailyLimit).toBe(
+      planQuota.plus.successPerDay,
+    );
+    expect(recovery.result.current.state.data.quota.remaining).toBe(9);
+    expect(recovery.result.current.state.data.quota.userDailyLimit).not.toBe(
+      planQuota.free.successPerDay,
+    );
+  });
+
+  // G17: usage 未取得時は planQuota.free をスキーマ充足用フォールバック（マジック 3 リテラルではない）
+  it("G17: synthetic failed falls back to planQuota.free when usage cache is empty", async () => {
+    const { planQuota } = await import("@shared/contracts/plan-quota");
+    mockPost.mockRejectedValueOnce(new Error("draft_not_found"));
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(recovery.result.current.state.phase).toBe("failed");
+    if (recovery.result.current.state.phase !== "failed") {
+      throw new Error("expected failed");
+    }
+    expect(recovery.result.current.state.data.quota.userDailyLimit).toBe(
+      planQuota.free.successPerDay,
+    );
+    expect(recovery.result.current.state.data.quota.remaining).toBe(0);
+  });
+
   // G7: post-reserve 系 code が Error.message で来ても pending を焼かない（ok:true 正規終端と非対称）
   it.each([
     "generation_timeout",

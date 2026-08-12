@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   householdSafetyChangedEvent,
-  householdSafetyRevisionStorageKey,
+  householdSafetyRevisionKey,
 } from "@/features/household/household-queries";
 import type { RevalidationResult } from "../api/revalidation-api";
 import { useMenuRevalidation } from "./use-menu-revalidation";
@@ -25,10 +25,11 @@ vi.mock("../api/revalidation-api", async (importOriginal) => {
   };
 });
 
-// H12: storage 判定が userId 束縛になったため session を供給する
+// H12: storage 判定が user-scoped key のみになったため session を供給する
+const MENU_REVALIDATION_USER_ID = vi.hoisted(() => "40000000-0000-4000-8000-000000000001");
 vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({
-    session: { user: { id: "40000000-0000-4000-8000-000000000001" } },
+    session: { user: { id: MENU_REVALIDATION_USER_ID } },
   }),
 }));
 
@@ -150,7 +151,8 @@ describe("useMenuRevalidation", () => {
     act(() => {
       window.dispatchEvent(
         new StorageEvent("storage", {
-          key: householdSafetyRevisionStorageKey,
+          // H12: 自 user-scoped key のみ hard recheck
+          key: householdSafetyRevisionKey(MENU_REVALIDATION_USER_ID),
           newValue: crypto.randomUUID(),
         }),
       );

@@ -23,11 +23,27 @@ export function registerPlannerLeaveFlush(handler: PlannerLeaveFlushHandler | nu
 /**
  * シェル NavLink 等から呼ぶ。handler 未登録（/planner 外）は proceed。
  * blocked 時は呼び出し側が navigate せず、route がエラーを可視化する。
+ *
+ * P2: module 単位の single-flight。shell `navLeavingRef` と
+ * `navigateAfterLeaveInFlight` は入口ごとに分かれていたため、下ナビ×ホーム直近献立の
+ * 同時 click で handler が二重起動し、別 to へ last-writer navigate し得た。
+ * 先行 flight 中の後続は handler を呼ばず "blocked"（先行 to のみ proceed 可能）。
  */
+let leaveFlushInFlight: Promise<PlannerLeaveFlushResult> | null = null;
+
 export async function runPlannerLeaveFlush(): Promise<PlannerLeaveFlushResult> {
+  if (leaveFlushInFlight !== null) {
+    return "blocked";
+  }
   const handler = leaveFlushHandler;
   if (handler === null) return "proceed";
-  return handler();
+  const flight = handler().finally(() => {
+    if (leaveFlushInFlight === flight) {
+      leaveFlushInFlight = null;
+    }
+  });
+  leaveFlushInFlight = flight;
+  return flight;
 }
 
 /**
@@ -79,4 +95,5 @@ export async function navigateAfterPlannerLeaveFlush(
 /** テスト用: single-flight フラグを解除する（register null と併用）。 */
 export function resetPlannerLeaveNavigateFlightForTests(): void {
   navigateAfterLeaveInFlight = false;
+  leaveFlushInFlight = null;
 }

@@ -37,6 +37,16 @@ const diffKey = (item: {
       ])
     : JSON.stringify(["numeric", item.normalizedName, item.unit]);
 
+/** numeric 同一キー（正規化名・単位）。数量カバレッジ集計と SHOP15 温存判定に使う。 */
+const numericCoverageKey = (item: {
+  normalizedName: string;
+  unit: string | null;
+  quantityValue: number | null;
+}): string | null =>
+  item.quantityValue === null || item.unit === null
+    ? null
+    : JSON.stringify(["numeric", item.normalizedName, item.unit]);
+
 export type ComputeShoppingDiffOptions = {
   /**
    * 再照合対象の item id 集合（同一献立 lineage の由来行）。
@@ -64,9 +74,16 @@ export function computeShoppingDiff(
     if (bucket?.length === 0) nextBuckets.delete(key);
     return candidate;
   };
-  const takeCandidateByName = (normalizedName: string): ShoppingDraftItem | undefined => {
+  // SHOP12: 同名だけだと unit バケットを跨ぎ誤 unit の review add になる。
+  // protected fallback は normalizedName + unit が一致する候補に限る。
+  const takeCandidateByNameAndUnit = (
+    normalizedName: string,
+    unit: string | null,
+  ): ShoppingDraftItem | undefined => {
     for (const [key, bucket] of nextBuckets) {
-      const candidateIndex = bucket.findIndex((entry) => entry.normalizedName === normalizedName);
+      const candidateIndex = bucket.findIndex(
+        (entry) => entry.normalizedName === normalizedName && entry.unit === unit,
+      );
       if (candidateIndex !== -1) {
         const [candidate] = bucket.splice(candidateIndex, 1);
         if (bucket.length === 0) nextBuckets.delete(key);
@@ -101,6 +118,23 @@ export function computeShoppingDiff(
     plainItems.push(item);
   }
 
+  // SHOP15: protected shortfall は「当該行だけ」ではなく同一 numeric key の
+  // 非手動・非ユーザー削除行の合計で既充足量を見る。前回 _delta_* 追加行が残った
+  // 再 reconcile で不足分を二重に積まない。isRemovedByUser 行は base から除外し、
+  // 処理中の自身数量だけ後で足す（既存の removed delta 挙動を維持）。
+  const baseCoverageByKey = new Map<string, number>();
+  for (const item of current.items) {
+    if (item.isManual || item.isRemovedByUser) continue;
+    const key = numericCoverageKey(item);
+    if (key === null || item.quantityValue === null) continue;
+    baseCoverageByKey.set(
+      key,
+      roundQuantityValue((baseCoverageByKey.get(key) ?? 0) + item.quantityValue),
+    );
+  }
+  // protected が numeric exact で所要を受け持った key。被覆に使った plain 行は remove しない。
+  const protectedSatisfiedNumericKeys = new Set<string>();
+
   // protected非手動行の完全一致をplain行より先に割り当て、入力順による結果変化を防ぐ。
   // residual-intentional (SHOP7): protected は exact diffKey の delta/add のみ。
   // label 警告差分の replace は plain のみ（SP-I8）。購入済み行の provenance 差し替えはしない。
@@ -113,8 +147,18 @@ export function computeShoppingDiff(
       item.unit !== null &&
       exact.unit === item.unit
     ) {
+      const coverageKey = numericCoverageKey(item);
+      let covered = item.quantityValue;
+      if (coverageKey !== null) {
+        protectedSatisfiedNumericKeys.add(coverageKey);
+        covered = baseCoverageByKey.get(coverageKey) ?? 0;
+        // ユーザー削除行は base に含めないが、自身の数量は shortfall 基準に残す。
+        if (item.isRemovedByUser) {
+          covered = roundQuantityValue(covered + item.quantityValue);
+        }
+      }
       // SP-I2/SP-I3: 差分数量も milli 丸め + formatQuantityValue で表示を安定させる。
-      const delta = roundQuantityValue(exact.quantityValue - item.quantityValue);
+      const delta = roundQuantityValue(exact.quantityValue - covered);
       if (delta > 0)
         add.push({
           ...exact,
@@ -142,6 +186,12 @@ export function computeShoppingDiff(
   for (const item of plainItems) {
     const candidate = takeCandidate(diffKey(item));
     if (candidate === undefined) {
+      const coverageKey = numericCoverageKey(item);
+      // SHOP15: protected が同一 key の所要を既に満たした plain は被覆行として温存。
+      // ここで remove すると（UI 上 remove は任意のため）未承認時に _delta_ 再加算と重なり数量が積み上がる。
+      if (coverageKey !== null && protectedSatisfiedNumericKeys.has(coverageKey)) {
+        continue;
+      }
       remove.push({
         itemId: item.id,
         displayName: item.displayName,
@@ -168,9 +218,9 @@ export function computeShoppingDiff(
       });
     }
   }
-  // 最後まで残った同名候補だけをprotected行の在庫確認付き追加へ割り当てる。
+  // 最後まで残った同名・同 unit 候補だけを protected 行の在庫確認付き追加へ割り当てる（SHOP12）。
   for (const item of protectedFallbackItems) {
-    const candidate = takeCandidateByName(item.normalizedName);
+    const candidate = takeCandidateByNameAndUnit(item.normalizedName, item.unit);
     if (candidate !== undefined) {
       add.push({
         ...candidate,

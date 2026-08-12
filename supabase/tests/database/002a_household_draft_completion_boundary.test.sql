@@ -6,29 +6,33 @@ select tests.create_supabase_user(
   '33333333-3333-3333-3333-333333333333',
   'draft-boundary@example.invalid'
 );
-select tests.authenticate_as('33333333-3333-3333-3333-333333333333');
-set local role authenticated;
-
-select lives_ok(
-  $sql$
-    insert into public.household_members (
-      id,
-      user_id,
-      age_band,
-      allergy_status,
-      unsupported_diet_status,
-      unsupported_diet_kinds
-    ) values (
-      'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
-      '33333333-3333-3333-3333-333333333333',
-      'adult',
-      'none',
-      'present',
-      '{}'
-    )
-  $sql$,
+-- H11: authenticated は raw INSERT 不可。固定 UUID の draft は postgres で seed。
+insert into public.household_members (
+  id,
+  user_id,
+  age_band,
+  allergy_status,
+  unsupported_diet_status,
+  unsupported_diet_kinds
+) values (
+  'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+  '33333333-3333-3333-3333-333333333333',
+  'adult',
+  'none',
+  'present',
+  '{}'
+);
+select is(
+  (
+    select unsupported_diet_status
+    from public.household_members
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+  ),
+  'present',
   'draft can persist present before an unsupported diet kind is selected'
 );
+select tests.authenticate_as('33333333-3333-3333-3333-333333333333');
+set local role authenticated;
 select throws_ok(
   $sql$
     select public.complete_household_member('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee')

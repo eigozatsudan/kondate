@@ -375,11 +375,13 @@ export function AudienceStep({
                             checked={value.targetMemberIds.includes(member.id) && !isBlocked}
                             onChange={(event) => {
                               if (isBlocked) return;
+                              // P8: disable だけでなく live 配列も LIMIT で slice（hydrate sanitize と同型）。
+                              // 連打・非 UI onDraftChange 注入で 21 件超が wizard state に残る窓を閉じる。
                               const nextIds = event.target.checked
                                 ? [
                                     ...value.targetMemberIds.filter((id) => selectableIds.has(id)),
                                     member.id,
-                                  ]
+                                  ].slice(0, PLANNER_TARGET_MEMBER_LIMIT)
                                 : value.targetMemberIds.filter((id) => id !== member.id);
                               onChange({ ...value, targetMemberIds: nextIds });
                             }}

@@ -56,8 +56,8 @@ export async function listHouseholdMembers(
 /**
  * 家族 draft 作成。直 INSERT は複数 draft 並立を許すため、
  * 既存 draft 再利用の原子 RPC（start_household_onboarding）に寄せる（H11）。
- * UI 経路も同 RPC。authenticated の raw INSERT 権限自体は DB 側に残るが、
- * アプリクライアントは本関数経由で単一化する。
+ * UI 経路も同 RPC。DB 側も authenticated の raw INSERT を revoke 済み
+ * （`members_insert_own` 削除 + table INSERT revoke; 20260812130000）。
  */
 export async function createHouseholdMemberDraft(
   client: BrowserSupabaseClient,

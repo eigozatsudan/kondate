@@ -1,4 +1,6 @@
 import { z } from "zod";
+// C4/R4: createAuthFlow 成功時の suppress clear + re-arm（auth-cleanup 循環回避）
+import { clearSoftResidualRecoverySuppressed } from "./soft-residual-recovery-suppress";
 
 /**
  * returnTo の共有検証（client storage / claim 応答 / サーバ Zod と同型）。
@@ -949,17 +951,8 @@ export async function createAuthFlow(
     // create レート枠は消費されるが、秘密漏洩面は無い（residual-intentional / TTL）。
     throw new Error("auth_flow_persist_failed");
   }
-  // C4/R3: 新規 flow 永続化成功後に共有 suppress 解除（意図した login の residual を再開可）
-  // auth-cleanup との循環 import を避けるため storage を直接触る（キーは cleanup と同文字列）
-  try {
-    if (typeof localStorage !== "undefined") {
-      localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
-    }
-    if (typeof sessionStorage !== "undefined") {
-      sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
-    }
-  } catch {
-    // best-effort
-  }
+  // C4/R3/R4: 新規 flow 永続化成功後に共有 suppress 解除 + residual re-arm。
+  // auth-cleanup 循環を避け leaf を直接呼ぶ（clear 内で re-arm イベントを発火）。
+  clearSoftResidualRecoverySuppressed();
   return flow;
 }

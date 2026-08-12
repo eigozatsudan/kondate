@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { isAuthSessionFailure } from "@/features/auth/session";
 import { redirectToLoginForExpiredSession } from "@/features/auth/session-expiry";
@@ -10,7 +10,9 @@ import {
   issueMessages,
   type GenerationFailureCode,
   type GenerationStatusData,
+  type UsageTodayData,
 } from "@shared/contracts/generation";
+import { planQuota } from "@shared/contracts/plan-quota";
 import { getGenerationStatus, postGeneration } from "../api/generation-api";
 import {
   generationReducer,
@@ -69,12 +71,27 @@ const POST_ERROR_STATUS_RECOVERABLE_FAILURE_CODES = new Set([
 const OFFLINE_RETRY_BASE_MS = 5_000;
 const OFFLINE_RETRY_MAX_MS = 60_000;
 
-/** ok:false 端末失敗を GenerationStatusData failed に載せ替え（issueMessages 正本）。 */
+/**
+ * ok:false 端末失敗を GenerationStatusData failed に載せ替え（issueMessages 正本）。
+ * G17: userDailyLimit を Free 3 固定にしない。usage キャッシュがあれば success.limit を採用し、
+ * 無ければ planQuota.free をスキーマ充足用フォールバックにする（パネルは userId ありで usage を正とする）。
+ */
 function syntheticFailedStatus(
   idempotencyKey: string,
   code: GenerationFailureCode,
   message: string = issueMessages[code],
+  usageHint?: Pick<UsageTodayData, "success"> | null,
 ): Extract<GenerationStatusData, { status: "failed" }> {
+  const hintLimit = usageHint?.success.limit;
+  const userDailyLimit =
+    hintLimit === planQuota.plus.successPerDay
+      ? planQuota.plus.successPerDay
+      : planQuota.free.successPerDay;
+  // remaining は usage 正本を優先し、無いときは 0（TerminalQuotaBlock は userId ありで usage 表示）。
+  const remaining =
+    usageHint === undefined || usageHint === null
+      ? 0
+      : Math.min(Math.max(0, usageHint.success.remaining), userDailyLimit);
   return {
     status: "failed",
     idempotencyKey,
@@ -87,12 +104,22 @@ function syntheticFailedStatus(
     completedAt: new Date().toISOString(),
     quota: {
       consumed: false,
-      remaining: 0,
-      userDailyLimit: 3,
+      remaining,
+      userDailyLimit,
       limitKind: null,
       retryAt: null,
     },
   };
+}
+
+/** G17: 当日 usage キャッシュから success 枠だけ読む（未取得は null）。 */
+function readCachedUsageSuccess(
+  queryClient: QueryClient,
+  ownerUserId: string,
+): Pick<UsageTodayData, "success"> | null {
+  const cached = queryClient.getQueryData<UsageTodayData>(usageTodayQueryKey(ownerUserId));
+  if (cached === undefined) return null;
+  return { success: cached.success };
 }
 
 /**
@@ -278,6 +305,7 @@ export function useGenerationRecovery(
               pending.request.idempotencyKey,
               classified.code,
               classified.message,
+              readCachedUsageSuccess(queryClient, token.ownerUserId),
             );
             token.phase = "failed";
             dispatch({ type: "status", data: failed });
@@ -304,7 +332,7 @@ export function useGenerationRecovery(
       });
       return operation;
     },
-    [dispatch, invalidateLifecycle, isCurrent],
+    [dispatch, invalidateLifecycle, isCurrent, queryClient],
   );
 
   useEffect(() => {
@@ -378,6 +406,7 @@ export function useGenerationRecovery(
             pending.request.idempotencyKey,
             classified.code,
             classified.message,
+            readCachedUsageSuccess(queryClient, token.ownerUserId),
           );
           token.phase = "failed";
           dispatch({ type: "status", data: failed });
@@ -403,7 +432,7 @@ export function useGenerationRecovery(
       if (statusInFlightRef.current === record) statusInFlightRef.current = null;
     });
     return operation;
-  }, [dispatch, invalidateLifecycle, isCurrent, read, resumeNotStarted]);
+  }, [dispatch, invalidateLifecycle, isCurrent, queryClient, read, resumeNotStarted]);
 
   const startGeneration = useCallback(
     async (pending: PendingGeneration) => {

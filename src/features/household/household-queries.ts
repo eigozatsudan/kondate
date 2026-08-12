@@ -92,15 +92,18 @@ export function isHouseholdSafetyRevisionStorageKey(key: string | null): boolean
 }
 
 /**
- * 自 user の revision 書込だけを受理する（レガシー固定キーは移行互換で許可）。
- * 共有端末で別アカウントの user-scoped キーによる誤 invalidate を防ぐ（H12）。
+ * 自 user の revision 書込だけを受理する（invalidate / hard recheck 用）。
+ * レガシー固定キー `kondate:household-safety-revision` は共有端末で任意アカウントの
+ * 書込が全セッションに hard signal を飛ばすため、invalidate 判定では受理しない（H12）。
+ * 新規書込は常に householdSafetyRevisionKey(userId)。logout 掃除は broad matcher を維持。
+ * emergency 等の読取フォールバックは storageKey 定数を直接参照してよい。
  */
 export function isHouseholdSafetyRevisionStorageKeyForUser(
   key: string | null,
   userId: string,
 ): boolean {
   if (key === null || userId.length === 0) return false;
-  return key === householdSafetyRevisionStorageKey || key === householdSafetyRevisionKey(userId);
+  return key === householdSafetyRevisionKey(userId);
 }
 export const householdSafetyQueryPrefixes = {
   // H6: 旧 ["current-safety"] は src 内に RQ 消費者が無く死んだ DiD だったため削除。

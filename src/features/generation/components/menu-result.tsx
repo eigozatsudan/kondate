@@ -191,12 +191,10 @@ export function MenuResult({
 
   const handleConfirmLabel = async (confirmationId: string): Promise<void> => {
     if (actions === undefined || actions.onConfirmLabel === undefined || busy) return;
-    // 現行ゲートの fingerprint を正とし、保存行の古い fingerprint は使わない
-    const fingerprint =
-      currentSafetyFingerprint ??
-      result.labelConfirmations.find((item) => item.confirmationId === confirmationId)
-        ?.requirementSafetyFingerprint;
-    if (fingerprint === undefined) {
+    // G14: 確認 POST は再検証ゲートの現行 fingerprint のみ。保存行 requirement へフォールバック
+    // すると live 欠落時に stale FP を送り、サーバ 404 と「条件変更」表示の区別が崩れる。
+    const fingerprint = currentSafetyFingerprint;
+    if (fingerprint === undefined || fingerprint.length === 0) {
       // G9: 専用 code は写像拡大しない。stale/条件変更の再確認導線だけ汎用文言へ補足する
       setLiveMessage("確認を保存できませんでした。条件が変わった場合は献立を開き直してください。");
       return;

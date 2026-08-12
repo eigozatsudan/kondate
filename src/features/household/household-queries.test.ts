@@ -24,17 +24,18 @@ it("accepts legacy fixed key and any user-scoped prefix for cleanup (broad match
   expect(isHouseholdSafetyRevisionStorageKey(null)).toBe(false);
 });
 
-it("binds storage invalidate to own userId only (H12)", () => {
+it("binds storage invalidate to own user-scoped key only (H12)", () => {
   const userA = "user-a";
   const userB = "user-b";
-  // レガシー固定は移行互換で許可
-  expect(isHouseholdSafetyRevisionStorageKeyForUser(householdSafetyRevisionStorageKey, userA)).toBe(
-    true,
-  );
+  // 自 user-scoped のみ受理（invalidate 用）
   expect(isHouseholdSafetyRevisionStorageKeyForUser(householdSafetyRevisionKey(userA), userA)).toBe(
     true,
   );
-  // 他 user の key は受理しない（共有端末の誤 invalidate を防ぐ）
+  // レガシー固定キーは共有端末 cross-user hard signal になるため invalidate では拒否
+  expect(isHouseholdSafetyRevisionStorageKeyForUser(householdSafetyRevisionStorageKey, userA)).toBe(
+    false,
+  );
+  // 他 user の key は受理しない
   expect(isHouseholdSafetyRevisionStorageKeyForUser(householdSafetyRevisionKey(userB), userA)).toBe(
     false,
   );

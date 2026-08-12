@@ -3,6 +3,12 @@ import { usageTodayDataSchema, type UsageTodayData } from "@shared/contracts/gen
 import { requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
+/**
+ * usage-today GET のクライアント abort 上限（ms）。
+ * 枠表示が hung proxy で永久 pending にならないよう 30s（G15; confirm と同値）。
+ */
+export const USAGE_TODAY_CLIENT_TIMEOUT_MS = 30_000;
+
 const usageEnvelopeSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), data: usageTodayDataSchema }).strict(),
   z
@@ -21,15 +27,18 @@ const usageEnvelopeSchema = z.discriminatedUnion("ok", [
 
 /** ブラウザから当日利用状況だけを読む。生成行は作らない。 */
 export async function getUsageToday(
-  deps: { fetchImpl?: typeof fetch } = {},
+  deps: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<UsageTodayData> {
   const accessToken = await requireAccessToken(getBrowserSupabaseClient());
+  const timeoutMs = deps.timeoutMs ?? USAGE_TODAY_CLIENT_TIMEOUT_MS;
   const response = await (deps.fetchImpl ?? fetch)("/api/usage/today", {
     method: "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
     cache: "no-store",
+    // G15: hung proxy で usage クエリが永久 pending にならないようにする
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const envelope = usageEnvelopeSchema.parse(await response.json());
   if (!envelope.ok) {
