@@ -1,6 +1,7 @@
 /**
- * 6 画面分の API ルートを Hono に接続する。
+ * 7 画面（共有レシピ含む）分の API ルートを Hono に接続する。
  * 業務 SQL は withReadOnly 経由のみ。
+ * 共有レシピは構造化本文を返すため localToken 設定時のみ登録する。
  */
 import type { Hono } from "hono";
 import type { Pool } from "pg";
@@ -23,6 +24,10 @@ import { getFeedback, listFeedback } from "../queries/feedback.js";
 import { getGeneration, listGenerations } from "../queries/generations.js";
 import { getQuotaHealth } from "../queries/quotaHealth.js";
 import { getShareJobs } from "../queries/shareJobs.js";
+import {
+  getSharedRecipe,
+  listSharedRecipes,
+} from "../queries/sharedRecipes.js";
 
 export type RouteDeps = {
   pool: Pool | null;
@@ -36,6 +41,10 @@ function requirePool(pool: Pool | null): Pool {
   }
   return pool;
 }
+
+/** 共有レシピ :id 用。8-4-4-4-12 の hex UUID のみ（ハイフンだらけの 36 文字を弾く） */
+const SHARED_RECIPE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function registerApiRoutes(app: Hono, deps: RouteDeps): void {
   app.get("/api/dashboard", async (c) => {
@@ -194,4 +203,74 @@ export function registerApiRoutes(app: Hono, deps: RouteDeps): void {
       return fail(c, e);
     }
   });
+
+  // 共有レシピは構造化本文を返すため token 未設定時はルート自体を載せない
+  if (deps.config.localToken) {
+    app.get("/api/shared-recipes", async (c) => {
+      try {
+        // クエリ検証を pool 取得より先に行い、不正入力を DB 不在でも 400 にできる
+        const q = c.req.query();
+        // Spec §7.1: from/to 必須（親 jst の「双方省略=直近7日」は共有レシピでは使わない）
+        if (!q.from || !q.to) {
+          throw badRequest(
+            "date_range_required",
+            "日付範囲 from と to は必須です。",
+          );
+        }
+        const range = parseJstDateRange({ from: q.from, to: q.to });
+        const status =
+          q.status === "active" || q.status === "disabled"
+            ? q.status
+            : undefined;
+        const mealType =
+          q.mealType === "breakfast" ||
+          q.mealType === "lunch" ||
+          q.mealType === "dinner"
+            ? q.mealType
+            : undefined;
+        if (q.status && !status) {
+          throw badRequest("invalid_status", "status が不正です。");
+        }
+        if (q.mealType && !mealType) {
+          throw badRequest("invalid_meal_type", "mealType が不正です。");
+        }
+        const pool = requirePool(deps.pool);
+        const data = await withReadOnly(pool, (client) =>
+          listSharedRecipes(client, {
+            fromUtc: range.fromUtc,
+            toUtcExclusive: range.toUtcExclusive,
+            status,
+            mealType,
+            limit: clampLimit(q.limit),
+            offset: clampOffset(q.offset),
+          }),
+        );
+        return ok(c, data);
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+
+    app.get("/api/shared-recipes/:id", async (c) => {
+      try {
+        const id = c.req.param("id");
+        // RFC 型 UUID のみ受理（緩い 36 文字 hex+`-` は PG cast 500 を避ける）
+        if (!id || !SHARED_RECIPE_UUID_RE.test(id)) {
+          throw badRequest("invalid_id", "id が不正です。");
+        }
+        const pool = requirePool(deps.pool);
+        const data = await withReadOnly(pool, (client) =>
+          getSharedRecipe(client, id),
+        );
+        if (!data) throw notFound();
+        return ok(c, data);
+      } catch (e) {
+        return fail(c, e);
+      }
+    });
+  } else {
+    console.warn(
+      "[admin] ADMIN_LOCAL_TOKEN 未設定のため共有レシピ API は無効です。",
+    );
+  }
 }

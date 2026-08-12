@@ -737,7 +737,8 @@ export function createAuthGateway(
       if (flowId === null) {
         return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
       }
-      // C3: cancel/期限切れ UI で dismiss 済みの flow は deposit/claim しない（secret は温存）
+      // C3: cancel/期限切れ UI で dismiss 済みの flow は deposit/claim しない
+      // （secret は DoS ロックで TTL まで残し、C2 で listUnexpired の TTL 掃除 / pending は dismiss 時消去）
       if (isAuthFlowUserDismissed(flowId, storage)) {
         return {
           kind: "error",

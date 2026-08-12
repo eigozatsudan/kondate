@@ -1,13 +1,15 @@
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { act, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AuthProvider,
   COLD_START_GET_SESSION_TIMEOUT_MS,
   COLD_START_SESSION_DEADLINE_MS,
   type AuthProviderClient,
 } from "./auth-provider";
+import { clearSoftResidualRecoverySuppressed } from "./auth-cleanup";
+import { resetAccessTokenPinGateForTests } from "./session";
 import { useAuth } from "./use-auth";
 
 const session = { access_token: "token", user: { id: "user-1" } } as Session;
@@ -39,6 +41,19 @@ function Probe() {
 }
 
 describe("AuthProvider", () => {
+  afterEach(() => {
+    // R1: module pin ゲートが他テストへ漏れないようにする
+    resetAccessTokenPinGateForTests();
+    // C4/R3: soft residual 共有 suppress が次テストの residual recovery を止めないようにする
+    clearSoftResidualRecoverySuppressed();
+    try {
+      window.localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
+      window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
+    } catch {
+      // ignore
+    }
+  });
+
   it("loads the initial session and refreshes on focus", async () => {
     const getSession = vi
       .fn()
@@ -439,16 +454,24 @@ describe("AuthProvider", () => {
       </AuthProvider>,
     );
     expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    // Probe の useEffect で title が揃うまで待つ（前テストの title 残渣を避ける）
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(document.title).toBe("user-a");
 
     await act(async () => {
       for (const listener of authListeners) {
         listener("SIGNED_IN", sessionB);
       }
+      // R1: pin reject 後の client cleanup → restore は async
+      await Promise.resolve();
+      await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(screen.getByText("authenticated")).toBeInTheDocument();
+    // R1: restore 後も listener が無い注入 client では degraded が残り得る（data plane は block）
+    expect(screen.getByText(/authenticated/)).toBeInTheDocument();
     expect(document.title).toBe("user-a");
     expect(setSession).toHaveBeenCalledWith({
       access_token: "token-a",
@@ -493,12 +516,15 @@ describe("AuthProvider", () => {
     expect(await screen.findByText("authenticated")).toBeInTheDocument();
 
     // cooldown 内の連続 clobber は 1 回だけ setSession restore
+    // R1: pin reject は先に client cleanup（async）してから restore するため microtask を十分流す
     await act(async () => {
       for (const listener of authListeners) {
         listener("SIGNED_IN", sessionB);
         listener("SIGNED_IN", sessionB);
         listener("SIGNED_IN", sessionB);
       }
+      await Promise.resolve();
+      await Promise.resolve();
       await Promise.resolve();
     });
 
@@ -550,8 +576,72 @@ describe("AuthProvider", () => {
       }
       await Promise.resolve();
       await Promise.resolve();
+      await Promise.resolve();
     });
 
+    expect(document.title).toBe("user-a");
+    expect(await screen.findByText("authenticated:degraded")).toBeInTheDocument();
+  });
+
+  it("R1: pin mismatch clears client via signOut so data plane cannot stay as B", async () => {
+    window.history.replaceState(null, "", "/planner");
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    // restore は失敗させ、signOut による B 除去 + pin 維持 + degraded を固定する
+    const setSession = vi
+      .fn()
+      .mockResolvedValue({ data: { session: null }, error: { message: "no" } });
+    const signOut = vi.fn().mockImplementation(() => {
+      // 本番同様 SIGNED_OUT を通知（pin mismatch cleanup として消費され pin は落ちない）
+      for (const listener of authListeners) {
+        listener("SIGNED_OUT", null);
+      }
+      return Promise.resolve({ error: null });
+    });
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null }),
+        setSession,
+        signOut,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // R1: B を data plane から落とす signOut が先に走る
+    expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+    // React pin は A のまま（SIGNED_OUT を cleanup として消費）
     expect(document.title).toBe("user-a");
     expect(await screen.findByText("authenticated:degraded")).toBeInTheDocument();
   });
@@ -611,11 +701,15 @@ describe("AuthProvider", () => {
       for (const listener of authListeners) {
         listener("SIGNED_IN", sessionB);
       }
+      // R1: client cleanup → restore は async
+      await Promise.resolve();
+      await Promise.resolve();
       await Promise.resolve();
     });
 
     // React 状態は A のまま。勝者 token を setSession で戻そうとする
-    expect(screen.getByText("authenticated")).toBeInTheDocument();
+    // R1: listener 無しでは degraded 表示が残り得る
+    expect(screen.getByText(/authenticated/)).toBeInTheDocument();
     expect(document.title).toBe("user-a");
     expect(setSession).toHaveBeenCalledWith({
       access_token: "token-a",
@@ -736,9 +830,10 @@ describe("AuthProvider", () => {
     expect(recovery.mock.calls.length).toBe(startsAfterLoad + 1);
   });
 
-  it("C5/C6/C7: soft SIGNED_OUT clears drafts/feedback but preserves in-flight flow secret", async () => {
+  it("C4/R3: soft SIGNED_OUT clears drafts/feedback; preserves sibling flow secrets + suppress recovery", async () => {
     window.history.replaceState(null, "", "/planner");
     window.localStorage.clear();
+    window.sessionStorage.clear();
     window.localStorage.setItem(
       "kondate:generation:v2",
       JSON.stringify({ kind: "regenerate_menu", request: { changeReason: "自由記述の下書き" } }),
@@ -747,7 +842,8 @@ describe("AuthProvider", () => {
       "kondate:feedback:ambiguous-fingerprint",
       "bug_report\nアレルギー free-form",
     );
-    // C7: soft 失効は進行中 continuation secret を焼かない（cold-start RR1 と同型）
+    // R3: soft 失効でも sibling mid-login の secret/pending/PKCE は温存
+    // C4: residual recovery は tab-local suppress で silent complete を閉じる
     const flowId = "10000000-0000-4000-8000-0000000000c7";
     const flowKey = `kondate.auth.flow.${flowId}`;
     const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
@@ -763,7 +859,6 @@ describe("AuthProvider", () => {
         startedAt: new Date().toISOString(),
       }),
     );
-    // C3/C10: pending code / PKCE verifier は soft でも消す
     window.localStorage.setItem(
       pendingKey,
       JSON.stringify({
@@ -803,9 +898,103 @@ describe("AuthProvider", () => {
     expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
     expect(window.localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(window.localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
+    // R3: sibling mid-login keys preserved
     expect(window.localStorage.getItem(flowKey)).not.toBeNull();
-    expect(window.localStorage.getItem(pendingKey)).toBeNull();
-    expect(window.localStorage.getItem("kondate.auth.supabase-code-verifier")).toBeNull();
+    expect(window.localStorage.getItem(pendingKey)).not.toBeNull();
+    expect(window.localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe(
+      "pkce-verifier",
+    );
+    // C4: origin 共有 localStorage で residual recovery を抑止（新タブからも見える）
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+  });
+
+  it("R3/C4: soft residual suppress prevents residual recovery start on /login", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const startRecovery = vi.fn(() => vi.fn());
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const authListeners: AuthStateListener[] = [];
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider client={client} startRecovery={startRecovery}>
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("authenticated");
+    const startsWhileAuth = startRecovery.mock.calls.length;
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_OUT", null);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    // soft residual 後は共有 suppress により recovery を開始しない
+    expect(startRecovery.mock.calls.length).toBe(startsWhileAuth);
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+  });
+
+  it("C4: shared soft residual suppress blocks residual recovery even with empty sessionStorage (new tab)", async () => {
+    // soft 後に新タブで /login を開いた状況: localStorage に suppress のみ、sessionStorage 空
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const flowId = "10000000-0000-4000-8000-0000000000c4";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "http://127.0.0.1:5173",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.pending-deposit.${flowId}`,
+      JSON.stringify({
+        state: "B".repeat(43),
+        code: "authorization-code-plain",
+        expiresAtMs: Date.now() + 60_000,
+      }),
+    );
+    // 前タブの soft residual が書いた共有 suppress（sessionStorage は新タブで空）
+    window.localStorage.setItem("kondate.auth.soft-residual-recovery-suppress", "1");
+    const startRecovery = vi.fn(() => vi.fn());
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider client={client} startRecovery={startRecovery}>
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    // 新タブでも共有 suppress により residual recovery を開始しない（prior user silent complete を閉じる）
+    expect(startRecovery).not.toHaveBeenCalled();
+    // R3: secret/pending は残っている（burn ではなく suppress）
+    expect(window.localStorage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
+    expect(
+      window.localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`),
+    ).not.toBeNull();
   });
 
   it("C5: cold-start never-authenticated unauthenticated does not wipe sibling flow (RR1 intact)", async () => {

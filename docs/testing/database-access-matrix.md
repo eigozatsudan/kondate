@@ -28,8 +28,8 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `private.share_app_daily_usage` | postgres | none | none | none | off (not exposed) | share AI/success daily ledger; no Data API; service via SECURITY DEFINER only |
 | `private.share_generalization_jobs` | postgres | none | none | none | off (not exposed) | share generalization jobs; no Data API; service via SECURITY DEFINER only |
 | `private.share_user_daily_usage` | postgres | none | none | none | off (not exposed) | share per-user daily attempt/success ledger; no Data API; service via SECURITY DEFINER only |
-| `private.shared_emergency_recipe_origins` | postgres | none | none | none | off (not exposed) | pool origin unlink map (`contributor_user_id`); no Data API; service via SECURITY DEFINER only |
-| `private.shared_emergency_recipes` | postgres | none | none | none | off (not exposed) | anonymous emergency pool body; no Data API; service via SECURITY DEFINER only |
+| `private.shared_emergency_recipe_origins` | postgres | none | none | none | off (not exposed) | pool origin unlink map (`contributor_user_id`); no Data API; service via SECURITY DEFINER only; ops readonly SELECT for local admin shared-recipes viewer; no DML; no Data API |
+| `private.shared_emergency_recipes` | postgres | none | none | none | off (not exposed) | anonymous emergency pool body; no Data API; service via SECURITY DEFINER only; ops readonly SELECT for local admin shared-recipes viewer; no DML; no Data API |
 | `public.allergen_aliases` | postgres | none | SELECT | ALL | on + policies | shared safety catalog; authenticated SELECT only |
 | `public.allergen_catalog` | postgres | none | SELECT | ALL | on + policies | shared safety catalog; authenticated SELECT only |
 | `public.dish_ingredients` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |

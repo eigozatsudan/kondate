@@ -17,7 +17,7 @@ import {
   type ShoppingList,
   type ShoppingListSafetyData,
 } from "@shared/contracts/shopping";
-import { requireAccessToken } from "@/features/auth/session";
+import { assertBrowserDataPlaneAligned, requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
 const failureSchema = z.object({
@@ -87,6 +87,8 @@ const rowLabel = (row: {
 
 export async function fetchActiveShoppingList(): Promise<ShoppingList | null> {
   const client = getBrowserSupabaseClient();
+  // R1: pin と client JWT の乖離時は PostgREST を走らせない（B の active list を A chrome で出さない）
+  await assertBrowserDataPlaneAligned(client);
   const { data, error } = await client
     .from("shopping_lists")
     .select(
@@ -167,6 +169,9 @@ export async function mutateShoppingItem(
   input: ShoppingItemMutationRequest,
 ): Promise<ShoppingItemMutationResponse> {
   const parsed = shoppingItemMutationRequestSchema.parse(input);
+  const client = getBrowserSupabaseClient();
+  // R1: pin と client JWT 乖離時は auth.uid() スコープの mutate RPC を B として走らせない
+  await assertBrowserDataPlaneAligned(client);
   const args = {
     p_list_id: parsed.listId,
     p_expected_list_version: parsed.expectedListVersion,
@@ -179,7 +184,7 @@ export async function mutateShoppingItem(
     p_idempotency_key: parsed.idempotencyKey,
     p_payload: parsed.payload,
   };
-  const { data, error } = await getBrowserSupabaseClient().rpc("mutate_shopping_item", args);
+  const { data, error } = await client.rpc("mutate_shopping_item", args);
   if (error !== null) {
     if (error.message.includes("list_version_conflict")) {
       throw Object.assign(new Error("買い物リストが更新されました"), {
@@ -785,6 +790,8 @@ export async function fetchReconcilableMenuSource(
   listId: string,
 ): Promise<ReconcilableMenuSource | null> {
   const client = getBrowserSupabaseClient();
+  // R1: pin 乖離時は menus / shopping_list_sources を B の JWT で読まない
+  await assertBrowserDataPlaneAligned(client);
   const menu = await client
     .from("menus")
     .select("id,derivation_group_id,version")

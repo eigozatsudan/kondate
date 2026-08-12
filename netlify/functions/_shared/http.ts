@@ -45,9 +45,13 @@ export function requireOrigin(request: Request, origin: string): boolean {
   return request.headers.get("origin") === origin;
 }
 
+/**
+ * auth-continuation 用の厳密 JSON 境界。
+ * C8: `application/json; charset=utf-8` や `*+json` を isJsonContentType と同型で許容する
+ * （exact match だと中間 proxy / 将来 wrapper が charset を付けただけで 400 になる）。
+ */
 export async function parseJsonRequest(request: Request): Promise<unknown> {
-  if (request.headers.get("content-type") !== "application/json")
-    throw new Error("invalid_request");
+  if (!isJsonContentType(request.headers.get("content-type"))) throw new Error("invalid_request");
   const declaredLength = request.headers.get("content-length");
   if (
     declaredLength !== null &&
@@ -106,7 +110,8 @@ export function methodNotAllowed(allowed: readonly string[]): Response {
 
 /**
  * Content-Type が JSON 系か（application/json または *+json）。
- * charset 等のパラメータは許容する。parseJsonRequest より緩いが text/plain 等は拒否。
+ * charset 等のパラメータは許容する。text/plain 等は拒否。
+ * parseJsonRequest / parseJson の双方がこれを使う（C8）。
  */
 function isJsonContentType(header: string | null): boolean {
   if (header === null) return false;

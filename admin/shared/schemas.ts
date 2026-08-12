@@ -179,6 +179,99 @@ export const shareJobsResponseSchema = z.object({
   jobs: z.array(shareJobListItemSchema),
 });
 
+/** 共有レシピ一覧・詳細の status / mealType */
+export const sharedRecipeStatusSchema = z.enum(["active", "disabled"]);
+export const sharedMealTypeSchema = z.enum(["breakfast", "lunch", "dinner"]);
+
+/** 一覧行。menu_payload は含めない（preview は detail のみ） */
+export const sharedRecipeListItemSchema = z.object({
+  id: z.string().uuid(),
+  createdAt: z.string(),
+  status: sharedRecipeStatusSchema,
+  mealType: sharedMealTypeSchema,
+  totalElapsedMinutes: z.number().int().positive(),
+  title: z.string().min(1).max(80),
+  standardAllergenIds: z.array(z.string()),
+  eligibleAgeBands: z.array(z.string()),
+  contributorUserId: z.string().uuid().nullable(),
+  sourceMenuId: z.string().uuid().nullable(),
+});
+
+export const sharedRecipesResponseSchema = z.object({
+  generatedAt: z.string(),
+  activeCount: z.number().int().nonnegative(),
+  disabledCount: z.number().int().nonnegative(),
+  items: z.array(sharedRecipeListItemSchema),
+});
+
+const previewIngredientSchema = z.object({
+  name: z.string(),
+  quantityText: z.string(),
+  unit: z.string().nullable(),
+  storeSection: z.string(),
+});
+
+const previewStepSchema = z.object({
+  position: z.number().int(),
+  instruction: z.string(),
+});
+
+const previewDishSchema = z.object({
+  role: z.string(),
+  position: z.number().int(),
+  name: z.string(),
+  description: z.string(),
+  cookingTimeMinutes: z.number().int(),
+  ingredients: z.array(previewIngredientSchema),
+  steps: z.array(previewStepSchema),
+});
+
+const previewTimelineSchema = z.object({
+  position: z.number().int(),
+  startMinute: z.number().int(),
+  durationMinutes: z.number().int(),
+  instruction: z.string(),
+});
+
+const previewSafetyActionSchema = z.object({
+  kind: z.string(),
+  instruction: z.string(),
+});
+
+const previewAdaptationSchema = z.object({
+  portionText: z.string(),
+  additionalCutting: z.string().nullable(),
+  additionalHeating: z.string().nullable(),
+  additionalSeasoning: z.string().nullable(),
+  servingCheck: z.string(),
+  anonymousMemberRef: z.string(),
+  safetyActions: z.array(previewSafetyActionSchema),
+});
+
+/** menu_payload を整形した閲覧用 preview（生 JSON は載せない） */
+export const sharedRecipePreviewSchema = z.object({
+  schemaVersion: z.string(),
+  menuId: z.string().uuid(),
+  mealType: sharedMealTypeSchema,
+  cuisineGenre: z.string(),
+  servings: z.number().int(),
+  totalElapsedMinutes: z.number().int(),
+  safetyTags: z.array(z.string()),
+  dishes: z.array(previewDishSchema).min(1),
+  timeline: z.array(previewTimelineSchema),
+  adaptations: z.array(previewAdaptationSchema),
+});
+
+export const sharedRecipePreviewErrorSchema = z.enum([
+  "invalid_menu_payload",
+  "unsupported_schema_version",
+]);
+
+export const sharedRecipeDetailSchema = sharedRecipeListItemSchema.extend({
+  preview: sharedRecipePreviewSchema.nullable(),
+  previewError: sharedRecipePreviewErrorSchema.nullable(),
+});
+
 export const healthResponseSchema = z.object({
   ok: z.literal(true),
   data: z.object({
@@ -209,6 +302,8 @@ export const FORBIDDEN_DTO_KEYS = [
   "stripePriceId",
   "stripe_price_id",
   "email",
+  "menu_payload",
+  "menuPayload",
 ] as const;
 
 export type GenerationListItem = z.infer<typeof generationListItemSchema>;
@@ -220,3 +315,7 @@ export type QuotaHealthResponse = z.infer<typeof quotaHealthResponseSchema>;
 export type BillingResponse = z.infer<typeof billingResponseSchema>;
 export type ShareJobsResponse = z.infer<typeof shareJobsResponseSchema>;
 export type ShareJobListItem = z.infer<typeof shareJobListItemSchema>;
+export type SharedRecipeListItem = z.infer<typeof sharedRecipeListItemSchema>;
+export type SharedRecipesResponse = z.infer<typeof sharedRecipesResponseSchema>;
+export type SharedRecipePreview = z.infer<typeof sharedRecipePreviewSchema>;
+export type SharedRecipeDetail = z.infer<typeof sharedRecipeDetailSchema>;

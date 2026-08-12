@@ -7,6 +7,10 @@ import type {
 } from "@shared/contracts/shopping";
 import { useAuth } from "@/features/auth/use-auth";
 import {
+  assertBrowserDataPlaneAligned,
+  isAccessTokenPinDataPlaneBlocked,
+} from "@/features/auth/session";
+import {
   householdSafetyChangedEvent,
   householdSafetyQueryPrefixes,
   isHouseholdSafetyRevisionStorageKeyForUser,
@@ -162,8 +166,15 @@ export function useShoppingSafetyGate() {
     let closed = false;
     let channel: ReturnType<typeof client.channel> | null = null;
     // 所有者が取れない・購読できない場合は必ず閉じる（fail closed）。
+    // R1: pin 乖離中は getUser()=B で Realtime を B に購読しない
     const subscribed = Promise.resolve()
-      .then(() => client.auth.getUser())
+      .then(async () => {
+        if (isAccessTokenPinDataPlaneBlocked()) {
+          throw new Error("auth_session_pin_mismatch");
+        }
+        await assertBrowserDataPlaneAligned(client);
+        return client.auth.getUser();
+      })
       .then((response) => {
         if (closed) return;
         if (response.error !== null) {

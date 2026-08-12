@@ -3,6 +3,7 @@ import {
   type PlannerDraftInput,
   plannerDraftSchema,
 } from "@shared/contracts/planner";
+import { assertBrowserDataPlaneAligned } from "@/features/auth/session";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import type { Tables } from "@/shared/types/database.generated";
 
@@ -45,6 +46,8 @@ export async function getPlannerDraft(
   client: BrowserSupabaseClient,
   userId: string,
 ): Promise<PlannerDraft | null> {
+  // R1: pin 不一致時は PostgREST を走らせない（client JWT と React userId の乖離を閉じる）
+  await assertBrowserDataPlaneAligned(client);
   const { data, error } = await client
     .from("generation_drafts")
     .select(
@@ -62,6 +65,8 @@ export async function savePlannerDraft(
   input: PlannerDraftInput,
   revision: number,
 ): Promise<PlannerDraft> {
+  // R1: pin 不一致時は auth.uid() 依存 RPC で B の draft を mutate しない
+  await assertBrowserDataPlaneAligned(client);
   const { data, error } = await client.rpc("save_generation_draft", {
     p_expected_revision: revision,
     p_meal_type: input.mealType,
@@ -88,6 +93,8 @@ export async function deletePlannerDraft(
   client: BrowserSupabaseClient,
   expectedRevision: number,
 ): Promise<void> {
+  // R1: pin 不一致時は auth.uid() 依存 RPC で B の draft を消さない
+  await assertBrowserDataPlaneAligned(client);
   const { error } = await client.rpc("delete_generation_draft", {
     p_expected_revision: expectedRevision,
   });

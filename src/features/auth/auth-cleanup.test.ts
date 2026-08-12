@@ -6,7 +6,9 @@ import {
   clearLocalAuthAndDrafts,
   clearOwnedLocalDataBestEffort,
   clearSoftSessionResidualBestEffort,
+  isSoftResidualRecoverySuppressed,
   SIGN_OUT_TIMEOUT_MS,
+  SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY,
 } from "./auth-cleanup";
 
 function seedOwnedKeys(storage: Storage): void {
@@ -143,7 +145,7 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
   });
 
-  it("C7: clearSoftSessionResidualBestEffort clears drafts/session but keeps flow secret", () => {
+  it("C4/R3: soft residual clears drafts/session/completion but preserves sibling flow secrets", () => {
     seedOwnedKeys(localStorage);
     localStorage.setItem("kondate.auth.lastMagicEmail", "user@example.com");
     clearSoftSessionResidualBestEffort();
@@ -151,14 +153,17 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
     expect(localStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
-    // 進行中 continuation secret は温存（C7）
+    // R3: sibling mid-login の flow secret は温存（C4 は共有 suppress で silent complete を閉じる）
     expect(
       localStorage.getItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001"),
     ).not.toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    // C4: origin 共有 localStorage で residual recovery を抑止（新タブからも見える）
+    expect(isSoftResidualRecoverySuppressed()).toBe(true);
+    expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
   });
 
-  it("C3/C10: soft residual clears pending-deposit and PKCE verifier but keeps flow secret", () => {
+  it("C4/R3: soft residual clears completion; preserves pending/PKCE/secret/callback-owner", () => {
     const flowId = "10000000-0000-4000-8000-0000000000c3";
     localStorage.setItem(
       `kondate.auth.flow.${flowId}`,
@@ -189,17 +194,33 @@ describe("clearLocalAuthAndDrafts", () => {
 
     clearSoftSessionResidualBestEffort();
 
-    // C3: authorization code 平文を残さない
-    expect(localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).toBeNull();
-    // C10: PKCE verifier も soft で消す
-    expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBeNull();
-    // C7: secret / callback-owner / completion は温存
+    // R3: sibling mid-login に必要なキーは温存
+    expect(localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).not.toBeNull();
+    expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe("pkce-verifier");
     expect(localStorage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
     expect(localStorage.getItem(`kondate.auth.supabase.callback-owner.${flowId}`)).not.toBeNull();
+    // C4: completion short-circuit は閉じる
     expect(
       localStorage.getItem(`kondate.auth.supabase.continuation-complete.${flowId}`),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    expect(isSoftResidualRecoverySuppressed()).toBe(true);
+    expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
+  });
+
+  it("C4: soft residual suppress is shared via localStorage (new-tab visible; sessionStorage empty)", () => {
+    // soft したタブと新タブを模擬: localStorage のみ共有、sessionStorage は空
+    seedOwnedKeys(localStorage);
+    clearSoftSessionResidualBestEffort();
+    expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
+    sessionStorage.clear();
+    // 新タブ相当: sessionStorage が空でも共有 suppress が効く
+    expect(sessionStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBeNull();
+    expect(isSoftResidualRecoverySuppressed()).toBe(true);
+    // R3: secret は残ったまま（新タブ residual は suppress で止め、secret burn ではない）
+    expect(
+      localStorage.getItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001"),
+    ).not.toBeNull();
   });
 
   it("AP1: clears kondate:feedback free-form fingerprint on logout and best-effort pass", async () => {

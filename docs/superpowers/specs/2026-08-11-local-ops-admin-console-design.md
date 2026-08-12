@@ -1,13 +1,14 @@
 # ローカル専用運用管理コンソール設計
 
-- 日付: 2026-08-11
-- 状態: **改訂済み・人間再承認待ち**（1次 / 敵対 / 2次レビュー反映。案 A: SELECT 専用 LOGIN）
-- 種別: 設計。**本書だけでは実装を開始しない**（再承認後に implementation plan → worktree）
+- 日付: 2026-08-11（共有レシピ例外: 2026-08-12 追記）
+- 状態: **第1版実装済み + 共有レシピ閲覧スライス追記**（§2.2 / §3.1 / §5.6 を [共有レシピ閲覧設計](./2026-08-12-admin-shared-recipes-viewer-design.md) と整合）
+- 種別: 設計。第1版 admin の正本。共有レシピ閲覧は子設計を正とし、本書の禁止リストは子と矛盾しない文言に改訂済み。
 - 対象: オペレータがローカルから本番 Supabase を **閲覧のみ** する内部コンソール
 - レビュー:
   - [1次](../reviews/2026-08-11-local-ops-admin-console-primary.md)
   - [敵対](../reviews/2026-08-11-local-ops-admin-console-adversarial.md)
   - [2次](../reviews/2026-08-11-local-ops-admin-console-secondary.md)
+  - 共有レシピ追記: [1次](../reviews/2026-08-12-admin-shared-recipes-viewer-primary.md) / [敵対](../reviews/2026-08-12-admin-shared-recipes-viewer-adversarial.md) / [2次](../reviews/2026-08-12-admin-shared-recipes-viewer-secondary.md)
 
 ---
 
@@ -46,7 +47,7 @@
 - Netlify / 本番 URL への admin デプロイ。
 - INSERT / UPDATE / DELETE、枠の手動調整、課金 reconcile 実行、アカウント削除などの **変更操作**。
 - PostgREST への `private` 公開、`service_role` への private 表 GRANT 拡大。
-- 献立本文・下書き・prompt・生 AI 出力・アレルギー詳細の閲覧。
+- 献立本文・下書き・prompt・生 AI 出力・アレルギー詳細の閲覧（**例外:** 共有プールの構造化 preview は [共有レシピ閲覧設計](./2026-08-12-admin-shared-recipes-viewer-design.md) を正とする。生 `menu_payload` は引き続き禁止）。
 - 本編 e2e / 本編 CI フルパイプラインへの admin 組み込み（第1版）。
 - 収益計測 analytics 個票の閲覧（別設計）。
 - feedback 本文の全文キーワード検索（第1版は **外す**。category / user_id / 日付のみ）。
@@ -77,13 +78,14 @@ named query の SELECT / JOIN 対象から **常に除外**する。DTO・画面
 | --- | --- |
 | 生成台帳 | `identity_key`, `request_hmac`, `request_hmac_version` |
 | 課金 | すべての `stripe_*` / `*_stripe_*`（`billing_customers.stripe_customer_id`、`billing_subscriptions.stripe_subscription_id` / `stripe_price_id`、`billing_webhook_events.stripe_event_id` 等） |
-| 下書き・共有本文 | `private.generation_draft_submission_versions` の memo / ingredients / pantry 系、`private.shared_emergency_recipes.menu_payload`、共有レシピ本文 |
-| 世帯・安全 | `public.profiles` の氏名相当、`member_allergies` / `member_dislikes`、献立・手順・材料の中身 |
+| 下書き | `private.generation_draft_submission_versions` の memo / ingredients / pantry 系 |
+| 共有プール本文 | **生** `private.shared_emergency_recipes.menu_payload` および raw JSON の API/UI/ログ露出。サーバ内 SELECT → 構造化 **preview DTO** のみ可（詳細は [共有レシピ閲覧設計](./2026-08-12-admin-shared-recipes-viewer-design.md)）。一覧は title 抽出 + メタに留める |
+| 世帯・安全 | `public.profiles` の氏名相当、`member_allergies` / `member_dislikes`、**ユーザー献立**の手順・材料の中身（共有プールの構造化 preview は上表の例外経路のみ） |
 | Auth | **`auth.*` スキーマ全体**（email 等） |
 | 接続 | DB URL、パスワード、userinfo |
 
 **許可の参照 UUID（中身は join しない）:**  
-`completed_menu_id`, `draft_id`, `source_menu_id`, `replace_dish_id` 等。UI は monospace のコピー用テキストのみ。メニュー詳細画面への導線は作らない。
+`completed_menu_id`, `draft_id`, `source_menu_id`, `replace_dish_id` 等。UI は monospace のコピー用テキストのみ。本編メニュー詳細画面への導線は作らない。
 
 `terminal_details` は DB 制約上 conflict 時の `{ conflictCodes: [...] }` のみ。そのまま返してよい。
 
@@ -254,7 +256,8 @@ AND coalesce(heartbeat_at, claimed_at) < now() - interval '15 minutes'
 
 **pending 長期放置:** 第1版ダッシュボードでは **件数のみ**（例: `status = 'pending' AND created_at < now() - interval '1 hour'`）。一覧の主対象は running 滞留 + 失敗。
 
-**出さない:** 共有レシピ本文・元献立中身（`source_menu_id` は UUID のみ）。
+**本画面（共有ジョブ）で出さない:** 共有レシピ本文・元献立中身（`source_menu_id` は UUID のみ）。  
+**掲載済みプールの品質目視**は別画面「共有レシピ」— 正本は [共有レシピ閲覧設計](./2026-08-12-admin-shared-recipes-viewer-design.md)（生 `menu_payload` 禁止・構造化 preview のみ・当該 API は `ADMIN_LOCAL_TOKEN` 必須）。
 
 ---
 
@@ -273,6 +276,8 @@ AND coalesce(heartbeat_at, claimed_at) < now() - interval '15 minutes'
 | `GET /api/quota-health` | 利用枠・健全性 |
 | `GET /api/billing` | 課金概況 |
 | `GET /api/share-jobs` | 共有 job 一覧 + サマリ |
+| `GET /api/shared-recipes` | 共有プール一覧（メタ + title）。**`ADMIN_LOCAL_TOKEN` 必須**。正本は [共有レシピ閲覧設計](./2026-08-12-admin-shared-recipes-viewer-design.md) |
+| `GET /api/shared-recipes/:id` | 共有プール詳細（構造化 preview）。**token 必須**。生 `menu_payload` 非レスポンス |
 
 共通:
 
