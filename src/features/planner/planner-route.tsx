@@ -429,6 +429,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const settingsOpeningRef = useRef(false);
   // P1: 緊急献立 open の同期 single-flight（state 再描画前に generate と二重 flight しない）
   const emergencyOpeningRef = useRef(false);
+  // P1: leave-flush 中の同期 single-flight。generate/settings/privacy/emergency が mid-leave に
+  // 起動しないよう武装し、post-flush でも submitting/opening を再確認する。
+  // proceed 時は unmount まで落さない（handler return → shell navigate の隙間に generate を許さない）。
+  const leaveInFlightRef = useRef(false);
   // P2: leave-flush handler は mount 時のみ register。state は ref で読み stale クロージャと
   // deps 更新時 cleanup→null の窓を避ける（submittingRef と同型）。
   const hasDraftConflictRef = useRef(false);
@@ -796,6 +800,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     if (
       privacyOpeningRef.current ||
       emergencyOpeningRef.current ||
+      leaveInFlightRef.current ||
       isOpeningEmergencyMenus ||
       isOpeningSettings ||
       hasDraftConflict
@@ -853,6 +858,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const openEmergencyMenus = useCallback((): void => {
     if (
       emergencyOpeningRef.current ||
+      leaveInFlightRef.current ||
       isOpeningEmergencyMenus ||
       isSubmitting ||
       submittingRef.current ||
@@ -1026,6 +1032,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     if (
       settingsOpeningRef.current ||
       emergencyOpeningRef.current ||
+      leaveInFlightRef.current ||
       isOpeningEmergencyMenus ||
       isOpeningPrivacy ||
       isSubmitting ||
@@ -1080,6 +1087,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // deps 更新のたび cleanup で null すると下ナビ click が即 proceed になる窓が残る。
   useEffect(() => {
     registerPlannerLeaveFlush(async () => {
+      // P1: 既に leave 中なら二重 leave しない（module mutex の第二防衛）。
+      if (leaveInFlightRef.current) {
+        return "blocked";
+      }
       // P4: ガード blocked は無言 stay にせず理由を可視化する。
       // 競合中は chrome に委任し、home では chrome が無いため wizard を開く。
       if (hasDraftConflictRef.current) {
@@ -1111,13 +1122,50 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         }
         return "blocked";
       }
+      // P1: flush await 前に武装。generate/openers が mid-leave を見られるようにする。
+      leaveInFlightRef.current = true;
+      const releaseLeaveUnlessProceeding = (proceeding: boolean): void => {
+        if (!proceeding) {
+          leaveInFlightRef.current = false;
+        }
+        // proceed 時は unmount まで維持（shell navigate 前の generate 起動窓を閉じる）
+      };
+      const otherOpInFlightAfterFlush = (): boolean =>
+        submittingRef.current ||
+        settingsOpeningRef.current ||
+        emergencyOpeningRef.current ||
+        privacyOpeningRef.current ||
+        isOpeningEmergencyMenusRef.current ||
+        isOpeningPrivacyRef.current ||
+        isOpeningSettingsRef.current;
       try {
         await flushDraftRef.current();
+        // P1: flush 成功後も generate/openers が await 中に武装していないか再確認
+        if (otherOpInFlightAfterFlush()) {
+          if (mountedRef.current) {
+            setSubmissionError(
+              "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
+            );
+          }
+          releaseLeaveUnlessProceeding(false);
+          return "blocked";
+        }
+        releaseLeaveUnlessProceeding(true);
         return "proceed";
       } catch (error) {
         // P1: Incomplete は schema 非 persistable の意図的拒否（RPC しない）。
         // pre-leave-flush 同様に離脱可とし、通信失敗文言で封鎖しない。
         if (error instanceof IncompleteDraftSaveError) {
+          if (otherOpInFlightAfterFlush()) {
+            if (mountedRef.current) {
+              setSubmissionError(
+                "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
+              );
+            }
+            releaseLeaveUnlessProceeding(false);
+            return "blocked";
+          }
+          releaseLeaveUnlessProceeding(true);
           return "proceed";
         }
         // P2: revision conflict は onConflict が競合 chrome を武装済み。
@@ -1126,6 +1174,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           if (mountedRef.current) {
             setWizardOpen(true);
           }
+          releaseLeaveUnlessProceeding(false);
           return "blocked";
         }
         if (mountedRef.current) {
@@ -1133,11 +1182,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
           );
         }
+        releaseLeaveUnlessProceeding(false);
         return "blocked";
       }
     });
     return () => {
       registerPlannerLeaveFlush(null);
+      leaveInFlightRef.current = false;
     };
   }, []);
 
@@ -1378,8 +1429,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         footer={flyerFooter}
         onSubmit={async () => {
           // P8: React 再描画前の二重 click を同期 ref で抑止（idea audience の confirmingRef と同型）
-          // P1: 緊急 open 中は generate を受け付けない（二重 flush / sticky pending と session 乖離を防ぐ）
-          if (submittingRef.current || emergencyOpeningRef.current) return;
+          // P1: 緊急 open / leave-flush 中は generate を受け付けない
+          // （二重 flush / sticky pending と route 乖離を防ぐ）
+          if (submittingRef.current || emergencyOpeningRef.current || leaveInFlightRef.current) {
+            return;
+          }
           setSubmissionError(null);
           setFieldErrors({});
           // P4: safety/pantry soft 失敗中は stale previous data で送信しない
@@ -1611,6 +1665,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
                 "作る相手が未設定のため、生成を開始できません。対象を選び直してください。",
               );
               setStep("audience");
+              return;
+            }
+            // P3: revision conflict は onConflict の競合 chrome に一本化。
+            // leave/settings/privacy/emergency と同型で汎用保存失敗文言を立てない。
+            if (error instanceof DraftRevisionConflictError) {
               return;
             }
             // IncompleteDraft は通信失敗と分けて人数未設定を伝える

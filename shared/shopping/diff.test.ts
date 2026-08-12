@@ -164,23 +164,172 @@ it.each(["plain-first", "protected-first"] as const)(
     };
 
     const diff = computeShoppingDiff(current, next);
-    expect(diff.add).toEqual([
-      expect.objectContaining({
-        key: `carrot-150_delta_${checkedId}`,
-        quantityValue: 50,
-        quantityText: "50g",
-      }),
-    ]);
+    // SHOP15: 同一 numeric key の合計 200g が所要 150g を既に満たすため delta も plain remove もしない。
+    expect(diff.add).toEqual([]);
     expect(diff.replace).toEqual([]);
-    expect(diff.remove).toEqual([
-      expect.objectContaining({
-        itemId: plainId,
-        quantityText: "100g",
-      }),
-    ]);
+    expect(diff.remove).toEqual([]);
     expect(diff.protectedItemIds).toEqual([checkedId]);
   },
 );
+
+it("adds only the shortfall after counting plain siblings of a protected numeric row (SHOP15)", () => {
+  const checkedId = "20000000-0000-4000-8000-000000000040";
+  const plainId = "20000000-0000-4000-8000-000000000041";
+  const current = makeShoppingList([
+    makeItem({
+      id: checkedId,
+      quantityValue: 100,
+      quantityText: "100g",
+      unit: "g",
+      isChecked: true,
+    }),
+    makeItem({
+      id: plainId,
+      quantityValue: 100,
+      quantityText: "100g",
+      unit: "g",
+    }),
+  ]);
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    key: "carrot-250",
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    storeSection: "produce",
+    quantityValue: 250,
+    quantityText: "250g",
+    unit: "g",
+  };
+  const diff = computeShoppingDiff(current, next);
+  // 合計 200g 済み → shortfall 50g のみ。plain は被覆行として温存（remove しない）。
+  expect(diff.add).toEqual([
+    expect.objectContaining({
+      key: `carrot-250_delta_${checkedId}`,
+      quantityValue: 50,
+      quantityText: "50g",
+    }),
+  ]);
+  expect(diff.replace).toEqual([]);
+  expect(diff.remove).toEqual([]);
+  expect(diff.protectedItemIds).toEqual([checkedId]);
+});
+
+it("does not re-add protected delta when previous delta row still covers the requirement (SHOP15)", () => {
+  // Check → reconcile higher qty（_delta_ 行適用）→ uncheck 後の再 reconcile を模す。
+  // 購入済み 100g + 前回 delta 50g が残った状態で所要 150g なら追加しない。
+  const checkedId = "20000000-0000-4000-8000-000000000042";
+  const priorDeltaId = "20000000-0000-4000-8000-000000000043";
+  const current = makeShoppingList([
+    makeItem({
+      id: checkedId,
+      quantityValue: 100,
+      quantityText: "100g",
+      unit: "g",
+      isChecked: true,
+    }),
+    makeItem({
+      id: priorDeltaId,
+      quantityValue: 50,
+      quantityText: "50g",
+      unit: "g",
+    }),
+  ]);
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    key: "carrot-150",
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    storeSection: "produce",
+    quantityValue: 150,
+    quantityText: "150g",
+    unit: "g",
+  };
+  const diff = computeShoppingDiff(current, next);
+  expect(diff.add).toEqual([]);
+  expect(diff.replace).toEqual([]);
+  expect(diff.remove).toEqual([]);
+  expect(diff.protectedItemIds).toEqual([checkedId]);
+});
+
+it("does not assign protected name fallback across different units (SHOP12)", () => {
+  // 購入済み unit=本 に exact が無く、draft が同名 unit=g だけのとき unit 跨ぎ review しない。
+  const checkedId = "20000000-0000-4000-8000-000000000044";
+  const current = makeShoppingList([
+    makeItem({
+      id: checkedId,
+      displayName: "にんじん",
+      normalizedName: "にんじん",
+      quantityValue: 1,
+      quantityText: "1本",
+      unit: "本",
+      isChecked: true,
+    }),
+  ]);
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    key: "carrot-100g",
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    storeSection: "produce",
+    quantityValue: 100,
+    quantityText: "100g",
+    unit: "g",
+  };
+  const diff = computeShoppingDiff(current, next);
+  // fallback で reverse せず、draft 行はそのまま add（unit 不一致の review を付けない）
+  expect(diff.add).toEqual([
+    expect.objectContaining({
+      key: "carrot-100g",
+      quantityValue: 100,
+      quantityText: "100g",
+      unit: "g",
+      pantryCheckRequired: false,
+    }),
+  ]);
+  expect(diff.add.some((item) => item.key.includes("_review_"))).toBe(false);
+  expect(diff.protectedItemIds).toEqual([checkedId]);
+});
+
+it("assigns protected name fallback only when unit matches (SHOP12)", () => {
+  // exact key 不一致（quantityText / store 等で ambiguous 側）でも同 unit なら review 可。
+  const checkedId = "20000000-0000-4000-8000-000000000045";
+  const current = makeShoppingList([
+    makeItem({
+      id: checkedId,
+      displayName: "にんじん",
+      normalizedName: "にんじん",
+      quantityValue: null,
+      quantityText: "適量",
+      unit: null,
+      storeSection: "produce",
+      isChecked: true,
+    }),
+  ]);
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    key: "carrot-small",
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    storeSection: "produce",
+    quantityValue: null,
+    quantityText: "少々",
+    unit: null,
+  };
+  const diff = computeShoppingDiff(current, next);
+  expect(diff.add).toEqual([
+    expect.objectContaining({
+      key: `carrot-small_review_${checkedId}`,
+      quantityText: "少々",
+      unit: null,
+      pantryCheckRequired: true,
+    }),
+  ]);
+  expect(diff.protectedItemIds).toEqual([checkedId]);
+});
 
 it.each(["plain-first", "protected-first"] as const)(
   "prioritizes a protected ambiguous exact match for %s order",
@@ -365,10 +514,26 @@ it("keeps a removed row and proposes its larger known delta or unknown review it
     quantityValue: 2,
     quantityText: "2本",
   });
-  next.items[0] = { ...next.items[0], quantityValue: null, quantityText: "適量", unit: null };
+  // 同 unit の ambiguous 所要は exact 不一致でも unit 一致 fallback で review（在庫確認）
+  next.items[0] = {
+    ...next.items[0]!,
+    quantityValue: null,
+    quantityText: "適量",
+    unit: "本",
+  };
   expect(computeShoppingDiff(makeShoppingList([removed]), next).add[0]).toMatchObject({
     pantryCheckRequired: true,
+    unit: "本",
   });
+  // SHOP12: unit 不一致（本 vs null）は protected review に紐づけない
+  next.items[0] = { ...next.items[0]!, quantityValue: null, quantityText: "適量", unit: null };
+  const crossUnit = computeShoppingDiff(makeShoppingList([removed]), next);
+  expect(crossUnit.add[0]).toMatchObject({
+    quantityText: "適量",
+    unit: null,
+    pantryCheckRequired: false,
+  });
+  expect(crossUnit.add[0]?.key.includes("_review_")).toBe(false);
 });
 
 it("does not treat milli-rounded float noise as a quantity replace (SP-I2)", () => {

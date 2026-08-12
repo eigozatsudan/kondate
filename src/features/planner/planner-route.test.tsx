@@ -539,7 +539,11 @@ vi.mock("@/features/generation/model/pending-generation-meta", async (importOrig
 });
 
 import { PlannerPage, PlannerRoutePage } from "./planner-route";
-import { runPlannerLeaveFlush } from "./planner-leave-flush";
+import {
+  registerPlannerLeaveFlush,
+  resetPlannerLeaveNavigateFlightForTests,
+  runPlannerLeaveFlush,
+} from "./planner-leave-flush";
 
 function createDeferred<T>(): {
   promise: Promise<T>;
@@ -557,6 +561,9 @@ function createDeferred<T>(): {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // P1/P2: 前テストの leave flight / register が次へ漏れないよう解除
+  registerPlannerLeaveFlush(null);
+  resetPlannerLeaveNavigateFlightForTests();
   autosaveInputs.length = 0;
   autosaveFlushMode.mode = "save";
   autosaveUiState.state = "saved";
@@ -1263,6 +1270,82 @@ it("P2: leave flush の DraftRevisionConflictError は通信文言を立てな�
   expect(
     screen.queryByText(
       "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
+    ),
+  ).toBeNull();
+});
+
+it("P1: leave flush 中は generate をガードし startGeneration / 二重 flush しない", async () => {
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  const startGeneration = vi.fn().mockResolvedValue(true);
+  render(<PlannerPage startGeneration={startGeneration} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  const leavePromise = runPlannerLeaveFlush();
+  await vi.waitFor(() => {
+    expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+  });
+
+  // leaveInFlightRef で onSubmit を同期抑止（mock は disabled でも props 直呼び）
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  await props.onSubmit();
+  expect(startGeneration).not.toHaveBeenCalled();
+  expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+
+  deferred.resolve({ ...draft, revision: 4 });
+  await expect(leavePromise).resolves.toBe("proceed");
+  expect(startGeneration).not.toHaveBeenCalled();
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+});
+
+it("P1: leave flush 中は emergency / settings をガードする", async () => {
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  render(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  const leavePromise = runPlannerLeaveFlush();
+  await vi.waitFor(() => {
+    expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+  });
+
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  props.onOpenEmergencyMenus?.();
+  props.onOpenSettings?.();
+  expect(navigateMock).not.toHaveBeenCalledWith("/emergency-menus");
+  expect(navigateMock).not.toHaveBeenCalledWith("/settings");
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+
+  deferred.resolve({ ...draft, revision: 4 });
+  await expect(leavePromise).resolves.toBe("proceed");
+  expect(navigateMock).not.toHaveBeenCalledWith("/emergency-menus");
+  expect(navigateMock).not.toHaveBeenCalledWith("/settings");
+});
+
+it("P3: 生成 flush の DraftRevisionConflictError は汎用保存失敗文言を立てない", async () => {
+  autosaveFlushMode.mode = "conflict";
+  const startGeneration = vi.fn().mockResolvedValue(true);
+  const user = userEvent.setup();
+  render(<PlannerPage startGeneration={startGeneration} />);
+
+  await user.click(screen.getByRole("button", { name: "確認を反映" }));
+  await user.click(screen.getByRole("button", { name: "生成" }));
+
+  await vi.waitFor(() => {
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+  expect(
+    screen.queryByText("献立条件を保存できなかったため、生成を開始しませんでした。"),
+  ).toBeNull();
+  // Incomplete 専用文言も出さない（conflict は chrome 一本化）
+  expect(
+    screen.queryByText(
+      "人数など必要な条件が未設定のため、生成を開始しませんでした。確認画面で内容を見直してください。",
     ),
   ).toBeNull();
 });

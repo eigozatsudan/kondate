@@ -1,8 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
+import { PLANNER_TARGET_MEMBER_LIMIT } from "@shared/contracts/planner";
 import { AppToastProvider } from "@/shared/ui/app-toast";
 import type { PlannerSafetyMember } from "../planner-safety-member";
 import { AudienceStep } from "./audience-step";
@@ -95,6 +96,47 @@ describe("AudienceStep layout and selected safety summary", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /家族設定を変更/ })).toBeInTheDocument();
     expect(screen.getByText("献立に合わせる家族を1人以上選んでください")).toBeInTheDocument();
+  });
+
+  it("P8: targetMemberIds onChange は LIMIT 超を slice する（disable 回避の連打相当）", () => {
+    const members: PlannerSafetyMember[] = Array.from(
+      { length: PLANNER_TARGET_MEMBER_LIMIT + 1 },
+      (_, index) => ({
+        id: `70000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        displayName: `家族${index + 1}`,
+        ageBandLabel: "大人",
+        allergyLabel: "アレルギーなし",
+        safetyLabels: [],
+        blockedReason: null,
+      }),
+    );
+    const selectedIds = members.slice(0, PLANNER_TARGET_MEMBER_LIMIT).map((member) => member.id);
+    const onChange = vi.fn();
+    renderAudience(
+      <AudienceStep
+        value={{
+          targetMode: "household",
+          targetMemberIds: selectedIds,
+          servings: null,
+        }}
+        eligibleMembers={members}
+        onChange={onChange}
+        onNext={vi.fn()}
+      />,
+    );
+
+    const overflow = screen.getByRole("checkbox", {
+      name: new RegExp(members[PLANNER_TARGET_MEMBER_LIMIT]!.displayName),
+    });
+    expect(overflow).toBeDisabled();
+    // UI disable をすり抜ける経路でも live 配列が LIMIT を超えないこと
+    overflow.removeAttribute("disabled");
+    fireEvent.click(overflow);
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0]?.[0] as { targetMemberIds: string[] };
+    expect(next.targetMemberIds).toHaveLength(PLANNER_TARGET_MEMBER_LIMIT);
+    expect(next.targetMemberIds).not.toContain(members[PLANNER_TARGET_MEMBER_LIMIT]!.id);
   });
 });
 
