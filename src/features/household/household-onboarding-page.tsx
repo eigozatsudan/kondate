@@ -228,6 +228,12 @@ export function HouseholdOnboardingForm({
   const latestSaveVersion = useRef(0);
   // H2: draft CAS 基準 updated_at。同一タブ直列 save では成功後に進める。
   const draftUpdatedAtRef = useRef<string | undefined>(undefined);
+  /**
+   * H13: アレルギー 0 件のまま `allergy_status=registered` を DB に書かない。
+   * settings の pendingRegisteredIntents と同方向。UI は registered 表示し、
+   * 初回アレルゲン追加成功時に初めて PATCH する。complete ゲートは従来どおり 0 件拒否。
+   */
+  const pendingRegisteredRef = useRef(false);
   const [customAllergy, setCustomAllergy] = useState("");
   const [customConfirmed, setCustomConfirmed] = useState(false);
   const [completeError, setCompleteError] = useState(false);
@@ -278,6 +284,8 @@ export function HouseholdOnboardingForm({
   // 同一 draft のサーバ再読込 updated_at では進めない（直列 save 成功時のみ save 側が進める）。
   useEffect(() => {
     draftUpdatedAtRef.current = draft?.updated_at;
+    // 別 draft へ移るときは pending registered も捨てる（H13）
+    pendingRegisteredRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- id 切替のみ。updated_at は save 成功で進める
   }, [draft?.id]);
   const completeMembers = members.filter((member) => member.status === "complete");
@@ -302,8 +310,13 @@ export function HouseholdOnboardingForm({
   const allergies = allergiesQuery.data ?? [];
 
   const replaceMember = (member: HouseholdMemberRow) => {
+    // H13: pending 中はサーバ正本が registered 以外でも UI を registered に保つ
+    const next =
+      pendingRegisteredRef.current && member.status === "draft"
+        ? { ...member, allergy_status: "registered" as const }
+        : member;
     queryClient.setQueryData<HouseholdMemberRow[]>(householdKeys.members(userId), (current = []) =>
-      current.map((item) => (item.id === member.id ? member : item)),
+      current.map((item) => (item.id === next.id ? next : item)),
     );
   };
 
@@ -456,6 +469,10 @@ export function HouseholdOnboardingForm({
             ?.find((row) => row.id === memberId);
           if (latest !== undefined) {
             draftUpdatedAtRef.current = latest.updated_at;
+            // H13: refetch 後も deferred registered の UI 選択を落とさない
+            if (pendingRegisteredRef.current) {
+              replaceMember(latest);
+            }
           }
         }
         if (saveVersion === latestSaveVersion.current) {
@@ -471,6 +488,15 @@ export function HouseholdOnboardingForm({
     // 保存失敗はキュー内で処理し、後続操作を止めない。
     saveQueue.current = queuedSave;
     return queuedSave;
+  };
+
+  /** H13: 初回アレルゲン追加後に deferred registered を DB へコミット */
+  const commitPendingRegisteredIfNeeded = async (): Promise<void> => {
+    if (!pendingRegisteredRef.current) return;
+    const ok = await save({ allergy_status: "registered" });
+    if (ok) {
+      pendingRegisteredRef.current = false;
+    }
   };
 
   /**
@@ -890,6 +916,29 @@ export function HouseholdOnboardingForm({
             }
             onChange={(event) => {
               const value = event.target.value;
+              if (value === "registered") {
+                // H13: アレルゲン証拠が無い registered は DB に書かず UI のみ進める
+                // （settings pendingRegistered + H-R1 と同方向。complete は 0 件拒否のまま）
+                const hasAllergyEvidence = allergiesQuery.isSuccess && allergies.length > 0;
+                if (!hasAllergyEvidence) {
+                  pendingRegisteredRef.current = true;
+                  // この select は draft 画面内のみ。UI のみ registered へ進め DB は後で commit
+                  queryClient.setQueryData<HouseholdMemberRow[]>(
+                    householdKeys.members(userId),
+                    (current = []) =>
+                      current.map((item) =>
+                        item.id === draft.id
+                          ? { ...item, allergy_status: "registered" as const }
+                          : item,
+                      ),
+                  );
+                  return;
+                }
+                pendingRegisteredRef.current = false;
+                void save({ allergy_status: "registered" });
+                return;
+              }
+              pendingRegisteredRef.current = false;
               void save({ allergy_status: value === "" ? null : value });
             }}
           >
@@ -980,6 +1029,8 @@ export function HouseholdOnboardingForm({
                 await queryClient.invalidateQueries({
                   queryKey: householdKeys.allergies(userId, memberId),
                 });
+                // H13: 初回追加で deferred registered を DB へ
+                await commitPendingRegisteredIfNeeded();
               }}
               addCustom={async (memberId, name, aliases) => {
                 if (actionPendingRef.current) return;
@@ -988,6 +1039,7 @@ export function HouseholdOnboardingForm({
                 await queryClient.invalidateQueries({
                   queryKey: householdKeys.allergies(userId, memberId),
                 });
+                await commitPendingRegisteredIfNeeded();
               }}
               remove={async (allergyId) => {
                 if (actionPendingRef.current) return;
@@ -1049,6 +1101,7 @@ export function HouseholdOnboardingForm({
                       queryKey: householdKeys.allergies(userId, draft.id),
                     }),
                   )
+                  .then(() => commitPendingRegisteredIfNeeded())
                   .then(() => {
                     setCustomAllergy("");
                     setCustomConfirmed(false);

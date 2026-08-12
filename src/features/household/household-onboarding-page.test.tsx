@@ -1036,3 +1036,99 @@ it("H7: waits for catalog before showing AllergyEditor", async () => {
     expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
   });
 });
+
+// H13: 0 件 registered は DB に即書きせず、初回アレルゲン追加でコミット
+it("H13: defers empty registered allergy_status until first allergen is added", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
+  let currentDraft = draft;
+  const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
+    currentDraft = { ...currentDraft, ...patch, updated_at: "2026-07-11T00:00:01.000Z" };
+    membersState.upsert(currentDraft);
+    return Promise.resolve(currentDraft);
+  });
+  const addStandardAllergy = vi.fn().mockResolvedValue({
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  });
+  const listAllergies = vi
+    .fn()
+    .mockResolvedValueOnce([])
+    .mockResolvedValue([
+      {
+        id: "allergy-egg",
+        user_id: "user-1",
+        member_id: "member-1",
+        allergen_id: "egg",
+        custom_name: null,
+        custom_aliases: [] as string[],
+        custom_confirmed: false,
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]);
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    updateDraft,
+    listAllergies,
+    listCatalog: vi.fn().mockResolvedValue([
+      {
+        id: "egg",
+        display_name: "卵",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]),
+    listAliases: vi.fn().mockResolvedValue([]),
+    addStandardAllergy,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  // UI は registered でも、証拠なしでは updateDraft を呼ばない
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
+  });
+  expect(updateDraft).not.toHaveBeenCalledWith(
+    "member-1",
+    expect.objectContaining({ allergy_status: "registered" }),
+    expect.anything(),
+  );
+
+  // 年齢変更など他項目は従来どおり保存できる
+  await user.selectOptions(screen.getByLabelText("年齢のめやす"), "adult");
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ age_band: "adult" }),
+      expect.any(String),
+    );
+  });
+  // 年齢 save 後も allergy_status は patch に載せない（pending のみ）
+  const registeredEarlyPatches = updateDraft.mock.calls.filter(
+    (call) => call[1].allergy_status === "registered",
+  );
+  expect(registeredEarlyPatches).toHaveLength(0);
+
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+  });
+  await user.click(screen.getByRole("button", { name: "卵を追加" }));
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalledWith("member-1", "egg");
+  });
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
+    );
+  });
+});

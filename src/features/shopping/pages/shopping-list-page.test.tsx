@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   householdSafetyChangedEvent,
-  householdSafetyRevisionStorageKey,
+  householdSafetyRevisionKey,
 } from "@/features/household/household-queries";
 import {
   createShoppingListRequestSchema,
@@ -407,7 +407,8 @@ describe("ShoppingListPage safety gate", () => {
     act(() => {
       window.dispatchEvent(
         new StorageEvent("storage", {
-          key: householdSafetyRevisionStorageKey,
+          // H12: invalidate は user-scoped revision key のみ受理
+          key: householdSafetyRevisionKey(OWNER_ID),
           newValue: crypto.randomUUID(),
         }),
       );

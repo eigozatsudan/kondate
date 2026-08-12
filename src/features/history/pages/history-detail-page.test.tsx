@@ -14,7 +14,7 @@ import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context
 import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
 import {
   householdSafetyChangedEvent,
-  householdSafetyRevisionStorageKey,
+  householdSafetyRevisionKey,
 } from "@/features/household/household-queries";
 import { pendingShoppingCommandStorageKey } from "@/features/shopping/api/shopping-api";
 import type { RevalidationResult } from "../api/revalidation-api";
@@ -315,7 +315,8 @@ function renderMenuResultPage(
 function dispatchHouseholdSafetyStorageEvent(): void {
   window.dispatchEvent(
     new StorageEvent("storage", {
-      key: householdSafetyRevisionStorageKey,
+      // H12: invalidate は user-scoped revision key のみ
+      key: householdSafetyRevisionKey(USER_ID),
       newValue: crypto.randomUUID(),
     }),
   );
