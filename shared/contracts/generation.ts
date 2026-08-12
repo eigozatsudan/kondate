@@ -105,8 +105,9 @@ export const menuTimelineStepSchema = z
   .object({
     id: z.uuid(),
     position: z.number().int().positive(),
-    startMinute: z.number().int().nonnegative(),
-    durationMinutes: z.number().int().positive(),
+    // S10: totalElapsed max 180 に揃えた天井（病理的巨大 duration を構造拒否）
+    startMinute: z.number().int().nonnegative().max(180),
+    durationMinutes: z.number().int().positive().max(180),
     instruction: z.string().trim().min(1).max(500),
     dishId: z.uuid().nullable(),
     recipeStepId: z.uuid().nullable(),

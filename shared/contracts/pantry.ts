@@ -66,7 +66,8 @@ const pantryUsageObjectSchema = z
     inventoryQuantity: nullableQuantitySchema,
     shortageQuantity: z.number().min(0).max(999_999).multipleOf(0.001).nullable(),
     unit: nullableUnitSchema,
-    dishIds: z.array(z.uuid()),
+    // S10: AI dishRefs.max(5) と揃え、病理的巨大配列を構造拒否
+    dishIds: z.array(z.uuid()).max(5),
     unusedReason: boundedCanonicalText(1, 200).nullable(),
   })
   .strict();

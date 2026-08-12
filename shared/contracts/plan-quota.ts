@@ -1,22 +1,32 @@
 /**
- * 製品 max の mjs 正本（preflight と共有）。TS 側はこの import を介して単一点化（S4）。
- * 数値そのものの無断変更は禁止。
+ * planQuota 製品定数のうち、TS（plan-quota.ts）と mjs（preflight 等）が
+ * 共有する単一正本（S1: 数値ミラーの二重定義を禁止）。
+ *
+ * 製品 max / Free 枠自体の引き上げ時は plan-quota-constants.mjs だけを改訂し、
+ * 本ファイル・function-budget・env の text 引数・テスト期待を同期する。
+ * 運用値（ENV の GLOBAL_DAILY_AI_LIMIT）の引き上げは ENV のみで足りる。
  */
-import { GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX as productMaxFromShared } from "./plan-quota-constants.mjs";
+import {
+  FREE_ATTEMPTS_PER_DAY,
+  FREE_SHORT_WINDOW_LIMIT,
+  FREE_SHORT_WINDOW_SECONDS,
+  FREE_SUCCESS_PER_DAY,
+  GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX as productMaxFromShared,
+} from "./plan-quota-constants.mjs";
 
 /** プラン別製品上限と DB/Zod 防御天井。設計 2026-07-29 L6–L9。 */
 export const planQuota = {
   free: {
-    successPerDay: 3,
-    attemptsPerDay: 6,
-    shortWindowLimit: 4,
-    shortWindowSeconds: 600,
+    successPerDay: FREE_SUCCESS_PER_DAY,
+    attemptsPerDay: FREE_ATTEMPTS_PER_DAY,
+    shortWindowLimit: FREE_SHORT_WINDOW_LIMIT,
+    shortWindowSeconds: FREE_SHORT_WINDOW_SECONDS,
   },
   plus: {
     successPerDay: 10,
     attemptsPerDay: 20,
     shortWindowLimit: 8,
-    shortWindowSeconds: 600,
+    shortWindowSeconds: FREE_SHORT_WINDOW_SECONDS,
   },
   quality: {
     perDay: 3,
