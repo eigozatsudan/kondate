@@ -64,7 +64,7 @@ export function SharedRecipesPage() {
     <div className="space-y-4">
       <h1 className="text-xl font-bold">共有レシピ</h1>
       <p className="text-xs text-amber-800">
-        構造化されたレシピ本文（料理名・材料・手順など）を含みます。外部共有・スクショ・チャット貼付をしないでください。閲覧専用で、無効化などの変更操作はありません。
+        共有プールの匿名化済み本文です。外部共有・スクショ・チャット貼付をしないでください。閲覧専用です。
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <Stat label="active（全体）" value={list.data?.activeCount ?? "—"} />
@@ -194,7 +194,7 @@ export function SharedRecipesPage() {
           {detail.data && (
             <div className="space-y-3 text-sm">
               <p className="text-xs text-amber-800">
-                構造化本文です。外部共有・スクショ・チャット貼付をしないでください。
+                共有プールの匿名化済み本文です。外部共有・スクショ・チャット貼付をしないでください。閲覧専用です。
               </p>
               <div className="grid gap-1 sm:grid-cols-2">
                 <p>
