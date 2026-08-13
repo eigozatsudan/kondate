@@ -12,7 +12,7 @@ import {
 } from "./household-api";
 import { EASE_SOFT_NOT_SWALLOW_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { HouseholdOnboardingForm, type HouseholdOnboardingApi } from "./household-onboarding-page";
-import { householdKeys } from "./household-queries";
+import { householdKeys, householdSafetyChangedEvent } from "./household-queries";
 import { UNSUPPORTED_DIET_KIND_LABELS } from "./unsupported-diet-copy";
 
 /** オンボーディング unit は useAppToast 前提のため Provider を同梱する */
@@ -2094,4 +2094,104 @@ it("H16: keeps residual delete after catalog refetch error", async () => {
     expect(client.getQueryState(["household", "allergen-catalog"])?.status).toBe("error");
   });
   expect(screen.getByRole("button", { name: "卵を削除" })).toBeVisible();
+});
+
+// H11: 既定 staleTime 内の空 success cache を正本扱いしない。complete 時だけ fresh を取る。
+it("H11: refuses none-complete when stale empty cache hides a residual allergy", async () => {
+  const user = userEvent.setup();
+  const noneDraft = residualNoneDraft();
+  const completeMember = vi.fn();
+  const listAllergies = vi.fn().mockResolvedValue([residualEggAllergy]);
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([noneDraft]),
+    getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
+    listAllergies,
+    completeMember,
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  client.setQueryData(householdKeys.members("user-1"), [noneDraft]);
+  client.setQueryData(householdKeys.profile("user-1"), mockProfile("in_progress"));
+  client.setQueryData(householdKeys.allergies("user-1", "member-1"), []);
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(await screen.findByRole("button", { name: "この家族の設定を完了する" })).toBeEnabled();
+  expect(listAllergies).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
+
+  await waitFor(() => {
+    expect(listAllergies).toHaveBeenCalled();
+  });
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(screen.getAllByText(/以前登録したアレルギーが残っています/u).length).toBeGreaterThan(0);
+});
+
+// H11: /onboarding も AppShell と同型に householdSafetyChangedEvent を受けて再取得する
+it("H11: invalidates allergies when householdSafetyChangedEvent fires", async () => {
+  const noneDraft = residualNoneDraft();
+  const listMembers = vi.fn().mockResolvedValue([noneDraft]);
+  const listAllergies = vi.fn().mockResolvedValue([]);
+  const api = baseApi({
+    listMembers,
+    listAllergies,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const allergiesKey = householdKeys.allergies("user-1", "member-1");
+  const membersKey = householdKeys.members("user-1");
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await waitFor(() => {
+    expect(listAllergies).toHaveBeenCalledTimes(1);
+    expect(client.getQueryState(allergiesKey)?.status).toBe("success");
+  });
+  const membersCallsBefore = listMembers.mock.calls.length;
+
+  act(() => {
+    window.dispatchEvent(new CustomEvent(householdSafetyChangedEvent));
+  });
+
+  await waitFor(() => {
+    expect(listAllergies.mock.calls.length).toBeGreaterThan(1);
+    expect(listMembers.mock.calls.length).toBeGreaterThan(membersCallsBefore);
+  });
+  expect(client.getQueryState(allergiesKey)?.status).toBe("success");
+  expect(client.getQueryState(membersKey)?.status).toBe("success");
+});
+
+// H12: 空 success の refetch 中は旧 [] のまま complete しない
+it("H12: refuses none-complete while empty allergies cache is refetching", async () => {
+  const user = userEvent.setup();
+  const noneDraft = residualNoneDraft();
+  const hang = deferred<(typeof residualEggAllergy)[]>();
+  const listAllergies = vi.fn().mockResolvedValue([]);
+  const completeMember = vi.fn();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([noneDraft]),
+    listAllergies,
+    completeMember,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const allergiesKey = householdKeys.allergies("user-1", "member-1");
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await waitFor(() => {
+    expect(client.getQueryState(allergiesKey)?.status).toBe("success");
+  });
+
+  listAllergies.mockImplementation(() => hang.promise);
+  act(() => {
+    void client.refetchQueries({ queryKey: allergiesKey });
+  });
+  await waitFor(() => {
+    expect(client.getQueryState(allergiesKey)?.fetchStatus).toBe("fetching");
+  });
+
+  await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
+
+  expect(completeMember).not.toHaveBeenCalled();
 });
