@@ -972,6 +972,39 @@ export function HouseholdOnboardingForm({
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
   }
 
+  const isResidualAllergyStatus =
+    draft.allergy_status === "none" || draft.allergy_status === "unconfirmed";
+  // H2: 残針そのもの。H14 の catalog 待ちはこの上に掛ける
+  const hasResidualAllergies =
+    isResidualAllergyStatus && allergiesQuery.isSuccess && allergies.length > 0;
+  const catalogProvided = api.listCatalog !== undefined;
+  // H14: listCatalog がある残針は catalog 成功まで出さない。未提供 API は既存 fallback
+  const residualCatalogPending = hasResidualAllergies && catalogProvided && catalogQuery.isPending;
+  const residualCatalogFailed =
+    hasResidualAllergies && catalogProvided && catalogQuery.isError && !catalogQuery.isPending;
+  const showResidualAllergyEditor =
+    hasResidualAllergies && (!catalogProvided || catalogQuery.isSuccess);
+  // H7: registered は catalog/aliases 成功まで Editor を出さない（変更しない）
+  const showRegisteredCatalogPending =
+    draft.allergy_status === "registered" &&
+    catalogProvided &&
+    (catalogQuery.isPending || (api.listAliases !== undefined && aliasesQuery.isPending));
+  const showRegisteredCatalogFailed =
+    draft.allergy_status === "registered" &&
+    catalogProvided &&
+    (catalogQuery.isError || (api.listAliases !== undefined && aliasesQuery.isError)) &&
+    !catalogQuery.isPending &&
+    !(api.listAliases !== undefined && aliasesQuery.isPending);
+  const showRegisteredAllergyEditor =
+    draft.allergy_status === "registered" &&
+    catalogProvided &&
+    catalogQuery.isSuccess &&
+    (api.listAliases === undefined || aliasesQuery.isSuccess);
+  // H13: 残針 Editor が出ているとき（none/unconfirmed + 残針）または registered は
+  // allergyError を出す（settings の setMessage 相当）
+  const showAllergyError =
+    allergyError !== null && (draft.allergy_status === "registered" || hasResidualAllergies);
+
   return (
     <main className="page-frame stack">
       <div>
@@ -1126,47 +1159,35 @@ export function HouseholdOnboardingForm({
             </button>
           </div>
         )}
-        {draft.allergy_status === "registered" && allergyError !== null && (
+        {showAllergyError && (
           <p className="error-message" role="alert">
             {allergyError}
           </p>
         )}
-        {/* H7: catalog/aliases 成功まで Editor を出さない（settings の全画面待ちと同趣旨の fail-early）。
-            未提供の API はゲート対象外（disabled query の isPending 永続を避ける）。 */}
-        {draft.allergy_status === "registered" &&
-          api.listCatalog !== undefined &&
-          (catalogQuery.isPending || (api.listAliases !== undefined && aliasesQuery.isPending)) && (
-            <p className="type-small" role="status">
-              アレルギー候補を読み込んでいます…
-            </p>
-          )}
-        {draft.allergy_status === "registered" &&
-          api.listCatalog !== undefined &&
-          (catalogQuery.isError || (api.listAliases !== undefined && aliasesQuery.isError)) &&
-          !catalogQuery.isPending &&
-          !(api.listAliases !== undefined && aliasesQuery.isPending) && (
-            <div className="stack" role="alert">
-              <p className="error-message">アレルギー候補を読み込めませんでした。</p>
-              <button
-                className="secondary-button min-h-11"
-                type="button"
-                onClick={() => {
-                  void catalogQuery.refetch();
-                  if (api.listAliases !== undefined) void aliasesQuery.refetch();
-                }}
-              >
-                再試行
-              </button>
-            </div>
-          )}
-        {/* H2: なし／未確認の残針は catalog 待ちせず削除専用リストを出す。追加 UI は出さない。 */}
-        {((draft.allergy_status === "none" || draft.allergy_status === "unconfirmed") &&
-          allergiesQuery.isSuccess &&
-          allergies.length > 0) ||
-        (draft.allergy_status === "registered" &&
-          api.listCatalog !== undefined &&
-          catalogQuery.isSuccess &&
-          (api.listAliases === undefined || aliasesQuery.isSuccess)) ? (
+        {/* H7: registered は catalog/aliases 成功まで Editor を出さない。
+            H14: 残針も listCatalog があるときは catalog 成功まで出さない。 */}
+        {(showRegisteredCatalogPending || residualCatalogPending) && (
+          <p className="type-small" role="status">
+            アレルギー候補を読み込んでいます…
+          </p>
+        )}
+        {(showRegisteredCatalogFailed || residualCatalogFailed) && (
+          <div className="stack" role="alert">
+            <p className="error-message">アレルギー候補を読み込めませんでした。</p>
+            <button
+              className="secondary-button min-h-11"
+              type="button"
+              onClick={() => {
+                void catalogQuery.refetch();
+                if (api.listAliases !== undefined) void aliasesQuery.refetch();
+              }}
+            >
+              再試行
+            </button>
+          </div>
+        )}
+        {/* H2: なし／未確認の残針は削除専用。H14: catalog 成功後に名前付きで出す。 */}
+        {showResidualAllergyEditor || showRegisteredAllergyEditor ? (
           <AllergyEditor
             memberId={draft.id}
             catalog={catalogQuery.data ?? []}

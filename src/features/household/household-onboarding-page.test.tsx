@@ -1915,3 +1915,131 @@ it("H5: refuses none-complete while allergies query is pending", async () => {
   );
   expect(completeMember).not.toHaveBeenCalled();
 });
+
+const residualEggAllergy = {
+  id: "allergy-egg",
+  user_id: "user-1",
+  member_id: "member-1",
+  allergen_id: "egg",
+  custom_name: null,
+  custom_aliases: [] as string[],
+  custom_confirmed: false,
+  created_at: "2026-07-11T00:00:00.000Z",
+};
+
+const residualWheatAllergy = {
+  id: "allergy-wheat",
+  user_id: "user-1",
+  member_id: "member-1",
+  allergen_id: "wheat",
+  custom_name: null,
+  custom_aliases: [] as string[],
+  custom_confirmed: false,
+  created_at: "2026-07-11T00:00:00.000Z",
+};
+
+const eggWheatCatalog = [
+  {
+    id: "egg",
+    display_name: "卵",
+    regulatory_class: "standard",
+    catalog_version: "2026-07-11",
+    created_at: "2026-07-11T00:00:00.000Z",
+  },
+  {
+    id: "wheat",
+    display_name: "小麦",
+    regulatory_class: "standard",
+    catalog_version: "2026-07-11",
+    created_at: "2026-07-11T00:00:00.000Z",
+  },
+];
+
+function residualNoneDraft(): HouseholdMemberRow {
+  return {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+}
+
+// H13: 残針 removeOnly の削除失敗も allergyError を出す（registered ゲートを外す）
+it("H13: shows allergyError alert when residual removeAllergy rejects", async () => {
+  const user = userEvent.setup();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([residualNoneDraft()]),
+    listAllergies: vi.fn().mockResolvedValue([residualEggAllergy]),
+    listCatalog: vi.fn().mockResolvedValue(eggWheatCatalog),
+    listAliases: vi.fn().mockResolvedValue([]),
+    removeAllergy: vi.fn().mockRejectedValue(new Error("アレルギーを削除できませんでした")),
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />);
+
+  await user.click(await screen.findByRole("button", { name: "卵を削除" }));
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveClass("error-message");
+  expect(alert).toHaveTextContent("アレルギーを削除できませんでした");
+});
+
+it("H13: shows persist-failed copy when residual remove RPC succeeds but the row remains", async () => {
+  const user = userEvent.setup();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([residualNoneDraft()]),
+    listAllergies: vi.fn().mockResolvedValue([residualEggAllergy]),
+    listCatalog: vi.fn().mockResolvedValue(eggWheatCatalog),
+    listAliases: vi.fn().mockResolvedValue([]),
+    removeAllergy: vi.fn().mockResolvedValue(undefined),
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />);
+
+  await user.click(await screen.findByRole("button", { name: "卵を削除" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("削除を反映できませんでした");
+});
+
+// H14: 残針リストは catalog 成功まで出さない（無名削除ボタンを出さない）
+it("H14: waits for catalog before naming residual delete buttons", async () => {
+  type CatalogRow = {
+    id: string;
+    display_name: string;
+    regulatory_class: string;
+    catalog_version: string;
+    created_at: string;
+  };
+  let resolveCatalog: ((value: CatalogRow[]) => void) | undefined;
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([residualNoneDraft()]),
+    listAllergies: vi.fn().mockResolvedValue([residualEggAllergy, residualWheatAllergy]),
+    listCatalog: vi.fn(
+      () =>
+        new Promise<CatalogRow[]>((resolve) => {
+          resolveCatalog = resolve;
+        }),
+    ),
+    listAliases: vi.fn().mockResolvedValue([]),
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />);
+
+  await waitFor(() => {
+    expect(screen.getByText(/アレルギー候補を読み込んでいます/u)).toBeVisible();
+  });
+  expect(
+    screen.queryByRole("button", { name: /名前を表示できない項目を削除/u }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "卵を削除" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "小麦を削除" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "残っているアレルギー" })).not.toBeInTheDocument();
+
+  await waitFor(() => {
+    expect(resolveCatalog).toBeDefined();
+  });
+  resolveCatalog?.(eggWheatCatalog);
+
+  expect(await screen.findByRole("button", { name: "卵を削除" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "小麦を削除" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /名前を表示できない項目を削除/u }),
+  ).not.toBeInTheDocument();
+});
