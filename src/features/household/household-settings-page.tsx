@@ -813,11 +813,13 @@ export function HouseholdSettingsForm({
       // invalidateQueries の既定 refetchType=active では再取得されず、
       // getQueryData が追加前の空配列のまま残る → H8 が誤って registered を止める。
       // fetchQuery で選択中かどうかに依らずサーバ一覧を正本として取り直す（H5 remove と同型）。
+      // H1: mutation 後の allergies 正本確認は stale cache を使わない。
       let listed: MemberAllergyRow[];
       try {
         listed = await queryClient.fetchQuery({
           queryKey: householdKeys.allergies(userId, memberId),
           queryFn: () => api.listAllergies(memberId),
+          staleTime: 0,
         });
       } catch {
         // 一覧再取得失敗時は registered を確定しない（H8 と同方向の fail-closed）
@@ -1788,9 +1790,11 @@ export function HouseholdSettingsForm({
                     }
                     await api.removeAllergy(allergyId);
                     // H5: RPC は所有外でも silent success。再取得で行残存を検知し利用者へ示す（RPC 契約は変えない）。
+                    // H1: AppProviders の staleTime 30s だと削除前キャッシュが fresh になり queryFn が走らない。
                     const afterRemove = await queryClient.fetchQuery({
                       queryKey: householdKeys.allergies(userId, selected.id),
                       queryFn: () => api.listAllergies(selected.id),
+                      staleTime: 0,
                     });
                     if (afterRemove.some((row) => row.id === allergyId)) {
                       if (selectedMemberIdRef.current === selected.id) {

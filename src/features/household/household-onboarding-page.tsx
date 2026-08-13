@@ -1165,10 +1165,12 @@ export function HouseholdOnboardingForm({
                 try {
                   setAllergyError(null);
                   // H5: silent RPC 後に再取得で行残存を検知（settings と同型）
+                  // H1: 既定 staleTime 内の削除前キャッシュを正本扱いしない。
                   await api.removeAllergy?.(allergyId);
                   const afterRemove = await queryClient.fetchQuery({
                     queryKey: householdKeys.allergies(userId, draft.id),
                     queryFn: () => api.listAllergies(draft.id),
+                    staleTime: 0,
                   });
                   if (afterRemove.some((row) => row.id === allergyId)) {
                     setAllergyError(

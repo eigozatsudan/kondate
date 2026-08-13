@@ -135,7 +135,7 @@ const walnutAllergy = standardAllergy;
  */
 async function renderSettings(
   overrides: Partial<HouseholdSettingsApi> = {},
-  options: { startClosed?: boolean } = {},
+  options: { startClosed?: boolean; staleTime?: number } = {},
 ) {
   const updateMember = vi.fn().mockResolvedValue(member);
   const invalidateSafety = vi.fn().mockResolvedValue(undefined);
@@ -157,7 +157,15 @@ async function renderSettings(
     invalidateSafety,
     ...overrides,
   };
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // 既定は staleTime 未指定（= 0）。H1 再現だけ本番 AppProviders と同じ 30s を渡す。
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        ...(options.staleTime === undefined ? {} : { staleTime: options.staleTime }),
+      },
+    },
+  });
   render(
     <QueryClientProvider client={queryClient}>
       <AppToastProvider>
@@ -3544,6 +3552,44 @@ it("H5: surfaces delete miss when allergy row remains after RPC success", async 
   await waitFor(() => {
     expect(screen.getByRole("status")).toHaveTextContent("アレルギーの削除を反映できませんでした");
   });
+});
+
+// H1: 本番 staleTime 30s でも削除後 fetchQuery はサーバ再取得し、誤検知せず invalidate する
+it("H1: post-delete fetchQuery bypasses stale cache so safety invalidate runs", async () => {
+  const registeredMember = { ...member, allergy_status: "registered" as const };
+  const customAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "えんどう豆たんぱく",
+    custom_confirmed: true,
+  };
+  // 初回キャッシュは 2 件。RPC 後の正本は残 1 件（stale cache を読むと誤検知する）
+  const listAllergies = vi
+    .fn()
+    .mockResolvedValueOnce([standardAllergy, customAllergy])
+    .mockResolvedValue([customAllergy]);
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  const { invalidateSafety } = await renderSettings(
+    {
+      listMembers: vi.fn().mockResolvedValue([registeredMember]),
+      listAllergies,
+      removeAllergy,
+    },
+    { staleTime: 30_000 },
+  );
+
+  const listCallsBeforeRemove = listAllergies.mock.calls.length;
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  expect(screen.queryByText("アレルギーの削除を反映できませんでした")).not.toBeInTheDocument();
+  expect(listAllergies.mock.calls.length).toBeGreaterThan(listCallsBeforeRemove);
 });
 
 // H12: draft でも empty registered を DB に即書きせず、初回アレルゲン追加で commit（onboarding H13 と同方向）
