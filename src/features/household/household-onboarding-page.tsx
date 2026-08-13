@@ -94,6 +94,8 @@ const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
 const ADD_SCOPE_NOTICE_TITLE_ID = "onboarding-add-scope-notice-title";
 /** H5: 一覧未確定のまま「なし／未確認」完了すると残針を見落としたまま complete できる */
 const ALLERGIES_LIST_PENDING_MESSAGE = "アレルギー一覧の読み込みが終わるまで待ってください";
+/** H15: 残針があるのに catalog 未確定だと削除 UI が無く「なし」完了できる */
+const ALLERGEN_CATALOG_PENDING_MESSAGE = "アレルギー候補の読み込みが終わるまで待ってください";
 
 const ONBOARDING_FIELD_ORDER = [
   "ageBand",
@@ -151,6 +153,22 @@ function isOnboardingAllergyListUnverified(
     return false;
   }
   return query.isPending || (!query.isSuccess && cachedCount === 0);
+}
+
+/**
+ * H15: 残針が確定しているときだけ catalog を見る。H5 の allergies 関門は広げない。
+ * pending、または listCatalog ありで data が無い（初回 error / success でも未着）なら未確定。
+ * refetch error で直前 data が残る場合は確定済み（H16）。
+ */
+function isOnboardingResidualCatalogUnverified(
+  hasResidualAllergies: boolean,
+  catalogProvided: boolean,
+  query: { isPending: boolean; data: unknown },
+): boolean {
+  if (!hasResidualAllergies || !catalogProvided) {
+    return false;
+  }
+  return query.isPending || query.data === undefined;
 }
 
 function firstOnboardingFieldError(
@@ -779,6 +797,22 @@ export function HouseholdOnboardingForm({
       ) {
         nextErrors.allergyStatus = ALLERGIES_LIST_PENDING_MESSAGE;
       }
+      // H15: 残針があるのに catalog 未確定だと削除 UI が無く「なし」完了できる。
+      // H5 は allergies だけ。catalog は残針が確定しているときだけ見る。
+      const hasResidualNow =
+        (draftNow.allergy_status === "none" || draftNow.allergy_status === "unconfirmed") &&
+        allergiesQuery.isSuccess &&
+        allergiesNow.length > 0;
+      if (
+        Object.keys(nextErrors).length === 0 &&
+        isOnboardingResidualCatalogUnverified(
+          hasResidualNow,
+          api.listCatalog !== undefined,
+          catalogQuery,
+        )
+      ) {
+        nextErrors.allergyStatus = ALLERGEN_CATALOG_PENDING_MESSAGE;
+      }
       if (Object.keys(nextErrors).length > 0) {
         setFieldErrors(nextErrors);
         const lead = firstOnboardingFieldError(nextErrors);
@@ -978,12 +1012,17 @@ export function HouseholdOnboardingForm({
   const hasResidualAllergies =
     isResidualAllergyStatus && allergiesQuery.isSuccess && allergies.length > 0;
   const catalogProvided = api.listCatalog !== undefined;
-  // H14: listCatalog がある残針は catalog 成功まで出さない。未提供 API は既存 fallback
+  // H14: listCatalog がある残針は catalog 初回到着まで出さない。未提供 API は既存 fallback
+  // H16: 初回 data があれば refetch error でも名前付き削除を残す（isSuccess だけにしない）
+  const residualCatalogUnresolved = isOnboardingResidualCatalogUnverified(
+    hasResidualAllergies,
+    catalogProvided,
+    catalogQuery,
+  );
   const residualCatalogPending = hasResidualAllergies && catalogProvided && catalogQuery.isPending;
   const residualCatalogFailed =
     hasResidualAllergies && catalogProvided && catalogQuery.isError && !catalogQuery.isPending;
-  const showResidualAllergyEditor =
-    hasResidualAllergies && (!catalogProvided || catalogQuery.isSuccess);
+  const showResidualAllergyEditor = hasResidualAllergies && !residualCatalogUnresolved;
   // H7: registered は catalog/aliases 成功まで Editor を出さない（変更しない）
   const showRegisteredCatalogPending =
     draft.allergy_status === "registered" &&
@@ -1131,16 +1170,14 @@ export function HouseholdOnboardingForm({
           </select>
         </label>
 
-        {/* H2: settings 相当の residual 警告。なし／未確認でも member_allergies 残存を説明する */}
+        {/* H2: settings 相当の residual 警告。H15: 「削除できます」は Editor が出ているときだけ */}
+        {showResidualAllergyEditor && (
+          <p className="type-small" role="status">
+            {RESIDUAL_ALLERGY_WARNING}
+          </p>
+        )}
         {(draft.allergy_status === "none" || draft.allergy_status === "unconfirmed") &&
-          allergiesQuery.isSuccess &&
-          allergies.length > 0 && (
-            <p className="type-small" role="status">
-              {RESIDUAL_ALLERGY_WARNING}
-            </p>
-          )}
-        {(draft.allergy_status === "none" || draft.allergy_status === "unconfirmed") &&
-          (allergiesQuery.isError || allergiesQuery.isPending) && (
+          (allergiesQuery.isError || allergiesQuery.isPending || residualCatalogUnresolved) && (
             <p className="type-small" role="status">
               {RESIDUAL_ALLERGY_UNVERIFIED_WARNING}
             </p>

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AppToastProvider } from "@/shared/ui/app-toast";
@@ -2042,4 +2042,56 @@ it("H14: waits for catalog before naming residual delete buttons", async () => {
   expect(
     screen.queryByRole("button", { name: /名前を表示できない項目を削除/u }),
   ).not.toBeInTheDocument();
+});
+
+// H15: catalog 失敗中は「下の一覧から削除できます」を出さず、残針のまま complete しない
+it("H15: does not claim residual can be deleted or complete while catalog rejected", async () => {
+  const user = userEvent.setup();
+  const completeMember = vi.fn();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([residualNoneDraft()]),
+    listAllergies: vi.fn().mockResolvedValue([residualEggAllergy]),
+    listCatalog: vi.fn().mockRejectedValue(new Error("アレルギー候補を読み込めませんでした")),
+    listAliases: vi.fn().mockResolvedValue([]),
+    completeMember,
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />);
+
+  await waitFor(() => {
+    expect(screen.getByText(/アレルギー候補を読み込めませんでした/u)).toBeVisible();
+  });
+  expect(screen.queryByText(/下の一覧から削除できます/u)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "卵を削除" })).not.toBeInTheDocument();
+
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+
+  expect(completeMember).not.toHaveBeenCalled();
+});
+
+// H16: 初回 catalog 成功後の refetch error でも名前付き削除を残す
+it("H16: keeps residual delete after catalog refetch error", async () => {
+  const listCatalog = vi.fn().mockResolvedValue(eggWheatCatalog);
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([residualNoneDraft()]),
+    listAllergies: vi.fn().mockResolvedValue([residualEggAllergy]),
+    listCatalog,
+    listAliases: vi.fn().mockResolvedValue([]),
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(await screen.findByRole("button", { name: "卵を削除" })).toBeVisible();
+  expect(client.getQueryState(["household", "allergen-catalog"])?.status).toBe("success");
+
+  listCatalog.mockRejectedValue(new Error("アレルギー候補を読み込めませんでした"));
+  await act(async () => {
+    await client
+      .refetchQueries({ queryKey: ["household", "allergen-catalog"] })
+      .catch(() => undefined);
+  });
+
+  await waitFor(() => {
+    expect(client.getQueryState(["household", "allergen-catalog"])?.status).toBe("error");
+  });
+  expect(screen.getByRole("button", { name: "卵を削除" })).toBeVisible();
 });
