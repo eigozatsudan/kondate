@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import { expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { COLD_START_SESSION_DEADLINE_MS } from "./auth-provider";
 import type { AuthGateway } from "./auth-gateway";
 import {
   LOGIN_EMAIL_HINT,
@@ -526,3 +527,75 @@ it.each([
     expect(sendMagicLink).toHaveBeenCalledWith("user@example.com", expected);
   },
 );
+
+describe("C6: login form while auth is loading", () => {
+  const useAuthMock = vi.mocked(useAuth);
+
+  afterEach(() => {
+    useAuthMock.mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    });
+    vi.useRealTimers();
+  });
+
+  it("does not show Google start CTA while status is loading past 15s", async () => {
+    useAuthMock.mockReturnValue({
+      status: "loading",
+      session: null,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    });
+    vi.useFakeTimers();
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn(),
+      resumeFlow: vi.fn(),
+      confirmMagicLink: vi.fn(),
+    };
+
+    render(
+      <MemoryRouter>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Googleで続ける" })).toBeNull();
+    expect(screen.getByText("読み込み中…")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS + 1_000);
+    });
+
+    expect(screen.queryByRole("button", { name: "Googleで続ける" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "ログイン用メールを送る" })).toBeNull();
+    expect(screen.getByText("読み込み中…")).toBeInTheDocument();
+  });
+
+  it("shows Google start CTA when unauthenticated", () => {
+    useAuthMock.mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    });
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn(),
+      resumeFlow: vi.fn(),
+      confirmMagicLink: vi.fn(),
+    };
+
+    render(
+      <MemoryRouter>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+  });
+});
