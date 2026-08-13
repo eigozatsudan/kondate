@@ -585,14 +585,12 @@ async function sendMenuGenerationWithRuntime(
       if (!dishOutput.success) {
         throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
       }
-      assertWithinDeadline();
-      const result: OpenRouterGenerationResult = {
+      // G5: schema 成功後は chat timeoutMs で捨てない。未完了/不正は下の catch が deadline を優先する。
+      return {
         mode: "replacement_dish",
         output: dishOutput.data,
         modelId: envelope.data.model,
       };
-      assertWithinDeadline();
-      return result;
     }
 
     if (mode === "flyer_weekly") {
@@ -600,14 +598,11 @@ async function sendMenuGenerationWithRuntime(
       if (!flyerOutput.success) {
         throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
       }
-      assertWithinDeadline();
-      const result: OpenRouterGenerationResult = {
+      return {
         mode: "flyer_weekly",
         output: flyerOutput.data,
         modelId: envelope.data.model,
       };
-      assertWithinDeadline();
-      return result;
     }
 
     // full_menu は provider wire を検査してから既存の内部 union へ閉じる。
@@ -615,22 +610,19 @@ async function sendMenuGenerationWithRuntime(
     if (!wire.success) {
       throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
     }
-    assertWithinDeadline();
     let output: AiGenerationResponse;
     try {
       output = toAiGenerationResponse(wire.data);
     } catch {
       throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
     }
-    assertWithinDeadline();
-    const result: OpenRouterGenerationResult = {
+    return {
       mode: "full_menu",
       output,
       modelId: envelope.data.model,
     };
-    assertWithinDeadline();
-    return result;
   } catch (error) {
+    // 成功 return はここに来ない。HTTP 未完了 / 未読 / JSON・schema 失敗だけ deadline 再判定する。
     assertWithinDeadline();
     throw error;
   } finally {
