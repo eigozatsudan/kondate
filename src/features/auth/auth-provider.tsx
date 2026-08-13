@@ -120,7 +120,7 @@ function isSessionPinActive(guard: ResidualSessionGuard): boolean {
 }
 
 /**
- * C14 / C16–C18: fail-closed 中または stale-era で見た prior access_token を denylist に残す。
+ * C14 / C16–C19: fail-closed 中または stale-era / quarantine leftover で見た prior access_token を denylist に残す。
  * login-era の世代ずれは呼び出し側で捨てるだけでここへ来ない（C18）。
  * トークン文字列はログしない。空は識別不能なので無視する。
  */
@@ -146,10 +146,6 @@ function isStaleEraProbe(probeGeneration: number, failClosedGeneration: number):
   return failClosedGeneration >= 0 && probeGeneration < failClosedGeneration;
 }
 
-function isLoginEraProbe(probeGeneration: number, failClosedGeneration: number): boolean {
-  return failClosedGeneration >= 0 && probeGeneration >= failClosedGeneration;
-}
-
 type PendingRawSessionProbe = {
   generation: number;
 };
@@ -159,13 +155,6 @@ function hasPendingStaleEraRawProbe(
   failClosedGeneration: number,
 ): boolean {
   return probes.some((probe) => isStaleEraProbe(probe.generation, failClosedGeneration));
-}
-
-function hasPendingLoginEraRawProbe(
-  probes: readonly PendingRawSessionProbe[],
-  failClosedGeneration: number,
-): boolean {
-  return probes.some((probe) => isLoginEraProbe(probe.generation, failClosedGeneration));
 }
 
 function releasePendingRawSessionProbe(
@@ -342,12 +331,12 @@ export function AuthProvider({
    */
   const failClosedGenerationRef = useRef(-1);
   /**
-   * C16–C18: fail-closed 後〜非 stale の成功 apply まで。SDK メモリ leftover / TOKEN_REFRESHED を閉じる。
+   * C16–C19: fail-closed 後〜非 stale の成功 apply まで。SDK メモリ leftover / TOKEN_REFRESHED を閉じる。
    * signOut は呼ばない（clearPersistedAuthOnColdStartFailClosed の Tradeoff: hang と同系で固着し得る）。
    */
   const sessionQuarantineRef = useRef(false);
   /**
-   * C16–C18: residual onComplete の refreshSession だけ quarantine 中でも apply する。
+   * C16–C20: residual onComplete の refreshSession だけ quarantine / denylist を通過して apply する。
    */
   const trustNextRefreshRef = useRef(false);
   /**
@@ -428,16 +417,18 @@ export function AuthProvider({
    * @returns 適用したか（false = 後着差し替えを抑止）
    */
   const applyAuthSession = useCallback(
-    (nextSession: Session | null): boolean => {
+    (nextSession: Session | null, options?: { bypassStaleDenylist?: boolean }): boolean => {
       // C4: fail-closed 中は遅延 getSession / onAuthStateChange の非 null を復活させない
       // C14: fail-closed 中に見た token は denylist へ。re-arm 後も同じ prior session は apply しない。
       // C16–C18: 観測は stale-era / fail-closed のみ。login-era 世代ずれは refreshSession 側で捨てる。
+      // C20: residual onComplete の 1 回だけ denylist を通過する（誤って焼いた B をマジック完了で復活）。
       if (nextSession !== null && coldStartFailClosedRef.current) {
         rememberStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession);
         return false;
       }
       if (
         nextSession !== null &&
+        !options?.bypassStaleDenylist &&
         isDeniedStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession)
       ) {
         return false;
@@ -687,17 +678,21 @@ export function AuthProvider({
         }
         if (
           data.session !== null &&
+          !trustThisRefresh &&
           isDeniedStaleAccessToken(staleAccessTokenDenylistRef.current, data.session)
         ) {
           return;
         }
         // C17: quarantine 中の世代一致 leftover は remember して apply しない（SDK メモリ）。
-        // residual onComplete の trust だけマジック完了として通す。
+        // C20: residual onComplete の trust は quarantine remember と denylist の両方を通過する。
         if (data.session !== null && sessionQuarantineRef.current && !trustThisRefresh) {
           rememberStaleAccessToken(staleAccessTokenDenylistRef.current, data.session);
           return;
         }
-        applyAuthSession(data.session);
+        applyAuthSession(
+          data.session,
+          trustThisRefresh ? { bypassStaleDenylist: true } : undefined,
+        );
         hasResolvedSessionOnce.current = true;
         setSessionProbeDegraded(false);
         setLoaded(true);
@@ -710,7 +705,12 @@ export function AuthProvider({
         return;
       }
       // 一時エラーの累積も cold-start deadline で fail-closed（C5）
-      if (Date.now() - beganAt >= COLD_START_SESSION_DEADLINE_MS) {
+      // C22: re-arm 後（login 開始済み）は世代を上げず fail-closed を再武装しない。
+      // 初回 cold-start の deadline 枝だけが世代境界を決める。
+      if (
+        Date.now() - beganAt >= COLD_START_SESSION_DEADLINE_MS &&
+        !(failClosedGenerationRef.current >= 0 && !coldStartFailClosedRef.current)
+      ) {
         sessionProbeGenerationRef.current += 1;
         failClosedGenerationRef.current = sessionProbeGenerationRef.current;
         coldStartFailClosedRef.current = true;
@@ -747,8 +747,10 @@ export function AuthProvider({
         return;
       }
       if (nextSession !== null && sessionQuarantineRef.current) {
-        // C17: TOKEN_REFRESHED / INITIAL_SESSION は leftover 回転。event 名を見て apply しない。
+        // C17 / C19: TOKEN_REFRESHED / INITIAL_SESSION は leftover 回転。apply せず token を学習する。
+        // 後続 SIGNED_IN が回転 leftover を正規 IdP 扱いしない。
         if (event !== "SIGNED_IN") {
+          rememberStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession);
           return;
         }
         // C14 / C16 / C18: SIGNED_IN。denylist ヒットは上で拒否済み。
@@ -760,13 +762,9 @@ export function AuthProvider({
           return;
         }
         // C16: stale-era raw が未 settle なら prior SIGNED_IN を学習して拒否。
-        // C18: login-era probe が in-flight なら正規 B の同 tick SIGNED_IN を通す。
+        // login-era が同時に pending でも例外にしない（両方 pending の prior を apply しない）。
         if (
           hasPendingStaleEraRawProbe(
-            pendingRawSessionProbesRef.current,
-            failClosedGenerationRef.current,
-          ) &&
-          !hasPendingLoginEraRawProbe(
             pendingRawSessionProbesRef.current,
             failClosedGenerationRef.current,
           )
@@ -912,7 +910,7 @@ export function AuthProvider({
       ...(restrictToFlowId === undefined ? {} : { restrictToFlowId }),
       onComplete: (result) => {
         publishCompletionSafely({ flowId: result.flowId, returnTo: result.returnTo });
-        // C16–C18: マジック完了の refresh だけ quarantine 中でも apply する
+        // C16–C20: マジック完了の refresh は quarantine と denylist を通過して apply する
         trustNextRefreshRef.current = true;
         void refreshSession();
         // C14 / C1: completion listener（C16）と同型の path / waiting ガード。
