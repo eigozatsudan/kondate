@@ -45,6 +45,8 @@ export const SIGN_OUT_TIMEOUT_MS = 4_000;
 const MAGIC_LINK_RESIDUAL_KEYS = [
   "kondate.auth.lastMagicEmail",
   "kondate.auth.magicSentUi",
+  // C2: タブ局所の「今開始した login flow」。logout / 401 後に次ユーザの residual target にしない
+  "kondate.auth.active-login-flow",
 ] as const;
 
 /**
@@ -231,6 +233,22 @@ export function clearSoftSessionResidualBestEffort(): void {
   }
   // C4: origin 共有 suppress（secret を焼かずに新タブ含む residual silent complete を閉じる）
   markSoftResidualRecoverySuppressed();
+}
+
+/**
+ * C5: 401 / session 失効用。session + 草稿は消すが R3 keep
+ * （flow / pending / PKCE / callback-owner）は残す。
+ * 明示 logout / アカウント削除は clearLocalAuthAndDrafts（全所有キー）のまま。
+ */
+export async function clearExpiredSessionAuthAndDrafts(
+  client: SupabaseClient<Database>,
+): Promise<void> {
+  try {
+    await withTimeout(signOutBestEffort(client, "local"), SIGN_OUT_TIMEOUT_MS);
+  } catch {
+    // timeout / throw — storage は下で soft residual する
+  }
+  clearSoftSessionResidualBestEffort();
 }
 
 async function signOutBestEffort(

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/shared/types/database";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
 import {
+  clearExpiredSessionAuthAndDrafts,
   clearLocalAuthAndDrafts,
   clearOwnedLocalDataBestEffort,
   clearSoftResidualRecoverySuppressed,
@@ -145,6 +146,53 @@ describe("clearLocalAuthAndDrafts", () => {
       expect(storage.getItem("kondate:preferences")).toBe("keep-me");
     }
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
+  });
+
+  it("C5: expired-session cleanup keeps sibling flow/pending/PKCE and clears session persist", async () => {
+    const flowId = "10000000-0000-4000-8000-0000000000c5";
+    const flowKey = `kondate.auth.flow.${flowId}`;
+    const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
+    const ownerKey = `kondate.auth.supabase.callback-owner.${flowId}`;
+    localStorage.setItem(
+      flowKey,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "http://127.0.0.1:5173",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    localStorage.setItem(
+      pendingKey,
+      JSON.stringify({
+        state: "B".repeat(43),
+        code: "authorization-code-plain",
+        expiresAtMs: Date.now() + 60_000,
+      }),
+    );
+    localStorage.setItem(ownerKey, new Date().toISOString());
+    localStorage.setItem("kondate.auth.supabase-code-verifier", "pkce-verifier");
+    localStorage.setItem("kondate.auth.supabase", '{"access_token":"session"}');
+    localStorage.setItem("kondate:generation:v2", '{"kind":"x"}');
+
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const client = {
+      auth: { signOut },
+    } as unknown as SupabaseClient<Database>;
+
+    await clearExpiredSessionAuthAndDrafts(client);
+
+    expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(localStorage.getItem(flowKey)).not.toBeNull();
+    expect(localStorage.getItem(pendingKey)).not.toBeNull();
+    expect(localStorage.getItem(ownerKey)).not.toBeNull();
+    expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe("pkce-verifier");
+    expect(localStorage.getItem("kondate.auth.supabase")).toBeNull();
+    expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
+    expect(isSoftResidualRecoverySuppressed()).toBe(true);
   });
 
   it("C4/R3: soft residual clears drafts/session/completion but preserves sibling flow secrets", () => {

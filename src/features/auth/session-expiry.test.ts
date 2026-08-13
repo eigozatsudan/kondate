@@ -1,14 +1,22 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Database } from "@/shared/types/database";
 import {
   redirectToLoginForExpiredSession,
   resetSessionExpiryRedirectForTests,
 } from "./session-expiry";
 
-const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn());
+const clearExpiredSessionAuthAndDraftsMock = vi.hoisted(() =>
+  vi.fn<(client: SupabaseClient<Database>) => Promise<void>>(),
+);
 
-vi.mock("./auth-cleanup", () => ({
-  clearLocalAuthAndDrafts: clearLocalAuthAndDraftsMock,
-}));
+vi.mock("./auth-cleanup", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./auth-cleanup")>();
+  return {
+    ...actual,
+    clearExpiredSessionAuthAndDrafts: clearExpiredSessionAuthAndDraftsMock,
+  };
+});
 
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({ id: "browser-client" }),
@@ -17,8 +25,8 @@ vi.mock("@/shared/lib/supabase", () => ({
 describe("redirectToLoginForExpiredSession", () => {
   beforeEach(() => {
     resetSessionExpiryRedirectForTests();
-    clearLocalAuthAndDraftsMock.mockReset();
-    clearLocalAuthAndDraftsMock.mockResolvedValue(undefined);
+    clearExpiredSessionAuthAndDraftsMock.mockReset();
+    clearExpiredSessionAuthAndDraftsMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -32,7 +40,7 @@ describe("redirectToLoginForExpiredSession", () => {
       replaceLocation,
     });
 
-    expect(clearLocalAuthAndDraftsMock).toHaveBeenCalledTimes(1);
+    expect(clearExpiredSessionAuthAndDraftsMock).toHaveBeenCalledTimes(1);
     expect(replaceLocation).toHaveBeenCalledWith("/login?sessionExpired=1&returnTo=%2Fgeneration");
   });
 
@@ -56,7 +64,7 @@ describe("redirectToLoginForExpiredSession", () => {
 
   it("is a no-op while a redirect is already in flight (concurrent)", async () => {
     let resolveCleanup: (() => void) | undefined;
-    clearLocalAuthAndDraftsMock.mockReturnValue(
+    clearExpiredSessionAuthAndDraftsMock.mockReturnValue(
       new Promise<void>((resolve) => {
         resolveCleanup = resolve;
       }),
@@ -68,7 +76,7 @@ describe("redirectToLoginForExpiredSession", () => {
     await first;
     await second;
 
-    expect(clearLocalAuthAndDraftsMock).toHaveBeenCalledTimes(1);
+    expect(clearExpiredSessionAuthAndDraftsMock).toHaveBeenCalledTimes(1);
     expect(replaceLocation).toHaveBeenCalledTimes(1);
   });
 
@@ -77,7 +85,7 @@ describe("redirectToLoginForExpiredSession", () => {
     await redirectToLoginForExpiredSession({ returnTo: "/planner", replaceLocation });
     await redirectToLoginForExpiredSession({ returnTo: "/generation", replaceLocation });
 
-    expect(clearLocalAuthAndDraftsMock).toHaveBeenCalledTimes(2);
+    expect(clearExpiredSessionAuthAndDraftsMock).toHaveBeenCalledTimes(2);
     expect(replaceLocation).toHaveBeenNthCalledWith(
       1,
       "/login?sessionExpired=1&returnTo=%2Fplanner",
@@ -103,7 +111,7 @@ describe("redirectToLoginForExpiredSession", () => {
   });
 
   it("still navigates when cleanup throws", async () => {
-    clearLocalAuthAndDraftsMock.mockRejectedValueOnce(new Error("storage"));
+    clearExpiredSessionAuthAndDraftsMock.mockRejectedValueOnce(new Error("storage"));
     const replaceLocation = vi.fn();
     await redirectToLoginForExpiredSession({ returnTo: "/planner", replaceLocation });
     expect(replaceLocation).toHaveBeenCalledWith("/login?sessionExpired=1&returnTo=%2Fplanner");
@@ -111,7 +119,7 @@ describe("redirectToLoginForExpiredSession", () => {
 
   it("still navigates when cleanup never settles (A2)", async () => {
     vi.useFakeTimers();
-    clearLocalAuthAndDraftsMock.mockReturnValue(new Promise(() => undefined));
+    clearExpiredSessionAuthAndDraftsMock.mockReturnValue(new Promise(() => undefined));
     const replaceLocation = vi.fn();
     const pending = redirectToLoginForExpiredSession({
       returnTo: "/planner",
@@ -122,5 +130,53 @@ describe("redirectToLoginForExpiredSession", () => {
     await pending;
     expect(replaceLocation).toHaveBeenCalledWith("/login?sessionExpired=1&returnTo=%2Fplanner");
     vi.useRealTimers();
+  });
+
+  it("C5: expiry redirect keeps sibling flow/pending and clears session persist", async () => {
+    const { clearExpiredSessionAuthAndDrafts } =
+      await vi.importActual<typeof import("./auth-cleanup")>("./auth-cleanup");
+    clearExpiredSessionAuthAndDraftsMock.mockImplementation(clearExpiredSessionAuthAndDrafts);
+
+    const flowId = "10000000-0000-4000-8000-0000000000c5";
+    const flowKey = `kondate.auth.flow.${flowId}`;
+    const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
+    window.localStorage.setItem(
+      flowKey,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "http://127.0.0.1:5173",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    window.localStorage.setItem(
+      pendingKey,
+      JSON.stringify({
+        state: "B".repeat(43),
+        code: "authorization-code-plain",
+        expiresAtMs: Date.now() + 60_000,
+      }),
+    );
+    window.localStorage.setItem(
+      "kondate.auth.supabase",
+      JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+    );
+
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const replaceLocation = vi.fn();
+    await redirectToLoginForExpiredSession({
+      returnTo: "/planner",
+      replaceLocation,
+      client: { auth: { signOut } } as unknown as SupabaseClient<Database>,
+    });
+
+    expect(replaceLocation).toHaveBeenCalledWith("/login?sessionExpired=1&returnTo=%2Fplanner");
+    expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(window.localStorage.getItem(flowKey)).not.toBeNull();
+    expect(window.localStorage.getItem(pendingKey)).not.toBeNull();
+    expect(window.localStorage.getItem("kondate.auth.supabase")).toBeNull();
   });
 });
