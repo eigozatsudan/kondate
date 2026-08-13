@@ -528,6 +528,25 @@ describe("auth flow storage", () => {
     }
   });
 
+  it("C38: non-UUID pin is treated as absent so suppress stays on", async () => {
+    const { isSoftResidualRecoverySuppressed, SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY } =
+      await import("./soft-residual-recovery-suppress");
+    window.localStorage.setItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY, "1");
+    window.localStorage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, "not-a-uuid");
+    window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    try {
+      expect(isSoftResidualRecoverySuppressed()).toBe(true);
+      expect(readActiveLoginFlowId()).toBeUndefined();
+      // read が不正値を消しても pin 無しのまま suppress を維持する
+      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
+      expect(isSoftResidualRecoverySuppressed()).toBe(true);
+    } finally {
+      window.localStorage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    }
+  });
+
   it("removes non-finite and over-TTL flow and callback timestamps", () => {
     const storage = new MapStorage();
     const invalidFlowId = "10000000-0000-4000-8000-000000000001";

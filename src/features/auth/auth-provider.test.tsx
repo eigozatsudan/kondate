@@ -2276,6 +2276,37 @@ describe("AuthProvider", () => {
     }
   });
 
+  it("C38: suppress + non-UUID local pin does not start /login residual", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem("kondate.auth.soft-residual-recovery-suppress", "1");
+    window.localStorage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, "not-a-uuid");
+    const startRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+    startRecovery.mockReturnValue(vi.fn());
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    // 不正 pin は pin 無し扱い。suppress を維持し全件 residual を開始しない
+    expect(startRecovery).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+  });
+
   it("C4: fail-closed stays unauthenticated after hung getSession settles; createAuthFlow applies only a new session", async () => {
     vi.useFakeTimers();
     try {

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /**
  * C4/R3/R4: soft residual 後の residual recovery 抑止印と、意図的 login 再開時の re-arm。
  *
@@ -96,14 +98,18 @@ function isSoftResidualRecoverySuppressFlagSet(): boolean {
 }
 
 /**
- * C36: 開始タブの session/local pin があるか。
+ * C36/C38: 開始タブの session/local pin があるか。
  * auth-flow を import すると循環するため、同じキーをここで読む。
+ * readActiveLoginFlowId と同じ z.uuid。不正値は pin 無し（ここでは消さない）。
  */
+const activeLoginFlowIdSchema = z.uuid();
+
 function hasReadableActiveLoginFlowId(): boolean {
   const read = (storage: Storage): boolean => {
     try {
       const raw = storage.getItem("kondate.auth.active-login-flow");
-      return raw !== null && raw.length > 0;
+      if (raw === null || raw.length === 0) return false;
+      return activeLoginFlowIdSchema.safeParse(raw).success;
     } catch {
       return false;
     }
@@ -114,9 +120,10 @@ function hasReadableActiveLoginFlowId(): boolean {
 }
 
 /**
- * C4/C36: residual recovery を抑止するか。
- * local（または r2 session）suppress が立っていて、readActiveLoginFlowId 相当の pin が無いときだけ true。
+ * C4/C36/C38: residual recovery を抑止するか。
+ * local（または r2 session）suppress が立っていて、readActiveLoginFlowId 相当の UUID pin が無いときだけ true。
  * 開始タブは session pin があるので false → residual を開始できる。他タブは pin 無し + suppress 残で true。
+ * 不正 pin は pin 無し扱い。read がキーを消しても true のまま（restrict 無し全件 residual を開かない）。
  */
 export function isSoftResidualRecoverySuppressed(): boolean {
   if (!isSoftResidualRecoverySuppressFlagSet()) return false;
