@@ -89,6 +89,49 @@ const autosaveUiState = vi.hoisted((): { state: "idle" | "saving" | "saved" | "e
   state: "saved",
 }));
 const navigateMock = vi.hoisted(() => vi.fn());
+/** P5: PlannerRoutePage の POP useBlocker。Router 無し unit が throw しないよう default unblocked。 */
+const blockerHarness = vi.hoisted(() => {
+  const proceed = vi.fn();
+  const reset = vi.fn();
+  const location = {
+    pathname: "/planner",
+    search: "",
+    hash: "",
+    state: null,
+    key: "default",
+  };
+  type BlockerState = "unblocked" | "blocked" | "proceeding";
+  type ShouldBlock = (args: {
+    historyAction: "POP" | "PUSH" | "REPLACE";
+    currentLocation: { pathname: string };
+    nextLocation: { pathname: string };
+  }) => boolean;
+  // state ごとに安定した identity。rerender で blocked にしたときだけ effect が再走するようにする。
+  const snapshots: Record<
+    BlockerState,
+    { state: BlockerState; proceed: typeof proceed; reset: typeof reset; location: typeof location }
+  > = {
+    unblocked: { state: "unblocked", proceed, reset, location },
+    blocked: { state: "blocked", proceed, reset, location },
+    proceeding: { state: "proceeding", proceed, reset, location },
+  };
+  const harness: {
+    state: BlockerState;
+    proceed: typeof proceed;
+    reset: typeof reset;
+    lastShouldBlock: ShouldBlock | undefined;
+    current: () => (typeof snapshots)[BlockerState];
+  } = {
+    state: "unblocked",
+    proceed,
+    reset,
+    lastShouldBlock: undefined,
+    current() {
+      return snapshots[this.state];
+    },
+  };
+  return harness;
+});
 const setQueryDataMock = vi.hoisted(() => vi.fn());
 // ensureQueryData 実装が cached を any にせず unknown として扱えるよう戻り値を明示する
 const getQueryDataMock = vi.hoisted(() => vi.fn<(queryKey: readonly unknown[]) => unknown>());
@@ -117,6 +160,17 @@ vi.mock("react-router", async (importOriginal) => {
     useNavigate: () => navigateMock,
     // Router 未 wrap の unit でも resume query を読めるようにする
     useSearchParams: () => [new URLSearchParams(queryState.search), vi.fn()],
+    // P5: data router 必須の useBlocker を差し替え。既存 PlannerRoutePage テストが throw しない。
+    useBlocker: (
+      shouldBlock: (args: {
+        historyAction: "POP" | "PUSH" | "REPLACE";
+        currentLocation: { pathname: string };
+        nextLocation: { pathname: string };
+      }) => boolean,
+    ) => {
+      blockerHarness.lastShouldBlock = shouldBlock;
+      return blockerHarness.current();
+    },
     // FlyerWeeklyPanel の Free CTA が Link を使うため、Router 無しでも描画できるよう差し替え
     Link: ({
       to,
@@ -568,6 +622,9 @@ function createDeferred<T>(): {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // P5: 前テストの blocked が次の PlannerRoutePage mount で即 flush しないよう戻す
+  blockerHarness.state = "unblocked";
+  blockerHarness.lastShouldBlock = undefined;
   // P1/P2: 前テストの leave flight / register が次へ漏れないよう解除
   registerPlannerLeaveFlush(null);
   resetPlannerLeaveNavigateFlightForTests();
@@ -2375,6 +2432,64 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+  });
+
+  it("POP blocker calls proceed when leave flush returns proceed", async () => {
+    const view = render(<PlannerRoutePage />);
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+    });
+
+    blockerHarness.state = "blocked";
+    view.rerender(<PlannerRoutePage />);
+
+    await vi.waitFor(() => {
+      expect(blockerHarness.proceed).toHaveBeenCalled();
+    });
+    expect(blockerHarness.reset).not.toHaveBeenCalled();
+  });
+
+  it("POP blocker calls reset and not proceed when leave flush returns blocked", async () => {
+    autosaveFlushMode.mode = "network_error";
+    const view = render(<PlannerRoutePage />);
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+    });
+
+    blockerHarness.state = "blocked";
+    view.rerender(<PlannerRoutePage />);
+
+    await vi.waitFor(() => {
+      expect(blockerHarness.reset).toHaveBeenCalled();
+    });
+    expect(blockerHarness.proceed).not.toHaveBeenCalled();
+  });
+
+  it("does not block PUSH navigations", () => {
+    render(<PlannerRoutePage />);
+    const shouldBlock = blockerHarness.lastShouldBlock;
+    expect(shouldBlock).toEqual(expect.any(Function));
+    expect(
+      shouldBlock?.({
+        historyAction: "PUSH",
+        currentLocation: { pathname: "/planner" },
+        nextLocation: { pathname: "/generation" },
+      }),
+    ).toBe(false);
+    expect(
+      shouldBlock?.({
+        historyAction: "REPLACE",
+        currentLocation: { pathname: "/planner" },
+        nextLocation: { pathname: "/settings" },
+      }),
+    ).toBe(false);
+    expect(
+      shouldBlock?.({
+        historyAction: "POP",
+        currentLocation: { pathname: "/planner" },
+        nextLocation: { pathname: "/history" },
+      }),
+    ).toBe(true);
   });
 });
 

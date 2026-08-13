@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router";
+import { NavigationType, useBlocker, useNavigate, useSearchParams } from "react-router";
 import type { PantryItem } from "@shared/contracts/pantry";
 import {
   collectPlannerRequestText,
@@ -69,7 +69,11 @@ import {
   plannerKeys,
   savePlannerDraft,
 } from "./planner-api";
-import { navigateAfterPlannerLeaveFlush, registerPlannerLeaveFlush } from "./planner-leave-flush";
+import {
+  navigateAfterPlannerLeaveFlush,
+  registerPlannerLeaveFlush,
+  runPlannerLeaveFlush,
+} from "./planner-leave-flush";
 import { useDraftAutosave } from "./use-draft-autosave";
 
 /** ホームに載せる直近献立の件数上限（詰め込みすぎない）。 */
@@ -268,6 +272,34 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
 export function PlannerRoutePage() {
   const userId = useAuth().session?.user.id;
   const navigate = useNavigate();
+  // P5: 履歴 POP（戻る / Android Back）は SPA click 差し替えを通らず unmount する。
+  // unmount enqueue は失敗を swallow するため、POP だけ block して leave-flush を await する。
+  // 下ナビ click 後の navigate・生成成功の /generation・settings/emergency/privacy は
+  // PUSH/REPLACE かつ既に flush 済み（または専用経路）なので block しない。
+  const blocker = useBlocker(({ historyAction, currentLocation, nextLocation }) => {
+    return (
+      historyAction === NavigationType.Pop && currentLocation.pathname !== nextLocation.pathname
+    );
+  });
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+    // blocked 時点の proceed/reset を閉じる。await 後に state が変わっても安全に呼ぶ。
+    const { proceed, reset } = blocker;
+    // cleanup が await 中に立つ。let だと静的解析が常に false と見なす。
+    const cancelled = { current: false };
+    void (async () => {
+      const result = await runPlannerLeaveFlush();
+      if (cancelled.current) return;
+      if (result === "proceed") {
+        proceed();
+      } else {
+        reset();
+      }
+    })();
+    return () => {
+      cancelled.current = true;
+    };
+  }, [blocker]);
   // P3: startGeneration 内でも plan / quality.available を参照し qualityMode を再 clamp
   // （onSubmit 一枚依存を避ける）
   const usage = useUsageToday(userId ?? "");
