@@ -21,6 +21,8 @@ export type HomeRecentMenusProps = {
   /** 取得失敗。再試行 CTA を出す。 */
   error?: boolean;
   onRetry?: () => void;
+  /** leave-flush 中など。Link を見た目無効化し第二 leave を起こさない。 */
+  disabled?: boolean;
 };
 
 /**
@@ -33,12 +35,18 @@ export function HomeRecentMenus({
   loading = false,
   error = false,
   onRetry,
+  disabled = false,
 }: HomeRecentMenusProps): JSX.Element {
   const navigate = useNavigate();
 
   const onMenuClick =
     (to: string) =>
     (event: MouseEvent<HTMLAnchorElement>): void => {
+      // leave 中は第二 leave を起こさず stay（module mutex の無言 blocked を避ける）
+      if (disabled) {
+        event.preventDefault();
+        return;
+      }
       if (!shouldInterceptPlannerLeaveClick(event)) return;
       event.preventDefault();
       void navigateAfterPlannerLeaveFlush(navigate, to);
@@ -77,7 +85,12 @@ export function HomeRecentMenus({
                 const to = `/menus/${menu.id}`;
                 return (
                   <li key={menu.id} className="home-recent-item">
-                    <Link className="home-recent-link min-h-11" to={to} onClick={onMenuClick(to)}>
+                    <Link
+                      className={`home-recent-link min-h-11${disabled ? " opacity-50" : ""}`}
+                      to={to}
+                      onClick={onMenuClick(to)}
+                      aria-disabled={disabled || undefined}
+                    >
                       {menu.title.length > 0 ? menu.title : "献立"}
                     </Link>
                   </li>

@@ -104,4 +104,30 @@ describe("HomeExpiringPantry", () => {
       expect(screen.getByRole("heading", { name: "冷蔵庫" })).toBeInTheDocument();
     });
   });
+
+  it("C5: disabled のときは leave-flush せず stay", async () => {
+    const user = userEvent.setup();
+    const flush = vi.fn().mockResolvedValue("proceed" as const);
+    registerPlannerLeaveFlush(flush);
+    renderWithRouter(
+      <HomeExpiringPantry
+        items={[
+          {
+            id: "a",
+            name: "キャベツ",
+            expiresOn: "2026-08-10",
+            tone: "warning",
+            suffix: "（まもなく）",
+          },
+        ]}
+        disabled
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "冷蔵庫を見る" });
+    expect(link).toHaveAttribute("aria-disabled", "true");
+    await user.click(link);
+    expect(flush).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "冷蔵庫" })).toBeNull();
+  });
 });

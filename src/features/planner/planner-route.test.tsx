@@ -1277,6 +1277,31 @@ it("P7: leave flush 中は home CTA を disabled にする", async () => {
   expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeDisabled();
 });
 
+it("C5: leave flush 中はホームの冷蔵庫リンクも disabled にする", async () => {
+  queryState.draft = null;
+  pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  render(<PlannerRoutePage />);
+  const pantryLink = await screen.findByRole("link", { name: "冷蔵庫を見る" });
+  expect(pantryLink).not.toHaveAttribute("aria-disabled", "true");
+
+  const leavePromise = runPlannerLeaveFlush();
+  await vi.waitFor(() => {
+    expect(screen.getByRole("link", { name: "冷蔵庫を見る" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  deferred.resolve({ ...draft, revision: 4 });
+  await expect(leavePromise).resolves.toBe("proceed");
+  expect(screen.getByRole("link", { name: "冷蔵庫を見る" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+});
+
 it("P1: home 面でも leave flush 通信失敗を role=alert で表示する", async () => {
   // 空下書き + pending なし → ホーム着地（wizard の error スロットに依存しない）
   queryState.draft = null;
@@ -1402,6 +1427,34 @@ it("P1: leave flush timeout 後はロックを落とし、遅延 proceed で固�
   await vi.waitFor(() => {
     expect(startGeneration).toHaveBeenCalled();
   });
+});
+
+it("C6: leave flush timeout は通信失敗と同系統の理由を出す", async () => {
+  const deferred = createDeferred<PlannerDraft>();
+  savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+  render(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  vi.useFakeTimers();
+  try {
+    const leavePromise = runPlannerLeaveFlush();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PLANNER_LEAVE_FLUSH_TIMEOUT_MS + 10);
+    });
+    await expect(leavePromise).resolves.toBe("blocked");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "条件の保存が時間内に終わらなかったため、移動できませんでした。通信を確認して再度お試しください。",
+    );
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("P5: leave flush が blocked なら isSaving を解除する", async () => {
@@ -1876,6 +1929,75 @@ describe("PlannerRoutePage", () => {
     });
     expect(pendingGenerationMock.savePendingGeneration).toHaveBeenCalled();
     // navigate は fire-and-forget。commit 前に isSaving が落ちると reset で sticky が消える
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+    expect(screen.getByRole("button", { name: "入力をリセット" })).toBeDisabled();
+
+    const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+    props.onReset?.();
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+  });
+
+  it("C3: kept resume 直後は isSaving を維持し reset しても pending を捨てない", async () => {
+    // startGeneration は kept で false を返すが /generation?resumed=1 済み。
+    // finally が isSaving を落とすと reset が sticky を消せる（P6 成功経路と同型）。
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: { idempotencyKey: "existing" },
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
+    expect(screen.getByRole("button", { name: "入力をリセット" })).toBeDisabled();
+
+    const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+    props.onReset?.();
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+  });
+
+  it("C3: claim 負け resume 直後は isSaving を維持し reset しても pending を捨てない", async () => {
+    const otherPending = {
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3" as const,
+      kind: "new_menu" as const,
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    };
+    pendingGenerationMock.claimPendingGeneration.mockImplementation(async () => {
+      pendingGenerationMock.readPendingGeneration.mockReturnValue(otherPending);
+      pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+        kind: "new_menu",
+        targetMode: "household",
+        idempotencyKey: otherPending.request.idempotencyKey,
+        ownerUserId: draft.userId,
+        createdAt: otherPending.createdAt,
+      });
+      return { pending: otherPending, claimed: false };
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
     expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
     expect(screen.getByRole("button", { name: "入力をリセット" })).toBeDisabled();
 

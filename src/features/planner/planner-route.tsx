@@ -274,11 +274,16 @@ export function PlannerRoutePage() {
   const planCode = usage.isSuccess ? usage.data.plan : null;
   const qualityAvailable = usage.isSuccess ? usage.data.quality.available : null;
   const startGeneration = useCallback(
-    async (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
+    async (
+      draft: PlannerDraft,
+      attempt: PlannerAttempt,
+      signal: AbortSignal,
+    ): Promise<boolean | "resumed"> => {
       if (userId === undefined) return false;
       // 進行中 pending を上書きすると作成 ID が失われる（C2）。既存は再開のみ。
-      // false を返し startNewAttempt を抑止する。true だと未消費 attempt
+      // false は startNewAttempt を抑止する。true だと未消費 attempt
       // （期限確認など）が回転して捨てられる。
+      // "resumed" は既存 sticky 再開（attempt は回さず、navigate 済みなので isSaving 維持）。
       // G-R1: terminal 済み sticky は status GET で clear し、新規作成を許す。
       // processing / status 失敗は keep→再開（G1/G2 維持。無条件 clear しない）。
       if (readPendingGeneration(userId, new Date()) !== null) {
@@ -287,7 +292,7 @@ export function PlannerRoutePage() {
           if (signal.aborted) return false;
           // 新規条件は送っていない。review の pending 注意文 + /generation?resumed=1 で明示する
           void navigate("/generation?resumed=1");
-          return false;
+          return "resumed";
         }
         // cleared / none: 下へ進み新 pending を書く
       }
@@ -333,7 +338,7 @@ export function PlannerRoutePage() {
         const winnerReady = await waitForWinnerPendingSticky(userId, signal);
         if (signal.aborted || !winnerReady) return false;
         void navigate("/generation?resumed=1");
-        return false;
+        return "resumed";
       }
       const pending = claim.pending;
       // savePendingGeneration 本体は targetMode を知らないため meta はここで書く。
@@ -1244,6 +1249,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           leaveInFlightRef.current = false;
           if (mountedRef.current) {
             setIsLeaving(false);
+            // ロック解除だけでは無言 stay になる。通信失敗と同系統の理由を出す。
+            setSubmissionError(
+              "条件の保存が時間内に終わらなかったため、移動できませんでした。通信を確認して再度お試しください。",
+            );
           }
         },
       },
@@ -1726,9 +1735,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             try {
               const result = await startGeneration(saved, commandAttempt, controller.signal);
               if (controller.signal.aborted || result === false) return;
-              startNewAttempt();
-              // true は /generation へ遷移済み。navigate commit まで isSaving を維持する。
-              generationProceeded = result === true;
+              // resume は既存 pending を使うので attempt を回さない（期限確認を捨てない）。
+              if (result !== "resumed") {
+                startNewAttempt();
+              }
+              // true（新規）も resumed（既存再開）も /generation へ遷移済み。
+              // navigate commit まで isSaving / submittingRef を維持し reset で sticky を捨てない。
+              generationProceeded = result === true || result === "resumed";
             } finally {
               if (generationAbortControllerRef.current === controller) {
                 generationAbortControllerRef.current = null;

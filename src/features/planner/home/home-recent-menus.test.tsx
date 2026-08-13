@@ -79,4 +79,22 @@ describe("HomeRecentMenus", () => {
       expect(screen.getByRole("heading", { name: "献立詳細" })).toBeInTheDocument();
     });
   });
+
+  it("C5: disabled のときは leave-flush せず stay", async () => {
+    const user = userEvent.setup();
+    const flush = vi.fn().mockResolvedValue("proceed" as const);
+    registerPlannerLeaveFlush(flush);
+    renderWithRouter(
+      <HomeRecentMenus
+        menus={[{ id: "11111111-1111-4111-8111-111111111111", title: "鶏肉のさっぱり煮" }]}
+        disabled
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "鶏肉のさっぱり煮" });
+    expect(link).toHaveAttribute("aria-disabled", "true");
+    await user.click(link);
+    expect(flush).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "献立詳細" })).toBeNull();
+  });
 });
