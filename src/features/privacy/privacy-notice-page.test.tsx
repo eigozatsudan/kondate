@@ -916,6 +916,54 @@ describe("AP11: submit must not join in-flight accepted or fall back to accepted
   });
 });
 
+describe("AP13: successful standalone reread must write cache before delayed mount settles", () => {
+  it("AP13: submit reread revoked wins cache after delayed mount accepted settles", async () => {
+    const user = userEvent.setup();
+    let shareCalls = 0;
+    let resolveMountRead: (state: ShareConsentState) => void = () => {
+      throw new Error("mount getMyShareConsent resolver が未設定");
+    };
+    getShare.mockImplementation(() => {
+      shareCalls += 1;
+      if (shareCalls === 1) {
+        // mount refetch。revoke 前に始まった accepted 応答として後から解決する
+        return new Promise<ShareConsentState>((resolve) => {
+          resolveMountRead = resolve;
+        });
+      }
+      // submit 中の単独再読はサーバ正（revoke 済み）
+      return Promise.resolve(revokedShareState);
+    });
+    acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+
+    const { client } = renderPrivacyPageWithWarmShareCache(currentShareState);
+    expect(client.getQueryData(shareConsentKeys.current("user-1"))).toEqual(currentShareState);
+
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).toBeEnabled();
+    expect(shareCheckbox).toBeChecked();
+
+    // 共有は触らず必須だけ進む → upsert しない（AP11）。再読 revoked は cache に載せる（AP13）
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveMountRead(currentShareState);
+    });
+
+    expect(client.getQueryData(shareConsentKeys.current("user-1"))).toEqual(revokedShareState);
+    expect(upsertShare).not.toHaveBeenCalledWith({}, true);
+    expect(upsertShare).not.toHaveBeenCalled();
+  });
+});
+
 describe("AP12: refetch error must not turn share off and revoke", () => {
   it("AP12: success then refetch error keeps box on and does not upsert false", async () => {
     const user = userEvent.setup();

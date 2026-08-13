@@ -128,6 +128,21 @@ export function PrivacyNoticePage() {
         if (input.shareConsentAccepted) {
           try {
             current = await withTimeout(getMyShareConsent(client), PRIVACY_ACCEPT_TIMEOUT_MS);
+            // AP13: 単独再読の成功値は cache に載せる（revoked / accepted とも）。
+            // 遅延 mount の accepted が後から上書きしないよう、当該キーを cancel してから書く。
+            // TQ v5 は cancel 後の resolve を捨てる。未タッチ + 再読失敗では cache を触らない（AP11）。
+            await queryClient.cancelQueries({ queryKey: shareConsentKeys.current(userId) });
+            queryClient.setQueryData(shareConsentKeys.current(userId), current);
+            // AP13: 設定と同型。同一 QC の設定トグルが 30s accepted のまま残らないよう他タブへ通知する
+            if (typeof BroadcastChannel !== "undefined") {
+              try {
+                const channel = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
+                channel.postMessage({ userId });
+                channel.close();
+              } catch {
+                // BroadcastChannel 失敗は focus 再同期に委ねる
+              }
+            }
           } catch {
             freshReadFailed = true;
           }
