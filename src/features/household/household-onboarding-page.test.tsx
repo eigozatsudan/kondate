@@ -1645,3 +1645,141 @@ it("H18: shows ease soft-not-swallow disclaimer after age is selected", async ()
   await user.selectOptions(await screen.findByLabelText("年齢のめやす"), "post_weaning_to_2");
   expect(await screen.findByText(EASE_SOFT_NOT_SWALLOW_DISCLAIMER)).toBeVisible();
 });
+
+// H4: draft registered で最後の 1 件を消すと trigger が無いので registered+0 が残る。
+// 追加完了直後の削除も通さない（beginAllergyMutation 解除後の直列 add→delete）。
+it("H4: refuses last allergy delete on draft registered so status cannot become registered+0", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
+  let currentDraft = draft;
+  const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
+    currentDraft = { ...currentDraft, ...patch, updated_at: "2026-07-11T00:00:06.000Z" };
+    membersState.upsert(currentDraft);
+    return Promise.resolve(currentDraft);
+  });
+  const eggAllergy = {
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  let allergyRows = [] as (typeof eggAllergy)[];
+  const listAllergies = vi.fn(() => Promise.resolve(allergyRows.map((row) => ({ ...row }))));
+  const addStandardAllergy = vi.fn().mockImplementation(() => {
+    allergyRows = [eggAllergy];
+    return Promise.resolve(eggAllergy);
+  });
+  const removeAllergy = vi.fn().mockImplementation(() => {
+    allergyRows = [];
+    return Promise.resolve(undefined);
+  });
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    updateDraft,
+    listAllergies,
+    listCatalog: vi.fn().mockResolvedValue([
+      {
+        id: "egg",
+        display_name: "卵",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]),
+    listAliases: vi.fn().mockResolvedValue([]),
+    addStandardAllergy,
+    removeAllergy,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+  });
+  await user.click(screen.getByRole("button", { name: "卵を追加" }));
+  const removeButton = await screen.findByRole("button", { name: "卵を削除" });
+  await user.click(removeButton);
+
+  expect(removeAllergy).not.toHaveBeenCalled();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "登録ありの場合は1つ以上選んでください",
+  );
+  expect(allergyRows).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "卵を削除" })).toBeInTheDocument();
+  // registered を書いたなら針は残っている（0 件のまま registered を維持しない）
+  const registeredPatches = updateDraft.mock.calls.filter(
+    (call) => call[1].allergy_status === "registered",
+  );
+  if (registeredPatches.length > 0) {
+    expect(currentDraft.allergy_status).toBe("registered");
+    expect(allergyRows).toHaveLength(1);
+  }
+});
+
+// H4: 追加後も一覧が空なら直接 commit が registered を書かない（HR1 effect は length===0 で既に return）
+it("H4: commitPendingRegisteredIfNeeded does not write registered when allergy list is empty", async () => {
+  const user = userEvent.setup();
+  const membersState = createMembersApiState([draft]);
+  let currentDraft = draft;
+  const updateDraft = vi.fn((_memberId: string, patch: HouseholdDraftPatch) => {
+    currentDraft = { ...currentDraft, ...patch, updated_at: "2026-07-11T00:00:07.000Z" };
+    membersState.upsert(currentDraft);
+    return Promise.resolve(currentDraft);
+  });
+  const addStandardAllergy = vi.fn().mockResolvedValue({
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  });
+  const listAllergies = vi.fn().mockResolvedValue([]);
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    updateDraft,
+    listAllergies,
+    listCatalog: vi.fn().mockResolvedValue([
+      {
+        id: "egg",
+        display_name: "卵",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]),
+    listAliases: vi.fn().mockResolvedValue([]),
+    addStandardAllergy,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "アレルギー編集" })).toBeVisible();
+  });
+  await user.click(screen.getByRole("button", { name: "卵を追加" }));
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalledWith("member-1", "egg");
+  });
+  // add → invalidate → commit まで終える（mutation 解除で追加ボタンが戻る）
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "卵を追加" })).toBeEnabled();
+  });
+  expect(updateDraft).not.toHaveBeenCalledWith(
+    "member-1",
+    expect.objectContaining({ allergy_status: "registered" }),
+    expect.anything(),
+  );
+  expect(
+    updateDraft.mock.calls.filter((call) => call[1].allergy_status === "registered"),
+  ).toHaveLength(0);
+  expect(currentDraft.allergy_status).not.toBe("registered");
+});

@@ -529,11 +529,21 @@ export function HouseholdOnboardingForm({
   /**
    * H13 / HR1: deferred registered を DB へコミット。
    * complete 直前は actionPendingRef で save() が no-op するため、その場合は updateDraft を直接叩く。
-   * @returns pending が無い・またはコミット成功なら true。失敗で pending が残れば false。
+   * @returns pending が無い・またはコミット成功なら true。失敗または空一覧で pending が残れば false。
    */
   const commitPendingRegisteredIfNeeded = async (): Promise<boolean> => {
     if (!pendingRegisteredRef.current) return true;
     if (draft === null) return false;
+
+    // H4: 空一覧のまま registered を書かない。HR1 effect は length===0 で既に return するが、
+    // add 成功直後の直接 commit は invalidate 後でも一覧が空のままここを通る。
+    // pending は残し DB は触らない（complete は 0 件で fail-closed）。
+    const listed =
+      queryClient.getQueryData<MemberAllergyRow[]>(householdKeys.allergies(userId, draft.id)) ??
+      allergies;
+    if (listed.length === 0) {
+      return false;
+    }
 
     // complete/skip 連打ガード中は save() が即 true で戻るため、complete flush は直接 API へ
     if (actionPendingRef.current) {
@@ -1164,6 +1174,18 @@ export function HouseholdOnboardingForm({
                 if (!beginAllergyMutation()) return;
                 try {
                   setAllergyError(null);
+                  // H4: draft の UI registered（pending 含む）でも最後の 1 件は消さない。
+                  // last-delete trigger は complete のみ。通すと registered+0 が残る。
+                  const registeredIntent =
+                    draft.allergy_status === "registered" || pendingRegisteredRef.current;
+                  const listed =
+                    queryClient.getQueryData<MemberAllergyRow[]>(
+                      householdKeys.allergies(userId, draft.id),
+                    ) ?? allergies;
+                  if (registeredIntent && listed.length <= 1) {
+                    setAllergyError("登録ありの場合は1つ以上選んでください");
+                    return;
+                  }
                   // H5: silent RPC 後に再取得で行残存を検知（settings と同型）
                   // H1: 既定 staleTime 内の削除前キャッシュを正本扱いしない。
                   await api.removeAllergy?.(allergyId);
