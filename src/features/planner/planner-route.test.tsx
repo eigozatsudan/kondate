@@ -2352,8 +2352,51 @@ describe("PlannerRoutePage", () => {
   it("入力をリセットすると進行中 pending も捨てる", async () => {
     const user = userEvent.setup();
     render(<PlannerPage />);
+    // 自タブが mint した key と一致するときだけ clear する（C7 の対照）
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: attemptKey,
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
     await user.click(screen.getByRole("button", { name: "入力をリセット" }));
     expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalledTimes(1);
+  });
+
+  it("C7: reset does not clear another tab's claimed pending after strip abort", async () => {
+    const user = userEvent.setup();
+    render(<PlannerPage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    const winnerKey = "80000000-0000-4000-8000-000000000099";
+    // 勝ちタブ sticky。画面の attempt は負けタブ側の別キーのまま
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: winnerKey,
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    expect(attemptKey).not.toBe(winnerKey);
+    await user.click(screen.getByRole("button", { name: "入力をリセット" }));
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("meal");
+    expect(screen.getByLabelText("attempt key").textContent).not.toBe(attemptKey);
   });
 
   it("pending 保存が失敗したら作成状況へ遷移せず attempt を保つ", async () => {

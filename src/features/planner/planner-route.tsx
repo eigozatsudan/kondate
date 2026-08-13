@@ -799,7 +799,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     generationAbortControllerRef.current?.abort();
     // 進行中の作成 ID（pending）を残すと、再「献立を作る」が C2 再開専用になり
     // offline/processing から抜けられず操作不能になる。入力リセットは作成の破棄も兼ねる。
-    clearPendingGeneration();
+    // C7: 共有 sticky のうち、このタブが mint / claim した key だけを消す。
+    // claim 負け後の strip abort で submittingRef が落ちても、勝ちタブの pending は残す。
+    if (userId !== undefined) {
+      const pending = readPendingGeneration(userId, new Date());
+      if (pending !== null && pending.request.idempotencyKey === attempt.idempotencyKey) {
+        clearPendingGeneration();
+      }
+    }
     const empty = { ...emptyDraft };
     setValue(empty);
     setStep("meal");
@@ -824,7 +831,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     if (current !== undefined && current !== null) {
       queryClient.setQueryData(key, { ...current, ...empty });
     }
-  }, [autosave.revision, queryClient, userId]);
+  }, [attempt.idempotencyKey, autosave.revision, queryClient, userId]);
 
   // P1: 利用者 reset 直後だけ強制 empty 保存を await し、失敗を submissionError で可視化する。
   // resolveDraftConflict の resetToken バンプでは走らせない（autosave 側の force save に任せる）。
