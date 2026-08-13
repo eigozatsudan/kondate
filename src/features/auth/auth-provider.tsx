@@ -120,6 +120,40 @@ function isSessionPinActive(guard: ResidualSessionGuard): boolean {
 }
 
 /**
+ * C14: fail-closed 中または世代ずれで見た prior access_token を denylist に残す。
+ * トークン文字列はログしない。空は識別不能なので無視する。
+ */
+function rememberStaleAccessToken(denylist: Set<string>, nextSession: Session | null): void {
+  if (nextSession === null) return;
+  const token = nextSession.access_token;
+  if (typeof token === "string" && token.length > 0) {
+    denylist.add(token);
+  }
+}
+
+function isDeniedStaleAccessToken(denylist: Set<string>, nextSession: Session): boolean {
+  const token = nextSession.access_token;
+  return typeof token === "string" && token.length > 0 && denylist.has(token);
+}
+
+function hasInFlightOlderGenerationProbe(
+  startedGenerations: readonly number[],
+  currentGeneration: number,
+): boolean {
+  return startedGenerations.some((generation) => generation < currentGeneration);
+}
+
+function releaseInFlightProbeGeneration(
+  startedGenerations: number[],
+  startedGeneration: number,
+): void {
+  const index = startedGenerations.indexOf(startedGeneration);
+  if (index !== -1) {
+    startedGenerations.splice(index, 1);
+  }
+}
+
+/**
  * 認証待ち UI（login / callback）かどうか。
  * C16 / C14: completion 後の強制 navigate をこの path に限定し、設定編集中の未保存 UI を捨てない。
  */
@@ -268,8 +302,23 @@ export function AuthProvider({
    * C4: cold-start 15s deadline 後の fail-closed。
    * hasResolvedSessionOnce は立てない（R 系の「一度解決済み」と混ぜない）。
    * 非 null session の apply を拒否し、明示 login（createAuthFlow → re-arm）まで維持する。
+   * C14: re-arm で fail-closed は下ろすが、fail-closed 前から in-flight だった prior token は
+   * denylist で拒否する。別 access_token（正規 IdP）は apply できる。
    */
   const coldStartFailClosedRef = useRef(false);
+  /**
+   * C14: fail-closed / re-arm で上げる。in-flight getSession の settle が別世代なら捨てる。
+   */
+  const sessionProbeGenerationRef = useRef(0);
+  /**
+   * C14: fail-closed 中または世代ずれで見た prior access_token。re-arm 後も残す。
+   * 異なる token を成功 apply したらクリア。トークン文字列はログしない。
+   */
+  const staleAccessTokenDenylistRef = useRef<Set<string>>(new Set());
+  /**
+   * C14: 開始時の probe generation。fail-closed / re-arm 後も in-flight の旧世代を識別する。
+   */
+  const inFlightProbeStartedGenerationsRef = useRef<number[]>([]);
   // cold-start の壁時計起点（マウント時）。deadline 超過で fail-closed。
   const coldStartBeganAtMs = useRef<number | null>(null);
   // C5/C6: このタブで一度でも authenticated になったか。soft SIGNED_OUT 時の草稿掃除判定用。
@@ -341,7 +390,15 @@ export function AuthProvider({
   const applyAuthSession = useCallback(
     (nextSession: Session | null): boolean => {
       // C4: fail-closed 中は遅延 getSession / onAuthStateChange の非 null を復活させない
+      // C14: fail-closed 中に見た token は denylist へ。re-arm 後も同じ prior session は apply しない。
       if (nextSession !== null && coldStartFailClosedRef.current) {
+        rememberStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession);
+        return false;
+      }
+      if (
+        nextSession !== null &&
+        isDeniedStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession)
+      ) {
         return false;
       }
       const guard = residualSessionGuardRef.current;
@@ -494,6 +551,8 @@ export function AuthProvider({
       clearSoftResidualRecoverySuppressed();
       // C2: 確立済み session があるのでタブ局所の「今開始した flow」印は不要
       clearActiveLoginFlowId();
+      // C14: 異なる token の成功 apply で prior denylist を閉じる
+      staleAccessTokenDenylistRef.current.clear();
       setSession(nextSession);
       return true;
     },
@@ -541,16 +600,39 @@ export function AuthProvider({
   const refreshSession = useCallback(async (): Promise<void> => {
     const beganAt = coldStartBeganAtMs.current ?? Date.now();
     coldStartBeganAtMs.current = beganAt;
+    const probeGeneration = sessionProbeGenerationRef.current;
+    inFlightProbeStartedGenerationsRef.current.push(probeGeneration);
     try {
-      const { data, error } = await withTimeout(
-        client.auth.getSession(),
-        COLD_START_GET_SESSION_TIMEOUT_MS,
+      const sessionPromise = client.auth.getSession();
+      // C14: withTimeout 後の遅延 settle でも prior token を denylist へ（ログしない）
+      void Promise.resolve(sessionPromise).then(
+        (result) => {
+          if (probeGeneration === sessionProbeGenerationRef.current) return;
+          if (result.error === null) {
+            rememberStaleAccessToken(staleAccessTokenDenylistRef.current, result.data.session);
+          }
+        },
+        () => undefined,
       );
+      const { data, error } = await withTimeout(sessionPromise, COLD_START_GET_SESSION_TIMEOUT_MS);
       // B-I6: getSession の一時エラーで直前 session を捨てない。
       // クリアは error === null かつ session === null、または SIGNED_OUT のみ。
       if (error === null) {
+        // C14: fail-closed / re-arm で世代が変わった in-flight 結果は捨てる
+        if (probeGeneration !== sessionProbeGenerationRef.current) {
+          rememberStaleAccessToken(staleAccessTokenDenylistRef.current, data.session);
+          return;
+        }
         // C4: fail-closed 後の遅延成功は非 null を捨てる（hasResolved も立てない）
-        if (coldStartFailClosedRef.current && data.session !== null) {
+        // C14: denylist 一致も同様（re-arm 後の prior token）
+        if (data.session !== null && coldStartFailClosedRef.current) {
+          rememberStaleAccessToken(staleAccessTokenDenylistRef.current, data.session);
+          return;
+        }
+        if (
+          data.session !== null &&
+          isDeniedStaleAccessToken(staleAccessTokenDenylistRef.current, data.session)
+        ) {
           return;
         }
         applyAuthSession(data.session);
@@ -567,6 +649,7 @@ export function AuthProvider({
       }
       // 一時エラーの累積も cold-start deadline で fail-closed（C5）
       if (Date.now() - beganAt >= COLD_START_SESSION_DEADLINE_MS) {
+        sessionProbeGenerationRef.current += 1;
         coldStartFailClosedRef.current = true;
         clearPersistedAuthOnColdStartFailClosed();
         applyAuthSession(null);
@@ -578,6 +661,8 @@ export function AuthProvider({
       if (hasResolvedSessionOnce.current && residualSessionGuardRef.current.pinnedUserId !== null) {
         setSessionProbeDegraded(true);
       }
+    } finally {
+      releaseInFlightProbeGeneration(inFlightProbeStartedGenerationsRef.current, probeGeneration);
     }
   }, [applyAuthSession, client]);
 
@@ -587,13 +672,38 @@ export function AuthProvider({
     startAuthFlowDismissBroadcastListener();
     void refreshSession();
     const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
-      // C4: fail-closed 中の遅延 session は無視（hasResolved も立てない）
-      if (coldStartFailClosedRef.current && nextSession !== null) {
+      const applyFromAuthChange = (incoming: Session | null): void => {
+        // C4: fail-closed 中の遅延 session は無視（hasResolved も立てない）
+        // C14: denylist の prior token も apply しない（re-arm 後含む）
+        if (incoming !== null && coldStartFailClosedRef.current) {
+          rememberStaleAccessToken(staleAccessTokenDenylistRef.current, incoming);
+          return;
+        }
+        if (
+          incoming !== null &&
+          isDeniedStaleAccessToken(staleAccessTokenDenylistRef.current, incoming)
+        ) {
+          return;
+        }
+        applyAuthSession(incoming);
+        hasResolvedSessionOnce.current = true;
+        setLoaded(true);
+      };
+      // C14: re-arm 後、旧世代 in-flight getSession の settle と同 tick の SIGNED_IN は
+      // 世代ずれ denylist が埋まる microtask の後に判定する。
+      if (
+        nextSession !== null &&
+        hasInFlightOlderGenerationProbe(
+          inFlightProbeStartedGenerationsRef.current,
+          sessionProbeGenerationRef.current,
+        )
+      ) {
+        queueMicrotask(() => {
+          applyFromAuthChange(nextSession);
+        });
         return;
       }
-      applyAuthSession(nextSession);
-      hasResolvedSessionOnce.current = true;
-      setLoaded(true);
+      applyFromAuthChange(nextSession);
     });
     const onFocus = (): void => void refreshSession();
     window.addEventListener("focus", onFocus);
@@ -608,6 +718,8 @@ export function AuthProvider({
     // persist token も同期 clear し、focus 復活で「いつの間にかログイン」を防ぐ
     const coldStartDeadlineTimer = window.setTimeout(() => {
       if (hasResolvedSessionOnce.current) return;
+      // C14: in-flight getSession の遅延 settle を捨てるため世代を上げる
+      sessionProbeGenerationRef.current += 1;
       coldStartFailClosedRef.current = true;
       clearPersistedAuthOnColdStartFailClosed();
       applyAuthSession(null);
@@ -677,6 +789,8 @@ export function AuthProvider({
   useEffect(() => {
     const onRearm = (): void => {
       // C4: 明示 login 開始（createAuthFlow）で fail-closed を解除し、正規 session を受け付ける
+      // C14: fail-closed は下ろすが denylist は残す。in-flight probe を無効化するため世代を上げる。
+      sessionProbeGenerationRef.current += 1;
       coldStartFailClosedRef.current = false;
       setResidualRecoveryRearmTick((n) => n + 1);
     };

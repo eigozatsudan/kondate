@@ -1788,7 +1788,7 @@ describe("AuthProvider", () => {
     }
   });
 
-  it("C4: fail-closed stays unauthenticated after hung getSession settles; createAuthFlow can apply", async () => {
+  it("C4: fail-closed stays unauthenticated after hung getSession settles; createAuthFlow applies only a new session", async () => {
     vi.useFakeTimers();
     try {
       window.history.replaceState(null, "", "/");
@@ -1856,9 +1856,107 @@ describe("AuthProvider", () => {
         });
         await Promise.resolve();
       });
+      // C14: re-arm 後も fail-closed 前の prior session（同じ access_token）は apply しない
       await act(async () => {
         for (const listener of authListeners) {
           listener("SIGNED_IN", session);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      // C14: 別 access_token（正規 IdP / residual complete 相当）は apply できる
+      const freshSession = {
+        access_token: "token-c14-fresh",
+        user: { id: "user-1" },
+      } as Session;
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", freshSession);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("authenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C14: createAuthFlow before delayed settle still rejects prior session and accepts a new token", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      let settleHang: ((value: { data: { session: Session }; error: null }) => void) | undefined;
+      const getSession = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ data: { session: Session }; error: null }>((resolve) => {
+            settleHang = resolve;
+          }),
+      );
+      const authListeners: AuthStateListener[] = [];
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } as AuthProviderClient;
+
+      render(
+        <AuthProvider client={client} startRecovery={() => vi.fn()}>
+          <Probe />
+        </AuthProvider>,
+      );
+      expect(screen.getByText("loading")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      const api = {
+        create: vi.fn(() =>
+          Promise.resolve({
+            id: "10000000-0000-4000-8000-0000000000c4",
+            expiresAt: new Date(Date.now() + 300_000).toISOString(),
+          }),
+        ),
+        deposit: vi.fn(() => Promise.resolve(undefined)),
+        claim: vi.fn(() => Promise.reject(new Error("not deposited"))),
+      };
+      // C14 how-to-confirm: deadline → createAuthFlow → 遅延 settle / SIGNED_IN A
+      await act(async () => {
+        await createAuthFlow("/onboarding", api, window.localStorage, {
+          now: () => new Date("2026-08-12T00:00:00.000Z"),
+          randomBytes: (size = 32) => new Uint8Array(size).fill(7),
+        });
+        await Promise.resolve();
+      });
+
+      // C14: settle と同 tick の SIGNED_IN（SDK が getSession resolve と同時に飛ばす経路）
+      await act(async () => {
+        settleHang?.({ data: { session }, error: null });
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", session);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      const freshSession = {
+        access_token: "token-c14-fresh",
+        user: { id: "user-1" },
+      } as Session;
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", freshSession);
         }
         await Promise.resolve();
       });
