@@ -23,6 +23,7 @@ import {
 } from "./auth-cleanup";
 import { SOFT_RESIDUAL_RECOVERY_REARM_EVENT } from "./soft-residual-recovery-suppress";
 import {
+  browserSupabaseSessionStorageKey,
   clearActiveLoginFlowId,
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
@@ -137,6 +138,15 @@ function hasAccessToken(bucket: Set<string>, nextSession: Session): boolean {
   return typeof token === "string" && token.length > 0 && bucket.has(token);
 }
 
+/** C31: persist 由来と観測 leftover のどちらでも hard 拒否する。 */
+function hasHardLeftoverAccessToken(
+  observed: Set<string>,
+  persistSeeded: Set<string>,
+  nextSession: Session,
+): boolean {
+  return hasAccessToken(observed, nextSession) || hasAccessToken(persistSeeded, nextSession);
+}
+
 function leftoverSetsNonEmpty(hard: Set<string>, soft: Set<string>): boolean {
   return hard.size > 0 || soft.size > 0;
 }
@@ -156,6 +166,40 @@ function readAccessToken(nextSession: Session | null): string | null {
   if (nextSession === null) return null;
   const token = nextSession.access_token;
   return typeof token === "string" && token.length > 0 ? token : null;
+}
+
+/**
+ * persist JSON から access_token を読める範囲で取り出す。
+ * 形が違えば null。トークン文字列はログしない。
+ */
+function readPersistedAccessTokenFromUnknown(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || !("access_token" in value)) {
+    return null;
+  }
+  const token = value.access_token;
+  return typeof token === "string" && token.length > 0 ? token : null;
+}
+
+/**
+ * C31: persist clear 前に local / session の session キーから leftover token を hard へ入れる。
+ * parse 失敗は無視する。トークンはログしない。
+ * leftoverSetsNonEmpty 用の観測 leftover とは分ける（C23 / C24 の空集合判定を壊さない）。
+ */
+function rememberPersistedAccessTokensAsHardLeftover(bucket: Set<string>): void {
+  if (typeof window === "undefined") return;
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    try {
+      const raw = storage.getItem(browserSupabaseSessionStorageKey);
+      if (raw === null || raw === "") continue;
+      const parsed: unknown = JSON.parse(raw);
+      const token = readPersistedAccessTokenFromUnknown(parsed);
+      if (token !== null) {
+        bucket.add(token);
+      }
+    } catch {
+      // parse / storage 障害は無視
+    }
+  }
 }
 
 /**
@@ -287,6 +331,8 @@ const AUTH_RECOVERY_PATH_SYNC_MS = 500;
  *   clearExpiredSessionAuthAndDrafts は使わない（soft residual / suppress が RR1 を壊す）。
  * - signOut 成功時だけ SDK 空とみなし、login-era leftover pending（C26）と空 leftover の C23（C28）を外す。
  *   timeout / 失敗 / signOut 無しは現行 quarantine / C23 を残す。
+ * - C30: fail-closed signOut 開始で expect を +1。後着 SIGNED_OUT は apply しない。
+ * - C31: persist clear 前に session キーの access_token を persist-hard leftover へ。
  * - 明示 logout は auth-cleanup 経由の clearOwnedAuthStorage（全所有キー）のまま。
  */
 function clearPersistedAuthOnColdStartFailClosed(): void {
@@ -356,7 +402,7 @@ export function AuthProvider({
    */
   const failClosedGenerationRef = useRef(-1);
   /**
-   * C16–C29: fail-closed 後〜非 stale の成功 apply まで。SDK メモリ leftover / TOKEN_REFRESHED を閉じる。
+   * C16–C32: fail-closed 後〜非 stale の成功 apply まで。SDK メモリ leftover / TOKEN_REFRESHED を閉じる。
    * local signOut 成功時は C23 / login-era pending を外す。失敗・timeout・signOut 無しは残す。
    */
   const sessionQuarantineRef = useRef(false);
@@ -371,6 +417,12 @@ export function AuthProvider({
    */
   const failClosedLocalSignOutInFlightRef = useRef(false);
   /**
+   * C30: fail-closed signOut 開始で +1。pin mismatch expect とは別。
+   * listener の null を 1 回消費して apply しない。in-flight 解除後の後着 SIGNED_OUT も拾う。
+   * 未消費分は SIGN_OUT_TIMEOUT_MS 後も次の 1 回の null を消費してよい。
+   */
+  const expectFailClosedSignedOutCountRef = useRef(0);
+  /**
    * C16–C20 / C25: residual onComplete の refreshSession だけ soft leftover を通過して apply する。
    * hard leftover は trust でも apply しない。
    */
@@ -380,6 +432,12 @@ export function AuthProvider({
    * re-arm 後も残し、trust でも apply しない。トークン文字列はログしない。
    */
   const hardLeftoverAccessTokensRef = useRef<Set<string>>(new Set());
+  /**
+   * C31: persist clear 前に読んだ leftover access_token。
+   * apply は拒否するが leftoverSetsNonEmpty には載せない（C23 / C24 を壊さない）。
+   * 成功 apply でも消さない（C32）。
+   */
+  const persistHardLeftoverAccessTokensRef = useRef<Set<string>>(new Set());
   /**
    * C16 / C23: re-arm 後に leftover として学習した access_token。
    * 通常 apply は拒否。residual onComplete の trustNextRefresh だけ通過してよい（C20）。
@@ -474,7 +532,11 @@ export function AuthProvider({
       }
       if (
         nextSession !== null &&
-        hasAccessToken(hardLeftoverAccessTokensRef.current, nextSession)
+        hasHardLeftoverAccessToken(
+          hardLeftoverAccessTokensRef.current,
+          persistHardLeftoverAccessTokensRef.current,
+          nextSession,
+        )
       ) {
         return false;
       }
@@ -635,8 +697,8 @@ export function AuthProvider({
       clearSoftResidualRecoverySuppressed();
       // C2: 確立済み session があるのでタブ局所の「今開始した flow」印は不要
       clearActiveLoginFlowId();
-      // C14 / C21: 異なる token の成功 apply で leftover と pending login-era を閉じる
-      hardLeftoverAccessTokensRef.current.clear();
+      // C14 / C21: 成功 apply で soft leftover と pending を閉じる。
+      // C31 / C32: hard leftover は残す（persist leftover A を後続 getSession / SIGNED_IN で拒否）。
       softQuarantineAccessTokensRef.current.clear();
       pendingLoginEraAccessTokenRef.current = null;
       // C16–C18: 非 stale の成功 apply で quarantine を解除
@@ -650,6 +712,7 @@ export function AuthProvider({
   /**
    * C26 / C29: fail-closed 後の local signOut。UI 解放は待たない。
    * pin mismatch expect は立てない（SIGNED_OUT で soft residual / pin 維持に誤接続しない）。
+   * C30: fail-closed expect を開始時に +1 し、後着 SIGNED_OUT を in-flight 外でも 1 回捨てる。
    * 成功時だけ localSignOutClearedSdkRef を立て、C23 / leftover pending を外す。
    */
   const requestLocalSignOutOnColdStartFailClosed = useCallback((): void => {
@@ -658,6 +721,7 @@ export function AuthProvider({
       return;
     }
     failClosedLocalSignOutInFlightRef.current = true;
+    expectFailClosedSignedOutCountRef.current += 1;
     void (async () => {
       try {
         const result = await withTimeout(
@@ -687,6 +751,8 @@ export function AuthProvider({
     failClosedGenerationRef.current = sessionProbeGenerationRef.current;
     coldStartFailClosedRef.current = true;
     sessionQuarantineRef.current = true;
+    // C31: persist clear 前に leftover access_token を persist-hard へ。parse 失敗は無視。
+    rememberPersistedAccessTokensAsHardLeftover(persistHardLeftoverAccessTokensRef.current);
     clearPersistedAuthOnColdStartFailClosed();
     applyAuthSession(null);
     setLoaded(true);
@@ -778,7 +844,11 @@ export function AuthProvider({
         }
         if (
           data.session !== null &&
-          hasAccessToken(hardLeftoverAccessTokensRef.current, data.session)
+          hasHardLeftoverAccessToken(
+            hardLeftoverAccessTokensRef.current,
+            persistHardLeftoverAccessTokensRef.current,
+            data.session,
+          )
         ) {
           return;
         }
@@ -804,6 +874,17 @@ export function AuthProvider({
             pendingLoginEraAccessTokenRef.current = token;
           }
           return;
+        }
+        // C32: 認証済み + fail-closed signOut 成功後、focus getSession の別 token は leftover A。
+        // TOKEN_REFRESHED は listener 経由で pin 更新してよい。
+        if (data.session !== null && localSignOutClearedSdkRef.current) {
+          const pinned = residualSessionGuardRef.current.pinnedSession;
+          const currentToken = readAccessToken(pinned);
+          const incomingToken = readAccessToken(data.session);
+          if (currentToken !== null && incomingToken !== null && incomingToken !== currentToken) {
+            rememberAccessToken(hardLeftoverAccessTokensRef.current, data.session);
+            return;
+          }
         }
         applyAuthSession(
           data.session,
@@ -845,8 +926,16 @@ export function AuthProvider({
     void refreshSession();
     const { data } = client.auth.onAuthStateChange((event, nextSession) => {
       // fail-closed local signOut の SIGNED_OUT。pin expect は立てていないのでここで捨てる。
-      // hasResolved も立てない（C4）。hadAuthenticated は false のまま soft residual を走らせない。
+      // C30: in-flight だけでなく expect カウントでも消費する（finally 後の後着 null）。
+      // hasResolved も立てない（C4）。soft residual も走らせない（apply しない）。
       if (nextSession === null && failClosedLocalSignOutInFlightRef.current) {
+        if (expectFailClosedSignedOutCountRef.current > 0) {
+          expectFailClosedSignedOutCountRef.current -= 1;
+        }
+        return;
+      }
+      if (nextSession === null && expectFailClosedSignedOutCountRef.current > 0) {
+        expectFailClosedSignedOutCountRef.current -= 1;
         return;
       }
       // C4: fail-closed 中の遅延 session は無視（hasResolved も立てない）
@@ -857,7 +946,11 @@ export function AuthProvider({
       }
       if (
         nextSession !== null &&
-        hasAccessToken(hardLeftoverAccessTokensRef.current, nextSession)
+        hasHardLeftoverAccessToken(
+          hardLeftoverAccessTokensRef.current,
+          persistHardLeftoverAccessTokensRef.current,
+          nextSession,
+        )
       ) {
         return;
       }
