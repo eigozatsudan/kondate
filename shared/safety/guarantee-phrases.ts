@@ -1,12 +1,14 @@
 import type { GeneratedMenu, MenuValidationIssue } from "../contracts/generation.js";
 import type { DishRegenerationAiOutput } from "../contracts/regeneration.js";
 import { shareGuaranteePhrases } from "../contracts/share-denylist.v1.js";
+import { foldKatakanaToHiragana } from "../safety-pure/normalize-food-text.js";
 import { visitDishRegenAiOutputTextLeaves, visitMenuUserTextLeaves } from "./japanese-user-text.js";
 
 /**
  * share 関門の閉じたリストには無いが、生成 persist では拒否する追加針。
  * 「安全です」は G6 の核。固定免責「食べて安全であることを保証するものではありません」は
  * 「安全です」も「安全を保証」も含まない（である / であることを が挟まる）。
+ * 照合前畳み（NFKC / Cf / 空白削除 / カナ幅）後も同じ。句読点までは落とさない。
  */
 const generationExtraGuaranteePhrases = ["安全です"] as const;
 
@@ -18,10 +20,27 @@ const generationGuaranteePhrases = [
 /** 内部向け短文。ヒット本文は載せない（PII / 生 AI 出力をログに残さない）。 */
 const GUARANTEE_PHRASE_MESSAGE = "利用者向け本文に安全保証の表現は書けません";
 
+/**
+ * haystack / needle を同じ空間へ寄せる。
+ * NFKC → 書式制御除去 → 空白類削除 → カタカナ→ひらがな。
+ * normalizeFoodText の句読点除去は使わない。免責の「である」境界を残し、
+ * 「安全です」「安全を保証」への誤爆を避ける（G10）。
+ */
+function foldGuaranteePhraseText(value: string): string {
+  return foldKatakanaToHiragana(
+    value
+      .normalize("NFKC")
+      .replace(/\p{Cf}/gu, "")
+      .replace(/\s/gu, ""),
+  );
+}
+
 function textHitsGenerationGuarantee(text: string): boolean {
-  const trimmed = text.trim();
-  if (trimmed === "") return false;
-  return generationGuaranteePhrases.some((phrase) => trimmed.includes(phrase));
+  const folded = foldGuaranteePhraseText(text);
+  if (folded === "") return false;
+  return generationGuaranteePhrases.some((phrase) =>
+    folded.includes(foldGuaranteePhraseText(phrase)),
+  );
 }
 
 function pushIfGuarantee(
