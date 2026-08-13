@@ -1,6 +1,10 @@
 import { z } from "zod";
 // C4/R4: createAuthFlow 成功時の suppress clear + re-arm（auth-cleanup 循環回避）
-import { clearSoftResidualRecoverySuppressed } from "./soft-residual-recovery-suppress";
+import {
+  clearSoftResidualRecoverySuppressed,
+  isSoftResidualRecoverySuppressed,
+  notifySoftResidualRecoveryRearm,
+} from "./soft-residual-recovery-suppress";
 
 /**
  * returnTo の共有検証（client storage / claim 応答 / サーバ Zod と同型）。
@@ -77,6 +81,52 @@ export const browserFlowDeps: FlowDeps = {
  * 所有キーの logout clear で抑止する。完全隔離はアーキテクチャ変更が必要。
  */
 export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.supabase"] as const;
+
+/**
+ * C2: このタブが今開始した login flow id。sessionStorage 局所。
+ * residual recovery の targetFlowId にし、prior-user 全件 complete を閉じる。
+ * flow secret はここに載せない（R3）。
+ */
+export const ACTIVE_LOGIN_FLOW_STORAGE_KEY = "kondate.auth.active-login-flow" as const;
+
+const activeLoginFlowIdSchema = z.uuid();
+
+/** C2: createAuthFlow 成功後にこのタブの対象 flow を覚える（best-effort） */
+export function writeActiveLoginFlowId(flowId: string): void {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, flowId);
+  } catch {
+    // sessionStorage 拒否時は residual が全件になる（従来フォールバック）
+  }
+}
+
+/** C2: タブ局所の新規 login flow。不正値は捨てる */
+export function readActiveLoginFlowId(): string | undefined {
+  if (typeof sessionStorage === "undefined") return undefined;
+  try {
+    const raw = sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    if (raw === null || raw.length === 0) return undefined;
+    const parsed = activeLoginFlowIdSchema.safeParse(raw);
+    if (!parsed.success) {
+      sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      return undefined;
+    }
+    return parsed.data;
+  } catch {
+    return undefined;
+  }
+}
+
+/** C2: session 適用成功 / 明示 logout でタブ局所の対象 flow を捨てる */
+export function clearActiveLoginFlowId(): void {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  } catch {
+    // best-effort
+  }
+}
 
 const flowPrefix = ownedAuthStoragePrefixes[0];
 const callbackOwnerPrefix = `${ownedAuthStoragePrefixes[1]}.callback-owner.`;
@@ -951,8 +1001,16 @@ export async function createAuthFlow(
     // create レート枠は消費されるが、秘密漏洩面は無い（residual-intentional / TTL）。
     throw new Error("auth_flow_persist_failed");
   }
+  // C2: persist 成功後にこのタブの対象 flow を先に書く（re-arm より前。effect が読む）
+  writeActiveLoginFlowId(flow.id);
   // C4/R3/R4: 新規 flow 永続化成功後に共有 suppress 解除 + residual re-arm。
   // auth-cleanup 循環を避け leaf を直接呼ぶ（clear 内で re-arm イベントを発火）。
+  // C4: cold-start fail-closed 後は suppress が無いので clear だけではイベントが飛ばない。
+  // 明示 login 開始を必ず provider に伝え、fail-closed を解除する。
+  const wasSuppressed = isSoftResidualRecoverySuppressed();
   clearSoftResidualRecoverySuppressed();
+  if (!wasSuppressed) {
+    notifySoftResidualRecoveryRearm();
+  }
   return flow;
 }

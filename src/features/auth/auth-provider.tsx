@@ -23,9 +23,11 @@ import {
 } from "./auth-cleanup";
 import { SOFT_RESIDUAL_RECOVERY_REARM_EVENT } from "./soft-residual-recovery-suppress";
 import {
+  clearActiveLoginFlowId,
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
   listUnexpiredAuthFlows,
+  readActiveLoginFlowId,
   startAuthFlowDismissBroadcastListener,
 } from "./auth-flow";
 import { resetAuthCallbackUrlCaptureIfLeftCallback } from "./auth-callback-url-capture";
@@ -176,6 +178,8 @@ type AuthProviderProps = {
     storage: Storage;
     onComplete: (result: { kind: "complete"; flowId: string; returnTo: string }) => void;
     onResult?: (result: RecoveryResult) => void;
+    /** C2: このタブが今開始した flow だけを recovery する（無ければ従来どおり全件） */
+    targetFlowId?: string;
     ttlMs: number;
   }) => () => void;
 };
@@ -255,6 +259,12 @@ export function AuthProvider({
   const [residualRecoveryRearmTick, setResidualRecoveryRearmTick] = useState(0);
   // 一度でも getSession 成功（error === null）したら true。SIGNED_OUT でも true のまま。
   const hasResolvedSessionOnce = useRef(false);
+  /**
+   * C4: cold-start 15s deadline 後の fail-closed。
+   * hasResolvedSessionOnce は立てない（R 系の「一度解決済み」と混ぜない）。
+   * 非 null session の apply を拒否し、明示 login（createAuthFlow → re-arm）まで維持する。
+   */
+  const coldStartFailClosedRef = useRef(false);
   // cold-start の壁時計起点（マウント時）。deadline 超過で fail-closed。
   const coldStartBeganAtMs = useRef<number | null>(null);
   // C5/C6: このタブで一度でも authenticated になったか。soft SIGNED_OUT 時の草稿掃除判定用。
@@ -325,6 +335,10 @@ export function AuthProvider({
    */
   const applyAuthSession = useCallback(
     (nextSession: Session | null): boolean => {
+      // C4: fail-closed 中は遅延 getSession / onAuthStateChange の非 null を復活させない
+      if (nextSession !== null && coldStartFailClosedRef.current) {
+        return false;
+      }
       const guard = residualSessionGuardRef.current;
       if (nextSession === null) {
         // R1/C1: pin mismatch cleanup の signOut による SIGNED_OUT は React pin を落とさない。
@@ -473,6 +487,8 @@ export function AuthProvider({
       setSessionProbeDegraded(false);
       // C4/R3: 認証成功で soft residual の共有 residual recovery suppress を解除
       clearSoftResidualRecoverySuppressed();
+      // C2: 確立済み session があるのでタブ局所の「今開始した flow」印は不要
+      clearActiveLoginFlowId();
       setSession(nextSession);
       return true;
     },
@@ -528,6 +544,10 @@ export function AuthProvider({
       // B-I6: getSession の一時エラーで直前 session を捨てない。
       // クリアは error === null かつ session === null、または SIGNED_OUT のみ。
       if (error === null) {
+        // C4: fail-closed 後の遅延成功は非 null を捨てる（hasResolved も立てない）
+        if (coldStartFailClosedRef.current && data.session !== null) {
+          return;
+        }
         applyAuthSession(data.session);
         hasResolvedSessionOnce.current = true;
         setSessionProbeDegraded(false);
@@ -542,6 +562,7 @@ export function AuthProvider({
       }
       // 一時エラーの累積も cold-start deadline で fail-closed（C5）
       if (Date.now() - beganAt >= COLD_START_SESSION_DEADLINE_MS) {
+        coldStartFailClosedRef.current = true;
         clearPersistedAuthOnColdStartFailClosed();
         applyAuthSession(null);
         setLoaded(true);
@@ -561,6 +582,10 @@ export function AuthProvider({
     startAuthFlowDismissBroadcastListener();
     void refreshSession();
     const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
+      // C4: fail-closed 中の遅延 session は無視（hasResolved も立てない）
+      if (coldStartFailClosedRef.current && nextSession !== null) {
+        return;
+      }
       applyAuthSession(nextSession);
       hasResolvedSessionOnce.current = true;
       setLoaded(true);
@@ -569,12 +594,16 @@ export function AuthProvider({
     window.addEventListener("focus", onFocus);
     // 初回 getSession が一時失敗したまま loading で固まらないよう、未解決中だけ再試行する
     const retryTimer = window.setInterval(() => {
-      if (!hasResolvedSessionOnce.current) void refreshSession();
+      // C4: fail-closed 後は interval を止める（hasResolved は立てず ref だけで判定）
+      if (!hasResolvedSessionOnce.current && !coldStartFailClosedRef.current) {
+        void refreshSession();
+      }
     }, COLD_START_SESSION_RETRY_MS);
     // C5: hang/一時失敗の再試行を打ち切り、未ログインとして UI を解放する全体上限
     // persist token も同期 clear し、focus 復活で「いつの間にかログイン」を防ぐ
     const coldStartDeadlineTimer = window.setTimeout(() => {
       if (hasResolvedSessionOnce.current) return;
+      coldStartFailClosedRef.current = true;
       clearPersistedAuthOnColdStartFailClosed();
       applyAuthSession(null);
       setLoaded(true);
@@ -642,6 +671,8 @@ export function AuthProvider({
   // C4: suppress 中はイベントが来ない（clear 時のみ re-arm）。prior-user silent complete は閉じたまま。
   useEffect(() => {
     const onRearm = (): void => {
+      // C4: 明示 login 開始（createAuthFlow）で fail-closed を解除し、正規 session を受け付ける
+      coldStartFailClosedRef.current = false;
       setResidualRecoveryRearmTick((n) => n + 1);
     };
     window.addEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
@@ -675,10 +706,13 @@ export function AuthProvider({
     // C-R1: residual recovery 起動で arm（first session 待ち）。C2 で pin は authenticated 中ずっと有効。
     const guard = residualSessionGuardRef.current;
     guard.armed = true;
+    const targetFlowId = readActiveLoginFlowId();
     const stopRecovery = startRecovery({
       gateway,
       storage,
       ttlMs: recoveryTtlMs,
+      // C2: createAuthFlow 後は今開始した flow だけ。キー無しの従来 residual は全件のまま。
+      ...(targetFlowId === undefined ? {} : { targetFlowId }),
       onComplete: (result) => {
         publishCompletionSafely({ flowId: result.flowId, returnTo: result.returnTo });
         void refreshSession();

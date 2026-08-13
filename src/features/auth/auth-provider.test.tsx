@@ -9,7 +9,7 @@ import {
   type AuthProviderClient,
 } from "./auth-provider";
 import { clearSoftResidualRecoverySuppressed } from "./auth-cleanup";
-import { createAuthFlow } from "./auth-flow";
+import { ACTIVE_LOGIN_FLOW_STORAGE_KEY, createAuthFlow } from "./auth-flow";
 import { resetAccessTokenPinGateForTests } from "./session";
 import { useAuth } from "./use-auth";
 
@@ -48,6 +48,7 @@ describe("AuthProvider", () => {
     try {
       window.localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
     } catch {
       // ignore
     }
@@ -62,6 +63,7 @@ describe("AuthProvider", () => {
     try {
       window.localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
     } catch {
       // ignore
     }
@@ -178,7 +180,9 @@ describe("AuthProvider", () => {
       </AuthProvider>,
     );
     expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
-    expect(recovery).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(recovery).toHaveBeenCalledOnce();
+    });
   });
 
   it("publishes completion when an in-flight recovery wins the claim", async () => {
@@ -1220,7 +1224,8 @@ describe("AuthProvider", () => {
     window.history.replaceState(null, "", "/login");
     window.localStorage.clear();
     window.sessionStorage.clear();
-    const startRecovery = vi.fn(() => vi.fn());
+    const startRecovery = vi.fn<(input: { targetFlowId?: string }) => () => void>();
+    startRecovery.mockReturnValue(vi.fn());
     const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
     const authListeners: AuthStateListener[] = [];
     const client = {
@@ -1276,6 +1281,101 @@ describe("AuthProvider", () => {
     expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBeNull();
     // 意図的 login 開始後は同一 /login マウントで residual が再武装される
     expect(startRecovery.mock.calls.length).toBeGreaterThan(startsWhileAuth);
+    // C2: 再武装は今開始した flow だけ（prior 全件ではない）
+    expect(startRecovery.mock.calls.at(-1)?.[0]?.targetFlowId).toBe(
+      "10000000-0000-4000-8000-0000000000a4",
+    );
+  });
+
+  it("C2: createAuthFlow after soft does not target a prior-user flow", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const priorFlowId = "10000000-0000-4000-8000-0000000000c2";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${priorFlowId}`,
+      JSON.stringify({
+        id: priorFlowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "http://127.0.0.1:5173",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.pending-deposit.${priorFlowId}`,
+      JSON.stringify({
+        state: "B".repeat(43),
+        code: "authorization-code-plain",
+        expiresAtMs: Date.now() + 60_000,
+      }),
+    );
+    const startRecovery = vi.fn<(input: { targetFlowId?: string }) => () => void>();
+    startRecovery.mockReturnValue(vi.fn());
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const authListeners: AuthStateListener[] = [];
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("authenticated");
+    const startsWhileAuth = startRecovery.mock.calls.length;
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_OUT", null);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(startRecovery.mock.calls.length).toBe(startsWhileAuth);
+
+    const newFlowId = "10000000-0000-4000-8000-0000000000b2";
+    const api = {
+      create: vi.fn(() =>
+        Promise.resolve({
+          id: newFlowId,
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        }),
+      ),
+      deposit: vi.fn(() => Promise.resolve(undefined)),
+      claim: vi.fn(() => Promise.reject(new Error("not deposited"))),
+    };
+
+    await act(async () => {
+      await createAuthFlow("/onboarding", api, window.localStorage, {
+        now: () => new Date("2026-08-12T00:00:00.000Z"),
+        randomBytes: (size = 32) => new Uint8Array(size).fill(7),
+      });
+      await Promise.resolve();
+    });
+
+    expect(startRecovery.mock.calls.length).toBeGreaterThan(startsWhileAuth);
+    const lastInput = startRecovery.mock.calls.at(-1)?.[0];
+    expect(lastInput?.targetFlowId).toBe(newFlowId);
+    expect(lastInput?.targetFlowId).not.toBe(priorFlowId);
+    // R3: prior-user secret / pending は焼かない
+    expect(window.localStorage.getItem(`kondate.auth.flow.${priorFlowId}`)).not.toBeNull();
+    expect(
+      window.localStorage.getItem(`kondate.auth.supabase.pending-deposit.${priorFlowId}`),
+    ).not.toBeNull();
   });
 
   it("C5: cold-start never-authenticated unauthenticated does not wipe sibling flow (RR1 intact)", async () => {
@@ -1677,6 +1777,87 @@ describe("AuthProvider", () => {
       expect(window.localStorage.getItem(pendingKey)).not.toBeNull();
       expect(window.localStorage.getItem(ownerKey)).not.toBeNull();
       expect(window.localStorage.getItem(completionKey)).not.toBeNull();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C4: fail-closed stays unauthenticated after hung getSession settles; createAuthFlow can apply", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      let settleHang: ((value: { data: { session: Session }; error: null }) => void) | undefined;
+      const getSession = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ data: { session: Session }; error: null }>((resolve) => {
+            settleHang = resolve;
+          }),
+      );
+      const authListeners: AuthStateListener[] = [];
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } as AuthProviderClient;
+
+      render(
+        <AuthProvider client={client} startRecovery={() => vi.fn()}>
+          <Probe />
+        </AuthProvider>,
+      );
+      expect(screen.getByText("loading")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      const callsAfterDeadline = getSession.mock.calls.length;
+
+      getSession.mockResolvedValue({ data: { session }, error: null });
+      await act(async () => {
+        settleHang?.({ data: { session }, error: null });
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", session);
+        }
+        await vi.advanceTimersByTimeAsync(3_000);
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      expect(getSession.mock.calls.length).toBe(callsAfterDeadline);
+
+      const api = {
+        create: vi.fn(() =>
+          Promise.resolve({
+            id: "10000000-0000-4000-8000-0000000000c4",
+            expiresAt: new Date(Date.now() + 300_000).toISOString(),
+          }),
+        ),
+        deposit: vi.fn(() => Promise.resolve(undefined)),
+        claim: vi.fn(() => Promise.reject(new Error("not deposited"))),
+      };
+      await act(async () => {
+        await createAuthFlow("/onboarding", api, window.localStorage, {
+          now: () => new Date("2026-08-12T00:00:00.000Z"),
+          randomBytes: (size = 32) => new Uint8Array(size).fill(7),
+        });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", session);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("authenticated")).toBeInTheDocument();
     } finally {
       window.localStorage.clear();
       vi.useRealTimers();

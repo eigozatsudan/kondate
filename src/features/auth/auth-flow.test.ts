@@ -10,6 +10,7 @@ import {
   clearSiblingUnexpiredAuthFlows,
   ContinuationResponseLostError,
   createContinuationApi,
+  ACTIVE_LOGIN_FLOW_STORAGE_KEY,
   createAuthFlow,
   estimateAuthClockSkewMs,
   isAuthContinuationCallbackOwned,
@@ -404,9 +405,13 @@ describe("auth flow storage", () => {
       expect(window.localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBeNull();
       expect(events).toHaveLength(1);
       expect(events[0]?.type).toBe(SOFT_RESIDUAL_RECOVERY_REARM_EVENT);
+      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(
+        "10000000-0000-4000-8000-000000000001",
+      );
     } finally {
       window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
       window.localStorage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
     }
   });
 
