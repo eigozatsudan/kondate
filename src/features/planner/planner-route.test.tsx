@@ -2036,7 +2036,7 @@ describe("PlannerRoutePage", () => {
         expiredPantryConfirmations: [],
       },
     };
-    pendingGenerationMock.claimPendingGeneration.mockImplementation(async () => {
+    pendingGenerationMock.claimPendingGeneration.mockImplementation(() => {
       pendingGenerationMock.readPendingGeneration.mockReturnValue(otherPending);
       pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
         kind: "new_menu",
@@ -2045,7 +2045,7 @@ describe("PlannerRoutePage", () => {
         ownerUserId: draft.userId,
         createdAt: otherPending.createdAt,
       });
-      return { pending: otherPending, claimed: false };
+      return Promise.resolve({ pending: otherPending, claimed: false });
     });
     const user = userEvent.setup();
     render(<PlannerRoutePage />);
@@ -2236,7 +2236,7 @@ describe("PlannerRoutePage", () => {
     };
     // init / claim 前は pending なし（reconcile 再開に落とさない）。
     // claim 負け後だけ winner の sticky/meta を読めるようにする。
-    pendingGenerationMock.claimPendingGeneration.mockImplementation(async () => {
+    pendingGenerationMock.claimPendingGeneration.mockImplementation(() => {
       pendingGenerationMock.readPendingGeneration.mockReturnValue(otherPending);
       pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
         kind: "new_menu",
@@ -2245,7 +2245,7 @@ describe("PlannerRoutePage", () => {
         ownerUserId: draft.userId,
         createdAt: otherPending.createdAt,
       });
-      return { pending: otherPending, claimed: false };
+      return Promise.resolve({ pending: otherPending, claimed: false });
     });
     const user = userEvent.setup();
     render(<PlannerRoutePage />);
@@ -2324,13 +2324,13 @@ describe("PlannerRoutePage", () => {
     };
     pendingGenerationMock.readPendingGenerationMeta.mockReturnValue(null);
     // init は pending なし（wizard を出す）。claim 後だけ winner body→rollback を再現する。
-    pendingGenerationMock.claimPendingGeneration.mockImplementation(async () => {
+    pendingGenerationMock.claimPendingGeneration.mockImplementation(() => {
       let pendingReads = 0;
       pendingGenerationMock.readPendingGeneration.mockImplementation(() => {
         pendingReads += 1;
         return pendingReads === 1 ? otherPending : null;
       });
-      return { pending: otherPending, claimed: false };
+      return Promise.resolve({ pending: otherPending, claimed: false });
     });
     const user = userEvent.setup();
     render(<PlannerRoutePage />);

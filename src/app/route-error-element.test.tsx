@@ -40,7 +40,9 @@ describe("RouteErrorElement", () => {
     // 同一 specifier の失敗 Promise はフルリロード以外では再利用されるため、
     // ホーム／ログイン Link だけでは /welcome 死回路を抜けられない
     const reload = vi.fn();
-    vi.stubGlobal("location", { ...window.location, reload });
+    // Location.reload は再定義できない。class instance の spread も lint 違反になるため、
+    // ボタンが触る reload だけを持つプレーンオブジェクトで差し替える。
+    vi.stubGlobal("location", { reload });
     const user = userEvent.setup();
     const router = createMemoryRouter(
       [

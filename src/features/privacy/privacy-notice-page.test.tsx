@@ -701,10 +701,11 @@ describe("AP7: stale share cache must not re-accept after other-tab revoke", () 
     expect(shareCheckbox).toBeChecked();
 
     latestShare = revokedShareState;
-    await act(async () => {
+    await act(() => {
       const publisher = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
       publisher.postMessage({ userId: "user-1" });
       publisher.close();
+      return Promise.resolve();
     });
 
     await waitFor(() => {
@@ -748,10 +749,11 @@ describe("AP7: stale share cache must not re-accept after other-tab revoke", () 
     expect(shareCheckbox).toBeChecked();
 
     latestShare = revokedShareState;
-    await act(async () => {
+    await act(() => {
       const publisher = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
       publisher.postMessage({ userId: "user-1" });
       publisher.close();
+      return Promise.resolve();
     });
 
     await waitFor(() => {
@@ -850,8 +852,9 @@ describe("AP11: submit must not join in-flight accepted or fall back to accepted
     });
 
     // in-flight を accepted で解決しても、合流した応答を accept 根拠にしてはいけない
-    await act(async () => {
+    await act(() => {
       resolveMountRead(currentShareState);
+      return Promise.resolve();
     });
 
     expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
@@ -954,8 +957,9 @@ describe("AP13: successful standalone reread must write cache before delayed mou
     });
     expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
 
-    await act(async () => {
+    await act(() => {
       resolveMountRead(currentShareState);
+      return Promise.resolve();
     });
 
     expect(client.getQueryData(shareConsentKeys.current("user-1"))).toEqual(revokedShareState);
@@ -982,8 +986,9 @@ describe("AP12: refetch error must not turn share off and revoke", () => {
     expect(shareCheckbox).toBeChecked();
 
     getShare.mockRejectedValue(new Error("共有の同意状態を読み込めませんでした"));
-    await act(async () => {
+    await act(() => {
       window.dispatchEvent(new Event("focus"));
+      return Promise.resolve();
     });
 
     await waitFor(() => {

@@ -368,7 +368,9 @@ export function PlannerRoutePage() {
         // の clear 後に空 pending で generation へ入り idle→planner になる。
         // sticky が残る（meta 完了 or 期限まで body 存続）ときだけ再開する。
         const winnerReady = await waitForWinnerPendingSticky(userId, signal);
-        if (signal.aborted || !winnerReady) return false;
+        // await 後に AbortSignal.aborted を直読すると、直前の early return で
+        // 常に false と畳まれ no-unnecessary-condition になる。関数経由で再読する。
+        if (isAbortSignalAborted(signal) || !winnerReady) return false;
         void navigate("/generation?resumed=1");
         return "resumed";
       }
@@ -1845,6 +1847,11 @@ async function waitForWinnerPendingSticky(userId: string, signal: AbortSignal): 
     });
   }
   return readPendingGeneration(userId, new Date()) !== null;
+}
+
+/** await 跨ぎの AbortSignal 再読。制御フロー解析に aborted=false と畳まれないよう関数経由。 */
+function isAbortSignalAborted(signal: AbortSignal): boolean {
+  return signal.aborted;
 }
 
 /** await 跨ぎの strip/unmount を ref 再読で検知する（制御フロー解析に畳まれないよう関数経由）。 */
