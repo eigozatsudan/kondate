@@ -12,6 +12,7 @@ import {
 } from "./household-api";
 import { EASE_SOFT_NOT_SWALLOW_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { HouseholdOnboardingForm, type HouseholdOnboardingApi } from "./household-onboarding-page";
+import { householdKeys } from "./household-queries";
 import { UNSUPPORTED_DIET_KIND_LABELS } from "./unsupported-diet-copy";
 
 /** オンボーディング unit は useAppToast 前提のため Provider を同梱する */
@@ -1158,7 +1159,7 @@ it("HR1: auto-commits deferred registered when allergy list becomes non-empty wh
     custom_confirmed: false,
     created_at: "2026-07-11T00:00:00.000Z",
   };
-  // 初回は loading → registered 選択で pending。その後 residual 非空一覧が届く
+  // H5: pending 中は select が disabled。空一覧成功後に registered を選び、residual 到着で auto-commit
   const allergiesDeferred = deferred<
     Array<{
       id: string;
@@ -1190,18 +1191,22 @@ it("HR1: auto-commits deferred registered when allergy list becomes non-empty wh
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
 
-  await user.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  allergiesDeferred.resolve([]);
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toBeEnabled();
+  });
+  await user.selectOptions(screen.getByLabelText("アレルギーの確認"), "registered");
   await waitFor(() => {
     expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
   });
-  // 証拠未到着中は DB に registered を書かない
+  // 空一覧の registered は DB に書かない（H13 pending）
   expect(updateDraft).not.toHaveBeenCalledWith(
     "member-1",
     expect.objectContaining({ allergy_status: "registered" }),
     expect.anything(),
   );
 
-  allergiesDeferred.resolve([eggAllergy]);
+  client.setQueryData(householdKeys.allergies("user-1", "member-1"), [eggAllergy]);
   await waitFor(() => {
     expect(updateDraft).toHaveBeenCalledWith(
       "member-1",
@@ -1782,4 +1787,78 @@ it("H4: commitPendingRegisteredIfNeeded does not write registered when allergy l
     updateDraft.mock.calls.filter((call) => call[1].allergy_status === "registered"),
   ).toHaveLength(0);
   expect(currentDraft.allergy_status).not.toBe("registered");
+});
+
+// H5: settings と同型。一覧 pending 中はアレルギー select を止め、residual 未確認警告を出す
+it("H5: disables allergy select while allergies query is pending", async () => {
+  const pendingDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const allergiesDeferred = deferred<
+    Array<{
+      id: string;
+      user_id: string;
+      member_id: string;
+      allergen_id: string | null;
+      custom_name: string | null;
+      custom_aliases: string[];
+      custom_confirmed: boolean;
+      created_at: string;
+    }>
+  >();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([pendingDraft]),
+    listAllergies: vi.fn(() => allergiesDeferred.promise),
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />);
+
+  expect(await screen.findByLabelText("アレルギーの確認")).toBeDisabled();
+  expect(
+    screen.getByText(/アレルギー一覧を確認できないため、以前の登録が残っている可能性/u),
+  ).toBeVisible();
+
+  allergiesDeferred.resolve([]);
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toBeEnabled();
+  });
+});
+
+// H5: 残針未確認のまま「なし」完了させない（completeMember に進まない）
+it("H5: refuses none-complete while allergies query is pending", async () => {
+  const user = userEvent.setup();
+  const completableDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const allergiesDeferred = deferred<
+    Array<{
+      id: string;
+      user_id: string;
+      member_id: string;
+      allergen_id: string | null;
+      custom_name: string | null;
+      custom_aliases: string[];
+      custom_confirmed: boolean;
+      created_at: string;
+    }>
+  >();
+  const completeMember = vi.fn();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([completableDraft]),
+    listAllergies: vi.fn(() => allergiesDeferred.promise),
+    completeMember,
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />);
+
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "アレルギー一覧の読み込みが終わるまで待ってください",
+  );
+  expect(completeMember).not.toHaveBeenCalled();
 });

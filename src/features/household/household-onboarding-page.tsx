@@ -92,6 +92,8 @@ type OnboardingFieldErrors = {
 const ONBOARDING_FORM_ERROR_ID = "household-onboarding-form-error";
 const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
 const ADD_SCOPE_NOTICE_TITLE_ID = "onboarding-add-scope-notice-title";
+/** H5: 一覧未確定のまま「なし／未確認」完了すると残針を見落としたまま complete できる */
+const ALLERGIES_LIST_PENDING_MESSAGE = "アレルギー一覧の読み込みが終わるまで待ってください";
 
 const ONBOARDING_FIELD_ORDER = [
   "ageBand",
@@ -134,6 +136,21 @@ function validateOnboardingDraft(
     errors.unsupportedDietKinds = UNSUPPORTED_DIET_KINDS_REQUIRED;
   }
   return errors;
+}
+
+/**
+ * H5: 「なし／未確認」は件数検証が無いので、一覧 pending（または未 success かつ cache 空）
+ * では residual を断定できない。validateOnboardingDraft にはねじ込まず query 状態で見る。
+ */
+function isOnboardingAllergyListUnverified(
+  allergyStatus: string | null,
+  query: { isPending: boolean; isSuccess: boolean },
+  cachedCount: number,
+): boolean {
+  if (allergyStatus !== "none" && allergyStatus !== "unconfirmed") {
+    return false;
+  }
+  return query.isPending || (!query.isSuccess && cachedCount === 0);
 }
 
 function firstOnboardingFieldError(
@@ -751,6 +768,17 @@ export function HouseholdOnboardingForm({
         queryClient.getQueryData<MemberAllergyRow[]>(householdKeys.allergies(userId, memberId)) ??
         allergies;
       const nextErrors = validateOnboardingDraft(draftNow, allergiesNow.length);
+      // H5: none/unconfirmed は件数ゲートが無い。一覧未確定なら complete しない
+      if (
+        Object.keys(nextErrors).length === 0 &&
+        isOnboardingAllergyListUnverified(
+          draftNow.allergy_status,
+          allergiesQuery,
+          allergiesNow.length,
+        )
+      ) {
+        nextErrors.allergyStatus = ALLERGIES_LIST_PENDING_MESSAGE;
+      }
       if (Object.keys(nextErrors).length > 0) {
         setFieldErrors(nextErrors);
         const lead = firstOnboardingFieldError(nextErrors);
@@ -1032,6 +1060,9 @@ export function HouseholdOnboardingForm({
             aria-describedby={
               fieldErrors.allergyStatus !== undefined ? ONBOARDING_FORM_ERROR_ID : undefined
             }
+            // U3-I2: 読込中は誤操作防止で止めるが、一覧 error 後も なし/未確認 へ戻せるようにする。
+            // （settings と同型。H5: pending 中に「なし」へ切って残針を見落とさない）
+            disabled={allergiesQuery.isPending}
             onChange={(event) => {
               const value = event.target.value;
               if (value === "registered") {
@@ -1076,7 +1107,7 @@ export function HouseholdOnboardingForm({
             </p>
           )}
         {(draft.allergy_status === "none" || draft.allergy_status === "unconfirmed") &&
-          allergiesQuery.isError && (
+          (allergiesQuery.isError || allergiesQuery.isPending) && (
             <p className="type-small" role="status">
               {RESIDUAL_ALLERGY_UNVERIFIED_WARNING}
             </p>
