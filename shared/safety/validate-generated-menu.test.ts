@@ -1634,12 +1634,15 @@ it("keeps ordinary Japanese menus valid without guarantee-phrase false positives
 });
 
 it("does not treat the fixed disclaimer wording as a guarantee phrase", () => {
-  // 固定免責は「安全です」「安全を保証」を部分一致で含まない。dish に入れても誤検知しない。
+  // 固定免責は「である / であることを」が挟まる。「安全です」「安全を保証」を部分一致で含まない。
+  // G10 の畳み（NFKC / Cf / 空白削除 / カナ幅）後も同じ。dish に入れても誤検知しない。
   const disclaimer =
     "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。";
   expect(disclaimer.includes("安全です")).toBe(false);
   expect(disclaimer.includes("安全を保証")).toBe(false);
   expect(disclaimer.includes("アレルギー対応済み")).toBe(false);
+  expect(disclaimer.replaceAll(/\s/gu, "").includes("安全です")).toBe(false);
+  expect(disclaimer.replaceAll(/\s/gu, "").includes("安全を保証")).toBe(false);
   const base = makeGeneratedMenu();
   const menu = makeGeneratedMenu({
     dishes: base.dishes.map((dish, index) =>
