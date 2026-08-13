@@ -16,6 +16,7 @@ import {
   type ShareConsentState,
 } from "./share-consent-api";
 import { shareConsentKeys } from "./share-consent-queries";
+import { SHARE_CONSENT_BROADCAST_CHANNEL } from "./share-consent-settings-section";
 
 /**
  * AP8: privacy accept（PostgREST）の上限。
@@ -34,6 +35,11 @@ export type PrivacyAcceptInput = {
    * 未同意 / 既 revoke の false は upsert しない。
    */
   shareConsentAccepted: boolean;
+  /**
+   * AP7: 利用者が共有チェックを手で触ったか。
+   * 未指定は未タッチ扱い（Content 単体の省略互換）。
+   */
+  shareConsentTouched?: boolean;
 };
 
 /**
@@ -65,7 +71,38 @@ export function PrivacyNoticePage() {
     queryKey: shareConsentKeys.current(userId ?? ""),
     queryFn: () => getMyShareConsent(getBrowserSupabaseClient()),
     enabled: userId !== undefined,
+    // AP7: AppProviders の 30s だと設定/他タブ revoke 後も accepted cache が fresh のまま残る
+    staleTime: 0,
   });
+  // AP7: 設定と同型。他タブ revoke / フォーカス復帰でサーバ正を再取得する
+  useEffect(() => {
+    if (userId === undefined) return;
+    const invalidate = (): void => {
+      void queryClient.invalidateQueries({ queryKey: shareConsentKeys.current(userId) });
+    };
+    const onFocus = (): void => {
+      invalidate();
+    };
+    window.addEventListener("focus", onFocus);
+
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== "undefined") {
+      channel = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
+      channel.onmessage = (event: MessageEvent<unknown>) => {
+        const data = event.data;
+        if (data === null || typeof data !== "object" || !("userId" in data)) return;
+        const messageUserId: unknown = Reflect.get(data, "userId");
+        if (messageUserId === userId) {
+          invalidate();
+        }
+      };
+    }
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      channel?.close();
+    };
+  }, [queryClient, userId]);
   // isFetched: 成功・失敗どちらでも読取は終わっている。disabled（未ログイン）は false。
   const shareConsentReady = shareQuery.isFetched;
   const initialShareChecked = initialShareCheckedFromConsent(shareQuery.data, shareQuery.isSuccess);
@@ -84,10 +121,29 @@ export function PrivacyNoticePage() {
       const shareSettled = shareState?.status === "success" || shareState?.status === "error";
       // pending 中は share 分岐を走らせない（default true 再 accept を残さない）
       if (shareSettled) {
-        const current = queryClient.getQueryData<ShareConsentState>(
-          shareConsentKeys.current(userId),
-        );
-        const shouldUpsertAccept = input.shareConsentAccepted;
+        let current = queryClient.getQueryData<ShareConsentState>(shareConsentKeys.current(userId));
+        // AP7: getQueryData だけに頼らず、upsert(true) 直前にサーバ正を再読する
+        if (input.shareConsentAccepted) {
+          try {
+            current = await withTimeout(
+              queryClient.fetchQuery({
+                queryKey: shareConsentKeys.current(userId),
+                queryFn: () => getMyShareConsent(client),
+                staleTime: 0,
+              }),
+              PRIVACY_ACCEPT_TIMEOUT_MS,
+            );
+          } catch {
+            // 再読失敗は cache のまま。下の分岐で未タッチ revoke なら upsert(true) しない
+          }
+        }
+        const freshRevoked =
+          current !== undefined &&
+          current.consent_version !== null &&
+          !hasCurrentShareConsent(current);
+        // サーバが revoke 済みで利用者が共有を触っていないなら再 accept しない
+        const shouldUpsertAccept =
+          input.shareConsentAccepted && !(freshRevoked && input.shareConsentTouched !== true);
         const shouldRevoke = !input.shareConsentAccepted && hasCurrentShareConsent(current ?? null);
         if (shouldUpsertAccept || shouldRevoke) {
           try {
@@ -149,11 +205,11 @@ export function PrivacyNoticeContent({
   // 読取完了前は進めない（未観測の unchecked を revoke と誤認しない）
   const [checked, setChecked] = useState(false);
   const [shareChecked, setShareChecked] = useState(initialShareChecked);
-  // 読取完了の一度だけサーバ正へ同期。Content 単体（ready 既定 true）では上書きしない
-  const appliedShareInitial = useRef(shareConsentReady);
+  // AP7: 利用者が共有を手で触ったらサーバ再読で上書きしない
+  const userTouchedShareRef = useRef(false);
   useEffect(() => {
-    if (!shareConsentReady || appliedShareInitial.current) return;
-    appliedShareInitial.current = true;
+    if (!shareConsentReady) return;
+    if (userTouchedShareRef.current) return;
     setShareChecked(initialShareChecked);
   }, [shareConsentReady, initialShareChecked]);
   // 未チェックのまま primary を押したときの案内。チェックしたら消す。
@@ -213,6 +269,7 @@ export function PrivacyNoticeContent({
             checked={shareChecked}
             disabled={!shareConsentReady}
             onChange={(event) => {
+              userTouchedShareRef.current = true;
               setShareChecked(event.target.checked);
             }}
           />
@@ -244,7 +301,10 @@ export function PrivacyNoticeContent({
             return;
           }
           // 読取完了前は share を true で送らない（pending 中の default true 再 accept を防ぐ）
-          onAccept({ shareConsentAccepted: shareConsentReady && shareChecked });
+          onAccept({
+            shareConsentAccepted: shareConsentReady && shareChecked,
+            shareConsentTouched: userTouchedShareRef.current,
+          });
         }}
       >
         {saving ? "保存中…" : "確認して進む"}

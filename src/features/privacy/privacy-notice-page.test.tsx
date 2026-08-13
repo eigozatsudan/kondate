@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { shareConsentVersion } from "@shared/contracts/share-consent";
 import { shareConsentRequiredPhrases, shareConsentSection } from "./privacy-copy";
 import type { ShareConsentState } from "./share-consent-api";
+import { shareConsentKeys } from "./share-consent-queries";
+import { SHARE_CONSENT_BROADCAST_CHANNEL } from "./share-consent-settings-section";
 
 type Consent = {
   user_id: string;
@@ -89,6 +91,59 @@ async function waitForShareConsentReady() {
   });
 }
 
+/** テスト用: 同一 channel 名の購読者へ配送する最小 BroadcastChannel スタブ */
+class FakeBroadcastChannel {
+  static channels = new Map<string, Set<FakeBroadcastChannel>>();
+  onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+  readonly name: string;
+
+  constructor(name: string) {
+    this.name = name;
+    const set = FakeBroadcastChannel.channels.get(name) ?? new Set();
+    set.add(this);
+    FakeBroadcastChannel.channels.set(name, set);
+  }
+
+  postMessage(data: unknown): void {
+    const peers = FakeBroadcastChannel.channels.get(this.name);
+    if (peers === undefined) return;
+    for (const peer of peers) {
+      // 同一タブには届けない（ブラウザ仕様）
+      if (peer === this) continue;
+      peer.onmessage?.({ data } as MessageEvent<unknown>);
+    }
+  }
+
+  close(): void {
+    FakeBroadcastChannel.channels.get(this.name)?.delete(this);
+  }
+
+  static reset(): void {
+    FakeBroadcastChannel.channels.clear();
+  }
+}
+
+function renderPrivacyPageWithWarmShareCache(state: ShareConsentState) {
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  // AppProviders と同じ 30s。warm cache が fresh のまま残る状況を再現する
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  client.setQueryData(shareConsentKeys.current("user-1"), state);
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return { client, router };
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -107,7 +162,10 @@ it("explains sent, unsent, and stored data before accepting", async () => {
   await user.click(accept);
   expect(onAccept).toHaveBeenCalledOnce();
   // 共有は既定オンのまま進む
-  expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: true });
+  expect(onAccept).toHaveBeenCalledWith({
+    shareConsentAccepted: true,
+    shareConsentTouched: false,
+  });
 });
 
 it("shows an alert and focuses the checkbox when primary is pressed without consent check", async () => {
@@ -166,7 +224,10 @@ it("keeps share consent as a separate card, checked by default, without gating p
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   expect(accept).toBeEnabled();
   await user.click(accept);
-  expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: false });
+  expect(onAccept).toHaveBeenCalledWith({
+    shareConsentAccepted: false,
+    shareConsentTouched: true,
+  });
 });
 
 it("accepts share consent by default when user leaves the pre-checked box on", async () => {
@@ -175,7 +236,10 @@ it("accepts share consent by default when user leaves the pre-checked box on", a
   renderPrivacyContent({ saving: false, onAccept, onSkip: vi.fn() });
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   await user.click(screen.getByRole("button", { name: "確認して進む" }));
-  expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: true });
+  expect(onAccept).toHaveBeenCalledWith({
+    shareConsentAccepted: true,
+    shareConsentTouched: false,
+  });
 });
 
 it("renders all required share-consent phrases for toContain locks", () => {
@@ -603,6 +667,109 @@ it("AP8: primary is disabled until share consent query settles so early submit c
   expect(shareCheckbox).toBeEnabled();
   expect(shareCheckbox).toBeChecked();
   expect(upsertShare).not.toHaveBeenCalled();
+});
+
+describe("AP7: stale share cache must not re-accept after other-tab revoke", () => {
+  beforeEach(() => {
+    FakeBroadcastChannel.reset();
+    vi.stubGlobal("BroadcastChannel", FakeBroadcastChannel);
+  });
+
+  afterEach(() => {
+    FakeBroadcastChannel.reset();
+    vi.unstubAllGlobals();
+  });
+
+  it("AP7: warm accepted cache then revoke broadcast does not re-accept if user did not touch share", async () => {
+    const user = userEvent.setup();
+    // 最初は accepted（warm cache / mount refetch）。invalidate 後は revoked
+    let latestShare: ShareConsentState = currentShareState;
+    getShare.mockImplementation(() => Promise.resolve(latestShare));
+    acceptConsent.mockResolvedValue({
+      user_id: "user-1",
+      notice_version: "2026-07-29.v1",
+      accepted_at: "2026-07-12T00:00:00.000Z",
+      created_at: "2026-07-12T00:00:00.000Z",
+    });
+
+    renderPrivacyPageWithWarmShareCache(currentShareState);
+
+    await waitForShareConsentReady();
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).toBeChecked();
+
+    latestShare = revokedShareState;
+    await act(async () => {
+      const publisher = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
+      publisher.postMessage({ userId: "user-1" });
+      publisher.close();
+    });
+
+    await waitFor(() => {
+      expect(shareCheckbox).not.toBeChecked();
+    });
+
+    // 共有は触らず必須だけ入れて進む → 再 accept しない
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(upsertShare).not.toHaveBeenCalledWith({}, true);
+    expect(upsertShare).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  });
+
+  it("AP7: explicit share on after revoke broadcast still upserts true", async () => {
+    const user = userEvent.setup();
+    let latestShare: ShareConsentState = currentShareState;
+    getShare.mockImplementation(() => Promise.resolve(latestShare));
+    acceptConsent.mockResolvedValue({
+      user_id: "user-1",
+      notice_version: "2026-07-29.v1",
+      accepted_at: "2026-07-12T00:00:00.000Z",
+      created_at: "2026-07-12T00:00:00.000Z",
+    });
+    upsertShare.mockResolvedValue({
+      consent_version: shareConsentVersion,
+      accepted_at: "2026-08-01T00:00:00.000Z",
+      revoked_at: null,
+    });
+
+    renderPrivacyPageWithWarmShareCache(currentShareState);
+
+    await waitForShareConsentReady();
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).toBeChecked();
+
+    latestShare = revokedShareState;
+    await act(async () => {
+      const publisher = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
+      publisher.postMessage({ userId: "user-1" });
+      publisher.close();
+    });
+
+    await waitFor(() => {
+      expect(shareCheckbox).not.toBeChecked();
+    });
+
+    // サーバ revoke 後に利用者が明示オン → 再 accept してよい
+    await user.click(shareCheckbox);
+    expect(shareCheckbox).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(upsertShare).toHaveBeenCalledWith({}, true);
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  });
 });
 
 it("AP8: accept hang times out so skip is re-enabled", async () => {
