@@ -31,8 +31,9 @@ export const privacyConsentCheckboxRequiredMessage =
 export type PrivacyAcceptInput = {
   /**
    * 共有任意チェック。
-   * true → upsert(true)。false かつ現行が有効同意なら upsert(false)。
-   * 未同意 / 既 revoke の false は upsert しない。
+   * true → 単独再読が現行/未同意なら upsert(true)。未タッチの再読失敗・fresh revoke は書かない。
+   * false かつ利用者がオフにした場合だけ、現行同意なら upsert(false)。
+   * 未タッチのオフ追従 / 未同意 / 既 revoke は upsert しない。
    */
   shareConsentAccepted: boolean;
   /**
@@ -46,13 +47,12 @@ export type PrivacyAcceptInput = {
  * AP1: 共有チェック初期値。
  * 有効同意 → true、revoke 済み（行はあるが current でない）→ false、
  * 未同意（null フィールド）→ true（初回推奨既定）。
- * pending / error では false（revoke 済みを default true で出さない）。
+ * data 無し（pending / 初回 error）では false（revoke 済みを default true で出さない — AP10）。
+ * AP12: success 後の refetch error は v5 が直前 data を残す。isSuccess が false でも
+ * その data を使い、未タッチのボックスをオフ追従させない。
  */
-function initialShareCheckedFromConsent(
-  state: ShareConsentState | undefined,
-  querySuccess: boolean,
-): boolean {
-  if (!querySuccess || state === undefined) return false;
+function initialShareCheckedFromConsent(state: ShareConsentState | undefined): boolean {
+  if (state === undefined) return false;
   if (state.consent_version === null) return true;
   return isCurrentShareConsent({
     consent_version: state.consent_version,
@@ -105,7 +105,7 @@ export function PrivacyNoticePage() {
   }, [queryClient, userId]);
   // isFetched: 成功・失敗どちらでも読取は終わっている。disabled（未ログイン）は false。
   const shareConsentReady = shareQuery.isFetched;
-  const initialShareChecked = initialShareCheckedFromConsent(shareQuery.data, shareQuery.isSuccess);
+  const initialShareChecked = initialShareCheckedFromConsent(shareQuery.data);
   const mutation = useMutation({
     mutationFn: async (input: PrivacyAcceptInput) => {
       if (userId === undefined) throw new Error("ログインが必要です");
@@ -122,29 +122,32 @@ export function PrivacyNoticePage() {
       // pending 中は share 分岐を走らせない（default true 再 accept を残さない）
       if (shareSettled) {
         let current = queryClient.getQueryData<ShareConsentState>(shareConsentKeys.current(userId));
-        // AP7: getQueryData だけに頼らず、upsert(true) 直前にサーバ正を再読する
+        let freshReadFailed = false;
+        // AP11: 同一キー fetchQuery は mount/focus の in-flight accepted に合流する。
+        // 単独 RPC なら revoke 後のサーバ正を読める。throw / timeout は cache を accept 根拠にしない。
         if (input.shareConsentAccepted) {
           try {
-            current = await withTimeout(
-              queryClient.fetchQuery({
-                queryKey: shareConsentKeys.current(userId),
-                queryFn: () => getMyShareConsent(client),
-                staleTime: 0,
-              }),
-              PRIVACY_ACCEPT_TIMEOUT_MS,
-            );
+            current = await withTimeout(getMyShareConsent(client), PRIVACY_ACCEPT_TIMEOUT_MS);
           } catch {
-            // 再読失敗は cache のまま。下の分岐で未タッチ revoke なら upsert(true) しない
+            freshReadFailed = true;
           }
         }
         const freshRevoked =
           current !== undefined &&
           current.consent_version !== null &&
           !hasCurrentShareConsent(current);
-        // サーバが revoke 済みで利用者が共有を触っていないなら再 accept しない
+        // 未タッチ + 再読失敗は accepted cache で upsert(true) しない（AP11）
+        // サーバが revoke 済みで利用者が共有を触っていないなら再 accept しない（AP7）
         const shouldUpsertAccept =
-          input.shareConsentAccepted && !(freshRevoked && input.shareConsentTouched !== true);
-        const shouldRevoke = !input.shareConsentAccepted && hasCurrentShareConsent(current ?? null);
+          input.shareConsentAccepted &&
+          !(freshReadFailed && input.shareConsentTouched !== true) &&
+          !(freshRevoked && input.shareConsentTouched !== true);
+        // AP12: 未タッチのオフ追従では revoke しない。
+        // revoke は利用者がオフにしたときだけ。fresh 現行かつ入力 false は触っている場合に限る。
+        const shouldRevoke =
+          !input.shareConsentAccepted &&
+          input.shareConsentTouched === true &&
+          hasCurrentShareConsent(current ?? null);
         if (shouldUpsertAccept || shouldRevoke) {
           try {
             const share = await withTimeout(
