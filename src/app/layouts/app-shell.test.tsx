@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useRef, type ReactNode } from "react";
 import { createMemoryRouter } from "react-router";
@@ -249,5 +249,24 @@ describe("AppShell planner leave flush (P2)", () => {
       expect(screen.getByRole("heading", { name: "設定" })).toBeVisible();
     });
     expect(flush).not.toHaveBeenCalled();
+  });
+
+  it("does not flush or preventDefault on modifier-click leave from /planner", () => {
+    const flush = vi.fn(() => Promise.resolve("proceed" as const));
+    registerPlannerLeaveFlush(flush);
+    renderAppShellAt("/planner");
+
+    const pantry = screen.getByRole("link", { name: /冷蔵庫/u });
+    // MemoryRouter は新規タブを開かない。核は flush 非実行と preventDefault しないこと。
+    let defaultPrevented = true;
+    const onDocumentClick = (event: Event) => {
+      defaultPrevented = event.defaultPrevented;
+    };
+    document.addEventListener("click", onDocumentClick);
+    fireEvent.click(pantry, { ctrlKey: true, button: 0 });
+    document.removeEventListener("click", onDocumentClick);
+
+    expect(flush).not.toHaveBeenCalled();
+    expect(defaultPrevented).toBe(false);
   });
 });

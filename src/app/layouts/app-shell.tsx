@@ -8,7 +8,10 @@ import {
   isHouseholdSafetyRevisionStorageKeyForUser,
   subscribeHouseholdSafetyBroadcast,
 } from "@/features/household/household-queries";
-import { runPlannerLeaveFlush } from "@/features/planner/planner-leave-flush";
+import {
+  runPlannerLeaveFlush,
+  shouldInterceptPlannerLeaveClick,
+} from "@/features/planner/planner-leave-flush";
 
 /** パスから配色セクションを決める。ルーティング定義は変えずに面の色だけを切り替える。 */
 function sectionForPath(pathname: string): string {
@@ -206,6 +209,8 @@ export function AppShell() {
               onClick={(event) => {
                 if (location.pathname !== "/planner") return;
                 if (item.to === "/planner") return;
+                // 修飾キー・中クリックは既定の新規タブ等を妨げない（同一タブ離脱だけ flush）
+                if (!shouldInterceptPlannerLeaveClick(event)) return;
                 // 既定の Link 遷移を止め、flush 成功後にだけ navigate する
                 event.preventDefault();
                 if (navLeavingRef.current) return;
