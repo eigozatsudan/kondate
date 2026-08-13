@@ -208,6 +208,23 @@ describe("createShoppingListFromMenu", () => {
     const replay = makeResponse({ replayed: true });
     const mocks = makeMocks();
     mocks.findMutationReplay.mockResolvedValue(replay);
+    // 世帯 invalid は list が残っている前提。不在は 404 側（SHOP3）で分ける。
+    mocks.loadActiveList.mockResolvedValue({
+      id: replay.listId,
+      status: "active",
+      version: 1,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: MENU_ID,
+        sourceMenuIdSnapshot: MENU_ID,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
     mocks.revalidate.mockResolvedValue(
       makeRevalidation({
         status: "invalid",
@@ -219,6 +236,21 @@ describe("createShoppingListFromMenu", () => {
       code: "current_safety_revalidation_required",
     });
     expect(mocks.applyDraft).not.toHaveBeenCalled();
+  });
+
+  it("rejects a saved replay with shopping_list_not_found when the active list is gone (SHOP3)", async () => {
+    // create 成功後に応答ロスト、別タブが別 key の mode=new で archive すると
+    // loadActiveList は null。409 current_safety に畳むと sticky が TTL まで残る。
+    const replay = makeResponse({ replayed: true });
+    const mocks = makeMocks();
+    mocks.findMutationReplay.mockResolvedValue(replay);
+    mocks.loadActiveList.mockResolvedValue(null);
+    await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).rejects.toMatchObject({
+      status: 404,
+      code: "shopping_list_not_found",
+    });
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
+    expect(mocks.revalidate).not.toHaveBeenCalled();
   });
 
   it("looks up replay using the idempotency key and the precomputed canonical command hash", async () => {
@@ -1369,6 +1401,25 @@ describe("previewShoppingListDiff", () => {
 describe("reconcileShoppingList", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("rejects a saved reconcile replay with shopping_list_not_found when the active list is gone (SHOP3)", async () => {
+    // create と同 helper。archive 済み list の replay を世帯 invalid に畳まない。
+    const saved = { listId: LIST_ID, version: 4, replayed: true };
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const revalidate = vi.fn<ShoppingDependencies["revalidate"]>();
+    const deps = makeShoppingDependencies({
+      findMutationReplay: vi.fn().mockResolvedValue(saved),
+      loadActiveList: vi.fn().mockResolvedValue(null),
+      applyReconciliation,
+      revalidate,
+    });
+    await expect(reconcileShoppingList(deps, reconcileCommand)).rejects.toMatchObject({
+      status: 404,
+      code: "shopping_list_not_found",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+    expect(revalidate).not.toHaveBeenCalled();
   });
 
   it("returns a saved reconciliation only after live safety revalidation still passes", async () => {

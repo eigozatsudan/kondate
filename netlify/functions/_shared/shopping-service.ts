@@ -145,7 +145,8 @@ async function assertActiveListSourcesCurrentlySafe(
  * ただし create 成功後に source 献立を削除したリストは製品仕様上残る。
  * その場合 validatedDraft(command.menuId) は常に失敗するため、
  * **list 上の live source だけ**再検証する（menu_id null の snapshot source は許容）。
- * list 自体が消えているときだけ 409。
+ * list 自体が消えているときは 404 shopping_list_not_found。
+ * 409 current_safety に畳むとクライアント sticky が TTL まで残り続ける（SHOP3）。
  */
 async function assertReplayStillCurrentlySafe(
   deps: ShoppingDependencies,
@@ -153,11 +154,7 @@ async function assertReplayStillCurrentlySafe(
 ): Promise<void> {
   const list = await deps.loadActiveList(input.listId);
   if (list === null) {
-    throw new HttpError(
-      409,
-      "current_safety_revalidation_required",
-      "買い物リストの状態が変わったため、もう一度確認してください",
-    );
+    throw new HttpError(404, "shopping_list_not_found", "買い物リストが見つかりません");
   }
   const sources = await deps.loadActiveListSources(input.listId);
   const liveMenuIds = [
