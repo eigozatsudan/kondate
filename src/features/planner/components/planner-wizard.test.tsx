@@ -2,7 +2,7 @@ import { fireEvent, act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
 import { AppToastProvider } from "@/shared/ui/app-toast";
@@ -12,7 +12,12 @@ import type { PlannerSafetyMember } from "../planner-safety-member";
 import { createPlannerAttempt } from "../expired-pantry-checks";
 import { commonMainIngredients } from "../model/main-ingredient-options";
 import { buildPlannerSubmissionFieldErrors } from "../model/planner-wizard";
+import { registerPlannerLeaveFlush } from "../planner-leave-flush";
 import { PlannerWizard } from "./planner-wizard";
+
+afterEach(() => {
+  registerPlannerLeaveFlush(null);
+});
 
 const emptyDraft: PlannerDraftInput = {
   mealType: null,
@@ -1435,6 +1440,48 @@ describe("PlannerWizard review step", () => {
         .getAllByRole("link", { name: "Plus を見る" })
         .every((a) => a.getAttribute("href") === "/plus"),
     ).toBe(true);
+  });
+
+  it("C10: isSaving 中は品質 Plus リンクが leave-flush せず stay", async () => {
+    const user = userEvent.setup();
+    const flush = vi.fn().mockResolvedValue("proceed" as const);
+    registerPlannerLeaveFlush(flush);
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={3}
+        plan="free"
+        isSaving
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "Plus を見る" });
+    expect(link).toHaveAttribute("aria-disabled", "true");
+    await user.click(link);
+    expect(flush).not.toHaveBeenCalled();
+  });
+
+  it("C10: isSaving 中は硬上限 Plus CTA が leave-flush せず stay", async () => {
+    const user = userEvent.setup();
+    const flush = vi.fn().mockResolvedValue("proceed" as const);
+    registerPlannerLeaveFlush(flush);
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        usageRemaining={0}
+        attemptsRemaining={3}
+        plan="free"
+        isSaving
+      />,
+    );
+
+    const hard = screen.getByTestId("plus-hard-limit-cta");
+    const link = within(hard).getByRole("link", { name: "Plus を見る" });
+    expect(hard.parentElement).toHaveClass("opacity-50");
+    await user.click(link);
+    expect(flush).not.toHaveBeenCalled();
   });
 
   it("shows soft one-remaining line without hard sell", () => {

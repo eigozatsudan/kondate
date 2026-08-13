@@ -826,14 +826,22 @@ export function ReviewStep({
                 )}
                 {/* L10-1: Free 硬上限（成功残 0 または attempt 残 0）で Plus CTA。
                     P1: 共有 CTA の生 a を capture で leave-flush 付き SPA 遷移に差し替え
-                    （billing 側 ownership は触らず planner 出口だけ閉じる）。 */}
+                    （billing 側 ownership は触らず planner 出口だけ閉じる）。
+                    C10: leave/saving 中は第二 leave を起こさず stay（module mutex の無言 blocked を避ける）。 */}
                 {quotaPlan === "free" && (usageRemaining === 0 || attemptsRemaining === 0) ? (
                   <div
+                    className={disabled ? "opacity-50" : undefined}
                     onClickCapture={(event: MouseEvent<HTMLDivElement>) => {
                       const target = event.target;
                       if (!(target instanceof Element)) return;
                       const anchor = target.closest('a[href="/plus"]');
                       if (anchor === null) return;
+                      // leave/saving 中は flush を起こさず生 a 遷移も止める（C5 直近献立と同型）
+                      if (disabled) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        return;
+                      }
                       if (!shouldInterceptPlannerLeaveClick(event)) return;
                       event.preventDefault();
                       event.stopPropagation();
@@ -882,13 +890,20 @@ export function ReviewStep({
             {/* quality の </label> の直後。idea の role=note より前。note と wizard-actions の間に置かない。
           label 内に入れない（checkbox の accessible name 汚染防止）。
           P1: leave-flush 後に SPA 遷移（生 a だと dirty 未 flush のまま /plus へ出る）。
-          Plus 枠切れでは「Plus を見る」を出さない（既に Plus）。Free / plan 未取得のみリンク。 */}
+          Plus 枠切れでは「Plus を見る」を出さない（既に Plus）。Free / plan 未取得のみリンク。
+          C10: leave/saving 中は第二 leave を起こさず stay（ホーム直近献立 C5 と同型）。 */}
             {qualityModeLocked && plan !== "plus" ? (
               <p className="quality-mode-plus-link-wrap">
                 <Link
                   to="/plus"
-                  className="ui-text-link"
+                  className={`ui-text-link${disabled ? " opacity-50" : ""}`}
+                  aria-disabled={disabled || undefined}
                   onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+                    // leave/saving 中は flush せず stay（module mutex の無言 blocked を避ける）
+                    if (disabled) {
+                      event.preventDefault();
+                      return;
+                    }
                     if (!shouldInterceptPlannerLeaveClick(event)) return;
                     event.preventDefault();
                     void navigateAfterPlannerLeaveFlush(navigate, "/plus");
