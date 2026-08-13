@@ -1,6 +1,7 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
+import { isCurrentShareConsent } from "@shared/contracts/share-consent";
 import { withTimeout } from "@/features/auth/async-timeout";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -8,7 +9,12 @@ import { sanitizeReturnPath } from "@/features/auth/auth-flow";
 import { acceptCurrentPrivacyConsent } from "./privacy-api";
 import { privacySections, providerExplanation, shareConsentSection } from "./privacy-copy";
 import { privacyKeys } from "./privacy-queries";
-import { upsertMyShareConsent } from "./share-consent-api";
+import {
+  getMyShareConsent,
+  hasCurrentShareConsent,
+  upsertMyShareConsent,
+  type ShareConsentState,
+} from "./share-consent-api";
 import { shareConsentKeys } from "./share-consent-queries";
 
 /**
@@ -22,9 +28,31 @@ export const privacyConsentCheckboxRequiredMessage =
   "「説明を確認しました」にチェックを入れてから進んでください。";
 
 export type PrivacyAcceptInput = {
-  /** 共有任意チェック。true のときだけ upsert_my_share_consent(accept=true) を呼ぶ */
+  /**
+   * 共有任意チェック。
+   * true → upsert(true)。false かつ現行が有効同意なら upsert(false)。
+   * 未同意 / 既 revoke の false は upsert しない。
+   */
   shareConsentAccepted: boolean;
 };
+
+/**
+ * AP1: 共有チェック初期値。
+ * 有効同意 → true、revoke 済み（行はあるが current でない）→ false、
+ * 未同意（null フィールド）→ true（初回推奨既定）。
+ * pending / error では false（revoke 済みを default true で出さない）。
+ */
+function initialShareCheckedFromConsent(
+  state: ShareConsentState | undefined,
+  querySuccess: boolean,
+): boolean {
+  if (!querySuccess || state === undefined) return false;
+  if (state.consent_version === null) return true;
+  return isCurrentShareConsent({
+    consent_version: state.consent_version,
+    revoked_at: state.revoked_at,
+  });
+}
 
 export function PrivacyNoticePage() {
   const auth = useAuth();
@@ -33,27 +61,45 @@ export function PrivacyNoticePage() {
   const queryClient = useQueryClient();
   const userId = auth.session?.user.id;
   const returnTo = sanitizeReturnPath(params.get("returnTo"));
+  const shareQuery = useQuery({
+    queryKey: shareConsentKeys.current(userId ?? ""),
+    queryFn: () => getMyShareConsent(getBrowserSupabaseClient()),
+    enabled: userId !== undefined,
+  });
+  // isFetched: 成功・失敗どちらでも読取は終わっている。disabled（未ログイン）は false。
+  const shareConsentReady = shareQuery.isFetched;
+  const initialShareChecked = initialShareCheckedFromConsent(shareQuery.data, shareQuery.isSuccess);
   const mutation = useMutation({
     mutationFn: async (input: PrivacyAcceptInput) => {
       if (userId === undefined) throw new Error("ログインが必要です");
       const client = getBrowserSupabaseClient();
-      // privacy は必須。共有は任意チェック時のみ別 RPC で保存する。
+      // privacy は必須。共有は読取完了後だけ別 RPC。
       // 共有 RPC 失敗で必須 privacy 同意を巻き戻さない・画面遷移を止めない（設定で再同意可）。
       // AP8: accept 全体を withTimeout（skip 導線が永久 disabled にならないようにする）
       const consent = await withTimeout(
         acceptCurrentPrivacyConsent(client, userId),
         PRIVACY_ACCEPT_TIMEOUT_MS,
       );
-      if (input.shareConsentAccepted) {
-        try {
-          const share = await withTimeout(
-            upsertMyShareConsent(client, true),
-            PRIVACY_ACCEPT_TIMEOUT_MS,
-          );
-          queryClient.setQueryData(shareConsentKeys.current(userId), share);
-        } catch {
-          // AP12 residual-intentional: share は無言 best-effort。
-          // privacy は保存済み・returnTo 継続。失敗案内は設定トグル再試行に委ねる。
+      const shareState = queryClient.getQueryState(shareConsentKeys.current(userId));
+      const shareSettled = shareState?.status === "success" || shareState?.status === "error";
+      // pending 中は share 分岐を走らせない（default true 再 accept を残さない）
+      if (shareSettled) {
+        const current = queryClient.getQueryData<ShareConsentState>(
+          shareConsentKeys.current(userId),
+        );
+        const shouldUpsertAccept = input.shareConsentAccepted;
+        const shouldRevoke = !input.shareConsentAccepted && hasCurrentShareConsent(current ?? null);
+        if (shouldUpsertAccept || shouldRevoke) {
+          try {
+            const share = await withTimeout(
+              upsertMyShareConsent(client, shouldUpsertAccept),
+              PRIVACY_ACCEPT_TIMEOUT_MS,
+            );
+            queryClient.setQueryData(shareConsentKeys.current(userId), share);
+          } catch {
+            // AP12 residual-intentional: share は無言 best-effort（revoke 失敗も同じ）。
+            // privacy は保存済み・returnTo 継続。失敗案内は設定トグル再試行に委ねる。
+          }
         }
       }
       return consent;
@@ -70,6 +116,8 @@ export function PrivacyNoticePage() {
       error={
         mutation.isError ? "確認状態を保存できませんでした。通信を確認してください。" : undefined
       }
+      initialShareChecked={initialShareChecked}
+      shareConsentReady={shareConsentReady}
       onAccept={(input) => {
         mutation.mutate(input);
       }}
@@ -85,15 +133,28 @@ export function PrivacyNoticeContent({
   error,
   onAccept,
   onSkip,
+  initialShareChecked = true,
+  shareConsentReady = true,
 }: {
   saving: boolean;
   error?: string | undefined;
   onAccept: (input: PrivacyAcceptInput) => void;
   onSkip: () => void;
+  /** 省略時は既定オン（Content 単体テスト互換） */
+  initialShareChecked?: boolean;
+  /** false の間は共有チェックを触れない（読取中の default true submit を防ぐ） */
+  shareConsentReady?: boolean;
 }) {
-  // 共有は既定 checked（任意。primary の enable 条件には使わない）
+  // 共有は任意。primary の enable 条件には使わない
   const [checked, setChecked] = useState(false);
-  const [shareChecked, setShareChecked] = useState(true);
+  const [shareChecked, setShareChecked] = useState(initialShareChecked);
+  // 読取完了の一度だけサーバ正へ同期。Content 単体（ready 既定 true）では上書きしない
+  const appliedShareInitial = useRef(shareConsentReady);
+  useEffect(() => {
+    if (!shareConsentReady || appliedShareInitial.current) return;
+    appliedShareInitial.current = true;
+    setShareChecked(initialShareChecked);
+  }, [shareConsentReady, initialShareChecked]);
   // 未チェックのまま primary を押したときの案内。チェックしたら消す。
   const [consentGateMessage, setConsentGateMessage] = useState<string | undefined>();
   const consentCheckboxRef = useRef<HTMLInputElement>(null);
@@ -149,6 +210,7 @@ export function PrivacyNoticeContent({
           <input
             type="checkbox"
             checked={shareChecked}
+            disabled={!shareConsentReady}
             onChange={(event) => {
               setShareChecked(event.target.checked);
             }}
@@ -180,7 +242,8 @@ export function PrivacyNoticeContent({
             consentCheckboxRef.current?.focus();
             return;
           }
-          onAccept({ shareConsentAccepted: shareChecked });
+          // 読取完了前は share を true で送らない（pending 中の default true 再 accept を防ぐ）
+          onAccept({ shareConsentAccepted: shareConsentReady && shareChecked });
         }}
       >
         {saving ? "保存中…" : "確認して進む"}
