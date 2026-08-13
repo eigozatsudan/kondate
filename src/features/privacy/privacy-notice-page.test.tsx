@@ -548,6 +548,63 @@ it("documents anonymized emergency body retention after account deletion", () =>
   expect(stored?.textContent).toContain("削除後も他ユーザー向けに残ることがあります");
 });
 
+it("AP8: primary is disabled until share consent query settles so early submit cannot revoke", async () => {
+  const user = userEvent.setup();
+  // 現行同意あり・cache なし。読取が終わる前に false で進むと mutation が revoke してしまう
+  let resolveShare: (state: ShareConsentState) => void = () => {
+    throw new Error("getMyShareConsent resolver が未設定");
+  };
+  getShare.mockImplementation(
+    () =>
+      new Promise<ShareConsentState>((resolve) => {
+        resolveShare = resolve;
+      }),
+  );
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  const shareCheckbox = screen.getByRole("checkbox", {
+    name: shareConsentSection.checkboxLabel,
+  });
+  expect(shareCheckbox).toBeDisabled();
+  expect(shareCheckbox).not.toBeChecked();
+
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  const accept = screen.getByRole("button", { name: "確認して進む" });
+  // 読取中は進めない。skip は従来どおり使える
+  expect(accept).toBeDisabled();
+  expect(screen.getByRole("button", { name: "今はAIを使わない" })).toBeEnabled();
+  expect(acceptConsent).not.toHaveBeenCalled();
+  expect(upsertShare).not.toHaveBeenCalled();
+
+  resolveShare(currentShareState);
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "確認して進む" })).toBeEnabled();
+  });
+  expect(shareCheckbox).toBeEnabled();
+  expect(shareCheckbox).toBeChecked();
+  expect(upsertShare).not.toHaveBeenCalled();
+});
+
 it("AP8: accept hang times out so skip is re-enabled", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {

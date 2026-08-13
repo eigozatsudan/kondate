@@ -142,10 +142,11 @@ export function PrivacyNoticeContent({
   onSkip: () => void;
   /** 省略時は既定オン（Content 単体テスト互換） */
   initialShareChecked?: boolean;
-  /** false の間は共有チェックを触れない（読取中の default true submit を防ぐ） */
+  /** false の間は共有チェックと primary を触れない（読取中の誤 accept / 誤 revoke を防ぐ） */
   shareConsentReady?: boolean;
 }) {
-  // 共有は任意。primary の enable 条件には使わない
+  // 共有チェック値は任意なので primary の enable には使わない。
+  // 読取完了前は進めない（未観測の unchecked を revoke と誤認しない）
   const [checked, setChecked] = useState(false);
   const [shareChecked, setShareChecked] = useState(initialShareChecked);
   // 読取完了の一度だけサーバ正へ同期。Content 単体（ready 既定 true）では上書きしない
@@ -234,8 +235,8 @@ export function PrivacyNoticeContent({
       <button
         className="primary-button"
         type="button"
-        // 未チェックでも押せるようにし、押下時に理由を案内する（disabled だと無反応に見える）
-        disabled={saving}
+        // 必須未チェックでも押せる（押下で案内）。読取中は進めない（AP8: 未観測 false で revoke しない）
+        disabled={saving || !shareConsentReady}
         onClick={() => {
           if (!checked) {
             setConsentGateMessage(privacyConsentCheckboxRequiredMessage);
