@@ -1224,7 +1224,8 @@ describe("AuthProvider", () => {
     window.history.replaceState(null, "", "/login");
     window.localStorage.clear();
     window.sessionStorage.clear();
-    const startRecovery = vi.fn<(input: { targetFlowId?: string }) => () => void>();
+    const startRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
     startRecovery.mockReturnValue(vi.fn());
     const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
     const authListeners: AuthStateListener[] = [];
@@ -1281,10 +1282,11 @@ describe("AuthProvider", () => {
     expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBeNull();
     // 意図的 login 開始後は同一 /login マウントで residual が再武装される
     expect(startRecovery.mock.calls.length).toBeGreaterThan(startsWhileAuth);
-    // C2: 再武装は今開始した flow だけ（prior 全件ではない）
-    expect(startRecovery.mock.calls.at(-1)?.[0]?.targetFlowId).toBe(
-      "10000000-0000-4000-8000-0000000000a4",
-    );
+    // C2/C12: 再武装は今開始した flow だけ（prior 全件ではない）。
+    // targetFlowId は callback 専用なので付けない（マジック元は owner 無し）。
+    const lastRearmInput = startRecovery.mock.calls.at(-1)?.[0];
+    expect(lastRearmInput?.restrictToFlowId).toBe("10000000-0000-4000-8000-0000000000a4");
+    expect(lastRearmInput?.targetFlowId).toBeUndefined();
   });
 
   it("C2: createAuthFlow after soft does not target a prior-user flow", async () => {
@@ -1312,7 +1314,8 @@ describe("AuthProvider", () => {
         expiresAtMs: Date.now() + 60_000,
       }),
     );
-    const startRecovery = vi.fn<(input: { targetFlowId?: string }) => () => void>();
+    const startRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
     startRecovery.mockReturnValue(vi.fn());
     const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
     const authListeners: AuthStateListener[] = [];
@@ -1369,8 +1372,10 @@ describe("AuthProvider", () => {
 
     expect(startRecovery.mock.calls.length).toBeGreaterThan(startsWhileAuth);
     const lastInput = startRecovery.mock.calls.at(-1)?.[0];
-    expect(lastInput?.targetFlowId).toBe(newFlowId);
-    expect(lastInput?.targetFlowId).not.toBe(priorFlowId);
+    // C12: residual は targetFlowId（callback-owner 必須）ではなく claimable 絞り込み
+    expect(lastInput?.restrictToFlowId).toBe(newFlowId);
+    expect(lastInput?.restrictToFlowId).not.toBe(priorFlowId);
+    expect(lastInput?.targetFlowId).toBeUndefined();
     // R3: prior-user secret / pending は焼かない
     expect(window.localStorage.getItem(`kondate.auth.flow.${priorFlowId}`)).not.toBeNull();
     expect(

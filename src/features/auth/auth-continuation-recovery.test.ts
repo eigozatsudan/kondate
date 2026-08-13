@@ -393,6 +393,34 @@ describe("auth continuation recovery", () => {
     stop();
   });
 
+  it("C12: restrictToFlowId claims a magic-origin flow without callback-owner", async () => {
+    // residual は targetFlowId を付けない。owner 無しのマジック元でも untargeted 枝で claim する。
+    const restrictedFlowId = "10000000-0000-4000-8000-0000000000c1";
+    const otherFlowId = "10000000-0000-4000-8000-0000000000c2";
+    // startedAt 順で other が先。絞り込みが無いと selectNext が other を取る。
+    const storage = flowStorage([otherFlowId, restrictedFlowId]);
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({
+        kind: "awaiting_completion",
+        flowId: restrictedFlowId,
+        returnTo: "/planner",
+      }),
+    };
+
+    const stop = startAuthContinuationRecovery({
+      gateway,
+      storage,
+      restrictToFlowId: restrictedFlowId,
+      onComplete: vi.fn(),
+      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    });
+    await flushPromises();
+
+    expect(gateway.resumeFlow).toHaveBeenCalledOnce();
+    expect(gateway.resumeFlow).toHaveBeenCalledWith(restrictedFlowId);
+    stop();
+  });
+
   it("shares one pending claim slot across two callback recoveries and normal recovery", async () => {
     const flowId = "10000000-0000-4000-8000-000000000001";
     const storage = flowStorage([flowId]);

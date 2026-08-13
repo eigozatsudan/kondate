@@ -178,8 +178,13 @@ type AuthProviderProps = {
     storage: Storage;
     onComplete: (result: { kind: "complete"; flowId: string; returnTo: string }) => void;
     onResult?: (result: RecoveryResult) => void;
-    /** C2: このタブが今開始した flow だけを recovery する（無ければ従来どおり全件） */
+    /** C12: callback タブ専用。owner 必須の target recovery（residual は付けない） */
     targetFlowId?: string;
+    /**
+     * C2/C12: residual が今開始した flow だけを claimable にする。
+     * targetFlowId とは別。無ければ従来どおり全件。
+     */
+    restrictToFlowId?: string;
     ttlMs: number;
   }) => () => void;
 };
@@ -706,13 +711,14 @@ export function AuthProvider({
     // C-R1: residual recovery 起動で arm（first session 待ち）。C2 で pin は authenticated 中ずっと有効。
     const guard = residualSessionGuardRef.current;
     guard.armed = true;
-    const targetFlowId = readActiveLoginFlowId();
+    const restrictToFlowId = readActiveLoginFlowId();
     const stopRecovery = startRecovery({
       gateway,
       storage,
       ttlMs: recoveryTtlMs,
-      // C2: createAuthFlow 後は今開始した flow だけ。キー無しの従来 residual は全件のまま。
-      ...(targetFlowId === undefined ? {} : { targetFlowId }),
+      // C2/C12: createAuthFlow 後は今開始した flow だけを claimable に絞る。
+      // targetFlowId は callback 専用（owner 必須）。マジック元は owner が無いので付けない。
+      ...(restrictToFlowId === undefined ? {} : { restrictToFlowId }),
       onComplete: (result) => {
         publishCompletionSafely({ flowId: result.flowId, returnTo: result.returnTo });
         void refreshSession();

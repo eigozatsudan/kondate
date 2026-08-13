@@ -84,7 +84,7 @@ export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.sup
 
 /**
  * C2: このタブが今開始した login flow id。sessionStorage 局所。
- * residual recovery の targetFlowId にし、prior-user 全件 complete を閉じる。
+ * residual recovery の restrictToFlowId にし、prior-user 全件 complete を閉じる。
  * flow secret はここに載せない（R3）。
  */
 export const ACTIVE_LOGIN_FLOW_STORAGE_KEY = "kondate.auth.active-login-flow" as const;
