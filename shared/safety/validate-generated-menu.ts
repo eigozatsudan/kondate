@@ -19,6 +19,7 @@ import type {
 } from "./generation-context.js";
 import { createIdeaSafetyFingerprint } from "./idea-fingerprint.js";
 import { detectUnsupportedMedicalRequest } from "../safety-pure/medical-scope.js";
+import { collectGuaranteePhraseIssues } from "./guarantee-phrases.js";
 import { collectNonJapaneseUserTextIssues } from "./japanese-user-text.js";
 import { collectDislikePreferenceGaps } from "../safety-pure/preference-gaps.js";
 
@@ -183,8 +184,8 @@ function containsRequestedMainIngredient(
 /** validateGeneratedMenu の追加オプション。 */
 export type ValidateGeneratedMenuOptions = {
   /**
-   * 利用者向け文言の日本語ゲート。既定 true。
-   * 一品再生成では保持料理に過去の英語 description が残ることがあるため、
+   * 利用者向け文言の日本語ゲートと保証フレーズゲート。既定 true。
+   * 一品再生成では保持料理に過去の英語 description / 保証文が残ることがあるため、
    * AI 出力側で別途検査し、ここでは false にする。
    */
   checkJapaneseUserText?: boolean;
@@ -358,9 +359,11 @@ function collectCommonMenuIssues(
     });
   }
   // 英語・他言語だけの name/description/手順 等を拒否（UI は日本語前提）。
-  // 一品再生成では保持料理の過去英語文を落とさないよう呼び出し側で抑止する。
+  // 「安全です」「アレルギー対応済み」等の保証コピーも同じ葉で拒否する（G6）。
+  // 一品再生成では保持料理の過去英語文・保証文を落とさないよう呼び出し側で抑止する。
   if (options.checkJapaneseUserText !== false) {
     issues.push(...collectNonJapaneseUserTextIssues(generated));
+    issues.push(...collectGuaranteePhraseIssues(generated));
   }
   return issues;
 }

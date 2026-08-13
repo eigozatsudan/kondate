@@ -54,6 +54,65 @@ export function isAcceptableJapaneseUserText(text: string): boolean {
 
 const NON_JAPANESE_MESSAGE = "利用者向けの文言は日本語で書いてください";
 
+type UserTextLeafVisitor = (path: string, text: string | null | undefined) => void;
+
+/**
+ * 新規・まるごと再生成の利用者向け text leaf。
+ * collectMenuTextSources に加え、結果 UI に出る pantryUsage.unusedReason も含む。
+ */
+export function visitMenuUserTextLeaves(menu: GeneratedMenu, visit: UserTextLeafVisitor): void {
+  for (const source of collectMenuTextSources(menu)) {
+    visit(source.sourcePath, source.text);
+  }
+  // collectMenuTextSources は label sourceType に無い pantryUsage を列挙しない
+  for (const [index, usage] of menu.pantryUsage.entries()) {
+    visit(`pantryUsage.${String(index)}.unusedReason`, usage.unusedReason);
+  }
+}
+
+/**
+ * 一品再生成の AI wire 出力だけを列挙する。
+ * 保持料理の name/description はサーバー側 DTO 由来のため対象外。
+ */
+export function visitDishRegenAiOutputTextLeaves(
+  output: DishRegenerationAiOutput,
+  visit: UserTextLeafVisitor,
+): void {
+  const dish = output.replacementDish;
+  visit("replacementDish.name", dish.name);
+  visit("replacementDish.description", dish.description);
+  for (const [index, ingredient] of dish.ingredients.entries()) {
+    const base = `replacementDish.ingredients.${String(index)}`;
+    visit(`${base}.name`, ingredient.name);
+    visit(`${base}.quantityText`, ingredient.quantityText);
+    visit(`${base}.unit`, ingredient.unit);
+  }
+  for (const [index, step] of dish.steps.entries()) {
+    visit(`replacementDish.steps.${String(index)}.instruction`, step.instruction);
+  }
+  for (const [index, row] of output.timeline.entries()) {
+    visit(`timeline.${String(index)}.instruction`, row.instruction);
+  }
+  for (const [index, row] of output.adaptations.entries()) {
+    const base = `adaptations.${String(index)}`;
+    visit(`${base}.portionText`, row.portionText);
+    visit(`${base}.additionalCutting`, row.additionalCutting);
+    visit(`${base}.additionalHeating`, row.additionalHeating);
+    visit(`${base}.additionalSeasoning`, row.additionalSeasoning);
+    visit(`${base}.servingCheck`, row.servingCheck);
+    for (const [actionIndex, action] of row.safetyActions.entries()) {
+      visit(`${base}.safetyActions.${String(actionIndex)}.instruction`, action.instruction);
+    }
+  }
+  for (const [index, row] of output.pantryUsage.entries()) {
+    visit(`pantryUsage.${String(index)}.unusedReason`, row.unusedReason);
+    visit(`pantryUsage.${String(index)}.pantryItemName`, row.pantryItemName);
+  }
+  for (const [index, row] of output.labelConfirmations.entries()) {
+    visit(`labelConfirmations.${String(index)}.sourceText`, row.sourceText);
+  }
+}
+
 function pushIfNonJapanese(
   issues: MenuValidationIssue[],
   path: string,
@@ -82,13 +141,9 @@ export function collectNonJapaneseUserTextIssues(
   menu: GeneratedMenu,
 ): readonly MenuValidationIssue[] {
   const issues: MenuValidationIssue[] = [];
-  for (const source of collectMenuTextSources(menu)) {
-    pushIfNonJapanese(issues, source.sourcePath, source.text);
-  }
-  // collectMenuTextSources は label sourceType に無い pantryUsage を列挙しない
-  for (const [index, usage] of menu.pantryUsage.entries()) {
-    pushIfNonJapanese(issues, `pantryUsage.${String(index)}.unusedReason`, usage.unusedReason);
-  }
+  visitMenuUserTextLeaves(menu, (path, text) => {
+    pushIfNonJapanese(issues, path, text);
+  });
   return issues;
 }
 
@@ -101,46 +156,8 @@ export function collectNonJapaneseUserTextIssuesFromDishRegenAiOutput(
   output: DishRegenerationAiOutput,
 ): readonly MenuValidationIssue[] {
   const issues: MenuValidationIssue[] = [];
-  const dish = output.replacementDish;
-  pushIfNonJapanese(issues, "replacementDish.name", dish.name);
-  pushIfNonJapanese(issues, "replacementDish.description", dish.description);
-  for (const [index, ingredient] of dish.ingredients.entries()) {
-    const base = `replacementDish.ingredients.${String(index)}`;
-    pushIfNonJapanese(issues, `${base}.name`, ingredient.name);
-    pushIfNonJapanese(issues, `${base}.quantityText`, ingredient.quantityText);
-    pushIfNonJapanese(issues, `${base}.unit`, ingredient.unit);
-  }
-  for (const [index, step] of dish.steps.entries()) {
-    pushIfNonJapanese(
-      issues,
-      `replacementDish.steps.${String(index)}.instruction`,
-      step.instruction,
-    );
-  }
-  for (const [index, row] of output.timeline.entries()) {
-    pushIfNonJapanese(issues, `timeline.${String(index)}.instruction`, row.instruction);
-  }
-  for (const [index, row] of output.adaptations.entries()) {
-    const base = `adaptations.${String(index)}`;
-    pushIfNonJapanese(issues, `${base}.portionText`, row.portionText);
-    pushIfNonJapanese(issues, `${base}.additionalCutting`, row.additionalCutting);
-    pushIfNonJapanese(issues, `${base}.additionalHeating`, row.additionalHeating);
-    pushIfNonJapanese(issues, `${base}.additionalSeasoning`, row.additionalSeasoning);
-    pushIfNonJapanese(issues, `${base}.servingCheck`, row.servingCheck);
-    for (const [actionIndex, action] of row.safetyActions.entries()) {
-      pushIfNonJapanese(
-        issues,
-        `${base}.safetyActions.${String(actionIndex)}.instruction`,
-        action.instruction,
-      );
-    }
-  }
-  for (const [index, row] of output.pantryUsage.entries()) {
-    pushIfNonJapanese(issues, `pantryUsage.${String(index)}.unusedReason`, row.unusedReason);
-    pushIfNonJapanese(issues, `pantryUsage.${String(index)}.pantryItemName`, row.pantryItemName);
-  }
-  for (const [index, row] of output.labelConfirmations.entries()) {
-    pushIfNonJapanese(issues, `labelConfirmations.${String(index)}.sourceText`, row.sourceText);
-  }
+  visitDishRegenAiOutputTextLeaves(output, (path, text) => {
+    pushIfNonJapanese(issues, path, text);
+  });
   return issues;
 }

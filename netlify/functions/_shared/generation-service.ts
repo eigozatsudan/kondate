@@ -26,6 +26,7 @@ import {
   createIdeaSafetyFingerprint,
   ideaSafetySnapshot,
 } from "../../../shared/safety/idea-fingerprint.js";
+import { collectGuaranteePhraseIssuesFromDishRegenAiOutput } from "../../../shared/safety/guarantee-phrases.js";
 import { collectNonJapaneseUserTextIssuesFromDishRegenAiOutput } from "../../../shared/safety/japanese-user-text.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { getServerEnv } from "./env.js";
@@ -578,10 +579,13 @@ function composeCandidate(
       return { kind: "invalid", issues: [{ code: "invalid_provider_menu" }] };
     }
     try {
-      // 保持料理の過去英語 description を落とさない。今回の AI 出力だけ日本語ゲートする。
-      const languageIssues = collectNonJapaneseUserTextIssuesFromDishRegenAiOutput(result.output);
-      if (languageIssues.length > 0) {
-        return { kind: "invalid", issues: languageIssues };
+      // 保持料理の過去英語 description / 保証文を落とさない。今回の AI 出力だけ見る。
+      const aiTextIssues = [
+        ...collectNonJapaneseUserTextIssuesFromDishRegenAiOutput(result.output),
+        ...collectGuaranteePhraseIssuesFromDishRegenAiOutput(result.output),
+      ];
+      if (aiTextIssues.length > 0) {
+        return { kind: "invalid", issues: aiTextIssues };
       }
       const candidate = materializeDishRegenerationCandidate(execution, result.output, uuid);
       const checked = validateGeneratedMenu(candidate, context, {
