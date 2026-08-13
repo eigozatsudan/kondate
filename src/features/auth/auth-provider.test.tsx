@@ -70,6 +70,7 @@ describe("AuthProvider", () => {
       window.localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
     } catch {
       // ignore
     }
@@ -85,6 +86,7 @@ describe("AuthProvider", () => {
       window.localStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
     } catch {
       // ignore
     }
@@ -1404,6 +1406,126 @@ describe("AuthProvider", () => {
     ).not.toBeNull();
   });
 
+  it("C13: other-tab /login remount restricts to B pin, not prior-user A", async () => {
+    // A の flow+pending → SIGNED_OUT suppress → createAuthFlow(B)。
+    // sessionStorage pin を消す（他タブ / remount 相当）。localStorage の B で restrict する。
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const priorFlowId = "10000000-0000-4000-8000-0000000000c3";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${priorFlowId}`,
+      JSON.stringify({
+        id: priorFlowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "http://127.0.0.1:5173",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.pending-deposit.${priorFlowId}`,
+      JSON.stringify({
+        state: "B".repeat(43),
+        code: "authorization-code-plain",
+        expiresAtMs: Date.now() + 60_000,
+      }),
+    );
+    const startRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+    startRecovery.mockReturnValue(vi.fn());
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const authListeners: AuthStateListener[] = [];
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } as AuthProviderClient;
+
+    const firstMount = render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("authenticated");
+    const startsWhileAuth = startRecovery.mock.calls.length;
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_OUT", null);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(startRecovery.mock.calls.length).toBe(startsWhileAuth);
+
+    const newFlowId = "10000000-0000-4000-8000-0000000000b3";
+    const api = {
+      create: vi.fn(() =>
+        Promise.resolve({
+          id: newFlowId,
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        }),
+      ),
+      deposit: vi.fn(() => Promise.resolve(undefined)),
+      claim: vi.fn(() => Promise.reject(new Error("not deposited"))),
+    };
+
+    await act(async () => {
+      await createAuthFlow("/onboarding", api, window.localStorage, {
+        now: () => new Date("2026-08-12T00:00:00.000Z"),
+        randomBytes: (size = 32) => new Uint8Array(size).fill(7),
+      });
+      await Promise.resolve();
+    });
+
+    expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(newFlowId);
+    firstMount.unmount();
+    // 他タブ相当: sessionStorage は空、origin 共有 localStorage に B の pin だけ
+    window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+
+    const remountRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+    remountRecovery.mockReturnValue(vi.fn());
+    const remountClient = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={remountClient}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={remountRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    expect(remountRecovery).toHaveBeenCalled();
+    const remountInput = remountRecovery.mock.calls.at(-1)?.[0];
+    expect(remountInput?.restrictToFlowId).toBe(newFlowId);
+    expect(remountInput?.restrictToFlowId).not.toBe(priorFlowId);
+    expect(remountInput?.targetFlowId).toBeUndefined();
+    // R3: A の secret / pending は claim しないだけで残す
+    expect(window.localStorage.getItem(`kondate.auth.flow.${priorFlowId}`)).not.toBeNull();
+    expect(
+      window.localStorage.getItem(`kondate.auth.supabase.pending-deposit.${priorFlowId}`),
+    ).not.toBeNull();
+  });
+
   it("C5: cold-start never-authenticated unauthenticated does not wipe sibling flow (RR1 intact)", async () => {
     window.history.replaceState(null, "", "/planner");
     window.localStorage.clear();
@@ -1805,6 +1927,79 @@ describe("AuthProvider", () => {
       expect(window.localStorage.getItem(completionKey)).not.toBeNull();
     } finally {
       window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C15: cold-start fail-closed suppresses /login residual without burning sibling flow", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/login");
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+      const flowId = "10000000-0000-4000-8000-0000000000c5";
+      const flowKey = `kondate.auth.flow.${flowId}`;
+      const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      window.localStorage.setItem(
+        flowKey,
+        JSON.stringify({
+          id: flowId,
+          secret: "A".repeat(43),
+          state: "B".repeat(43),
+          origin: "http://127.0.0.1:5173",
+          returnTo: "/onboarding",
+          sessionExchange: "supabase",
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      window.localStorage.setItem(
+        pendingKey,
+        JSON.stringify({
+          state: "B".repeat(43),
+          code: "sibling-code",
+          expiresAtMs: Date.now() + 60_000,
+        }),
+      );
+      const startRecovery = vi.fn(() => vi.fn());
+      const getSession = vi.fn().mockReturnValue(new Promise(() => undefined));
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: () => ({
+            data: { subscription: createAuthSubscription() },
+          }),
+        },
+      } satisfies AuthProviderClient;
+
+      render(
+        <AuthProvider
+          client={client}
+          recoveryGateway={{ resumeFlow: vi.fn() }}
+          startRecovery={startRecovery}
+        >
+          <Probe />
+        </AuthProvider>,
+      );
+      expect(screen.getByText("loading")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      // createAuthFlow するまで leftover 全件 residual を回さない（C5 と同じ origin 共有 suppress）
+      expect(startRecovery).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+      // RR1: flow / pending は焼かない
+      expect(window.localStorage.getItem(flowKey)).not.toBeNull();
+      expect(window.localStorage.getItem(pendingKey)).not.toBeNull();
+    } finally {
+      window.localStorage.clear();
+      window.sessionStorage.clear();
       vi.useRealTimers();
     }
   });

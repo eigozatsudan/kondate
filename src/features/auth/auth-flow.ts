@@ -83,33 +83,29 @@ export const browserFlowDeps: FlowDeps = {
 export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.supabase"] as const;
 
 /**
- * C2: このタブが今開始した login flow id。sessionStorage 局所。
- * residual recovery の restrictToFlowId にし、prior-user 全件 complete を閉じる。
- * flow secret はここに載せない（R3）。
+ * C2/C13: この origin が今開始した login flow id。
+ * sessionStorage に加え origin 共有 localStorage にも同じ UUID を書く。
+ * residual recovery の restrictToFlowId にし、他タブ / sessionStorage 空の /login remount でも
+ * prior-user 全件 complete を閉じる。flow secret はここに載せない（R3）。
  */
 export const ACTIVE_LOGIN_FLOW_STORAGE_KEY = "kondate.auth.active-login-flow" as const;
 
 const activeLoginFlowIdSchema = z.uuid();
 
-/** C2: createAuthFlow 成功後にこのタブの対象 flow を覚える（best-effort） */
-export function writeActiveLoginFlowId(flowId: string): void {
-  if (typeof sessionStorage === "undefined") return;
-  try {
-    sessionStorage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, flowId);
-  } catch {
-    // sessionStorage 拒否時は residual が全件になる（従来フォールバック）
-  }
+function activeLoginFlowStorages(): Array<Storage> {
+  const storages: Array<Storage> = [];
+  if (typeof sessionStorage !== "undefined") storages.push(sessionStorage);
+  if (typeof localStorage !== "undefined") storages.push(localStorage);
+  return storages;
 }
 
-/** C2: タブ局所の新規 login flow。不正値は捨てる */
-export function readActiveLoginFlowId(): string | undefined {
-  if (typeof sessionStorage === "undefined") return undefined;
+function readStoredActiveLoginFlowId(storage: Storage): string | undefined {
   try {
-    const raw = sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    const raw = storage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
     if (raw === null || raw.length === 0) return undefined;
     const parsed = activeLoginFlowIdSchema.safeParse(raw);
     if (!parsed.success) {
-      sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      storage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       return undefined;
     }
     return parsed.data;
@@ -118,13 +114,37 @@ export function readActiveLoginFlowId(): string | undefined {
   }
 }
 
-/** C2: session 適用成功 / 明示 logout でタブ局所の対象 flow を捨てる */
+/** C2/C13: createAuthFlow 成功後に対象 flow を覚える（best-effort。secret は載せない） */
+export function writeActiveLoginFlowId(flowId: string): void {
+  for (const storage of activeLoginFlowStorages()) {
+    try {
+      storage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, flowId);
+    } catch {
+      // sessionStorage 失敗でも localStorage があれば他タブ / remount で restrict できる
+    }
+  }
+}
+
+/** C2/C13: タブ局所を優先し、無ければ origin 共有。不正値は捨てる */
+export function readActiveLoginFlowId(): string | undefined {
+  if (typeof sessionStorage !== "undefined") {
+    const fromSession = readStoredActiveLoginFlowId(sessionStorage);
+    if (fromSession !== undefined) return fromSession;
+  }
+  if (typeof localStorage !== "undefined") {
+    return readStoredActiveLoginFlowId(localStorage);
+  }
+  return undefined;
+}
+
+/** C2/C13: session 適用成功 / 明示 logout で対象 flow を両方から捨てる */
 export function clearActiveLoginFlowId(): void {
-  if (typeof sessionStorage === "undefined") return;
-  try {
-    sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
-  } catch {
-    // best-effort
+  for (const storage of activeLoginFlowStorages()) {
+    try {
+      storage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    } catch {
+      // best-effort
+    }
   }
 }
 

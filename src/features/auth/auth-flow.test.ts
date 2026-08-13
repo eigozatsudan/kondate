@@ -11,7 +11,10 @@ import {
   ContinuationResponseLostError,
   createContinuationApi,
   ACTIVE_LOGIN_FLOW_STORAGE_KEY,
+  clearActiveLoginFlowId,
   createAuthFlow,
+  readActiveLoginFlowId,
+  writeActiveLoginFlowId,
   estimateAuthClockSkewMs,
   isAuthContinuationCallbackOwned,
   isAuthFlowUserDismissed,
@@ -408,10 +411,72 @@ describe("auth flow storage", () => {
       expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(
         "10000000-0000-4000-8000-000000000001",
       );
+      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(
+        "10000000-0000-4000-8000-000000000001",
+      );
     } finally {
       window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
       window.localStorage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    }
+  });
+
+  it("C13: active-login-flow pin is origin-shared and sessionStorage is preferred", () => {
+    const flowId = "10000000-0000-4000-8000-0000000000c3";
+    const otherId = "20000000-0000-4000-8000-0000000000c3";
+    try {
+      writeActiveLoginFlowId(flowId);
+      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(flowId);
+      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(flowId);
+      expect(readActiveLoginFlowId()).toBe(flowId);
+
+      window.localStorage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, otherId);
+      expect(readActiveLoginFlowId()).toBe(flowId);
+
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      expect(readActiveLoginFlowId()).toBe(otherId);
+
+      clearActiveLoginFlowId();
+      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
+      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
+      expect(readActiveLoginFlowId()).toBeUndefined();
+    } finally {
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    }
+  });
+
+  it("C13: sessionStorage setItem failure still pins via localStorage", () => {
+    const flowId = "10000000-0000-4000-8000-0000000000c3";
+    const setItemDescriptor = Object.getOwnPropertyDescriptor(Storage.prototype, "setItem");
+    if (setItemDescriptor?.value === undefined) {
+      throw new Error("Storage.prototype.setItem is missing");
+    }
+    const originalSetItem = setItemDescriptor.value as (
+      this: Storage,
+      key: string,
+      value: string,
+    ) => void;
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      key: string,
+      value: string,
+    ): void {
+      if (this === window.sessionStorage && key === ACTIVE_LOGIN_FLOW_STORAGE_KEY) {
+        throw new Error("quota");
+      }
+      originalSetItem.call(this, key, value);
+    });
+    try {
+      writeActiveLoginFlowId(flowId);
+      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
+      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(flowId);
+      expect(readActiveLoginFlowId()).toBe(flowId);
+    } finally {
+      setItem.mockRestore();
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
     }
   });
 

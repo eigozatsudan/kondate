@@ -45,7 +45,7 @@ export const SIGN_OUT_TIMEOUT_MS = 4_000;
 const MAGIC_LINK_RESIDUAL_KEYS = [
   "kondate.auth.lastMagicEmail",
   "kondate.auth.magicSentUi",
-  // C2: タブ局所の「今開始した login flow」。logout / 401 後に次ユーザの residual target にしない
+  // C2/C13: 今開始した login flow（session + origin 共有 local）。logout / 401 後に次ユーザの residual target にしない
   "kondate.auth.active-login-flow",
 ] as const;
 
