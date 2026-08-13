@@ -1857,6 +1857,10 @@ describe("persistedShoppingCommand", () => {
   });
 
   it("reuses reconcile sticky when only expectedListVersion advanced (SHOP1 sheet re-submit)", () => {
+    const previewedQuantities = {
+      add: [{ key: "a", quantityValue: 1, quantityText: "1本" }],
+      replace: [] as { itemId: string; quantityValue: number | null; quantityText: string }[],
+    };
     const first = persistedShoppingCommand(
       "reconcile",
       `${LIST_ID}:${MENU_ID}`,
@@ -1867,6 +1871,7 @@ describe("persistedShoppingCommand", () => {
         sourceMenuVersion: 2,
         idempotencyKey,
         approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities,
       }),
     );
     const second = persistedShoppingCommand(
@@ -1879,12 +1884,14 @@ describe("persistedShoppingCommand", () => {
         sourceMenuVersion: 2,
         idempotencyKey,
         approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities,
       }),
       (saved) =>
         isReconcileShoppingStickyReusable(saved, {
           sourceMenuId: MENU_ID,
           sourceMenuVersion: 2,
           approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+          previewedQuantities,
         }),
     );
     expect(second).toEqual(first);
@@ -1892,6 +1899,10 @@ describe("persistedShoppingCommand", () => {
   });
 
   it("discards reconcile sticky when approval changes (SHOP6 via SHOP1 helper)", () => {
+    const previewedQuantities = {
+      add: [{ key: "a", quantityValue: 1, quantityText: "1本" }],
+      replace: [] as { itemId: string; quantityValue: number | null; quantityText: string }[],
+    };
     const first = persistedShoppingCommand(
       "reconcile",
       `${LIST_ID}:${MENU_ID}`,
@@ -1902,6 +1913,7 @@ describe("persistedShoppingCommand", () => {
         sourceMenuVersion: 2,
         idempotencyKey,
         approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities,
       }),
     );
     const rebuilt = persistedShoppingCommand(
@@ -1914,15 +1926,70 @@ describe("persistedShoppingCommand", () => {
         sourceMenuVersion: 2,
         idempotencyKey,
         approval: { addKeys: ["b"], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: {
+          add: [{ key: "b", quantityValue: 1, quantityText: "1本" }],
+          replace: [],
+        },
       }),
       (saved) =>
         isReconcileShoppingStickyReusable(saved, {
           sourceMenuId: MENU_ID,
           sourceMenuVersion: 2,
           approval: { addKeys: ["b"], replaceItemIds: [], removeItemIds: [] },
+          previewedQuantities: {
+            add: [{ key: "b", quantityValue: 1, quantityText: "1本" }],
+            replace: [],
+          },
         }),
     );
     expect(rebuilt.approval.addKeys).toEqual(["b"]);
+    expect(rebuilt.idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
+  it("discards reconcile sticky when previewed quantities change", () => {
+    const first = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: {
+          add: [{ key: "a", quantityValue: 1, quantityText: "1本" }],
+          replace: [],
+        },
+      }),
+    );
+    const rebuilt = persistedShoppingCommand(
+      "reconcile",
+      `${LIST_ID}:${MENU_ID}`,
+      reconcileShoppingListRequestSchema,
+      (idempotencyKey) => ({
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        idempotencyKey,
+        approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: {
+          add: [{ key: "a", quantityValue: 3, quantityText: "3本" }],
+          replace: [],
+        },
+      }),
+      (saved) =>
+        isReconcileShoppingStickyReusable(saved, {
+          sourceMenuId: MENU_ID,
+          sourceMenuVersion: 2,
+          approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+          previewedQuantities: {
+            add: [{ key: "a", quantityValue: 3, quantityText: "3本" }],
+            replace: [],
+          },
+        }),
+    );
+    expect(rebuilt.previewedQuantities.add[0]?.quantityValue).toBe(3);
     expect(rebuilt.idempotencyKey).not.toBe(first.idempotencyKey);
   });
 

@@ -4,7 +4,11 @@ import {
   resetAccessTokenPinGateForTests,
   setAccessTokenPinnedUserId,
 } from "@/features/auth/session";
-import { fetchReconcilableMenuSource, mutateShoppingItem } from "./shopping-api";
+import {
+  fetchReconcilableMenuSource,
+  isReconcileShoppingStickyReusable,
+  mutateShoppingItem,
+} from "./shopping-api";
 
 const getBrowserSupabaseClientMock = vi.hoisted(() => vi.fn());
 
@@ -140,5 +144,44 @@ describe("mutateShoppingItem", () => {
       }),
     ).rejects.toBeInstanceOf(AuthSessionPinMismatchError);
     expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("isReconcileShoppingStickyReusable", () => {
+  const base = {
+    expectedListVersion: 3,
+    sourceMenuId: MENU_ID,
+    sourceMenuVersion: 2,
+    idempotencyKey: "43000000-0000-4000-8000-000000000001",
+    approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
+    previewedQuantities: {
+      add: [{ key: "a", quantityValue: 1, quantityText: "1本" }],
+      replace: [] as { itemId: string; quantityValue: number | null; quantityText: string }[],
+    },
+  };
+
+  it("rebuilds when previewed quantities change for the same approval key", () => {
+    expect(
+      isReconcileShoppingStickyReusable(base, {
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        approval: base.approval,
+        previewedQuantities: {
+          add: [{ key: "a", quantityValue: 3, quantityText: "3本" }],
+          replace: [],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("reuses sticky when only list version advanced", () => {
+    expect(
+      isReconcileShoppingStickyReusable(base, {
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 2,
+        approval: base.approval,
+        previewedQuantities: base.previewedQuantities,
+      }),
+    ).toBe(true);
   });
 });

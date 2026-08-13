@@ -9,6 +9,7 @@ import {
   type ReconcileShoppingListRequest,
   type ShoppingDiff,
 } from "@shared/contracts/shopping";
+import { snapshotPreviewedQuantities } from "@shared/shopping/previewed-quantities";
 import { FlyerUpsellBanner } from "@/features/billing/flyer-upsell-banner";
 import { MenuActions } from "@/features/menu-detail/menu-actions";
 import { MenuSafetyNotice } from "@/features/menu-detail/menu-safety-notice";
@@ -911,6 +912,8 @@ export function HouseholdMenuDetailBody({
                   return;
                 }
                 const listId = activeList.id;
+                // 表示中の shoppingDiff から preview 数量スナップショットを付ける。
+                const previewedQuantities = snapshotPreviewedQuantities(shoppingDiff);
                 // SHOP2 + SHOP9: list+menu 粒度 sticky を Locks 付きで mint
                 void claimShoppingCommand(
                   "reconcile",
@@ -922,13 +925,15 @@ export function HouseholdMenuDetailBody({
                     sourceMenuVersion: target.sourceMenuVersion,
                     idempotencyKey,
                     approval,
+                    previewedQuantities,
                   }),
-                  // SHOP6: approval/source 変更だけ rebuild。SHOP1: expectedListVersion は照合しない。
+                  // SHOP6: approval/source/preview 数量変更だけ rebuild。SHOP1: expectedListVersion は照合しない。
                   (saved) =>
                     isReconcileShoppingStickyReusable(saved, {
                       sourceMenuId: menuId,
                       sourceMenuVersion: target.sourceMenuVersion,
                       approval,
+                      previewedQuantities,
                     }),
                 ).then((command) => {
                   void submitReconcile(listId, command, stickyTargetId);

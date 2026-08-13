@@ -192,6 +192,30 @@ export const createShoppingListResponseSchema = z
   })
   .strict();
 
+const previewedShoppingQuantityAddSchema = z
+  .object({
+    key: z.string().min(1).max(200),
+    quantityValue: shoppingQuantityValue,
+    quantityText: z.string().trim().min(1).max(60),
+  })
+  .strict();
+
+const previewedShoppingQuantityReplaceSchema = z
+  .object({
+    itemId: uuid,
+    quantityValue: shoppingQuantityValue,
+    quantityText: z.string().trim().min(1).max(60),
+  })
+  .strict();
+
+/** 画面が見せた add/replace 数量。承認キーだけでは preview/apply の数量ずれを縛れない。 */
+export const previewedShoppingQuantitiesSchema = z
+  .object({
+    add: z.array(previewedShoppingQuantityAddSchema).max(shoppingItemsMax),
+    replace: z.array(previewedShoppingQuantityReplaceSchema).max(shoppingItemsMax),
+  })
+  .strict();
+
 export const reconcileShoppingListRequestSchema = z
   .object({
     expectedListVersion: z.number().int().positive(),
@@ -205,6 +229,7 @@ export const reconcileShoppingListRequestSchema = z
         removeItemIds: z.array(uuid).max(shoppingItemsMax),
       })
       .strict(),
+    previewedQuantities: previewedShoppingQuantitiesSchema,
   })
   .strict();
 
@@ -375,6 +400,7 @@ export type ShoppingList = z.infer<typeof shoppingListSchema>;
 export type ShoppingDiff = z.infer<typeof shoppingDiffSchema>;
 export type CreateShoppingListRequest = z.infer<typeof createShoppingListRequestSchema>;
 export type CreateShoppingListResponse = z.infer<typeof createShoppingListResponseSchema>;
+export type PreviewedShoppingQuantities = z.infer<typeof previewedShoppingQuantitiesSchema>;
 export type ReconcileShoppingListRequest = z.infer<typeof reconcileShoppingListRequestSchema>;
 export type ReconcileShoppingListResponse = z.infer<typeof reconcileShoppingListResponseSchema>;
 export type PreviewShoppingDiffRequest = z.infer<typeof previewShoppingDiffRequestSchema>;

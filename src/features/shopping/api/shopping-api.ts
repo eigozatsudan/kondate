@@ -17,6 +17,7 @@ import {
   type ShoppingList,
   type ShoppingListSafetyData,
 } from "@shared/contracts/shopping";
+import { previewedQuantitiesEqual } from "@shared/shopping/previewed-quantities";
 import { assertBrowserDataPlaneAligned, requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
@@ -339,11 +340,15 @@ export function isCreateShoppingStickyReusable(
 /**
  * SHOP1: reconcile sheet 再送で sticky を再利用するか。
  * expectedListVersion は適用で進むため照合しない（version 不一致だけで key 破棄しない）。
- * approval / source が変わったときだけ false → rebuild（SHOP6）。
+ * approval / source / previewedQuantities が変わったときだけ false → rebuild（SHOP6）。
+ * 再 preview で数量が変わったら同じ承認キーでも sticky を作り直す（preview/apply の数量ずれ）。
  */
 export function isReconcileShoppingStickyReusable(
   saved: ReconcileShoppingListRequest,
-  intent: Pick<ReconcileShoppingListRequest, "sourceMenuId" | "sourceMenuVersion" | "approval">,
+  intent: Pick<
+    ReconcileShoppingListRequest,
+    "sourceMenuId" | "sourceMenuVersion" | "approval" | "previewedQuantities"
+  >,
 ): boolean {
   const sorted = (xs: readonly string[]) => [...xs].toSorted();
   return (
@@ -358,7 +363,8 @@ export function isReconcileShoppingStickyReusable(
         addKeys: sorted(intent.approval.addKeys),
         replaceItemIds: sorted(intent.approval.replaceItemIds),
         removeItemIds: sorted(intent.approval.removeItemIds),
-      })
+      }) &&
+    previewedQuantitiesEqual(saved.previewedQuantities, intent.previewedQuantities)
   );
 }
 
