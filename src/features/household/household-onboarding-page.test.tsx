@@ -988,6 +988,59 @@ it("H2: shows residual allergy warning when none status still has allergies", as
   });
 });
 
+// H2: none + 残針 1 件は削除できる（registeredIntent ガードは発火しない）
+it("H2: allows last residual allergy delete when draft status is none", async () => {
+  const user = userEvent.setup();
+  const residualDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const eggAllergy = {
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  let allergyRows = [eggAllergy];
+  const listAllergies = vi.fn(() => Promise.resolve(allergyRows.map((row) => ({ ...row }))));
+  const removeAllergy = vi.fn().mockImplementation(() => {
+    allergyRows = [];
+    return Promise.resolve(undefined);
+  });
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([residualDraft]),
+    listAllergies,
+    listCatalog: vi.fn().mockResolvedValue([
+      {
+        id: "egg",
+        display_name: "卵",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]),
+    listAliases: vi.fn().mockResolvedValue([]),
+    removeAllergy,
+  });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />);
+
+  await user.click(await screen.findByRole("button", { name: "卵を削除" }));
+
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith("allergy-egg");
+  });
+  expect(screen.queryByText("登録ありの場合は1つ以上選んでください")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("searchbox", { name: "よくあるアレルギーを絞り込む" }),
+  ).not.toBeInTheDocument();
+});
+
 // H7: catalog 未ロード中は AllergyEditor を出さない
 it("H7: waits for catalog before showing AllergyEditor", async () => {
   const registeredDraft: HouseholdMemberRow = {

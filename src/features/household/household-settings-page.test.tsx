@@ -3525,6 +3525,74 @@ it("H1: shows residual warning when none status still has allergies", async () =
   });
 });
 
+// H2: complete + none の残針 1 件は UI から消せる（last-delete ガードは registered のみ）
+it("H2: allows last residual allergy delete when complete status is none", async () => {
+  let allergies: MemberAllergyRow[] = [standardAllergy];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+  const removeAllergy = vi.fn().mockImplementation(() => {
+    allergies = [];
+    return Promise.resolve(undefined);
+  });
+  await renderSettings({
+    listAllergies,
+    removeAllergy,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  expect(screen.queryByText("登録ありの場合は1つ以上選んでください")).not.toBeInTheDocument();
+});
+
+// H2: 残針を残したまま「登録あり」へ戻すと、最後の 1 件は再び削除拒否
+it("H2: restores last-delete guard after switching residual none back to registered", async () => {
+  const customAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "えんどう豆たんぱく",
+    custom_confirmed: true,
+  };
+  let allergies: MemberAllergyRow[] = [standardAllergy, customAllergy];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+  const removeAllergy = vi.fn().mockImplementation((allergyId: string) => {
+    allergies = allergies.filter((row) => row.id !== allergyId);
+    return Promise.resolve(undefined);
+  });
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({ ...member, ...patch }),
+  );
+  await renderSettings({
+    listAllergies,
+    removeAllergy,
+    updateMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  expect(screen.queryByText("登録ありの場合は1つ以上選んでください")).not.toBeInTheDocument();
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      member.id,
+      expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
+    );
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "えんどう豆たんぱくを削除" }));
+
+  expect(removeAllergy).toHaveBeenCalledTimes(1);
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "登録ありの場合は1つ以上選んでください",
+  );
+});
+
 // H5: silent delete 後に行が残る場合は利用者へ説明
 it("H5: surfaces delete miss when allergy row remains after RPC success", async () => {
   const registeredMember = { ...member, allergy_status: "registered" as const };

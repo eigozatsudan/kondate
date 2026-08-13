@@ -1759,12 +1759,19 @@ export function HouseholdSettingsForm({
                   {RESIDUAL_ALLERGY_UNVERIFIED_WARNING}
                 </p>
               )}
-            {values.allergyStatus === "registered" && (
+            {/* H2: なし／未確認でも残針があれば削除専用リストを出す。追加 UI は出さない。 */}
+            {(values.allergyStatus === "registered" ||
+              ((values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
+                allergiesQuery.isSuccess &&
+                currentAllergies.length > 0)) && (
               <AllergyEditor
                 memberId={selected.id}
                 catalog={catalogQuery.data}
                 aliases={aliasesQuery.data}
                 allergies={currentAllergies}
+                removeOnly={
+                  values.allergyStatus === "none" || values.allergyStatus === "unconfirmed"
+                }
                 addStandard={(memberId, allergenId) =>
                   runAllergyMutation(selected, async () => {
                     await api.addStandardAllergy(memberId, allergenId);

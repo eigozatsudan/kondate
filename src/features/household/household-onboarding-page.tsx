@@ -1159,89 +1159,94 @@ export function HouseholdOnboardingForm({
               </button>
             </div>
           )}
-        {draft.allergy_status === "registered" &&
+        {/* H2: なし／未確認の残針は catalog 待ちせず削除専用リストを出す。追加 UI は出さない。 */}
+        {((draft.allergy_status === "none" || draft.allergy_status === "unconfirmed") &&
+          allergiesQuery.isSuccess &&
+          allergies.length > 0) ||
+        (draft.allergy_status === "registered" &&
           api.listCatalog !== undefined &&
           catalogQuery.isSuccess &&
-          (api.listAliases === undefined || aliasesQuery.isSuccess) && (
-            <AllergyEditor
-              memberId={draft.id}
-              catalog={catalogQuery.data}
-              aliases={aliasesQuery.data ?? []}
-              allergies={allergies}
-              // H6: complete/finish/skip 中は settings と同型に Editor を閉じ、allergy 境界レースを防ぐ
-              disabled={actionPending}
-              addStandard={async (memberId, allergenId) => {
-                // actionPending 中は disabled だが、遅延 invoker が残っても API を叩かない
-                if (!beginAllergyMutation()) return;
-                try {
-                  setAllergyError(null);
-                  await api.addStandardAllergy?.(memberId, allergenId);
-                  await queryClient.invalidateQueries({
-                    queryKey: householdKeys.allergies(userId, memberId),
-                  });
-                  // H13: 初回追加で deferred registered を DB へ
-                  await commitPendingRegisteredIfNeeded();
-                  // H16: draft アレルギー後も dependents を soft invalidate
-                  await softInvalidateAfterDraftAllergyChange();
-                } finally {
-                  endAllergyMutation();
+          (api.listAliases === undefined || aliasesQuery.isSuccess)) ? (
+          <AllergyEditor
+            memberId={draft.id}
+            catalog={catalogQuery.data ?? []}
+            aliases={aliasesQuery.data ?? []}
+            allergies={allergies}
+            removeOnly={draft.allergy_status === "none" || draft.allergy_status === "unconfirmed"}
+            // H6: complete/finish/skip 中は settings と同型に Editor を閉じ、allergy 境界レースを防ぐ
+            disabled={actionPending}
+            addStandard={async (memberId, allergenId) => {
+              // actionPending 中は disabled だが、遅延 invoker が残っても API を叩かない
+              if (!beginAllergyMutation()) return;
+              try {
+                setAllergyError(null);
+                await api.addStandardAllergy?.(memberId, allergenId);
+                await queryClient.invalidateQueries({
+                  queryKey: householdKeys.allergies(userId, memberId),
+                });
+                // H13: 初回追加で deferred registered を DB へ
+                await commitPendingRegisteredIfNeeded();
+                // H16: draft アレルギー後も dependents を soft invalidate
+                await softInvalidateAfterDraftAllergyChange();
+              } finally {
+                endAllergyMutation();
+              }
+            }}
+            addCustom={async (memberId, name, aliases) => {
+              if (!beginAllergyMutation()) return;
+              try {
+                setAllergyError(null);
+                await api.addCustomAllergy(memberId, name, aliases);
+                await queryClient.invalidateQueries({
+                  queryKey: householdKeys.allergies(userId, memberId),
+                });
+                await commitPendingRegisteredIfNeeded();
+                await softInvalidateAfterDraftAllergyChange();
+              } finally {
+                endAllergyMutation();
+              }
+            }}
+            remove={async (allergyId) => {
+              if (!beginAllergyMutation()) return;
+              try {
+                setAllergyError(null);
+                // H4: draft の UI registered（pending 含む）でも最後の 1 件は消さない。
+                // last-delete trigger は complete のみ。通すと registered+0 が残る。
+                const registeredIntent =
+                  draft.allergy_status === "registered" || pendingRegisteredRef.current;
+                const listed =
+                  queryClient.getQueryData<MemberAllergyRow[]>(
+                    householdKeys.allergies(userId, draft.id),
+                  ) ?? allergies;
+                if (registeredIntent && listed.length <= 1) {
+                  setAllergyError("登録ありの場合は1つ以上選んでください");
+                  return;
                 }
-              }}
-              addCustom={async (memberId, name, aliases) => {
-                if (!beginAllergyMutation()) return;
-                try {
-                  setAllergyError(null);
-                  await api.addCustomAllergy(memberId, name, aliases);
-                  await queryClient.invalidateQueries({
-                    queryKey: householdKeys.allergies(userId, memberId),
-                  });
-                  await commitPendingRegisteredIfNeeded();
-                  await softInvalidateAfterDraftAllergyChange();
-                } finally {
-                  endAllergyMutation();
+                // H5: silent RPC 後に再取得で行残存を検知（settings と同型）
+                // H1: 既定 staleTime 内の削除前キャッシュを正本扱いしない。
+                await api.removeAllergy?.(allergyId);
+                const afterRemove = await queryClient.fetchQuery({
+                  queryKey: householdKeys.allergies(userId, draft.id),
+                  queryFn: () => api.listAllergies(draft.id),
+                  staleTime: 0,
+                });
+                if (afterRemove.some((row) => row.id === allergyId)) {
+                  setAllergyError(
+                    "アレルギーの削除を反映できませんでした。一覧を再読み込みして確認してください。",
+                  );
                 }
-              }}
-              remove={async (allergyId) => {
-                if (!beginAllergyMutation()) return;
-                try {
-                  setAllergyError(null);
-                  // H4: draft の UI registered（pending 含む）でも最後の 1 件は消さない。
-                  // last-delete trigger は complete のみ。通すと registered+0 が残る。
-                  const registeredIntent =
-                    draft.allergy_status === "registered" || pendingRegisteredRef.current;
-                  const listed =
-                    queryClient.getQueryData<MemberAllergyRow[]>(
-                      householdKeys.allergies(userId, draft.id),
-                    ) ?? allergies;
-                  if (registeredIntent && listed.length <= 1) {
-                    setAllergyError("登録ありの場合は1つ以上選んでください");
-                    return;
-                  }
-                  // H5: silent RPC 後に再取得で行残存を検知（settings と同型）
-                  // H1: 既定 staleTime 内の削除前キャッシュを正本扱いしない。
-                  await api.removeAllergy?.(allergyId);
-                  const afterRemove = await queryClient.fetchQuery({
-                    queryKey: householdKeys.allergies(userId, draft.id),
-                    queryFn: () => api.listAllergies(draft.id),
-                    staleTime: 0,
-                  });
-                  if (afterRemove.some((row) => row.id === allergyId)) {
-                    setAllergyError(
-                      "アレルギーの削除を反映できませんでした。一覧を再読み込みして確認してください。",
-                    );
-                  }
-                  await softInvalidateAfterDraftAllergyChange();
-                } finally {
-                  endAllergyMutation();
-                }
-              }}
-              onError={(error) => {
-                setAllergyError(
-                  error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
-                );
-              }}
-            />
-          )}
+                await softInvalidateAfterDraftAllergyChange();
+              } finally {
+                endAllergyMutation();
+              }
+            }}
+            onError={(error) => {
+              setAllergyError(
+                error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
+              );
+            }}
+          />
+        ) : null}
         {draft.allergy_status === "registered" && api.listCatalog === undefined && (
           <fieldset className="stack" disabled={actionPending || allergyMutationPending}>
             <legend>登録するアレルギー</legend>
