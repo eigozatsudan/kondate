@@ -9,7 +9,7 @@ import {
   COLD_START_SESSION_RETRY_MS,
   type AuthProviderClient,
 } from "./auth-provider";
-import { clearSoftResidualRecoverySuppressed } from "./auth-cleanup";
+import { clearSoftResidualRecoverySuppressed, SIGN_OUT_TIMEOUT_MS } from "./auth-cleanup";
 import { ACTIVE_LOGIN_FLOW_STORAGE_KEY, createAuthFlow } from "./auth-flow";
 import { resetAccessTokenPinGateForTests } from "./session";
 import { useAuth } from "./use-auth";
@@ -2861,6 +2861,363 @@ describe("AuthProvider", () => {
           returnTo: "/onboarding",
         });
         await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("fail-closed calls local signOut and unlocks UI before signOut timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      const getSession = vi.fn().mockReturnValue(new Promise(() => undefined));
+      const signOut = vi.fn().mockReturnValue(new Promise(() => undefined));
+      const client = {
+        auth: {
+          getSession,
+          signOut,
+          onAuthStateChange: () => ({
+            data: { subscription: createAuthSubscription() },
+          }),
+        },
+      } satisfies AuthProviderClient;
+
+      render(
+        <AuthProvider client={client}>
+          <Probe />
+        </AuthProvider>,
+      );
+      expect(screen.getByText("loading")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+      // UI 解放は SIGN_OUT_TIMEOUT を待たない
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SIGN_OUT_TIMEOUT_MS - 1);
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("fail-closed keeps sibling flow when local signOut never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const flowId = "10000000-0000-4000-8000-0000000026aa";
+      const flowKey = `kondate.auth.flow.${flowId}`;
+      const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
+      const ownerKey = `kondate.auth.supabase.callback-owner.${flowId}`;
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      window.localStorage.setItem(
+        flowKey,
+        JSON.stringify({
+          id: flowId,
+          secret: "A".repeat(43),
+          state: "B".repeat(43),
+          origin: "http://127.0.0.1:5173",
+          returnTo: "/onboarding",
+          sessionExchange: "supabase",
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      window.localStorage.setItem(
+        pendingKey,
+        JSON.stringify({
+          state: "B".repeat(43),
+          code: "sibling-code",
+          expiresAtMs: Date.now() + 60_000,
+        }),
+      );
+      window.localStorage.setItem(ownerKey, new Date().toISOString());
+
+      const getSession = vi.fn().mockReturnValue(new Promise(() => undefined));
+      const signOut = vi.fn().mockReturnValue(new Promise(() => undefined));
+      const client = {
+        auth: {
+          getSession,
+          signOut,
+          onAuthStateChange: () => ({
+            data: { subscription: createAuthSubscription() },
+          }),
+        },
+      } satisfies AuthProviderClient;
+
+      render(
+        <AuthProvider client={client}>
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+      expect(window.localStorage.getItem("kondate.auth.supabase")).toBeNull();
+      expect(window.localStorage.getItem(flowKey)).not.toBeNull();
+      expect(window.localStorage.getItem(pendingKey)).not.toBeNull();
+      expect(window.localStorage.getItem(ownerKey)).not.toBeNull();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C26: after successful local signOut, login-era leftover A is not pending and SIGNED_IN A does not apply", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      const leftoverA = session;
+      const getSession = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ data: { session: Session }; error: null }>(() => {
+            // hang。fail-closed 中に A は見ない
+          }),
+      );
+      const signOut = vi.fn().mockResolvedValue({ error: null });
+      const authListeners: AuthStateListener[] = [];
+      const client = {
+        auth: {
+          getSession,
+          signOut,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } satisfies AuthProviderClient;
+
+      render(
+        <AuthProvider client={client} startRecovery={() => vi.fn()}>
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+
+      await act(async () => {
+        await startTestAuthFlow("10000000-0000-4000-8000-000000000026");
+        await Promise.resolve();
+      });
+
+      getSession.mockResolvedValue({ data: { session: leftoverA }, error: null });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_RETRY_MS);
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", leftoverA);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C29: after successful local signOut, onComplete getSession null stays unauthenticated", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/login");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      const getSession = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ data: { session: Session }; error: null }>(() => {
+            // hang。fail-closed 中に A は見ない
+          }),
+      );
+      const signOut = vi.fn().mockResolvedValue({ error: null });
+      let completeRecovery:
+        ((result: { kind: "complete"; flowId: string; returnTo: string }) => void) | undefined;
+      const client = {
+        auth: {
+          getSession,
+          signOut,
+          onAuthStateChange: () => ({
+            data: { subscription: createAuthSubscription() },
+          }),
+        },
+      } satisfies AuthProviderClient;
+
+      render(
+        <AuthProvider
+          client={client}
+          recoveryGateway={{ resumeFlow: vi.fn() }}
+          navigateTo={vi.fn()}
+          startRecovery={(input) => {
+            completeRecovery = input.onComplete;
+            return vi.fn();
+          }}
+        >
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      await act(async () => {
+        await startTestAuthFlow("10000000-0000-4000-8000-000000000029");
+        await Promise.resolve();
+      });
+      expect(completeRecovery).toBeTypeOf("function");
+
+      // signOut 成功後は SDK 空。getSession が A のままなのは失敗相当なので成功パスにしない
+      getSession.mockResolvedValue({ data: { session: null }, error: null });
+      await act(async () => {
+        completeRecovery?.({
+          kind: "complete",
+          flowId: "10000000-0000-4000-8000-000000000029",
+          returnTo: "/onboarding",
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C28: after successful local signOut, empty leftover SIGNED_IN B authenticates", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      const getSession = vi.fn().mockResolvedValue({ error: {}, data: { session: null } });
+      const signOut = vi.fn().mockResolvedValue({ error: null });
+      const authListeners: AuthStateListener[] = [];
+      const client = {
+        auth: {
+          getSession,
+          signOut,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } satisfies AuthProviderClient;
+
+      render(
+        <AuthProvider client={client} startRecovery={() => vi.fn()}>
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+
+      await act(async () => {
+        await startTestAuthFlow("10000000-0000-4000-8000-000000000028");
+        await Promise.resolve();
+      });
+
+      const sessionB = {
+        access_token: "token-c28-b",
+        user: { id: "user-1" },
+      } as Session;
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", sessionB);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("authenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C23 remains when fail-closed local signOut fails", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      const getSession = vi.fn().mockResolvedValue({ error: {}, data: { session: null } });
+      const signOut = vi.fn().mockResolvedValue({ error: { message: "sign-out-failed" } });
+      const authListeners: AuthStateListener[] = [];
+      const client = {
+        auth: {
+          getSession,
+          signOut,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } satisfies AuthProviderClient;
+
+      render(
+        <AuthProvider client={client} startRecovery={() => vi.fn()}>
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+
+      await act(async () => {
+        await startTestAuthFlow("10000000-0000-4000-8000-000000000023");
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", session);
+        }
         await Promise.resolve();
       });
       expect(screen.getByText("unauthenticated")).toBeInTheDocument();

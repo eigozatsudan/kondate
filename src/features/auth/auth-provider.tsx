@@ -141,6 +141,17 @@ function leftoverSetsNonEmpty(hard: Set<string>, soft: Set<string>): boolean {
   return hard.size > 0 || soft.size > 0;
 }
 
+/**
+ * fail-closed local signOut の結果が失敗か。
+ * `{ error: null }` / void は成功。timeout は呼び出し側の catch。
+ */
+function isFailedAuthSignOutResult(result: unknown): boolean {
+  if (typeof result !== "object" || result === null || !("error" in result)) {
+    return false;
+  }
+  return result.error != null;
+}
+
 function readAccessToken(nextSession: Session | null): string | null {
   if (nextSession === null) return null;
   const token = nextSession.access_token;
@@ -271,7 +282,11 @@ const AUTH_RECOVERY_PATH_SYNC_MS = 500;
  *   他タブはメモリ上 session が残る間は動き得るが、reload 後は再ログインが必要になり得る。
  * - flow secret / completion は温存し、並行ログイン・recovery を優先する。
  * - soft 失効（別 effect）は pending-deposit / PKCE verifier を追加で消す（C3/C10）。cold-start は触らない。
- * - signOut は getSession hang と同系で固着し得るため storage のみ同期 clear（best-effort）。
+ * - local `signOut({ scope: "local" })` を UI 解放のあと fire-and-forget で打つ（C26 / C27 / C29）。
+ *   hang は SIGN_OUT_TIMEOUT_MS。完了は待たない。global は打たない。C5 の
+ *   clearExpiredSessionAuthAndDrafts は使わない（soft residual / suppress が RR1 を壊す）。
+ * - signOut 成功時だけ SDK 空とみなし、login-era leftover pending（C26）と空 leftover の C23（C28）を外す。
+ *   timeout / 失敗 / signOut 無しは現行 quarantine / C23 を残す。
  * - 明示 logout は auth-cleanup 経由の clearOwnedAuthStorage（全所有キー）のまま。
  */
 function clearPersistedAuthOnColdStartFailClosed(): void {
@@ -341,10 +356,20 @@ export function AuthProvider({
    */
   const failClosedGenerationRef = useRef(-1);
   /**
-   * C16–C25: fail-closed 後〜非 stale の成功 apply まで。SDK メモリ leftover / TOKEN_REFRESHED を閉じる。
-   * signOut は呼ばない（clearPersistedAuthOnColdStartFailClosed の Tradeoff: hang と同系で固着し得る）。
+   * C16–C29: fail-closed 後〜非 stale の成功 apply まで。SDK メモリ leftover / TOKEN_REFRESHED を閉じる。
+   * local signOut 成功時は C23 / login-era pending を外す。失敗・timeout・signOut 無しは残す。
    */
   const sessionQuarantineRef = useRef(false);
+  /**
+   * fail-closed local signOut が成功したか。成功後だけ SDK メモリは空とみなす（C26 / C28 / C29）。
+   * re-arm では下ろさない（C28 の正規 SIGNED_IN を通すため）。
+   */
+  const localSignOutClearedSdkRef = useRef(false);
+  /**
+   * fail-closed local signOut の in-flight。SIGNED_OUT を pin expect に載せない。
+   * 後着 SIGNED_OUT が正規 B を落とさないよう、この間の null は listener で捨てる。
+   */
+  const failClosedLocalSignOutInFlightRef = useRef(false);
   /**
    * C16–C20 / C25: residual onComplete の refreshSession だけ soft leftover を通過して apply する。
    * hard leftover は trust でも apply しない。
@@ -623,6 +648,52 @@ export function AuthProvider({
   );
 
   /**
+   * C26 / C29: fail-closed 後の local signOut。UI 解放は待たない。
+   * pin mismatch expect は立てない（SIGNED_OUT で soft residual / pin 維持に誤接続しない）。
+   * 成功時だけ localSignOutClearedSdkRef を立て、C23 / leftover pending を外す。
+   */
+  const requestLocalSignOutOnColdStartFailClosed = useCallback((): void => {
+    const signOut = client.auth.signOut;
+    if (typeof signOut !== "function") {
+      return;
+    }
+    failClosedLocalSignOutInFlightRef.current = true;
+    void (async () => {
+      try {
+        const result = await withTimeout(
+          Promise.resolve(signOut.call(client.auth, { scope: "local" })),
+          SIGN_OUT_TIMEOUT_MS,
+        );
+        if (isFailedAuthSignOutResult(result)) {
+          return;
+        }
+        localSignOutClearedSdkRef.current = true;
+      } catch {
+        // timeout / throw — quarantine / C23 を残す
+      } finally {
+        failClosedLocalSignOutInFlightRef.current = false;
+      }
+    })();
+  }, [client]);
+
+  /**
+   * C5 / C16–C18: cold-start deadline の fail-closed。UI を先に解放し、local signOut は待たない。
+   * 二重発火では世代を上げない（C18 の login-era を stale にしない）。
+   */
+  const failClosedColdStartSession = useCallback((): void => {
+    if (hasResolvedSessionOnce.current) return;
+    if (coldStartFailClosedRef.current) return;
+    sessionProbeGenerationRef.current += 1;
+    failClosedGenerationRef.current = sessionProbeGenerationRef.current;
+    coldStartFailClosedRef.current = true;
+    sessionQuarantineRef.current = true;
+    clearPersistedAuthOnColdStartFailClosed();
+    applyAuthSession(null);
+    setLoaded(true);
+    requestLocalSignOutOnColdStartFailClosed();
+  }, [applyAuthSession, requestLocalSignOutOnColdStartFailClosed]);
+
+  /**
    * C12: authenticated+degraded 固着から再ログイン可能な未認証へ落とす。
    * data plane は既に fail-closed。権限昇格はせず pin/expect を破棄して soft residual 経路へ。
    * client 残留 JWT も best-effort で落とし、pin 解除後に B のまま data plane が開かないようにする。
@@ -721,7 +792,13 @@ export function AuthProvider({
         // C21: quarantine 中の世代一致 login-era getSession は apply せず leftover にも入れない。
         // pending に残し、後続 SIGNED_IN が同じ token なら hard が無いとき apply できる。
         // C20: residual onComplete の trust は soft leftover だけ通過する（hard は上で拒否済み）。
+        // C26: signOut 成功後は leftover A を pending に載せない（hard leftover。後続 SIGNED_IN A を閉じる）。
+        // signOut 成功後の trust getSession 非 null は正規完了として apply する（C29 拒否枝は置かない）。
         if (data.session !== null && sessionQuarantineRef.current && !trustThisRefresh) {
+          if (localSignOutClearedSdkRef.current) {
+            rememberAccessToken(hardLeftoverAccessTokensRef.current, data.session);
+            return;
+          }
           const token = readAccessToken(data.session);
           if (token !== null) {
             pendingLoginEraAccessTokenRef.current = token;
@@ -750,13 +827,7 @@ export function AuthProvider({
         Date.now() - beganAt >= COLD_START_SESSION_DEADLINE_MS &&
         !(failClosedGenerationRef.current >= 0 && !coldStartFailClosedRef.current)
       ) {
-        sessionProbeGenerationRef.current += 1;
-        failClosedGenerationRef.current = sessionProbeGenerationRef.current;
-        coldStartFailClosedRef.current = true;
-        sessionQuarantineRef.current = true;
-        clearPersistedAuthOnColdStartFailClosed();
-        applyAuthSession(null);
-        setLoaded(true);
+        failClosedColdStartSession();
       }
     } catch {
       // C12: timeout / never-settle。storage は焼かず、authenticated なら degraded UX のみ。
@@ -765,7 +836,7 @@ export function AuthProvider({
         setSessionProbeDegraded(true);
       }
     }
-  }, [applyAuthSession, client]);
+  }, [applyAuthSession, client, failClosedColdStartSession]);
 
   useEffect(() => {
     coldStartBeganAtMs.current = Date.now();
@@ -773,6 +844,11 @@ export function AuthProvider({
     startAuthFlowDismissBroadcastListener();
     void refreshSession();
     const { data } = client.auth.onAuthStateChange((event, nextSession) => {
+      // fail-closed local signOut の SIGNED_OUT。pin expect は立てていないのでここで捨てる。
+      // hasResolved も立てない（C4）。hadAuthenticated は false のまま soft residual を走らせない。
+      if (nextSession === null && failClosedLocalSignOutInFlightRef.current) {
+        return;
+      }
       // C4: fail-closed 中の遅延 session は無視（hasResolved も立てない）
       // C14 / C25: fail-closed 中に見た token は hard leftover。re-arm 後も trust でも apply しない。
       if (nextSession !== null && coldStartFailClosedRef.current) {
@@ -840,6 +916,13 @@ export function AuthProvider({
         }
         // C23: quarantine 中・hard/soft 空・stale pending 無しの SIGNED_IN は leftover。
         // pending login-era token 一致はこの枝に来ない（C21）。
+        // C28: signOut 成功後は SDK 空とみなし、正規 SIGNED_IN B を通す。失敗時は C23 を残す。
+        if (localSignOutClearedSdkRef.current) {
+          applyAuthSession(nextSession);
+          hasResolvedSessionOnce.current = true;
+          setLoaded(true);
+          return;
+        }
         rememberAccessToken(softQuarantineAccessTokensRef.current, nextSession);
         return;
       }
@@ -859,16 +942,9 @@ export function AuthProvider({
     // C5: hang/一時失敗の再試行を打ち切り、未ログインとして UI を解放する全体上限
     // persist token も同期 clear し、focus 復活で「いつの間にかログイン」を防ぐ
     const coldStartDeadlineTimer = window.setTimeout(() => {
-      if (hasResolvedSessionOnce.current) return;
-      // C14 / C16–C18: in-flight を stale-era にするため世代を上げ、その値を境界として覚える。
-      // persist だけ消し signOut はしない（Tradeoff）。SDK メモリ leftover は quarantine で閉じる。
-      sessionProbeGenerationRef.current += 1;
-      failClosedGenerationRef.current = sessionProbeGenerationRef.current;
-      coldStartFailClosedRef.current = true;
-      sessionQuarantineRef.current = true;
-      clearPersistedAuthOnColdStartFailClosed();
-      applyAuthSession(null);
-      setLoaded(true);
+      // C14 / C16–C18: in-flight を stale-era にするため世代を上げる。
+      // persist 同期 clear + UI 解放を先に。local signOut は待たない（C26 / C29）。
+      failClosedColdStartSession();
     }, COLD_START_SESSION_DEADLINE_MS);
     return () => {
       data.subscription.unsubscribe();
@@ -876,7 +952,7 @@ export function AuthProvider({
       window.clearInterval(retryTimer);
       window.clearTimeout(coldStartDeadlineTimer);
     };
-  }, [applyAuthSession, client, refreshSession]);
+  }, [applyAuthSession, client, failClosedColdStartSession, refreshSession]);
 
   // C5/C6/C4/R3: authenticated → unauthenticated（SIGNED_OUT / refresh 失効の getSession null 等）で
   // 共有端末に free-form 草稿・feedback fingerprint・session を残さない。
