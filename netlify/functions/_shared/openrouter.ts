@@ -560,7 +560,9 @@ async function sendMenuGenerationWithRuntime(
     if (!envelope.success) {
       throw new OpenRouterCallError("invalid_ai_response", modelId);
     }
-    assertWithinDeadline();
+    // G11: envelope Zod / content JSON 成功後は chat timeoutMs で捨てない。
+    // メモリ上の valid 相当 payload は menu/dish/flyer Zod へ進める。
+    // 失敗時は下の catch が deadline を優先する。
 
     const firstChoice = envelope.data.choices[0];
     if (firstChoice === undefined) {
@@ -573,7 +575,6 @@ async function sendMenuGenerationWithRuntime(
     } catch {
       throw new OpenRouterCallError("invalid_ai_response", envelope.data.model);
     }
-    assertWithinDeadline();
 
     if (mode === "replacement_dish") {
       // full_menu ボディを置換モードで拒否（mode 付きの閉じた結果）

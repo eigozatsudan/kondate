@@ -743,6 +743,55 @@ it.each([
   },
 );
 
+// G11: envelope Zod 成功直後（now 7 回目）および content JSON.parse 成功直後
+// （G5 がずらした 8 回目）が 20,000ms でも、メモリ上の valid 相当 payload を Zod へ進めて返す。
+it.each([
+  ["full_menu", 7, undefined, successfulResponse(), { mode: "full_menu", output: conflictOutput }],
+  ["full_menu", 8, undefined, successfulResponse(), { mode: "full_menu", output: conflictOutput }],
+  [
+    "replacement_dish",
+    7,
+    "replacement_dish" as const,
+    contentEnvelopeResponse(dishRegenerationOutput),
+    { mode: "replacement_dish", output: dishRegenerationOutput },
+  ],
+  [
+    "replacement_dish",
+    8,
+    "replacement_dish" as const,
+    contentEnvelopeResponse(dishRegenerationOutput),
+    { mode: "replacement_dish", output: dishRegenerationOutput },
+  ],
+  [
+    "flyer_weekly",
+    7,
+    "flyer_weekly" as const,
+    contentEnvelopeResponse(flyerWeeklyOutput),
+    { mode: "flyer_weekly", output: flyerWeeklyOutput },
+  ],
+  [
+    "flyer_weekly",
+    8,
+    "flyer_weekly" as const,
+    contentEnvelopeResponse(flyerWeeklyOutput),
+    { mode: "flyer_weekly", output: flyerWeeklyOutput },
+  ],
+] as const)(
+  "returns a valid %s parse even if the chat deadline elapses at now call %s",
+  async (_mode, deadlineCall, mode, response, expected) => {
+    mockDeadlineAtCall(deadlineCall);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response));
+
+    await expect(
+      sendMenuGeneration({
+        messages: [],
+        timeoutMs: 20_000,
+        ...(mode === undefined ? {} : { mode }),
+      }),
+    ).resolves.toMatchObject({ ...expected, modelId: models[0] });
+  },
+);
+
 it.each([
   ["top-level JSON", new Response("not-json", { status: 200 }), 5],
   ["envelope", new Response(JSON.stringify({ model: models[0], choices: [] }), { status: 200 }), 7],
@@ -755,7 +804,8 @@ it.each([
       }),
       { status: 200 },
     ),
-    8,
+    // G11: envelope Zod 成功後 assert を外したので、catch の再判定が now 7 回目。
+    7,
   ],
   ["outside model", successfulResponse("other/model"), 6],
   [
@@ -777,7 +827,8 @@ it.each([
       }),
       { status: 200 },
     ),
-    9,
+    // G11: envelope Zod / content JSON 後の assert を外したので、catch が now 7 回目。
+    7,
   ],
   [
     "body",
@@ -806,8 +857,8 @@ it.each([
 
 it("prioritizes an elapsed deadline over an adapter failure", async () => {
   // schema 失敗（adapter throw）は catch の再 assert が deadline を優先する。
-  // G5 で wire 成功後の assert を外したため、catch が now の 9 回目。
-  mockDeadlineAtCall(9);
+  // G11: envelope Zod / content JSON 後の assert を外したため、catch が now の 7 回目。
+  mockDeadlineAtCall(7);
   const adapterSpy = vi
     .spyOn(generationContracts, "toAiGenerationResponse")
     .mockImplementation(() => {
