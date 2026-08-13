@@ -2004,6 +2004,278 @@ describe("AuthProvider", () => {
     }
   });
 
+  it("C36: local pin write failure keeps suppress; starting tab recovers, other tab does not", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const startRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+    startRecovery.mockReturnValue(vi.fn());
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const authListeners: AuthStateListener[] = [];
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } as AuthProviderClient;
+
+    const firstMount = render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("authenticated");
+    const startsWhileAuth = startRecovery.mock.calls.length;
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_OUT", null);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(startRecovery.mock.calls.length).toBe(startsWhileAuth);
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+
+    const newFlowId = "10000000-0000-4000-8000-0000000000c6";
+    const setItemDescriptor = Object.getOwnPropertyDescriptor(Storage.prototype, "setItem");
+    if (setItemDescriptor?.value === undefined) {
+      throw new Error("Storage.prototype.setItem is missing");
+    }
+    const originalSetItem = setItemDescriptor.value as (
+      this: Storage,
+      key: string,
+      value: string,
+    ) => void;
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      key: string,
+      value: string,
+    ): void {
+      if (this === window.localStorage && key === ACTIVE_LOGIN_FLOW_STORAGE_KEY) {
+        throw new Error("quota");
+      }
+      originalSetItem.call(this, key, value);
+    });
+    try {
+      await act(async () => {
+        await createAuthFlow(
+          "/onboarding",
+          createTestContinuationApi(newFlowId),
+          window.localStorage,
+          {
+            now: () => new Date("2026-08-12T00:00:00.000Z"),
+            randomBytes: (size = 32) => new Uint8Array(size).fill(7),
+          },
+        );
+        await Promise.resolve();
+      });
+    } finally {
+      setItem.mockRestore();
+    }
+
+    // origin 共有 suppress は残る。開始タブは session pin で residual を開始する
+    expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+    expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(newFlowId);
+    expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
+    expect(startRecovery.mock.calls.length).toBeGreaterThan(startsWhileAuth);
+    const startedInput = startRecovery.mock.calls.at(-1)?.[0];
+    expect(startedInput?.restrictToFlowId).toBe(newFlowId);
+    expect(startedInput?.targetFlowId).toBeUndefined();
+
+    firstMount.unmount();
+    window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+
+    const remountRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+    remountRecovery.mockReturnValue(vi.fn());
+    const remountClient = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={remountClient}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={remountRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    // 他タブ相当: pin 無し + suppress 残なので start しない
+    expect(remountRecovery).not.toHaveBeenCalled();
+  });
+
+  it("C37: fail-closed clears leftover local pin so remount cannot restrict to abandoned A", async () => {
+    vi.useFakeTimers();
+    const priorFlowId = "10000000-0000-4000-8000-0000000000a7";
+    const newFlowId = "10000000-0000-4000-8000-0000000000b7";
+    const flowKey = `kondate.auth.flow.${priorFlowId}`;
+    const pendingKey = `kondate.auth.supabase.pending-deposit.${priorFlowId}`;
+    try {
+      window.history.replaceState(null, "", "/login");
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      window.localStorage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, priorFlowId);
+      window.localStorage.setItem(
+        flowKey,
+        JSON.stringify({
+          id: priorFlowId,
+          secret: "A".repeat(43),
+          state: "B".repeat(43),
+          origin: "http://127.0.0.1:5173",
+          returnTo: "/onboarding",
+          sessionExchange: "supabase",
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      window.localStorage.setItem(
+        pendingKey,
+        JSON.stringify({
+          state: "B".repeat(43),
+          code: "sibling-code",
+          expiresAtMs: Date.now() + 60_000,
+        }),
+      );
+      const startRecovery =
+        vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+      startRecovery.mockReturnValue(vi.fn());
+      const getSession = vi.fn().mockReturnValue(new Promise(() => undefined));
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: () => ({
+            data: { subscription: createAuthSubscription() },
+          }),
+        },
+      } satisfies AuthProviderClient;
+
+      const firstMount = render(
+        <AuthProvider
+          client={client}
+          recoveryGateway={{ resumeFlow: vi.fn() }}
+          startRecovery={startRecovery}
+        >
+          <Probe />
+        </AuthProvider>,
+      );
+      expect(screen.getByText("loading")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      expect(startRecovery).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+      // C37: fail-closed で abandoned A の pin を両方消す
+      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
+      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
+      // R3: secret / pending は焼かない
+      expect(window.localStorage.getItem(flowKey)).not.toBeNull();
+      expect(window.localStorage.getItem(pendingKey)).not.toBeNull();
+
+      vi.useRealTimers();
+      firstMount.unmount();
+
+      const createRecovery =
+        vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+      createRecovery.mockReturnValue(vi.fn());
+      const createClient = {
+        auth: {
+          getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+          onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+        },
+      } as AuthProviderClient;
+      const createMount = render(
+        <AuthProvider
+          client={createClient}
+          recoveryGateway={{ resumeFlow: vi.fn() }}
+          startRecovery={createRecovery}
+        >
+          <Probe />
+        </AuthProvider>,
+      );
+      await screen.findByText("unauthenticated");
+      expect(createRecovery).not.toHaveBeenCalled();
+
+      const setItemDescriptor = Object.getOwnPropertyDescriptor(Storage.prototype, "setItem");
+      if (setItemDescriptor?.value === undefined) {
+        throw new Error("Storage.prototype.setItem is missing");
+      }
+      const originalSetItem = setItemDescriptor.value as (
+        this: Storage,
+        key: string,
+        value: string,
+      ) => void;
+      const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+        this: Storage,
+        key: string,
+        value: string,
+      ): void {
+        if (this === window.localStorage && key === ACTIVE_LOGIN_FLOW_STORAGE_KEY) {
+          throw new Error("quota");
+        }
+        originalSetItem.call(this, key, value);
+      });
+      try {
+        await act(async () => {
+          await startTestAuthFlow(newFlowId);
+          await Promise.resolve();
+        });
+      } finally {
+        setItem.mockRestore();
+      }
+
+      expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).not.toBe(priorFlowId);
+      createMount.unmount();
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+
+      const remountRecovery =
+        vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+      remountRecovery.mockReturnValue(vi.fn());
+      const remountClient = {
+        auth: {
+          getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+          onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+        },
+      } as AuthProviderClient;
+      render(
+        <AuthProvider
+          client={remountClient}
+          recoveryGateway={{ resumeFlow: vi.fn() }}
+          startRecovery={remountRecovery}
+        >
+          <Probe />
+        </AuthProvider>,
+      );
+      await screen.findByText("unauthenticated");
+      // suppress 残 or pin 無しなので A を restrict して start しない
+      expect(remountRecovery).not.toHaveBeenCalled();
+    } finally {
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
   it("C4: fail-closed stays unauthenticated after hung getSession settles; createAuthFlow applies only a new session", async () => {
     vi.useFakeTimers();
     try {

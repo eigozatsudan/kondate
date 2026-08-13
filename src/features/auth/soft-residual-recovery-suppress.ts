@@ -4,7 +4,7 @@
  * auth-flow と auth-cleanup の循環 import を避けるため、suppress の正本を本モジュールに置く。
  * - mark: soft residual 実行後（origin 共有 localStorage）
  * - clear: createAuthFlow 成功・session 適用・明示 clear。解除時に re-arm イベントを発火する（R4）
- * - is: AuthProvider residual effect のゲート（suppress 中は startRecovery しない = C4）
+ * - is: AuthProvider residual effect のゲート（C4/C36: 印があり pin が無いときだけ start しない）
  *
  * R4: storage から印を消すだけでは residual useEffect が再評価されない（deps に suppress 無し）。
  * clear 時に window イベントで AuthProvider に通知し、unauthenticated /login 上で再武装する。
@@ -49,7 +49,8 @@ export function notifySoftResidualRecoveryRearm(): void {
  * 無印 clear（テスト後始末等）で recovery を無駄に再起動しない。
  */
 export function clearSoftResidualRecoverySuppressed(): void {
-  const wasSuppressed = isSoftResidualRecoverySuppressed();
+  // R4: 印そのものが立っていたら re-arm。C36 の pin 有無は見ない。
+  const wasSuppressed = isSoftResidualRecoverySuppressFlagSet();
   for (const storage of [
     typeof localStorage !== "undefined" ? localStorage : null,
     typeof sessionStorage !== "undefined" ? sessionStorage : null,
@@ -67,10 +68,10 @@ export function clearSoftResidualRecoverySuppressed(): void {
 }
 
 /**
- * C4: soft residual 後の residual recovery を抑止中か（origin 共有 localStorage を正とする）。
- * r2 tab-local 印が残っていれば同一タブでは fail-closed で true（移行残骸）。
+ * C4: origin 共有（または r2 session 残骸）の suppress 印があるか。
+ * pin の有無は見ない。R4 の clear 判定用。
  */
-export function isSoftResidualRecoverySuppressed(): boolean {
+function isSoftResidualRecoverySuppressFlagSet(): boolean {
   try {
     if (
       typeof localStorage !== "undefined" &&
@@ -92,4 +93,32 @@ export function isSoftResidualRecoverySuppressed(): boolean {
     return false;
   }
   return false;
+}
+
+/**
+ * C36: 開始タブの session/local pin があるか。
+ * auth-flow を import すると循環するため、同じキーをここで読む。
+ */
+function hasReadableActiveLoginFlowId(): boolean {
+  const read = (storage: Storage): boolean => {
+    try {
+      const raw = storage.getItem("kondate.auth.active-login-flow");
+      return raw !== null && raw.length > 0;
+    } catch {
+      return false;
+    }
+  };
+  if (typeof sessionStorage !== "undefined" && read(sessionStorage)) return true;
+  if (typeof localStorage !== "undefined" && read(localStorage)) return true;
+  return false;
+}
+
+/**
+ * C4/C36: residual recovery を抑止するか。
+ * local（または r2 session）suppress が立っていて、readActiveLoginFlowId 相当の pin が無いときだけ true。
+ * 開始タブは session pin があるので false → residual を開始できる。他タブは pin 無し + suppress 残で true。
+ */
+export function isSoftResidualRecoverySuppressed(): boolean {
+  if (!isSoftResidualRecoverySuppressFlagSet()) return false;
+  return !hasReadableActiveLoginFlowId();
 }

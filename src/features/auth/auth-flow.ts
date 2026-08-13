@@ -114,14 +114,26 @@ function readStoredActiveLoginFlowId(storage: Storage): string | undefined {
   }
 }
 
-/** C2/C13: createAuthFlow 成功後に対象 flow を覚える（best-effort。secret は載せない） */
-export function writeActiveLoginFlowId(flowId: string): void {
+/**
+ * C2/C13/C36: createAuthFlow 成功後に対象 flow を覚える（best-effort。secret は載せない）。
+ * origin 共有 localStorage に書けたときだけ true。失敗時は呼び出し側が共有 suppress を残す。
+ */
+export function writeActiveLoginFlowId(flowId: string): boolean {
   for (const storage of activeLoginFlowStorages()) {
     try {
       storage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, flowId);
     } catch {
       // sessionStorage 失敗でも localStorage があれば他タブ / remount で restrict できる
+      // C36: local 失敗は呼び出し側で origin 共有 suppress を落とさない
     }
+  }
+  try {
+    return (
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY) === flowId
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -1021,15 +1033,24 @@ export async function createAuthFlow(
     // create レート枠は消費されるが、秘密漏洩面は無い（residual-intentional / TTL）。
     throw new Error("auth_flow_persist_failed");
   }
-  // C2: persist 成功後にこのタブの対象 flow を先に書く（re-arm より前。effect が読む）
-  writeActiveLoginFlowId(flow.id);
-  // C4/R3/R4: 新規 flow 永続化成功後に共有 suppress 解除 + residual re-arm。
-  // auth-cleanup 循環を避け leaf を直接呼ぶ（clear 内で re-arm イベントを発火）。
-  // C4: cold-start fail-closed 後は suppress が無いので clear だけではイベントが飛ばない。
-  // 明示 login 開始を必ず provider に伝え、fail-closed を解除する。
+  // C36: pin 書込前に印を見る。書込後は開始タブの session pin で isSoft が false になる。
   const wasSuppressed = isSoftResidualRecoverySuppressed();
-  clearSoftResidualRecoverySuppressed();
-  if (!wasSuppressed) {
+  // C2: persist 成功後にこのタブの対象 flow を先に書く（re-arm より前。effect が読む）
+  const wroteLocalPin = writeActiveLoginFlowId(flow.id);
+  // C36: origin 共有 suppress は local pin が書けたときだけ落とす。
+  // 書けないときは他タブを抑止のまま残す。開始タブは session pin があるので
+  // isSoftResidualRecoverySuppressed が false になり residual を開始できる。
+  if (wroteLocalPin) {
+    // C4/R3/R4: 新規 flow 永続化成功後に共有 suppress 解除 + residual re-arm。
+    // auth-cleanup 循環を避け leaf を直接呼ぶ（clear 内で re-arm イベントを発火）。
+    // C4: cold-start fail-closed 後は suppress が無いので clear だけではイベントが飛ばない。
+    // 明示 login 開始を必ず provider に伝え、fail-closed を解除する。
+    clearSoftResidualRecoverySuppressed();
+    if (!wasSuppressed) {
+      notifySoftResidualRecoveryRearm();
+    }
+  } else {
+    // 開始タブの residual effect を再評価する（共有 suppress は残す）
     notifySoftResidualRecoveryRearm();
   }
   return flow;

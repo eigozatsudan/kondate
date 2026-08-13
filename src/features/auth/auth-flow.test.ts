@@ -480,6 +480,54 @@ describe("auth flow storage", () => {
     }
   });
 
+  it("C36: localStorage pin write failure keeps suppress after createAuthFlow", async () => {
+    const { isSoftResidualRecoverySuppressed, SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY } =
+      await import("./soft-residual-recovery-suppress");
+    window.localStorage.setItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY, "1");
+    const setItemDescriptor = Object.getOwnPropertyDescriptor(Storage.prototype, "setItem");
+    if (setItemDescriptor?.value === undefined) {
+      throw new Error("Storage.prototype.setItem is missing");
+    }
+    const originalSetItem = setItemDescriptor.value as (
+      this: Storage,
+      key: string,
+      value: string,
+    ) => void;
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      key: string,
+      value: string,
+    ): void {
+      if (this === window.localStorage && key === ACTIVE_LOGIN_FLOW_STORAGE_KEY) {
+        throw new Error("quota");
+      }
+      originalSetItem.call(this, key, value);
+    });
+    try {
+      const wroteLocal = writeActiveLoginFlowId("10000000-0000-4000-8000-0000000000c6");
+      expect(wroteLocal).toBe(false);
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+
+      const api = continuationApiMock();
+      await createAuthFlow("/onboarding", api, new MapStorage(), fixedFlowDeps);
+      expect(window.localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
+      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(
+        "10000000-0000-4000-8000-000000000001",
+      );
+      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
+      // 開始タブは session pin があるので suppress 判定は外れる
+      expect(isSoftResidualRecoverySuppressed()).toBe(false);
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      // 他タブ相当: pin 無し + suppress 残
+      expect(isSoftResidualRecoverySuppressed()).toBe(true);
+    } finally {
+      setItem.mockRestore();
+      window.localStorage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    }
+  });
+
   it("removes non-finite and over-TTL flow and callback timestamps", () => {
     const storage = new MapStorage();
     const invalidFlowId = "10000000-0000-4000-8000-000000000001";

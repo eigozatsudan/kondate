@@ -745,8 +745,9 @@ export function AuthProvider({
    * C5 / C16–C18: cold-start deadline の fail-closed。UI を先に解放し、local signOut は待たない。
    * 二重発火では世代を上げない（C18 の login-era を stale にしない）。
    * C15: C5 の 401 と同じ origin 共有 suppress を立て、/login residual が leftover 全件を回さない。
+   * C37: abandoned の active-login-flow pin は両方消す（applyAuthSession(null) では消えない）。
    * flow / pending / PKCE / callback-owner は焼かない（RR1 / R3）。
-   * 解除は createAuthFlow / session 適用（既存 clear + R4 re-arm）。
+   * 解除は createAuthFlow（local pin 成功時） / session 適用（既存 clear + R4 re-arm）。
    */
   const failClosedColdStartSession = useCallback((): void => {
     if (hasResolvedSessionOnce.current) return;
@@ -762,6 +763,9 @@ export function AuthProvider({
     setLoaded(true);
     // C15: UI 解放を待たず、C5 と同じ origin 共有 suppress。sibling secret は残す。
     markSoftResidualRecoverySuppressed();
+    // C37: abandoned の origin 共有 pin を両方消す。残すと後続 B の local 書込失敗で remount が A を restrict する。
+    // leftover / pending / secret は焼かない（RR1 / R3）。
+    clearActiveLoginFlowId();
     requestLocalSignOutOnColdStartFailClosed();
   }, [applyAuthSession, requestLocalSignOutOnColdStartFailClosed]);
 
