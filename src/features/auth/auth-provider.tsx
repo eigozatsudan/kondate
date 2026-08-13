@@ -120,21 +120,31 @@ function isSessionPinActive(guard: ResidualSessionGuard): boolean {
 }
 
 /**
- * C14 / C16–C19: fail-closed 中または stale-era / quarantine leftover で見た prior access_token を denylist に残す。
- * login-era の世代ずれは呼び出し側で捨てるだけでここへ来ない（C18）。
- * トークン文字列はログしない。空は識別不能なので無視する。
+ * leftover の access_token を hard / soft いずれかの集合へ入れる。
+ * 照合は token のみ（同一 user の正規 B を落とさない）。トークン文字列はログしない。
+ * 空は識別不能なので無視する。login-era の世代ずれは呼び出し側で捨てるだけでここへ来ない（C18）。
  */
-function rememberStaleAccessToken(denylist: Set<string>, nextSession: Session | null): void {
+function rememberAccessToken(bucket: Set<string>, nextSession: Session | null): void {
   if (nextSession === null) return;
   const token = nextSession.access_token;
   if (typeof token === "string" && token.length > 0) {
-    denylist.add(token);
+    bucket.add(token);
   }
 }
 
-function isDeniedStaleAccessToken(denylist: Set<string>, nextSession: Session): boolean {
+function hasAccessToken(bucket: Set<string>, nextSession: Session): boolean {
   const token = nextSession.access_token;
-  return typeof token === "string" && token.length > 0 && denylist.has(token);
+  return typeof token === "string" && token.length > 0 && bucket.has(token);
+}
+
+function leftoverSetsNonEmpty(hard: Set<string>, soft: Set<string>): boolean {
+  return hard.size > 0 || soft.size > 0;
+}
+
+function readAccessToken(nextSession: Session | null): string | null {
+  if (nextSession === null) return null;
+  const token = nextSession.access_token;
+  return typeof token === "string" && token.length > 0 ? token : null;
 }
 
 /**
@@ -317,12 +327,12 @@ export function AuthProvider({
    * hasResolvedSessionOnce は立てない（R 系の「一度解決済み」と混ぜない）。
    * 非 null session の apply を拒否し、明示 login（createAuthFlow → re-arm）まで維持する。
    * C14: re-arm で fail-closed は下ろすが、fail-closed 前から in-flight だった prior token は
-   * denylist で拒否する。別 access_token（正規 IdP）は apply できる。
+   * hard leftover で拒否する。別 access_token（正規 IdP）は apply できる。
    */
   const coldStartFailClosedRef = useRef(false);
   /**
    * C14 / C16–C18: fail-closed で上げる。re-arm では上げない（C18: 正当な login-era probe を stale にしない）。
-   * in-flight getSession の settle が stale-era なら denylist、login-era の世代ずれは捨てるだけ。
+   * in-flight getSession の settle が stale-era なら hard leftover、login-era の世代ずれは捨てるだけ。
    */
   const sessionProbeGenerationRef = useRef(0);
   /**
@@ -331,19 +341,30 @@ export function AuthProvider({
    */
   const failClosedGenerationRef = useRef(-1);
   /**
-   * C16–C19: fail-closed 後〜非 stale の成功 apply まで。SDK メモリ leftover / TOKEN_REFRESHED を閉じる。
+   * C16–C25: fail-closed 後〜非 stale の成功 apply まで。SDK メモリ leftover / TOKEN_REFRESHED を閉じる。
    * signOut は呼ばない（clearPersistedAuthOnColdStartFailClosed の Tradeoff: hang と同系で固着し得る）。
    */
   const sessionQuarantineRef = useRef(false);
   /**
-   * C16–C20: residual onComplete の refreshSession だけ quarantine / denylist を通過して apply する。
+   * C16–C20 / C25: residual onComplete の refreshSession だけ soft leftover を通過して apply する。
+   * hard leftover は trust でも apply しない。
    */
   const trustNextRefreshRef = useRef(false);
   /**
-   * C14: fail-closed 中または stale-era で見た prior access_token。re-arm 後も残す。
-   * 異なる token を成功 apply したらクリア。トークン文字列はログしない。
+   * C14 / C25: fail-closed 中または stale-era probe で見た prior access_token。
+   * re-arm 後も残し、trust でも apply しない。トークン文字列はログしない。
    */
-  const staleAccessTokenDenylistRef = useRef<Set<string>>(new Set());
+  const hardLeftoverAccessTokensRef = useRef<Set<string>>(new Set());
+  /**
+   * C16 / C23: re-arm 後に leftover として学習した access_token。
+   * 通常 apply は拒否。residual onComplete の trustNextRefresh だけ通過してよい（C20）。
+   */
+  const softQuarantineAccessTokensRef = useRef<Set<string>>(new Set());
+  /**
+   * C21: quarantine 中の login-era getSession 成功 token。apply も leftover remember もしない。
+   * 後続 SIGNED_IN が同じ token なら hard が無いときだけ apply する。
+   */
+  const pendingLoginEraAccessTokenRef = useRef<string | null>(null);
   /**
    * C16: raw getSession の未 settle。withTimeout で外れても raw が pending なら残る。
    */
@@ -419,17 +440,23 @@ export function AuthProvider({
   const applyAuthSession = useCallback(
     (nextSession: Session | null, options?: { bypassStaleDenylist?: boolean }): boolean => {
       // C4: fail-closed 中は遅延 getSession / onAuthStateChange の非 null を復活させない
-      // C14: fail-closed 中に見た token は denylist へ。re-arm 後も同じ prior session は apply しない。
+      // C14 / C25: fail-closed 中に見た token は hard leftover。trust でも apply しない。
       // C16–C18: 観測は stale-era / fail-closed のみ。login-era 世代ずれは refreshSession 側で捨てる。
-      // C20: residual onComplete の 1 回だけ denylist を通過する（誤って焼いた B をマジック完了で復活）。
+      // C20: residual onComplete の 1 回だけ soft leftover を通過する。
       if (nextSession !== null && coldStartFailClosedRef.current) {
-        rememberStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession);
+        rememberAccessToken(hardLeftoverAccessTokensRef.current, nextSession);
+        return false;
+      }
+      if (
+        nextSession !== null &&
+        hasAccessToken(hardLeftoverAccessTokensRef.current, nextSession)
+      ) {
         return false;
       }
       if (
         nextSession !== null &&
         !options?.bypassStaleDenylist &&
-        isDeniedStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession)
+        hasAccessToken(softQuarantineAccessTokensRef.current, nextSession)
       ) {
         return false;
       }
@@ -583,8 +610,10 @@ export function AuthProvider({
       clearSoftResidualRecoverySuppressed();
       // C2: 確立済み session があるのでタブ局所の「今開始した flow」印は不要
       clearActiveLoginFlowId();
-      // C14: 異なる token の成功 apply で prior denylist を閉じる
-      staleAccessTokenDenylistRef.current.clear();
+      // C14 / C21: 異なる token の成功 apply で leftover と pending login-era を閉じる
+      hardLeftoverAccessTokensRef.current.clear();
+      softQuarantineAccessTokensRef.current.clear();
+      pendingLoginEraAccessTokenRef.current = null;
       // C16–C18: 非 stale の成功 apply で quarantine を解除
       sessionQuarantineRef.current = false;
       setSession(nextSession);
@@ -644,13 +673,13 @@ export function AuthProvider({
     try {
       const sessionPromise = client.auth.getSession();
       pendingRawSessionProbesRef.current.push(trackedProbe);
-      // C14 / C18: withTimeout 後の遅延 settle。stale-era だけ denylist（login-era 世代ずれは捨てるだけ）
+      // C14 / C18: withTimeout 後の遅延 settle。stale-era だけ hard leftover（login-era 世代ずれは捨てるだけ）
       void Promise.resolve(sessionPromise).then(
         (result) => {
           if (probeGeneration === sessionProbeGenerationRef.current) return;
           if (!isStaleEraProbe(probeGeneration, failClosedGenerationRef.current)) return;
           if (result.error === null) {
-            rememberStaleAccessToken(staleAccessTokenDenylistRef.current, result.data.session);
+            rememberAccessToken(hardLeftoverAccessTokensRef.current, result.data.session);
           }
         },
         () => undefined,
@@ -663,30 +692,40 @@ export function AuthProvider({
       // B-I6: getSession の一時エラーで直前 session を捨てない。
       // クリアは error === null かつ session === null、または SIGNED_OUT のみ。
       if (error === null) {
-        // C14 / C18: 世代ずれ。stale-era だけ denylist。login-era は結果を捨てるだけ（正規 B を焼かない）
+        // C14 / C18: 世代ずれ。stale-era だけ hard leftover。login-era は結果を捨てるだけ（正規 B を焼かない）
         if (probeGeneration !== sessionProbeGenerationRef.current) {
           if (isStaleEraProbe(probeGeneration, failClosedGenerationRef.current)) {
-            rememberStaleAccessToken(staleAccessTokenDenylistRef.current, data.session);
+            rememberAccessToken(hardLeftoverAccessTokensRef.current, data.session);
           }
           return;
         }
         // C4: fail-closed 後の遅延成功は非 null を捨てる（hasResolved も立てない）
-        // C14: denylist 一致も同様（re-arm 後の prior token）
+        // C14 / C25: hard leftover は trust でも apply しない
         if (data.session !== null && coldStartFailClosedRef.current) {
-          rememberStaleAccessToken(staleAccessTokenDenylistRef.current, data.session);
+          rememberAccessToken(hardLeftoverAccessTokensRef.current, data.session);
+          return;
+        }
+        if (
+          data.session !== null &&
+          hasAccessToken(hardLeftoverAccessTokensRef.current, data.session)
+        ) {
           return;
         }
         if (
           data.session !== null &&
           !trustThisRefresh &&
-          isDeniedStaleAccessToken(staleAccessTokenDenylistRef.current, data.session)
+          hasAccessToken(softQuarantineAccessTokensRef.current, data.session)
         ) {
           return;
         }
-        // C17: quarantine 中の世代一致 leftover は remember して apply しない（SDK メモリ）。
-        // C20: residual onComplete の trust は quarantine remember と denylist の両方を通過する。
+        // C21: quarantine 中の世代一致 login-era getSession は apply せず leftover にも入れない。
+        // pending に残し、後続 SIGNED_IN が同じ token なら hard が無いとき apply できる。
+        // C20: residual onComplete の trust は soft leftover だけ通過する（hard は上で拒否済み）。
         if (data.session !== null && sessionQuarantineRef.current && !trustThisRefresh) {
-          rememberStaleAccessToken(staleAccessTokenDenylistRef.current, data.session);
+          const token = readAccessToken(data.session);
+          if (token !== null) {
+            pendingLoginEraAccessTokenRef.current = token;
+          }
           return;
         }
         applyAuthSession(
@@ -735,33 +774,60 @@ export function AuthProvider({
     void refreshSession();
     const { data } = client.auth.onAuthStateChange((event, nextSession) => {
       // C4: fail-closed 中の遅延 session は無視（hasResolved も立てない）
-      // C14: fail-closed 中に見た token は denylist へ。re-arm 後も同じ prior は apply しない。
+      // C14 / C25: fail-closed 中に見た token は hard leftover。re-arm 後も trust でも apply しない。
       if (nextSession !== null && coldStartFailClosedRef.current) {
-        rememberStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession);
+        rememberAccessToken(hardLeftoverAccessTokensRef.current, nextSession);
         return;
       }
       if (
         nextSession !== null &&
-        isDeniedStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession)
+        hasAccessToken(hardLeftoverAccessTokensRef.current, nextSession)
+      ) {
+        return;
+      }
+      if (
+        nextSession !== null &&
+        hasAccessToken(softQuarantineAccessTokensRef.current, nextSession)
       ) {
         return;
       }
       if (nextSession !== null && sessionQuarantineRef.current) {
-        // C17 / C19: TOKEN_REFRESHED / INITIAL_SESSION は leftover 回転。apply せず token を学習する。
-        // 後続 SIGNED_IN が回転 leftover を正規 IdP 扱いしない。
+        // C19 / C24: 非 SIGNED_IN は hard/soft が既に空でないときだけ soft remember。
+        // 空の先着 TOKEN_REFRESHED B は焼かない。hard に T1 がある C19 は T2 を remember し続ける。
         if (event !== "SIGNED_IN") {
-          rememberStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession);
+          if (
+            leftoverSetsNonEmpty(
+              hardLeftoverAccessTokensRef.current,
+              softQuarantineAccessTokensRef.current,
+            )
+          ) {
+            rememberAccessToken(softQuarantineAccessTokensRef.current, nextSession);
+          }
           return;
         }
-        // C14 / C16 / C18: SIGNED_IN。denylist ヒットは上で拒否済み。
-        // denylist に別 token があるなら正規 IdP（C16 後半 / C17 後半 / C4/C14 の fresh）。
-        if (staleAccessTokenDenylistRef.current.size > 0) {
+        // C21: login-era getSession が先に見た token の SIGNED_IN は leftover に落とさず apply
+        const pendingToken = pendingLoginEraAccessTokenRef.current;
+        const incomingToken = readAccessToken(nextSession);
+        if (pendingToken !== null && incomingToken === pendingToken) {
           applyAuthSession(nextSession);
           hasResolvedSessionOnce.current = true;
           setLoaded(true);
           return;
         }
-        // C16: stale-era raw が未 settle なら prior SIGNED_IN を学習して拒否。
+        // C14 / C16 / C18: SIGNED_IN。hard/soft ヒットは上で拒否済み。
+        // 既に別 leftover があるなら正規 IdP（C16 後半 / C17 後半 / C4/C14 の fresh）。
+        if (
+          leftoverSetsNonEmpty(
+            hardLeftoverAccessTokensRef.current,
+            softQuarantineAccessTokensRef.current,
+          )
+        ) {
+          applyAuthSession(nextSession);
+          hasResolvedSessionOnce.current = true;
+          setLoaded(true);
+          return;
+        }
+        // C16: stale-era raw が未 settle なら prior SIGNED_IN を soft 学習して拒否。
         // login-era が同時に pending でも例外にしない（両方 pending の prior を apply しない）。
         if (
           hasPendingStaleEraRawProbe(
@@ -769,9 +835,13 @@ export function AuthProvider({
             failClosedGenerationRef.current,
           )
         ) {
-          rememberStaleAccessToken(staleAccessTokenDenylistRef.current, nextSession);
+          rememberAccessToken(softQuarantineAccessTokensRef.current, nextSession);
           return;
         }
+        // C23: quarantine 中・hard/soft 空・stale pending 無しの SIGNED_IN は leftover。
+        // pending login-era token 一致はこの枝に来ない（C21）。
+        rememberAccessToken(softQuarantineAccessTokensRef.current, nextSession);
+        return;
       }
       applyAuthSession(nextSession);
       hasResolvedSessionOnce.current = true;
@@ -864,7 +934,7 @@ export function AuthProvider({
   useEffect(() => {
     const onRearm = (): void => {
       // C4: 明示 login 開始（createAuthFlow）で fail-closed を解除し、正規 session を受け付ける
-      // C14 / C18: fail-closed は下ろすが denylist と quarantine は残す。
+      // C14 / C18: fail-closed は下ろすが leftover 集合と quarantine は残す。
       // 世代は fail-closed 時点で上げ済み。re-arm で上げると正当な login-era probe が stale になる。
       coldStartFailClosedRef.current = false;
       setResidualRecoveryRearmTick((n) => n + 1);
@@ -910,7 +980,7 @@ export function AuthProvider({
       ...(restrictToFlowId === undefined ? {} : { restrictToFlowId }),
       onComplete: (result) => {
         publishCompletionSafely({ flowId: result.flowId, returnTo: result.returnTo });
-        // C16–C20: マジック完了の refresh は quarantine と denylist を通過して apply する
+        // C16–C20 / C25: マジック完了の refresh は soft leftover だけ通過する。hard leftover は拒否。
         trustNextRefreshRef.current = true;
         void refreshSession();
         // C14 / C1: completion listener（C16）と同型の path / waiting ガード。

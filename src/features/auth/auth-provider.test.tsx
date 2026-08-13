@@ -2092,6 +2092,17 @@ describe("AuthProvider", () => {
       });
       expect(screen.getByText("unauthenticated")).toBeInTheDocument();
 
+      // C17: leftover A を apply しないために、fail-closed 中の SIGNED_IN で hard 学習する。
+      // interval の login-era getSession は C21 で焼かないので、ここで A を入れないと
+      // 後続の fresh SIGNED_IN が C16/C23 で leftover 扱いされる。
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", session);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
       await act(async () => {
         await startTestAuthFlow("10000000-0000-4000-8000-0000000000c7");
         await Promise.resolve();
@@ -2572,6 +2583,287 @@ describe("AuthProvider", () => {
         await Promise.resolve();
       });
       expect(screen.getByText("authenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C21: login-era getSession token B is not burned; later SIGNED_IN B authenticates", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      const getSession = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ data: { session: Session }; error: null }>(() => {
+            // cold-start は hang。login-era interval だけ token B で settle する
+          }),
+      );
+      const authListeners: AuthStateListener[] = [];
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } as AuthProviderClient;
+
+      render(
+        <AuthProvider client={client} startRecovery={() => vi.fn()}>
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      await act(async () => {
+        await startTestAuthFlow("10000000-0000-4000-8000-000000000021");
+        await Promise.resolve();
+      });
+
+      const sessionB = {
+        access_token: "token-c21-b",
+        user: { id: "user-1" },
+      } as Session;
+      getSession.mockResolvedValue({ data: { session: sessionB }, error: null });
+      // C21: settle と SIGNED_IN を別 act にする。getSession が先に B を焼く穴を踏む
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_RETRY_MS);
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", sessionB);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("authenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C23: SIGNED_IN leftover after settled error getSession stays unauthenticated", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      const getSession = vi.fn().mockResolvedValue({ error: {}, data: { session: null } });
+      const authListeners: AuthStateListener[] = [];
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } as AuthProviderClient;
+
+      render(
+        <AuthProvider client={client} startRecovery={() => vi.fn()}>
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      await act(async () => {
+        await startTestAuthFlow("10000000-0000-4000-8000-000000000023");
+        await Promise.resolve();
+      });
+
+      // C23: 1.5s は進めない。stale pending も token 学習も無い leftover SIGNED_IN
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", session);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      const freshSession = {
+        access_token: "token-c23-fresh",
+        user: { id: "user-1" },
+      } as Session;
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", freshSession);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("authenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C24: first TOKEN_REFRESHED B with empty leftover sets is not remembered", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      let settleHang: ((value: { data: { session: Session }; error: null }) => void) | undefined;
+      const getSession = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ data: { session: Session }; error: null }>((resolve) => {
+            settleHang = resolve;
+          }),
+      );
+      const authListeners: AuthStateListener[] = [];
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } as AuthProviderClient;
+
+      render(
+        <AuthProvider client={client} startRecovery={() => vi.fn()}>
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      await act(async () => {
+        await startTestAuthFlow("10000000-0000-4000-8000-000000000024");
+        await Promise.resolve();
+      });
+
+      const sessionB = {
+        access_token: "token-c24-b",
+        user: { id: "user-1" },
+      } as Session;
+      // C24 縮小: 空 denylist の先着 TOKEN_REFRESHED は焼かない（C19 は再開しない）
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("TOKEN_REFRESHED", sessionB);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      // 別経路で leftover A を hard 学習してから SIGNED_IN B が通ること
+      await act(async () => {
+        settleHang?.({ data: { session }, error: null });
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", sessionB);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("authenticated")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C25: trustNextRefresh does not apply hard leftover token A", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/login");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      const leftoverA = session;
+      const getSession = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ data: { session: Session }; error: null }>(() => {
+            // hang。fail-closed 中に A を hard 学習し、onComplete の getSession も A のまま
+          }),
+      );
+      const authListeners: AuthStateListener[] = [];
+      let completeRecovery:
+        ((result: { kind: "complete"; flowId: string; returnTo: string }) => void) | undefined;
+      const client = {
+        auth: {
+          getSession,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } as AuthProviderClient;
+
+      render(
+        <AuthProvider
+          client={client}
+          recoveryGateway={{ resumeFlow: vi.fn() }}
+          navigateTo={vi.fn()}
+          startRecovery={(input) => {
+            completeRecovery = input.onComplete;
+            return vi.fn();
+          }}
+        >
+          <Probe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", leftoverA);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+
+      await act(async () => {
+        await startTestAuthFlow("10000000-0000-4000-8000-000000000025");
+        await Promise.resolve();
+      });
+      expect(completeRecovery).toBeTypeOf("function");
+
+      getSession.mockResolvedValue({ data: { session: leftoverA }, error: null });
+      await act(async () => {
+        completeRecovery?.({
+          kind: "complete",
+          flowId: "10000000-0000-4000-8000-000000000025",
+          returnTo: "/onboarding",
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
     } finally {
       window.localStorage.clear();
       vi.useRealTimers();
