@@ -1378,7 +1378,9 @@ describe("materializeDishRegenerationCandidate", () => {
     const retained = candidate.dishes.find((dish) => dish.name === "保持する副菜");
     expect(retained).toBeDefined();
     expect(retained?.description.includes("安全です")).toBe(false);
-    expect(retained?.description).toBe("料理の説明");
+    // 葉全体プレースホルダにすると小麦針が消え、persist 後の世帯変更再検証が開く
+    expect(retained?.description).toContain("小麦");
+    expect(retained?.description).not.toBe("料理の説明");
   });
 
   it("normalizes non-pantry tablespoon quantities on replacement dish", () => {

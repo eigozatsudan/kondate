@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { menuValidationIssueCodes, type GeneratedMenu } from "../contracts/generation.js";
 import { collectPlannerRequestText } from "../contracts/planner.js";
 import { currentFoodSafetyRulesV1 } from "./current-food-safety-rules.v1.js";
+import { guaranteePhraseRedaction, redactGuaranteePhraseText } from "./guarantee-phrases.js";
 import { validateGeneratedMenu } from "./validate-generated-menu.js";
 import {
   hardBeanAndReviewedNutRule,
@@ -1679,6 +1680,32 @@ it("can skip only the guarantee-phrase gate for household source revalidation", 
     validateGeneratedMenu(menu, makeGenerationContext(), { checkGuaranteePhrases: false }).ok,
   ).toBe(true);
   expect(validateGeneratedMenu(menu, makeGenerationContext()).ok).toBe(false);
+});
+
+it("still finds wheat after stripping only the guarantee phrase from a stored leaf", () => {
+  // 葉全体を「料理の説明」にすると小麦針が消え、後から小麦を家族に足しても
+  // actionsEnabled が開く。フレーズ剥離後の本文は再検証で拾う。
+  const sourceDescription = "小麦アレルギーでも安全です";
+  const redacted = redactGuaranteePhraseText(
+    sourceDescription,
+    guaranteePhraseRedaction.description,
+  );
+  expect(redacted).toContain("小麦");
+  expect(redacted.includes("安全です")).toBe(false);
+  const base = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: redacted } : dish,
+    ),
+  });
+  const placeholderMenu = makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: guaranteePhraseRedaction.description } : dish,
+    ),
+  });
+  const wheatContext = makeGenerationContext({ safety: wheatSafetyContext() });
+  expectIssueCodes(validateGeneratedMenu(menu, wheatContext), ["direct_allergen_match"]);
+  expect(validateGeneratedMenu(placeholderMenu, wheatContext).ok).toBe(true);
 });
 
 it("idea mode expands reviewed avoid synonyms (卵↔たまご) without safety dictionary", () => {

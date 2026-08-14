@@ -2934,12 +2934,15 @@ describe("runGeneration regeneration duplicate gating", () => {
       dishes: readonly { description: string }[];
     };
     expect(candidate.dishes.every((dish) => !dish.description.includes("安全です"))).toBe(true);
+    // 保持料理の小麦トークンは残す。葉全体置換だと履歴再検証が針を見失う
+    expect(candidate.dishes.some((dish) => dish.description.includes("小麦"))).toBe(true);
     const succeedArg = repository.succeed.mock.calls[0]?.[0] as {
       menu: { dishes: readonly { description: string }[] };
     };
     expect(succeedArg.menu.dishes.every((dish) => !dish.description.includes("安全です"))).toBe(
       true,
     );
+    expect(succeedArg.menu.dishes.some((dish) => dish.description.includes("小麦"))).toBe(true);
   });
 });
 

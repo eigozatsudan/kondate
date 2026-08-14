@@ -88,10 +88,41 @@ describe("collectGuaranteePhraseIssuesFromDishRegenAiOutput", () => {
     expect(
       redactGuaranteePhraseText("さっと炒める主菜", guaranteePhraseRedaction.description),
     ).toBe("さっと炒める主菜");
+    // 葉全体をプレースホルダにすると小麦針が消え、後から家族へ小麦を足しても
+    // 履歴再検証が direct_allergen_match を出せない。フレーズだけ剥がす。
     expect(
       redactGuaranteePhraseText("小麦アレルギーでも安全です", guaranteePhraseRedaction.description),
-    ).toBe(guaranteePhraseRedaction.description);
+    ).toBe("小麦アレルギーでも");
     expect(redactGuaranteePhraseText("安全です", "アレルギーでも安心")).toBe("（省略）");
+  });
+
+  it("keeps allergen and food-rule tokens when stripping a guarantee phrase", () => {
+    expect(
+      redactGuaranteePhraseText("小麦アレルギーでも安全です", guaranteePhraseRedaction.description),
+    ).toContain("小麦");
+    expect(
+      redactGuaranteePhraseText("卵を加えても安全です", guaranteePhraseRedaction.instruction),
+    ).toContain("卵");
+    expect(
+      redactGuaranteePhraseText("炒り大豆でも安全です", guaranteePhraseRedaction.description),
+    ).toContain("炒り大豆");
+    expect(
+      redactGuaranteePhraseText("小麦アレルギーでも安心", guaranteePhraseRedaction.description),
+    ).toBe("小麦");
+    expect(
+      redactGuaranteePhraseText("小麦アレルギーでも安全です", guaranteePhraseRedaction.description),
+    ).not.toContain("安全です");
+  });
+
+  it.each([
+    { name: "mid-word spaces", text: "小麦アレルギーでも安全 です" },
+    { name: "zero-width space", text: "小麦アレルギーでも安全\u200bです" },
+    { name: "katakana desu", text: "小麦は安全デス" },
+  ])("keeps wheat token after folded guarantee redaction ($name)", ({ text }) => {
+    const redacted = redactGuaranteePhraseText(text, guaranteePhraseRedaction.description);
+    expect(redacted).toContain("小麦");
+    expect(redacted.includes("安全です")).toBe(false);
+    expect(redacted.includes("安全デス")).toBe(false);
   });
 
   it("does not treat the fixed disclaimer as a guarantee after folding", () => {

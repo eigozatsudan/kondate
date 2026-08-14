@@ -59,6 +59,92 @@ function textHitsGenerationGuarantee(text: string): boolean {
   );
 }
 
+type FoldedInterval = {
+  start: number;
+  end: number;
+};
+
+/**
+ * 畳み空間の index を NFKC 原文へ戻すための写像。
+ * 葉全体置換だと「小麦アレルギーでも安全です」の小麦針が消え、persist 後に
+ * 家族へ小麦を足しても履歴再検証が needle を見つけられない。
+ */
+function foldGuaranteePhraseWithMap(value: string): {
+  folded: string;
+  nfkc: string;
+  foldedToNfkc: readonly number[];
+} {
+  const nfkc = value.normalize("NFKC");
+  let folded = "";
+  const foldedToNfkc: number[] = [];
+  let nfkcOffset = 0;
+  for (const char of nfkc) {
+    const start = nfkcOffset;
+    nfkcOffset += char.length;
+    if (/\p{Cf}/u.test(char) || /\s/u.test(char)) continue;
+    const foldedChar = foldKatakanaToHiragana(char);
+    for (const foldedUnit of foldedChar) {
+      folded += foldedUnit;
+      foldedToNfkc.push(start);
+    }
+  }
+  return { folded, nfkc, foldedToNfkc };
+}
+
+function collectFoldedGuaranteeIntervals(folded: string): FoldedInterval[] {
+  const intervals: FoldedInterval[] = [];
+  for (const phrase of generationGuaranteePhrases) {
+    const needle = foldGuaranteePhraseText(phrase);
+    if (needle === "") continue;
+    let from = 0;
+    while (from <= folded.length - needle.length) {
+      const start = folded.indexOf(needle, from);
+      if (start === -1) break;
+      intervals.push({ start, end: start + needle.length });
+      from = start + 1;
+    }
+  }
+  if (intervals.length === 0) return [];
+  intervals.sort((left, right) => left.start - right.start || left.end - right.end);
+  const merged: FoldedInterval[] = [];
+  for (const interval of intervals) {
+    const last = merged.at(-1);
+    if (last !== undefined && interval.start <= last.end) {
+      last.end = Math.max(last.end, interval.end);
+      continue;
+    }
+    merged.push({ ...interval });
+  }
+  return merged;
+}
+
+function nfkcCodePointLengthAt(nfkc: string, index: number): number {
+  const codePoint = nfkc.codePointAt(index);
+  if (codePoint === undefined) return 0;
+  return String.fromCodePoint(codePoint).length;
+}
+
+/**
+ * 保証フレーズに当たる区間だけを NFKC 原文から除く。非ヒット部分（アレルゲン /
+ * food-rule の走査トークン）は残す。剥がし切れなければ空文字。
+ */
+function stripGenerationGuaranteePhrases(text: string): string {
+  const { folded, nfkc, foldedToNfkc } = foldGuaranteePhraseWithMap(text);
+  const intervals = collectFoldedGuaranteeIntervals(folded);
+  if (intervals.length === 0) return text;
+  const nfkcIntervals = intervals.flatMap((interval) => {
+    const start = foldedToNfkc[interval.start];
+    const lastFolded = foldedToNfkc[interval.end - 1];
+    if (start === undefined || lastFolded === undefined) return [];
+    return [{ start, end: lastFolded + nfkcCodePointLengthAt(nfkc, lastFolded) }];
+  });
+  let result = nfkc;
+  for (const interval of nfkcIntervals.toSorted((left, right) => right.start - left.start)) {
+    result = `${result.slice(0, interval.start)}${result.slice(interval.end)}`;
+  }
+  return result.trim();
+}
+
 function pushIfGuarantee(
   issues: MenuValidationIssue[],
   path: string,
@@ -74,11 +160,30 @@ function pushIfGuarantee(
 }
 
 /**
- * 保証フレーズを含む葉をプレースホルダへ置き換える。ヒットしなければ原文のまま。
+ * 保証フレーズだけを剥がす。ヒットしなければ原文のまま。
  * 一品再生成の保持料理を再 persist する前に使い、結果画面へ「安全です」を出さない（G3）。
+ * 葉がフレーズだけなら fallback（それも針なら「（省略）」）。
  */
 export function redactGuaranteePhraseText(text: string, fallback: string): string {
   if (!textHitsGenerationGuarantee(text)) return text;
+  let current = text;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (!textHitsGenerationGuarantee(current)) {
+      return current.trim() === "" ? fallbackOrOmitted(fallback) : current;
+    }
+    const stripped = stripGenerationGuaranteePhrases(current);
+    if (stripped === current || stripped === "") {
+      break;
+    }
+    current = stripped;
+  }
+  if (current.trim() !== "" && !textHitsGenerationGuarantee(current)) {
+    return current;
+  }
+  return fallbackOrOmitted(fallback);
+}
+
+function fallbackOrOmitted(fallback: string): string {
   if (!textHitsGenerationGuarantee(fallback)) return fallback;
   return GUARANTEE_PHRASE_REDACTION_OMITTED;
 }
