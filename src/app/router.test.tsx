@@ -6,6 +6,7 @@ import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
 import { RootGatePage } from "@/features/landing/root-gate-page";
 import { NotFoundPage } from "./not-found-page";
 import { RouteErrorElement } from "./route-error-element";
+import { RouterPendingFallback } from "@/shared/ui/feedback";
 import { createAppRouter } from "./router";
 
 function findRoute(routes: DataRouteObject[], path: string): DataRouteObject | undefined {
@@ -141,6 +142,15 @@ describe("app router", () => {
     const slash = findRoute(router.routes, "/");
     expect(slash?.errorElement).toBeDefined();
     expect((slash?.errorElement as ReactElement).type).toBe(RouteErrorElement);
+    router.dispose();
+  });
+
+  it("L2: root route uses HydrateFallback for lazy cold-start pending main", () => {
+    const router = createAppRouter();
+    const root = router.routes[0];
+    // createBrowserRouter は HydrateFallback を hydrateFallbackElement へ正規化する
+    expect(root?.hydrateFallbackElement).toBeDefined();
+    expect((root?.hydrateFallbackElement as ReactElement).type).toBe(RouterPendingFallback);
     router.dispose();
   });
 

@@ -458,6 +458,26 @@
   overflow-wrap: anywhere;
 }
 
+/*
+ * L7: キーボード / タッチで閉じる。グローバル button の 44px を維持しつつ、
+ * toast padding を打ち消して pill 全体が高さ 44px に収まるようにする。
+ * 320px でも h1 を丸ごと覆わない（1 行＋44px）。
+ */
+.app-toast-dismiss {
+  flex: none;
+  box-sizing: border-box;
+  margin: -8px -10px -8px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .app-toast--error {
   color: var(--danger);
   background: #fff8f7;

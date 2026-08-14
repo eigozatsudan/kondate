@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { Badge, EmptyState, LivePendingMain, Skeleton } from "./feedback";
+import { Badge, EmptyState, LivePendingMain, RouterPendingFallback, Skeleton } from "./feedback";
 import { Button } from "./button";
 
 describe("Skeleton", () => {
@@ -29,6 +29,15 @@ describe("LivePendingMain", () => {
     expect(status).toHaveTextContent("ログイン状態を確認しています…");
     expect(status).toHaveAttribute("aria-live", "polite");
     expect(status.closest("main")).toHaveAttribute("aria-busy", "true");
+  });
+});
+
+describe("RouterPendingFallback", () => {
+  it("L2: exposes pending main for lazy cold start", () => {
+    render(<RouterPendingFallback />);
+    const pending = screen.getByText("読み込み中…");
+    expect(pending.closest("main")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
   });
 });
 describe("EmptyState", () => {

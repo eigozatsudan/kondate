@@ -64,3 +64,36 @@ it("does not dismiss while hovered", async () => {
   expect(screen.queryByRole("status")).toBeNull();
   vi.useRealTimers();
 });
+
+it("L7: Escape dismisses toast so keyboard can stop the 6s limit", async () => {
+  const user = userEvent.setup();
+  render(
+    <AppToastProvider>
+      <Probe msg="保持" />
+    </AppToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "show" }));
+  expect(screen.getByRole("status")).toHaveTextContent("保持");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("L7: focusing the close button pauses auto-dismiss", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  render(
+    <AppToastProvider>
+      <Probe msg="保持" />
+    </AppToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "show" }));
+  const close = screen.getByRole("button", { name: "閉じる" });
+  close.focus();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(7000);
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("保持");
+  await user.click(close);
+  expect(screen.queryByRole("status")).toBeNull();
+  vi.useRealTimers();
+});

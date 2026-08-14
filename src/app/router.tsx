@@ -14,6 +14,7 @@ import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
 import { HistoryDetailPage } from "@/features/history/pages/history-detail-page";
 import { HistoryPage } from "@/features/history/pages/history-page";
 import { ShoppingListPage } from "@/features/shopping/pages/shopping-list-page";
+import { RouterPendingFallback } from "@/shared/ui/feedback";
 
 export type AppRouter = ReturnType<typeof createBrowserRouter>;
 
@@ -22,6 +23,10 @@ export function createAppRouter(): AppRouter {
   return createBrowserRouter([
     {
       errorElement: <RouteErrorElement />,
+      // L2: RR8 は RouterProvider.fallbackElement を持たない。
+      // lazy 初回一致で initialized 前は HydrateFallback が唯一の pending `<main>`。
+      // hang 打ち切りは各 lazy の withTimeout(C5) のまま。
+      HydrateFallback: RouterPendingFallback,
       children: [
         {
           path: "/login",

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -161,6 +161,48 @@ describe("AppShell route focus (L2)", () => {
       expect(document.activeElement).toBe(dialogButton);
     });
     expect(screen.getByRole("heading", { name: "設定" })).not.toHaveFocus();
+  });
+
+  it("L1: focuses h1 that appears after pathname change (pending/lazy)", async () => {
+    function DelayedHeading({ title }: { title: string }) {
+      const [ready, setReady] = useState(false);
+      useEffect(() => {
+        const id = window.setTimeout(() => {
+          setReady(true);
+        }, 30);
+        return () => {
+          window.clearTimeout(id);
+        };
+      }, []);
+      if (!ready) {
+        return <main className="page-frame">読み込み中</main>;
+      }
+      return (
+        <main className="page-frame">
+          <h1>{title}</h1>
+        </main>
+      );
+    }
+
+    const user = userEvent.setup();
+    renderAppShellAt("/planner", [
+      {
+        path: "/planner",
+        element: (
+          <main className="page-frame">
+            <h1>献立</h1>
+          </main>
+        ),
+      },
+      { path: "/settings", element: <DelayedHeading title="設定" /> },
+    ]);
+    expect(screen.getByRole("heading", { name: "献立" })).toBeVisible();
+    await user.click(screen.getByRole("link", { name: /設定/u }));
+    expect(screen.queryByRole("heading", { name: "設定" })).not.toBeInTheDocument();
+    const settingsHeading = await screen.findByRole("heading", { name: "設定" });
+    await waitFor(() => {
+      expect(settingsHeading).toHaveFocus();
+    });
   });
 });
 

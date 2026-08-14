@@ -49,7 +49,9 @@ export function RootEntryPage() {
     return <LivePendingMain message="状態を確認しています…" />;
   }
 
-  if (profileQuery.isError || pendingTimedOut) {
+  // L3: refetch error で成功 data が残るときは cached status で振り分ける。
+  // 初回失敗（data なし）と pending timeout だけ alert。planner の fatal と同型。
+  if ((profileQuery.isError && profileQuery.data === undefined) || pendingTimedOut) {
     return <RetryableProfileAlert profileQuery={profileQuery} />;
   }
 
