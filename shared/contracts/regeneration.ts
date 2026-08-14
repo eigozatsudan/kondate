@@ -108,7 +108,8 @@ const localRefPantryUsageSchema = z
     inventoryQuantity: z.number().positive().max(999_999).multipleOf(0.001).nullable(),
     shortageQuantity: z.number().min(0).max(999_999).multipleOf(0.001).nullable(),
     unit: z.string().trim().min(1).max(24).nullable(),
-    dishRefs: z.array(dishRefSchema).max(10),
+    // persist dishIds.max(5) / 新規生成 AI dishRefs.max(5) と揃え、6〜10 で試行枠だけ焼かない
+    dishRefs: z.array(dishRefSchema).max(5),
     unusedReason: z.string().trim().min(1).max(200).nullable(),
   })
   .strict();
@@ -141,7 +142,8 @@ export const dishRegenerationPromptSchema = z
     replaceDishRef: dishRefSchema,
     sourceDishToReplace: retainedDishPromptSchema,
     retainedDishes: z.array(retainedDishPromptSchema).min(1).max(9),
-    sourceTimeline: z.array(localRefTimelineStepSchema).max(50),
+    // generatedMenu / AI 生成 timeline.max(60) と揃え、既存 51〜60 件メニューを再生成できる
+    sourceTimeline: z.array(localRefTimelineStepSchema).max(60),
     sourceAdaptations: z.array(localRefAdaptationSchema).max(100),
     sourcePantryUsage: z.array(localRefPantryUsageSchema).max(50),
     sourceLabelConfirmations: z.array(localRefGeneratedLabelSchema).max(200),
@@ -152,7 +154,8 @@ export const dishRegenerationPromptSchema = z
 export const dishRegenerationAiOutputSchema = z
   .object({
     replacementDish: localRefDishSchema,
-    timeline: z.array(localRefTimelineStepSchema).min(1).max(50),
+    // 生成側 timeline.max(60) と揃え、合法な 51〜60 ステップを再出力できる
+    timeline: z.array(localRefTimelineStepSchema).min(1).max(60),
     adaptations: z.array(localRefAdaptationSchema).max(100),
     pantryUsage: z.array(localRefPantryUsageSchema).max(50),
     labelConfirmations: z.array(localRefGeneratedLabelSchema).max(200),

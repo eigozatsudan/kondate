@@ -10,7 +10,7 @@ import {
 
 describe("share-denylist.v1", () => {
   it("locks a single denylist version", () => {
-    expect(shareDenylistVersion).toBe("2026-08-14.v4");
+    expect(shareDenylistVersion).toBe("2026-08-15.v5");
   });
 
   it("flags guarantee phrase アレルギーでも安心", () => {
@@ -79,6 +79,22 @@ describe("share-denylist.v1", () => {
     // 既存ヒットは緩めない
     expect(textHitsShareDenylist("太郎の特製みそ")).toBe(true);
     expect(textHitsShareDenylist("パパの残り")).toBe(true);
+  });
+
+  it("flags 母の / 父の without loosening ママの / パパの", () => {
+    expect(sharePiiLiteralPhrases).toContain("母の");
+    expect(sharePiiLiteralPhrases).toContain("父の");
+    expect(textHitsShareDenylist("母の特製だれ")).toBe(true);
+    expect(textHitsShareDenylist("父の残り野菜")).toBe(true);
+    expect(textHitsShareDenylist("ママの特製だれ")).toBe(true);
+    expect(textHitsShareDenylist("パパの残り")).toBe(true);
+  });
+
+  it("flags NFKC / format-control variants of existing needles", () => {
+    expect(textHitsShareDenylist("太郎の特製みそ")).toBe(true);
+    expect(textHitsShareDenylist("太郎\u200bの特製みそ")).toBe(true);
+    expect(textHitsShareDenylist("連絡は family@example.com まで")).toBe(true);
+    expect(textHitsShareDenylist("連絡は family＠example.com まで")).toBe(true);
   });
 
   it("does not flag ordinary food phrases", () => {

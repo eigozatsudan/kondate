@@ -8,7 +8,7 @@
  * を fail-closed で追加する。オープン集合の完全人名認識は製品再設計域のため residual。
  */
 
-export const shareDenylistVersion = "2026-08-14.v4" as const;
+export const shareDenylistVersion = "2026-08-15.v5" as const;
 
 /**
  * 安全を保証する表現。共有プールでは安全を保証しない方針と矛盾するため拒否。
@@ -65,6 +65,9 @@ export const sharePiiLiteralPhrases = [
   "本名",
   "ママの",
   "パパの",
+  // 助詞付きの短称。お母さん/お父さん は honorific で当たるが「母の特製」は当たらない
+  "母の",
+  "父の",
   "ママ用",
   "パパ用",
   "おばあちゃんの",
@@ -150,11 +153,23 @@ const japaneseAddressFragmentPattern =
   /[一-龯]{1,4}[都道府県][一-龯0-9０-９\-−ー\s]{0,24}[市区町村]/u;
 
 /**
+ * 照合前畳み。針の文言は変えず、haystack だけ NFKC + 書式制御除去する。
+ * ゼロ幅空白で「太郎の」を分断したり、全角＠で email 針をすり抜ける経路を閉じる。
+ * カタカナ折り・空白削除はしない（針は明示フレーズの部分一致のまま）。
+ */
+function foldShareDenylistHaystack(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/\p{Cf}/gu, "")
+    .trim();
+}
+
+/**
  * 単一テキストが denylist に触れるか。
- * 正規化はしない（保証表現は表記ゆれより明示フレーズを優先。PII は部分一致）。
+ * haystack のみ NFKC + Cf 除去。針は緩めない。
  */
 export function textHitsShareDenylist(text: string): boolean {
-  const trimmed = text.trim();
+  const trimmed = foldShareDenylistHaystack(text);
   if (trimmed === "") return false;
 
   for (const phrase of shareGuaranteePhrases) {

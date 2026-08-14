@@ -160,6 +160,44 @@ describe("S8 closedHttpErrorDetails / handleError", () => {
     expect(text).not.toContain("secret-body");
   });
 
+  it("closes free-text code/message and keeps existing Japanese messages", async () => {
+    const leaked = handleError(
+      new HttpError(502, "openrouter said: canary@example.com", "stack prompt 太郎"),
+    );
+    const leakedBody = (await leaked.json()) as {
+      ok: false;
+      error: { code: string; message: string };
+    };
+    expect(leakedBody.error.code).toBe("request_failed");
+    expect(leakedBody.error.message).toBe("処理を完了できませんでした");
+    const leakedText = JSON.stringify(leakedBody);
+    expect(leakedText).not.toContain("canary@example.com");
+    expect(leakedText).not.toContain("太郎");
+    expect(leakedText).not.toContain("stack prompt");
+
+    const kept = handleError(new HttpError(400, "invalid_request", "入力内容を確認してください"));
+    const keptBody = (await kept.json()) as {
+      ok: false;
+      error: { code: string; message: string };
+    };
+    expect(keptBody.error.code).toBe("invalid_request");
+    expect(keptBody.error.message).toBe("入力内容を確認してください");
+
+    const product = handleError(
+      new HttpError(
+        400,
+        "flyer_unsupported_media",
+        "対応している画像形式は JPEG / PNG / WebP です。",
+      ),
+    );
+    const productBody = (await product.json()) as {
+      ok: false;
+      error: { code: string; message: string };
+    };
+    expect(productBody.error.code).toBe("flyer_unsupported_media");
+    expect(productBody.error.message).toBe("対応している画像形式は JPEG / PNG / WebP です。");
+  });
+
   it("omits details entirely when only unknown keys were provided", async () => {
     const response = handleError(
       new HttpError(500, "request_failed", "処理を完了できませんでした", {

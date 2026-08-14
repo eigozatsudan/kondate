@@ -198,6 +198,114 @@ describe("regeneration contracts", () => {
     });
     expect(dishPrompt.replaceDishRef).toBe("dish_9");
   });
+
+  it("accepts source and AI timeline of 60 to match generatedMenu max", () => {
+    const retained = makeRetainedDishPrompt();
+    const timelineStep = {
+      timelineRef: "timeline_1",
+      position: 1,
+      startMinute: 0,
+      durationMinutes: 1,
+      instruction: "手順",
+      dishRef: "dish_1" as const,
+      stepRef: "step_1" as const,
+    };
+    const sixty = Array.from({ length: 60 }, (_, index) => ({
+      ...timelineStep,
+      timelineRef: `timeline_${String(index + 1)}`,
+      position: index + 1,
+    }));
+    const prompt = dishRegenerationPromptSchema.parse({
+      mode: "dish",
+      reason: "simpler",
+      changeReasonCustom: null,
+      replaceDishRef: "dish_9",
+      sourceDishToReplace: {
+        ...retained,
+        dishRef: "dish_9",
+        role: "main",
+        position: 1,
+        name: "元の主菜",
+      },
+      retainedDishes: [retained],
+      sourceTimeline: sixty,
+      sourceAdaptations: [],
+      sourcePantryUsage: [],
+      sourceLabelConfirmations: [],
+      excludedDishSignatures: [],
+    });
+    expect(prompt.sourceTimeline).toHaveLength(60);
+
+    const output = makeDishRegenerationAiOutput();
+    expect(
+      dishRegenerationAiOutputSchema.parse({
+        ...output,
+        timeline: sixty.map((step) => ({ ...step, dishRef: "dish_2", stepRef: "step_10" })),
+      }).timeline,
+    ).toHaveLength(60);
+  });
+
+  it("rejects regeneration timeline of 61", () => {
+    const retained = makeRetainedDishPrompt();
+    const sixtyOne = Array.from({ length: 61 }, (_, index) => ({
+      timelineRef: `timeline_${String(index + 1)}`,
+      position: index + 1,
+      startMinute: 0,
+      durationMinutes: 1,
+      instruction: "手順",
+      dishRef: "dish_1",
+      stepRef: "step_1",
+    }));
+    expect(
+      dishRegenerationPromptSchema.safeParse({
+        mode: "dish",
+        reason: "simpler",
+        changeReasonCustom: null,
+        replaceDishRef: "dish_9",
+        sourceDishToReplace: {
+          ...retained,
+          dishRef: "dish_9",
+          role: "main",
+          position: 1,
+          name: "元の主菜",
+        },
+        retainedDishes: [retained],
+        sourceTimeline: sixtyOne,
+        sourceAdaptations: [],
+        sourcePantryUsage: [],
+        sourceLabelConfirmations: [],
+        excludedDishSignatures: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...makeDishRegenerationAiOutput(),
+        timeline: sixtyOne,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects dishRefs above persist max 5 so OpenRouter cannot burn a try", () => {
+    const output = makeDishRegenerationAiOutput();
+    const sixRefs = ["dish_1", "dish_2", "dish_3", "dish_4", "dish_5", "dish_6"];
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [{ ...output.pantryUsage[0]!, dishRefs: sixRefs }],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [
+          {
+            ...output.pantryUsage[0]!,
+            dishRefs: ["dish_1", "dish_2", "dish_3", "dish_4", "dish_5"],
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("assertUniqueLocalRefDeclarations", () => {

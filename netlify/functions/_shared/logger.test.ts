@@ -476,6 +476,31 @@ describe("S1 closed allowed string values", () => {
     expect(badParsed).not.toHaveProperty("billing_status");
   });
 
+  it("collapses free-text level to error and keeps info/warn/error", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "error canary@example.com" as "error",
+      requestId: "req-level",
+      code: "succeeded",
+      durationMs: 1,
+    });
+    const line = write.mock.calls[0]![0] as string;
+    const parsed = JSON.parse(line) as { level: string };
+    expect(parsed.level).toBe("error");
+    expect(line).not.toContain("canary@example.com");
+
+    for (const level of ["info", "warn", "error"] as const) {
+      const keep = vi.fn();
+      createSafeLogger(keep)({
+        level,
+        requestId: "req-keep-level",
+        code: "succeeded",
+        durationMs: 1,
+      });
+      expect((JSON.parse(keep.mock.calls[0]![0] as string) as { level: string }).level).toBe(level);
+    }
+  });
+
   it("keeps valid modelId shape matching OpenRouter id pattern", () => {
     const write = vi.fn();
     createSafeLogger(write)({

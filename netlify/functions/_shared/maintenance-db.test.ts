@@ -114,6 +114,24 @@ describe("runMaintenance", () => {
     expect(end).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["verify-ca", "verify-full"] as const)(
+    "sets rejectUnauthorized true when sslmode is %s",
+    async (sslmode) => {
+      mockHappyPath();
+      await runMaintenance({
+        connectionString: `postgresql://kondate_maintenance_login:x@db.abcdefghij1234567890.supabase.co:5432/postgres?sslmode=${sslmode}`,
+        now: "2026-07-24T12:00:00.000Z",
+        batchSize: 250,
+      });
+      const clientOptions = (Client as unknown as { mock: { calls: unknown[][] } }).mock
+        .calls[0]?.[0] as Record<string, unknown> | undefined;
+      expect(clientOptions).toMatchObject({
+        ssl: { rejectUnauthorized: true },
+      });
+      expect(String(clientOptions?.connectionString)).not.toMatch(/sslmode=/u);
+    },
+  );
+
   it("does not force ssl option for local sslmode=disable", async () => {
     mockHappyPath();
     const localUrl = "postgresql://kondate_maintenance_login:x@db:5432/postgres?sslmode=disable";

@@ -49,31 +49,32 @@ const COUNT_KEYS = [
   "staleShareJobsReaped",
 ] as const;
 
-const productionTlsSslmode = /(?:^|[?&])sslmode=(?:require|verify-ca|verify-full)(?:&|$)/u;
-
 /**
  * 本番 URL は maintenance-env が sslmode=require|verify-ca|verify-full を強制済み。
  *
  * pg 8.x の ConnectionParameters は
  * `Object.assign({}, clientConfig, parse(connectionString))` のため、
  * connectionString 上の sslmode が Client の `ssl` オプションを上書きする。
- * しかも sslmode=require は verify-full 相当（証明書検証あり）になり、
- * Supabase Session pooler で SELF_SIGNED_CERT_IN_CHAIN になる（psql は通る）。
- *
- * 対策: 検証用の sslmode クエリだけ外し、TLS は `ssl: { rejectUnauthorized: false }` で
- * 明示する（暗号化は維持、Node の CA 検証のみ緩める）。env に保存する URL 形状は変えない。
- * ローカル sslmode=disable はそのまま渡す。
+ * 対策: 検証用の sslmode クエリだけ外し、TLS は `ssl.rejectUnauthorized` で明示する。
+ * env に保存する URL 形状は変えない。admin `buildPoolSslOptions` と同型:
+ * - require: 暗号化のみ。証明書は検証しない（Session pooler の自己署名連鎖）。
+ *   verify-full を名乗って無効化はしない。
+ * - verify-ca / verify-full: rejectUnauthorized: true で実際に検証する。
+ *   pooler では自己署名連鎖で接続失敗し得る（require を使う）。
+ * - disable（ローカル）: ssl オフ。
  */
 function clientConnectionOptions(connectionString: string): {
   connectionString: string;
-  ssl?: { rejectUnauthorized: false };
+  ssl?: { rejectUnauthorized: boolean };
 } {
-  if (!productionTlsSslmode.test(connectionString)) {
-    return { connectionString };
-  }
+  let sslmode: string | null = null;
   let stripped = connectionString;
   try {
     const parsed = new URL(connectionString);
+    sslmode = parsed.searchParams.get("sslmode");
+    if (sslmode !== "require" && sslmode !== "verify-ca" && sslmode !== "verify-full") {
+      return { connectionString };
+    }
     parsed.searchParams.delete("sslmode");
     stripped = parsed.toString();
     // URL#toString が末尾に残した空クエリを落とす
@@ -82,11 +83,12 @@ function clientConnectionOptions(connectionString: string): {
     }
   } catch {
     // パース不能時は元文字を維持（上位の env パーサが既に弾いている想定）
-    stripped = connectionString;
+    return { connectionString };
   }
+  const verifyPeer = sslmode === "verify-ca" || sslmode === "verify-full";
   return {
     connectionString: stripped,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: verifyPeer },
   };
 }
 
