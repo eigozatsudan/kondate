@@ -168,6 +168,33 @@ function firstHouseholdFieldError(
 
 const HOUSEHOLD_FORM_ERROR_ID = "household-settings-form-error";
 const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
+/**
+ * H5: none/unconfirmed は件数ゲートが無い。一覧未確定のまま完了すると残針を見落とす。
+ * onboarding の ALLERGIES_LIST_PENDING_MESSAGE と同文（household-onboarding-page.tsx）。
+ */
+const ALLERGIES_LIST_PENDING_MESSAGE = "アレルギー一覧の読み込みが終わるまで待ってください";
+
+/**
+ * H5: 「なし／未確認」は件数検証が無いので、一覧 pending（または未 success かつ cache 空）
+ * では residual を断定できない。householdSettingsSchema にはねじ込まず query 状態で見る。
+ * H12: refetch 中は isPending=false / isSuccess=true のまま旧 [] が見える。
+ * 空 cache の in-flight も未確定として扱い、残針が既に見えている refetch は止めない。
+ * onboarding の isOnboardingAllergyListUnverified と同型。
+ */
+function isSettingsAllergyListUnverified(
+  allergyStatus: string,
+  query: { isPending: boolean; isSuccess: boolean; isFetching: boolean },
+  cachedCount: number,
+): boolean {
+  if (allergyStatus !== "none" && allergyStatus !== "unconfirmed") {
+    return false;
+  }
+  return (
+    query.isPending ||
+    (!query.isSuccess && cachedCount === 0) ||
+    (query.isFetching && cachedCount === 0)
+  );
+}
 
 export interface HouseholdSettingsApi {
   listMembers(): Promise<HouseholdMemberRow[]>;
@@ -1181,6 +1208,63 @@ export function HouseholdSettingsForm({
       allergyStatusRef.current?.focus();
       return;
     }
+    // H5: none/unconfirmed は件数ゲートが無い。一覧未確定なら complete しない
+    // H12: 空 cache の refetch 中も同様（isPending だけでは旧 [] のまま通る）
+    // onboarding handleCompleteClick の isOnboardingAllergyListUnverified と同型。
+    if (
+      isSettingsAllergyListUnverified(
+        parsed.data.allergyStatus,
+        allergiesQuery,
+        currentAllergies.length,
+      )
+    ) {
+      releaseSavingGuard();
+      setMessage("");
+      setErrors({ allergyStatus: ALLERGIES_LIST_PENDING_MESSAGE });
+      showToast({
+        message: ALLERGIES_LIST_PENDING_MESSAGE,
+        tone: "error",
+      });
+      allergyStatusRef.current?.focus();
+      return;
+    }
+    // H11: 既定 staleTime 内の空 success cache を正本扱いしない（H1 remove と同型）。
+    // none/unconfirmed でクリック前 0 件なのに fresh が残針なら、今回は complete しない。
+    // 警告を見たあとの再クリックは cache が 0 でないので通す（onboarding H11 と同型）。
+    const isResidualStatus =
+      parsed.data.allergyStatus === "none" || parsed.data.allergyStatus === "unconfirmed";
+    if (isResidualStatus) {
+      const cachedAllergyCount = currentAllergies.length;
+      let freshAllergies: MemberAllergyRow[];
+      try {
+        freshAllergies = await queryClient.fetchQuery({
+          queryKey: householdKeys.allergies(userId, completingMemberId),
+          queryFn: () => api.listAllergies(completingMemberId),
+          staleTime: 0,
+        });
+      } catch {
+        releaseSavingGuard();
+        setMessage("");
+        setErrors({ allergyStatus: ALLERGIES_LIST_PENDING_MESSAGE });
+        showToast({
+          message: ALLERGIES_LIST_PENDING_MESSAGE,
+          tone: "error",
+        });
+        allergyStatusRef.current?.focus();
+        return;
+      }
+      if (cachedAllergyCount === 0 && freshAllergies.length > 0) {
+        releaseSavingGuard();
+        setMessage("");
+        setErrors({ allergyStatus: RESIDUAL_ALLERGY_WARNING });
+        showToast({
+          message: RESIDUAL_ALLERGY_WARNING,
+          tone: "error",
+        });
+        allergyStatusRef.current?.focus();
+        return;
+      }
+    }
     // バリデーション通過後は validation toast を即 dismiss（duration 待ちしない）
     dismissToast();
     setErrors({});
@@ -1715,7 +1799,13 @@ export function HouseholdSettingsForm({
                 }
                 // U3-I2: 読込中は誤操作防止で止めるが、一覧 error 後も なし/未確認 へ戻せるようにする。
                 // （旧: !isSuccess だと error 時も全ロックされ完了不能）
-                disabled={selectedAllergyMutationPending || allergiesQuery.isPending}
+                // H5/H12: pending 中に「なし」へ切って残針を見落とさない。空 cache の refetch 中も止める。
+                // 残針が見えている refetch は操作を残す（onboarding select と同型）。
+                disabled={
+                  selectedAllergyMutationPending ||
+                  allergiesQuery.isPending ||
+                  (allergiesQuery.isFetching && currentAllergies.length === 0)
+                }
                 onChange={(event) => {
                   if (allergyMutationPendingMemberIdsRef.current.has(selected.id)) return;
                   const allergyStatus = event.target.value as AllergyStatus;
@@ -1745,7 +1835,8 @@ export function HouseholdSettingsForm({
                 </button>
               </div>
             )}
-            {/* H1: residual は success 時の length、error 時は未確認警告（empty fallback で residual を消さない） */}
+            {/* H1: residual は success 時の length。未確認は error / pending / 空 cache の fetching
+                （onboarding H5/H12。empty fallback で residual を消さない） */}
             {(values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
               allergiesQuery.isSuccess &&
               currentAllergies.length > 0 && (
@@ -1754,7 +1845,9 @@ export function HouseholdSettingsForm({
                 </p>
               )}
             {(values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
-              allergiesQuery.isError && (
+              (allergiesQuery.isError ||
+                allergiesQuery.isPending ||
+                (allergiesQuery.isFetching && currentAllergies.length === 0)) && (
                 <p className="type-small" role="status">
                   {RESIDUAL_ALLERGY_UNVERIFIED_WARNING}
                 </p>
