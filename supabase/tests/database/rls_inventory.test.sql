@@ -260,6 +260,7 @@ select is_empty(
   ('public.insert_billing_trial_history(p_identity_key text)', 'service_role', 'EXECUTE'),
   ('public.insert_user_feedback_rate_limited(p_user_id uuid, p_category text, p_body text, p_client_path text, p_limit integer, p_window_seconds integer)', 'service_role', 'EXECUTE'),
   ('public.lookup_ai_generation_request(p_user_id uuid, p_idempotency_key uuid)', 'service_role', 'EXECUTE'),
+  ('public.lookup_flyer_weekly(p_user_id uuid, p_idempotency_key text)', 'service_role', 'EXECUTE'),
   ('public.mark_ai_global_sent(p_request_id uuid, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.mark_billing_subscription_dual_cancel_keep(p_user_id uuid, p_keep_stripe_subscription_id text)', 'service_role', 'EXECUTE'),
   ('public.mutate_shopping_item(p_list_id uuid, p_expected_list_version integer, p_expected_safety_fingerprint text, p_operation text, p_item_id uuid, p_idempotency_key uuid, p_payload jsonb)', 'authenticated', 'EXECUTE'),

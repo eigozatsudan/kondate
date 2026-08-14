@@ -7,10 +7,12 @@ import { makeCurrentSafetyContext } from "../../../shared/testing/factories.js";
 import {
   appendDraftMemberAllergiesForFlyerInspection,
   assertFlyerMenuAgainstSafety,
+  assertFlyerMenuHasNoGuaranteePhrases,
   assertFlyerMenuSafe,
   assertFlyerPrivacyConsent,
   isFlyerPlusAllowed,
   jstWeekStartMonday,
+  loadFlyerInspectionSafety,
   runFlyerWeeklyWithReserveStub,
 } from "./flyer-weekly-service.js";
 import type { Entitlement } from "./billing-entitlement.js";
@@ -83,6 +85,44 @@ describe("flyer-weekly-service", () => {
     expect(result.openRouterCalls).toBe(0);
     expect(openRouterSender).not.toHaveBeenCalled();
     expect(flyerWeeklyIssueMessages.flyer_requires_plus).toContain("Plus");
+  });
+
+  it("PE2: replays terminal succeeded ledger even when Plus is lost", async () => {
+    // 新規 reserve は 403 のまま。既 succeeded の同一キーだけ Plus 短絡を越えて再生する。
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+    const result = await runFlyerWeeklyWithReserveStub({
+      reserveResult: {
+        request_id: "00000000-0000-4000-8000-000000000001",
+        idempotency_key: "k",
+        status: "succeeded",
+        result: sampleMenu(),
+        replayed: true,
+      },
+      openRouterSender,
+      plusEntitled: false,
+      billingEnabled: true,
+    });
+    expect(result.errorCode).toBeUndefined();
+    expect(result.openRouterCalls).toBe(0);
+    expect(openRouterSender).not.toHaveBeenCalled();
+  });
+
+  it("PE2: kill switch still 403s a fresh processing reserve (no new send)", async () => {
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+    const result = await runFlyerWeeklyWithReserveStub({
+      reserveResult: {
+        request_id: "00000000-0000-4000-8000-000000000001",
+        idempotency_key: "k",
+        status: "processing",
+        replayed: false,
+      },
+      openRouterSender,
+      plusEntitled: true,
+      billingEnabled: false,
+    });
+    expect(result.errorCode).toBe("flyer_requires_plus");
+    expect(result.openRouterCalls).toBe(0);
+    expect(openRouterSender).not.toHaveBeenCalled();
   });
 
   it("PRIV-1: returns consent_required without OpenRouter when privacy not accepted", async () => {
@@ -279,6 +319,40 @@ describe("assertFlyerPrivacyConsent", () => {
     } as never);
 
     await expect(assertFlyerPrivacyConsent(user)).resolves.toBeUndefined();
+  });
+});
+
+describe("loadFlyerInspectionSafety", () => {
+  const userId = "11111111-1111-4111-8111-111111111111";
+
+  function thenableQuery(result: { data: unknown; error: unknown }) {
+    const query: {
+      select: ReturnType<typeof vi.fn>;
+      eq: ReturnType<typeof vi.fn>;
+      order: ReturnType<typeof vi.fn>;
+      in: ReturnType<typeof vi.fn>;
+      then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => Promise<unknown>;
+    } = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      order: vi.fn(),
+      in: vi.fn(),
+      then: (resolve) => Promise.resolve(result).then(resolve),
+    };
+    query.select.mockReturnValue(query);
+    query.eq.mockReturnValue(query);
+    query.order.mockReturnValue(query);
+    query.in.mockReturnValue(query);
+    return query;
+  }
+
+  it("PE4: maps household_members DB error to 500 safety_context_failed", async () => {
+    const query = thenableQuery({ data: null, error: { message: "connection reset" } });
+    const admin = { from: vi.fn(() => query) };
+    await expect(loadFlyerInspectionSafety(admin as never, userId)).rejects.toMatchObject({
+      status: 500,
+      code: "safety_context_failed",
+    });
   });
 });
 
@@ -517,6 +591,23 @@ describe("assertFlyerMenuAgainstSafety", () => {
     expect(() => {
       assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "卵焼き" }), inspection);
     }).toThrow(HttpError);
+  });
+
+  it("PE3: rejects guarantee phrases in mainName before persist", () => {
+    expect(() => {
+      assertFlyerMenuHasNoGuaranteePhrases(sampleMenu({ mainName: "アレルギーでも安心チキン" }));
+    }).toThrow(HttpError);
+    try {
+      assertFlyerMenuHasNoGuaranteePhrases(sampleMenu({ mainName: "安全です煮" }));
+    } catch (error) {
+      expect(error).toMatchObject({ status: 400, code: "flyer_invalid_ai_response" });
+    }
+  });
+
+  it("PE3: accepts ordinary names that are not guarantee phrases", () => {
+    expect(() => {
+      assertFlyerMenuHasNoGuaranteePhrases(sampleMenu());
+    }).not.toThrow();
   });
 
   it("PE1: does not invent members when draft allergies are empty", () => {

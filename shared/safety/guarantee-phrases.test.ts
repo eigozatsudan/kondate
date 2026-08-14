@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collectGuaranteePhraseIssuesFromDishRegenAiOutput,
+  collectGuaranteePhraseIssuesFromFlyerMenu,
   guaranteePhraseRedaction,
   redactGuaranteePhraseText,
 } from "./guarantee-phrases.js";
@@ -137,6 +138,38 @@ describe("collectGuaranteePhraseIssuesFromDishRegenAiOutput", () => {
         },
       }),
     ).toEqual([]);
+  });
+});
+
+describe("collectGuaranteePhraseIssuesFromFlyerMenu", () => {
+  function flyerMenu(mainName: string) {
+    return {
+      weekStartJst: "2026-07-27",
+      days: Array.from({ length: 7 }, (_, index) => ({
+        dayIndex: index + 1,
+        label: `Day${String(index + 1)}`,
+        mainName: index === 0 ? mainName : "野菜炒め",
+        sideName: "味噌汁",
+        ingredients: ["キャベツ"],
+        notes: null as string | null,
+      })),
+    };
+  }
+
+  it("rejects the same generation guarantee needles in flyer text fields", () => {
+    const issues = collectGuaranteePhraseIssuesFromFlyerMenu(flyerMenu("アレルギーでも安心チキン"));
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues[0]).toMatchObject({
+      code: "invalid_menu_structure",
+      path: "days.0.mainName",
+    });
+    expect(
+      collectGuaranteePhraseIssuesFromFlyerMenu(flyerMenu("安全です煮")).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("accepts ordinary flyer names", () => {
+    expect(collectGuaranteePhraseIssuesFromFlyerMenu(flyerMenu("野菜炒め"))).toEqual([]);
   });
 });
 

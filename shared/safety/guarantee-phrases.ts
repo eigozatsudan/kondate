@@ -1,3 +1,4 @@
+import type { WeeklyFlyerMenu } from "../contracts/flyer-weekly.js";
 import type { GeneratedMenu, MenuValidationIssue } from "../contracts/generation.js";
 import type { DishRegenerationAiOutput } from "../contracts/regeneration.js";
 import { shareGuaranteePhrases } from "../contracts/share-denylist.v1.js";
@@ -210,6 +211,27 @@ export function collectGuaranteePhraseIssuesFromDishRegenAiOutput(
   const issues: MenuValidationIssue[] = [];
   visitDishRegenAiOutputTextLeaves(output, (path, text) => {
     pushIfGuarantee(issues, path, text);
+  });
+  return issues;
+}
+
+/**
+ * チラシ週間献立の表示・保持フィールドへ、生成と同じ保証フレーズ針を掛ける。
+ * collectGuaranteePhraseIssues と同じ畳み・針（「安全です」含む）。ヒット本文は載せない。
+ */
+export function collectGuaranteePhraseIssuesFromFlyerMenu(
+  menu: WeeklyFlyerMenu,
+): readonly MenuValidationIssue[] {
+  const issues: MenuValidationIssue[] = [];
+  menu.days.forEach((day, index) => {
+    const prefix = `days.${String(index)}`;
+    pushIfGuarantee(issues, `${prefix}.label`, day.label);
+    pushIfGuarantee(issues, `${prefix}.mainName`, day.mainName);
+    pushIfGuarantee(issues, `${prefix}.sideName`, day.sideName);
+    pushIfGuarantee(issues, `${prefix}.notes`, day.notes);
+    day.ingredients.forEach((ingredient, ingredientIndex) => {
+      pushIfGuarantee(issues, `${prefix}.ingredients.${String(ingredientIndex)}`, ingredient);
+    });
   });
   return issues;
 }
