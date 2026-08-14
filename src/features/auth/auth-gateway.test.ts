@@ -2406,6 +2406,87 @@ it("C-R2-1: later Google failure after PKCE overwrite does not terminal-clear in
   expect(readAuthFlow(storedA.id, storage)).not.toBeNull();
 });
 
+it("C-R2-3: failed Google restore does not clobber sibling V3 so later B resume is not terminal-cleared", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const pkceVerifierKey = `${browserSupabaseSessionStorageKey}-code-verifier`;
+  storage.setItem(pkceVerifierKey, "verifier-v1");
+  const flowC = "10000000-0000-4000-8000-00000000000c";
+  const flowB = "20000000-0000-4000-8000-00000000000b";
+  let releaseC: (() => void) | undefined;
+  const cOauthGate = new Promise<void>((resolve) => {
+    releaseC = resolve;
+  });
+  const client = authClientMock();
+  let oauthCalls = 0;
+  // 実 SDK 同様、signInWithOAuth は error / assign より先に単一キーへ verifier を書く
+  client.auth.signInWithOAuth.mockImplementation(() => {
+    oauthCalls += 1;
+    if (oauthCalls === 1) {
+      storage.setItem(pkceVerifierKey, "verifier-v2");
+      return cOauthGate.then(() =>
+        Promise.resolve({ data: null, error: { message: "failed" } as AuthError }),
+      );
+    }
+    storage.setItem(pkceVerifierKey, "verifier-v3");
+    return Promise.resolve({ data: {}, error: null });
+  });
+  // 新しい B resume は generation 差が無い。V1 に戻っていると PKCE 失敗で terminal clear する
+  client.auth.exchangeCodeForSession.mockImplementation(() => {
+    if (storage.getItem(pkceVerifierKey) !== "verifier-v3") {
+      return Promise.resolve({
+        data: null,
+        error: { message: "invalid verifier", name: "AuthApiError", status: 400 } as AuthError,
+      });
+    }
+    return Promise.resolve({ data: {}, error: null });
+  });
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: flowC,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: flowB,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+    claim: vi.fn().mockResolvedValue({ code: "auth-code-b", returnTo: "/onboarding" }),
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  const pendingC = gateway.signInWithGoogle("/planner");
+  for (let i = 0; i < 50 && oauthCalls === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v2");
+
+  await gateway.signInWithGoogle("/onboarding");
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v3");
+  expect(readAuthFlow(flowB, storage)).not.toBeNull();
+
+  releaseC?.();
+  await expect(pendingC).rejects.toThrow("Googleログインを開始できませんでした");
+  // 並行成功の V3 を開始時 V1 で消さない
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v3");
+  expect(readAuthFlow(flowC, storage)).toBeNull();
+  expect(readAuthFlow(flowB, storage)).not.toBeNull();
+  expect(isAuthFlowUserDismissed(flowB, storage)).toBe(false);
+
+  await expect(gateway.resumeFlow(flowB)).resolves.toEqual({
+    kind: "complete",
+    continuation: "same_browser",
+    returnTo: "/onboarding",
+    flowId: flowB,
+  });
+});
+
 it("C4: existing session alone does not skip claim/exchange (new login while signed-in)", async () => {
   const storage = new MapStorage();
   const claim = vi.fn().mockResolvedValue({ code: "auth-code-1", returnTo: "/onboarding" });

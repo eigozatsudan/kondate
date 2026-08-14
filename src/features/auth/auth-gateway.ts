@@ -537,6 +537,7 @@ function isInFlightResumeDismissed(flowId: string, storage: Storage): boolean {
  * signInWithOAuth は dismiss より先に V2 を書く。失敗時に V1 を戻し、
  * in-flight exchange は generation 変化を dismiss 無しの non-terminal 条件にする。
  * generation に TTL は無い（上書き試行の世代カウンタ。BrowserSupabaseClient は再定義しない）。
+ * C-R2-3: 失敗復元は自分の bump 世代が残っているときだけ（自 V2）。並行成功の V3 は消さない。
  */
 const PKCE_CODE_VERIFIER_KEY = `${browserSupabaseSessionStorageKey}-code-verifier`;
 const PKCE_VERIFIER_GENERATION_KEY = `${PKCE_CODE_VERIFIER_KEY}-generation`;
@@ -559,6 +560,22 @@ function restorePkceCodeVerifier(storage: Storage, value: string | null): void {
   } catch {
     // best-effort。storage 障害でも Google 開始失敗の throw は止めない
   }
+}
+
+/**
+ * C-R2-3: 失敗時の V1 復元は、自分の bump 世代がまだ最新のときだけ。
+ * 後続タブがさらに bump して V3 を書いた並行成功は消さない。
+ * bump 前の失敗（oauth_mock 等）は世代が無いので従来どおり戻す。
+ */
+function restorePkceCodeVerifierAfterFailedGoogle(
+  storage: Storage,
+  generationAfterBump: number | null,
+  previousVerifier: string | null,
+): void {
+  if (generationAfterBump !== null && readPkceVerifierGeneration(storage) !== generationAfterBump) {
+    return;
+  }
+  restorePkceCodeVerifier(storage, previousVerifier);
 }
 
 function readPkceVerifierGeneration(storage: Storage): number {
@@ -685,6 +702,7 @@ export function createAuthGateway(
       // 成功後に自 flow の dismiss を戻し、同時双方 dismiss を後勝ちで閉じる。
       // C-R2-1: SDK は await 前に V2 を書く。失敗時は V1 を戻し、世代だけ残して
       // in-flight の exchangeStarted 失敗を dismiss 無しでも non-terminal にする。
+      // C-R2-3: 戻すのは自分の bump 世代が残っているときだけ。並行成功の V3 は残す。
       const provider = deps.getPublicEnv();
       const flow = await createAuthFlow(
         returnTo,
@@ -694,6 +712,7 @@ export function createAuthGateway(
         provider.authProviderMode,
       );
       const previousPkceVerifier = readPkceCodeVerifier(storage);
+      let pkceGenerationAfterBump: number | null = null;
       try {
         const redirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
         if (provider.authProviderMode === "oauth_mock") {
@@ -714,6 +733,7 @@ export function createAuthGateway(
         }
         // 世代は SDK 書き込みより前に上げる。失敗後に V1 を戻しても in-flight が上書きを観測できる。
         bumpPkceVerifierGeneration(storage);
+        pkceGenerationAfterBump = readPkceVerifierGeneration(storage);
         const { error } = await client.auth.signInWithOAuth({
           provider: "google",
           options: { redirectTo },
@@ -724,7 +744,11 @@ export function createAuthGateway(
         dismissSiblingOauthAuthorizationFlows(flow.id, storage);
         clearAuthFlowUserDismissed(flow.id, storage);
       } catch {
-        restorePkceCodeVerifier(storage, previousPkceVerifier);
+        restorePkceCodeVerifierAfterFailedGoogle(
+          storage,
+          pkceGenerationAfterBump,
+          previousPkceVerifier,
+        );
         clearAuthFlow(flow.id, storage);
         throw new Error("Googleログインを開始できませんでした");
       }
