@@ -8,6 +8,7 @@ import {
   isAllowlistedPlusPrice,
   projectionFromSubscription,
   resolveBillingUserId,
+  resolveKillSourceStatus,
   subscriptionHasAllowlistedPlusPrice,
   subscriptionIdFromInvoice,
   type BillingWebhookDeps,
@@ -755,7 +756,7 @@ describe("handleBillingWebhook", () => {
     expect(rpc.mock.calls.filter(([n]) => n === "process_billing_stripe_event")).toHaveLength(1);
   });
 
-  it("returns 200 billing_user_unmapped when user cannot be resolved and does not 500", async () => {
+  it("returns 500 billing_user_unmapped when user cannot be resolved so Stripe retries (B9)", async () => {
     const sub = makeSubscription({
       metadata: {},
       customer: "cus_unknown",
@@ -768,15 +769,66 @@ describe("handleBillingWebhook", () => {
       return { data: null, error: null };
     });
     const response = await handleBillingWebhook(signedRequest(), deps());
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({
-      ok: true,
-      data: { code: "billing_user_unmapped" },
+      ok: false,
+      error: { code: "billing_user_unmapped" },
     });
     expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
     expect(logSink).toHaveBeenCalledWith(
       expect.objectContaining({ code: "billing_user_unmapped", alertMetric: 1 }),
     );
+  });
+
+  it("returns 500 when invoice first retrieve throws and does not claim (B8)", async () => {
+    const invoice = {
+      id: "in_retrieve_fail",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, { id: "evt_invoice_retrieve_fail" }),
+    );
+    retrieve.mockRejectedValue(new Error("stripe 429"));
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "request_failed" },
+    });
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "billing_invoice_subscription_retrieve_failed",
+        alertMetric: 1,
+      }),
+    );
+  });
+
+  it("returns 500 billing_user_unmapped on invoice path so Stripe retries after map (B9)", async () => {
+    const invoice = {
+      id: "in_unmapped",
+      object: "invoice",
+      customer: "cus_unknown",
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, { id: "evt_invoice_unmapped" }),
+    );
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_stripe_id") {
+        return { data: {}, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "billing_user_unmapped" },
+    });
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
   });
 
   it("live-payload retry after discard cancel still projects keep active", async () => {
@@ -1423,9 +1475,11 @@ describe("handleBillingWebhook", () => {
         p_payload: Record<string, unknown>;
       }
     ).p_payload;
-    // kill 中も event は処理するが Plus になり得る status は unpaid へ落とす
+    // kill 中も event は処理するが Plus になり得る status は unpaid へ落とす（A3）
     expect(processPayload.status).toBe("unpaid");
     expect(processPayload.stripe_price_id).toBe("price_m");
+    // B3: 元 status を残し、解除後に webhook 無しで復元できるようにする
+    expect(processPayload.kill_source_status).toBe("active");
   });
 
   it("demotes unknown price to unpaid and does not elevate Plus (B1)", async () => {
@@ -1458,6 +1512,7 @@ describe("handleBillingWebhook", () => {
     ).p_payload;
     expect(processPayload.status).toBe("unpaid");
     expect(processPayload.stripe_price_id).toBe("price_other_product");
+    expect(processPayload.kill_source_status).toBeNull();
   });
 
   it("releases lock by session id on checkout.session.completed webhook", async () => {
@@ -1651,6 +1706,17 @@ describe("guardSubscriptionProjection B1/B7", () => {
   it("demotes elevating status when billing kill switch is on", () => {
     const guarded = guardSubscriptionProjection(base, { billingEnabled: false, stripe });
     expect(guarded.status).toBe("unpaid");
+    expect(resolveKillSourceStatus(base.status, { billingEnabled: false, priceOk: true })).toBe(
+      "active",
+    );
+  });
+
+  it("does not record kill source for unknown-price unpaid", () => {
+    expect(resolveKillSourceStatus("active", { billingEnabled: false, priceOk: false })).toBeNull();
+  });
+
+  it("clears kill source when billing is enabled", () => {
+    expect(resolveKillSourceStatus("active", { billingEnabled: true, priceOk: true })).toBeNull();
   });
 
   it("keeps allowlisted active when billing enabled", () => {

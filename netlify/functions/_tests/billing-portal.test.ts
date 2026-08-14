@@ -223,6 +223,21 @@ describe("runBillingPortal", () => {
     expect(subscriptionsList).not.toHaveBeenCalled();
   });
 
+  it("allows portal after kill-unpaid restore without waiting for webhook (B3)", async () => {
+    loadEntitlement.mockResolvedValue({
+      ...freeNone,
+      status: "unpaid",
+      plusEntitled: false,
+      dbPlusEntitled: false,
+      currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      killSourceStatus: "active",
+    });
+    const response = await runBillingPortal(request(), deps());
+    expect(response.status).toBe(200);
+    expect(portalCreate).toHaveBeenCalled();
+    expect(subscriptionsList).not.toHaveBeenCalled();
+  });
+
   it("returns 401 when authentication fails", async () => {
     authenticate.mockRejectedValue(new HttpError(401, "auth_required", "ログインが必要です"));
     const response = await runBillingPortal(request(), deps());

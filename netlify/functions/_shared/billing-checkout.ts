@@ -16,6 +16,7 @@ import {
   applyQuotaPlan,
   BillingEntitlementUnavailableError,
   loadEntitlement,
+  restoreKillMaskedEntitlement,
   type Entitlement,
 } from "./billing-entitlement.js";
 
@@ -36,6 +37,9 @@ export type StripeCheckoutClient = {
     sessions: {
       create: (params: Stripe.Checkout.SessionCreateParams) => Promise<Stripe.Checkout.Session>;
       expire: (id: string) => Promise<Stripe.Checkout.Session>;
+      list: (
+        params: Stripe.Checkout.SessionListParams,
+      ) => Promise<Stripe.ApiList<Stripe.Checkout.Session>>;
     };
   };
   subscriptions: {
@@ -140,6 +144,50 @@ async function releaseCheckoutLock(
   });
   if (error !== null) {
     throw new Error(error.message || "release_billing_checkout_lock_failed");
+  }
+}
+
+/**
+ * TTL 上書きや bind 失敗で残った open Session を expire する（B1）。
+ * list 失敗・expire 失敗は fail-closed。完了済み Session は list(status=open) に出ない。
+ */
+async function expireOpenCheckoutSessions(
+  deps: BillingCheckoutDeps,
+  customerId: string,
+  log: (event: SafeLogEvent) => void,
+  requestId: string,
+  startedAt: number,
+): Promise<void> {
+  let listed: Stripe.ApiList<Stripe.Checkout.Session>;
+  try {
+    listed = await deps.stripe.checkout.sessions.list({
+      customer: customerId,
+      status: "open",
+      limit: 100,
+    });
+  } catch {
+    throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+  }
+  for (const session of listed.data) {
+    if (typeof session.id !== "string" || session.id.length === 0) continue;
+    try {
+      await deps.stripe.checkout.sessions.expire(session.id);
+      log({
+        level: "info",
+        requestId,
+        code: "billing_checkout_session_expired_compensation",
+        durationMs: Date.now() - startedAt,
+      });
+    } catch {
+      log({
+        level: "error",
+        requestId,
+        code: "billing_checkout_session_expire_failed",
+        durationMs: Date.now() - startedAt,
+        alertMetric: 1,
+      });
+      throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+    }
   }
 }
 
@@ -250,6 +298,9 @@ export async function runBillingCheckout(
       throw error;
     }
 
+    // B3: kill 中 unpaid を復帰後に戻してから 409 判定（未復元だと unpaid が Checkout を通す）
+    entitlement = restoreKillMaskedEntitlement(entitlement, deps.env.billingEnabled);
+
     // DB 投影で既に entitled → 409（kill 中は Checkout 自体 503 なのでここに来ない）
     if (entitlement.dbPlusEntitled) {
       throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
@@ -316,6 +367,9 @@ export async function runBillingCheckout(
 
     const customerId = await ensureStripeCustomer(deps, user.userId);
 
+    // B1: TTL 上書きで残る旧 open Session を expire してから新規作成する
+    await expireOpenCheckoutSessions(deps, customerId, log, requestId, startedAt);
+
     // Stripe 側の live sub がある場合は Portal 誘導（409）。
     // status 別 list（limit 1）で terminal 履歴に埋もれた live を見落とさない。
     await rejectIfLiveStripeSubscription(deps, customerId);
@@ -333,6 +387,8 @@ export async function runBillingCheckout(
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${origin}/settings?billing=success`,
         cancel_url: `${origin}/plus?billing=cancel`,
+        // lock TTL と同じ寿命。期限切れ lock 上書き時に旧 Session が完了できる窓を閉じる（B1）
+        expires_at: Math.floor(new Date(expiresAt).getTime() / 1000),
         subscription_data: {
           ...(usedTrial ? {} : { trial_period_days: TRIAL_PERIOD_DAYS }),
           metadata: { supabase_user_id: user.userId, plan_code: "plus" },

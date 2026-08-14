@@ -6,6 +6,7 @@ import { requireUserWithEmail } from "./_shared/auth.js";
 import {
   BillingEntitlementUnavailableError,
   loadEntitlement,
+  restoreKillMaskedEntitlement,
   type Entitlement,
 } from "./_shared/billing-entitlement.js";
 import { getStripeClientFromEnv } from "./_shared/billing-stripe.js";
@@ -123,6 +124,8 @@ export async function runBillingPortal(
       throw error;
     }
     const now = deps.now ?? (() => new Date());
+    // B3: kill 中 unpaid を復帰後に戻してから Portal 可否を見る
+    entitlement = restoreKillMaskedEntitlement(entitlement, deps.env.billingEnabled, now());
     const dbPortalAllowed = isBillingPortalAllowed(entitlement, now());
 
     const { data, error } = await deps.admin.rpc("get_billing_customer_by_user", {

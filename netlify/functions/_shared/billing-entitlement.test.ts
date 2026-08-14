@@ -5,6 +5,7 @@ import {
   limitsForPlan,
   PAST_DUE_GRACE_HOURS,
   productSurfacesOpen,
+  restoreKillMaskedEntitlement,
   toEntitlementData,
   type Entitlement,
 } from "./billing-entitlement.js";
@@ -202,7 +203,8 @@ describe("toEntitlementData / productSurfacesOpen (A3)", () => {
     expect(data.productSurfacesOpen).toBe(false);
     expect(data.quotaPlan).toBe("free");
     expect(data.dbPlusEntitled).toBe(true);
-    expect(data.plusEntitled).toBe(true);
+    // B5: plusEntitled は quota 実効（usage と同義）。kill 中は false。DB 生値は dbPlusEntitled
+    expect(data.plusEntitled).toBe(false);
   });
 
   it("opens product surfaces and uses plus quota when enabled and entitled", () => {
@@ -210,5 +212,51 @@ describe("toEntitlementData / productSurfacesOpen (A3)", () => {
     const data = toEntitlementData(baseEntitlement, true);
     expect(data.productSurfacesOpen).toBe(true);
     expect(data.quotaPlan).toBe("plus");
+    expect(data.plusEntitled).toBe(true);
+  });
+});
+
+describe("restoreKillMaskedEntitlement (B3)", () => {
+  const killMasked: Entitlement = {
+    plan: "free",
+    status: "unpaid",
+    plusEntitled: false,
+    pastDueGrace: false,
+    currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+    cancelAtPeriodEnd: false,
+    trialEnd: null,
+    dbPlusEntitled: false,
+    pastDueSince: null,
+    killSourceStatus: "active",
+  };
+
+  it("does not restore while billing is still killed", () => {
+    const restored = restoreKillMaskedEntitlement(killMasked, false);
+    expect(restored.status).toBe("unpaid");
+    expect(restored.plusEntitled).toBe(false);
+    expect(applyQuotaPlan(killMasked, false)).toBe("free");
+  });
+
+  it("restores allowlisted kill-unpaid to source status without a new webhook", () => {
+    const restored = restoreKillMaskedEntitlement(killMasked, true);
+    expect(restored.status).toBe("active");
+    expect(restored.plusEntitled).toBe(true);
+    expect(restored.plan).toBe("plus");
+    expect(applyQuotaPlan(killMasked, true)).toBe("plus");
+    const data = toEntitlementData(killMasked, true);
+    expect(data.status).toBe("active");
+    expect(data.plusEntitled).toBe(true);
+    expect(data.quotaPlan).toBe("plus");
+    // DB 行は unpaid のまま。生値は落とさない
+    expect(data.dbPlusEntitled).toBe(false);
+  });
+
+  it("does not restore real unpaid that has no kill source", () => {
+    const realUnpaid: Entitlement = {
+      ...killMasked,
+      killSourceStatus: null,
+    };
+    expect(restoreKillMaskedEntitlement(realUnpaid, true).status).toBe("unpaid");
+    expect(applyQuotaPlan(realUnpaid, true)).toBe("free");
   });
 });
