@@ -48,7 +48,7 @@ import {
   writePendingItemMutation,
   type PendingItemMutationSticky,
 } from "../api/shopping-api";
-import { historyPathForShopping } from "../shopping-intent";
+import { historyPathForShopping, markShoppingResumeSuppress } from "../shopping-intent";
 import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { z } from "zod";
 
@@ -2364,6 +2364,37 @@ describe("useResumeShoppingCommand", () => {
     await waitFor(() => {
       expect(submit).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("re-reads Storage suppress on focus even when enabled stays true (SHOP2)", async () => {
+    // Tab B は既に mount 済みで enabled=true。Tab A の suppress 書き込みでは re-render しない。
+    // focus の resume はクロージャの enabled ではなく localStorage 正本を再読する。
+    seed(Date.now());
+    const submit = vi.fn<Submit>(() => Promise.resolve());
+
+    renderHook(() =>
+      useResumeShoppingCommand({
+        kind: "create",
+        targetId: MENU_ID,
+        schema,
+        submit,
+        enabled: true,
+      }),
+    );
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    markShoppingResumeSuppress("create", MENU_ID);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("online"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+    });
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem(storageKey)).not.toBeNull();
   });
 });
 

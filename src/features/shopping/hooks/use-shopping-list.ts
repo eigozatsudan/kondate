@@ -25,6 +25,7 @@ import {
   reconcileShoppingListRequest,
   revalidateActiveShoppingList,
 } from "../api/shopping-api";
+import { isShoppingResumeSuppressed } from "../shopping-intent";
 
 /** 買い物クエリは所有者 ID で名前空間化し、ユーザー切替時の stale キャッシュ混入を防ぐ。 */
 export const shoppingKeys = {
@@ -317,6 +318,10 @@ export function useResumeShoppingCommand<T>({
     const run = async (): Promise<void> => {
       // ロック取得後にも enabled / sticky を再確認（待ち行列中の無効化・clear に追従）
       if (!enabledRef.current) return;
+      // SHOP2 (adversarial): Tab A の suppress 書き込みでは mount 済み Tab B は
+      // re-render しない。focus/online の resume はクロージャの enabled ではなく
+      // localStorage 正本を再読し、立っていれば旧 sticky を POST しない。
+      if (isShoppingResumeSuppressed(kind, targetId)) return;
       // SHOP3: local 正本を先に読む（他タブの失応答 sticky も同じ key で再送）。
       // 壊れた / TTL 超過 / 時計巻き戻しは read 側で当該 Storage から掃除済み。
       const command = readPendingShoppingCommand(kind, targetId, schema);
