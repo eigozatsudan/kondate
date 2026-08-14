@@ -13,7 +13,8 @@ import {
   test,
 } from "../fixtures/shopping";
 import { openFirstMemberEditor } from "../fixtures/history";
-import type { Route } from "@playwright/test";
+import { localRestHeaders } from "../fixtures/local-supabase";
+import type { Request, Route } from "@playwright/test";
 
 // Spec §7.4: race 系は共有 app 経路・household 変異・route abort を前提とし並列と相性が悪い。
 // ファイル全体を serial にし、workers≥2 でも同一 file 内は 1 worker 直列にする。
@@ -213,6 +214,46 @@ test("fails closed after server-side household safety change when hard safety re
   await expect(page.getByRole("checkbox", { name: /購入済みにする/u }).first()).toBeDisabled();
 });
 
+/**
+ * E2E4: サーバ単独 household 変異 → Realtime postgres_changes 必須観測。
+ * CustomEvent 注入テストは handler だけを固定する。本テストは注入せず、
+ * history-safety-change と同型で Realtime 無しなら timeout red になる。
+ * soft poll は 60s なので 45s 待ちは poll では緑にならない。
+ */
+test("fails closed after server-side household safety change via Realtime", async ({
+  authenticatedPage: page,
+  shoppingMenuId,
+}) => {
+  await createListFromMenu(page, shoppingMenuId);
+  await page.goto("/shopping");
+  await expect(page.getByRole("checkbox", { name: /購入済みにする/u }).first()).toBeEnabled({
+    timeout: 60_000,
+  });
+
+  const realtimeRevalidate = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/shopping-lists\/[^/]+\/revalidate$/u.test(new URL(response.url()).pathname),
+    { timeout: 45_000 },
+  );
+  // REST PATCH のみ。CustomEvent / storage / focus は注入しない。
+  await markFirstMemberAllergyUnconfirmed(page);
+  await realtimeRevalidate;
+
+  await expect(page.getByRole("checkbox", { name: /購入済みにする/u }).first()).toBeDisabled({
+    timeout: 15_000,
+  });
+  await expect(
+    page.getByRole("button", { name: "数量・単位・売り場を編集" }).first(),
+  ).toBeDisabled();
+  // unconfirmed の blocked コピーは checking の「現在の家族設定で再確認…」ではない。
+  // Realtime 後の再検証結果（アレルギー確認が必要）まで固定する。
+  await expect(page.getByRole("alert").filter({ hasText: "アレルギー確認が必要です" })).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(page.getByRole("checkbox", { name: /購入済みにする/u }).first()).toBeDisabled();
+});
+
 test("replays reconciliation after the committed response is lost", async ({
   authenticatedPage: page,
   shoppingMenuId,
@@ -300,8 +341,8 @@ test("pending create envelope does not create a list after household safety chan
   expect(createPosts).toBeGreaterThanOrEqual(1);
 
   // E2E1: 同一 origin の peer タブは session 空でも localStorage sticky を共有する。
-  // page.close + create resume の完全経路は重いため本 pass では sticky 共有まで固定する。
-  // about:blank では localStorage が SecurityError になるため app origin を開く。
+  // page.close + create resume の POST 観測は後続の dedicated テストが固定する。
+  // 本テストは pending×safety の契約を薄くしない。about:blank は localStorage SecurityError。
   const peer = await page.context().newPage();
   try {
     await peer.goto("/");
@@ -370,6 +411,128 @@ test("pending create envelope does not create a list after household safety chan
     timeout: 30_000,
   });
   await expect(page.getByRole("checkbox", { name: /を購入済みにする/u })).toHaveCount(0);
+});
+
+/**
+ * E2E2: create sticky の multi-tab resume。generation-recovery の tab-close POST
+ * 観測と同型。Tab A はサーバ適用後に応答だけ落として閉じ、同一 context の新 page が
+ * /menus/:id で同一 idempotencyKey を再 POST し、使用中リストが 1 本になること。
+ * sticky 可視だけでは Tab B の新 key mint / resume 欠落 / suppress 凍結が落ちない。
+ */
+test("resumes create with the same key after the first tab closes", async ({
+  authenticatedPage: page,
+  shoppingMenuId,
+  context,
+}) => {
+  const bodies: string[] = [];
+  let createPosts = 0;
+  const countCreatePost = (request: Request) => {
+    if (
+      request.method() !== "POST" ||
+      new URL(request.url()).pathname !== "/api/shopping-lists/from-menu"
+    ) {
+      return;
+    }
+    createPosts += 1;
+    const data = request.postData();
+    if (data !== null) bodies.push(data);
+  };
+  context.on("request", countCreatePost);
+  try {
+    // Tab A の POST はサーバ適用後に応答だけ落とす。同一 page の自動再送も閉じる前は
+    // 成功させず、peer の resume だけを 200 経路にする。
+    await page.route("**/api/shopping-lists/from-menu", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      await route.fetch();
+      await route.abort("connectionreset");
+    });
+
+    await page.goto(`/menus/${shoppingMenuId}`);
+    await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+      timeout: 90_000,
+    });
+    await expect(page.getByText("現在の家族設定で確認しています")).toHaveCount(0, {
+      timeout: 90_000,
+    });
+    await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({
+      timeout: 30_000,
+    });
+    const labelConfirm = page.getByRole("button", {
+      name: "本人が商品の原材料表示を確認しました",
+    });
+    if ((await labelConfirm.count()) > 0) {
+      await expect(labelConfirm).toBeVisible({ timeout: 30_000 });
+      await labelConfirm.click();
+    }
+    const createButton = page.getByRole("button", { name: "材料の買い物リストを作る" });
+    await expect(createButton).toBeEnabled({ timeout: 60_000 });
+    const createSheetHeading = page.getByRole("heading", { name: "買い物リストを作る" });
+    if (!(await createSheetHeading.isVisible().catch(() => false))) {
+      await createButton.click();
+    }
+    await expect(createSheetHeading).toBeVisible({ timeout: 60_000 });
+    await chooseCreateListModeNew(page);
+    await expect(page.getByRole("button", { name: "作成する" })).toBeEnabled({
+      timeout: 60_000,
+    });
+    await page.getByRole("button", { name: "作成する" }).click();
+
+    await expect.poll(() => createPosts, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(
+        async () =>
+          page.evaluate((menuId) => {
+            const match = (storage: Storage) =>
+              Object.keys(storage).some(
+                (key) => key.startsWith("kondate:shopping:create:") && key.includes(menuId),
+              );
+            return match(localStorage);
+          }, shoppingMenuId),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+
+    await page.close();
+    const postsBeforePeer = createPosts;
+    const peer = await context.newPage();
+    try {
+      await peer.goto(`/menus/${shoppingMenuId}`);
+      // peer の resume が from-menu を再 POST すること（可視だけは不合格）
+      await expect.poll(() => createPosts, { timeout: 60_000 }).toBeGreaterThan(postsBeforePeer);
+      await expect(peer).toHaveURL(/\/shopping$/u, { timeout: 60_000 });
+      await expect(peer.getByRole("heading", { name: "買い物リスト" })).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(peer.getByRole("checkbox", { name: /を購入済みにする/u }).first()).toBeEnabled({
+        timeout: 60_000,
+      });
+
+      expect(createPosts).toBeGreaterThanOrEqual(2);
+      const commands = bodies.map((body) =>
+        createShoppingListRequestSchema.parse(JSON.parse(body)),
+      );
+      expect(new Set(commands.map((command) => command.idempotencyKey)).size).toBe(1);
+      expect(commands[0]?.idempotencyKey).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+
+      // 使用中リストは 1 本（新 key mint の dual-create を落とす）
+      const headers = await localRestHeaders(peer);
+      const lookup = await peer.request.get(
+        "http://127.0.0.1:8000/rest/v1/shopping_lists?status=eq.active&select=id",
+        { headers },
+      );
+      const rows = z.array(z.object({ id: z.uuid() })).parse(await lookup.json());
+      expect(rows).toHaveLength(1);
+    } finally {
+      await peer.close();
+    }
+  } finally {
+    context.off("request", countCreatePost);
+  }
 });
 
 /**
