@@ -45,6 +45,29 @@ describe("planner-leave-flush (P2)", () => {
     }
   });
 
+  it("P3: timeout は開始時の onTimeout に閉じ、remount 後の新 instance を呼ばない", async () => {
+    vi.useFakeTimers();
+    try {
+      const startedOnTimeout = vi.fn();
+      const remountedOnTimeout = vi.fn();
+      registerPlannerLeaveFlush(() => new Promise(() => undefined), {
+        onTimeout: startedOnTimeout,
+      });
+      const pending = runPlannerLeaveFlush();
+      // hang 中の userId remount: 旧 cleanup が null、新面が別 onTimeout を載せる
+      registerPlannerLeaveFlush(null);
+      registerPlannerLeaveFlush(() => Promise.resolve("proceed"), {
+        onTimeout: remountedOnTimeout,
+      });
+      await vi.advanceTimersByTimeAsync(PLANNER_LEAVE_FLUSH_TIMEOUT_MS + 10);
+      await expect(pending).resolves.toBe("blocked");
+      expect(startedOnTimeout).toHaveBeenCalledTimes(1);
+      expect(remountedOnTimeout).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("L12: timeout は onTimeout を同期実行し、遅延 handler の proceed は使わない", async () => {
     vi.useFakeTimers();
     try {

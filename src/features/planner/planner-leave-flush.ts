@@ -55,11 +55,14 @@ export async function runPlannerLeaveFlush(): Promise<PlannerLeaveFlushResult> {
   }
   const handler = leaveFlushHandler;
   if (handler === null) return "proceed";
+  // hang 中の userId remount で register が差し替わっても、開始時の口だけを呼ぶ。
+  // 発火時の module 参照だと新 instance の onTimeout が誤 error を出す。
+  const onTimeout = leaveFlushOnTimeout;
   const flight = (async (): Promise<PlannerLeaveFlushResult> => {
     try {
       return await withTimeout(handler(), PLANNER_LEAVE_FLUSH_TIMEOUT_MS, () => {
         // 元 handler は cancel 不能。route の leave ロックを先に落とし、遅延 proceed の固着を防ぐ。
-        leaveFlushOnTimeout?.();
+        onTimeout?.();
       });
     } catch (error) {
       // L12: timeout のみ blocked。handler のその他 throw は呼び出し側へ伝播する。

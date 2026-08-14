@@ -121,6 +121,8 @@ const blockerHarness = vi.hoisted(() => {
     reset: typeof reset;
     lastShouldBlock: ShouldBlock | undefined;
     current: () => (typeof snapshots)[BlockerState];
+    /** react-router 8.3 の blocked→blocked 差し替え（2 回目 Back）を再現する。 */
+    replaceBlockedIdentity: () => void;
   } = {
     state: "unblocked",
     proceed,
@@ -128,6 +130,14 @@ const blockerHarness = vi.hoisted(() => {
     lastShouldBlock: undefined,
     current() {
       return snapshots[this.state];
+    },
+    replaceBlockedIdentity() {
+      snapshots.blocked = {
+        state: "blocked",
+        proceed,
+        reset,
+        location,
+      };
     },
   };
   return harness;
@@ -2475,6 +2485,31 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+  });
+
+  it("P1: blocked 中の再 POP で in-flight flush を捨てず成功後は proceed する", async () => {
+    const deferred = createDeferred<PlannerDraft>();
+    savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+    const view = render(<PlannerRoutePage />);
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+    });
+
+    blockerHarness.state = "blocked";
+    view.rerender(<PlannerRoutePage />);
+    await vi.waitFor(() => {
+      expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+    });
+
+    // 第 2 Back: blocker 参照だけ変わる。in-flight を cancelled にしてはいけない。
+    blockerHarness.replaceBlockedIdentity();
+    view.rerender(<PlannerRoutePage />);
+
+    deferred.resolve({ ...draft, revision: 4 });
+    await vi.waitFor(() => {
+      expect(blockerHarness.proceed).toHaveBeenCalled();
+    });
+    expect(blockerHarness.reset).not.toHaveBeenCalled();
   });
 
   it("POP blocker calls proceed when leave flush returns proceed", async () => {
