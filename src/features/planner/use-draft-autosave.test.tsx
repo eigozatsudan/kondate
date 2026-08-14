@@ -19,6 +19,16 @@ const base: PlannerDraftInput = {
   pantrySelections: [],
 };
 
+/** review 到達済み（meal / 主材料 / ジャンル / audience 完了）。memo 変更だけで persistable。 */
+const reviewDraft: PlannerDraftInput = {
+  ...base,
+  mealType: "dinner",
+  mainIngredients: ["鶏肉"],
+  cuisineGenre: "japanese",
+  targetMode: "household",
+  targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+};
+
 function saved(value: PlannerDraftInput, revision: number): PlannerDraft {
   return {
     id: "71000000-0000-0000-0000-000000000001",
@@ -801,4 +811,129 @@ it("キュー待ち中に value が更新されていれば最新を保存する
   const lastValue = save.mock.calls.at(-1)?.[0] as PlannerDraftInput;
   expect(lastValue.targetMemberIds).toEqual([]);
   expect(lastValue.targetMode).toBeNull();
+});
+
+it("P2: persistable dirty の pagehide は debounce 前に keepalive 経路へ最新 revision を渡す", async () => {
+  // useBlocker は document unload を見ない。600ms 前の reload / タブ閉じで
+  // 通常 enqueue は keepalive 無しのため中断され、サーバ旧 revision が正本に戻る。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const saveOnUnload = vi.fn();
+  const edited = { ...reviewDraft, memo: "野菜多め" };
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 3,
+        resetToken: 0,
+        save,
+        saveOnUnload,
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: edited });
+  await act(async () => vi.advanceTimersByTimeAsync(599));
+  expect(save).not.toHaveBeenCalled();
+
+  act(() => {
+    window.dispatchEvent(new Event("pagehide"));
+  });
+
+  expect(saveOnUnload).toHaveBeenCalledTimes(1);
+  expect(saveOnUnload).toHaveBeenCalledWith(edited, 3);
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("P2: beforeunload でも persistable dirty を 1 回だけ keepalive 経路へ渡す", async () => {
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const saveOnUnload = vi.fn();
+  const edited = { ...reviewDraft, memo: "タブ閉じ直前" };
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        saveOnUnload,
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: edited });
+  await act(async () => vi.advanceTimersByTimeAsync(100));
+
+  act(() => {
+    window.dispatchEvent(new Event("beforeunload"));
+    window.dispatchEvent(new Event("pagehide"));
+  });
+
+  expect(saveOnUnload).toHaveBeenCalledTimes(1);
+  expect(saveOnUnload).toHaveBeenCalledWith(edited, 4);
+});
+
+it("P2: persistable でない途中下書きは document unload で keepalive しない", async () => {
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const saveOnUnload = vi.fn();
+  const incompleteIdea: PlannerDraftInput = {
+    ...reviewDraft,
+    targetMode: "idea",
+    targetMemberIds: [],
+    servings: null,
+  };
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 1,
+        resetToken: 0,
+        save,
+        saveOnUnload,
+      }),
+    { initialProps: { value: base } },
+  );
+
+  rerender({ value: incompleteIdea });
+  await act(async () => vi.advanceTimersByTimeAsync(100));
+  act(() => {
+    window.dispatchEvent(new Event("pagehide"));
+  });
+
+  expect(saveOnUnload).not.toHaveBeenCalled();
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("P2: dirty でない pagehide は keepalive しない", () => {
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const saveOnUnload = vi.fn();
+  renderHook(() =>
+    useDraftAutosave({
+      value: reviewDraft,
+      enabled: true,
+      baselineRevision: 3,
+      resetToken: 0,
+      save,
+      saveOnUnload,
+    }),
+  );
+
+  act(() => {
+    window.dispatchEvent(new Event("pagehide"));
+  });
+
+  expect(saveOnUnload).not.toHaveBeenCalled();
 });

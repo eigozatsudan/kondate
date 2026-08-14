@@ -73,6 +73,7 @@ const ownerBDraft: PlannerDraft = {
 };
 
 const savePlannerDraftMock = vi.hoisted(() => vi.fn());
+const startPlannerDraftKeepaliveSaveMock = vi.hoisted(() => vi.fn());
 const setOnboardingStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const getProfileMock = vi.hoisted(() => vi.fn());
 const autosaveInputs = vi.hoisted(() => [] as unknown[]);
@@ -160,7 +161,9 @@ const listPantryItemsMock = vi.hoisted(() =>
 );
 
 vi.mock("@/features/auth/use-auth", () => ({
-  useAuth: () => ({ session: { user: { id: queryState.userId } } }),
+  useAuth: () => ({
+    session: { user: { id: queryState.userId }, access_token: "planner-access-token" },
+  }),
 }));
 vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
 vi.mock("react-router", async (importOriginal) => {
@@ -315,7 +318,11 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 vi.mock("./planner-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("./planner-api")>();
-  return { ...original, savePlannerDraft: savePlannerDraftMock };
+  return {
+    ...original,
+    savePlannerDraft: savePlannerDraftMock,
+    startPlannerDraftKeepaliveSave: startPlannerDraftKeepaliveSaveMock,
+  };
 });
 vi.mock("./use-draft-autosave", async (importOriginal) => {
   const original = await importOriginal<typeof import("./use-draft-autosave")>();
@@ -326,6 +333,7 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
       value: PlannerDraftInput;
       baselineRevision: number;
       save(value: PlannerDraftInput, revision: number): Promise<PlannerDraft>;
+      saveOnUnload?(value: PlannerDraftInput, revision: number): void;
     }) => {
       autosaveInputs.push(input);
       return {
@@ -1001,6 +1009,22 @@ it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closu
     expect.objectContaining({ memo: "owner B の下書き" }),
     8,
   );
+});
+
+it("P2: persistable dirty の document unload 用に session token の keepalive 保存を渡す", () => {
+  render(<PlannerPage />);
+  const latestAutosave = autosaveInputs.at(-1) as {
+    saveOnUnload?(next: PlannerDraftInput, revision: number): void;
+  };
+  const edited = { ...draft, memo: "野菜多め" };
+  latestAutosave.saveOnUnload?.(edited, 3);
+  expect(startPlannerDraftKeepaliveSaveMock).toHaveBeenCalledTimes(1);
+  expect(startPlannerDraftKeepaliveSaveMock).toHaveBeenCalledWith(
+    "planner-access-token",
+    edited,
+    3,
+  );
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
 });
 
 it("owner の冷蔵庫一覧を loaded 状態で planner wizard へ渡す", () => {

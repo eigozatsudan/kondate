@@ -68,6 +68,7 @@ import {
   getPlannerDraft,
   plannerKeys,
   savePlannerDraft,
+  startPlannerDraftKeepaliveSave,
 } from "./planner-api";
 import {
   navigateAfterPlannerLeaveFlush,
@@ -421,6 +422,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const client = getBrowserSupabaseClient();
+  // document unload は useBlocker の外。keepalive 保存は session JWT を同期で使う。
+  const accessToken = useAuth().session?.access_token;
+  const accessTokenRef = useRef(accessToken);
+  accessTokenRef.current = typeof accessToken === "string" ? accessToken : undefined;
   // G-R4: home/review の再開 UI は status reconcile 後の kept のみ（localStorage 非 null だけでは出さない）
   const { hasResumablePending, pendingDisplayReady } = useResumablePendingAfterReconcile(userId);
   const draftQuery = useQuery({
@@ -750,6 +755,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     },
     [queryClient, userId],
   );
+  const saveOnUnload = useCallback((next: PlannerDraftInput, revision: number) => {
+    const token = accessTokenRef.current;
+    if (token === undefined || token.length === 0) return;
+    startPlannerDraftKeepaliveSave(token, next, revision);
+  }, []);
   const autosave = useDraftAutosave({
     value,
     enabled: initialized && userId !== undefined,
@@ -758,6 +768,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     save,
     onConflict,
     onSaved: onDraftSaved,
+    saveOnUnload,
   });
   const flushAutosave = autosave.flush;
   const flushDraft = useCallback(async (): Promise<PlannerDraft> => {
