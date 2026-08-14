@@ -9,9 +9,11 @@ import {
   assertFlyerMenuAgainstSafety,
   assertFlyerMenuSafe,
   assertFlyerPrivacyConsent,
+  isFlyerPlusAllowed,
   jstWeekStartMonday,
   runFlyerWeeklyWithReserveStub,
 } from "./flyer-weekly-service.js";
+import type { Entitlement } from "./billing-entitlement.js";
 import { HttpError } from "./http.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
 
@@ -204,6 +206,37 @@ describe("flyer-weekly-service", () => {
 
   it("PE11: flyer_invalid_ai_response discloses try may be consumed", () => {
     expect(flyerWeeklyIssueMessages.flyer_invalid_ai_response).toContain("試行回数");
+  });
+
+  it("allows flyer after kill-unpaid restore even when raw plusEntitled is false (B-R2)", () => {
+    const killMasked: Entitlement = {
+      plan: "free",
+      status: "unpaid",
+      plusEntitled: false,
+      pastDueGrace: false,
+      currentPeriodEnd: "2099-01-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+      trialEnd: null,
+      dbPlusEntitled: false,
+      killSourceStatus: "active",
+    };
+    expect(killMasked.plusEntitled).toBe(false);
+    expect(isFlyerPlusAllowed(killMasked, true)).toBe(true);
+    expect(isFlyerPlusAllowed(killMasked, false)).toBe(false);
+  });
+
+  it("still blocks flyer when restore cannot grant plus (B-R2)", () => {
+    const freeEntitlement: Entitlement = {
+      plan: "free",
+      status: "none",
+      plusEntitled: false,
+      pastDueGrace: false,
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+      trialEnd: null,
+      dbPlusEntitled: false,
+    };
+    expect(isFlyerPlusAllowed(freeEntitlement, true)).toBe(false);
   });
 });
 

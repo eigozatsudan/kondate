@@ -217,7 +217,8 @@ export function PlanSettingsSection({
           ) : null}
 
           {/* B10: grace 切れ past_due は Portal のみ。新規申込枝を並べない */}
-          {!entitled && surfacesOpen && !isIncomplete && !isPastDue ? (
+          {/* B-R4: fetch error 時は stale 申込枝（COMING_SOON / Checkout）も出さない */}
+          {!error && !entitled && surfacesOpen && !isIncomplete && !isPastDue ? (
             <div className="stack gap-3">
               <p>こんだて日和 Plus なら、1 日最大 10 回まで献立を作れます。</p>
               {/* BILL-1: LP の COMING_SOON と設定の Checkout を揃える（申込不可なのに Settings だけ課金可にしない） */}

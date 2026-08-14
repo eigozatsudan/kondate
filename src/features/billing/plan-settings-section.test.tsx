@@ -256,6 +256,13 @@ describe("PlanSettingsSection", () => {
     expect(screen.queryByText(PAST_DUE_COPY)).not.toBeInTheDocument();
   });
 
+  it("does not reopen signup when entitlement fetch errors (B-R4)", () => {
+    renderPlan({ entitlement: trialingEntitlement, entitlementError: true });
+    expect(screen.queryByText(/こんだて日和 Plus なら/)).not.toBeInTheDocument();
+    expect(screen.queryByText(PLUS_LP_COMING_SOON_BADGE)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
+  });
+
   // B25: plan=plus でも plusEntitled=false なら無料ラベル（表示 DiD）
   it("labels free when plan is plus but plusEntitled is false (B25)", () => {
     renderPlan({

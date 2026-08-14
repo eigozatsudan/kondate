@@ -259,4 +259,23 @@ describe("restoreKillMaskedEntitlement (B3)", () => {
     expect(restoreKillMaskedEntitlement(realUnpaid, true).status).toBe("unpaid");
     expect(applyQuotaPlan(realUnpaid, true)).toBe("free");
   });
+
+  it("restores canceled-in-period as plus without flipping wire dbPlusEntitled (B-R3)", () => {
+    const now = new Date("2026-07-29T12:00:00.000Z");
+    const canceledMasked: Entitlement = {
+      ...killMasked,
+      currentPeriodEnd: "2099-01-01T00:00:00.000Z",
+      killSourceStatus: "canceled",
+    };
+    const restored = restoreKillMaskedEntitlement(canceledMasked, true, now);
+    expect(restored.status).toBe("canceled");
+    expect(restored.plusEntitled).toBe(true);
+    expect(restored.plan).toBe("plus");
+    expect(restored.dbPlusEntitled).toBe(false);
+    expect(applyQuotaPlan(canceledMasked, true)).toBe("plus");
+    const data = toEntitlementData(canceledMasked, true);
+    expect(data.status).toBe("canceled");
+    expect(data.plusEntitled).toBe(true);
+    expect(data.dbPlusEntitled).toBe(false);
+  });
 });

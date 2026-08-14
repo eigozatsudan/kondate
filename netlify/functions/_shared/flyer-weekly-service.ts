@@ -26,6 +26,7 @@ import {
   limitsForPlan,
   loadEntitlement,
   productSurfacesOpen,
+  type Entitlement,
 } from "./billing-entitlement.js";
 import { loadCurrentSafetyContext } from "./current-safety.js";
 import { getServerEnv } from "./env.js";
@@ -151,6 +152,16 @@ export async function assertFlyerPrivacyConsent(user: FlyerWeeklyAuthUser): Prom
   if (consentResult.error !== null || !consent.success || consent.data.user_id !== user.userId) {
     throw new HttpError(422, "consent_required", "最新の利用説明への同意が必要です。");
   }
+}
+
+/**
+ * flyer 第一関門。usage と同じく restore 後の plus を見る（B-R2）。
+ * 生 plusEntitled（kill unpaid）で短絡しない。
+ */
+export function isFlyerPlusAllowed(entitlement: Entitlement, billingEnabled: boolean): boolean {
+  return (
+    productSurfacesOpen(billingEnabled) && applyQuotaPlan(entitlement, billingEnabled) === "plus"
+  );
 }
 
 function entitlementUnavailableHttpError(): HttpError {
@@ -501,8 +512,8 @@ export async function runFlyerWeekly(
     throw entitlementUnavailableHttpError();
   }
 
-  // Free / kill switch: reserve 前 403（台帳非接触）
-  if (!productSurfacesOpen(env.billingEnabled) || !entitlement.plusEntitled) {
+  // Free / kill switch: reserve 前 403（台帳非接触）。restore 後の plus を見る（B-R2）
+  if (!isFlyerPlusAllowed(entitlement, env.billingEnabled)) {
     safeLog({
       level: "info",
       requestId: requestIdForLog,

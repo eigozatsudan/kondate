@@ -299,7 +299,8 @@ export async function runBillingCheckout(
     }
 
     // B3: kill 中 unpaid を復帰後に戻してから 409 判定（未復元だと unpaid が Checkout を通す）
-    entitlement = restoreKillMaskedEntitlement(entitlement, deps.env.billingEnabled);
+    // now を渡して canceled 期間判定を Checkout 時計と揃える（B-R3）
+    entitlement = restoreKillMaskedEntitlement(entitlement, deps.env.billingEnabled, now());
 
     // DB 投影で既に entitled → 409（kill 中は Checkout 自体 503 なのでここに来ない）
     if (entitlement.dbPlusEntitled) {
@@ -319,6 +320,10 @@ export async function runBillingCheckout(
       throw new HttpError(409, "billing_checkout_use_portal", "お支払い管理から手続きしてください");
     }
     if (entitlement.status === "trialing" || entitlement.status === "active") {
+      throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
+    }
+    // B-R3: restore 後 plus（期間内 canceled）は 409。status 専用枝の後に置き past_due code は変えない
+    if (entitlement.plusEntitled) {
       throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
     }
 
@@ -380,6 +385,8 @@ export async function runBillingCheckout(
     await rejectIfLiveStripeSubscription(deps, customerId);
     let session: Stripe.Checkout.Session;
     try {
+      // Stripe は create 時点から 30 分以上。lock 取得時刻ではなく直前の now+30m（以上）（B-R1）
+      const sessionExpiresAt = Math.floor((now().getTime() + CHECKOUT_LOCK_TTL_MS) / 1000) + 60;
       session = await deps.stripe.checkout.sessions.create({
         mode: "subscription",
         customer: customerId,
@@ -387,8 +394,8 @@ export async function runBillingCheckout(
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${origin}/settings?billing=success`,
         cancel_url: `${origin}/plus?billing=cancel`,
-        // lock TTL と同じ寿命。期限切れ lock 上書き時に旧 Session が完了できる窓を閉じる（B1）
-        expires_at: Math.floor(new Date(expiresAt).getTime() / 1000),
+        // lock TTL 以上。期限切れ lock 上書き時は expireOpenCheckoutSessions が旧 Session を閉じる（B1）
+        expires_at: sessionExpiresAt,
         subscription_data: {
           ...(usedTrial ? {} : { trial_period_days: TRIAL_PERIOD_DAYS }),
           metadata: { supabase_user_id: user.userId, plan_code: "plus" },
