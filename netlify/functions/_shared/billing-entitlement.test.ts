@@ -260,6 +260,36 @@ describe("restoreKillMaskedEntitlement (B3)", () => {
     expect(applyQuotaPlan(realUnpaid, true)).toBe("free");
   });
 
+  it("restores past_due within grace as plus when since was persisted during kill (B-R5)", () => {
+    // webhook が kill 中でも past_due_since を残せば、解除後は grace 契約どおり plus に戻る
+    const now = new Date();
+    const pastDueMasked: Entitlement = {
+      ...killMasked,
+      pastDueSince: new Date(now.getTime() - 60 * 60 * 1000).toISOString(),
+      killSourceStatus: "past_due",
+    };
+    const restored = restoreKillMaskedEntitlement(pastDueMasked, true, now);
+    expect(restored.status).toBe("past_due");
+    expect(restored.plusEntitled).toBe(true);
+    expect(restored.pastDueGrace).toBe(true);
+    expect(restored.plan).toBe("plus");
+    expect(restored.dbPlusEntitled).toBe(false);
+    expect(applyQuotaPlan(pastDueMasked, true)).toBe("plus");
+  });
+
+  it("keeps A6 fail-closed when kill-source past_due has null since (B-R5)", () => {
+    const pastDueMasked: Entitlement = {
+      ...killMasked,
+      pastDueSince: null,
+      killSourceStatus: "past_due",
+    };
+    const restored = restoreKillMaskedEntitlement(pastDueMasked, true);
+    expect(restored.status).toBe("past_due");
+    expect(restored.plusEntitled).toBe(false);
+    expect(restored.pastDueGrace).toBe(false);
+    expect(applyQuotaPlan(pastDueMasked, true)).toBe("free");
+  });
+
   it("restores canceled-in-period as plus without flipping wire dbPlusEntitled (B-R3)", () => {
     const now = new Date("2026-07-29T12:00:00.000Z");
     const canceledMasked: Entitlement = {

@@ -755,7 +755,9 @@ async function handleSubscriptionEvent(
   const stripeCfg = deps.env.stripe;
   const priceOk =
     stripeCfg !== undefined && isAllowlistedPlusPrice(guardedProjection.stripe_price_id, stripeCfg);
-  const killSourceStatus = resolveKillSourceStatus(guardedProjection.status, {
+  // B-R5: since 判定は kill unpaid の前。元 past_due を unpaid 後 status で落とさない。
+  const preGuardStatus = guardedProjection.status;
+  const killSourceStatus = resolveKillSourceStatus(preGuardStatus, {
     billingEnabled: deps.env.billingEnabled,
     priceOk,
   });
@@ -774,8 +776,9 @@ async function handleSubscriptionEvent(
   // SQL は既存 past_due_since を優先 coalesce するため再送・延長では伸ばさない。
   // residual-intentional (B8): SQL 正本は payload 欠落時 clock_timestamp() fallback。
   // 正規 Function 経路は常に past_due_since を載せる。手投入/将来 path の延長残差は migration 契約。
+  // B-R5: kill 中 unpaid でも SQL unpaid 枝が payload since を coalesce するので、元 past_due なら載せる。
   const pastDueSinceIso =
-    !clearPastDue && projectedStatus === "past_due" ? unixToIsoZ(event.created) : null;
+    !clearPastDue && preGuardStatus === "past_due" ? unixToIsoZ(event.created) : null;
 
   const outcome = await processStripeEvent(deps.admin, {
     stripe_event_id: event.id,
@@ -1050,7 +1053,9 @@ async function handleInvoiceEvent(
   const stripeCfg = deps.env.stripe;
   const priceOk =
     stripeCfg !== undefined && isAllowlistedPlusPrice(projection.stripe_price_id, stripeCfg);
-  const killSourceStatus = resolveKillSourceStatus(projection.status, {
+  // B-R5: since 判定は kill unpaid の前。元 past_due を unpaid 後 status で落とさない。
+  const preGuardStatus = projection.status;
+  const killSourceStatus = resolveKillSourceStatus(preGuardStatus, {
     billingEnabled: deps.env.billingEnabled,
     priceOk,
   });
@@ -1069,8 +1074,9 @@ async function handleInvoiceEvent(
   const status = projection.status;
   const clearPastDueSince = isPaid && (status === "active" || status === "trialing");
   // invoice 経路でも初回 past_due は event.created を起点に載せる（処理遅延の過付与を防ぐ / B8 Function 緩和）
+  // B-R5: guard 前 status で判定。kill 中 unpaid でも元 past_due なら since を残す。
   const pastDueSinceIso =
-    !clearPastDueSince && status === "past_due" ? unixToIsoZ(event.created) : null;
+    !clearPastDueSince && preGuardStatus === "past_due" ? unixToIsoZ(event.created) : null;
 
   const outcome = await processStripeEvent(deps.admin, {
     stripe_event_id: event.id,
