@@ -10,7 +10,12 @@ import {
   type AuthProviderClient,
 } from "./auth-provider";
 import { clearSoftResidualRecoverySuppressed, SIGN_OUT_TIMEOUT_MS } from "./auth-cleanup";
-import { ACTIVE_LOGIN_FLOW_STORAGE_KEY, createAuthFlow } from "./auth-flow";
+import {
+  ACTIVE_LOGIN_FLOW_STORAGE_KEY,
+  createAuthFlow,
+  defaultAuthContinuationTtlMs,
+  writeActiveLoginFlowId,
+} from "./auth-flow";
 import { resetAccessTokenPinGateForTests } from "./session";
 import { useAuth } from "./use-auth";
 
@@ -60,6 +65,22 @@ async function startTestAuthFlow(flowId: string): Promise<void> {
     now: () => new Date("2026-08-12T00:00:00.000Z"),
     randomBytes: (size = 32) => new Uint8Array(size).fill(7),
   });
+}
+
+function seedActiveLoginFlowPin(flowId = "10000000-0000-4000-8000-00000000ff01"): string {
+  writeActiveLoginFlowId(flowId);
+  return flowId;
+}
+
+function readPinnedFlowId(storage: Storage): string | undefined {
+  const raw = storage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  if (raw === null) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { id?: unknown };
+    return typeof parsed.id === "string" ? parsed.id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 describe("AuthProvider", () => {
@@ -186,6 +207,7 @@ describe("AuthProvider", () => {
   it("accepts an injectable recovery boundary without creating an auth gateway", async () => {
     // C2: residual recovery は /login のみ。非待機 path では gateway 注入だけでも start しない。
     window.history.replaceState(null, "", "/login");
+    seedActiveLoginFlowPin();
     const client = {
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
@@ -211,6 +233,7 @@ describe("AuthProvider", () => {
   it("publishes completion when an in-flight recovery wins the claim", async () => {
     window.history.replaceState(null, "", "/login");
     window.localStorage.clear();
+    seedActiveLoginFlowPin();
     const client = {
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
@@ -260,6 +283,7 @@ describe("AuthProvider", () => {
   it("refreshes the session after recovery completion when publishing fails", async () => {
     // C1/C6: residual recovery は unauthenticated + /login のみ start する
     window.history.replaceState(null, "", "/login");
+    seedActiveLoginFlowPin();
     const getSession = vi
       .fn()
       .mockResolvedValueOnce({ data: { session: null }, error: null })
@@ -375,6 +399,7 @@ describe("AuthProvider", () => {
   it("C14: recovery onComplete navigates only on auth waiting paths (same guard as C16)", async () => {
     // C2: recovery は /login でのみ start するため、まず login で onComplete を掴み非待機へ移す
     window.history.replaceState(null, "", "/login");
+    seedActiveLoginFlowPin();
     const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
     const client = {
       auth: {
@@ -844,6 +869,7 @@ describe("AuthProvider", () => {
   it("C-R1: rejects late residual exchange session swap after another user already won", async () => {
     // residual recovery start → A 確立（recovery stop）→ 後着 B の onAuthStateChange を捨てる。
     window.history.replaceState(null, "", "/login");
+    seedActiveLoginFlowPin();
     const sessionA = {
       access_token: "token-a",
       refresh_token: "refresh-a",
@@ -942,6 +968,7 @@ describe("AuthProvider", () => {
     window.localStorage.clear();
     window.history.replaceState(null, "", "/login");
     expect(window.location.pathname).toBe("/login");
+    seedActiveLoginFlowPin();
     const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
     const client = {
       auth: {
@@ -989,6 +1016,7 @@ describe("AuthProvider", () => {
 
   it("R1: restarts recovery when returning to unauthenticated /login", async () => {
     window.history.replaceState(null, "", "/login");
+    seedActiveLoginFlowPin();
     const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
     const client = {
       auth: {
@@ -1095,7 +1123,7 @@ describe("AuthProvider", () => {
     expect(window.localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
     // R3: sibling mid-login keys preserved
     expect(window.localStorage.getItem(flowKey)).not.toBeNull();
-    expect(window.localStorage.getItem(pendingKey)).not.toBeNull();
+    expect(window.localStorage.getItem(pendingKey)).toBeNull();
     expect(window.localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe(
       "pkce-verifier",
     );
@@ -1158,14 +1186,7 @@ describe("AuthProvider", () => {
         startedAt: new Date().toISOString(),
       }),
     );
-    window.localStorage.setItem(
-      `kondate.auth.supabase.pending-deposit.${flowId}`,
-      JSON.stringify({
-        state: "B".repeat(43),
-        code: "authorization-code-plain",
-        expiresAtMs: Date.now() + 60_000,
-      }),
-    );
+    // C5: 前タブ soft residual は pending 平文を消す。新タブ seed も合わせる。
     // 前タブの soft residual が書いた共有 suppress（sessionStorage は新タブで空）
     window.localStorage.setItem("kondate.auth.soft-residual-recovery-suppress", "1");
     const startRecovery = vi.fn(() => vi.fn());
@@ -1185,11 +1206,11 @@ describe("AuthProvider", () => {
     await screen.findByText("unauthenticated");
     // 新タブでも共有 suppress により residual recovery を開始しない（prior user silent complete を閉じる）
     expect(startRecovery).not.toHaveBeenCalled();
-    // R3: secret/pending は残っている（burn ではなく suppress）
+    // R3: secret は残っている（burn ではなく suppress）。C5: pending 平文は消す
     expect(window.localStorage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
     expect(
       window.localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`),
-    ).not.toBeNull();
+    ).toBeNull();
   });
 
   it("R4: clearSoftResidual after soft re-arms residual recovery on same /login mount", async () => {
@@ -1233,7 +1254,9 @@ describe("AuthProvider", () => {
     expect(startRecovery.mock.calls.length).toBe(startsWhileAuth);
     expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
 
-    // R4: createAuthFlow / clearSoft 相当 — remount なしで re-arm
+    // R4: createAuthFlow / clearSoft 相当 — remount なしで re-arm。
+    // C4: pin 無し idle では residual を始めないので、再武装前に pin を戻す。
+    seedActiveLoginFlowPin();
     await act(async () => {
       clearSoftResidualRecoverySuppressed();
       await Promise.resolve();
@@ -1399,11 +1422,11 @@ describe("AuthProvider", () => {
     expect(lastInput?.restrictToFlowId).toBe(newFlowId);
     expect(lastInput?.restrictToFlowId).not.toBe(priorFlowId);
     expect(lastInput?.targetFlowId).toBeUndefined();
-    // R3: prior-user secret / pending は焼かない
+    // R3: prior-user secret は焼かない。C5: soft 後の pending 平文は消す
     expect(window.localStorage.getItem(`kondate.auth.flow.${priorFlowId}`)).not.toBeNull();
     expect(
       window.localStorage.getItem(`kondate.auth.supabase.pending-deposit.${priorFlowId}`),
-    ).not.toBeNull();
+    ).toBeNull();
   });
 
   it("C13: other-tab /login remount restricts to B pin, not prior-user A", async () => {
@@ -1489,7 +1512,7 @@ describe("AuthProvider", () => {
       await Promise.resolve();
     });
 
-    expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(newFlowId);
+    expect(readPinnedFlowId(window.localStorage)).toBe(newFlowId);
     firstMount.unmount();
     // 他タブ相当: sessionStorage は空、origin 共有 localStorage に B の pin だけ
     window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
@@ -1519,11 +1542,11 @@ describe("AuthProvider", () => {
     expect(remountInput?.restrictToFlowId).toBe(newFlowId);
     expect(remountInput?.restrictToFlowId).not.toBe(priorFlowId);
     expect(remountInput?.targetFlowId).toBeUndefined();
-    // R3: A の secret / pending は claim しないだけで残す
+    // R3: A の secret は claim しないだけで残す。C5: soft 後の pending 平文は消す
     expect(window.localStorage.getItem(`kondate.auth.flow.${priorFlowId}`)).not.toBeNull();
     expect(
       window.localStorage.getItem(`kondate.auth.supabase.pending-deposit.${priorFlowId}`),
-    ).not.toBeNull();
+    ).toBeNull();
   });
 
   it("C5: cold-start never-authenticated unauthenticated does not wipe sibling flow (RR1 intact)", async () => {
@@ -1772,6 +1795,7 @@ describe("AuthProvider", () => {
     window.history.replaceState(null, "", "/login");
     window.localStorage.clear();
     const flowId = "10000000-0000-4000-8000-000000000001";
+    seedActiveLoginFlowPin(flowId);
     window.localStorage.setItem(
       `kondate.auth.flow.${flowId}`,
       JSON.stringify({
@@ -2084,7 +2108,7 @@ describe("AuthProvider", () => {
 
     // origin 共有 suppress は残る。開始タブは session pin で residual を開始する
     expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
-    expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(newFlowId);
+    expect(readPinnedFlowId(window.sessionStorage)).toBe(newFlowId);
     expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
     expect(startRecovery.mock.calls.length).toBeGreaterThan(startsWhileAuth);
     const startedInput = startRecovery.mock.calls.at(-1)?.[0];
@@ -2305,6 +2329,61 @@ describe("AuthProvider", () => {
     // 不正 pin は pin 無し扱い。suppress を維持し全件 residual を開始しない
     expect(startRecovery).not.toHaveBeenCalled();
     expect(window.localStorage.getItem("kondate.auth.soft-residual-recovery-suppress")).toBe("1");
+  });
+
+  it("C4: idle /login without active-login-flow pin does not start residual", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const startRecovery = vi.fn(() => vi.fn());
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    expect(startRecovery).not.toHaveBeenCalled();
+  });
+
+  it("C4: expired active-login-flow pin does not start /login residual", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    writeActiveLoginFlowId(
+      "10000000-0000-4000-8000-0000000000c4",
+      Date.now() - defaultAuthContinuationTtlMs - 1,
+    );
+    const startRecovery = vi.fn(() => vi.fn());
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    expect(startRecovery).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
   });
 
   it("C4: fail-closed stays unauthenticated after hung getSession settles; createAuthFlow applies only a new session", async () => {
@@ -3809,7 +3888,7 @@ describe("AuthProvider", () => {
     }
   });
 
-  it("C32: focus getSession leftover A after authenticated B does not replace pin token", async () => {
+  it("C32: focus getSession persist leftover after authenticated B does not replace pin token", async () => {
     vi.useFakeTimers();
     try {
       window.history.replaceState(null, "", "/");
@@ -3817,8 +3896,8 @@ describe("AuthProvider", () => {
         "kondate.auth.supabase",
         JSON.stringify({ access_token: "stale", refresh_token: "r" }),
       );
-      const leftoverA = {
-        access_token: "token-c32-a",
+      const persistLeftover = {
+        access_token: "stale",
         user: { id: "user-1" },
       } as Session;
       const sessionB = {
@@ -3875,12 +3954,90 @@ describe("AuthProvider", () => {
       });
       expect(screen.getByText("authenticated:token-c32-b")).toBeInTheDocument();
 
-      getSession.mockResolvedValue({ data: { session: leftoverA }, error: null });
+      getSession.mockResolvedValue({ data: { session: persistLeftover }, error: null });
       await act(async () => {
         window.dispatchEvent(new Event("focus"));
         await Promise.resolve();
       });
       expect(screen.getByText("authenticated:token-c32-b")).toBeInTheDocument();
+    } finally {
+      window.localStorage.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it("C2: same-user refresh T2 after fail-closed signOut success updates pin", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/");
+      window.localStorage.setItem(
+        "kondate.auth.supabase",
+        JSON.stringify({ access_token: "stale", refresh_token: "r" }),
+      );
+      const sessionT1 = {
+        access_token: "token-c2-t1",
+        user: { id: "user-1" },
+      } as Session;
+      const sessionT2 = {
+        access_token: "token-c2-t2",
+        user: { id: "user-1" },
+      } as Session;
+      const getSession = vi.fn().mockResolvedValue({ error: {}, data: { session: null } });
+      const signOut = vi.fn().mockResolvedValue({ error: null });
+      const authListeners: AuthStateListener[] = [];
+      const client = {
+        auth: {
+          getSession,
+          signOut,
+          onAuthStateChange: (cb: AuthStateListener) => {
+            authListeners.push(cb);
+            return { data: { subscription: createAuthSubscription() } };
+          },
+        },
+      } satisfies AuthProviderClient;
+
+      function TokenProbe() {
+        const auth = useAuth();
+        return (
+          <output>
+            {auth.status}
+            {auth.session !== null ? `:${auth.session.access_token}` : ""}
+          </output>
+        );
+      }
+
+      render(
+        <AuthProvider client={client} startRecovery={() => vi.fn()}>
+          <TokenProbe />
+        </AuthProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unauthenticated")).toBeInTheDocument();
+      expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+
+      await act(async () => {
+        await startTestAuthFlow("10000000-0000-4000-8000-0000000000c2");
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        for (const listener of authListeners) {
+          listener("SIGNED_IN", sessionT1);
+        }
+        await Promise.resolve();
+      });
+      expect(screen.getByText("authenticated:token-c2-t1")).toBeInTheDocument();
+
+      getSession.mockResolvedValue({ data: { session: sessionT2 }, error: null });
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"));
+        await Promise.resolve();
+      });
+      expect(screen.getByText("authenticated:token-c2-t2")).toBeInTheDocument();
     } finally {
       window.localStorage.clear();
       vi.useRealTimers();

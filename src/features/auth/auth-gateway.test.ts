@@ -13,9 +13,11 @@ import {
   ContinuationHttpError,
   ContinuationResponseLostError,
   createAuthFlow,
+  isAuthFlowUserDismissed,
   markAuthContinuationCallbackOwner,
   markAuthFlowUserDismissed,
   readAuthFlow,
+  readPendingAuthDeposit,
   resetAuthFlowUserDismissedMemoryForTests,
   writePendingAuthDeposit,
   type ContinuationApi,
@@ -254,6 +256,39 @@ it("token_hash magic: completeCallback needs user confirmation without verifyOtp
   expect(readAuthFlow(flow.id, storage)).not.toBeNull();
 });
 
+it("C1: resumeFlow does not verifyOtp an unconfirmed token_hash pending", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const claim = vi.fn().mockRejectedValue(new ContinuationHttpError(404));
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock({ deposit, claim }),
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "e".repeat(40);
+
+  await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
+    ),
+  );
+  expect(readPendingAuthDeposit(sent.flowId, storage)?.awaitingConfirm).toBe(true);
+
+  await expect(gateway.resumeFlow(sent.flowId)).resolves.toMatchObject({
+    kind: "awaiting_completion",
+    flowId: sent.flowId,
+  });
+  expect(deposit).not.toHaveBeenCalled();
+  expect(client.auth.verifyOtp).not.toHaveBeenCalled();
+  expect(readPendingAuthDeposit(sent.flowId, storage)?.code).toBe(tokenHash);
+});
+
 it("token_hash magic: strip reload restores needs_confirmation from pending", async () => {
   configurePublicEnv();
   const storage = new MapStorage();
@@ -449,6 +484,38 @@ it("C6: keeps the prior local flow secret when a magic link is resent", async ()
   expect(storage.getItem(`kondate.auth.supabase.callback-owner.${first.flowId}`)).not.toBeNull();
   expect(readAuthFlow(resent.flowId, storage)).not.toBeNull();
   expect(first.flowId).not.toBe(resent.flowId);
+});
+
+it("C3: later Google start dismisses the prior OAuth flow (single PKCE verifier)", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000001",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000002",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+  });
+  const client = authClientMock({ oauthResult: { data: {}, error: null } });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  await gateway.signInWithGoogle("/planner");
+  await gateway.signInWithGoogle("/onboarding");
+
+  expect(isAuthFlowUserDismissed("10000000-0000-4000-8000-000000000001", storage)).toBe(true);
+  expect(readAuthFlow("10000000-0000-4000-8000-000000000001", storage)).not.toBeNull();
+  expect(isAuthFlowUserDismissed("10000000-0000-4000-8000-000000000002", storage)).toBe(false);
+  expect(readAuthFlow("10000000-0000-4000-8000-000000000002", storage)).not.toBeNull();
 });
 
 it("C6: keeps the prior magic-link flow secret when switching to Google", async () => {

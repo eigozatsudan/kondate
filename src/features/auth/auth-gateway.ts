@@ -10,6 +10,7 @@ import {
   ContinuationResponseLostError,
   createAuthFlow,
   isAuthFlowUserDismissed,
+  markAuthFlowUserDismissed,
   readAuthFlow,
   readPendingAuthDeposit,
   sanitizeLoginReturnPath,
@@ -306,6 +307,31 @@ function verifyOtpType(): "email" {
 }
 
 /**
+ * C3: 後勝ち Google 開始で先行 OAuth（authorization_code）を明示キャンセルする。
+ * PKCE verifier は SDK 単一キーのため、先行 flow を残すと先着 callback の exchange が
+ * 上書き後の verifier で失敗し terminal になる。magic（token_hash）は残す（C6）。
+ */
+function dismissSiblingOauthAuthorizationFlows(currentFlowId: string, storage: Storage): void {
+  // listUnexpiredAuthFlows は TTL 正規化で secret を消し得る。
+  // 開始直後の sibling 列挙は read だけにし、今作った flow を巻き込まない。
+  const prefix = "kondate.auth.flow.";
+  const flowIds: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(prefix) === true) {
+      flowIds.push(key.slice(prefix.length));
+    }
+  }
+  for (const flowId of flowIds) {
+    if (flowId === currentFlowId) continue;
+    const existing = readAuthFlow(flowId, storage);
+    if (existing === null) continue;
+    if (existing.credentialKind === "token_hash") continue;
+    markAuthFlowUserDismissed(existing.id, storage);
+  }
+}
+
+/**
  * claim した平文を verifyOtp に渡すか PKCE code exchange に渡すか。
  * - token_hash フローの正規経路: 長い hash（ハイフン無し）
  * - 旧 / ローカル ConfirmationURL（GET /verify）: UUID 形の authorization code
@@ -581,6 +607,9 @@ export function createAuthGateway(
       // C6: 既存 unexpired secret は焼かない。旧 magic/OAuth リンクが deposit されても
       // 元ブラウザが claim できるよう複数 flow を TTL まで併存させる。
       // （旧 replaceExistingAuthFlows は再送時に flow A secret を消し、A のリンクを orphan にしていた）
+      // C3: ただし PKCE verifier は SDK 単一キー。後勝ちの Google 開始は先行 OAuth を
+      // 明示 dismiss し、死んだ verifier で先着 callback が terminal になる窓を閉じる。
+      // magic（token_hash）は PKCE を使わないので残す。
       const provider = deps.getPublicEnv();
       const flow = await createAuthFlow(
         returnTo,
@@ -590,6 +619,7 @@ export function createAuthGateway(
         provider.authProviderMode,
       );
       try {
+        dismissSiblingOauthAuthorizationFlows(flow.id, storage);
         const redirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
         if (provider.authProviderMode === "oauth_mock") {
           if (provider.oauthMockOrigin !== "http://127.0.0.1:8788") {
@@ -682,6 +712,7 @@ export function createAuthGateway(
         }
         // C-ML1: strip 後リロードでも確認できるよう pending に短寿命保存（verify はまだしない）。
         // secret 無し（WebView）でも state があれば保存し、同タブ再表示に耐える。
+        // C1: awaitingConfirm を付け、他タブ residual が confirm 前に OTP を消費しないようにする。
         if (state !== null) {
           const pendingExpiresAtMs =
             stored?.expiresAt !== undefined
@@ -689,7 +720,12 @@ export function createAuthGateway(
               : Date.now() + deps.getPublicEnv().authContinuationTtlMs;
           writePendingAuthDeposit(
             flowId,
-            { state, code: tokenHash, expiresAtMs: pendingExpiresAtMs },
+            {
+              state,
+              code: tokenHash,
+              expiresAtMs: pendingExpiresAtMs,
+              awaitingConfirm: true,
+            },
             storage,
           );
         }
@@ -1021,7 +1057,9 @@ export function createAuthGateway(
       storage,
       adjustedAuthNowMs(Date.now(), flow.clockSkewMs),
     );
-    if (pendingDeposit !== null) {
+    // C1: confirm 前の token_hash pending は OTP を消費しない。
+    // 他端末 confirm が既に deposit していれば下の claim で拾う。re-deposit しない。
+    if (pendingDeposit !== null && pendingDeposit.awaitingConfirm !== true) {
       // RR2: 他 run が既に exchange 中なら re-deposit を重ねず recovery へ委ねる。
       if (isAuthContinuationExchangeInFlight(flow.id, storage, Date.now())) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };

@@ -607,23 +607,28 @@ function openClaimPollDatabase(factory: IDBFactory): Promise<IDBDatabase> {
   });
 }
 
-async function runInIndexedDbCoordinator<T>(operation: () => T): Promise<T | undefined> {
-  if (typeof indexedDB === "undefined") return undefined;
+type IndexedDbCoordinatorOutcome<T> =
+  { available: true; value: T | undefined } | { available: false };
+
+async function runInIndexedDbCoordinator<T>(
+  operation: () => T,
+): Promise<IndexedDbCoordinatorOutcome<T>> {
+  if (typeof indexedDB === "undefined") return { available: false };
   let database: IDBDatabase;
   try {
     database = await openClaimPollDatabase(indexedDB);
   } catch {
-    return undefined;
+    return { available: false };
   }
 
   try {
-    return await new Promise<T | undefined>((resolve) => {
+    const value = await new Promise<T | undefined>((resolve) => {
       let result: T | undefined;
       let settled = false;
-      const settle = (value: T | undefined): void => {
+      const settle = (next: T | undefined): void => {
         if (settled) return;
         settled = true;
-        resolve(value);
+        resolve(next);
       };
       let transaction: IDBTransaction;
       try {
@@ -655,6 +660,7 @@ async function runInIndexedDbCoordinator<T>(operation: () => T): Promise<T | und
         settle(undefined);
       };
     });
+    return { available: true, value };
   } finally {
     database.close();
   }
@@ -781,7 +787,14 @@ export function startAuthContinuationRecovery(input: {
     try {
       const lockManager = typeof navigator === "undefined" ? undefined : navigator.locks;
       if (lockManager === undefined) {
-        await runClaim(await runInIndexedDbCoordinator(reserveClaim));
+        const coordinated = await runInIndexedDbCoordinator(reserveClaim);
+        if (coordinated.available) {
+          await runClaim(coordinated.value);
+          return;
+        }
+        // C6: locks / IDB が使えない UA でも localStorage poll で単一タブ claim する。
+        // タブ横断直列は無いが、claim を捨てたまま TTL まで待つより安全。
+        await runClaim(reserveClaim());
         return;
       }
       // Web Locks 対応ブラウザでは待機列を作らず、次周期に譲ってタブ横断のclaim競合を防ぐ。

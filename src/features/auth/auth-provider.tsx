@@ -410,6 +410,7 @@ export function AuthProvider({
   /**
    * fail-closed local signOut が成功したか。成功後だけ SDK メモリは空とみなす（C26 / C28 / C29）。
    * re-arm では下ろさない（C28 の正規 SIGNED_IN を通すため）。
+   * 正規 session の成功 apply で下ろす（C2: 同一 user の refresh 回転を leftover にしない）。
    */
   const localSignOutClearedSdkRef = useRef(false);
   /**
@@ -704,6 +705,9 @@ export function AuthProvider({
       pendingLoginEraAccessTokenRef.current = null;
       // C16–C18: 非 stale の成功 apply で quarantine を解除
       sessionQuarantineRef.current = false;
+      // C2: 正規 session 適用後は fail-closed signOut 成功旗を下ろす。
+      // 残すと focus getSession の同一 user refresh 回転（T2）まで leftover 扱いになる。
+      localSignOutClearedSdkRef.current = false;
       setSession(nextSession);
       return true;
     },
@@ -885,17 +889,8 @@ export function AuthProvider({
           }
           return;
         }
-        // C32: 認証済み + fail-closed signOut 成功後、focus getSession の別 token は leftover A。
-        // TOKEN_REFRESHED は listener 経由で pin 更新してよい。
-        if (data.session !== null && localSignOutClearedSdkRef.current) {
-          const pinned = residualSessionGuardRef.current.pinnedSession;
-          const currentToken = readAccessToken(pinned);
-          const incomingToken = readAccessToken(data.session);
-          if (currentToken !== null && incomingToken !== null && incomingToken !== currentToken) {
-            rememberAccessToken(hardLeftoverAccessTokensRef.current, data.session);
-            return;
-          }
-        }
+        // C32: persist-hard / fail-closed 観測 token は上の hasHardLeftoverAccessToken で拒否済み。
+        // 同一 user の正規 refresh 回転は denylist しない（認証成功で flag を下ろす）。
         applyAuthSession(
           data.session,
           trustThisRefresh ? { bypassStaleDenylist: true } : undefined,
@@ -1150,13 +1145,16 @@ export function AuthProvider({
     const guard = residualSessionGuardRef.current;
     guard.armed = true;
     const restrictToFlowId = readActiveLoginFlowId();
+    // C4/C12: pin 無し idle /login では residual を始めない。
+    // 期限切れ pin は read が捨てる。restrict 無し全件 claim を開かない。
+    if (restrictToFlowId === undefined) return undefined;
     const stopRecovery = startRecovery({
       gateway,
       storage,
       ttlMs: recoveryTtlMs,
       // C2/C12: createAuthFlow 後は今開始した flow だけを claimable に絞る。
       // targetFlowId は callback 専用（owner 必須）。マジック元は owner が無いので付けない。
-      ...(restrictToFlowId === undefined ? {} : { restrictToFlowId }),
+      restrictToFlowId,
       onComplete: (result) => {
         publishCompletionSafely({ flowId: result.flowId, returnTo: result.returnTo });
         // C16–C20 / C25: マジック完了の refresh は soft leftover だけ通過する。hard leftover は拒否。

@@ -148,7 +148,7 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
   });
 
-  it("C5: expired-session cleanup keeps sibling flow/pending/PKCE and clears session persist", async () => {
+  it("C5: expired-session cleanup keeps sibling flow/PKCE, clears pending and session persist", async () => {
     const flowId = "10000000-0000-4000-8000-0000000000c5";
     const flowKey = `kondate.auth.flow.${flowId}`;
     const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
@@ -187,7 +187,7 @@ describe("clearLocalAuthAndDrafts", () => {
 
     expect(signOut).toHaveBeenCalledWith({ scope: "local" });
     expect(localStorage.getItem(flowKey)).not.toBeNull();
-    expect(localStorage.getItem(pendingKey)).not.toBeNull();
+    expect(localStorage.getItem(pendingKey)).toBeNull();
     expect(localStorage.getItem(ownerKey)).not.toBeNull();
     expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe("pkce-verifier");
     expect(localStorage.getItem("kondate.auth.supabase")).toBeNull();
@@ -213,7 +213,7 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
   });
 
-  it("C4/R3: soft residual clears completion; preserves pending/PKCE/secret/callback-owner", () => {
+  it("C4/R3: soft residual clears completion and pending; preserves PKCE/secret/callback-owner", () => {
     const flowId = "10000000-0000-4000-8000-0000000000c3";
     localStorage.setItem(
       `kondate.auth.flow.${flowId}`,
@@ -244,8 +244,8 @@ describe("clearLocalAuthAndDrafts", () => {
 
     clearSoftSessionResidualBestEffort();
 
-    // R3: sibling mid-login に必要なキーは温存
-    expect(localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).not.toBeNull();
+    // C5: pending 平文は消す。R3: sibling mid-login の secret / PKCE / owner は温存
+    expect(localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).toBeNull();
     expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe("pkce-verifier");
     expect(localStorage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
     expect(localStorage.getItem(`kondate.auth.supabase.callback-owner.${flowId}`)).not.toBeNull();

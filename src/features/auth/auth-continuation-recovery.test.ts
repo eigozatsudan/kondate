@@ -958,20 +958,33 @@ describe("auth continuation recovery", () => {
     },
   );
 
-  it("fails closed when neither Web Locks nor IndexedDB is available", async () => {
+  it("falls back to localStorage claim when neither Web Locks nor IndexedDB is available", async () => {
     Reflect.deleteProperty(globalThis, "indexedDB");
-    const gateway = { resumeFlow: vi.fn() };
+    const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+    Reflect.deleteProperty(navigator, "locks");
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
 
-    const stop = startAuthContinuationRecovery({
-      gateway,
-      storage: flowStorage(["10000000-0000-4000-8000-000000000001"]),
-      onComplete: vi.fn(),
-      setInterval: (() => 1) as unknown as typeof window.setInterval,
-    });
-    await flushPromises();
+    try {
+      const stop = startAuthContinuationRecovery({
+        gateway,
+        storage: flowStorage(["10000000-0000-4000-8000-000000000001"]),
+        onComplete: vi.fn(),
+        setInterval: (() => 1) as unknown as typeof window.setInterval,
+      });
+      await flushPromises();
 
-    expect(gateway.resumeFlow).not.toHaveBeenCalled();
-    stop();
+      expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+      expect(gateway.resumeFlow).toHaveBeenCalledWith("10000000-0000-4000-8000-000000000001");
+      stop();
+    } finally {
+      if (originalLocks === undefined) {
+        Reflect.deleteProperty(navigator, "locks");
+      } else {
+        Object.defineProperty(navigator, "locks", originalLocks);
+      }
+    }
   });
 
   it.each(["last-at", "cursor"])(

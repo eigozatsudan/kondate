@@ -52,7 +52,7 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
 /**
  * R3: soft residual で消してよい kondate.auth.* か。
  * 共有端末の prior-user residual complete（C4）を閉じつつ、sibling タブ in-flight の
- * flow secret / pending / PKCE / callback-owner は焼かない。
+ * flow secret / PKCE / callback-owner は焼かない。pending 平文は消す（C5）。
  *
  * 消す:
  * - session 永続キー（exact）
@@ -62,9 +62,12 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
  *
  * 残す（sibling mid-login / C4 suppress）:
  * - kondate.auth.flow.*
- * - pending-deposit / callback-owner / flow-user-dismissed / clock-rebase
+ * - callback-owner / flow-user-dismissed / clock-rebase
  * - PKCE verifier（storageKey 派生の -code-verifier）
  * - soft residual suppress 印自体（localStorage 共有; mark 後に再設定）
+ *
+ * 消す（共有端末の code / token_hash 平文）:
+ * - pending-deposit（C5: confirm 前・deposit 再試行キャッシュを soft 後に残さない）
  */
 function shouldClearAuthKeyOnSoftResidual(key: string): boolean {
   // C4 共有 suppress 印は soft 掃除ループで落とさない（直後 mark と二重化してよい）
@@ -78,9 +81,9 @@ function shouldClearAuthKeyOnSoftResidual(key: string): boolean {
   ) {
     return true;
   }
-  // sibling in-flight に必要なキーは温存
+  // sibling in-flight に必要なキーは温存（pending 平文は残さない）
   if (key.startsWith(ownedAuthStoragePrefixes[0])) return false; // flow.
-  if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.pending-deposit.`)) return false;
+  if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.pending-deposit.`)) return true;
   if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.callback-owner.`)) return false;
   if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.flow-user-dismissed.`)) return false;
   if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.clock-rebase.`)) return false;
@@ -184,7 +187,8 @@ export function clearOwnedLocalDataBestEffort(): void {
  * C4: residual recovery が前ユーザとして silent complete しないこと。
  * 旧実装は `kondate.auth.*` 全消しで secret も焼いたが、sibling タブ in-flight login まで
  * 巻き添えにした（R3）。R3 以降は:
- * - flow secret / pending / PKCE / callback-owner は温存（sibling mid-login）
+ * - flow secret / PKCE / callback-owner は温存（sibling mid-login）
+ * - pending-deposit は消す（共有端末の code / token_hash 平文）
  * - completion と session キーは消す（resume short-circuit / persist token）
  * - residual recovery を origin 共有 localStorage suppress で抑止（C4: 新タブ含む）
  *
@@ -236,8 +240,8 @@ export function clearSoftSessionResidualBestEffort(): void {
 }
 
 /**
- * C5: 401 / session 失効用。session + 草稿は消すが R3 keep
- * （flow / pending / PKCE / callback-owner）は残す。
+ * C5: 401 / session 失効用。session + 草稿 + pending は消し、R3 keep
+ * （flow / PKCE / callback-owner）は残す。
  * 明示 logout / アカウント削除は clearLocalAuthAndDrafts（全所有キー）のまま。
  */
 export async function clearExpiredSessionAuthAndDrafts(
