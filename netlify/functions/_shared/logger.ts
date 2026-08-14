@@ -35,7 +35,7 @@ export type SafeLogEvent = {
   /** 緊急献立: Stage M 結果。空応答は null */
   matchMode?: "none" | "main_ingredient" | "safety_only" | null;
   /** 緊急献立: 空理由。非空は null */
-  emptyReason?: "current_safety_unavailable" | "no_matching_fixture" | null;
+  emptyReason?: "current_safety_unavailable" | "allergen_missing" | "no_matching_fixture" | null;
   /** 緊急献立: 返却候補件数（食材名・本文は出さない） */
   candidateCount?: number;
   /** 緊急献立: breakfast | lunch | dinner */
@@ -139,13 +139,27 @@ function closedBillingStatus(raw: string): string | undefined {
  * S3: SafeLog の残 enum を実行時 Set で閉じる（TS 型だけだと cast/miswire free-text が載る）。
  * 未知値は省略（必須フィールドではない）。
  */
+const CLOSED_LEVELS = new Set(["info", "warn", "error"]);
 const CLOSED_PATHS = new Set(["household", "idea"]);
 const CLOSED_MATCH_MODES = new Set(["none", "main_ingredient", "safety_only"]);
-const CLOSED_EMPTY_REASONS = new Set(["current_safety_unavailable", "no_matching_fixture"]);
+const CLOSED_EMPTY_REASONS = new Set([
+  "current_safety_unavailable",
+  "allergen_missing",
+  "no_matching_fixture",
+]);
 const CLOSED_MEAL_TYPES = new Set(["breakfast", "lunch", "dinner"]);
 const CLOSED_PLANS = new Set(["free", "plus"]);
 const CLOSED_PRICE_INTERVALS = new Set(["month", "year"]);
 const CLOSED_GENERATION_ROUTES = new Set(["menu", "dish", "status"]);
+
+/**
+ * 必須 level。TS 型だけだと cast/miswire の free-text が JSON に載る。
+ * 未知値は error へ潰す（キー省略すると assert-privacy-logs が欠ける）。
+ */
+function closedLevel(raw: string): "info" | "warn" | "error" {
+  if (CLOSED_LEVELS.has(raw)) return raw as "info" | "warn" | "error";
+  return "error";
+}
 
 function closedPath(raw: string): "household" | "idea" | undefined {
   if (CLOSED_PATHS.has(raw)) return raw as "household" | "idea";
@@ -159,9 +173,9 @@ function closedMatchMode(raw: string): "none" | "main_ingredient" | "safety_only
 
 function closedEmptyReason(
   raw: string,
-): "current_safety_unavailable" | "no_matching_fixture" | undefined {
+): "current_safety_unavailable" | "allergen_missing" | "no_matching_fixture" | undefined {
   if (CLOSED_EMPTY_REASONS.has(raw)) {
-    return raw as "current_safety_unavailable" | "no_matching_fixture";
+    return raw as "current_safety_unavailable" | "allergen_missing" | "no_matching_fixture";
   }
   return undefined;
 }
@@ -259,7 +273,7 @@ export const createSafeLogger =
   (event: SafeLogEvent): void => {
     // null は緊急献立の matchMode / emptyReason 用（省略と区別するため明示シリアライズ）
     const record: Record<string, string | number | null> = {
-      level: event.level,
+      level: closedLevel(event.level),
       request_id: closedRequestId(event.requestId),
       code: closedErrorCode(event.code),
       duration_ms: Math.max(0, Math.trunc(event.durationMs)),

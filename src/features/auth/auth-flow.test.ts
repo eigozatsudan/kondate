@@ -5,6 +5,7 @@ import {
   authDeadlineRemainingMs,
   browserSupabaseSessionStorageKey,
   clearAuthFlow,
+  clearAuthFlowUserDismissed,
   clearBrowserSupabaseSessionStorage,
   clearPendingAuthDeposit,
   clearSiblingUnexpiredAuthFlows,
@@ -13,6 +14,7 @@ import {
   ACTIVE_LOGIN_FLOW_STORAGE_KEY,
   clearActiveLoginFlowId,
   createAuthFlow,
+  defaultAuthContinuationTtlMs,
   readActiveLoginFlowId,
   writeActiveLoginFlowId,
   estimateAuthClockSkewMs,
@@ -408,12 +410,7 @@ describe("auth flow storage", () => {
       expect(window.localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBeNull();
       expect(events).toHaveLength(1);
       expect(events[0]?.type).toBe(SOFT_RESIDUAL_RECOVERY_REARM_EVENT);
-      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(
-        "10000000-0000-4000-8000-000000000001",
-      );
-      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(
-        "10000000-0000-4000-8000-000000000001",
-      );
+      expect(readActiveLoginFlowId()).toBe("10000000-0000-4000-8000-000000000001");
     } finally {
       window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
       window.localStorage.removeItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY);
@@ -427,11 +424,30 @@ describe("auth flow storage", () => {
     const otherId = "20000000-0000-4000-8000-0000000000c3";
     try {
       writeActiveLoginFlowId(flowId);
-      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(flowId);
-      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(flowId);
       expect(readActiveLoginFlowId()).toBe(flowId);
+      expect(
+        (
+          JSON.parse(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY) ?? "null") as {
+            id: string;
+          }
+        ).id,
+      ).toBe(flowId);
+      expect(
+        (
+          JSON.parse(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY) ?? "null") as {
+            id: string;
+          }
+        ).id,
+      ).toBe(flowId);
 
-      window.localStorage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, otherId);
+      writeActiveLoginFlowId(otherId);
+      window.sessionStorage.setItem(
+        ACTIVE_LOGIN_FLOW_STORAGE_KEY,
+        JSON.stringify({
+          id: flowId,
+          expiresAtMs: Date.now() + defaultAuthContinuationTtlMs,
+        }),
+      );
       expect(readActiveLoginFlowId()).toBe(flowId);
 
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
@@ -441,6 +457,19 @@ describe("auth flow storage", () => {
       expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
       expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
       expect(readActiveLoginFlowId()).toBeUndefined();
+    } finally {
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    }
+  });
+
+  it("C4: expired active-login-flow pin is treated as absent", () => {
+    const flowId = "10000000-0000-4000-8000-0000000000c4";
+    try {
+      writeActiveLoginFlowId(flowId, Date.now() - defaultAuthContinuationTtlMs - 1);
+      expect(readActiveLoginFlowId()).toBeUndefined();
+      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
+      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
     } finally {
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
@@ -471,8 +500,14 @@ describe("auth flow storage", () => {
     try {
       writeActiveLoginFlowId(flowId);
       expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
-      expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(flowId);
       expect(readActiveLoginFlowId()).toBe(flowId);
+      expect(
+        (
+          JSON.parse(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY) ?? "null") as {
+            id: string;
+          }
+        ).id,
+      ).toBe(flowId);
     } finally {
       setItem.mockRestore();
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
@@ -511,9 +546,7 @@ describe("auth flow storage", () => {
       const api = continuationApiMock();
       await createAuthFlow("/onboarding", api, new MapStorage(), fixedFlowDeps);
       expect(window.localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
-      expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBe(
-        "10000000-0000-4000-8000-000000000001",
-      );
+      expect(readActiveLoginFlowId()).toBe("10000000-0000-4000-8000-000000000001");
       expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
       // 開始タブは session pin があるので suppress 判定は外れる
       expect(isSoftResidualRecoverySuppressed()).toBe(false);
@@ -750,6 +783,30 @@ function installFakeBroadcastChannel(): {
   };
   return { FakeBroadcastChannel, emptyStorage };
 }
+
+it("C-R1: dismiss BroadcastChannel clear drops peer tab memory without storage", () => {
+  const { FakeBroadcastChannel, emptyStorage } = installFakeBroadcastChannel();
+  try {
+    const flowId = "10000000-0000-4000-8000-0000000000r1";
+    resetAuthFlowUserDismissedMemoryForTests();
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(false);
+    const publisher = new BroadcastChannel("kondate.auth.flow-user-dismissed");
+    publisher.postMessage({ flowId });
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(true);
+    publisher.postMessage({ flowId, cleared: true });
+    publisher.close();
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(false);
+    // storage 印が無くても clearAuthFlowUserDismissed が memory を落とす
+    markAuthFlowUserDismissed(flowId, emptyStorage);
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(true);
+    clearAuthFlowUserDismissed(flowId, emptyStorage);
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(false);
+  } finally {
+    FakeBroadcastChannel.reset();
+    vi.unstubAllGlobals();
+    resetAuthFlowUserDismissedMemoryForTests();
+  }
+});
 
 it("C-R8: dismiss BroadcastChannel populates peer tab memory without storage", () => {
   // open tabs のみ: 他タブ相当の postMessage で memory 印が立つ（storage 無し）

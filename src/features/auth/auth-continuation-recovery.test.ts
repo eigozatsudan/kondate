@@ -958,20 +958,65 @@ describe("auth continuation recovery", () => {
     },
   );
 
-  it("fails closed when neither Web Locks nor IndexedDB is available", async () => {
+  it("falls back to localStorage claim when neither Web Locks nor IndexedDB is available", async () => {
     Reflect.deleteProperty(globalThis, "indexedDB");
-    const gateway = { resumeFlow: vi.fn() };
+    const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+    Reflect.deleteProperty(navigator, "locks");
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
 
-    const stop = startAuthContinuationRecovery({
-      gateway,
-      storage: flowStorage(["10000000-0000-4000-8000-000000000001"]),
-      onComplete: vi.fn(),
-      setInterval: (() => 1) as unknown as typeof window.setInterval,
+    try {
+      const stop = startAuthContinuationRecovery({
+        gateway,
+        storage: flowStorage(["10000000-0000-4000-8000-000000000001"]),
+        onComplete: vi.fn(),
+        setInterval: (() => 1) as unknown as typeof window.setInterval,
+      });
+      await flushPromises();
+
+      expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+      expect(gateway.resumeFlow).toHaveBeenCalledWith("10000000-0000-4000-8000-000000000001");
+      stop();
+    } finally {
+      if (originalLocks === undefined) {
+        Reflect.deleteProperty(navigator, "locks");
+      } else {
+        Object.defineProperty(navigator, "locks", originalLocks);
+      }
+    }
+  });
+
+  it("C-R4: falls back to localStorage claim when IndexedDB transaction aborts", async () => {
+    Object.defineProperty(globalThis, "indexedDB", {
+      configurable: true,
+      value: new AbortingTransactionIndexedDb(),
     });
-    await flushPromises();
+    const originalLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+    Reflect.deleteProperty(navigator, "locks");
+    const gateway = {
+      resumeFlow: vi.fn().mockResolvedValue({ kind: "awaiting_completion" }),
+    };
 
-    expect(gateway.resumeFlow).not.toHaveBeenCalled();
-    stop();
+    try {
+      const stop = startAuthContinuationRecovery({
+        gateway,
+        storage: flowStorage(["10000000-0000-4000-8000-000000000001"]),
+        onComplete: vi.fn(),
+        setInterval: (() => 1) as unknown as typeof window.setInterval,
+      });
+      await flushPromises();
+
+      expect(gateway.resumeFlow).toHaveBeenCalledTimes(1);
+      expect(gateway.resumeFlow).toHaveBeenCalledWith("10000000-0000-4000-8000-000000000001");
+      stop();
+    } finally {
+      if (originalLocks === undefined) {
+        Reflect.deleteProperty(navigator, "locks");
+      } else {
+        Object.defineProperty(navigator, "locks", originalLocks);
+      }
+    }
   });
 
   it.each(["last-at", "cursor"])(
@@ -1989,6 +2034,51 @@ class SerializedIndexedDb {
       },
     });
     return transaction as unknown as IDBTransaction;
+  }
+}
+
+/** C-R4: open は成功するが transaction が abort する半死 IDB */
+class AbortingTransactionIndexedDb {
+  open(): IDBOpenDBRequest {
+    const request = {
+      onblocked: null as ((event: Event) => void) | null,
+      onerror: null as ((event: Event) => void) | null,
+      onsuccess: null as ((event: Event) => void) | null,
+      onupgradeneeded: null as ((event: Event) => void) | null,
+    };
+    const database = {
+      objectStoreNames: { contains: () => true },
+      close: vi.fn(),
+      transaction: () => {
+        const transaction = {
+          onabort: null as ((event: Event) => void) | null,
+          oncomplete: null as ((event: Event) => void) | null,
+          onerror: null as ((event: Event) => void) | null,
+          abort: () => {
+            transaction.onabort?.(new Event("abort"));
+          },
+          objectStore: () => ({
+            get: () => {
+              const getRequest = {
+                onerror: null as ((event: Event) => void) | null,
+                onsuccess: null as ((event: Event) => void) | null,
+              };
+              queueMicrotask(() => {
+                transaction.onabort?.(new Event("abort"));
+              });
+              return getRequest;
+            },
+            put: () => ({}) as IDBRequest,
+          }),
+        };
+        return transaction as unknown as IDBTransaction;
+      },
+    };
+    Object.defineProperty(request, "result", { value: database });
+    queueMicrotask(() => {
+      request.onsuccess?.(new Event("success"));
+    });
+    return request as unknown as IDBOpenDBRequest;
   }
 }
 

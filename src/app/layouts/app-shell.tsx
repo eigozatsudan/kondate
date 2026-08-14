@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, Outlet, useLocation, useNavigate } from "react-router";
+import { Link, Outlet, useLocation, useNavigate, useNavigation } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import {
   householdSafetyChangedEvent,
@@ -134,6 +134,7 @@ export function AppShell() {
   const auth = useAuth();
   const queryClient = useQueryClient();
   const location = useLocation();
+  const navigation = useNavigation();
   const navigate = useNavigate();
   const userId = auth.session?.user.id;
   const section = sectionForPath(location.pathname);
@@ -163,26 +164,59 @@ export function AppShell() {
   // 無い場合のみ -1 を付与する（キーボード順序に載せない）。
   // L2: 既に dialog / alertdialog 内にフォーカスがあるときは奪わない
   // （pathname 変更直後に開いたモーダルや、ページ側の意図した trap を壊さない）。
+  // L1: lazy / 子 query pending で h1 が遅れて載る面では 1 回 rAF だと逃す。
+  // navigation.loading 中は旧面の h1 を最終扱いせず、idle 後に出現を待つ。
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
+    let cancelled = false;
+    let observer: MutationObserver | null = null;
+    let frame = 0;
+
+    function tryFocusHeading(): boolean {
+      if (cancelled) return true;
       const active = document.activeElement;
       if (
         active instanceof Element &&
         active.closest('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')
       ) {
-        return;
+        return true;
       }
       const heading = document.querySelector("main h1") ?? document.querySelector("h1");
-      if (!(heading instanceof HTMLElement)) return;
+      if (!(heading instanceof HTMLElement)) return false;
       if (!heading.hasAttribute("tabindex")) {
         heading.tabIndex = -1;
       }
       heading.focus({ preventScroll: true });
+      return true;
+    }
+
+    function armObserver(): void {
+      if (observer !== null) return;
+      observer = new MutationObserver(() => {
+        if (tryFocusHeading()) {
+          observer?.disconnect();
+          observer = null;
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    // lazy settle 前は旧面の h1 を最終フォーカスにしない
+    if (navigation.state !== "idle") {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    frame = window.requestAnimationFrame(() => {
+      if (tryFocusHeading()) return;
+      armObserver();
     });
     return () => {
+      cancelled = true;
       window.cancelAnimationFrame(frame);
+      observer?.disconnect();
     };
-  }, [location.pathname]);
+  }, [location.pathname, navigation.state]);
 
   return (
     <div className="app-section" data-section={section}>

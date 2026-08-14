@@ -93,18 +93,21 @@ describe("resolvePlusLandingView", () => {
     expect(view.kind).toBe("incomplete");
   });
 
-  it("does not treat quotaPlan alone as entitled under kill", () => {
-    // plusEntitled true + surfaces closed → entitled 短形（full ではない）
+  it("does not treat dbPlusEntitled as entitled under kill (B5)", () => {
+    // plusEntitled は quota 実効。kill 中は false なのでマーケ短形に落とさず Checkout も閉じる
     const data: EntitlementData = {
       ...freeOpen,
       plan: "plus",
       status: "active",
-      plusEntitled: true,
+      plusEntitled: false,
       dbPlusEntitled: true,
       productSurfacesOpen: false,
       quotaPlan: "free",
     };
-    expect(resolvePlusLandingView({ loading: false, error: false, data }).kind).toBe("entitled");
+    expect(resolvePlusLandingView({ loading: false, error: false, data })).toEqual({
+      kind: "full",
+      checkoutEnabled: false,
+    });
   });
 });
 

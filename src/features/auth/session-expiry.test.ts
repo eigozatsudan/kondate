@@ -132,7 +132,7 @@ describe("redirectToLoginForExpiredSession", () => {
     vi.useRealTimers();
   });
 
-  it("C5: expiry redirect keeps sibling flow/pending and clears session persist", async () => {
+  it("C5: expiry redirect keeps sibling flow, clears pending and session persist", async () => {
     const { clearExpiredSessionAuthAndDrafts } =
       await vi.importActual<typeof import("./auth-cleanup")>("./auth-cleanup");
     clearExpiredSessionAuthAndDraftsMock.mockImplementation(clearExpiredSessionAuthAndDrafts);
@@ -176,7 +176,7 @@ describe("redirectToLoginForExpiredSession", () => {
     expect(replaceLocation).toHaveBeenCalledWith("/login?sessionExpired=1&returnTo=%2Fplanner");
     expect(signOut).toHaveBeenCalledWith({ scope: "local" });
     expect(window.localStorage.getItem(flowKey)).not.toBeNull();
-    expect(window.localStorage.getItem(pendingKey)).not.toBeNull();
+    expect(window.localStorage.getItem(pendingKey)).toBeNull();
     expect(window.localStorage.getItem("kondate.auth.supabase")).toBeNull();
   });
 });

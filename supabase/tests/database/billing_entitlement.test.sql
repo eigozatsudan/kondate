@@ -2,7 +2,7 @@
 -- Task 2: private billing 表 + SECURITY DEFINER RPC（A6 / lock / process 冪等・stale・crash-safe）
 
 begin;
-select plan(61);
+select plan(67);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -13,6 +13,10 @@ select tests.create_supabase_user(
 select tests.create_supabase_user(
   'f2000000-0000-4000-8000-000000000002'::uuid,
   'billing-process@example.invalid'
+);
+select tests.create_supabase_user(
+  'f2000000-0000-4000-8000-000000000003'::uuid,
+  'billing-kill-since@example.invalid'
 );
 
 -- ---------------------------------------------------------------------------
@@ -636,6 +640,92 @@ select is(
     where user_id = 'f2000000-0000-4000-8000-000000000002'::uuid),
   'sub_keep_older',
   'dual-cancel keep aligns stripe_subscription_id'
+);
+
+-- ---------------------------------------------------------------------------
+-- B-R6 / B-R7: kill unpaid の past_due_since は既存優先、clear は persist unpaid でも効く
+-- ---------------------------------------------------------------------------
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_kill_since_t0',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 6000,
+    'user_id', 'f2000000-0000-4000-8000-000000000003',
+    'stripe_subscription_id', 'sub_kill_since_1',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'unpaid',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false,
+    'kill_source_status', 'past_due',
+    'past_due_since', '2026-07-01T00:00:00.000Z'
+  )) ->> 'outcome',
+  'applied',
+  'B-R6 first kill unpaid past_due persist applies T0'
+);
+
+select is(
+  (select past_due_since from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000003'::uuid),
+  '2026-07-01 00:00:00+00'::timestamptz,
+  'B-R6 first kill unpaid persist stores payload since'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_kill_since_t1',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 7000,
+    'user_id', 'f2000000-0000-4000-8000-000000000003',
+    'stripe_subscription_id', 'sub_kill_since_1',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'unpaid',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false,
+    'kill_source_status', 'past_due',
+    'past_due_since', '2026-07-04T00:00:00.000Z'
+  )) ->> 'outcome',
+  'applied',
+  'B-R6 later kill unpaid past_due persist applies'
+);
+
+select is(
+  (select past_due_since from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000003'::uuid),
+  '2026-07-01 00:00:00+00'::timestamptz,
+  'B-R6 later payload T1 does not extend existing since T0'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_kill_since_clear_active',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 8000,
+    'user_id', 'f2000000-0000-4000-8000-000000000003',
+    'stripe_subscription_id', 'sub_kill_since_1',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'unpaid',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true,
+    'kill_source_status', 'active'
+  )) ->> 'outcome',
+  'applied',
+  'B-R7 kill unpaid clear persist applies'
+);
+
+select is(
+  (select past_due_since from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000003'::uuid),
+  null,
+  'B-R7 clear_past_due_since nulls since even when persist status is unpaid'
 );
 
 -- 禁止: insert_billing_webhook_event を public に export しない

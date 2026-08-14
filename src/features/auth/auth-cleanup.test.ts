@@ -148,7 +148,7 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
   });
 
-  it("C5: expired-session cleanup keeps sibling flow/pending/PKCE and clears session persist", async () => {
+  it("C5/C-R3: expired-session cleanup keeps sibling flow/PKCE/pending and session persist", async () => {
     const flowId = "10000000-0000-4000-8000-0000000000c5";
     const flowKey = `kondate.auth.flow.${flowId}`;
     const pendingKey = `kondate.auth.supabase.pending-deposit.${flowId}`;
@@ -187,6 +187,7 @@ describe("clearLocalAuthAndDrafts", () => {
 
     expect(signOut).toHaveBeenCalledWith({ scope: "local" });
     expect(localStorage.getItem(flowKey)).not.toBeNull();
+    // C-R3: callback-owner がある sibling mid-login pending は残す（strip 後 re-deposit 正本）
     expect(localStorage.getItem(pendingKey)).not.toBeNull();
     expect(localStorage.getItem(ownerKey)).not.toBeNull();
     expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe("pkce-verifier");
@@ -213,7 +214,7 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
   });
 
-  it("C4/R3: soft residual clears completion; preserves pending/PKCE/secret/callback-owner", () => {
+  it("C4/R3: soft residual clears completion; preserves PKCE/secret/callback-owner and sibling pending", () => {
     const flowId = "10000000-0000-4000-8000-0000000000c3";
     localStorage.setItem(
       `kondate.auth.flow.${flowId}`,
@@ -244,7 +245,7 @@ describe("clearLocalAuthAndDrafts", () => {
 
     clearSoftSessionResidualBestEffort();
 
-    // R3: sibling mid-login に必要なキーは温存
+    // C-R3: callback-owner 付き pending は sibling mid-login として残す
     expect(localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).not.toBeNull();
     expect(localStorage.getItem("kondate.auth.supabase-code-verifier")).toBe("pkce-verifier");
     expect(localStorage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
@@ -256,6 +257,29 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
     expect(isSoftResidualRecoverySuppressed()).toBe(true);
     expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
+  });
+
+  it("C5/C-R3: soft residual still clears prior-user pending without callback-owner", () => {
+    const flowId = "10000000-0000-4000-8000-0000000000c5";
+    localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({ id: flowId, secret: "A".repeat(43) }),
+    );
+    localStorage.setItem(
+      `kondate.auth.supabase.pending-deposit.${flowId}`,
+      JSON.stringify({
+        state: "B".repeat(43),
+        code: "authorization-code-plain",
+        expiresAtMs: Date.now() + 60_000,
+      }),
+    );
+
+    clearSoftSessionResidualBestEffort();
+
+    // 共有端末の prior-user pending 平文は消す。sibling mid-login 印（owner）は無い
+    expect(localStorage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).toBeNull();
+    expect(localStorage.getItem(`kondate.auth.flow.${flowId}`)).not.toBeNull();
+    expect(isSoftResidualRecoverySuppressed()).toBe(true);
   });
 
   it("C4: soft residual suppress is shared via localStorage (new-tab visible; sessionStorage empty)", () => {

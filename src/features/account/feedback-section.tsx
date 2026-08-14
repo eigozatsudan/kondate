@@ -85,15 +85,20 @@ function readAmbiguousFingerprint(userId: string | null | undefined): string | n
     if (value !== null) {
       localStorage.removeItem(storageKey);
     }
-    // AP3: sessionStorage に残った旧 sticky があれば読み捨て（localStorage へ寄せる）
+    // AP3: sessionStorage に残った sticky があれば読む。local へ寄せられなければ session に残す（AP13）
     try {
       const legacy = sessionStorage.getItem(storageKey);
+      if (legacy !== null && /^[0-9a-f]{64}$/u.test(legacy)) {
+        try {
+          localStorage.setItem(storageKey, legacy);
+          sessionStorage.removeItem(storageKey);
+        } catch {
+          // local へ寄せられないときは session を消さず、値は返す
+        }
+        return legacy;
+      }
       if (legacy !== null) {
         sessionStorage.removeItem(storageKey);
-        if (/^[0-9a-f]{64}$/u.test(legacy)) {
-          localStorage.setItem(storageKey, legacy);
-          return legacy;
-        }
       }
     } catch {
       // sessionStorage 拒否は無視
@@ -107,7 +112,13 @@ function readAmbiguousFingerprint(userId: string | null | undefined): string | n
     }
     return null;
   } catch {
-    // localStorage 拒否時は in-memory のみにフォールバック
+    // AP13: localStorage 拒否時は同一タブ再読用に sessionStorage を読む
+    try {
+      const fallback = sessionStorage.getItem(storageKey);
+      if (fallback !== null && /^[0-9a-f]{64}$/u.test(fallback)) return fallback;
+    } catch {
+      // sessionStorage も拒否なら in-memory のみ
+    }
     return null;
   }
 }
@@ -135,7 +146,16 @@ function writeAmbiguousFingerprint(
       // ignore
     }
   } catch {
-    // 拒否時は ref 側だけが効く
+    // AP13: localStorage 拒否時は sessionStorage へフォールバック（同一タブ再読で二重行を抑える）
+    try {
+      if (fingerprint === null) {
+        sessionStorage.removeItem(storageKey);
+      } else {
+        sessionStorage.setItem(storageKey, fingerprint);
+      }
+    } catch {
+      // 両方拒否時は ref 側だけが効く
+    }
   }
 }
 
@@ -143,9 +163,8 @@ function writeAmbiguousFingerprint(
  * 設定ページのフィードバック。機能改善と不具合報告を受け付ける。
  * 既定は折りたたみ。本文はサーバへだけ送り、クライアントログには出さない。
  *
- * AP7 residual-intentional: free-form 本文は ops 保管（約 30 日スイープ）。
- * PII 禁止スキーマは設けず、クライアントログにも出さない。利用者向けの保管期間・PII 注意
- * は製品開示の別途拡張余地（本修正では保管モデル自体は変えない）。
+ * AP8: free-form 本文は ops 保管（約 30 日スイープ）。設定 UI に保管・閲覧を開示する。
+ * PII 禁止スキーマは設けず、クライアントログにも出さない。保管モデル自体は変えない。
  */
 export function FeedbackSection() {
   const auth = useAuth();
@@ -327,7 +346,7 @@ export function FeedbackSection() {
             使っていて不便な点や、あると助かる機能があれば教えてください。不具合の報告もこちらから送れます。送信は
             {FEEDBACK_RATE_WINDOW_HOURS}時間あたり{FEEDBACK_DAILY_LIMIT}
             件までです。上限に達したら時間をおいてお試しください。送信時にいま開いている画面のパス（例:
-            /settings）だけを参考情報として添えます。氏名や本文以外の個人情報は自動では送りません。
+            /settings）だけを参考情報として添えます。献立の番号は送りません。氏名や本文以外の個人情報は自動では送りません。本文は平文のまま約30日間保管され、運営が確認のために読むことがあります。氏名や連絡先など個人が分かることは書かないでください。この端末が一時保存を拒否していると、同じ内容を再送すると重複することがあります。
           </p>
           <form className="stack" onSubmit={(event) => void handleSubmit(event)}>
             <fieldset className="stack" disabled={pending}>

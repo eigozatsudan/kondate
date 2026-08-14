@@ -100,16 +100,23 @@ function isSoftResidualRecoverySuppressFlagSet(): boolean {
 /**
  * C36/C38: 開始タブの session/local pin があるか。
  * auth-flow を import すると循環するため、同じキーをここで読む。
- * readActiveLoginFlowId と同じ z.uuid。不正値は pin 無し（ここでは消さない）。
+ * readActiveLoginFlowId と同じ `{ id, expiresAtMs }`。不正・期限切れは pin 無し（ここでは消さない）。
  */
-const activeLoginFlowIdSchema = z.uuid();
+const activeLoginFlowPinSchema = z
+  .object({
+    id: z.uuid(),
+    expiresAtMs: z.number(),
+  })
+  .strict();
 
 function hasReadableActiveLoginFlowId(): boolean {
   const read = (storage: Storage): boolean => {
     try {
       const raw = storage.getItem("kondate.auth.active-login-flow");
       if (raw === null || raw.length === 0) return false;
-      return activeLoginFlowIdSchema.safeParse(raw).success;
+      const parsed = activeLoginFlowPinSchema.safeParse(JSON.parse(raw) as unknown);
+      if (!parsed.success) return false;
+      return parsed.data.expiresAtMs > Date.now();
     } catch {
       return false;
     }

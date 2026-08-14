@@ -256,6 +256,28 @@ export function guardSubscriptionProjection(
   return projection;
 }
 
+/**
+ * kill 中に elevating を unpaid へ落とすとき、元 status を残す（B3 復元用）。
+ * unknown price の unpaid は kill マスクではないので null。
+ * BILLING_ENABLED=true では null を返し、SQL 側の kill_source_status をクリアする。
+ */
+export function resolveKillSourceStatus(
+  originalStatus: string,
+  options: { billingEnabled: boolean; priceOk: boolean },
+): string | null {
+  if (options.billingEnabled) return null;
+  if (!options.priceOk) return null;
+  if (
+    originalStatus === "trialing" ||
+    originalStatus === "active" ||
+    originalStatus === "past_due" ||
+    originalStatus === "canceled"
+  ) {
+    return originalStatus;
+  }
+  return null;
+}
+
 function unixToIsoZ(seconds: number | null | undefined): string | null {
   if (seconds === null || seconds === undefined) return null;
   return new Date(seconds * 1000).toISOString();
@@ -339,7 +361,7 @@ function subscriptionIdFromUnknown(value: unknown): string | null {
  * user 解決: billing_customers の stripe_customer_id マップを正とする。
  * - map 必須（meta のみの被害者 UUID 載せ elevation を閉じる = B2）
  * - map + meta 両方あるときは一致必須（U5-M1）
- * - 解決不能は null（200 + billing_user_unmapped、権益なし）
+ * - 解決不能は null（5xx + billing_user_unmapped。Stripe 再送で map 後に適用）
  */
 export async function resolveBillingUserId(
   admin: BillingWebhookAdmin,
@@ -623,9 +645,8 @@ async function handleSubscriptionEvent(
     stripeCustomerId: customerId,
   });
   if (userId === null) {
-    // residual-intentional (B4): map 未整備は process 前に 200 + 非 claim。
-    // Stripe 再送と map 後適用を意図的リカバリとする。claim して event_only にすると
-    // map 後に同一 evt が再投影できず elevation が永久落ちるため、仕様変更はしない。
+    // B9: map 未整備は process 前に 5xx + 非 claim。Stripe は 2xx を再送しない。
+    // map 後に同一 evt を再送させ、elevation を適用する。
     log({
       level: "warn",
       requestId,
@@ -634,9 +655,9 @@ async function handleSubscriptionEvent(
       alertMetric: 1,
       ...(customerId === null ? {} : { stripeCustomerId: customerId }),
     });
-    return json(200, {
-      ok: true,
-      data: { handled: true, code: "billing_user_unmapped" },
+    return json(500, {
+      ok: false,
+      error: { code: "billing_user_unmapped", message: "処理を完了できませんでした" },
     });
   }
 
@@ -732,6 +753,14 @@ async function handleSubscriptionEvent(
     status: forceCanceledFromDeleted ? "canceled" : projection.status,
   };
   const stripeCfg = deps.env.stripe;
+  const priceOk =
+    stripeCfg !== undefined && isAllowlistedPlusPrice(guardedProjection.stripe_price_id, stripeCfg);
+  // B-R5: since 判定は kill unpaid の前。元 past_due を unpaid 後 status で落とさない。
+  const preGuardStatus = guardedProjection.status;
+  const killSourceStatus = resolveKillSourceStatus(preGuardStatus, {
+    billingEnabled: deps.env.billingEnabled,
+    priceOk,
+  });
   if (stripeCfg !== undefined) {
     guardedProjection = guardSubscriptionProjection(guardedProjection, {
       billingEnabled: deps.env.billingEnabled,
@@ -741,14 +770,18 @@ async function handleSubscriptionEvent(
   const projectedStatus = guardedProjection.status;
   projection = guardedProjection;
 
+  // B-R7: clear は guard 前 status。kill 中は persist が unpaid でも
+  // active/trialing 復帰なら since を消す（設計 L351: 復帰で NULL）。
   const clearPastDue =
-    projectedStatus === "active" || projectedStatus === "trialing" || forceCanceledFromDeleted;
+    preGuardStatus === "active" || preGuardStatus === "trialing" || forceCanceledFromDeleted;
   // 初回 past_due の grace 起点は webhook 処理時刻ではなく Stripe event.created。
   // SQL は既存 past_due_since を優先 coalesce するため再送・延長では伸ばさない。
   // residual-intentional (B8): SQL 正本は payload 欠落時 clock_timestamp() fallback。
   // 正規 Function 経路は常に past_due_since を載せる。手投入/将来 path の延長残差は migration 契約。
+  // B-R5: kill 中 unpaid でも元 past_due なら初回候補として載せる。
+  // B-R6: 後続イベントも event.created を載せるが、SQL unpaid else は既存優先で延長しない。
   const pastDueSinceIso =
-    !clearPastDue && projectedStatus === "past_due" ? unixToIsoZ(event.created) : null;
+    !clearPastDue && preGuardStatus === "past_due" ? unixToIsoZ(event.created) : null;
 
   const outcome = await processStripeEvent(deps.admin, {
     stripe_event_id: event.id,
@@ -763,6 +796,7 @@ async function handleSubscriptionEvent(
     current_period_end: projection.current_period_end,
     trial_end: projection.trial_end,
     clear_past_due_since: clearPastDue,
+    kill_source_status: killSourceStatus,
     ...(pastDueSinceIso !== null ? { past_due_since: pastDueSinceIso } : {}),
     // same-second 用。RPC が created 比較後に参照。evt_ 辞書順は使わない。
     // residual-intentional (B7): 投影成功時は常に retrieved を載せるため SQL の terminality
@@ -914,13 +948,15 @@ async function handleInvoiceEvent(
   try {
     sub = await deps.stripe.subscriptions.retrieve(subId);
   } catch {
-    const outcome = await processStripeEvent(deps.admin, {
-      stripe_event_id: event.id,
-      event_type: event.type,
-      stripe_event_created: event.created,
-      skip_subscription_projection: true,
+    // B8: 第一 retrieve 失敗は claim せず 5xx。Stripe 再送で回復する。
+    log({
+      level: "error",
+      requestId,
+      code: "billing_invoice_subscription_retrieve_failed",
+      durationMs: Date.now() - startedAt,
+      alertMetric: 1,
     });
-    return json(200, { ok: true, data: { outcome } });
+    throw new Error("invoice_subscription_retrieve_failed");
   }
 
   const resolvedCustomerId = customerId ?? customerIdFrom(sub.customer);
@@ -931,7 +967,7 @@ async function handleInvoiceEvent(
     stripeCustomerId: resolvedCustomerId,
   });
   if (userId === null) {
-    // residual-intentional (B4): subscription 経路と同型。claim せず 200 + 再送リカバリ。
+    // B9: subscription 経路と同型。claim せず 5xx。map 後の Stripe 再送で適用する。
     log({
       level: "warn",
       requestId,
@@ -939,9 +975,9 @@ async function handleInvoiceEvent(
       durationMs: Date.now() - startedAt,
       alertMetric: 1,
     });
-    return json(200, {
-      ok: true,
-      data: { handled: true, code: "billing_user_unmapped" },
+    return json(500, {
+      ok: false,
+      error: { code: "billing_user_unmapped", message: "処理を完了できませんでした" },
     });
   }
 
@@ -1018,6 +1054,14 @@ async function handleInvoiceEvent(
 
   // price allowlist + kill 中の Plus 投影抑止
   const stripeCfg = deps.env.stripe;
+  const priceOk =
+    stripeCfg !== undefined && isAllowlistedPlusPrice(projection.stripe_price_id, stripeCfg);
+  // B-R5: since 判定は kill unpaid の前。元 past_due を unpaid 後 status で落とさない。
+  const preGuardStatus = projection.status;
+  const killSourceStatus = resolveKillSourceStatus(preGuardStatus, {
+    billingEnabled: deps.env.billingEnabled,
+    priceOk,
+  });
   if (stripeCfg !== undefined) {
     projection = guardSubscriptionProjection(projection, {
       billingEnabled: deps.env.billingEnabled,
@@ -1028,13 +1072,17 @@ async function handleInvoiceEvent(
   // residual-intentional (B10): invoice type で status を上書きしない。
   // Subscription retrieve を正とし、past_due を invoice.payment_failed だけで勝手に付けない。
   // payment_failed 後も retrieve が active なら demotion は subscription.updated 待ち（一時 over-entitle）。
-  // past_due_since クリアは paid 確定かつ status が active/trialing のときだけ（A6: past_due+NULL=非 entitled）。
+  // past_due_since クリアは paid 確定かつ retrieve が active/trialing のときだけ（A6: past_due+NULL=非 entitled）。
   const isPaid = event.type === "invoice.paid";
   const status = projection.status;
-  const clearPastDueSince = isPaid && (status === "active" || status === "trialing");
+  // B-R7: clear は guard 前 status。kill 中 unpaid でも invoice.paid + retrieve active なら消す。
+  const clearPastDueSince =
+    isPaid && (preGuardStatus === "active" || preGuardStatus === "trialing");
   // invoice 経路でも初回 past_due は event.created を起点に載せる（処理遅延の過付与を防ぐ / B8 Function 緩和）
+  // B-R5: guard 前 status で判定。kill 中 unpaid でも元 past_due なら since を残す。
+  // B-R6: 後続 payment_failed も event.created を載せるが、SQL は既存優先で延長しない。
   const pastDueSinceIso =
-    !clearPastDueSince && status === "past_due" ? unixToIsoZ(event.created) : null;
+    !clearPastDueSince && preGuardStatus === "past_due" ? unixToIsoZ(event.created) : null;
 
   const outcome = await processStripeEvent(deps.admin, {
     stripe_event_id: event.id,
@@ -1049,6 +1097,7 @@ async function handleInvoiceEvent(
     current_period_end: projection.current_period_end,
     trial_end: projection.trial_end,
     clear_past_due_since: clearPastDueSince,
+    kill_source_status: killSourceStatus,
     ...(pastDueSinceIso !== null ? { past_due_since: pastDueSinceIso } : {}),
     retrieved_subscription: {
       status,

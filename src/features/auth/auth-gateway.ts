@@ -2,14 +2,17 @@ import type { AuthError } from "@supabase/supabase-js";
 import { z } from "zod";
 import {
   adjustedAuthNowMs,
+  browserSupabaseSessionStorageKey,
   buildAuthCallbackUrl,
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
   clearPendingAuthDeposit,
   ContinuationHttpError,
   ContinuationResponseLostError,
+  clearAuthFlowUserDismissed,
   createAuthFlow,
   isAuthFlowUserDismissed,
+  markAuthFlowUserDismissed,
   readAuthFlow,
   readPendingAuthDeposit,
   sanitizeLoginReturnPath,
@@ -306,6 +309,31 @@ function verifyOtpType(): "email" {
 }
 
 /**
+ * C3: 後勝ち Google 開始で先行 OAuth（authorization_code）を明示キャンセルする。
+ * PKCE verifier は SDK 単一キーのため、先行 flow を残すと先着 callback の exchange が
+ * 上書き後の verifier で失敗し terminal になる。magic（token_hash）は残す（C6）。
+ */
+function dismissSiblingOauthAuthorizationFlows(currentFlowId: string, storage: Storage): void {
+  // listUnexpiredAuthFlows は TTL 正規化で secret を消し得る。
+  // 開始直後の sibling 列挙は read だけにし、今作った flow を巻き込まない。
+  const prefix = "kondate.auth.flow.";
+  const flowIds: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(prefix) === true) {
+      flowIds.push(key.slice(prefix.length));
+    }
+  }
+  for (const flowId of flowIds) {
+    if (flowId === currentFlowId) continue;
+    const existing = readAuthFlow(flowId, storage);
+    if (existing === null) continue;
+    if (existing.credentialKind === "token_hash") continue;
+    markAuthFlowUserDismissed(existing.id, storage);
+  }
+}
+
+/**
  * claim した平文を verifyOtp に渡すか PKCE code exchange に渡すか。
  * - token_hash フローの正規経路: 長い hash（ハイフン無し）
  * - 旧 / ローカル ConfirmationURL（GET /verify）: UUID 形の authorization code
@@ -495,6 +523,92 @@ function isInFlightResumeDiscardedByStorage(flowId: string, storage: Storage): b
 }
 
 /**
+ * C-R2: in-flight の dismiss 再検査。sibling clear（flow 行欠如）とは別で、
+ * 後勝ち Google が secret を残したまま dismiss したときに exchange しない。
+ * completion があるときは既存 discard と同じく complete 側へ委ねる。
+ */
+function isInFlightResumeDismissed(flowId: string, storage: Storage): boolean {
+  if (readAuthContinuationCompletion(flowId, storage) !== null) return false;
+  return isAuthFlowUserDismissed(flowId, storage);
+}
+
+/**
+ * C-R2-1: SDK 単一 PKCE キー（createBrowserSupabaseClient の storageKey + "-code-verifier"）。
+ * signInWithOAuth は dismiss より先に V2 を書く。失敗時に V1 を戻し、
+ * in-flight exchange は generation 変化を dismiss 無しの non-terminal 条件にする。
+ * generation に TTL は無い（上書き試行の世代カウンタ。BrowserSupabaseClient は再定義しない）。
+ * C-R2-3: 失敗復元は自分の bump 世代が残っているときだけ（自 V2）。並行成功の V3 は消さない。
+ */
+const PKCE_CODE_VERIFIER_KEY = `${browserSupabaseSessionStorageKey}-code-verifier`;
+const PKCE_VERIFIER_GENERATION_KEY = `${PKCE_CODE_VERIFIER_KEY}-generation`;
+
+function readPkceCodeVerifier(storage: Storage): string | null {
+  try {
+    return storage.getItem(PKCE_CODE_VERIFIER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function restorePkceCodeVerifier(storage: Storage, value: string | null): void {
+  try {
+    if (value === null) {
+      storage.removeItem(PKCE_CODE_VERIFIER_KEY);
+    } else {
+      storage.setItem(PKCE_CODE_VERIFIER_KEY, value);
+    }
+  } catch {
+    // best-effort。storage 障害でも Google 開始失敗の throw は止めない
+  }
+}
+
+/**
+ * C-R2-3: 失敗時の V1 復元は、自分の bump 世代がまだ最新のときだけ。
+ * 後続タブがさらに bump して V3 を書いた並行成功は消さない。
+ * bump 前の失敗（oauth_mock 等）は世代が無いので従来どおり戻す。
+ */
+function restorePkceCodeVerifierAfterFailedGoogle(
+  storage: Storage,
+  generationAfterBump: number | null,
+  previousVerifier: string | null,
+): void {
+  if (generationAfterBump !== null && readPkceVerifierGeneration(storage) !== generationAfterBump) {
+    return;
+  }
+  restorePkceCodeVerifier(storage, previousVerifier);
+}
+
+function readPkceVerifierGeneration(storage: Storage): number {
+  try {
+    const raw = storage.getItem(PKCE_VERIFIER_GENERATION_KEY);
+    if (raw === null) return 0;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function bumpPkceVerifierGeneration(storage: Storage): void {
+  try {
+    storage.setItem(PKCE_VERIFIER_GENERATION_KEY, String(readPkceVerifierGeneration(storage) + 1));
+  } catch {
+    // best-effort。世代が上がらなくても失敗経路は V1 復元を試みる
+  }
+}
+
+function wasPkceVerifierOverwrittenDuringExchange(
+  storage: Storage,
+  generationAtStart: number,
+  verifierAtStart: string | null,
+): boolean {
+  return (
+    readPkceVerifierGeneration(storage) !== generationAtStart ||
+    readPkceCodeVerifier(storage) !== verifierAtStart
+  );
+}
+
+/**
  * C4: dual exchange / loser 収束用。
  * - completion bus: 常に見てよい（当該 flow の完了印）。
  * - session: exchange 開始後（または claim 後）だけ見る。
@@ -581,6 +695,14 @@ export function createAuthGateway(
       // C6: 既存 unexpired secret は焼かない。旧 magic/OAuth リンクが deposit されても
       // 元ブラウザが claim できるよう複数 flow を TTL まで併存させる。
       // （旧 replaceExistingAuthFlows は再送時に flow A secret を消し、A のリンクを orphan にしていた）
+      // C3: ただし PKCE verifier は SDK 単一キー。後勝ちの Google 開始は先行 OAuth を
+      // 明示 dismiss し、死んだ verifier で先着 callback が terminal になる窓を閉じる。
+      // magic（token_hash）は PKCE を使わないので残す。
+      // C-R1: dismiss は OAuth 成功後。失敗時に先行 flow を oauth_cancelled にしない。
+      // 成功後に自 flow の dismiss を戻し、同時双方 dismiss を後勝ちで閉じる。
+      // C-R2-1: SDK は await 前に V2 を書く。失敗時は V1 を戻し、世代だけ残して
+      // in-flight の exchangeStarted 失敗を dismiss 無しでも non-terminal にする。
+      // C-R2-3: 戻すのは自分の bump 世代が残っているときだけ。並行成功の V3 は残す。
       const provider = deps.getPublicEnv();
       const flow = await createAuthFlow(
         returnTo,
@@ -589,6 +711,8 @@ export function createAuthGateway(
         undefined,
         provider.authProviderMode,
       );
+      const previousPkceVerifier = readPkceCodeVerifier(storage);
+      let pkceGenerationAfterBump: number | null = null;
       try {
         const redirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
         if (provider.authProviderMode === "oauth_mock") {
@@ -603,8 +727,13 @@ export function createAuthGateway(
           authorize.searchParams.set("flow", flow.id);
           authorize.searchParams.set("state", flow.state);
           deps.navigate(authorize.href);
+          dismissSiblingOauthAuthorizationFlows(flow.id, storage);
+          clearAuthFlowUserDismissed(flow.id, storage);
           return;
         }
+        // 世代は SDK 書き込みより前に上げる。失敗後に V1 を戻しても in-flight が上書きを観測できる。
+        bumpPkceVerifierGeneration(storage);
+        pkceGenerationAfterBump = readPkceVerifierGeneration(storage);
         const { error } = await client.auth.signInWithOAuth({
           provider: "google",
           options: { redirectTo },
@@ -612,7 +741,14 @@ export function createAuthGateway(
         if (error !== null) {
           throw new Error("Googleログインを開始できませんでした");
         }
+        dismissSiblingOauthAuthorizationFlows(flow.id, storage);
+        clearAuthFlowUserDismissed(flow.id, storage);
       } catch {
+        restorePkceCodeVerifierAfterFailedGoogle(
+          storage,
+          pkceGenerationAfterBump,
+          previousPkceVerifier,
+        );
         clearAuthFlow(flow.id, storage);
         throw new Error("Googleログインを開始できませんでした");
       }
@@ -682,6 +818,7 @@ export function createAuthGateway(
         }
         // C-ML1: strip 後リロードでも確認できるよう pending に短寿命保存（verify はまだしない）。
         // secret 無し（WebView）でも state があれば保存し、同タブ再表示に耐える。
+        // C1: awaitingConfirm を付け、他タブ residual が confirm 前に OTP を消費しないようにする。
         if (state !== null) {
           const pendingExpiresAtMs =
             stored?.expiresAt !== undefined
@@ -689,7 +826,12 @@ export function createAuthGateway(
               : Date.now() + deps.getPublicEnv().authContinuationTtlMs;
           writePendingAuthDeposit(
             flowId,
-            { state, code: tokenHash, expiresAtMs: pendingExpiresAtMs },
+            {
+              state,
+              code: tokenHash,
+              expiresAtMs: pendingExpiresAtMs,
+              awaitingConfirm: true,
+            },
             storage,
           );
         }
@@ -1021,7 +1163,9 @@ export function createAuthGateway(
       storage,
       adjustedAuthNowMs(Date.now(), flow.clockSkewMs),
     );
-    if (pendingDeposit !== null) {
+    // C1: confirm 前の token_hash pending は OTP を消費しない。
+    // 他端末 confirm が既に deposit していれば下の claim で拾う。re-deposit しない。
+    if (pendingDeposit !== null && pendingDeposit.awaitingConfirm !== true) {
       // RR2: 他 run が既に exchange 中なら re-deposit を重ねず recovery へ委ねる。
       if (isAuthContinuationExchangeInFlight(flow.id, storage, Date.now())) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
@@ -1070,6 +1214,15 @@ export function createAuthGateway(
         }
         clearAuthContinuationCompletion(flow.id, storage);
       }
+      // C-R2: redeposit 中に後勝ち Google が dismiss したら exchange しない
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // C-R1: redeposit 中に sibling clear されていたら claim/exchange しない
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
@@ -1079,12 +1232,24 @@ export function createAuthGateway(
     let exchangeStarted = false;
     // C1: exchange 直前 fingerprint。catch の loser probe から参照するため try 外で保持する。
     let sessionBaseline: SessionProbeBaseline = { kind: "unknown" };
+    // C-R2-1: exchange 開始時の PKCE 世代/値。catch から参照するため try 外。
+    let pkceGenerationAtExchangeStart = 0;
+    let pkceVerifierAtExchangeStart: string | null = null;
     // C3/R2: タブ横断 dual exchange 抑止用。claim 成功後に acquire（locks + 確認遅延）し、
     // 完了/terminal で解放する。R3: 生存中は heartbeat で TTL を延長する。
     const exchangeInstanceId = `exchange-${flow.id}-${Math.random().toString(36).slice(2, 10)}`;
     let holdsExchangeLease = false;
     let stopExchangeHeartbeat: (() => void) | undefined;
     try {
+      // C-R2: claim 直前の dismiss 再検査（入口通過後の後勝ち Google）
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // C-R1: claim 直前にも storage を再確認（redeposit await 中の sibling clear）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
@@ -1140,16 +1305,36 @@ export function createAuthGateway(
       if (preExchangeDone !== null) {
         return preExchangeDone;
       }
+      // C-R2: exchange 直前の dismiss 再検査（claim 中に後勝ち Google が verifier を上書き）
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // C-R1: sibling clear 後はメモリ secret / claimed code で exchange しない（結果適用 discard）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       // C1: exchange 直前の session 指紋。loser probe は「変化した session」だけ complete する。
       sessionBaseline = await captureSessionProbeBaseline(client);
+      // C-R2: baseline await 後の最終 dismiss 再検査
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // baseline await 後の最終 discard（C-R1）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
+      pkceGenerationAtExchangeStart = readPkceVerifierGeneration(storage);
+      pkceVerifierAtExchangeStart = readPkceCodeVerifier(storage);
       exchangeStarted = true;
       const result =
         claimFlow.sessionExchange === "oauth_mock"
@@ -1236,6 +1421,27 @@ export function createAuthGateway(
         error instanceof ContinuationResponseLostError ||
         error instanceof TypeError;
       if (exchangeStarted && !isRetryableTransport) {
+        // C-R2: exchange 開始後に後勝ち Google が dismiss したなら terminal clear しない。
+        // 死んだ verifier での失敗を unbound にしない（secret は TTL まで残す）。
+        if (isInFlightResumeDismissed(flow.id, storage)) {
+          return {
+            kind: "error",
+            code: "oauth_cancelled",
+            returnTo: flow.returnTo,
+            flowId: flow.id,
+          };
+        }
+        // C-R2-1: dismiss 前の verifier 上書き（失敗後勝ち / write→dismiss 窓）。
+        // V1 復元後でも世代差が残るので、比較が V1==V1 でも terminal にしない。
+        if (
+          wasPkceVerifierOverwrittenDuringExchange(
+            storage,
+            pkceGenerationAtExchangeStart,
+            pkceVerifierAtExchangeStart,
+          )
+        ) {
+          return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+        }
         // C4/C5: dual exchange loser や getSession ラグでも sibling 成功を取りこぼさない。
         // 短間隔で completion / session を再検査してから terminal clear する。
         // C1: session は baseline から変化したときだけ complete（pre-existing 据え置きは拒否）。

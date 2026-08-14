@@ -133,9 +133,19 @@ const walnutAllergy = standardAllergy;
  * 製品の初期表示は編集を閉じるが、操作系テストの大半はフォーム前提のため、
  * メンバーがあるときは先頭の「編集」を自動で開く（startClosed: true で閉じたまま）。
  */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 async function renderSettings(
   overrides: Partial<HouseholdSettingsApi> = {},
-  options: { startClosed?: boolean; staleTime?: number } = {},
+  options: { startClosed?: boolean; staleTime?: number; queryClient?: QueryClient } = {},
 ) {
   const updateMember = vi.fn().mockResolvedValue(member);
   const invalidateSafety = vi.fn().mockResolvedValue(undefined);
@@ -158,14 +168,16 @@ async function renderSettings(
     ...overrides,
   };
   // 既定は staleTime 未指定（= 0）。H1 再現だけ本番 AppProviders と同じ 30s を渡す。
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-        ...(options.staleTime === undefined ? {} : { staleTime: options.staleTime }),
+  const queryClient =
+    options.queryClient ??
+    new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          ...(options.staleTime === undefined ? {} : { staleTime: options.staleTime }),
+        },
       },
-    },
-  });
+    });
   render(
     <QueryClientProvider client={queryClient}>
       <AppToastProvider>
@@ -3524,6 +3536,128 @@ it("H1: shows residual warning when none status still has allergies", async () =
     expect(screen.getByText(/以前登録したアレルギーが残っています/u)).toBeVisible();
   });
 });
+
+// H5: onboarding と同型。2人目 none draft の切替直後は allergies が pending。
+// 残針未確認のまま completeMember へ進まない。select / 未確認警告も同じ関門。
+it("H5: refuses none-complete on second draft while allergies query is pending", async () => {
+  const secondDraft: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    status: "draft",
+    display_name: "子ども",
+    allergy_status: "none",
+    sort_order: 1,
+  };
+  const hang = deferred<MemberAllergyRow[]>();
+  const listAllergies = vi.fn((memberId: string) => {
+    if (memberId === secondDraft.id) return hang.promise;
+    return Promise.resolve([]);
+  });
+  const completeMember = vi.fn();
+  await renderSettings(
+    {
+      listMembers: vi.fn().mockResolvedValue([member, secondDraft]),
+      listAllergies,
+      completeMember,
+    },
+    { startClosed: true },
+  );
+
+  await userEvent.click(await screen.findByRole("button", { name: "2人目の子どもを編集" }));
+  await screen.findByRole("region", { name: "家族情報を追加・編集" });
+
+  expect(
+    await screen.findByText(/アレルギー一覧を確認できないため、以前の登録が残っている可能性/u),
+  ).toBeVisible();
+  expect(screen.getByLabelText("アレルギーの確認")).toBeDisabled();
+
+  await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "アレルギー一覧の読み込みが終わるまで待ってください",
+  );
+  expect(completeMember).not.toHaveBeenCalled();
+});
+
+// H11: 既定 staleTime 内の空 success cache を正本扱いしない。complete 時だけ fresh を取る。
+it.each(["none", "unconfirmed"] as const)(
+  "H11: refuses %s-complete when stale empty cache hides a residual allergy",
+  async (allergyStatus) => {
+    const noneDraft: HouseholdMemberRow = {
+      ...member,
+      status: "draft",
+      allergy_status: allergyStatus,
+    };
+    const residual: MemberAllergyRow = { ...standardAllergy, member_id: noneDraft.id };
+    const listAllergies = vi.fn().mockResolvedValue([residual]);
+    const completeMember = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+    });
+    queryClient.setQueryData(householdKeys.members("settings"), [noneDraft]);
+    queryClient.setQueryData(householdKeys.allergies("settings", noneDraft.id), []);
+
+    await renderSettings(
+      {
+        listMembers: vi.fn().mockResolvedValue([noneDraft]),
+        listAllergies,
+        completeMember,
+        updateDraft: vi.fn().mockResolvedValue(noneDraft),
+      },
+      { queryClient },
+    );
+
+    expect(await screen.findByRole("button", { name: "この家族の設定を完了" })).toBeEnabled();
+    const callsBeforeComplete = listAllergies.mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
+
+    await waitFor(() => {
+      expect(listAllergies.mock.calls.length).toBeGreaterThan(callsBeforeComplete);
+    });
+    expect(completeMember).not.toHaveBeenCalled();
+    expect(screen.getAllByText(/以前登録したアレルギーが残っています/u).length).toBeGreaterThan(0);
+  },
+);
+
+// H12: 空 success の refetch 中は旧 [] のまま complete しない（onboarding H12 と同型）
+it.each(["none", "unconfirmed"] as const)(
+  "H12: refuses %s-complete while empty allergies cache is refetching",
+  async (allergyStatus) => {
+    const noneDraft: HouseholdMemberRow = {
+      ...member,
+      status: "draft",
+      allergy_status: allergyStatus,
+    };
+    const hang = deferred<MemberAllergyRow[]>();
+    const listAllergies = vi.fn().mockResolvedValue([]);
+    const completeMember = vi.fn();
+    const { queryClient } = await renderSettings({
+      listMembers: vi.fn().mockResolvedValue([noneDraft]),
+      listAllergies,
+      completeMember,
+    });
+    const allergiesKey = householdKeys.allergies("settings", noneDraft.id);
+    await waitForAllergies(queryClient, noneDraft.id);
+
+    listAllergies.mockImplementation(() => hang.promise);
+    act(() => {
+      void queryClient.refetchQueries({ queryKey: allergiesKey });
+    });
+    await waitFor(() => {
+      expect(queryClient.getQueryState(allergiesKey)?.fetchStatus).toBe("fetching");
+    });
+
+    expect(
+      screen.getByText(/アレルギー一覧を確認できないため、以前の登録が残っている可能性/u),
+    ).toBeVisible();
+    expect(screen.getByLabelText("アレルギーの確認")).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
+
+    expect(completeMember).not.toHaveBeenCalled();
+  },
+);
 
 // H2: complete + none の残針 1 件は UI から消せる（last-delete ガードは registered のみ）
 it("H2: allows last residual allergy delete when complete status is none", async () => {

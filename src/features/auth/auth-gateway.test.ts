@@ -12,10 +12,13 @@ import {
 import {
   ContinuationHttpError,
   ContinuationResponseLostError,
+  browserSupabaseSessionStorageKey,
   createAuthFlow,
+  isAuthFlowUserDismissed,
   markAuthContinuationCallbackOwner,
   markAuthFlowUserDismissed,
   readAuthFlow,
+  readPendingAuthDeposit,
   resetAuthFlowUserDismissedMemoryForTests,
   writePendingAuthDeposit,
   type ContinuationApi,
@@ -254,6 +257,39 @@ it("token_hash magic: completeCallback needs user confirmation without verifyOtp
   expect(readAuthFlow(flow.id, storage)).not.toBeNull();
 });
 
+it("C1: resumeFlow does not verifyOtp an unconfirmed token_hash pending", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const claim = vi.fn().mockRejectedValue(new ContinuationHttpError(404));
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock({ deposit, claim }),
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "e".repeat(40);
+
+  await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
+    ),
+  );
+  expect(readPendingAuthDeposit(sent.flowId, storage)?.awaitingConfirm).toBe(true);
+
+  await expect(gateway.resumeFlow(sent.flowId)).resolves.toMatchObject({
+    kind: "awaiting_completion",
+    flowId: sent.flowId,
+  });
+  expect(deposit).not.toHaveBeenCalled();
+  expect(client.auth.verifyOtp).not.toHaveBeenCalled();
+  expect(readPendingAuthDeposit(sent.flowId, storage)?.code).toBe(tokenHash);
+});
+
 it("token_hash magic: strip reload restores needs_confirmation from pending", async () => {
   configurePublicEnv();
   const storage = new MapStorage();
@@ -417,6 +453,93 @@ it("clears the just-created flow when starting Google OAuth fails", async () => 
   expect(readAuthFlow("10000000-0000-4000-8000-000000000001", storage)).toBeNull();
 });
 
+it("C-R1: failed later Google start does not dismiss the prior OAuth flow", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const flowA = "10000000-0000-4000-8000-000000000001";
+  const flowB = "10000000-0000-4000-8000-000000000002";
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: flowA,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: flowB,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+    deposit,
+    claim: vi.fn().mockRejectedValue(new ContinuationHttpError(404)),
+  });
+  const client = authClientMock({ oauthResult: { data: {}, error: null } });
+  client.auth.signInWithOAuth
+    .mockResolvedValueOnce({ data: {}, error: null })
+    .mockResolvedValueOnce({ data: null, error: { message: "failed" } as AuthError });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  await gateway.signInWithGoogle("/planner");
+  await expect(gateway.signInWithGoogle("/onboarding")).rejects.toThrow(
+    "Googleログインを開始できませんでした",
+  );
+
+  // 失敗した B だけ消し、A の dismiss は戻す（有効な code+V1 を oauth_cancelled にしない）
+  expect(readAuthFlow(flowB, storage)).toBeNull();
+  expect(readAuthFlow(flowA, storage)).not.toBeNull();
+  expect(isAuthFlowUserDismissed(flowA, storage)).toBe(false);
+
+  const storedA = readAuthFlow(flowA, storage);
+  if (storedA === null) throw new Error("expected prior OAuth flow");
+  const callback = await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flowA}&state=${storedA.state}&code=valid-v1-code`,
+    ),
+  );
+  expect(callback).not.toMatchObject({ code: "oauth_cancelled" });
+  expect(deposit).toHaveBeenCalled();
+});
+
+it("C-R1: later Google success undismisses the new flow after a concurrent sibling dismiss", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const flowA = "10000000-0000-4000-8000-000000000001";
+  const flowB = "10000000-0000-4000-8000-000000000002";
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: flowA,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: flowB,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+  });
+  const client = authClientMock({ oauthResult: { data: {}, error: null } });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  await gateway.signInWithGoogle("/planner");
+  // 同時開始で A 側が先に B を dismiss したあとに、B の OAuth が成功する窓
+  markAuthFlowUserDismissed(flowB, storage);
+  await gateway.signInWithGoogle("/onboarding");
+
+  expect(isAuthFlowUserDismissed(flowA, storage)).toBe(true);
+  expect(isAuthFlowUserDismissed(flowB, storage)).toBe(false);
+  expect(readAuthFlow(flowB, storage)).not.toBeNull();
+});
+
 it("C6: keeps the prior local flow secret when a magic link is resent", async () => {
   configurePublicEnv();
   const storage = new MapStorage();
@@ -449,6 +572,38 @@ it("C6: keeps the prior local flow secret when a magic link is resent", async ()
   expect(storage.getItem(`kondate.auth.supabase.callback-owner.${first.flowId}`)).not.toBeNull();
   expect(readAuthFlow(resent.flowId, storage)).not.toBeNull();
   expect(first.flowId).not.toBe(resent.flowId);
+});
+
+it("C3: later Google start dismisses the prior OAuth flow (single PKCE verifier)", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000001",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000002",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+  });
+  const client = authClientMock({ oauthResult: { data: {}, error: null } });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  await gateway.signInWithGoogle("/planner");
+  await gateway.signInWithGoogle("/onboarding");
+
+  expect(isAuthFlowUserDismissed("10000000-0000-4000-8000-000000000001", storage)).toBe(true);
+  expect(readAuthFlow("10000000-0000-4000-8000-000000000001", storage)).not.toBeNull();
+  expect(isAuthFlowUserDismissed("10000000-0000-4000-8000-000000000002", storage)).toBe(false);
+  expect(readAuthFlow("10000000-0000-4000-8000-000000000002", storage)).not.toBeNull();
 });
 
 it("C6: keeps the prior magic-link flow secret when switching to Google", async () => {
@@ -2058,6 +2213,278 @@ it("C-R1: discards in-flight resume exchange after sibling clear of flow secret"
     returnTo: "/onboarding",
   });
   expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+});
+
+it("C-R2: in-flight resume skips exchange when a later Google start dismisses the flow", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const flowA = "10000000-0000-4000-8000-000000000001";
+  const flowB = "20000000-0000-4000-8000-0000000000b2";
+  let releaseClaim: (() => void) | undefined;
+  const claimGate = new Promise<void>((resolve) => {
+    releaseClaim = resolve;
+  });
+  const claim = vi.fn().mockImplementation(async () => {
+    await claimGate;
+    return { code: "auth-code-v1", returnTo: "/onboarding" };
+  });
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: flowA,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: flowB,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+    claim,
+  });
+  const client = authClientMock({ oauthResult: { data: {}, error: null } });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const storedA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(storedA.id);
+  for (let i = 0; i < 50 && claim.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(claim).toHaveBeenCalled();
+  // 入口 dismiss 通過後に後勝ち Google が A を dismiss + verifier を上書き
+  await gateway.signInWithGoogle("/planner");
+  expect(isAuthFlowUserDismissed(storedA.id, storage)).toBe(true);
+
+  releaseClaim?.();
+  await flushResumeUntilExchange();
+  await expect(pending).resolves.toEqual({
+    kind: "error",
+    code: "oauth_cancelled",
+    returnTo: "/onboarding",
+    flowId: storedA.id,
+  });
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+  // terminal clear しない（secret は TTL まで残す）
+  expect(readAuthFlow(storedA.id, storage)).not.toBeNull();
+});
+
+it("C-R2: exchange failure after sibling dismiss does not terminal-clear the flow", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const flowA = "10000000-0000-4000-8000-000000000001";
+  const flowB = "20000000-0000-4000-8000-0000000000b3";
+  let releaseExchange: (() => void) | undefined;
+  const exchangeGate = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const client = authClientMock({ oauthResult: { data: {}, error: null } });
+  client.auth.exchangeCodeForSession.mockImplementation(async () => {
+    await exchangeGate;
+    return {
+      data: null,
+      error: { message: "invalid verifier", name: "AuthApiError", status: 400 } as AuthError,
+    };
+  });
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: flowA,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: flowB,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+    claim: vi.fn().mockResolvedValue({ code: "auth-code-v1", returnTo: "/onboarding" }),
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const storedA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(storedA.id);
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.exchangeCodeForSession.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalled();
+  await gateway.signInWithGoogle("/planner");
+  expect(isAuthFlowUserDismissed(storedA.id, storage)).toBe(true);
+
+  releaseExchange?.();
+  await expect(pending).resolves.toEqual({
+    kind: "error",
+    code: "oauth_cancelled",
+    returnTo: "/onboarding",
+    flowId: storedA.id,
+  });
+  expect(readAuthFlow(storedA.id, storage)).not.toBeNull();
+});
+
+it("C-R2-1: later Google failure after PKCE overwrite does not terminal-clear in-flight exchange", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const pkceVerifierKey = `${browserSupabaseSessionStorageKey}-code-verifier`;
+  storage.setItem(pkceVerifierKey, "verifier-v1");
+  const flowA = "10000000-0000-4000-8000-000000000001";
+  const flowB = "20000000-0000-4000-8000-0000000000b4";
+  let releaseExchange: (() => void) | undefined;
+  const exchangeGate = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const client = authClientMock();
+  client.auth.exchangeCodeForSession.mockImplementation(async () => {
+    await exchangeGate;
+    return {
+      data: null,
+      error: { message: "invalid verifier", name: "AuthApiError", status: 400 } as AuthError,
+    };
+  });
+  // SDK は dismiss より先に単一キーへ V2 を書く。C-R1 により失敗時は A を dismiss しない。
+  client.auth.signInWithOAuth.mockImplementation(() => {
+    storage.setItem(pkceVerifierKey, "verifier-v2");
+    return Promise.resolve({ data: null, error: { message: "failed" } as AuthError });
+  });
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: flowA,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: flowB,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+    claim: vi.fn().mockResolvedValue({ code: "auth-code-v1", returnTo: "/onboarding" }),
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const storedA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(storedA.id);
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.exchangeCodeForSession.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalled();
+  await expect(gateway.signInWithGoogle("/planner")).rejects.toThrow(
+    "Googleログインを開始できませんでした",
+  );
+  expect(isAuthFlowUserDismissed(storedA.id, storage)).toBe(false);
+  expect(readAuthFlow(flowB, storage)).toBeNull();
+  // 失敗後勝ちは V2 を戻し、先行 A の V1 を死なせない
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v1");
+
+  releaseExchange?.();
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: storedA.id,
+    returnTo: "/onboarding",
+  });
+  expect(readAuthFlow(storedA.id, storage)).not.toBeNull();
+});
+
+it("C-R2-3: failed Google restore does not clobber sibling V3 so later B resume is not terminal-cleared", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const pkceVerifierKey = `${browserSupabaseSessionStorageKey}-code-verifier`;
+  storage.setItem(pkceVerifierKey, "verifier-v1");
+  const flowC = "10000000-0000-4000-8000-00000000000c";
+  const flowB = "20000000-0000-4000-8000-00000000000b";
+  let releaseC: (() => void) | undefined;
+  const cOauthGate = new Promise<void>((resolve) => {
+    releaseC = resolve;
+  });
+  const client = authClientMock();
+  let oauthCalls = 0;
+  // 実 SDK 同様、signInWithOAuth は error / assign より先に単一キーへ verifier を書く
+  client.auth.signInWithOAuth.mockImplementation(() => {
+    oauthCalls += 1;
+    if (oauthCalls === 1) {
+      storage.setItem(pkceVerifierKey, "verifier-v2");
+      return cOauthGate.then(() =>
+        Promise.resolve({ data: null, error: { message: "failed" } as AuthError }),
+      );
+    }
+    storage.setItem(pkceVerifierKey, "verifier-v3");
+    return Promise.resolve({ data: {}, error: null });
+  });
+  // 新しい B resume は generation 差が無い。V1 に戻っていると PKCE 失敗で terminal clear する
+  client.auth.exchangeCodeForSession.mockImplementation(() => {
+    if (storage.getItem(pkceVerifierKey) !== "verifier-v3") {
+      return Promise.resolve({
+        data: null,
+        error: { message: "invalid verifier", name: "AuthApiError", status: 400 } as AuthError,
+      });
+    }
+    return Promise.resolve({ data: {}, error: null });
+  });
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: flowC,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: flowB,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+    claim: vi.fn().mockResolvedValue({ code: "auth-code-b", returnTo: "/onboarding" }),
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  const pendingC = gateway.signInWithGoogle("/planner");
+  for (let i = 0; i < 50 && oauthCalls === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v2");
+
+  await gateway.signInWithGoogle("/onboarding");
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v3");
+  expect(readAuthFlow(flowB, storage)).not.toBeNull();
+
+  releaseC?.();
+  await expect(pendingC).rejects.toThrow("Googleログインを開始できませんでした");
+  // 並行成功の V3 を開始時 V1 で消さない
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v3");
+  expect(readAuthFlow(flowC, storage)).toBeNull();
+  expect(readAuthFlow(flowB, storage)).not.toBeNull();
+  expect(isAuthFlowUserDismissed(flowB, storage)).toBe(false);
+
+  await expect(gateway.resumeFlow(flowB)).resolves.toEqual({
+    kind: "complete",
+    continuation: "same_browser",
+    returnTo: "/onboarding",
+    flowId: flowB,
+  });
 });
 
 it("C4: existing session alone does not skip claim/exchange (new login while signed-in)", async () => {

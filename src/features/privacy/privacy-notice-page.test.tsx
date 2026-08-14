@@ -4,7 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { shareConsentVersion } from "@shared/contracts/share-consent";
-import { shareConsentRequiredPhrases, shareConsentSection } from "./privacy-copy";
+import {
+  shareConsentRequiredPhrases,
+  shareConsentSection,
+  shareConsentSettingsCopy,
+} from "./privacy-copy";
 import type { ShareConsentState } from "./share-consent-api";
 import { shareConsentKeys } from "./share-consent-queries";
 import { SHARE_CONSENT_BROADCAST_CHANNEL } from "./share-consent-settings-section";
@@ -463,6 +467,45 @@ it("AP1: unsigned null fields keep default-on share and upsert true", async () =
   });
   expect(upsertShare).toHaveBeenCalledWith({}, true);
   expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+});
+
+it("AP5: revoke failure stays on privacy and does not proceed as success", async () => {
+  const user = userEvent.setup();
+  getShare.mockResolvedValue(currentShareState);
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  upsertShare.mockRejectedValue(new Error("共有の同意を保存できませんでした"));
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await waitForShareConsentReady();
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }));
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  await waitFor(() => {
+    expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+  });
+  expect(upsertShare).toHaveBeenCalledWith({}, false);
+  expect(await screen.findByRole("alert")).toHaveTextContent(shareConsentSettingsCopy.revokeFailed);
+  expect(screen.queryByRole("heading", { name: "献立" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "家族情報の取り扱い" })).toBeInTheDocument();
 });
 
 it("共有同意 RPC が失敗しても必須 privacy 同意後は returnTo へ進む", async () => {

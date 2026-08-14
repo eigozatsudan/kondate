@@ -154,4 +154,30 @@ describe("pantry contracts", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("rejects more than 5 dishIds to match AI dishRefs.max(5)", () => {
+    const sixDishIds = [
+      "22000000-0000-4000-8000-000000000001",
+      "22000000-0000-4000-8000-000000000002",
+      "22000000-0000-4000-8000-000000000003",
+      "22000000-0000-4000-8000-000000000004",
+      "22000000-0000-4000-8000-000000000005",
+      "22000000-0000-4000-8000-000000000006",
+    ];
+    expect(
+      pantryUsageSchema.safeParse({
+        selectionId: "21000000-0000-4000-8000-000000000001",
+        pantryItemId: null,
+        pantryItemName: "にんじん",
+        priority: "prefer_use",
+        usageStatus: "used",
+        plannedQuantity: 1,
+        inventoryQuantity: 1,
+        shortageQuantity: 0,
+        unit: "本",
+        dishIds: sixDishIds,
+        unusedReason: null,
+      }).success,
+    ).toBe(false);
+  });
 });

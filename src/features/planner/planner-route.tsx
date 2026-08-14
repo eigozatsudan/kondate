@@ -68,6 +68,7 @@ import {
   getPlannerDraft,
   plannerKeys,
   savePlannerDraft,
+  startPlannerDraftKeepaliveSave,
 } from "./planner-api";
 import {
   navigateAfterPlannerLeaveFlush,
@@ -281,25 +282,32 @@ export function PlannerRoutePage() {
       historyAction === NavigationType.Pop && currentLocation.pathname !== nextLocation.pathname
     );
   });
+  // react-router 8.3 は blocked 中の再 POP で blocker 参照だけを差し替える。
+  // proceed/reset は最新を使い、identity 変化では in-flight flush を cancelled にしない。
+  const blockerRef = useRef(blocker);
+  blockerRef.current = blocker;
   useEffect(() => {
     if (blocker.state !== "blocked") return;
-    // blocked 時点の proceed/reset を閉じる。await 後に state が変わっても安全に呼ぶ。
-    const { proceed, reset } = blocker;
     // cleanup が await 中に立つ。let だと静的解析が常に false と見なす。
     const cancelled = { current: false };
     void (async () => {
       const result = await runPlannerLeaveFlush();
       if (cancelled.current) return;
+      const current = blockerRef.current;
+      if (current.state !== "blocked") return;
       if (result === "proceed") {
-        proceed();
+        current.proceed();
       } else {
-        reset();
+        current.reset();
       }
     })();
     return () => {
       cancelled.current = true;
     };
-  }, [blocker]);
+    // state だけを見る。blocker 全体だと再 POP の identity 差し替えで
+    // cleanup が cancelled → 第 2 flush は mutex blocked → reset、第 1 成功の
+    // releaseLeaveUnlessProceeding(true) がロックを残し reload まで操作不能になる。
+  }, [blocker.state]);
   // P3: startGeneration 内でも plan / quality.available を参照し qualityMode を再 clamp
   // （onSubmit 一枚依存を避ける）
   const usage = useUsageToday(userId ?? "");
@@ -414,6 +422,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const client = getBrowserSupabaseClient();
+  // document unload は useBlocker の外。keepalive 保存は session JWT を同期で使う。
+  const accessToken = useAuth().session?.access_token;
+  const accessTokenRef = useRef(accessToken);
+  accessTokenRef.current = typeof accessToken === "string" ? accessToken : undefined;
   // G-R4: home/review の再開 UI は status reconcile 後の kept のみ（localStorage 非 null だけでは出さない）
   const { hasResumablePending, pendingDisplayReady } = useResumablePendingAfterReconcile(userId);
   const draftQuery = useQuery({
@@ -743,6 +755,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     },
     [queryClient, userId],
   );
+  const saveOnUnload = useCallback((next: PlannerDraftInput, revision: number) => {
+    const token = accessTokenRef.current;
+    if (token === undefined || token.length === 0) return;
+    startPlannerDraftKeepaliveSave(token, next, revision);
+  }, []);
   const autosave = useDraftAutosave({
     value,
     enabled: initialized && userId !== undefined,
@@ -751,6 +768,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     save,
     onConflict,
     onSaved: onDraftSaved,
+    saveOnUnload,
   });
   const flushAutosave = autosave.flush;
   const flushDraft = useCallback(async (): Promise<PlannerDraft> => {

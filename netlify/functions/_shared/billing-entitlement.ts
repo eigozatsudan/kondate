@@ -22,6 +22,13 @@ export type Entitlement = {
   cancelAtPeriodEnd: boolean;
   trialEnd: string | null;
   dbPlusEntitled: boolean;
+  /** RPC の past_due_since。kill 復元で past_due grace を再計算する */
+  pastDueSince?: string | null;
+  /**
+   * kill 中に unpaid へ落としたときの元 status。
+   * BILLING_ENABLED 復帰後、次 webhook を待たずに投影を戻す（B3）。
+   */
+  killSourceStatus?: BillingSubscriptionStatus | null;
 };
 
 /** past_due 猶予（時間）。SQL の interval '72 hours' と一致させる */
@@ -78,10 +85,51 @@ export function computePlusEntitled(
   return { plusEntitled: false, pastDueGrace: false };
 }
 
+const KILL_RESTORABLE_STATUSES = new Set<BillingSubscriptionStatus>([
+  "trialing",
+  "active",
+  "past_due",
+  "canceled",
+]);
+
+/**
+ * kill 中 unpaid 投影を、BILLING_ENABLED 復帰後に元 status から戻す（B3）。
+ * persist の unpaid 落とし（A3）は残し、読取側だけ復元する。次 webhook は待たない。
+ * unknown price の unpaid（kill_source 無し）は触らない。
+ */
+export function restoreKillMaskedEntitlement(
+  entitlement: Entitlement,
+  billingEnabled: boolean,
+  now: Date = new Date(),
+): Entitlement {
+  if (!billingEnabled) return entitlement;
+  const source = entitlement.killSourceStatus;
+  if (source == null || entitlement.status !== "unpaid") return entitlement;
+  if (!KILL_RESTORABLE_STATUSES.has(source)) return entitlement;
+  const periodEnd = entitlement.currentPeriodEnd;
+  if (periodEnd == null) return entitlement;
+  const recomputed = computePlusEntitled(
+    {
+      status: source,
+      past_due_since: entitlement.pastDueSince ?? null,
+      current_period_end: periodEnd,
+    },
+    now,
+  );
+  return {
+    ...entitlement,
+    status: source,
+    plusEntitled: recomputed.plusEntitled,
+    pastDueGrace: recomputed.pastDueGrace,
+    plan: recomputed.plusEntitled ? "plus" : "free",
+  };
+}
+
 /** BILLING_ENABLED=false → 常に free limits（A3 枠面） */
 export function applyQuotaPlan(entitlement: Entitlement, billingEnabled: boolean): PlanCode {
   if (!billingEnabled) return "free";
-  return entitlement.plusEntitled ? "plus" : "free";
+  const restored = restoreKillMaskedEntitlement(entitlement, billingEnabled);
+  return restored.plusEntitled ? "plus" : "free";
 }
 
 /**
@@ -95,20 +143,23 @@ export function productSurfacesOpen(billingEnabled: boolean): boolean {
 /**
  * GET /api/billing/entitlement 用: DB 投影 + kill 分割面を合成する。
  * productSurfacesOpen / quotaPlan は env.billingEnabled 由来。
+ * B5: plusEntitled は usage.plusEntitled と同義（quotaPlan === "plus"）。
+ * dbPlusEntitled だけが BILLING_ENABLED 非依存の DB 生値。
  */
 export function toEntitlementData(
   entitlement: Entitlement,
   billingEnabled: boolean,
 ): EntitlementData {
+  const restored = restoreKillMaskedEntitlement(entitlement, billingEnabled);
   const quotaPlan = applyQuotaPlan(entitlement, billingEnabled);
   return {
-    plan: entitlement.plan,
-    status: entitlement.status,
-    plusEntitled: entitlement.plusEntitled,
-    pastDueGrace: entitlement.pastDueGrace,
-    currentPeriodEnd: entitlement.currentPeriodEnd,
-    cancelAtPeriodEnd: entitlement.cancelAtPeriodEnd,
-    trialEnd: entitlement.trialEnd,
+    plan: restored.plan,
+    status: restored.status,
+    plusEntitled: quotaPlan === "plus",
+    pastDueGrace: restored.pastDueGrace,
+    currentPeriodEnd: restored.currentPeriodEnd,
+    cancelAtPeriodEnd: restored.cancelAtPeriodEnd,
+    trialEnd: restored.trialEnd,
     dbPlusEntitled: entitlement.dbPlusEntitled,
     productSurfacesOpen: productSurfacesOpen(billingEnabled),
     quotaPlan,
@@ -141,6 +192,19 @@ const entitlementRpcSchema = z
     trial_end: z.string().nullable(),
     db_plus_entitled: z.boolean(),
     past_due_since: z.string().nullable().optional(),
+    kill_source_status: z
+      .enum([
+        "trialing",
+        "active",
+        "past_due",
+        "canceled",
+        "unpaid",
+        "incomplete",
+        "incomplete_expired",
+        "paused",
+      ])
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -171,6 +235,8 @@ export async function loadEntitlement(userId: string): Promise<Entitlement> {
       cancelAtPeriodEnd: parsed.data.cancel_at_period_end,
       trialEnd: parsed.data.trial_end,
       dbPlusEntitled: parsed.data.db_plus_entitled,
+      pastDueSince: parsed.data.past_due_since ?? null,
+      killSourceStatus: parsed.data.kill_source_status ?? null,
     };
   } catch (error: unknown) {
     if (error instanceof BillingEntitlementUnavailableError) throw error;

@@ -33,10 +33,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): AdminConfig {
   }
 
   const port = parsePort(env.ADMIN_PORT, 5193);
-  const bindHost =
-    typeof env.ADMIN_BIND_HOST === "string" && env.ADMIN_BIND_HOST.length > 0
-      ? env.ADMIN_BIND_HOST
-      : "0.0.0.0";
+  // 空/欠落は loopback。0.0.0.0 は明示時のみ（compose 内 listen 用）。
+  const rawBind = typeof env.ADMIN_BIND_HOST === "string" ? env.ADMIN_BIND_HOST.trim() : "";
+  const bindHost = rawBind.length > 0 ? rawBind : "127.0.0.1";
 
   const tokenRaw = env.ADMIN_LOCAL_TOKEN;
   // ADM5: 空は従来どおり optional null。非空かつ短すぎる token は fail-closed。
@@ -66,7 +65,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): AdminConfig {
 export function connectionHostLabel(databaseUrl: string): string {
   try {
     const u = new URL(databaseUrl);
-    const port = u.port || (u.protocol === "postgresql:" || u.protocol === "postgres:" ? "5432" : "");
+    const port =
+      u.port || (u.protocol === "postgresql:" || u.protocol === "postgres:" ? "5432" : "");
     return port ? `${u.hostname}:${port}` : u.hostname;
   } catch {
     return "(unknown)";

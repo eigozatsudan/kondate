@@ -88,6 +88,14 @@ describe("buildPreviewFromPayload", () => {
     expect(json).not.toContain("44444444-4444-4444-8444-444444444444");
   });
 
+  it("AO5 residual: operator preview keeps pool text (no second denylist)", () => {
+    const payload = minimalValidPayload();
+    payload.dishes[0].name = "太郎の肉じゃが";
+    const r = buildPreviewFromPayload(payload);
+    expect(r.previewError).toBeNull();
+    expect(r.preview?.dishes[0]?.name).toBe("太郎の肉じゃが");
+  });
+
   it("returns invalid_menu_payload for dishes:[null] without throwing", () => {
     // ネスト null 要素で投影が TypeError にならないこと（500 ではなく previewError）
     const payload = {

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   assertMaterializationRefUnion,
   assertUniqueLocalRefDeclarations,
+  capExcludedDishSignatures,
   dishRegenerationAiOutputSchema,
   dishRegenerationPromptSchema,
+  excludedDishSignaturesMax,
   regenerateDishRequestSchema,
   retainedDishPromptSchema,
   wholeRegenerationPromptSchema,
@@ -197,6 +199,177 @@ describe("regeneration contracts", () => {
       excludedDishSignatures: [],
     });
     expect(dishPrompt.replaceDishRef).toBe("dish_9");
+  });
+
+  it("accepts source and AI timeline of 60 to match generatedMenu max", () => {
+    const retained = makeRetainedDishPrompt();
+    const timelineStep = {
+      timelineRef: "timeline_1",
+      position: 1,
+      startMinute: 0,
+      durationMinutes: 1,
+      instruction: "手順",
+      dishRef: "dish_1" as const,
+      stepRef: "step_1" as const,
+    };
+    const sixty = Array.from({ length: 60 }, (_, index) => ({
+      ...timelineStep,
+      timelineRef: `timeline_${String(index + 1)}`,
+      position: index + 1,
+    }));
+    const prompt = dishRegenerationPromptSchema.parse({
+      mode: "dish",
+      reason: "simpler",
+      changeReasonCustom: null,
+      replaceDishRef: "dish_9",
+      sourceDishToReplace: {
+        ...retained,
+        dishRef: "dish_9",
+        role: "main",
+        position: 1,
+        name: "元の主菜",
+      },
+      retainedDishes: [retained],
+      sourceTimeline: sixty,
+      sourceAdaptations: [],
+      sourcePantryUsage: [],
+      sourceLabelConfirmations: [],
+      excludedDishSignatures: [],
+    });
+    expect(prompt.sourceTimeline).toHaveLength(60);
+
+    const output = makeDishRegenerationAiOutput();
+    expect(
+      dishRegenerationAiOutputSchema.parse({
+        ...output,
+        timeline: sixty.map((step) => ({ ...step, dishRef: "dish_2", stepRef: "step_10" })),
+      }).timeline,
+    ).toHaveLength(60);
+  });
+
+  it("rejects regeneration timeline of 61", () => {
+    const retained = makeRetainedDishPrompt();
+    const sixtyOne = Array.from({ length: 61 }, (_, index) => ({
+      timelineRef: `timeline_${String(index + 1)}`,
+      position: index + 1,
+      startMinute: 0,
+      durationMinutes: 1,
+      instruction: "手順",
+      dishRef: "dish_1",
+      stepRef: "step_1",
+    }));
+    expect(
+      dishRegenerationPromptSchema.safeParse({
+        mode: "dish",
+        reason: "simpler",
+        changeReasonCustom: null,
+        replaceDishRef: "dish_9",
+        sourceDishToReplace: {
+          ...retained,
+          dishRef: "dish_9",
+          role: "main",
+          position: 1,
+          name: "元の主菜",
+        },
+        retainedDishes: [retained],
+        sourceTimeline: sixtyOne,
+        sourceAdaptations: [],
+        sourcePantryUsage: [],
+        sourceLabelConfirmations: [],
+        excludedDishSignatures: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...makeDishRegenerationAiOutput(),
+        timeline: sixtyOne,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects dishRefs above persist max 5 so OpenRouter cannot burn a try", () => {
+    const output = makeDishRegenerationAiOutput();
+    const sixRefs = ["dish_1", "dish_2", "dish_3", "dish_4", "dish_5", "dish_6"];
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [{ ...output.pantryUsage[0]!, dishRefs: sixRefs }],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [
+          {
+            ...output.pantryUsage[0]!,
+            dishRefs: ["dish_1", "dish_2", "dish_3", "dish_4", "dish_5"],
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects persist-invalid pantryUsage at the AI schema so a try is not burned", () => {
+    const output = makeDishRegenerationAiOutput();
+    const baseUsage = output.pantryUsage[0]!;
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [{ ...baseUsage, priority: "must_use", usageStatus: "unused" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [{ ...baseUsage, usageStatus: "used", dishRefs: [] }],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [{ ...baseUsage, usageStatus: "used", unusedReason: "使わなかった" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects AI timeline whose start+duration exceeds persist totalElapsed 180", () => {
+    const output = makeDishRegenerationAiOutput();
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        timeline: [{ ...output.timeline[0]!, startMinute: 180, durationMinutes: 20 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        timeline: [{ ...output.timeline[0]!, startMinute: 0, durationMinutes: 180 }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts 200 excluded signatures and rejects 201 without raising the cap", () => {
+    expect(excludedDishSignaturesMax).toBe(200);
+    const twoHundred = Array.from({ length: 200 }, (_, index) => `sig-${String(index + 1)}`);
+    const twoHundredOne = [...twoHundred, "sig-201"];
+    expect(
+      wholeRegenerationPromptSchema.safeParse({
+        mode: "whole",
+        reason: "simpler",
+        changeReasonCustom: null,
+        excludedDishSignatures: twoHundred,
+      }).success,
+    ).toBe(true);
+    expect(
+      wholeRegenerationPromptSchema.safeParse({
+        mode: "whole",
+        reason: "simpler",
+        changeReasonCustom: null,
+        excludedDishSignatures: twoHundredOne,
+      }).success,
+    ).toBe(false);
+    expect(capExcludedDishSignatures(twoHundredOne)).toHaveLength(200);
+    expect(capExcludedDishSignatures(twoHundred)).toHaveLength(200);
   });
 });
 

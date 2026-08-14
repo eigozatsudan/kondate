@@ -86,6 +86,7 @@ import {
   loadRegenerationExecutionContext,
   materializeDishRegenerationCandidate,
   reloadExistingDerivationMenus,
+  requireRegenerationArtifacts,
   toRetainedDishPrompt,
   type LoaderDeps,
 } from "./regeneration-context.js";
@@ -524,6 +525,65 @@ describe("loadRegenerationExecutionContext", () => {
     expect(context.startedAtMonotonicMs).toBe(1_000);
   });
 
+  it("caps dish regeneration excludedDishSignatures at 200 so load does not throw ZodError", async () => {
+    const source = makeStoredMenu();
+    const group = Array.from({ length: 101 }, (_, index) =>
+      makeStoredMenu({
+        menu: makeValidatedMenu({
+          menuId: `b1000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        }),
+      }),
+    );
+    group[0] = source;
+    const deps = makeLoaderDeps(source, { group, recent: [] });
+    snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+      const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+      return Promise.resolve({
+        data: [
+          {
+            request_id: args.p_request_id,
+            user_id: args.p_user_id,
+            kind: "regenerate_dish",
+            source_menu_id: source.menu.menuId,
+            source_menu_version: source.version,
+            replace_dish_id: dish2Id,
+            target_mode: "household",
+            servings: 2,
+            target_member_ids: [...source.targetMemberIds],
+            created_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+        error: null,
+      });
+    });
+    const loaded = await loadRegenerationExecutionContext(
+      deps,
+      user,
+      {
+        commandVersion: "generation-command.v3",
+        kind: "regenerate_dish",
+        qualityMode: false,
+        request: {
+          sourceMenuId: source.menu.menuId,
+          dishId: dish2Id,
+          idempotencyKey: "82000000-0000-4000-8000-000000000001",
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      "91000000-0000-4000-8000-000000000001",
+      50_000,
+    );
+    expect(loaded.kind).toBe("regenerate_dish");
+    if (loaded.kind !== "regenerate_dish") throw new Error("expected regenerate_dish");
+    const flat = loaded.regeneration.existingDerivationMenus.flatMap((menu) => menu.dishSignatures);
+    expect(flat.length).toBeGreaterThan(200);
+    const artifacts = requireRegenerationArtifacts(loaded.regeneration.artifacts);
+    expect(artifacts.promptDto?.excludedDishSignatures).toHaveLength(200);
+  });
+
   it("requires at least one surviving current target member", async () => {
     const deps = makeLoaderDeps(
       makeStoredMenu({
@@ -566,6 +626,31 @@ describe("loadRegenerationExecutionContext", () => {
         50_000,
       ),
     ).rejects.toMatchObject({ code: "current_safety_revalidation_required" });
+  });
+
+  it("does not map source guarantee phrases to current_safety_revalidation_required", async () => {
+    // G2: 歴史行の「安全です」は家族 allergen/food-rules 失敗ではない。
+    // ソース関門を 422 current_safety_revalidation_required に畳むと、
+    // 家族安全 OK のまま「家族設定では使えない」と誤誘導し再生成が始まらない。
+    const base = makeStoredMenu();
+    const source = makeStoredMenu({
+      menu: {
+        ...base.menu,
+        dishes: base.menu.dishes.map((dish, index) =>
+          index === 0 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
+        ),
+      },
+    });
+    const deps = makeLoaderDeps(source);
+    const context = await loadRegenerationExecutionContext(
+      deps,
+      user,
+      dishCommand,
+      "91000000-0000-4000-8000-000000000001",
+      50_000,
+    );
+    expect(context.kind).toBe("regenerate_dish");
+    expect(deps.buildCurrentContext).toHaveBeenCalled();
   });
 
   it("maps foreign or missing source to source_menu_changed before current context", async () => {
@@ -1326,6 +1411,36 @@ describe("materializeDishRegenerationCandidate", () => {
         (row) => !("confirmedAt" in row) && !("confirmedBy" in row),
       ),
     ).toBe(true);
+  });
+
+  it("strips retained-dish guarantee phrases from the materialized candidate", () => {
+    // G3: 保持料理の「安全です」を新 UUID 行へ再 persist / 表示しない。
+    const { execution, uuid } = makeDishRegenerationExecutionContext();
+    const guaranteedExecution = {
+      ...execution,
+      regeneration: {
+        ...execution.regeneration,
+        artifacts: {
+          ...execution.regeneration.artifacts,
+          retainedDishes: execution.regeneration.artifacts.retainedDishes.map((dish) =>
+            dish.name === "保持する副菜"
+              ? { ...dish, description: "小麦アレルギーでも安全です" }
+              : dish,
+          ),
+        },
+      },
+    };
+    const candidate = materializeDishRegenerationCandidate(
+      guaranteedExecution,
+      makeDishRegenerationAiOutput(),
+      uuid,
+    );
+    const retained = candidate.dishes.find((dish) => dish.name === "保持する副菜");
+    expect(retained).toBeDefined();
+    expect(retained?.description.includes("安全です")).toBe(false);
+    // 葉全体プレースホルダにすると小麦針が消え、persist 後の世帯変更再検証が開く
+    expect(retained?.description).toContain("小麦");
+    expect(retained?.description).not.toBe("料理の説明");
   });
 
   it("normalizes non-pantry tablespoon quantities on replacement dish", () => {

@@ -374,5 +374,55 @@ describe("FeedbackSection", () => {
     ).toBeVisible();
     // AP9: 画面パス添付の開示
     expect(screen.getByText(/いま開いている画面のパス/u)).toBeVisible();
+    // AP8: 本文保管・運用閲覧
+    expect(screen.getByText(/平文のまま約30日間保管/u)).toBeVisible();
+    expect(screen.getByText(/運営が確認のために読む/u)).toBeVisible();
+  });
+
+  it("AP13: localStorage reject falls back to sessionStorage sticky", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    const text = "保存拒否でも同じ本文の再送を抑止する内容です。";
+    vi.stubGlobal("localStorage", {
+      get length() {
+        return 0;
+      },
+      clear() {
+        return undefined;
+      },
+      getItem() {
+        return null;
+      },
+      key() {
+        return null;
+      },
+      removeItem() {
+        return undefined;
+      },
+      setItem() {
+        throw new DOMException("QuotaExceededError");
+      },
+    } satisfies Storage);
+    try {
+      const { unmount } = render(<FeedbackSection />);
+      await expandFeedback(user);
+      await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+      await user.click(screen.getByRole("button", { name: "送信する" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+      const stored = sessionStorage.getItem(stickyKey);
+      expect(typeof stored).toBe("string");
+      expect(stored).toMatch(/^[0-9a-f]{64}$/u);
+
+      unmount();
+      fetchMock.mockClear();
+      render(<FeedbackSection />);
+      await expandFeedback(user);
+      await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+      await user.click(screen.getByRole("button", { name: "送信する" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("同じ内容を再送すると重複");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

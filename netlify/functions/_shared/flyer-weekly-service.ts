@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   flyerWeeklyIssueMessages,
+  weeklyFlyerMenuResultSchema,
   weeklyFlyerMenuSchema,
   type WeeklyFlyerMenu,
   type WeeklyFlyerMenuResult,
@@ -20,12 +21,14 @@ import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
 import { planQuota } from "../../../shared/contracts/plan-quota.js";
 import { foodTextContainsAlias, normalizeFoodText } from "../../../shared/safety/allergens.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
+import { collectGuaranteePhraseIssuesFromFlyerMenu } from "../../../shared/safety/guarantee-phrases.js";
 import {
   applyQuotaPlan,
   BillingEntitlementUnavailableError,
   limitsForPlan,
   loadEntitlement,
   productSurfacesOpen,
+  type Entitlement,
 } from "./billing-entitlement.js";
 import { loadCurrentSafetyContext } from "./current-safety.js";
 import { getServerEnv } from "./env.js";
@@ -34,6 +37,7 @@ import { HttpError } from "./http.js";
 import { safeLog } from "./logger.js";
 import {
   createOpenRouterGenerationSender,
+  ensureOpenRouterRuntimeModelPolicy,
   OpenRouterCallError,
   type OpenRouterGenerationResult,
   type OpenRouterMessage,
@@ -133,6 +137,15 @@ export type FlyerWeeklyDeps = {
    * 未指定時は privacy_consents を user-scoped に読む（生成経路と同型）。
    */
   assertPrivacyConsent?: (user: FlyerWeeklyAuthUser) => Promise<void>;
+  /**
+   * PE5: mark 前の Models 政策。未指定時は env から ensureOpenRouterRuntimeModelPolicy。
+   * 失敗は p_sent:false（try 非消費）。allowlist / 価格定数は変えない。
+   */
+  ensureOpenRouterModelPolicy?: (input: { models: readonly string[] }) => Promise<void>;
+  /**
+   * PE2: Plus 短絡時の台帳参照。未指定時は lookup_flyer_weekly（新規 reserve しない）。
+   */
+  lookupFlyerWeekly?: (input: { userId: string; idempotencyKey: string }) => Promise<unknown>;
 };
 
 /**
@@ -151,6 +164,16 @@ export async function assertFlyerPrivacyConsent(user: FlyerWeeklyAuthUser): Prom
   if (consentResult.error !== null || !consent.success || consent.data.user_id !== user.userId) {
     throw new HttpError(422, "consent_required", "最新の利用説明への同意が必要です。");
   }
+}
+
+/**
+ * flyer 第一関門。usage と同じく restore 後の plus を見る（B-R2）。
+ * 生 plusEntitled（kill unpaid）で短絡しない。
+ */
+export function isFlyerPlusAllowed(entitlement: Entitlement, billingEnabled: boolean): boolean {
+  return (
+    productSurfacesOpen(billingEnabled) && applyQuotaPlan(entitlement, billingEnabled) === "plus"
+  );
 }
 
 function entitlementUnavailableHttpError(): HttpError {
@@ -187,14 +210,16 @@ function mapFailureHttp(code: string, retryAt: string | null = null): never {
             ? 429
             : code === "model_unavailable" || code === "generation_timeout"
               ? 503
-              : code === "allergy_unconfirmed" ||
-                  code === "allergen_missing" ||
-                  code === "unsupported_diet_unconfirmed" ||
-                  code === "unsupported_diet" ||
-                  code === "current_target_member_required" ||
-                  code === "consent_required"
-                ? 422
-                : 400;
+              : code === "safety_context_failed"
+                ? 500
+                : code === "allergy_unconfirmed" ||
+                    code === "allergen_missing" ||
+                    code === "unsupported_diet_unconfirmed" ||
+                    code === "unsupported_diet" ||
+                    code === "current_target_member_required" ||
+                    code === "consent_required"
+                  ? 422
+                  : 400;
   throw new HttpError(status, code, message, retryAt ? { retryAt } : undefined);
 }
 
@@ -247,6 +272,11 @@ function rejectFlyerSafetyHit(): never {
     "flyer_invalid_ai_response",
     flyerWeeklyIssueMessages.flyer_invalid_ai_response,
   );
+}
+
+/** 検査集合の DB / 一時障害。400 に写すと sticky が消え同一画像が新 key になる。 */
+function inspectionSafetyUnavailable(): HttpError {
+  return new HttpError(500, "safety_context_failed", "現在の安全条件を読み込めませんでした");
 }
 
 /** draft メンバーの member_allergies 行（検査用 union 入力）。 */
@@ -335,11 +365,7 @@ export async function loadFlyerInspectionSafety(
     .eq("status", "complete")
     .order("sort_order", { ascending: true });
   if (memberError !== null) {
-    throw new HttpError(
-      400,
-      "flyer_invalid_ai_response",
-      flyerWeeklyIssueMessages.flyer_invalid_ai_response,
-    );
+    throw inspectionSafetyUnavailable();
   }
   const memberIds = (Array.isArray(memberRows) ? memberRows : []).map(
     (row: { id: string }) => row.id,
@@ -383,11 +409,7 @@ export async function loadFlyerInspectionSafety(
     .eq("user_id", userId)
     .eq("status", "draft");
   if (draftMemberError !== null) {
-    throw new HttpError(
-      400,
-      "flyer_invalid_ai_response",
-      flyerWeeklyIssueMessages.flyer_invalid_ai_response,
-    );
+    throw inspectionSafetyUnavailable();
   }
   const draftMemberIds = (Array.isArray(draftMemberRows) ? draftMemberRows : []).map(
     (row: { id: string }) => row.id,
@@ -399,15 +421,24 @@ export async function loadFlyerInspectionSafety(
     .eq("user_id", userId)
     .in("member_id", draftMemberIds);
   if (draftAllergyError !== null) {
-    throw new HttpError(
-      400,
-      "flyer_invalid_ai_response",
-      flyerWeeklyIssueMessages.flyer_invalid_ai_response,
-    );
+    throw inspectionSafetyUnavailable();
   }
   return appendDraftMemberAllergiesForFlyerInspection(
     safety,
     Array.isArray(draftAllergyRows) ? draftAllergyRows : [],
+  );
+}
+
+/**
+ * persist / UI に「安全です」等を残さない。生成の collectGuaranteePhraseIssues と同針。
+ * ヒットは 400 flyer_invalid_ai_response（新 code は足さない）。
+ */
+export function assertFlyerMenuHasNoGuaranteePhrases(menu: WeeklyFlyerMenu): void {
+  if (collectGuaranteePhraseIssuesFromFlyerMenu(menu).length === 0) return;
+  throw new HttpError(
+    400,
+    "flyer_invalid_ai_response",
+    flyerWeeklyIssueMessages.flyer_invalid_ai_response,
   );
 }
 
@@ -448,6 +479,79 @@ export function assertFlyerMenuAgainstSafety(
       }
     }
   }
+}
+
+const flyerLookupMissSchema = z.object({ kind: z.literal("miss") }).strict();
+
+async function defaultLookupFlyerWeekly(
+  admin: AdminSupabaseClient,
+  userId: string,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const { data, error } = await rpcUntyped(admin, "lookup_flyer_weekly", {
+    p_user_id: userId,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error !== null) {
+    throw new HttpError(500, "internal_error", issueMessages.internal_error);
+  }
+  return data;
+}
+
+/**
+ * 既 terminal succeeded の台帳本文を現行 safety 再 assert のうえ返す。
+ * result 欠損 / Zod 非適合は PE13 どおり fail-closed。
+ */
+async function replaySucceededFlyerMenu(
+  admin: AdminSupabaseClient,
+  userId: string,
+  reserve: z.infer<typeof reservePayloadSchema>,
+  requestIdForLog: string,
+): Promise<{ menu: WeeklyFlyerMenuResult; requestId: string }> {
+  if (reserve.result == null) {
+    throw new HttpError(400, "internal_error", issueMessages.internal_error);
+  }
+  // PE7: 再生は weekStartJst 必須の Result schema。弱い AI schema + cast で必須をスキップしない。
+  const parsedResult = weeklyFlyerMenuResultSchema.safeParse(reserve.result);
+  if (!parsedResult.success) {
+    throw new HttpError(400, "internal_error", issueMessages.internal_error);
+  }
+  const menu = parsedResult.data;
+  const inspectionSafety = await loadFlyerInspectionSafety(admin, userId);
+  assertFlyerMenuAgainstSafety(menu, inspectionSafety);
+  return { menu, requestId: reserve.request_id ?? requestIdForLog };
+}
+
+/**
+ * PE11: persist + reserved→success が終わるまで 200 にしない。
+ * finalize 失敗時は本文を stash して 500。同一キー再入場 / cleanup が枠を空けずに確定する。
+ * finalize_failure は呼ばない（reserved を解放すると successPerJstWeek を踏まず 200 を繰り返せる）。
+ */
+async function commitFlyerWeeklySuccess(
+  admin: AdminSupabaseClient,
+  requestId: string,
+  resultMenu: WeeklyFlyerMenuResult,
+  started: number,
+): Promise<void> {
+  const { error: finError } = await rpcUntyped(admin, "finalize_flyer_weekly_success", {
+    p_request_id: requestId,
+    p_result: resultMenu,
+  });
+  if (finError === null) return;
+
+  await rpcUntyped(admin, "stash_flyer_weekly_result", {
+    p_request_id: requestId,
+    p_result: resultMenu,
+  });
+  safeLog({
+    level: "error",
+    requestId,
+    code: "flyer_finalize_success_failed",
+    durationMs: performance.now() - started,
+    flyer: true,
+    plan: "plus",
+  });
+  throw new HttpError(500, "internal_error", issueMessages.internal_error);
 }
 
 function buildFlyerMessages(dataUrl: string): OpenRouterMessage[] {
@@ -501,8 +605,31 @@ export async function runFlyerWeekly(
     throw entitlementUnavailableHttpError();
   }
 
-  // Free / kill switch: reserve 前 403（台帳非接触）
-  if (!productSurfacesOpen(env.billingEnabled) || !entitlement.plusEntitled) {
+  const admin = getSupabaseAdmin();
+  const plusAllowed =
+    isFlyerPlusAllowed(entitlement, env.billingEnabled) &&
+    applyQuotaPlan(entitlement, env.billingEnabled) === "plus";
+
+  // PE2: 新規 reserve は従来どおり 403。既 terminal succeeded の同一キーだけ
+  // Plus / kill switch 短絡の前に台帳 hit を見て、現行 safety 再 assert のうえ再生する。
+  if (!plusAllowed) {
+    const lookupFlyer =
+      deps.lookupFlyerWeekly ??
+      (async (input: { userId: string; idempotencyKey: string }) =>
+        defaultLookupFlyerWeekly(admin, input.userId, input.idempotencyKey));
+    const lookupRaw = await lookupFlyer({
+      userId: deps.user.userId,
+      idempotencyKey,
+    });
+    if (!flyerLookupMissSchema.safeParse(lookupRaw).success) {
+      const lookedUp = reservePayloadSchema.safeParse(lookupRaw);
+      if (!lookedUp.success) {
+        throw new HttpError(500, "internal_error", issueMessages.internal_error);
+      }
+      if (lookedUp.data.status === "succeeded") {
+        return replaySucceededFlyerMenu(admin, deps.user.userId, lookedUp.data, requestIdForLog);
+      }
+    }
     safeLog({
       level: "info",
       requestId: requestIdForLog,
@@ -511,11 +638,6 @@ export async function runFlyerWeekly(
       flyer: true,
       plan: "free",
     });
-    throw new HttpError(403, "flyer_requires_plus", flyerWeeklyIssueMessages.flyer_requires_plus);
-  }
-
-  const quotaPlan = applyQuotaPlan(entitlement, env.billingEnabled);
-  if (quotaPlan !== "plus") {
     throw new HttpError(403, "flyer_requires_plus", flyerWeeklyIssueMessages.flyer_requires_plus);
   }
 
@@ -536,7 +658,6 @@ export async function runFlyerWeekly(
 
   const limits = limitsForPlan("plus");
   const identityKey = computeQuotaIdentityKey(env.quotaIdentityHmacKey, deps.user.email);
-  const admin = getSupabaseAdmin();
 
   const { data: reserveRaw, error: reserveError } = await rpcUntyped(
     admin,
@@ -575,27 +696,47 @@ export async function runFlyerWeekly(
   // PE13: succeeded は result 有無に関わらず mark パイプラインへ落とさない。
   // result null / Zod 非適合は fail-closed（壊れた成功行に再入場して 500 ループしない）。
   // 4xx internal_error でクライアント sticky を clear（PE1 隣接: 同一 key 束縛を断つ）。
-  // 健全な result は PE2 どおり現行 safety を再 assert（terminal 非破壊・拒否のみ）。
+  // 健全な result は現行 safety を再 assert（terminal 非破壊・拒否のみ）。
   if (reserve.status === "succeeded") {
-    if (reserve.result == null) {
-      throw new HttpError(400, "internal_error", issueMessages.internal_error);
-    }
-    const parsedResult = weeklyFlyerMenuSchema.safeParse(reserve.result);
-    if (!parsedResult.success) {
-      throw new HttpError(400, "internal_error", issueMessages.internal_error);
-    }
-    const menu = parsedResult.data as WeeklyFlyerMenuResult;
-    const inspectionSafety = await loadFlyerInspectionSafety(admin, deps.user.userId);
-    assertFlyerMenuAgainstSafety(menu, inspectionSafety);
-    return { menu, requestId: reserve.request_id ?? requestIdForLog };
+    return replaySucceededFlyerMenu(admin, deps.user.userId, reserve, requestIdForLog);
   }
 
-  // PE1: 同一 key の processing 冪等 hit（replayed）はパイプライン再入場しない。
-  // generation と同様 hydrate/in-progress のみ。budget・mark 失敗枝で
-  // finalize_flyer_weekly_failure すると先着 in-flight を failed にし success 枠を解放してしまう。
-  // failed/succeeded を上で除外済みのため、ここでの status は processing に狭まっている。
-  // 新規予約（replayed でない processing）だけが mark → OpenRouter へ進む。
+  // PE1: 同一 key の processing 冪等 hit（replayed）は OpenRouter に再入場しない。
+  // PE11: 検証済み result が残っていれば finalize だけ再試行する（processing 409 のまま
+  // 再入場不可は PE6 回帰。finalize_failure は先着枠を解放するので呼ばない）。
+  // result が無い replay は従来どおり in-progress。
   if (reserve.replayed === true) {
+    const stashed = weeklyFlyerMenuSchema.safeParse(reserve.result);
+    if (stashed.success && reserve.request_id != null) {
+      const weekStart =
+        typeof reserve.week_start === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(reserve.week_start)
+          ? reserve.week_start
+          : (stashed.data.weekStartJst ?? jstWeekStartMonday(new Date()));
+      const resultMenu: WeeklyFlyerMenuResult = {
+        ...stashed.data,
+        weekStartJst: weekStart,
+      };
+      try {
+        const inspectionSafety = await loadFlyerInspectionSafety(admin, deps.user.userId);
+        assertFlyerMenuAgainstSafety(resultMenu, inspectionSafety);
+      } catch (error: unknown) {
+        // 一時的な検査障害は行を残し sticky を保つ。確定した safety 拒否だけ failure にする。
+        if (error instanceof HttpError && error.code === "safety_context_failed") {
+          throw error;
+        }
+        if (error instanceof HttpError) {
+          await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+            p_request_id: reserve.request_id,
+            p_failure_code: error.code,
+            p_sent: true,
+          });
+          throw error;
+        }
+        throw error;
+      }
+      await commitFlyerWeeklySuccess(admin, reserve.request_id, resultMenu, started);
+      return { menu: resultMenu, requestId: reserve.request_id };
+    }
     mapFailureHttp("generation_in_progress", reserve.retry_at ?? null);
   }
 
@@ -639,35 +780,54 @@ export async function runFlyerWeekly(
     mapFailureHttp("generation_timeout");
   }
 
-  // PE1 pre-mark: complete 0 人は OpenRouter 前に fail-closed（try を sent 化しない）
-  {
-    const { data: preMemberRows, error: preMemberError } = await admin
-      .from("household_members")
-      .select("id")
-      .eq("user_id", deps.user.userId)
-      .eq("status", "complete")
-      .limit(1);
-    if (preMemberError !== null) {
+  // PE1: mark / OpenRouter 前に generation と同型の member 安全ゲートを閉じる。
+  // complete 人数だけ見て unconfirmed / allergen_missing / diet を後回しにしない。
+  // mark 後の再検査は現行 safety 優先のため残す。
+  try {
+    await loadFlyerInspectionSafety(admin, deps.user.userId);
+  } catch (error: unknown) {
+    const code = error instanceof HttpError ? error.code : "internal_error";
+    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+      p_request_id: requestId,
+      p_failure_code: code,
+      p_sent: false,
+    });
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(500, "internal_error", issueMessages.internal_error);
+  }
+
+  // PE5: mark 前に Models 政策を閉じる（generation failBeforeSend と同型）。
+  // Models API 障害で try を焼かない。vision 必須の新契約は発明しない。
+  const ensureModelPolicy =
+    deps.ensureOpenRouterModelPolicy ??
+    (async ({ models }: { models: readonly string[] }) => {
+      await ensureOpenRouterRuntimeModelPolicy({
+        baseUrl: env.openRouter.baseUrl,
+        models,
+        apiKey: env.openRouter.apiKey,
+      });
+    });
+  try {
+    await ensureModelPolicy({ models: flyerModels });
+  } catch (error: unknown) {
+    if (error instanceof OpenRouterCallError && error.code === "model_unavailable") {
       await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
         p_request_id: requestId,
-        p_failure_code: "internal_error",
+        p_failure_code: "model_unavailable",
         p_sent: false,
       });
-      throw new HttpError(500, "internal_error", issueMessages.internal_error);
+      mapFailureHttp("model_unavailable");
     }
-    const preCount = Array.isArray(preMemberRows) ? preMemberRows.length : 0;
-    if (preCount === 0) {
-      await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
-        p_request_id: requestId,
-        p_failure_code: "current_target_member_required",
-        p_sent: false,
-      });
-      throw new HttpError(
-        422,
-        "current_target_member_required",
-        issueMessages.current_target_member_required,
-      );
-    }
+    throw error;
+  }
+  // ensure は Models API を食うことがあるため、成功後に送信予算を再ゲートする。
+  if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
+    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+      p_request_id: requestId,
+      p_failure_code: "generation_timeout",
+      p_sent: false,
+    });
+    mapFailureHttp("generation_timeout");
   }
 
   // mark sent（short + try→sent + attempt/global）
@@ -736,9 +896,29 @@ export async function runFlyerWeekly(
     mapFailureHttp("flyer_invalid_ai_response");
   }
 
+  // persist 前: 生成と同じ保証フレーズ針。ヒットは本文を残さず失敗。
+  try {
+    assertFlyerMenuHasNoGuaranteePhrases(parsedMenu.data);
+  } catch (error: unknown) {
+    if (error instanceof HttpError) {
+      await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+        p_request_id: requestId,
+        p_failure_code: error.code,
+        p_sent: true,
+      });
+      throw error;
+    }
+    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+      p_request_id: requestId,
+      p_failure_code: "flyer_invalid_ai_response",
+      p_sent: true,
+    });
+    mapFailureHttp("flyer_invalid_ai_response");
+  }
+
   // server current safety only（クライアント allergy は信頼しない）
   try {
-    // PE2: 初回も replay と同型の loadFlyerInspectionSafety（complete + draft union）
+    // 初回も replay と同型の loadFlyerInspectionSafety（complete + draft union）
     const inspectionSafety = await loadFlyerInspectionSafety(admin, deps.user.userId);
     // 辞書 alias + custom を foodTextContainsAlias（evaluateAllergens 同型）で検査
     assertFlyerMenuAgainstSafety(parsedMenu.data, inspectionSafety);
@@ -770,13 +950,9 @@ export async function runFlyerWeekly(
     weekStartJst: weekStart,
   };
 
-  const { error: finError } = await rpcUntyped(admin, "finalize_flyer_weekly_success", {
-    p_request_id: requestId,
-    p_result: resultMenu,
-  });
-  if (finError !== null) {
-    throw new HttpError(500, "internal_error", issueMessages.internal_error);
-  }
+  // PE11: finalize 失敗でも 200 すると reserved のまま cleanup が枠を空ける。
+  // 本文は stash、HTTP は 500。同一キー再 POST が finalize を再試行する。
+  await commitFlyerWeeklySuccess(admin, requestId, resultMenu, started);
 
   safeLog({
     level: "info",
@@ -797,7 +973,8 @@ export async function runFlyerWeekly(
 
 /**
  * テスト用: reserve 後の early 分岐を本体と同順で模倣する。
- * PE1: processing + replayed は OpenRouter 0・finalize 無し（in-progress）。
+ * PE1: processing + replayed は OpenRouter 0。
+ * PE11: 検証済み result がある replay は finalize 再試行相当（OpenRouter 無し）。
  */
 export async function runFlyerWeeklyWithReserveStub(options: {
   reserveResult: unknown;
@@ -812,6 +989,16 @@ export async function runFlyerWeeklyWithReserveStub(options: {
 }): Promise<{ openRouterCalls: number; errorCode?: string }> {
   let openRouterCalls = 0;
   if (!options.billingEnabled || !options.plusEntitled) {
+    // PE2: 新規は 403。既 terminal succeeded だけ台帳本文を再生する（OpenRouter 0）。
+    const deniedReserve = reservePayloadSchema.safeParse(options.reserveResult);
+    if (
+      deniedReserve.success &&
+      deniedReserve.data.status === "succeeded" &&
+      deniedReserve.data.result != null &&
+      weeklyFlyerMenuResultSchema.safeParse(deniedReserve.data.result).success
+    ) {
+      return { openRouterCalls: 0 };
+    }
     return { openRouterCalls: 0, errorCode: "flyer_requires_plus" };
   }
   // PRIV-1: Plus でも未同意なら OpenRouter に触れない
@@ -830,15 +1017,18 @@ export async function runFlyerWeeklyWithReserveStub(options: {
     if (reserve.result == null) {
       return { openRouterCalls: 0, errorCode: "internal_error" };
     }
-    const parsed = weeklyFlyerMenuSchema.safeParse(reserve.result);
+    const parsed = weeklyFlyerMenuResultSchema.safeParse(reserve.result);
     if (!parsed.success) {
       return { openRouterCalls: 0, errorCode: "internal_error" };
     }
     return { openRouterCalls: 0 };
   }
-  // PE1: 冪等 hit の processing はパイプライン再入場しない
-  // failed/succeeded を上で排除済みのため status は processing に絞られる
+  // PE1: 冪等 hit の processing は OpenRouter 再入場しない
+  // PE11: stash 済み result は finalize 再試行相当（OpenRouter 0・エラーなし）
   if (reserve.replayed === true) {
+    if (reserve.result != null && weeklyFlyerMenuSchema.safeParse(reserve.result).success) {
+      return { openRouterCalls: 0 };
+    }
     return { openRouterCalls: 0, errorCode: "generation_in_progress" };
   }
   openRouterCalls += 1;

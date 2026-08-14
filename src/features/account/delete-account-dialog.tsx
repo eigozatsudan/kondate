@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { accountDeletionAnonymousShareNote } from "@/features/privacy/privacy-copy";
+import {
+  accountDeletionAnonymousShareNote,
+  accountDeletionOtherDeviceNote,
+  accountDeletionProviderPromptNote,
+  accountDeletionSharedDeviceNote,
+  accountDeletionStripeResidualNote,
+  shareInFlightSendNote,
+} from "@/features/privacy/privacy-copy";
 
 export type DeleteAccountDialogProps = {
   open: boolean;
@@ -47,6 +54,11 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
       </p>
       {/* AP4: 方針 B を削除直前に再開示（privacy 本文・runbook と一致） */}
       <p className="mt-2">{accountDeletionAnonymousShareNote}</p>
+      <p className="mt-2">{accountDeletionStripeResidualNote}</p>
+      <p className="mt-2">{accountDeletionProviderPromptNote}</p>
+      <p className="mt-2">{shareInFlightSendNote}</p>
+      <p className="mt-2">{accountDeletionOtherDeviceNote}</p>
+      <p className="mt-2">{accountDeletionSharedDeviceNote}</p>
       <p className="mt-2">
         有料プランに入っている場合は、先に解約が成功してからアカウントを削除します。解約できないときは削除を中止します（請求が続くことがあります）。請求の詳細はメール（Stripe）をご確認ください。
       </p>

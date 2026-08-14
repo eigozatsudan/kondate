@@ -8,6 +8,7 @@ import {
   isAllowlistedPlusPrice,
   projectionFromSubscription,
   resolveBillingUserId,
+  resolveKillSourceStatus,
   subscriptionHasAllowlistedPlusPrice,
   subscriptionIdFromInvoice,
   type BillingWebhookDeps,
@@ -755,7 +756,7 @@ describe("handleBillingWebhook", () => {
     expect(rpc.mock.calls.filter(([n]) => n === "process_billing_stripe_event")).toHaveLength(1);
   });
 
-  it("returns 200 billing_user_unmapped when user cannot be resolved and does not 500", async () => {
+  it("returns 500 billing_user_unmapped when user cannot be resolved so Stripe retries (B9)", async () => {
     const sub = makeSubscription({
       metadata: {},
       customer: "cus_unknown",
@@ -768,15 +769,66 @@ describe("handleBillingWebhook", () => {
       return { data: null, error: null };
     });
     const response = await handleBillingWebhook(signedRequest(), deps());
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({
-      ok: true,
-      data: { code: "billing_user_unmapped" },
+      ok: false,
+      error: { code: "billing_user_unmapped" },
     });
     expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
     expect(logSink).toHaveBeenCalledWith(
       expect.objectContaining({ code: "billing_user_unmapped", alertMetric: 1 }),
     );
+  });
+
+  it("returns 500 when invoice first retrieve throws and does not claim (B8)", async () => {
+    const invoice = {
+      id: "in_retrieve_fail",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, { id: "evt_invoice_retrieve_fail" }),
+    );
+    retrieve.mockRejectedValue(new Error("stripe 429"));
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "request_failed" },
+    });
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "billing_invoice_subscription_retrieve_failed",
+        alertMetric: 1,
+      }),
+    );
+  });
+
+  it("returns 500 billing_user_unmapped on invoice path so Stripe retries after map (B9)", async () => {
+    const invoice = {
+      id: "in_unmapped",
+      object: "invoice",
+      customer: "cus_unknown",
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, { id: "evt_invoice_unmapped" }),
+    );
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_stripe_id") {
+        return { data: {}, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "billing_user_unmapped" },
+    });
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
   });
 
   it("live-payload retry after discard cancel still projects keep active", async () => {
@@ -1423,9 +1475,134 @@ describe("handleBillingWebhook", () => {
         p_payload: Record<string, unknown>;
       }
     ).p_payload;
-    // kill 中も event は処理するが Plus になり得る status は unpaid へ落とす
+    // kill 中も event は処理するが Plus になり得る status は unpaid へ落とす（A3）
     expect(processPayload.status).toBe("unpaid");
     expect(processPayload.stripe_price_id).toBe("price_m");
+    // B3: 元 status を残し、解除後に webhook 無しで復元できるようにする
+    expect(processPayload.kill_source_status).toBe("active");
+  });
+
+  it("keeps past_due_since on kill-unpaid subscription projection (B-R5)", async () => {
+    // kill 中は status を unpaid にするが、元 past_due なら grace 起点を落とさない。
+    // SQL unpaid 枝は既存優先 coalesce。初回は既存 null なので payload が列に入る。
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", makeSubscription({ status: "past_due" }), {
+        id: "evt_kill_past_due",
+        created: 1_700_000_000,
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "past_due" }));
+    const response = await handleBillingWebhook(signedRequest(), deps({ billingEnabled: false }));
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.kill_source_status).toBe("past_due");
+    expect(processPayload.clear_past_due_since).toBe(false);
+    expect(processPayload.past_due_since).toBe(new Date(1_700_000_000 * 1000).toISOString());
+  });
+
+  it("keeps past_due_since on kill-unpaid invoice projection when retrieve is past_due (B-R5)", async () => {
+    const invoice = {
+      id: "in_kill_past_due",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.payment_failed", invoice, {
+        id: "evt_kill_invoice_past_due",
+        created: 1_700_000_100,
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "past_due" }));
+    const response = await handleBillingWebhook(signedRequest(), deps({ billingEnabled: false }));
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.kill_source_status).toBe("past_due");
+    expect(processPayload.clear_past_due_since).toBe(false);
+    expect(processPayload.past_due_since).toBe(new Date(1_700_000_100 * 1000).toISOString());
+  });
+
+  it("clears past_due_since on kill-unpaid when source is active (B-R7)", async () => {
+    // 設計: active/trialing 復帰で since=NULL。kill 中は persist が unpaid でも
+    // guard 前 status で clear を立てる。立てないと解除後の次 past_due が古い T0 を残す。
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", makeSubscription({ status: "active" }), {
+        id: "evt_kill_active_clear_since",
+        created: 1_700_000_200,
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "active" }));
+    const response = await handleBillingWebhook(signedRequest(), deps({ billingEnabled: false }));
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.kill_source_status).toBe("active");
+    expect(processPayload.clear_past_due_since).toBe(true);
+    expect(processPayload.past_due_since).toBeUndefined();
+  });
+
+  it("clears past_due_since on kill-unpaid invoice.paid when retrieve is active (B-R7)", async () => {
+    const invoice = {
+      id: "in_kill_paid_active",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, {
+        id: "evt_kill_invoice_paid_active",
+        created: 1_700_000_300,
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "active" }));
+    const response = await handleBillingWebhook(signedRequest(), deps({ billingEnabled: false }));
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.kill_source_status).toBe("active");
+    expect(processPayload.clear_past_due_since).toBe(true);
+    expect(processPayload.past_due_since).toBeUndefined();
+  });
+
+  it("still sends later event.created as since candidate during kill unpaid (B-R6)", async () => {
+    // Function は既存行を見ないので毎回 event.created を載せる（初回 persist 用）。
+    // 後続で grace を伸ばさない契約は SQL unpaid else の coalesce(既存, payload)。
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", makeSubscription({ status: "past_due" }), {
+        id: "evt_kill_past_due_later",
+        created: 1_700_000_400,
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "past_due" }));
+    const response = await handleBillingWebhook(signedRequest(), deps({ billingEnabled: false }));
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.kill_source_status).toBe("past_due");
+    expect(processPayload.clear_past_due_since).toBe(false);
+    expect(processPayload.past_due_since).toBe(new Date(1_700_000_400 * 1000).toISOString());
   });
 
   it("demotes unknown price to unpaid and does not elevate Plus (B1)", async () => {
@@ -1458,6 +1635,7 @@ describe("handleBillingWebhook", () => {
     ).p_payload;
     expect(processPayload.status).toBe("unpaid");
     expect(processPayload.stripe_price_id).toBe("price_other_product");
+    expect(processPayload.kill_source_status).toBeNull();
   });
 
   it("releases lock by session id on checkout.session.completed webhook", async () => {
@@ -1651,6 +1829,17 @@ describe("guardSubscriptionProjection B1/B7", () => {
   it("demotes elevating status when billing kill switch is on", () => {
     const guarded = guardSubscriptionProjection(base, { billingEnabled: false, stripe });
     expect(guarded.status).toBe("unpaid");
+    expect(resolveKillSourceStatus(base.status, { billingEnabled: false, priceOk: true })).toBe(
+      "active",
+    );
+  });
+
+  it("does not record kill source for unknown-price unpaid", () => {
+    expect(resolveKillSourceStatus("active", { billingEnabled: false, priceOk: false })).toBeNull();
+  });
+
+  it("clears kill source when billing is enabled", () => {
+    expect(resolveKillSourceStatus("active", { billingEnabled: true, priceOk: true })).toBeNull();
   });
 
   it("keeps allowlisted active when billing enabled", () => {

@@ -579,7 +579,8 @@ function composeCandidate(
       return { kind: "invalid", issues: [{ code: "invalid_provider_menu" }] };
     }
     try {
-      // 保持料理の過去英語 description / 保証文を落とさない。今回の AI 出力だけ見る。
+      // 保持料理の過去英語 description は落とさない。今回の AI 出力だけ日本語を見る。
+      // 保証フレーズは AI 出力でも拒否し、保持料理は materialize で剥離する（G3）。
       const aiTextIssues = [
         ...collectNonJapaneseUserTextIssuesFromDishRegenAiOutput(result.output),
         ...collectGuaranteePhraseIssuesFromDishRegenAiOutput(result.output),

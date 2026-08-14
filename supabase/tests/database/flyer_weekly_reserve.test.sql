@@ -2,7 +2,7 @@
 -- Task 7: flyer weekly S1 no try mutation + release symmetry
 
 begin;
-select plan(12);
+select plan(15);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -198,6 +198,35 @@ select is(
   ),
   1,
   'after stale release + new reserve, flyer success reserved_count is 1 (not pinned orphan)'
+);
+
+-- PE2: lookup は miss で行を作らず、hit は既存 payload のみ
+select is(
+  public.lookup_flyer_weekly(
+    'b1000000-0000-4000-8000-000000000001'::uuid,
+    'idem-flyer-never-existed'
+  ) ->> 'kind',
+  'miss',
+  'lookup_flyer_weekly miss does not create a request row'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from private.flyer_weekly_requests
+    where idempotency_key = 'idem-flyer-never-existed'
+  ),
+  0,
+  'lookup miss leaves flyer_weekly_requests unchanged'
+);
+
+select is(
+  public.lookup_flyer_weekly(
+    'b1000000-0000-4000-8000-000000000001'::uuid,
+    'idem-flyer-after-stale'
+  ) ->> 'kind',
+  'hit',
+  'lookup_flyer_weekly hit returns kind=hit for existing key'
 );
 
 select * from finish();

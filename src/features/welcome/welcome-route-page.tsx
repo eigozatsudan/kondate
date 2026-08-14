@@ -34,6 +34,8 @@ export const WELCOME_START_CAS_SETTLE_MS = COLD_START_SESSION_DEADLINE_MS;
  * timeout は **lock コールバック内**でかけ、reject で lock を解放し dual-tab 閉塞を防ぐ。
  * withTimeout は元 Promise を cancel しないため、onTimeout で generation を無効化する。
  * 遅延 CAS の DB 書き込み自体は止められないが、route 側で re-read / ゾンビ CAS を reconcile する。
+ * L4: 獲得待ちは ifAvailable + 外側 C5。他 document が握っている／request 自体が
+ * never-settle でも CTA を「準備しています…」で固着させない（shopping / auth と同型）。
  */
 async function withOnboardingStartLock<T>(
   run: () => Promise<T>,
@@ -45,7 +47,17 @@ async function withOnboardingStartLock<T>(
   if (locks === undefined || typeof locks.request !== "function") {
     return execute();
   }
-  return locks.request(ONBOARDING_START_LOCK, execute);
+  return withTimeout(
+    locks.request(ONBOARDING_START_LOCK, { ifAvailable: true }, (lock) => {
+      // 他タブが exclusive 保持中 → 待たずに失敗。reconcile で先勝ち status を拾う。
+      if (lock === null) {
+        throw new Error("timeout");
+      }
+      return execute();
+    }),
+    COLD_START_SESSION_DEADLINE_MS,
+    onTimeout,
+  );
 }
 
 /** 開始後ナビは履歴トラップ防止のため replace（L4。terminal 直アクセス / RootEntry と同型）。 */
@@ -281,7 +293,9 @@ export function WelcomeRoutePage() {
     // L10: 待ち UI は SR に busy/status を通知（timeout 後の alert と対称。初期 live は mount 後）
     return <LivePendingMain message="状態を確認しています…" />;
   }
-  if (profileQuery.isError || pendingTimedOut || profileQuery.data == null) {
+  // L3: focus refetch 失敗でも成功 data が残る。isError だけで CTA を消さない
+  // （planner の isError && data === undefined と同型。キャッシュ済み status を使う）。
+  if (pendingTimedOut || profileQuery.data == null) {
     return (
       <main className="page-frame stack">
         <p className="error-message" role="alert">

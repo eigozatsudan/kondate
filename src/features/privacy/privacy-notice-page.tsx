@@ -7,7 +7,12 @@ import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { sanitizeReturnPath } from "@/features/auth/auth-flow";
 import { acceptCurrentPrivacyConsent } from "./privacy-api";
-import { privacySections, providerExplanation, shareConsentSection } from "./privacy-copy";
+import {
+  privacySections,
+  providerExplanation,
+  shareConsentSection,
+  shareConsentSettingsCopy,
+} from "./privacy-copy";
 import { privacyKeys } from "./privacy-queries";
 import {
   getMyShareConsent,
@@ -27,6 +32,13 @@ export const PRIVACY_ACCEPT_TIMEOUT_MS = 10_000;
 /** 必須チェック未入力のまま primary を押したときの案内（disabled だと理由が伝わらないため） */
 export const privacyConsentCheckboxRequiredMessage =
   "「説明を確認しました」にチェックを入れてから進んでください。";
+
+function privacyAcceptErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message === shareConsentSettingsCopy.revokeFailed) {
+    return shareConsentSettingsCopy.revokeFailed;
+  }
+  return "確認状態を保存できませんでした。通信を確認してください。";
+}
 
 export type PrivacyAcceptInput = {
   /**
@@ -163,16 +175,26 @@ export function PrivacyNoticePage() {
           !input.shareConsentAccepted &&
           input.shareConsentTouched === true &&
           hasCurrentShareConsent(current ?? null);
-        if (shouldUpsertAccept || shouldRevoke) {
+        if (shouldRevoke) {
           try {
             const share = await withTimeout(
-              upsertMyShareConsent(client, shouldUpsertAccept),
+              upsertMyShareConsent(client, false),
               PRIVACY_ACCEPT_TIMEOUT_MS,
             );
             queryClient.setQueryData(shareConsentKeys.current(userId), share);
           } catch {
-            // AP12 residual-intentional: share は無言 best-effort（revoke 失敗も同じ）。
-            // privacy は保存済み・returnTo 継続。失敗案内は設定トグル再試行に委ねる。
+            // AP5: revoke 失敗は無言で進めない。必須 privacy は保存済みでも共有停止未確定。
+            throw new Error(shareConsentSettingsCopy.revokeFailed);
+          }
+        } else if (shouldUpsertAccept) {
+          try {
+            const share = await withTimeout(
+              upsertMyShareConsent(client, true),
+              PRIVACY_ACCEPT_TIMEOUT_MS,
+            );
+            queryClient.setQueryData(shareConsentKeys.current(userId), share);
+          } catch {
+            // 任意の共有オンは best-effort。必須 privacy は保存済み・returnTo 継続。
           }
         }
       }
@@ -187,9 +209,7 @@ export function PrivacyNoticePage() {
   return (
     <PrivacyNoticeContent
       saving={mutation.isPending}
-      error={
-        mutation.isError ? "確認状態を保存できませんでした。通信を確認してください。" : undefined
-      }
+      error={mutation.isError ? privacyAcceptErrorMessage(mutation.error) : undefined}
       initialShareChecked={initialShareChecked}
       shareConsentReady={shareConsentReady}
       onAccept={(input) => {

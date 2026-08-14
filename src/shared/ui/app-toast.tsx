@@ -38,6 +38,7 @@ const AppToastContext = createContext<AppToastApi | null>(null);
  * 同時表示は最新 1 件（後勝ち）。error/info とも role=status + aria-live=polite
  * （永続の inline は role=alert 側に任せる）。
  * hover / focus-within 中はタイマーを止め、離れたら duration を振り直す（WCAG 2.2.1）。
+ * 閉じるボタンへフォーカスしても pause。Escape で閉じ、キーボードだけでも 6s 制限を止められる。
  */
 export function AppToastProvider({ children }: PropsWithChildren): React.JSX.Element {
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -101,6 +102,31 @@ export function AppToastProvider({ children }: PropsWithChildren): React.JSX.Ele
     };
   }, [toast, startTimer, clearTimer]);
 
+  // L7: キーボードは hover できない。Escape で閉じ、6s 自動消去を止められるようにする。
+  // モーダルが開いているときは dialog 側の Escape を奪わない。
+  useEffect(() => {
+    if (toast === null) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.defaultPrevented) {
+        return;
+      }
+      const active = document.activeElement;
+      if (
+        active instanceof Element &&
+        active.closest('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')
+      ) {
+        return;
+      }
+      dismiss();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [toast, dismiss]);
+
   const api: AppToastApi = {
     show,
     dismiss,
@@ -143,6 +169,10 @@ export function AppToastProvider({ children }: PropsWithChildren): React.JSX.Ele
         }}
       >
         <span className="app-toast-label">{toast.message}</span>
+        {/* L7: フォーカス可能。focus-within で pause。44px は触れるが pill を縦に増やしすぎない */}
+        <button type="button" className="app-toast-dismiss" aria-label="閉じる" onClick={dismiss}>
+          ×
+        </button>
       </div>
     );
   }

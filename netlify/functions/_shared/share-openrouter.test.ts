@@ -120,7 +120,7 @@ describe("share-openrouter", () => {
     expect(shareFreeTextPatchSchema.safeParse(result.patch).success).toBe(true);
   });
 
-  it("buildSharePassMessages uses pass-specific system role without quantities", () => {
+  it("buildSharePassMessages uses pass-specific system role without numeric quantities", () => {
     const menu = makeValidatedMenu();
     const messages = buildSharePassMessages("pass1", menu);
     expect(messages[0]?.role).toBe("system");
@@ -128,7 +128,9 @@ describe("share-openrouter", () => {
     const user = messages[1]?.content;
     expect(typeof user).toBe("string");
     if (typeof user !== "string") return;
-    expect(user).not.toMatch(/quantityValue|quantityText|"unit"/);
+    // AP1: quantityText は一般化対象。数値・単位はプロンプトに載せない。
+    expect(user).not.toMatch(/quantityValue|"unit"/);
+    expect(user).toMatch(/quantityText/);
     expect(user).toMatch(/dishes/);
   });
 });

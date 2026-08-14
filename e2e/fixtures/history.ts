@@ -133,15 +133,27 @@ export async function selectHouseholdAudienceWithMember(
   await expectDraftTargetMembersNonEmpty(page);
 }
 
-/** 登録済み一覧のみのとき編集フォームを開く（editorOpen 既定 false 対応） */
+/**
+ * 登録済み一覧のみのとき先頭メンバーの編集フォームを開く（editorOpen 既定 false 対応）。
+ * pending 中は見出しも編集も追加も出ない。1 ショット count() で追加へ落ちると
+ * seed 済みメンバーではなく空 draft 追加になり、完了が schema で落ちるか観測が別経路になる。
+ * heading / 一覧 CTA を待ってから分岐し、seed 済みがいれば必ず編集する。
+ */
 export async function openFirstMemberEditor(page: Page): Promise<void> {
+  // pending 中の h1 は出ない。解放後の empty / 一覧のどちらにも「家族設定」がある。
+  await expect(page.getByRole("heading", { name: "家族設定" })).toBeVisible({
+    timeout: 15_000,
+  });
   const nameField = page.getByRole("textbox", { name: "呼び名" });
   if (await nameField.isVisible().catch(() => false)) return;
   const edit = page.getByRole("button", { name: /を編集$/u }).first();
+  const add = page.getByRole("button", { name: "家族を追加" });
+  // 一覧（編集+追加）と empty（追加のみ）のどちらが出るまで待ってから分岐する。
+  await expect(edit.or(add).first()).toBeVisible({ timeout: 15_000 });
   if ((await edit.count()) > 0) {
     await edit.click();
   } else {
-    await page.getByRole("button", { name: "家族を追加" }).click();
+    await add.click();
     await confirmAddScopeNotice(page);
   }
   await expect(nameField).toBeVisible({ timeout: 15_000 });

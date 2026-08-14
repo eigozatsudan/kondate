@@ -594,6 +594,25 @@ it.each([
   },
 );
 
+it("accepts an already-expired date on create so pantry CRUD can record leftovers", async () => {
+  // PE10 の min=JST今日は期限切れ食材の新規登録を HTML5 が拒否する。製品は期限切れを第一級とする。
+  const user = userEvent.setup();
+  const onSubmit = vi.fn().mockResolvedValue(undefined);
+  render(<PantryForm saving={false} onSubmit={onSubmit} />);
+  await user.type(screen.getByRole("textbox", { name: "食材名" }), "キャベツ");
+  await user.type(screen.getByLabelText("分量"), "1");
+  await user.type(screen.getByLabelText("単位"), "個");
+  await user.type(screen.getByLabelText("期限日"), "2000-01-01");
+  await user.selectOptions(screen.getByLabelText("期限の種類"), "use_by");
+  await user.selectOptions(screen.getByLabelText("開封状態"), "opened");
+  await user.click(screen.getByRole("button", { name: "追加する" }));
+  await waitFor(() => {
+    expect(onSubmit).toHaveBeenCalled();
+  });
+  expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ name: "キャベツ", expiresOn: "2000-01-01" });
+  expect(screen.getByLabelText("期限日")).not.toHaveAttribute("min");
+});
+
 it("shows and associates a Japanese schema error, then focuses the invalid field", async () => {
   const user = userEvent.setup();
   const onSubmit = vi.fn();

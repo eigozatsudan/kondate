@@ -144,12 +144,16 @@ export function markShoppingResumeSuppress(kind: "create" | "reconcile", targetI
   const key = shoppingResumeSuppressKey(kind, targetId);
   writeResumeSuppressFlag(localStorage, key, true);
   writeResumeSuppressFlag(sessionStorage, key, true);
+  // SHOP1: live タブが sheet / 意図的 suppress を持っている印。他タブの boot が
+  // 共有 local 正本を落とさないよう occupancy lock を保持する（タブ死亡で自動解放）。
+  holdShoppingSheetOccupancy(kind, targetId);
 }
 
 export function clearShoppingResumeSuppress(kind: "create" | "reconcile", targetId: string): void {
   const key = shoppingResumeSuppressKey(kind, targetId);
   writeResumeSuppressFlag(localStorage, key, false);
   writeResumeSuppressFlag(sessionStorage, key, false);
+  releaseShoppingSheetOccupancy(kind, targetId);
 }
 
 /**
@@ -160,6 +164,8 @@ export function clearShoppingResumeSuppress(kind: "create" | "reconcile", target
  * - SPA remount / StrictMode: 同一 timeOrigin なので 2 回目以降は no-op（シート選び直し中の suppress を壊さない）
  * - hard reload: 新しい JS 文脈 + 新しい timeOrigin で clear が再武装
  * - シート open 中の mount では呼び出し側が shoppingSheet を見て skip すること
+ * - SHOP1: 他タブが occupancy lock を live 保持しているときは共有 local を落とさない
+ *   （自タブ sheet=null の hard reload が Tab A の選び直し中 suppress を消す dual-intent 窓）
  * - current_safety 等の意図的 suppress も reload 後は 1 回 resume を試し、再 409 なら
  *   failShoppingCommand が再 mark する（永久 pause より復旧優先）
  * sticky 本体は触らない（pause-not-abandon の鍵は維持）。
@@ -177,25 +183,85 @@ function documentTimeOriginMs(): number {
   return 0;
 }
 
+/** SHOP1: 他タブが sheet / 意図的 suppress を live 保持しているあいだ boot が共有旗を落とさない lock */
+export function shoppingSheetOccupancyLockName(
+  kind: "create" | "reconcile",
+  targetId: string,
+): string {
+  return `kondate:shopping:sheet-occupancy:${kind}:${targetId}`;
+}
+
+const occupancyHeldUntil = new Map<string, () => void>();
+
+function holdShoppingSheetOccupancy(kind: "create" | "reconcile", targetId: string): void {
+  const mapKey = resumeSuppressDocumentBootKey(kind, targetId);
+  if (occupancyHeldUntil.has(mapKey)) return;
+  let release = (): void => {};
+  const untilReleased = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  occupancyHeldUntil.set(mapKey, release);
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+  if (locks === undefined || typeof locks.request !== "function") return;
+  void locks
+    .request(shoppingSheetOccupancyLockName(kind, targetId), () => untilReleased)
+    .catch(() => {
+      /* 保持失敗は Storage 旗のみ。boot は lock 無しなら orphan として落とす */
+    });
+}
+
+function releaseShoppingSheetOccupancy(kind: "create" | "reconcile", targetId: string): void {
+  const mapKey = resumeSuppressDocumentBootKey(kind, targetId);
+  const release = occupancyHeldUntil.get(mapKey);
+  if (release === undefined) return;
+  occupancyHeldUntil.delete(mapKey);
+  release();
+}
+
+async function isShoppingSheetOccupiedByLivePeer(
+  kind: "create" | "reconcile",
+  targetId: string,
+): Promise<boolean> {
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+  if (locks === undefined || typeof locks.request !== "function") return false;
+  const name = shoppingSheetOccupancyLockName(kind, targetId);
+  try {
+    return await new Promise<boolean>((resolve, reject) => {
+      void Promise.resolve(
+        locks.request(name, { ifAvailable: true }, (lock) => {
+          resolve(lock === null);
+        }),
+      ).catch(reject);
+    });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @returns true のとき実際に suppress を clear した
  */
-export function clearResumeSuppressOnDocumentBoot(
+export async function clearResumeSuppressOnDocumentBoot(
   kind: "create" | "reconcile",
   targetId: string,
-): boolean {
+): Promise<boolean> {
   const token = documentTimeOriginMs();
   const mapKey = resumeSuppressDocumentBootKey(kind, targetId);
   if (resumeSuppressDocumentBootTokens.get(mapKey) === token) return false;
+  // SHOP1: 他タブ（またはこのタブ）が occupancy を live 保持なら共有旗を残す。
+  // token は消費しない。peer 離脱後の同一 document 再評価で orphan を落とせる。
+  if (await isShoppingSheetOccupiedByLivePeer(kind, targetId)) return false;
   resumeSuppressDocumentBootTokens.set(mapKey, token);
   if (!isShoppingResumeSuppressed(kind, targetId)) return false;
   clearShoppingResumeSuppress(kind, targetId);
   return true;
 }
 
-/** テスト用: document boot トークンを捨て、同一 timeOrigin でも再 clear できるようにする */
+/** テスト用: document boot トークンと occupancy 保持を捨て、同一 timeOrigin でも再 clear できるようにする */
 export function resetResumeSuppressDocumentBootForTests(): void {
   resumeSuppressDocumentBootTokens.clear();
+  for (const release of occupancyHeldUntil.values()) release();
+  occupancyHeldUntil.clear();
 }
 
 /**

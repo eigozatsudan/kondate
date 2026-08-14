@@ -1,10 +1,15 @@
 import { expect, it } from "vitest";
 import {
   accountDeletionAnonymousShareNote,
+  accountDeletionOtherDeviceNote,
+  accountDeletionProviderPromptNote,
+  accountDeletionSharedDeviceNote,
+  accountDeletionStripeResidualNote,
   privacySections,
   shareConsentRequiredPhrases,
   shareConsentSection,
   shareConsentSettingsCopy,
+  shareInFlightSendNote,
 } from "./privacy-copy";
 
 it("locks the six required share-consent phrases for UI copy", () => {
@@ -34,6 +39,19 @@ it("documents that anonymized emergency body may remain after account deletion",
   expect(accountDeletionAnonymousShareNote).toContain("匿名");
   expect(accountDeletionAnonymousShareNote).toContain("残る");
   expect(accountDeletionAnonymousShareNote).toContain("誰が作ったか");
+});
+
+it("discloses Stripe residual, provider prompt residual, and in-flight share send", () => {
+  const stored = privacySections.find((section) => section.title === "アプリに保存する情報");
+  expect(stored?.body).toContain(accountDeletionStripeResidualNote);
+  expect(stored?.body).toContain(accountDeletionProviderPromptNote);
+  expect(accountDeletionStripeResidualNote).toContain("Stripe");
+  expect(accountDeletionProviderPromptNote).toContain("消えません");
+  expect(shareConsentSection.body).toContain(shareInFlightSendNote);
+  expect(shareConsentSettingsCopy.residualRetentionNotice).toContain(shareInFlightSendNote);
+  expect(shareConsentSettingsCopy.revokeFailed).toContain("共有の停止");
+  expect(accountDeletionOtherDeviceNote).toContain("他の端末");
+  expect(accountDeletionSharedDeviceNote).toContain("共有");
 });
 
 it("keeps share consent optional and separate from AI privacy sections", () => {

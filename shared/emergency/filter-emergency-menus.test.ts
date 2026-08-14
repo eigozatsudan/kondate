@@ -474,6 +474,32 @@ describe("reviewed emergency menus", () => {
     });
   });
 
+  it("uses allergen_missing when registered member has no confirmed allergens", () => {
+    // Stage S 全滅を no_matching_fixture に誤帰属しない。登録不足は早期に区別する。
+    const context = makeCurrentSafetyContext();
+    const result = filterEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: ["鶏肉"],
+      pantryNames: [],
+      context: makeCurrentSafetyContext({
+        members: [
+          {
+            ...context.members[0]!,
+            allergyStatus: "registered",
+            allergenIds: [],
+            customAllergies: [],
+          },
+        ],
+      }),
+    });
+
+    expect(result).toEqual({
+      menus: [],
+      emptyReason: "allergen_missing",
+      matchMode: null,
+    });
+  });
+
   it.each([{ unsupportedDietStatus: "present" as const }, { hasUnmappedCustomAllergy: true }])(
     "uses current_safety_unavailable for early safety exclusion even with main ingredients",
     (memberPatch) => {

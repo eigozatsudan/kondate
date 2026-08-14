@@ -19,6 +19,7 @@ vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
 
+import { householdKeys } from "@/features/household/household-queries";
 import {
   WelcomeRoutePage,
   WELCOME_START_CAS_SETTLE_MS,
@@ -44,7 +45,7 @@ function renderWelcome() {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return router;
+  return { router, queryClient };
 }
 
 describe("WelcomeRoutePage L4 first-writer", () => {
@@ -61,6 +62,8 @@ describe("WelcomeRoutePage L4 first-writer", () => {
   afterEach(() => {
     // fake timer 残留で後続 findBy / userEvent が testTimeout(15s) まで死ぬのを防ぐ
     vi.useRealTimers();
+    // L4 テストが stub した locks を残さない
+    Reflect.deleteProperty(navigator, "locks");
     cleanup();
   });
 
@@ -69,7 +72,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     let liveStatus: "not_started" | "in_progress" | "skipped" | "complete" = "not_started";
     getProfileMock.mockImplementation(() => ({ onboarding_status: liveStatus }));
     const user = userEvent.setup();
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     liveStatus = "in_progress";
     await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
@@ -82,7 +85,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     let liveStatus: "not_started" | "in_progress" | "skipped" | "complete" = "not_started";
     getProfileMock.mockImplementation(() => ({ onboarding_status: liveStatus }));
     const user = userEvent.setup();
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "家族情報を登録する" })).toBeVisible();
     liveStatus = "skipped";
     await user.click(screen.getByRole("button", { name: "家族情報を登録する" }));
@@ -95,7 +98,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
     setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "skipped" });
     const user = userEvent.setup();
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
     await waitFor(() => {
@@ -112,7 +115,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
     setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "in_progress" });
     const user = userEvent.setup();
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
     await waitFor(() => {
@@ -128,7 +131,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
     setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "in_progress" });
     const user = userEvent.setup();
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "家族情報を登録する" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "家族情報を登録する" }));
     await waitFor(() => {
@@ -147,7 +150,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     getProfileMock.mockResolvedValue({ onboarding_status: "in_progress" });
     setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "skipped" });
     const user = userEvent.setup();
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(
       await screen.findByRole("button", { name: "設定せず献立アイデアを考える" }),
     ).toBeVisible();
@@ -164,7 +167,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
   it("L1: in_progress 表示の household は onboarding へ（書き込みなし）", async () => {
     getProfileMock.mockResolvedValue({ onboarding_status: "in_progress" });
     const user = userEvent.setup();
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "家族設定を続ける" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "家族設定を続ける" }));
     expect(await screen.findByRole("heading", { name: "家族設定" })).toBeVisible();
@@ -210,7 +213,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
           resolveReread = resolve;
         }),
     );
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     vi.useFakeTimers();
     try {
@@ -248,7 +251,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
           resolveCas = resolve;
         }),
     );
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     vi.useFakeTimers();
     try {
@@ -293,7 +296,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
           resolveCas = resolve;
         }),
     );
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     vi.useFakeTimers();
     try {
@@ -422,7 +425,7 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
     setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "skipped" });
     const user = userEvent.setup();
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
     expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();
@@ -440,11 +443,69 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
   });
 
+  it("L3: refetch error keeps cached onboarding CTA", async () => {
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    const { queryClient } = renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    getProfileMock.mockRejectedValue(new Error("network"));
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: householdKeys.profile(userId) });
+    });
+    expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    expect(screen.queryByText("初回設定の状態を確認できませんでした")).not.toBeInTheDocument();
+  });
+
+  it("L4: ifAvailable miss re-enables CTA without waiting for lock", async () => {
+    const request = vi.fn(
+      (_name: string, options: LockOptions, callback: (lock: Lock | null) => unknown) => {
+        expect(options.ifAvailable).toBe(true);
+        return Promise.resolve(callback(null));
+      },
+    );
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request },
+    });
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("開始できませんでした");
+    expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeEnabled();
+    expect(request).toHaveBeenCalled();
+    expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("L4: lock acquire hang past C5 re-enables CTA", async () => {
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: () => new Promise(() => undefined),
+      },
+    });
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+      expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COLD_START_SESSION_DEADLINE_MS);
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("開始できませんでした");
+      expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeEnabled();
+      expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("L4: successful idea start replaces history (back does not return to welcome)", async () => {
     getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
     setOnboardingStatusMock.mockResolvedValue({ onboarding_status: "skipped" });
     const user = userEvent.setup();
-    const router = renderWelcome();
+    const { router } = renderWelcome();
     expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
     expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();

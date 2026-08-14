@@ -106,6 +106,23 @@ describe("DeleteAccountDialog", () => {
     expect(screen.getByText(/削除後も他ユーザー向けに残る/)).toBeVisible();
   });
 
+  it("discloses Stripe, provider, other-device, and shared-device residuals", () => {
+    render(
+      <DeleteAccountDialog
+        open
+        pending={false}
+        errorMessage={null}
+        onCancel={() => undefined}
+        onConfirm={() => Promise.resolve()}
+      />,
+    );
+    expect(screen.getByText(/請求先（Stripe）/)).toBeVisible();
+    expect(screen.getByText(/すでに外部のAIへ送った一般化用の文章/)).toBeVisible();
+    expect(screen.getByText(/すでに送り始めた1回分/)).toBeVisible();
+    expect(screen.getByText(/他の端末に残った下書き/)).toBeVisible();
+    expect(screen.getByText(/この端末を他の人と共有している場合/)).toBeVisible();
+  });
+
   it("maps Escape/cancel to onCancel without confirming", () => {
     const onCancel = vi.fn();
     const onConfirm = vi.fn();

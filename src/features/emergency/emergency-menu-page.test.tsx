@@ -1090,6 +1090,36 @@ it("shows differentiated post-API empty copy for current_safety_unavailable", ()
   expect(screen.queryByText("条件を緩めず、候補を表示していません。")).toBeNull();
 });
 
+it("shows differentiated post-API empty copy for household allergen_missing", () => {
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="household"
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [],
+        message: "アレルギー情報の登録が必要です。家族の設定を確認してください。",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: null,
+        emptyReason: "allergen_missing",
+      }}
+    />,
+  );
+  expect(
+    screen.getByText("アレルギー情報の登録が必要です。家族の設定を確認してください。"),
+  ).toBeVisible();
+  expect(
+    screen.getByText("アレルギー情報が足りないため、候補を表示していません。条件は緩めていません"),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(
+      "いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません",
+    ),
+  ).toBeNull();
+});
+
 it("shows differentiated post-API empty copy for household no_matching_fixture", () => {
   renderWithRouter(
     <EmergencyMenuContent

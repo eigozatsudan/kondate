@@ -393,6 +393,96 @@ test("recovers a completed result after a tab is closed before its POST response
   });
 });
 
+/**
+ * E2E7: 同一ユーザの 2 タブ。勝ちが claim した sticky を、負けが
+ * /generation?resumed=1 で踏む。勝ちの POST は再開案内を見るまで保留し、
+ * 負けの追加 POST は切る（同時 continue は draft 削除後の draft_not_found）。
+ * 負けは status GET で同じ結果へ着地する。origin は変えない。
+ */
+test("dual-tab generate claims one pending and the loser resumes the same sticky", async ({
+  completedOnboardingPage: page,
+  context,
+}) => {
+  test.setTimeout(180_000);
+  await completeMinimumPlanner(page);
+
+  const postedKeys: string[] = [];
+  let resumeObserved: () => void = () => undefined;
+  const resumeSeen = new Promise<void>((resolve) => {
+    resumeObserved = resolve;
+  });
+  let winnerPostStarted = false;
+  await context.route("**/api/generations/menu", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const body = route.request().postDataJSON() as {
+      request?: { idempotencyKey?: unknown };
+    };
+    const key = body.request?.idempotencyKey;
+    if (typeof key !== "string" || key.length === 0) {
+      throw new Error("expected request.idempotencyKey on generation POST body");
+    }
+    postedKeys.push(key);
+    if (!winnerPostStarted) {
+      winnerPostStarted = true;
+      await resumeSeen;
+      await route.continue();
+      return;
+    }
+    // 負けタブの二重 POST は draft 削除後の not_found になる。status 再開に任せる。
+    await route.abort("connectionreset");
+  });
+
+  const peer = await context.newPage();
+  try {
+    await peer.goto("/planner?resume=review");
+    await expect(peer.getByRole("heading", { name: "5. 確認" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(peer.getByRole("button", { name: "献立を作る" })).toBeEnabled({
+      timeout: 15_000,
+    });
+
+    await page.getByRole("button", { name: "献立を作る" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/generation", { timeout: 30_000 });
+
+    await peer.goto("/generation?resumed=1");
+    await expect(peer.getByText("進行中の作成を再開しています")).toBeVisible({
+      timeout: 15_000,
+    });
+    resumeObserved();
+
+    // 勝ちが結果へ着地。負けは resumed=1 の案内を既に観測済み（追加 POST は切っている）。
+    await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
+    await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
+      timeout: 30_000,
+    });
+    const pageMenuId = z
+      .uuid()
+      .parse(/\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1]);
+
+    expect(postedKeys.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(postedKeys).size).toBe(1);
+    expect(postedKeys[0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+
+    const headers = await localRestHeaders(page);
+    const menuLookup = await page.request.get(
+      `http://127.0.0.1:8000/rest/v1/menus?id=eq.${pageMenuId}&select=id`,
+      { headers },
+    );
+    const menuRows = z.array(z.object({ id: z.uuid() })).parse(await menuLookup.json());
+    expect(menuRows).toHaveLength(1);
+  } finally {
+    resumeObserved();
+    await context.unroute("**/api/generations/menu");
+    await peer.close();
+  }
+});
+
 test(
   "shows result details and keeps major regions within their parent",
   {

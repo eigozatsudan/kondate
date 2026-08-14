@@ -22,6 +22,14 @@ export function Skeleton({ lines = 2, label }: SkeletonProps): JSX.Element {
  * mount 後に role=status を埋めて「変更」として通知する。
  * 視覚は初回 paint から message を出し、announce 後は status ノードだけに集約する。
  */
+/**
+ * L2: lazy 初回一致で Router ツリーが空のあいだの pending `<main>`。
+ * hang 打ち切りは各 route の withTimeout(C5) のまま。ここは空白を埋めるだけ。
+ */
+export function RouterPendingFallback(): JSX.Element {
+  return <LivePendingMain message="読み込み中…" />;
+}
+
 export function LivePendingMain({ message }: { message: string }): JSX.Element {
   const [announced, setAnnounced] = useState(false);
   useEffect(() => {

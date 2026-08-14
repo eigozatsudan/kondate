@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  guaranteePhraseRedaction,
+  redactGuaranteePhraseText,
+} from "../../../shared/safety/guarantee-phrases.js";
+import {
   makeCurrentSafetyContext,
   makeGeneratedMenu,
   makeValidatedMenu,
@@ -756,6 +760,105 @@ describe("validateStoredMenuCurrentSafety", () => {
     expect(result.issues.filter((issue) => /allergen/i.test(issue.code))).toEqual([]);
     expect(result.candidate.adaptations.map((row) => row.anonymousMemberRef)).toEqual(["member_2"]);
     expect(result.candidate.adaptations[0]?.portionText).toBe("生存メンバーの取り分け");
+  });
+
+  it("finds wheat on a phrase-stripped retained leaf after the household adds wheat", async () => {
+    // 一品再生成の保持葉は保証フレーズだけ剥がす。葉全体を「料理の説明」にすると
+    // 小麦針が消え、後から小麦を足しても actionsEnabled が開く。
+    const sourceDescription = "小麦アレルギーでも安全です";
+    const redacted = redactGuaranteePhraseText(
+      sourceDescription,
+      guaranteePhraseRedaction.description,
+    );
+    expect(redacted).toContain("小麦");
+    expect(redacted.includes("安全です")).toBe(false);
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue(
+      makeCurrentSafetyContext({
+        members: [
+          {
+            householdMemberId: LIVE_MEMBER_ID,
+            anonymousRef: "member_1",
+            ageBand: "adult",
+            allergyStatus: "registered",
+            allergenIds: ["wheat"],
+            hasUnmappedCustomAllergy: false,
+            customAllergies: [],
+            requiredSafetyConstraints: [],
+            unsupportedDietStatus: "none",
+            unsupportedDietKinds: [],
+          },
+        ],
+        allergenDictionary: {
+          version: "jp-caa-2026-04.v1",
+          catalog: [{ id: "wheat", displayName: "小麦", catalogVersion: "jp-caa-2026-04.v1" }],
+          aliases: [
+            {
+              allergenId: "wheat",
+              alias: "小麦",
+              normalizedAlias: "小麦",
+              aliasKind: "direct",
+              requiresLabelConfirmation: false,
+              dictionaryVersion: "jp-caa-2026-04.v1",
+            },
+          ],
+        },
+      }),
+    );
+    const baseMenu = makeValidatedMenu({
+      menuId: MENU_ID,
+      pantryUsage: [],
+      labelConfirmations: [],
+    });
+    const stored = makeStored({
+      menu: {
+        ...baseMenu,
+        dishes: baseMenu.dishes.map((dish, index) =>
+          index === 0 ? { ...dish, description: redacted } : dish,
+        ),
+      },
+    });
+    const placeholderStored = makeStored({
+      menu: {
+        ...baseMenu,
+        dishes: baseMenu.dishes.map((dish, index) =>
+          index === 0 ? { ...dish, description: guaranteePhraseRedaction.description } : dish,
+        ),
+      },
+    });
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await validateStoredMenuCurrentSafety({
+      ownerClient: ownerClient as never,
+      admin: {} as never,
+      stored,
+      userId: USER_ID,
+    });
+    const placeholderResult = await validateStoredMenuCurrentSafety({
+      ownerClient: ownerClient as never,
+      admin: {} as never,
+      stored: placeholderStored,
+      userId: USER_ID,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.some((issue) => issue.code === "direct_allergen_match")).toBe(true);
+    expect(placeholderResult.ok).toBe(true);
+    expect(placeholderResult.issues.some((issue) => issue.code === "direct_allergen_match")).toBe(
+      false,
+    );
   });
 
   it("keeps historical confirmed provenance on the stored aggregate and does not use it as current provider evidence", async () => {

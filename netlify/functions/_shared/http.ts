@@ -195,14 +195,35 @@ export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Prom
   return parsed.data;
 }
 
+/** Function エラー code: SafeLog closedErrorCode と同形の snake_case。 */
+function closedHttpErrorCode(raw: string): string {
+  if (/^[a-z][a-z0-9_]{0,79}$/u.test(raw)) return raw;
+  return "request_failed";
+}
+
+const closedHttpErrorMessageFallback = "処理を完了できませんでした";
+
+/**
+ * 既存の閉じた日本語 message を通し、email / stack / 人名混じり free-text は潰す。
+ * 製品語（JSON / JPEG / PNG / WebP / Plus / multipart / ID / AI）は現行文言に残る。
+ */
+function closedHttpErrorMessage(raw: string): string {
+  if (raw.length < 1 || raw.length > 500) return closedHttpErrorMessageFallback;
+  if (/[@＠]/u.test(raw)) return closedHttpErrorMessageFallback;
+  const withoutProductTokens = raw.replace(/\b(?:JSON|JPEG|PNG|WebP|Plus|multipart|ID|AI)\b/gu, "");
+  if (/[A-Za-z]/u.test(withoutProductTokens)) return closedHttpErrorMessageFallback;
+  if (!/[\u3040-\u30ff\u4e00-\u9fff]/u.test(raw)) return closedHttpErrorMessageFallback;
+  return raw;
+}
+
 export function handleError(error: unknown): Response {
   if (error instanceof HttpError) {
     const details = closedHttpErrorDetails(error.details);
     return json(error.status, {
       ok: false,
       error: {
-        code: error.code,
-        message: error.message,
+        code: closedHttpErrorCode(error.code),
+        message: closedHttpErrorMessage(error.message),
         ...(details === undefined ? {} : { details }),
       },
     });

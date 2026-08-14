@@ -4,8 +4,10 @@ import {
   plannerDraftSchema,
 } from "@shared/contracts/planner";
 import { assertBrowserDataPlaneAligned } from "@/features/auth/session";
+import { getPublicEnv } from "@/shared/config/public-env";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import type { Tables } from "@/shared/types/database.generated";
+import type { Database } from "@/shared/types/database";
 
 export const plannerKeys = {
   draft: (userId: string) => ["planner", "draft", userId] as const,
@@ -59,15 +61,11 @@ export async function getPlannerDraft(
   return data === null ? null : mapPlannerDraft(data);
 }
 
-export async function savePlannerDraft(
-  client: BrowserSupabaseClient,
-  _userId: string,
+function buildSaveGenerationDraftArgs(
   input: PlannerDraftInput,
   revision: number,
-): Promise<PlannerDraft> {
-  // R1: pin 不一致時は auth.uid() 依存 RPC で B の draft を mutate しない
-  await assertBrowserDataPlaneAligned(client);
-  const { data, error } = await client.rpc("save_generation_draft", {
+): Database["public"]["Functions"]["save_generation_draft"]["Args"] {
+  return {
     p_expected_revision: revision,
     p_meal_type: input.mealType,
     p_main_ingredients: input.mainIngredients,
@@ -81,12 +79,57 @@ export async function savePlannerDraft(
     p_avoid_ingredients: input.avoidIngredients,
     p_memo: input.memo,
     p_pantry_selections: input.pantrySelections,
-  });
+  };
+}
+
+export async function savePlannerDraft(
+  client: BrowserSupabaseClient,
+  _userId: string,
+  input: PlannerDraftInput,
+  revision: number,
+): Promise<PlannerDraft> {
+  // R1: pin 不一致時は auth.uid() 依存 RPC で B の draft を mutate しない
+  await assertBrowserDataPlaneAligned(client);
+  const { data, error } = await client.rpc(
+    "save_generation_draft",
+    buildSaveGenerationDraftArgs(input, revision),
+  );
   if (error !== null) {
     if (error.message.includes("draft_revision_conflict")) throw new DraftRevisionConflictError();
     throw new Error("献立条件を保存できませんでした");
   }
   return mapPlannerDraft(data);
+}
+
+/**
+ * document unload（reload / タブ閉じ）用の best-effort 保存。
+ * supabase-js の rpc は keepalive 無し fetch のため teardown で中断され得る。
+ * 既存 client / Auth / BrowserSupabaseClient は再定義せず、同一 RPC 引数を
+ * keepalive fetch で同期開始する（応答は待たない。失敗は可視化しない）。
+ */
+export function startPlannerDraftKeepaliveSave(
+  accessToken: string,
+  input: PlannerDraftInput,
+  revision: number,
+): boolean {
+  if (accessToken.length === 0) return false;
+  const env = getPublicEnv();
+  try {
+    void fetch(`${env.supabaseUrl}/rest/v1/rpc/save_generation_draft`, {
+      method: "POST",
+      keepalive: true,
+      headers: {
+        apikey: env.supabasePublishableKey,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(buildSaveGenerationDraftArgs(input, revision)),
+    }).catch(() => undefined);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function deletePlannerDraft(

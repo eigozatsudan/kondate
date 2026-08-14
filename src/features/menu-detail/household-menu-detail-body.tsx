@@ -294,21 +294,27 @@ export function HouseholdMenuDetailBody({
   // SHOP2 (adversarial): hard reload 後に unmount clear が走らず suppress が残る穴。
   // document boot 1 回だけ create/reconcile suppress を落とす。シート open 中は触らない
   // （選び直し中の sticky auto POST 抑止を維持）。StrictMode 2 回目は token で no-op。
+  // SHOP1: 他タブが occupancy lock を live 保持しているときは共有 local を落とさない
+  // （自タブ shoppingSheet=null の hard reload が選び直し中の suppress を消す窓）。
   // Storage だけ変えても render が走らないため、実際に clear したときだけ tick して
   // useResumeShoppingCommand の enabled（isShoppingResumeSuppressed）を再評価する。
   useEffect(() => {
     if (menuId.length === 0) return;
-    let cleared = false;
-    if (shoppingSheet !== "create") {
-      cleared = clearResumeSuppressOnDocumentBoot("create", menuId) || cleared;
-    }
-    const listId = activeList?.id;
-    if (listId !== undefined && shoppingSheet !== "reconcile") {
-      cleared =
-        clearResumeSuppressOnDocumentBoot("reconcile", reconcileCommandTargetId(listId, menuId)) ||
-        cleared;
-    }
-    if (cleared) setResumeSuppressBootTick((n) => n + 1);
+    void (async () => {
+      let cleared = false;
+      if (shoppingSheet !== "create") {
+        cleared = (await clearResumeSuppressOnDocumentBoot("create", menuId)) || cleared;
+      }
+      const listId = activeList?.id;
+      if (listId !== undefined && shoppingSheet !== "reconcile") {
+        cleared =
+          (await clearResumeSuppressOnDocumentBoot(
+            "reconcile",
+            reconcileCommandTargetId(listId, menuId),
+          )) || cleared;
+      }
+      if (cleared) setResumeSuppressBootTick((n) => n + 1);
+    })();
   }, [menuId, shoppingSheet, activeList?.id]);
 
   // SHOP1 + SHOP9: reconcile suppress は listId:sourceMenuId 粒度。

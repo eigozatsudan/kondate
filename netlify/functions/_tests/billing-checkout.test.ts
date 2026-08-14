@@ -3,7 +3,11 @@ import {
   PLUS_LP_UPGRADE_COMING_SOON,
   STRIPE_API_VERSION,
 } from "../../../shared/contracts/billing.js";
-import { runBillingCheckout, type BillingCheckoutDeps } from "../_shared/billing-checkout.js";
+import {
+  CHECKOUT_LOCK_TTL_MS,
+  runBillingCheckout,
+  type BillingCheckoutDeps,
+} from "../_shared/billing-checkout.js";
 import type { Entitlement } from "../_shared/billing-entitlement.js";
 import type { ServerEnv } from "../_shared/env.js";
 import { HttpError } from "../_shared/http.js";
@@ -77,6 +81,7 @@ describe("runBillingCheckout", () => {
   const rpc = vi.fn();
   const sessionsCreate = vi.fn();
   const sessionsExpire = vi.fn();
+  const sessionsList = vi.fn();
   const customersCreate = vi.fn();
   const subscriptionsList = vi.fn();
   const logSink = vi.fn();
@@ -91,7 +96,9 @@ describe("runBillingCheckout", () => {
       loadEntitlement,
       stripe: {
         customers: { create: customersCreate },
-        checkout: { sessions: { create: sessionsCreate, expire: sessionsExpire } },
+        checkout: {
+          sessions: { create: sessionsCreate, expire: sessionsExpire, list: sessionsList },
+        },
         subscriptions: { list: subscriptionsList },
       },
       admin: { rpc } as BillingCheckoutDeps["admin"],
@@ -121,6 +128,7 @@ describe("runBillingCheckout", () => {
     rpc.mockReset();
     sessionsCreate.mockReset();
     sessionsExpire.mockReset();
+    sessionsList.mockReset();
     customersCreate.mockReset();
     subscriptionsList.mockReset();
     logSink.mockReset();
@@ -130,6 +138,7 @@ describe("runBillingCheckout", () => {
     subscriptionsList.mockResolvedValue({ data: [] });
     sessionsCreate.mockResolvedValue({ id: SESSION_ID, url: SESSION_URL });
     sessionsExpire.mockResolvedValue({ id: SESSION_ID });
+    sessionsList.mockResolvedValue({ data: [], object: "list", has_more: false, url: "" });
     rpc.mockImplementation((name: string) => {
       if (name === "get_billing_customer_by_user") {
         return { data: { stripe_customer_id: "cus_existing" }, error: null };
@@ -184,7 +193,9 @@ describe("runBillingCheckout", () => {
       loadEntitlement,
       stripe: {
         customers: { create: customersCreate },
-        checkout: { sessions: { create: sessionsCreate, expire: sessionsExpire } },
+        checkout: {
+          sessions: { create: sessionsCreate, expire: sessionsExpire, list: sessionsList },
+        },
         subscriptions: { list: subscriptionsList },
       },
       admin: { rpc } as BillingCheckoutDeps["admin"],
@@ -697,5 +708,140 @@ describe("runBillingCheckout", () => {
         alertMetric: 1,
       }),
     );
+  });
+
+  it("expires leftover open Sessions and pins Session expires_at to lock TTL (B1)", async () => {
+    const oldSessionId = "cs_old_open";
+    sessionsList.mockResolvedValue({
+      data: [{ id: oldSessionId, status: "open" }],
+      object: "list",
+      has_more: false,
+      url: "",
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(200);
+    expect(sessionsList).toHaveBeenCalledWith(
+      expect.objectContaining({ customer: "cus_existing", status: "open" }),
+    );
+    expect(sessionsExpire).toHaveBeenCalledWith(oldSessionId);
+    const createArgs = sessionsCreate.mock.calls[0]![0] as { expires_at: number };
+    // B-R1: create 直前 now+30m 以上。凍結 now でも Stripe 下限（1800s）を割らない
+    expect(createArgs.expires_at).toBeGreaterThanOrEqual(
+      Math.floor((Date.parse("2026-07-29T12:00:00.000Z") + CHECKOUT_LOCK_TTL_MS) / 1000),
+    );
+    expect(sessionsExpire).toHaveBeenCalledTimes(1);
+  });
+
+  it("sets Session expires_at from create-time now, not lock-time (B-R1)", async () => {
+    // restore / lock / create の各 now をずらす。lock 時刻固定だと Stripe 下限割れを見逃す
+    let nowMs = Date.parse("2026-07-29T12:00:00.000Z");
+    let lockExpiresAtIso: string | undefined;
+    rpc.mockImplementation((name: string, args?: { p_expires_at?: string }) => {
+      if (name === "get_billing_customer_by_user") {
+        return { data: { stripe_customer_id: "cus_existing" }, error: null };
+      }
+      if (name === "has_billing_trial_history") {
+        return { data: false, error: null };
+      }
+      if (name === "acquire_billing_checkout_lock") {
+        lockExpiresAtIso = args?.p_expires_at;
+        return { data: { ok: true, lock_token: LOCK_TOKEN }, error: null };
+      }
+      if (name === "bind_billing_checkout_session") {
+        return {
+          data: {
+            ok: true,
+            lock_token: LOCK_TOKEN,
+            stripe_checkout_session_id: SESSION_ID,
+          },
+          error: null,
+        };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: { ok: true, released: true }, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const response = await runBillingCheckout(request(), {
+      ...deps(),
+      now: () => {
+        const current = new Date(nowMs);
+        nowMs += 1_000;
+        return current;
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(lockExpiresAtIso).toBeDefined();
+    const createArgs = sessionsCreate.mock.calls[0]![0] as { expires_at: number };
+    const lockExpiresUnix = Math.floor(new Date(lockExpiresAtIso!).getTime() / 1000);
+    expect(createArgs.expires_at).toBeGreaterThan(lockExpiresUnix);
+    expect(createArgs.expires_at - lockExpiresUnix).toBeGreaterThanOrEqual(1);
+  });
+
+  it("returns 503 when leftover open Session expire fails before create (B1)", async () => {
+    sessionsList.mockResolvedValue({
+      data: [{ id: "cs_old_open", status: "open" }],
+      object: "list",
+      has_more: false,
+      url: "",
+    });
+    sessionsExpire.mockRejectedValue(new Error("expire down"));
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(503);
+    expect(sessionsCreate).not.toHaveBeenCalled();
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "billing_checkout_session_expire_failed",
+        alertMetric: 1,
+      }),
+    );
+  });
+
+  it("rejects checkout after kill-unpaid restore without waiting for webhook (B3)", async () => {
+    loadEntitlement.mockResolvedValue({
+      ...freeEntitlement,
+      status: "unpaid",
+      plusEntitled: false,
+      dbPlusEntitled: false,
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      killSourceStatus: "active",
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "billing_already_entitled" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects checkout after kill-unpaid restore from canceled while period remains (B-R3)", async () => {
+    loadEntitlement.mockResolvedValue({
+      ...freeEntitlement,
+      status: "unpaid",
+      plusEntitled: false,
+      dbPlusEntitled: false,
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      killSourceStatus: "canceled",
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "billing_already_entitled" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows checkout after kill-unpaid restore from canceled once period ended (B-R3)", async () => {
+    loadEntitlement.mockResolvedValue({
+      ...freeEntitlement,
+      status: "unpaid",
+      plusEntitled: false,
+      dbPlusEntitled: false,
+      currentPeriodEnd: "2026-07-01T00:00:00.000Z",
+      killSourceStatus: "canceled",
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(200);
+    expect(sessionsCreate).toHaveBeenCalledTimes(1);
   });
 });

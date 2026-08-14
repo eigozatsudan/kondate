@@ -2,8 +2,10 @@
  * ops readonly 用 pg プールと URL 検証。
  * - ユーザー名は exact: kondate_ops_readonly または kondate_ops_readonly.<20-char-ref>
  * - port 6543（transaction pooler）拒否、postgres ロール拒否
- * - 本番相当は sslmode require|verify-ca|verify-full（env 検証）+ TLS は
- *   maintenance-db と同様 rejectUnauthorized: false（pooler 自己署名連鎖）
+ * - 本番相当は sslmode require|verify-ca|verify-full（env 検証）
+ *   - require: TLS 暗号化のみ（rejectUnauthorized: false）。Session pooler の
+ *     自己署名連鎖では CA 検証できないため。verify-full を名乗らない
+ *   - verify-ca / verify-full: rejectUnauthorized: true で実際に検証する
  * - 業務 SQL は withReadOnly 経由のみ（pool.query 直叩き禁止）
  */
 import pg from "pg";
@@ -16,12 +18,7 @@ const LOCAL_LOGIN_USER = "kondate_ops_readonly";
 const PROJECT_REF_PATTERN = /^[a-z0-9]{20}$/u;
 const POOLER_HOST_PATTERN = /^[a-z0-9-]+\.pooler\.supabase\.com$/u;
 const DIRECT_HOST_PATTERN = /^db\.[a-z0-9]{20}\.supabase\.co$/u;
-const LOCAL_HOSTS = new Set([
-  "127.0.0.1",
-  "localhost",
-  "host.docker.internal",
-  "db",
-]);
+const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "host.docker.internal", "db"]);
 
 export type AssertDatabaseUrlOpts = {
   allowInsecureLocalDb: boolean;
@@ -31,10 +28,7 @@ export type AssertDatabaseUrlOpts = {
  * ADMIN_DATABASE_URL を fail-closed で検証し、パース済み URL を返す。
  * 例外メッセージにパスワードを載せない（closed 文言）。
  */
-export function assertDatabaseUrl(
-  url: string,
-  opts: AssertDatabaseUrlOpts,
-): URL {
+export function assertDatabaseUrl(url: string, opts: AssertDatabaseUrlOpts): URL {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -82,7 +76,9 @@ export function assertDatabaseUrl(
     isRoleWithRef = PROJECT_REF_PATTERN.test(ref);
   }
   if (!isBareRole && !isRoleWithRef) {
-    throw new Error("database_url_invalid: username must be kondate_ops_readonly or kondate_ops_readonly.<20-char-ref>");
+    throw new Error(
+      "database_url_invalid: username must be kondate_ops_readonly or kondate_ops_readonly.<20-char-ref>",
+    );
   }
 
   const sslmode = parsed.searchParams.get("sslmode");
@@ -109,10 +105,8 @@ export function assertDatabaseUrl(
     databaseUrlInvalid();
   }
 
-  const isDirect =
-    isBareRole && DIRECT_HOST_PATTERN.test(host);
-  const isSession =
-    isRoleWithRef && POOLER_HOST_PATTERN.test(host);
+  const isDirect = isBareRole && DIRECT_HOST_PATTERN.test(host);
+  const isSession = isRoleWithRef && POOLER_HOST_PATTERN.test(host);
 
   if (!isDirect && !isSession) {
     // bare role + pooler や role.ref + direct は拒否
@@ -124,15 +118,17 @@ export function assertDatabaseUrl(
 
 /**
  * node-pg 用接続オプション。
- * 本番相当: URL の sslmode で検証済みのうえ、connectionString から sslmode を外し
- * `ssl: { rejectUnauthorized: false }` を明示する（maintenance-db と同型。
- * sslmode=require を残すと pg が verify-full 相当になり pooler で証明書連鎖エラーになる）。
- * ローカル insecure: ssl オフ。
+ * connectionString の sslmode は pg が Client.ssl を上書きするため外す。
+ * - require: 暗号化のみ。証明書は検証しない（pooler 自己署名連鎖）。
+ *   verify-full を名乗って無効化はしない。
+ * - verify-ca / verify-full: rejectUnauthorized: true で実際に検証する。
+ *   pooler では自己署名連鎖で接続失敗し得る（require を使う）。
+ * - disable（ローカル insecure）: ssl オフ。
  */
 export function buildPoolSslOptions(
   connectionString: string,
   allowInsecureLocalDb: boolean,
-): { connectionString: string; ssl?: { rejectUnauthorized: false } } {
+): { connectionString: string; ssl?: { rejectUnauthorized: boolean } } {
   const parsed = assertDatabaseUrl(connectionString, { allowInsecureLocalDb });
   const sslmode = parsed.searchParams.get("sslmode");
 
@@ -146,9 +142,10 @@ export function buildPoolSslOptions(
   if (next.endsWith("?")) {
     next = next.slice(0, -1);
   }
+  const verifyPeer = sslmode === "verify-ca" || sslmode === "verify-full";
   return {
     connectionString: next,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: verifyPeer },
   };
 }
 
@@ -167,10 +164,7 @@ export function createPool(config: AdminConfig): pg.Pool {
   assertDatabaseUrl(config.databaseUrl, {
     allowInsecureLocalDb: config.allowInsecureLocalDb,
   });
-  const conn = buildPoolSslOptions(
-    config.databaseUrl,
-    config.allowInsecureLocalDb,
-  );
+  const conn = buildPoolSslOptions(config.databaseUrl, config.allowInsecureLocalDb);
   return new Pool({
     connectionString: conn.connectionString,
     ssl: conn.ssl,
@@ -215,9 +209,7 @@ export type StartupDbCheckResult = {
  * listen 前に必須。失敗時は process を落とす前提の closed throw。
  * 成功時は実測 session_user を返し、呼び出し側が hardcode しないこと。
  */
-export async function runStartupDbChecks(
-  pool: pg.Pool,
-): Promise<StartupDbCheckResult> {
+export async function runStartupDbChecks(pool: pg.Pool): Promise<StartupDbCheckResult> {
   const client = await pool.connect();
   try {
     const userRes = await client.query<{
@@ -291,9 +283,7 @@ export async function runStartupDbChecks(
     }
 
     // 代表 SELECT が permission エラーにならないこと
-    await client.query(
-      "select id from public.user_feedback limit 1",
-    );
+    await client.query("select id from public.user_feedback limit 1");
 
     return { sessionUser };
   } catch (e) {

@@ -10,6 +10,9 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env.admin
+    environment:
+      # コンテナ内 listen。ホスト公開は下の 127.0.0.1:5193 のみ。
+      ADMIN_BIND_HOST: "0.0.0.0"
     ports:
       - "127.0.0.1:5193:5193"
     restart: "no"

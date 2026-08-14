@@ -25,11 +25,49 @@ import {
   shoppingIntentStorageKey,
   shoppingResumeSuppressKey,
   shoppingSheetExpectedKey,
+  shoppingSheetOccupancyLockName,
 } from "./shopping-intent";
 import { pendingShoppingCommandStorageKey } from "./api/shopping-api";
 
 const MENU = "40000000-0000-4000-8000-000000000001";
 const LIST = "41000000-0000-4000-8000-000000000001";
+
+/** jsdom に無い Web Locks を、sheet occupancy の保持 / ifAvailable 探測だけ模す。 */
+function createFakeLockManager() {
+  const held = new Set<string>();
+  type FakeLockCallback = (lock: { name: string; mode: "exclusive" } | null) => unknown;
+  return {
+    isHeld: (name: string) => held.has(name),
+    request(
+      name: string,
+      optionsOrCallback: LockOptions | FakeLockCallback,
+      maybeCallback?: FakeLockCallback,
+    ): Promise<unknown> {
+      const options = typeof optionsOrCallback === "function" ? {} : optionsOrCallback;
+      const callback = typeof optionsOrCallback === "function" ? optionsOrCallback : maybeCallback;
+      if (callback === undefined) return Promise.resolve(undefined);
+      if (held.has(name)) {
+        if (options.ifAvailable === true) return Promise.resolve(callback(null));
+        return new Promise(() => {
+          /* テストはキュー待ちを使わない */
+        });
+      }
+      held.add(name);
+      const lock = { name, mode: "exclusive" as const };
+      return Promise.resolve(callback(lock)).finally(() => {
+        held.delete(name);
+      });
+    },
+  };
+}
+
+function stubNavigatorLocks(locks: ReturnType<typeof createFakeLockManager>): void {
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    writable: true,
+    value: locks,
+  });
+}
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -42,6 +80,7 @@ afterEach(() => {
   sessionStorage.clear();
   localStorage.clear();
   resetResumeSuppressDocumentBootForTests();
+  Reflect.deleteProperty(navigator, "locks");
 });
 
 describe("shopping-intent paths", () => {
@@ -294,34 +333,58 @@ describe("resume suppress unmount clear (SHOP1)", () => {
 
 describe("clearResumeSuppressOnDocumentBoot (SHOP2 hard reload)", () => {
   // hard reload 後: unmount clear が走らず suppress と sticky が同居して auto-resume が凍る穴。
-  it("clears orphan suppress once per document boot", () => {
+  it("clears orphan suppress once per document boot", async () => {
     markShoppingResumeSuppress("create", MENU);
-    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
     // 同一 document（StrictMode remount / SPA）では 2 回目 no-op
     markShoppingResumeSuppress("create", MENU);
-    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(false);
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(false);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
   });
 
-  it("does not clear other kind/target and is no-op when already clear", () => {
+  it("does not clear other kind/target and is no-op when already clear", async () => {
     markShoppingResumeSuppress("create", MENU);
     markShoppingResumeSuppress("reconcile", LIST);
-    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
     expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(true);
-    expect(clearResumeSuppressOnDocumentBoot("reconcile", LIST)).toBe(true);
+    expect(await clearResumeSuppressOnDocumentBoot("reconcile", LIST)).toBe(true);
     expect(isShoppingResumeSuppressed("reconcile", LIST)).toBe(false);
     // 既に clear 済みでも boot token は消費済み → false
-    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(false);
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(false);
   });
 
-  it("re-arms after reset so simulated hard reload can clear again", () => {
+  it("re-arms after reset so simulated hard reload can clear again", async () => {
     markShoppingResumeSuppress("create", MENU);
-    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
     markShoppingResumeSuppress("create", MENU);
     resetResumeSuppressDocumentBootForTests();
-    expect(clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+  });
+
+  it("does not clear shared suppress while a live peer holds the sheet occupancy lock (SHOP1)", async () => {
+    // Tab A が sheet 表示中: mark が occupancy lock を保持し、共有 local 正本が立つ。
+    // Tab B hard reload は自タブ shoppingSheet=null でも、peer lock があるあいだ共有旗を消さない。
+    const locks = createFakeLockManager();
+    stubNavigatorLocks(locks);
+    markShoppingResumeSuppress("create", MENU);
+    expect(locks.isHeld(shoppingSheetOccupancyLockName("create", MENU))).toBe(true);
+
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(false);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
+    expect(localStorage.getItem(shoppingResumeSuppressKey("create", MENU))).toBe("1");
+  });
+
+  it("still clears orphan shared suppress when occupancy lock is free (SHOP1)", async () => {
+    // 保持タブ死亡相当: 共有旗だけ残り lock は無い。hard reload の boot は従来どおり落とす。
+    const locks = createFakeLockManager();
+    stubNavigatorLocks(locks);
+    localStorage.setItem(shoppingResumeSuppressKey("create", MENU), "1");
+    expect(locks.isHeld(shoppingSheetOccupancyLockName("create", MENU))).toBe(false);
+
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
   });
 });

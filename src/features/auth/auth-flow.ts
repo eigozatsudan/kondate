@@ -87,10 +87,19 @@ export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.sup
  * sessionStorage に加え origin 共有 localStorage にも同じ UUID を書く。
  * residual recovery の restrictToFlowId にし、他タブ / sessionStorage 空の /login remount でも
  * prior-user 全件 complete を閉じる。flow secret はここに載せない（R3）。
+ *
+ * C4: 値は `{ id, expiresAtMs }`。TTL は continuation と同じ
+ * `defaultAuthContinuationTtlMs`（新しい数値は発明しない）。期限切れ・旧 UUID 平文は pin 無し。
  */
 export const ACTIVE_LOGIN_FLOW_STORAGE_KEY = "kondate.auth.active-login-flow" as const;
 
 const activeLoginFlowIdSchema = z.uuid();
+const activeLoginFlowPinSchema = z
+  .object({
+    id: activeLoginFlowIdSchema,
+    expiresAtMs: z.number(),
+  })
+  .strict();
 
 function activeLoginFlowStorages(): Array<Storage> {
   const storages: Array<Storage> = [];
@@ -99,16 +108,34 @@ function activeLoginFlowStorages(): Array<Storage> {
   return storages;
 }
 
-function readStoredActiveLoginFlowId(storage: Storage): string | undefined {
+function parseActiveLoginFlowPinRaw(
+  raw: string,
+  nowMs: number,
+): { id: string; expiresAtMs: number } | undefined {
+  try {
+    const parsed = activeLoginFlowPinSchema.safeParse(JSON.parse(raw) as unknown);
+    if (!parsed.success) return undefined;
+    if (parsed.data.expiresAtMs <= nowMs) return undefined;
+    return parsed.data;
+  } catch {
+    // 旧 UUID 平文は TTL 無しのため共有端末に残る。期限切れと同じく無効。
+    return undefined;
+  }
+}
+
+function readStoredActiveLoginFlowId(
+  storage: Storage,
+  nowMs: number = Date.now(),
+): string | undefined {
   try {
     const raw = storage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
     if (raw === null || raw.length === 0) return undefined;
-    const parsed = activeLoginFlowIdSchema.safeParse(raw);
-    if (!parsed.success) {
+    const parsed = parseActiveLoginFlowPinRaw(raw, nowMs);
+    if (parsed === undefined) {
       storage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       return undefined;
     }
-    return parsed.data;
+    return parsed.id;
   } catch {
     return undefined;
   }
@@ -117,11 +144,16 @@ function readStoredActiveLoginFlowId(storage: Storage): string | undefined {
 /**
  * C2/C13/C36: createAuthFlow 成功後に対象 flow を覚える（best-effort。secret は載せない）。
  * origin 共有 localStorage に書けたときだけ true。失敗時は呼び出し側が共有 suppress を残す。
+ * C4: continuation TTL 付きで書き、共有端末の無期限 pin を閉じる。
  */
-export function writeActiveLoginFlowId(flowId: string): boolean {
+export function writeActiveLoginFlowId(flowId: string, nowMs: number = Date.now()): boolean {
+  const payload = JSON.stringify({
+    id: flowId,
+    expiresAtMs: nowMs + defaultAuthContinuationTtlMs,
+  });
   for (const storage of activeLoginFlowStorages()) {
     try {
-      storage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, flowId);
+      storage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, payload);
     } catch {
       // sessionStorage 失敗でも localStorage があれば他タブ / remount で restrict できる
       // C36: local 失敗は呼び出し側で origin 共有 suppress を落とさない
@@ -130,7 +162,7 @@ export function writeActiveLoginFlowId(flowId: string): boolean {
   try {
     return (
       typeof localStorage !== "undefined" &&
-      localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY) === flowId
+      readStoredActiveLoginFlowId(localStorage, nowMs) === flowId
     );
   } catch {
     return false;
@@ -167,8 +199,10 @@ const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
  * C3: URL strip 後も 429/5xx 再 deposit できるよう、同一ブラウザに短寿命で code を保持する。
  * owned prefix 配下なので logout の clearOwnedAuthStorage で消える。
  * cold-start fail-closed（RR1）は session キーのみ消し pending は温存。
- * soft 失効（clearSoftSessionResidualBestEffort）は R3 以降 pending を温存する
- * （sibling mid-login）。C4 は origin 共有 localStorage residual recovery suppress で
+ * soft 失効は prior-user pending を消す（C5）。callback-owner 付き sibling
+ * mid-login pending は残す（C-R3: strip 後 re-deposit）。
+ * sibling mid-login の secret / PKCE / callback-owner は残す（R3）。
+ * C4 は origin 共有 localStorage residual recovery suppress で
  * 新タブ含む silent complete を閉じる（secret は焼かない）。
  * dismiss（markAuthFlowUserDismissed）でも pending は即消す（C2）。
  */
@@ -192,6 +226,8 @@ const dismissedFlowIdsMemory = new Set<string>();
  */
 const AUTH_FLOW_DISMISS_BROADCAST_CHANNEL = "kondate.auth.flow-user-dismissed";
 let dismissBroadcastListenerStarted = false;
+/** テスト reset で閉じ、遅延 postMessage が次ケースの同一 UUID を汚さないようにする */
+let dismissBroadcastChannel: BroadcastChannel | null = null;
 
 function ensureAuthFlowDismissBroadcastListener(): void {
   if (dismissBroadcastListenerStarted) return;
@@ -199,18 +235,26 @@ function ensureAuthFlowDismissBroadcastListener(): void {
   dismissBroadcastListenerStarted = true;
   try {
     const channel = new BroadcastChannel(AUTH_FLOW_DISMISS_BROADCAST_CHANNEL);
+    dismissBroadcastChannel = channel;
     channel.onmessage = (event: MessageEvent) => {
       const data: unknown = event.data;
       if (typeof data !== "object" || data === null) return;
       if (!("flowId" in data)) return;
       const flowId: unknown = Reflect.get(data, "flowId");
       if (typeof flowId !== "string" || flowId === "") return;
+      // C-R1: 後勝ち OAuth 成功後の自 flow 取り消しを open tabs の memory にも反映する
+      const cleared = "cleared" in data ? Reflect.get(data, "cleared") : undefined;
+      if (cleared === true) {
+        dismissedFlowIdsMemory.delete(flowId);
+        return;
+      }
       dismissedFlowIdsMemory.add(flowId);
     };
   } catch {
     // BroadcastChannel 不可環境は memory + storage のみ
     // 起動失敗時は flag を戻し、後続 mark/isAuth で再試行できるようにする
     dismissBroadcastListenerStarted = false;
+    dismissBroadcastChannel = null;
   }
 }
 
@@ -222,11 +266,11 @@ export function startAuthFlowDismissBroadcastListener(): void {
   ensureAuthFlowDismissBroadcastListener();
 }
 
-function broadcastAuthFlowUserDismissed(flowId: string): void {
+function broadcastAuthFlowUserDismissed(flowId: string, cleared = false): void {
   if (typeof BroadcastChannel === "undefined") return;
   try {
     const channel = new BroadcastChannel(AUTH_FLOW_DISMISS_BROADCAST_CHANNEL);
-    channel.postMessage({ flowId });
+    channel.postMessage(cleared ? { flowId, cleared: true } : { flowId });
     channel.close();
   } catch {
     // best-effort（受信側 listener 未起動・環境非対応は TTL に収束）
@@ -239,7 +283,8 @@ if (typeof window !== "undefined") {
   ensureAuthFlowDismissBroadcastListener();
 }
 
-const defaultAuthContinuationTtlMs = 300_000;
+/** continuation / pin / pending が共有する既定 TTL。新しい数値は発明しない。 */
+export const defaultAuthContinuationTtlMs = 300_000;
 /**
  * C6: deposit API（`auth-continuation-deposit` authorizationCodeSchema.max(512)）と揃える。
  * pending / claim が 2048 だけ広いと deposit 400 → re-deposit ループになる。
@@ -255,6 +300,11 @@ const pendingDepositSchema = z
     code: z.string().min(1).max(AUTH_CONTINUATION_CODE_MAX_LENGTH),
     // Zod v4 では number 既定が有限値のみ（.finite() は no-op かつ deprecated）
     expiresAtMs: z.number(),
+    /**
+     * C1: token_hash の confirm 前キャッシュ。residual / resumeFlow は
+     * この印がある pending を re-deposit → verifyOtp しない（プレビュー耐性）。
+     */
+    awaitingConfirm: z.boolean().optional(),
   })
   .strict();
 
@@ -753,6 +803,24 @@ export function markAuthFlowUserDismissed(
   clearPendingAuthDeposit(flowId, storage);
 }
 
+/**
+ * C-R1: 後勝ち Google が OAuth 成功したあと、同時開始で付いた自 flow の dismiss を戻す。
+ * pending は戻さない（C2: dismiss 時点で消した平文は復元しない）。
+ */
+export function clearAuthFlowUserDismissed(
+  flowId: string,
+  storage: Storage = window.localStorage,
+): void {
+  if (flowId === "") return;
+  dismissedFlowIdsMemory.delete(flowId);
+  try {
+    storage.removeItem(`${userDismissedPrefix}${flowId}`);
+  } catch {
+    // storage 障害: memory + BroadcastChannel で同一ページ／open tabs は戻す
+  }
+  broadcastAuthFlowUserDismissed(flowId, true);
+}
+
 /** C3: dismiss 済み flow か（残存 secret があっても silent complete しない） */
 export function isAuthFlowUserDismissed(
   flowId: string,
@@ -776,6 +844,12 @@ export function resetAuthFlowUserDismissedMemoryForTests(): void {
   dismissedFlowIdsMemory.clear();
   // 次の mark/isAuth で現在の BroadcastChannel 実装に再接続できるようにする（C-R8 テスト用）
   dismissBroadcastListenerStarted = false;
+  try {
+    dismissBroadcastChannel?.close();
+  } catch {
+    // best-effort
+  }
+  dismissBroadcastChannel = null;
 }
 
 /**

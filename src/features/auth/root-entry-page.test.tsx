@@ -121,6 +121,30 @@ it("query error は not_started へ推測変換せず再試行操作を持つ al
   expect(router.state.location.pathname).toBe("/");
 });
 
+it("L3: refetch error with cached not_started still redirects to welcome", async () => {
+  useQueryMock.mockReturnValue({
+    isPending: false,
+    isError: true,
+    status: "error",
+    data: { onboarding_status: "not_started" },
+  });
+  const router = renderWithRouter();
+  expect(await screen.findByRole("heading", { name: "ウェルカム" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/welcome");
+});
+
+it("L3: refetch error with cached complete still redirects to planner", async () => {
+  useQueryMock.mockReturnValue({
+    isPending: false,
+    isError: true,
+    status: "error",
+    data: { onboarding_status: "complete" },
+  });
+  const router = renderWithRouter();
+  expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/planner");
+});
+
 it("profile row 欠損は not_started へ推測変換せず再試行操作を持つ alert に留まりredirectしない", () => {
   useQueryMock.mockReturnValue({ isPending: false, isError: false, data: null });
   const router = renderWithRouter();

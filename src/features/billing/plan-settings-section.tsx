@@ -106,10 +106,11 @@ export function PlanSettingsSection({
   const surfacesOpen = data?.productSurfacesOpen === true;
   // B6: error 時は stale Plus を出さない（サーバ再検証までの fail-closed 表示）
   const entitled = !error && data?.plusEntitled === true;
-  const isTrialing = data?.status === "trialing";
-  const isPastDue = data?.status === "past_due" || data?.pastDueGrace === true;
+  // B11: fetch error 時は stale status の trial / past_due / incomplete ブロックを出さない
+  const isTrialing = !error && data?.status === "trialing";
+  const isPastDue = !error && (data?.status === "past_due" || data?.pastDueGrace === true);
   // B1: incomplete は Checkout 409 が Portal 完了を指示。Checkout フォームではなく Portal CTA を出す
-  const isIncomplete = data?.status === "incomplete";
+  const isIncomplete = !error && data?.status === "incomplete";
   const trialEndLabel = formatTrialEnd(data?.trialEnd ?? null);
   // Checkout 成功後の webhook 遅延待ち中・期限後も Portal を出せる（両閉じ回避）
   // B17: COMING_SOON 中は Checkout 経路が無いため、surfaces 開放中は Free 枝でも Portal CTA を出す
@@ -215,7 +216,9 @@ export function PlanSettingsSection({
             </div>
           ) : null}
 
-          {!entitled && surfacesOpen && !isIncomplete ? (
+          {/* B10: grace 切れ past_due は Portal のみ。新規申込枝を並べない */}
+          {/* B-R4: fetch error 時は stale 申込枝（COMING_SOON / Checkout）も出さない */}
+          {!error && !entitled && surfacesOpen && !isIncomplete && !isPastDue ? (
             <div className="stack gap-3">
               <p>こんだて日和 Plus なら、1 日最大 10 回まで献立を作れます。</p>
               {/* BILL-1: LP の COMING_SOON と設定の Checkout を揃える（申込不可なのに Settings だけ課金可にしない） */}

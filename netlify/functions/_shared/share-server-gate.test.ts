@@ -58,7 +58,7 @@ describe("runShareServerGate", () => {
                 ingredientIndex === 0
                   ? {
                       ...ingredient,
-                      // 数量だけ改変（name はロック対象外なので据え置き）
+                      // 数量の数値だけ改変（name / quantityText はロック対象外）
                       quantityValue: (ingredient.quantityValue ?? 0) + 100,
                       quantityText: "改変量",
                     }
@@ -81,6 +81,24 @@ describe("runShareServerGate", () => {
       ok: false,
       code: "server_gate_failed",
     });
+  });
+
+  it("allows free-text quantityText change when numeric quantities stay locked", () => {
+    const menu = makeValidatedMenu();
+    const lock = captureShareIngredientGraphLock(menu);
+    const rewritten = makeValidatedMenu({
+      dishes: menu.dishes.map((dish, index) =>
+        index === 0
+          ? {
+              ...dish,
+              ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+                ingredientIndex === 0 ? { ...ingredient, quantityText: "大さじ1" } : ingredient,
+              ),
+            }
+          : dish,
+      ),
+    });
+    expect(runShareServerGate(rewritten, lock)).toEqual({ ok: true });
   });
 
   it("allows free-text name change when graph quantities stay locked", () => {

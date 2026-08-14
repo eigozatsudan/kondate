@@ -52,7 +52,7 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
 /**
  * R3: soft residual で消してよい kondate.auth.* か。
  * 共有端末の prior-user residual complete（C4）を閉じつつ、sibling タブ in-flight の
- * flow secret / pending / PKCE / callback-owner は焼かない。
+ * flow secret / PKCE / callback-owner は焼かない。
  *
  * 消す:
  * - session 永続キー（exact）
@@ -62,11 +62,15 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
  *
  * 残す（sibling mid-login / C4 suppress）:
  * - kondate.auth.flow.*
- * - pending-deposit / callback-owner / flow-user-dismissed / clock-rebase
+ * - callback-owner / flow-user-dismissed / clock-rebase
  * - PKCE verifier（storageKey 派生の -code-verifier）
  * - soft residual suppress 印自体（localStorage 共有; mark 後に再設定）
+ * - callback-owner がある pending-deposit（C-R3: strip 後 re-deposit 正本）
+ *
+ * 消す（共有端末の prior-user code / token_hash 平文）:
+ * - callback-owner の無い pending-deposit（C5）
  */
-function shouldClearAuthKeyOnSoftResidual(key: string): boolean {
+function shouldClearAuthKeyOnSoftResidual(key: string, storage: Storage): boolean {
   // C4 共有 suppress 印は soft 掃除ループで落とさない（直後 mark と二重化してよい）
   if (key === SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY) return false;
   if ((MAGIC_LINK_RESIDUAL_KEYS as readonly string[]).includes(key)) return true;
@@ -80,7 +84,22 @@ function shouldClearAuthKeyOnSoftResidual(key: string): boolean {
   }
   // sibling in-flight に必要なキーは温存
   if (key.startsWith(ownedAuthStoragePrefixes[0])) return false; // flow.
-  if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.pending-deposit.`)) return false;
+  const pendingPrefix = `${ownedAuthStoragePrefixes[1]}.pending-deposit.`;
+  if (key.startsWith(pendingPrefix)) {
+    const flowId = key.slice(pendingPrefix.length);
+    // C-R3: callback タブが owner を立てている mid-login pending は残す。
+    // owner 無しは共有端末の prior-user 平文として消す（C5）。
+    if (flowId !== "") {
+      try {
+        if (storage.getItem(`${ownedAuthStoragePrefixes[1]}.callback-owner.${flowId}`) !== null) {
+          return false;
+        }
+      } catch {
+        // owner が読めないときは C5 どおり消す
+      }
+    }
+    return true;
+  }
   if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.callback-owner.`)) return false;
   if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.flow-user-dismissed.`)) return false;
   if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.clock-rebase.`)) return false;
@@ -184,7 +203,9 @@ export function clearOwnedLocalDataBestEffort(): void {
  * C4: residual recovery が前ユーザとして silent complete しないこと。
  * 旧実装は `kondate.auth.*` 全消しで secret も焼いたが、sibling タブ in-flight login まで
  * 巻き添えにした（R3）。R3 以降は:
- * - flow secret / pending / PKCE / callback-owner は温存（sibling mid-login）
+ * - flow secret / PKCE / callback-owner は温存（sibling mid-login）
+ * - pending-deposit は callback-owner がある sibling mid-login だけ残し、
+ *   prior-user 平文は消す（C5 / C-R3）
  * - completion と session キーは消す（resume short-circuit / persist token）
  * - residual recovery を origin 共有 localStorage suppress で抑止（C4: 新タブ含む）
  *
@@ -215,7 +236,7 @@ export function clearSoftSessionResidualBestEffort(): void {
     for (const key of keys) {
       if (key.startsWith("kondate.auth.")) {
         // R3: sibling in-flight に必要なキーは残し、C4 対象（session/completion 等）だけ消す
-        if (!shouldClearAuthKeyOnSoftResidual(key)) continue;
+        if (!shouldClearAuthKeyOnSoftResidual(key, storage)) continue;
         try {
           storage.removeItem(key);
         } catch {
@@ -236,8 +257,8 @@ export function clearSoftSessionResidualBestEffort(): void {
 }
 
 /**
- * C5: 401 / session 失効用。session + 草稿は消すが R3 keep
- * （flow / pending / PKCE / callback-owner）は残す。
+ * C5: 401 / session 失効用。session + 草稿 + prior-user pending は消し、R3 keep
+ * （flow / PKCE / callback-owner / sibling mid-login pending）は残す。
  * 明示 logout / アカウント削除は clearLocalAuthAndDrafts（全所有キー）のまま。
  */
 export async function clearExpiredSessionAuthAndDrafts(

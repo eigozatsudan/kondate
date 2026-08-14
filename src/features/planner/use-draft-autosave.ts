@@ -152,6 +152,7 @@ export function useDraftAutosave({
   save,
   onConflict,
   onSaved,
+  saveOnUnload,
 }: {
   value: PlannerDraftInput;
   enabled: boolean;
@@ -161,6 +162,12 @@ export function useDraftAutosave({
   onConflict?: () => void | Promise<void>;
   /** サーバ確定後の cache 同期など。supersede で破棄した書込では呼ばない。 */
   onSaved?: (draft: PlannerDraft) => void;
+  /**
+   * persistable dirty の document unload（pagehide / beforeunload）で同期開始する口。
+   * useBlocker は unload を見ない。通常 enqueue は keepalive 無しで中断され得る。
+   * 呼び出し側は keepalive 可能な経路を渡す。失敗は可視化しない（best-effort）。
+   */
+  saveOnUnload?: (value: PlannerDraftInput, revision: number) => void;
 }): DraftAutosaveController {
   const [state, setState] = useState<DraftSaveState>("idle");
   const [savedRevision, setSavedRevision] = useState(baselineRevision);
@@ -196,12 +203,16 @@ export function useDraftAutosave({
   // P1: reset 強制保存を fire-and-forget で握りつぶさず、flush から await 可能にする
   const pendingForceSaveRef = useRef<PendingForceSave | null>(null);
   const onSavedRef = useRef(onSaved);
+  const saveOnUnloadRef = useRef(saveOnUnload);
+  /** pagehide と beforeunload が連続しても keepalive は 1 回だけ。 */
+  const unloadPersistStartedRef = useRef(false);
   latestRef.current = value;
   latestSerializedRef.current = serialized;
   latestFingerprintRef.current = fingerprint;
   baselineRevisionRef.current = baselineRevision;
   enabledRef.current = enabled;
   onSavedRef.current = onSaved;
+  saveOnUnloadRef.current = saveOnUnload;
 
   const resetBaseline = useCallback((revision: number): void => {
     revisionRef.current = revision;
@@ -464,6 +475,35 @@ export function useDraftAutosave({
       // unmount 後は toast を出せないため失敗は握りつぶす。settings 等の明示遷移は
       // route が await flush + submissionError で可視化する。
       void enqueueRef.current(latestRef.current).catch(() => undefined);
+    };
+  }, []);
+
+  useEffect(() => {
+    const persistOnDocumentUnload = (): void => {
+      if (unloadPersistStartedRef.current) return;
+      if (!enabledRef.current) return;
+      const persist = saveOnUnloadRef.current;
+      if (persist === undefined) return;
+      if (peekDraftConflict(conflictRef) !== null) return;
+      const dirty = latestFingerprintRef.current !== baselineSerializedRef.current;
+      if (!pendingDebounceRef.current && !dirty) return;
+      const latest = latestRef.current;
+      // review memo 等の persistable dirty だけ。途中 idea は RPC 不能なので送らない。
+      if (!isPersistableDraft(latest)) return;
+      unloadPersistStartedRef.current = true;
+      persist(latest, revisionRef.current);
+    };
+    const resetUnloadGuard = (): void => {
+      // bfcache 復帰後に再編集→再離脱できるよう、1 回フラグだけ戻す。
+      unloadPersistStartedRef.current = false;
+    };
+    window.addEventListener("pagehide", persistOnDocumentUnload);
+    window.addEventListener("beforeunload", persistOnDocumentUnload);
+    window.addEventListener("pageshow", resetUnloadGuard);
+    return () => {
+      window.removeEventListener("pagehide", persistOnDocumentUnload);
+      window.removeEventListener("beforeunload", persistOnDocumentUnload);
+      window.removeEventListener("pageshow", resetUnloadGuard);
     };
   }, []);
 
