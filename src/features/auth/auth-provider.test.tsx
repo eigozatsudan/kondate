@@ -1536,8 +1536,12 @@ describe("AuthProvider", () => {
         <Probe />
       </AuthProvider>,
     );
-    await screen.findByText("unauthenticated");
-    expect(remountRecovery).toHaveBeenCalled();
+    // remount の getSession(null) で unauthenticated になったあと residual effect が走る。
+    // フルスイート負荷下では findByText が effect より先に解決し得るので、副作用を待つ。
+    await waitFor(() => {
+      expect(remountRecovery).toHaveBeenCalled();
+    });
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
     const remountInput = remountRecovery.mock.calls.at(-1)?.[0];
     expect(remountInput?.restrictToFlowId).toBe(newFlowId);
     expect(remountInput?.restrictToFlowId).not.toBe(priorFlowId);
