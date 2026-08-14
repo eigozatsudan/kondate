@@ -1,6 +1,6 @@
 /**
  * ADMIN_LOCAL_TOKEN が設定されているとき、/api/* に Bearer を要求する。
- * /api/health は任意で免除可能。
+ * /api/health は任意で免除可能。未設定時の業務 API 未登録は register 側。
  * ADM5: 比較は timingSafeEqual。短すぎる token は loadConfig 側で拒否する。
  */
 import { timingSafeEqual } from "node:crypto";
@@ -13,12 +13,11 @@ export const ADMIN_LOCAL_TOKEN_MIN_LENGTH = 16;
 function secretsEqual(provided: string, expected: string): boolean {
   const a = Buffer.from(provided, "utf8");
   const b = Buffer.from(expected, "utf8");
-  if (a.length !== b.length) {
-    // 長さ不一致でも 1 回比較相当の仕事をさせて単純な時間差を均す
-    timingSafeEqual(a, a);
-    return false;
-  }
-  return timingSafeEqual(a, b);
+  // 長さ不一致でも expected 長の比較 1 回を行い、長さ側の時間差を均す
+  const sameLength = a.length === b.length;
+  const left = sameLength ? a : Buffer.alloc(b.length);
+  const equal = timingSafeEqual(left, b);
+  return sameLength && equal;
 }
 
 function bearerToken(authorization: string | null | undefined): string | null {

@@ -9,18 +9,15 @@ import { join } from "node:path";
 import { loadConfig, connectionHostLabel } from "./config.js";
 import { createPool, runStartupDbChecks } from "./db.js";
 import { createApp } from "./app.js";
-import {
-  createSafeStaticMiddleware,
-  createSpaFallbackMiddleware,
-} from "./lib/safe-static.js";
+import { createSafeStaticMiddleware, createSpaFallbackMiddleware } from "./lib/safe-static.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
 
   if (config.localToken === null) {
-    // 秘密は出さない。運用注意のみ
+    // 秘密は出さない。業務 API は register 側で未登録
     console.warn(
-      "[admin] ADMIN_LOCAL_TOKEN が未設定です。単一オペレータ・非共有 PC でのみ起動してください。",
+      "[admin] ADMIN_LOCAL_TOKEN が未設定です。業務 API は無効です。単一オペレータ・非共有 PC でのみ起動してください。",
     );
   }
 

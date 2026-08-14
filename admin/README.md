@@ -7,7 +7,7 @@
 | 公開 URL   | `http://127.0.0.1:5193` のみ（LAN 公開しない）                                                            |
 | 本編アプリ | 非依存。`compose.yaml` とは別の `compose.admin.yaml`                                                      |
 | デプロイ   | **しない**（Netlify / 本番 URL に載せない）                                                               |
-| 認証       | アプリログインなし。Host allowlist + loopback。**`ADMIN_LOCAL_TOKEN` 推奨**（共有レシピ API は **必須**） |
+| 認証       | アプリログインなし。Host allowlist + loopback。**`ADMIN_LOCAL_TOKEN` 必須**（`/api/health` 以外の業務 API） |
 | 操作       | GET / SELECT のみ。書き込み API・書き込み RPC なし                                                        |
 | 検証の既定 | **local DB**（`docker compose` の本編 Postgres）。本番 URL は明示時のみ                                   |
 
@@ -39,7 +39,7 @@
 | 利用枠・健全性   | グローバル日次、stuck、failure_code ランキング、上限付近 user                                 |
 | 課金概況         | status 集計・任意一覧（Stripe ID は出さない）                                                 |
 | 共有パイプライン | share job 一覧・滞留（lease **15 分**）                                                       |
-| 共有レシピ       | 共有レシピ一覧・詳細・プレビュー（`menu_payload` 生データなし。`ADMIN_LOCAL_TOKEN` **必須**） |
+| 共有レシピ       | 共有レシピ一覧・詳細・プレビュー（`menu_payload` 生データなし。業務 API は `ADMIN_LOCAL_TOKEN` **必須**） |
 
 日付は **JST**。一覧の日付範囲は必須（既定 7 日、上限 31 日）。
 
@@ -110,7 +110,7 @@
    ```
 
    - port は **5432**（**6543 は使わない**）
-   - `sslmode=require`（または verify-ca / verify-full）
+   - `sslmode=require`（暗号化のみ。verify-ca / verify-full は実行時に検証する）
 
 ### このユーザーが読めるデータ（参考）
 
@@ -175,8 +175,8 @@ docker compose -f compose.admin.yaml build
 | ------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ADMIN_DATABASE_URL`            | はい                          | `kondate_ops_readonly` の Postgres URL                                                                                                                                              |
 | `ADMIN_PORT`                    | いいえ                        | 既定 `5193`                                                                                                                                                                         |
-| `ADMIN_BIND_HOST`               | いいえ                        | コンテナ内既定 `0.0.0.0`（ホスト公開は compose が `127.0.0.1` 固定）                                                                                                                |
-| `ADMIN_LOCAL_TOKEN`             | 推奨（共有レシピは **必須**） | 高エントロピー。設定時は `/api/*` が `Authorization: Bearer …` 必須（`/api/health` は除外可）。**共有レシピ** (`/api/shared-recipes*`) は token **未設定だとルート未登録 → 404**。token 設定済みで Bearer 欠落・不一致のときだけ **401** |
+| `ADMIN_BIND_HOST`               | いいえ                        | 既定 `127.0.0.1`（空/欠落も loopback）。コンテナ内 listen は compose が `0.0.0.0` に上書き。ホスト公開は `127.0.0.1:5193` 固定                                                                 |
+| `ADMIN_LOCAL_TOKEN`             | **必須**（health 除く）       | 高エントロピー。未設定だと業務 API はルート未登録 → **404**。設定時は `/api/*` が `Authorization: Bearer …` 必須（`/api/health` は除外可）。Bearer 欠落・不一致は **401** |
 | `ADMIN_ALLOW_INSECURE_LOCAL_DB` | ローカルのみ                  | `1` のとき loopback 等 + `sslmode=disable` を許可。本番 URL では使わない                                                                                                            |
 
 ### `ADMIN_DATABASE_URL` の受理形
@@ -195,6 +195,8 @@ postgresql://kondate_ops_readonly:<password>@db.<20文字project-ref>.supabase.c
 
 - username は **exact** `kondate_ops_readonly` または `kondate_ops_readonly.<20-char-ref>` のみ（prefix 不可）
 - `sslmode` は `require` / `verify-ca` / `verify-full`
+  - `require`: 暗号化のみ（証明書検証なし）。Session pooler の自己署名連鎖向け
+  - `verify-ca` / `verify-full`: 実行時に CA 検証する（pooler では連鎖エラーになり得る）
 - port **5432** のみ（**6543 禁止**）
 - `postgres` ユーザー禁止
 
@@ -278,7 +280,7 @@ docker compose --profile test run --rm db-test
 | feedback が常に 0 件           | RLS policy `user_feedback_ops_readonly_select` があるか（migration）                                       |
 | ブラウザで Host 400            | `http://127.0.0.1:5193` または `http://localhost:5193` で開く                                              |
 | API 401                        | `ADMIN_LOCAL_TOKEN` 設定時は UI の token 欄に同じ値を入れる（sessionStorage）                              |
-| 共有レシピ 404                 | `ADMIN_LOCAL_TOKEN` **未設定** → `/api/shared-recipes*` はルート未登録（404）。`.env.admin` に token を設定して再起動 |
+| 業務 API 404                   | `ADMIN_LOCAL_TOKEN` **未設定** → `/api/health` 以外はルート未登録（404）。`.env.admin` に token を設定して再起動 |
 | 共有レシピ 401                 | token は設定済みだが Bearer 欠落・不一致。UI の token 欄に `.env.admin` と同じ値を入れる                   |
 | compose が `.env.admin` で失敗 | ファイルを作成済みか（`env_file` 必須）                                                                    |
 | 意図しない DB を見ている       | 起動前に `ADMIN_DATABASE_URL` の host を目視（本番誤接続防止）                                             |

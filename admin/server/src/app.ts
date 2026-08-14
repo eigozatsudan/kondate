@@ -1,6 +1,6 @@
 /**
  * Hono アプリ本体。
- * Host allowlist・GET のみ・optional Bearer・health を載せる。
+ * Host allowlist・GET のみ・Bearer（業務 API）・health を載せる。
  * 業務ルートは Task 6 で registerApiRoutes 経由で接続する。
  */
 import { Hono } from "hono";
@@ -75,10 +75,7 @@ export function createApp(deps: CreateAppDeps): Hono {
 
   app.onError((err, c) => {
     if (err instanceof AdminClosedError) {
-      return c.json(
-        { ok: false, error: err.body },
-        err.httpStatus as 400 | 401 | 404 | 405 | 500,
-      );
+      return c.json({ ok: false, error: err.body }, err.httpStatus as 400 | 401 | 404 | 405 | 500);
     }
     const closed = internalError();
     return c.json({ ok: false, error: closed.body }, 500);

@@ -16,6 +16,8 @@ test("compose.admin.yaml publishes only loopback 5193 and builds from ./admin", 
   assert.match(yaml, /127\.0\.0\.1:5193:5193/);
   assert.doesNotMatch(yaml, /^\s*-\s*["']?5193:5193["']?\s*$/m);
   assert.match(yaml, /context:\s*\.\/admin/);
+  // コンテナ内は 0.0.0.0 listen。ホスト公開は上の 127.0.0.1:5193。
+  assert.match(yaml, /ADMIN_BIND_HOST:\s*"0\.0\.0\.0"/);
 });
 
 test(".env.admin is gitignored (.env alone is not enough)", () => {

@@ -4,19 +4,17 @@ import { assertDatabaseUrl, buildPoolSslOptions } from "./db.js";
 describe("assertDatabaseUrl", () => {
   it("rejects transaction pooler port 6543", () => {
     expect(() =>
-      assertDatabaseUrl(
-        "postgresql://kondate_ops_readonly:x@host:6543/postgres?sslmode=require",
-        { allowInsecureLocalDb: false },
-      ),
+      assertDatabaseUrl("postgresql://kondate_ops_readonly:x@host:6543/postgres?sslmode=require", {
+        allowInsecureLocalDb: false,
+      }),
     ).toThrow(/6543/);
   });
 
   it("rejects postgres superuser name", () => {
     expect(() =>
-      assertDatabaseUrl(
-        "postgresql://postgres:x@host:5432/postgres?sslmode=require",
-        { allowInsecureLocalDb: false },
-      ),
+      assertDatabaseUrl("postgresql://postgres:x@host:5432/postgres?sslmode=require", {
+        allowInsecureLocalDb: false,
+      }),
     ).toThrow(/kondate_ops_readonly/);
   });
 
@@ -75,7 +73,7 @@ describe("assertDatabaseUrl", () => {
 });
 
 describe("buildPoolSslOptions", () => {
-  it("sets rejectUnauthorized false for production pooler TLS (maintenance-compatible)", () => {
+  it("sets rejectUnauthorized false for production pooler TLS (sslmode=require)", () => {
     const ref = "abcdefghij1234567890";
     const opts = buildPoolSslOptions(
       `postgresql://kondate_ops_readonly.${ref}:x@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require`,
@@ -83,6 +81,25 @@ describe("buildPoolSslOptions", () => {
     );
     expect(opts.ssl).toEqual({ rejectUnauthorized: false });
     expect(opts.connectionString).not.toMatch(/sslmode=/);
+  });
+
+  it("sets rejectUnauthorized true when sslmode is verify-full", () => {
+    const ref = "abcdefghij1234567890";
+    const opts = buildPoolSslOptions(
+      `postgresql://kondate_ops_readonly:x@db.${ref}.supabase.co:5432/postgres?sslmode=verify-full`,
+      false,
+    );
+    expect(opts.ssl).toEqual({ rejectUnauthorized: true });
+    expect(opts.connectionString).not.toMatch(/sslmode=/);
+  });
+
+  it("sets rejectUnauthorized true when sslmode is verify-ca", () => {
+    const ref = "abcdefghij1234567890";
+    const opts = buildPoolSslOptions(
+      `postgresql://kondate_ops_readonly:x@db.${ref}.supabase.co:5432/postgres?sslmode=verify-ca`,
+      false,
+    );
+    expect(opts.ssl).toEqual({ rejectUnauthorized: true });
   });
 
   it("leaves ssl off for local disable", () => {
