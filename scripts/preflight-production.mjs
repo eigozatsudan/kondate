@@ -8,7 +8,16 @@ import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX } from "../shared/contracts/plan-quota-constants.mjs";
+import {
+  AI_PROCESSING_STALE_SECONDS,
+  FREE_ATTEMPTS_PER_DAY,
+  FREE_SHORT_WINDOW_LIMIT,
+  FREE_SHORT_WINDOW_SECONDS,
+  FREE_SUCCESS_PER_DAY,
+  FUNCTION_TOTAL_BUDGET_MS,
+  GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX,
+  OPENROUTER_TIMEOUT_MS,
+} from "../shared/contracts/plan-quota-constants.mjs";
 import { assertProductionCspMatchesSupabaseUrl, buildDeployHeadersFile } from "./csp-headers.mjs";
 
 // TS の parseOpenRouterModels / parseManagedSupabaseProjectRef と
@@ -284,17 +293,21 @@ export function validateProductionEnv(env) {
     throw new Error("supabase_publishable_key_mismatch");
   }
 
-  // ロックされた整数
-  requirePositiveIntegerString(env, "USER_DAILY_AI_LIMIT", 3);
-  requirePositiveIntegerString(env, "USER_DAILY_EXTERNAL_CALL_LIMIT", 6);
-  requirePositiveIntegerString(env, "USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT", 4);
-  requirePositiveIntegerString(env, "USER_SHORT_WINDOW_SECONDS", 600);
+  // S1: ロックされた整数は plan-quota-constants.mjs 単一正本（数値リテラルミラー禁止）
+  requirePositiveIntegerString(env, "USER_DAILY_AI_LIMIT", FREE_SUCCESS_PER_DAY);
+  requirePositiveIntegerString(env, "USER_DAILY_EXTERNAL_CALL_LIMIT", FREE_ATTEMPTS_PER_DAY);
+  requirePositiveIntegerString(
+    env,
+    "USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT",
+    FREE_SHORT_WINDOW_LIMIT,
+  );
+  requirePositiveIntegerString(env, "USER_SHORT_WINDOW_SECONDS", FREE_SHORT_WINDOW_SECONDS);
   requirePositiveIntegerString(env, "AUTH_CONTINUATION_TTL_SECONDS", 300);
   requirePositiveIntegerString(env, "VITE_AUTH_CONTINUATION_TTL_MS", 300_000);
-  // Netlify 同期 60s 硬上限に合わせたリリース固定（shared/contracts/function-budget.ts）
-  requirePositiveIntegerString(env, "OPENROUTER_TIMEOUT_MS", 24_000);
-  requirePositiveIntegerString(env, "FUNCTION_TOTAL_BUDGET_MS", 55_000);
-  requirePositiveIntegerString(env, "AI_PROCESSING_STALE_SECONDS", 180);
+  // Netlify 同期 60s 硬上限に合わせたリリース固定（function-budget ← plan-quota-constants）
+  requirePositiveIntegerString(env, "OPENROUTER_TIMEOUT_MS", OPENROUTER_TIMEOUT_MS);
+  requirePositiveIntegerString(env, "FUNCTION_TOTAL_BUDGET_MS", FUNCTION_TOTAL_BUDGET_MS);
+  requirePositiveIntegerString(env, "AI_PROCESSING_STALE_SECONDS", AI_PROCESSING_STALE_SECONDS);
   requirePositiveIntegerString(env, "VITE_MAGIC_LINK_RESEND_SECONDS");
   const globalLimit = requirePositiveIntegerString(env, "GLOBAL_DAILY_AI_LIMIT");
   // 製品 max は plan-quota-constants.mjs 単一正本（S4）。TS plan-quota と同一 import。

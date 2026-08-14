@@ -1593,6 +1593,40 @@ it("C3: resumeFlow re-deposits from pending cache after prior 429 exhaust", asyn
   }
 });
 
+it("C7: confirmMagicLink terminal deposit clears pending (symmetric with redeposit)", async () => {
+  // terminal 4xx で pending を残すと recovery が OTP を再 deposit し IP budget を焼く
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockRejectedValue(new ContinuationHttpError(400));
+  // verify は失敗させ、pending clear が complete 経路の clearAuthFlow に依存しないことを固定する
+  const client = authClientMock({
+    verifyOtpResult: {
+      data: { session: null },
+      error: { message: "invalid", name: "AuthApiError", status: 400 } as AuthError,
+    },
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock({ deposit }),
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "d".repeat(40);
+
+  await gateway.confirmMagicLink({
+    flowId: flow.id,
+    state: flow.state,
+    tokenHash,
+    otpType: "email",
+  });
+
+  expect(deposit).toHaveBeenCalled();
+  expect(storage.getItem(`kondate.auth.supabase.pending-deposit.${flow.id}`)).toBeNull();
+});
+
 it("C8: resumeFlow re-deposit terminal clears pending deposit (symmetric with completeCallback)", async () => {
   vi.useFakeTimers();
   try {

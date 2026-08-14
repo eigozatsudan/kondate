@@ -336,3 +336,34 @@ it("reports a remove rejection exactly once", async () => {
   });
   expect(onError).toHaveBeenCalledWith(error);
 });
+
+// H2: なし／未確認の残針は削除だけ。検索・候補・自由登録は出さない。
+it("removeOnly lists residual allergies and hides add controls", async () => {
+  const addStandard = vi.fn();
+  const addCustom = vi.fn();
+  const remove = vi.fn().mockResolvedValue(undefined);
+  render(
+    <AllergyEditor
+      memberId="member-1"
+      catalog={catalog}
+      allergies={[allergy({ allergen_id: "walnut", custom_name: null })]}
+      addStandard={addStandard}
+      addCustom={addCustom}
+      remove={remove}
+      removeOnly
+    />,
+  );
+
+  expect(screen.getByRole("region", { name: "残っているアレルギー" })).toBeVisible();
+  expect(screen.getByRole("list", { name: "選択済みアレルギー" })).toHaveTextContent("くるみ");
+  expect(
+    screen.queryByRole("searchbox", { name: "よくあるアレルギーを絞り込む" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "くるみを追加" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("自由登録名")).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "くるみを削除" }));
+  expect(remove).toHaveBeenCalledWith("allergy-1");
+  expect(addStandard).not.toHaveBeenCalled();
+  expect(addCustom).not.toHaveBeenCalled();
+});

@@ -40,8 +40,9 @@ describe("createCheckoutSession / createPortalSession host DiD (B7)", () => {
         }),
       ),
     );
+    // checkoutDataSchema の host refine が先に fail-closed（DiD 手書き throw より手前）
     await expect(createCheckoutSession({ interval: "month" }, { fetchImpl })).rejects.toThrow(
-      "billing_redirect_url_invalid",
+      /stripe_redirect_host_not_allowed|billing_redirect_url_invalid/,
     );
   });
 
@@ -71,8 +72,9 @@ describe("createCheckoutSession / createPortalSession host DiD (B7)", () => {
         }),
       ),
     );
+    // portalDataSchema の host refine が先に fail-closed（DiD 手書き throw より手前）
     await expect(createPortalSession({ fetchImpl })).rejects.toThrow(
-      "billing_redirect_url_invalid",
+      /stripe_redirect_host_not_allowed|billing_redirect_url_invalid/,
     );
   });
 });

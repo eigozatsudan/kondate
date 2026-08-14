@@ -9,6 +9,7 @@ import {
   type ReconcileShoppingListRequest,
   type ShoppingDiff,
 } from "@shared/contracts/shopping";
+import { snapshotPreviewedQuantities } from "@shared/shopping/previewed-quantities";
 import { FlyerUpsellBanner } from "@/features/billing/flyer-upsell-banner";
 import { MenuActions } from "@/features/menu-detail/menu-actions";
 import { MenuSafetyNotice } from "@/features/menu-detail/menu-safety-notice";
@@ -342,6 +343,9 @@ export function HouseholdMenuDetailBody({
     if (shoppingSheet !== null) return;
     if (hasPendingCreateCommand(menuId)) return;
     if (!canOpenCreateSheet) return;
+    // 単一案・未採用で for=shopping 意図が無いとき、create auto-open が補助採用 CTA を
+    // dialog で覆う（desktop full-journey）。意図導線（shoppingIntentActive）は従来どおり開く。
+    if (!accepted && confirmedSingle && !shoppingIntentActive) return;
 
     const restore = isShoppingSheetExpected(menuId);
     const firstOpen = shoppingIntentActive && !hasShoppingDidAutoOpen(menuId);
@@ -358,7 +362,15 @@ export function HouseholdMenuDetailBody({
       el?.scrollIntoView({ block: "nearest" });
       el?.focus();
     });
-  }, [menuId, shoppingSheet, canOpenCreateSheet, shoppingIntentActive, markShoppingAutoOpened]);
+  }, [
+    menuId,
+    shoppingSheet,
+    canOpenCreateSheet,
+    shoppingIntentActive,
+    markShoppingAutoOpened,
+    accepted,
+    confirmedSingle,
+  ]);
 
   const queryKey = useMemo(
     () => ["menu-result", userId ?? "missing", menuId] as const,
@@ -752,7 +764,12 @@ export function HouseholdMenuDetailBody({
           onAccept={() => {
             // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
             // HR8: ref で soft-flight 中の stale クロージャも塞ぐ
-            if (!actionsEnabledRef.current) return;
+            // soft 開始直後は補助「この献立にする」が 1 フレーム enabled のまま残ることがあり、
+            // silent return だと click が消えて E2E/desktop で採用 0 のまま固まる。
+            if (!actionsEnabledRef.current) {
+              setAcceptError("家族設定の確認中です。確認が終わってからもう一度お試しください");
+              return;
+            }
             setAcceptError(null);
             accept.mutate(menuId, {
               onSuccess: () => {
@@ -837,8 +854,9 @@ export function HouseholdMenuDetailBody({
             // SHOP4: reconcilable 時は append を閉じ、差分 CTA へ誘導（mode=new は維持）
             disableAppend={reconcileTarget.data !== null && reconcileTarget.data !== undefined}
             onSubmit={(input) => {
-              // 表示中 isFetching では止めない（safetyBlocked と同じく actions のみ）
-              if (!actionsEnabled || createList.isPending) return;
+              // HRV10: soft 開始と同 tick でも stale actionsEnabled=true で create しない
+              // （accept の actionsEnabledRef と同型。表示中 isFetching では止めない）
+              if (!actionsEnabledRef.current || createList.isPending) return;
               // SHOP2: mint を Web Locks で直列化し multi-tab 別 UUID を閉じる
               void claimShoppingCommand(
                 "create",
@@ -894,6 +912,8 @@ export function HouseholdMenuDetailBody({
                   return;
                 }
                 const listId = activeList.id;
+                // 表示中の shoppingDiff から preview 数量スナップショットを付ける。
+                const previewedQuantities = snapshotPreviewedQuantities(shoppingDiff);
                 // SHOP2 + SHOP9: list+menu 粒度 sticky を Locks 付きで mint
                 void claimShoppingCommand(
                   "reconcile",
@@ -905,13 +925,15 @@ export function HouseholdMenuDetailBody({
                     sourceMenuVersion: target.sourceMenuVersion,
                     idempotencyKey,
                     approval,
+                    previewedQuantities,
                   }),
-                  // SHOP6: approval/source 変更だけ rebuild。SHOP1: expectedListVersion は照合しない。
+                  // SHOP6: approval/source/preview 数量変更だけ rebuild。SHOP1: expectedListVersion は照合しない。
                   (saved) =>
                     isReconcileShoppingStickyReusable(saved, {
                       sourceMenuId: menuId,
                       sourceMenuVersion: target.sourceMenuVersion,
                       approval,
+                      previewedQuantities,
                     }),
                 ).then((command) => {
                   void submitReconcile(listId, command, stickyTargetId);

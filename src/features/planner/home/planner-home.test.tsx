@@ -55,4 +55,33 @@ describe("PlannerHome", () => {
       "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
     );
   });
+
+  it("C5: disabled のときは直近献立と冷蔵庫リンクも止める", () => {
+    renderWithRouter(
+      <PlannerHome
+        remainingToday={3}
+        onStartWizard={vi.fn()}
+        recentMenus={[{ id: "11111111-1111-4111-8111-111111111111", title: "味噌汁定食" }]}
+        expiringItems={[
+          {
+            id: "a",
+            name: "キャベツ",
+            expiresOn: "2026-08-10",
+            tone: "warning",
+            suffix: "（まもなく）",
+          },
+        ]}
+        disabled
+      />,
+    );
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeDisabled();
+    expect(screen.getByRole("link", { name: "味噌汁定食" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("link", { name: "冷蔵庫を見る" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
 });

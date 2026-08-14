@@ -17,6 +17,7 @@ import {
   type ShoppingList,
   type ShoppingListSafetyData,
 } from "@shared/contracts/shopping";
+import { previewedQuantitiesEqual } from "@shared/shopping/previewed-quantities";
 import { assertBrowserDataPlaneAligned, requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
@@ -339,11 +340,15 @@ export function isCreateShoppingStickyReusable(
 /**
  * SHOP1: reconcile sheet 再送で sticky を再利用するか。
  * expectedListVersion は適用で進むため照合しない（version 不一致だけで key 破棄しない）。
- * approval / source が変わったときだけ false → rebuild（SHOP6）。
+ * approval / source / previewedQuantities が変わったときだけ false → rebuild（SHOP6）。
+ * 再 preview で数量が変わったら同じ承認キーでも sticky を作り直す（preview/apply の数量ずれ）。
  */
 export function isReconcileShoppingStickyReusable(
   saved: ReconcileShoppingListRequest,
-  intent: Pick<ReconcileShoppingListRequest, "sourceMenuId" | "sourceMenuVersion" | "approval">,
+  intent: Pick<
+    ReconcileShoppingListRequest,
+    "sourceMenuId" | "sourceMenuVersion" | "approval" | "previewedQuantities"
+  >,
 ): boolean {
   const sorted = (xs: readonly string[]) => [...xs].toSorted();
   return (
@@ -358,7 +363,8 @@ export function isReconcileShoppingStickyReusable(
         addKeys: sorted(intent.approval.addKeys),
         replaceItemIds: sorted(intent.approval.replaceItemIds),
         removeItemIds: sorted(intent.approval.removeItemIds),
-      })
+      }) &&
+    previewedQuantitiesEqual(saved.previewedQuantities, intent.previewedQuantities)
   );
 }
 
@@ -584,10 +590,26 @@ export function readPendingItemMutation(
 }
 
 /**
- * intentKey 単位で upsert。他 intent の slot は残す（SHOP2 multi-slot）。
+ * 同一 list の multi-slot RMW（mint / write / clear）を Web Locks で直列化する。
+ * SHOP1: clear/write を unlocked のままにすると異 intent 同士の last-writer-wins で
+ * 成功 clear 済み slot が復活し、適用済み key 再利用 → under-add になる。
+ * Locks 非対応は同期 RMW のまま（同一タブ内は atomic、跨タブは best-effort）。
+ */
+async function withPendingItemMutationClaimLock<T>(listId: string, run: () => T): Promise<T> {
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+  if (locks !== undefined && typeof locks.request === "function") {
+    // callback は Lock 引数を無視（臨界区間だけを直列化）
+    return locks.request(pendingItemMutationClaimLockName(listId), () => run());
+  }
+  return run();
+}
+
+/**
+ * intentKey 単位で upsert（ロック外本体）。claim / locked write から呼ぶ。
+ * 他 intent の slot は残す（SHOP2 multi-slot）。
  * slot 上限超過時は **書き込み対象以外** の最古 entry を落とす。
  */
-export function writePendingItemMutation(listId: string, sticky: PendingItemMutationSticky): void {
+function writePendingItemMutationUnlocked(listId: string, sticky: PendingItemMutationSticky): void {
   const nowMs = Date.now();
   const existing = readAllPendingItemMutationEntries(listId).filter(
     (entry) => entry.intentKey !== sticky.intentKey,
@@ -610,8 +632,8 @@ export function writePendingItemMutation(listId: string, sticky: PendingItemMuta
   writeAllPendingItemMutationEntries(listId, next);
 }
 
-/** intentKey 省略時は list 全 slot を捨てる。指定時はその intent だけ。 */
-export function clearPendingItemMutation(listId: string, intentKey?: string): void {
+/** intent 単位 clear のロック外本体。intentKey 省略時は list 全 slot。 */
+function clearPendingItemMutationUnlocked(listId: string, intentKey?: string): void {
   if (intentKey === undefined) {
     const key = pendingItemMutationStorageKey(listId);
     removeStorageBestEffort(localStorage, key);
@@ -625,38 +647,58 @@ export function clearPendingItemMutation(listId: string, intentKey?: string): vo
 }
 
 /**
- * SHOP6 + SHOP2: 同一 list の sticky 読取→mint→書込を Web Locks で直列化し、
+ * intentKey 単位で upsert。他 intent の slot は残す（SHOP2 multi-slot）。
+ * SHOP1: claim と同じ list スコープ lock で RMW を直列化し、異 intent clear との
+ * 交差 last-writer-wins（復活 / 必要 key 消失）を閉じる。
+ */
+export async function writePendingItemMutation(
+  listId: string,
+  sticky: PendingItemMutationSticky,
+): Promise<void> {
+  await withPendingItemMutationClaimLock(listId, () => {
+    writePendingItemMutationUnlocked(listId, sticky);
+  });
+}
+
+/**
+ * intentKey 省略時は list 全 slot を捨てる。指定時はその intent だけ。
+ * SHOP1: write と同じ claim lock 下で filter→write し multi-tab 交差 RMW を直列化。
+ */
+export async function clearPendingItemMutation(listId: string, intentKey?: string): Promise<void> {
+  await withPendingItemMutationClaimLock(listId, () => {
+    clearPendingItemMutationUnlocked(listId, intentKey);
+  });
+}
+
+/**
+ * SHOP6 + SHOP2 + SHOP1: 同一 list の sticky 読取→mint→書込を Web Locks で直列化し、
  * 両タブが sticky 未書込で同時に新 UUID を mint する pre-write TOCTOU を閉じる。
  * ロック保持は mint のみ（ネットワーク送信は外）で intentional 再 add の新 key は維持。
  * Locks 非対応環境は書込後 re-read にフォールバック（同一 intent の勝者 key を優先）。
  * 異 intent は別 slot に共存し、互いの idempotency key を上書きしない（SHOP2）。
+ * write/clear も同一 lock 名を共有するため、mint 中に異 intent の clear が割り込まない。
  */
 export async function claimItemMutationSticky(
   listId: string,
   intentKey: string,
   buildNew: () => ShoppingItemMutationRequest,
 ): Promise<PendingItemMutationSticky> {
-  const run = (): PendingItemMutationSticky => {
+  return withPendingItemMutationClaimLock(listId, () => {
     const existing = readPendingItemMutation(listId, intentKey);
     if (existing !== null && existing.request.listId === listId) {
       return existing;
     }
     const request = buildNew();
     const sticky: PendingItemMutationSticky = { intentKey, request };
-    writePendingItemMutation(listId, sticky);
+    // 既に claim lock 内なので unlocked 本体を使う（再帰 request で deadlock しない）
+    writePendingItemMutationUnlocked(listId, sticky);
     // ロック無し競合や書込失敗時: 同一 intent が既に他タブで勝っていればそちらを使う
     const again = readPendingItemMutation(listId, intentKey);
     if (again !== null && again.request.listId === listId) {
       return again;
     }
     return sticky;
-  };
-  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
-  if (locks !== undefined && typeof locks.request === "function") {
-    // callback は Lock 引数を無視（mint 臨界区間だけを直列化）
-    return locks.request(pendingItemMutationClaimLockName(listId), () => run());
-  }
-  return run();
+  });
 }
 
 /**
@@ -664,7 +706,10 @@ export async function claimItemMutationSticky(
  * 利用者が同内容を手動再入力すると新 UUID で dual-add する窓を縮退する。
  * サーバ content 冪等や RLS/idempotency ロックは触らず、同一 intentKey の再送を
  * **1 回目は確認ブロック・2 回目で許可**するクライアント DiD。
- * sticky TTL と同窓（24h）。session 正本（同一タブ再入力が主 path）。
+ * sticky TTL と同窓（24h）。
+ * SHOP3 (adversarial 869bbe94): localStorage を multi-tab 正本にし（item sticky と同型）、
+ * 他タブでの mismatch abandon 後 dual-add を縮退。session は mirror / legacy 昇格用。
+ * 意図的 2 回目 re-add（armed 消費）は維持。content サーバ冪等は product 非対象。
  */
 export const itemMutationMismatchGuardStorageKey = (listId: string) =>
   `kondate:shopping:item-mismatch-guard:v1:${listId}`;
@@ -687,34 +732,70 @@ const itemMutationMismatchGuardStoreSchema = z
 
 type ItemMutationMismatchGuardEntry = z.infer<typeof itemMutationMismatchGuardEntrySchema>;
 
-function readMismatchGuardEntries(listId: string, nowMs: number): ItemMutationMismatchGuardEntry[] {
-  const key = itemMutationMismatchGuardStorageKey(listId);
+/**
+ * 単一 Storage から TTL 内 guard entries を読む。
+ * 不正・全期限切れは当該 Storage から捨て null（キー無しと区別）。
+ */
+function readMismatchGuardEntriesFrom(
+  storage: Storage,
+  key: string,
+  nowMs: number,
+): ItemMutationMismatchGuardEntry[] | null {
   let raw: string | null = null;
   try {
-    raw = sessionStorage.getItem(key);
+    raw = storage.getItem(key);
   } catch {
-    return [];
+    return null;
   }
-  if (raw === null) return [];
+  if (raw === null) return null;
   try {
     const parsed = itemMutationMismatchGuardStoreSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) {
-      removeStorageBestEffort(sessionStorage, key);
-      return [];
+      removeStorageBestEffort(storage, key);
+      return null;
     }
     const live = parsed.data.entries.filter((entry) => {
       const age = nowMs - entry.atMs;
       return age >= 0 && age <= pendingShoppingCommandTtlMs;
     });
     if (live.length === 0) {
-      removeStorageBestEffort(sessionStorage, key);
-      return [];
+      removeStorageBestEffort(storage, key);
+      return null;
     }
     return live;
   } catch {
-    removeStorageBestEffort(sessionStorage, key);
-    return [];
+    removeStorageBestEffort(storage, key);
+    return null;
   }
+}
+
+function readMismatchGuardEntries(listId: string, nowMs: number): ItemMutationMismatchGuardEntry[] {
+  const key = itemMutationMismatchGuardStorageKey(listId);
+  // 共有正本は localStorage（SHOP3 multi-tab）。他タブ mark を先に拾う。
+  const fromLocal = readMismatchGuardEntriesFrom(localStorage, key, nowMs);
+  if (fromLocal !== null) {
+    try {
+      const payload = JSON.stringify({ v: 1 as const, entries: fromLocal });
+      writeStorageBestEffort(localStorage, key, payload);
+      writeStorageBestEffort(sessionStorage, key, payload);
+    } catch {
+      /* mirror optional */
+    }
+    return fromLocal;
+  }
+  // legacy session-only → local へ昇格（旧クライアント残滓 / 同一タブ）
+  const fromSession = readMismatchGuardEntriesFrom(sessionStorage, key, nowMs);
+  if (fromSession !== null) {
+    try {
+      const payload = JSON.stringify({ v: 1 as const, entries: fromSession });
+      writeStorageBestEffort(localStorage, key, payload);
+      writeStorageBestEffort(sessionStorage, key, payload);
+    } catch {
+      /* promote optional */
+    }
+    return fromSession;
+  }
+  return [];
 }
 
 function writeMismatchGuardEntries(
@@ -723,10 +804,13 @@ function writeMismatchGuardEntries(
 ): void {
   const key = itemMutationMismatchGuardStorageKey(listId);
   if (entries.length === 0) {
+    removeStorageBestEffort(localStorage, key);
     removeStorageBestEffort(sessionStorage, key);
     return;
   }
-  writeStorageBestEffort(sessionStorage, key, JSON.stringify({ v: 1 as const, entries }));
+  const payload = JSON.stringify({ v: 1 as const, entries });
+  writeStorageBestEffort(localStorage, key, payload);
+  writeStorageBestEffort(sessionStorage, key, payload);
 }
 
 /** mismatch abandon 直後に呼ぶ。同一 intent の次 1 回を確認ブロック対象にする。 */
@@ -768,7 +852,9 @@ export function shouldBlockItemMutationAfterMismatch(listId: string, intentKey: 
 /** テスト・成功後掃除用 */
 export function clearItemMutationMismatchGuard(listId: string, intentKey?: string): void {
   if (intentKey === undefined) {
-    removeStorageBestEffort(sessionStorage, itemMutationMismatchGuardStorageKey(listId));
+    const key = itemMutationMismatchGuardStorageKey(listId);
+    removeStorageBestEffort(localStorage, key);
+    removeStorageBestEffort(sessionStorage, key);
     return;
   }
   const nowMs = Date.now();

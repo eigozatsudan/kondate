@@ -161,8 +161,14 @@ test("idea history shows badge, notice, permitted actions, regenerates as idea w
   // result / history detail / dish・whole 再生成後の各地点で shopping・family revalidate は 0
   expect(shoppingRequests).toHaveLength(0);
   expect(revalidationRequests).toHaveLength(0);
+  // E2E13: SHOP3 create sticky は local 正本。session のみ見ると local 残滓を見逃す。
+  // full-journey idea と同型で dual-check する。
   const shoppingSessionKeys = await page.evaluate(() =>
     Object.keys(sessionStorage).filter((key) => key.startsWith("kondate:shopping:")),
   );
   expect(shoppingSessionKeys).toHaveLength(0);
+  const shoppingLocalKeys = await page.evaluate(() =>
+    Object.keys(localStorage).filter((key) => key.startsWith("kondate:shopping:")),
+  );
+  expect(shoppingLocalKeys).toHaveLength(0);
 });

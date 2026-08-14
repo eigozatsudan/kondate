@@ -11,6 +11,12 @@ export type AuthContextValue = {
    * storage clear はしない（再ログイン誤誘導を避ける）。focus / refreshSession で再試行。
    */
   sessionProbeDegraded: boolean;
+  /**
+   * C12: pin restore 枯渇などで authenticated+degraded が固着したとき、
+   * fail-closed のまま未認証へ落として再ログインできるようにする。権限昇格はしない。
+   * テスト注入など未提供時は省略可。
+   */
+  recoverDegradedSession?: () => void;
 };
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

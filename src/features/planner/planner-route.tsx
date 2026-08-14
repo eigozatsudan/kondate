@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router";
+import { NavigationType, useBlocker, useNavigate, useSearchParams } from "react-router";
 import type { PantryItem } from "@shared/contracts/pantry";
 import {
   collectPlannerRequestText,
@@ -24,13 +24,16 @@ import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import { expiryNotice } from "@/features/pantry/pantry-page";
 import {
+  claimPendingGeneration,
   clearPendingGeneration,
   createPendingGeneration,
   readPendingGeneration,
-  savePendingGeneration,
 } from "@/features/generation/model/pending-generation";
 import { reconcileTerminalPendingGeneration } from "@/features/generation/model/reconcile-terminal-pending";
-import { savePendingGenerationMeta } from "@/features/generation/model/pending-generation-meta";
+import {
+  readPendingGenerationMeta,
+  savePendingGenerationMeta,
+} from "@/features/generation/model/pending-generation-meta";
 import { useResumablePendingAfterReconcile } from "@/features/generation/hooks/use-resumable-pending-after-reconcile";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import { historyKeys, listHistoryGroups } from "@/features/history/api/history-api";
@@ -66,13 +69,21 @@ import {
   plannerKeys,
   savePlannerDraft,
 } from "./planner-api";
-import { navigateAfterPlannerLeaveFlush, registerPlannerLeaveFlush } from "./planner-leave-flush";
+import {
+  navigateAfterPlannerLeaveFlush,
+  registerPlannerLeaveFlush,
+  runPlannerLeaveFlush,
+} from "./planner-leave-flush";
 import { useDraftAutosave } from "./use-draft-autosave";
 
 /** ホームに載せる直近献立の件数上限（詰め込みすぎない）。 */
 const HOME_RECENT_MENU_LIMIT = 5;
 /** ホームに載せる期限注意食材の件数上限。 */
 const HOME_EXPIRING_PANTRY_LIMIT = 5;
+/** 負けタブが勝ちタブの body→meta 完了 / rollback を待つ上限。 */
+const CLAIM_LOSER_WAIT_MS = 160;
+/** 負けタブの pending / meta 再読間隔。 */
+const CLAIM_LOSER_POLL_MS = 16;
 
 const emptyDraft: PlannerDraftInput = {
   mealType: null,
@@ -261,17 +272,50 @@ export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
 export function PlannerRoutePage() {
   const userId = useAuth().session?.user.id;
   const navigate = useNavigate();
+  // P5: 履歴 POP（戻る / Android Back）は SPA click 差し替えを通らず unmount する。
+  // unmount enqueue は失敗を swallow するため、POP だけ block して leave-flush を await する。
+  // 下ナビ click 後の navigate・生成成功の /generation・settings/emergency/privacy は
+  // PUSH/REPLACE かつ既に flush 済み（または専用経路）なので block しない。
+  const blocker = useBlocker(({ historyAction, currentLocation, nextLocation }) => {
+    return (
+      historyAction === NavigationType.Pop && currentLocation.pathname !== nextLocation.pathname
+    );
+  });
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+    // blocked 時点の proceed/reset を閉じる。await 後に state が変わっても安全に呼ぶ。
+    const { proceed, reset } = blocker;
+    // cleanup が await 中に立つ。let だと静的解析が常に false と見なす。
+    const cancelled = { current: false };
+    void (async () => {
+      const result = await runPlannerLeaveFlush();
+      if (cancelled.current) return;
+      if (result === "proceed") {
+        proceed();
+      } else {
+        reset();
+      }
+    })();
+    return () => {
+      cancelled.current = true;
+    };
+  }, [blocker]);
   // P3: startGeneration 内でも plan / quality.available を参照し qualityMode を再 clamp
   // （onSubmit 一枚依存を避ける）
   const usage = useUsageToday(userId ?? "");
   const planCode = usage.isSuccess ? usage.data.plan : null;
   const qualityAvailable = usage.isSuccess ? usage.data.quality.available : null;
   const startGeneration = useCallback(
-    async (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal): Promise<boolean> => {
+    async (
+      draft: PlannerDraft,
+      attempt: PlannerAttempt,
+      signal: AbortSignal,
+    ): Promise<boolean | "resumed"> => {
       if (userId === undefined) return false;
       // 進行中 pending を上書きすると作成 ID が失われる（C2）。既存は再開のみ。
-      // false を返し startNewAttempt を抑止する。true だと未消費 attempt
+      // false は startNewAttempt を抑止する。true だと未消費 attempt
       // （期限確認など）が回転して捨てられる。
+      // "resumed" は既存 sticky 再開（attempt は回さず、navigate 済みなので isSaving 維持）。
       // G-R1: terminal 済み sticky は status GET で clear し、新規作成を許す。
       // processing / status 失敗は keep→再開（G1/G2 維持。無条件 clear しない）。
       if (readPendingGeneration(userId, new Date()) !== null) {
@@ -280,7 +324,7 @@ export function PlannerRoutePage() {
           if (signal.aborted) return false;
           // 新規条件は送っていない。review の pending 注意文 + /generation?resumed=1 で明示する
           void navigate("/generation?resumed=1");
-          return false;
+          return "resumed";
         }
         // cleared / none: 下へ進み新 pending を書く
       }
@@ -295,7 +339,7 @@ export function PlannerRoutePage() {
       // onSubmit が selected∩expired 済みの checks を渡す前提。ここは選択中のみ再絞り。
       // P2/P3/P5: Free / 非 Plus / plan 未取得 / quality 枠なしでは qualityMode を必ず false
       // （onSubmit clamp をすり抜けた注入・将来呼び出しでも pending に true を載せない）
-      const pending = createPendingGeneration(
+      const candidate = createPendingGeneration(
         {
           commandVersion: "generation-command.v3",
           kind: "new_menu",
@@ -315,10 +359,26 @@ export function PlannerRoutePage() {
         },
         userId,
       );
-      savePendingGeneration(pending);
+      // P1: dual-tab check-then-act を claim（Web Locks + 書込後 re-read）で閉じる。
+      // 無条件 save だと他タブの進行中 sticky を last-writer で消す。負けたら C2 再開のみ。
+      const claim = await claimPendingGeneration(candidate, userId, new Date());
+      if (!claim.claimed) {
+        if (signal.aborted) return false;
+        // 勝ちタブの body→meta は非アトミック。即 resumed すると meta throw / abort
+        // の clear 後に空 pending で generation へ入り idle→planner になる。
+        // sticky が残る（meta 完了 or 期限まで body 存続）ときだけ再開する。
+        const winnerReady = await waitForWinnerPendingSticky(userId, signal);
+        // await 後に AbortSignal.aborted を直読すると、直前の early return で
+        // 常に false と畳まれ no-unnecessary-condition になる。関数経由で再読する。
+        if (isAbortSignalAborted(signal) || !winnerReady) return false;
+        void navigate("/generation?resumed=1");
+        return "resumed";
+      }
+      const pending = claim.pending;
       // savePendingGeneration 本体は targetMode を知らないため meta はここで書く。
       // P2: body→meta は非アトミック。meta が QuotaExceeded 等で throw すると body だけ sticky
       // に残り C2 再開導線と矛盾する。meta 失敗時は body+meta をまとめて消してから再 throw。
+      // claimed 時のみ meta を書き、負けタブは他 sticky の meta を触らない。
       try {
         savePendingGenerationMeta({
           kind: "new_menu",
@@ -331,13 +391,13 @@ export function PlannerRoutePage() {
         clearPendingGeneration();
         throw error;
       }
-      // strip/abort が pending 保存後に走った場合は sticky 再開導線を残さない
+      // strip/abort が claim 後に走った場合は自タブ sticky 再開導線を残さない
       if (signal.aborted) {
         clearPendingGeneration();
-        return Promise.resolve(false);
+        return false;
       }
       void navigate("/generation");
-      return Promise.resolve(true);
+      return true;
     },
     [navigate, planCode, qualityAvailable, userId],
   );
@@ -416,6 +476,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // P6/P8: privacy・settings 遷移中は isSaving に載せ二重 flush/navigate を抑止
   const [isOpeningPrivacy, setIsOpeningPrivacy] = useState(false);
   const [isOpeningSettings, setIsOpeningSettings] = useState(false);
+  // P5: leave-flush 中も isSaving に載せる（generate 無言 no-op / post-flush 編集窓を閉じる）
+  // ref は同期ガード、state は disabled 再描画用（privacy/settings と同型）。
+  const [isLeaving, setIsLeaving] = useState(false);
   const generationAbortControllerRef = useRef<AbortController | null>(null);
   // 緊急献立遷移の single-flight と unmount 後の遅延 navigate 抑止。
   const mountedRef = useRef(true);
@@ -432,7 +495,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // P1: leave-flush 中の同期 single-flight。generate/settings/privacy/emergency が mid-leave に
   // 起動しないよう武装し、post-flush でも submitting/opening を再確認する。
   // proceed 時は unmount まで落さない（handler return → shell navigate の隙間に generate を許さない）。
+  // P5: isLeaving state と対で isSaving に載せ、wizard 編集・生成 CTA を visually disable する。
   const leaveInFlightRef = useRef(false);
+  // timeout 後の遅延 flush が proceed ロックを再武装しないよう flight 世代で stale 判定する。
+  const leaveFlightIdRef = useRef(0);
   // P2: leave-flush handler は mount 時のみ register。state は ref で読み stale クロージャと
   // deps 更新時 cleanup→null の窓を避ける（submittingRef と同型）。
   const hasDraftConflictRef = useRef(false);
@@ -728,10 +794,21 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   /** 利用者の明示操作で入力を空に戻す。autosave が resetToken 経由で空下書きをサーバへ保存する（P1）。 */
   const resetPlannerDraft = useCallback((): void => {
+    // 生成成功後の navigate commit 前に sticky pending を捨てると /generation が idle へ落ちる。
+    if (submittingRef.current) {
+      return;
+    }
     generationAbortControllerRef.current?.abort();
     // 進行中の作成 ID（pending）を残すと、再「献立を作る」が C2 再開専用になり
     // offline/processing から抜けられず操作不能になる。入力リセットは作成の破棄も兼ねる。
-    clearPendingGeneration();
+    // C7: 共有 sticky のうち、このタブが mint / claim した key だけを消す。
+    // claim 負け後の strip abort で submittingRef が落ちても、勝ちタブの pending は残す。
+    if (userId !== undefined) {
+      const pending = readPendingGeneration(userId, new Date());
+      if (pending !== null && pending.request.idempotencyKey === attempt.idempotencyKey) {
+        clearPendingGeneration();
+      }
+    }
     const empty = { ...emptyDraft };
     setValue(empty);
     setStep("meal");
@@ -756,7 +833,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     if (current !== undefined && current !== null) {
       queryClient.setQueryData(key, { ...current, ...empty });
     }
-  }, [autosave.revision, queryClient, userId]);
+  }, [attempt.idempotencyKey, autosave.revision, queryClient, userId]);
 
   // P1: 利用者 reset 直後だけ強制 empty 保存を await し、失敗を submissionError で可視化する。
   // resolveDraftConflict の resetToken バンプでは走らせない（autosave 側の force save に任せる）。
@@ -1086,76 +1163,78 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // P2: mount 時のみ register。handler は ref 経由で最新 conflict / opening / flush を読む。
   // deps 更新のたび cleanup で null すると下ナビ click が即 proceed になる窓が残る。
   useEffect(() => {
-    registerPlannerLeaveFlush(async () => {
-      // P1: 既に leave 中なら二重 leave しない（module mutex の第二防衛）。
-      if (leaveInFlightRef.current) {
-        return "blocked";
-      }
-      // P4: ガード blocked は無言 stay にせず理由を可視化する。
-      // 競合中は chrome に委任し、home では chrome が無いため wizard を開く。
-      if (hasDraftConflictRef.current) {
-        if (mountedRef.current) {
-          setWizardOpen(true);
+    registerPlannerLeaveFlush(
+      async () => {
+        // P1: 既に leave 中なら二重 leave しない（module mutex の第二防衛）。
+        if (leaveInFlightRef.current) {
+          return "blocked";
         }
-        return "blocked";
-      }
-      if (
-        settingsOpeningRef.current ||
-        emergencyOpeningRef.current ||
-        privacyOpeningRef.current ||
-        isOpeningEmergencyMenusRef.current ||
-        isOpeningPrivacyRef.current ||
-        isOpeningSettingsRef.current
-      ) {
-        if (mountedRef.current) {
-          setSubmissionError(
-            "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
-          );
+        // P4: ガード blocked は無言 stay にせず理由を可視化する。
+        // 競合中は chrome に委任し、home では chrome が無いため wizard を開く。
+        if (hasDraftConflictRef.current) {
+          if (mountedRef.current) {
+            setWizardOpen(true);
+          }
+          return "blocked";
         }
-        return "blocked";
-      }
-      if (submittingRef.current) {
-        if (mountedRef.current) {
-          setSubmissionError(
-            "献立の作成処理中のため、移動できませんでした。完了後にもう一度お試しください。",
-          );
-        }
-        return "blocked";
-      }
-      // P1: flush await 前に武装。generate/openers が mid-leave を見られるようにする。
-      leaveInFlightRef.current = true;
-      const releaseLeaveUnlessProceeding = (proceeding: boolean): void => {
-        if (!proceeding) {
-          leaveInFlightRef.current = false;
-        }
-        // proceed 時は unmount まで維持（shell navigate 前の generate 起動窓を閉じる）
-      };
-      const otherOpInFlightAfterFlush = (): boolean =>
-        submittingRef.current ||
-        settingsOpeningRef.current ||
-        emergencyOpeningRef.current ||
-        privacyOpeningRef.current ||
-        isOpeningEmergencyMenusRef.current ||
-        isOpeningPrivacyRef.current ||
-        isOpeningSettingsRef.current;
-      try {
-        await flushDraftRef.current();
-        // P1: flush 成功後も generate/openers が await 中に武装していないか再確認
-        if (otherOpInFlightAfterFlush()) {
+        if (
+          settingsOpeningRef.current ||
+          emergencyOpeningRef.current ||
+          privacyOpeningRef.current ||
+          isOpeningEmergencyMenusRef.current ||
+          isOpeningPrivacyRef.current ||
+          isOpeningSettingsRef.current
+        ) {
           if (mountedRef.current) {
             setSubmissionError(
               "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
             );
           }
-          releaseLeaveUnlessProceeding(false);
           return "blocked";
         }
-        releaseLeaveUnlessProceeding(true);
-        return "proceed";
-      } catch (error) {
-        // P1: Incomplete は schema 非 persistable の意図的拒否（RPC しない）。
-        // pre-leave-flush 同様に離脱可とし、通信失敗文言で封鎖しない。
-        if (error instanceof IncompleteDraftSaveError) {
+        if (submittingRef.current) {
+          if (mountedRef.current) {
+            setSubmissionError(
+              "献立の作成処理中のため、移動できませんでした。完了後にもう一度お試しください。",
+            );
+          }
+          return "blocked";
+        }
+        // P1: flush await 前に武装。generate/openers が mid-leave を見られるようにする。
+        // P5: isLeaving を立て isSaving 経由で CTA/編集を disable（無言 generate no-op と post-flush 編集を防ぐ）。
+        const flightId = ++leaveFlightIdRef.current;
+        leaveInFlightRef.current = true;
+        if (mountedRef.current) {
+          setIsLeaving(true);
+        }
+        const isCurrentLeaveFlight = (): boolean => leaveFlightIdRef.current === flightId;
+        const releaseLeaveUnlessProceeding = (proceeding: boolean): void => {
+          if (!isCurrentLeaveFlight()) {
+            // timeout 後の遅延完了。proceed ロックを再武装しない
+            return;
+          }
+          if (!proceeding) {
+            leaveInFlightRef.current = false;
+            if (mountedRef.current) {
+              setIsLeaving(false);
+            }
+          }
+          // proceed 時は unmount まで維持（shell navigate 前の generate 起動・編集窓を閉じる）
+        };
+        const otherOpInFlightAfterFlush = (): boolean =>
+          submittingRef.current ||
+          settingsOpeningRef.current ||
+          emergencyOpeningRef.current ||
+          privacyOpeningRef.current ||
+          isOpeningEmergencyMenusRef.current ||
+          isOpeningPrivacyRef.current ||
+          isOpeningSettingsRef.current;
+        try {
+          await flushDraftRef.current();
+          if (!isCurrentLeaveFlight()) {
+            return "blocked";
+          }
+          // P1: flush 成功後も generate/openers が await 中に武装していないか再確認
           if (otherOpInFlightAfterFlush()) {
             if (mountedRef.current) {
               setSubmissionError(
@@ -1167,26 +1246,60 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           }
           releaseLeaveUnlessProceeding(true);
           return "proceed";
-        }
-        // P2: revision conflict は onConflict が競合 chrome を武装済み。
-        // 通信障害文言と並立させず、home では wizard を開いて chrome を見せる。
-        if (error instanceof DraftRevisionConflictError) {
+        } catch (error) {
+          if (!isCurrentLeaveFlight()) {
+            return "blocked";
+          }
+          // P1: Incomplete は schema 非 persistable の意図的拒否（RPC しない）。
+          // pre-leave-flush 同様に離脱可とし、通信失敗文言で封鎖しない。
+          if (error instanceof IncompleteDraftSaveError) {
+            if (otherOpInFlightAfterFlush()) {
+              if (mountedRef.current) {
+                setSubmissionError(
+                  "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
+                );
+              }
+              releaseLeaveUnlessProceeding(false);
+              return "blocked";
+            }
+            releaseLeaveUnlessProceeding(true);
+            return "proceed";
+          }
+          // P2: revision conflict は onConflict が競合 chrome を武装済み。
+          // 通信障害文言と並立させず、home では wizard を開いて chrome を見せる。
+          if (error instanceof DraftRevisionConflictError) {
+            if (mountedRef.current) {
+              setWizardOpen(true);
+            }
+            releaseLeaveUnlessProceeding(false);
+            return "blocked";
+          }
           if (mountedRef.current) {
-            setWizardOpen(true);
+            setSubmissionError(
+              "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
+            );
           }
           releaseLeaveUnlessProceeding(false);
           return "blocked";
         }
-        if (mountedRef.current) {
-          setSubmissionError(
-            "条件を保存できなかったため、移動できませんでした。通信を確認して再度お試しください。",
-          );
-        }
-        releaseLeaveUnlessProceeding(false);
-        return "blocked";
-      }
-    });
+      },
+      {
+        onTimeout: () => {
+          // withTimeout 後も handler は続く。世代を進め route ロックを同期で落とす。
+          leaveFlightIdRef.current += 1;
+          leaveInFlightRef.current = false;
+          if (mountedRef.current) {
+            setIsLeaving(false);
+            // ロック解除だけでは無言 stay になる。通信失敗と同系統の理由を出す。
+            setSubmissionError(
+              "条件の保存が時間内に終わらなかったため、移動できませんでした。通信を確認して再度お試しください。",
+            );
+          }
+        },
+      },
+    );
     return () => {
+      leaveFlightIdRef.current += 1;
       registerPlannerLeaveFlush(null);
       leaveInFlightRef.current = false;
     };
@@ -1300,6 +1413,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         footer={flyerFooter}
         // P1: leave-flush / strip / 明示保存失敗を home でも role=alert で可視化（wizard と同型）
         error={submissionError}
+        disabled={
+          isLeaving ||
+          isSubmitting ||
+          isOpeningEmergencyMenus ||
+          isOpeningPrivacy ||
+          isOpeningSettings
+        }
         banner={
           backgroundRefetchErrorMessage !== null ? (
             <div className="home-soft-banner stack">
@@ -1350,11 +1470,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           // saving を isSaving に載せると privacy/settings/emergency が無言 disable になる。
           // 競合 UI は hasDraftConflict（onConflict）で止める。undelete プローブ中の固着は
           // save() 側で live 確認後に conflict を再 throw して onConflict を発火させる。
+          // P5: leave-flush 中は privacy/settings と同型で isSaving に載せ、generate の見た目有効
+          // ＋無言 early-return、および proceed 後 unmount 前の編集窓を閉じる。
           isSubmitting ||
           hasDraftConflict ||
           isOpeningEmergencyMenus ||
           isOpeningPrivacy ||
-          isOpeningSettings
+          isOpeningSettings ||
+          isLeaving
         }
         // P4: safety/pantry soft 失敗中は stale 送信を禁止（主 CTA のみ。編集は previous data で継続）
         blockGenerationForStaleSafety={staleBackgroundSafetyPantry}
@@ -1515,6 +1638,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           submittingRef.current = true;
           setIsSubmitting(true);
           setAudienceStatusError(null);
+          // 生成成功（/generation 遷移）後は finally で isSaving を落とさない
+          let generationProceeded = false;
           try {
             const saved = await flushDraft();
             // strip は operationId を先に無効化するので submittingRef の再読は冗長
@@ -1651,7 +1776,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             try {
               const result = await startGeneration(saved, commandAttempt, controller.signal);
               if (controller.signal.aborted || result === false) return;
-              startNewAttempt();
+              // resume は既存 pending を使うので attempt を回さない（期限確認を捨てない）。
+              if (result !== "resumed") {
+                startNewAttempt();
+              }
+              // true（新規）も resumed（既存再開）も /generation へ遷移済み。
+              // navigate commit まで isSaving / submittingRef を維持し reset で sticky を捨てない。
+              generationProceeded = result === true || result === "resumed";
             } finally {
               if (generationAbortControllerRef.current === controller) {
                 generationAbortControllerRef.current = null;
@@ -1682,7 +1813,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             );
           } finally {
             // strip が既に operation を無効化して ref を落としている場合は上書きしない
-            if (submitOperationId === submitOperationIdRef.current) {
+            // 生成成功後は unmount まで isSaving / submittingRef を維持し reset で sticky を捨てない
+            if (submitOperationId === submitOperationIdRef.current && !generationProceeded) {
               submittingRef.current = false;
               setIsSubmitting(false);
             }
@@ -1691,6 +1823,35 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       />
     </>
   );
+}
+
+/**
+ * claim 負け後、勝ちタブの非アトミック body→meta が終わるまで短く待つ。
+ * meta 失敗や abort で clear されると pending が消える。その状態で
+ * /generation?resumed=1 すると idle→planner で両タブが作成 ID を失う。
+ * pending が消えたら false（generation へ飛ばさない）。
+ * meta が揃うか、期限まで pending が残れば true。
+ */
+async function waitForWinnerPendingSticky(userId: string, signal: AbortSignal): Promise<boolean> {
+  const deadline = Date.now() + CLAIM_LOSER_WAIT_MS;
+  const maxAttempts = Math.ceil(CLAIM_LOSER_WAIT_MS / CLAIM_LOSER_POLL_MS) + 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (signal.aborted) return false;
+    const pending = readPendingGeneration(userId, new Date());
+    if (pending === null) return false;
+    const meta = readPendingGenerationMeta(userId, new Date());
+    if (meta !== null) return true;
+    if (Date.now() >= deadline) break;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, CLAIM_LOSER_POLL_MS);
+    });
+  }
+  return readPendingGeneration(userId, new Date()) !== null;
+}
+
+/** await 跨ぎの AbortSignal 再読。制御フロー解析に aborted=false と畳まれないよう関数経由。 */
+function isAbortSignalAborted(signal: AbortSignal): boolean {
+  return signal.aborted;
 }
 
 /** await 跨ぎの strip/unmount を ref 再読で検知する（制御フロー解析に畳まれないよう関数経由）。 */

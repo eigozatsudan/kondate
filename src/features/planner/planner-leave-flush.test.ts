@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   navigateAfterPlannerLeaveFlush,
+  PLANNER_LEAVE_FLUSH_TIMEOUT_MS,
   registerPlannerLeaveFlush,
   resetPlannerLeaveNavigateFlightForTests,
   runPlannerLeaveFlush,
@@ -28,6 +29,45 @@ describe("planner-leave-flush (P2)", () => {
     registerPlannerLeaveFlush(() => Promise.resolve("blocked"));
     registerPlannerLeaveFlush(null);
     await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+  });
+
+  it("L12: never-settle handler times out as blocked and clears single-flight", async () => {
+    vi.useFakeTimers();
+    try {
+      registerPlannerLeaveFlush(() => new Promise(() => undefined));
+      const pending = runPlannerLeaveFlush();
+      await vi.advanceTimersByTimeAsync(PLANNER_LEAVE_FLUSH_TIMEOUT_MS + 10);
+      await expect(pending).resolves.toBe("blocked");
+      registerPlannerLeaveFlush(() => Promise.resolve("proceed"));
+      await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("L12: timeout は onTimeout を同期実行し、遅延 handler の proceed は使わない", async () => {
+    vi.useFakeTimers();
+    try {
+      const onTimeout = vi.fn();
+      let resolveHandler: ((value: "proceed") => void) | undefined;
+      registerPlannerLeaveFlush(
+        () =>
+          new Promise<"proceed">((resolve) => {
+            resolveHandler = resolve;
+          }),
+        { onTimeout },
+      );
+      const pending = runPlannerLeaveFlush();
+      await vi.advanceTimersByTimeAsync(PLANNER_LEAVE_FLUSH_TIMEOUT_MS + 10);
+      await expect(pending).resolves.toBe("blocked");
+      expect(onTimeout).toHaveBeenCalledTimes(1);
+      resolveHandler?.("proceed");
+      await Promise.resolve();
+      registerPlannerLeaveFlush(() => Promise.resolve("proceed"));
+      await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -140,11 +140,17 @@ export function clampLimit(raw: string | undefined, fallback = 50, max = 100): n
   return Math.min(n, max);
 }
 
-export function clampOffset(raw: string | undefined): number {
+/** ADM8: 巨大 OFFSET スキャン抑止。keyset 前の DiD 上限。 */
+export const MAX_LIST_OFFSET = 10_000;
+
+export function clampOffset(raw: string | undefined, max = MAX_LIST_OFFSET): number {
   if (raw === undefined || raw === "") return 0;
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 0) {
     throw badRequest("invalid_offset", "offset が不正です。");
+  }
+  if (n > max) {
+    throw badRequest("invalid_offset", "offset が大きすぎます。");
   }
   return n;
 }

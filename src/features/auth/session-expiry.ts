@@ -3,7 +3,7 @@ import type { Database } from "@/shared/types/database";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { withTimeout } from "./async-timeout";
 import { isAuthSelfReturnPath, sanitizeReturnPath } from "./auth-flow";
-import { clearLocalAuthAndDrafts } from "./auth-cleanup";
+import { clearExpiredSessionAuthAndDrafts } from "./auth-cleanup";
 
 /** 二重 replace を避ける（並列 401 や POST+GET 同時失敗用） */
 let redirectInFlight = false;
@@ -57,7 +57,8 @@ export async function redirectToLoginForExpiredSession(
 
   try {
     try {
-      await withTimeout(clearLocalAuthAndDrafts(client), cleanupTimeoutMs);
+      // C5: 401 は session + 草稿のみ。R3 keep（flow/pending/PKCE/callback-owner）は残す。
+      await withTimeout(clearExpiredSessionAuthAndDrafts(client), cleanupTimeoutMs);
     } catch {
       // timeout / storage 例外でもログイン画面へ進める
     }

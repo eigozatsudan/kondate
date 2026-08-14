@@ -7,6 +7,16 @@ import {
   OPENROUTER_TIMEOUT_MS,
 } from "../../../shared/contracts/function-budget.js";
 import { GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX } from "../../../shared/contracts/plan-quota.js";
+import {
+  AI_PROCESSING_STALE_SECONDS,
+  AI_PROCESSING_STALE_SECONDS_ENV,
+  FREE_ATTEMPTS_PER_DAY_ENV,
+  FREE_SHORT_WINDOW_LIMIT_ENV,
+  FREE_SHORT_WINDOW_SECONDS_ENV,
+  FREE_SUCCESS_PER_DAY_ENV,
+  FUNCTION_TOTAL_BUDGET_MS_ENV,
+  OPENROUTER_TIMEOUT_MS_ENV,
+} from "../../../shared/contracts/plan-quota-constants.mjs";
 import { releaseQuota } from "../../../shared/contracts/generation.js";
 import { parseGenerationRequestHmacKey } from "./generation-command-integrity.js";
 
@@ -94,27 +104,40 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   GENERATION_REQUEST_HMAC_KEY: generationRequestHmacKeySchema,
   // identity 日次枠用。GENERATION_REQUEST_HMAC_KEY と共用しない
   QUOTA_IDENTITY_HMAC_KEY: quotaIdentityHmacKeySchema,
-  USER_DAILY_AI_LIMIT: releaseLockedInteger(releaseQuota.userDailySuccessLimit, "3"),
+  // S1: Free/budget の number は planQuota/function-budget、text は plan-quota-constants.mjs SSOT
+  USER_DAILY_AI_LIMIT: releaseLockedInteger(
+    releaseQuota.userDailySuccessLimit,
+    FREE_SUCCESS_PER_DAY_ENV,
+  ),
   USER_DAILY_EXTERNAL_CALL_LIMIT: releaseLockedInteger(
     releaseQuota.userDailyExternalCallLimit,
-    "6",
+    FREE_ATTEMPTS_PER_DAY_ENV,
   ),
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: releaseLockedInteger(
     releaseQuota.userShortWindowExternalCallLimit,
-    "4",
+    FREE_SHORT_WINDOW_LIMIT_ENV,
   ),
-  USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(releaseQuota.userShortWindowSeconds, "600"),
+  USER_SHORT_WINDOW_SECONDS: releaseLockedInteger(
+    releaseQuota.userShortWindowSeconds,
+    FREE_SHORT_WINDOW_SECONDS_ENV,
+  ),
   // アプリ全体安全弁。製品 max は planQuota.globalDailyAiLimitProductMax（現状 500）。
   // 運用値は ENV だけで上げられる。製品 max を超える値はここ（と preflight ミラー）を先に上げる。
   // SQL は p_global_limit の範囲拒否をしない（ENV のみが正本）。
   GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX),
   // 締切3値はリリース固定。未設定の silent default を禁止し、近傍値も拒否する
   // Netlify 同期 60s 硬上限: 試行 24s（primary+repair）/ 総 55s（platform headroom 5s）
-  OPENROUTER_TIMEOUT_MS: releaseLockedInteger(OPENROUTER_TIMEOUT_MS, "24000"),
-  FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(FUNCTION_TOTAL_BUDGET_MS, "55000"),
+  OPENROUTER_TIMEOUT_MS: releaseLockedInteger(OPENROUTER_TIMEOUT_MS, OPENROUTER_TIMEOUT_MS_ENV),
+  FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(
+    FUNCTION_TOTAL_BUDGET_MS,
+    FUNCTION_TOTAL_BUDGET_MS_ENV,
+  ),
   // G1 residual-intentional: processing 孤児解放までの秒数。55s/60s 実行上限より長いのは
   // 意図的ロック（cleanup は期限前に解放しない）。値の短縮は設計改訂が必要。
-  AI_PROCESSING_STALE_SECONDS: releaseLockedInteger(180, "180"),
+  AI_PROCESSING_STALE_SECONDS: releaseLockedInteger(
+    AI_PROCESSING_STALE_SECONDS,
+    AI_PROCESSING_STALE_SECONDS_ENV,
+  ),
 });
 
 type ParsedServerEnv = z.infer<typeof rawServerEnvSchema>;

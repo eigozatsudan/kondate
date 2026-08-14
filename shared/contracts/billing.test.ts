@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   PLUS_LP_UPGRADE_COMING_SOON,
   STRIPE_API_VERSION,
+  checkoutDataSchema,
   checkoutRequestSchema,
   entitlementDataSchema,
+  portalDataSchema,
 } from "./billing.js";
 
 describe("billing contracts", () => {
@@ -63,5 +65,20 @@ describe("billing contracts", () => {
     // 公開時に false へ戻す。true のあいだ UI と Checkout API が同時に閉じる。
     expect(typeof PLUS_LP_UPGRADE_COMING_SOON).toBe("boolean");
     expect(PLUS_LP_UPGRADE_COMING_SOON).toBe(true);
+  });
+
+  // S9: schema が Stripe host DiD を含み evil URL を構造拒否する
+  it("S9: checkout/portal data schemas reject non-Stripe redirect hosts", () => {
+    expect(
+      checkoutDataSchema.safeParse({ url: "https://checkout.stripe.com/c/pay/cs_test" }).success,
+    ).toBe(true);
+    expect(
+      portalDataSchema.safeParse({ url: "https://billing.stripe.com/p/session/test" }).success,
+    ).toBe(true);
+    expect(
+      checkoutDataSchema.safeParse({ url: "http://checkout.stripe.com/c/pay/x" }).success,
+    ).toBe(false);
+    expect(checkoutDataSchema.safeParse({ url: "https://evil.example/phish" }).success).toBe(false);
+    expect(portalDataSchema.safeParse({ url: "https://evil.example/phish" }).success).toBe(false);
   });
 });

@@ -216,4 +216,35 @@ describe("PlanSettingsSection", () => {
       expect(onPortal).toHaveBeenCalledTimes(1);
     });
   });
+
+  // B17: COMING_SOON 中でも Free 枝に Portal CTA（cold free+live の管理導線）
+  it("shows portal CTA on free branch under COMING_SOON (B17)", async () => {
+    if (!PLUS_LP_UPGRADE_COMING_SOON) return;
+    const onPortal = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    renderPlan({ onPortal });
+    expect(screen.getByText(PLUS_LP_COMING_SOON_BADGE)).toBeVisible();
+    const portal = screen.getByRole("button", { name: PORTAL_BUTTON_LABEL });
+    expect(portal).toBeVisible();
+    await user.click(portal);
+    await waitFor(() => {
+      expect(onPortal).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // B25: plan=plus でも plusEntitled=false なら無料ラベル（表示 DiD）
+  it("labels free when plan is plus but plusEntitled is false (B25)", () => {
+    renderPlan({
+      entitlement: {
+        ...freeEntitlement,
+        plan: "plus",
+        status: "none",
+        plusEntitled: false,
+        dbPlusEntitled: false,
+        quotaPlan: "free",
+      },
+    });
+    expect(screen.getByText(/いまのプラン:/).textContent).toContain("無料プラン");
+    expect(screen.getByText(/いまのプラン:/).textContent).not.toContain("こんだて日和 Plus");
+  });
 });

@@ -94,6 +94,21 @@ it("L5: successful start keeps CTA disabled (pending held until navigate unmount
   expect(onStartIdea).toHaveBeenCalledOnce();
 });
 
+it("L14: failed start focuses the alert for keyboard users", async () => {
+  const user = userEvent.setup();
+  render(
+    <WelcomePage
+      onboardingStatus="not_started"
+      onStartIdea={() => Promise.reject(new Error("start failed"))}
+      onStartHousehold={() => Promise.resolve()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("開始できませんでした");
+  expect(alert).toHaveFocus();
+});
+
 it("L11: pending exposes status region and marks main busy", async () => {
   const user = userEvent.setup();
   const onStartIdea = vi.fn(() => new Promise<void>(() => undefined));

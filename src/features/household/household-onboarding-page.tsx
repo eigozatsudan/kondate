@@ -31,8 +31,16 @@ import {
   type ProfileRow,
   type SetOnboardingStatusOptions,
 } from "./household-api";
+import { EASE_SOFT_NOT_SWALLOW_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { defaultsForAgeBand } from "./household-defaults";
-import { householdKeys, invalidateHouseholdSafetyDependents } from "./household-queries";
+import {
+  householdKeys,
+  householdSafetyChangedEvent,
+  invalidateHouseholdSafetyDependents,
+  invalidateHouseholdSafetyQueries,
+  isHouseholdSafetyRevisionStorageKeyForUser,
+  subscribeHouseholdSafetyBroadcast,
+} from "./household-queries";
 import { AllergyEditor } from "./allergy-editor";
 import {
   RESIDUAL_ALLERGY_UNVERIFIED_WARNING,
@@ -91,6 +99,10 @@ type OnboardingFieldErrors = {
 const ONBOARDING_FORM_ERROR_ID = "household-onboarding-form-error";
 const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
 const ADD_SCOPE_NOTICE_TITLE_ID = "onboarding-add-scope-notice-title";
+/** H5: 一覧未確定のまま「なし／未確認」完了すると残針を見落としたまま complete できる */
+const ALLERGIES_LIST_PENDING_MESSAGE = "アレルギー一覧の読み込みが終わるまで待ってください";
+/** H15: 残針があるのに catalog 未確定だと削除 UI が無く「なし」完了できる */
+const ALLERGEN_CATALOG_PENDING_MESSAGE = "アレルギー候補の読み込みが終わるまで待ってください";
 
 const ONBOARDING_FIELD_ORDER = [
   "ageBand",
@@ -133,6 +145,43 @@ function validateOnboardingDraft(
     errors.unsupportedDietKinds = UNSUPPORTED_DIET_KINDS_REQUIRED;
   }
   return errors;
+}
+
+/**
+ * H5: 「なし／未確認」は件数検証が無いので、一覧 pending（または未 success かつ cache 空）
+ * では residual を断定できない。validateOnboardingDraft にはねじ込まず query 状態で見る。
+ * H12: refetch 中は isPending=false / isSuccess=true のまま旧 [] が見える。
+ * 空 cache の in-flight も未確定として扱い、残針が既に見えている refetch は止めない。
+ */
+function isOnboardingAllergyListUnverified(
+  allergyStatus: string | null,
+  query: { isPending: boolean; isSuccess: boolean; isFetching: boolean },
+  cachedCount: number,
+): boolean {
+  if (allergyStatus !== "none" && allergyStatus !== "unconfirmed") {
+    return false;
+  }
+  return (
+    query.isPending ||
+    (!query.isSuccess && cachedCount === 0) ||
+    (query.isFetching && cachedCount === 0)
+  );
+}
+
+/**
+ * H15: 残針が確定しているときだけ catalog を見る。H5 の allergies 関門は広げない。
+ * pending、または listCatalog ありで data が無い（初回 error / success でも未着）なら未確定。
+ * refetch error で直前 data が残る場合は確定済み（H16）。
+ */
+function isOnboardingResidualCatalogUnverified(
+  hasResidualAllergies: boolean,
+  catalogProvided: boolean,
+  query: { isPending: boolean; data: unknown },
+): boolean {
+  if (!hasResidualAllergies || !catalogProvided) {
+    return false;
+  }
+  return query.isPending || query.data === undefined;
 }
 
 function firstOnboardingFieldError(
@@ -245,6 +294,9 @@ export function HouseholdOnboardingForm({
   const [actionPending, setActionPending] = useState(false);
   // H7: complete 開始を同期で立て、re-render 前の連打・完了中 field save を閉じる
   const actionPendingRef = useRef(false);
+  // H14: AllergyEditor 追加/削除 in-flight 中は complete を塞ぐ（settings と同型）
+  const [allergyMutationPending, setAllergyMutationPending] = useState(false);
+  const allergyMutationPendingRef = useRef(false);
   // HP-I1: AllergyEditor 失敗を利用者に見せる（設定画面と同型）
   const [allergyError, setAllergyError] = useState<string | null>(null);
   // 完了押下後の fieldErrors（valid になったら clear）
@@ -319,6 +371,41 @@ export function HouseholdOnboardingForm({
       current.map((item) => (item.id === next.id ? next : item)),
     );
   };
+
+  // H11: /onboarding は AppShell 配下ではないので、他タブの安全変更をここで受ける。
+  // チャネル名は household-queries の定数を再利用し、二重定義しない。
+  // 同一タブの dependents も event / Broadcast を飛ばす。購読の再 invalidate のあと
+  // deferred registered を replaceMember で載せ直し、members 正本で Editor が消えないようにする（HR1）。
+  // 失敗は unhandled にしない（H-R2 の soft 失敗と同型）。
+  const draftId = draft?.id;
+  useEffect(() => {
+    const invalidate = () => {
+      void invalidateHouseholdSafetyQueries(queryClient, userId)
+        .then(() => {
+          if (!pendingRegisteredRef.current || draftId === undefined) return;
+          const latest = queryClient
+            .getQueryData<HouseholdMemberRow[]>(householdKeys.members(userId))
+            ?.find((row) => row.id === draftId);
+          if (latest !== undefined) {
+            replaceMember(latest);
+          }
+        })
+        .catch(() => undefined);
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (isHouseholdSafetyRevisionStorageKeyForUser(event.key, userId)) invalidate();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(householdSafetyChangedEvent, invalidate);
+    const unsubscribeBroadcast = subscribeHouseholdSafetyBroadcast(userId, invalidate);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(householdSafetyChangedEvent, invalidate);
+      unsubscribeBroadcast();
+    };
+    // replaceMember は毎 render 新しい参照。中身は ref / queryClient / userId だけなので購読を張り直さない
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- replaceMember は安定した副作用だけ
+  }, [queryClient, userId, draftId]);
 
   const startMutation = useMutation({
     mutationFn: () => api.createDraft(members.length),
@@ -425,6 +512,38 @@ export function HouseholdOnboardingForm({
     setActionPending(false);
   };
 
+  /** H14: allergy 追加/削除の in-flight を親で把握し complete CTA を塞ぐ */
+  const beginAllergyMutation = (): boolean => {
+    if (actionPendingRef.current || allergyMutationPendingRef.current) return false;
+    allergyMutationPendingRef.current = true;
+    setAllergyMutationPending(true);
+    return true;
+  };
+  const endAllergyMutation = () => {
+    allergyMutationPendingRef.current = false;
+    setAllergyMutationPending(false);
+  };
+
+  /**
+   * H16: draft アレルギー変更後も dependents を soft invalidate。
+   * draft は snapshot 対象外だが、同一 user の allergies/dislikes/緊急献立などの
+   * soft 窓を縮める（complete 後経路と同型。失敗は沈黙 soft）。
+   * HR1: members invalidate はサーバ正本で registered 未コミット状態に戻し得る。
+   * deferred registered が残っているときは replaceMember で UI/complete 検証用に再載せる
+   * （allergy 行は DB 残存の fail-closed。complete 前 flush 失敗も従来どおり塞ぐ）。
+   */
+  const softInvalidateAfterDraftAllergyChange = async (): Promise<void> => {
+    const memberId = draft?.id;
+    await tryInvalidateSafety(() => invalidateHouseholdSafetyDependents(queryClient, userId));
+    if (!pendingRegisteredRef.current || memberId === undefined) return;
+    const latest = queryClient
+      .getQueryData<HouseholdMemberRow[]>(householdKeys.members(userId))
+      ?.find((row) => row.id === memberId);
+    if (latest !== undefined) {
+      replaceMember(latest);
+    }
+  };
+
   const save = (patch: HouseholdDraftPatch) => {
     // H7: complete/finish/skip 中は新規 field save を積まず、DB complete との交差を防ぐ
     if (draft === null || actionPendingRef.current) return Promise.resolve(true);
@@ -493,11 +612,21 @@ export function HouseholdOnboardingForm({
   /**
    * H13 / HR1: deferred registered を DB へコミット。
    * complete 直前は actionPendingRef で save() が no-op するため、その場合は updateDraft を直接叩く。
-   * @returns pending が無い・またはコミット成功なら true。失敗で pending が残れば false。
+   * @returns pending が無い・またはコミット成功なら true。失敗または空一覧で pending が残れば false。
    */
   const commitPendingRegisteredIfNeeded = async (): Promise<boolean> => {
     if (!pendingRegisteredRef.current) return true;
     if (draft === null) return false;
+
+    // H4: 空一覧のまま registered を書かない。HR1 effect は length===0 で既に return するが、
+    // add 成功直後の直接 commit は invalidate 後でも一覧が空のままここを通る。
+    // pending は残し DB は触らない（complete は 0 件で fail-closed）。
+    const listed =
+      queryClient.getQueryData<MemberAllergyRow[]>(householdKeys.allergies(userId, draft.id)) ??
+      allergies;
+    if (listed.length === 0) {
+      return false;
+    }
 
     // complete/skip 連打ガード中は save() が即 true で戻るため、complete flush は直接 API へ
     if (actionPendingRef.current) {
@@ -662,7 +791,8 @@ export function HouseholdOnboardingForm({
 
   /** incomplete 完了押下: fieldErrors + toast + focus。成功時は次アクションへ（setProgress しない） */
   const handleCompleteClick = (): void => {
-    if (draft === null || actionPendingRef.current) return;
+    // H14: allergy 追加/削除 in-flight 中は complete を始めない（settings と同型）
+    if (draft === null || actionPendingRef.current || allergyMutationPendingRef.current) return;
     // H7: 押下直後に同期ガードを立て、連打と完了中の field save チェーンを閉じる。
     // そのうえで click 時点までの saveQueue を待ち、キャッシュ最新 draft で検証する。
     beginActionPending();
@@ -690,14 +820,48 @@ export function HouseholdOnboardingForm({
           return;
         }
       }
-      // click 後の楽観更新を含め、キャッシュ上の最新 draft / allergies で検証する
+      // click 後の楽観更新を含め、キャッシュ上の最新 draft / allergies で検証する。
+      // HR1: deferred registered 未コミット中は members 正本が non-registered でも
+      // UI 意図どおり registered として検証し、直後の flush へ進める。
       const membersNow =
         queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members(userId)) ?? [];
-      const draftNow = membersNow.find((member) => member.id === memberId) ?? draft;
+      const rawDraftNow = membersNow.find((member) => member.id === memberId) ?? draft;
+      const draftNow =
+        pendingRegisteredRef.current && rawDraftNow.status === "draft"
+          ? { ...rawDraftNow, allergy_status: "registered" as const }
+          : rawDraftNow;
       const allergiesNow =
         queryClient.getQueryData<MemberAllergyRow[]>(householdKeys.allergies(userId, memberId)) ??
         allergies;
       const nextErrors = validateOnboardingDraft(draftNow, allergiesNow.length);
+      // H5: none/unconfirmed は件数ゲートが無い。一覧未確定なら complete しない
+      // H12: 空 cache の refetch 中も同様（isPending だけでは旧 [] のまま通る）
+      if (
+        Object.keys(nextErrors).length === 0 &&
+        isOnboardingAllergyListUnverified(
+          draftNow.allergy_status,
+          allergiesQuery,
+          allergiesNow.length,
+        )
+      ) {
+        nextErrors.allergyStatus = ALLERGIES_LIST_PENDING_MESSAGE;
+      }
+      // H15: 残針があるのに catalog 未確定だと削除 UI が無く「なし」完了できる。
+      // H5 は allergies だけ。catalog は残針が確定しているときだけ見る。
+      const hasResidualNow =
+        (draftNow.allergy_status === "none" || draftNow.allergy_status === "unconfirmed") &&
+        allergiesQuery.isSuccess &&
+        allergiesNow.length > 0;
+      if (
+        Object.keys(nextErrors).length === 0 &&
+        isOnboardingResidualCatalogUnverified(
+          hasResidualNow,
+          api.listCatalog !== undefined,
+          catalogQuery,
+        )
+      ) {
+        nextErrors.allergyStatus = ALLERGEN_CATALOG_PENDING_MESSAGE;
+      }
       if (Object.keys(nextErrors).length > 0) {
         setFieldErrors(nextErrors);
         const lead = firstOnboardingFieldError(nextErrors);
@@ -706,6 +870,44 @@ export function HouseholdOnboardingForm({
           tone: "error",
         });
         focusFirstInvalid(nextErrors);
+        endActionPending();
+        return;
+      }
+      // H11: 既定 staleTime 内の空 success cache を正本扱いしない（H1 remove と同型）。
+      // none/unconfirmed でクリック前 0 件なのに fresh が残針なら、今回は complete しない。
+      // 警告を見たあとの再クリックは cache が 0 でないので H2 どおり通す。
+      let freshAllergies: MemberAllergyRow[];
+      try {
+        freshAllergies = await queryClient.fetchQuery({
+          queryKey: householdKeys.allergies(userId, memberId),
+          queryFn: () => api.listAllergies(memberId),
+          staleTime: 0,
+        });
+      } catch {
+        const fetchErrors: OnboardingFieldErrors = {
+          allergyStatus: ALLERGIES_LIST_PENDING_MESSAGE,
+        };
+        setFieldErrors(fetchErrors);
+        showToast({
+          message: ALLERGIES_LIST_PENDING_MESSAGE,
+          tone: "error",
+        });
+        focusFirstInvalid(fetchErrors);
+        endActionPending();
+        return;
+      }
+      const isResidualStatusNow =
+        draftNow.allergy_status === "none" || draftNow.allergy_status === "unconfirmed";
+      if (isResidualStatusNow && allergiesNow.length === 0 && freshAllergies.length > 0) {
+        const residualErrors: OnboardingFieldErrors = {
+          allergyStatus: RESIDUAL_ALLERGY_WARNING,
+        };
+        setFieldErrors(residualErrors);
+        showToast({
+          message: RESIDUAL_ALLERGY_WARNING,
+          tone: "error",
+        });
+        focusFirstInvalid(residualErrors);
         endActionPending();
         return;
       }
@@ -891,6 +1093,44 @@ export function HouseholdOnboardingForm({
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
   }
 
+  const isResidualAllergyStatus =
+    draft.allergy_status === "none" || draft.allergy_status === "unconfirmed";
+  // H2: 残針そのもの。H14 の catalog 待ちはこの上に掛ける
+  const hasResidualAllergies =
+    isResidualAllergyStatus && allergiesQuery.isSuccess && allergies.length > 0;
+  const catalogProvided = api.listCatalog !== undefined;
+  // H14: listCatalog がある残針は catalog 初回到着まで出さない。未提供 API は既存 fallback
+  // H16: 初回 data があれば refetch error でも名前付き削除を残す（isSuccess だけにしない）
+  const residualCatalogUnresolved = isOnboardingResidualCatalogUnverified(
+    hasResidualAllergies,
+    catalogProvided,
+    catalogQuery,
+  );
+  const residualCatalogPending = hasResidualAllergies && catalogProvided && catalogQuery.isPending;
+  const residualCatalogFailed =
+    hasResidualAllergies && catalogProvided && catalogQuery.isError && !catalogQuery.isPending;
+  const showResidualAllergyEditor = hasResidualAllergies && !residualCatalogUnresolved;
+  // H7: registered は catalog/aliases 成功まで Editor を出さない（変更しない）
+  const showRegisteredCatalogPending =
+    draft.allergy_status === "registered" &&
+    catalogProvided &&
+    (catalogQuery.isPending || (api.listAliases !== undefined && aliasesQuery.isPending));
+  const showRegisteredCatalogFailed =
+    draft.allergy_status === "registered" &&
+    catalogProvided &&
+    (catalogQuery.isError || (api.listAliases !== undefined && aliasesQuery.isError)) &&
+    !catalogQuery.isPending &&
+    !(api.listAliases !== undefined && aliasesQuery.isPending);
+  const showRegisteredAllergyEditor =
+    draft.allergy_status === "registered" &&
+    catalogProvided &&
+    catalogQuery.isSuccess &&
+    (api.listAliases === undefined || aliasesQuery.isSuccess);
+  // H13: 残針 Editor が出ているとき（none/unconfirmed + 残針）または registered は
+  // allergyError を出す（settings の setMessage 相当）
+  const showAllergyError =
+    allergyError !== null && (draft.allergy_status === "registered" || hasResidualAllergies);
+
   return (
     <main className="page-frame stack">
       <div>
@@ -963,6 +1203,12 @@ export function HouseholdOnboardingForm({
             <option value="senior">高齢者</option>
           </select>
         </label>
+        {/* H18: 年齢既定で soft が入るため settings と同文言を入力時に出す（ease UI は無し） */}
+        {draft.age_band !== null && (
+          <p className="type-small" role="note">
+            {EASE_SOFT_NOT_SWALLOW_DISCLAIMER}
+          </p>
+        )}
         <label className="field">
           <span>アレルギーの確認</span>
           <select
@@ -972,6 +1218,12 @@ export function HouseholdOnboardingForm({
             aria-invalid={fieldErrors.allergyStatus !== undefined ? true : undefined}
             aria-describedby={
               fieldErrors.allergyStatus !== undefined ? ONBOARDING_FORM_ERROR_ID : undefined
+            }
+            // U3-I2: 読込中は誤操作防止で止めるが、一覧 error 後も なし/未確認 へ戻せるようにする。
+            // （settings と同型。H5: pending 中に「なし」へ切って残針を見落とさない）
+            // H12: 空 cache の refetch 中も止める。残針が見えている refetch は操作を残す。
+            disabled={
+              allergiesQuery.isPending || (allergiesQuery.isFetching && allergies.length === 0)
             }
             onChange={(event) => {
               const value = event.target.value;
@@ -1008,16 +1260,17 @@ export function HouseholdOnboardingForm({
           </select>
         </label>
 
-        {/* H2: settings 相当の residual 警告。なし／未確認でも member_allergies 残存を説明する */}
+        {/* H2: settings 相当の residual 警告。H15: 「削除できます」は Editor が出ているときだけ */}
+        {showResidualAllergyEditor && (
+          <p className="type-small" role="status">
+            {RESIDUAL_ALLERGY_WARNING}
+          </p>
+        )}
         {(draft.allergy_status === "none" || draft.allergy_status === "unconfirmed") &&
-          allergiesQuery.isSuccess &&
-          allergies.length > 0 && (
-            <p className="type-small" role="status">
-              {RESIDUAL_ALLERGY_WARNING}
-            </p>
-          )}
-        {(draft.allergy_status === "none" || draft.allergy_status === "unconfirmed") &&
-          allergiesQuery.isError && (
+          (allergiesQuery.isError ||
+            allergiesQuery.isPending ||
+            (allergiesQuery.isFetching && allergies.length === 0) ||
+            residualCatalogUnresolved) && (
             <p className="type-small" role="status">
               {RESIDUAL_ALLERGY_UNVERIFIED_WARNING}
             </p>
@@ -1036,53 +1289,47 @@ export function HouseholdOnboardingForm({
             </button>
           </div>
         )}
-        {draft.allergy_status === "registered" && allergyError !== null && (
+        {showAllergyError && (
           <p className="error-message" role="alert">
             {allergyError}
           </p>
         )}
-        {/* H7: catalog/aliases 成功まで Editor を出さない（settings の全画面待ちと同趣旨の fail-early）。
-            未提供の API はゲート対象外（disabled query の isPending 永続を避ける）。 */}
-        {draft.allergy_status === "registered" &&
-          api.listCatalog !== undefined &&
-          (catalogQuery.isPending || (api.listAliases !== undefined && aliasesQuery.isPending)) && (
-            <p className="type-small" role="status">
-              アレルギー候補を読み込んでいます…
-            </p>
-          )}
-        {draft.allergy_status === "registered" &&
-          api.listCatalog !== undefined &&
-          (catalogQuery.isError || (api.listAliases !== undefined && aliasesQuery.isError)) &&
-          !catalogQuery.isPending &&
-          !(api.listAliases !== undefined && aliasesQuery.isPending) && (
-            <div className="stack" role="alert">
-              <p className="error-message">アレルギー候補を読み込めませんでした。</p>
-              <button
-                className="secondary-button min-h-11"
-                type="button"
-                onClick={() => {
-                  void catalogQuery.refetch();
-                  if (api.listAliases !== undefined) void aliasesQuery.refetch();
-                }}
-              >
-                再試行
-              </button>
-            </div>
-          )}
-        {draft.allergy_status === "registered" &&
-          api.listCatalog !== undefined &&
-          catalogQuery.isSuccess &&
-          (api.listAliases === undefined || aliasesQuery.isSuccess) && (
-            <AllergyEditor
-              memberId={draft.id}
-              catalog={catalogQuery.data}
-              aliases={aliasesQuery.data ?? []}
-              allergies={allergies}
-              // H6: complete/finish/skip 中は settings と同型に Editor を閉じ、allergy 境界レースを防ぐ
-              disabled={actionPending}
-              addStandard={async (memberId, allergenId) => {
-                // actionPending 中は disabled だが、遅延 invoker が残っても API を叩かない
-                if (actionPendingRef.current) return;
+        {/* H7: registered は catalog/aliases 成功まで Editor を出さない。
+            H14: 残針も listCatalog があるときは catalog 成功まで出さない。 */}
+        {(showRegisteredCatalogPending || residualCatalogPending) && (
+          <p className="type-small" role="status">
+            アレルギー候補を読み込んでいます…
+          </p>
+        )}
+        {(showRegisteredCatalogFailed || residualCatalogFailed) && (
+          <div className="stack" role="alert">
+            <p className="error-message">アレルギー候補を読み込めませんでした。</p>
+            <button
+              className="secondary-button min-h-11"
+              type="button"
+              onClick={() => {
+                void catalogQuery.refetch();
+                if (api.listAliases !== undefined) void aliasesQuery.refetch();
+              }}
+            >
+              再試行
+            </button>
+          </div>
+        )}
+        {/* H2: なし／未確認の残針は削除専用。H14: catalog 成功後に名前付きで出す。 */}
+        {showResidualAllergyEditor || showRegisteredAllergyEditor ? (
+          <AllergyEditor
+            memberId={draft.id}
+            catalog={catalogQuery.data ?? []}
+            aliases={aliasesQuery.data ?? []}
+            allergies={allergies}
+            removeOnly={draft.allergy_status === "none" || draft.allergy_status === "unconfirmed"}
+            // H6: complete/finish/skip 中は settings と同型に Editor を閉じ、allergy 境界レースを防ぐ
+            disabled={actionPending}
+            addStandard={async (memberId, allergenId) => {
+              // actionPending 中は disabled だが、遅延 invoker が残っても API を叩かない
+              if (!beginAllergyMutation()) return;
+              try {
                 setAllergyError(null);
                 await api.addStandardAllergy?.(memberId, allergenId);
                 await queryClient.invalidateQueries({
@@ -1090,47 +1337,76 @@ export function HouseholdOnboardingForm({
                 });
                 // H13: 初回追加で deferred registered を DB へ
                 await commitPendingRegisteredIfNeeded();
-              }}
-              addCustom={async (memberId, name, aliases) => {
-                if (actionPendingRef.current) return;
+                // H16: draft アレルギー後も dependents を soft invalidate
+                await softInvalidateAfterDraftAllergyChange();
+              } finally {
+                endAllergyMutation();
+              }
+            }}
+            addCustom={async (memberId, name, aliases) => {
+              if (!beginAllergyMutation()) return;
+              try {
                 setAllergyError(null);
                 await api.addCustomAllergy(memberId, name, aliases);
                 await queryClient.invalidateQueries({
                   queryKey: householdKeys.allergies(userId, memberId),
                 });
                 await commitPendingRegisteredIfNeeded();
-              }}
-              remove={async (allergyId) => {
-                if (actionPendingRef.current) return;
+                await softInvalidateAfterDraftAllergyChange();
+              } finally {
+                endAllergyMutation();
+              }
+            }}
+            remove={async (allergyId) => {
+              if (!beginAllergyMutation()) return;
+              try {
                 setAllergyError(null);
+                // H4: draft の UI registered（pending 含む）でも最後の 1 件は消さない。
+                // last-delete trigger は complete のみ。通すと registered+0 が残る。
+                const registeredIntent =
+                  draft.allergy_status === "registered" || pendingRegisteredRef.current;
+                const listed =
+                  queryClient.getQueryData<MemberAllergyRow[]>(
+                    householdKeys.allergies(userId, draft.id),
+                  ) ?? allergies;
+                if (registeredIntent && listed.length <= 1) {
+                  setAllergyError("登録ありの場合は1つ以上選んでください");
+                  return;
+                }
                 // H5: silent RPC 後に再取得で行残存を検知（settings と同型）
+                // H1: 既定 staleTime 内の削除前キャッシュを正本扱いしない。
                 await api.removeAllergy?.(allergyId);
                 const afterRemove = await queryClient.fetchQuery({
                   queryKey: householdKeys.allergies(userId, draft.id),
                   queryFn: () => api.listAllergies(draft.id),
+                  staleTime: 0,
                 });
                 if (afterRemove.some((row) => row.id === allergyId)) {
                   setAllergyError(
                     "アレルギーの削除を反映できませんでした。一覧を再読み込みして確認してください。",
                   );
                 }
-              }}
-              onError={(error) => {
-                setAllergyError(
-                  error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
-                );
-              }}
-            />
-          )}
+                await softInvalidateAfterDraftAllergyChange();
+              } finally {
+                endAllergyMutation();
+              }
+            }}
+            onError={(error) => {
+              setAllergyError(
+                error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
+              );
+            }}
+          />
+        ) : null}
         {draft.allergy_status === "registered" && api.listCatalog === undefined && (
-          <fieldset className="stack" disabled={actionPending}>
+          <fieldset className="stack" disabled={actionPending || allergyMutationPending}>
             <legend>登録するアレルギー</legend>
             <label className="field">
               <span>自由登録名</span>
               <input
                 value={customAllergy}
                 maxLength={80}
-                disabled={actionPending}
+                disabled={actionPending || allergyMutationPending}
                 onChange={(event) => {
                   setCustomAllergy(event.target.value);
                 }}
@@ -1140,7 +1416,7 @@ export function HouseholdOnboardingForm({
               <input
                 type="checkbox"
                 checked={customConfirmed}
-                disabled={actionPending}
+                disabled={actionPending || allergyMutationPending}
                 onChange={(event) => {
                   setCustomConfirmed(event.target.checked);
                 }}
@@ -1150,9 +1426,14 @@ export function HouseholdOnboardingForm({
             <button
               className="secondary-button"
               type="button"
-              disabled={actionPending || !customConfirmed || customAllergy.trim() === ""}
+              disabled={
+                actionPending ||
+                allergyMutationPending ||
+                !customConfirmed ||
+                customAllergy.trim() === ""
+              }
               onClick={() => {
-                if (actionPendingRef.current) return;
+                if (!beginAllergyMutation()) return;
                 void api
                   .addCustomAllergy(draft.id, customAllergy, [])
                   .then(() =>
@@ -1161,6 +1442,7 @@ export function HouseholdOnboardingForm({
                     }),
                   )
                   .then(() => commitPendingRegisteredIfNeeded())
+                  .then(() => softInvalidateAfterDraftAllergyChange())
                   .then(() => {
                     setCustomAllergy("");
                     setCustomConfirmed(false);
@@ -1173,6 +1455,9 @@ export function HouseholdOnboardingForm({
                         ? error.message
                         : "アレルギー情報を更新できませんでした",
                     );
+                  })
+                  .finally(() => {
+                    endAllergyMutation();
                   });
               }}
             >
@@ -1257,7 +1542,8 @@ export function HouseholdOnboardingForm({
         className="primary-button min-h-11"
         type="button"
         // U3-I1: incomplete でも押下可。autosave failed でも complete は再試行可能にする
-        disabled={actionPending}
+        // H14: allergy 追加/削除 in-flight 中も complete を塞ぐ
+        disabled={actionPending || allergyMutationPending}
         onClick={handleCompleteClick}
       >
         この家族の設定を完了する

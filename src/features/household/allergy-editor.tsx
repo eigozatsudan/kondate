@@ -12,10 +12,22 @@ export type AllergyEditorProps = {
   remove(allergyId: string): Promise<unknown>;
   onError?(error: unknown): void;
   disabled?: boolean;
+  /**
+   * H2: なし／未確認の残針は削除だけ許す。検索・候補・自由登録は出さない
+   * （status を none のまま針を増やさない）。
+   */
+  removeOnly?: boolean;
 };
 
 export function AllergyEditor(props: AllergyEditorProps) {
-  const { memberId, catalog, aliases = [], allergies, disabled = false } = props;
+  const {
+    memberId,
+    catalog,
+    aliases = [],
+    allergies,
+    disabled = false,
+    removeOnly = false,
+  } = props;
   const [query, setQuery] = useState("");
   const [customName, setCustomName] = useState("");
   const [customAliases, setCustomAliases] = useState("");
@@ -86,7 +98,7 @@ export function AllergyEditor(props: AllergyEditorProps) {
   const availableMatches = matches.filter((item) => !selectedStandardIds.has(item.id));
 
   return (
-    <section className="stack" aria-label="アレルギー編集">
+    <section className="stack" aria-label={removeOnly ? "残っているアレルギー" : "アレルギー編集"}>
       {/* 選択済みは絞り込み欄の上。いま何が入っているかを先に見せる */}
       <ul className="allergy-selected-list" aria-label="選択済みアレルギー">
         {allergies.length === 0 ? (
@@ -117,112 +129,116 @@ export function AllergyEditor(props: AllergyEditorProps) {
           })
         )}
       </ul>
-      <label className="field">
-        <span>よくあるアレルギーを絞り込む</span>
-        <input
-          aria-label="よくあるアレルギーを絞り込む"
-          role="searchbox"
-          value={query}
-          disabled={mutationDisabled}
-          placeholder="例：卵・小麦・乳"
-          autoComplete="off"
-          onChange={(event) => {
-            setQuery(event.target.value);
-          }}
-        />
-      </label>
-      <p className="field-hint">入力すると下の候補が絞られます。空欄のときは全部並びます。</p>
-      <ul className="allergy-add-chip-list" aria-label="よくあるアレルギーの候補">
-        {availableMatches.length === 0 && (
-          <li className="allergy-add-chip-list__empty">
-            {matches.length === 0
-              ? "一覧に該当するものはありません。自由登録を確認してください。"
-              : "表示できる候補はすべて追加済みです。"}
-          </li>
-        )}
-        {availableMatches.map((item) => (
-          <li key={item.id}>
-            <button
-              className="secondary-button allergy-add-chip"
-              type="button"
+      {removeOnly ? null : (
+        <>
+          <label className="field">
+            <span>よくあるアレルギーを絞り込む</span>
+            <input
+              aria-label="よくあるアレルギーを絞り込む"
+              role="searchbox"
+              value={query}
               disabled={mutationDisabled}
+              placeholder="例：卵・小麦・乳"
+              autoComplete="off"
+              onChange={(event) => {
+                setQuery(event.target.value);
+              }}
+            />
+          </label>
+          <p className="field-hint">入力すると下の候補が絞られます。空欄のときは全部並びます。</p>
+          <ul className="allergy-add-chip-list" aria-label="よくあるアレルギーの候補">
+            {availableMatches.length === 0 && (
+              <li className="allergy-add-chip-list__empty">
+                {matches.length === 0
+                  ? "一覧に該当するものはありません。自由登録を確認してください。"
+                  : "表示できる候補はすべて追加済みです。"}
+              </li>
+            )}
+            {availableMatches.map((item) => (
+              <li key={item.id}>
+                <button
+                  className="secondary-button allergy-add-chip"
+                  type="button"
+                  disabled={mutationDisabled}
+                  onClick={() => {
+                    runMutation(() => props.addStandard(memberId, item.id));
+                  }}
+                >
+                  {item.display_name}を追加
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="field-hint">自由登録は候補にない場合だけ使用してください</p>
+          <fieldset className="control-group">
+            <legend>自由登録</legend>
+            <label className="field">
+              <span>自由登録名</span>
+              <input
+                value={customName}
+                disabled={mutationDisabled}
+                onChange={(event) => {
+                  setCustomName(event.target.value);
+                }}
+              />
+            </label>
+            <label className="field">
+              <span>別名（カンマ区切り・任意）</span>
+              <input
+                value={customAliases}
+                disabled={mutationDisabled}
+                onChange={(event) => {
+                  setCustomAliases(event.target.value);
+                }}
+              />
+            </label>
+            {exactMatch && (
+              <p role="alert">
+                一覧に同じものがあります: {exactMatches.map((item) => item.display_name).join("、")}
+                （{normalizedCustomName}）。一覧から先に選んでください
+              </p>
+            )}
+            <label className="control-label">
+              <input
+                type="checkbox"
+                aria-label="一覧にないアレルギーとして登録"
+                checked={confirmed}
+                disabled={mutationDisabled}
+                onChange={(event) => {
+                  setConfirmed(event.target.checked);
+                }}
+              />
+              一覧にないアレルギーとして登録
+            </label>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={
+                mutationDisabled ||
+                !confirmed ||
+                exactMatch ||
+                normalizedCustomName.length < 1 ||
+                // H12: 純句読点・Cf のみは normalize 後 empty。幽霊カスタムを UI でも拒否する。
+                collisionNormalizedName.length < 1 ||
+                normalizedCustomName.length > 80 ||
+                aliasValues.length > 10
+              }
               onClick={() => {
-                runMutation(() => props.addStandard(memberId, item.id));
+                runMutation(
+                  () => props.addCustom(memberId, normalizedCustomName, aliasValues),
+                  () => {
+                    setCustomName("");
+                    setCustomAliases("");
+                    setConfirmed(false);
+                  },
+                );
               }}
             >
-              {item.display_name}を追加
+              自由登録を追加
             </button>
-          </li>
-        ))}
-      </ul>
-      <p className="field-hint">自由登録は候補にない場合だけ使用してください</p>
-      <fieldset className="control-group">
-        <legend>自由登録</legend>
-        <label className="field">
-          <span>自由登録名</span>
-          <input
-            value={customName}
-            disabled={mutationDisabled}
-            onChange={(event) => {
-              setCustomName(event.target.value);
-            }}
-          />
-        </label>
-        <label className="field">
-          <span>別名（カンマ区切り・任意）</span>
-          <input
-            value={customAliases}
-            disabled={mutationDisabled}
-            onChange={(event) => {
-              setCustomAliases(event.target.value);
-            }}
-          />
-        </label>
-        {exactMatch && (
-          <p role="alert">
-            一覧に同じものがあります: {exactMatches.map((item) => item.display_name).join("、")}（
-            {normalizedCustomName}）。一覧から先に選んでください
-          </p>
-        )}
-        <label className="control-label">
-          <input
-            type="checkbox"
-            aria-label="一覧にないアレルギーとして登録"
-            checked={confirmed}
-            disabled={mutationDisabled}
-            onChange={(event) => {
-              setConfirmed(event.target.checked);
-            }}
-          />
-          一覧にないアレルギーとして登録
-        </label>
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={
-            mutationDisabled ||
-            !confirmed ||
-            exactMatch ||
-            normalizedCustomName.length < 1 ||
-            // H12: 純句読点・Cf のみは normalize 後 empty。幽霊カスタムを UI でも拒否する。
-            collisionNormalizedName.length < 1 ||
-            normalizedCustomName.length > 80 ||
-            aliasValues.length > 10
-          }
-          onClick={() => {
-            runMutation(
-              () => props.addCustom(memberId, normalizedCustomName, aliasValues),
-              () => {
-                setCustomName("");
-                setCustomAliases("");
-                setConfirmed(false);
-              },
-            );
-          }}
-        >
-          自由登録を追加
-        </button>
-      </fieldset>
+          </fieldset>
+        </>
+      )}
     </section>
   );
 }

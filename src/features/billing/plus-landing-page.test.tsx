@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { createMemoryRouter } from "react-router";
@@ -7,7 +7,7 @@ import { RouterProvider } from "react-router/dom";
 import { describe, expect, it, vi } from "vitest";
 import type { EntitlementData } from "@shared/contracts/billing";
 import { planQuota } from "@shared/contracts/plan-quota";
-import { PAST_DUE_COPY, SURFACES_CLOSED_COPY } from "./billing-ui-copy";
+import { PAST_DUE_COPY, PORTAL_BUTTON_LABEL, SURFACES_CLOSED_COPY } from "./billing-ui-copy";
 import {
   PLUS_LP_ACTIVE,
   PLUS_LP_CANCEL,
@@ -193,5 +193,26 @@ describe("PlusLandingPage", () => {
     expect(button).toBeDisabled();
     await user.click(button);
     expect(onCheckout).not.toHaveBeenCalled();
+  });
+
+  // B18: Settings と同型。use_portal で Portal CTA を出し generic で閉じない
+  it("maps checkout use_portal to portal CTA like Settings (B18)", async () => {
+    if (PLUS_LP_UPGRADE_COMING_SOON) return;
+    const onCheckout = vi.fn(() => Promise.reject(new Error("billing_checkout_use_portal")));
+    const onPortal = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    renderLp({ entitlement: freeOpen, onCheckout, onPortal });
+    await user.click(screen.getByRole("button", { name: "Plus をはじめる" }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/お支払い管理から手続きしてください。新規のお申し込みはできません/),
+      ).toBeVisible();
+    });
+    const portal = screen.getByRole("button", { name: PORTAL_BUTTON_LABEL });
+    expect(portal).toBeVisible();
+    await user.click(portal);
+    await waitFor(() => {
+      expect(onPortal).toHaveBeenCalledTimes(1);
+    });
   });
 });

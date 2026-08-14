@@ -666,6 +666,11 @@ export function startAuthContinuationRecovery(input: {
   onComplete(result: RecoveryCompleteResult): void;
   onResult?(result: RecoveryResult): void;
   targetFlowId?: string;
+  /**
+   * C12: residual が今開始した flow だけを claimable に絞る。
+   * targetFlowId とは別。canHandleFlow は untargeted 枝のまま（callback-owner 不要）。
+   */
+  restrictToFlowId?: string;
   ttlMs?: number;
   now?: () => Date;
   setInterval?: typeof window.setInterval;
@@ -702,7 +707,13 @@ export function startAuthContinuationRecovery(input: {
     if (nowMs - last < MIN_CLAIM_POLL_GAP_MS) return;
     const now = input.now?.() ?? new Date();
     const ttlMs = input.ttlMs ?? 300_000;
-    const unexpiredFlows = listUnexpiredAuthFlows(input.storage, now, ttlMs);
+    const listedFlows = listUnexpiredAuthFlows(input.storage, now, ttlMs);
+    // C12: residual は active-login-flow だけを claimable にする。
+    // targetFlowId は付けないので canHandleFlow は untargeted 枝（owner 無しでも claim 可）。
+    const unexpiredFlows =
+      input.restrictToFlowId === undefined
+        ? listedFlows
+        : listedFlows.filter((flow) => flow.id === input.restrictToFlowId);
     const activeTargetLeases = readActiveTargetLeases(input.storage, nowMs);
     const callbackOwnedFlowIds = new Set(
       unexpiredFlows

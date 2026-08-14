@@ -15,6 +15,10 @@ import {
 } from "../../../shared/contracts/shopping.js";
 import { buildShoppingDraft } from "../../../shared/shopping/aggregate.js";
 import { computeShoppingDiff, resolveApprovedDiff } from "../../../shared/shopping/diff.js";
+import {
+  canonicalizePreviewedQuantities,
+  previewedQuantitiesMatchDiff,
+} from "../../../shared/shopping/previewed-quantities.js";
 import type { CurrentMenuLabelWarning } from "./revalidation-service.js";
 import { createShoppingWarningKey, type ShoppingDependencies } from "./shopping-adapter.js";
 
@@ -37,6 +41,7 @@ export function createReconciliationRequestHash(
       replaceItemIds: command.approval.replaceItemIds.toSorted(),
       removeItemIds: command.approval.removeItemIds.toSorted(),
     },
+    previewedQuantities: canonicalizePreviewedQuantities(command.previewedQuantities),
   };
   return createHash("sha256").update(JSON.stringify(canonical), "utf8").digest("hex");
 }
@@ -145,7 +150,8 @@ async function assertActiveListSourcesCurrentlySafe(
  * ただし create 成功後に source 献立を削除したリストは製品仕様上残る。
  * その場合 validatedDraft(command.menuId) は常に失敗するため、
  * **list 上の live source だけ**再検証する（menu_id null の snapshot source は許容）。
- * list 自体が消えているときだけ 409。
+ * list 自体が消えているときは 404 shopping_list_not_found。
+ * 409 current_safety に畳むとクライアント sticky が TTL まで残り続ける（SHOP3）。
  */
 async function assertReplayStillCurrentlySafe(
   deps: ShoppingDependencies,
@@ -153,11 +159,7 @@ async function assertReplayStillCurrentlySafe(
 ): Promise<void> {
   const list = await deps.loadActiveList(input.listId);
   if (list === null) {
-    throw new HttpError(
-      409,
-      "current_safety_revalidation_required",
-      "買い物リストの状態が変わったため、もう一度確認してください",
-    );
+    throw new HttpError(404, "shopping_list_not_found", "買い物リストが見つかりません");
   }
   const sources = await deps.loadActiveListSources(input.listId);
   const liveMenuIds = [
@@ -619,6 +621,7 @@ function prepareReconcileApply(
   draft: ReturnType<typeof buildShoppingDraft>,
   scopeItemIds: ReadonlySet<string>,
   approval: ReconcileShoppingListRequest["approval"],
+  previewedQuantities: ReconcileShoppingListRequest["previewedQuantities"],
 ): {
   resolvedDiff: ReturnType<typeof resolveApprovedDiff>;
   stampSourceVersion: boolean;
@@ -636,6 +639,11 @@ function prepareReconcileApply(
   // U5-002: サーバ diff があるのに承認がすべて空だと版だけ登録され再 reconcile 不能になる。
   if (!hasApproval) {
     throw new HttpError(422, "empty_approval", "反映する変更を1つ以上選んでください");
+  }
+  // preview/apply の数量ずれ: 承認キーは数量非依存のため、画面が見せた
+  // quantity スナップショットと再計算 add/replace が一致しないときは書かない。
+  if (!previewedQuantitiesMatchDiff(previewedQuantities, diff)) {
+    throw new Error("approved_diff_mismatch");
   }
   // SHOP2: 追加・数量変更の部分集合承認は menu version 刻印後に残り差分を
   // menu_version_already_in_list で閉塞する。外す候補だけ任意（D-C2）とし、
@@ -722,7 +730,13 @@ export async function reconcileShoppingList(
     stampSourceVersion: boolean;
   };
   try {
-    prepared = prepareReconcileApply(list, draft, scopeItemIds, command.approval);
+    prepared = prepareReconcileApply(
+      list,
+      draft,
+      scopeItemIds,
+      command.approval,
+      command.previewedQuantities,
+    );
   } catch (error: unknown) {
     if (error instanceof HttpError) throw error;
     // クライアント承認キーとサーバ再計算 diff の不一致は 4xx として閉じる（500 にしない）。

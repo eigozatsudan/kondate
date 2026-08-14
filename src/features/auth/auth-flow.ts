@@ -1,6 +1,10 @@
 import { z } from "zod";
 // C4/R4: createAuthFlow 成功時の suppress clear + re-arm（auth-cleanup 循環回避）
-import { clearSoftResidualRecoverySuppressed } from "./soft-residual-recovery-suppress";
+import {
+  clearSoftResidualRecoverySuppressed,
+  isSoftResidualRecoverySuppressed,
+  notifySoftResidualRecoveryRearm,
+} from "./soft-residual-recovery-suppress";
 
 /**
  * returnTo の共有検証（client storage / claim 応答 / サーバ Zod と同型）。
@@ -77,6 +81,84 @@ export const browserFlowDeps: FlowDeps = {
  * 所有キーの logout clear で抑止する。完全隔離はアーキテクチャ変更が必要。
  */
 export const ownedAuthStoragePrefixes = ["kondate.auth.flow.", "kondate.auth.supabase"] as const;
+
+/**
+ * C2/C13: この origin が今開始した login flow id。
+ * sessionStorage に加え origin 共有 localStorage にも同じ UUID を書く。
+ * residual recovery の restrictToFlowId にし、他タブ / sessionStorage 空の /login remount でも
+ * prior-user 全件 complete を閉じる。flow secret はここに載せない（R3）。
+ */
+export const ACTIVE_LOGIN_FLOW_STORAGE_KEY = "kondate.auth.active-login-flow" as const;
+
+const activeLoginFlowIdSchema = z.uuid();
+
+function activeLoginFlowStorages(): Array<Storage> {
+  const storages: Array<Storage> = [];
+  if (typeof sessionStorage !== "undefined") storages.push(sessionStorage);
+  if (typeof localStorage !== "undefined") storages.push(localStorage);
+  return storages;
+}
+
+function readStoredActiveLoginFlowId(storage: Storage): string | undefined {
+  try {
+    const raw = storage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    if (raw === null || raw.length === 0) return undefined;
+    const parsed = activeLoginFlowIdSchema.safeParse(raw);
+    if (!parsed.success) {
+      storage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      return undefined;
+    }
+    return parsed.data;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * C2/C13/C36: createAuthFlow 成功後に対象 flow を覚える（best-effort。secret は載せない）。
+ * origin 共有 localStorage に書けたときだけ true。失敗時は呼び出し側が共有 suppress を残す。
+ */
+export function writeActiveLoginFlowId(flowId: string): boolean {
+  for (const storage of activeLoginFlowStorages()) {
+    try {
+      storage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, flowId);
+    } catch {
+      // sessionStorage 失敗でも localStorage があれば他タブ / remount で restrict できる
+      // C36: local 失敗は呼び出し側で origin 共有 suppress を落とさない
+    }
+  }
+  try {
+    return (
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY) === flowId
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** C2/C13: タブ局所を優先し、無ければ origin 共有。不正値は捨てる */
+export function readActiveLoginFlowId(): string | undefined {
+  if (typeof sessionStorage !== "undefined") {
+    const fromSession = readStoredActiveLoginFlowId(sessionStorage);
+    if (fromSession !== undefined) return fromSession;
+  }
+  if (typeof localStorage !== "undefined") {
+    return readStoredActiveLoginFlowId(localStorage);
+  }
+  return undefined;
+}
+
+/** C2/C13: session 適用成功 / 明示 logout で対象 flow を両方から捨てる */
+export function clearActiveLoginFlowId(): void {
+  for (const storage of activeLoginFlowStorages()) {
+    try {
+      storage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    } catch {
+      // best-effort
+    }
+  }
+}
 
 const flowPrefix = ownedAuthStoragePrefixes[0];
 const callbackOwnerPrefix = `${ownedAuthStoragePrefixes[1]}.callback-owner.`;
@@ -951,8 +1033,25 @@ export async function createAuthFlow(
     // create レート枠は消費されるが、秘密漏洩面は無い（residual-intentional / TTL）。
     throw new Error("auth_flow_persist_failed");
   }
-  // C4/R3/R4: 新規 flow 永続化成功後に共有 suppress 解除 + residual re-arm。
-  // auth-cleanup 循環を避け leaf を直接呼ぶ（clear 内で re-arm イベントを発火）。
-  clearSoftResidualRecoverySuppressed();
+  // C36: pin 書込前に印を見る。書込後は開始タブの session pin で isSoft が false になる。
+  const wasSuppressed = isSoftResidualRecoverySuppressed();
+  // C2: persist 成功後にこのタブの対象 flow を先に書く（re-arm より前。effect が読む）
+  const wroteLocalPin = writeActiveLoginFlowId(flow.id);
+  // C36: origin 共有 suppress は local pin が書けたときだけ落とす。
+  // 書けないときは他タブを抑止のまま残す。開始タブは session pin があるので
+  // isSoftResidualRecoverySuppressed が false になり residual を開始できる。
+  if (wroteLocalPin) {
+    // C4/R3/R4: 新規 flow 永続化成功後に共有 suppress 解除 + residual re-arm。
+    // auth-cleanup 循環を避け leaf を直接呼ぶ（clear 内で re-arm イベントを発火）。
+    // C4: cold-start fail-closed 後は suppress が無いので clear だけではイベントが飛ばない。
+    // 明示 login 開始を必ず provider に伝え、fail-closed を解除する。
+    clearSoftResidualRecoverySuppressed();
+    if (!wasSuppressed) {
+      notifySoftResidualRecoveryRearm();
+    }
+  } else {
+    // 開始タブの residual effect を再評価する（共有 suppress は残す）
+    notifySoftResidualRecoveryRearm();
+  }
   return flow;
 }

@@ -9,6 +9,27 @@ export type Json =
 export type Database = {
   private: {
     Tables: {
+      account_delete_locks: {
+        Row: {
+          created_at: string
+          expires_at: string
+          lock_token: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          lock_token: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          lock_token?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       ai_generation_requests: {
         Row: {
           actual_model_ids: string[]
@@ -2583,6 +2604,10 @@ export type Database = {
     }
     Functions: {
       accept_menu_version: { Args: { p_menu_id: string }; Returns: undefined }
+      acquire_account_delete_lock: {
+        Args: { p_expires_at: string; p_lock_token: string; p_user_id: string }
+        Returns: Json
+      }
       acquire_billing_checkout_lock: {
         Args: { p_expires_at: string; p_lock_token: string; p_user_id: string }
         Returns: Json
@@ -3072,6 +3097,10 @@ export type Database = {
           p_user_id: string
           p_warnings: Json
         }
+        Returns: Json
+      }
+      release_account_delete_lock: {
+        Args: { p_lock_token: string; p_user_id: string }
         Returns: Json
       }
       release_billing_checkout_lock: {

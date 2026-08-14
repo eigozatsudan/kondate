@@ -121,6 +121,9 @@ export function PlusLandingPage({
 
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // B18: Checkout が use_portal / incomplete / already_entitled を返したとき Portal CTA を出す
+  // （Settings の portalCtaFromCheckoutBlock と同型。COMING_SOON 解除後の非対称を閉じる）
+  const [portalCtaFromCheckoutBlock, setPortalCtaFromCheckoutBlock] = useState(false);
 
   const view = resolvePlusLandingView({ loading, error, data });
 
@@ -162,6 +165,7 @@ export function PlusLandingPage({
     if (pending) return;
     setPending(true);
     setActionError(null);
+    setPortalCtaFromCheckoutBlock(false);
     try {
       if (onCheckout !== undefined) {
         await onCheckout(interval);
@@ -174,6 +178,13 @@ export function PlusLandingPage({
       const code = err instanceof Error ? err.message : "";
       if (code === "billing_checkout_in_progress") {
         setActionError(PLUS_LP_CHECKOUT_IN_PROGRESS);
+      } else if (code === "billing_checkout_incomplete") {
+        // B18: Settings と同型。Portal で手続き完了を促す
+        setActionError(PLUS_LP_INCOMPLETE);
+        setPortalCtaFromCheckoutBlock(true);
+      } else if (code === "billing_checkout_use_portal" || code === "billing_already_entitled") {
+        setActionError("お支払い管理から手続きしてください。新規のお申し込みはできません");
+        setPortalCtaFromCheckoutBlock(true);
       } else {
         setActionError(CHECKOUT_GENERIC_ERROR);
       }
@@ -434,6 +445,21 @@ export function PlusLandingPage({
                 void runCheckout(interval);
               }}
             />
+            {/* B18: use_portal / incomplete 等で Settings と同様に Portal CTA を出す */}
+            {portalCtaFromCheckoutBlock && view.checkoutEnabled ? (
+              <div className="stack gap-2">
+                <button
+                  type="button"
+                  className="secondary-button min-h-11"
+                  disabled={pending}
+                  onClick={() => {
+                    void runPortal();
+                  }}
+                >
+                  {PORTAL_BUTTON_LABEL}
+                </button>
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}

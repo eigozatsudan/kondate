@@ -47,6 +47,10 @@ const validBody = {
   sourceMenuVersion: 1,
   idempotencyKey: IDEMPOTENCY_KEY,
   approval: { addKeys: ["curry-roux"], replaceItemIds: [ITEM_ID], removeItemIds: [] },
+  previewedQuantities: {
+    add: [{ key: "curry-roux", quantityValue: 1, quantityText: "1箱" }],
+    replace: [{ itemId: ITEM_ID, quantityValue: 2, quantityText: "2個" }],
+  },
 };
 
 describe("createShoppingListReconcileHandler", () => {
@@ -91,6 +95,24 @@ describe("createShoppingListReconcileHandler", () => {
     expect(response.status).toBe(400);
     const body: unknown = await response.json();
     expect(body).toMatchObject({ ok: false, error: { code: "invalid_json" } });
+  });
+
+  it("rejects a body that omits previewedQuantities", async () => {
+    const handler = createShoppingListReconcileHandler(makeFactory());
+    const response = await handler(
+      makeRequest({
+        expectedListVersion: 3,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        approval: { addKeys: ["curry-roux"], replaceItemIds: [ITEM_ID], removeItemIds: [] },
+      }),
+      makeContext(LIST_ID),
+    );
+    expect(response.status).toBe(400);
+    const body: unknown = await response.json();
+    expect(body).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+    expect(reconcileShoppingListMock).not.toHaveBeenCalled();
   });
 
   it("rejects a body that carries resolved values instead of approval keys and ids", async () => {

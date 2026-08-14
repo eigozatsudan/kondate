@@ -4,8 +4,10 @@ import { postGeneration } from "../api/generation-api";
 import { generationReducer, type GenerationClientState } from "./generation-machine";
 import {
   PENDING_GENERATION_TTL_MS,
+  claimPendingGeneration,
   clearPendingGeneration,
   createPendingGeneration,
+  pendingGenerationClaimLockName,
   pendingGenerationSchema,
   pendingGenerationCommand,
   readPendingGeneration,
@@ -308,5 +310,242 @@ describe("pending generation storage", () => {
     };
     await expect(operation()).rejects.toThrow("set");
     expect(post).not.toHaveBeenCalled();
+  });
+
+  describe("claimPendingGeneration (P1 dual-tab)", () => {
+    const OTHER_KEY = "10000000-0000-4000-8000-000000000002";
+
+    it("claims empty storage and persists the candidate", async () => {
+      const storage = memoryStorage();
+      const candidate = storedPending();
+      const result = await claimPendingGeneration(
+        candidate,
+        USER_ID,
+        new Date(STARTED_AT),
+        storage,
+      );
+      expect(result.claimed).toBe(true);
+      expect(result.pending.request.idempotencyKey).toBe(IDEMPOTENCY_KEY);
+      expect(readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)).toMatchObject({
+        request: { idempotencyKey: IDEMPOTENCY_KEY },
+      });
+    });
+
+    it("does not overwrite an existing sticky (C2 first-writer / resume)", async () => {
+      const existing = storedPending({
+        request: {
+          idempotencyKey: OTHER_KEY,
+          draftId: "20000000-0000-4000-8000-000000000001",
+          draftRevision: 3,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      });
+      const storage = memoryStorage(JSON.stringify(existing));
+      const candidate = storedPending();
+      const result = await claimPendingGeneration(
+        candidate,
+        USER_ID,
+        new Date(STARTED_AT),
+        storage,
+      );
+      expect(result.claimed).toBe(false);
+      expect(result.pending.request.idempotencyKey).toBe(OTHER_KEY);
+      // setItem は呼ばれない（上書きしない）
+      expect(storage.setItem).not.toHaveBeenCalled();
+      expect(
+        readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)?.request.idempotencyKey,
+      ).toBe(OTHER_KEY);
+    });
+
+    it("write-then-reread adopts the storage winner when keys diverge", async () => {
+      // Locks 無し競合: 自 setItem の直後に他 sticky が読める場合は claimed=false
+      const winner = storedPending({
+        request: {
+          idempotencyKey: OTHER_KEY,
+          draftId: "20000000-0000-4000-8000-000000000001",
+          draftRevision: 9,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      });
+      const map = new Map<string, string>();
+      let setCount = 0;
+      const storage = {
+        getItem: vi.fn((k: string) => map.get(k) ?? null),
+        setItem: vi.fn((k: string, next: string) => {
+          setCount += 1;
+          map.set(k, next);
+          // 1 回目の自 claim 書込直後に他タブ sticky へ差替え（re-read で負けを観測）
+          if (setCount === 1 && k === KEY) {
+            map.set(k, JSON.stringify(winner));
+          }
+        }),
+        removeItem: vi.fn((k: string) => {
+          map.delete(k);
+        }),
+      };
+      const candidate = storedPending();
+      const result = await claimPendingGeneration(
+        candidate,
+        USER_ID,
+        new Date(STARTED_AT),
+        storage,
+      );
+      expect(result.claimed).toBe(false);
+      expect(result.pending.request.idempotencyKey).toBe(OTHER_KEY);
+    });
+
+    it("locks 無しでも自 key の直後 re-read のあと他 sticky が見えたら負け", async () => {
+      // 既存の即時 re-read は自 setItem 直後に自 key を見て claimed になる。
+      // locks 無し dual-tab では他タブ上書きが次ティックで見えるので、
+      // 自 key 確認後にもう一度読んで他 sticky なら負けにする。
+      vi.stubGlobal("navigator", {});
+      try {
+        const winner = storedPending({
+          request: {
+            idempotencyKey: OTHER_KEY,
+            draftId: "20000000-0000-4000-8000-000000000001",
+            draftRevision: 9,
+            privacyNoticeVersion: "2026-07-29.v1",
+            expiredPantryConfirmations: [],
+          },
+        });
+        const map = new Map<string, string>();
+        let readsAfterWrite = 0;
+        const storage = {
+          getItem: vi.fn((k: string) => {
+            if (k === KEY && map.has(k)) {
+              readsAfterWrite += 1;
+              if (readsAfterWrite >= 2) {
+                return JSON.stringify(winner);
+              }
+            }
+            return map.get(k) ?? null;
+          }),
+          setItem: vi.fn((k: string, next: string) => {
+            map.set(k, next);
+          }),
+          removeItem: vi.fn((k: string) => {
+            map.delete(k);
+          }),
+        };
+        const result = await claimPendingGeneration(
+          storedPending(),
+          USER_ID,
+          new Date(STARTED_AT),
+          storage,
+        );
+        expect(result.claimed).toBe(false);
+        expect(result.pending.request.idempotencyKey).toBe(OTHER_KEY);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("locks 無しの同時 check-then-act では両方 claimed にならない", async () => {
+      // navigator.locks が無いと両タブが existing===null を見て別 idempotencyKey を
+      // 書ける。書込の可視を次マクロタスクに遅らせ、即時 re-read だけだと両方勝つ。
+      vi.stubGlobal("navigator", {});
+      try {
+        const map = new Map<string, string>();
+        const storage = {
+          getItem: vi.fn((k: string) => map.get(k) ?? null),
+          setItem: vi.fn((k: string, next: string) => {
+            queueMicrotask(() => {
+              map.set(k, next);
+            });
+          }),
+          removeItem: vi.fn((k: string) => {
+            map.delete(k);
+          }),
+        };
+        const a = storedPending();
+        const b = storedPending({
+          request: {
+            idempotencyKey: OTHER_KEY,
+            draftId: "20000000-0000-4000-8000-000000000001",
+            draftRevision: 3,
+            privacyNoticeVersion: "2026-07-29.v1",
+            expiredPantryConfirmations: [],
+          },
+        });
+        const [resultA, resultB] = await Promise.all([
+          claimPendingGeneration(a, USER_ID, new Date(STARTED_AT), storage),
+          claimPendingGeneration(b, USER_ID, new Date(STARTED_AT), storage),
+        ]);
+        expect([resultA.claimed, resultB.claimed].filter(Boolean)).toHaveLength(1);
+        expect(resultA.pending.request.idempotencyKey).toBe(resultB.pending.request.idempotencyKey);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("serializes concurrent claims via Web Locks so both tabs share one sticky", async () => {
+      // shopping claimItemMutationSticky テストと同型の直列キュー
+      type LockRequest = {
+        name: string;
+        callback: () => unknown;
+        resolve: (value: unknown) => void;
+        reject: (reason?: unknown) => void;
+      };
+      const queue: LockRequest[] = [];
+      let running = false;
+      const pump = (): void => {
+        if (running) return;
+        const next = queue.shift();
+        if (next === undefined) return;
+        running = true;
+        Promise.resolve()
+          .then(() => next.callback())
+          .then(
+            (value) => {
+              next.resolve(value);
+            },
+            (reason: unknown) => {
+              next.reject(reason);
+            },
+          )
+          .finally(() => {
+            running = false;
+            pump();
+          });
+      };
+      vi.stubGlobal("navigator", {
+        locks: {
+          request: (name: string, callback: () => unknown) =>
+            new Promise((resolve, reject) => {
+              queue.push({ name, callback, resolve, reject });
+              pump();
+            }),
+        },
+      });
+      try {
+        const storage = memoryStorage();
+        const a = storedPending();
+        const b = storedPending({
+          request: {
+            idempotencyKey: OTHER_KEY,
+            draftId: "20000000-0000-4000-8000-000000000001",
+            draftRevision: 3,
+            privacyNoticeVersion: "2026-07-29.v1",
+            expiredPantryConfirmations: [],
+          },
+        });
+        const [resultA, resultB] = await Promise.all([
+          claimPendingGeneration(a, USER_ID, new Date(STARTED_AT), storage),
+          claimPendingGeneration(b, USER_ID, new Date(STARTED_AT), storage),
+        ]);
+        // 先勝ち 1 件のみ claimed。後続は同一 sticky を adopted
+        expect([resultA.claimed, resultB.claimed].filter(Boolean)).toHaveLength(1);
+        expect(resultA.pending.request.idempotencyKey).toBe(resultB.pending.request.idempotencyKey);
+        const stored = readPendingGeneration(USER_ID, new Date(STARTED_AT), storage);
+        expect(stored?.request.idempotencyKey).toBe(resultA.pending.request.idempotencyKey);
+        // ロック名が generation claim であることを固定
+        expect(pendingGenerationClaimLockName).toBe("kondate:generation:v3:claim");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 });

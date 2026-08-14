@@ -125,6 +125,10 @@ describe("shopping response bounds (S2/S8)", () => {
       { length: shoppingItemsMax + 1 },
       (_, index) => `key-${String(index)}`,
     );
+    const previewedQuantities = {
+      add: [{ key: "にんじん|本", quantityValue: 1, quantityText: "1本" }],
+      replace: [],
+    };
     expect(
       reconcileShoppingListRequestSchema.safeParse({
         expectedListVersion: 1,
@@ -136,6 +140,7 @@ describe("shopping response bounds (S2/S8)", () => {
           replaceItemIds: [],
           removeItemIds: [],
         },
+        previewedQuantities,
       }).success,
     ).toBe(false);
     expect(
@@ -149,8 +154,41 @@ describe("shopping response bounds (S2/S8)", () => {
           replaceItemIds: [],
           removeItemIds: [],
         },
+        previewedQuantities,
       }).success,
     ).toBe(true);
+  });
+
+  it("requires previewedQuantities and rejects over-max snapshot arrays", () => {
+    const approval = {
+      addKeys: ["にんじん|本"],
+      replaceItemIds: [],
+      removeItemIds: [],
+    };
+    expect(
+      reconcileShoppingListRequestSchema.safeParse({
+        expectedListVersion: 1,
+        sourceMenuId: menuId,
+        sourceMenuVersion: 1,
+        idempotencyKey,
+        approval,
+      }).success,
+    ).toBe(false);
+    const overMaxAdd = Array.from({ length: shoppingItemsMax + 1 }, (_, index) => ({
+      key: `key-${String(index)}`,
+      quantityValue: 1,
+      quantityText: "1本",
+    }));
+    expect(
+      reconcileShoppingListRequestSchema.safeParse({
+        expectedListVersion: 1,
+        sourceMenuId: menuId,
+        sourceMenuVersion: 1,
+        idempotencyKey,
+        approval,
+        previewedQuantities: { add: overMaxAdd, replace: [] },
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects nested sourceIngredients over shoppingSourceIngredientsMax (S8)", () => {

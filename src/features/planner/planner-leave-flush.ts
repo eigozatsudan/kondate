@@ -7,17 +7,33 @@
  * P1: 下ナビ以外の SPA 離脱（ホームの冷蔵庫/直近献立、Plus リンク等）も同一口を使う。
  * P2: route は mount 時にだけ register し、handler 本体は ref 経由で最新状態を読む
  * （effect deps 更新のたび null 再登録する窓を作らない）。
+ * L12: never-settle flush でも C5 同尺で打ち切り、shell 下ナビ固着を防ぐ。
  */
+
+import { withTimeout } from "@/features/auth/async-timeout";
 
 export type PlannerLeaveFlushResult = "proceed" | "blocked";
 
 export type PlannerLeaveFlushHandler = () => Promise<PlannerLeaveFlushResult>;
 
+/**
+ * L12: leave-flush の壁時計上限。
+ * auth C5（COLD_START_SESSION_DEADLINE_MS = 15s）と同尺。循環 import 回避のためリテラル固定。
+ * hang 時は "blocked" を返し shell busy を解放する（navigate しない）。
+ */
+export const PLANNER_LEAVE_FLUSH_TIMEOUT_MS = 15_000;
+
 let leaveFlushHandler: PlannerLeaveFlushHandler | null = null;
+/** withTimeout は元 Promise を cancel しない。timeout 同期で route ロックを落とす口。 */
+let leaveFlushOnTimeout: (() => void) | null = null;
 
 /** planner-route が mount/unmount で登録・解除する。同時 mount は想定しない（単一 /planner）。 */
-export function registerPlannerLeaveFlush(handler: PlannerLeaveFlushHandler | null): void {
+export function registerPlannerLeaveFlush(
+  handler: PlannerLeaveFlushHandler | null,
+  options?: { onTimeout?: () => void },
+): void {
   leaveFlushHandler = handler;
+  leaveFlushOnTimeout = handler === null ? null : (options?.onTimeout ?? null);
 }
 
 /**
@@ -28,6 +44,8 @@ export function registerPlannerLeaveFlush(handler: PlannerLeaveFlushHandler | nu
  * `navigateAfterLeaveInFlight` は入口ごとに分かれていたため、下ナビ×ホーム直近献立の
  * 同時 click で handler が二重起動し、別 to へ last-writer navigate し得た。
  * 先行 flight 中の後続は handler を呼ばず "blocked"（先行 to のみ proceed 可能）。
+ * L12: handler に C5 withTimeout。timeout は "blocked"（stay + busy 解除）。
+ * 元 Promise は cancel 不能なため onTimeout で route ロックを同期解放する。
  */
 let leaveFlushInFlight: Promise<PlannerLeaveFlushResult> | null = null;
 
@@ -37,7 +55,20 @@ export async function runPlannerLeaveFlush(): Promise<PlannerLeaveFlushResult> {
   }
   const handler = leaveFlushHandler;
   if (handler === null) return "proceed";
-  const flight = handler().finally(() => {
+  const flight = (async (): Promise<PlannerLeaveFlushResult> => {
+    try {
+      return await withTimeout(handler(), PLANNER_LEAVE_FLUSH_TIMEOUT_MS, () => {
+        // 元 handler は cancel 不能。route の leave ロックを先に落とし、遅延 proceed の固着を防ぐ。
+        leaveFlushOnTimeout?.();
+      });
+    } catch (error) {
+      // L12: timeout のみ blocked。handler のその他 throw は呼び出し側へ伝播する。
+      if (error instanceof Error && error.message === "timeout") {
+        return "blocked";
+      }
+      throw error;
+    }
+  })().finally(() => {
     if (leaveFlushInFlight === flight) {
       leaveFlushInFlight = null;
     }

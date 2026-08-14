@@ -5,28 +5,13 @@ export const checkoutRequestSchema = z.object({ interval: z.enum(["month", "year
 
 export type CheckoutRequest = z.infer<typeof checkoutRequestSchema>;
 
-export const checkoutDataSchema = z
-  .object({
-    url: z.url(),
-  })
-  .strict();
-
-export type CheckoutData = z.infer<typeof checkoutDataSchema>;
-
-export const portalDataSchema = z
-  .object({
-    url: z.url(),
-  })
-  .strict();
-
-export type PortalData = z.infer<typeof portalDataSchema>;
-
 /**
- * B7: Checkout / Portal の redirect URL を Stripe host に限定するクライアント DiD。
+ * B7 / S9: Checkout / Portal の redirect URL を Stripe host に限定する DiD。
  * サーバは success/cancel/return を SERVER_SITE_ORIGIN 固定で組み立てるが、
  * API 応答の session.url を location.assign する前に host を再検証する。
  * - 本番: checkout.stripe.com / billing.stripe.com
  * - ローカル mock: checkout.stripe.test / billing.stripe.test
+ * S9: schema 側でも refine し、schema-only consumer が evil URL を構造受理しない。
  */
 const STRIPE_REDIRECT_HOSTS = new Set([
   "checkout.stripe.com",
@@ -44,6 +29,26 @@ export function isAllowedStripeRedirectUrl(url: string): boolean {
     return false;
   }
 }
+
+const stripeRedirectUrlSchema = z.url().refine((value) => isAllowedStripeRedirectUrl(value), {
+  message: "stripe_redirect_host_not_allowed",
+});
+
+export const checkoutDataSchema = z
+  .object({
+    url: stripeRedirectUrlSchema,
+  })
+  .strict();
+
+export type CheckoutData = z.infer<typeof checkoutDataSchema>;
+
+export const portalDataSchema = z
+  .object({
+    url: stripeRedirectUrlSchema,
+  })
+  .strict();
+
+export type PortalData = z.infer<typeof portalDataSchema>;
 
 /** GET /api/billing/entitlement の閉じたレスポンス。 */
 export const entitlementDataSchema = z

@@ -923,7 +923,10 @@ export function createAuthGateway(
             secret: stored.secret,
           }),
         );
-        if (depositOutcome === "ok") {
+        // C7: ok に加え terminal（非リトライ 4xx）でも pending を消す。
+        // redeposit / completeCallback 初回 terminal と対称にし、recovery 経由の
+        // OTP re-deposit と IP rate 自己消費を閉じる。timeout/transient は late 204 用に残置。
+        if (depositOutcome === "ok" || depositOutcome === "terminal") {
           clearPendingAuthDeposit(flowId, storage);
         }
         // deposit 失敗でも URL 由来 token_hash で verify を試みる（continuation TTL 切れ等）。

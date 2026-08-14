@@ -1,9 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryRouter, RouterProvider } from "react-router";
+import { shareConsentVersion } from "@shared/contracts/share-consent";
 import { shareConsentRequiredPhrases, shareConsentSection } from "./privacy-copy";
+import type { ShareConsentState } from "./share-consent-api";
+import { shareConsentKeys } from "./share-consent-queries";
+import { SHARE_CONSENT_BROADCAST_CHANNEL } from "./share-consent-settings-section";
 
 type Consent = {
   user_id: string;
@@ -13,6 +17,26 @@ type Consent = {
 };
 const acceptConsent = vi.fn<(client: unknown, userId: string) => Promise<Consent>>();
 const upsertShare = vi.fn<(client: unknown, accept: boolean) => Promise<unknown>>();
+const getShare = vi.fn<(client: unknown) => Promise<ShareConsentState>>();
+
+/** get_my_share_consent の未同意（行なし相当）。初回は共有チェック既定オン。 */
+const unsignedShareState: ShareConsentState = {
+  consent_version: null,
+  accepted_at: null,
+  revoked_at: null,
+};
+
+const currentShareState: ShareConsentState = {
+  consent_version: shareConsentVersion,
+  accepted_at: "2026-08-01T00:00:00.000Z",
+  revoked_at: null,
+};
+
+const revokedShareState: ShareConsentState = {
+  consent_version: shareConsentVersion,
+  accepted_at: "2026-08-01T00:00:00.000Z",
+  revoked_at: "2026-08-02T00:00:00.000Z",
+};
 
 vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: "user-1" } } }),
@@ -26,9 +50,14 @@ vi.mock("./privacy-api", () => ({
   acceptCurrentPrivacyConsent: (client: unknown, userId: string) => acceptConsent(client, userId),
 }));
 
-vi.mock("./share-consent-api", () => ({
-  upsertMyShareConsent: (client: unknown, accept: boolean) => upsertShare(client, accept),
-}));
+vi.mock("./share-consent-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./share-consent-api")>();
+  return {
+    ...actual,
+    upsertMyShareConsent: (client: unknown, accept: boolean) => upsertShare(client, accept),
+    getMyShareConsent: (client: unknown) => getShare(client),
+  };
+});
 
 import { MemoryRouter } from "react-router";
 import type { ComponentProps } from "react";
@@ -50,7 +79,70 @@ function renderPrivacyContent(props: ComponentProps<typeof PrivacyNoticeContent>
 beforeEach(() => {
   acceptConsent.mockReset();
   upsertShare.mockReset();
+  getShare.mockReset();
+  // 未同意は初回推奨の既定オン。既存 page テストが実 API を叩かないよう必ず mock する。
+  getShare.mockResolvedValue(unsignedShareState);
 });
+
+/** 共有同意の読取が終わるまで待つ（pending 中の default true で進まないようにする） */
+async function waitForShareConsentReady() {
+  await waitFor(() => {
+    expect(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel })).toBeEnabled();
+  });
+}
+
+/** テスト用: 同一 channel 名の購読者へ配送する最小 BroadcastChannel スタブ */
+class FakeBroadcastChannel {
+  static channels = new Map<string, Set<FakeBroadcastChannel>>();
+  onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+  readonly name: string;
+
+  constructor(name: string) {
+    this.name = name;
+    const set = FakeBroadcastChannel.channels.get(name) ?? new Set();
+    set.add(this);
+    FakeBroadcastChannel.channels.set(name, set);
+  }
+
+  postMessage(data: unknown): void {
+    const peers = FakeBroadcastChannel.channels.get(this.name);
+    if (peers === undefined) return;
+    for (const peer of peers) {
+      // 同一タブには届けない（ブラウザ仕様）
+      if (peer === this) continue;
+      peer.onmessage?.({ data } as MessageEvent<unknown>);
+    }
+  }
+
+  close(): void {
+    FakeBroadcastChannel.channels.get(this.name)?.delete(this);
+  }
+
+  static reset(): void {
+    FakeBroadcastChannel.channels.clear();
+  }
+}
+
+function renderPrivacyPageWithWarmShareCache(state: ShareConsentState) {
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  // AppProviders と同じ 30s。warm cache が fresh のまま残る状況を再現する
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  client.setQueryData(shareConsentKeys.current("user-1"), state);
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return { client, router };
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -70,7 +162,10 @@ it("explains sent, unsent, and stored data before accepting", async () => {
   await user.click(accept);
   expect(onAccept).toHaveBeenCalledOnce();
   // 共有は既定オンのまま進む
-  expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: true });
+  expect(onAccept).toHaveBeenCalledWith({
+    shareConsentAccepted: true,
+    shareConsentTouched: false,
+  });
 });
 
 it("shows an alert and focuses the checkbox when primary is pressed without consent check", async () => {
@@ -129,7 +224,10 @@ it("keeps share consent as a separate card, checked by default, without gating p
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   expect(accept).toBeEnabled();
   await user.click(accept);
-  expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: false });
+  expect(onAccept).toHaveBeenCalledWith({
+    shareConsentAccepted: false,
+    shareConsentTouched: true,
+  });
 });
 
 it("accepts share consent by default when user leaves the pre-checked box on", async () => {
@@ -138,7 +236,10 @@ it("accepts share consent by default when user leaves the pre-checked box on", a
   renderPrivacyContent({ saving: false, onAccept, onSkip: vi.fn() });
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   await user.click(screen.getByRole("button", { name: "確認して進む" }));
-  expect(onAccept).toHaveBeenCalledWith({ shareConsentAccepted: true });
+  expect(onAccept).toHaveBeenCalledWith({
+    shareConsentAccepted: true,
+    shareConsentTouched: false,
+  });
 });
 
 it("renders all required share-consent phrases for toContain locks", () => {
@@ -180,6 +281,7 @@ it("saves privacy consent with default-on share and navigates to the sanitized r
     </QueryClientProvider>,
   );
 
+  await waitForShareConsentReady();
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   await user.click(screen.getByRole("button", { name: "確認して進む" }));
 
@@ -219,6 +321,7 @@ it("does not upsert share consent when the optional share checkbox is unchecked"
     </QueryClientProvider>,
   );
 
+  await waitForShareConsentReady();
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   // 既定 ON を外してから accept → share upsert しない
   await user.click(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }));
@@ -228,6 +331,137 @@ it("does not upsert share consent when the optional share checkbox is unchecked"
     expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
   });
   expect(upsertShare).not.toHaveBeenCalled();
+  expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+});
+
+it("AP1: revoked share row leaves the box unchecked and does not upsert true", async () => {
+  const user = userEvent.setup();
+  getShare.mockResolvedValue(revokedShareState);
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await waitForShareConsentReady();
+  const shareCheckbox = screen.getByRole("checkbox", {
+    name: shareConsentSection.checkboxLabel,
+  });
+  expect(shareCheckbox).not.toBeChecked();
+
+  // 共有ボックスは触らず必須チェックだけ入れて進む → 再 accept しない
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  await waitFor(() => {
+    expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+  });
+  expect(upsertShare).not.toHaveBeenCalledWith({}, true);
+  expect(upsertShare).not.toHaveBeenCalled();
+  expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+});
+
+it("AP1: current share consent can be revoked by unchecking before accept", async () => {
+  const user = userEvent.setup();
+  getShare.mockResolvedValue(currentShareState);
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  upsertShare.mockResolvedValue({
+    consent_version: shareConsentVersion,
+    accepted_at: "2026-08-01T00:00:00.000Z",
+    revoked_at: "2026-08-02T00:00:00.000Z",
+  });
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await waitForShareConsentReady();
+  const shareCheckbox = screen.getByRole("checkbox", {
+    name: shareConsentSection.checkboxLabel,
+  });
+  expect(shareCheckbox).toBeChecked();
+
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(shareCheckbox);
+  expect(shareCheckbox).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  await waitFor(() => {
+    expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+  });
+  expect(upsertShare).toHaveBeenCalledWith({}, false);
+  expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+});
+
+it("AP1: unsigned null fields keep default-on share and upsert true", async () => {
+  const user = userEvent.setup();
+  getShare.mockResolvedValue(unsignedShareState);
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  upsertShare.mockResolvedValue({
+    consent_version: shareConsentVersion,
+    accepted_at: "2026-08-01T00:00:00.000Z",
+    revoked_at: null,
+  });
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await waitForShareConsentReady();
+  expect(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel })).toBeChecked();
+
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  await waitFor(() => {
+    expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+  });
+  expect(upsertShare).toHaveBeenCalledWith({}, true);
   expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
 });
 
@@ -255,6 +489,7 @@ it("共有同意 RPC が失敗しても必須 privacy 同意後は returnTo へ�
     </QueryClientProvider>,
   );
 
+  await waitForShareConsentReady();
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   // 既定 ON のまま（外さない）→ upsert が呼ばれ reject しても遷移継続
   await user.click(screen.getByRole("button", { name: "確認して進む" }));
@@ -298,6 +533,7 @@ it("review resume 付きの returnTo（review確定直前の遷移）を確認�
     </QueryClientProvider>,
   );
 
+  await waitForShareConsentReady();
   await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
   await user.click(screen.getByRole("button", { name: "確認して進む" }));
 
@@ -376,6 +612,168 @@ it("documents anonymized emergency body retention after account deletion", () =>
   expect(stored?.textContent).toContain("削除後も他ユーザー向けに残ることがあります");
 });
 
+it("AP8: primary is disabled until share consent query settles so early submit cannot revoke", async () => {
+  const user = userEvent.setup();
+  // 現行同意あり・cache なし。読取が終わる前に false で進むと mutation が revoke してしまう
+  let resolveShare: (state: ShareConsentState) => void = () => {
+    throw new Error("getMyShareConsent resolver が未設定");
+  };
+  getShare.mockImplementation(
+    () =>
+      new Promise<ShareConsentState>((resolve) => {
+        resolveShare = resolve;
+      }),
+  );
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  const shareCheckbox = screen.getByRole("checkbox", {
+    name: shareConsentSection.checkboxLabel,
+  });
+  expect(shareCheckbox).toBeDisabled();
+  expect(shareCheckbox).not.toBeChecked();
+
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  const accept = screen.getByRole("button", { name: "確認して進む" });
+  // 読取中は進めない。skip は従来どおり使える
+  expect(accept).toBeDisabled();
+  expect(screen.getByRole("button", { name: "今はAIを使わない" })).toBeEnabled();
+  expect(acceptConsent).not.toHaveBeenCalled();
+  expect(upsertShare).not.toHaveBeenCalled();
+
+  resolveShare(currentShareState);
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "確認して進む" })).toBeEnabled();
+  });
+  expect(shareCheckbox).toBeEnabled();
+  expect(shareCheckbox).toBeChecked();
+  expect(upsertShare).not.toHaveBeenCalled();
+});
+
+describe("AP7: stale share cache must not re-accept after other-tab revoke", () => {
+  beforeEach(() => {
+    FakeBroadcastChannel.reset();
+    vi.stubGlobal("BroadcastChannel", FakeBroadcastChannel);
+  });
+
+  afterEach(() => {
+    FakeBroadcastChannel.reset();
+    vi.unstubAllGlobals();
+  });
+
+  it("AP7: warm accepted cache then revoke broadcast does not re-accept if user did not touch share", async () => {
+    const user = userEvent.setup();
+    // 最初は accepted（warm cache / mount refetch）。invalidate 後は revoked
+    let latestShare: ShareConsentState = currentShareState;
+    getShare.mockImplementation(() => Promise.resolve(latestShare));
+    acceptConsent.mockResolvedValue({
+      user_id: "user-1",
+      notice_version: "2026-07-29.v1",
+      accepted_at: "2026-07-12T00:00:00.000Z",
+      created_at: "2026-07-12T00:00:00.000Z",
+    });
+
+    renderPrivacyPageWithWarmShareCache(currentShareState);
+
+    await waitForShareConsentReady();
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).toBeChecked();
+
+    latestShare = revokedShareState;
+    await act(() => {
+      const publisher = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
+      publisher.postMessage({ userId: "user-1" });
+      publisher.close();
+      return Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(shareCheckbox).not.toBeChecked();
+    });
+
+    // 共有は触らず必須だけ入れて進む → 再 accept しない
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(upsertShare).not.toHaveBeenCalledWith({}, true);
+    expect(upsertShare).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  });
+
+  it("AP7: explicit share on after revoke broadcast still upserts true", async () => {
+    const user = userEvent.setup();
+    let latestShare: ShareConsentState = currentShareState;
+    getShare.mockImplementation(() => Promise.resolve(latestShare));
+    acceptConsent.mockResolvedValue({
+      user_id: "user-1",
+      notice_version: "2026-07-29.v1",
+      accepted_at: "2026-07-12T00:00:00.000Z",
+      created_at: "2026-07-12T00:00:00.000Z",
+    });
+    upsertShare.mockResolvedValue({
+      consent_version: shareConsentVersion,
+      accepted_at: "2026-08-01T00:00:00.000Z",
+      revoked_at: null,
+    });
+
+    renderPrivacyPageWithWarmShareCache(currentShareState);
+
+    await waitForShareConsentReady();
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).toBeChecked();
+
+    latestShare = revokedShareState;
+    await act(() => {
+      const publisher = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
+      publisher.postMessage({ userId: "user-1" });
+      publisher.close();
+      return Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(shareCheckbox).not.toBeChecked();
+    });
+
+    // サーバ revoke 後に利用者が明示オン → 再 accept してよい
+    await user.click(shareCheckbox);
+    expect(shareCheckbox).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(upsertShare).toHaveBeenCalledWith({}, true);
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  });
+});
+
 it("AP8: accept hang times out so skip is re-enabled", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
@@ -409,4 +807,203 @@ it("AP8: accept hang times out so skip is re-enabled", async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+const acceptedPrivacyConsent = {
+  user_id: "user-1",
+  notice_version: "2026-07-29.v1",
+  accepted_at: "2026-07-12T00:00:00.000Z",
+  created_at: "2026-07-12T00:00:00.000Z",
+};
+
+describe("AP11: submit must not join in-flight accepted or fall back to accepted cache", () => {
+  it("AP11: does not upsert true by joining in-flight accepted after server revoke", async () => {
+    const user = userEvent.setup();
+    let shareCalls = 0;
+    let resolveMountRead: (state: ShareConsentState) => void = () => {
+      throw new Error("mount getMyShareConsent resolver が未設定");
+    };
+    getShare.mockImplementation(() => {
+      shareCalls += 1;
+      if (shareCalls === 1) {
+        // mount refetch。revoke 前に始まった accepted 応答として後から解決する
+        return new Promise<ShareConsentState>((resolve) => {
+          resolveMountRead = resolve;
+        });
+      }
+      // 単独再読ならサーバ正（revoke 済み）を返す
+      return Promise.resolve(revokedShareState);
+    });
+    acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+
+    renderPrivacyPageWithWarmShareCache(currentShareState);
+
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).toBeEnabled();
+    expect(shareCheckbox).toBeChecked();
+
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+
+    // in-flight を accepted で解決しても、合流した応答を accept 根拠にしてはいけない
+    await act(() => {
+      resolveMountRead(currentShareState);
+      return Promise.resolve();
+    });
+
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+    expect(upsertShare).not.toHaveBeenCalledWith({}, true);
+    expect(upsertShare).not.toHaveBeenCalled();
+  });
+
+  it("AP11: does not upsert true when submit reread rejects and cache is accepted", async () => {
+    const user = userEvent.setup();
+    getShare.mockResolvedValue(currentShareState);
+    acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+
+    const { client } = renderPrivacyPageWithWarmShareCache(currentShareState);
+    await waitForShareConsentReady();
+    await waitFor(() => {
+      expect(client.getQueryState(shareConsentKeys.current("user-1"))?.fetchStatus).toBe("idle");
+    });
+
+    getShare.mockRejectedValue(new Error("共有の同意状態を読み込めませんでした"));
+
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+    expect(upsertShare).not.toHaveBeenCalledWith({}, true);
+    expect(upsertShare).not.toHaveBeenCalled();
+  });
+
+  it("AP11: does not upsert true when submit reread times out and cache is accepted", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      getShare.mockResolvedValue(currentShareState);
+      acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+
+      const { client } = renderPrivacyPageWithWarmShareCache(currentShareState);
+      await waitForShareConsentReady();
+      await waitFor(() => {
+        expect(client.getQueryState(shareConsentKeys.current("user-1"))?.fetchStatus).toBe("idle");
+      });
+
+      getShare.mockImplementation(() => new Promise<ShareConsentState>(() => undefined));
+
+      await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+      await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+      await waitFor(() => {
+        expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+      });
+
+      await vi.advanceTimersByTimeAsync(PRIVACY_ACCEPT_TIMEOUT_MS + 50);
+
+      expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+      expect(upsertShare).not.toHaveBeenCalledWith({}, true);
+      expect(upsertShare).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("AP13: successful standalone reread must write cache before delayed mount settles", () => {
+  it("AP13: submit reread revoked wins cache after delayed mount accepted settles", async () => {
+    const user = userEvent.setup();
+    let shareCalls = 0;
+    let resolveMountRead: (state: ShareConsentState) => void = () => {
+      throw new Error("mount getMyShareConsent resolver が未設定");
+    };
+    getShare.mockImplementation(() => {
+      shareCalls += 1;
+      if (shareCalls === 1) {
+        // mount refetch。revoke 前に始まった accepted 応答として後から解決する
+        return new Promise<ShareConsentState>((resolve) => {
+          resolveMountRead = resolve;
+        });
+      }
+      // submit 中の単独再読はサーバ正（revoke 済み）
+      return Promise.resolve(revokedShareState);
+    });
+    acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+
+    const { client } = renderPrivacyPageWithWarmShareCache(currentShareState);
+    expect(client.getQueryData(shareConsentKeys.current("user-1"))).toEqual(currentShareState);
+
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).toBeEnabled();
+    expect(shareCheckbox).toBeChecked();
+
+    // 共有は触らず必須だけ進む → upsert しない（AP11）。再読 revoked は cache に載せる（AP13）
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+
+    await act(() => {
+      resolveMountRead(currentShareState);
+      return Promise.resolve();
+    });
+
+    expect(client.getQueryData(shareConsentKeys.current("user-1"))).toEqual(revokedShareState);
+    expect(upsertShare).not.toHaveBeenCalledWith({}, true);
+    expect(upsertShare).not.toHaveBeenCalled();
+  });
+});
+
+describe("AP12: refetch error must not turn share off and revoke", () => {
+  it("AP12: success then refetch error keeps box on and does not upsert false", async () => {
+    const user = userEvent.setup();
+    getShare.mockResolvedValue(currentShareState);
+    acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+
+    const { client } = renderPrivacyPageWithWarmShareCache(currentShareState);
+    await waitForShareConsentReady();
+    await waitFor(() => {
+      expect(client.getQueryState(shareConsentKeys.current("user-1"))?.fetchStatus).toBe("idle");
+    });
+
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).toBeChecked();
+
+    getShare.mockRejectedValue(new Error("共有の同意状態を読み込めませんでした"));
+    await act(() => {
+      window.dispatchEvent(new Event("focus"));
+      return Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(client.getQueryState(shareConsentKeys.current("user-1"))?.status).toBe("error");
+    });
+    expect(shareCheckbox).toBeChecked();
+
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+    expect(upsertShare).not.toHaveBeenCalledWith({}, false);
+    expect(upsertShare).not.toHaveBeenCalled();
+  });
 });

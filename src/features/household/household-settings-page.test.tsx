@@ -24,6 +24,7 @@ import {
 const navigateMock = vi.hoisted(() => vi.fn());
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const requireAccessTokenMock = vi.hoisted(() => vi.fn().mockResolvedValue("token"));
+const useAuthMock = vi.hoisted(() => vi.fn());
 
 const emptySearchParams = new URLSearchParams();
 const setSearchParamsMock = vi.hoisted(() => vi.fn());
@@ -46,6 +47,10 @@ vi.mock("@/features/auth/auth-cleanup", () => ({
 vi.mock("@/features/auth/session", () => ({
   requireAccessToken: requireAccessTokenMock,
 }));
+// FeedbackSection が useAuth を要求する。家族 CRUD は AuthProvider に依存させない。
+vi.mock("@/features/auth/use-auth", () => ({
+  useAuth: useAuthMock,
+}));
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({ auth: {} }),
 }));
@@ -64,8 +69,15 @@ beforeEach(() => {
   navigateMock.mockReset();
   clearLocalAuthAndDraftsMock.mockReset();
   requireAccessTokenMock.mockReset();
+  useAuthMock.mockReset();
   clearLocalAuthAndDraftsMock.mockResolvedValue(undefined);
   requireAccessTokenMock.mockResolvedValue("token");
+  useAuthMock.mockReturnValue({
+    status: "authenticated",
+    session: { user: { id: "user-1" }, access_token: "token" },
+    refreshSession: vi.fn(),
+    sessionProbeDegraded: false,
+  });
   if (typeof HTMLDialogElement !== "undefined") {
     HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
       this.setAttribute("open", "");
@@ -123,7 +135,7 @@ const walnutAllergy = standardAllergy;
  */
 async function renderSettings(
   overrides: Partial<HouseholdSettingsApi> = {},
-  options: { startClosed?: boolean } = {},
+  options: { startClosed?: boolean; staleTime?: number } = {},
 ) {
   const updateMember = vi.fn().mockResolvedValue(member);
   const invalidateSafety = vi.fn().mockResolvedValue(undefined);
@@ -145,7 +157,15 @@ async function renderSettings(
     invalidateSafety,
     ...overrides,
   };
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // 既定は staleTime 未指定（= 0）。H1 再現だけ本番 AppProviders と同じ 30s を渡す。
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        ...(options.staleTime === undefined ? {} : { staleTime: options.staleTime }),
+      },
+    },
+  });
   render(
     <QueryClientProvider client={queryClient}>
       <AppToastProvider>
@@ -3505,6 +3525,74 @@ it("H1: shows residual warning when none status still has allergies", async () =
   });
 });
 
+// H2: complete + none の残針 1 件は UI から消せる（last-delete ガードは registered のみ）
+it("H2: allows last residual allergy delete when complete status is none", async () => {
+  let allergies: MemberAllergyRow[] = [standardAllergy];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+  const removeAllergy = vi.fn().mockImplementation(() => {
+    allergies = [];
+    return Promise.resolve(undefined);
+  });
+  await renderSettings({
+    listAllergies,
+    removeAllergy,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  expect(screen.queryByText("登録ありの場合は1つ以上選んでください")).not.toBeInTheDocument();
+});
+
+// H2: 残針を残したまま「登録あり」へ戻すと、最後の 1 件は再び削除拒否
+it("H2: restores last-delete guard after switching residual none back to registered", async () => {
+  const customAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "えんどう豆たんぱく",
+    custom_confirmed: true,
+  };
+  let allergies: MemberAllergyRow[] = [standardAllergy, customAllergy];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies.map((row) => ({ ...row }))));
+  const removeAllergy = vi.fn().mockImplementation((allergyId: string) => {
+    allergies = allergies.filter((row) => row.id !== allergyId);
+    return Promise.resolve(undefined);
+  });
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({ ...member, ...patch }),
+  );
+  await renderSettings({
+    listAllergies,
+    removeAllergy,
+    updateMember,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  expect(screen.queryByText("登録ありの場合は1つ以上選んでください")).not.toBeInTheDocument();
+
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      member.id,
+      expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
+    );
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "えんどう豆たんぱくを削除" }));
+
+  expect(removeAllergy).toHaveBeenCalledTimes(1);
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "登録ありの場合は1つ以上選んでください",
+  );
+});
+
 // H5: silent delete 後に行が残る場合は利用者へ説明
 it("H5: surfaces delete miss when allergy row remains after RPC success", async () => {
   const registeredMember = { ...member, allergy_status: "registered" as const };
@@ -3531,6 +3619,116 @@ it("H5: surfaces delete miss when allergy row remains after RPC success", async 
   });
   await waitFor(() => {
     expect(screen.getByRole("status")).toHaveTextContent("アレルギーの削除を反映できませんでした");
+  });
+});
+
+// H1: 本番 staleTime 30s でも削除後 fetchQuery はサーバ再取得し、誤検知せず invalidate する
+it("H1: post-delete fetchQuery bypasses stale cache so safety invalidate runs", async () => {
+  const registeredMember = { ...member, allergy_status: "registered" as const };
+  const customAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    allergen_id: null,
+    custom_name: "えんどう豆たんぱく",
+    custom_confirmed: true,
+  };
+  // 初回キャッシュは 2 件。RPC 後の正本は残 1 件（stale cache を読むと誤検知する）
+  const listAllergies = vi
+    .fn()
+    .mockResolvedValueOnce([standardAllergy, customAllergy])
+    .mockResolvedValue([customAllergy]);
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  const { invalidateSafety } = await renderSettings(
+    {
+      listMembers: vi.fn().mockResolvedValue([registeredMember]),
+      listAllergies,
+      removeAllergy,
+    },
+    { staleTime: 30_000 },
+  );
+
+  const listCallsBeforeRemove = listAllergies.mock.calls.length;
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  await waitFor(() => {
+    expect(removeAllergy).toHaveBeenCalledWith(standardAllergy.id);
+  });
+  await waitFor(() => {
+    expect(invalidateSafety).toHaveBeenCalled();
+  });
+  expect(screen.queryByText("アレルギーの削除を反映できませんでした")).not.toBeInTheDocument();
+  expect(listAllergies.mock.calls.length).toBeGreaterThan(listCallsBeforeRemove);
+});
+
+// H12: draft でも empty registered を DB に即書きせず、初回アレルゲン追加で commit（onboarding H13 と同方向）
+it("H12: defers empty registered allergy_status on draft until first allergen is added", async () => {
+  const draft: HouseholdMemberRow = {
+    ...member,
+    id: "draft-h12",
+    status: "draft",
+    display_name: "子ども",
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  let allergies: MemberAllergyRow[] = [];
+  const listAllergies = vi.fn(() => Promise.resolve(allergies));
+  const draftAllergy = { ...standardAllergy, id: "allergy-draft-h12", member_id: draft.id };
+  const addStandardAllergy = vi.fn().mockImplementation(() => {
+    allergies = [draftAllergy];
+    return Promise.resolve(draftAllergy);
+  });
+  const updateDraft = vi
+    .fn()
+    .mockImplementation((_memberId: string, patch: HouseholdMemberPatch) =>
+      Promise.resolve({ ...draft, ...patch }),
+    );
+  const { queryClient } = await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    listAllergies,
+    addStandardAllergy,
+    updateDraft,
+  });
+
+  await waitForAllergies(queryClient, draft.id);
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+
+  // UI は registered でも、証拠なしでは draft に registered を書かない
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("registered");
+  });
+  expect(updateDraft).not.toHaveBeenCalledWith(
+    draft.id,
+    expect.objectContaining({ allergy_status: "registered" }),
+    expect.any(String),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
+
+  // 他項目は旧 allergy_status のまま保存できる
+  fireEvent.change(screen.getByLabelText("辛さ"), { target: { value: "mild" } });
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledWith(
+      draft.id,
+      expect.objectContaining({ spice_level: "mild", allergy_status: "none" }),
+      expect.any(String),
+    );
+  });
+  const earlyRegistered = updateDraft.mock.calls.filter((call) => {
+    const patch = call[1] as HouseholdMemberPatch;
+    return patch.allergy_status === "registered";
+  });
+  expect(earlyRegistered).toHaveLength(0);
+
+  await userEvent.click(screen.getByRole("button", { name: "くるみを追加" }));
+  await waitFor(() => {
+    expect(addStandardAllergy).toHaveBeenCalledWith(draft.id, "walnut");
+  });
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledWith(
+      draft.id,
+      expect.objectContaining({ allergy_status: "registered" }),
+      expect.any(String),
+    );
   });
 });
 

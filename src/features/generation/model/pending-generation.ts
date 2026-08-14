@@ -159,6 +159,106 @@ export function savePendingGeneration(
   }
 }
 
+/**
+ * dual-tab claim 用。shopping の pendingShoppingCommandClaimLockName と同型。
+ * ロック保持は sticky mint のみ（navigate / POST は外）。
+ */
+export const pendingGenerationClaimLockName = "kondate:generation:v3:claim" as const;
+
+export type ClaimPendingGenerationResult = {
+  pending: PendingGeneration;
+  /**
+   * true: 自タブが first-writer として sticky を確保した。
+   * false: 既存または他タブ勝者の sticky を採用（上書きしない。C2 再開）。
+   */
+  claimed: boolean;
+};
+
+type PendingGenerationClaimStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/**
+ * P1: dual-tab localStorage pending の check-then-act last-writer-wins を閉じる。
+ * shopping の claimShoppingCommand / claimItemMutationSticky と同型:
+ * - Web Locks で読取→書込を直列化（pre-write TOCTOU を閉じる）
+ * - Locks 非対応は書込後 re-read + 1 ティック後の再確認で他 sticky を見たら負け
+ *   （即時 re-read だけだと両タブが自 key を見て両方 claimed になり得る）
+ * C2: 既に有効 pending があるときは上書きせず claimed=false（同一タブ再開と同契約）。
+ * recovery 中の requestId 更新など「同一 sticky の上書き」は savePendingGeneration を直接使う。
+ */
+export async function claimPendingGeneration(
+  candidate: PendingGeneration,
+  currentUserId: string,
+  now: Date = new Date(),
+  storage: PendingGenerationClaimStorage = localStorage,
+): Promise<ClaimPendingGenerationResult> {
+  const run = (): ClaimPendingGenerationResult =>
+    decideClaimAfterWrite(candidate, currentUserId, now, storage);
+
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+  if (locks !== undefined && typeof locks.request === "function") {
+    return locks.request(pendingGenerationClaimLockName, () => run());
+  }
+  return claimPendingGenerationWithoutLocks(candidate, currentUserId, now, storage);
+}
+
+function sameClaimIdempotencyKey(left: PendingGeneration, right: PendingGeneration): boolean {
+  return left.request.idempotencyKey === right.request.idempotencyKey;
+}
+
+function decideClaimAfterWrite(
+  candidate: PendingGeneration,
+  currentUserId: string,
+  now: Date,
+  storage: PendingGenerationClaimStorage,
+): ClaimPendingGenerationResult {
+  const existing = readPendingGeneration(currentUserId, now, storage);
+  if (existing !== null) {
+    return { pending: existing, claimed: false };
+  }
+  savePendingGeneration(candidate, storage);
+  // 書込後 re-read: Locks 無し競合で他タブが後勝ちした場合は共有 sticky を優先する
+  const again = readPendingGeneration(currentUserId, now, storage);
+  if (again === null) {
+    // setItem 成功後に読めない異常。candidate を自 claim として返し呼び出し側が進める
+    return { pending: candidate, claimed: true };
+  }
+  const claimed = sameClaimIdempotencyKey(again, candidate);
+  return { pending: again, claimed };
+}
+
+function yieldClaimTurn(): Promise<void> {
+  // 他タブの setItem が localStorage に見えるのは次マクロタスク以降。
+  // queueMicrotask だと自タブの遅延書込と並び、両方 claimed のまま残る。
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+/**
+ * Locks 非対応: 書いた直後の自 key を信じず、1 ティック後にもう一度読む。
+ * 他 sticky が見えたら負け（両方 claimed にしない）。Locks 経路は触らない。
+ */
+async function claimPendingGenerationWithoutLocks(
+  candidate: PendingGeneration,
+  currentUserId: string,
+  now: Date,
+  storage: PendingGenerationClaimStorage,
+): Promise<ClaimPendingGenerationResult> {
+  const first = decideClaimAfterWrite(candidate, currentUserId, now, storage);
+  if (!first.claimed) {
+    return first;
+  }
+  await yieldClaimTurn();
+  const again = readPendingGeneration(currentUserId, now, storage);
+  if (again === null) {
+    return first;
+  }
+  if (!sameClaimIdempotencyKey(again, candidate)) {
+    return { pending: again, claimed: false };
+  }
+  return { pending: again, claimed: true };
+}
+
 export function clearPendingGeneration(
   storage: PendingGenerationRemoveStorage = localStorage,
 ): void {

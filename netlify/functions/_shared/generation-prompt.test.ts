@@ -318,6 +318,14 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain("英語");
   });
 
+  it("forbids safety-guarantee wording in the system prompt", () => {
+    const system = systemText(buildGenerationMessages(asNewMenuExecution(makeGenerationContext())));
+    // 生成 persist の保証フレーズゲートと揃える（share 関門専用リストは広げない）
+    expect(system).toContain("安全です");
+    expect(system).toContain("アレルギー対応済み");
+    expect(system).toContain("保証する表現は書かない");
+  });
+
   it("idea path keeps empty adaptations/labels instruction", () => {
     const messages = buildGenerationMessages(asNewMenuExecution(makeIdeaGenerationContext()));
     const system = messages.find((message) => message.role === "system")?.content ?? "";

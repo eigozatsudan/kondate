@@ -244,8 +244,17 @@ test(
     // 最初のPOST abortが完了し、pending generationがlocalStorageに保存されるのを待つ
     await firstAbortedPromise;
     await page.reload();
-    // recovery hookがGET statusでsucceeded結果を検出し、結果画面へ遷移する
-    await expect(page.getByText("献立ができました")).toBeVisible({ timeout: 30_000 });
+    // E2E10: after-handler 経路と同深度。空 result / 誤 fixture でも「できました」だけで
+    // 緑にしない。recovery navigate は ?recovered=1、success fixture 主菜を固定する。
+    await expect(page).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/u, { timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByRole("heading", { name: "鶏肉と白菜のやわらか煮" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByRole("heading", { name: "全体の段取り" })).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "料理" })).toBeVisible();
     // POSTは2回発行され（初回abort後の再送1回）、両方とも同一idempotencyKeyであることを
     // 直接確認する。Set.size === 1 だけではPOSTが1回だけでも通過してしまうため、
     // 実際に2回のPOSTが発生し、両方が同じkeyであることを明示的に検証する。
@@ -255,6 +264,21 @@ test(
     expect(postedKeys[0]).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
+    // メニュー行が REST 上に materialize されていること（UI 成功コピーだけの dual materialize 穴）
+    const menuId = z
+      .uuid()
+      .parse(/\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1]);
+    const headers = await localRestHeaders(page);
+    const menuLookup = await page.request.get(
+      `http://127.0.0.1:8000/rest/v1/menus?id=eq.${menuId}&select=id,target_mode`,
+      { headers },
+    );
+    const menuRows = z
+      .array(z.object({ id: z.uuid(), target_mode: z.string() }))
+      .parse(await menuLookup.json());
+    expect(menuRows).toHaveLength(1);
+    expect(menuRows[0]?.id).toBe(menuId);
+    expect(menuRows[0]?.target_mode).toBe("household");
   },
 );
 

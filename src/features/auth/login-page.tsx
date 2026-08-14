@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { Navigate, useLocation } from "react-router";
 import { accountDeletionAnonymousShareNote } from "@/features/privacy/privacy-copy";
+import { LivePendingMain } from "@/shared/ui/feedback";
 import { createAuthGateway, type AuthGateway } from "./auth-gateway";
 import type { MagicLinkState } from "./magic-link-state";
 import { sanitizeLoginReturnPath } from "./auth-flow";
 import { useAuth } from "./use-auth";
-import { useAuthLoadingDeadline } from "./use-auth-loading-deadline";
 
 /** 低リテラシー向け：登録とログインが同じ操作であることを明示（MVP 設計の単一画面方針） */
 export const LOGIN_PAGE_LEAD =
@@ -255,8 +255,6 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const returnTo = params.has("returnTo")
     ? sanitizeLoginReturnPath(params.get("returnTo"), "/welcome")
     : "/welcome";
-  // C14: AuthProvider 15s 主防衛の二次防衛（RequireSession / RootGate と同型）
-  const { showLoading } = useAuthLoadingDeadline(auth.status);
   const [state, setState] = useState<MagicLinkState>(() =>
     initialMagicLinkState(locationState.authError, location.search),
   );
@@ -376,13 +374,11 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   if (auth.status === "authenticated") {
     return <Navigate to={returnTo} replace />;
   }
-  // deadline 超過後は未ログイン UI（フォーム）へフォールスルーする
-  if (showLoading) {
-    return (
-      <main className="page-frame stack">
-        <p>読み込み中…</p>
-      </main>
-    );
+  // C6: loading 中は deadline 超過でもフォームを出さない。
+  // provider が fail-closed して unauthenticated になるまで LivePendingMain。
+  // useAuthLoadingDeadline の RootGate / RequireSession 用途は変えない。
+  if (auth.status === "loading") {
+    return <LivePendingMain message="読み込み中…" />;
   }
 
   // 送信済み・期限切れは同一文脈（宛先・再送・変更・Google）でやり直せる（B-I8 / L174 / L644）

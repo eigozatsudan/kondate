@@ -135,6 +135,98 @@ function closedBillingStatus(raw: string): string | undefined {
   return undefined;
 }
 
+/**
+ * S3: SafeLog の残 enum を実行時 Set で閉じる（TS 型だけだと cast/miswire free-text が載る）。
+ * 未知値は省略（必須フィールドではない）。
+ */
+const CLOSED_PATHS = new Set(["household", "idea"]);
+const CLOSED_MATCH_MODES = new Set(["none", "main_ingredient", "safety_only"]);
+const CLOSED_EMPTY_REASONS = new Set(["current_safety_unavailable", "no_matching_fixture"]);
+const CLOSED_MEAL_TYPES = new Set(["breakfast", "lunch", "dinner"]);
+const CLOSED_PLANS = new Set(["free", "plus"]);
+const CLOSED_PRICE_INTERVALS = new Set(["month", "year"]);
+const CLOSED_GENERATION_ROUTES = new Set(["menu", "dish", "status"]);
+
+function closedPath(raw: string): "household" | "idea" | undefined {
+  if (CLOSED_PATHS.has(raw)) return raw as "household" | "idea";
+  return undefined;
+}
+
+function closedMatchMode(raw: string): "none" | "main_ingredient" | "safety_only" | undefined {
+  if (CLOSED_MATCH_MODES.has(raw)) return raw as "none" | "main_ingredient" | "safety_only";
+  return undefined;
+}
+
+function closedEmptyReason(
+  raw: string,
+): "current_safety_unavailable" | "no_matching_fixture" | undefined {
+  if (CLOSED_EMPTY_REASONS.has(raw)) {
+    return raw as "current_safety_unavailable" | "no_matching_fixture";
+  }
+  return undefined;
+}
+
+function closedMealType(raw: string): "breakfast" | "lunch" | "dinner" | undefined {
+  if (CLOSED_MEAL_TYPES.has(raw)) return raw as "breakfast" | "lunch" | "dinner";
+  return undefined;
+}
+
+function closedPlan(raw: string): "free" | "plus" | undefined {
+  if (CLOSED_PLANS.has(raw)) return raw as "free" | "plus";
+  return undefined;
+}
+
+function closedPriceInterval(raw: string): "month" | "year" | undefined {
+  if (CLOSED_PRICE_INTERVALS.has(raw)) return raw as "month" | "year";
+  return undefined;
+}
+
+function closedGenerationRoute(raw: string): "menu" | "dish" | "status" | undefined {
+  if (CLOSED_GENERATION_ROUTES.has(raw)) return raw as "menu" | "dish" | "status";
+  return undefined;
+}
+
+/**
+ * S3: assert-privacy-logs.mjs の allowedLogKeys と対応する snake_case キー SSOT。
+ * logger が出し得るキーのみ。新規キー追加時は本 Set と mjs allowlist を同時更新。
+ */
+export const SAFE_LOG_SERIALIZED_KEYS = new Set([
+  "level",
+  "request_id",
+  "code",
+  "duration_ms",
+  "model_id",
+  "stale_reservations_finalized",
+  "generation_ledgers_deleted",
+  "shopping_mutations_deleted",
+  "auth_continuations_deleted",
+  "user_feedback_deleted",
+  "draft_submissions_deleted",
+  "identity_ledgers_deleted",
+  "flyer_ledgers_deleted",
+  "stale_share_jobs_reaped",
+  "path",
+  "match_mode",
+  "empty_reason",
+  "candidate_count",
+  "meal_type",
+  "main_ingredient_count",
+  "plan",
+  "billing_status",
+  "price_interval",
+  "quality_mode",
+  "flyer",
+  "stripe_customer_id",
+  "stripe_subscription_id",
+  "alert_metric",
+  "generation_route",
+  "http_status",
+  "job_id",
+  "failure_code",
+  "source_counts_fixture",
+  "source_counts_community",
+]);
+
 /** opaque Stripe customer id（cus_…）。プレフィックス外・空白・@ 混入は省略。 */
 function closedStripeCustomerId(raw: string): string | undefined {
   // ローカル/テストも cus_test_delete_1 形。空白・記号 free-text は拒否。
@@ -204,23 +296,51 @@ export const createSafeLogger =
       record.stale_share_jobs_reaped = event.staleShareJobsReaped;
     }
     // 緊急献立: 列挙・件数のみ。null も明示的に出す（省略すると集計が欠ける）
-    if (event.path !== undefined) record.path = event.path;
-    if (event.matchMode !== undefined) record.match_mode = event.matchMode;
-    if (event.emptyReason !== undefined) record.empty_reason = event.emptyReason;
+    // S3: 列挙は runtime Set で閉じ、未知 free-text は載せない
+    if (event.path !== undefined) {
+      const path = closedPath(event.path);
+      if (path !== undefined) record.path = path;
+    }
+    if (event.matchMode !== undefined) {
+      // null は Stage M 空結果の明示。string は閉じた列挙のみ。
+      if (event.matchMode === null) {
+        record.match_mode = null;
+      } else {
+        const matchMode = closedMatchMode(event.matchMode);
+        if (matchMode !== undefined) record.match_mode = matchMode;
+      }
+    }
+    if (event.emptyReason !== undefined) {
+      if (event.emptyReason === null) {
+        record.empty_reason = null;
+      } else {
+        const emptyReason = closedEmptyReason(event.emptyReason);
+        if (emptyReason !== undefined) record.empty_reason = emptyReason;
+      }
+    }
     if (event.candidateCount !== undefined) {
       record.candidate_count = Math.max(0, Math.trunc(event.candidateCount));
     }
-    if (event.mealType !== undefined) record.meal_type = event.mealType;
+    if (event.mealType !== undefined) {
+      const mealType = closedMealType(event.mealType);
+      if (mealType !== undefined) record.meal_type = mealType;
+    }
     if (event.mainIngredientCount !== undefined) {
       record.main_ingredient_count = Math.max(0, Math.trunc(event.mainIngredientCount));
     }
     // billing: 非 PII の列挙・opaque id のみ（値も実行時に閉じる）
-    if (event.plan !== undefined) record.plan = event.plan;
+    if (event.plan !== undefined) {
+      const plan = closedPlan(event.plan);
+      if (plan !== undefined) record.plan = plan;
+    }
     if (event.billingStatus !== undefined) {
       const billingStatus = closedBillingStatus(event.billingStatus);
       if (billingStatus !== undefined) record.billing_status = billingStatus;
     }
-    if (event.priceInterval !== undefined) record.price_interval = event.priceInterval;
+    if (event.priceInterval !== undefined) {
+      const priceInterval = closedPriceInterval(event.priceInterval);
+      if (priceInterval !== undefined) record.price_interval = priceInterval;
+    }
     if (event.qualityMode !== undefined) record.quality_mode = event.qualityMode ? 1 : 0;
     if (event.flyer !== undefined) record.flyer = event.flyer ? 1 : 0;
     if (event.stripeCustomerId !== undefined) {
@@ -237,7 +357,8 @@ export const createSafeLogger =
       record.alert_metric = Math.max(0, Math.trunc(event.alertMetric));
     }
     if (event.generationRoute !== undefined) {
-      record.generation_route = event.generationRoute;
+      const generationRoute = closedGenerationRoute(event.generationRoute);
+      if (generationRoute !== undefined) record.generation_route = generationRoute;
     }
     if (event.httpStatus !== undefined) {
       record.http_status = Math.max(0, Math.trunc(event.httpStatus));

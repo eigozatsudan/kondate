@@ -19,6 +19,8 @@ export type HomeExpiringPantryItem = {
 
 export type HomeExpiringPantryProps = {
   items: readonly HomeExpiringPantryItem[];
+  /** leave-flush 中など。冷蔵庫 Link を見た目無効化し第二 leave を起こさない。 */
+  disabled?: boolean;
 };
 
 /**
@@ -26,12 +28,20 @@ export type HomeExpiringPantryProps = {
  * 安全保証は出さず、冷蔵庫タブへの導線と Badge による注意だけを示す。
  * P1: 冷蔵庫 Link は leave-flush を await してから遷移（下ナビと同型。失敗は stay）。
  */
-export function HomeExpiringPantry({ items }: HomeExpiringPantryProps): JSX.Element | null {
+export function HomeExpiringPantry({
+  items,
+  disabled = false,
+}: HomeExpiringPantryProps): JSX.Element | null {
   const navigate = useNavigate();
   // 該当が無いときはセクションごと出さず、ホームを詰め込まない。
   if (items.length === 0) return null;
 
   const onPantryClick = (event: MouseEvent<HTMLAnchorElement>): void => {
+    // leave 中は第二 leave を起こさず stay（module mutex の無言 blocked を避ける）
+    if (disabled) {
+      event.preventDefault();
+      return;
+    }
     if (!shouldInterceptPlannerLeaveClick(event)) return;
     event.preventDefault();
     void navigateAfterPlannerLeaveFlush(navigate, "/pantry");
@@ -62,7 +72,12 @@ export function HomeExpiringPantry({ items }: HomeExpiringPantryProps): JSX.Elem
               </li>
             ))}
           </Stack>
-          <Link className="button-link min-h-11" to="/pantry" onClick={onPantryClick}>
+          <Link
+            className={`button-link min-h-11${disabled ? " opacity-50" : ""}`}
+            to="/pantry"
+            onClick={onPantryClick}
+            aria-disabled={disabled || undefined}
+          >
             冷蔵庫を見る
           </Link>
         </Stack>

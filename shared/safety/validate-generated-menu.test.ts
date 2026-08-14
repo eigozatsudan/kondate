@@ -1557,6 +1557,115 @@ it("rejects idea menus with adaptations or servings mismatch", () => {
   expect(menuValidationIssueCodes).toContain(servingsMismatch.issues[0]?.code);
 });
 
+it("rejects dish description that guarantees safety (安全です)", () => {
+  const base = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
+    ),
+  });
+  const result = validateGeneratedMenu(menu, makeGenerationContext());
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("保証表現の検証エラーを期待しました");
+  expect(result.issues).toContainEqual({
+    code: "invalid_menu_structure",
+    path: "dishes.0.description",
+    message: "利用者向け本文に安全保証の表現は書けません",
+  });
+});
+
+it.each([
+  {
+    name: "servingCheck",
+    menu: (() => {
+      const base = makeGeneratedMenu();
+      return makeGeneratedMenu({
+        adaptations: [
+          {
+            ...base.adaptations[0]!,
+            servingCheck: "アレルギー対応済みの取り分けです",
+          },
+        ],
+      });
+    })(),
+    path: "adaptations.0.servingCheck",
+  },
+  {
+    name: "safetyActions.instruction",
+    menu: (() => {
+      const base = makeGeneratedMenu();
+      const firstDish = base.dishes[0]!;
+      const firstIngredient = firstDish.ingredients[0]!;
+      return makeGeneratedMenu({
+        adaptations: [
+          {
+            ...base.adaptations[0]!,
+            safetyActions: [
+              {
+                kind: "heat_thoroughly" as const,
+                dishId: firstDish.id,
+                ingredientId: firstIngredient.id,
+                anonymousMemberRef: "member_1",
+                beforeRecipeStepId: firstDish.steps[0]!.id,
+                instruction: "アレルギー対応済みとして盛り付ける",
+              },
+            ],
+          },
+        ],
+      });
+    })(),
+    path: "adaptations.0.safetyActions.0.instruction",
+  },
+] as const)("rejects $name that claims allergy-ready (アレルギー対応済み)", ({ menu, path }) => {
+  const result = validateGeneratedMenu(menu, makeGenerationContext());
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("保証表現の検証エラーを期待しました");
+  expect(result.issues).toContainEqual({
+    code: "invalid_menu_structure",
+    path,
+    message: "利用者向け本文に安全保証の表現は書けません",
+  });
+});
+
+it("keeps ordinary Japanese menus valid without guarantee-phrase false positives", () => {
+  expect(validateGeneratedMenu(makeGeneratedMenu(), makeGenerationContext())).toMatchObject({
+    ok: true,
+  });
+});
+
+it("does not treat the fixed disclaimer wording as a guarantee phrase", () => {
+  // 固定免責は「である / であることを」が挟まる。「安全です」「安全を保証」を部分一致で含まない。
+  // G10 の畳み（NFKC / Cf / 空白削除 / カナ幅）後も同じ。dish に入れても誤検知しない。
+  const disclaimer =
+    "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。";
+  expect(disclaimer.includes("安全です")).toBe(false);
+  expect(disclaimer.includes("安全を保証")).toBe(false);
+  expect(disclaimer.includes("アレルギー対応済み")).toBe(false);
+  expect(disclaimer.replaceAll(/\s/gu, "").includes("安全です")).toBe(false);
+  expect(disclaimer.replaceAll(/\s/gu, "").includes("安全を保証")).toBe(false);
+  const base = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: disclaimer } : dish,
+    ),
+  });
+  expect(validateGeneratedMenu(menu, makeGenerationContext())).toMatchObject({ ok: true });
+});
+
+it("skips retained-dish guarantee phrases when the user-text gate is off", () => {
+  const base = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 1 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
+    ),
+  });
+  // 一品再生成の保持料理に残る保証文は本線ゲートを抑止して通す（AI 出力側で別途見る）
+  expect(
+    validateGeneratedMenu(menu, makeGenerationContext(), { checkJapaneseUserText: false }).ok,
+  ).toBe(true);
+  expect(validateGeneratedMenu(menu, makeGenerationContext()).ok).toBe(false);
+});
+
 it("idea mode expands reviewed avoid synonyms (卵↔たまご) without safety dictionary", () => {
   // S6: idea は safety null でも確認済みシノニムで preference 整合を閉じる
   const context = makeIdeaGenerationContext({

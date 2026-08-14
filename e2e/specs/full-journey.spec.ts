@@ -30,7 +30,11 @@ test(
     tag: ["@smoke"],
   },
   async ({ completedOnboardingPage: page }) => {
-    await page.setViewportSize({ width: 320, height: 720 });
+    // E2E5: mobile project のみ 320 を固定。desktop-chromium は Desktop Chrome 幅のまま
+    // 走らせ、layout 退行を dual-project の vacuous green にしない。
+    if (test.info().project.name === "mobile-chromium") {
+      await page.setViewportSize({ width: 320, height: 720 });
+    }
 
     // 小麦ラベル確認が必要な mock success 用メンバーを整える
     await page.goto("/settings");
@@ -110,29 +114,55 @@ test(
     });
     const acceptSource = page.getByRole("button", { name: "この献立にする" });
     const shopCreate = page.getByRole("button", { name: "材料の買い物リストを作る" });
+    const createSheetHeading = page.getByRole("heading", { name: "買い物リストを作る" });
     // versions+gate settle: 採用か買い物のどちらかが有効になるまで待つ
     await expect
       .poll(
         async () => {
           const shopOk = await shopCreate.isEnabled().catch(() => false);
           const acceptOk = await acceptSource.isEnabled().catch(() => false);
-          return shopOk || acceptOk;
+          const sheetOpen = await createSheetHeading.isVisible().catch(() => false);
+          return shopOk || acceptOk || sheetOpen;
         },
         { timeout: 90_000 },
       )
       .toBe(true);
+    // sticky intent 等で create シートが auto-open していると採用 CTA が dialog 下で click 不能。
+    // 採用を先に確定するため、開いていれば一度閉じる（キャンセルはシート abandon のみ）。
+    if (await createSheetHeading.isVisible().catch(() => false)) {
+      await page.getByRole("button", { name: "キャンセル" }).click();
+      await expect(createSheetHeading).toHaveCount(0, { timeout: 15_000 });
+    }
     // E2E1: soft skip 禁止。CTA が見える経路では必須で採用する。
     // versions 未確定・一瞬 disabled を isVisible().catch で吸うと採用 POST 0 のまま create まで green。
     // 単一案 (confirmedSingle) でも補助に「この献立にする」が出る。既 isSelected なら count 0。
     if ((await acceptSource.count()) > 0) {
+      // soft recheck 中の no-op click を避ける: enabled かつ再確認文言が消えてから採用
+      await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+        timeout: 90_000,
+      });
       await expect(acceptSource).toBeEnabled({ timeout: 30_000 });
       await acceptSource.click();
-      // 採用後は CTA が消える（accepted / 買い物 primary 昇格）
-      await expect(acceptSource).toHaveCount(0, { timeout: 30_000 });
+      // 採用後は CTA が消える（accepted / 買い物 primary 昇格）。soft 競合で残る場合は再試行。
+      try {
+        await expect(acceptSource).toHaveCount(0, { timeout: 15_000 });
+      } catch {
+        await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+          timeout: 90_000,
+        });
+        if (await createSheetHeading.isVisible().catch(() => false)) {
+          await page.getByRole("button", { name: "キャンセル" }).click();
+          await expect(createSheetHeading).toHaveCount(0, { timeout: 15_000 });
+        }
+        if ((await acceptSource.count()) > 0) {
+          await expect(acceptSource).toBeEnabled({ timeout: 30_000 });
+          await acceptSource.click();
+        }
+        await expect(acceptSource).toHaveCount(0, { timeout: 30_000 });
+      }
     }
     await expect(shopCreate).toBeEnabled({ timeout: 90_000 });
     // 作成シートは click で <dialog> が opener を覆う。開閉は見出しで固定する。
-    const createSheetHeading = page.getByRole("heading", { name: "買い物リストを作る" });
     if (!(await createSheetHeading.isVisible().catch(() => false))) {
       await shopCreate.click();
     }
@@ -237,7 +267,10 @@ test(
     tag: ["@smoke"],
   },
   async ({ authenticatedPage: page }) => {
-    await page.setViewportSize({ width: 320, height: 720 });
+    // E2E5: mobile のみ 320 固定。desktop project では Desktop Chrome 幅を保つ。
+    if (test.info().project.name === "mobile-chromium") {
+      await page.setViewportSize({ width: 320, height: 720 });
+    }
 
     const shoppingRequests: string[] = [];
     page.on("request", (request) => {
@@ -331,7 +364,8 @@ test(
     await expect(page.getByRole("button", { name: "買い物リストの差分を見る" })).toHaveCount(0);
 
     expect(shoppingRequests).toEqual([]);
-    // 製品の shopping intent / pending create は sessionStorage（localStorage では vacuous）
+    // SHOP3: pending create/reconcile は local 正本 + session mirror。
+    // idea 経路ではどちらにも kondate:shopping: が残らないこと。
     const shoppingSessionKeys = await page.evaluate(() =>
       Object.keys(sessionStorage).filter((key) => key.startsWith("kondate:shopping:")),
     );

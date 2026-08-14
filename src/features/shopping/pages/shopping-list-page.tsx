@@ -1,4 +1,4 @@
-import { useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import {
   shoppingItemMutationRequestSchema,
   type ShoppingItem,
@@ -13,6 +13,7 @@ import {
   clearPendingItemMutation,
   markItemMutationMismatchGuard,
   mutateShoppingItem,
+  pendingItemMutationStorageKey,
   readPendingItemMutation,
   revalidateActiveShoppingList,
   shouldBlockItemMutationAfterMismatch,
@@ -70,36 +71,76 @@ export function ShoppingListPage() {
   // list_version_conflict / mismatch は未適用確定なので sticky を捨てる。
   // SHOP3: shopping_safety_fingerprint_changed は適用済み+early FP fail もあり得るため
   // sticky を保持し、同一 intent の再送鍵を固定して dual-add に転化させない。
-  // SHOP2 (adversarial): ref / Storage は intentKey 単位 multi-slot。異 intent を clobber しない。
+  // SHOP2 (adversarial multi-slot): ref / Storage は intentKey 単位。異 intent を clobber しない。
+  // SHOP2 (adversarial 869bbe94): Storage が multi-tab 正本。Map だけ残る peer-clear 後は
+  // 適用済み key 再利用 → under-add になるため load は毎回 Storage を再検証する。
   // SHOP3 (adversarial): preflight の live FP が sticky と違うときは **同一 key のまま FP だけ
   // 書き戻して**再送する。適用済みなら hash mismatch → form abandon で dual-add を避ける。
   // SHOP1 (adversarial): mismatch 後の手動再入力は mismatch guard で 1 回確認ブロック（RLS 非緩和）。
+  // SHOP1 (adversarial 869bbe94): write/clear は claim と同じ Web Lock で multi-slot RMW を直列化。
   const pendingItemMutationRef = useRef(new Map<string, PendingItemMutationSticky>());
   const [itemMutationPending, setItemMutationPending] = useState(false);
 
   const itemStickyMapKey = (listId: string, intentKey: string) => `${listId}\0${intentKey}`;
 
-  /** ref が空なら local/sessionStorage から intent 単位で復元（SHOP2 multi-slot）。 */
+  /**
+   * Storage を multi-tab 正本として読む（SHOP2 multi-slot + peer-clear）。
+   * Map はキャッシュ。Storage 欠落時は Map の stale を捨て claim の新 mint へ進ませる。
+   */
   const loadItemMutationSticky = (
     listId: string,
     intentKey: string,
   ): PendingItemMutationSticky | null => {
     const mapKey = itemStickyMapKey(listId, intentKey);
-    const fromRef = pendingItemMutationRef.current.get(mapKey);
-    if (fromRef !== undefined && fromRef.request.listId === listId) return fromRef;
     const fromStorage = readPendingItemMutation(listId, intentKey);
-    if (fromStorage !== null) pendingItemMutationRef.current.set(mapKey, fromStorage);
-    return fromStorage;
+    if (fromStorage !== null && fromStorage.request.listId === listId) {
+      pendingItemMutationRef.current.set(mapKey, fromStorage);
+      return fromStorage;
+    }
+    // peer 成功 clear / TTL / 期限切れ刈り込み後: Map だけ残すと under-add
+    pendingItemMutationRef.current.delete(mapKey);
+    return null;
   };
-  const saveItemMutationSticky = (sticky: PendingItemMutationSticky): void => {
+  const saveItemMutationSticky = async (sticky: PendingItemMutationSticky): Promise<void> => {
     const mapKey = itemStickyMapKey(sticky.request.listId, sticky.intentKey);
     pendingItemMutationRef.current.set(mapKey, sticky);
-    writePendingItemMutation(sticky.request.listId, sticky);
+    await writePendingItemMutation(sticky.request.listId, sticky);
   };
-  const dropItemMutationSticky = (listId: string, intentKey: string): void => {
+  const dropItemMutationSticky = async (listId: string, intentKey: string): Promise<void> => {
     pendingItemMutationRef.current.delete(itemStickyMapKey(listId, intentKey));
-    clearPendingItemMutation(listId, intentKey);
+    await clearPendingItemMutation(listId, intentKey);
   };
+
+  // SHOP2: 他タブの localStorage clear/update で Map を即 purge（submit 前の stale 窓を縮退）
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea !== localStorage) return;
+      if (event.key === null) {
+        // storage.clear()
+        pendingItemMutationRef.current.clear();
+        return;
+      }
+      // kondate:shopping:item-mutate:<listId>
+      const prefix = "kondate:shopping:item-mutate:";
+      if (!event.key.startsWith(prefix)) return;
+      const listId = event.key.slice(prefix.length);
+      if (listId.length === 0) return;
+      // listId 抽出が storage key 正本と一致しない場合は無視（prefix 衝突の保険）
+      if (event.key !== pendingItemMutationStorageKey(listId)) return;
+      // list 単位で Map を落とす。次 load が Storage から再充填する。
+      // （key 削除 or entries 書換のどちらでも peer 成功 clear を拾う）
+      const map = pendingItemMutationRef.current;
+      for (const mapKey of [...map.keys()]) {
+        if (mapKey === listId || mapKey.startsWith(`${listId}\0`)) {
+          map.delete(mapKey);
+        }
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
   if (query.isPending)
     return (
       <main className="page-frame">
@@ -233,11 +274,11 @@ export function ShoppingListPage() {
           }),
         };
       }
-      saveItemMutationSticky(claimed);
+      await saveItemMutationSticky(claimed);
       const request = claimed.request;
       await mutateShoppingItem(request);
       // 成功（replay 含む）したら sticky を捨て、次の意図的な同内容 add は新 key になる
-      dropItemMutationSticky(list.id, intentKey);
+      await dropItemMutationSticky(list.id, intentKey);
       clearItemMutationMismatchGuard(list.id, intentKey);
       shouldClearUi = true;
       // 成功時のみ確認行用 id を更新（失敗後の refetch でも pending を汚さない）
@@ -259,7 +300,7 @@ export function ShoppingListPage() {
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "list_version_conflict") {
         // early replay は version を見ない。conflict は未適用確定 → sticky 破棄して次回は新 body
-        dropItemMutationSticky(list.id, intentKey);
+        await dropItemMutationSticky(list.id, intentKey);
         setMutationError("別の画面で更新されました。最新の内容を読み込みました");
       } else if (
         error instanceof Error &&
@@ -281,7 +322,7 @@ export function ShoppingListPage() {
         // SHOP3: FP rebuild 後の hash mismatch は「旧 body で適用済み」の強い信号。
         // sticky を捨てフォームも閉じ、同一内容の即時新 key dual-add を避ける。
         // SHOP1: 手動再入力 dual-add は mismatch guard（1 回確認ブロック）でさらに縮退。
-        dropItemMutationSticky(list.id, intentKey);
+        await dropItemMutationSticky(list.id, intentKey);
         if (value.operation === "add_manual") {
           markItemMutationMismatchGuard(list.id, intentKey);
         }

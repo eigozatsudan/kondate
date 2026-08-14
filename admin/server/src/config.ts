@@ -39,8 +39,15 @@ export function loadConfig(env: NodeJS.ProcessEnv): AdminConfig {
       : "0.0.0.0";
 
   const tokenRaw = env.ADMIN_LOCAL_TOKEN;
-  const localToken =
-    typeof tokenRaw === "string" && tokenRaw.length > 0 ? tokenRaw : null;
+  // ADM5: 空は従来どおり optional null。非空かつ短すぎる token は fail-closed。
+  let localToken: string | null = null;
+  if (typeof tokenRaw === "string" && tokenRaw.length > 0) {
+    // 循環 import を避けるため長さ定数をここにもリテラルで固定（token.ts と一致）
+    if (tokenRaw.length < 16) {
+      throw new Error("admin_local_token_too_short");
+    }
+    localToken = tokenRaw;
+  }
 
   const allowInsecureLocalDb = env.ADMIN_ALLOW_INSECURE_LOCAL_DB === "1";
 

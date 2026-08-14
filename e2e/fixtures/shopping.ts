@@ -189,6 +189,17 @@ export async function regenerateWholeMenu(page: Page, menuId: string): Promise<s
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
     timeout: 30_000,
   });
+  // E2E8: scenario 中身を helper で固定（default success 吸込みや no-op reconcile の偽 green を防ぐ）。
+  // alternate-menu 固有主菜・副菜（scenarios.mjs）。success 主菜「鶏肉と白菜のやわらか煮」とは不一致。
+  // 主菜は heading、副菜は料理 tab の accessible name（区分・料理名）で固定する。
+  await expect(page.getByRole("heading", { name: "鶏肉のさっぱり煮" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    page
+      .getByRole("tablist", { name: "料理" })
+      .getByRole("tab", { name: /きゅうりともやしの浅漬け/u }),
+  ).toBeVisible({ timeout: 15_000 });
   const parsed = /\/menus\/([0-9a-f-]+)$/u.exec(new URL(page.url()).pathname);
   if (parsed?.[1] === undefined) throw new Error("regenerated menu id was not present in URL");
   return parsed[1];

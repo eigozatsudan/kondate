@@ -651,15 +651,146 @@ it("includes fetch-side preparation in the deadline", async () => {
   expect(fetchImpl).not.toHaveBeenCalled();
 });
 
-it("rejects completion at 20,000ms even before the timer callback can run", async () => {
-  // body・JSON・envelope・wire・adapter は境界内で終え、成功 return 直前だけ境界へ達する。
-  mockDeadlineAtCall(11);
-  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(successfulResponse()));
+const dishRegenerationOutput = {
+  replacementDish: {
+    dishRef: "dish_1",
+    role: "main",
+    position: 1,
+    name: "炒め物",
+    description: "主菜",
+    cookingTimeMinutes: 15,
+    ingredients: [
+      {
+        ingredientRef: "ingredient_1",
+        position: 1,
+        name: "豚肉",
+        quantityValue: 100,
+        quantityText: "100g",
+        unit: "g",
+        storeSection: "meat_fish",
+        pantryRef: null,
+        labelConfirmationRequired: false,
+      },
+    ],
+    steps: [{ stepRef: "step_1", position: 1, instruction: "炒める" }],
+  },
+  timeline: [
+    {
+      timelineRef: "timeline_1",
+      position: 1,
+      startMinute: 0,
+      durationMinutes: 15,
+      instruction: "炒める",
+      dishRef: "dish_1",
+      stepRef: "step_1",
+    },
+  ],
+  adaptations: [],
+  pantryUsage: [],
+  labelConfirmations: [],
+} as const;
 
-  await expect(sendMenuGeneration({ messages: [], timeoutMs: 20_000 })).rejects.toEqual(
-    new OpenRouterCallError("generation_timeout"),
+const flyerWeeklyOutput = {
+  days: Array.from({ length: 7 }, (_, i) => ({
+    dayIndex: i + 1,
+    label: `曜日${String(i + 1)}`,
+    mainName: `主菜${String(i + 1)}`,
+    sideName: null,
+    ingredients: ["にんじん", "ごはん"],
+    notes: null,
+  })),
+};
+
+function contentEnvelopeResponse(content: unknown): Response {
+  return new Response(
+    JSON.stringify({
+      model: models[0],
+      choices: [{ message: { content: JSON.stringify(content) } }],
+    }),
+    { status: 200 },
   );
-});
+}
+
+// G5: content JSON 直後（now 8 回目）までは 19,999ms。schema 成功後の 9 回目以降が
+// 20,000ms でも、valid な結果を generation_timeout で捨てない。
+it.each([
+  ["full_menu", undefined, successfulResponse(), { mode: "full_menu", output: conflictOutput }],
+  [
+    "replacement_dish",
+    "replacement_dish" as const,
+    contentEnvelopeResponse(dishRegenerationOutput),
+    { mode: "replacement_dish", output: dishRegenerationOutput },
+  ],
+  [
+    "flyer_weekly",
+    "flyer_weekly" as const,
+    contentEnvelopeResponse(flyerWeeklyOutput),
+    { mode: "flyer_weekly", output: flyerWeeklyOutput },
+  ],
+] as const)(
+  "returns a valid %s parse even if the chat deadline elapses after schema success",
+  async (_mode, mode, response, expected) => {
+    mockDeadlineAtCall(9);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response));
+
+    await expect(
+      sendMenuGeneration({
+        messages: [],
+        timeoutMs: 20_000,
+        ...(mode === undefined ? {} : { mode }),
+      }),
+    ).resolves.toMatchObject({ ...expected, modelId: models[0] });
+  },
+);
+
+// G11: envelope Zod 成功直後（now 7 回目）および content JSON.parse 成功直後
+// （G5 がずらした 8 回目）が 20,000ms でも、メモリ上の valid 相当 payload を Zod へ進めて返す。
+it.each([
+  ["full_menu", 7, undefined, successfulResponse(), { mode: "full_menu", output: conflictOutput }],
+  ["full_menu", 8, undefined, successfulResponse(), { mode: "full_menu", output: conflictOutput }],
+  [
+    "replacement_dish",
+    7,
+    "replacement_dish" as const,
+    contentEnvelopeResponse(dishRegenerationOutput),
+    { mode: "replacement_dish", output: dishRegenerationOutput },
+  ],
+  [
+    "replacement_dish",
+    8,
+    "replacement_dish" as const,
+    contentEnvelopeResponse(dishRegenerationOutput),
+    { mode: "replacement_dish", output: dishRegenerationOutput },
+  ],
+  [
+    "flyer_weekly",
+    7,
+    "flyer_weekly" as const,
+    contentEnvelopeResponse(flyerWeeklyOutput),
+    { mode: "flyer_weekly", output: flyerWeeklyOutput },
+  ],
+  [
+    "flyer_weekly",
+    8,
+    "flyer_weekly" as const,
+    contentEnvelopeResponse(flyerWeeklyOutput),
+    { mode: "flyer_weekly", output: flyerWeeklyOutput },
+  ],
+] as const)(
+  "returns a valid %s parse even if the chat deadline elapses at now call %s",
+  async (_mode, deadlineCall, mode, response, expected) => {
+    mockDeadlineAtCall(deadlineCall);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response));
+
+    await expect(
+      sendMenuGeneration({
+        messages: [],
+        timeoutMs: 20_000,
+        ...(mode === undefined ? {} : { mode }),
+      }),
+    ).resolves.toMatchObject({ ...expected, modelId: models[0] });
+  },
+);
 
 it.each([
   ["top-level JSON", new Response("not-json", { status: 200 }), 5],
@@ -673,7 +804,8 @@ it.each([
       }),
       { status: 200 },
     ),
-    8,
+    // G11: envelope Zod 成功後 assert を外したので、catch の再判定が now 7 回目。
+    7,
   ],
   ["outside model", successfulResponse("other/model"), 6],
   [
@@ -695,7 +827,8 @@ it.each([
       }),
       { status: 200 },
     ),
-    9,
+    // G11: envelope Zod / content JSON 後の assert を外したので、catch が now 7 回目。
+    7,
   ],
   [
     "body",
@@ -723,7 +856,9 @@ it.each([
 );
 
 it("prioritizes an elapsed deadline over an adapter failure", async () => {
-  mockDeadlineAtCall(10);
+  // schema 失敗（adapter throw）は catch の再 assert が deadline を優先する。
+  // G11: envelope Zod / content JSON 後の assert を外したため、catch が now の 7 回目。
+  mockDeadlineAtCall(7);
   const adapterSpy = vi
     .spyOn(generationContracts, "toAiGenerationResponse")
     .mockImplementation(() => {

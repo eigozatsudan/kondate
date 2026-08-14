@@ -24,7 +24,7 @@ export type PlannerHomeProps = {
    * wizard の error と同型で role=alert。soft banner とは分離する。
    */
   error?: string | null;
-  /** 主 CTA を止める（遷移中など）。 */
+  /** 主 CTA と離脱リンク（直近献立 / 冷蔵庫）を止める（leave-flush 中など）。 */
   disabled?: boolean;
 };
 
@@ -63,12 +63,13 @@ export function PlannerHome({
           {...(onResumePending !== undefined ? { onResumePending } : {})}
           disabled={disabled}
         />
-        <HomeExpiringPantry items={expiringItems} />
+        <HomeExpiringPantry items={expiringItems} disabled={disabled} />
         <HomeRecentMenus
           menus={recentMenus}
           loading={recentMenusLoading}
           error={recentMenusError}
           {...(onRetryRecentMenus !== undefined ? { onRetry: onRetryRecentMenus } : {})}
+          disabled={disabled}
         />
         {footer}
       </Stack>

@@ -281,21 +281,46 @@ test("pending create envelope does not create a list after household safety chan
   await chooseCreateListModeNew(page);
   await page.getByRole("button", { name: "作成する" }).click();
 
-  // pending create envelope が sessionStorage に残ること（POST 保留中）
+  // pending create envelope が dual-write されること（POST 保留中）。
+  // SHOP3: localStorage が multi-tab 正本、session は同タブ mirror（session だけ見ると
+  // local 欠落退行が緑のまま残る — E2E1）。
   await expect
     .poll(
       async () =>
-        page.evaluate(
-          (menuId) =>
-            Object.keys(sessionStorage).some(
+        page.evaluate((menuId) => {
+          const match = (storage: Storage) =>
+            Object.keys(storage).some(
               (key) => key.startsWith("kondate:shopping:create:") && key.includes(menuId),
-            ),
-          shoppingMenuId,
-        ),
+            );
+          return match(sessionStorage) && match(localStorage);
+        }, shoppingMenuId),
       { timeout: 15_000 },
     )
     .toBe(true);
   expect(createPosts).toBeGreaterThanOrEqual(1);
+
+  // E2E1: 同一 origin の peer タブは session 空でも localStorage sticky を共有する。
+  // page.close + create resume の完全経路は重いため本 pass では sticky 共有まで固定する。
+  // about:blank では localStorage が SecurityError になるため app origin を開く。
+  const peer = await page.context().newPage();
+  try {
+    await peer.goto("/");
+    const peerSticky = await peer.evaluate((menuId) => {
+      const match = (storage: Storage) =>
+        Object.keys(storage).filter(
+          (key) => key.startsWith("kondate:shopping:create:") && key.includes(menuId),
+        );
+      return { local: match(localStorage), session: match(sessionStorage) };
+    }, shoppingMenuId);
+    expect(
+      peerSticky.local.length,
+      "peer tab must see create sticky in localStorage",
+    ).toBeGreaterThan(0);
+    // 新 page の sessionStorage は空。local 正本だけが multi-tab を支える。
+    expect(peerSticky.session).toEqual([]);
+  } finally {
+    await peer.close();
+  }
 
   // 横断: safety を崩してから保留中の create を解放する。
   // REST だけでは同タブ hard が飛ばないため、製品 hard 入口と同名 CustomEvent を注入
@@ -321,16 +346,17 @@ test("pending create envelope does not create a list after household safety chan
   // E2E6 / SHOP1: current_safety_revalidation_required では sticky を残し
   // （適用済み+応答ロスト後の新 key dual-create を防ぐ）、resume-suppress で
   // auto-resume の 409 ループを止める。ユーザー向け状態変化メッセージは出す。
+  // E2E1: local+session 両方に残ること（session のみ残存の退行を落とす）。
   await expect
     .poll(
       async () =>
-        page.evaluate(
-          (menuId) =>
-            Object.keys(sessionStorage).some(
+        page.evaluate((menuId) => {
+          const match = (storage: Storage) =>
+            Object.keys(storage).some(
               (key) => key.startsWith("kondate:shopping:create:") && key.includes(menuId),
-            ),
-          shoppingMenuId,
-        ),
+            );
+          return match(sessionStorage) && match(localStorage);
+        }, shoppingMenuId),
       { timeout: 15_000 },
     )
     .toBe(true);
@@ -391,13 +417,15 @@ test("pending reconcile envelope does not apply after household safety changes",
   });
   await page.getByRole("button", { name: "選んだ変更を反映" }).click();
 
-  // pending reconcile envelope が sessionStorage に残ること（POST 保留中）
+  // pending reconcile envelope が dual-write されること（POST 保留中）。SHOP3 / E2E1。
   await expect
     .poll(
       async () =>
-        page.evaluate(() =>
-          Object.keys(sessionStorage).some((key) => key.startsWith("kondate:shopping:reconcile:")),
-        ),
+        page.evaluate(() => {
+          const match = (storage: Storage) =>
+            Object.keys(storage).some((key) => key.startsWith("kondate:shopping:reconcile:"));
+          return match(sessionStorage) && match(localStorage);
+        }),
       { timeout: 15_000 },
     )
     .toBe(true);
@@ -416,12 +444,15 @@ test("pending reconcile envelope does not apply after household safety changes",
 
   // SHOP1: safety 409 でも reconcile sticky を保持（新 key dual-apply 防止）。
   // suppress で auto-resume ループは止め、状態変化メッセージを出す。
+  // E2E1: local+session の dual sticky（session のみでは multi-tab 正本欠落を見逃す）。
   await expect
     .poll(
       async () =>
-        page.evaluate(() =>
-          Object.keys(sessionStorage).some((key) => key.startsWith("kondate:shopping:reconcile:")),
-        ),
+        page.evaluate(() => {
+          const match = (storage: Storage) =>
+            Object.keys(storage).some((key) => key.startsWith("kondate:shopping:reconcile:"));
+          return match(sessionStorage) && match(localStorage);
+        }),
       { timeout: 15_000 },
     )
     .toBe(true);

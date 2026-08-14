@@ -15,7 +15,9 @@ import type {
   ShoppingDependencies,
   ShoppingMenuAggregate,
 } from "./shopping-adapter.js";
+import { snapshotPreviewedQuantities } from "../../../shared/shopping/previewed-quantities.js";
 import {
+  createReconciliationRequestHash,
   createShoppingListFromMenu,
   previewShoppingListDiff,
   reconcileShoppingList,
@@ -208,6 +210,23 @@ describe("createShoppingListFromMenu", () => {
     const replay = makeResponse({ replayed: true });
     const mocks = makeMocks();
     mocks.findMutationReplay.mockResolvedValue(replay);
+    // 世帯 invalid は list が残っている前提。不在は 404 側（SHOP3）で分ける。
+    mocks.loadActiveList.mockResolvedValue({
+      id: replay.listId,
+      status: "active",
+      version: 1,
+      items: [],
+      listLabelWarnings: [],
+    });
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: MENU_ID,
+        sourceMenuIdSnapshot: MENU_ID,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000001",
+        itemSources: [],
+      },
+    ]);
     mocks.revalidate.mockResolvedValue(
       makeRevalidation({
         status: "invalid",
@@ -219,6 +238,21 @@ describe("createShoppingListFromMenu", () => {
       code: "current_safety_revalidation_required",
     });
     expect(mocks.applyDraft).not.toHaveBeenCalled();
+  });
+
+  it("rejects a saved replay with shopping_list_not_found when the active list is gone (SHOP3)", async () => {
+    // create 成功後に応答ロスト、別タブが別 key の mode=new で archive すると
+    // loadActiveList は null。409 current_safety に畳むと sticky が TTL まで残る。
+    const replay = makeResponse({ replayed: true });
+    const mocks = makeMocks();
+    mocks.findMutationReplay.mockResolvedValue(replay);
+    mocks.loadActiveList.mockResolvedValue(null);
+    await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).rejects.toMatchObject({
+      status: 404,
+      code: "shopping_list_not_found",
+    });
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
+    expect(mocks.revalidate).not.toHaveBeenCalled();
   });
 
   it("looks up replay using the idempotency key and the precomputed canonical command hash", async () => {
@@ -786,6 +820,11 @@ function makeShoppingDependencies(
   };
 }
 
+const emptyPreviewedQuantities: ReconcileShoppingListRequest["previewedQuantities"] = {
+  add: [],
+  replace: [],
+};
+
 const reconcileCommand: ReconcileShoppingListRequest & { userId: string; listId: string } = {
   userId: USER_ID,
   listId: LIST_ID,
@@ -794,6 +833,7 @@ const reconcileCommand: ReconcileShoppingListRequest & { userId: string; listId:
   sourceMenuVersion: 1,
   idempotencyKey: IDEMPOTENCY_KEY,
   approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+  previewedQuantities: emptyPreviewedQuantities,
 };
 
 function sentWarnings(
@@ -1371,6 +1411,25 @@ describe("reconcileShoppingList", () => {
     vi.clearAllMocks();
   });
 
+  it("rejects a saved reconcile replay with shopping_list_not_found when the active list is gone (SHOP3)", async () => {
+    // create と同 helper。archive 済み list の replay を世帯 invalid に畳まない。
+    const saved = { listId: LIST_ID, version: 4, replayed: true };
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const revalidate = vi.fn<ShoppingDependencies["revalidate"]>();
+    const deps = makeShoppingDependencies({
+      findMutationReplay: vi.fn().mockResolvedValue(saved),
+      loadActiveList: vi.fn().mockResolvedValue(null),
+      applyReconciliation,
+      revalidate,
+    });
+    await expect(reconcileShoppingList(deps, reconcileCommand)).rejects.toMatchObject({
+      status: 404,
+      code: "shopping_list_not_found",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+    expect(revalidate).not.toHaveBeenCalled();
+  });
+
   it("returns a saved reconciliation only after live safety revalidation still passes", async () => {
     // SHOP1: reconcile replay も現行 safety 再確認後にだけ保存済み応答を返す
     const saved = { listId: LIST_ID, version: 4, replayed: true };
@@ -1435,20 +1494,20 @@ describe("reconcileShoppingList", () => {
       ]),
     });
     // pure add 承認を付けて prepare を通し、apply の競合パスへ進める
-    const draftKey = (
-      await previewShoppingListDiff(deps, {
-        userId: USER_ID,
-        listId: LIST_ID,
-        sourceMenuId: MENU_ID,
-        sourceMenuVersion: 1,
-        expectedListVersion: 3,
-      })
-    ).add[0]?.key;
+    const preview = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    const draftKey = preview.add[0]?.key;
     expect(draftKey).toBeDefined();
     await expect(
       reconcileShoppingList(deps, {
         ...reconcileCommand,
         approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: snapshotPreviewedQuantities(preview),
       }),
     ).resolves.toEqual(concurrentReplay);
     expect(findMutationReplay).toHaveBeenCalledTimes(2);
@@ -1472,19 +1531,19 @@ describe("reconcileShoppingList", () => {
       .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
     const deps = makeShoppingDependencies({ applyReconciliation });
     // pure add が pending なので key を承認して RPC へ進める
-    const draftKey = (
-      await previewShoppingListDiff(deps, {
-        userId: USER_ID,
-        listId: LIST_ID,
-        sourceMenuId: MENU_ID,
-        sourceMenuVersion: 1,
-        expectedListVersion: 3,
-      })
-    ).add[0]?.key;
+    const preview = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    const draftKey = preview.add[0]?.key;
     expect(draftKey).toBeDefined();
     await reconcileShoppingList(deps, {
       ...reconcileCommand,
       approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+      previewedQuantities: snapshotPreviewedQuantities(preview),
     });
     expect(applyReconciliation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1509,19 +1568,19 @@ describe("reconcileShoppingList", () => {
           new HttpError(409, "protected_item_conflict", "差分を作り直してください"),
         ),
     });
-    const draftKey = (
-      await previewShoppingListDiff(deps, {
-        userId: USER_ID,
-        listId: LIST_ID,
-        sourceMenuId: MENU_ID,
-        sourceMenuVersion: 1,
-        expectedListVersion: 3,
-      })
-    ).add[0]?.key;
+    const preview = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    const draftKey = preview.add[0]?.key;
     await expect(
       reconcileShoppingList(deps, {
         ...reconcileCommand,
         approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: snapshotPreviewedQuantities(preview),
       }),
     ).rejects.toMatchObject({
       status: 409,
@@ -1711,6 +1770,7 @@ describe("reconcileShoppingList", () => {
       reconcileShoppingList(deps, {
         ...reconcileCommand,
         approval: { addKeys: [onlyFirst!], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: snapshotPreviewedQuantities(diff),
       }),
     ).rejects.toMatchObject({
       status: 422,
@@ -1774,6 +1834,7 @@ describe("reconcileShoppingList", () => {
         replaceItemIds: diff.replace.map((item) => item.itemId),
         removeItemIds: [],
       },
+      previewedQuantities: snapshotPreviewedQuantities(diff),
     });
     expect(applyReconciliation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1837,6 +1898,7 @@ describe("reconcileShoppingList", () => {
         replaceItemIds: diff.replace.map((item) => item.itemId),
         removeItemIds: diff.remove.map((item) => item.itemId),
       },
+      previewedQuantities: snapshotPreviewedQuantities(diff),
     });
     expect(applyReconciliation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1864,19 +1926,19 @@ describe("reconcileShoppingList", () => {
       applyReconciliation,
       replaceCurrentSafetyProjection,
     });
-    const draftKey = (
-      await previewShoppingListDiff(deps, {
-        userId: USER_ID,
-        listId: LIST_ID,
-        sourceMenuId: MENU_ID,
-        sourceMenuVersion: 1,
-        expectedListVersion: 3,
-      })
-    ).add[0]?.key;
+    const preview = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    const draftKey = preview.add[0]?.key;
     expect(draftKey).toBeDefined();
     await reconcileShoppingList(deps, {
       ...reconcileCommand,
       approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+      previewedQuantities: snapshotPreviewedQuantities(preview),
     });
     expect(applyReconciliation).toHaveBeenCalled();
     // apply 前の assertActiveListSourcesCurrentlySafe は revalidate のみで
@@ -1897,22 +1959,174 @@ describe("reconcileShoppingList", () => {
       applyReconciliation,
       replaceCurrentSafetyProjection,
     });
-    const draftKey = (
-      await previewShoppingListDiff(deps, {
-        userId: USER_ID,
-        listId: LIST_ID,
-        sourceMenuId: MENU_ID,
-        sourceMenuVersion: 1,
-        expectedListVersion: 3,
-      })
-    ).add[0]?.key;
+    const preview = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    const draftKey = preview.add[0]?.key;
     await expect(
       reconcileShoppingList(deps, {
         ...reconcileCommand,
         approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: snapshotPreviewedQuantities(preview),
       }),
     ).resolves.toEqual({ listId: LIST_ID, version: 4, replayed: false });
     expect(applyReconciliation).toHaveBeenCalled();
+  });
+
+  it("rejects apply when pantry drift changes the previewed add quantity", async () => {
+    // preview/apply の数量ずれ: 献立 3・在庫 2 → add 1。同じ承認キーのまま
+    // apply 前に在庫を消すと再計算 add は 3 になる。list version は進まない。
+    const applyReconciliation = vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
+    const loadPantry = vi
+      .fn<ShoppingDependencies["loadPantry"]>()
+      .mockResolvedValue([{ name: "にんじん", quantity: 2, unit: "本" }]);
+    const deps = makeShoppingDependencies({
+      applyReconciliation,
+      loadPantry,
+      loadMenu: vi.fn<ShoppingDependencies["loadMenu"]>().mockResolvedValue(
+        makeMenu({
+          ingredients: [
+            {
+              ingredientId: INGREDIENT_ID,
+              dishId: DISH_ID,
+              dishName: "料理",
+              name: "にんじん",
+              quantityValue: 3,
+              quantityText: "3本",
+              unit: "本",
+              storeSection: "produce",
+            },
+          ],
+        }),
+      ),
+    });
+    const preview = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    expect(preview.add).toHaveLength(1);
+    expect(preview.add[0]?.quantityValue).toBe(1);
+    expect(preview.add[0]?.quantityText).toBe("1本");
+    const previewedAdd = preview.add[0]!;
+    loadPantry.mockResolvedValue([]);
+    await expect(
+      reconcileShoppingList(deps, {
+        ...reconcileCommand,
+        approval: {
+          addKeys: [previewedAdd.key],
+          replaceItemIds: [],
+          removeItemIds: [],
+        },
+        previewedQuantities: {
+          add: [
+            {
+              key: previewedAdd.key,
+              quantityValue: previewedAdd.quantityValue,
+              quantityText: previewedAdd.quantityText,
+            },
+          ],
+          replace: [],
+        },
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "approved_diff_mismatch",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+  });
+
+  it("applies the previewed add quantity when pantry is unchanged", async () => {
+    const applyReconciliation = vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
+    const deps = makeShoppingDependencies({
+      applyReconciliation,
+      loadPantry: vi
+        .fn<ShoppingDependencies["loadPantry"]>()
+        .mockResolvedValue([{ name: "にんじん", quantity: 2, unit: "本" }]),
+      loadMenu: vi.fn<ShoppingDependencies["loadMenu"]>().mockResolvedValue(
+        makeMenu({
+          ingredients: [
+            {
+              ingredientId: INGREDIENT_ID,
+              dishId: DISH_ID,
+              dishName: "料理",
+              name: "にんじん",
+              quantityValue: 3,
+              quantityText: "3本",
+              unit: "本",
+              storeSection: "produce",
+            },
+          ],
+        }),
+      ),
+    });
+    const preview = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    expect(preview.add[0]?.quantityValue).toBe(1);
+    const previewedAdd = preview.add[0]!;
+    await expect(
+      reconcileShoppingList(deps, {
+        ...reconcileCommand,
+        approval: {
+          addKeys: [previewedAdd.key],
+          replaceItemIds: [],
+          removeItemIds: [],
+        },
+        previewedQuantities: {
+          add: [
+            {
+              key: previewedAdd.key,
+              quantityValue: previewedAdd.quantityValue,
+              quantityText: previewedAdd.quantityText,
+            },
+          ],
+          replace: [],
+        },
+      }),
+    ).resolves.toEqual({ listId: LIST_ID, version: 4, replayed: false });
+    expect(applyReconciliation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resolvedDiff: expect.objectContaining({
+          add: [expect.objectContaining({ quantityValue: 1, quantityText: "1本" })],
+        }) as unknown as object,
+      }),
+    );
+  });
+
+  it("changes the reconciliation hash when previewed quantities differ for the same key", () => {
+    const base = {
+      ...reconcileCommand,
+      approval: { addKeys: ["carrot-add"], replaceItemIds: [], removeItemIds: [] },
+      previewedQuantities: {
+        add: [{ key: "carrot-add", quantityValue: 1, quantityText: "1本" }],
+        replace: [],
+      },
+    };
+    const drifted = {
+      ...base,
+      previewedQuantities: {
+        add: [{ key: "carrot-add", quantityValue: 3, quantityText: "3本" }],
+        replace: [],
+      },
+    };
+    expect(createReconciliationRequestHash(base)).not.toBe(
+      createReconciliationRequestHash(drifted),
+    );
   });
 });
 
@@ -2060,6 +2274,7 @@ describe("idea menu shopping boundaries", () => {
         sourceMenuVersion: 1,
         idempotencyKey: IDEMPOTENCY_KEY,
         approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: emptyPreviewedQuantities,
       }),
     ).resolves.toEqual({ listId: LIST_ID, version: 4, replayed: true });
     expect(mocks.loadMenuIdentity).toHaveBeenCalled();
@@ -2092,6 +2307,7 @@ describe("idea menu shopping boundaries", () => {
         sourceMenuVersion: 1,
         idempotencyKey: IDEMPOTENCY_KEY,
         approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: emptyPreviewedQuantities,
       }),
     ).rejects.toMatchObject({
       status: 422,
@@ -2130,6 +2346,7 @@ describe("idea menu shopping boundaries", () => {
         sourceMenuVersion: 1,
         idempotencyKey: IDEMPOTENCY_KEY,
         approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: emptyPreviewedQuantities,
       }),
     ).rejects.toMatchObject({
       status: 422,
@@ -2199,6 +2416,7 @@ describe("idea menu shopping boundaries", () => {
         sourceMenuVersion: 1,
         idempotencyKey: IDEMPOTENCY_KEY,
         approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: emptyPreviewedQuantities,
       }),
     ).rejects.toMatchObject({ status: 422, code: "idea_menu_not_supported" });
     expect(mocks.revalidate).not.toHaveBeenCalled();
@@ -2278,6 +2496,7 @@ describe("reconcile identity priority order", () => {
           sourceMenuVersion,
           idempotencyKey: IDEMPOTENCY_KEY,
           approval: { addKeys: [], replaceItemIds: [], removeItemIds: [] },
+          previewedQuantities: emptyPreviewedQuantities,
         }),
       ).rejects.toMatchObject({ status: expectedStatus, code: expectedCode });
       if (targetMode === "idea") {
