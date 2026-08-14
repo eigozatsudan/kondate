@@ -2,6 +2,7 @@ import type { AuthError } from "@supabase/supabase-js";
 import { z } from "zod";
 import {
   adjustedAuthNowMs,
+  browserSupabaseSessionStorageKey,
   buildAuthCallbackUrl,
   clearAuthFlow,
   clearBrowserSupabaseSessionStorage,
@@ -532,6 +533,65 @@ function isInFlightResumeDismissed(flowId: string, storage: Storage): boolean {
 }
 
 /**
+ * C-R2-1: SDK 単一 PKCE キー（createBrowserSupabaseClient の storageKey + "-code-verifier"）。
+ * signInWithOAuth は dismiss より先に V2 を書く。失敗時に V1 を戻し、
+ * in-flight exchange は generation 変化を dismiss 無しの non-terminal 条件にする。
+ * generation に TTL は無い（上書き試行の世代カウンタ。BrowserSupabaseClient は再定義しない）。
+ */
+const PKCE_CODE_VERIFIER_KEY = `${browserSupabaseSessionStorageKey}-code-verifier`;
+const PKCE_VERIFIER_GENERATION_KEY = `${PKCE_CODE_VERIFIER_KEY}-generation`;
+
+function readPkceCodeVerifier(storage: Storage): string | null {
+  try {
+    return storage.getItem(PKCE_CODE_VERIFIER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function restorePkceCodeVerifier(storage: Storage, value: string | null): void {
+  try {
+    if (value === null) {
+      storage.removeItem(PKCE_CODE_VERIFIER_KEY);
+    } else {
+      storage.setItem(PKCE_CODE_VERIFIER_KEY, value);
+    }
+  } catch {
+    // best-effort。storage 障害でも Google 開始失敗の throw は止めない
+  }
+}
+
+function readPkceVerifierGeneration(storage: Storage): number {
+  try {
+    const raw = storage.getItem(PKCE_VERIFIER_GENERATION_KEY);
+    if (raw === null) return 0;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function bumpPkceVerifierGeneration(storage: Storage): void {
+  try {
+    storage.setItem(PKCE_VERIFIER_GENERATION_KEY, String(readPkceVerifierGeneration(storage) + 1));
+  } catch {
+    // best-effort。世代が上がらなくても失敗経路は V1 復元を試みる
+  }
+}
+
+function wasPkceVerifierOverwrittenDuringExchange(
+  storage: Storage,
+  generationAtStart: number,
+  verifierAtStart: string | null,
+): boolean {
+  return (
+    readPkceVerifierGeneration(storage) !== generationAtStart ||
+    readPkceCodeVerifier(storage) !== verifierAtStart
+  );
+}
+
+/**
  * C4: dual exchange / loser 収束用。
  * - completion bus: 常に見てよい（当該 flow の完了印）。
  * - session: exchange 開始後（または claim 後）だけ見る。
@@ -623,6 +683,8 @@ export function createAuthGateway(
       // magic（token_hash）は PKCE を使わないので残す。
       // C-R1: dismiss は OAuth 成功後。失敗時に先行 flow を oauth_cancelled にしない。
       // 成功後に自 flow の dismiss を戻し、同時双方 dismiss を後勝ちで閉じる。
+      // C-R2-1: SDK は await 前に V2 を書く。失敗時は V1 を戻し、世代だけ残して
+      // in-flight の exchangeStarted 失敗を dismiss 無しでも non-terminal にする。
       const provider = deps.getPublicEnv();
       const flow = await createAuthFlow(
         returnTo,
@@ -631,6 +693,7 @@ export function createAuthGateway(
         undefined,
         provider.authProviderMode,
       );
+      const previousPkceVerifier = readPkceCodeVerifier(storage);
       try {
         const redirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
         if (provider.authProviderMode === "oauth_mock") {
@@ -649,6 +712,8 @@ export function createAuthGateway(
           clearAuthFlowUserDismissed(flow.id, storage);
           return;
         }
+        // 世代は SDK 書き込みより前に上げる。失敗後に V1 を戻しても in-flight が上書きを観測できる。
+        bumpPkceVerifierGeneration(storage);
         const { error } = await client.auth.signInWithOAuth({
           provider: "google",
           options: { redirectTo },
@@ -659,6 +724,7 @@ export function createAuthGateway(
         dismissSiblingOauthAuthorizationFlows(flow.id, storage);
         clearAuthFlowUserDismissed(flow.id, storage);
       } catch {
+        restorePkceCodeVerifier(storage, previousPkceVerifier);
         clearAuthFlow(flow.id, storage);
         throw new Error("Googleログインを開始できませんでした");
       }
@@ -1142,6 +1208,9 @@ export function createAuthGateway(
     let exchangeStarted = false;
     // C1: exchange 直前 fingerprint。catch の loser probe から参照するため try 外で保持する。
     let sessionBaseline: SessionProbeBaseline = { kind: "unknown" };
+    // C-R2-1: exchange 開始時の PKCE 世代/値。catch から参照するため try 外。
+    let pkceGenerationAtExchangeStart = 0;
+    let pkceVerifierAtExchangeStart: string | null = null;
     // C3/R2: タブ横断 dual exchange 抑止用。claim 成功後に acquire（locks + 確認遅延）し、
     // 完了/terminal で解放する。R3: 生存中は heartbeat で TTL を延長する。
     const exchangeInstanceId = `exchange-${flow.id}-${Math.random().toString(36).slice(2, 10)}`;
@@ -1240,6 +1309,8 @@ export function createAuthGateway(
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
+      pkceGenerationAtExchangeStart = readPkceVerifierGeneration(storage);
+      pkceVerifierAtExchangeStart = readPkceCodeVerifier(storage);
       exchangeStarted = true;
       const result =
         claimFlow.sessionExchange === "oauth_mock"
@@ -1335,6 +1406,17 @@ export function createAuthGateway(
             returnTo: flow.returnTo,
             flowId: flow.id,
           };
+        }
+        // C-R2-1: dismiss 前の verifier 上書き（失敗後勝ち / write→dismiss 窓）。
+        // V1 復元後でも世代差が残るので、比較が V1==V1 でも terminal にしない。
+        if (
+          wasPkceVerifierOverwrittenDuringExchange(
+            storage,
+            pkceGenerationAtExchangeStart,
+            pkceVerifierAtExchangeStart,
+          )
+        ) {
+          return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
         }
         // C4/C5: dual exchange loser や getSession ラグでも sibling 成功を取りこぼさない。
         // 短間隔で completion / session を再検査してから terminal clear する。
