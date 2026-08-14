@@ -9,7 +9,7 @@ import { validatedMenuSchema, type ValidatedMenu } from "../../../shared/contrac
 import type { ShareFailureCode } from "../../../shared/contracts/share-job.js";
 import { collectMenuTextSources } from "../../../shared/safety/allergens.js";
 
-/** 関門が比較する材料グラフのロック形（数量・構成。name はロックしない） */
+/** 関門が比較する材料グラフのロック形（数値・単位・構成。name / quantityText はロックしない） */
 export type ShareIngredientGraphLock = {
   readonly dishes: readonly {
     readonly id: string;
@@ -19,7 +19,6 @@ export type ShareIngredientGraphLock = {
       readonly id: string;
       readonly position: number;
       readonly quantityValue: number | null;
-      readonly quantityText: string;
       readonly unit: string | null;
       readonly storeSection: ValidatedMenu["dishes"][number]["ingredients"][number]["storeSection"];
     }[];
@@ -30,7 +29,7 @@ export type ShareServerGateResult = { ok: true } | { ok: false; code: ShareFailu
 
 /**
  * Pass 前（または canonical 直後）のメニューからグラフロックを切り出す。
- * name は含めない（一般化対象。数量・構成のみ不変）。
+ * name / quantityText は含めない（一般化対象。数値・単位・構成のみ不変）。
  */
 export function captureShareIngredientGraphLock(menu: ValidatedMenu): ShareIngredientGraphLock {
   return {
@@ -42,7 +41,6 @@ export function captureShareIngredientGraphLock(menu: ValidatedMenu): ShareIngre
         id: ingredient.id,
         position: ingredient.position,
         quantityValue: ingredient.quantityValue,
-        quantityText: ingredient.quantityText,
         unit: ingredient.unit,
         storeSection: ingredient.storeSection,
       })),
@@ -78,7 +76,6 @@ function graphsMatch(menu: ValidatedMenu, locked: ShareIngredientGraphLock): boo
         menuIngredient.id !== lockedIngredient.id ||
         menuIngredient.position !== lockedIngredient.position ||
         menuIngredient.quantityValue !== lockedIngredient.quantityValue ||
-        menuIngredient.quantityText !== lockedIngredient.quantityText ||
         menuIngredient.unit !== lockedIngredient.unit ||
         menuIngredient.storeSection !== lockedIngredient.storeSection
       ) {
@@ -103,7 +100,7 @@ export function menuHitsShareDenylist(menu: ValidatedMenu): boolean {
 
 /**
  * サーバー関門。Zod 不正・グラフ変異・denylist ヒットはすべて server_gate_failed。
- * lockedGraph は Pass 前後で数量が戻っていることの証拠。
+ * lockedGraph は Pass 前後で数量の数値・単位が戻っていることの証拠。
  */
 export function runShareServerGate(
   menu: unknown,

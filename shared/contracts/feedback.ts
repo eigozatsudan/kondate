@@ -15,11 +15,27 @@ export const FEEDBACK_DAILY_LIMIT = 5 as const;
 /** 送信上限の集計窓（時間）。RPC 既定 86400s と一致。 */
 export const FEEDBACK_RATE_WINDOW_HOURS = 24 as const;
 
+/** メニュー ID など UUID 形のパスセグメント。ops 相関を残さないために落とす。 */
+const uuidPathSegmentPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
+/**
+ * AP11: 履歴詳細などの UUID セグメントを落とし、ops にメニュー ID を残さない。
+ * `/history/<uuid>` → `/history`。非 UUID（`/history/abc-123`）はそのまま。
+ */
+export function sanitizeFeedbackClientPath(pathname: string): string {
+  const kept = pathname.split("/").filter((segment, index) => {
+    if (index === 0 && segment === "") return false;
+    if (segment === "") return false;
+    return !uuidPathSegmentPattern.test(segment);
+  });
+  return kept.length === 0 ? "/" : `/${kept.join("/")}`;
+}
+
 /**
  * 画面パスとして許可する clientPath。
  * UI は pathname のみ送る。改変クライアントによる scheme / ホスト / 空白 / 誘導文字列を拒否する（AP4）。
  * ドットのみのセグメント（`.` / `..` / `....`）も拒否し運用閲覧ノイズを抑える（AP9）。
- * 例: /settings, /history/abc-123, /planner? は不可（query なし）。
+ * UUID セグメントは畳む（AP11）。例: /settings, /history/abc-123, /planner? は不可（query なし）。
  */
 export const feedbackClientPathSchema = z
   .string()
@@ -35,7 +51,8 @@ export const feedbackClientPathSchema = z
         .filter(Boolean)
         .some((segment) => /^\.+$/u.test(segment)),
     "画面パスの形式が正しくありません",
-  );
+  )
+  .transform(sanitizeFeedbackClientPath);
 
 /**
  * フィードバック送信リクエスト。

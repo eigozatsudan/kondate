@@ -88,8 +88,8 @@ export type ShareGeneralizeAiPipelineResult =
     };
 
 /**
- * モデル自由文パッチをメニューへ merge し、グラフロックの数量・構成を復元する。
- * id 集合が一致しない・adaptation 数が崩れる場合は null（fail-closed）。
+ * モデル自由文パッチをメニューへ merge し、グラフロックの数値・単位・構成を復元する。
+ * quantityText はパッチ（一般化結果）を採用する。id 集合が崩れる場合は null（fail-closed）。
  */
 export function mergeShareFreeTextAndRestoreLock(
   menu: ValidatedMenu,
@@ -145,12 +145,12 @@ export function mergeShareFreeTextAndRestoreLock(
       ) {
         return null;
       }
-      // name はモデル自由文。数量・単位・区画は常にロックから復元（モデル改変を無視）
+      // name / quantityText はモデル自由文。数値・単位・区画だけロックから復元
       ingredients.push({
         ...sourceIngredient,
         name: patchIngredient.name,
         quantityValue: lockedIngredient.quantityValue,
-        quantityText: lockedIngredient.quantityText,
+        quantityText: patchIngredient.quantityText,
         unit: lockedIngredient.unit,
         storeSection: lockedIngredient.storeSection,
       });

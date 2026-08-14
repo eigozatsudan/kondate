@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   shareDenylistVersion,
   shareGuaranteePhrases,
+  sharePiiGivenNameBareStems,
   sharePiiGivenNameStems,
   sharePiiLiteralPhrases,
   textHitsShareDenylist,
@@ -9,7 +10,7 @@ import {
 
 describe("share-denylist.v1", () => {
   it("locks a single denylist version", () => {
-    expect(shareDenylistVersion).toBe("2026-08-07.v3");
+    expect(shareDenylistVersion).toBe("2026-08-14.v4");
   });
 
   it("flags guarantee phrase アレルギーでも安心", () => {
@@ -60,11 +61,33 @@ describe("share-denylist.v1", () => {
     expect(textHitsShareDenylist("東京都千代田区の市場で買った")).toBe(true);
   });
 
+  it("AP2: flags 太郎が / suffix-less 太郎 / パパ用 without loosening existing hits", () => {
+    expect(sharePiiLiteralPhrases).toContain("太郎が");
+    expect(sharePiiLiteralPhrases).toContain("花子が");
+    expect(sharePiiLiteralPhrases).toContain("パパ用");
+    expect(sharePiiLiteralPhrases).toContain("ママ用");
+    expect(sharePiiGivenNameStems).toContain("太郎");
+    expect(sharePiiGivenNameStems).toContain("花子");
+    expect(sharePiiGivenNameBareStems).toContain("太郎");
+    expect(sharePiiGivenNameBareStems).toContain("花子");
+    expect(textHitsShareDenylist("太郎が好きなハンバーグ")).toBe(true);
+    expect(textHitsShareDenylist("太郎ハンバーグ")).toBe(true);
+    expect(textHitsShareDenylist("花子と一緒に")).toBe(true);
+    expect(textHitsShareDenylist("パパ用の取り分け")).toBe(true);
+    expect(textHitsShareDenylist("ママ用に薄味")).toBe(true);
+    expect(textHitsShareDenylist("1歳用の取り分け")).toBe(true);
+    // 既存ヒットは緩めない
+    expect(textHitsShareDenylist("太郎の特製みそ")).toBe(true);
+    expect(textHitsShareDenylist("パパの残り")).toBe(true);
+  });
+
   it("does not flag ordinary food phrases", () => {
     expect(textHitsShareDenylist("ごはんを握る")).toBe(false);
     expect(textHitsShareDenylist("にんじん")).toBe(false);
     expect(textHitsShareDenylist("年齢と食欲に合わせた量")).toBe(false);
     expect(textHitsShareDenylist("鶏肉を焼く")).toBe(false);
+    // 食品複合の「桃太郎」は suffix 無し stem で落とさない
+    expect(textHitsShareDenylist("桃太郎トマトを切る")).toBe(false);
   });
 
   it("flags email-like residue", () => {

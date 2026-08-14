@@ -26,6 +26,7 @@ export async function getCurrentPrivacyConsent(
  * 現行 notice_version の同意行を返すか INSERT する。
  * AP6 residual-intentional: ゲート権威は DB 行の有無。説明本文の読了証明・content hash は無い。
  * 改変クライアントの own-user insert はサーバ生成の consent SELECT でも通る（elevation ではない）。
+ * AP4: INSERT はアプリも DB ポリシーも現行 privacyNoticeVersion のみ（未来版の先書きを閉じる）。
  */
 export async function acceptCurrentPrivacyConsent(
   client: BrowserSupabaseClient,

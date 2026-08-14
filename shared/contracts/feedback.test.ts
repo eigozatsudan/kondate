@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   feedbackClientPathSchema,
   feedbackEnvelopeSchema,
+  sanitizeFeedbackClientPath,
   submitFeedbackRequestSchema,
 } from "./feedback.js";
 
@@ -10,6 +11,19 @@ describe("feedbackClientPathSchema (AP4)", () => {
     expect(feedbackClientPathSchema.parse("/settings")).toBe("/settings");
     expect(feedbackClientPathSchema.parse("/history/abc-123")).toBe("/history/abc-123");
     expect(feedbackClientPathSchema.parse("/")).toBe("/");
+  });
+
+  it("AP11: folds UUID menu segments out of clientPath", () => {
+    expect(sanitizeFeedbackClientPath("/history/550e8400-e29b-41d4-a716-446655440000")).toBe(
+      "/history",
+    );
+    expect(feedbackClientPathSchema.parse("/history/550e8400-e29b-41d4-a716-446655440000")).toBe(
+      "/history",
+    );
+    expect(feedbackClientPathSchema.parse("/menus/550e8400-e29b-41d4-a716-446655440000")).toBe(
+      "/menus",
+    );
+    expect(feedbackClientPathSchema.parse("/history/abc-123")).toBe("/history/abc-123");
   });
 
   it("rejects schemes, hosts, query, spaces, and free-form lures", () => {

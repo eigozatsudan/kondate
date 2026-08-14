@@ -8,7 +8,7 @@
  * を fail-closed で追加する。オープン集合の完全人名認識は製品再設計域のため residual。
  */
 
-export const shareDenylistVersion = "2026-08-07.v3" as const;
+export const shareDenylistVersion = "2026-08-14.v4" as const;
 
 /**
  * 安全を保証する表現。共有プールでは安全を保証しない方針と矛盾するため拒否。
@@ -39,8 +39,12 @@ export const sharePiiLiteralPhrases = [
   "太郎は",
   "太郎を",
   "太郎に",
+  "太郎が",
   "花子の",
   "花子は",
+  "花子を",
+  "花子に",
+  "花子が",
   "うちの子",
   "うちの残り",
   // 世帯・親族の残渣（部分一致。うちの* は「うちの」でも拾う）
@@ -61,8 +65,12 @@ export const sharePiiLiteralPhrases = [
   "本名",
   "ママの",
   "パパの",
+  "ママ用",
+  "パパ用",
   "おばあちゃんの",
   "おじいちゃんの",
+  // 年齢帯の世帯残渣（「1歳用」等）。一般の分量表現とは衝突しにくい
+  "歳用",
 ] as const;
 
 /**
@@ -71,6 +79,8 @@ export const sharePiiLiteralPhrases = [
  */
 export const sharePiiGivenNameStems = [
   // 2 文字以上のみ（1 文字 stem は食品・一般語と衝突しやすい）
+  "太郎",
+  "花子",
   "健太",
   "翔太",
   "直樹",
@@ -98,6 +108,14 @@ export const sharePiiGivenNameStems = [
 ] as const;
 
 const givenNameParticleSuffixes = ["の", "は", "を", "に", "が"] as const;
+
+/**
+ * AP2: suffix 無しの「太郎ハンバーグ」「花子と一緒に」を拾う。
+ * 食品複合（桃太郎トマト等）は先に除いてから部分一致する。
+ */
+export const sharePiiGivenNameBareStems = ["太郎", "花子"] as const;
+
+const givenNameFoodCompounds = ["桃太郎", "金太郎", "浦島太郎"] as const;
 
 /**
  * 明らかに非食品・有害な指示の断片。
@@ -150,6 +168,14 @@ export function textHitsShareDenylist(text: string): boolean {
     for (const particle of givenNameParticleSuffixes) {
       if (trimmed.includes(`${stem}${particle}`)) return true;
     }
+  }
+  // AP2: suffix 無し。食品複合を除いた残りに stem があればヒット
+  let bareHaystack = trimmed;
+  for (const compound of givenNameFoodCompounds) {
+    bareHaystack = bareHaystack.split(compound).join("");
+  }
+  for (const stem of sharePiiGivenNameBareStems) {
+    if (bareHaystack.includes(stem)) return true;
   }
   for (const phrase of shareHarmfulInstructionPhrases) {
     if (trimmed.includes(phrase)) return true;

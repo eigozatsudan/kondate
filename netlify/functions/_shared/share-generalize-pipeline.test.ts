@@ -226,7 +226,8 @@ describe("runShareGeneralizeAiPipeline", () => {
     const restored = merged.dishes[0]?.ingredients[0];
     expect(restored?.name).toBe("白米ごはん");
     expect(restored?.quantityValue).toBe(firstIngredient?.quantityValue);
-    expect(restored?.quantityText).toBe(firstIngredient?.quantityText);
+    // AP1: 数値・単位はロック。quantityText はパッチ自由文（ここでは extract 元の改変文）
+    expect(restored?.quantityText).toBe("改変された量");
     expect(restored?.unit).toBe(firstIngredient?.unit);
     expect(restored?.storeSection).toBe(firstIngredient?.storeSection);
     expect(merged.dishes[0]?.name).toBe("一般化した主食");
@@ -250,9 +251,50 @@ describe("runShareGeneralizeAiPipeline", () => {
     expect(publishedMenu.dishes[0]?.ingredients[0]?.quantityValue).toBe(
       firstIngredient?.quantityValue,
     );
-    expect(publishedMenu.dishes[0]?.ingredients[0]?.quantityText).toBe(
-      firstIngredient?.quantityText,
-    );
+    expect(publishedMenu.dishes[0]?.ingredients[0]?.unit).toBe(firstIngredient?.unit);
+    expect(publishedMenu.dishes[0]?.ingredients[0]?.quantityText).toBe("改変された量");
+  });
+
+  it("AP1: merge keeps locked numeric quantity and adopts generalized quantityText", () => {
+    const menu = makeValidatedMenu();
+    const firstIngredient = menu.dishes[0]?.ingredients[0];
+    expect(firstIngredient).toBeDefined();
+    const menuWithHouseholdQuantity: ValidatedMenu = {
+      ...menu,
+      dishes: menu.dishes.map((dish, dishIndex) =>
+        dishIndex === 0
+          ? {
+              ...dish,
+              ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+                ingredientIndex === 0
+                  ? { ...ingredient, quantityText: "太郎が食べる分 大さじ1" }
+                  : ingredient,
+              ),
+            }
+          : dish,
+      ),
+    };
+    const lock = captureShareIngredientGraphLock(menuWithHouseholdQuantity);
+    const patch = identityPatch(menuWithHouseholdQuantity);
+    const generalized: ShareFreeTextPatch = {
+      ...patch,
+      dishes: patch.dishes.map((dish, dishIndex) =>
+        dishIndex === 0
+          ? {
+              ...dish,
+              ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+                ingredientIndex === 0 ? { ...ingredient, quantityText: "大さじ1" } : ingredient,
+              ),
+            }
+          : dish,
+      ),
+    };
+    const merged = mergeShareFreeTextAndRestoreLock(menuWithHouseholdQuantity, generalized, lock);
+    expect(merged).not.toBeNull();
+    const restored = merged?.dishes[0]?.ingredients[0];
+    expect(restored?.quantityValue).toBe(firstIngredient?.quantityValue);
+    expect(restored?.unit).toBe(firstIngredient?.unit);
+    expect(restored?.quantityText).toBe("大さじ1");
   });
 
   it("does not publish when Pass2 fails after Pass1 ok", async () => {

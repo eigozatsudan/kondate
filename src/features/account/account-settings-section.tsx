@@ -7,7 +7,12 @@ import {
   SIGN_OUT_TIMEOUT_MS,
 } from "@/features/auth/auth-cleanup";
 import { requireAccessToken } from "@/features/auth/session";
-import { accountDeletionAnonymousShareNote } from "@/features/privacy/privacy-copy";
+import {
+  accountDeletionAnonymousShareNote,
+  accountDeletionOtherDeviceNote,
+  accountDeletionProviderPromptNote,
+  accountDeletionStripeResidualNote,
+} from "@/features/privacy/privacy-copy";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { DeleteAccountDialog } from "./delete-account-dialog";
 
@@ -92,6 +97,9 @@ export function DangerZone({
           </p>
           {/* AP4: 方針 B（匿名共有 pool 残存）を削除導線でも開示（privacy-copy と単一ソース） */}
           <p>{accountDeletionAnonymousShareNote}</p>
+          <p>{accountDeletionStripeResidualNote}</p>
+          <p>{accountDeletionProviderPromptNote}</p>
+          <p>{accountDeletionOtherDeviceNote}</p>
           <button
             type="button"
             className="min-h-11 rounded-xl bg-danger-700 px-4 font-semibold text-white"

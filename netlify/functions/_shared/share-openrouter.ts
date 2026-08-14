@@ -40,6 +40,8 @@ export const shareFreeTextPatchSchema = z
                   .object({
                     id: z.uuid(),
                     name: z.string().trim().min(1).max(100),
+                    // AP1: quantityText は自由文（数量ロックの対象外）。数値・単位はサーバが復元する。
+                    quantityText: z.string().trim().min(1).max(60),
                   })
                   .strict(),
               )
@@ -150,7 +152,7 @@ function isExactLocalMockBaseUrl(value: string): boolean {
   }
 }
 
-/** メニューからモデル入力用の自由文スナップショットを切り出す（数量は載せない） */
+/** メニューからモデル入力用の自由文スナップショットを切り出す（数量の数値・単位は載せない） */
 export function extractShareFreeTextForPrompt(menu: ValidatedMenu): ShareFreeTextPatch {
   return {
     dishes: menu.dishes.map((dish) => ({
@@ -160,6 +162,8 @@ export function extractShareFreeTextForPrompt(menu: ValidatedMenu): ShareFreeTex
       ingredients: dish.ingredients.map((ingredient) => ({
         id: ingredient.id,
         name: ingredient.name,
+        // AP1: 数量自由文も一般化対象。quantityValue / unit は載せない。
+        quantityText: ingredient.quantityText,
       })),
       steps: dish.steps.map((step) => ({
         id: step.id,
@@ -193,7 +197,8 @@ const PASS1_SYSTEM =
   "人名・家族呼び・「うちの」等の固有表現を一般的な表現に置き換えてください。" +
   "医療・アレルギー安全の保証表現は書かないでください。" +
   "材料・料理の id は入力と同一を維持してください。" +
-  "数量・構成は変更対象外です（自由文の name / description / instruction 等のみ）。" +
+  "数量の数値・単位・構成は変更対象外です。" +
+  "quantityText は自由文として一般化してください（人名や世帯呼びを残さない）。" +
   "利用者向け文言はすべて日本語で書いてください。";
 
 const PASS2_SYSTEM =
@@ -202,12 +207,13 @@ const PASS2_SYSTEM =
   "プライバシー残渣（人名・家族呼び・個人特定っぽい表現）、保証表現、" +
   "共有向きでない表現を除去または中立表現へ直してください。" +
   "材料・料理の id は入力と同一を維持してください。" +
-  "数量・構成は変更対象外です。" +
+  "数量の数値・単位・構成は変更対象外です。" +
+  "quantityText は自由文として点検し、人名や世帯呼びが残っていれば中立な分量表現へ直してください。" +
   "利用者向け文言はすべて日本語で書いてください。";
 
 /**
- * Pass 用メッセージ列。自由文のみを JSON で渡し、数量フィールドは載せない。
- * プロンプト本文は呼び出し元でもログしないこと。
+ * Pass 用メッセージ列。自由文のみを JSON で渡し、数量の数値・単位は載せない。
+ * quantityText は一般化対象。プロンプト本文は呼び出し元でもログしないこと。
  */
 export function buildSharePassMessages(
   pass: SharePassKind,
