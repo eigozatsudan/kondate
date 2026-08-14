@@ -21,6 +21,22 @@ const generationGuaranteePhrases = [
 const GUARANTEE_PHRASE_MESSAGE = "利用者向け本文に安全保証の表現は書けません";
 
 /**
+ * 保持料理から保証フレーズを剥離するときのプレースホルダ。
+ * schema の min(1) を満たし、generationGuaranteePhrases に当たらない。
+ */
+export const guaranteePhraseRedaction = {
+  name: "料理",
+  description: "料理の説明",
+  instruction: "手順を確認する",
+  ingredientName: "材料",
+  quantityText: "適量",
+  unit: "g",
+} as const;
+
+/** fallback 自身が針に当たったときの最終プレースホルダ */
+const GUARANTEE_PHRASE_REDACTION_OMITTED = "（省略）";
+
+/**
  * haystack / needle を同じ空間へ寄せる。
  * NFKC → 書式制御除去 → 空白類削除 → カタカナ→ひらがな。
  * normalizeFoodText の句読点除去は使わない。免責の「である」境界を残し、
@@ -58,6 +74,16 @@ function pushIfGuarantee(
 }
 
 /**
+ * 保証フレーズを含む葉をプレースホルダへ置き換える。ヒットしなければ原文のまま。
+ * 一品再生成の保持料理を再 persist する前に使い、結果画面へ「安全です」を出さない（G3）。
+ */
+export function redactGuaranteePhraseText(text: string, fallback: string): string {
+  if (!textHitsGenerationGuarantee(text)) return text;
+  if (!textHitsGenerationGuarantee(fallback)) return fallback;
+  return GUARANTEE_PHRASE_REDACTION_OMITTED;
+}
+
+/**
  * 新規・まるごと再生成向け。利用者向け本文の保証フレーズを拒否する。
  * 失敗は invalid_menu_structure に閉じる（新 code は足さない）。
  */
@@ -71,7 +97,7 @@ export function collectGuaranteePhraseIssues(menu: GeneratedMenu): readonly Menu
 
 /**
  * 一品再生成の今回 AI 出力だけを見る。
- * 保持料理の過去文（保証フレーズ残渣を含む）は落とさない。
+ * 保持料理の残渣は materialize 側で剥離し、本関数では見ない。
  */
 export function collectGuaranteePhraseIssuesFromDishRegenAiOutput(
   output: DishRegenerationAiOutput,

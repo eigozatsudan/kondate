@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { collectGuaranteePhraseIssuesFromDishRegenAiOutput } from "./guarantee-phrases.js";
+import {
+  collectGuaranteePhraseIssuesFromDishRegenAiOutput,
+  guaranteePhraseRedaction,
+  redactGuaranteePhraseText,
+} from "./guarantee-phrases.js";
 
 describe("collectGuaranteePhraseIssuesFromDishRegenAiOutput", () => {
   const baseOutput = {
@@ -78,6 +82,16 @@ describe("collectGuaranteePhraseIssuesFromDishRegenAiOutput", () => {
         },
       }),
     ).toEqual([guaranteeIssue]);
+  });
+
+  it("redacts guarantee phrasing and leaves ordinary text unchanged", () => {
+    expect(
+      redactGuaranteePhraseText("さっと炒める主菜", guaranteePhraseRedaction.description),
+    ).toBe("さっと炒める主菜");
+    expect(
+      redactGuaranteePhraseText("小麦アレルギーでも安全です", guaranteePhraseRedaction.description),
+    ).toBe(guaranteePhraseRedaction.description);
+    expect(redactGuaranteePhraseText("安全です", "アレルギーでも安心")).toBe("（省略）");
   });
 
   it("does not treat the fixed disclaimer as a guarantee after folding", () => {

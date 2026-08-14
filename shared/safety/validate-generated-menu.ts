@@ -184,11 +184,17 @@ function containsRequestedMainIngredient(
 /** validateGeneratedMenu の追加オプション。 */
 export type ValidateGeneratedMenuOptions = {
   /**
-   * 利用者向け文言の日本語ゲートと保証フレーズゲート。既定 true。
-   * 一品再生成では保持料理に過去の英語 description / 保証文が残ることがあるため、
-   * AI 出力側で別途検査し、ここでは false にする。
+   * 利用者向け文言の日本語ゲート。既定 true。
+   * 一品再生成では保持料理に過去の英語 description が残ることがあるため、
+   * AI 出力側で別途検査し、ここでは false にする。保証フレーズとは独立。
    */
   checkJapaneseUserText?: boolean;
+  /**
+   * 「安全です」等の保証フレーズゲート。既定 true。
+   * 再生成ソース関門では家族安全（allergen / food-rules）と分離する。
+   * 保証残渣を current_safety_revalidation_required に畳まない（G2）。
+   */
+  checkGuaranteePhrases?: boolean;
 };
 
 function collectCommonMenuIssues(
@@ -359,10 +365,12 @@ function collectCommonMenuIssues(
     });
   }
   // 英語・他言語だけの name/description/手順 等を拒否（UI は日本語前提）。
-  // 「安全です」「アレルギー対応済み」等の保証コピーも同じ葉で拒否する（G6）。
-  // 一品再生成では保持料理の過去英語文・保証文を落とさないよう呼び出し側で抑止する。
+  // 「安全です」「アレルギー対応済み」等の保証コピーは別フラグ（G6 / G2 / G3）。
+  // 一品再生成は保持料理の過去英語だけ抑止し、保証フレーズは既定のまま拒否する。
   if (options.checkJapaneseUserText !== false) {
     issues.push(...collectNonJapaneseUserTextIssues(generated));
+  }
+  if (options.checkGuaranteePhrases !== false) {
     issues.push(...collectGuaranteePhraseIssues(generated));
   }
   return issues;

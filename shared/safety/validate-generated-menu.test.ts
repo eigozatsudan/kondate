@@ -1652,16 +1652,31 @@ it("does not treat the fixed disclaimer wording as a guarantee phrase", () => {
   expect(validateGeneratedMenu(menu, makeGenerationContext())).toMatchObject({ ok: true });
 });
 
-it("skips retained-dish guarantee phrases when the user-text gate is off", () => {
+it("still rejects guarantee phrases when only the Japanese language gate is off", () => {
   const base = makeGeneratedMenu();
   const menu = makeGeneratedMenu({
     dishes: base.dishes.map((dish, index) =>
       index === 1 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
     ),
   });
-  // 一品再生成の保持料理に残る保証文は本線ゲートを抑止して通す（AI 出力側で別途見る）
+  // 日本語ゲートと保証フレーズゲートは独立。一品再生成は英語残渣だけ抑止し、
+  // 保持料理の「安全です」は本線でも拒否する（G3）。
   expect(
     validateGeneratedMenu(menu, makeGenerationContext(), { checkJapaneseUserText: false }).ok,
+  ).toBe(false);
+  expect(validateGeneratedMenu(menu, makeGenerationContext()).ok).toBe(false);
+});
+
+it("can skip only the guarantee-phrase gate for household source revalidation", () => {
+  const base = makeGeneratedMenu();
+  const menu = makeGeneratedMenu({
+    dishes: base.dishes.map((dish, index) =>
+      index === 0 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
+    ),
+  });
+  // G2: 再生成ソース関門は保証残渣を家族安全 422 に畳まない。
+  expect(
+    validateGeneratedMenu(menu, makeGenerationContext(), { checkGuaranteePhrases: false }).ok,
   ).toBe(true);
   expect(validateGeneratedMenu(menu, makeGenerationContext()).ok).toBe(false);
 });

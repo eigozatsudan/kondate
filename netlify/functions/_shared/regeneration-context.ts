@@ -25,6 +25,10 @@ import {
 import { createFinalizeSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { createIdeaSafetyFingerprint } from "../../../shared/safety/idea-fingerprint.js";
+import {
+  guaranteePhraseRedaction,
+  redactGuaranteePhraseText,
+} from "../../../shared/safety/guarantee-phrases.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { formatQuantityValue } from "../../../shared/shopping/normalize.js";
 import { normalizeIngredientQuantity } from "../../../shared/shopping/quantity-display.js";
@@ -598,9 +602,13 @@ export async function loadRegenerationExecutionContext(
       generationContext.targetMembers.map((member) => member.anonymousRef),
     );
     const projectedForGate = projectMenuForSurvivingTargets(source.menu, survivingRefs);
+    // G2: ソースの保証フレーズ残渣は家族安全失敗ではない。
+    // 既定ゲートだと 422 current_safety_revalidation_required に畳み、
+    // 表示側（allergen / food-rules）が OK のまま再生成が始まらない。
     const validation = validateGeneratedMenu(
       toStoredRevalidationCandidate(projectedForGate, generationContext),
       generationContext,
+      { checkGuaranteePhrases: false },
     );
     if (!validation.ok) {
       throw new HttpError(
@@ -882,8 +890,9 @@ export function materializeDishRegenerationCandidate(
     id: requiredMap(dishIdByRef, dish.dishRef),
     role: dish.role,
     position: dish.position,
-    name: dish.name,
-    description: dish.description,
+    // G3: 保持料理の保証フレーズを新 menu 行へ再 persist / 表示しない
+    name: redactGuaranteePhraseText(dish.name, guaranteePhraseRedaction.name),
+    description: redactGuaranteePhraseText(dish.description, guaranteePhraseRedaction.description),
     cookingTimeMinutes: dish.cookingTimeMinutes,
     ingredients: dish.ingredients.map((item) => {
       // R2/G5/G17/G4: pantryRef 正当時は trusted name/unit と planned 数量へ揃える
@@ -919,10 +928,13 @@ export function materializeDishRegenerationCandidate(
       return {
         id: requiredMap(ingredientIdByRef, item.ingredientRef),
         position: item.position,
-        name,
+        name: redactGuaranteePhraseText(name, guaranteePhraseRedaction.ingredientName),
         quantityValue,
-        quantityText,
-        unit,
+        quantityText: redactGuaranteePhraseText(
+          quantityText,
+          guaranteePhraseRedaction.quantityText,
+        ),
+        unit: unit === null ? null : redactGuaranteePhraseText(unit, guaranteePhraseRedaction.unit),
         storeSection: item.storeSection,
         pantrySelectionId:
           item.pantryRef === null ? null : requiredMap(selectionIdByRef, item.pantryRef),
@@ -932,7 +944,10 @@ export function materializeDishRegenerationCandidate(
     steps: dish.steps.map((step) => ({
       id: requiredMap(stepIdByRef, step.stepRef),
       position: step.position,
-      instruction: step.instruction,
+      instruction: redactGuaranteePhraseText(
+        step.instruction,
+        guaranteePhraseRedaction.instruction,
+      ),
     })),
   });
 

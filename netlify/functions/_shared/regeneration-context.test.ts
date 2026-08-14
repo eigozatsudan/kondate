@@ -568,6 +568,31 @@ describe("loadRegenerationExecutionContext", () => {
     ).rejects.toMatchObject({ code: "current_safety_revalidation_required" });
   });
 
+  it("does not map source guarantee phrases to current_safety_revalidation_required", async () => {
+    // G2: 歴史行の「安全です」は家族 allergen/food-rules 失敗ではない。
+    // ソース関門を 422 current_safety_revalidation_required に畳むと、
+    // 家族安全 OK のまま「家族設定では使えない」と誤誘導し再生成が始まらない。
+    const base = makeStoredMenu();
+    const source = makeStoredMenu({
+      menu: {
+        ...base.menu,
+        dishes: base.menu.dishes.map((dish, index) =>
+          index === 0 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
+        ),
+      },
+    });
+    const deps = makeLoaderDeps(source);
+    const context = await loadRegenerationExecutionContext(
+      deps,
+      user,
+      dishCommand,
+      "91000000-0000-4000-8000-000000000001",
+      50_000,
+    );
+    expect(context.kind).toBe("regenerate_dish");
+    expect(deps.buildCurrentContext).toHaveBeenCalled();
+  });
+
   it("maps foreign or missing source to source_menu_changed before current context", async () => {
     const deps = makeLoaderDeps(makeStoredMenu());
     deps.loadSource.mockRejectedValue(new HttpError(404, "menu_not_found", "献立が見つかりません"));
@@ -1326,6 +1351,34 @@ describe("materializeDishRegenerationCandidate", () => {
         (row) => !("confirmedAt" in row) && !("confirmedBy" in row),
       ),
     ).toBe(true);
+  });
+
+  it("strips retained-dish guarantee phrases from the materialized candidate", () => {
+    // G3: 保持料理の「安全です」を新 UUID 行へ再 persist / 表示しない。
+    const { execution, uuid } = makeDishRegenerationExecutionContext();
+    const guaranteedExecution = {
+      ...execution,
+      regeneration: {
+        ...execution.regeneration,
+        artifacts: {
+          ...execution.regeneration.artifacts,
+          retainedDishes: execution.regeneration.artifacts.retainedDishes.map((dish) =>
+            dish.name === "保持する副菜"
+              ? { ...dish, description: "小麦アレルギーでも安全です" }
+              : dish,
+          ),
+        },
+      },
+    };
+    const candidate = materializeDishRegenerationCandidate(
+      guaranteedExecution,
+      makeDishRegenerationAiOutput(),
+      uuid,
+    );
+    const retained = candidate.dishes.find((dish) => dish.name === "保持する副菜");
+    expect(retained).toBeDefined();
+    expect(retained?.description.includes("安全です")).toBe(false);
+    expect(retained?.description).toBe("料理の説明");
   });
 
   it("normalizes non-pantry tablespoon quantities on replacement dish", () => {

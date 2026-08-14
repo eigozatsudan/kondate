@@ -22,6 +22,7 @@ import { materializeAiGeneratedMenu } from "./generation-materializer.js";
 import { GenerationOutputError } from "./generation-repair.js";
 import { HttpError } from "./http.js";
 import { OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
+import { toRetainedDishPrompt } from "./regeneration-context.js";
 vi.mock("./generation-integrity-context.js", () => ({
   resolveGenerationIntegrityContext: vi.fn(() =>
     Promise.resolve({
@@ -2804,6 +2805,139 @@ describe("runGeneration regeneration duplicate gating", () => {
     >;
     expect(succeedCalls[0]?.[0]?.safetySnapshot).toEqual(currentSafetySnapshot);
     expect(freshMenu.labelConfirmations.every((row) => row.confirmationStatus === "pending")).toBe(
+      true,
+    );
+  });
+
+  it("does not re-persist retained-dish guarantee phrases on idea dish regeneration", async () => {
+    // G3: idea 一品再生成は保持料理の「安全です」を新 menu 行へ再 persist しない。
+    const sourceMenu = makeValidatedMenu({
+      dishes: makeValidatedMenu().dishes.map((dish, index) =>
+        index === 1 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
+      ),
+    });
+    const replaceDishId = sourceMenu.dishes[0]!.id;
+    const retained = toRetainedDishPrompt(sourceMenu, replaceDishId);
+    const dishRegenerationCommand = {
+      commandVersion: "generation-command.v3" as const,
+      kind: "regenerate_dish" as const,
+      qualityMode: false,
+      request: {
+        idempotencyKey: key,
+        sourceMenuId: sourceMenu.menuId,
+        dishId: replaceDishId,
+        changeReason: "simpler" as const,
+        changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-29.v1" as const,
+        expiredPantryConfirmations: [],
+      },
+    };
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_dish" }> = {
+      kind: "regenerate_dish",
+      command: dishRegenerationCommand,
+      requestId,
+      generationContext: makeIdeaGenerationContext(),
+      expectedSafetyFingerprint: "idea-fingerprint",
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId,
+        retainedDishIds: [sourceMenu.dishes[1]!.id],
+        excludedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: retained.dto,
+          sourceDishToReplace: retained.replaceTarget,
+          promptDto: null,
+          retainedRefMap: retained.refMap,
+        },
+      },
+    };
+    let seq = 0;
+    const uuid = () => {
+      seq += 1;
+      return `c${String(seq).padStart(7, "0")}-0000-4000-8000-000000000001`;
+    };
+    vi.mocked(validateGeneratedMenu).mockImplementation((menu) => ({
+      ok: true,
+      menu: menu as ReturnType<typeof makeValidatedMenu>,
+      labelConfirmations: [],
+      safetyFingerprint: "sha256:test",
+      preferenceGaps: [],
+    }));
+    const repository = makeRepository();
+    const result = await runGeneration(
+      makeDeps({
+        repository,
+        loadExecutionContext: vi.fn(() => Promise.resolve(execution)),
+        callOpenRouter: vi.fn(() =>
+          Promise.resolve({
+            mode: "replacement_dish" as const,
+            output: {
+              replacementDish: {
+                dishRef: "dish_1",
+                role: "main" as const,
+                position: 1,
+                name: "豚肉炒め",
+                description: "さっと炒める主菜",
+                cookingTimeMinutes: 15,
+                ingredients: [
+                  {
+                    ingredientRef: "ingredient_10",
+                    position: 1,
+                    name: "豚こま肉",
+                    quantityValue: 200,
+                    quantityText: "200g",
+                    unit: "g",
+                    storeSection: "meat_fish" as const,
+                    pantryRef: null,
+                    labelConfirmationRequired: false,
+                  },
+                ],
+                steps: [
+                  {
+                    stepRef: "step_10",
+                    position: 1,
+                    instruction: "中火で炒める",
+                  },
+                ],
+              },
+              timeline: [
+                {
+                  timelineRef: "timeline_1",
+                  position: 1,
+                  startMinute: 0,
+                  durationMinutes: 15,
+                  instruction: "主菜を炒める",
+                  dishRef: "dish_1",
+                  stepRef: "step_10",
+                },
+              ],
+              adaptations: [],
+              pantryUsage: [],
+              labelConfirmations: [],
+            },
+            modelId: models[0],
+          }),
+        ),
+        uuid,
+      }),
+      dishRegenerationCommand,
+    );
+    expect(result.status).toBe("succeeded");
+    const candidate = vi.mocked(validateGeneratedMenu).mock.calls[0]?.[0] as {
+      dishes: readonly { description: string }[];
+    };
+    expect(candidate.dishes.every((dish) => !dish.description.includes("安全です"))).toBe(true);
+    const succeedArg = repository.succeed.mock.calls[0]?.[0] as {
+      menu: { dishes: readonly { description: string }[] };
+    };
+    expect(succeedArg.menu.dishes.every((dish) => !dish.description.includes("安全です"))).toBe(
       true,
     );
   });
