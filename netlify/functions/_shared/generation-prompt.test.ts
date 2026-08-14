@@ -67,6 +67,25 @@ function userPayload(
   return JSON.parse(serialized) as Record<string, unknown>;
 }
 
+function regenerationConstraints(messages: ReturnType<typeof buildGenerationMessages>): {
+  excludedDishSignatures: readonly string[];
+} {
+  const user = messages.find(
+    (message) =>
+      message.role === "user" &&
+      typeof message.content === "string" &&
+      message.content.includes("<regeneration_constraints>"),
+  );
+  const content = typeof user?.content === "string" ? user.content : "";
+  const match = /<regeneration_constraints>\n([\s\S]*)\n<\/regeneration_constraints>/u.exec(
+    content,
+  );
+  if (match?.[1] === undefined) {
+    throw new Error("missing regeneration_constraints");
+  }
+  return JSON.parse(match[1]) as { excludedDishSignatures: readonly string[] };
+}
+
 const firstPantryId = "74000000-0000-4000-8000-000000000001";
 const secondPantryId = "74000000-0000-4000-8000-000000000002";
 const userIdCanary = "USER_ID_CANARY";
@@ -679,5 +698,59 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain(HOUSEHOLD_KITCHEN_PARAGRAPH);
     expect(system).toContain("材料の都合・機材・器具の都合・好みの曖昧さ");
     expect(system).not.toContain(DIVERSITY_SYSTEM_MARKER);
+  });
+
+  it("caps whole regeneration excludedDishSignatures at 200 so buildMessages does not throw", () => {
+    const context = makeGenerationContext();
+    const sourceMenu = makeValidatedMenu();
+    const signatures = Array.from({ length: 201 }, (_, index) => `sig-${String(index + 1)}`);
+    const execution: Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> = {
+      kind: "regenerate_menu",
+      command: {
+        commandVersion: "generation-command.v3",
+        kind: "regenerate_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: "56000000-0000-4000-8000-000000000001",
+          sourceMenuId: sourceMenu.menuId,
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext: context,
+      expectedSafetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        excludedDishIds: [],
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [
+          {
+            menuId: sourceMenu.menuId,
+            menuSignature: "menu-sig",
+            dishSignatures: signatures,
+          },
+        ],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+    const constraints = regenerationConstraints(buildGenerationMessages(execution));
+    expect(constraints.excludedDishSignatures).toHaveLength(200);
+    expect(constraints.excludedDishSignatures[0]).toBe("sig-1");
+    expect(constraints.excludedDishSignatures[199]).toBe("sig-200");
   });
 });

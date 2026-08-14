@@ -1,4 +1,5 @@
 import {
+  capExcludedDishSignatures,
   dishRegenerationPromptSchema,
   wholeRegenerationPromptSchema,
 } from "../../../shared/contracts/regeneration.js";
@@ -529,8 +530,8 @@ export function buildGenerationMessages(
           mode: "whole",
           reason: context.command.request.changeReason,
           changeReasonCustom: context.command.request.changeReasonCustom,
-          excludedDishSignatures: context.regeneration.existingDerivationMenus.flatMap(
-            (menu) => menu.dishSignatures,
+          excludedDishSignatures: capExcludedDishSignatures(
+            context.regeneration.existingDerivationMenus.flatMap((menu) => menu.dishSignatures),
           ),
         });
   return [

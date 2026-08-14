@@ -9,6 +9,7 @@ import type {
 import { generatedMenuSchema } from "../../../shared/contracts/generation.js";
 import {
   assertMaterializationRefUnion,
+  capExcludedDishSignatures,
   dishRegenerationAiOutputSchema,
   dishRegenerationPromptSchema,
   retainedDishPromptSchema,
@@ -647,10 +648,12 @@ export async function loadRegenerationExecutionContext(
       generationContext,
       retained,
     });
-    // 除外シグネチャは derivation 全体を正とする
+    // 除外シグネチャは derivation 全体を正とする。200 超は畳み、ZodError→internal_error を避ける
     promptDto = dishRegenerationPromptSchema.parse({
       ...promptDto,
-      excludedDishSignatures: existingDerivationMenus.flatMap((menu) => menu.dishSignatures),
+      excludedDishSignatures: capExcludedDishSignatures(
+        existingDerivationMenus.flatMap((menu) => menu.dishSignatures),
+      ),
     });
   }
 

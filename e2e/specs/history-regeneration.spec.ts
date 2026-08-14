@@ -33,7 +33,7 @@ test("regenerates whole menu, groups versions, and marks the chosen menu", async
   await expect(page.getByText("献立ができました")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "この献立にする" }).click();
   await page.goto("/history");
-  await expect(page.getByText("2案")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("2案", { exact: true })).toBeVisible({ timeout: 15_000 });
 });
 
 test(

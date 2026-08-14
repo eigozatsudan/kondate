@@ -97,6 +97,9 @@ const localRefAdaptationSchema = menuMemberAdaptationSchema
 /**
  * Plan 2 の pantryUsage 葉を request-local に置き換えた形。
  * pantryUsageSchema は superRefine 付きのため .omit できず、同一フィールド上限で再構成する。
+ * persist が materialize 後に拒否する意味 refine（must_use+unused / used+空 dishRefs /
+ * used+unusedReason）だけここで掛ける。不足量・単位は materialize が trusted から
+ * 再計算するので AI 境界では見ない。dishRefs.max(5) は上げない。
  */
 const localRefPantryUsageSchema = z
   .object({
@@ -112,7 +115,30 @@ const localRefPantryUsageSchema = z
     dishRefs: z.array(dishRefSchema).max(5),
     unusedReason: z.string().trim().min(1).max(200).nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.priority === "must_use" && value.usageStatus === "unused") {
+      context.addIssue({
+        code: "custom",
+        path: ["usageStatus"],
+        message: "必ず使う食材が未使用です",
+      });
+    }
+    if (value.usageStatus === "used" && value.dishRefs.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["dishRefs"],
+        message: "使用先の料理が必要です",
+      });
+    }
+    if (value.usageStatus === "used" && value.unusedReason !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["unusedReason"],
+        message: "使用時に未使用理由は保存しません",
+      });
+    }
+  });
 
 const localRefGeneratedLabelSchema = generatedLabelConfirmationSchema
   .omit({ sourceId: true })
@@ -125,12 +151,29 @@ const localRefGeneratedLabelSchema = generatedLabelConfirmationSchema
 /** 保持料理は localRefDish と同形。テキスト葉を欠落させない。 */
 export const retainedDishPromptSchema = localRefDishSchema;
 
+/**
+ * prompt 除外シグネチャの契約上限。derivation 版数に天井は無いが、ここは上げない。
+ * 超過分は load/buildMessages が capExcludedDishSignatures で畳む。
+ */
+export const excludedDishSignaturesMax = 200 as const;
+
+/**
+ * derivation 全体の flatMap は 200 を超え得る（版数天井なし × menuDishCountMax）。
+ * schema 上限は上げず先頭 200 に畳み、ZodError → internal_error を避ける。
+ * markSent 前なので attempt は焼かない。
+ */
+export function capExcludedDishSignatures(signatures: readonly string[]): readonly string[] {
+  return signatures.length <= excludedDishSignaturesMax
+    ? signatures
+    : signatures.slice(0, excludedDishSignaturesMax);
+}
+
 export const wholeRegenerationPromptSchema = z
   .object({
     mode: z.literal("whole"),
     reason: z.enum(changeReasons),
     changeReasonCustom: z.string().trim().min(1).max(200).nullable(),
-    excludedDishSignatures: z.array(z.string().min(1).max(2000)).max(200),
+    excludedDishSignatures: z.array(z.string().min(1).max(2000)).max(excludedDishSignaturesMax),
   })
   .strict();
 
@@ -147,7 +190,7 @@ export const dishRegenerationPromptSchema = z
     sourceAdaptations: z.array(localRefAdaptationSchema).max(100),
     sourcePantryUsage: z.array(localRefPantryUsageSchema).max(50),
     sourceLabelConfirmations: z.array(localRefGeneratedLabelSchema).max(200),
-    excludedDishSignatures: z.array(z.string().min(1).max(2000)).max(200),
+    excludedDishSignatures: z.array(z.string().min(1).max(2000)).max(excludedDishSignaturesMax),
   })
   .strict();
 
@@ -160,7 +203,21 @@ export const dishRegenerationAiOutputSchema = z
     pantryUsage: z.array(localRefPantryUsageSchema).max(50),
     labelConfirmations: z.array(localRefGeneratedLabelSchema).max(200),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    // persist totalElapsedMinutes.max(180)。葉の start/duration は各 180 まで合法なので
+    // 合計 360 まで AI schema を通る。materialize が max(start+duration) をそのまま
+    // persist に渡すと ZodError で試行枠だけ焼く。180 は上げず、ここで先に閉じる。
+    for (const [index, step] of value.timeline.entries()) {
+      if (step.startMinute + step.durationMinutes > 180) {
+        context.addIssue({
+          code: "custom",
+          path: ["timeline", index],
+          message: "全体時間を超えています",
+        });
+      }
+    }
+  });
 
 export type RetainedDishPrompt = z.infer<typeof retainedDishPromptSchema>;
 export type WholeRegenerationPrompt = z.infer<typeof wholeRegenerationPromptSchema>;

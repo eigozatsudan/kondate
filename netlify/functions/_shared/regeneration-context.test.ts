@@ -86,6 +86,7 @@ import {
   loadRegenerationExecutionContext,
   materializeDishRegenerationCandidate,
   reloadExistingDerivationMenus,
+  requireRegenerationArtifacts,
   toRetainedDishPrompt,
   type LoaderDeps,
 } from "./regeneration-context.js";
@@ -522,6 +523,65 @@ describe("loadRegenerationExecutionContext", () => {
     ).toEqual(expect.arrayContaining([teriyakiSignature, sweetSoySignature]));
     expect(context.regeneration.retainedDishIds).not.toContain(dish2Id);
     expect(context.startedAtMonotonicMs).toBe(1_000);
+  });
+
+  it("caps dish regeneration excludedDishSignatures at 200 so load does not throw ZodError", async () => {
+    const source = makeStoredMenu();
+    const group = Array.from({ length: 101 }, (_, index) =>
+      makeStoredMenu({
+        menu: makeValidatedMenu({
+          menuId: `b1000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        }),
+      }),
+    );
+    group[0] = source;
+    const deps = makeLoaderDeps(source, { group, recent: [] });
+    snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+      const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+      return Promise.resolve({
+        data: [
+          {
+            request_id: args.p_request_id,
+            user_id: args.p_user_id,
+            kind: "regenerate_dish",
+            source_menu_id: source.menu.menuId,
+            source_menu_version: source.version,
+            replace_dish_id: dish2Id,
+            target_mode: "household",
+            servings: 2,
+            target_member_ids: [...source.targetMemberIds],
+            created_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+        error: null,
+      });
+    });
+    const loaded = await loadRegenerationExecutionContext(
+      deps,
+      user,
+      {
+        commandVersion: "generation-command.v3",
+        kind: "regenerate_dish",
+        qualityMode: false,
+        request: {
+          sourceMenuId: source.menu.menuId,
+          dishId: dish2Id,
+          idempotencyKey: "82000000-0000-4000-8000-000000000001",
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      "91000000-0000-4000-8000-000000000001",
+      50_000,
+    );
+    expect(loaded.kind).toBe("regenerate_dish");
+    if (loaded.kind !== "regenerate_dish") throw new Error("expected regenerate_dish");
+    const flat = loaded.regeneration.existingDerivationMenus.flatMap((menu) => menu.dishSignatures);
+    expect(flat.length).toBeGreaterThan(200);
+    const artifacts = requireRegenerationArtifacts(loaded.regeneration.artifacts);
+    expect(artifacts.promptDto?.excludedDishSignatures).toHaveLength(200);
   });
 
   it("requires at least one surviving current target member", async () => {

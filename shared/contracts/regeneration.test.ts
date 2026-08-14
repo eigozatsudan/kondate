@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   assertMaterializationRefUnion,
   assertUniqueLocalRefDeclarations,
+  capExcludedDishSignatures,
   dishRegenerationAiOutputSchema,
   dishRegenerationPromptSchema,
+  excludedDishSignaturesMax,
   regenerateDishRequestSchema,
   retainedDishPromptSchema,
   wholeRegenerationPromptSchema,
@@ -305,6 +307,69 @@ describe("regeneration contracts", () => {
         ],
       }).success,
     ).toBe(true);
+  });
+
+  it("rejects persist-invalid pantryUsage at the AI schema so a try is not burned", () => {
+    const output = makeDishRegenerationAiOutput();
+    const baseUsage = output.pantryUsage[0]!;
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [{ ...baseUsage, priority: "must_use", usageStatus: "unused" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [{ ...baseUsage, usageStatus: "used", dishRefs: [] }],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        pantryUsage: [{ ...baseUsage, usageStatus: "used", unusedReason: "使わなかった" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects AI timeline whose start+duration exceeds persist totalElapsed 180", () => {
+    const output = makeDishRegenerationAiOutput();
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        timeline: [{ ...output.timeline[0]!, startMinute: 180, durationMinutes: 20 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      dishRegenerationAiOutputSchema.safeParse({
+        ...output,
+        timeline: [{ ...output.timeline[0]!, startMinute: 0, durationMinutes: 180 }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts 200 excluded signatures and rejects 201 without raising the cap", () => {
+    expect(excludedDishSignaturesMax).toBe(200);
+    const twoHundred = Array.from({ length: 200 }, (_, index) => `sig-${String(index + 1)}`);
+    const twoHundredOne = [...twoHundred, "sig-201"];
+    expect(
+      wholeRegenerationPromptSchema.safeParse({
+        mode: "whole",
+        reason: "simpler",
+        changeReasonCustom: null,
+        excludedDishSignatures: twoHundred,
+      }).success,
+    ).toBe(true);
+    expect(
+      wholeRegenerationPromptSchema.safeParse({
+        mode: "whole",
+        reason: "simpler",
+        changeReasonCustom: null,
+        excludedDishSignatures: twoHundredOne,
+      }).success,
+    ).toBe(false);
+    expect(capExcludedDishSignatures(twoHundredOne)).toHaveLength(200);
+    expect(capExcludedDishSignatures(twoHundred)).toHaveLength(200);
   });
 });
 
