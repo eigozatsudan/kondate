@@ -433,6 +433,7 @@ export type Database = {
           cancel_at_period_end: boolean
           current_period_end: string
           current_period_start: string
+          kill_source_status: string | null
           last_stripe_event_created: number
           last_stripe_event_id: string | null
           past_due_since: string | null
@@ -447,6 +448,7 @@ export type Database = {
           cancel_at_period_end?: boolean
           current_period_end: string
           current_period_start: string
+          kill_source_status?: string | null
           last_stripe_event_created?: number
           last_stripe_event_id?: string | null
           past_due_since?: string | null
@@ -461,6 +463,7 @@ export type Database = {
           cancel_at_period_end?: boolean
           current_period_end?: string
           current_period_start?: string
+          kill_source_status?: string | null
           last_stripe_event_created?: number
           last_stripe_event_id?: string | null
           past_due_since?: string | null
@@ -3011,6 +3014,10 @@ export type Database = {
         Args: { p_idempotency_key: string; p_user_id: string }
         Returns: Json
       }
+      lookup_flyer_weekly: {
+        Args: { p_idempotency_key: string; p_user_id: string }
+        Returns: Json
+      }
       mark_ai_global_sent: {
         Args: { p_now?: string; p_request_id: string }
         Returns: Json
@@ -3263,6 +3270,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      stash_flyer_weekly_result: {
+        Args: { p_now?: string; p_request_id: string; p_result: Json }
+        Returns: Json
       }
       try_enqueue_share_job: { Args: { p_menu_id: string }; Returns: Json }
       upsert_billing_subscription_from_stripe: {
