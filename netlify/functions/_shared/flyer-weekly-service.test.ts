@@ -161,6 +161,25 @@ describe("flyer-weekly-service", () => {
     expect(openRouterSender).not.toHaveBeenCalled();
   });
 
+  it("PE11: processing + replayed + stashed result is finalize-only (no OpenRouter)", async () => {
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+    const result = await runFlyerWeeklyWithReserveStub({
+      reserveResult: {
+        request_id: "00000000-0000-4000-8000-000000000001",
+        idempotency_key: "k",
+        status: "processing",
+        replayed: true,
+        result: sampleMenu(),
+      },
+      openRouterSender,
+      plusEntitled: true,
+      billingEnabled: true,
+    });
+    expect(result.errorCode).toBeUndefined();
+    expect(result.openRouterCalls).toBe(0);
+    expect(openRouterSender).not.toHaveBeenCalled();
+  });
+
   it("PE1: fresh processing (not replayed) still proceeds to OpenRouter path in stub", async () => {
     const openRouterSender = vi.fn(() =>
       Promise.resolve({

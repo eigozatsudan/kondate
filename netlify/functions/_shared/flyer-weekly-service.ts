@@ -520,6 +520,38 @@ async function replaySucceededFlyerMenu(
   return { menu, requestId: reserve.request_id ?? requestIdForLog };
 }
 
+/**
+ * PE11: persist + reserved→success が終わるまで 200 にしない。
+ * finalize 失敗時は本文を stash して 500。同一キー再入場 / cleanup が枠を空けずに確定する。
+ * finalize_failure は呼ばない（reserved を解放すると successPerJstWeek を踏まず 200 を繰り返せる）。
+ */
+async function commitFlyerWeeklySuccess(
+  admin: AdminSupabaseClient,
+  requestId: string,
+  resultMenu: WeeklyFlyerMenuResult,
+  started: number,
+): Promise<void> {
+  const { error: finError } = await rpcUntyped(admin, "finalize_flyer_weekly_success", {
+    p_request_id: requestId,
+    p_result: resultMenu,
+  });
+  if (finError === null) return;
+
+  await rpcUntyped(admin, "stash_flyer_weekly_result", {
+    p_request_id: requestId,
+    p_result: resultMenu,
+  });
+  safeLog({
+    level: "error",
+    requestId,
+    code: "flyer_finalize_success_failed",
+    durationMs: performance.now() - started,
+    flyer: true,
+    plan: "plus",
+  });
+  throw new HttpError(500, "internal_error", issueMessages.internal_error);
+}
+
 function buildFlyerMessages(dataUrl: string): OpenRouterMessage[] {
   return [
     {
@@ -667,12 +699,42 @@ export async function runFlyerWeekly(
     return replaySucceededFlyerMenu(admin, deps.user.userId, reserve, requestIdForLog);
   }
 
-  // PE1: 同一 key の processing 冪等 hit（replayed）はパイプライン再入場しない。
-  // generation と同様 hydrate/in-progress のみ。budget・mark 失敗枝で
-  // finalize_flyer_weekly_failure すると先着 in-flight を failed にし success 枠を解放してしまう。
-  // failed/succeeded を上で除外済みのため、ここでの status は processing に狭まっている。
-  // 新規予約（replayed でない processing）だけが mark → OpenRouter へ進む。
+  // PE1: 同一 key の processing 冪等 hit（replayed）は OpenRouter に再入場しない。
+  // PE11: 検証済み result が残っていれば finalize だけ再試行する（processing 409 のまま
+  // 再入場不可は PE6 回帰。finalize_failure は先着枠を解放するので呼ばない）。
+  // result が無い replay は従来どおり in-progress。
   if (reserve.replayed === true) {
+    const stashed = weeklyFlyerMenuSchema.safeParse(reserve.result);
+    if (stashed.success && reserve.request_id != null) {
+      const weekStart =
+        typeof reserve.week_start === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(reserve.week_start)
+          ? reserve.week_start
+          : (stashed.data.weekStartJst ?? jstWeekStartMonday(new Date()));
+      const resultMenu: WeeklyFlyerMenuResult = {
+        ...stashed.data,
+        weekStartJst: weekStart,
+      };
+      try {
+        const inspectionSafety = await loadFlyerInspectionSafety(admin, deps.user.userId);
+        assertFlyerMenuAgainstSafety(resultMenu, inspectionSafety);
+      } catch (error: unknown) {
+        // 一時的な検査障害は行を残し sticky を保つ。確定した safety 拒否だけ failure にする。
+        if (error instanceof HttpError && error.code === "safety_context_failed") {
+          throw error;
+        }
+        if (error instanceof HttpError) {
+          await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+            p_request_id: reserve.request_id,
+            p_failure_code: error.code,
+            p_sent: true,
+          });
+          throw error;
+        }
+        throw error;
+      }
+      await commitFlyerWeeklySuccess(admin, reserve.request_id, resultMenu, started);
+      return { menu: resultMenu, requestId: reserve.request_id };
+    }
     mapFailureHttp("generation_in_progress", reserve.retry_at ?? null);
   }
 
@@ -886,23 +948,9 @@ export async function runFlyerWeekly(
     weekStartJst: weekStart,
   };
 
-  const { error: finError } = await rpcUntyped(admin, "finalize_flyer_weekly_success", {
-    p_request_id: requestId,
-    p_result: resultMenu,
-  });
-  if (finError !== null) {
-    // PE6: 検証済み本文を捨てると processing のまま 409 し、180s 後に喪失する。
-    // quota は返却しない。クライアントへ menu を返し、同一キー再試行で本文を失わない。
-    safeLog({
-      level: "error",
-      requestId,
-      code: "flyer_finalize_success_failed",
-      durationMs: performance.now() - started,
-      flyer: true,
-      plan: "plus",
-    });
-    return { menu: resultMenu, requestId };
-  }
+  // PE11: finalize 失敗でも 200 すると reserved のまま cleanup が枠を空ける。
+  // 本文は stash、HTTP は 500。同一キー再 POST が finalize を再試行する。
+  await commitFlyerWeeklySuccess(admin, requestId, resultMenu, started);
 
   safeLog({
     level: "info",
@@ -923,7 +971,8 @@ export async function runFlyerWeekly(
 
 /**
  * テスト用: reserve 後の early 分岐を本体と同順で模倣する。
- * PE1: processing + replayed は OpenRouter 0・finalize 無し（in-progress）。
+ * PE1: processing + replayed は OpenRouter 0。
+ * PE11: 検証済み result がある replay は finalize 再試行相当（OpenRouter 無し）。
  */
 export async function runFlyerWeeklyWithReserveStub(options: {
   reserveResult: unknown;
@@ -972,9 +1021,12 @@ export async function runFlyerWeeklyWithReserveStub(options: {
     }
     return { openRouterCalls: 0 };
   }
-  // PE1: 冪等 hit の processing はパイプライン再入場しない
-  // failed/succeeded を上で排除済みのため status は processing に絞られる
+  // PE1: 冪等 hit の processing は OpenRouter 再入場しない
+  // PE11: stash 済み result は finalize 再試行相当（OpenRouter 0・エラーなし）
   if (reserve.replayed === true) {
+    if (reserve.result != null && weeklyFlyerMenuSchema.safeParse(reserve.result).success) {
+      return { openRouterCalls: 0 };
+    }
     return { openRouterCalls: 0, errorCode: "generation_in_progress" };
   }
   openRouterCalls += 1;

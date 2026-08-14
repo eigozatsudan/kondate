@@ -277,6 +277,7 @@ select is_empty(
   ('public.mark_flyer_weekly_sent(p_request_id uuid, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.finalize_flyer_weekly_success(p_request_id uuid, p_result jsonb, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.finalize_flyer_weekly_failure(p_request_id uuid, p_failure_code text, p_sent boolean, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
+  ('public.stash_flyer_weekly_result(p_request_id uuid, p_result jsonb, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.cleanup_stale_flyer_weekly_batch(p_now timestamp with time zone, p_limit integer)', 'service_role', 'EXECUTE'),
   ('public.release_flyer_weekly_for_user_processing(p_user_id uuid, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
   ('public.release_identity_and_global_for_user_processing(p_user_id uuid, p_now timestamp with time zone)', 'service_role', 'EXECUTE'),
