@@ -770,13 +770,16 @@ async function handleSubscriptionEvent(
   const projectedStatus = guardedProjection.status;
   projection = guardedProjection;
 
+  // B-R7: clear は guard 前 status。kill 中は persist が unpaid でも
+  // active/trialing 復帰なら since を消す（設計 L351: 復帰で NULL）。
   const clearPastDue =
-    projectedStatus === "active" || projectedStatus === "trialing" || forceCanceledFromDeleted;
+    preGuardStatus === "active" || preGuardStatus === "trialing" || forceCanceledFromDeleted;
   // 初回 past_due の grace 起点は webhook 処理時刻ではなく Stripe event.created。
   // SQL は既存 past_due_since を優先 coalesce するため再送・延長では伸ばさない。
   // residual-intentional (B8): SQL 正本は payload 欠落時 clock_timestamp() fallback。
   // 正規 Function 経路は常に past_due_since を載せる。手投入/将来 path の延長残差は migration 契約。
-  // B-R5: kill 中 unpaid でも SQL unpaid 枝が payload since を coalesce するので、元 past_due なら載せる。
+  // B-R5: kill 中 unpaid でも元 past_due なら初回候補として載せる。
+  // B-R6: 後続イベントも event.created を載せるが、SQL unpaid else は既存優先で延長しない。
   const pastDueSinceIso =
     !clearPastDue && preGuardStatus === "past_due" ? unixToIsoZ(event.created) : null;
 
@@ -1069,12 +1072,15 @@ async function handleInvoiceEvent(
   // residual-intentional (B10): invoice type で status を上書きしない。
   // Subscription retrieve を正とし、past_due を invoice.payment_failed だけで勝手に付けない。
   // payment_failed 後も retrieve が active なら demotion は subscription.updated 待ち（一時 over-entitle）。
-  // past_due_since クリアは paid 確定かつ status が active/trialing のときだけ（A6: past_due+NULL=非 entitled）。
+  // past_due_since クリアは paid 確定かつ retrieve が active/trialing のときだけ（A6: past_due+NULL=非 entitled）。
   const isPaid = event.type === "invoice.paid";
   const status = projection.status;
-  const clearPastDueSince = isPaid && (status === "active" || status === "trialing");
+  // B-R7: clear は guard 前 status。kill 中 unpaid でも invoice.paid + retrieve active なら消す。
+  const clearPastDueSince =
+    isPaid && (preGuardStatus === "active" || preGuardStatus === "trialing");
   // invoice 経路でも初回 past_due は event.created を起点に載せる（処理遅延の過付与を防ぐ / B8 Function 緩和）
   // B-R5: guard 前 status で判定。kill 中 unpaid でも元 past_due なら since を残す。
+  // B-R6: 後続 payment_failed も event.created を載せるが、SQL は既存優先で延長しない。
   const pastDueSinceIso =
     !clearPastDueSince && preGuardStatus === "past_due" ? unixToIsoZ(event.created) : null;
 

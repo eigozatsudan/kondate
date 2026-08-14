@@ -1484,7 +1484,7 @@ describe("handleBillingWebhook", () => {
 
   it("keeps past_due_since on kill-unpaid subscription projection (B-R5)", async () => {
     // kill 中は status を unpaid にするが、元 past_due なら grace 起点を落とさない。
-    // SQL unpaid 枝は payload の since を coalesce するので、キー欠落だと列が null のまま。
+    // SQL unpaid 枝は既存優先 coalesce。初回は既存 null なので payload が列に入る。
     constructEvent.mockReturnValue(
       makeEvent("customer.subscription.updated", makeSubscription({ status: "past_due" }), {
         id: "evt_kill_past_due",
@@ -1530,6 +1530,79 @@ describe("handleBillingWebhook", () => {
     expect(processPayload.kill_source_status).toBe("past_due");
     expect(processPayload.clear_past_due_since).toBe(false);
     expect(processPayload.past_due_since).toBe(new Date(1_700_000_100 * 1000).toISOString());
+  });
+
+  it("clears past_due_since on kill-unpaid when source is active (B-R7)", async () => {
+    // 設計: active/trialing 復帰で since=NULL。kill 中は persist が unpaid でも
+    // guard 前 status で clear を立てる。立てないと解除後の次 past_due が古い T0 を残す。
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", makeSubscription({ status: "active" }), {
+        id: "evt_kill_active_clear_since",
+        created: 1_700_000_200,
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "active" }));
+    const response = await handleBillingWebhook(signedRequest(), deps({ billingEnabled: false }));
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.kill_source_status).toBe("active");
+    expect(processPayload.clear_past_due_since).toBe(true);
+    expect(processPayload.past_due_since).toBeUndefined();
+  });
+
+  it("clears past_due_since on kill-unpaid invoice.paid when retrieve is active (B-R7)", async () => {
+    const invoice = {
+      id: "in_kill_paid_active",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, {
+        id: "evt_kill_invoice_paid_active",
+        created: 1_700_000_300,
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "active" }));
+    const response = await handleBillingWebhook(signedRequest(), deps({ billingEnabled: false }));
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.kill_source_status).toBe("active");
+    expect(processPayload.clear_past_due_since).toBe(true);
+    expect(processPayload.past_due_since).toBeUndefined();
+  });
+
+  it("still sends later event.created as since candidate during kill unpaid (B-R6)", async () => {
+    // Function は既存行を見ないので毎回 event.created を載せる（初回 persist 用）。
+    // 後続で grace を伸ばさない契約は SQL unpaid else の coalesce(既存, payload)。
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", makeSubscription({ status: "past_due" }), {
+        id: "evt_kill_past_due_later",
+        created: 1_700_000_400,
+      }),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "past_due" }));
+    const response = await handleBillingWebhook(signedRequest(), deps({ billingEnabled: false }));
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("unpaid");
+    expect(processPayload.kill_source_status).toBe("past_due");
+    expect(processPayload.clear_past_due_since).toBe(false);
+    expect(processPayload.past_due_since).toBe(new Date(1_700_000_400 * 1000).toISOString());
   });
 
   it("demotes unknown price to unpaid and does not elevate Plus (B1)", async () => {
