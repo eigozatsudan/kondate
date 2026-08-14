@@ -594,36 +594,23 @@ it.each([
   },
 );
 
-it("PE10: date input min is JST today, not the browser local calendar day", () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-08-13T16:00:00.000Z"));
-  try {
-    render(<PantryForm saving={false} onSubmit={vi.fn()} />);
-    const dateInput = screen.getByLabelText("期限日");
-    // UTC では 2026-08-13、JST では 2026-08-14。min は製品時計の JST キー。
-    expect(dateInput).toHaveAttribute("min", "2026-08-14");
-    expect(dateInput).not.toHaveAttribute("min", "2026-08-13");
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-it("PE10: editing an already-past expiry keeps that date as min so save is not blocked", () => {
-  render(
-    <PantryForm
-      saving={false}
-      initialValue={{
-        name: "牛乳",
-        quantity: 500,
-        unit: "ml",
-        expiresOn: "2026-07-10",
-        expirationType: "use_by",
-        openedState: "opened",
-      }}
-      onSubmit={vi.fn()}
-    />,
-  );
-  expect(screen.getByLabelText("期限日")).toHaveAttribute("min", "2026-07-10");
+it("accepts an already-expired date on create so pantry CRUD can record leftovers", async () => {
+  // PE10 の min=JST今日は期限切れ食材の新規登録を HTML5 が拒否する。製品は期限切れを第一級とする。
+  const user = userEvent.setup();
+  const onSubmit = vi.fn().mockResolvedValue(undefined);
+  render(<PantryForm saving={false} onSubmit={onSubmit} />);
+  await user.type(screen.getByRole("textbox", { name: "食材名" }), "キャベツ");
+  await user.type(screen.getByLabelText("分量"), "1");
+  await user.type(screen.getByLabelText("単位"), "個");
+  await user.type(screen.getByLabelText("期限日"), "2000-01-01");
+  await user.selectOptions(screen.getByLabelText("期限の種類"), "use_by");
+  await user.selectOptions(screen.getByLabelText("開封状態"), "opened");
+  await user.click(screen.getByRole("button", { name: "追加する" }));
+  await waitFor(() => {
+    expect(onSubmit).toHaveBeenCalled();
+  });
+  expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ name: "キャベツ", expiresOn: "2000-01-01" });
+  expect(screen.getByLabelText("期限日")).not.toHaveAttribute("min");
 });
 
 it("shows and associates a Japanese schema error, then focuses the invalid field", async () => {
