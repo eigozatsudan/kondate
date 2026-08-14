@@ -594,6 +594,38 @@ it.each([
   },
 );
 
+it("PE10: date input min is JST today, not the browser local calendar day", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-08-13T16:00:00.000Z"));
+  try {
+    render(<PantryForm saving={false} onSubmit={vi.fn()} />);
+    const dateInput = screen.getByLabelText("期限日");
+    // UTC では 2026-08-13、JST では 2026-08-14。min は製品時計の JST キー。
+    expect(dateInput).toHaveAttribute("min", "2026-08-14");
+    expect(dateInput).not.toHaveAttribute("min", "2026-08-13");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("PE10: editing an already-past expiry keeps that date as min so save is not blocked", () => {
+  render(
+    <PantryForm
+      saving={false}
+      initialValue={{
+        name: "牛乳",
+        quantity: 500,
+        unit: "ml",
+        expiresOn: "2026-07-10",
+        expirationType: "use_by",
+        openedState: "opened",
+      }}
+      onSubmit={vi.fn()}
+    />,
+  );
+  expect(screen.getByLabelText("期限日")).toHaveAttribute("min", "2026-07-10");
+});
+
 it("shows and associates a Japanese schema error, then focuses the invalid field", async () => {
   const user = userEvent.setup();
   const onSubmit = vi.fn();

@@ -263,6 +263,27 @@ describe("flyer-weekly-service", () => {
     expect(openRouterSender).not.toHaveBeenCalled();
   });
 
+  it("PE7: succeeded replay without weekStartJst is fail-closed", async () => {
+    // weeklyFlyerMenuSchema は weekStartJst 任意。再生は Result 必須で閉じる。
+    const menuWithoutWeekStart = { days: sampleMenu().days };
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+    const result = await runFlyerWeeklyWithReserveStub({
+      reserveResult: {
+        request_id: "00000000-0000-4000-8000-000000000001",
+        idempotency_key: "k",
+        status: "succeeded",
+        result: menuWithoutWeekStart,
+        replayed: true,
+      },
+      openRouterSender,
+      plusEntitled: true,
+      billingEnabled: true,
+    });
+    expect(result.errorCode).toBe("internal_error");
+    expect(result.openRouterCalls).toBe(0);
+    expect(openRouterSender).not.toHaveBeenCalled();
+  });
+
   it("PE11: flyer_invalid_ai_response discloses try may be consumed", () => {
     expect(flyerWeeklyIssueMessages.flyer_invalid_ai_response).toContain("試行回数");
   });

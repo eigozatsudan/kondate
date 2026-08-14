@@ -1,7 +1,7 @@
 import type { Config } from "@netlify/functions";
 import { z } from "zod";
 import { ageBands, mealTypes } from "../../shared/contracts/domain.js";
-import { validatedMenuSchema } from "../../shared/contracts/generation.js";
+import { issueMessages, validatedMenuSchema } from "../../shared/contracts/generation.js";
 import { shareQuota } from "../../shared/contracts/share-quota.js";
 import {
   emergencyMainIngredientsSchema,
@@ -25,7 +25,13 @@ import {
   loadEmergencyCurrentSafety,
   type EmergencyCurrentSafety,
 } from "./_shared/current-safety.js";
-import { closedFieldErrors, handleError, json, methodNotAllowed } from "./_shared/http.js";
+import {
+  closedFieldErrors,
+  handleError,
+  HttpError,
+  json,
+  methodNotAllowed,
+} from "./_shared/http.js";
 import { safeLog } from "./_shared/logger.js";
 import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
 
@@ -314,7 +320,7 @@ async function resolveMultiSourceEmergencyMenus(input: {
   });
 
   // 文脈ゲート失敗は community でも同じ結果。無駄な RPC を避ける
-  if (s1.emptyReason === "current_safety_unavailable") {
+  if (s1.emptyReason === "current_safety_unavailable" || s1.emptyReason === "allergen_missing") {
     return s1;
   }
 
@@ -411,7 +417,10 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
           listActiveSharedRecipes,
           salt,
         });
-        if (filtered.emptyReason === "current_safety_unavailable") {
+        if (
+          filtered.emptyReason === "current_safety_unavailable" ||
+          filtered.emptyReason === "allergen_missing"
+        ) {
           // 到達しない想定のバグ。偽の 200 empty にしない。運用検知用に非PII だけ記録。
           safeLog({
             level: "error",
@@ -420,7 +429,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
             durationMs: Date.now() - startedAt,
             path: "idea",
             matchMode: null,
-            emptyReason: "current_safety_unavailable",
+            emptyReason: filtered.emptyReason,
             candidateCount: 0,
             mealType: resolved.meal,
             mainIngredientCount,
@@ -496,9 +505,11 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
       // PE6: emptyReason に応じて wire message を分岐（custom/unconfirmed を汎用 empty に溶かさない）
       const message =
         candidates.length === 0
-          ? filtered.emptyReason === "current_safety_unavailable"
-            ? "アレルギー確認や食事条件のため、候補を表示できません"
-            : "条件に合う緊急献立がありません"
+          ? filtered.emptyReason === "allergen_missing"
+            ? issueMessages.allergen_missing
+            : filtered.emptyReason === "current_safety_unavailable"
+              ? "アレルギー確認や食事条件のため、候補を表示できません"
+              : "条件に合う緊急献立がありません"
           : filtered.matchMode === "safety_only"
             ? "メイン食材は一致しませんでした。安全条件に合う固定候補を表示しています"
             : "AIを使わない15分緊急献立です";
@@ -564,6 +575,22 @@ export function pantryNamesForEmergencyScoring(
     .map((row) => row.name);
 }
 
+/**
+ * PE9: pantry select の error を空成功にしない。見つからない ID は data から落ちるだけ。
+ */
+export function pantryNamesFromSelectResult(
+  result: {
+    data: readonly { name: string; expires_on: string | null }[] | null;
+    error: { message?: string } | null;
+  },
+  todayJst: string,
+): string[] {
+  if (result.error !== null) {
+    throw new HttpError(500, "internal_error", issueMessages.internal_error);
+  }
+  return pantryNamesForEmergencyScoring(result.data ?? [], todayJst);
+}
+
 const handler = createEmergencyMenusHandler({
   authenticate: requireUser,
   loadContext: (userId, ids) => loadEmergencyCurrentSafety(getSupabaseAdmin(), userId, ids),
@@ -574,10 +601,8 @@ const handler = createEmergencyMenusHandler({
       .select("name, expires_on")
       .eq("user_id", userId)
       .in("id", [...ids]);
-    // PE8: 1 件不正混入で正当 ID 分まで捨てない。error のみ空。見つからない ID は黙って落とす。
-    // 生成型上 data は error===null のとき non-null。
-    if (error !== null) return [];
-    return pantryNamesForEmergencyScoring(data, getJstDateKey(new Date()));
+    // 見つからない ID は黙って落とす。select error は空成功にせず fail-closed。
+    return pantryNamesFromSelectResult({ data, error }, getJstDateKey(new Date()));
   },
   listActiveSharedRecipes: listActiveSharedRecipesFromAdmin,
 });

@@ -609,6 +609,9 @@ function postApiEmptyBody(response: EmergencyMenusData): string {
   if (response.emptyReason === "current_safety_unavailable" && response.path === "household") {
     return "アレルギー確認未了・自由登録アレルギー、または対応できない食事条件のため、候補を表示していません。条件は緩めていません";
   }
+  if (response.emptyReason === "allergen_missing" && response.path === "household") {
+    return "アレルギー情報が足りないため、候補を表示していません。条件は緩めていません";
+  }
   if (response.emptyReason === "no_matching_fixture" && response.path === "household") {
     return "いまのアレルギー・年齢に合う15分固定候補がありません。条件は緩めていません";
   }

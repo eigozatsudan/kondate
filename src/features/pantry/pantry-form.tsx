@@ -6,6 +6,7 @@ import {
   type PantryItemInput,
   pantryItemInputSchema,
 } from "@shared/contracts/pantry";
+import { getJstDateKey } from "@shared/time/jst";
 import { Button } from "@/shared/ui/button";
 import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
@@ -113,6 +114,13 @@ export function PantryForm({
       submitInFlightRef.current = false;
     }
   });
+  // 製品時計は JST。picker のローカル「今日」と揃えるため min も JST 日付キー。
+  // 既存の過去日を編集するときは現行値を下限にして HTML5 が保存を止めない。
+  const todayJst = getJstDateKey(new Date());
+  const expiresOnMin =
+    initialValue.expiresOn !== null && initialValue.expiresOn < todayJst
+      ? initialValue.expiresOn
+      : todayJst;
   const errorAttributes = (field: keyof PantryItemInput) => {
     const hasError = form.formState.errors[field] !== undefined;
     return {
@@ -180,6 +188,7 @@ export function PantryForm({
             期限日
             <input
               type="date"
+              min={expiresOnMin}
               {...errorAttributes("expiresOn")}
               {...form.register("expiresOn", {
                 setValueAs: (value: string) => (value === "" ? null : value),

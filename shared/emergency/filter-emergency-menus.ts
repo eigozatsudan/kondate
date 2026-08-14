@@ -190,6 +190,16 @@ function isCurrentSafetyUnavailable(context: CurrentSafetyContext): boolean {
   );
 }
 
+/** 生成/flyer と同型。registered なのに確認済みアレルゲンが 0 件。 */
+function isAllergenMissing(context: CurrentSafetyContext): boolean {
+  return context.members.some(
+    (member) =>
+      member.allergyStatus === "registered" &&
+      member.allergenIds.length === 0 &&
+      member.customAllergies.length === 0,
+  );
+}
+
 /**
  * 1 候補の Stage S（metadata ゲート → remap → validate）。
  * community で remap 後 adaptations が空なら fail-closed（空 adaptation での通過禁止）。
@@ -251,6 +261,15 @@ export function filterEmergencyMenuCandidates(input: {
     return {
       menus: [],
       emptyReason: "current_safety_unavailable",
+      matchMode: null,
+      sourceCounts: { ...emptyCounts },
+    };
+  }
+  // PE8: registered + 確認済み 0 を no_matching_fixture に落とさない（誤帰属禁止）
+  if (isAllergenMissing(input.context)) {
+    return {
+      menus: [],
+      emptyReason: "allergen_missing",
       matchMode: null,
       sourceCounts: { ...emptyCounts },
     };

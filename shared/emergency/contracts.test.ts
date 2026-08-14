@@ -89,6 +89,34 @@ it("rejects idea path with current_safety_unavailable", () => {
   ).toThrow();
 });
 
+it("accepts empty household with allergen_missing", () => {
+  expect(
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "アレルギー情報の登録が必要です。家族の設定を確認してください。",
+      consumesAiQuota: false,
+      path: "household",
+      matchMode: null,
+      emptyReason: "allergen_missing",
+    }).emptyReason,
+  ).toBe("allergen_missing");
+});
+
+it("rejects idea path with allergen_missing", () => {
+  expect(() =>
+    emergencyMenusDataSchema.parse({
+      fixtureVersion: "2026-07-28.v1",
+      candidates: [],
+      message: "アレルギー情報の登録が必要です。家族の設定を確認してください。",
+      consumesAiQuota: false,
+      path: "idea",
+      matchMode: null,
+      emptyReason: "allergen_missing",
+    }),
+  ).toThrow();
+});
+
 it("accepts empty household with no_matching_fixture", () => {
   expect(
     emergencyMenusDataSchema.parse({

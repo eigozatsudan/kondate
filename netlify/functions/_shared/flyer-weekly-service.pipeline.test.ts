@@ -308,6 +308,40 @@ describe("runFlyerWeekly pipeline (PE1/PE2/PE4/PE5/PE6/PE11)", () => {
     expect(rpcNames()).toEqual(["lookup_flyer_weekly"]);
   });
 
+  it("PE7: succeeded replay without weekStartJst is 400 internal_error", async () => {
+    loadEntitlementMock.mockResolvedValue(freeEntitlement);
+    const menuWithoutWeekStart = { days: sampleMenu().days };
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            kind: "hit",
+            request_id: "00000000-0000-4000-8000-000000000099",
+            idempotency_key: "idem-pe7",
+            status: "succeeded",
+            result: menuWithoutWeekStart,
+            replayed: true,
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: { message: "unexpected" } });
+    });
+
+    await expect(
+      runFlyerWeekly(
+        {
+          user,
+          openRouterSender: vi.fn(() => Promise.reject(new Error("should not be called"))),
+          assertPrivacyConsent: acceptConsent,
+        },
+        new Uint8Array([1, 2, 3]),
+        "idem-pe7",
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "internal_error" });
+    expect(rpcNames()).toEqual(["lookup_flyer_weekly"]);
+  });
+
   it("PE2: 403s a miss without creating a new reserve", async () => {
     loadEntitlementMock.mockResolvedValue(freeEntitlement);
     rpcMock.mockImplementation((name: string) => {

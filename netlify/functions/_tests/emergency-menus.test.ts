@@ -11,10 +11,12 @@ import {
   createEmergencyMenusHandler,
   mapSharedRowsToCommunityCandidates,
   pantryNamesForEmergencyScoring,
+  pantryNamesFromSelectResult,
   type EmergencyHandlerDeps,
   type ListActiveSharedEmergencyRecipesInput,
   type SharedEmergencyListRow,
 } from "../emergency-menus.js";
+import { HttpError } from "../_shared/http.js";
 import * as logger from "../_shared/logger.js";
 import type { SafeLogEvent } from "../_shared/logger.js";
 
@@ -107,6 +109,43 @@ describe("GET /api/emergency-menus", () => {
         emptyReason: "current_safety_unavailable",
         candidates: [],
         message: "アレルギー確認や食事条件のため、候補を表示できません",
+        consumesAiQuota: false,
+      },
+    });
+  });
+
+  it("PE8: registered with no confirmed allergens is allergen_missing, not no_matching_fixture", async () => {
+    const context = makeCurrentSafetyContext();
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext: () =>
+        Promise.resolve({
+          context: makeCurrentSafetyContext({
+            members: [
+              {
+                ...context.members[0]!,
+                allergyStatus: "registered",
+                allergenIds: [],
+                customAllergies: [],
+              },
+            ],
+          }),
+          memberLabels: Object.freeze({ member_1: "家族1" }),
+        }),
+      loadPantryNames: () => Promise.resolve([]),
+    });
+    const response = await handler(
+      new Request(`http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}`),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        path: "household",
+        matchMode: null,
+        emptyReason: "allergen_missing",
+        candidates: [],
+        message: "アレルギー情報の登録が必要です。家族の設定を確認してください。",
         consumesAiQuota: false,
       },
     });
@@ -735,6 +774,54 @@ describe("GET /api/emergency-menus", () => {
     });
     expect(body.data.candidates.length).toBeGreaterThan(0);
     expect(body.data.fixtureVersion).toBe("2026-07-28.v1");
+  });
+
+  it("PE9: pantry select error is 500 and does not return empty ranking", async () => {
+    const handler = createEmergencyMenusHandler({
+      authenticate: () => Promise.resolve({ userId }),
+      loadContext: () =>
+        Promise.resolve({
+          context: makeCurrentSafetyContext(),
+          memberLabels: Object.freeze({ member_1: "家族1" }),
+        }),
+      loadPantryNames: () => Promise.reject(new Error("pantry_items_select_failed")),
+    });
+    const pantryItemIds = ["82000000-0000-4000-8000-000000000001"];
+    const response = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&pantryItemIds=${pantryItemIds.join(",")}`,
+      ),
+    );
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "request_failed" },
+    });
+  });
+
+  it("PE9: pantryNamesFromSelectResult throws on select error and keeps missing IDs dropped", () => {
+    try {
+      pantryNamesFromSelectResult(
+        { data: null, error: { message: "select failed" } },
+        "2026-08-07",
+      );
+      expect.unreachable("select error must not become empty names");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpError);
+      expect(error).toMatchObject({ status: 500, code: "internal_error" });
+    }
+
+    const names = pantryNamesFromSelectResult(
+      {
+        data: [
+          { name: "鮭", expires_on: "2026-07-01" },
+          { name: "キャベツ", expires_on: null },
+        ],
+        error: null,
+      },
+      "2026-08-07",
+    );
+    expect(names).toEqual(["キャベツ"]);
   });
 
   it("PE4: pantryNamesForEmergencyScoring drops past-entered expiry but keeps null", () => {

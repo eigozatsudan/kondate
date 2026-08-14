@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   flyerWeeklyIssueMessages,
+  weeklyFlyerMenuResultSchema,
   weeklyFlyerMenuSchema,
   type WeeklyFlyerMenu,
   type WeeklyFlyerMenuResult,
@@ -510,11 +511,12 @@ async function replaySucceededFlyerMenu(
   if (reserve.result == null) {
     throw new HttpError(400, "internal_error", issueMessages.internal_error);
   }
-  const parsedResult = weeklyFlyerMenuSchema.safeParse(reserve.result);
+  // PE7: 再生は weekStartJst 必須の Result schema。弱い AI schema + cast で必須をスキップしない。
+  const parsedResult = weeklyFlyerMenuResultSchema.safeParse(reserve.result);
   if (!parsedResult.success) {
     throw new HttpError(400, "internal_error", issueMessages.internal_error);
   }
-  const menu = parsedResult.data as WeeklyFlyerMenuResult;
+  const menu = parsedResult.data;
   const inspectionSafety = await loadFlyerInspectionSafety(admin, userId);
   assertFlyerMenuAgainstSafety(menu, inspectionSafety);
   return { menu, requestId: reserve.request_id ?? requestIdForLog };
@@ -993,7 +995,7 @@ export async function runFlyerWeeklyWithReserveStub(options: {
       deniedReserve.success &&
       deniedReserve.data.status === "succeeded" &&
       deniedReserve.data.result != null &&
-      weeklyFlyerMenuSchema.safeParse(deniedReserve.data.result).success
+      weeklyFlyerMenuResultSchema.safeParse(deniedReserve.data.result).success
     ) {
       return { openRouterCalls: 0 };
     }
@@ -1015,7 +1017,7 @@ export async function runFlyerWeeklyWithReserveStub(options: {
     if (reserve.result == null) {
       return { openRouterCalls: 0, errorCode: "internal_error" };
     }
-    const parsed = weeklyFlyerMenuSchema.safeParse(reserve.result);
+    const parsed = weeklyFlyerMenuResultSchema.safeParse(reserve.result);
     if (!parsed.success) {
       return { openRouterCalls: 0, errorCode: "internal_error" };
     }
