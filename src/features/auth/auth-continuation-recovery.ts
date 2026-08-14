@@ -622,13 +622,13 @@ async function runInIndexedDbCoordinator<T>(
   }
 
   try {
-    const value = await new Promise<T | undefined>((resolve) => {
+    const coordinated = await new Promise<{ failed: boolean; value: T | undefined }>((resolve) => {
       let result: T | undefined;
       let settled = false;
-      const settle = (next: T | undefined): void => {
+      const settle = (next: T | undefined, failed: boolean): void => {
         if (settled) return;
         settled = true;
-        resolve(next);
+        resolve({ failed, value: next });
       };
       let transaction: IDBTransaction;
       try {
@@ -647,20 +647,23 @@ async function runInIndexedDbCoordinator<T>(
           transaction.abort();
         };
       } catch {
-        settle(undefined);
+        settle(undefined, true);
         return;
       }
       transaction.oncomplete = () => {
-        settle(result);
+        settle(result, false);
       };
       transaction.onerror = () => {
-        settle(undefined);
+        settle(undefined, true);
       };
       transaction.onabort = () => {
-        settle(undefined);
+        settle(undefined, true);
       };
     });
-    return { available: true, value };
+    // C-R4: txn abort / 生成失敗は「使えない」とみなし localStorage fallback へ。
+    // 成功して value が空（claim 無し）のときは available:true のまま（二重 reserve しない）。
+    if (coordinated.failed) return { available: false };
+    return { available: true, value: coordinated.value };
   } finally {
     database.close();
   }

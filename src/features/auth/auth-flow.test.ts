@@ -5,6 +5,7 @@ import {
   authDeadlineRemainingMs,
   browserSupabaseSessionStorageKey,
   clearAuthFlow,
+  clearAuthFlowUserDismissed,
   clearBrowserSupabaseSessionStorage,
   clearPendingAuthDeposit,
   clearSiblingUnexpiredAuthFlows,
@@ -782,6 +783,30 @@ function installFakeBroadcastChannel(): {
   };
   return { FakeBroadcastChannel, emptyStorage };
 }
+
+it("C-R1: dismiss BroadcastChannel clear drops peer tab memory without storage", () => {
+  const { FakeBroadcastChannel, emptyStorage } = installFakeBroadcastChannel();
+  try {
+    const flowId = "10000000-0000-4000-8000-0000000000r1";
+    resetAuthFlowUserDismissedMemoryForTests();
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(false);
+    const publisher = new BroadcastChannel("kondate.auth.flow-user-dismissed");
+    publisher.postMessage({ flowId });
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(true);
+    publisher.postMessage({ flowId, cleared: true });
+    publisher.close();
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(false);
+    // storage 印が無くても clearAuthFlowUserDismissed が memory を落とす
+    markAuthFlowUserDismissed(flowId, emptyStorage);
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(true);
+    clearAuthFlowUserDismissed(flowId, emptyStorage);
+    expect(isAuthFlowUserDismissed(flowId, emptyStorage)).toBe(false);
+  } finally {
+    FakeBroadcastChannel.reset();
+    vi.unstubAllGlobals();
+    resetAuthFlowUserDismissedMemoryForTests();
+  }
+});
 
 it("C-R8: dismiss BroadcastChannel populates peer tab memory without storage", () => {
   // open tabs のみ: 他タブ相当の postMessage で memory 印が立つ（storage 無し）

@@ -8,6 +8,7 @@ import {
   clearPendingAuthDeposit,
   ContinuationHttpError,
   ContinuationResponseLostError,
+  clearAuthFlowUserDismissed,
   createAuthFlow,
   isAuthFlowUserDismissed,
   markAuthFlowUserDismissed,
@@ -521,6 +522,16 @@ function isInFlightResumeDiscardedByStorage(flowId: string, storage: Storage): b
 }
 
 /**
+ * C-R2: in-flight の dismiss 再検査。sibling clear（flow 行欠如）とは別で、
+ * 後勝ち Google が secret を残したまま dismiss したときに exchange しない。
+ * completion があるときは既存 discard と同じく complete 側へ委ねる。
+ */
+function isInFlightResumeDismissed(flowId: string, storage: Storage): boolean {
+  if (readAuthContinuationCompletion(flowId, storage) !== null) return false;
+  return isAuthFlowUserDismissed(flowId, storage);
+}
+
+/**
  * C4: dual exchange / loser 収束用。
  * - completion bus: 常に見てよい（当該 flow の完了印）。
  * - session: exchange 開始後（または claim 後）だけ見る。
@@ -610,6 +621,8 @@ export function createAuthGateway(
       // C3: ただし PKCE verifier は SDK 単一キー。後勝ちの Google 開始は先行 OAuth を
       // 明示 dismiss し、死んだ verifier で先着 callback が terminal になる窓を閉じる。
       // magic（token_hash）は PKCE を使わないので残す。
+      // C-R1: dismiss は OAuth 成功後。失敗時に先行 flow を oauth_cancelled にしない。
+      // 成功後に自 flow の dismiss を戻し、同時双方 dismiss を後勝ちで閉じる。
       const provider = deps.getPublicEnv();
       const flow = await createAuthFlow(
         returnTo,
@@ -619,7 +632,6 @@ export function createAuthGateway(
         provider.authProviderMode,
       );
       try {
-        dismissSiblingOauthAuthorizationFlows(flow.id, storage);
         const redirectTo = buildAuthCallbackUrl(deps.appOrigin, flow);
         if (provider.authProviderMode === "oauth_mock") {
           if (provider.oauthMockOrigin !== "http://127.0.0.1:8788") {
@@ -633,6 +645,8 @@ export function createAuthGateway(
           authorize.searchParams.set("flow", flow.id);
           authorize.searchParams.set("state", flow.state);
           deps.navigate(authorize.href);
+          dismissSiblingOauthAuthorizationFlows(flow.id, storage);
+          clearAuthFlowUserDismissed(flow.id, storage);
           return;
         }
         const { error } = await client.auth.signInWithOAuth({
@@ -642,6 +656,8 @@ export function createAuthGateway(
         if (error !== null) {
           throw new Error("Googleログインを開始できませんでした");
         }
+        dismissSiblingOauthAuthorizationFlows(flow.id, storage);
+        clearAuthFlowUserDismissed(flow.id, storage);
       } catch {
         clearAuthFlow(flow.id, storage);
         throw new Error("Googleログインを開始できませんでした");
@@ -1108,6 +1124,15 @@ export function createAuthGateway(
         }
         clearAuthContinuationCompletion(flow.id, storage);
       }
+      // C-R2: redeposit 中に後勝ち Google が dismiss したら exchange しない
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // C-R1: redeposit 中に sibling clear されていたら claim/exchange しない
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
@@ -1123,6 +1148,15 @@ export function createAuthGateway(
     let holdsExchangeLease = false;
     let stopExchangeHeartbeat: (() => void) | undefined;
     try {
+      // C-R2: claim 直前の dismiss 再検査（入口通過後の後勝ち Google）
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // C-R1: claim 直前にも storage を再確認（redeposit await 中の sibling clear）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
@@ -1178,12 +1212,30 @@ export function createAuthGateway(
       if (preExchangeDone !== null) {
         return preExchangeDone;
       }
+      // C-R2: exchange 直前の dismiss 再検査（claim 中に後勝ち Google が verifier を上書き）
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // C-R1: sibling clear 後はメモリ secret / claimed code で exchange しない（結果適用 discard）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       // C1: exchange 直前の session 指紋。loser probe は「変化した session」だけ complete する。
       sessionBaseline = await captureSessionProbeBaseline(client);
+      // C-R2: baseline await 後の最終 dismiss 再検査
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // baseline await 後の最終 discard（C-R1）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
@@ -1274,6 +1326,16 @@ export function createAuthGateway(
         error instanceof ContinuationResponseLostError ||
         error instanceof TypeError;
       if (exchangeStarted && !isRetryableTransport) {
+        // C-R2: exchange 開始後に後勝ち Google が dismiss したなら terminal clear しない。
+        // 死んだ verifier での失敗を unbound にしない（secret は TTL まで残す）。
+        if (isInFlightResumeDismissed(flow.id, storage)) {
+          return {
+            kind: "error",
+            code: "oauth_cancelled",
+            returnTo: flow.returnTo,
+            flowId: flow.id,
+          };
+        }
         // C4/C5: dual exchange loser や getSession ラグでも sibling 成功を取りこぼさない。
         // 短間隔で completion / session を再検査してから terminal clear する。
         // C1: session は baseline から変化したときだけ complete（pre-existing 据え置きは拒否）。

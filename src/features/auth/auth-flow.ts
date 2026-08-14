@@ -199,7 +199,8 @@ const clockRebasePrefix = `${ownedAuthStoragePrefixes[1]}.clock-rebase.`;
  * C3: URL strip 後も 429/5xx 再 deposit できるよう、同一ブラウザに短寿命で code を保持する。
  * owned prefix 配下なので logout の clearOwnedAuthStorage で消える。
  * cold-start fail-closed（RR1）は session キーのみ消し pending は温存。
- * soft 失効は pending を消す（共有端末の code/token_hash 平文残置を閉じる）。
+ * soft 失効は prior-user pending を消す（C5）。callback-owner 付き sibling
+ * mid-login pending は残す（C-R3: strip 後 re-deposit）。
  * sibling mid-login の secret / PKCE / callback-owner は残す（R3）。
  * C4 は origin 共有 localStorage residual recovery suppress で
  * 新タブ含む silent complete を閉じる（secret は焼かない）。
@@ -225,6 +226,8 @@ const dismissedFlowIdsMemory = new Set<string>();
  */
 const AUTH_FLOW_DISMISS_BROADCAST_CHANNEL = "kondate.auth.flow-user-dismissed";
 let dismissBroadcastListenerStarted = false;
+/** テスト reset で閉じ、遅延 postMessage が次ケースの同一 UUID を汚さないようにする */
+let dismissBroadcastChannel: BroadcastChannel | null = null;
 
 function ensureAuthFlowDismissBroadcastListener(): void {
   if (dismissBroadcastListenerStarted) return;
@@ -232,18 +235,26 @@ function ensureAuthFlowDismissBroadcastListener(): void {
   dismissBroadcastListenerStarted = true;
   try {
     const channel = new BroadcastChannel(AUTH_FLOW_DISMISS_BROADCAST_CHANNEL);
+    dismissBroadcastChannel = channel;
     channel.onmessage = (event: MessageEvent) => {
       const data: unknown = event.data;
       if (typeof data !== "object" || data === null) return;
       if (!("flowId" in data)) return;
       const flowId: unknown = Reflect.get(data, "flowId");
       if (typeof flowId !== "string" || flowId === "") return;
+      // C-R1: 後勝ち OAuth 成功後の自 flow 取り消しを open tabs の memory にも反映する
+      const cleared = "cleared" in data ? Reflect.get(data, "cleared") : undefined;
+      if (cleared === true) {
+        dismissedFlowIdsMemory.delete(flowId);
+        return;
+      }
       dismissedFlowIdsMemory.add(flowId);
     };
   } catch {
     // BroadcastChannel 不可環境は memory + storage のみ
     // 起動失敗時は flag を戻し、後続 mark/isAuth で再試行できるようにする
     dismissBroadcastListenerStarted = false;
+    dismissBroadcastChannel = null;
   }
 }
 
@@ -255,11 +266,11 @@ export function startAuthFlowDismissBroadcastListener(): void {
   ensureAuthFlowDismissBroadcastListener();
 }
 
-function broadcastAuthFlowUserDismissed(flowId: string): void {
+function broadcastAuthFlowUserDismissed(flowId: string, cleared = false): void {
   if (typeof BroadcastChannel === "undefined") return;
   try {
     const channel = new BroadcastChannel(AUTH_FLOW_DISMISS_BROADCAST_CHANNEL);
-    channel.postMessage({ flowId });
+    channel.postMessage(cleared ? { flowId, cleared: true } : { flowId });
     channel.close();
   } catch {
     // best-effort（受信側 listener 未起動・環境非対応は TTL に収束）
@@ -792,6 +803,24 @@ export function markAuthFlowUserDismissed(
   clearPendingAuthDeposit(flowId, storage);
 }
 
+/**
+ * C-R1: 後勝ち Google が OAuth 成功したあと、同時開始で付いた自 flow の dismiss を戻す。
+ * pending は戻さない（C2: dismiss 時点で消した平文は復元しない）。
+ */
+export function clearAuthFlowUserDismissed(
+  flowId: string,
+  storage: Storage = window.localStorage,
+): void {
+  if (flowId === "") return;
+  dismissedFlowIdsMemory.delete(flowId);
+  try {
+    storage.removeItem(`${userDismissedPrefix}${flowId}`);
+  } catch {
+    // storage 障害: memory + BroadcastChannel で同一ページ／open tabs は戻す
+  }
+  broadcastAuthFlowUserDismissed(flowId, true);
+}
+
 /** C3: dismiss 済み flow か（残存 secret があっても silent complete しない） */
 export function isAuthFlowUserDismissed(
   flowId: string,
@@ -815,6 +844,12 @@ export function resetAuthFlowUserDismissedMemoryForTests(): void {
   dismissedFlowIdsMemory.clear();
   // 次の mark/isAuth で現在の BroadcastChannel 実装に再接続できるようにする（C-R8 テスト用）
   dismissBroadcastListenerStarted = false;
+  try {
+    dismissBroadcastChannel?.close();
+  } catch {
+    // best-effort
+  }
+  dismissBroadcastChannel = null;
 }
 
 /**
