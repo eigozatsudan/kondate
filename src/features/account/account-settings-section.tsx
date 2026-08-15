@@ -40,6 +40,10 @@ function mapDeleteError(
   if (code === "account_delete_after_billing_cancel_failed") {
     return "有料プランの解約は完了した可能性がありますが、アカウント削除に失敗しました。時間をおいてもう一度削除を試してください";
   }
+  // AP7: 並行 DELETE の 409。汎用失敗に潰すと進行中と分からず連打する
+  if (code === "account_delete_in_progress") {
+    return "削除処理が進行中です。完了するまでお待ちいただき、画面を更新してからもう一度お試しください";
+  }
   // AP3: クライアント締切後もサーバ側削除が完了し得る。失敗確定に見えない文言にする
   if (options?.maybeStillProcessing === true) {
     return "削除の結果を確認できませんでした。処理が続いている場合があるため、時間をおいてからログインできるか確認してください。すでに削除済みのときはログインできなくなります";
@@ -155,7 +159,8 @@ export function AccountSettingsSection() {
    * AP1（誤成功忌避）:
    * - local `session === null` は Auth hard delete の証拠ではない（同時 logout / soft
    *   SIGNED_OUT / storage 消滅でも起きる）。サーバ実在確認に進めないため **不明=false**。
-   * - getUser の任意 4xx は広げすぎ（429 等）→ **401/403 のみ** gone。
+   * - getUser の任意 4xx は広げすぎ（429 等）。**403 または user null** のみ gone。
+   * - getUser **401 は gone にしない**（revoke / 期限切れ JWT と Auth 残存が両立する）。
    * - 5xx / status 無し / timeout / ネットワークは不明（偽陰性 residual-intentional）。
    *
    * AP1: probe 自体に timeout を付け、never-settle で pending/ダイアログが固着しないようにする。
@@ -181,9 +186,9 @@ export function AccountSettingsSection() {
         AUTH_SESSION_PROBE_TIMEOUT_MS,
       );
       if (error !== null) {
-        // 401/403 のみ JWT 無効・ユーザー削除済み寄り。429 など他 4xx / 5xx / status 無しは不明
+        // 403 のみ「sub のユーザーが居ない」寄り。401 は JWT 無効だけで Auth 残存し得る
         const status = error.status;
-        if (status === 401 || status === 403) {
+        if (status === 403) {
           return true;
         }
         return false;
@@ -289,7 +294,7 @@ export function AccountSettingsSection() {
         }
         // 二タブ敗者: account_delete_failed / account_delete_after_billing_cancel_failed /
         // auth_required は、勝者が Auth hard delete 済みなら strict probe で成功同等 cleanup。
-        // probe は residual JWT + getUser(401/403|user null) のみ（session null 短絡なし）。
+        // probe は residual JWT + getUser(403|user null) のみ（401 と session null は短絡しない）。
         if (await isAuthSessionGone()) {
           await completeAccountDeletedLocally();
           return;

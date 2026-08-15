@@ -88,6 +88,15 @@ export const shareConsentSettingsCopy = {
   title: "匿名の緊急候補への協力",
   toggleLabel: "匿名で緊急候補に役立てる",
   help: "完成した献立のうち条件を満たしたものの一部を、匿名で他の方の緊急候補に使うことがあります。どれが選ばれるかは選べません。",
+  /**
+   * AP6: 設定トグル ON（初回 accept / 再同意）の前に必須フレーズを見せる。
+   * /privacy カードと同一ソース。オフ時だけ表示する。
+   */
+  acceptDisclosure: [
+    ...shareConsentRequiredPhrases.map((phrase) =>
+      phrase.endsWith("。") ? phrase : `${phrase}。`,
+    ),
+  ].join(""),
   /** トグル off 操作時・オフ状態で必ず見せる残存説明 */
   residualRetentionNotice: `協力を止めても、すでに提供済みの献立は他の方の緊急候補に残り続けます（既提供分は残ります）。${shareInFlightSendNote}`,
   /** AP5: /privacy で共有オフの保存に失敗したとき。成功扱いで進めない。 */

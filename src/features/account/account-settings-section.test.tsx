@@ -323,7 +323,7 @@ describe("AccountSettingsSection", () => {
   });
 
   it("AP10: fetch reject + residual JWT Auth gone → success-equivalent local cleanup", async () => {
-    // AP1: session null 短絡は廃止。残 JWT + getUser 401/403|user null のみ成功同等。
+    // AP1: session null 短絡は廃止。残 JWT + getUser 403|user null のみ成功同等。
     const user = userEvent.setup();
     seedOwnedStorage();
     fetchMock.mockRejectedValue(new TypeError("network"));
@@ -392,7 +392,7 @@ describe("AccountSettingsSection", () => {
   });
 
   it("AP3: fetch reject + local JWT remains but Auth user gone → success-equivalent cleanup", async () => {
-    // Admin hard delete 成功後も local getSession は JWT を返す。getUser 4xx でサーバ削除を検出する。
+    // Admin hard delete 成功後も local getSession は JWT を返す。getUser 403 でサーバ削除を検出する。
     const user = userEvent.setup();
     seedOwnedStorage();
     fetchMock.mockRejectedValue(new TypeError("network"));
@@ -429,7 +429,7 @@ describe("AccountSettingsSection", () => {
     });
     getUserMock.mockResolvedValue({
       data: { user: null },
-      error: { message: "invalid claim", status: 401 },
+      error: { message: "User from sub claim in JWT does not exist", status: 403 },
     });
 
     render(<AccountSettingsSection />);
@@ -753,6 +753,82 @@ describe("AccountSettingsSection", () => {
       await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
     ).toBeVisible();
     expect(getUserMock).toHaveBeenCalled();
+    expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
+  it("AP1: DELETE auth_required + getUser 401 must not accountDeleted", async () => {
+    // JWT revoke / 期限切れの 401 は Auth 残存と両立する。user null / 403 だけ gone。
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "auth_required",
+            message: "Authentication required",
+          },
+        }),
+        { status: 401, headers: { "content-type": "application/json" } },
+      ),
+    );
+    getSessionMock.mockResolvedValue({
+      data: { session: { access_token: "revoked-but-unexpired" } },
+      error: null,
+    });
+    getUserMock.mockResolvedValue({
+      data: { user: null },
+      error: { message: "invalid claim", status: 401 },
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    expect(
+      await screen.findByText("削除できませんでした。時間をおいてもう一度お試しください"),
+    ).toBeVisible();
+    expect(getUserMock).toHaveBeenCalled();
+    expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
+    expect(locationReplaceMock).not.toHaveBeenCalled();
+  });
+
+  it("AP7: account_delete_in_progress shows dedicated copy (not generic)", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "account_delete_in_progress",
+            message:
+              "削除処理が進行中です。完了するまでお待ちいただき、画面を更新してからもう一度お試しください",
+          },
+        }),
+        { status: 409, headers: { "content-type": "application/json" } },
+      ),
+    );
+    getSessionMock.mockResolvedValue({
+      data: { session: { access_token: "still-here" } },
+      error: null,
+    });
+    getUserMock.mockResolvedValue({
+      data: { user: { id: "u1" } },
+      error: null,
+    });
+
+    render(<AccountSettingsSection />);
+    await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
+    await user.click(screen.getByRole("button", { name: "削除の確認へ進む" }));
+    await user.type(screen.getByLabelText("確認のため「削除する」と入力"), "削除する");
+    await user.click(screen.getByRole("button", { name: "完全に削除する" }));
+
+    expect(await screen.findByText(/削除処理が進行中です/)).toBeVisible();
+    expect(
+      screen.queryByText("削除できませんでした。時間をおいてもう一度お試しください"),
+    ).not.toBeInTheDocument();
     expect(clearLocalAuthAndDraftsMock).not.toHaveBeenCalled();
     expect(locationReplaceMock).not.toHaveBeenCalled();
   });

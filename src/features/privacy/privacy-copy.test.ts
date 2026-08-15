@@ -76,3 +76,9 @@ it("locks residual retention copy for settings toggle off", () => {
   expect(shareConsentSettingsCopy.toggleLabel).toContain("匿名");
   expect(shareConsentSettingsCopy.sharedListTitle).toMatch(/提供/);
 });
+
+it("AP6: settings accept disclosure includes every required share-consent phrase", () => {
+  for (const phrase of shareConsentRequiredPhrases) {
+    expect(shareConsentSettingsCopy.acceptDisclosure).toContain(phrase);
+  }
+});

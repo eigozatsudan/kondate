@@ -140,7 +140,10 @@ describe("FeedbackSection", () => {
 
   it("AP10: blocks same-body resubmit after ambiguous response loss", async () => {
     const user = userEvent.setup();
-    fetchMock.mockRejectedValue(new TypeError("network"));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: () => Promise.reject(new SyntaxError("not json")),
+    });
     render(<FeedbackSection />);
     await expandFeedback(user);
     const text = "応答欠落後に同じ本文を再送したくない内容です。";
@@ -154,6 +157,28 @@ describe("FeedbackSection", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("同じ内容を再送すると重複");
     // 二重 insert 防止: fetch は増えない
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("AP8: fetch never reached does not sticky same-body retry", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockRejectedValue(new TypeError("network"));
+    render(<FeedbackSection />);
+    await expandFeedback(user);
+    const text = "到達前失敗のあと同じ本文を再送できる内容です。";
+    await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("送信できませんでした");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(stickyKey)).toBeNull();
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, data: { id: "feedback-retry" } }),
+    });
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("フィードバックを受け付けました");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("AP10: allows retry after definitive server error (not ambiguous)", async () => {
@@ -187,7 +212,10 @@ describe("FeedbackSection", () => {
 
   it("AP5/AP3: persists ambiguous fingerprint across remount via localStorage", async () => {
     const user = userEvent.setup();
-    fetchMock.mockRejectedValue(new TypeError("network"));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: () => Promise.reject(new SyntaxError("not json")),
+    });
     const text = "リロード後も同じ本文の再送を抑止する内容です。";
     const { unmount } = render(<FeedbackSection />);
     await expandFeedback(user);
@@ -216,7 +244,10 @@ describe("FeedbackSection", () => {
   it("AP3: sticky fingerprint is shared across tabs via localStorage (no second POST)", async () => {
     // Tab A が ambiguous 後、別マウント（Tab B 相当）が同一 body を拒否する
     const user = userEvent.setup();
-    fetchMock.mockRejectedValue(new TypeError("network"));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: () => Promise.reject(new SyntaxError("not json")),
+    });
     const text = "別タブでも同じ本文の再送を抑止する内容です。";
     const { unmount: unmountTabA } = render(<FeedbackSection />);
     await expandFeedback(user);
@@ -238,7 +269,10 @@ describe("FeedbackSection", () => {
 
   it("AP1: ambiguous fingerprint storage never contains free-form body plaintext", async () => {
     const user = userEvent.setup();
-    fetchMock.mockRejectedValue(new TypeError("network"));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: () => Promise.reject(new SyntaxError("not json")),
+    });
     const piiBody = "氏名やメールを含む曖昧失敗本文です。再送抑止の指紋確認用。";
     render(<FeedbackSection />);
     await expandFeedback(user);
@@ -271,7 +305,10 @@ describe("FeedbackSection", () => {
 
   it("AP17: sticky fingerprint is user-bound (other user is not suppressed)", async () => {
     const user = userEvent.setup();
-    fetchMock.mockRejectedValue(new TypeError("network"));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: () => Promise.reject(new SyntaxError("not json")),
+    });
     const text = "利用者Aの曖昧失敗本文は利用者Bの sticky にならない内容です。";
     const { unmount } = render(<FeedbackSection />);
     await expandFeedback(user);
@@ -317,9 +354,10 @@ describe("FeedbackSection", () => {
 
       await vi.advanceTimersByTimeAsync(FEEDBACK_POST_CLIENT_TIMEOUT_MS + 50);
 
-      expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+      expect(await screen.findByRole("alert")).toHaveTextContent("送信できませんでした");
       expect(screen.getByRole("button", { name: "閉じる" })).not.toBeDisabled();
       expect(screen.getByRole("button", { name: "送信する" })).not.toBeDisabled();
+      expect(localStorage.getItem(stickyKey)).toBeNull();
       // AP9: abortable POST
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/feedback",
@@ -381,7 +419,10 @@ describe("FeedbackSection", () => {
 
   it("AP13: localStorage reject falls back to sessionStorage sticky", async () => {
     const user = userEvent.setup();
-    fetchMock.mockRejectedValue(new TypeError("network"));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: () => Promise.reject(new SyntaxError("not json")),
+    });
     const text = "保存拒否でも同じ本文の再送を抑止する内容です。";
     vi.stubGlobal("localStorage", {
       get length() {

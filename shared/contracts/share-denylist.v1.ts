@@ -8,7 +8,7 @@
  * を fail-closed で追加する。オープン集合の完全人名認識は製品再設計域のため residual。
  */
 
-export const shareDenylistVersion = "2026-08-15.v5" as const;
+export const shareDenylistVersion = "2026-08-16.v6" as const;
 
 /**
  * 安全を保証する表現。共有プールでは安全を保証しない方針と矛盾するため拒否。
@@ -52,8 +52,14 @@ export const sharePiiLiteralPhrases = [
   "うちの冷蔵庫",
   "弟の",
   "姉の",
+  "兄の",
+  "妹の",
   "息子の",
   "娘の",
+  "次女の",
+  "長男の",
+  "祖母の",
+  "祖父の",
   "子供の",
   "こどもの",
   // 呼びかけ残渣（「ちゃんの」「くんの」は短く誤爆し得るが fail-closed 優先）
@@ -155,18 +161,20 @@ const japaneseAddressFragmentPattern =
 /**
  * 照合前畳み。針の文言は変えず、haystack だけ NFKC + 書式制御除去する。
  * ゼロ幅空白で「太郎の」を分断したり、全角＠で email 針をすり抜ける経路を閉じる。
- * カタカナ折り・空白削除はしない（針は明示フレーズの部分一致のまま）。
+ * AP2: 空白・読点・中点で「健太 の」「弟・の」「090 1234 5678」を分ける経路を閉じる。
+ * カタカナ折りはしない（針は明示フレーズの部分一致のまま）。
  */
 function foldShareDenylistHaystack(text: string): string {
   return text
     .normalize("NFKC")
     .replace(/\p{Cf}/gu, "")
+    .replace(/[\s、，・]+/gu, "")
     .trim();
 }
 
 /**
  * 単一テキストが denylist に触れるか。
- * haystack のみ NFKC + Cf 除去。針は緩めない。
+ * haystack のみ NFKC + Cf 除去 + 空白/読点/中点削除。針は緩めない。
  */
 export function textHitsShareDenylist(text: string): boolean {
   const trimmed = foldShareDenylistHaystack(text);

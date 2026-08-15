@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { shareConsentVersion } from "@shared/contracts/share-consent";
-import { shareConsentSettingsCopy } from "./privacy-copy";
+import { shareConsentRequiredPhrases, shareConsentSettingsCopy } from "./privacy-copy";
 import type { ShareConsentState, SharedEmergencyRecipeListItem } from "./share-consent-api";
 import {
   SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
@@ -65,6 +65,17 @@ describe("ShareConsentSettingsSection", () => {
     expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(screen.getByText(shareConsentSettingsCopy.residualRetentionNotice)).toBeVisible();
     expect(shareConsentSettingsCopy.residualRetentionNotice).toContain("既提供分は残");
+  });
+
+  it("AP6: shows required consent phrases before settings reaccept", () => {
+    renderSection({ consent: emptyConsent });
+    const section = screen
+      .getByRole("heading", { name: shareConsentSettingsCopy.title })
+      .closest("section");
+    const text = section?.textContent ?? "";
+    for (const phrase of shareConsentRequiredPhrases) {
+      expect(text).toContain(phrase);
+    }
   });
 
   it("shows residual retention notice when consent is revoked", () => {

@@ -188,6 +188,8 @@ export function ShareConsentSettingsSection({
       </h2>
 
       <p className="type-small">{shareConsentSettingsCopy.help}</p>
+      {/* AP6: オフ時だけ必須同意フレーズを見せ、設定トグルだけで見ずに accept しない */}
+      {!enabled ? <p className="type-small">{shareConsentSettingsCopy.acceptDisclosure}</p> : null}
 
       {consentLoading && consent === null ? (
         <p role="status">{shareConsentSettingsCopy.consentLoading}</p>

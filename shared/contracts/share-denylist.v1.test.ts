@@ -10,7 +10,7 @@ import {
 
 describe("share-denylist.v1", () => {
   it("locks a single denylist version", () => {
-    expect(shareDenylistVersion).toBe("2026-08-15.v5");
+    expect(shareDenylistVersion).toBe("2026-08-16.v6");
   });
 
   it("flags guarantee phrase アレルギーでも安心", () => {
@@ -29,8 +29,14 @@ describe("share-denylist.v1", () => {
       "うちの冷蔵庫",
       "弟の",
       "姉の",
+      "兄の",
+      "妹の",
       "息子の",
       "娘の",
+      "次女の",
+      "長男の",
+      "祖母の",
+      "祖父の",
       "子供の",
       "こどもの",
       "ちゃんの",
@@ -42,6 +48,30 @@ describe("share-denylist.v1", () => {
       expect(sharePiiLiteralPhrases).toContain(phrase);
       expect(textHitsShareDenylist(`${phrase}残り`), phrase).toBe(true);
     }
+  });
+
+  it("AP3: flags missing kinship literals 兄/妹/次女/長男/祖母/祖父", () => {
+    expect(textHitsShareDenylist("兄の特製だれを絡める")).toBe(true);
+    expect(textHitsShareDenylist("妹の残りカレーを温める")).toBe(true);
+    expect(textHitsShareDenylist("次女の取り分け")).toBe(true);
+    expect(textHitsShareDenylist("長男の弁当用")).toBe(true);
+    expect(textHitsShareDenylist("祖母の味付け")).toBe(true);
+    expect(textHitsShareDenylist("祖父の残り野菜")).toBe(true);
+    // 既存ヒットは緩めない
+    expect(textHitsShareDenylist("弟の特製だれ")).toBe(true);
+    expect(textHitsShareDenylist("健太の特製")).toBe(true);
+  });
+
+  it("AP2: flags whitespace / 中点 / 読点 separators and spaced phone", () => {
+    expect(textHitsShareDenylist("健太 の特製")).toBe(true);
+    expect(textHitsShareDenylist("弟 の")).toBe(true);
+    expect(textHitsShareDenylist("息子・の残り")).toBe(true);
+    expect(textHitsShareDenylist("弟、の特製")).toBe(true);
+    expect(textHitsShareDenylist("090 1234 5678")).toBe(true);
+    expect(textHitsShareDenylist("兄\nの特製だれ")).toBe(true);
+    // 既存ヒットは緩めない
+    expect(textHitsShareDenylist("太郎の特製ハンバーグ")).toBe(true);
+    expect(textHitsShareDenylist("健太の特製だれ")).toBe(true);
   });
 
   it("AP5: flags unlisted-class given name 健太の before OpenRouter", () => {

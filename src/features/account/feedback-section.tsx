@@ -237,7 +237,8 @@ export function FeedbackSection() {
       return;
     }
 
-    // fetch 到達後の欠落だけを ambiguous 扱いする（token 取得前失敗は未到達）
+    // Response を得たあとの欠落だけを ambiguous 扱いする。
+    // token 取得後・fetch 未到達（abort / timeout / ネットワーク）は sticky しない（AP8）
     let requestStarted = false;
     // AP9: 締切時に in-flight POST を abort し zombie 二重 insert 窓を縮める
     const abortController = new AbortController();
@@ -250,7 +251,6 @@ export function FeedbackSection() {
     const remainingPostBudgetMs = (): number => Math.max(1, postDeadlineMs - Date.now());
     try {
       const accessToken = await requireAccessToken(getBrowserSupabaseClient());
-      requestStarted = true;
       // AP6/AP9: settle + body を同一予算。withTimeout は UI 回復、onTimeout で AbortSignal
       const response = await withTimeout(
         fetch("/api/feedback", {
@@ -266,6 +266,8 @@ export function FeedbackSection() {
         remainingPostBudgetMs(),
         abortPost,
       );
+      // AP8: headers を得てからだけ到達。未到達失敗で同一本文を封じない
+      requestStarted = true;
       let raw: unknown;
       try {
         // AP9: headers-only hang で pending / 閉じる不能にしない
