@@ -167,8 +167,8 @@ export async function assertFlyerPrivacyConsent(user: FlyerWeeklyAuthUser): Prom
 }
 
 /**
- * flyer 第一関門。usage と同じく restore 後の plus を見る（B-R2）。
- * 生 plusEntitled（kill unpaid）で短絡しない。
+ * flyer 第一関門。usage と同じく applyQuotaPlan の plus を見る。
+ * B2: kill_source では elevation しない。生 plusEntitled（kill unpaid）で短絡しない。
  */
 export function isFlyerPlusAllowed(entitlement: Entitlement, billingEnabled: boolean): boolean {
   return (

@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { EntitlementData } from "@shared/contracts/billing";
 import {
+  CHECKOUT_POLL_UNCONFIRMED_COPY,
   INCOMPLETE_COPY,
   PAST_DUE_COPY,
   PORTAL_BUTTON_LABEL,
@@ -13,6 +14,7 @@ import {
   TRIAL_END_WARNING,
   YEARLY_CONFIRM_COPY,
 } from "./plan-settings-section";
+import { ENTITLEMENT_SUCCESS_POLL_DEADLINE_MS } from "./use-entitlement";
 import {
   PLUS_LP_COMING_SOON_BADGE,
   PLUS_LP_COMING_SOON_BODY,
@@ -201,6 +203,24 @@ describe("PlanSettingsSection", () => {
     await waitFor(() => {
       expect(onPortal).toHaveBeenCalledTimes(1);
     });
+  });
+
+  // B8: 5 分 deadline では確認不能コピーへ切り替わり、確認中は残さない
+  it("shows unconfirmed copy after checkout success poll deadline (B8)", async () => {
+    vi.useFakeTimers();
+    try {
+      const onSettled = vi.fn();
+      renderPlan({ pollAfterCheckoutSuccess: true, onCheckoutPollSettled: onSettled });
+      expect(screen.getByText(/お支払いの反映を確認しています/)).toBeVisible();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ENTITLEMENT_SUCCESS_POLL_DEADLINE_MS);
+      });
+      expect(onSettled).toHaveBeenCalled();
+      expect(screen.getByText(CHECKOUT_POLL_UNCONFIRMED_COPY)).toBeVisible();
+      expect(screen.queryByText(/お支払いの反映を確認しています/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // B9: Checkout 成功後の poll 中は Free でも Portal 導線を残す

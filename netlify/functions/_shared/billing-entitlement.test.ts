@@ -216,7 +216,7 @@ describe("toEntitlementData / productSurfacesOpen (A3)", () => {
   });
 });
 
-describe("restoreKillMaskedEntitlement (B3)", () => {
+describe("restoreKillMaskedEntitlement (B2)", () => {
   const killMasked: Entitlement = {
     plan: "free",
     status: "unpaid",
@@ -237,17 +237,18 @@ describe("restoreKillMaskedEntitlement (B3)", () => {
     expect(applyQuotaPlan(killMasked, false)).toBe("free");
   });
 
-  it("restores allowlisted kill-unpaid to source status without a new webhook", () => {
+  it("does not elevate from stale kill_source without Stripe (B2)", () => {
+    // kill 中に Stripe が canceled/unpaid でも webhook 欠落なら kill_source は active のまま。
+    // BILLING_ENABLED 復帰だけで Plus に戻さない（webhook / reconcile 待ち）。
     const restored = restoreKillMaskedEntitlement(killMasked, true);
-    expect(restored.status).toBe("active");
-    expect(restored.plusEntitled).toBe(true);
-    expect(restored.plan).toBe("plus");
-    expect(applyQuotaPlan(killMasked, true)).toBe("plus");
+    expect(restored.status).toBe("unpaid");
+    expect(restored.plusEntitled).toBe(false);
+    expect(restored.plan).toBe("free");
+    expect(applyQuotaPlan(killMasked, true)).toBe("free");
     const data = toEntitlementData(killMasked, true);
-    expect(data.status).toBe("active");
-    expect(data.plusEntitled).toBe(true);
-    expect(data.quotaPlan).toBe("plus");
-    // DB 行は unpaid のまま。生値は落とさない
+    expect(data.status).toBe("unpaid");
+    expect(data.plusEntitled).toBe(false);
+    expect(data.quotaPlan).toBe("free");
     expect(data.dbPlusEntitled).toBe(false);
   });
 
@@ -260,8 +261,7 @@ describe("restoreKillMaskedEntitlement (B3)", () => {
     expect(applyQuotaPlan(realUnpaid, true)).toBe("free");
   });
 
-  it("restores past_due within grace as plus when since was persisted during kill (B-R5)", () => {
-    // webhook が kill 中でも past_due_since を残せば、解除後は grace 契約どおり plus に戻る
+  it("does not restore past_due kill_source as plus (B2)", () => {
     const now = new Date();
     const pastDueMasked: Entitlement = {
       ...killMasked,
@@ -269,28 +269,24 @@ describe("restoreKillMaskedEntitlement (B3)", () => {
       killSourceStatus: "past_due",
     };
     const restored = restoreKillMaskedEntitlement(pastDueMasked, true, now);
-    expect(restored.status).toBe("past_due");
-    expect(restored.plusEntitled).toBe(true);
-    expect(restored.pastDueGrace).toBe(true);
-    expect(restored.plan).toBe("plus");
-    expect(restored.dbPlusEntitled).toBe(false);
-    expect(applyQuotaPlan(pastDueMasked, true)).toBe("plus");
+    expect(restored.status).toBe("unpaid");
+    expect(restored.plusEntitled).toBe(false);
+    expect(applyQuotaPlan(pastDueMasked, true, now)).toBe("free");
   });
 
-  it("keeps A6 fail-closed when kill-source past_due has null since (B-R5)", () => {
+  it("keeps unpaid when kill-source past_due has null since", () => {
     const pastDueMasked: Entitlement = {
       ...killMasked,
       pastDueSince: null,
       killSourceStatus: "past_due",
     };
     const restored = restoreKillMaskedEntitlement(pastDueMasked, true);
-    expect(restored.status).toBe("past_due");
+    expect(restored.status).toBe("unpaid");
     expect(restored.plusEntitled).toBe(false);
-    expect(restored.pastDueGrace).toBe(false);
     expect(applyQuotaPlan(pastDueMasked, true)).toBe("free");
   });
 
-  it("restores canceled-in-period as plus without flipping wire dbPlusEntitled (B-R3)", () => {
+  it("does not restore canceled kill_source as plus (B2)", () => {
     const now = new Date("2026-07-29T12:00:00.000Z");
     const canceledMasked: Entitlement = {
       ...killMasked,
@@ -298,14 +294,30 @@ describe("restoreKillMaskedEntitlement (B3)", () => {
       killSourceStatus: "canceled",
     };
     const restored = restoreKillMaskedEntitlement(canceledMasked, true, now);
-    expect(restored.status).toBe("canceled");
-    expect(restored.plusEntitled).toBe(true);
-    expect(restored.plan).toBe("plus");
-    expect(restored.dbPlusEntitled).toBe(false);
-    expect(applyQuotaPlan(canceledMasked, true)).toBe("plus");
-    const data = toEntitlementData(canceledMasked, true);
-    expect(data.status).toBe("canceled");
-    expect(data.plusEntitled).toBe(true);
+    expect(restored.status).toBe("unpaid");
+    expect(restored.plusEntitled).toBe(false);
+    expect(applyQuotaPlan(canceledMasked, true, now)).toBe("free");
+    const data = toEntitlementData(canceledMasked, true, now);
+    expect(data.status).toBe("unpaid");
+    expect(data.plusEntitled).toBe(false);
+    expect(data.quotaPlan).toBe("free");
     expect(data.dbPlusEntitled).toBe(false);
+  });
+
+  it("uses one clock for restore and quota so wire stays consistent (B15)", () => {
+    const now = new Date("2026-08-01T00:00:00.000Z");
+    const canceled: Entitlement = {
+      ...killMasked,
+      status: "canceled",
+      currentPeriodEnd: now.toISOString(),
+      killSourceStatus: null,
+      plusEntitled: false,
+      plan: "free",
+    };
+    const data = toEntitlementData(canceled, true, now);
+    expect(data.plusEntitled).toBe(data.quotaPlan === "plus");
+    if (data.plan === "plus") {
+      expect(data.plusEntitled).toBe(true);
+    }
   });
 });

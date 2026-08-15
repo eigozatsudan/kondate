@@ -797,7 +797,7 @@ describe("runBillingCheckout", () => {
     );
   });
 
-  it("rejects checkout after kill-unpaid restore without waiting for webhook (B3)", async () => {
+  it("does not 409 from stale kill_source; Stripe list is the live guard (B2)", async () => {
     loadEntitlement.mockResolvedValue({
       ...freeEntitlement,
       status: "unpaid",
@@ -807,14 +807,35 @@ describe("runBillingCheckout", () => {
       killSourceStatus: "active",
     });
     const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(200);
+    expect(sessionsCreate).toHaveBeenCalledTimes(1);
+    expect(subscriptionsList).toHaveBeenCalled();
+  });
+
+  it("still 409s via Stripe list when kill_source is stale but a live sub exists (B2)", async () => {
+    loadEntitlement.mockResolvedValue({
+      ...freeEntitlement,
+      status: "unpaid",
+      plusEntitled: false,
+      dbPlusEntitled: false,
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      killSourceStatus: "active",
+    });
+    subscriptionsList.mockImplementation((params: { status?: string }) => {
+      if (params.status === "active") {
+        return Promise.resolve({ data: [{ id: "sub_live", status: "active" }] });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const response = await runBillingCheckout(request(), deps());
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
-      error: { code: "billing_already_entitled" },
+      error: { code: "billing_checkout_use_portal" },
     });
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects checkout after kill-unpaid restore from canceled while period remains (B-R3)", async () => {
+  it("allows checkout after kill-unpaid canceled source once Stripe list is empty (B2)", async () => {
     loadEntitlement.mockResolvedValue({
       ...freeEntitlement,
       status: "unpaid",
@@ -824,24 +845,79 @@ describe("runBillingCheckout", () => {
       killSourceStatus: "canceled",
     });
     const response = await runBillingCheckout(request(), deps());
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: "billing_already_entitled" },
+    expect(response.status).toBe(200);
+    expect(sessionsCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 503 when customer search throws instead of creating another Customer (B3)", async () => {
+    const customersSearch = vi.fn().mockRejectedValue(new Error("search index down"));
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_user") {
+        return { data: null, error: null };
+      }
+      if (name === "acquire_billing_checkout_lock") {
+        return { data: { ok: true, lock_token: LOCK_TOKEN }, error: null };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: { ok: true, released: true }, error: null };
+      }
+      return { data: null, error: null };
     });
+    const d = deps();
+    d.stripe = {
+      ...d.stripe,
+      customers: { create: customersCreate, search: customersSearch },
+    };
+    const response = await runBillingCheckout(request(), d);
+    expect(response.status).toBe(503);
+    expect(customersSearch).toHaveBeenCalled();
+    expect(customersCreate).not.toHaveBeenCalled();
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
-  it("allows checkout after kill-unpaid restore from canceled once period ended (B-R3)", async () => {
-    loadEntitlement.mockResolvedValue({
-      ...freeEntitlement,
-      status: "unpaid",
-      plusEntitled: false,
-      dbPlusEntitled: false,
-      currentPeriodEnd: "2026-07-01T00:00:00.000Z",
-      killSourceStatus: "canceled",
-    });
+  it("expires every page of leftover open Sessions (B13)", async () => {
+    sessionsList
+      .mockResolvedValueOnce({
+        data: [{ id: "cs_old_page1", status: "open" }],
+        object: "list",
+        has_more: true,
+        url: "",
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: "cs_old_page2", status: "open" }],
+        object: "list",
+        has_more: false,
+        url: "",
+      });
     const response = await runBillingCheckout(request(), deps());
     expect(response.status).toBe(200);
-    expect(sessionsCreate).toHaveBeenCalledTimes(1);
+    expect(sessionsList).toHaveBeenCalledTimes(2);
+    expect(sessionsList.mock.calls[1]![0]).toEqual(
+      expect.objectContaining({ starting_after: "cs_old_page1" }),
+    );
+    expect(sessionsExpire).toHaveBeenCalledWith("cs_old_page1");
+    expect(sessionsExpire).toHaveBeenCalledWith("cs_old_page2");
+  });
+
+  it("returns 503 when Session url host is not an allowed Stripe host (B14)", async () => {
+    sessionsCreate.mockResolvedValue({
+      id: SESSION_ID,
+      url: "https://evil.example/phish",
+    });
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(503);
+    expect(sessionsExpire).toHaveBeenCalledWith(SESSION_ID);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "request_failed" },
+    });
+  });
+
+  it("pins Session expires_at to lock TTL without the +60s tail (B12)", async () => {
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(200);
+    const createArgs = sessionsCreate.mock.calls[0]![0] as { expires_at: number };
+    expect(createArgs.expires_at).toBe(
+      Math.floor((Date.parse("2026-07-29T12:00:00.000Z") + CHECKOUT_LOCK_TTL_MS) / 1000),
+    );
   });
 });

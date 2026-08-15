@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { EntitlementData } from "@shared/contracts/billing";
 import { createCheckoutSession, createPortalSession } from "./billing-api";
 import {
+  CHECKOUT_POLL_UNCONFIRMED_COPY,
   INCOMPLETE_COPY,
   PAST_DUE_COPY,
   PORTAL_BUTTON_LABEL,
@@ -26,6 +27,7 @@ export {
   PAST_DUE_COPY,
   INCOMPLETE_COPY,
   SURFACES_CLOSED_COPY,
+  CHECKOUT_POLL_UNCONFIRMED_COPY,
 } from "./billing-ui-copy";
 
 function formatTrialEnd(iso: string | null): string | null {
@@ -305,8 +307,11 @@ export function PlanSettingsSection({
             </div>
           ) : null}
 
-          {pollAfterCheckoutSuccess && !entitled ? (
+          {pollAfterCheckoutSuccess && !entitled && !portalCtaAfterSuccessPoll ? (
             <p role="status">お支払いの反映を確認しています。数十秒かかることがあります。</p>
+          ) : null}
+          {portalCtaAfterSuccessPoll && !entitled ? (
+            <p role="status">{CHECKOUT_POLL_UNCONFIRMED_COPY}</p>
           ) : null}
         </>
       ) : null}

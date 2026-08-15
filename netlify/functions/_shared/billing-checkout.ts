@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 import {
   checkoutRequestSchema,
+  isAllowedStripeRedirectUrl,
   PLUS_LP_UPGRADE_COMING_SOON,
   type CheckoutData,
   type CheckoutRequest,
@@ -109,7 +110,9 @@ async function ensureStripeCustomer(deps: BillingCheckoutDeps, userId: string): 
       }
     } catch (error: unknown) {
       if (error instanceof HttpError) throw error;
-      // search 失敗時は create へフォールバック
+      // B3: search throw を握りつぶして create すると別 Customer / 二重課金になる。
+      // index 遅延の空ヒットは残差（新規ユーザーの create 経路を閉じない）。
+      throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
   }
 
@@ -158,36 +161,49 @@ async function expireOpenCheckoutSessions(
   requestId: string,
   startedAt: number,
 ): Promise<void> {
-  let listed: Stripe.ApiList<Stripe.Checkout.Session>;
-  try {
-    listed = await deps.stripe.checkout.sessions.list({
-      customer: customerId,
-      status: "open",
-      limit: 100,
-    });
-  } catch {
-    throw new HttpError(503, "request_failed", "処理を完了できませんでした");
-  }
-  for (const session of listed.data) {
-    if (typeof session.id !== "string" || session.id.length === 0) continue;
+  // B13: webhook 側 live list と同型。limit 100 の 1 ページだけだと 101 件目が支払可能のまま残る。
+  let startingAfter: string | undefined;
+  for (;;) {
+    let listed: Stripe.ApiList<Stripe.Checkout.Session>;
     try {
-      await deps.stripe.checkout.sessions.expire(session.id);
-      log({
-        level: "info",
-        requestId,
-        code: "billing_checkout_session_expired_compensation",
-        durationMs: Date.now() - startedAt,
+      listed = await deps.stripe.checkout.sessions.list({
+        customer: customerId,
+        status: "open",
+        limit: 100,
+        ...(startingAfter === undefined ? {} : { starting_after: startingAfter }),
       });
     } catch {
-      log({
-        level: "error",
-        requestId,
-        code: "billing_checkout_session_expire_failed",
-        durationMs: Date.now() - startedAt,
-        alertMetric: 1,
-      });
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
+    for (const session of listed.data) {
+      if (typeof session.id !== "string" || session.id.length === 0) continue;
+      try {
+        await deps.stripe.checkout.sessions.expire(session.id);
+        log({
+          level: "info",
+          requestId,
+          code: "billing_checkout_session_expired_compensation",
+          durationMs: Date.now() - startedAt,
+        });
+      } catch {
+        log({
+          level: "error",
+          requestId,
+          code: "billing_checkout_session_expire_failed",
+          durationMs: Date.now() - startedAt,
+          alertMetric: 1,
+        });
+        throw new HttpError(503, "request_failed", "処理を完了できませんでした");
+      }
+    }
+    if (!listed.has_more || listed.data.length === 0) {
+      break;
+    }
+    const last = listed.data[listed.data.length - 1];
+    if (last === undefined || typeof last.id !== "string" || last.id.length === 0) {
+      break;
+    }
+    startingAfter = last.id;
   }
 }
 
@@ -298,9 +314,9 @@ export async function runBillingCheckout(
       throw error;
     }
 
-    // B3: kill 中 unpaid を復帰後に戻してから 409 判定（未復元だと unpaid が Checkout を通す）
-    // now を渡して canceled 期間判定を Checkout 時計と揃える（B-R3）
-    entitlement = restoreKillMaskedEntitlement(entitlement, deps.env.billingEnabled, now());
+    // B2: kill_source では elevation しない。Checkout 時計は restore / 成功ログで共有する（B15）。
+    const checkoutNow = now();
+    entitlement = restoreKillMaskedEntitlement(entitlement, deps.env.billingEnabled, checkoutNow);
 
     // DB 投影で既に entitled → 409（kill 中は Checkout 自体 503 なのでここに来ない）
     if (entitlement.dbPlusEntitled) {
@@ -322,7 +338,7 @@ export async function runBillingCheckout(
     if (entitlement.status === "trialing" || entitlement.status === "active") {
       throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
     }
-    // B-R3: restore 後 plus（期間内 canceled）は 409。status 専用枝の後に置き past_due code は変えない
+    // B2: restore は elevation しない。期間内 canceled の 409 は DB 投影の plusEntitled / Stripe list に委ねる。
     if (entitlement.plusEntitled) {
       throw new HttpError(409, "billing_already_entitled", "すでに Plus をご利用中です");
     }
@@ -381,12 +397,14 @@ export async function runBillingCheckout(
 
     const usedTrial = await hasUsedTrial(deps, user.email);
     const origin = deps.env.SERVER_SITE_ORIGIN;
-    // B16: sessions.create 直前に再 list（list→create TOCTOU を縮める DiD。dual webhook は残差）
+    // B12/B16: sessions.create 直前に再 list（list→create TOCTOU を縮める DiD）。
+    // Stripe 側 atomic は発明しない。完全閉鎖は残差。
     await rejectIfLiveStripeSubscription(deps, customerId);
     let session: Stripe.Checkout.Session;
     try {
-      // Stripe は create 時点から 30 分以上。lock 取得時刻ではなく直前の now+30m（以上）（B-R1）
-      const sessionExpiresAt = Math.floor((now().getTime() + CHECKOUT_LOCK_TTL_MS) / 1000) + 60;
+      // B12: lock TTL と Session 期限を揃える（+60s すると lock 切れ後も旧 Session が支払可能）。
+      // Stripe 下限は create 時点から 30 分。lock 取得時刻ではなく直前の now+30m（B-R1）。
+      const sessionExpiresAt = Math.floor((now().getTime() + CHECKOUT_LOCK_TTL_MS) / 1000);
       session = await deps.stripe.checkout.sessions.create({
         mode: "subscription",
         customer: customerId,
@@ -394,7 +412,7 @@ export async function runBillingCheckout(
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${origin}/settings?billing=success`,
         cancel_url: `${origin}/plus?billing=cancel`,
-        // lock TTL 以上。期限切れ lock 上書き時は expireOpenCheckoutSessions が旧 Session を閉じる（B1）
+        // lock TTL と同じ。期限切れ lock 上書き時は expireOpenCheckoutSessions が旧 Session を閉じる（B1/B13）
         expires_at: sessionExpiresAt,
         subscription_data: {
           ...(usedTrial ? {} : { trial_period_days: TRIAL_PERIOD_DAYS }),
@@ -456,8 +474,12 @@ export async function runBillingCheckout(
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
 
-    if (typeof session.url !== "string" || session.url.length === 0) {
-      // bind 済み Session に URL が無い = 利用不能。expire してから解放する。
+    if (
+      typeof session.url !== "string" ||
+      session.url.length === 0 ||
+      !isAllowedStripeRedirectUrl(session.url)
+    ) {
+      // B14: bind 済みでも host 再検証。空 / 非許可 host は expire してから解放する。
       try {
         await deps.stripe.checkout.sessions.expire(session.id);
         log({
@@ -488,7 +510,7 @@ export async function runBillingCheckout(
       code: "billing_checkout_created",
       durationMs: Date.now() - startedAt,
       priceInterval: body.interval,
-      plan: applyQuotaPlan(entitlement, deps.env.billingEnabled),
+      plan: applyQuotaPlan(entitlement, deps.env.billingEnabled, checkoutNow),
     });
 
     return json<CheckoutData>(200, { ok: true, data: { url: session.url } });

@@ -467,7 +467,8 @@ export async function cancelDualLiveSubscriptions(
     if (ok === false) {
       const failureCode = (markData as { failure_code?: unknown }).failure_code;
       if (failureCode === "billing_subscription_missing") {
-        // 初回 dual で行がまだ無い: cancel せず process で行を作り、再送で dual を完了させる
+        // B11: 初回 dual で行がまだ無い。同一 evt 再送は duplicate なので
+        // ここで rank keep 以外を cancel する（再送完了前提は破れている）。
         deps.log({
           level: "warn",
           requestId: deps.requestId,
@@ -475,9 +476,10 @@ export async function cancelDualLiveSubscriptions(
           durationMs: Date.now() - deps.startedAt,
           stripeCustomerId,
         });
-        return { keepSubscriptionId: null, discardedSubscriptionIds: [] };
+        // mark 無しでも下の cancel ループへ進む
+      } else {
+        throw new Error("mark_billing_subscription_dual_cancel_keep_rejected");
       }
-      throw new Error("mark_billing_subscription_dual_cancel_keep_rejected");
     }
   }
 
@@ -716,9 +718,17 @@ async function handleSubscriptionEvent(
     // B4: allowlist item 優先で投影
     retrieved = projectionFromSubscription(liveSub, prices);
   } catch {
-    // discard 済みイベントで keep retrieve 失敗時は event オブジェクトで上書きしない
+    // B10: retrieve 失敗を event payload で投影しない（stale active 上書き防止）。
+    // invoice 経路と同型: claim せず 5xx 再送。discard→keep の retrieve 失敗も event で上書きしない。
     if (projectSubscriptionId === sub.id) {
-      retrieved = projectionFromSubscription(sub, prices);
+      log({
+        level: "error",
+        requestId,
+        code: "billing_subscription_retrieve_failed",
+        durationMs: Date.now() - startedAt,
+        alertMetric: 1,
+      });
+      throw new Error("subscription_retrieve_failed");
     }
   }
   let projection =
@@ -798,18 +808,9 @@ async function handleSubscriptionEvent(
     clear_past_due_since: clearPastDue,
     kill_source_status: killSourceStatus,
     ...(pastDueSinceIso !== null ? { past_due_since: pastDueSinceIso } : {}),
-    // same-second 用。RPC が created 比較後に参照。evt_ 辞書順は使わない。
-    // residual-intentional (B7): 投影成功時は常に retrieved を載せるため SQL の terminality
-    // fallback は実質デッド。同一秒 race は後勝ち live スナップショット（migration 契約）。
-    retrieved_subscription: {
-      status: projectedStatus,
-      stripe_price_id: projection.stripe_price_id,
-      stripe_subscription_id: projection.stripe_subscription_id,
-      cancel_at_period_end: projection.cancel_at_period_end,
-      current_period_start: projection.current_period_start,
-      current_period_end: projection.current_period_end,
-      trial_end: projection.trial_end,
-    },
+    // B6: retrieved_subscription を載せない。SQL の same-second は terminality rank を使う。
+    // 常に載せると stale retrieve の active が先に commit された canceled を上書きする。
+    // 投影フィールド自体は retrieve 成功時の live を top-level に載せる（evt_ 辞書順は使わない）。
   });
 
   if (outcome === "stale_ignored") {
@@ -881,10 +882,21 @@ async function handleCheckoutSessionEvent(
     stripeCustomerId: customerId,
   });
 
+  // B9: process を先に行い、throw 時は lock を残して Stripe 再送させる。
+  // 解放を先にすると process 失敗後に同一ユーザーが次 Checkout を取れる。
+  // subscription 投影は subscription イベントに寄せる。event 記録のみ。
+  const outcome = await processStripeEvent(deps.admin, {
+    stripe_event_id: event.id,
+    event_type: event.type,
+    stripe_event_created: event.created,
+    ...(userId === null ? { skip_subscription_projection: true } : { user_id: userId }),
+    skip_subscription_projection: true,
+  });
+
   // B12: checkout lock 解放は projection 用 user 解決と独立。
   // map 未解決でも metadata / client_reference の user で session 紐づき lock を解放し、
   // 最大 30m の billing_checkout_in_progress を避ける（権益投影は別経路）。
-  // B2: release の `{ error }` を検査し、失敗時は claim 前に 500 で止めて Stripe 再送させる。
+  // release の `{ error }` を検査し、失敗時は 500 で Stripe 再送（event は claim 済み、再送は duplicate + 再解放）。
   // released:false（行なし）は既解放・未 bind の idempotent no-op として成功扱い。
   const lockUserId = userId ?? metadataUserId;
   let released = false;
@@ -904,15 +916,6 @@ async function handleCheckoutSessionEvent(
       typeof releaseData === "object" &&
       (releaseData as { released?: unknown }).released === true;
   }
-
-  // subscription 投影は subscription イベントに寄せる。event 記録のみ。
-  const outcome = await processStripeEvent(deps.admin, {
-    stripe_event_id: event.id,
-    event_type: event.type,
-    stripe_event_created: event.created,
-    ...(userId === null ? { skip_subscription_projection: true } : { user_id: userId }),
-    skip_subscription_projection: true,
-  });
 
   log({
     level: "info",
@@ -1099,15 +1102,7 @@ async function handleInvoiceEvent(
     clear_past_due_since: clearPastDueSince,
     kill_source_status: killSourceStatus,
     ...(pastDueSinceIso !== null ? { past_due_since: pastDueSinceIso } : {}),
-    retrieved_subscription: {
-      status,
-      stripe_price_id: projection.stripe_price_id,
-      stripe_subscription_id: projection.stripe_subscription_id,
-      cancel_at_period_end: projection.cancel_at_period_end,
-      current_period_start: projection.current_period_start,
-      current_period_end: projection.current_period_end,
-      trial_end: projection.trial_end,
-    },
+    // B6: subscription 経路と同型。retrieved_subscription は載せない（same-second terminality）。
   });
 
   log({

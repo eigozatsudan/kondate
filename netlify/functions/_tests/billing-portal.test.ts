@@ -223,7 +223,7 @@ describe("runBillingPortal", () => {
     expect(subscriptionsList).not.toHaveBeenCalled();
   });
 
-  it("allows portal after kill-unpaid restore without waiting for webhook (B3)", async () => {
+  it("does not open portal from stale kill_source; Stripe live list is the guard (B2)", async () => {
     loadEntitlement.mockResolvedValue({
       ...freeNone,
       status: "unpaid",
@@ -233,9 +233,38 @@ describe("runBillingPortal", () => {
       killSourceStatus: "active",
     });
     const response = await runBillingPortal(request(), deps());
+    expect(response.status).toBe(403);
+    expect(portalCreate).not.toHaveBeenCalled();
+    expect(subscriptionsList).toHaveBeenCalled();
+  });
+
+  it("opens portal when kill_source is stale but Stripe still has a live sub (B2)", async () => {
+    loadEntitlement.mockResolvedValue({
+      ...freeNone,
+      status: "unpaid",
+      plusEntitled: false,
+      dbPlusEntitled: false,
+      currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      killSourceStatus: "active",
+    });
+    subscriptionsList.mockImplementation((params: { status?: string }) => {
+      if (params.status === "active") {
+        return Promise.resolve({ data: [{ id: "sub_live", status: "active" }] });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const response = await runBillingPortal(request(), deps());
     expect(response.status).toBe(200);
     expect(portalCreate).toHaveBeenCalled();
-    expect(subscriptionsList).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 when Portal session url host is not allowed (B14)", async () => {
+    portalCreate.mockResolvedValue({ url: "https://evil.example/phish" });
+    const response = await runBillingPortal(request(), deps());
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "request_failed" },
+    });
   });
 
   it("returns 401 when authentication fails", async () => {

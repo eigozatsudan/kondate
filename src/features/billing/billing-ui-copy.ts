@@ -10,3 +10,5 @@ export const PAST_DUE_COPY = "お支払いの更新が必要です" as const;
 export const INCOMPLETE_COPY =
   "お支払いの手続きが完了していません。お支払い管理から手続きを続けてください" as const;
 export const SURFACES_CLOSED_COPY = "お支払い管理は現在ご利用いただけません。" as const;
+/** Checkout 成功後 poll が 5 分 / 連続失敗で止まったときの確認不能 UX（runbook と同文） */
+export const CHECKOUT_POLL_UNCONFIRMED_COPY = "お支払い状況を確認できません" as const;

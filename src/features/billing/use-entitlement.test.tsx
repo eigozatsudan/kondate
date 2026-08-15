@@ -55,4 +55,15 @@ describe("shouldContinueEntitlementSuccessPoll", () => {
     expect(ENTITLEMENT_SUCCESS_POLL_DEADLINE_MS).toBe(5 * 60 * 1000);
     expect(ENTITLEMENT_SUCCESS_POLL_MAX_FAILURES).toBe(3);
   });
+
+  it("stops at deadline even when plusEntitled and failureCount stay unchanged (B8)", () => {
+    expect(
+      shouldContinueEntitlementSuccessPoll({
+        ...base,
+        plusEntitled: false,
+        fetchFailureCount: 0,
+        nowMs: base.startedAtMs + ENTITLEMENT_SUCCESS_POLL_DEADLINE_MS + 1,
+      }),
+    ).toBe(false);
+  });
 });

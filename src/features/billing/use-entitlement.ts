@@ -84,17 +84,33 @@ export function useEntitlement(
   useEffect(() => {
     if (!pollActive || settledRef.current) return;
     const started = pollStartedAtRef.current ?? Date.now();
-    const cont = shouldContinueEntitlementSuccessPoll({
-      plusEntitled: query.data?.plusEntitled === true,
-      fetchFailureCount: query.failureCount,
-      startedAtMs: started,
-      nowMs: Date.now(),
-    });
-    if (!cont) {
-      settledRef.current = true;
-      setPollActive(false);
-      onCheckoutPollSettled?.();
-    }
+    const settleIfDone = (nowMs: number) => {
+      if (settledRef.current) return;
+      const cont = shouldContinueEntitlementSuccessPoll({
+        plusEntitled: query.data?.plusEntitled === true,
+        fetchFailureCount: query.failureCount,
+        startedAtMs: started,
+        nowMs,
+      });
+      if (!cont) {
+        settledRef.current = true;
+        setPollActive(false);
+        onCheckoutPollSettled?.();
+      }
+    };
+    // B8: plusEntitled / failureCount が変わらなくても deadline で settled する。
+    // refetchInterval 停止だけでは effect が再走せず「確認しています」が残る。
+    settleIfDone(Date.now());
+    const remaining = ENTITLEMENT_SUCCESS_POLL_DEADLINE_MS - (Date.now() - started);
+    const timer = window.setTimeout(
+      () => {
+        settleIfDone(Date.now());
+      },
+      Math.max(0, remaining),
+    );
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [pollActive, query.data?.plusEntitled, query.failureCount, onCheckoutPollSettled]);
 
   return query;

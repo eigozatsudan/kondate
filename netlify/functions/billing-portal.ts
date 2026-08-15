@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Config } from "@netlify/functions";
 import type Stripe from "stripe";
-import type { PortalData } from "../../shared/contracts/billing.js";
+import { isAllowedStripeRedirectUrl, type PortalData } from "../../shared/contracts/billing.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
 import {
   BillingEntitlementUnavailableError,
@@ -124,7 +124,7 @@ export async function runBillingPortal(
       throw error;
     }
     const now = deps.now ?? (() => new Date());
-    // B3: kill 中 unpaid を復帰後に戻してから Portal 可否を見る
+    // B2: kill_source では elevation しない。Portal 可否の live 確認は Stripe list に委ねる。
     entitlement = restoreKillMaskedEntitlement(entitlement, deps.env.billingEnabled, now());
     const dbPortalAllowed = isBillingPortalAllowed(entitlement, now());
 
@@ -185,7 +185,12 @@ export async function runBillingPortal(
       return_url: `${deps.env.SERVER_SITE_ORIGIN}/settings`,
       locale: "ja",
     });
-    if (typeof session.url !== "string" || session.url.length === 0) {
+    if (
+      typeof session.url !== "string" ||
+      session.url.length === 0 ||
+      !isAllowedStripeRedirectUrl(session.url)
+    ) {
+      // B14: サーバ側でも Stripe host を再検証する（クライアント DiD だけに頼らない）
       throw new HttpError(503, "request_failed", "処理を完了できませんでした");
     }
 

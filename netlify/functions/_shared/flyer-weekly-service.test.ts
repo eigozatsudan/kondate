@@ -288,7 +288,7 @@ describe("flyer-weekly-service", () => {
     expect(flyerWeeklyIssueMessages.flyer_invalid_ai_response).toContain("試行回数");
   });
 
-  it("allows flyer after kill-unpaid restore even when raw plusEntitled is false (B-R2)", () => {
+  it("blocks flyer when only stale kill_source would have granted plus (B2)", () => {
     const killMasked: Entitlement = {
       plan: "free",
       status: "unpaid",
@@ -301,7 +301,7 @@ describe("flyer-weekly-service", () => {
       killSourceStatus: "active",
     };
     expect(killMasked.plusEntitled).toBe(false);
-    expect(isFlyerPlusAllowed(killMasked, true)).toBe(true);
+    expect(isFlyerPlusAllowed(killMasked, true)).toBe(false);
     expect(isFlyerPlusAllowed(killMasked, false)).toBe(false);
   });
 

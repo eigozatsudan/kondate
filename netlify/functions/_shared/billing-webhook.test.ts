@@ -362,11 +362,11 @@ describe("handleBillingWebhook", () => {
     const processCall = rpc.mock.calls.find(([name]) => name === "process_billing_stripe_event");
     expect(processCall).toBeDefined();
     const payload = processCall![1] as { p_payload: Record<string, unknown> };
-    // same-second は retrieve 結果を payload に載せる。event.id の文字列順比較はしない。
-    expect(payload.p_payload.retrieved_subscription).toMatchObject({
-      status: "canceled",
-      stripe_subscription_id: SUB_ID,
-    });
+    // B6: same-second は retrieved_subscription を載せない（SQL terminality を生かす）。
+    // retrieve 結果は top-level status に載せる。event.id の文字列順比較はしない。
+    expect(payload.p_payload.retrieved_subscription).toBeUndefined();
+    expect(payload.p_payload.status).toBe("canceled");
+    expect(payload.p_payload.stripe_subscription_id).toBe(SUB_ID);
     expect(retrieve).toHaveBeenCalledWith(SUB_ID);
   });
 
@@ -1339,8 +1339,8 @@ describe("handleBillingWebhook", () => {
     expect(processPayload.stripe_subscription_id).toBe("sub_newer_partial");
   });
 
-  // B10: mark missing は cancel せず process 投影へ（再送で dual 完了）
-  it("skips dual cancel when mark keep reports subscription missing (B10)", async () => {
+  // B11: mark missing でも rank keep 以外を cancel する（同一 evt 再送は duplicate）
+  it("cancels dual live subs when mark keep reports subscription missing (B11)", async () => {
     const older = makeSubscription({
       id: "sub_older_missing",
       created: 1000,
@@ -1381,7 +1381,7 @@ describe("handleBillingWebhook", () => {
 
     const response = await handleBillingWebhook(signedRequest(), deps());
     expect(response.status).toBe(200);
-    expect(cancel).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledWith("sub_older_missing");
     expect(logSink).toHaveBeenCalledWith(
       expect.objectContaining({ code: "billing_dual_cancel_mark_missing" }),
     );
@@ -1665,6 +1665,11 @@ describe("handleBillingWebhook", () => {
       }
     ).p_payload;
     expect(processPayload.skip_subscription_projection).toBe(true);
+    const names = rpc.mock.calls.map(([n]) => n as string);
+    expect(names.indexOf("process_billing_stripe_event")).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf("process_billing_stripe_event")).toBeLessThan(
+      names.indexOf("release_billing_checkout_lock"),
+    );
   });
 
   it("B12: releases checkout lock from metadata when user map is unmapped", async () => {
@@ -1704,8 +1709,8 @@ describe("handleBillingWebhook", () => {
     );
   });
 
-  // B2: release error 時は claim（process）前に 500 で止める
-  it("returns 500 and does not claim when checkout lock release RPC errors (B2)", async () => {
+  // B9: process 成功後の release error は 500。event は claim 済み、再送で再解放する
+  it("returns 500 after claiming when checkout lock release RPC errors (B9)", async () => {
     rpc.mockImplementation((name: string) => {
       if (name === "get_billing_customer_by_stripe_id") {
         return {
@@ -1733,7 +1738,56 @@ describe("handleBillingWebhook", () => {
     );
     const response = await handleBillingWebhook(signedRequest(), deps());
     expect(response.status).toBe(500);
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(true);
+    expect(rpc.mock.calls.some(([n]) => n === "release_billing_checkout_lock")).toBe(true);
+  });
+
+  it("keeps checkout lock when process throws so Stripe can retry (B9)", async () => {
+    rpc.mockImplementation((name: string) => {
+      if (name === "get_billing_customer_by_stripe_id") {
+        return {
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        };
+      }
+      if (name === "process_billing_stripe_event") {
+        return { data: null, error: { message: "process failed" } };
+      }
+      if (name === "release_billing_checkout_lock") {
+        return { data: { ok: true, released: true }, error: null };
+      }
+      return { data: null, error: null };
+    });
+    const session = {
+      id: "cs_test_process_fail",
+      object: "checkout.session",
+      customer: CUSTOMER_ID,
+      client_reference_id: USER_ID,
+      metadata: { supabase_user_id: USER_ID },
+    } as unknown as Stripe.Checkout.Session;
+    constructEvent.mockReturnValue(
+      makeEvent("checkout.session.completed", session, { id: "evt_cs_process_fail" }),
+    );
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    expect(rpc.mock.calls.some(([n]) => n === "release_billing_checkout_lock")).toBe(false);
+  });
+
+  it("does not project the event object when subscription retrieve fails (B10)", async () => {
+    const sub = makeSubscription({ status: "active" });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", sub, { id: "evt_retrieve_fail" }),
+    );
+    retrieve.mockRejectedValue(new Error("stripe retrieve down"));
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
     expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "billing_subscription_retrieve_failed",
+        alertMetric: 1,
+      }),
+    );
   });
 });
 

@@ -26,7 +26,7 @@ export type Entitlement = {
   pastDueSince?: string | null;
   /**
    * kill 中に unpaid へ落としたときの元 status。
-   * BILLING_ENABLED 復帰後、次 webhook を待たずに投影を戻す（B3）。
+   * B2: 読取側は Stripe 未検証のため elevation に使わない。webhook / reconcile 待ち。
    */
   killSourceStatus?: BillingSubscriptionStatus | null;
 };
@@ -85,17 +85,11 @@ export function computePlusEntitled(
   return { plusEntitled: false, pastDueGrace: false };
 }
 
-const KILL_RESTORABLE_STATUSES = new Set<BillingSubscriptionStatus>([
-  "trialing",
-  "active",
-  "past_due",
-  "canceled",
-]);
-
 /**
- * kill 中 unpaid 投影を、BILLING_ENABLED 復帰後に元 status から戻す（B3）。
- * persist の unpaid 落とし（A3）は残し、読取側だけ復元する。次 webhook は待たない。
- * unknown price の unpaid（kill_source 無し）は触らない。
+ * kill 中 unpaid 投影の読取側フック。
+ * B2: kill_source は Stripe 未検証の stale。BILLING_ENABLED 復帰だけで
+ * elevation しない。権益は webhook / reconcile の投影を待つ（fail-closed）。
+ * unknown price の unpaid（kill_source 無し）も触らない。
  */
 export function restoreKillMaskedEntitlement(
   entitlement: Entitlement,
@@ -103,32 +97,20 @@ export function restoreKillMaskedEntitlement(
   now: Date = new Date(),
 ): Entitlement {
   if (!billingEnabled) return entitlement;
-  const source = entitlement.killSourceStatus;
-  if (source == null || entitlement.status !== "unpaid") return entitlement;
-  if (!KILL_RESTORABLE_STATUSES.has(source)) return entitlement;
-  const periodEnd = entitlement.currentPeriodEnd;
-  if (periodEnd == null) return entitlement;
-  const recomputed = computePlusEntitled(
-    {
-      status: source,
-      past_due_since: entitlement.pastDueSince ?? null,
-      current_period_end: periodEnd,
-    },
-    now,
-  );
-  return {
-    ...entitlement,
-    status: source,
-    plusEntitled: recomputed.plusEntitled,
-    pastDueGrace: recomputed.pastDueGrace,
-    plan: recomputed.plusEntitled ? "plus" : "free",
-  };
+  // B2: now は B15 の時計共有のために受け取る。Stripe 未検証の kill_source では elevation しない。
+  void now;
+  return entitlement;
 }
 
 /** BILLING_ENABLED=false → 常に free limits（A3 枠面） */
-export function applyQuotaPlan(entitlement: Entitlement, billingEnabled: boolean): PlanCode {
+export function applyQuotaPlan(
+  entitlement: Entitlement,
+  billingEnabled: boolean,
+  now: Date = new Date(),
+): PlanCode {
   if (!billingEnabled) return "free";
-  const restored = restoreKillMaskedEntitlement(entitlement, billingEnabled);
+  // B15: toEntitlementData / Checkout と同じ now を渡せる。別時計で plan と quota が割れない。
+  const restored = restoreKillMaskedEntitlement(entitlement, billingEnabled, now);
   return restored.plusEntitled ? "plus" : "free";
 }
 
@@ -149,9 +131,11 @@ export function productSurfacesOpen(billingEnabled: boolean): boolean {
 export function toEntitlementData(
   entitlement: Entitlement,
   billingEnabled: boolean,
+  now: Date = new Date(),
 ): EntitlementData {
-  const restored = restoreKillMaskedEntitlement(entitlement, billingEnabled);
-  const quotaPlan = applyQuotaPlan(entitlement, billingEnabled);
+  // B15: restore と apply を同じ時計で見る（終端ちょうどで plan と plusEntitled が割れない）
+  const restored = restoreKillMaskedEntitlement(entitlement, billingEnabled, now);
+  const quotaPlan = applyQuotaPlan(entitlement, billingEnabled, now);
   return {
     plan: restored.plan,
     status: restored.status,
