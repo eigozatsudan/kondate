@@ -10,7 +10,7 @@ import {
 
 describe("share-denylist.v1", () => {
   it("locks a single denylist version", () => {
-    expect(shareDenylistVersion).toBe("2026-08-16.v6");
+    expect(shareDenylistVersion).toBe("2026-08-16.v7");
   });
 
   it("flags guarantee phrase アレルギーでも安心", () => {
@@ -33,8 +33,12 @@ describe("share-denylist.v1", () => {
       "妹の",
       "息子の",
       "娘の",
-      "次女の",
       "長男の",
+      "長女の",
+      "次男の",
+      "次女の",
+      "三男の",
+      "三女の",
       "祖母の",
       "祖父の",
       "子供の",
@@ -60,6 +64,20 @@ describe("share-denylist.v1", () => {
     // 既存ヒットは緩めない
     expect(textHitsShareDenylist("弟の特製だれ")).toBe(true);
     expect(textHitsShareDenylist("健太の特製")).toBe(true);
+  });
+
+  it("AP-R1: flags closed birth-order counterparts 長女/次男/三男/三女", () => {
+    // 長/次/三 × 男/女 の閉じた行列。娘の/息子の/次女の/長男の の部分文字列にはならない
+    for (const phrase of ["長女の", "次男の", "三男の", "三女の"] as const) {
+      expect(sharePiiLiteralPhrases).toContain(phrase);
+    }
+    expect(textHitsShareDenylist("長女の取り分けを温める")).toBe(true);
+    expect(textHitsShareDenylist("次男の弁当用に詰める")).toBe(true);
+    expect(textHitsShareDenylist("三男の残り")).toBe(true);
+    expect(textHitsShareDenylist("三女の特製だれ")).toBe(true);
+    // 既存ヒットは緩めない
+    expect(textHitsShareDenylist("次女の取り分け")).toBe(true);
+    expect(textHitsShareDenylist("長男の弁当用")).toBe(true);
   });
 
   it("AP2: flags whitespace / 中点 / 読点 separators and spaced phone", () => {

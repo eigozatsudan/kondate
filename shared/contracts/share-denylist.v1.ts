@@ -8,7 +8,7 @@
  * を fail-closed で追加する。オープン集合の完全人名認識は製品再設計域のため residual。
  */
 
-export const shareDenylistVersion = "2026-08-16.v6" as const;
+export const shareDenylistVersion = "2026-08-16.v7" as const;
 
 /**
  * 安全を保証する表現。共有プールでは安全を保証しない方針と矛盾するため拒否。
@@ -56,8 +56,13 @@ export const sharePiiLiteralPhrases = [
   "妹の",
   "息子の",
   "娘の",
-  "次女の",
+  // 出生順の閉じた行列（長/次/三 × 男/女）。四男以降やオープン NER は載せない
   "長男の",
+  "長女の",
+  "次男の",
+  "次女の",
+  "三男の",
+  "三女の",
   "祖母の",
   "祖父の",
   "子供の",
