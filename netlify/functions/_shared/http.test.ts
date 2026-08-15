@@ -70,6 +70,36 @@ describe("generic JSON boundary", () => {
       } satisfies Partial<HttpError>);
     },
   );
+
+  it("rejects an underdeclared Content-Length before finishing the stream (SC5)", async () => {
+    const chunkSize = 16_384;
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = new Uint8Array(chunkSize).fill(0x61);
+        pulled += chunk.byteLength;
+        if (pulled > 200_000) {
+          controller.error(new Error("stream was read past the parseJson limit"));
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    });
+    const promise = parseJson(
+      new Request("https://functions.test", {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": "1" },
+        body,
+        duplex: "half",
+      } as RequestInit),
+      z.unknown(),
+    );
+    await expect(promise).rejects.toMatchObject({
+      status: 413,
+      code: "request_too_large",
+    } satisfies Partial<HttpError>);
+    expect(pulled).toBeLessThanOrEqual(chunkSize * 5);
+  });
 });
 
 describe("parseJson content-type and field error closing", () => {
@@ -196,6 +226,38 @@ describe("S8 closedHttpErrorDetails / handleError", () => {
     };
     expect(productBody.error.code).toBe("flyer_unsupported_media");
     expect(productBody.error.message).toBe("対応している画像形式は JPEG / PNG / WebP です。");
+
+    const allergyCopy = handleError(
+      new HttpError(
+        422,
+        "allergy_unconfirmed",
+        "アレルギー確認が必要な項目があります。確認してからもう一度お試しください。",
+      ),
+    );
+    const allergyBody = (await allergyCopy.json()) as {
+      ok: false;
+      error: { message: string };
+    };
+    expect(allergyBody.error.message).toBe(
+      "アレルギー確認が必要な項目があります。確認してからもう一度お試しください。",
+    );
+  });
+
+  it("closes Japanese name-and-allergy free-text (SC4)", async () => {
+    const response = handleError(
+      new HttpError(400, "invalid_request", "山田太郎さんの小麦アレルギーを確認してください"),
+    );
+    const body = (await response.json()) as {
+      ok: false;
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("invalid_request");
+    expect(body.error.message).toBe("処理を完了できませんでした");
+    const text = JSON.stringify(body);
+    expect(text).not.toContain("山田");
+    expect(text).not.toContain("太郎");
+    expect(text).not.toContain("小麦");
+    expect(text).not.toContain("アレルギーを確認してください");
   });
 
   it("omits details entirely when only unknown keys were provided", async () => {

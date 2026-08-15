@@ -283,31 +283,34 @@ export const createSafeLogger =
       if (modelId !== undefined) record.model_id = modelId;
     }
     if (event.staleReservationsFinalized !== undefined) {
-      record.stale_reservations_finalized = event.staleReservationsFinalized;
+      record.stale_reservations_finalized = Math.max(
+        0,
+        Math.trunc(event.staleReservationsFinalized),
+      );
     }
     if (event.generationLedgersDeleted !== undefined) {
-      record.generation_ledgers_deleted = event.generationLedgersDeleted;
+      record.generation_ledgers_deleted = Math.max(0, Math.trunc(event.generationLedgersDeleted));
     }
     if (event.shoppingMutationsDeleted !== undefined) {
-      record.shopping_mutations_deleted = event.shoppingMutationsDeleted;
+      record.shopping_mutations_deleted = Math.max(0, Math.trunc(event.shoppingMutationsDeleted));
     }
     if (event.authContinuationsDeleted !== undefined) {
-      record.auth_continuations_deleted = event.authContinuationsDeleted;
+      record.auth_continuations_deleted = Math.max(0, Math.trunc(event.authContinuationsDeleted));
     }
     if (event.userFeedbackDeleted !== undefined) {
-      record.user_feedback_deleted = event.userFeedbackDeleted;
+      record.user_feedback_deleted = Math.max(0, Math.trunc(event.userFeedbackDeleted));
     }
     if (event.draftSubmissionsDeleted !== undefined) {
-      record.draft_submissions_deleted = event.draftSubmissionsDeleted;
+      record.draft_submissions_deleted = Math.max(0, Math.trunc(event.draftSubmissionsDeleted));
     }
     if (event.identityLedgersDeleted !== undefined) {
-      record.identity_ledgers_deleted = event.identityLedgersDeleted;
+      record.identity_ledgers_deleted = Math.max(0, Math.trunc(event.identityLedgersDeleted));
     }
     if (event.flyerLedgersDeleted !== undefined) {
-      record.flyer_ledgers_deleted = event.flyerLedgersDeleted;
+      record.flyer_ledgers_deleted = Math.max(0, Math.trunc(event.flyerLedgersDeleted));
     }
     if (event.staleShareJobsReaped !== undefined) {
-      record.stale_share_jobs_reaped = event.staleShareJobsReaped;
+      record.stale_share_jobs_reaped = Math.max(0, Math.trunc(event.staleShareJobsReaped));
     }
     // 緊急献立: 列挙・件数のみ。null も明示的に出す（省略すると集計が欠ける）
     // S3: 列挙は runtime Set で閉じ、未知 free-text は載せない
@@ -389,7 +392,14 @@ export const createSafeLogger =
       record.source_counts_fixture = Math.max(0, Math.trunc(event.sourceCounts.fixture));
       record.source_counts_community = Math.max(0, Math.trunc(event.sourceCounts.community));
     }
-    write(JSON.stringify(record));
+    // SC8: 手書きキーと Set の drift を実行時に閉じる（未知キーは出さない）
+    const closed: Record<string, string | number | null> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (SAFE_LOG_SERIALIZED_KEYS.has(key)) {
+        closed[key] = value;
+      }
+    }
+    write(JSON.stringify(closed));
   };
 
 /** 本番 Functions の既定シンク（stdout 相当） */

@@ -167,20 +167,49 @@ export function closedHttpErrorDetails(
   return Object.keys(closed).length === 0 ? undefined : closed;
 }
 
+const parseJsonMaxBytes = 65_536;
+
+/**
+ * SC5: Content-Length 欠落・過小申告でもストリーム累積で上限超過を読取完了前に拒否する。
+ * 宣言が上限超なら従来どおり先読み 413。flyer の累積拒否と同型。
+ */
+async function readJsonTextWithLimit(request: Request, maxBytes: number): Promise<string> {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new HttpError(413, "request_too_large", "入力が大きすぎます");
+  }
+  if (request.body === null) {
+    return "";
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new HttpError(413, "request_too_large", "入力が大きすぎます");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   let value: unknown;
   try {
     if (!isJsonContentType(request.headers.get("content-type"))) {
       throw new HttpError(400, "invalid_json", "JSONを読み取れません");
     }
-    const declared = Number(request.headers.get("content-length") ?? "0");
-    if (Number.isFinite(declared) && declared > 65_536) {
-      throw new HttpError(413, "request_too_large", "入力が大きすぎます");
-    }
-    const text = await request.text();
-    if (new TextEncoder().encode(text).byteLength > 65_536) {
-      throw new HttpError(413, "request_too_large", "入力が大きすぎます");
-    }
+    const text = await readJsonTextWithLimit(request, parseJsonMaxBytes);
     value = JSON.parse(text) as unknown;
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -213,6 +242,10 @@ function closedHttpErrorMessage(raw: string): string {
   const withoutProductTokens = raw.replace(/\b(?:JSON|JPEG|PNG|WebP|Plus|multipart|ID|AI)\b/gu, "");
   if (/[A-Za-z]/u.test(withoutProductTokens)) return closedHttpErrorMessageFallback;
   if (!/[\u3040-\u30ff\u4e00-\u9fff]/u.test(raw)) return closedHttpErrorMessageFallback;
+  // 人名混じり（敬称付き和文）を潰す。閉じた製品コピーは さん/様 を含まない。
+  if (/[一-龯ぁ-んァ-ン]{1,4}(?:ちゃん|くん|さん|様)/u.test(raw)) {
+    return closedHttpErrorMessageFallback;
+  }
   return raw;
 }
 

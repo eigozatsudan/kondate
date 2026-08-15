@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createSafeLogger,
   handleGenerationHttpError,
   logGenerationEvent,
   logGenerationHttpBoundary,
+  SAFE_LOG_SERIALIZED_KEYS,
 } from "./logger.js";
 import { HttpError } from "./http.js";
 
@@ -41,6 +45,33 @@ describe("createSafeLogger", () => {
       code: "succeeded",
       duration_ms: 10,
     });
+  });
+
+  it("sanitizes maintenance counts like other numeric fields (SC7)", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "info",
+      requestId: "maint-bad",
+      code: "maintenance_cleanup",
+      durationMs: 50,
+      staleReservationsFinalized: "canary@example.com" as unknown as number,
+      generationLedgersDeleted: Number.NaN,
+      shoppingMutationsDeleted: -3.7,
+      authContinuationsDeleted: 4.9,
+      userFeedbackDeleted: 5,
+    });
+    const line = write.mock.calls[0]![0] as string;
+    expect(line).not.toContain("canary@example.com");
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    expect(
+      parsed.stale_reservations_finalized === 0 || parsed.stale_reservations_finalized === null,
+    ).toBe(true);
+    expect(
+      parsed.generation_ledgers_deleted === 0 || parsed.generation_ledgers_deleted === null,
+    ).toBe(true);
+    expect(parsed.shopping_mutations_deleted).toBe(0);
+    expect(parsed.auth_continuations_deleted).toBe(4);
+    expect(parsed.user_feedback_deleted).toBe(5);
   });
 
   it("includes maintenance aggregate counts when provided", () => {
@@ -499,6 +530,59 @@ describe("S1 closed allowed string values", () => {
       });
       expect((JSON.parse(keep.mock.calls[0]![0] as string) as { level: string }).level).toBe(level);
     }
+  });
+
+  it("pins SAFE_LOG_SERIALIZED_KEYS to serialized output and assert-privacy-logs (SC8)", () => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "info",
+      requestId: "sc8-full",
+      code: "maintenance_cleanup",
+      durationMs: 1,
+      modelId: "vendor/model:free",
+      staleReservationsFinalized: 1,
+      generationLedgersDeleted: 1,
+      shoppingMutationsDeleted: 1,
+      authContinuationsDeleted: 1,
+      userFeedbackDeleted: 1,
+      draftSubmissionsDeleted: 1,
+      identityLedgersDeleted: 1,
+      flyerLedgersDeleted: 1,
+      staleShareJobsReaped: 1,
+      path: "household",
+      matchMode: "none",
+      emptyReason: "allergen_missing",
+      candidateCount: 1,
+      mealType: "lunch",
+      mainIngredientCount: 1,
+      plan: "plus",
+      billingStatus: "active",
+      priceInterval: "month",
+      qualityMode: true,
+      flyer: true,
+      stripeCustomerId: "cus_sc8",
+      stripeSubscriptionId: "sub_sc8",
+      alertMetric: 1,
+      generationRoute: "menu",
+      httpStatus: 200,
+      jobId: "d1000000-0000-4000-8000-000000000001",
+      failureCode: "consent_revoked",
+      sourceCounts: { fixture: 1, community: 1 },
+    });
+    const serializedKeys = new Set(
+      Object.keys(JSON.parse(write.mock.calls[0]![0] as string) as Record<string, unknown>),
+    );
+    expect(serializedKeys).toEqual(SAFE_LOG_SERIALIZED_KEYS);
+
+    const scriptPath = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../scripts/assert-privacy-logs.mjs",
+    );
+    const script = readFileSync(scriptPath, "utf8");
+    const block = script.match(/const allowedLogKeys = new Set\(\[([\s\S]*?)\]\)/u)?.[1];
+    expect(block).toBeTypeOf("string");
+    const scriptKeys = new Set([...(block ?? "").matchAll(/"([^"]+)"/gu)].map((match) => match[1]));
+    expect(scriptKeys).toEqual(SAFE_LOG_SERIALIZED_KEYS);
   });
 
   it("keeps valid modelId shape matching OpenRouter id pattern", () => {
