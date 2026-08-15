@@ -441,6 +441,20 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     const pending = await screen.findByText("状態を確認しています…");
     expect(pending.closest("main")).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    // L8: AppShell 外の待ち面にも見出しランドマークが要る
+    expect(
+      screen.getByRole("heading", { level: 1, name: "初回設定を読み込んでいます" }),
+    ).toBeVisible();
+  });
+
+  it("L8: profile load failure exposes h1 and retry", async () => {
+    getProfileMock.mockRejectedValue(new Error("network"));
+    renderWelcome();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "初回設定を確認できませんでした" }),
+    ).toBeVisible();
+    expect(screen.getByRole("alert")).toBeVisible();
+    expect(screen.getByRole("button", { name: "再試行" })).toBeVisible();
   });
 
   it("L3: refetch error keeps cached onboarding CTA", async () => {
@@ -474,6 +488,30 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     expect(screen.getByRole("button", { name: "献立アイデアを考える" })).toBeEnabled();
     expect(request).toHaveBeenCalled();
     expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("L6: ifAvailable miss reconciles winning skipped status without CAS", async () => {
+    const request = vi.fn(
+      (_name: string, options: LockOptions, callback: (lock: Lock | null) => unknown) => {
+        expect(options.ifAvailable).toBe(true);
+        return Promise.resolve(callback(null));
+      },
+    );
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request },
+    });
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    const { router } = renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    // 表示後に先勝ちタブが skipped 済み。lock miss でも reconcile 再読込で拾う。
+    getProfileMock.mockResolvedValue({ onboarding_status: "skipped" });
+    fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/planner");
+    expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(request).toHaveBeenCalled();
   });
 
   it("L4: lock acquire hang past C5 re-enables CTA", async () => {

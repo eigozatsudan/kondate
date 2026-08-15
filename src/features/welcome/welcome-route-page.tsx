@@ -51,6 +51,9 @@ async function withOnboardingStartLock<T>(
     locks.request(ONBOARDING_START_LOCK, { ifAvailable: true }, (lock) => {
       // 他タブが exclusive 保持中 → 待たずに失敗。reconcile で先勝ち status を拾う。
       if (lock === null) {
+        // ifAvailable miss は withTimeout の timer ではないため onTimeout が走らない。
+        // generation を無効化し、stillActive 経由で先勝ち status を再読込する。
+        onTimeout?.();
         throw new Error("timeout");
       }
       return execute();
@@ -291,13 +294,16 @@ export function WelcomeRoutePage() {
 
   if (showPending) {
     // L10: 待ち UI は SR に busy/status を通知（timeout 後の alert と対称。初期 live は mount 後）
-    return <LivePendingMain message="状態を確認しています…" />;
+    // L8: AppShell 外のためシェルの遷移後 h1 フォーカスが無い。待ち面にも見出しを置く。
+    return <LivePendingMain heading="初回設定を読み込んでいます" message="状態を確認しています…" />;
   }
   // L3: focus refetch 失敗でも成功 data が残る。isError だけで CTA を消さない
   // （planner の isError && data === undefined と同型。キャッシュ済み status を使う）。
   if (pendingTimedOut || profileQuery.data == null) {
     return (
       <main className="page-frame stack">
+        {/* L8: AppShell 外の失敗面。見出しランドマークを欠かさない。 */}
+        <h1>初回設定を確認できませんでした</h1>
         <p className="error-message" role="alert">
           初回設定の状態を確認できませんでした。通信を確認して再試行してください。
         </p>

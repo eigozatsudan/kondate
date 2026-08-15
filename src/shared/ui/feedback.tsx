@@ -30,13 +30,21 @@ export function RouterPendingFallback(): JSX.Element {
   return <LivePendingMain message="読み込み中…" />;
 }
 
-export function LivePendingMain({ message }: { message: string }): JSX.Element {
+export function LivePendingMain({
+  message,
+  heading,
+}: {
+  message: string;
+  /** AppShell 外の待ち面向け。見出しランドマークが必要なときだけ渡す。 */
+  heading?: string;
+}): JSX.Element {
   const [announced, setAnnounced] = useState(false);
   useEffect(() => {
     setAnnounced(true);
   }, []);
   return (
     <main className="page-frame" aria-busy="true">
+      {heading !== undefined ? <h1>{heading}</h1> : null}
       {!announced ? <p aria-hidden="true">{message}</p> : null}
       <p role="status" aria-live="polite">
         {announced ? message : ""}

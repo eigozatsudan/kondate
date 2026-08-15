@@ -10,9 +10,12 @@ import { useAuth } from "./use-auth";
 function RetryableProfileAlert({ profileQuery }: { profileQuery: UseQueryResult<ProfileRow> }) {
   return (
     <main className="page-frame">
+      {/* L8: AppShell 外の失敗面。見出しランドマークを欠かさない。 */}
+      <h1>初回設定を確認できませんでした</h1>
       <p className="error-message" role="alert">
-        初回設定の状態を確認できませんでした。通信を確認して再読み込みしてください。
+        初回設定の状態を確認できませんでした。通信を確認して再試行してください。
       </p>
+      {/* L7: refetch なので LP timeout の「再読み込み」(location.reload) とラベルを揃えない。 */}
       <button
         className="secondary-button min-h-11"
         type="button"
@@ -20,7 +23,7 @@ function RetryableProfileAlert({ profileQuery }: { profileQuery: UseQueryResult<
           void profileQuery.refetch();
         }}
       >
-        再読み込み
+        再試行
       </button>
     </main>
   );
@@ -46,7 +49,8 @@ export function RootEntryPage() {
 
   if (showPending) {
     // L10: 待ち UI は SR に busy/status を通知（初期 live は mount 後に埋める）
-    return <LivePendingMain message="状態を確認しています…" />;
+    // L8: AppShell 外のためシェルの遷移後 h1 フォーカスが無い。待ち面にも見出しを置く。
+    return <LivePendingMain heading="初回設定を読み込んでいます" message="状態を確認しています…" />;
   }
 
   // L3: refetch error で成功 data が残るときは cached status で振り分ける。

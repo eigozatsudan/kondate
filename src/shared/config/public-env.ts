@@ -114,10 +114,13 @@ export function parsePublicEnv(
   const validLocalMock =
     mode === "oauth_mock" && !context.production && mockOrigin === "http://127.0.0.1:8788";
   const validSupabase = mode === "supabase" && mockOrigin === undefined;
+  // 許可 origin 集合は変えない。oauth_mock だけ local Compose URL に閉じる（L10）。
   const validSupabaseUrl = context.production
     ? managedSupabaseOrigin.test(result.data.VITE_SUPABASE_URL)
-    : result.data.VITE_SUPABASE_URL === localBrowserSupabaseUrl ||
-      managedSupabaseOrigin.test(result.data.VITE_SUPABASE_URL);
+    : mode === "oauth_mock"
+      ? result.data.VITE_SUPABASE_URL === localBrowserSupabaseUrl
+      : result.data.VITE_SUPABASE_URL === localBrowserSupabaseUrl ||
+        managedSupabaseOrigin.test(result.data.VITE_SUPABASE_URL);
   if ((!validLocalMock && !validSupabase) || !validSupabaseUrl) {
     throw new Error("公開設定を読み込めません");
   }

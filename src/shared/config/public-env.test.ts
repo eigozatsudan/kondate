@@ -159,6 +159,23 @@ describe("parsePublicEnv", () => {
     ).toThrow("公開設定を読み込めません");
   });
 
+  it("L10: rejects oauth_mock with managed supabase URL outside production", () => {
+    expect(() =>
+      parsePublicEnv(
+        {
+          VITE_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+          VITE_SUPABASE_PUBLISHABLE_KEY:
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
+          VITE_MAGIC_LINK_RESEND_SECONDS: "60",
+          VITE_AUTH_CONTINUATION_TTL_MS: "300000",
+          VITE_AUTH_PROVIDER_MODE: "oauth_mock",
+          VITE_OAUTH_MOCK_ORIGIN: "http://127.0.0.1:8788",
+        },
+        { production: false },
+      ),
+    ).toThrow("公開設定を読み込めません");
+  });
+
   it("L3: rejects JWT whose payload lacks role=anon", () => {
     // payload {"sub":"x"} — role 無し
     const noRoleJwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ4In0.signature";

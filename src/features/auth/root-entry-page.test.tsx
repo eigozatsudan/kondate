@@ -59,7 +59,9 @@ it("queryKey に householdKeys.profile(userId)、queryFn に getProfile(client,u
 it("pending 中は進行状況を表示する", () => {
   useQueryMock.mockReturnValue({ isPending: true, isError: false, data: undefined });
   renderWithRouter();
-  expect(screen.queryByRole("heading")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { level: 1, name: "初回設定を読み込んでいます" }),
+  ).toBeInTheDocument();
   expect(screen.getByText(/確認/u)).toBeInTheDocument();
 });
 
@@ -117,7 +119,10 @@ it("query error は not_started へ推測変換せず再試行操作を持つ al
   useQueryMock.mockReturnValue({ isPending: false, isError: true, data: undefined });
   const router = renderWithRouter();
   expect(screen.getByRole("alert")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /再読み込み|再試行/u })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "再試行" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { level: 1, name: "初回設定を確認できませんでした" }),
+  ).toBeInTheDocument();
   expect(router.state.location.pathname).toBe("/");
 });
 
@@ -149,6 +154,9 @@ it("profile row 欠損は not_started へ推測変換せず再試行操作を持
   useQueryMock.mockReturnValue({ isPending: false, isError: false, data: null });
   const router = renderWithRouter();
   expect(screen.getByRole("alert")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /再読み込み|再試行/u })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "再試行" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { level: 1, name: "初回設定を確認できませんでした" }),
+  ).toBeInTheDocument();
   expect(router.state.location.pathname).toBe("/");
 });
