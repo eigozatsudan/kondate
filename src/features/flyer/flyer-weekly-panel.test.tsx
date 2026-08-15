@@ -141,6 +141,55 @@ describe("FlyerWeeklyPanel", () => {
     expect(screen.getByTestId("flyer-weekly-plus-server-note")).toBeVisible();
   });
 
+  it("PE13: Plus-lost panel can replay succeeded sticky without file input", async () => {
+    writeFlyerStickyAttempt(FLYER_USER_ID, {
+      key: "replay-key-uuid",
+      fingerprint: "10:image/jpeg:abc",
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          ok: true,
+          data: {
+            menu: {
+              weekStartJst: "2026-07-27",
+              days: Array.from({ length: 7 }, (_, index) => ({
+                dayIndex: index + 1,
+                label: `Day${String(index + 1)}`,
+                mainName: "野菜炒め",
+                sideName: "味噌汁",
+                ingredients: ["キャベツ"],
+                notes: null,
+              })),
+            },
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId("flyer-weekly-upload")).toBeNull();
+    const replay = screen.getByTestId("flyer-weekly-replay");
+    expect(replay).toBeVisible();
+    await userEvent.setup().click(replay);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    const init = fetchMock.mock.calls[0]?.[1] as {
+      headers: Record<string, string>;
+      body: FormData;
+    };
+    expect(init.headers["Idempotency-Key"]).toBe("replay-key-uuid");
+    expect(init.body.get("image")).toBeNull();
+    expect(init.body.get("idempotencyKey")).toBe("replay-key-uuid");
+    expect(await screen.findByText(/Day1: 野菜炒め/u)).toBeVisible();
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)?.key).toBe("replay-key-uuid");
+  });
+
   it("PE11: Plus upload discloses email identity count reset residual", () => {
     render(
       <MemoryRouter>

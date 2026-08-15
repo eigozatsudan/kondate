@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
@@ -101,6 +101,8 @@ export function EmergencyMenuPage() {
   const [pantryLoadState, setPantryLoadState] = useState<"idle" | "loading" | "ready" | "error">(
     "idle",
   );
+  // PE2: pantry 実物の再読込世代。ID CSV が同じでも期限更新で effect を再走させる。
+  const [pantryRefreshTick, setPantryRefreshTick] = useState(0);
   const [householdSafetyRevision, setHouseholdSafetyRevision] = useState(() => {
     if (userId === undefined) return "initial";
     try {
@@ -115,10 +117,13 @@ export function EmergencyMenuPage() {
     }
   });
 
+  const queryClient = useQueryClient();
   const draftQuery = useQuery({
     queryKey: plannerKeys.draft(userId ?? "missing"),
     enabled: draftQueryEnabled,
     queryFn: () => getPlannerDraft(getBrowserSupabaseClient(), userId ?? ""),
+    // PE9: 既定 30s stale だと他タブの対象メンバー変更が残る。focus / Realtime で取り直す。
+    staleTime: 0,
   });
 
   // 設計 §5 enablement: draft 由来で household / idea を分岐する。
@@ -163,6 +168,8 @@ export function EmergencyMenuPage() {
           return `${current}:event:${String(householdSafetyEventVersion.current)}`;
         }
       });
+      // PE9: 家族 Realtime だけでは draft ∩ eligible の draft 側が古いまま。下書きを取り直す。
+      void queryClient.invalidateQueries({ queryKey: plannerKeys.draft(userId) });
     };
     const handleStorage = (event: StorageEvent) => {
       // H12: 自 user key + レガシー固定のみ（他 user の prefix 一致は無視）
@@ -186,6 +193,11 @@ export function EmergencyMenuPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "member_allergies", filter: ownerFilter },
+        refreshRevision,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "generation_drafts", filter: ownerFilter },
         refreshRevision,
       )
       .subscribe((status) => {
@@ -218,7 +230,7 @@ export function EmergencyMenuPage() {
       unsubscribeBroadcast();
       void client.removeChannel(channel);
     };
-  }, [userId, safetyRealtimeEnabled]);
+  }, [userId, safetyRealtimeEnabled, queryClient]);
 
   const shouldResolveUnselectedTargets =
     draftQuery.data?.targetMode === null && draftQuery.data.targetMemberIds.length === 0;
@@ -297,13 +309,44 @@ export function EmergencyMenuPage() {
     () => new Set(declinedExpiredPantryIds),
     [declinedExpiredPantryIds],
   );
-  // PE8: 辞退分を除いた ID を候補 API に渡す（スコア対象から外す）
-  const pantryItemIds = draftPantryItemIds.filter((id) => !declinedExpiredSet.has(id));
 
   // PE8: 下書きに pantry 選択があるときだけ実物期限を読み、未確認の期限切れを候補起動前に止める。
   // useQuery を増やさず effect 読込にし、既存 draft/household/candidate の 3 本 mock 契約を壊さない。
   const pantryGateNeeded = draftReady && draftPantryItemIds.length > 0;
   const draftPantryKey = draftPantryItemIds.join(",");
+  // PE2: ID CSV が同じでも他タブの期限更新・削除を拾う。focus / Realtime / 60s で再読込する。
+  useEffect(() => {
+    if (userId === undefined || !pantryGateNeeded) return;
+    const refreshPantry = () => {
+      setPantryRefreshTick((tick) => tick + 1);
+    };
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") refreshPantry();
+    };
+    const client = getBrowserSupabaseClient();
+    const ownerFilter = `user_id=eq.${userId}`;
+    const channel = client
+      .channel(`emergency-pantry:${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "pantry_items", filter: ownerFilter },
+        refreshPantry,
+      )
+      .subscribe();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) refreshPantry();
+    }, 60_000);
+    window.addEventListener("focus", handleVisible);
+    window.addEventListener("online", refreshPantry);
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", handleVisible);
+      window.removeEventListener("online", refreshPantry);
+      document.removeEventListener("visibilitychange", handleVisible);
+      void client.removeChannel(channel);
+    };
+  }, [userId, pantryGateNeeded]);
   useEffect(() => {
     if (userId === undefined || !pantryGateNeeded) {
       setPantryRows(null);
@@ -311,7 +354,8 @@ export function EmergencyMenuPage() {
       return;
     }
     let cancelled = false;
-    setPantryLoadState("loading");
+    // 再読込中に候補を落とさないよう、初回だけ loading。ready のまま差し替える。
+    setPantryLoadState((current) => (current === "ready" ? current : "loading"));
     void listPantryItems(getBrowserSupabaseClient(), userId)
       .then((rows) => {
         if (cancelled) return;
@@ -326,11 +370,23 @@ export function EmergencyMenuPage() {
     return () => {
       cancelled = true;
     };
-  }, [userId, pantryGateNeeded, draftPantryKey]);
+  }, [userId, pantryGateNeeded, draftPantryKey, pantryRefreshTick]);
 
   // expiredConfirmTick を読んで確認直後に session を再評価する（eslint 未使用回避）
   const sessionConfirmGeneration = expiredConfirmTick;
   const nowForExpiry = new Date();
+  // PE1: 確認済み期限切れもスコア対象から外す（サーバは期限切れ名を落とす。確認/辞退を揃える）
+  const pantryItemIds = draftPantryItemIds.filter((id) => {
+    if (declinedExpiredSet.has(id)) return false;
+    if (pantryLoadState !== "ready" || pantryRows === null) return true;
+    const item = pantryRows.find((row) => row.id === id);
+    if (item === undefined) return true;
+    void sessionConfirmGeneration;
+    return !(
+      isPastEnteredExpiry(item, nowForExpiry) &&
+      hasExpiredPantryConfirmation(null, userId, item.id, nowForExpiry)
+    );
+  });
   const unconfirmedExpiredItems: PantryItem[] =
     pantryLoadState === "ready" && pantryRows !== null
       ? draftPantryItemIds

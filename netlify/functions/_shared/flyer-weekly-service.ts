@@ -17,7 +17,13 @@ import {
   OPENROUTER_TIMEOUT_MS,
 } from "../../../shared/contracts/function-budget.js";
 import { issueMessages } from "../../../shared/contracts/generation.js";
-import { privacyNoticeVersion } from "../../../shared/contracts/domain.js";
+import {
+  ageBands,
+  privacyNoticeVersion,
+  requiredSafetyConstraints,
+  type AgeBand,
+  type RequiredSafetyConstraint,
+} from "../../../shared/contracts/domain.js";
 import { planQuota } from "../../../shared/contracts/plan-quota.js";
 import { foodTextContainsAlias, normalizeFoodText } from "../../../shared/safety/allergens.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
@@ -289,16 +295,25 @@ export type FlyerDraftAllergyRow = {
 };
 
 /**
+/** draft メンバーの年齢帯・必須制約（検査用。部分 age は推測せず保存値だけ使う）。 */
+export type FlyerDraftMemberRow = {
+  id: string;
+  age_band: AgeBand | null;
+  required_safety_constraints: readonly RequiredSafetyConstraint[];
+};
+
+/**
  * PE1: complete のみの safety に、draft（入力途中）メンバーの確認済みアレルギー針を検査集合へ union する。
  * get_current_safety_snapshot は status=complete のみのため draft は RPC に載せられない。
  * 表示ターゲットにはせず、banned / assert 用にだけ合成する。
- * ageBand は adult 固定（年齢帯ルールは complete 側のみ。draft の部分 age は推測しない）。
+ * PE5: 保存済み age_band / required_safety_constraints を使う。未保存の年齢は推測しない。
  */
 export function appendDraftMemberAllergiesForFlyerInspection(
   safety: CurrentSafetyContext,
   draftAllergyRows: readonly FlyerDraftAllergyRow[],
+  draftMembers: readonly FlyerDraftMemberRow[] = [],
 ): CurrentSafetyContext {
-  if (draftAllergyRows.length === 0) return safety;
+  if (draftAllergyRows.length === 0 && draftMembers.length === 0) return safety;
 
   const byMember = new Map<
     string,
@@ -320,23 +335,31 @@ export function appendDraftMemberAllergiesForFlyerInspection(
     byMember.set(row.member_id, bucket);
   }
 
+  const memberMeta = new Map(draftMembers.map((member) => [member.id, member]));
+  const memberIds = new Set([...byMember.keys(), ...memberMeta.keys()]);
+
   // member_id 昇順で合成し、anonymousRef 採番を決定的にする
   const extraMembers: CurrentSafetyContext["members"][number][] = [];
   let refIndex = safety.members.length;
-  for (const memberId of [...byMember.keys()].sort()) {
-    const bucket = byMember.get(memberId);
-    if (bucket === undefined) continue;
-    if (bucket.allergenIds.length === 0 && bucket.customAllergies.length === 0) continue;
+  for (const memberId of [...memberIds].sort()) {
+    const bucket = byMember.get(memberId) ?? { allergenIds: [], customAllergies: [] };
+    const meta = memberMeta.get(memberId);
+    const ageBand = meta?.age_band ?? "adult";
+    const constraints = meta?.required_safety_constraints ?? [];
+    const hasAllergies = bucket.allergenIds.length > 0 || bucket.customAllergies.length > 0;
+    // 未保存 age は推測しない。保存済みの非成人 / 必須制約 / アレルギー針だけ載せる。
+    const hasAgeRules = meta?.age_band != null && meta.age_band !== "adult";
+    if (!hasAllergies && !hasAgeRules && constraints.length === 0) continue;
     refIndex += 1;
     extraMembers.push({
       householdMemberId: memberId,
       anonymousRef: `member_${String(refIndex)}`,
-      ageBand: "adult",
-      allergyStatus: "registered",
+      ageBand,
+      allergyStatus: hasAllergies ? "registered" : "none",
       allergenIds: bucket.allergenIds,
       hasUnmappedCustomAllergy: bucket.customAllergies.length > 0,
       customAllergies: bucket.customAllergies,
-      requiredSafetyConstraints: [],
+      requiredSafetyConstraints: [...constraints],
       unsupportedDietStatus: "none",
       unsupportedDietKinds: [],
     });
@@ -405,15 +428,29 @@ export async function loadFlyerInspectionSafety(
   // draft に登録済みアレルギーが残っていても検査集合から外さない
   const { data: draftMemberRows, error: draftMemberError } = await admin
     .from("household_members")
-    .select("id")
+    .select("id,age_band,required_safety_constraints")
     .eq("user_id", userId)
     .eq("status", "draft");
   if (draftMemberError !== null) {
     throw inspectionSafetyUnavailable();
   }
-  const draftMemberIds = (Array.isArray(draftMemberRows) ? draftMemberRows : []).map(
-    (row: { id: string }) => row.id,
-  );
+  const parsedDraftMembers = z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        age_band: z.enum(ageBands).nullable(),
+        required_safety_constraints: z
+          .array(z.enum(requiredSafetyConstraints))
+          .nullish()
+          .transform((value) => value ?? []),
+      }),
+    )
+    .safeParse(Array.isArray(draftMemberRows) ? draftMemberRows : []);
+  if (!parsedDraftMembers.success) {
+    throw inspectionSafetyUnavailable();
+  }
+  const draftMembers: FlyerDraftMemberRow[] = parsedDraftMembers.data;
+  const draftMemberIds = draftMembers.map((row) => row.id);
   if (draftMemberIds.length === 0) return safety;
   const { data: draftAllergyRows, error: draftAllergyError } = await admin
     .from("member_allergies")
@@ -426,6 +463,7 @@ export async function loadFlyerInspectionSafety(
   return appendDraftMemberAllergiesForFlyerInspection(
     safety,
     Array.isArray(draftAllergyRows) ? draftAllergyRows : [],
+    draftMembers,
   );
 }
 
@@ -446,6 +484,12 @@ export function assertFlyerMenuAgainstSafety(
   menu: WeeklyFlyerMenu,
   safety: CurrentSafetyContext,
 ): void {
+  // PE6: flyer は adaptations / safetyActions を持てない。cut_small は料理単位で証拠必須のため即拒否。
+  for (const member of safety.members) {
+    if (member.requiredSafetyConstraints.includes("cut_small")) {
+      rejectFlyerSafetyHit();
+    }
+  }
   for (const day of menu.days) {
     const fields = flyerDayTextFields(day);
     for (const member of safety.members) {
@@ -519,6 +563,8 @@ async function replaySucceededFlyerMenu(
   const menu = parsedResult.data;
   const inspectionSafety = await loadFlyerInspectionSafety(admin, userId);
   assertFlyerMenuAgainstSafety(menu, inspectionSafety);
+  // PE3: 再生でも保証フレーズ針を通す（針増補・旧行の historical 本文を 200 に残さない）
+  assertFlyerMenuHasNoGuaranteePhrases(menu);
   return { menu, requestId: reserve.request_id ?? requestIdForLog };
 }
 
@@ -719,6 +765,8 @@ export async function runFlyerWeekly(
       try {
         const inspectionSafety = await loadFlyerInspectionSafety(admin, deps.user.userId);
         assertFlyerMenuAgainstSafety(resultMenu, inspectionSafety);
+        // PE3: stash 再試行も保証フレーズを通す（初回 persist と同じ針）
+        assertFlyerMenuHasNoGuaranteePhrases(resultMenu);
       } catch (error: unknown) {
         // 一時的な検査障害は行を残し sticky を保つ。確定した safety 拒否だけ failure にする。
         if (error instanceof HttpError && error.code === "safety_context_failed") {

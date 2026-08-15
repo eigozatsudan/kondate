@@ -390,6 +390,83 @@ it("実QueryClientで家族APIが失敗したとき候補APIを呼ばずpage-lev
   expect(getEmergencyMenusMock).not.toHaveBeenCalled();
 });
 
+it("PE9: generation_drafts Realtime refreshes draft target members into candidate request", async () => {
+  const userId = eligibleMember.user_id;
+  const childId = "72000000-0000-4000-8000-000000000011";
+  const childMember: HouseholdMemberRow = {
+    ...eligibleMember,
+    id: childId,
+    display_name: "子ども",
+    age_band: "age_3_5",
+    required_safety_constraints: ["remove_bones", "cut_small"],
+  };
+  const householdDraft = {
+    id: "draft-pe9",
+    userId,
+    mealType: "dinner" as const,
+    mainIngredients: [],
+    cuisineGenre: null,
+    targetMode: "household" as const,
+    targetMemberIds: [eligibleMember.id],
+    servings: null,
+    timeLimitMinutes: null,
+    budgetPreference: null,
+    ingredientPreference: null,
+    avoidIngredients: [],
+    memo: "",
+    pantrySelections: [],
+    revision: 1,
+    createdAt: "2026-07-25T00:00:00.000Z",
+    updatedAt: "2026-07-25T00:00:00.000Z",
+  };
+  getPlannerDraftMock.mockReset();
+  getPlannerDraftMock.mockResolvedValue(householdDraft);
+  listHouseholdMembersMock.mockReset();
+  listHouseholdMembersMock.mockResolvedValue([eligibleMember, childMember]);
+  listMemberAllergiesMock.mockResolvedValue([]);
+  getEmergencyMenusMock.mockReset();
+  getEmergencyMenusMock.mockResolvedValue(emergencyResponse("旧候補"));
+
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { staleTime: 30_000, retry: false } },
+  });
+  const view = render(
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+
+  await waitFor(() => {
+    expect(getEmergencyMenusMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetMode: "household",
+        targetMemberIds: [eligibleMember.id],
+      }),
+    );
+  });
+
+  getPlannerDraftMock.mockResolvedValue({
+    ...householdDraft,
+    targetMemberIds: [eligibleMember.id, childId],
+    revision: 2,
+  });
+  act(() => {
+    emitRealtime("generation_drafts", userId);
+  });
+
+  await waitFor(() => {
+    expect(getEmergencyMenusMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetMode: "household",
+        targetMemberIds: [eligibleMember.id, childId],
+      }),
+    );
+  });
+  view.unmount();
+});
+
 it("30秒のfresh cache中でも家族安全更新event後に家族を再取得して候補へ渡す", async () => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { staleTime: 30_000, retry: false } },

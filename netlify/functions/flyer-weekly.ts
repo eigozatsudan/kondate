@@ -108,12 +108,20 @@ export default async function flyerWeekly(request: Request): Promise<Response> {
     }
 
     // image 以外のフィールドは safety に使わない（キーは冪等用のみ）
+    // PE13: Plus 失効後の succeeded 再生は画像なし POST を許す（runFlyerWeekly は lookup だけ使う）
     const image = form.get("image");
-    if (image === null || typeof image === "string") {
-      throw new HttpError(400, "flyer_invalid_image", flyerWeeklyIssueMessages.flyer_invalid_image);
+    let buffer = new Uint8Array(0);
+    if (image !== null) {
+      if (typeof image === "string") {
+        throw new HttpError(
+          400,
+          "flyer_invalid_image",
+          flyerWeeklyIssueMessages.flyer_invalid_image,
+        );
+      }
+      const blob = image as Blob;
+      buffer = new Uint8Array(await blob.arrayBuffer());
     }
-    const blob = image as Blob;
-    const buffer = new Uint8Array(await blob.arrayBuffer());
     // PE4: キー解決は reserve 前。不正は 400 で台帳非接触
     const idempotencyKey = resolveFlyerIdempotencyKey(request, form);
 

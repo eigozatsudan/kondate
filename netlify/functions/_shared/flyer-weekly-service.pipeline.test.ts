@@ -551,6 +551,77 @@ describe("runFlyerWeekly pipeline (PE1/PE2/PE4/PE5/PE6/PE11)", () => {
     expect(rpcNames()).not.toContain("finalize_flyer_weekly_failure");
   });
 
+  it("PE3: succeeded replay rejects guarantee phrases without persisting", async () => {
+    loadEntitlementMock.mockResolvedValue(freeEntitlement);
+    const guaranteed = sampleMenu();
+    guaranteed.days[0] = { ...guaranteed.days[0]!, mainName: "安全です煮" };
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            kind: "hit",
+            request_id: "00000000-0000-4000-8000-000000000099",
+            idempotency_key: "idem-pe3-replay",
+            status: "succeeded",
+            result: guaranteed,
+            replayed: true,
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: { message: "unexpected" } });
+    });
+
+    await expect(
+      runFlyerWeekly(
+        {
+          user,
+          openRouterSender: vi.fn(() => Promise.reject(new Error("should not be called"))),
+          assertPrivacyConsent: acceptConsent,
+        },
+        new Uint8Array([1, 2, 3]),
+        "idem-pe3-replay",
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "flyer_invalid_ai_response" });
+    expect(rpcNames()).toEqual(["lookup_flyer_weekly"]);
+    expect(rpcNames()).not.toContain("finalize_flyer_weekly_failure");
+  });
+
+  it("PE3: processing stash replay rejects guarantee phrases", async () => {
+    const guaranteed = sampleMenu();
+    guaranteed.days[0] = { ...guaranteed.days[0]!, mainName: "アレルギーでも安心チキン" };
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "00000000-0000-4000-8000-000000000014",
+            idempotency_key: "idem-pe3-stash",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-07-27",
+            result: guaranteed,
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: { ok: true }, error: null });
+    });
+
+    await expect(
+      runFlyerWeekly(
+        {
+          user,
+          openRouterSender: vi.fn(() => Promise.reject(new Error("should not be called"))),
+          assertPrivacyConsent: acceptConsent,
+        },
+        new Uint8Array([1, 2, 3]),
+        "idem-pe3-stash",
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "flyer_invalid_ai_response" });
+    expect(rpcNames()).toContain("finalize_flyer_weekly_failure");
+    expect(rpcNames()).not.toContain("finalize_flyer_weekly_success");
+  });
+
   it("PE3: does not persist a menu that contains a guarantee phrase", async () => {
     rpcMock.mockImplementation((name: string) => {
       if (name === "reserve_flyer_weekly") {

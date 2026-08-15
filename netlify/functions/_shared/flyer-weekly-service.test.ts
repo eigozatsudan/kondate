@@ -663,4 +663,59 @@ describe("assertFlyerMenuAgainstSafety", () => {
     ]);
     expect(merged.members).toHaveLength(base.members.length);
   });
+
+  it("PE5: draft age_3_5 without allergens still applies toddler food rules", () => {
+    const base = makeCurrentSafetyContext();
+    const completeOnly = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          householdMemberId: "55000000-0000-4000-8000-000000000001",
+          ageBand: "adult",
+          allergyStatus: "none",
+          allergenIds: [],
+          customAllergies: [],
+          requiredSafetyConstraints: [],
+        },
+      ],
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "お雑煮（餅入り）" }), completeOnly);
+    }).not.toThrow();
+
+    const inspection = appendDraftMemberAllergiesForFlyerInspection(
+      completeOnly,
+      [],
+      [
+        {
+          id: "55000000-0000-4000-8000-000000000099",
+          age_band: "age_3_5",
+          required_safety_constraints: [],
+        },
+      ],
+    );
+    expect(inspection.members).toHaveLength(2);
+    expect(inspection.members[1]?.ageBand).toBe("age_3_5");
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "お雑煮（餅入り）" }), inspection);
+    }).toThrow(HttpError);
+  });
+
+  it("PE6: rejects flyer menu when cut_small is required and flyer cannot attach evidence", () => {
+    const base = makeCurrentSafetyContext();
+    const safety = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          ageBand: "age_3_5",
+          allergyStatus: "none",
+          allergenIds: [],
+          requiredSafetyConstraints: ["cut_small"],
+        },
+      ],
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ ingredients: ["りんご"] }), safety);
+    }).toThrow(HttpError);
+  });
 });

@@ -274,6 +274,25 @@ function shouldKeepFlyerSticky(errorCode: string | undefined, status: number): b
   return errorCode === "generation_in_progress";
 }
 
+function FlyerWeeklyMenuDays({ menu }: { menu: WeeklyFlyerMenuResult }) {
+  return (
+    <ol className="stack">
+      {menu.days
+        .slice()
+        .sort((a, b) => a.dayIndex - b.dayIndex)
+        .map((day) => (
+          <li key={day.dayIndex}>
+            <strong>
+              {day.label}: {day.mainName}
+            </strong>
+            {day.sideName ? <span className="muted"> / {day.sideName}</span> : null}
+            <div className="muted">{day.ingredients.join("、")}</div>
+          </li>
+        ))}
+    </ol>
+  );
+}
+
 /**
  * チラシ→1 週間献立の入口。
  * Free: locked preview + Plus CTA。
@@ -304,7 +323,90 @@ export function FlyerWeeklyPanel({
   // sync single-flight。跨タブ dual-mint（PE1）や multi-fingerprint map（PE2）は対象外。
   const uploadInFlightRef = useRef(false);
 
+  const persistSticky = (sticky: StickyFlyerAttempt | null): void => {
+    stickyAttemptRef.current = sticky;
+    if (userId === undefined) return;
+    if (sticky === null) {
+      clearFlyerStickyAttempt(userId);
+      return;
+    }
+    writeFlyerStickyAttempt(userId, sticky);
+  };
+
+  const postFlyerWeekly = async (attemptKey: string, file: File | null): Promise<void> => {
+    if (!session?.access_token) return;
+    const form = new FormData();
+    if (file !== null) {
+      form.append("image", file);
+    }
+    form.append("idempotencyKey", attemptKey);
+    const response = await fetch("/api/flyer-weekly", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Idempotency-Key": attemptKey,
+      },
+      body: form,
+    });
+    // F-U11-1: 他 AI 面と同型で Zod 閉じた envelope のみ受理（未検証 cast 禁止）
+    const raw: unknown = await response.json();
+    const envelopeSchema = z.object({
+      ok: z.literal(true),
+      data: z.object({ menu: weeklyFlyerMenuResultSchema }),
+    });
+    const errorSchema = z.object({
+      ok: z.literal(false).optional(),
+      error: z
+        .object({
+          code: z.string().optional(),
+          message: z.string().optional(),
+        })
+        .optional(),
+    });
+    const parsed = envelopeSchema.safeParse(raw);
+    if (!response.ok || !parsed.success) {
+      const err = errorSchema.safeParse(raw);
+      const errorCode = err.success ? err.data.error?.code : undefined;
+      // PE1: terminal failed（generation_timeout 等）は sticky clear → 新 key で再 reserve。
+      // PE3: processing / 5xx(internal_error) は sticky 維持。finalize 成功後の応答欠落で
+      // 新 key にすると週次 try を二重消費する。4xx の確定失敗も破棄。
+      // PE4 (ambiguous body): HTTP 200 だが body が Zod で閉じられないときは成功/transport 曖昧。
+      // catch（通信断）と同様に sticky を残し、同一画像の再送で二重 try を防ぐ。
+      const ambiguousOkBody = response.ok && !parsed.success;
+      if (!ambiguousOkBody && !shouldKeepFlyerSticky(errorCode, response.status)) {
+        persistSticky(null);
+      }
+      setError(
+        err.success
+          ? (err.data.error?.message ?? "チラシ献立を作成できませんでした。")
+          : "チラシ献立を作成できませんでした。",
+      );
+      return;
+    }
+    // 再生成功後も sticky を残す（Plus 失効中に再表示できるようにする）
+    if (file !== null) {
+      persistSticky(null);
+    }
+    setMenu(parsed.data.data.menu);
+  };
+
   if (!plusEntitled) {
+    const stickyForReplay = userId !== undefined ? readFlyerStickyAttempt(userId) : null;
+    const replaySticky = async (): Promise<void> => {
+      if (stickyForReplay === null || uploadInFlightRef.current) return;
+      uploadInFlightRef.current = true;
+      setBusy(true);
+      setError(null);
+      try {
+        persistSticky(stickyForReplay);
+        await postFlyerWeekly(stickyForReplay.key, null);
+      } catch {
+        setError("チラシ献立を作成できませんでした。");
+      } finally {
+        uploadInFlightRef.current = false;
+        setBusy(false);
+      }
+    };
     return (
       <section className="stack card" data-testid="flyer-weekly-locked" aria-labelledby={inputId}>
         <h2 id={inputId}>チラシから 1 週間の献立</h2>
@@ -321,6 +423,26 @@ export function FlyerWeeklyPanel({
         <p className="muted" data-testid="flyer-weekly-plus-server-note">
           作成できるかは Plus 契約をサーバーで確認します。
         </p>
+        {/* PE13: Plus 失効後も同一 sticky キーの succeeded 再生だけ UI から再 POST できる */}
+        {stickyForReplay !== null ? (
+          <button
+            type="button"
+            className="secondary-button min-h-11"
+            data-testid="flyer-weekly-replay"
+            disabled={busy}
+            onClick={() => {
+              void replaySticky();
+            }}
+          >
+            {busy ? "読み込み中…" : "前回の献立を再表示"}
+          </button>
+        ) : null}
+        {error !== null ? (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        ) : null}
+        {menu !== null ? <FlyerWeeklyMenuDays menu={menu} /> : null}
         {/* primary-button はアプリ共通の CTA クラス。.button.primary は未定義で素のリンクになっていた */}
         <Link className="primary-button" to="/plus">
           Plus を見る
@@ -381,16 +503,6 @@ export function FlyerWeeklyPanel({
     );
   }
 
-  const persistSticky = (sticky: StickyFlyerAttempt | null): void => {
-    stickyAttemptRef.current = sticky;
-    if (userId === undefined) return;
-    if (sticky === null) {
-      clearFlyerStickyAttempt(userId);
-      return;
-    }
-    writeFlyerStickyAttempt(userId, sticky);
-  };
-
   const resolveStickyForFingerprint = (fingerprint: string): string => {
     // 同一マウントの ref を優先。無ければ Storage（remount / 他タブ）。
     let sticky = stickyAttemptRef.current;
@@ -424,54 +536,7 @@ export function FlyerWeeklyPanel({
       }
       const attemptKey = resolveStickyForFingerprint(fingerprint);
       persistSticky({ key: attemptKey, fingerprint });
-      const form = new FormData();
-      form.append("image", file);
-      form.append("idempotencyKey", attemptKey);
-      const response = await fetch("/api/flyer-weekly", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          "Idempotency-Key": attemptKey,
-        },
-        body: form,
-      });
-      // F-U11-1: 他 AI 面と同型で Zod 閉じた envelope のみ受理（未検証 cast 禁止）
-      const raw: unknown = await response.json();
-      const envelopeSchema = z.object({
-        ok: z.literal(true),
-        data: z.object({ menu: weeklyFlyerMenuResultSchema }),
-      });
-      const errorSchema = z.object({
-        ok: z.literal(false).optional(),
-        error: z
-          .object({
-            code: z.string().optional(),
-            message: z.string().optional(),
-          })
-          .optional(),
-      });
-      const parsed = envelopeSchema.safeParse(raw);
-      if (!response.ok || !parsed.success) {
-        const err = errorSchema.safeParse(raw);
-        const errorCode = err.success ? err.data.error?.code : undefined;
-        // PE1: terminal failed（generation_timeout 等）は sticky clear → 新 key で再 reserve。
-        // PE3: processing / 5xx(internal_error) は sticky 維持。finalize 成功後の応答欠落で
-        // 新 key にすると週次 try を二重消費する。4xx の確定失敗も破棄。
-        // PE4 (ambiguous body): HTTP 200 だが body が Zod で閉じられないときは成功/transport 曖昧。
-        // catch（通信断）と同様に sticky を残し、同一画像の再送で二重 try を防ぐ。
-        const ambiguousOkBody = response.ok && !parsed.success;
-        if (!ambiguousOkBody && !shouldKeepFlyerSticky(errorCode, response.status)) {
-          persistSticky(null);
-        }
-        setError(
-          err.success
-            ? (err.data.error?.message ?? "チラシ献立を作成できませんでした。")
-            : "チラシ献立を作成できませんでした。",
-        );
-        return;
-      }
-      persistSticky(null);
-      setMenu(parsed.data.data.menu);
+      await postFlyerWeekly(attemptKey, file);
     } catch {
       // 通信断: sticky を残し、同じ画像・同じキーで再送できるようにする
       setError("チラシ献立を作成できませんでした。");
@@ -519,22 +584,7 @@ export function FlyerWeeklyPanel({
           {error}
         </p>
       ) : null}
-      {menu !== null ? (
-        <ol className="stack">
-          {menu.days
-            .slice()
-            .sort((a, b) => a.dayIndex - b.dayIndex)
-            .map((day) => (
-              <li key={day.dayIndex}>
-                <strong>
-                  {day.label}: {day.mainName}
-                </strong>
-                {day.sideName ? <span className="muted"> / {day.sideName}</span> : null}
-                <div className="muted">{day.ingredients.join("、")}</div>
-              </li>
-            ))}
-        </ol>
-      ) : null}
+      {menu !== null ? <FlyerWeeklyMenuDays menu={menu} /> : null}
     </section>
   );
 }
