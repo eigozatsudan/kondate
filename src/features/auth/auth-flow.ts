@@ -302,7 +302,7 @@ const pendingDepositSchema = z
     expiresAtMs: z.number(),
     /**
      * C1: token_hash の confirm 前キャッシュ。residual / resumeFlow は
-     * この印がある pending を re-deposit → verifyOtp しない（プレビュー耐性）。
+     * この印がある pending を re-deposit も claim もしない（プレビュー耐性）。
      */
     awaitingConfirm: z.boolean().optional(),
   })

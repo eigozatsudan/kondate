@@ -14,6 +14,8 @@ export function createBrowserSupabaseClient(
       detectSessionInUrl: false,
       flowType: "pkce",
       storage: window.localStorage,
+      // 単一 PKCE verifier キー（storageKey + "-code-verifier"）。flow 名前空間は付けない
+      // （BrowserSupabaseClient 再定義禁止）。並行 Google 開始は gateway 側で直列化する。
       storageKey: "kondate.auth.supabase",
     },
   });

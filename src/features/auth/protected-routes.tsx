@@ -18,30 +18,28 @@ export function RequireSession() {
     const returnTo = sanitizeReturnPath(`${location.pathname}${location.search}`);
     return <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace />;
   }
-  return (
-    <>
-      {/* C12: probe/pin 乖離中は shell を維持しつつ再試行・再ログインを促す（自動 privilege 昇格はしない） */}
-      {auth.sessionProbeDegraded ? (
-        <div className="page-frame type-small stack" role="status">
+  // C4: pin/probe 乖離中は Outlet を出さない。history / household 等が JWT-B で動く窓を閉じる。
+  if (auth.sessionProbeDegraded) {
+    return (
+      <div className="page-frame type-small stack" role="status">
+        <p>
+          ログイン状態の確認に時間がかかっているか、別の状態と食い違っています。安全のため一部の操作を止めています。画面をそのままにするか、再読み込みするか、下のボタンからログインし直してください。
+        </p>
+        {auth.recoverDegradedSession !== undefined ? (
           <p>
-            ログイン状態の確認に時間がかかっているか、別の状態と食い違っています。安全のため一部の操作を止めています。画面をそのままにするか、再読み込みするか、下のボタンからログインし直してください。
+            <button
+              type="button"
+              className="text-button min-h-11 min-w-11"
+              onClick={auth.recoverDegradedSession}
+            >
+              ログインし直す
+            </button>
           </p>
-          {auth.recoverDegradedSession !== undefined ? (
-            <p>
-              <button
-                type="button"
-                className="text-button min-h-11 min-w-11"
-                onClick={auth.recoverDegradedSession}
-              >
-                ログインし直す
-              </button>
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-      <Outlet />
-    </>
-  );
+        ) : null}
+      </div>
+    );
+  }
+  return <Outlet />;
 }
 
 // RequireCompletedOnboarding は Plan 7 Task 6 で撤去した。

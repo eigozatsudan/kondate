@@ -122,9 +122,32 @@ it("C12: degraded session shows re-auth recovery action when recoverDegradedSess
   expect(
     screen.getByText(/安全のため一部の操作を止めています|接続の確認に時間がかかっています/),
   ).toBeInTheDocument();
+  // C4: pin mismatch 中は Outlet を出さず JWT-B の history/household を動かさない
+  expect(screen.queryByRole("heading", { name: "冷蔵庫" })).not.toBeInTheDocument();
   const button = screen.getByRole("button", { name: "ログインし直す" });
   act(() => {
     button.click();
   });
   expect(recoverDegradedSession).toHaveBeenCalledOnce();
+});
+
+it("C4: degraded session does not render protected Outlet children", () => {
+  vi.mocked(useAuth).mockReturnValue({
+    status: "authenticated",
+    session: { user: { id: "user-1" } } as NonNullable<ReturnType<typeof useAuth>["session"]>,
+    refreshSession: vi.fn(),
+    sessionProbeDegraded: true,
+  });
+  const router = createMemoryRouter(
+    [
+      {
+        element: <RequireSession />,
+        children: [{ path: "/history", element: <h1>履歴</h1> }],
+      },
+    ],
+    { initialEntries: ["/history"] },
+  );
+  render(<RouterProvider router={router} />);
+  expect(screen.queryByRole("heading", { name: "履歴" })).not.toBeInTheDocument();
+  expect(screen.getByText(/安全のため一部の操作を止めています/)).toBeInTheDocument();
 });

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { getPublicEnv } from "@/shared/config/public-env";
+import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import {
+  clearAuthContinuationCompletion,
   publishAuthContinuationCompletion,
   readAuthContinuationCompletion,
   startAuthContinuationCompletionWait,
@@ -9,7 +12,6 @@ import {
   isAuthContinuationExchangeBusy,
   startAuthContinuationRecovery,
 } from "./auth-continuation-recovery";
-import { getPublicEnv } from "@/shared/config/public-env";
 import {
   captureAndStripAuthCallbackUrl,
   takeCapturedAuthCallbackUrl,
@@ -44,6 +46,18 @@ function loginErrorHref(code: AuthCallbackErrorCode, returnTo?: string): string 
     }
   }
   return `/login?${params.toString()}`;
+}
+
+/**
+ * C6: resumeFlow C-R4 と同型。completion 印だけでは live session 無しの success leave をしない。
+ */
+async function hasLiveAuthSession(): Promise<boolean> {
+  try {
+    const sessionResult = await getBrowserSupabaseClient().auth.getSession();
+    return sessionResult.data.session !== null;
+  } catch {
+    return false;
+  }
 }
 
 function publishCompletionSafely(completion: { flowId: string; returnTo: string }): void {
@@ -254,32 +268,42 @@ export function AuthCallbackPage({
           ? undefined
           : (readAuthFlow(flowIdForWatch, window.localStorage)?.returnTo ?? undefined);
       const watchedReturnTo = fromStorage ?? hangWatchReturnToRef.current;
-      // C15/C9: late exchange 成功と watchdog の競合を同期で解決する。
-      // completion 済み → success leave。exchange in-flight / callback-prelease 中は secret を焼かず
-      // login-error のみ（gateway が後から completion を publish し、他タブ / login の listener が拾える）。
+      // C15/C9: late exchange 成功と watchdog の競合を解決する。
+      // C6: completion 印だけでは leaveSuccess しない。live session が要る（resumeFlow C-R4 と同型）。
+      // exchange in-flight / callback-prelease 中は secret を焼かず login-error のみ。
       // C9: claim 成功〜exchange lease 取得前は in-flight が無いが pre-lease で保護する。
-      if (flowIdForWatch !== null) {
-        const completion = readAuthContinuationCompletion(flowIdForWatch);
-        if (completion !== null) {
-          leaveSuccess(completion.returnTo);
-          return;
+      void (async () => {
+        if (flowIdForWatch !== null) {
+          const completion = readAuthContinuationCompletion(flowIdForWatch);
+          if (completion !== null) {
+            if (await hasLiveAuthSession()) {
+              if (leftRef.current) return;
+              leaveSuccess(completion.returnTo);
+              return;
+            }
+            clearAuthContinuationCompletion(flowIdForWatch);
+          }
+          if (leftRef.current) return;
+          const exchangeBusy = isAuthContinuationExchangeBusy(
+            flowIdForWatch,
+            window.localStorage,
+            Date.now(),
+          );
+          if (!exchangeBusy) {
+            clearAuthFlow(flowIdForWatch);
+          }
         }
-        const exchangeBusy = isAuthContinuationExchangeBusy(
-          flowIdForWatch,
-          window.localStorage,
-          Date.now(),
-        );
-        if (!exchangeBusy) {
-          clearAuthFlow(flowIdForWatch);
-        }
-      }
-      leaveLoginError("unbound_callback", watchedReturnTo);
+        if (leftRef.current) return;
+        leaveLoginError("unbound_callback", watchedReturnTo);
+      })();
     }, remainingMs);
 
     let active = true;
     let stopWaiting: (() => void) | undefined;
+    // then 内に閉じると active が true に narrowing され、await 後の再検査が lint で消される
+    const isAbandoned = (): boolean => !active || leftRef.current;
     void callbackPromise.current.then((next) => {
-      if (!active) return;
+      if (isAbandoned()) return;
       setResult(next);
       hangWatchReturnToRef.current = next.returnTo;
       if (next.kind === "complete") {
@@ -291,99 +315,137 @@ export function AuthCallbackPage({
         // token_hash: ユーザー操作まで OTP を消費しない（プレビュー / スキャナ耐性）
         stayOnDepositedRef.current = true;
       } else if (next.kind === "awaiting_completion") {
-        const startedAt = readAuthContinuationCallbackStartedAt(
-          next.flowId,
-          window.localStorage,
-          new Date(),
-          callbackTtlMs,
-        );
-        if (startedAt === null) {
-          clearAuthFlow(next.flowId);
-          leaveLoginError("unbound_callback", next.returnTo);
-          return;
-        }
-        const existingCompletion = readAuthContinuationCompletion(next.flowId);
-        if (existingCompletion !== null) {
-          leaveSuccess(existingCompletion.returnTo);
-          return;
-        }
-        let finished = false;
-        let stopCompletionWait = (): void => undefined;
-        let stopRecovery = (): void => undefined;
-        const stopAwaiting = (): void => {
-          if (finished) return;
-          finished = true;
-          stopCompletionWait();
-          stopRecovery();
-        };
-        const failClosed = (authError: "magic_link_expired" | "unbound_callback"): void => {
-          if (finished) return;
-          // C15: onExpire と late exchange の競合 — completion があれば success へ
-          if (authError === "unbound_callback") {
-            const completion = readAuthContinuationCompletion(next.flowId);
-            if (completion !== null) {
-              stopAwaiting();
-              leaveSuccess(completion.returnTo);
+        void (async () => {
+          if (isAbandoned()) return;
+          const startedAt = readAuthContinuationCallbackStartedAt(
+            next.flowId,
+            window.localStorage,
+            new Date(),
+            callbackTtlMs,
+          );
+          if (startedAt === null) {
+            clearAuthFlow(next.flowId);
+            leaveLoginError("unbound_callback", next.returnTo);
+            return;
+          }
+          const existingCompletion = readAuthContinuationCompletion(next.flowId);
+          // C6: resumeFlow C-R4 と同型。stale completion + null session では success leave しない。
+          if (existingCompletion !== null) {
+            if (await hasLiveAuthSession()) {
+              if (isAbandoned()) return;
+              leaveSuccess(existingCompletion.returnTo);
               return;
             }
-            if (isAuthContinuationExchangeBusy(next.flowId, window.localStorage, Date.now())) {
+            clearAuthContinuationCompletion(next.flowId);
+          }
+          if (isAbandoned()) return;
+          let finished = false;
+          let stopCompletionWait = (): void => undefined;
+          let stopRecovery = (): void => undefined;
+          const stopAwaiting = (): void => {
+            if (finished) return;
+            finished = true;
+            stopCompletionWait();
+            stopRecovery();
+          };
+          const finishUnbound = (authError: "magic_link_expired" | "unbound_callback"): void => {
+            if (finished || leftRef.current) return;
+            if (
+              authError === "unbound_callback" &&
+              isAuthContinuationExchangeBusy(next.flowId, window.localStorage, Date.now())
+            ) {
               // exchange / pre-lease 中は secret を残し login-error のみ（completion bus が後から救える）
               stopAwaiting();
               leaveLoginError(authError, next.returnTo);
               return;
             }
-          }
-          stopAwaiting();
-          clearAuthFlow(next.flowId);
-          leaveLoginError(authError, next.returnTo);
-        };
-        // R3: hangWatchdog（C6）と同型で server expiresAt があれば wait もクリップする
-        // C4 / RR1: clockSkewMs も hangWatchdog と同型で渡し、進みすぎクライアントの早期 fail-closed を防ぐ
-        // exactOptionalPropertyTypes: undefined を明示渡さない
-        const flowForWait = readAuthFlow(next.flowId, window.localStorage);
-        stopCompletionWait = startAuthContinuationCompletionWait({
-          flowId: next.flowId,
-          startedAt,
-          ttlMs: callbackTtlMs,
-          ...(flowForWait?.expiresAt !== undefined
-            ? { serverExpiresAt: flowForWait.expiresAt }
-            : {}),
-          ...(flowForWait?.clockSkewMs !== undefined
-            ? { clockSkewMs: flowForWait.clockSkewMs }
-            : {}),
-          onComplete: (completion) => {
-            if (finished) return;
             stopAwaiting();
-            leaveSuccess(completion.returnTo);
-          },
-          onExpire: () => {
-            failClosed("unbound_callback");
-          },
-        });
-        // callback ownerも通常recoveryと同じ共有slotを通し、タブ数にかかわらずclaim頻度を固定する。
-        stopRecovery = startAuthContinuationRecovery({
-          gateway: activeGateway,
-          storage: window.localStorage,
-          targetFlowId: next.flowId,
-          ttlMs: callbackTtlMs,
-          onComplete: (completion) => {
+            clearAuthFlow(next.flowId);
+            leaveLoginError(authError, next.returnTo);
+          };
+          const failClosed = (authError: "magic_link_expired" | "unbound_callback"): void => {
             if (finished) return;
-            stopAwaiting();
-            publishCompletionSafely({
-              flowId: completion.flowId,
-              returnTo: completion.returnTo,
-            });
-            leaveSuccess(completion.returnTo);
-          },
-          onResult: (recoveryResult) => {
-            if (recoveryResult.kind === "expired") {
-              failClosed("magic_link_expired");
-            } else if (recoveryResult.kind === "error") {
-              failClosed("unbound_callback");
+            // C15: onExpire と late exchange の競合 — live session 付き completion なら success へ
+            if (authError === "unbound_callback") {
+              const completion = readAuthContinuationCompletion(next.flowId);
+              if (completion !== null) {
+                void hasLiveAuthSession().then((live) => {
+                  if (finished || leftRef.current) return;
+                  if (live) {
+                    stopAwaiting();
+                    leaveSuccess(completion.returnTo);
+                    return;
+                  }
+                  clearAuthContinuationCompletion(next.flowId);
+                  finishUnbound(authError);
+                });
+                return;
+              }
             }
-          },
-        });
-        stopWaiting = stopAwaiting;
+            finishUnbound(authError);
+          };
+          // R3: hangWatchdog（C6）と同型で server expiresAt があれば wait もクリップする
+          // C4 / RR1: clockSkewMs も hangWatchdog と同型で渡し、進みすぎクライアントの早期 fail-closed を防ぐ
+          // exactOptionalPropertyTypes: undefined を明示渡さない
+          const flowForWait = readAuthFlow(next.flowId, window.localStorage);
+          stopCompletionWait = startAuthContinuationCompletionWait({
+            flowId: next.flowId,
+            startedAt,
+            ttlMs: callbackTtlMs,
+            ...(flowForWait?.expiresAt !== undefined
+              ? { serverExpiresAt: flowForWait.expiresAt }
+              : {}),
+            ...(flowForWait?.clockSkewMs !== undefined
+              ? { clockSkewMs: flowForWait.clockSkewMs }
+              : {}),
+            onComplete: (completion) => {
+              if (finished) return;
+              void hasLiveAuthSession().then((live) => {
+                if (finished || leftRef.current) return;
+                if (!live) {
+                  clearAuthContinuationCompletion(next.flowId);
+                  return;
+                }
+                stopAwaiting();
+                leaveSuccess(completion.returnTo);
+              });
+            },
+            onExpire: () => {
+              failClosed("unbound_callback");
+            },
+          });
+          // callback ownerも通常recoveryと同じ共有slotを通し、タブ数にかかわらずclaim頻度を固定する。
+          stopRecovery = startAuthContinuationRecovery({
+            gateway: activeGateway,
+            storage: window.localStorage,
+            targetFlowId: next.flowId,
+            ttlMs: callbackTtlMs,
+            onComplete: (completion) => {
+              if (finished) return;
+              void hasLiveAuthSession().then((live) => {
+                if (finished || leftRef.current) return;
+                if (!live) {
+                  clearAuthContinuationCompletion(next.flowId);
+                  return;
+                }
+                stopAwaiting();
+                publishCompletionSafely({
+                  flowId: completion.flowId,
+                  returnTo: completion.returnTo,
+                });
+                leaveSuccess(completion.returnTo);
+              });
+            },
+            onResult: (recoveryResult) => {
+              if (recoveryResult.kind === "expired") {
+                failClosed("magic_link_expired");
+              } else if (recoveryResult.kind === "error") {
+                failClosed("unbound_callback");
+              }
+            },
+          });
+          stopWaiting = stopAwaiting;
+        })();
       } else if (next.kind === "expired") {
         // C5: code 無し expired でも secret を即焼かない（state 漏洩経由の DoS を縮める）。
         // C3: dismiss 印で遅延 success の silent complete を防ぎ、TTL / 明示 logout / やり直すで収束。

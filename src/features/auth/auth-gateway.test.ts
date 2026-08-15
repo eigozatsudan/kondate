@@ -286,7 +286,46 @@ it("C1: resumeFlow does not verifyOtp an unconfirmed token_hash pending", async 
     flowId: sent.flowId,
   });
   expect(deposit).not.toHaveBeenCalled();
+  expect(claim).not.toHaveBeenCalled();
   expect(client.auth.verifyOtp).not.toHaveBeenCalled();
+  expect(readPendingAuthDeposit(sent.flowId, storage)?.code).toBe(tokenHash);
+});
+
+it("C1: awaitingConfirm residual does not claim ciphertext or terminal-clear the flow", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const deposit = vi.fn().mockResolvedValue(undefined);
+  const claim = vi.fn().mockResolvedValue({
+    code: "poison-ciphertext-xxxxxxxx",
+    returnTo: "/onboarding",
+  });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock({ deposit, claim }),
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "f".repeat(40);
+
+  await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
+    ),
+  );
+  expect(readPendingAuthDeposit(sent.flowId, storage)?.awaitingConfirm).toBe(true);
+
+  await expect(gateway.resumeFlow(sent.flowId)).resolves.toMatchObject({
+    kind: "awaiting_completion",
+    flowId: sent.flowId,
+  });
+  expect(claim).not.toHaveBeenCalled();
+  expect(client.auth.verifyOtp).not.toHaveBeenCalled();
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+  expect(readAuthFlow(sent.flowId, storage)).not.toBeNull();
   expect(readPendingAuthDeposit(sent.flowId, storage)?.code).toBe(tokenHash);
 });
 
@@ -606,6 +645,70 @@ it("C3: later Google start dismisses the prior OAuth flow (single PKCE verifier)
   expect(readAuthFlow("10000000-0000-4000-8000-000000000002", storage)).not.toBeNull();
 });
 
+it("C3: overlapping Google starts serialize so the first verifier is not overwritten mid-OAuth", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const pkceVerifierKey = `${browserSupabaseSessionStorageKey}-code-verifier`;
+  const flowA = "10000000-0000-4000-8000-000000000001";
+  const flowB = "10000000-0000-4000-8000-000000000002";
+  let releaseFirst: (() => void) | undefined;
+  const firstOauthGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: flowA,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: flowB,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+  });
+  const client = authClientMock();
+  let oauthCalls = 0;
+  client.auth.signInWithOAuth.mockImplementation(() => {
+    oauthCalls += 1;
+    if (oauthCalls === 1) {
+      storage.setItem(pkceVerifierKey, "verifier-v1");
+      return firstOauthGate.then(() => Promise.resolve({ data: {}, error: null }));
+    }
+    storage.setItem(pkceVerifierKey, "verifier-v2");
+    return Promise.resolve({ data: {}, error: null });
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+
+  const pendingA = gateway.signInWithGoogle("/planner");
+  for (let index = 0; index < 50 && oauthCalls === 0; index += 1) {
+    await Promise.resolve();
+  }
+  expect(oauthCalls).toBe(1);
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v1");
+
+  const pendingB = gateway.signInWithGoogle("/onboarding");
+  for (let index = 0; index < 20; index += 1) {
+    await Promise.resolve();
+  }
+  // 後着は OAuth に入らず、先着の verifier を上書きしない
+  expect(oauthCalls).toBe(1);
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v1");
+
+  releaseFirst?.();
+  await pendingA;
+  await pendingB;
+  expect(oauthCalls).toBe(2);
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v2");
+  expect(isAuthFlowUserDismissed(flowA, storage)).toBe(true);
+  expect(isAuthFlowUserDismissed(flowB, storage)).toBe(false);
+});
+
 it("C6: keeps the prior magic-link flow secret when switching to Google", async () => {
   configurePublicEnv();
   const storage = new MapStorage();
@@ -632,8 +735,61 @@ it("C6: keeps the prior magic-link flow secret when switching to Google", async 
   const magicLink = await gateway.sendMagicLink("user@example.com", "/planner");
   await gateway.signInWithGoogle("/planner");
 
+  // C6: secret は残す。C5: token_hash も dismiss し、後勝ち Google 後の magic verify を止める
   expect(readAuthFlow(magicLink.flowId, storage)).not.toBeNull();
+  expect(isAuthFlowUserDismissed(magicLink.flowId, storage)).toBe(true);
   expect(readAuthFlow("10000000-0000-4000-8000-000000000002", storage)).not.toBeNull();
+});
+
+it("C5: Google start dismisses token_hash so confirmMagicLink does not verifyOtp", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000001",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: "10000000-0000-4000-8000-000000000002",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+  });
+  const client = authClientMock({ oauthResult: { data: {}, error: null } });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/planner");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "c".repeat(40);
+  await gateway.completeCallback(
+    new URL(
+      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
+    ),
+  );
+
+  await gateway.signInWithGoogle("/planner");
+  expect(isAuthFlowUserDismissed(sent.flowId, storage)).toBe(true);
+
+  await expect(
+    gateway.confirmMagicLink({
+      flowId: sent.flowId,
+      tokenHash,
+      otpType: "email",
+      state: flow.state,
+    }),
+  ).resolves.toMatchObject({
+    kind: "error",
+    code: "oauth_cancelled",
+    flowId: sent.flowId,
+  });
+  expect(client.auth.verifyOtp).not.toHaveBeenCalled();
+  expect(readAuthFlow(sent.flowId, storage)).not.toBeNull();
 });
 
 it("C7: rejects a callback URL with implicit access_token in the hash without exchanging", async () => {
@@ -2467,13 +2623,18 @@ it("C-R2-3: failed Google restore does not clobber sibling V3 so later B resume 
   }
   expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v2");
 
-  await gateway.signInWithGoogle("/onboarding");
-  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v3");
-  expect(readAuthFlow(flowB, storage)).not.toBeNull();
+  // C3: 開始は直列。後着 B は C の失敗 settle まで OAuth に入らない。
+  const pendingB = gateway.signInWithGoogle("/onboarding");
+  for (let i = 0; i < 20; i += 1) {
+    await Promise.resolve();
+  }
+  expect(oauthCalls).toBe(1);
+  expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v2");
 
   releaseC?.();
   await expect(pendingC).rejects.toThrow("Googleログインを開始できませんでした");
-  // 並行成功の V3 を開始時 V1 で消さない
+  await pendingB;
+  // C 失敗復元のあと B が V3 を書く。直列化で C の restore が V3 を踏まない。
   expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v3");
   expect(readAuthFlow(flowC, storage)).toBeNull();
   expect(readAuthFlow(flowB, storage)).not.toBeNull();
@@ -2922,6 +3083,65 @@ it("C-R9: post-exchange discard with absent baseline clears loser session locall
   // present restore はしない。loser fingerprint 一致のため local signOut
   expect(client.auth.setSession).not.toHaveBeenCalled();
   expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+});
+
+it("C5: discarded magic verify does not signOut when a sibling Google completion exists", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const loserSession = {
+    access_token: "magic-loser-access",
+    refresh_token: "magic-loser-refresh",
+    expires_in: 3600,
+    token_type: "bearer",
+    user: { id: "user-magic" },
+  };
+  let liveSession: typeof loserSession | null = null;
+  let releaseVerify: (() => void) | undefined;
+  const verifyGate = new Promise<void>((resolve) => {
+    releaseVerify = resolve;
+  });
+  const client = authClientMock();
+  client.auth.getSession = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve({ data: { session: liveSession }, error: null }));
+  client.auth.verifyOtp = vi.fn().mockImplementation(async () => {
+    await verifyGate;
+    liveSession = loserSession;
+    return { data: { session: loserSession }, error: null };
+  });
+  const api = continuationApiMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "g".repeat(40);
+
+  const pending = gateway.confirmMagicLink({
+    flowId: sent.flowId,
+    tokenHash,
+    otpType: "email",
+    state: flow.state,
+  });
+  await flushResumeUntilExchange();
+  for (let index = 0; index < 80 && client.auth.verifyOtp.mock.calls.length === 0; index += 1) {
+    await Promise.resolve();
+  }
+  expect(client.auth.verifyOtp).toHaveBeenCalled();
+  // 勝者 Google が先に completion を載せ、magic 行を sibling clear
+  publishAuthContinuationCompletion({ flowId: "google-winner", returnTo: "/planner" }, storage);
+  clearAuthFlowForTest(sent.flowId, storage);
+
+  releaseVerify?.();
+  await expect(pending).resolves.toMatchObject({
+    kind: "awaiting_completion",
+    flowId: sent.flowId,
+  });
+  expect(client.auth.signOut).not.toHaveBeenCalled();
 });
 
 it("C-R9: post-exchange discard does not signOut when current session is not the loser", async () => {

@@ -16,6 +16,19 @@ import {
   resetAuthFlowUserDismissedMemoryForTests,
 } from "./auth-flow";
 
+const getSessionMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    data: { session: { access_token: "live-tok" } },
+    error: null,
+  }),
+);
+
+vi.mock("@/shared/lib/supabase", () => ({
+  getBrowserSupabaseClient: () => ({
+    auth: { getSession: getSessionMock },
+  }),
+}));
+
 vi.mock("./auth-gateway", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./auth-gateway")>();
   return { ...actual, createAuthGateway: vi.fn() };
@@ -57,6 +70,11 @@ afterEach(() => {
   startAuthContinuationRecoveryMock.mockClear();
   vi.mocked(publishAuthContinuationCompletion).mockClear();
   vi.mocked(clearAuthFlow).mockClear();
+  getSessionMock.mockReset();
+  getSessionMock.mockResolvedValue({
+    data: { session: { access_token: "live-tok" } },
+    error: null,
+  });
 });
 
 function renderCallback(
@@ -345,8 +363,44 @@ it("uses completion published before the losing callback starts waiting", async 
   };
   const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
 
+  await waitFor(() => {
+    expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
+  });
+});
+
+it("C6: awaiting_completion does not leaveSuccess on stale completion without a live session", async () => {
+  getSessionMock.mockResolvedValue({ data: { session: null }, error: null });
+  window.localStorage.setItem(
+    "kondate.auth.supabase.continuation-complete.flow-1",
+    JSON.stringify({
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+      completedAt: new Date().toISOString(),
+    }),
+  );
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "awaiting_completion",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    }),
+    resumeFlow: vi.fn().mockResolvedValue({
+      kind: "awaiting_completion",
+      flowId: "flow-1",
+      returnTo: "/onboarding",
+    }),
+    confirmMagicLink: vi.fn(),
+  };
+  const { leaveAuthCallback } = renderCallback(gateway, { ttlMs: 300_000 });
+
   await act(async () => Promise.resolve());
-  expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
+  await act(async () => Promise.resolve());
+  expect(leaveAuthCallback).not.toHaveBeenCalled();
+  expect(
+    window.localStorage.getItem("kondate.auth.supabase.continuation-complete.flow-1"),
+  ).toBeNull();
 });
 
 it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", async () => {
@@ -495,6 +549,7 @@ it("AUTH-01: re-claims on the callback owner tab after a transient awaiting_comp
         flowId: "flow-1",
         returnTo: "/onboarding",
       });
+      await Promise.resolve();
       await Promise.resolve();
     });
     expect(resumeFlow).not.toHaveBeenCalled();
@@ -720,7 +775,9 @@ it("cleans up and leaves after recovery completion when publishing fails", async
       await Promise.resolve();
     });
 
-    expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
+    await waitFor(() => {
+      expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
+    });
     expect(stopRecovery).toHaveBeenCalledOnce();
     expect(consoleError).not.toHaveBeenCalled();
   } finally {
