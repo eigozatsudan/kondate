@@ -486,6 +486,57 @@ describe("useGenerationRecovery", () => {
     },
   );
 
+  it("keeps processing poll and navigates after a sibling tab clears pending", async () => {
+    vi.useFakeTimers();
+    try {
+      mockStatus.mockResolvedValueOnce(processingA).mockResolvedValueOnce(succeededA);
+      const recovery = renderRecoveryAt(processingState, pendingA);
+      realPendingGeneration.clearPendingGeneration(storage);
+      await act(async () => {
+        await recovery.result.current.retryStatus();
+      });
+      expect(recovery.result.current.state.phase).toBe("processing");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(recovery.result.current.state.phase).toBe("succeeded");
+      expect(navigateMock).toHaveBeenCalledWith(`/menus/${succeededA.menuId}?recovered=1`);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("navigates to the succeeded menu after a sibling tab clears pending during GET", async () => {
+    const delayedStatus = deferred<GenerationStatusData>();
+    mockStatus.mockReturnValue(delayedStatus.promise);
+    const recovery = renderRecoveryAt(checkingState, pendingA);
+    const statusOp = recovery.result.current.retryStatus();
+    realPendingGeneration.clearPendingGeneration(storage);
+    delayedStatus.resolve(succeededA);
+    await act(() => statusOp);
+    await waitFor(() => {
+      expect(recovery.result.current.state.phase).toBe("succeeded");
+    });
+    expect(navigateMock).toHaveBeenCalledWith(`/menus/${succeededA.menuId}?recovered=1`);
+  });
+
+  it("navigates to the succeeded menu after a sibling tab clears pending during POST", async () => {
+    const delayedPost = deferred<GenerationStatusData>();
+    mockPost.mockReturnValue(delayedPost.promise);
+    const recovery = renderRecoveryAt(idleState, null);
+    const start = recovery.result.current.startGeneration(pendingA);
+    await act(async () => {
+      await flushPromises();
+    });
+    realPendingGeneration.clearPendingGeneration(storage);
+    delayedPost.resolve(succeededA);
+    await act(() => start);
+    await waitFor(() => {
+      expect(recovery.result.current.state.phase).toBe("succeeded");
+    });
+    expect(navigateMock).toHaveBeenCalledWith(`/menus/${succeededA.menuId}?recovered=1`);
+  });
+
   it("serializes concurrent not_started status checks into one resend", async () => {
     mockReadPending.mockReturnValue(oldPending);
     mockStatus.mockResolvedValue(notStarted);

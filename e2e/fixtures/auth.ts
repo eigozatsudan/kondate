@@ -49,13 +49,22 @@ type AuthFixtures = {
 
 export const test = base.extend<AuthFixtures>({
   authEmail: async ({ browserName }, provide, testInfo) => {
-    const safeTitle = testInfo.title
-      .replaceAll(/[^a-z0-9]+/giu, "-")
-      .slice(0, 30)
-      .toLowerCase();
+    // full は mobile/desktop を別プロセスで並列する。両 project とも
+    // browserName=chromium、serial file は workerIndex=0 なので、title+browser+
+    // worker+Date.now() だけだと同一 ms で email / identity が衝突する。
+    // project.name と pid でプロセス一意性を足す。quota 定数は変えない。
     const workerIndex = String(testInfo.workerIndex);
     const timestamp = String(Date.now());
-    await provide(`${safeTitle}-${browserName}-${workerIndex}-${timestamp}@example.invalid`);
+    const pid = String(process.pid);
+    const safeProject = testInfo.project.name.replaceAll(/[^a-z0-9]+/giu, "-").toLowerCase();
+    // local-part 上限 64。衝突回避に効く project/pid/worker/時刻を先に置き、title は余り。
+    const prefix = `${safeProject}-${browserName}-${workerIndex}-${pid}-${timestamp}`;
+    const titleBudget = Math.max(1, 64 - prefix.length - 1);
+    const safeTitle = testInfo.title
+      .replaceAll(/[^a-z0-9]+/giu, "-")
+      .slice(0, titleBudget)
+      .toLowerCase();
+    await provide(`${prefix}-${safeTitle}@example.invalid`);
   },
 
   authenticatedPage: async ({ page, authEmail }, provide) => {

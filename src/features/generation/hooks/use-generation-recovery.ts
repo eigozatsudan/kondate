@@ -253,18 +253,18 @@ export function useGenerationRecovery(
     },
     [read, userId],
   );
+  const isActiveToken = useCallback((token: GenerationLifecycleToken) => {
+    const current = lifecycleRef.current;
+    return (
+      current === token &&
+      current.ownerUserId === token.ownerUserId &&
+      current.epoch === token.epoch &&
+      current.idempotencyKey === token.idempotencyKey
+    );
+  }, []);
   const isCurrent = useCallback(
-    (token: GenerationLifecycleToken) => {
-      const current = lifecycleRef.current;
-      return (
-        current === token &&
-        current.ownerUserId === token.ownerUserId &&
-        current.epoch === token.epoch &&
-        current.idempotencyKey === token.idempotencyKey &&
-        storedMatches(token)
-      );
-    },
-    [storedMatches],
+    (token: GenerationLifecycleToken) => isActiveToken(token) && storedMatches(token),
+    [isActiveToken, storedMatches],
   );
   const invalidateLifecycle = useCallback(() => {
     epochRef.current += 1;
@@ -280,7 +280,13 @@ export function useGenerationRecovery(
       const operation = Promise.resolve().then(async () => {
         try {
           const data = await postGeneration(pendingGenerationCommand(pending));
-          if (!isCurrent(token)) return;
+          // 他タブが先に結果着地して pending を消しても、同一 lifecycle の
+          // processing / succeeded は回収する。not_started 再POST は pending 必須。
+          if (data.status === "succeeded" || data.status === "processing") {
+            if (!isActiveToken(token)) return;
+          } else if (!isCurrent(token)) {
+            return;
+          }
           token.phase = data.status === "not_started" ? "submitting" : data.status;
           dispatch({ type: "status", data });
         } catch (error) {
@@ -332,7 +338,7 @@ export function useGenerationRecovery(
       });
       return operation;
     },
-    [dispatch, invalidateLifecycle, isCurrent, queryClient],
+    [dispatch, invalidateLifecycle, isActiveToken, isCurrent, queryClient],
   );
 
   useEffect(() => {
@@ -364,9 +370,14 @@ export function useGenerationRecovery(
 
   const retryStatus = useCallback((): Promise<void> => {
     const pending = read();
-    if (!pending) return Promise.resolve();
     let token = lifecycleRef.current;
-    if (
+    if (pending === null) {
+      // 他タブが先に結果着地して pending を消しても、同一 lifecycle の
+      // processing poll / succeeded 着地は続ける。破棄（invalidate）後は止める。
+      if (token === null || userId === null || token.ownerUserId !== userId) {
+        return Promise.resolve();
+      }
+    } else if (
       token === null ||
       token.ownerUserId !== pending.ownerUserId ||
       token.idempotencyKey !== pending.request.idempotencyKey
@@ -379,15 +390,22 @@ export function useGenerationRecovery(
       };
       lifecycleRef.current = token;
     }
+    const idempotencyKey = pending?.request.idempotencyKey ?? token.idempotencyKey;
     const current = statusInFlightRef.current;
     if (current?.token === token) return current.promise;
     const operation = Promise.resolve().then(async () => {
       try {
-        const data = await getGenerationStatus(pending.request.idempotencyKey);
-        if (!isCurrent(token)) return;
+        const data = await getGenerationStatus(idempotencyKey);
+        // 他タブが先に結果着地して pending を消しても、同一 lifecycle の
+        // processing / succeeded は回収する。not_started 再POST は pending 必須。
+        if (data.status === "succeeded" || data.status === "processing") {
+          if (!isActiveToken(token)) return;
+        } else if (!isCurrent(token)) {
+          return;
+        }
         token.phase = data.status === "not_started" ? "submitting" : data.status;
         dispatch({ type: "status", data });
-        if (data.status === "not_started" && isCurrent(token))
+        if (data.status === "not_started" && pending !== null && isCurrent(token))
           void resumeNotStarted(token, pending);
       } catch (error) {
         if (!isCurrent(token)) return;
@@ -432,7 +450,16 @@ export function useGenerationRecovery(
       if (statusInFlightRef.current === record) statusInFlightRef.current = null;
     });
     return operation;
-  }, [dispatch, invalidateLifecycle, isCurrent, queryClient, read, resumeNotStarted]);
+  }, [
+    dispatch,
+    invalidateLifecycle,
+    isActiveToken,
+    isCurrent,
+    queryClient,
+    read,
+    resumeNotStarted,
+    userId,
+  ]);
 
   const startGeneration = useCallback(
     async (pending: PendingGeneration) => {
@@ -542,7 +569,7 @@ export function useGenerationRecovery(
       token !== null &&
       token.phase === "succeeded" &&
       token.idempotencyKey === state.data.idempotencyKey &&
-      isCurrent(token)
+      isActiveToken(token)
     ) {
       clearPendingGeneration();
       void navigate(`/menus/${state.data.menuId}?recovered=1`);
@@ -572,7 +599,7 @@ export function useGenerationRecovery(
       });
     }
     return undefined;
-  }, [isCurrent, navigate, queryClient, retryStatus, state, userId]);
+  }, [isActiveToken, isCurrent, navigate, queryClient, retryStatus, state, userId]);
 
   useEffect(() => {
     // イベント駆動の復旧は「保存済み pending があるときだけ」。

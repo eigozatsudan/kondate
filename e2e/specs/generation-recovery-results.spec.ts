@@ -395,9 +395,9 @@ test("recovers a completed result after a tab is closed before its POST response
 
 /**
  * E2E7: 同一ユーザの 2 タブ。勝ちが claim した sticky を、負けが
- * /generation?resumed=1 で踏む。勝ちの POST は再開案内を見るまで保留し、
- * 負けの追加 POST は切る（同時 continue は draft 削除後の draft_not_found）。
- * 負けは status GET で同じ結果へ着地する。origin は変えない。
+ * /generation?resumed=1 で踏む。勝ちの POST は再開案内を見るまで保留する。
+ * 同一 key の追加 POST は案内後に通す（lookup hit / 冪等 replay）。
+ * 負けは同じ /menus 結果へ着地する。origin は変えない。
  */
 test("dual-tab generate claims one pending and the loser resumes the same sticky", async ({
   completedOnboardingPage: page,
@@ -411,8 +411,8 @@ test("dual-tab generate claims one pending and the loser resumes the same sticky
   const resumeSeen = new Promise<void>((resolve) => {
     resumeObserved = resolve;
   });
-  let winnerPostStarted = false;
-  await context.route("**/api/generations/menu", async (route) => {
+  const generationPostPattern = "**/api/generations/menu";
+  await context.route(generationPostPattern, async (route) => {
     if (route.request().method() !== "POST") {
       await route.continue();
       return;
@@ -425,14 +425,10 @@ test("dual-tab generate claims one pending and the loser resumes the same sticky
       throw new Error("expected request.idempotencyKey on generation POST body");
     }
     postedKeys.push(key);
-    if (!winnerPostStarted) {
-      winnerPostStarted = true;
-      await resumeSeen;
-      await route.continue();
-      return;
-    }
-    // 負けタブの二重 POST は draft 削除後の not_found になる。status 再開に任せる。
-    await route.abort("connectionreset");
+    // 案内観測まで全 POST を止め、その後は同一 key を通す。abort すると負けが
+    // offline のまま勝ちの clearPending を跨ぎ、着地を観測できない。
+    await resumeSeen;
+    await route.continue();
   });
 
   const peer = await context.newPage();
@@ -454,7 +450,6 @@ test("dual-tab generate claims one pending and the loser resumes the same sticky
     });
     resumeObserved();
 
-    // 勝ちが結果へ着地。負けは resumed=1 の案内を既に観測済み（追加 POST は切っている）。
     await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
     await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
       timeout: 30_000,
@@ -462,6 +457,14 @@ test("dual-tab generate claims one pending and the loser resumes the same sticky
     const pageMenuId = z
       .uuid()
       .parse(/\/menus\/([0-9a-f-]{36})/iu.exec(new URL(page.url()).pathname)?.[1]);
+
+    // 負けも案内だけで終わらせず、同じ献立結果へ着地することを観測する。
+    await expect(peer).toHaveURL(new RegExp(`/menus/${pageMenuId}(?:\\?|$)`, "u"), {
+      timeout: 90_000,
+    });
+    await expect(peer.getByRole("heading", { name: "献立ができました" })).toBeVisible({
+      timeout: 30_000,
+    });
 
     expect(postedKeys.length).toBeGreaterThanOrEqual(1);
     expect(new Set(postedKeys).size).toBe(1);
@@ -478,7 +481,7 @@ test("dual-tab generate claims one pending and the loser resumes the same sticky
     expect(menuRows).toHaveLength(1);
   } finally {
     resumeObserved();
-    await context.unroute("**/api/generations/menu");
+    await context.unroute(generationPostPattern);
     await peer.close();
   }
 });
