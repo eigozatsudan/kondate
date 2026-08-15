@@ -671,7 +671,9 @@ it("C8: restart from deposited UI clears the flow secret", async () => {
   expect(await screen.findByRole("button", { name: "最初からやり直す" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "最初からやり直す" }));
   expect(clearAuthFlow).toHaveBeenCalledWith(flowId);
-  expect(leaveAuthCallback).toHaveBeenCalledWith("/login");
+  expect(leaveAuthCallback).toHaveBeenCalledWith(
+    "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+  );
 });
 
 it("handles the original callback result after StrictMode remounts the effect", async () => {

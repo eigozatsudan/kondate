@@ -223,6 +223,23 @@ function isAuthErrorCode(value: unknown): value is NonNullable<LoginLocationStat
   );
 }
 
+/**
+ * leftover session を伴い得る leave。authenticated でも Navigate せず
+ * エラー + Google CTA を出す（C2 / C-R2）。
+ * - oauth_cancelled: dismiss 後 verify の loser
+ * - unbound_callback: C6 hangWatchdog / restartFromLogin
+ * - query 無し /login: restart が query を付けられなかった経路
+ */
+function isLeftoverCapableLoginLeave(
+  authError: LoginLocationState["authError"],
+  search: string,
+): boolean {
+  if (authError === "oauth_cancelled" || authError === "unbound_callback") {
+    return true;
+  }
+  return search === "" || search === "?";
+}
+
 function readLoginLocationState(value: unknown): LoginLocationState {
   if (typeof value !== "object" || value === null || !("authError" in value)) return {};
   const authError = value.authError;
@@ -371,9 +388,12 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   }, [auth.status]);
 
   // 既にセッションがある場合はフォームを出さず returnTo へ進める。
-  // C2: oauth_cancelled は破棄した交換の session が残っていることがある。
-  // エラーより先に Navigate すると pin が後勝ち Google を拒み、magic が残る。
-  if (auth.status === "authenticated" && locationState.authError !== "oauth_cancelled") {
+  // C2 / C-R2: leftover を伴い得る leave はエラーより先に Navigate しない。
+  // 入ると pin が後勝ち Google を拒み leftover magic が残る。
+  if (
+    auth.status === "authenticated" &&
+    !isLeftoverCapableLoginLeave(locationState.authError, location.search)
+  ) {
     return <Navigate to={returnTo} replace />;
   }
   // C6: loading 中は deadline 超過でもフォームを出さない。

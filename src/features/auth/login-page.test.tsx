@@ -477,6 +477,57 @@ it("C2: authenticated login still shows oauth_cancelled instead of navigating aw
   }
 });
 
+it.each([
+  {
+    label: "unbound_callback query",
+    entry: "/login?authError=unbound_callback",
+    copy: "ログインの情報を確認できませんでした。最初からやり直してください。",
+  },
+  {
+    label: "restart-style query-less /login",
+    entry: "/login",
+    copy: null,
+  },
+] as const)(
+  "C-R2: authenticated login still shows leftover-capable $label instead of navigating away",
+  ({ entry, copy }) => {
+    vi.mocked(useAuth).mockReturnValue({
+      status: "authenticated",
+      session: { user: { id: "user-magic" } } as never,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    });
+    try {
+      const gateway: AuthGateway = {
+        signInWithGoogle: vi.fn(),
+        sendMagicLink: vi.fn(),
+        completeCallback: vi.fn(),
+        resumeFlow: vi.fn(),
+        confirmMagicLink: vi.fn(),
+      };
+
+      render(
+        <MemoryRouter initialEntries={[entry]}>
+          <LoginPage gateway={gateway} />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByRole("heading", { name: "こんだて日和" })).toBeInTheDocument();
+      if (copy !== null) {
+        expect(screen.getByRole("alert")).toHaveTextContent(copy);
+      }
+      expect(screen.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+    } finally {
+      vi.mocked(useAuth).mockReturnValue({
+        status: "unauthenticated",
+        session: null,
+        refreshSession: vi.fn(),
+        sessionProbeDegraded: false,
+      });
+    }
+  },
+);
+
 it("C9: clears magic-link residual sessionStorage when already authenticated", () => {
   sessionStorage.setItem(
     "kondate.auth.lastMagicEmail",

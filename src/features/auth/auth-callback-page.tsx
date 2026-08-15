@@ -135,8 +135,10 @@ export function AuthCallbackPage({
 
   /**
    * C8: 「最初からやり直す」は当該 flow secret を消し、/login residual recovery が拾わないようにする。
+   * C-R2: leftover session があり得るので unbound_callback を載せる。
+   * query 無し /login だと Login の authenticated Navigate が leftover を returnTo へ入れる。
    */
-  const restartFromLogin = (flowId: string | undefined): void => {
+  const restartFromLogin = (flowId: string | undefined, returnTo?: string): void => {
     if (flowId !== undefined && flowId !== "") {
       try {
         clearAuthFlow(flowId);
@@ -144,7 +146,7 @@ export function AuthCallbackPage({
         // best-effort
       }
     }
-    leaveOnce("/login");
+    leaveLoginError("unbound_callback", returnTo);
   };
 
   const applyTerminalResult = (next: AuthCallbackResult): void => {
@@ -502,7 +504,7 @@ export function AuthCallbackPage({
               className="primary-button min-h-11"
               onClick={() => {
                 // C8: やり直すは当該 flow を clear（residual recovery が拾わない）
-                restartFromLogin(result.flowId);
+                restartFromLogin(result.flowId, result.returnTo);
               }}
             >
               最初からやり直す
@@ -555,7 +557,7 @@ export function AuthCallbackPage({
             type="button"
             className="primary-button min-h-11"
             onClick={() => {
-              restartFromLogin(result.flowId);
+              restartFromLogin(result.flowId, result.returnTo);
             }}
           >
             最初からやり直す
