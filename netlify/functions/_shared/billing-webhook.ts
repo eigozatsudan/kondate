@@ -760,23 +760,39 @@ async function handleSubscriptionEvent(
   // 支払済み（active/trialing/past_due 等）の deleted は従来どおり canceled。
   const incompleteLike = (status: string): boolean =>
     status === "incomplete" || status === "incomplete_expired";
-  const retrievedIncomplete = incompleteLike(projection.status);
-  const eventIncomplete = incompleteLike(sub.status);
+  const retrievedStatus = projection.status;
+  const eventFrozenStatus = sub.status;
+  const retrievedIncomplete = incompleteLike(retrievedStatus);
+  const eventIncomplete = incompleteLike(eventFrozenStatus);
   const keepUnpaidIncomplete =
     event.type === "customer.subscription.deleted" &&
     !projectingDiscardedOntoKeep &&
     (retrievedIncomplete || eventIncomplete);
+  // B-R2: forceCanceled で status を書く前に retrieve/event の past_due を残す。
+  const snapshotPastDue = retrievedStatus === "past_due" || eventFrozenStatus === "past_due";
+  // 支払証拠: active/trialing の残存、または past_due（B2 読取枝の since 対象）。
+  const snapshotPaidEvidence =
+    retrievedStatus === "active" ||
+    retrievedStatus === "trialing" ||
+    eventFrozenStatus === "active" ||
+    eventFrozenStatus === "trialing" ||
+    snapshotPastDue;
   const forceCanceledFromDeleted =
     event.type === "customer.subscription.deleted" &&
     !projectingDiscardedOntoKeep &&
     !keepUnpaidIncomplete;
+  // B-R1: retrieve/event が既に canceled だけの deleted は支払証拠が無い。
+  // canceled のまま書くと未来 period_end だけで Plus になるので incomplete_expired 相当。
+  // 既存の支払済み行は SQL が incoming incomplete_expired を canceled 残存へ戻す。
   const deletedStatus = keepUnpaidIncomplete
     ? retrievedIncomplete
-      ? projection.status
-      : sub.status
+      ? retrievedStatus
+      : eventFrozenStatus
     : forceCanceledFromDeleted
-      ? "canceled"
-      : projection.status;
+      ? snapshotPaidEvidence
+        ? "canceled"
+        : "incomplete_expired"
+      : retrievedStatus;
   // forceCanceled 後に B1/B7 ガード（deleted→canceled が kill 中に再昇格しないよう後段で適用）
   let guardedProjection: SubscriptionProjection = {
     ...projection,
@@ -811,8 +827,12 @@ async function handleSubscriptionEvent(
   // 正規 Function 経路は常に past_due_since を載せる。手投入/将来 path の延長残差は migration 契約。
   // B-R5: kill 中 unpaid でも元 past_due なら初回候補として載せる。
   // B-R6: 後続イベントも event.created を載せるが、SQL unpaid else は既存優先で延長しない。
+  // B-R2: forceCanceled 後の preGuardStatus は canceled になるので、上書き前の
+  // retrieve/event past_due も since 候補にする。行無し deleted+past_due でも B2 読取枝が発火する。
   const pastDueSinceIso =
-    !clearPastDue && preGuardStatus === "past_due" ? unixToIsoZ(event.created) : null;
+    !clearPastDue && (preGuardStatus === "past_due" || snapshotPastDue)
+      ? unixToIsoZ(event.created)
+      : null;
 
   const outcome = await processStripeEvent(deps.admin, {
     stripe_event_id: event.id,

@@ -180,6 +180,20 @@ describe("computePlusEntitled", () => {
     ).toEqual({ plusEntitled: false, pastDueGrace: false });
   });
 
+  it("returns false for incomplete_expired even inside period (B-R1)", () => {
+    // 支払証拠の無い初回 deleted は incomplete_expired 相当。期間内でも Plus にしない。
+    expect(
+      computePlusEntitled(
+        {
+          status: "incomplete_expired",
+          past_due_since: null,
+          current_period_end: "2026-08-01T00:00:00.000Z",
+        },
+        now,
+      ),
+    ).toEqual({ plusEntitled: false, pastDueGrace: false });
+  });
+
   it.each(["unpaid", "incomplete", "incomplete_expired", "paused"] as const)(
     "returns false for non-entitled status %s",
     (status) => {

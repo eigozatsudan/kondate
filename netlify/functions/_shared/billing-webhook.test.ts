@@ -1000,6 +1000,33 @@ describe("handleBillingWebhook", () => {
     expect(processPayload.status).toBe("canceled");
   });
 
+  it("persists incomplete_expired when deleted snapshot is already canceled (B-R1)", async () => {
+    // 行無しの初回 deleted で retrieve/event が既に canceled だと、canceled のまま書くと
+    // 未来 period_end だけで Plus になる。支払証拠が無いので incomplete_expired 相当。
+    const alreadyCanceled = makeSubscription({
+      id: "sub_canceled_first_deleted",
+      status: "canceled",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", alreadyCanceled, {
+        id: "evt_deleted_already_canceled",
+        created: 9_325,
+      }),
+    );
+    retrieve.mockResolvedValue(alreadyCanceled);
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("incomplete_expired");
+    expect(processPayload.clear_past_due_since).toBe(false);
+  });
+
   it("does not clear past_due_since when deleting after past_due (B2)", async () => {
     // grace 切れ証拠を消すと canceled 枝が期間内 Plus に戻す。deleted でも since を残す。
     const pastDue = makeSubscription({
@@ -1024,6 +1051,8 @@ describe("handleBillingWebhook", () => {
     ).p_payload;
     expect(processPayload.status).toBe("canceled");
     expect(processPayload.clear_past_due_since).toBe(false);
+    // B-R2: forceCanceled 前の past_due を since 候補として載せる（行無しでも B2 読取枝が発火）。
+    expect(processPayload.past_due_since).toBe(new Date(9_330 * 1000).toISOString());
   });
 
   it("invoice.paid for discarded dual-sub projects keep active instead of overwrite cancel", async () => {
