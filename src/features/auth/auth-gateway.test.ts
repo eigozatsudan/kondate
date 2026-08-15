@@ -23,7 +23,10 @@ import {
   writePendingAuthDeposit,
   type ContinuationApi,
 } from "./auth-flow";
-import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
+import {
+  publishAuthContinuationCompletion,
+  readAuthContinuationCompletion,
+} from "./auth-continuation-completion";
 import {
   EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS,
   tryAcquireAuthContinuationExchangeInFlight,
@@ -33,6 +36,14 @@ import {
 async function flushResumeUntilExchange(): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, EXCHANGE_IN_FLIGHT_CONFIRM_DELAY_MS + 20);
+  });
+  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+}
+
+/** C-R1: Locks 非対応の storage 開始旗（確認遅延 40ms）を超えて OAuth 開始まで進める */
+async function flushGoogleStartLock(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 60);
   });
   for (let index = 0; index < 20; index += 1) await Promise.resolve();
 }
@@ -686,9 +697,7 @@ it("C3: overlapping Google starts serialize so the first verifier is not overwri
   );
 
   const pendingA = gateway.signInWithGoogle("/planner");
-  for (let index = 0; index < 50 && oauthCalls === 0; index += 1) {
-    await Promise.resolve();
-  }
+  await flushGoogleStartLock();
   expect(oauthCalls).toBe(1);
   expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v1");
 
@@ -707,6 +716,91 @@ it("C3: overlapping Google starts serialize so the first verifier is not overwri
   expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v2");
   expect(isAuthFlowUserDismissed(flowA, storage)).toBe(true);
   expect(isAuthFlowUserDismissed(flowB, storage)).toBe(false);
+});
+
+it("C-R1: without Web Locks, another browsing context still serializes Google start", async () => {
+  configurePublicEnv();
+  const locksDescriptor = Object.getOwnPropertyDescriptor(navigator, "locks");
+  Object.defineProperty(navigator, "locks", { configurable: true, value: undefined });
+  try {
+    const storage = new MapStorage();
+    const pkceVerifierKey = `${browserSupabaseSessionStorageKey}-code-verifier`;
+    const flowA = "10000000-0000-4000-8000-000000000001";
+    const flowB = "10000000-0000-4000-8000-000000000002";
+    let releaseFirst: (() => void) | undefined;
+    const firstOauthGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const api = continuationApiMock({
+      create: vi
+        .fn()
+        .mockResolvedValueOnce({
+          id: flowA,
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        })
+        .mockResolvedValueOnce({
+          id: flowB,
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        }),
+    });
+    let oauthCalls = 0;
+    const signInWithOAuth = vi.fn().mockImplementation(() => {
+      oauthCalls += 1;
+      if (oauthCalls === 1) {
+        storage.setItem(pkceVerifierKey, "verifier-v1");
+        return firstOauthGate.then(() => Promise.resolve({ data: {}, error: null }));
+      }
+      storage.setItem(pkceVerifierKey, "verifier-v2");
+      return Promise.resolve({ data: {}, error: null });
+    });
+    const clientA = authClientMock();
+    const clientB = authClientMock();
+    clientA.auth.signInWithOAuth = signInWithOAuth;
+    clientB.auth.signInWithOAuth = signInWithOAuth;
+    const gatewayA = createAuthGateway(
+      clientA as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+    const gatewayB = createAuthGateway(
+      clientB as unknown as BrowserSupabaseClient,
+      api,
+      storage,
+      gatewayDeps(),
+    );
+
+    const pendingA = gatewayA.signInWithGoogle("/planner");
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 80);
+    });
+    expect(oauthCalls).toBe(1);
+    expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v1");
+
+    // 別 browsing context: in-process chain を共有しない
+    resetInflightResumeForTests();
+    const pendingB = gatewayB.signInWithGoogle("/onboarding");
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 80);
+    });
+    // storage ロックが無ければ後着が V2 を書いて C3 と同型の取り違えになる
+    expect(oauthCalls).toBe(1);
+    expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v1");
+
+    releaseFirst?.();
+    await pendingA;
+    await pendingB;
+    expect(oauthCalls).toBe(2);
+    expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v2");
+    expect(isAuthFlowUserDismissed(flowA, storage)).toBe(true);
+    expect(isAuthFlowUserDismissed(flowB, storage)).toBe(false);
+  } finally {
+    if (locksDescriptor === undefined) {
+      Reflect.deleteProperty(navigator, "locks");
+    } else {
+      Object.defineProperty(navigator, "locks", locksDescriptor);
+    }
+  }
 });
 
 it("C6: keeps the prior magic-link flow secret when switching to Google", async () => {
@@ -790,6 +884,70 @@ it("C5: Google start dismisses token_hash so confirmMagicLink does not verifyOtp
   });
   expect(client.auth.verifyOtp).not.toHaveBeenCalled();
   expect(readAuthFlow(sent.flowId, storage)).not.toBeNull();
+});
+
+it("C-R2: in-flight confirmMagicLink re-checks dismiss before publish so Google flow is not burned", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const magicFlowId = "10000000-0000-4000-8000-000000000001";
+  const googleFlowId = "20000000-0000-4000-8000-0000000000b5";
+  let releaseVerify: (() => void) | undefined;
+  const verifyGate = new Promise<void>((resolve) => {
+    releaseVerify = resolve;
+  });
+  const client = authClientMock({ oauthResult: { data: {}, error: null } });
+  client.auth.verifyOtp = vi.fn().mockImplementation(async () => {
+    await verifyGate;
+    return { data: { session: { user: { id: "user-magic" } } }, error: null };
+  });
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: magicFlowId,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: googleFlowId,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "c".repeat(40);
+
+  const pending = gateway.confirmMagicLink({
+    flowId: flow.id,
+    tokenHash,
+    otpType: "email",
+    state: flow.state,
+  });
+  await flushResumeUntilExchange();
+  for (let index = 0; index < 50 && client.auth.verifyOtp.mock.calls.length === 0; index += 1) {
+    await Promise.resolve();
+  }
+  expect(client.auth.verifyOtp).toHaveBeenCalled();
+
+  await gateway.signInWithGoogle("/planner");
+  expect(isAuthFlowUserDismissed(flow.id, storage)).toBe(true);
+  expect(readAuthFlow(googleFlowId, storage)).not.toBeNull();
+
+  releaseVerify?.();
+  await expect(pending).resolves.toMatchObject({
+    kind: "error",
+    code: "oauth_cancelled",
+    flowId: flow.id,
+  });
+  // publish しないので後勝ち Google の secret は残る
+  expect(readAuthFlow(googleFlowId, storage)).not.toBeNull();
+  expect(readAuthContinuationCompletion(flow.id, storage)).toBeNull();
 });
 
 it("C7: rejects a callback URL with implicit access_token in the hash without exchanging", async () => {
@@ -2618,9 +2776,7 @@ it("C-R2-3: failed Google restore does not clobber sibling V3 so later B resume 
   );
 
   const pendingC = gateway.signInWithGoogle("/planner");
-  for (let i = 0; i < 50 && oauthCalls === 0; i += 1) {
-    await Promise.resolve();
-  }
+  await flushGoogleStartLock();
   expect(storage.getItem(pkceVerifierKey)).toBe("verifier-v2");
 
   // C3: 開始は直列。後着 B は C の失敗 settle まで OAuth に入らない。

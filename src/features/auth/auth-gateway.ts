@@ -274,11 +274,102 @@ const redepositInFlightByFlowId = new Set<string>();
 /**
  * C3: SDK 単一 PKCE キーへの並行 signInWithOAuth を直列化する。
  * BrowserSupabaseClient / AuthFlow は再定義せず、開始だけ待つ。
+ * C-R1: Locks 非対応の別 browsing context は chain を共有しないため、
+ * 注入 storage（本番は localStorage）でも同じ開始旗で待つ。
  */
 const GOOGLE_START_LOCK_NAME = "kondate.auth.google-start";
+const GOOGLE_START_STORAGE_LOCK_KEY = "kondate.auth.google-start.lock";
+/**
+ * 死亡タブが開始旗を残しても後着が入れる窓。continuation / origin TTL とは別。
+ * signInWithOAuth の壁時計は短いが、hang 時に 30s 超えて二重開始しないよう claim 窓に揃える。
+ */
+const GOOGLE_START_STORAGE_LOCK_TTL_MS = IMMEDIATE_CLAIM_TIMEOUT_MS;
+/** 他タブの setItem が見えるまでの確認遅延（exchange lease と同型）。 */
+const GOOGLE_START_STORAGE_LOCK_CONFIRM_MS = 40;
+const GOOGLE_START_STORAGE_LOCK_POLL_MS = 20;
 let googleStartChain: Promise<void> = Promise.resolve();
 
-async function withSerializedGoogleStart<T>(run: () => Promise<T>): Promise<T> {
+type GoogleStartStorageLock = {
+  ownerId: string;
+  expiresAtMs: number;
+};
+
+const googleStartStorageLockSchema = z
+  .object({
+    ownerId: z.string().min(1),
+    expiresAtMs: z.number(),
+  })
+  .strict();
+
+function readGoogleStartStorageLock(storage: Storage): GoogleStartStorageLock | null {
+  try {
+    const raw = storage.getItem(GOOGLE_START_STORAGE_LOCK_KEY);
+    if (raw === null) return null;
+    const parsed = googleStartStorageLockSchema.safeParse(JSON.parse(raw) as unknown);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeGoogleStartStorageLock(storage: Storage, lock: GoogleStartStorageLock): boolean {
+  try {
+    storage.setItem(GOOGLE_START_STORAGE_LOCK_KEY, JSON.stringify(lock));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseGoogleStartStorageLock(storage: Storage, ownerId: string): void {
+  try {
+    const current = readGoogleStartStorageLock(storage);
+    if (current === null || current.ownerId !== ownerId) return;
+    storage.removeItem(GOOGLE_START_STORAGE_LOCK_KEY);
+  } catch {
+    // best-effort。死亡タブは TTL で失効する
+  }
+}
+
+function isGoogleStartStorageLockHeld(lock: GoogleStartStorageLock | null, nowMs: number): boolean {
+  return lock !== null && lock.expiresAtMs > nowMs;
+}
+
+/**
+ * C-R1: Web Locks が無い UA のタブ間排他。
+ * write → 即 re-read → 確認遅延 → 再 re-read で双方 null 読取の dual owner を潰す。
+ * 負けたら解放せず待ち、死亡タブは TTL 後に奪取する。
+ */
+async function withGoogleStartStorageLock<T>(storage: Storage, run: () => Promise<T>): Promise<T> {
+  const ownerId = `google-start-${Math.random().toString(36).slice(2, 12)}`;
+  for (;;) {
+    const nowMs = Date.now();
+    const existing = readGoogleStartStorageLock(storage);
+    if (!isGoogleStartStorageLockHeld(existing, nowMs)) {
+      const next: GoogleStartStorageLock = {
+        ownerId,
+        expiresAtMs: nowMs + GOOGLE_START_STORAGE_LOCK_TTL_MS,
+      };
+      if (!writeGoogleStartStorageLock(storage, next)) {
+        // storage 不能なら PKCE も書けないので進行する
+        return run();
+      }
+      if (readGoogleStartStorageLock(storage)?.ownerId === ownerId) {
+        await sleepMs(GOOGLE_START_STORAGE_LOCK_CONFIRM_MS);
+        if (readGoogleStartStorageLock(storage)?.ownerId === ownerId) {
+          try {
+            return await run();
+          } finally {
+            releaseGoogleStartStorageLock(storage, ownerId);
+          }
+        }
+      }
+    }
+    await sleepMs(GOOGLE_START_STORAGE_LOCK_POLL_MS);
+  }
+}
+
+async function withSerializedGoogleStart<T>(storage: Storage, run: () => Promise<T>): Promise<T> {
   const previous = googleStartChain;
   let releaseInProcess: () => void = () => undefined;
   googleStartChain = new Promise<void>((resolve) => {
@@ -290,7 +381,7 @@ async function withSerializedGoogleStart<T>(run: () => Promise<T>): Promise<T> {
     if (locks !== undefined && typeof locks.request === "function") {
       return await locks.request(GOOGLE_START_LOCK_NAME, run);
     }
-    return await run();
+    return await withGoogleStartStorageLock(storage, run);
   } finally {
     releaseInProcess();
   }
@@ -745,7 +836,8 @@ export function createAuthGateway(
   const gateway: AuthGateway = {
     async signInWithGoogle(returnTo) {
       // C3: 単一 PKCE キーへの並行開始を直列化。create も含め後着は先着の OAuth 完了を待つ。
-      return withSerializedGoogleStart(async () => {
+      // C-R1: Locks 非対応でも注入 storage の開始旗でタブ間直列化する。
+      return withSerializedGoogleStart(storage, async () => {
         // C6: 既存 unexpired secret は焼かない。旧 magic/OAuth リンクが deposit されても
         // 元ブラウザが claim できるよう複数 flow を TTL まで併存させる。
         // （旧 replaceExistingAuthFlows は再送時に flow A secret を消し、A のリンクを orphan にしていた）
@@ -1582,6 +1674,7 @@ export function createAuthGateway(
   /**
    * 同一ブラウザ confirmMagicLink 用: claim を経ず token_hash を verifyOtp して session を立てる。
    * resumeFlow と同じ exchange lease / completion publish 契約。
+   * C-R2: verify / publish 前に dismiss を再検査し、後勝ち Google を焼かない。
    * C-R6: runResumeFlow と同型の sibling-clear discard 再確認（pre/post verifyOtp）と baseline 復元。
    */
   async function establishSessionFromTokenHash(
@@ -1647,6 +1740,15 @@ export function createAuthGateway(
         holdsExchangeLease = false;
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
+      // C-R2: lease 待ち中の後勝ち Google。入口通過後でも verify しない
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       const preExchangeDone = await resolveAlreadyAuthenticated(
         flow.id,
         flow.returnTo,
@@ -1655,11 +1757,29 @@ export function createAuthGateway(
         { checkSession: false },
       );
       if (preExchangeDone !== null) return preExchangeDone;
+      // C-R2: resumeFlow と同型。後勝ち Google の dismiss を verify 前に再検査する
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // C-R6: sibling clear 後は verifyOtp しない（結果適用 discard / コード消費を避ける）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       sessionBaseline = await captureSessionProbeBaseline(client);
+      // C-R2: baseline await 後の最終 dismiss 再検査
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       // baseline await 後の最終 discard（C-R6 / runResumeFlow と同型）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
@@ -1694,6 +1814,15 @@ export function createAuthGateway(
         );
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
+      // C-R2: verify 成功後も dismiss なら publish しない（後勝ち Google の secret を焼かない）
+      if (isInFlightResumeDismissed(flow.id, storage)) {
+        return {
+          kind: "error",
+          code: "oauth_cancelled",
+          returnTo: flow.returnTo,
+          flowId: flow.id,
+        };
+      }
       const safeReturnTo = sanitizeLoginReturnPath(flow.returnTo);
       try {
         publishAuthContinuationCompletion({ flowId: flow.id, returnTo: safeReturnTo }, storage);
@@ -1713,6 +1842,15 @@ export function createAuthGateway(
         error instanceof ContinuationResponseLostError ||
         error instanceof TypeError;
       if (exchangeStarted && !isRetryableTransport) {
+        // C-R2: verify 開始後の後勝ち Google。terminal clear せず secret を残す
+        if (isInFlightResumeDismissed(flow.id, storage)) {
+          return {
+            kind: "error",
+            code: "oauth_cancelled",
+            returnTo: flow.returnTo,
+            flowId: flow.id,
+          };
+        }
         for (let probe = 0; probe < EXCHANGE_LOSER_SESSION_PROBE_ATTEMPTS; probe += 1) {
           if (probe > 0) {
             await sleepMs(EXCHANGE_LOSER_SESSION_PROBE_GAP_MS);
