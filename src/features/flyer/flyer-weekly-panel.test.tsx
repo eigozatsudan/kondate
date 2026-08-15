@@ -190,6 +190,66 @@ describe("FlyerWeeklyPanel", () => {
     expect(readFlyerStickyAttempt(FLYER_USER_ID)?.key).toBe("replay-key-uuid");
   });
 
+  it("PE-R2: replay 400 flyer_invalid_image keeps sticky for retry", async () => {
+    writeFlyerStickyAttempt(FLYER_USER_ID, {
+      key: "replay-keep-400",
+      fingerprint: "10:image/jpeg:abc",
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "flyer_invalid_image",
+            message: "画像を読み取れませんでした。",
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled={false} />
+      </MemoryRouter>,
+    );
+    await userEvent.setup().click(screen.getByTestId("flyer-weekly-replay"));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)?.key).toBe("replay-keep-400");
+  });
+
+  it("PE-R2: replay 403 flyer_requires_plus keeps processing sticky", async () => {
+    writeFlyerStickyAttempt(FLYER_USER_ID, {
+      key: "replay-keep-403",
+      fingerprint: "10:image/jpeg:abc",
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "flyer_requires_plus",
+            message: "Plus 契約が必要です。",
+          },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter>
+        <FlyerWeeklyPanel plusEntitled={false} />
+      </MemoryRouter>,
+    );
+    await userEvent.setup().click(screen.getByTestId("flyer-weekly-replay"));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(readFlyerStickyAttempt(FLYER_USER_ID)?.key).toBe("replay-keep-403");
+  });
+
   it("PE11: Plus upload discloses email identity count reset residual", () => {
     render(
       <MemoryRouter>

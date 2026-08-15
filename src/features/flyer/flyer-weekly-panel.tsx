@@ -373,7 +373,9 @@ export function FlyerWeeklyPanel({
       // PE4 (ambiguous body): HTTP 200 だが body が Zod で閉じられないときは成功/transport 曖昧。
       // catch（通信断）と同様に sticky を残し、同一画像の再送で二重 try を防ぐ。
       const ambiguousOkBody = response.ok && !parsed.success;
-      if (!ambiguousOkBody && !shouldKeepFlyerSticky(errorCode, response.status)) {
+      // PE-R2: 画像なし再生は 400/403 でも sticky を残す。サーバ Plus + 空バイトや
+      // processing キーの flyer_requires_plus で PE2/PE3 の同一キーを捨てない。
+      if (file !== null && !ambiguousOkBody && !shouldKeepFlyerSticky(errorCode, response.status)) {
         persistSticky(null);
       }
       setError(

@@ -365,6 +365,71 @@ describe("runFlyerWeekly pipeline (PE1/PE2/PE4/PE5/PE6/PE11)", () => {
     expect(rpcNames()).toEqual(["lookup_flyer_weekly"]);
   });
 
+  it("PE-R2: empty image still replays succeeded lookup when server is Plus", async () => {
+    // UI 失効面の画像なし再 POST が、サーバ Plus のまま空バイト検証へ落ちないこと。
+    loadEntitlementMock.mockResolvedValue(plusEntitlement);
+    prepareFlyerImageMock.mockImplementation(() => {
+      throw new Error("empty image must not reach prepareFlyerImage");
+    });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            kind: "hit",
+            request_id: "00000000-0000-4000-8000-000000000099",
+            idempotency_key: "idem-pe-r2",
+            status: "succeeded",
+            result: sampleMenu(),
+            replayed: true,
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: { message: "unexpected" } });
+    });
+
+    const result = await runFlyerWeekly(
+      {
+        user,
+        openRouterSender: vi.fn(() => Promise.reject(new Error("should not be called"))),
+        assertPrivacyConsent: acceptConsent,
+      },
+      new Uint8Array(0),
+      "idem-pe-r2",
+    );
+    expect(result.menu.days).toHaveLength(7);
+    expect(result.requestId).toBe("00000000-0000-4000-8000-000000000099");
+    expect(rpcNames()).toEqual(["lookup_flyer_weekly"]);
+    expect(prepareFlyerImageMock).not.toHaveBeenCalled();
+  });
+
+  it("PE-R2: Plus + empty image without succeeded lookup is 400 without reserve", async () => {
+    loadEntitlementMock.mockResolvedValue(plusEntitlement);
+    prepareFlyerImageMock.mockImplementation(() => {
+      throw new Error("empty image must not reach prepareFlyerImage");
+    });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      }
+      return Promise.resolve({ data: null, error: { message: "unexpected" } });
+    });
+
+    await expect(
+      runFlyerWeekly(
+        {
+          user,
+          openRouterSender: vi.fn(() => Promise.reject(new Error("should not be called"))),
+          assertPrivacyConsent: acceptConsent,
+        },
+        new Uint8Array(0),
+        "idem-pe-r2-miss",
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "flyer_invalid_image" });
+    expect(rpcNames()).toEqual(["lookup_flyer_weekly"]);
+    expect(prepareFlyerImageMock).not.toHaveBeenCalled();
+  });
+
   it("PE4: draft household_members DB error is 500 safety_context_failed", async () => {
     mockInspectionQueries({ draftError: { message: "db down" } });
     rpcMock.mockImplementation((name: string) => {

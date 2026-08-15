@@ -1,5 +1,5 @@
 begin;
-select plan(42);
+select plan(43);
 
 select has_table('public', 'pantry_items', 'pantry item table exists');
 select has_table('public', 'generation_drafts', 'generation draft table exists');
@@ -32,6 +32,12 @@ select ok((select relrowsecurity from pg_class where oid = 'public.pantry_items'
   'pantry item RLS is enabled');
 select ok((select relrowsecurity from pg_class where oid = 'public.generation_drafts'::regclass),
   'generation draft RLS is enabled');
+select ok((select count(*)=1 from pg_publication_tables
+    where pubname='supabase_realtime' and schemaname='public'
+      and tablename='generation_drafts')
+    and (select relreplident='f' from pg_class
+      where oid='public.generation_drafts'::regclass),
+  'generation drafts publish full-row cross-device target changes');
 select has_function('public','save_generation_draft',
   array['bigint','text','text[]','text','text','uuid[]','smallint','smallint','text','text','text[]','text','jsonb']);
 

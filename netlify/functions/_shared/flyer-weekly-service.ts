@@ -658,7 +658,10 @@ export async function runFlyerWeekly(
 
   // PE2: 新規 reserve は従来どおり 403。既 terminal succeeded の同一キーだけ
   // Plus / kill switch 短絡の前に台帳 hit を見て、現行 safety 再 assert のうえ再生する。
-  if (!plusAllowed) {
+  // PE-R2: UI 失効面の画像なし再 POST はサーバがまだ Plus でも空バイト検証へ落とさない。
+  // 空画像は新規生成できないので、Plus 中でも lookup 再生だけ先に見る。
+  const imageMissing = imageBytes.byteLength === 0;
+  if (!plusAllowed || imageMissing) {
     const lookupFlyer =
       deps.lookupFlyerWeekly ??
       (async (input: { userId: string; idempotencyKey: string }) =>
@@ -676,15 +679,19 @@ export async function runFlyerWeekly(
         return replaySucceededFlyerMenu(admin, deps.user.userId, lookedUp.data, requestIdForLog);
       }
     }
-    safeLog({
-      level: "info",
-      requestId: requestIdForLog,
-      code: "flyer_requires_plus",
-      durationMs: performance.now() - started,
-      flyer: true,
-      plan: "free",
-    });
-    throw new HttpError(403, "flyer_requires_plus", flyerWeeklyIssueMessages.flyer_requires_plus);
+    if (!plusAllowed) {
+      safeLog({
+        level: "info",
+        requestId: requestIdForLog,
+        code: "flyer_requires_plus",
+        durationMs: performance.now() - started,
+        flyer: true,
+        plan: "free",
+      });
+      throw new HttpError(403, "flyer_requires_plus", flyerWeeklyIssueMessages.flyer_requires_plus);
+    }
+    // Plus だが画像が空で succeeded 再生できない。reserve / OpenRouter には進まない。
+    mapFailureHttp("flyer_invalid_image");
   }
 
   // PRIV-1: Plus でも未同意なら AI 送信しない（生成・再生成と同型）。OpenRouter 0 回。

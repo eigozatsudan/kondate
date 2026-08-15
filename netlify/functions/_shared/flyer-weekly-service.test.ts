@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   flyerWeeklyIssueMessages,
   type WeeklyFlyerMenu,
@@ -13,15 +13,48 @@ import {
   isFlyerPlusAllowed,
   jstWeekStartMonday,
   loadFlyerInspectionSafety,
+  runFlyerWeekly,
   runFlyerWeeklyWithReserveStub,
 } from "./flyer-weekly-service.js";
 import type { Entitlement } from "./billing-entitlement.js";
 import { HttpError } from "./http.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
 
+const {
+  getServerEnvMock,
+  loadEntitlementMock,
+  rpcMock,
+  fromMock,
+  prepareFlyerImageMock,
+  loadCurrentSafetyContextMock,
+} = vi.hoisted(() => ({
+  getServerEnvMock: vi.fn(),
+  loadEntitlementMock: vi.fn(),
+  rpcMock: vi.fn(),
+  fromMock: vi.fn(),
+  prepareFlyerImageMock: vi.fn(),
+  loadCurrentSafetyContextMock: vi.fn(),
+}));
+
 vi.mock("./supabase-user.js", () => ({
   createUserScopedSupabase: vi.fn(),
 }));
+vi.mock("./env.js", () => ({ getServerEnv: getServerEnvMock }));
+vi.mock("./supabase-admin.js", () => ({
+  getSupabaseAdmin: () => ({ rpc: rpcMock, from: fromMock }),
+}));
+vi.mock("./billing-entitlement.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./billing-entitlement.js")>();
+  return { ...actual, loadEntitlement: loadEntitlementMock };
+});
+vi.mock("./flyer-image.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./flyer-image.js")>();
+  return { ...actual, prepareFlyerImage: prepareFlyerImageMock };
+});
+vi.mock("./current-safety.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./current-safety.js")>();
+  return { ...actual, loadCurrentSafetyContext: loadCurrentSafetyContextMock };
+});
 
 function sampleMenu(overrides: Partial<WeeklyFlyerMenu["days"][number]> = {}): WeeklyFlyerMenu {
   const baseDay = {
@@ -317,6 +350,179 @@ describe("flyer-weekly-service", () => {
       dbPlusEntitled: false,
     };
     expect(isFlyerPlusAllowed(freeEntitlement, true)).toBe(false);
+  });
+});
+
+describe("PE-R2 empty-image lookup while Plus", () => {
+  const user = {
+    userId: "11111111-1111-4111-8111-111111111111",
+    email: "plus@example.com",
+    accessToken: "token",
+  };
+  const plusEntitlement: Entitlement = {
+    plan: "plus",
+    status: "active",
+    plusEntitled: true,
+    pastDueGrace: false,
+    currentPeriodEnd: "2099-01-01T00:00:00.000Z",
+    cancelAtPeriodEnd: false,
+    trialEnd: null,
+    dbPlusEntitled: true,
+  };
+
+  function thenableQuery(result: { data: unknown; error: unknown }) {
+    const query: {
+      select: ReturnType<typeof vi.fn>;
+      eq: ReturnType<typeof vi.fn>;
+      order: ReturnType<typeof vi.fn>;
+      in: ReturnType<typeof vi.fn>;
+      limit: ReturnType<typeof vi.fn>;
+      then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => Promise<unknown>;
+    } = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      order: vi.fn(),
+      in: vi.fn(),
+      limit: vi.fn(),
+      then: (resolve) => Promise.resolve(result).then(resolve),
+    };
+    query.select.mockReturnValue(query);
+    query.eq.mockReturnValue(query);
+    query.order.mockReturnValue(query);
+    query.in.mockReturnValue(query);
+    query.limit.mockReturnValue(query);
+    return query;
+  }
+
+  function rpcNames(): string[] {
+    return rpcMock.mock.calls.map((call) => {
+      const name: unknown = Array.isArray(call) ? call.at(0) : undefined;
+      return typeof name === "string" ? name : "";
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getServerEnvMock.mockReturnValue({
+      billingEnabled: true,
+      aiQuotaDisabled: false,
+      quotaIdentityHmacKey: Buffer.alloc(32, 9),
+      openRouter: {
+        apiKey: "sk-test",
+        baseUrl: "http://127.0.0.1:4010/v1",
+        models: ["mock/primary:free"],
+        plusModels: ["mock/plus:free"],
+        flyerModels: ["mock/flyer:free"],
+        timeoutMs: 24_000,
+        functionTotalBudgetMs: 55_000,
+        globalDailyLimit: 20,
+      },
+    });
+    loadEntitlementMock.mockResolvedValue(plusEntitlement);
+    prepareFlyerImageMock.mockImplementation(() => {
+      throw new Error("empty image must not reach prepareFlyerImage");
+    });
+    loadCurrentSafetyContextMock.mockResolvedValue(
+      makeCurrentSafetyContext({
+        members: [
+          {
+            ...makeCurrentSafetyContext().members[0]!,
+            householdMemberId: "55000000-0000-4000-8000-000000000001",
+            allergyStatus: "none",
+            allergenIds: [],
+            customAllergies: [],
+            unsupportedDietStatus: "none",
+          },
+        ],
+      }),
+    );
+    const complete = thenableQuery({
+      data: [{ id: "55000000-0000-4000-8000-000000000001" }],
+      error: null,
+    });
+    const draft = thenableQuery({ data: [], error: null });
+    fromMock.mockImplementation(() => {
+      const query = {
+        select: vi.fn(),
+        eq: vi.fn(),
+        order: vi.fn(),
+        in: vi.fn(),
+        limit: vi.fn(),
+        then: undefined as
+          | ((resolve: (value: { data: unknown; error: unknown }) => unknown) => Promise<unknown>)
+          | undefined,
+      };
+      const self = () => query;
+      query.select.mockImplementation(self);
+      query.order.mockImplementation(self);
+      query.in.mockImplementation(self);
+      query.limit.mockImplementation(self);
+      query.eq.mockImplementation((_column: string, value: string) => {
+        if (value === "complete") {
+          query.then = (resolve) => Promise.resolve(complete).then((row) => resolve(row));
+        } else if (value === "draft") {
+          query.then = (resolve) => Promise.resolve(draft).then((row) => resolve(row));
+        }
+        return query;
+      });
+      query.then = (resolve) => Promise.resolve(complete).then((row) => resolve(row));
+      return query;
+    });
+  });
+
+  it("replays succeeded lookup on empty image without prepareFlyerImage", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            kind: "hit",
+            request_id: "00000000-0000-4000-8000-000000000099",
+            idempotency_key: "idem-pe-r2",
+            status: "succeeded",
+            result: sampleMenu(),
+            replayed: true,
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: { message: "unexpected" } });
+    });
+
+    const result = await runFlyerWeekly(
+      {
+        user,
+        openRouterSender: vi.fn(() => Promise.reject(new Error("should not be called"))),
+        assertPrivacyConsent: () => Promise.resolve(),
+      },
+      new Uint8Array(0),
+      "idem-pe-r2",
+    );
+    expect(result.menu.days).toHaveLength(7);
+    expect(rpcNames()).toEqual(["lookup_flyer_weekly"]);
+    expect(prepareFlyerImageMock).not.toHaveBeenCalled();
+  });
+
+  it("returns flyer_invalid_image on Plus empty miss without reserve", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      }
+      return Promise.resolve({ data: null, error: { message: "unexpected" } });
+    });
+
+    await expect(
+      runFlyerWeekly(
+        {
+          user,
+          openRouterSender: vi.fn(() => Promise.reject(new Error("should not be called"))),
+          assertPrivacyConsent: () => Promise.resolve(),
+        },
+        new Uint8Array(0),
+        "idem-pe-r2-miss",
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "flyer_invalid_image" });
+    expect(rpcNames()).toEqual(["lookup_flyer_weekly"]);
+    expect(prepareFlyerImageMock).not.toHaveBeenCalled();
   });
 });
 
