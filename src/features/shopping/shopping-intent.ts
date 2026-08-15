@@ -239,6 +239,27 @@ async function isShoppingSheetOccupiedByLivePeer(
 }
 
 /**
+ * SHOP3: peer の occupancy が死ぬまで待つ。自タブが保持中は deadlock 回避で即 return。
+ * locks 無し UA は SHOP8 どおり待たない（orphan 復旧優先）。
+ */
+export async function waitForShoppingSheetOccupancyRelease(
+  kind: "create" | "reconcile",
+  targetId: string,
+): Promise<void> {
+  const mapKey = resumeSuppressDocumentBootKey(kind, targetId);
+  if (occupancyHeldUntil.has(mapKey)) return;
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+  if (locks === undefined || typeof locks.request !== "function") return;
+  if (!(await isShoppingSheetOccupiedByLivePeer(kind, targetId))) return;
+  const name = shoppingSheetOccupancyLockName(kind, targetId);
+  try {
+    await locks.request(name, () => undefined);
+  } catch {
+    /* 取得失敗でも呼び出し側が focus で再評価できる */
+  }
+}
+
+/**
  * @returns true のとき実際に suppress を clear した
  */
 export async function clearResumeSuppressOnDocumentBoot(

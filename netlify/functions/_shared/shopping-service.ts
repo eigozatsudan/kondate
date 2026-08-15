@@ -11,6 +11,7 @@ import type {
 } from "../../../shared/contracts/shopping.js";
 import {
   currentShoppingLabelWarningSchema,
+  shoppingItemsMax,
   shoppingListSafetyDataSchema,
 } from "../../../shared/contracts/shopping.js";
 import { buildShoppingDraft } from "../../../shared/shopping/aggregate.js";
@@ -120,12 +121,12 @@ async function validatedDraft(deps: ShoppingDependencies, menuId: string) {
  * append が単一 menu fingerprint だけ見ると、他 source が invalid でも 200 になり得る。
  * dead source（menu_id null）は SQL list_unverifiable と同趣旨で拒否する。
  */
-// residual-intentional (SHOP4/SHOP11): SQL 側 FP は世帯 fingerprint 自己一致のみ。
-// メニュー allergen invalid の権威は本 service revalidate。service_role 直 RPC の DiD は migration 非変更で残す。
+// residual-intentional (SHOP4/SHOP11): メニュー allergen invalid の権威は本 service revalidate。
+// SHOP6: 撮った FP を apply に渡し、SQL が他 source を自己一致ではなくその FP で lock する。
 async function assertActiveListSourcesCurrentlySafe(
   deps: ShoppingDependencies,
   listId: string,
-): Promise<void> {
+): Promise<Readonly<Record<string, string>>> {
   const sources = await deps.loadActiveListSources(listId);
   if (sources.some((source) => source.menuId === null)) {
     throw new HttpError(
@@ -134,13 +135,29 @@ async function assertActiveListSourcesCurrentlySafe(
       "削除された献立が残っているため、新しい買い物リストを作り直してください",
     );
   }
+  const fingerprints: Record<string, string> = {};
   const seen = new Set<string>();
   for (const source of sources) {
     if (source.menuId === null || seen.has(source.menuId)) continue;
     seen.add(source.menuId);
     await assertHouseholdMenuIdentity(deps, source.menuId);
+    const fingerprintBefore = await deps.getSafetyFingerprint(source.menuId);
     await revalidateMenuOrThrow(deps, source.menuId);
+    const fingerprintAfter = await deps.getSafetyFingerprint(source.menuId);
+    if (fingerprintBefore !== fingerprintAfter) {
+      throw new HttpError(
+        409,
+        "safety_fingerprint_changed",
+        "家族設定が変わったため、もう一度確認してください",
+      );
+    }
+    fingerprints[source.menuId] = fingerprintAfter;
   }
+  return fingerprints;
+}
+
+function rejectShoppingItemsLimit(): never {
+  throw new HttpError(422, "shopping_items_limit_exceeded", "買い物リストの品目が上限に達しました");
 }
 
 /**
@@ -231,8 +248,12 @@ export async function createShoppingListFromMenu(
   // SHOP8: idea / owner は full aggregate より前（SQL の identity 優先と同順）
   const { menu, draft, safetyFingerprint } = await validatedDraft(deps, command.menuId);
   // SHOP2: append は active list 全 live source の現行 safety を先に確認
+  let sourceSafetyFingerprints: Readonly<Record<string, string>> = {};
   if (command.mode === "append" && command.activeListId !== null) {
-    await assertActiveListSourcesCurrentlySafe(deps, command.activeListId);
+    sourceSafetyFingerprints = await assertActiveListSourcesCurrentlySafe(
+      deps,
+      command.activeListId,
+    );
     // SHOP4: 同 lineage（同一 menu / derivation group）が既に list にあるときは
     // append の二重行を拒否し reconcile 入口へ誘導する（UI CTA と対称のサーバ DiD）。
     if (
@@ -249,6 +270,11 @@ export async function createShoppingListFromMenu(
         "この献立は買い物リストに取り込まれています。差分から反映してください",
       );
     }
+    // SHOP5: append は既存行を消さず draft を足す。契約 shoppingItemsMax を超える書き込みを拒否。
+    const activeList = await deps.loadActiveList(command.activeListId);
+    if (activeList !== null && activeList.items.length + draft.items.length > shoppingItemsMax) {
+      rejectShoppingItemsLimit();
+    }
   }
   try {
     const result = await deps.applyDraft({
@@ -256,6 +282,7 @@ export async function createShoppingListFromMenu(
       requestHash,
       safetyFingerprint,
       draft,
+      sourceSafetyFingerprints,
     });
     // SHOP1: SQL early-replay（replayed:true）成功後も現行 safety を再確認する。
     // 両者が service find を miss した並行同一 key で、勝者 commit 後に世帯が変わり
@@ -706,7 +733,7 @@ export async function reconcileShoppingList(
   }
   // SHOP1: append と同様、全 live source の現行 safety を apply 前に確認する。
   // 単一 source fingerprint だけ見ると、他 source invalid でも reconcile 200 になり得る。
-  await assertActiveListSourcesCurrentlySafe(deps, command.listId);
+  const sourceSafetyFingerprints = await assertActiveListSourcesCurrentlySafe(deps, command.listId);
   // SHOP3: items 空でも lineage 無し reconcile は拒否（create append が multi-source 入口）
   if (
     !(await hasSourceLineageOnList(
@@ -745,12 +772,19 @@ export async function reconcileShoppingList(
     }
     throw error;
   }
+  // SHOP5: replace は件数不変。remove+add 後が shoppingItemsMax を超える書き込みを拒否。
+  const resultingItemCount =
+    list.items.length - prepared.resolvedDiff.removeIds.length + prepared.resolvedDiff.add.length;
+  if (resultingItemCount > shoppingItemsMax) {
+    rejectShoppingItemsLimit();
+  }
   let result: ReconcileShoppingListResponse;
   try {
     result = await deps.applyReconciliation({
       ...command,
       requestHash,
       safetyFingerprint,
+      sourceSafetyFingerprints,
       resolvedDiff: prepared.resolvedDiff,
       stampSourceVersion: prepared.stampSourceVersion,
     });

@@ -155,8 +155,13 @@ describe("isReconcileShoppingStickyReusable", () => {
     idempotencyKey: "43000000-0000-4000-8000-000000000001",
     approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
     previewedQuantities: {
-      add: [{ key: "a", quantityValue: 1, quantityText: "1本" }],
-      replace: [] as { itemId: string; quantityValue: number | null; quantityText: string }[],
+      add: [{ key: "a", quantityValue: 1, quantityText: "1本", pantryCheckRequired: false }],
+      replace: [] as {
+        itemId: string;
+        quantityValue: number | null;
+        quantityText: string;
+        pantryCheckRequired: boolean;
+      }[],
     },
   };
 
@@ -167,7 +172,7 @@ describe("isReconcileShoppingStickyReusable", () => {
         sourceMenuVersion: 2,
         approval: base.approval,
         previewedQuantities: {
-          add: [{ key: "a", quantityValue: 3, quantityText: "3本" }],
+          add: [{ key: "a", quantityValue: 3, quantityText: "3本", pantryCheckRequired: false }],
           replace: [],
         },
       }),

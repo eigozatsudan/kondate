@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  CreateShoppingListRequest,
-  CreateShoppingListResponse,
-  CurrentShoppingLabelWarning,
-  ReconcileShoppingListRequest,
-  ShoppingDraft,
-  ShoppingLabelSnapshot,
-  ShoppingList,
+import {
+  shoppingItemsMax,
+  type CreateShoppingListRequest,
+  type CreateShoppingListResponse,
+  type CurrentShoppingLabelWarning,
+  type ReconcileShoppingListRequest,
+  type ShoppingDraft,
+  type ShoppingLabelSnapshot,
+  type ShoppingList,
 } from "../../../shared/contracts/shopping.js";
 import { HttpError } from "./http.js";
 import type { CurrentMenuLabelWarning, RevalidationResult } from "./revalidation-service.js";
@@ -604,6 +605,126 @@ describe("createShoppingListFromMenu", () => {
     });
     expect(mocks.applyDraft).not.toHaveBeenCalled();
     expect(mocks.revalidate).toHaveBeenCalledWith(OTHER_MENU);
+  });
+
+  it("passes captured live-source fingerprints to applyDraft (SHOP6)", async () => {
+    const OTHER_MENU = "52000000-0000-4000-8000-000000000099";
+    const mocks = makeMocks();
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: OTHER_MENU,
+        sourceMenuIdSnapshot: OTHER_MENU,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000099",
+        itemSources: [],
+      },
+    ]);
+    mocks.loadMenuIdentity.mockImplementation((menuId) =>
+      Promise.resolve({
+        id: menuId,
+        userId: USER_ID,
+        version: 1,
+        targetMode: "household" as const,
+      }),
+    );
+    mocks.getSafetyFingerprint.mockImplementation((menuId) =>
+      Promise.resolve(menuId === OTHER_MENU ? FINGERPRINT_B : FINGERPRINT_A),
+    );
+    await createShoppingListFromMenu(
+      toDeps(mocks),
+      makeCommand({
+        mode: "append",
+        activeListId: "70000000-0000-4000-8000-000000000001",
+        expectedListVersion: 1,
+      }),
+    );
+    expect(mocks.applyDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceSafetyFingerprints: { [OTHER_MENU]: FINGERPRINT_B },
+      }),
+    );
+  });
+
+  it("rejects append when another live source fingerprint drifts during assert (SHOP6)", async () => {
+    const OTHER_MENU = "52000000-0000-4000-8000-000000000099";
+    const mocks = makeMocks();
+    mocks.loadActiveListSources.mockResolvedValue([
+      {
+        menuId: OTHER_MENU,
+        sourceMenuIdSnapshot: OTHER_MENU,
+        sourceMenuVersion: 1,
+        sourceDerivationGroupId: "c1000000-0000-4000-8000-000000000099",
+        itemSources: [],
+      },
+    ]);
+    mocks.loadMenuIdentity.mockImplementation((menuId) =>
+      Promise.resolve({
+        id: menuId,
+        userId: USER_ID,
+        version: 1,
+        targetMode: "household" as const,
+      }),
+    );
+    let otherSourceReads = 0;
+    mocks.getSafetyFingerprint.mockImplementation((menuId) => {
+      if (menuId !== OTHER_MENU) return Promise.resolve(FINGERPRINT_A);
+      otherSourceReads += 1;
+      return Promise.resolve(otherSourceReads === 1 ? FINGERPRINT_A : FINGERPRINT_B);
+    });
+    await expect(
+      createShoppingListFromMenu(
+        toDeps(mocks),
+        makeCommand({
+          mode: "append",
+          activeListId: "70000000-0000-4000-8000-000000000001",
+          expectedListVersion: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "safety_fingerprint_changed",
+    });
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
+  });
+
+  it("rejects append that would exceed shoppingItemsMax (SHOP5)", async () => {
+    const mocks = makeMocks();
+    mocks.loadActiveList.mockResolvedValue({
+      id: "70000000-0000-4000-8000-000000000001",
+      status: "active",
+      version: 1,
+      items: Array.from({ length: shoppingItemsMax }, (_, index) => ({
+        id: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        listId: "70000000-0000-4000-8000-000000000001",
+        displayName: "手追加",
+        normalizedName: "手追加",
+        storeSection: "other" as const,
+        quantityValue: 1,
+        quantityText: "1個",
+        unit: "個",
+        isChecked: false,
+        isManual: true,
+        isManuallyEdited: false,
+        isRemovedByUser: false,
+        pantryCheckRequired: false,
+        labelWarnings: [],
+      })),
+      listLabelWarnings: [],
+    });
+    await expect(
+      createShoppingListFromMenu(
+        toDeps(mocks),
+        makeCommand({
+          mode: "append",
+          activeListId: "70000000-0000-4000-8000-000000000001",
+          expectedListVersion: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "shopping_items_limit_exceeded",
+    });
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
   });
 
   it("rejects append when same lineage is already on the active list (SHOP4)", async () => {
@@ -1556,8 +1677,56 @@ describe("reconcileShoppingList", () => {
         requestHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown as string,
         // remove 候補が無い pure add は版刻印する（R1）
         stampSourceVersion: true,
+        sourceSafetyFingerprints: { [MENU_ID]: FINGERPRINT_A },
       }),
     );
+  });
+
+  it("rejects reconcile that would exceed shoppingItemsMax (SHOP5)", async () => {
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const deps = makeShoppingDependencies({
+      applyReconciliation,
+      loadActiveList: vi.fn<ShoppingDependencies["loadActiveList"]>().mockResolvedValue(
+        makeList({
+          items: Array.from({ length: shoppingItemsMax }, (_, index) => ({
+            id: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+            listId: LIST_ID,
+            displayName: "手追加",
+            normalizedName: "手追加",
+            storeSection: "other" as const,
+            quantityValue: 1,
+            quantityText: "1個",
+            unit: "個",
+            isChecked: false,
+            isManual: true,
+            isManuallyEdited: false,
+            isRemovedByUser: false,
+            pantryCheckRequired: false,
+            labelWarnings: [],
+          })),
+        }),
+      ),
+    });
+    const preview = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    const draftKey = preview.add[0]?.key;
+    expect(draftKey).toBeDefined();
+    await expect(
+      reconcileShoppingList(deps, {
+        ...reconcileCommand,
+        approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: snapshotPreviewedQuantities(preview),
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "shopping_items_limit_exceeded",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
   });
 
   it("surfaces the RPC protected_item_conflict defense to the caller", async () => {
@@ -2032,6 +2201,7 @@ describe("reconcileShoppingList", () => {
               key: previewedAdd.key,
               quantityValue: previewedAdd.quantityValue,
               quantityText: previewedAdd.quantityText,
+              pantryCheckRequired: previewedAdd.pantryCheckRequired,
             },
           ],
           replace: [],
@@ -2093,6 +2263,7 @@ describe("reconcileShoppingList", () => {
               key: previewedAdd.key,
               quantityValue: previewedAdd.quantityValue,
               quantityText: previewedAdd.quantityText,
+              pantryCheckRequired: previewedAdd.pantryCheckRequired,
             },
           ],
           replace: [],
@@ -2108,19 +2279,78 @@ describe("reconcileShoppingList", () => {
     );
   });
 
+  it("rejects apply when pantryCheckRequired drifts with the same quantity (SHOP7)", async () => {
+    const applyReconciliation = vi
+      .fn<ShoppingDependencies["applyReconciliation"]>()
+      .mockResolvedValue({ listId: LIST_ID, version: 4, replayed: false });
+    const loadPantry = vi.fn<ShoppingDependencies["loadPantry"]>().mockResolvedValue([]);
+    const deps = makeShoppingDependencies({
+      applyReconciliation,
+      loadPantry,
+      loadMenu: vi.fn<ShoppingDependencies["loadMenu"]>().mockResolvedValue(
+        makeMenu({
+          ingredients: [
+            {
+              ingredientId: INGREDIENT_ID,
+              dishId: DISH_ID,
+              dishName: "料理",
+              name: "にんじん",
+              quantityValue: 3,
+              quantityText: "3本",
+              unit: "本",
+              storeSection: "produce",
+            },
+          ],
+        }),
+      ),
+    });
+    const preview = await previewShoppingListDiff(deps, {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    expect(preview.add[0]?.quantityValue).toBe(3);
+    expect(preview.add[0]?.pantryCheckRequired).toBe(false);
+    const previewedAdd = preview.add[0]!;
+    loadPantry.mockResolvedValue([
+      { name: "にんじん", quantity: 1, unit: "本", expiresOn: "2000-01-01" },
+    ]);
+    await expect(
+      reconcileShoppingList(deps, {
+        ...reconcileCommand,
+        approval: {
+          addKeys: [previewedAdd.key],
+          replaceItemIds: [],
+          removeItemIds: [],
+        },
+        previewedQuantities: snapshotPreviewedQuantities(preview),
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "approved_diff_mismatch",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
+  });
+
   it("changes the reconciliation hash when previewed quantities differ for the same key", () => {
     const base = {
       ...reconcileCommand,
       approval: { addKeys: ["carrot-add"], replaceItemIds: [], removeItemIds: [] },
       previewedQuantities: {
-        add: [{ key: "carrot-add", quantityValue: 1, quantityText: "1本" }],
+        add: [
+          { key: "carrot-add", quantityValue: 1, quantityText: "1本", pantryCheckRequired: false },
+        ],
         replace: [],
       },
     };
     const drifted = {
       ...base,
       previewedQuantities: {
-        add: [{ key: "carrot-add", quantityValue: 3, quantityText: "3本" }],
+        add: [
+          { key: "carrot-add", quantityValue: 3, quantityText: "3本", pantryCheckRequired: false },
+        ],
         replace: [],
       },
     };

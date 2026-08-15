@@ -126,7 +126,9 @@ describe("shopping response bounds (S2/S8)", () => {
       (_, index) => `key-${String(index)}`,
     );
     const previewedQuantities = {
-      add: [{ key: "にんじん|本", quantityValue: 1, quantityText: "1本" }],
+      add: [
+        { key: "にんじん|本", quantityValue: 1, quantityText: "1本", pantryCheckRequired: false },
+      ],
       replace: [],
     };
     expect(
@@ -178,6 +180,7 @@ describe("shopping response bounds (S2/S8)", () => {
       key: `key-${String(index)}`,
       quantityValue: 1,
       quantityText: "1本",
+      pantryCheckRequired: false,
     }));
     expect(
       reconcileShoppingListRequestSchema.safeParse({

@@ -69,6 +69,7 @@ import {
   isShoppingSheetExpected,
   markShoppingResumeSuppress,
   scheduleResumeSuppressClear,
+  waitForShoppingSheetOccupancyRelease,
 } from "@/features/shopping/shopping-intent";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { Button } from "@/shared/ui/button";
@@ -300,7 +301,9 @@ export function HouseholdMenuDetailBody({
   // useResumeShoppingCommand の enabled（isShoppingResumeSuppressed）を再評価する。
   useEffect(() => {
     if (menuId.length === 0) return;
-    void (async () => {
+    const cancelled = { current: false };
+    const runBoot = async () => {
+      if (cancelled.current) return;
       let cleared = false;
       if (shoppingSheet !== "create") {
         cleared = (await clearResumeSuppressOnDocumentBoot("create", menuId)) || cleared;
@@ -314,7 +317,35 @@ export function HouseholdMenuDetailBody({
           )) || cleared;
       }
       if (cleared) setResumeSuppressBootTick((n) => n + 1);
+    };
+    void runBoot();
+    // SHOP3: occupancy 中は token 非消費。peer 死亡後は lock 解放または focus で再評価する。
+    const onFocus = () => {
+      void runBoot();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void runBoot();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    void (async () => {
+      if (shoppingSheet !== "create") {
+        await waitForShoppingSheetOccupancyRelease("create", menuId);
+      }
+      const listId = activeList?.id;
+      if (listId !== undefined && shoppingSheet !== "reconcile") {
+        await waitForShoppingSheetOccupancyRelease(
+          "reconcile",
+          reconcileCommandTargetId(listId, menuId),
+        );
+      }
+      if (!cancelled.current) await runBoot();
     })();
+    return () => {
+      cancelled.current = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [menuId, shoppingSheet, activeList?.id]);
 
   // SHOP1 + SHOP9: reconcile suppress は listId:sourceMenuId 粒度。
@@ -410,13 +441,16 @@ export function HouseholdMenuDetailBody({
       // version rebuild（同一 key で expectedListVersion だけ載せ替え）は hash 変更で
       // dual-create を再発させるので行わない。isReusable の version 非照合は維持。
       //
-      // current_safety_revalidation_required は sticky を保持する。
-      // 適用済み create/reconcile + 応答ロスト後に safety が一時 invalid になると
+      // current_safety_revalidation_required と safety_fingerprint_changed は sticky を保持する。
+      // 適用済み create/reconcile + 応答ロスト後に safety が一時 invalid / FP だけずれると
       // replay が 409 になる。ここで clear するとユーザー再送が新 idempotency key になり、
       // mode=new は active を archive して第二リストを作る（進捗 wipe / dual-create）。
       // suppress で auto-resume の 409 ループは止め、safety 復帰後の同一 key 再送を残す。
       // 他 code（list_version_conflict 含む）は sticky+suppress clear。
-      if (code === "current_safety_revalidation_required") {
+      if (
+        code === "current_safety_revalidation_required" ||
+        code === "safety_fingerprint_changed"
+      ) {
         markShoppingResumeSuppress(kind, targetId);
       } else {
         clearShoppingCommand(kind, targetId);

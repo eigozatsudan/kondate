@@ -202,6 +202,11 @@ export async function mutateShoppingItem(
         code: "shopping_safety_fingerprint_changed",
       });
     }
+    if (error.message.includes("shopping_items_limit_exceeded")) {
+      throw Object.assign(new Error("買い物リストの品目が上限に達しました"), {
+        code: "shopping_items_limit_exceeded",
+      });
+    }
     throw new Error("買い物項目を更新できませんでした");
   }
   return shoppingItemMutationResponseSchema.parse(data);

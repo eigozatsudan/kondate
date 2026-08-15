@@ -1858,8 +1858,13 @@ describe("persistedShoppingCommand", () => {
 
   it("reuses reconcile sticky when only expectedListVersion advanced (SHOP1 sheet re-submit)", () => {
     const previewedQuantities = {
-      add: [{ key: "a", quantityValue: 1, quantityText: "1本" }],
-      replace: [] as { itemId: string; quantityValue: number | null; quantityText: string }[],
+      add: [{ key: "a", quantityValue: 1, quantityText: "1本", pantryCheckRequired: false }],
+      replace: [] as {
+        itemId: string;
+        quantityValue: number | null;
+        quantityText: string;
+        pantryCheckRequired: boolean;
+      }[],
     };
     const first = persistedShoppingCommand(
       "reconcile",
@@ -1900,8 +1905,13 @@ describe("persistedShoppingCommand", () => {
 
   it("discards reconcile sticky when approval changes (SHOP6 via SHOP1 helper)", () => {
     const previewedQuantities = {
-      add: [{ key: "a", quantityValue: 1, quantityText: "1本" }],
-      replace: [] as { itemId: string; quantityValue: number | null; quantityText: string }[],
+      add: [{ key: "a", quantityValue: 1, quantityText: "1本", pantryCheckRequired: false }],
+      replace: [] as {
+        itemId: string;
+        quantityValue: number | null;
+        quantityText: string;
+        pantryCheckRequired: boolean;
+      }[],
     };
     const first = persistedShoppingCommand(
       "reconcile",
@@ -1927,7 +1937,7 @@ describe("persistedShoppingCommand", () => {
         idempotencyKey,
         approval: { addKeys: ["b"], replaceItemIds: [], removeItemIds: [] },
         previewedQuantities: {
-          add: [{ key: "b", quantityValue: 1, quantityText: "1本" }],
+          add: [{ key: "b", quantityValue: 1, quantityText: "1本", pantryCheckRequired: false }],
           replace: [],
         },
       }),
@@ -1937,7 +1947,7 @@ describe("persistedShoppingCommand", () => {
           sourceMenuVersion: 2,
           approval: { addKeys: ["b"], replaceItemIds: [], removeItemIds: [] },
           previewedQuantities: {
-            add: [{ key: "b", quantityValue: 1, quantityText: "1本" }],
+            add: [{ key: "b", quantityValue: 1, quantityText: "1本", pantryCheckRequired: false }],
             replace: [],
           },
         }),
@@ -1958,7 +1968,7 @@ describe("persistedShoppingCommand", () => {
         idempotencyKey,
         approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
         previewedQuantities: {
-          add: [{ key: "a", quantityValue: 1, quantityText: "1本" }],
+          add: [{ key: "a", quantityValue: 1, quantityText: "1本", pantryCheckRequired: false }],
           replace: [],
         },
       }),
@@ -1974,7 +1984,7 @@ describe("persistedShoppingCommand", () => {
         idempotencyKey,
         approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
         previewedQuantities: {
-          add: [{ key: "a", quantityValue: 3, quantityText: "3本" }],
+          add: [{ key: "a", quantityValue: 3, quantityText: "3本", pantryCheckRequired: false }],
           replace: [],
         },
       }),
@@ -1984,7 +1994,7 @@ describe("persistedShoppingCommand", () => {
           sourceMenuVersion: 2,
           approval: { addKeys: ["a"], replaceItemIds: [], removeItemIds: [] },
           previewedQuantities: {
-            add: [{ key: "a", quantityValue: 3, quantityText: "3本" }],
+            add: [{ key: "a", quantityValue: 3, quantityText: "3本", pantryCheckRequired: false }],
             replace: [],
           },
         }),

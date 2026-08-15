@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ShoppingList, ShoppingListSafetyData } from "@shared/contracts/shopping";
+import { householdSafetyChangedEvent } from "@/features/household/household-queries";
 import { useShoppingList, useShoppingSafetyGate } from "./use-shopping-list";
 
 const fetchActiveShoppingListMock = vi.hoisted(() => vi.fn());
@@ -79,5 +81,96 @@ describe("useShoppingList / useShoppingSafetyGate boundary", () => {
     const call = fetchActiveShoppingListMock.mock.calls[0];
     expect(call).toHaveLength(1);
     expect(result.current.isSuccess || result.current.isPending).toBe(true);
+  });
+});
+
+const LIST_ID = "70000000-0000-4000-8000-000000000001";
+
+function makeList(): ShoppingList {
+  return {
+    id: LIST_ID,
+    status: "active",
+    version: 1,
+    items: [],
+    listLabelWarnings: [],
+  };
+}
+
+function makeValid(): ShoppingListSafetyData {
+  return {
+    status: "valid",
+    safetyFingerprint: "a".repeat(64),
+    checkedSourceMenuIds: [],
+    currentLabelWarnings: [],
+    issues: [],
+  };
+}
+
+function makeInvalid(): ShoppingListSafetyData {
+  return {
+    status: "invalid",
+    safetyFingerprint: null,
+    checkedSourceMenuIds: [],
+    currentLabelWarnings: [],
+    issues: [
+      { code: "current_safety_invalid", message: "家族設定が変わりました", sourceMenuId: null },
+    ],
+  };
+}
+
+describe("useShoppingSafetyGate soft vs hard (SHOP4)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not let a same-epoch soft valid reopen a hard blocked gate", async () => {
+    vi.useFakeTimers();
+    fetchActiveShoppingListMock.mockResolvedValue(makeList());
+    const pending: Array<(value: ShoppingListSafetyData) => void> = [];
+    revalidateActiveShoppingListMock.mockImplementation(
+      () =>
+        new Promise<ShoppingListSafetyData>((resolve) => {
+          pending.push(resolve);
+        }),
+    );
+
+    const { result } = renderHook(() => useShoppingSafetyGate(), { wrapper });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(pending).toHaveLength(1);
+    await act(async () => {
+      pending.shift()?.(makeValid());
+      await Promise.resolve();
+    });
+    expect(result.current.blocked).toBe(false);
+
+    await act(async () => {
+      window.dispatchEvent(new Event(householdSafetyChangedEvent));
+      await Promise.resolve();
+    });
+    expect(result.current.checking).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(pending.length).toBeGreaterThanOrEqual(2);
+    const hard = pending.shift();
+    const soft = pending.shift();
+    expect(hard).toBeDefined();
+    expect(soft).toBeDefined();
+
+    await act(async () => {
+      hard?.(makeInvalid());
+      await Promise.resolve();
+    });
+    expect(result.current.error).toBe(true);
+
+    await act(async () => {
+      soft?.(makeValid());
+      await Promise.resolve();
+    });
+    expect(result.current.error).toBe(true);
+    expect(result.current.blocked).toBe(true);
   });
 });

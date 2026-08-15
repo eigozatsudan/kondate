@@ -26,18 +26,39 @@ import {
   shoppingResumeSuppressKey,
   shoppingSheetExpectedKey,
   shoppingSheetOccupancyLockName,
+  waitForShoppingSheetOccupancyRelease,
 } from "./shopping-intent";
 import { pendingShoppingCommandStorageKey } from "./api/shopping-api";
 
 const MENU = "40000000-0000-4000-8000-000000000001";
 const LIST = "41000000-0000-4000-8000-000000000001";
 
-/** jsdom に無い Web Locks を、sheet occupancy の保持 / ifAvailable 探測だけ模す。 */
+/** jsdom に無い Web Locks を、sheet occupancy の保持 / ifAvailable / 解放待ちまで模す。 */
 function createFakeLockManager() {
   const held = new Set<string>();
+  const waiters = new Map<string, Array<() => void>>();
   type FakeLockCallback = (lock: { name: string; mode: "exclusive" } | null) => unknown;
+  const acquire = (name: string, callback: FakeLockCallback): Promise<unknown> => {
+    held.add(name);
+    const lock = { name, mode: "exclusive" as const };
+    return Promise.resolve(callback(lock)).finally(() => {
+      held.delete(name);
+      const queued = waiters.get(name) ?? [];
+      waiters.delete(name);
+      for (const resume of queued) resume();
+    });
+  };
   return {
     isHeld: (name: string) => held.has(name),
+    hold(name: string): () => void {
+      held.add(name);
+      return () => {
+        held.delete(name);
+        const queued = waiters.get(name) ?? [];
+        waiters.delete(name);
+        for (const resume of queued) resume();
+      };
+    },
     request(
       name: string,
       optionsOrCallback: LockOptions | FakeLockCallback,
@@ -48,15 +69,15 @@ function createFakeLockManager() {
       if (callback === undefined) return Promise.resolve(undefined);
       if (held.has(name)) {
         if (options.ifAvailable === true) return Promise.resolve(callback(null));
-        return new Promise(() => {
-          /* テストはキュー待ちを使わない */
+        return new Promise((resolve) => {
+          const queued = waiters.get(name) ?? [];
+          queued.push(() => {
+            resolve(acquire(name, callback));
+          });
+          waiters.set(name, queued);
         });
       }
-      held.add(name);
-      const lock = { name, mode: "exclusive" as const };
-      return Promise.resolve(callback(lock)).finally(() => {
-        held.delete(name);
-      });
+      return acquire(name, callback);
     },
   };
 }
@@ -384,6 +405,24 @@ describe("clearResumeSuppressOnDocumentBoot (SHOP2 hard reload)", () => {
     localStorage.setItem(shoppingResumeSuppressKey("create", MENU), "1");
     expect(locks.isHeld(shoppingSheetOccupancyLockName("create", MENU))).toBe(false);
 
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
+  });
+
+  it("re-evaluates boot after a peer occupancy lock is released (SHOP3)", async () => {
+    // Tab B: 自タブは occupancyHeldUntil を持たず、peer の lock だけ見える。
+    // 初回 boot は token 非消費。peer 死亡後の wait 完了で orphan suppress を落とせる。
+    const locks = createFakeLockManager();
+    stubNavigatorLocks(locks);
+    const releasePeer = locks.hold(shoppingSheetOccupancyLockName("create", MENU));
+    localStorage.setItem(shoppingResumeSuppressKey("create", MENU), "1");
+
+    expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(false);
+    expect(isShoppingResumeSuppressed("create", MENU)).toBe(true);
+
+    const waiting = waitForShoppingSheetOccupancyRelease("create", MENU);
+    releasePeer();
+    await waiting;
     expect(await clearResumeSuppressOnDocumentBoot("create", MENU)).toBe(true);
     expect(isShoppingResumeSuppressed("create", MENU)).toBe(false);
   });

@@ -253,6 +253,91 @@ it("does not re-add protected delta when previous delta row still covers the req
   expect(diff.protectedItemIds).toEqual([checkedId]);
 });
 
+it("does not count out-of-scope rows toward protected numeric coverage (SHOP1)", () => {
+  // 他献立 B のにんじん 3本（plain・scope 外）を被覆に使うと、A の購入済み 2本
+  // + B 3本 = 5 で所要 4 を満たしたことになり shortfall 2本が落ちる。
+  const foreignPlainId = "30000000-0000-4000-8000-000000000011";
+  const scopedCheckedId = "30000000-0000-4000-8000-000000000012";
+  const current = makeShoppingList([
+    makeItem({
+      id: foreignPlainId,
+      quantityValue: 3,
+      quantityText: "3本",
+      unit: "本",
+    }),
+    makeItem({
+      id: scopedCheckedId,
+      quantityValue: 2,
+      quantityText: "2本",
+      unit: "本",
+      isChecked: true,
+    }),
+  ]);
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    key: "carrot-4",
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    storeSection: "produce",
+    quantityValue: 4,
+    quantityText: "4本",
+    unit: "本",
+  };
+  const diff = computeShoppingDiff(current, next, {
+    scopeItemIds: new Set([scopedCheckedId]),
+  });
+  expect(diff.add).toEqual([
+    expect.objectContaining({
+      key: `carrot-4_delta_${scopedCheckedId}`,
+      quantityValue: 2,
+      quantityText: "2本",
+    }),
+  ]);
+  expect(diff.replace).toEqual([]);
+  expect(diff.remove.map((row) => row.itemId)).not.toContain(foreignPlainId);
+  expect(diff.protectedItemIds).toEqual([scopedCheckedId]);
+});
+
+it("still counts in-scope siblings for SHOP15 coverage when scoped", () => {
+  // 同一 lineage の購入済み + 前回 _delta_ が両方 scope 内なら二重加算しない。
+  const checkedId = "30000000-0000-4000-8000-000000000013";
+  const priorDeltaId = "30000000-0000-4000-8000-000000000014";
+  const current = makeShoppingList([
+    makeItem({
+      id: checkedId,
+      quantityValue: 100,
+      quantityText: "100g",
+      unit: "g",
+      isChecked: true,
+    }),
+    makeItem({
+      id: priorDeltaId,
+      quantityValue: 50,
+      quantityText: "50g",
+      unit: "g",
+    }),
+  ]);
+  const next = makeDraft();
+  next.items[0] = {
+    ...next.items[0]!,
+    key: "carrot-150",
+    displayName: "にんじん",
+    normalizedName: "にんじん",
+    storeSection: "produce",
+    quantityValue: 150,
+    quantityText: "150g",
+    unit: "g",
+  };
+  const diff = computeShoppingDiff(current, next, {
+    scopeItemIds: new Set([checkedId, priorDeltaId]),
+  });
+  expect(diff.add).toEqual([]);
+  expect(diff.replace).toEqual([]);
+  expect(diff.remove).toEqual([]);
+  expect(diff.protectedItemIds).toEqual([checkedId]);
+});
+
 it("does not assign protected name fallback across different units (SHOP12)", () => {
   // 購入済み unit=本 に exact が無く、draft が同名 unit=g だけのとき unit 跨ぎ review しない。
   const checkedId = "20000000-0000-4000-8000-000000000044";

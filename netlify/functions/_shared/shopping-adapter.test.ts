@@ -195,6 +195,7 @@ describe("createShoppingDependencies.replaceCurrentSafetyProjection", () => {
           items: [],
           listLabelWarnings: [],
         },
+        sourceSafetyFingerprints: {},
       }),
     ).rejects.toMatchObject({
       status: 409,
@@ -225,10 +226,63 @@ describe("createShoppingDependencies.replaceCurrentSafetyProjection", () => {
           items: [],
           listLabelWarnings: [],
         },
+        sourceSafetyFingerprints: {},
       }),
     ).rejects.toMatchObject({
       status: 503,
       code: "shopping_unavailable",
     });
+  });
+
+  it("maps shopping_items_limit_exceeded from write RPC (SHOP5)", async () => {
+    const { deps } = makeDeps({
+      data: null,
+      error: { message: "shopping_items_limit_exceeded" },
+    });
+    await expect(
+      deps.applyDraft({
+        userId: USER_ID,
+        menuId: MENU_ID,
+        mode: "append",
+        activeListId: LIST_ID,
+        expectedListVersion: 1,
+        safetyFingerprint: FINGERPRINT,
+        idempotencyKey: "90000000-0000-4000-8000-000000000097",
+        requestHash: "c".repeat(64),
+        draft: { items: [], listLabelWarnings: [] },
+        sourceSafetyFingerprints: {},
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "shopping_items_limit_exceeded",
+    });
+  });
+
+  it("forwards captured source fingerprints on applyDraft (SHOP6)", async () => {
+    const { deps, rpc } = makeDeps({
+      data: { listId: LIST_ID, version: 2, replayed: false },
+      error: null,
+    });
+    const otherMenu = "52000000-0000-4000-8000-000000000099";
+    await deps.applyDraft({
+      userId: USER_ID,
+      menuId: MENU_ID,
+      mode: "append",
+      activeListId: LIST_ID,
+      expectedListVersion: 1,
+      safetyFingerprint: FINGERPRINT,
+      idempotencyKey: "90000000-0000-4000-8000-000000000096",
+      requestHash: "d".repeat(64),
+      draft: { items: [], listLabelWarnings: [] },
+      sourceSafetyFingerprints: { [otherMenu]: FINGERPRINT },
+    });
+    expect(rpc).toHaveBeenCalledWith(
+      "apply_shopping_draft",
+      expect.objectContaining({
+        p_draft: expect.objectContaining({
+          sourceSafetyFingerprints: { [otherMenu]: FINGERPRINT },
+        }) as unknown as object,
+      }),
+    );
   });
 });

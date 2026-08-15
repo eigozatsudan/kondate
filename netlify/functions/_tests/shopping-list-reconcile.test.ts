@@ -48,8 +48,10 @@ const validBody = {
   idempotencyKey: IDEMPOTENCY_KEY,
   approval: { addKeys: ["curry-roux"], replaceItemIds: [ITEM_ID], removeItemIds: [] },
   previewedQuantities: {
-    add: [{ key: "curry-roux", quantityValue: 1, quantityText: "1箱" }],
-    replace: [{ itemId: ITEM_ID, quantityValue: 2, quantityText: "2個" }],
+    add: [{ key: "curry-roux", quantityValue: 1, quantityText: "1箱", pantryCheckRequired: false }],
+    replace: [
+      { itemId: ITEM_ID, quantityValue: 2, quantityText: "2個", pantryCheckRequired: false },
+    ],
   },
 };
 

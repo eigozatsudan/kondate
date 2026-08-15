@@ -71,8 +71,10 @@ function makeDiff(overrides: Partial<ShoppingDiff> = {}): ShoppingDiff {
 describe("snapshotPreviewedQuantities", () => {
   it("copies add keys and replace next quantities from the preview diff", () => {
     expect(snapshotPreviewedQuantities(makeDiff())).toEqual({
-      add: [{ key: "carrot-add", quantityValue: 1, quantityText: "1本" }],
-      replace: [{ itemId, quantityValue: 2, quantityText: "2個" }],
+      add: [
+        { key: "carrot-add", quantityValue: 1, quantityText: "1本", pantryCheckRequired: false },
+      ],
+      replace: [{ itemId, quantityValue: 2, quantityText: "2個", pantryCheckRequired: false }],
     });
   });
 });
@@ -104,28 +106,59 @@ describe("previewedQuantitiesMatchDiff", () => {
     ).toBe(false);
     expect(previewedQuantitiesMatchDiff(snapshot, { ...preview, add: [] })).toBe(false);
   });
+
+  it("rejects when pantryCheckRequired drifted with the same quantity (SHOP7)", () => {
+    const preview = makeDiff({ replace: [] });
+    const snapshot = snapshotPreviewedQuantities(preview);
+    expect(snapshot.add[0]?.pantryCheckRequired).toBe(false);
+    const flagged: ShoppingDiff = {
+      ...preview,
+      add: [makeAdd({ pantryCheckRequired: true })],
+    };
+    expect(previewedQuantitiesMatchDiff(snapshot, flagged)).toBe(false);
+  });
 });
 
 describe("canonicalizePreviewedQuantities", () => {
   it("sorts add keys and replace item ids so the same set hashes equal", () => {
     const left = canonicalizePreviewedQuantities({
       add: [
-        { key: "b", quantityValue: 2, quantityText: "2個" },
-        { key: "a", quantityValue: 1, quantityText: "1本" },
+        { key: "b", quantityValue: 2, quantityText: "2個", pantryCheckRequired: false },
+        { key: "a", quantityValue: 1, quantityText: "1本", pantryCheckRequired: true },
       ],
       replace: [
-        { itemId: "20000000-0000-4000-8000-000000000002", quantityValue: 4, quantityText: "4個" },
-        { itemId: "10000000-0000-4000-8000-000000000001", quantityValue: 3, quantityText: "3本" },
+        {
+          itemId: "20000000-0000-4000-8000-000000000002",
+          quantityValue: 4,
+          quantityText: "4個",
+          pantryCheckRequired: false,
+        },
+        {
+          itemId: "10000000-0000-4000-8000-000000000001",
+          quantityValue: 3,
+          quantityText: "3本",
+          pantryCheckRequired: true,
+        },
       ],
     });
     const right = canonicalizePreviewedQuantities({
       add: [
-        { key: "a", quantityValue: 1, quantityText: "1本" },
-        { key: "b", quantityValue: 2, quantityText: "2個" },
+        { key: "a", quantityValue: 1, quantityText: "1本", pantryCheckRequired: true },
+        { key: "b", quantityValue: 2, quantityText: "2個", pantryCheckRequired: false },
       ],
       replace: [
-        { itemId: "10000000-0000-4000-8000-000000000001", quantityValue: 3, quantityText: "3本" },
-        { itemId: "20000000-0000-4000-8000-000000000002", quantityValue: 4, quantityText: "4個" },
+        {
+          itemId: "10000000-0000-4000-8000-000000000001",
+          quantityValue: 3,
+          quantityText: "3本",
+          pantryCheckRequired: true,
+        },
+        {
+          itemId: "20000000-0000-4000-8000-000000000002",
+          quantityValue: 4,
+          quantityText: "4個",
+          pantryCheckRequired: false,
+        },
       ],
     });
     expect(left).toEqual(right);

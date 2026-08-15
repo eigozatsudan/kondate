@@ -122,9 +122,11 @@ export function computeShoppingDiff(
   // 非手動・非ユーザー削除行の合計で既充足量を見る。前回 _delta_* 追加行が残った
   // 再 reconcile で不足分を二重に積まない。isRemovedByUser 行は base から除外し、
   // 処理中の自身数量だけ後で足す（既存の removed delta 挙動を維持）。
+  // SHOP1: 被覆合算も scope 内に限る。他献立の同名行を足すと scope 内 shortfall が落ちる。
   const baseCoverageByKey = new Map<string, number>();
   for (const item of current.items) {
     if (item.isManual || item.isRemovedByUser) continue;
+    if (scopeItemIds !== undefined && !scopeItemIds.has(item.id)) continue;
     const key = numericCoverageKey(item);
     if (key === null || item.quantityValue === null) continue;
     baseCoverageByKey.set(

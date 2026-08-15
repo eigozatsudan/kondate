@@ -113,6 +113,7 @@ export function useShoppingSafetyGate() {
   /**
    * SHOP6 soft: ready 中の poll は UI を checking に落とさず裏で再検証する。
    * invalid / 通信失敗だけ blocked へ。Realtime 欠落後の窓を poll で閉じる。
+   * SHOP4: hard と同じ epoch の裏 valid で blocked/checking を ready に戻さない。
    */
   const softRefresh = useCallback(async () => {
     const ownerId = userId ?? "missing";
@@ -125,6 +126,18 @@ export function useShoppingSafetyGate() {
       });
       if (list === null) return;
       const checked = await revalidateActiveShoppingList(list.id);
+      if (epoch.current !== current) return;
+      if (checked.status === "valid") {
+        setState((prev) => {
+          if (prev.phase !== "ready") return prev;
+          return {
+            phase: "ready",
+            safetyFingerprint: checked.safetyFingerprint,
+            currentLabelWarnings: checked.currentLabelWarnings,
+          };
+        });
+        return;
+      }
       applyChecked(current, checked);
     } catch {
       if (epoch.current === current)

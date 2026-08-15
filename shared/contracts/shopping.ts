@@ -197,6 +197,7 @@ const previewedShoppingQuantityAddSchema = z
     key: z.string().min(1).max(200),
     quantityValue: shoppingQuantityValue,
     quantityText: z.string().trim().min(1).max(60),
+    pantryCheckRequired: z.boolean(),
   })
   .strict();
 
@@ -205,10 +206,11 @@ const previewedShoppingQuantityReplaceSchema = z
     itemId: uuid,
     quantityValue: shoppingQuantityValue,
     quantityText: z.string().trim().min(1).max(60),
+    pantryCheckRequired: z.boolean(),
   })
   .strict();
 
-/** 画面が見せた add/replace 数量。承認キーだけでは preview/apply の数量ずれを縛れない。 */
+/** 画面が見せた add/replace 数量と在庫確認フラグ。承認キーだけでは preview/apply のずれを縛れない。 */
 export const previewedShoppingQuantitiesSchema = z
   .object({
     add: z.array(previewedShoppingQuantityAddSchema).max(shoppingItemsMax),

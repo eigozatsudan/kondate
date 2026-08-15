@@ -94,6 +94,8 @@ export type ShoppingDependencies = {
     idempotencyKey: string;
     requestHash: string;
     draft: ShoppingDraft;
+    /** SHOP6: service が revalidate 後に撮った他 live source FP。SQL は自己一致に使わない。 */
+    sourceSafetyFingerprints: Readonly<Record<string, string>>;
   }): Promise<CreateShoppingListResponse>;
   applyReconciliation(input: {
     userId: string;
@@ -107,6 +109,8 @@ export type ShoppingDependencies = {
     resolvedDiff: ResolvedShoppingDiff;
     /** false のとき SQL は source 版刻印を延期（未承認 remove 残存時。R1） */
     stampSourceVersion: boolean;
+    /** SHOP6: service が revalidate 後に撮った他 live source FP。SQL は自己一致に使わない。 */
+    sourceSafetyFingerprints: Readonly<Record<string, string>>;
   }): Promise<ReconcileShoppingListResponse>;
   loadActiveListSources(listId: string): Promise<ActiveShoppingSource[]>;
   getListSafetyFingerprint(listId: string): Promise<string | null>;
@@ -194,6 +198,12 @@ function mapRpcError(error: { message: string }): never {
       409,
       "list_unverifiable",
       "削除された献立が残っているため、新しい買い物リストを作り直してください",
+    ],
+    // SHOP5: draft/list 契約 shoppingItemsMax と同じ天井。値は変えない。
+    shopping_items_limit_exceeded: [
+      422,
+      "shopping_items_limit_exceeded",
+      "買い物リストの品目が上限に達しました",
     ],
     menu_not_found: [404, "menu_not_found", "献立が見つかりません"],
     idea_menu_not_supported: [
@@ -549,7 +559,11 @@ export function createShoppingDependencies(user: AuthenticatedUser): ShoppingDep
         p_safety_fingerprint: input.safetyFingerprint,
         p_idempotency_key: input.idempotencyKey,
         p_request_hash: input.requestHash,
-        p_draft: input.draft,
+        // SHOP6: sourceSafetyFingerprints は公開 draft 契約外。SQL だけが読む内部キー。
+        p_draft: {
+          ...input.draft,
+          sourceSafetyFingerprints: input.sourceSafetyFingerprints,
+        },
       };
       const { data, error } = await admin.rpc("apply_shopping_draft", args);
       if (error !== null) mapRpcError(error);
@@ -569,6 +583,7 @@ export function createShoppingDependencies(user: AuthenticatedUser): ShoppingDep
         p_resolved_diff: {
           ...input.resolvedDiff,
           stampSourceVersion: input.stampSourceVersion,
+          sourceSafetyFingerprints: input.sourceSafetyFingerprints,
         },
       });
       if (error !== null) mapRpcError(error);
