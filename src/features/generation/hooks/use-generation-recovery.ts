@@ -421,7 +421,7 @@ export function useGenerationRecovery(
         if (classified.kind === "failed") {
           clearPendingGeneration();
           const failed = syntheticFailedStatus(
-            pending.request.idempotencyKey,
+            idempotencyKey,
             classified.code,
             classified.message,
             readCachedUsageSuccess(queryClient, token.ownerUserId),
