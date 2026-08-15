@@ -370,8 +370,10 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     rememberMagicSentUi(null);
   }, [auth.status]);
 
-  // 既にセッションがある場合はフォームを出さず returnTo へ進める
-  if (auth.status === "authenticated") {
+  // 既にセッションがある場合はフォームを出さず returnTo へ進める。
+  // C2: oauth_cancelled は破棄した交換の session が残っていることがある。
+  // エラーより先に Navigate すると pin が後勝ち Google を拒み、magic が残る。
+  if (auth.status === "authenticated" && locationState.authError !== "oauth_cancelled") {
     return <Navigate to={returnTo} replace />;
   }
   // C6: loading 中は deadline 超過でもフォームを出さない。

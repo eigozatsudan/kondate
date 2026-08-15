@@ -1815,7 +1815,23 @@ export function createAuthGateway(
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       // C-R2: verify 成功後も dismiss なら publish しない（後勝ち Google の secret を焼かない）
+      // C2: sibling-clear と同型。破棄した magic session を baseline 復元 or loser 指紋一致時だけ local clear。
+      // 残すと Login の authenticated Navigate と pin が後勝ち Google を拒む。
       if (isInFlightResumeDismissed(flow.id, storage)) {
+        clearPendingAuthDeposit(flow.id, storage);
+        let discardedExchangeSessionKey: string | null = null;
+        try {
+          const postExchange = await client.auth.getSession();
+          discardedExchangeSessionKey = sessionProbeKey(postExchange.data.session);
+        } catch {
+          discardedExchangeSessionKey = null;
+        }
+        await restoreSessionAfterDiscardedExchange(
+          client,
+          sessionBaseline,
+          discardedExchangeSessionKey,
+          { loserFlowId: flow.id, storage },
+        );
         return {
           kind: "error",
           code: "oauth_cancelled",

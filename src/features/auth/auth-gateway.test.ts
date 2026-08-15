@@ -950,6 +950,85 @@ it("C-R2: in-flight confirmMagicLink re-checks dismiss before publish so Google 
   expect(readAuthContinuationCompletion(flow.id, storage)).toBeNull();
 });
 
+it("C2: dismiss after successful verifyOtp clears discarded magic session like sibling-clear", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const magicFlowId = "10000000-0000-4000-8000-0000000000c2";
+  const googleFlowId = "20000000-0000-4000-8000-0000000000c2";
+  const magicSession = {
+    access_token: "magic-access",
+    refresh_token: "magic-refresh",
+    expires_in: 3600,
+    token_type: "bearer",
+    user: { id: "user-magic" },
+  };
+  // baseline は未ログイン。verify 成功後だけ magic session が共有 client に残る
+  let liveSession: typeof magicSession | null = null;
+  let releaseVerify: (() => void) | undefined;
+  const verifyGate = new Promise<void>((resolve) => {
+    releaseVerify = resolve;
+  });
+  const client = authClientMock({ oauthResult: { data: {}, error: null } });
+  client.auth.getSession = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve({ data: { session: liveSession }, error: null }));
+  client.auth.verifyOtp = vi.fn().mockImplementation(async () => {
+    await verifyGate;
+    liveSession = magicSession;
+    return { data: { session: magicSession }, error: null };
+  });
+  const api = continuationApiMock({
+    create: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: magicFlowId,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      })
+      .mockResolvedValueOnce({
+        id: googleFlowId,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
+  const flow = readAuthFlow(sent.flowId, storage);
+  if (flow === null) throw new Error("magic-link flow was not stored");
+  const tokenHash = "c".repeat(40);
+
+  const pending = gateway.confirmMagicLink({
+    flowId: flow.id,
+    tokenHash,
+    otpType: "email",
+    state: flow.state,
+  });
+  await flushResumeUntilExchange();
+  for (let index = 0; index < 50 && client.auth.verifyOtp.mock.calls.length === 0; index += 1) {
+    await Promise.resolve();
+  }
+  expect(client.auth.verifyOtp).toHaveBeenCalled();
+
+  await gateway.signInWithGoogle("/planner");
+  expect(isAuthFlowUserDismissed(flow.id, storage)).toBe(true);
+  expect(readAuthFlow(googleFlowId, storage)).not.toBeNull();
+
+  releaseVerify?.();
+  await expect(pending).resolves.toMatchObject({
+    kind: "error",
+    code: "oauth_cancelled",
+    flowId: flow.id,
+  });
+  expect(readAuthContinuationCompletion(flow.id, storage)).toBeNull();
+  expect(readAuthFlow(googleFlowId, storage)).not.toBeNull();
+  // C2: sibling-clear と同型。absent baseline + loser 指紋一致なら local signOut
+  expect(client.auth.setSession).not.toHaveBeenCalled();
+  expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+});
+
 it("C7: rejects a callback URL with implicit access_token in the hash without exchanging", async () => {
   const client = authClientMock();
   const gateway = createAuthGateway(

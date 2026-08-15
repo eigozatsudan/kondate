@@ -440,6 +440,43 @@ it("C13: discards stale magic-link residual sessionStorage past TTL", () => {
   expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBeNull();
 });
 
+it("C2: authenticated login still shows oauth_cancelled instead of navigating away", () => {
+  vi.mocked(useAuth).mockReturnValue({
+    status: "authenticated",
+    session: { user: { id: "user-magic" } } as never,
+    refreshSession: vi.fn(),
+    sessionProbeDegraded: false,
+  });
+  try {
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn(),
+      resumeFlow: vi.fn(),
+      confirmMagicLink: vi.fn(),
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/login?authError=oauth_cancelled"]}>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("heading", { name: "こんだて日和" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Googleログインがキャンセルされました。もう一度試すか、別の方法を選べます。",
+    );
+    expect(screen.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+  } finally {
+    vi.mocked(useAuth).mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    });
+  }
+});
+
 it("C9: clears magic-link residual sessionStorage when already authenticated", () => {
   sessionStorage.setItem(
     "kondate.auth.lastMagicEmail",
