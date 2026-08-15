@@ -46,9 +46,43 @@ export function requireOrigin(request: Request, origin: string): boolean {
 }
 
 /**
+ * SC5 / SC-R2: Content-Length 欠落・過小申告でもストリーム累積で上限超過を読取完了前に拒否する。
+ * flyer の累積拒否と同型。超過時は cancel してから投げる。
+ */
+async function readRequestTextUntilLimit(
+  request: Request,
+  isOverLimit: (total: number) => boolean,
+): Promise<string> {
+  if (request.body === null) {
+    return "";
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (isOverLimit(total)) {
+      await reader.cancel();
+      throw new Error("request_too_large");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+/**
  * auth-continuation 用の厳密 JSON 境界。
  * C8: `application/json; charset=utf-8` や `*+json` を isJsonContentType と同型で許容する
  * （exact match だと中間 proxy / 将来 wrapper が charset を付けただけで 400 になる）。
+ * SC-R2: 宣言が 8KiB 未満でも本文は累積拒否する。request.text() は打ち切らないので使わない。
  */
 export async function parseJsonRequest(request: Request): Promise<unknown> {
   if (!isJsonContentType(request.headers.get("content-type"))) throw new Error("invalid_request");
@@ -59,8 +93,13 @@ export async function parseJsonRequest(request: Request): Promise<unknown> {
   ) {
     throw new Error("invalid_request");
   }
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength >= maxBodyBytes) throw new Error("invalid_request");
+  let text: string;
+  try {
+    // 8KiB は既存どおり排他上限（>=）。欠落・過小申告は読取完了前に invalid_request。
+    text = await readRequestTextUntilLimit(request, (total) => total >= maxBodyBytes);
+  } catch {
+    throw new Error("invalid_request");
+  }
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -178,29 +217,14 @@ async function readJsonTextWithLimit(request: Request, maxBytes: number): Promis
   if (Number.isFinite(declared) && declared > maxBytes) {
     throw new HttpError(413, "request_too_large", "入力が大きすぎます");
   }
-  if (request.body === null) {
-    return "";
-  }
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
+  try {
+    return await readRequestTextUntilLimit(request, (total) => total > maxBytes);
+  } catch (error) {
+    if (error instanceof Error && error.message === "request_too_large") {
       throw new HttpError(413, "request_too_large", "入力が大きすぎます");
     }
-    chunks.push(value);
+    throw error;
   }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(bytes);
 }
 
 export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {

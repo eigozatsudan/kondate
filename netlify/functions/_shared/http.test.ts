@@ -43,6 +43,38 @@ describe("continuation HTTP boundary", () => {
     await expect(parseJsonRequest(request)).rejects.toThrow("invalid_request");
   });
 
+  it.each([true, false])(
+    "rejects underdeclared or missing Content-Length before finishing the stream (SC-R2, declared=%s)",
+    async (declared) => {
+      const chunkSize = 2_048;
+      let pulled = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = new Uint8Array(chunkSize).fill(0x61);
+          pulled += chunk.byteLength;
+          if (pulled > 50_000) {
+            controller.error(new Error("stream was read past the parseJsonRequest limit"));
+            return;
+          }
+          controller.enqueue(chunk);
+        },
+      });
+      const headers = new Headers({ "content-type": "application/json" });
+      if (declared) headers.set("content-length", "1");
+      const promise = parseJsonRequest(
+        new Request("https://functions.test", {
+          method: "POST",
+          headers,
+          body,
+          duplex: "half",
+        } as RequestInit),
+      );
+      await expect(promise).rejects.toThrow("invalid_request");
+      // 8KiB 排他上限 + 1 チャンク。request.text() 全文 read なら 50KiB で stream error になる。
+      expect(pulled).toBeLessThanOrEqual(chunkSize * 5);
+    },
+  );
+
   it("returns only a closed error for invalid requests", async () => {
     const response = invalidRequest();
     expect(response.status).toBe(400);
