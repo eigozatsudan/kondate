@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { Navigate, useLocation } from "react-router";
 import { accountDeletionAnonymousShareNote } from "@/features/privacy/privacy-copy";
 import { LivePendingMain } from "@/shared/ui/feedback";
-import { createAuthGateway, type AuthGateway } from "./auth-gateway";
+import {
+  clearLeftoverLoginSessionIfNoSiblingCompletion,
+  createAuthGateway,
+  type AuthGateway,
+} from "./auth-gateway";
 import type { MagicLinkState } from "./magic-link-state";
 import { sanitizeLoginReturnPath } from "./auth-flow";
 import { useAuth } from "./use-auth";
@@ -225,16 +229,16 @@ function isAuthErrorCode(value: unknown): value is NonNullable<LoginLocationStat
 
 /**
  * leftover session を伴い得る leave。authenticated でも Navigate せず
- * エラー + Google CTA を出す（C2 / C-R2）。
- * - oauth_cancelled: dismiss 後 verify の loser
- * - unbound_callback: C6 hangWatchdog / restartFromLogin
- * - query 無し /login: restart が query を付けられなかった経路
+ * エラー + Google CTA を出す（C2 / C-R2 / C-R3）。
+ * 個別コードは列挙しない。authError（query / history.state）がある leave は
+ * leftover を伴い得る（oauth_cancelled / unbound_callback / auth_callback_failed /
+ * magic_link_expired）。query 無し /login は restart として現状どおり残す。
  */
 function isLeftoverCapableLoginLeave(
   authError: LoginLocationState["authError"],
   search: string,
 ): boolean {
-  if (authError === "oauth_cancelled" || authError === "unbound_callback") {
+  if (authError !== undefined || new URLSearchParams(search).has("authError")) {
     return true;
   }
   return search === "" || search === "?";
@@ -387,8 +391,18 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     rememberMagicSentUi(null);
   }, [auth.status]);
 
+  // C-R4: leftover-capable Login は pin 前に leftover persist を local signOut する。
+  // C6 hang は persist を残したまま leave するため、ここで落とさないと live pin になる。
+  // 勝者 sibling completion があるときは触らない（C5）。
+  useEffect(() => {
+    if (!isLeftoverCapableLoginLeave(locationState.authError, location.search)) {
+      return;
+    }
+    void clearLeftoverLoginSessionIfNoSiblingCompletion();
+  }, [locationState.authError, location.search]);
+
   // 既にセッションがある場合はフォームを出さず returnTo へ進める。
-  // C2 / C-R2: leftover を伴い得る leave はエラーより先に Navigate しない。
+  // C2 / C-R2 / C-R3: leftover を伴い得る leave はエラーより先に Navigate しない。
   // 入ると pin が後勝ち Google を拒み leftover magic が残る。
   if (
     auth.status === "authenticated" &&

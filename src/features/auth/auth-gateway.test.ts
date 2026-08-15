@@ -2,6 +2,7 @@ import type { AuthError } from "@supabase/supabase-js";
 import { afterEach, expect, it, vi } from "vitest";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
+  clearLeftoverLoginSessionIfNoSiblingCompletion,
   createAuthGateway,
   dropInflightResumeMapForTests,
   IMMEDIATE_CLAIM_TIMEOUT_MS,
@@ -3821,4 +3822,36 @@ it("C-R12: present restore failure then clears when getSession still has discard
   expect(client.auth.setSession).toHaveBeenCalled();
   // C-R12: restore error 後、loser 指紋が残っていれば local clear
   expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+});
+
+it("C-R4: leftover-capable clear local-signs-out persist when no sibling completion", async () => {
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
+  const client = authClientMock();
+  try {
+    await clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBeNull();
+    expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+  }
+});
+
+it("C-R4: leftover-capable clear does not signOut when sibling completion exists", async () => {
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, "winner-persist");
+  publishAuthContinuationCompletion({ flowId: "google-winner", returnTo: "/planner" });
+  const client = authClientMock();
+  try {
+    await clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    expect(client.auth.signOut).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBe("winner-persist");
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    window.localStorage.removeItem("kondate.auth.supabase.continuation-complete.google-winner");
+  }
 });

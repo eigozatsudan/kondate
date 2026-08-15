@@ -631,6 +631,27 @@ async function clearDiscardedExchangeSessionIfStillPresent(
 }
 
 /**
+ * C-R4: leftover-capable Login が pin 前に leftover persist を落とす。
+ * C6 hangWatchdog は persist を消さず leave するため、ここで local signOut しないと
+ * leftover が live pin され後勝ち Google を拒む。
+ * C5: 任意の勝者 completion があるときは触らない（loserFlowId 空 = 全 completion が sibling）。
+ */
+export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
+  client?: BrowserSupabaseClient,
+  storage: Storage = window.localStorage,
+): Promise<void> {
+  try {
+    const resolved = client ?? getBrowserSupabaseClient();
+    await clearDiscardedExchangeSessionIfStillPresent(resolved, null, {
+      loserFlowId: "",
+      storage,
+    });
+  } catch {
+    // leftover 掃除失敗でも Login は出す（C-R3）。pin は AuthProvider に残し得る。
+  }
+}
+
+/**
  * C-R6 / C-R9 / C-R10: exchange 成功後に sibling clear で complete を discard するとき、
  * 置換済み client/storage session を baseline（exchange 前 = pin 相当）へ best-effort 復元する。
  *

@@ -1,8 +1,9 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { COLD_START_SESSION_DEADLINE_MS } from "./auth-provider";
+import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
 import type { AuthGateway } from "./auth-gateway";
 import {
   LOGIN_EMAIL_HINT,
@@ -13,12 +14,38 @@ import {
 } from "./login-page";
 import { useAuth } from "./use-auth";
 
+const leftoverSignOut = vi.hoisted(() => vi.fn().mockResolvedValue({ error: null }));
+
+vi.mock("@/shared/lib/supabase", () => ({
+  getBrowserSupabaseClient: () => ({
+    auth: { signOut: leftoverSignOut },
+  }),
+}));
+
 vi.mock("./use-auth", () => ({
   useAuth: vi.fn(() => ({ status: "unauthenticated", session: null })),
 }));
 
 /** マジックリンク操作テスト用（SHOW_EMAIL_LOGIN 時は /login でも可。クエリは互換のため残す） */
 const emailLoginEntry = "/login?emailLogin=1";
+const leftoverSessionStorageKey = "kondate.auth.supabase";
+
+function renderLoginAt(entry: string, gateway: AuthGateway) {
+  return render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Routes>
+        <Route path="/login" element={<LoginPage gateway={gateway} />} />
+        <Route path="/welcome" element={<p>welcome-dest</p>} />
+        <Route path="/planner" element={<p>planner-dest</p>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+afterEach(() => {
+  leftoverSignOut.mockClear();
+  window.localStorage.removeItem(leftoverSessionStorageKey);
+});
 
 it("explains that first-time users can register on the same screen with Google and email", () => {
   const gateway: AuthGateway = {
@@ -481,16 +508,133 @@ it.each([
   {
     label: "unbound_callback query",
     entry: "/login?authError=unbound_callback",
+    heading: "こんだて日和",
     copy: "ログインの情報を確認できませんでした。最初からやり直してください。",
+    googleName: "Googleで続ける",
   },
   {
     label: "restart-style query-less /login",
     entry: "/login",
+    heading: "こんだて日和",
     copy: null,
+    googleName: "Googleで続ける",
   },
 ] as const)(
   "C-R2: authenticated login still shows leftover-capable $label instead of navigating away",
-  ({ entry, copy }) => {
+  ({ entry, heading, copy, googleName }) => {
+    vi.mocked(useAuth).mockReturnValue({
+      status: "authenticated",
+      session: { user: { id: "user-magic" } } as never,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    });
+    try {
+      const gateway: AuthGateway = {
+        signInWithGoogle: vi.fn(),
+        sendMagicLink: vi.fn(),
+        completeCallback: vi.fn(),
+        resumeFlow: vi.fn(),
+        confirmMagicLink: vi.fn(),
+      };
+
+      renderLoginAt(entry, gateway);
+
+      expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+      if (copy !== null) {
+        expect(screen.getByRole("alert")).toHaveTextContent(copy);
+      }
+      expect(screen.getByRole("button", { name: googleName })).toBeVisible();
+      expect(screen.queryByText("welcome-dest")).not.toBeInTheDocument();
+      expect(screen.queryByText("planner-dest")).not.toBeInTheDocument();
+    } finally {
+      vi.mocked(useAuth).mockReturnValue({
+        status: "unauthenticated",
+        session: null,
+        refreshSession: vi.fn(),
+        sessionProbeDegraded: false,
+      });
+    }
+  },
+);
+
+it.each([
+  {
+    label: "auth_callback_failed query",
+    entry: "/login?authError=auth_callback_failed",
+    heading: "こんだて日和",
+    copy: "ログインを確認できませんでした。もう一度お試しください。",
+    googleName: "Googleで続ける",
+  },
+  {
+    label: "auth_callback_failed with returnTo",
+    entry: "/login?authError=auth_callback_failed&returnTo=%2Fplanner",
+    heading: "こんだて日和",
+    copy: "ログインを確認できませんでした。もう一度お試しください。",
+    googleName: "Googleで続ける",
+  },
+  {
+    label: "magic_link_expired query",
+    entry: "/login?authError=magic_link_expired",
+    heading: "リンクの期限が切れました",
+    copy: "このリンクは期限切れか、すでに使用されています。",
+    googleName: "Googleに切り替える",
+  },
+  {
+    label: "magic_link_expired with returnTo",
+    entry: "/login?authError=magic_link_expired&returnTo=%2Fplanner",
+    heading: "リンクの期限が切れました",
+    copy: "このリンクは期限切れか、すでに使用されています。",
+    googleName: "Googleに切り替える",
+  },
+] as const)(
+  "C-R3: authenticated login still shows leftover-capable $label instead of navigating away",
+  ({ entry, heading, copy, googleName }) => {
+    vi.mocked(useAuth).mockReturnValue({
+      status: "authenticated",
+      session: { user: { id: "user-magic" } } as never,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    });
+    try {
+      const gateway: AuthGateway = {
+        signInWithGoogle: vi.fn(),
+        sendMagicLink: vi.fn(),
+        completeCallback: vi.fn(),
+        resumeFlow: vi.fn(),
+        confirmMagicLink: vi.fn(),
+      };
+
+      renderLoginAt(entry, gateway);
+
+      expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(copy);
+      expect(screen.getByRole("button", { name: googleName })).toBeVisible();
+      expect(screen.queryByText("welcome-dest")).not.toBeInTheDocument();
+      expect(screen.queryByText("planner-dest")).not.toBeInTheDocument();
+    } finally {
+      vi.mocked(useAuth).mockReturnValue({
+        status: "unauthenticated",
+        session: null,
+        refreshSession: vi.fn(),
+        sessionProbeDegraded: false,
+      });
+    }
+  },
+);
+
+it.each([
+  {
+    label: "unbound_callback leave",
+    entry: "/login?authError=unbound_callback",
+  },
+  {
+    label: "query-less restart",
+    entry: "/login",
+  },
+] as const)(
+  "C-R4: leftover-capable $label local-signs-out leftover when no sibling completion",
+  async ({ entry }) => {
+    window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
     vi.mocked(useAuth).mockReturnValue({
       status: "authenticated",
       session: { user: { id: "user-magic" } } as never,
@@ -512,11 +656,10 @@ it.each([
         </MemoryRouter>,
       );
 
-      expect(screen.getByRole("heading", { name: "こんだて日和" })).toBeInTheDocument();
-      if (copy !== null) {
-        expect(screen.getByRole("alert")).toHaveTextContent(copy);
-      }
-      expect(screen.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
+      await waitFor(() => {
+        expect(leftoverSignOut).toHaveBeenCalledWith({ scope: "local" });
+      });
+      expect(window.localStorage.getItem(leftoverSessionStorageKey)).toBeNull();
     } finally {
       vi.mocked(useAuth).mockReturnValue({
         status: "unauthenticated",
@@ -527,6 +670,49 @@ it.each([
     }
   },
 );
+
+it("C-R4: leftover-capable login does not signOut leftover when sibling completion exists", async () => {
+  window.localStorage.setItem(leftoverSessionStorageKey, "winner-persist");
+  publishAuthContinuationCompletion({
+    flowId: "google-winner",
+    returnTo: "/planner",
+  });
+  vi.mocked(useAuth).mockReturnValue({
+    status: "authenticated",
+    session: { user: { id: "user-magic" } } as never,
+    refreshSession: vi.fn(),
+    sessionProbeDegraded: false,
+  });
+  try {
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn(),
+      resumeFlow: vi.fn(),
+      confirmMagicLink: vi.fn(),
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/login?authError=unbound_callback"]}>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(leftoverSignOut).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(leftoverSessionStorageKey)).toBe("winner-persist");
+  } finally {
+    vi.mocked(useAuth).mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    });
+    window.localStorage.removeItem("kondate.auth.supabase.continuation-complete.google-winner");
+  }
+});
 
 it("C9: clears magic-link residual sessionStorage when already authenticated", () => {
   sessionStorage.setItem(
