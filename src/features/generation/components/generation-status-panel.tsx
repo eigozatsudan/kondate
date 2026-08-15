@@ -384,6 +384,12 @@ export function GenerationStatusPanel({
           {progressMessage}
         </p>
         <GenerationProgressMeter stageIndex={progressStageIndex} />
+        {/* G-R1: 別タブ reconcileTerminalPendingGeneration が POST 応答前に
+            pending を消すと isCurrent が落ち、dispatch せず phase が
+            submitting のまま固着する。GenerationPage は idle のときだけ
+            Navigate するため、checking と同じ破棄導線を出す。
+            サーバ processing が残っている可能性があるため破棄は confirm 必須。 */}
+        <RecoveryLinks requireDiscardConfirm {...(onClear === undefined ? {} : { onClear })} />
       </PanelShell>
     );
   }
@@ -512,6 +518,10 @@ export function GenerationStatusPanel({
         <p role="status" aria-live="polite">
           献立を表示しています
         </p>
+        {/* G-R1: succeeded を積んだあと navigate の isCurrent が pending
+            消失で落ちると /menus/:id へ行かない。checking と同じ破棄導線。
+            サーバ側が既に完成していても端末 pending 破棄は confirm 必須。 */}
+        <RecoveryLinks requireDiscardConfirm {...(onClear === undefined ? {} : { onClear })} />
       </PanelShell>
     );
   }

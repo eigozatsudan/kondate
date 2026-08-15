@@ -621,6 +621,98 @@ describe("GenerationStatusPanel", () => {
     confirmSpy.mockRestore();
   });
 
+  // G-R1: 別タブ reconcile が POST 応答前に pending を消すと isCurrent が落ち、
+  // phase が submitting のまま固着する。進捗スピナーだけでは画面内破棄導線が無い。
+  it("exposes RecoveryLinks while submitting so a stuck spinner can be abandoned (G-R1)", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} onClear={onClear} />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("条件を確認しています");
+    expect(screen.getByRole("button", { name: "条件を直してやり直す" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "作った献立を見る" })).toBeVisible();
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).toHaveBeenCalledOnce();
+    confirmSpy.mockRestore();
+  });
+
+  it("does not abandon a submitting run when confirm is cancelled (G-R1)", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(
+      <GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} onClear={onClear} />,
+    );
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  // G-R1: succeeded を積んだあと navigate の isCurrent が pending 消失で落ちると
+  // 「献立を表示しています」のまま /menus/:id へ行かない。破棄導線が無いと固着する。
+  it("exposes RecoveryLinks while succeeded so a stuck navigate can be abandoned (G-R1)", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const succeededState: GenerationClientState = {
+      phase: "succeeded",
+      data: {
+        status: "succeeded",
+        idempotencyKey: KEY,
+        requestId: REQUEST_ID,
+        menuId: "30000000-0000-4000-8000-000000000001",
+        completedAt: "2026-07-11T00:00:01.000Z",
+        quota: {
+          consumed: true,
+          remaining: 1,
+          userDailyLimit: 3,
+          limitKind: "user",
+          retryAt: null,
+        },
+      },
+      effect: "navigate",
+    };
+    render(<GenerationStatusPanel state={succeededState} onClear={onClear} />);
+    expect(screen.getByRole("status")).toHaveTextContent("献立を表示しています");
+    expect(screen.getByRole("button", { name: "条件を直してやり直す" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "作った献立を見る" })).toBeVisible();
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).toHaveBeenCalledOnce();
+    confirmSpy.mockRestore();
+  });
+
+  it("does not abandon a succeeded run when confirm is cancelled (G-R1)", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const succeededState: GenerationClientState = {
+      phase: "succeeded",
+      data: {
+        status: "succeeded",
+        idempotencyKey: KEY,
+        requestId: REQUEST_ID,
+        menuId: "30000000-0000-4000-8000-000000000001",
+        completedAt: "2026-07-11T00:00:01.000Z",
+        quota: {
+          consumed: true,
+          remaining: 1,
+          userDailyLimit: 3,
+          limitKind: "user",
+          retryAt: null,
+        },
+      },
+      effect: "navigate",
+    };
+    render(<GenerationStatusPanel state={succeededState} onClear={onClear} />);
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
   it("shows sticky progress stages while submitting", () => {
     render(<GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />);
     const status = screen.getByRole("status");

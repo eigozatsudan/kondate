@@ -298,6 +298,51 @@ describe("GenerationPage", () => {
     confirmSpy.mockRestore();
   });
 
+  // G-R1: GET not_started 後 POST 中に別タブが pending を消すと isCurrent が落ち、
+  // submitting のまま固着する。GenerationPage は idle 以外 Navigate しない。
+  it("lets the user leave a stuck submitting spinner after another tab clears pending", async () => {
+    const user = userEvent.setup();
+    const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
+    savePendingGeneration(pending);
+    mockStatus.mockResolvedValue({
+      status: "not_started",
+      idempotencyKey: KEY_A,
+      quota,
+    });
+    let resolvePost: ((value: GenerationStatusData) => void) | undefined;
+    mockPost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePost = resolve;
+        }),
+    );
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const router = renderGenerationPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("条件を確認しています");
+    });
+    clearPendingGeneration();
+    expect(router.state.location.pathname).toBe("/generation");
+    expect(screen.queryByRole("heading", { name: "プランナー" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/planner");
+    });
+    expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
+    resolvePost?.({
+      status: "succeeded",
+      idempotencyKey: KEY_A,
+      requestId: "50000000-0000-4000-8000-000000000001",
+      menuId: "30000000-0000-4000-8000-000000000001",
+      completedAt: "2026-07-11T00:00:01.000Z",
+      quota: { ...quota, consumed: true },
+    });
+    confirmSpy.mockRestore();
+  });
+
   it("still returns to planner after new_menu failure clear", async () => {
     const user = userEvent.setup();
     const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
