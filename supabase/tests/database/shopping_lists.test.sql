@@ -861,6 +861,8 @@ begin
 
   v_fingerprint := public.shopping_safety_fingerprint(v_owner, v_menu_b);
   v_hash := encode(extensions.digest(convert_to('reconcile-idem-approval','UTF8'),'sha256'),'hex');
+  -- SHOP6: 他 live source（献立A）は service 撮影 FP の欠落を fail-closed する。
+  -- 本 DO は SQL を直接呼ぶため、service 相当の map を diff に載せる。
   v_diff := jsonb_build_object(
     'add', jsonb_build_array(jsonb_build_object(
       'key','onion-reconcile','displayName','たまねぎ','normalizedName','たまねぎ',
@@ -874,7 +876,10 @@ begin
     )),
     'replace','[]'::jsonb,
     'removeIds','[]'::jsonb,
-    'listLabelWarnings','[]'::jsonb
+    'listLabelWarnings','[]'::jsonb,
+    'sourceSafetyFingerprints', jsonb_build_object(
+      v_menu_a::text, public.shopping_safety_fingerprint(v_owner, v_menu_a)
+    )
   );
 
   v_response := public.apply_shopping_reconciliation(
@@ -1264,7 +1269,10 @@ begin
         'add','[]'::jsonb,
         'replace','[]'::jsonb,
         'removeIds', jsonb_build_array(to_jsonb(v_derived_id)),
-        'listLabelWarnings','[]'::jsonb
+        'listLabelWarnings','[]'::jsonb,
+        'sourceSafetyFingerprints', jsonb_build_object(
+          v_menu::text, public.shopping_safety_fingerprint(v_owner, v_menu)
+        )
       )
     );
   exception when others then
