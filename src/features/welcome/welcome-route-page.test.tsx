@@ -514,6 +514,32 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     expect(request).toHaveBeenCalled();
   });
 
+  it("L-R1: in_progress idea skip on ifAvailable miss stays on welcome for retry", async () => {
+    // 表示 in_progress の skip は lock 獲得時だけ skipped CAS。miss で /onboarding に潰さない。
+    const request = vi.fn(
+      (_name: string, options: LockOptions, callback: (lock: Lock | null) => unknown) => {
+        expect(options.ifAvailable).toBe(true);
+        return Promise.resolve(callback(null));
+      },
+    );
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request },
+    });
+    getProfileMock.mockResolvedValue({ onboarding_status: "in_progress" });
+    const { router } = renderWelcome();
+    expect(
+      await screen.findByRole("button", { name: "設定せず献立アイデアを考える" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "設定せず献立アイデアを考える" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("開始できませんでした");
+    expect(screen.getByRole("button", { name: "設定せず献立アイデアを考える" })).toBeEnabled();
+    expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+    expect(router.state.location.pathname).toBe("/welcome");
+    expect(screen.queryByRole("heading", { name: "家族設定" })).not.toBeInTheDocument();
+    expect(request).toHaveBeenCalled();
+  });
+
   it("L4: lock acquire hang past C5 re-enables CTA", async () => {
     Object.defineProperty(navigator, "locks", {
       configurable: true,

@@ -180,8 +180,13 @@ export function WelcomeRoutePage() {
   /**
    * L1: C5 timeout 後、in-flight CAS / 他タブ先行を短い grace の再読込で確認。
    * status が進んでいれば失敗表示せず遷移。true hang のみ timeout を再 throw。
+   * ideaSkipFromInProgress: 表示 in_progress の skip。lock 無しでは skipped CAS
+   * できないため、再読込がまだ in_progress なら first-writer 着地へ流さない（L-R1）。
    */
-  async function reconcileAfterStartTimeout(generation: number): Promise<void> {
+  async function reconcileAfterStartTimeout(
+    generation: number,
+    ideaSkipFromInProgress: boolean,
+  ): Promise<void> {
     if (!stillActive(generation) || userId === undefined) {
       throw new Error("timeout");
     }
@@ -194,6 +199,11 @@ export function WelcomeRoutePage() {
         throw new Error("timeout");
       }
       if (latest.onboarding_status === "not_started") {
+        throw new Error("timeout");
+      }
+      // L-R1: skip 意図の miss を /onboarding に潰さない。先勝ち skipped|complete は
+      // navigateAfterWelcomeStart が /planner へ。household 継続は従来どおり /onboarding。
+      if (ideaSkipFromInProgress && latest.onboarding_status === "in_progress") {
         throw new Error("timeout");
       }
       softInvalidateProfile(queryClient, userId);
@@ -259,9 +269,11 @@ export function WelcomeRoutePage() {
    * body 内の await 後は isCurrent() で副作用をガードする。
    * timeout 後は L1 reconcile を挟み、status 進行済みなら失敗にしない。
    * CAS 発行後の grace miss は outstanding CAS 待ちで single-flight を維持する（L1）。
+   * ideaSkipFromInProgress は表示 in_progress の skip だけ真（L-R1）。
    */
   async function runWelcomeStart(
     body: (isCurrent: () => boolean, generation: number) => Promise<void>,
+    ideaSkipFromInProgress = false,
   ): Promise<void> {
     const generation = ++startGenerationRef.current;
     // 新 flight 開始時に旧 CAS 追跡を捨てる（前 flight の settle 待ちに reverse しない）
@@ -282,7 +294,7 @@ export function WelcomeRoutePage() {
         throw error;
       }
       try {
-        await reconcileAfterStartTimeout(generation);
+        await reconcileAfterStartTimeout(generation, ideaSkipFromInProgress);
       } catch (reconcileError) {
         if (!isTimeoutError(reconcileError)) {
           throw reconcileError;
@@ -331,6 +343,8 @@ export function WelcomeRoutePage() {
       onStartIdea={async () => {
         // L5: 未ログインは return せず throw し、pending 解除 + 再試行 UI へ
         if (userId === undefined) throw new Error("ログインが必要です");
+        // L-R1: 表示 in_progress の skip は lock miss 再読込がまだ in_progress
+        // なら失敗 UI。first-writer（表示 not_started）は従来どおり /onboarding。
         await runWelcomeStart(async (isCurrent, generation) => {
           const client = getBrowserSupabaseClient();
           // ロック内で最新 status を再読込し、別タブの確定を上書きしない
@@ -375,7 +389,7 @@ export function WelcomeRoutePage() {
           softInvalidateProfile(queryClient, userId);
           if (!isCurrent()) return;
           navigateAfterWelcomeStart(written.onboarding_status, navigate);
-        });
+        }, displayStatus === "in_progress");
       }}
       onStartHousehold={async () => {
         if (userId === undefined) throw new Error("ログインが必要です");
