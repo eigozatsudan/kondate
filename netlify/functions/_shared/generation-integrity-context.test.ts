@@ -47,6 +47,21 @@ const regenerateCommand: GenerationCommand = {
   },
 };
 
+const regenerateDishCommand: GenerationCommand = {
+  commandVersion: "generation-command.v3",
+  kind: "regenerate_dish",
+  qualityMode: false,
+  request: {
+    idempotencyKey: "60000000-0000-4000-8000-000000000003",
+    sourceMenuId: menuId,
+    dishId,
+    changeReason: "simpler",
+    changeReasonCustom: null,
+    privacyNoticeVersion: "2026-07-29.v1",
+    expiredPantryConfirmations: [],
+  },
+};
+
 function chain(result: { data: unknown; error: null | { message: string } }) {
   const builder: Record<string, unknown> = {};
   const self = () => builder;
@@ -56,6 +71,19 @@ function chain(result: { data: unknown; error: null | { message: string } }) {
   // multi-row select for members uses thenable without maybeSingle
   builder.then = undefined;
   return builder;
+}
+
+function membersQuery(data: unknown) {
+  return {
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({
+          data,
+          error: null,
+        }),
+      }),
+    }),
+  };
 }
 
 describe("resolveGenerationIntegrityContext", () => {
@@ -177,16 +205,7 @@ describe("resolveGenerationIntegrityContext", () => {
           error: null,
         }),
       )
-      .mockReturnValueOnce({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({
-              data: [{ household_member_id: memberId }],
-              error: null,
-            }),
-          }),
-        }),
-      });
+      .mockReturnValueOnce(membersQuery([{ household_member_id: memberId }]));
     await expect(
       resolveGenerationIntegrityContext(admin as never, userId, regenerateCommand),
     ).resolves.toEqual({
@@ -203,6 +222,81 @@ describe("resolveGenerationIntegrityContext", () => {
     await expect(
       resolveGenerationIntegrityContext(admin as never, userId, regenerateCommand),
     ).rejects.toMatchObject({ code: "source_menu_not_found" });
+  });
+
+  // G1: ON DELETE SET NULL 後の null household_member_id を uuid 必須 parse すると
+  // ZodError → 500 request_failed になり、クライアントが offline 再 POST する。
+  // load 経路と同じ閉じた 422 current_target_member_required にする。
+  it("rejects regenerate_menu when all target member ids were set null", async () => {
+    fromMock
+      .mockReturnValueOnce(
+        chain({
+          data: {
+            id: menuId,
+            target_mode: "household",
+            servings: 4,
+            version: 7,
+          },
+          error: null,
+        }),
+      )
+      .mockReturnValueOnce(membersQuery([{ household_member_id: null }]));
+    await expect(
+      resolveGenerationIntegrityContext(admin as never, userId, regenerateCommand),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "current_target_member_required",
+    });
+  });
+
+  it("keeps surviving regenerate_menu members after set-null rows", async () => {
+    fromMock
+      .mockReturnValueOnce(
+        chain({
+          data: {
+            id: menuId,
+            target_mode: "household",
+            servings: 4,
+            version: 7,
+          },
+          error: null,
+        }),
+      )
+      .mockReturnValueOnce(
+        membersQuery([{ household_member_id: null }, { household_member_id: memberId }]),
+      );
+    await expect(
+      resolveGenerationIntegrityContext(admin as never, userId, regenerateCommand),
+    ).resolves.toEqual({
+      kind: "regenerate_menu",
+      targetMode: "household",
+      servings: 4,
+      targetMemberIds: [memberId],
+      sourceMenuVersion: 7,
+    });
+  });
+
+  it("rejects regenerate_dish when all target member ids were set null", async () => {
+    fromMock
+      .mockReturnValueOnce(
+        chain({
+          data: {
+            id: menuId,
+            target_mode: "household",
+            servings: 2,
+            version: 3,
+          },
+          error: null,
+        }),
+      )
+      .mockReturnValueOnce(chain({ data: { id: dishId }, error: null }))
+      .mockReturnValueOnce(membersQuery([{ household_member_id: null }]));
+    await expect(
+      resolveGenerationIntegrityContext(admin as never, userId, regenerateDishCommand),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "current_target_member_required",
+    });
   });
 });
 
@@ -273,5 +367,3 @@ describe("parseIntegrityContextPayload", () => {
     expect(() => parseIntegrityContextPayload(payload)).toThrow(HttpError);
   });
 });
-
-void dishId;

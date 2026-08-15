@@ -265,6 +265,39 @@ describe("GenerationPage", () => {
     expect(screen.queryByRole("heading", { name: "プランナー" })).not.toBeInTheDocument();
   });
 
+  // G3: 別タブが pending を消すと retryStatus の isCurrent が落ち、checking のまま
+  // GenerationPage は idle 以外 Navigate しない。RecoveryLinks から破棄できること。
+  it("lets the user leave a stuck checking spinner after another tab clears pending", async () => {
+    const user = userEvent.setup();
+    const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
+    savePendingGeneration(pending);
+    let resolveStatus: ((value: ReturnType<typeof processingStatus>) => void) | undefined;
+    mockStatus.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve;
+        }),
+    );
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const router = renderGenerationPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("保存した作成状況を確認しています");
+    });
+    clearPendingGeneration();
+    expect(router.state.location.pathname).toBe("/generation");
+    expect(screen.queryByRole("heading", { name: "プランナー" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/planner");
+    });
+    expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
+    resolveStatus?.(processingStatus(KEY_A));
+    confirmSpy.mockRestore();
+  });
+
   it("still returns to planner after new_menu failure clear", async () => {
     const user = userEvent.setup();
     const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());

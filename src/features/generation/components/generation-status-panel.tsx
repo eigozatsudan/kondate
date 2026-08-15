@@ -366,6 +366,12 @@ export function GenerationStatusPanel({
         <p role="status" aria-live="polite">
           保存した作成状況を確認しています
         </p>
+        {/* G3: 別タブ reconcileTerminalPendingGeneration が pending を消すと
+            retryStatus 完了時の isCurrent（pending 存続）が落ち、dispatch せず
+            phase が checking のまま固着する。GenerationPage は idle のときだけ
+            Navigate するため、processing / offline と同じ破棄導線を出す。
+            サーバ processing が残っている可能性があるため破棄は confirm 必須。 */}
+        <RecoveryLinks requireDiscardConfirm {...(onClear === undefined ? {} : { onClear })} />
       </PanelShell>
     );
   }

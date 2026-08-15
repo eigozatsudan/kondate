@@ -60,6 +60,14 @@ const menuRowSchema = z
   })
   .strict();
 
+// ON DELETE SET NULL 後は household_member_id が null の行が残る。
+// uuid 必須にすると ZodError → 500 request_failed になる。
+const menuTargetMemberRowSchema = z
+  .object({
+    household_member_id: z.uuid().nullable(),
+  })
+  .strict();
+
 /**
  * 権威ある draft revision または source menu から整合性コンテキストを解決する。
  * クライアントの mode / servings / memberIds / source version は信頼しない。
@@ -156,13 +164,25 @@ export async function resolveGenerationIntegrityContext(
   if (memberError !== null) {
     throw new HttpError(500, "internal_error", "対象家族を確認できませんでした。");
   }
-  const memberIds = memberRows.map((row) => {
-    const id = z.object({ household_member_id: z.uuid() }).parse(row).household_member_id;
-    return id;
+  // stored-menu-loader と同様に削除済みリンク（null）は除外する。
+  // 残存 0 人の household は load 経路と同じ 422 current_target_member_required。
+  const memberIds = memberRows.flatMap((row) => {
+    const parsed = menuTargetMemberRowSchema.safeParse(row);
+    if (!parsed.success) {
+      throw new HttpError(422, "invalid_request", "対象の家族IDが不正です。");
+    }
+    return parsed.data.household_member_id === null ? [] : [parsed.data.household_member_id];
   });
 
   const kind = command.kind;
   if (menu.data.target_mode === "household") {
+    if (memberIds.length === 0) {
+      throw new HttpError(
+        422,
+        "current_target_member_required",
+        "現在の家族を1人以上選んでください",
+      );
+    }
     return {
       kind,
       targetMode: "household",

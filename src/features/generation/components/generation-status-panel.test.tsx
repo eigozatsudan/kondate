@@ -591,6 +591,36 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByRole("status")).toHaveTextContent("保存した作成状況を確認しています");
   });
 
+  // G3: 別タブ reconcile が pending を消すと retryStatus の isCurrent が落ち、
+  // phase が checking のまま固着する。スピナーだけでは画面内破棄導線が無い。
+  it("exposes RecoveryLinks while checking so a stuck spinner can be abandoned (G3)", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <GenerationStatusPanel state={{ phase: "checking", effect: "status" }} onClear={onClear} />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("保存した作成状況を確認しています");
+    expect(screen.getByRole("button", { name: "条件を直してやり直す" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "作った献立を見る" })).toBeVisible();
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).toHaveBeenCalledOnce();
+    confirmSpy.mockRestore();
+  });
+
+  it("does not abandon a checking run when confirm is cancelled (G3)", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(
+      <GenerationStatusPanel state={{ phase: "checking", effect: "status" }} onClear={onClear} />,
+    );
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
   it("shows sticky progress stages while submitting", () => {
     render(<GenerationStatusPanel state={{ phase: "submitting", effect: "submit" }} />);
     const status = screen.getByRole("status");
