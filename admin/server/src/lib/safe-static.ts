@@ -2,12 +2,21 @@
  * root 封じ込め付き静的配信。
  * - リクエスト path の leading `/` を剥がし、絶対 path 扱いにしない
  * - resolve 後は root 配下（exact または root+sep 接頭）のみ許可（fail-closed）
+ * - 中間/末端 symlink は lstat+realpath で実体が root 内か確認する
  * - 許可されたファイルだけ createReadStream する
  *
  * Node 24 の path.join は absolute 第2引数を相対扱いするが、
  * 防御を join 意味論に依存させず明示的に封じ込める。
+ * 本番 Docker は COPY 済み dist 前提（通常成果物に symlink は無い）。
  */
-import { createReadStream, existsSync, statSync } from "node:fs";
+import {
+  createReadStream,
+  existsSync,
+  lstatSync,
+  realpathSync,
+  statSync,
+  type Stats,
+} from "node:fs";
 import { resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import type { Context, MiddlewareHandler, Next } from "hono";
@@ -17,10 +26,7 @@ import { getMimeType } from "hono/utils/mime";
  * リクエスト path を root 配下の実ファイル path に解決する。
  * 封じ込めに失敗・不正エンコードなら null。
  */
-export function resolveContainedPath(
-  root: string,
-  requestPath: string,
-): string | null {
+export function resolveContainedPath(root: string, requestPath: string): string | null {
   let decoded: string;
   try {
     decoded = decodeURIComponent(requestPath);
@@ -36,19 +42,13 @@ export function resolveContainedPath(
   const relativePath = decoded.replace(/^[/\\]+/u, "");
 
   // 単独の . / .. 断片や \\ を拒否（resolve 前の明示ガード）
-  if (
-    relativePath.length > 0 &&
-    /(?:^|[/\\])\.{1,2}(?:$|[/\\])|[/\\]{2,}|\\/u.test(relativePath)
-  ) {
+  if (relativePath.length > 0 && /(?:^|[/\\])\.{1,2}(?:$|[/\\])|[/\\]{2,}|\\/u.test(relativePath)) {
     return null;
   }
 
   const rootResolved = resolve(root);
   // relativePath が空なら root 自身（ディレクトリ扱い）
-  const candidate =
-    relativePath.length === 0
-      ? rootResolved
-      : resolve(rootResolved, relativePath);
+  const candidate = relativePath.length === 0 ? rootResolved : resolve(rootResolved, relativePath);
 
   if (!isPathInsideRoot(candidate, rootResolved)) {
     return null;
@@ -70,12 +70,55 @@ function createStreamBody(stream: ReturnType<typeof createReadStream>): Readable
   return Readable.toWeb(stream) as ReadableStream;
 }
 
-function tryStat(filePath: string): ReturnType<typeof statSync> | null {
+function tryStat(filePath: string): Stats | null {
   try {
     return statSync(filePath);
   } catch {
     return null;
   }
+}
+
+function tryLstat(filePath: string): ReturnType<typeof lstatSync> | null {
+  try {
+    return lstatSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function tryRealpath(filePath: string): string | null {
+  try {
+    return realpathSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+type ContainedExisting =
+  { kind: "missing" } | { kind: "escaped" } | { kind: "ok"; path: string; stats: Stats };
+
+/**
+ * 文字列接頭辞通過後に実体を確認する。
+ * 末端・中間の symlink が root 外へ出る、または解決不能なら escaped。
+ */
+function resolveContainedExisting(candidate: string, rootResolved: string): ContainedExisting {
+  const rootReal = tryRealpath(rootResolved);
+  if (rootReal === null) {
+    return { kind: "escaped" };
+  }
+  const appeared = tryLstat(candidate);
+  const real = tryRealpath(candidate);
+  if (real === null) {
+    return appeared === null ? { kind: "missing" } : { kind: "escaped" };
+  }
+  if (!isPathInsideRoot(real, rootReal)) {
+    return { kind: "escaped" };
+  }
+  const stats = tryStat(real);
+  if (stats === null) {
+    return { kind: "missing" };
+  }
+  return { kind: "ok", path: real, stats };
 }
 
 /**
@@ -101,35 +144,41 @@ export function createSafeStaticMiddleware(root: string): MiddlewareHandler {
       return next();
     }
 
-    let filePath = resolveContainedPath(rootResolved, pathname);
+    const filePath = resolveContainedPath(rootResolved, pathname);
     if (filePath === null) {
       // 封じ込め失敗は next せず 404 相当（SPA に漏らさない）
       return c.text("Not Found", 404);
     }
 
-    let stats = tryStat(filePath);
-    if (stats?.isDirectory()) {
-      const indexPath = resolve(filePath, "index.html");
-      if (!isPathInsideRoot(indexPath, rootResolved)) {
+    let existing = resolveContainedExisting(filePath, rootResolved);
+    if (existing.kind === "escaped") {
+      return c.text("Not Found", 404);
+    }
+    if (existing.kind === "ok" && existing.stats.isDirectory()) {
+      const indexPath = resolve(existing.path, "index.html");
+      const rootReal = tryRealpath(rootResolved) ?? rootResolved;
+      if (!isPathInsideRoot(indexPath, rootReal)) {
         return c.text("Not Found", 404);
       }
-      filePath = indexPath;
-      stats = tryStat(filePath);
+      existing = resolveContainedExisting(indexPath, rootResolved);
+      if (existing.kind === "escaped") {
+        return c.text("Not Found", 404);
+      }
     }
 
-    if (!stats || !stats.isFile()) {
+    if (existing.kind !== "ok" || !existing.stats.isFile()) {
       return next();
     }
 
-    const mimeType = getMimeType(filePath) || "application/octet-stream";
+    const mimeType = getMimeType(existing.path) || "application/octet-stream";
     c.header("Content-Type", mimeType);
-    c.header("Content-Length", String(stats.size));
+    c.header("Content-Length", String(existing.stats.size));
 
     if (method === "HEAD") {
       return c.body(null, 200);
     }
 
-    return c.body(createStreamBody(createReadStream(filePath)), 200);
+    return c.body(createStreamBody(createReadStream(existing.path)), 200);
   };
 }
 
@@ -150,16 +199,16 @@ export function createSpaFallbackMiddleware(root: string): MiddlewareHandler {
       return next();
     }
 
-    const stats = tryStat(indexPath);
-    if (!stats?.isFile()) {
+    const existing = resolveContainedExisting(indexPath, rootResolved);
+    if (existing.kind !== "ok" || !existing.stats.isFile()) {
       return next();
     }
 
-    c.header("Content-Type", getMimeType(indexPath) || "text/html");
-    c.header("Content-Length", String(stats.size));
+    c.header("Content-Type", getMimeType(existing.path) || "text/html");
+    c.header("Content-Length", String(existing.stats.size));
     if (c.req.method.toUpperCase() === "HEAD") {
       return c.body(null, 200);
     }
-    return c.body(createStreamBody(createReadStream(indexPath)), 200);
+    return c.body(createStreamBody(createReadStream(existing.path)), 200);
   };
 }

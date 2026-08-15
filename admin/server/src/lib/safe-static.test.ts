@@ -2,7 +2,7 @@
  * 静的 root 封じ込めの単体・アプリ結合テスト。
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
@@ -116,6 +116,37 @@ describe("createSafeStaticMiddleware integration", () => {
       expect(resolveContainedPath(tmpRoot, "/assets/../../leaked.txt")).toBeNull();
     } finally {
       rmSync(outside, { force: true });
+    }
+  });
+
+  it("does not follow a root-internal symlink that points outside (AO11)", async () => {
+    const outside = join(tmpRoot, "..", "ao11-secret.txt");
+    writeFileSync(outside, "AO11_SECRET_OUTSIDE\n", "utf8");
+    const linkPath = join(tmpRoot, "assets", "leak.txt");
+    symlinkSync(outside, linkPath);
+    try {
+      const app = buildApp();
+      const res = await app.request("http://127.0.0.1:5193/assets/leak.txt");
+      const body = await res.text();
+      expect(body).not.toContain("AO11_SECRET_OUTSIDE");
+      expect(res.status).toBe(404);
+    } finally {
+      rmSync(linkPath, { force: true });
+      rmSync(outside, { force: true });
+    }
+  });
+
+  it("still serves a symlink whose realpath stays inside root", async () => {
+    const target = join(tmpRoot, "assets", "app.js");
+    const linkPath = join(tmpRoot, "assets", "app-alias.js");
+    symlinkSync(target, linkPath);
+    try {
+      const app = buildApp();
+      const res = await app.request("http://127.0.0.1:5193/assets/app-alias.js");
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("console.log");
+    } finally {
+      rmSync(linkPath, { force: true });
     }
   });
 });
