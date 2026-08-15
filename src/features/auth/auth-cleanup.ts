@@ -64,6 +64,8 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
  * - kondate.auth.flow.*
  * - callback-owner / flow-user-dismissed / clock-rebase
  * - PKCE verifier（storageKey 派生の -code-verifier）
+ * - claim-poll lease 系（exchange / target-lease / last-at）。既起動 residual の
+ *   5s 床と callback-owned lease を焼かない（C1: wipe 直後の orphan 再 claim 抑止）
  * - soft residual suppress 印自体（localStorage 共有; mark 後に再設定）
  * - callback-owner がある pending-deposit（C-R3: strip 後 re-deposit 正本）
  *
@@ -103,6 +105,12 @@ function shouldClearAuthKeyOnSoftResidual(key: string, storage: Storage): boolea
   if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.callback-owner.`)) return false;
   if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.flow-user-dismissed.`)) return false;
   if (key.startsWith(`${ownedAuthStoragePrefixes[1]}.clock-rebase.`)) return false;
+  // C1: 既起動 residual / callback の claim-poll lease。未知残渣として消すと last-at 床が消え
+  // lease 0 の callback-owned が orphan 再 claim → 単回 IdP code の dual exchange になる。
+  const claimPollPrefix = `${ownedAuthStoragePrefixes[1]}.claim-poll`;
+  if (key === `${claimPollPrefix}-last-at`) return false;
+  if (key.startsWith(`${claimPollPrefix}-exchange.`)) return false;
+  if (key.startsWith(`${claimPollPrefix}-target-lease.`)) return false;
   // PKCE verifier（createBrowserSupabaseClient の storageKey + "-code-verifier"）
   if (key === `${browserSupabaseSessionStorageKey}-code-verifier`) return false;
   if (key.startsWith(`${browserSupabaseSessionStorageKey}-code-verifier`)) return false;
@@ -203,7 +211,7 @@ export function clearOwnedLocalDataBestEffort(): void {
  * C4: residual recovery が前ユーザとして silent complete しないこと。
  * 旧実装は `kondate.auth.*` 全消しで secret も焼いたが、sibling タブ in-flight login まで
  * 巻き添えにした（R3）。R3 以降は:
- * - flow secret / PKCE / callback-owner は温存（sibling mid-login）
+ * - flow secret / PKCE / callback-owner / claim-poll lease は温存（sibling mid-login）
  * - pending-deposit は callback-owner がある sibling mid-login だけ残し、
  *   prior-user 平文は消す（C5 / C-R3）
  * - completion と session キーは消す（resume short-circuit / persist token）
@@ -258,7 +266,7 @@ export function clearSoftSessionResidualBestEffort(): void {
 
 /**
  * C5: 401 / session 失効用。session + 草稿 + prior-user pending は消し、R3 keep
- * （flow / PKCE / callback-owner / sibling mid-login pending）は残す。
+ * （flow / PKCE / callback-owner / sibling mid-login pending / C1 claim-poll lease）は残す。
  * 明示 logout / アカウント削除は clearLocalAuthAndDrafts（全所有キー）のまま。
  */
 export async function clearExpiredSessionAuthAndDrafts(

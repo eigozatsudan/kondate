@@ -259,6 +259,59 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
   });
 
+  it("C1: soft residual / 401 keep claim-poll lease keys so live sibling exchange is not orphaned", async () => {
+    const flowId = "10000000-0000-4000-8000-0000000000c1";
+    const lastAt = String(Date.now() + 4_000);
+    const exchangeKey = `kondate.auth.supabase.claim-poll-exchange.${flowId}`;
+    const leaseKey = `kondate.auth.supabase.claim-poll-target-lease.${flowId}.liveinstance01`;
+    const lastAtKey = "kondate.auth.supabase.claim-poll-last-at";
+    const cursorKey = "kondate.auth.supabase.claim-poll-cursor";
+    const leaseJson = JSON.stringify({
+      flowId,
+      instanceId: "liveinstance01",
+      refreshedAt: Date.now(),
+      pending: false,
+    });
+    const exchangeJson = JSON.stringify({
+      flowId,
+      instanceId: "exchange-live",
+      refreshedAt: Date.now(),
+    });
+    for (const storage of [localStorage, sessionStorage]) {
+      storage.setItem(lastAtKey, lastAt);
+      storage.setItem(exchangeKey, exchangeJson);
+      storage.setItem(leaseKey, leaseJson);
+      storage.setItem(cursorKey, flowId);
+      storage.setItem("kondate.auth.supabase", '{"access_token":"session"}');
+    }
+
+    clearSoftSessionResidualBestEffort();
+
+    expect(localStorage.getItem(lastAtKey)).toBe(lastAt);
+    expect(localStorage.getItem(exchangeKey)).toBe(exchangeJson);
+    expect(localStorage.getItem(leaseKey)).toBe(leaseJson);
+    expect(sessionStorage.getItem(lastAtKey)).toBe(lastAt);
+    expect(sessionStorage.getItem(exchangeKey)).toBe(exchangeJson);
+    expect(sessionStorage.getItem(leaseKey)).toBe(leaseJson);
+    // last-at / lease 以外の claim-poll 残渣（cursor）は未知キーとして消してよい
+    expect(localStorage.getItem(cursorKey)).toBeNull();
+    expect(localStorage.getItem("kondate.auth.supabase")).toBeNull();
+
+    localStorage.setItem(lastAtKey, lastAt);
+    localStorage.setItem(exchangeKey, exchangeJson);
+    localStorage.setItem(leaseKey, leaseJson);
+    localStorage.setItem("kondate.auth.supabase", '{"access_token":"session"}');
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const client = {
+      auth: { signOut },
+    } as unknown as SupabaseClient<Database>;
+    await clearExpiredSessionAuthAndDrafts(client);
+    expect(localStorage.getItem(lastAtKey)).toBe(lastAt);
+    expect(localStorage.getItem(exchangeKey)).toBe(exchangeJson);
+    expect(localStorage.getItem(leaseKey)).toBe(leaseJson);
+    expect(localStorage.getItem("kondate.auth.supabase")).toBeNull();
+  });
+
   it("C5/C-R3: soft residual still clears prior-user pending without callback-owner", () => {
     const flowId = "10000000-0000-4000-8000-0000000000c5";
     localStorage.setItem(
