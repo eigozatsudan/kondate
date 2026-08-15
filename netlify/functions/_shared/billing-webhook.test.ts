@@ -942,6 +942,8 @@ describe("handleBillingWebhook", () => {
       ).p_payload;
       expect(processPayload.status).toBe(status);
       expect(processPayload.clear_past_due_since).toBe(false);
+      // B-R6: incomplete でも kill_source キーを送らない（B-R5 の incomplete_expired と同じ）。
+      expect(processPayload).not.toHaveProperty("kill_source_status");
     },
   );
 
@@ -974,6 +976,8 @@ describe("handleBillingWebhook", () => {
     ).p_payload;
     expect(processPayload.status).toBe("incomplete");
     expect(processPayload.clear_past_due_since).toBe(false);
+    // B-R6: event 凍結の incomplete でも kill_source を null 上書きしない。
+    expect(processPayload).not.toHaveProperty("kill_source_status");
   });
 
   it("still force-cancels paid active on subscription.deleted (B1 paid remainder)", async () => {
@@ -1085,6 +1089,66 @@ describe("handleBillingWebhook", () => {
       }
     ).p_payload;
     expect(processPayload.status).toBe("incomplete_expired");
+    expect(processPayload.event_type).toBe("invoice.payment_failed");
+    expect(processPayload).not.toHaveProperty("kill_source_status");
+  });
+
+  it("omits kill_source on updated incomplete so unpaid remainder can recover (B-R6)", async () => {
+    // created / updated の incomplete も B-R5 固定の外から unpaid を上書きし得る。
+    // BILLING_ENABLED=true の resolve は null なので、キーを送ると回復材料が消える。
+    const incomplete = makeSubscription({
+      id: "sub_updated_incomplete_br6",
+      status: "incomplete",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", incomplete, {
+        id: "evt_updated_incomplete_br6",
+        created: 9_328,
+      }),
+    );
+    retrieve.mockResolvedValue(incomplete);
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("incomplete");
+    expect(processPayload.event_type).toBe("customer.subscription.updated");
+    expect(processPayload).not.toHaveProperty("kill_source_status");
+  });
+
+  it("omits kill_source on invoice incomplete (B-R6)", async () => {
+    const invoice = {
+      id: "in_incomplete_br6",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: "sub_invoice_incomplete_br6",
+    } as unknown as Stripe.Invoice;
+    const incomplete = makeSubscription({
+      id: "sub_invoice_incomplete_br6",
+      status: "incomplete",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.payment_failed", invoice, {
+        id: "evt_invoice_incomplete_br6",
+        created: 9_329,
+      }),
+    );
+    retrieve.mockResolvedValue(incomplete);
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("incomplete");
     expect(processPayload.event_type).toBe("invoice.payment_failed");
     expect(processPayload).not.toHaveProperty("kill_source_status");
   });

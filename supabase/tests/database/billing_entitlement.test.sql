@@ -2,7 +2,7 @@
 -- Task 2: private billing 表 + SECURITY DEFINER RPC（A6 / lock / process 冪等・stale・crash-safe）
 
 begin;
-select plan(130);
+select plan(142);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -73,6 +73,14 @@ select tests.create_supabase_user(
 select tests.create_supabase_user(
   'f2000000-0000-4000-8000-000000000011'::uuid,
   'billing-br5-unknown-unpaid@example.invalid'
+);
+select tests.create_supabase_user(
+  'f2000000-0000-4000-8000-000000000012'::uuid,
+  'billing-br6-unpaid-restore@example.invalid'
+);
+select tests.create_supabase_user(
+  'f2000000-0000-4000-8000-000000000013'::uuid,
+  'billing-br6-unknown-unpaid@example.invalid'
 );
 
 -- ---------------------------------------------------------------------------
@@ -1635,6 +1643,162 @@ select is(
   ) ->> 'plus_entitled')::boolean,
   false,
   'B-R5 unknown-price unpaid stays not entitled'
+);
+
+-- ---------------------------------------------------------------------------
+-- B-R6: unpaid は incoming incomplete で上げず、deleted+canceled だけ残存へ戻す
+-- ---------------------------------------------------------------------------
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_br6_unpaid_mask',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 34000,
+    'user_id', 'f2000000-0000-4000-8000-000000000012',
+    'stripe_subscription_id', 'sub_br6_restore',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'unpaid',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false,
+    'kill_source_status', 'canceled'
+  )) ->> 'outcome',
+  'applied',
+  'B-R6 kill unpaid with canceled source applies'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_br6_deleted_incomplete',
+    'event_type', 'customer.subscription.deleted',
+    'stripe_event_created', 35000,
+    'user_id', 'f2000000-0000-4000-8000-000000000012',
+    'stripe_subscription_id', 'sub_br6_restore',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'incomplete',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false,
+    'kill_source_status', null
+  )) ->> 'outcome',
+  'applied',
+  'B-R6 deleted incomplete over unpaid applies'
+);
+
+select is(
+  (select status from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000012'::uuid),
+  'unpaid',
+  'B-R6 incoming incomplete does not elevate unpaid'
+);
+
+select is(
+  (select kill_source_status from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000012'::uuid),
+  'canceled',
+  'B-R6 incoming incomplete keeps kill_source'
+);
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000012'::uuid,
+    '2026-07-15 00:00:00+00'::timestamptz
+  ) ->> 'plus_entitled')::boolean,
+  false,
+  'B-R6 unpaid after incomplete stays not entitled'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_br6_deleted_canceled',
+    'event_type', 'customer.subscription.deleted',
+    'stripe_event_created', 36000,
+    'user_id', 'f2000000-0000-4000-8000-000000000012',
+    'stripe_subscription_id', 'sub_br6_restore',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'canceled',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false,
+    'kill_source_status', null
+  )) ->> 'outcome',
+  'applied',
+  'B-R6 deleted canceled over unpaid applies'
+);
+
+select is(
+  (select status from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000012'::uuid),
+  'canceled',
+  'B-R6 deleted canceled restores unpaid to canceled remainder'
+);
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000012'::uuid,
+    '2026-07-15 00:00:00+00'::timestamptz
+  ) ->> 'plus_entitled')::boolean,
+  true,
+  'B-R6 deleted canceled remainder is entitled inside period'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_br6_unknown_unpaid',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 37000,
+    'user_id', 'f2000000-0000-4000-8000-000000000013',
+    'stripe_subscription_id', 'sub_br6_unknown',
+    'stripe_price_id', 'price_other',
+    'status', 'unpaid',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false
+  )) ->> 'outcome',
+  'applied',
+  'B-R6 unknown-price unpaid applies'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_br6_unknown_incomplete',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 38000,
+    'user_id', 'f2000000-0000-4000-8000-000000000013',
+    'stripe_subscription_id', 'sub_br6_unknown',
+    'stripe_price_id', 'price_other',
+    'status', 'incomplete',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false
+  )) ->> 'outcome',
+  'applied',
+  'B-R6 unknown-price updated incomplete applies'
+);
+
+select is(
+  (select status from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000013'::uuid),
+  'unpaid',
+  'B-R6 unknown-price unpaid is not remapped by incoming incomplete'
+);
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000013'::uuid,
+    '2026-07-15 00:00:00+00'::timestamptz
+  ) ->> 'plus_entitled')::boolean,
+  false,
+  'B-R6 unknown-price unpaid stays not entitled'
 );
 
 -- 禁止: insert_billing_webhook_event を public に export しない
