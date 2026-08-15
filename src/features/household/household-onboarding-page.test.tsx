@@ -2195,3 +2195,50 @@ it("H12: refuses none-complete while empty allergies cache is refetching", async
 
   expect(completeMember).not.toHaveBeenCalled();
 });
+
+// H6: ACK 前の楽観 cache を失敗時に戻す。再入場で stale registered のまま complete しない。
+it("H6: rolls back optimistic members cache when registered save fails", async () => {
+  const user = userEvent.setup();
+  const noneDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "none",
+    unsupported_diet_status: "none",
+  };
+  const membersState = createMembersApiState([noneDraft]);
+  const updateDraft = vi.fn().mockRejectedValue(new Error("一時的な保存失敗"));
+  const completeMember = vi.fn();
+  const eggAllergy = {
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: "member-1",
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  const api = baseApi({
+    listMembers: membersState.listMembers,
+    updateDraft,
+    completeMember,
+    listAllergies: vi.fn().mockResolvedValue([eggAllergy]),
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.selectOptions(await screen.findByLabelText("アレルギーの確認"), "registered");
+  expect(
+    await screen.findByText("保存できませんでした。選び直して再試行してください。"),
+  ).toBeInTheDocument();
+
+  await waitFor(() => {
+    expect(
+      client.getQueryData<HouseholdMemberRow[]>(householdKeys.members("user-1"))?.[0],
+    ).toMatchObject({
+      allergy_status: "none",
+    });
+  });
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
+});

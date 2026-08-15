@@ -15,12 +15,16 @@ import {
   currentAllergenCatalogV1,
   currentAllergenCatalogVersion,
 } from "../../../shared/safety/current-allergen-catalog.v1.js";
-import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
+import {
+  currentFoodRuleVersion,
+  currentFoodSafetyRulesV1,
+} from "../../../shared/safety/current-food-safety-rules.v1.js";
 import { HttpError } from "./http.js";
 import type { AdminSupabaseClient } from "./supabase-admin.js";
 
 const dictionaryVersion = currentAllergenCatalogVersion;
-const foodRuleVersion = "jp-caa-child-shape-2026-07.v1" as const;
+// H7: dictionary 側定数を正本にする。片側リテラル bump で全 load が 500 になる穴を閉じる。
+const foodRuleVersion = currentFoodRuleVersion;
 
 export const currentAllergenCatalogIds: readonly string[] = Object.freeze([
   ...new Set(currentAllergenCatalogV1.map((entry) => entry.id)),

@@ -13,3 +13,10 @@ export const RESIDUAL_ALLERGY_WARNING =
  */
 export const RESIDUAL_ALLERGY_UNVERIFIED_WARNING =
   "アレルギー一覧を確認できないため、以前の登録が残っている可能性があります。献立生成の安全判定では登録済みのアレルギーが使われることがあります。通信を確認して再読み込みしてください。";
+
+/**
+ * H8: アレルギー編集面の保証否定。onboarding / planner と同文。
+ * 「安全です」は出さない。
+ */
+export const ALLERGY_SAFETY_NOT_GUARANTEED =
+  "AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。";

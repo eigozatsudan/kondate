@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { currentAllergenCatalogV1 } from "../../../shared/safety/current-allergen-catalog.v1.js";
-import { currentFoodSafetyRulesV1 } from "../../../shared/safety/current-food-safety-rules.v1.js";
+import {
+  currentFoodRuleVersion,
+  currentFoodSafetyRulesV1,
+} from "../../../shared/safety/current-food-safety-rules.v1.js";
 import type { AdminSupabaseClient } from "./supabase-admin.js";
 import {
   currentAllergenAliasManifest,
@@ -14,7 +18,7 @@ const userId = "70000000-0000-4000-8000-000000000001";
 const firstMemberId = "71000000-0000-4000-8000-000000000001";
 const secondMemberId = "71000000-0000-4000-8000-000000000002";
 const dictionaryVersion = "jp-caa-2026-04.v1";
-const foodRuleVersion = "jp-caa-child-shape-2026-07.v1";
+const foodRuleVersion = currentFoodRuleVersion;
 
 function member(id: string, displayName: string) {
   return {
@@ -321,6 +325,20 @@ const manifestMutations: readonly ManifestMutation[] = [
 ];
 
 describe("current safety snapshot RPC boundary", () => {
+  it("H7: foodRuleVersion is imported from the dictionary, not a second literal", async () => {
+    const source = readFileSync("netlify/functions/_shared/current-safety.ts", "utf8");
+    expect(source).toMatch(/currentFoodRuleVersion/);
+    expect(source).not.toMatch(/const foodRuleVersion = "jp-caa-child-shape-2026-07\.v1"/u);
+    expect(new Set(currentFoodSafetyRulesV1.map((rule) => rule.ruleVersion))).toEqual(
+      new Set([currentFoodRuleVersion]),
+    );
+
+    const { admin } = adminWithRpc({ data: availableSnapshot(), error: null });
+    await expect(
+      loadCurrentSafetyContext(admin, userId, [secondMemberId, firstMemberId]),
+    ).resolves.toMatchObject({ foodRuleVersion: currentFoodRuleVersion });
+  });
+
   it("loads unconfirmed allergy members without failing closed (A-I3 relief path)", async () => {
     const snapshot = availableSnapshot([firstMemberId]);
     // ランタイム RPC は unconfirmed を返す。fixture ヘルパの型は complete 中心なので raw を差し替える。

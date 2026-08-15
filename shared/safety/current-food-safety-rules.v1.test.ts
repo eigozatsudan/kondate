@@ -2,7 +2,10 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { currentFoodSafetyRulesV1 } from "./current-food-safety-rules.v1.js";
+import {
+  currentFoodRuleVersion,
+  currentFoodSafetyRulesV1,
+} from "./current-food-safety-rules.v1.js";
 import type { FoodSafetyRule } from "./food-rules.js";
 
 const migrationSql = readFileSync(
@@ -126,6 +129,13 @@ describe("current food safety rules v1 migration contract", () => {
     expect(actual.split(expectedUpdate)).toHaveLength(2);
     expect(actual).toContain("ifupdated_rows<>1then");
     expect(actual).not.toContain("rule_version");
+  });
+
+  it("H7: pins every rule to the single currentFoodRuleVersion", () => {
+    expect(currentFoodRuleVersion).toBe("jp-caa-child-shape-2026-07.v1");
+    expect(
+      currentFoodSafetyRulesV1.every((rule) => rule.ruleVersion === currentFoodRuleVersion),
+    ).toBe(true);
   });
 
   it("keeps exactly the seven canonical rules and every behavioral field in sync", () => {

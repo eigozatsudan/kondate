@@ -277,6 +277,8 @@ export function HouseholdOnboardingForm({
   const latestSaveVersion = useRef(0);
   // H2: draft CAS 基準 updated_at。同一タブ直列 save では成功後に進める。
   const draftUpdatedAtRef = useRef<string | undefined>(undefined);
+  // H6: ACK 済みサーバ正本。失敗時に楽観 cache をここへ戻し、再入場で stale registered を残さない。
+  const lastAckedMemberRef = useRef<HouseholdMemberRow | undefined>(undefined);
   /**
    * H13: アレルギー 0 件のまま `allergy_status=registered` を DB に書かない。
    * settings の pendingRegisteredIntents と同方向。UI は registered 表示し、
@@ -338,6 +340,7 @@ export function HouseholdOnboardingForm({
     draftUpdatedAtRef.current = draft?.updated_at;
     // 別 draft へ移るときは pending registered も捨てる（H13）
     pendingRegisteredRef.current = false;
+    lastAckedMemberRef.current = draft ?? undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- id 切替のみ。updated_at は save 成功で進める
   }, [draft?.id]);
   const completeMembers = members.filter((member) => member.status === "complete");
@@ -548,6 +551,9 @@ export function HouseholdOnboardingForm({
     // H7: complete/finish/skip 中は新規 field save を積まず、DB complete との交差を防ぐ
     if (draft === null || actionPendingRef.current) return Promise.resolve(true);
     const memberId = draft.id;
+    if (lastAckedMemberRef.current === undefined) {
+      lastAckedMemberRef.current = draft;
+    }
     const saveVersion = latestSaveVersion.current + 1;
     latestSaveVersion.current = saveVersion;
     pendingSavePatch.current = { ...pendingSavePatch.current, ...patch };
@@ -565,6 +571,7 @@ export function HouseholdOnboardingForm({
         const expectedUpdatedAt = draftUpdatedAtRef.current ?? draft.updated_at;
         const saved = await api.updateDraft(memberId, patchToSave, expectedUpdatedAt);
         draftUpdatedAtRef.current = saved.updated_at;
+        lastAckedMemberRef.current = saved;
         if (saveVersion === latestSaveVersion.current) {
           pendingSavePatch.current = {};
           replaceMember(saved);
@@ -588,10 +595,25 @@ export function HouseholdOnboardingForm({
             ?.find((row) => row.id === memberId);
           if (latest !== undefined) {
             draftUpdatedAtRef.current = latest.updated_at;
+            lastAckedMemberRef.current = latest;
             // H13: refetch 後も deferred registered の UI 選択を落とさない
             if (pendingRegisteredRef.current) {
               replaceMember(latest);
             }
+          }
+        } else if (saveVersion === latestSaveVersion.current) {
+          // H6: ACK 前の楽観 cache を最後のサーバ正本へ戻す（settings は成功後だけ更新）。
+          // deferred registered の UI 選択は overlay で残す。
+          const lastAcked = lastAckedMemberRef.current;
+          if (lastAcked !== undefined) {
+            const restored =
+              pendingRegisteredRef.current && lastAcked.status === "draft"
+                ? { ...lastAcked, allergy_status: "registered" as const }
+                : lastAcked;
+            queryClient.setQueryData<HouseholdMemberRow[]>(
+              householdKeys.members(userId),
+              (current = []) => current.map((item) => (item.id === memberId ? restored : item)),
+            );
           }
         }
         if (saveVersion === latestSaveVersion.current) {

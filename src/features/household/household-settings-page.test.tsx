@@ -407,19 +407,29 @@ it("does not start completion while an allergy addition is pending", async () =>
   expect(updateMember).not.toHaveBeenCalled();
 });
 
-it("does not start completion while the last draft allergy deletion is pending", async () => {
+it("does not start completion while a draft allergy deletion is pending", async () => {
   const draft = {
     ...member,
     id: "draft-1",
     status: "draft" as const,
     allergy_status: "registered" as const,
   };
+  const extraAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-custom",
+    member_id: draft.id,
+    allergen_id: null,
+    custom_name: "マンゴー",
+    custom_confirmed: true,
+  };
   const removeAllergy = vi.fn(() => new Promise<void>(() => undefined));
   const updateDraft = vi.fn().mockResolvedValue(draft);
   const completeMember = vi.fn().mockResolvedValue({ ...draft, status: "complete" as const });
   await renderSettings({
     listMembers: vi.fn().mockResolvedValue([draft]),
-    listAllergies: vi.fn().mockResolvedValue([{ ...standardAllergy, member_id: draft.id }]),
+    listAllergies: vi
+      .fn()
+      .mockResolvedValue([{ ...standardAllergy, member_id: draft.id }, extraAllergy]),
     removeAllergy,
     updateDraft,
     completeMember,
@@ -3954,4 +3964,129 @@ it("H-R1: does not save registered while allergy-insert list confirmation is in 
     expect.objectContaining({ allergy_status: "registered" }),
     expect.any(String),
   );
+});
+
+// H1: settings も onboarding H4 と同型。draft registered の最終 1 件は消さない。
+it("H1: refuses last allergy delete on draft registered so status cannot become registered+0", async () => {
+  const draft = {
+    ...member,
+    id: "draft-h1",
+    status: "draft" as const,
+    allergy_status: "registered" as const,
+  };
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([draft]),
+    listAllergies: vi.fn().mockResolvedValue([{ ...standardAllergy, member_id: draft.id }]),
+    removeAllergy,
+  });
+
+  await userEvent.click(await screen.findByRole("button", { name: "くるみを削除" }));
+
+  expect(removeAllergy).not.toHaveBeenCalled();
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "登録ありの場合は1つ以上選んでください",
+  );
+});
+
+// H5: registered 完了は cache 件数ではなく fresh fetch を正本にする
+it("H5: refuses registered-complete when stale non-empty cache hides an empty list", async () => {
+  const registeredDraft: HouseholdMemberRow = {
+    ...member,
+    status: "draft",
+    allergy_status: "registered",
+  };
+  const listAllergies = vi.fn().mockResolvedValue([]);
+  const completeMember = vi.fn();
+  const updateDraft = vi.fn().mockResolvedValue(registeredDraft);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  queryClient.setQueryData(householdKeys.members("settings"), [registeredDraft]);
+  queryClient.setQueryData(householdKeys.allergies("settings", registeredDraft.id), [
+    { ...standardAllergy, member_id: registeredDraft.id },
+  ]);
+
+  await renderSettings(
+    {
+      listMembers: vi.fn().mockResolvedValue([registeredDraft]),
+      listAllergies,
+      completeMember,
+      updateDraft,
+    },
+    { queryClient },
+  );
+
+  const callsBeforeComplete = listAllergies.mock.calls.length;
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+
+  await waitFor(() => {
+    expect(listAllergies.mock.calls.length).toBeGreaterThan(callsBeforeComplete);
+  });
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(updateDraft).not.toHaveBeenCalled();
+  expect(screen.getByRole("status")).toHaveTextContent("登録ありの場合は1つ以上選んでください");
+});
+
+it("H5: allows registered-complete when stale empty cache hides a remaining allergy", async () => {
+  const registeredDraft: HouseholdMemberRow = {
+    ...member,
+    status: "draft",
+    allergy_status: "registered",
+  };
+  const remaining = { ...standardAllergy, member_id: registeredDraft.id };
+  const listAllergies = vi.fn().mockResolvedValue([remaining]);
+  const completeMember = vi.fn().mockResolvedValue({
+    ...registeredDraft,
+    status: "complete" as const,
+  });
+  const updateDraft = vi.fn().mockResolvedValue(registeredDraft);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  queryClient.setQueryData(householdKeys.members("settings"), [registeredDraft]);
+  queryClient.setQueryData(householdKeys.allergies("settings", registeredDraft.id), []);
+
+  await renderSettings(
+    {
+      listMembers: vi.fn().mockResolvedValue([registeredDraft]),
+      listAllergies,
+      completeMember,
+      updateDraft,
+    },
+    { queryClient },
+  );
+
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledWith(registeredDraft.id);
+  });
+});
+
+// H8: onboarding と同じ保証否定。安全保証コピーは出さない
+it("H8: shows allergy non-guarantee copy and never claims safety", async () => {
+  await renderSettings();
+
+  expect(
+    screen.getByText(
+      "AI生成だけでアレルギーの安全は保証できません。加工品の表示と家庭内の混入を確認してください。",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText(/安全です/u)).not.toBeInTheDocument();
+});
+
+// H9: catalog 失敗でも下段（Plan/共有/Account）は出し、アレルギー Editor は閉じる
+it("H9: keeps account surfaces when allergen catalog fails and closes the allergy editor", async () => {
+  await renderSettings({
+    listCatalog: vi.fn().mockRejectedValue(new Error("catalog failed")),
+  });
+
+  expect(await screen.findByRole("heading", { name: "家族設定" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
+  expect(screen.getByLabelText("プラン")).toBeVisible();
+  expect(screen.getByLabelText("匿名の緊急候補への協力")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "アレルギー編集" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "くるみを追加" })).not.toBeInTheDocument();
+  expect(screen.getByText("アレルギー候補を読み込めませんでした。")).toBeVisible();
 });

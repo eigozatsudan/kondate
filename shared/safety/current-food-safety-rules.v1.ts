@@ -1,5 +1,8 @@
 import type { FoodSafetyRule } from "./food-rules.js";
 
+/** current-safety / seed と共有する単一ソース。値はロック済み。片側 bump 禁止。 */
+export const currentFoodRuleVersion = "jp-caa-child-shape-2026-07.v1" as const;
+
 export const hardBeanAndReviewedNutRule: FoodSafetyRule = {
   id: "hard_beans_and_reviewed_nuts_under_6",
   appliesToAgeBands: ["post_weaning_to_2", "age_3_5"],
@@ -27,7 +30,7 @@ export const hardBeanAndReviewedNutRule: FoodSafetyRule = {
   requiredSafetyTag: null,
   userMessage:
     "5歳以下を含む献立では、硬い豆とピーナッツ・くるみ・アーモンド・カシューナッツ・ピスタチオ・マカダミアナッツを原則使用できません",
-  ruleVersion: "jp-caa-child-shape-2026-07.v1",
+  ruleVersion: currentFoodRuleVersion,
 };
 
 export const currentFoodSafetyRulesV1: readonly FoodSafetyRule[] = [
@@ -39,7 +42,7 @@ export const currentFoodSafetyRulesV1: readonly FoodSafetyRule[] = [
     ruleKind: "requires_tag",
     requiredSafetyTag: "quarter_round_food",
     userMessage: "ぶどうは4等分する工程が必要です",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+    ruleVersion: currentFoodRuleVersion,
   },
   {
     id: "cherry_tomato_under_6",
@@ -48,7 +51,7 @@ export const currentFoodSafetyRulesV1: readonly FoodSafetyRule[] = [
     ruleKind: "requires_tag",
     requiredSafetyTag: "quarter_round_food",
     userMessage: "ミニトマトは4等分する工程が必要です",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+    ruleVersion: currentFoodRuleVersion,
   },
   {
     id: "mochi_under_6",
@@ -57,7 +60,7 @@ export const currentFoodSafetyRulesV1: readonly FoodSafetyRule[] = [
     ruleKind: "forbidden",
     requiredSafetyTag: null,
     userMessage: "5歳以下を含む献立では餅を使用できません",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+    ruleVersion: currentFoodRuleVersion,
   },
   {
     id: "mochi_senior",
@@ -66,7 +69,7 @@ export const currentFoodSafetyRulesV1: readonly FoodSafetyRule[] = [
     ruleKind: "forbidden",
     requiredSafetyTag: null,
     userMessage: "高齢者を含む固定候補とAI献立では餅を原則除外します",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+    ruleVersion: currentFoodRuleVersion,
   },
   {
     id: "bones_for_young_and_senior",
@@ -106,7 +109,7 @@ export const currentFoodSafetyRulesV1: readonly FoodSafetyRule[] = [
     ruleKind: "requires_tag",
     requiredSafetyTag: "remove_bones",
     userMessage: "小骨を完全に除く工程が必要です",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+    ruleVersion: currentFoodRuleVersion,
   },
   {
     id: "hard_food_for_senior",
@@ -115,6 +118,6 @@ export const currentFoodSafetyRulesV1: readonly FoodSafetyRule[] = [
     ruleKind: "requires_tag",
     requiredSafetyTag: "soften",
     userMessage: "高齢者向けに十分やわらかくする工程が必要です",
-    ruleVersion: "jp-caa-child-shape-2026-07.v1",
+    ruleVersion: currentFoodRuleVersion,
   },
 ];
