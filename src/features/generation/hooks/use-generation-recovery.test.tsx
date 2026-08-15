@@ -537,6 +537,44 @@ describe("useGenerationRecovery", () => {
     expect(navigateMock).toHaveBeenCalledWith(`/menus/${succeededA.menuId}?recovered=1`);
   });
 
+  // G-R2: 別インスタンス（別タブ）が pending B を書いたあと、token A の
+  // isActiveToken 着地が key 非照合の clearPendingGeneration で B を消してはならない。
+  // pending 無しの A 着地（直前 2 件）は維持する。
+  it("does not clear a sibling tab's newer pending when delayed GET A succeeds", async () => {
+    const delayedStatus = deferred<GenerationStatusData>();
+    mockStatus.mockReturnValue(delayedStatus.promise);
+    const recovery = renderRecoveryAt(checkingState, pendingA);
+    const statusOp = recovery.result.current.retryStatus();
+    realPendingGeneration.savePendingGeneration(pendingB, storage);
+    delayedStatus.resolve(succeededA);
+    await act(() => statusOp);
+    await waitFor(() => {
+      expect(recovery.result.current.state.phase).toBe("succeeded");
+    });
+    expect(navigateMock).toHaveBeenCalledWith(`/menus/${succeededA.menuId}?recovered=1`);
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject(pendingB);
+    expect(mockClearPending).not.toHaveBeenCalled();
+  });
+
+  it("does not clear a sibling tab's newer pending when delayed POST A succeeds", async () => {
+    const delayedPost = deferred<GenerationStatusData>();
+    mockPost.mockReturnValue(delayedPost.promise);
+    const recovery = renderRecoveryAt(idleState, null);
+    const start = recovery.result.current.startGeneration(pendingA);
+    await act(async () => {
+      await flushPromises();
+    });
+    realPendingGeneration.savePendingGeneration(pendingB, storage);
+    delayedPost.resolve(succeededA);
+    await act(() => start);
+    await waitFor(() => {
+      expect(recovery.result.current.state.phase).toBe("succeeded");
+    });
+    expect(navigateMock).toHaveBeenCalledWith(`/menus/${succeededA.menuId}?recovered=1`);
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject(pendingB);
+    expect(mockClearPending).not.toHaveBeenCalled();
+  });
+
   it("serializes concurrent not_started status checks into one resend", async () => {
     mockReadPending.mockReturnValue(oldPending);
     mockStatus.mockResolvedValue(notStarted);

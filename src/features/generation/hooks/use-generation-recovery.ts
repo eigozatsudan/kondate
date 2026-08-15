@@ -571,7 +571,13 @@ export function useGenerationRecovery(
       token.idempotencyKey === state.data.idempotencyKey &&
       isActiveToken(token)
     ) {
-      clearPendingGeneration();
+      // G-R2: 別タブが claim した新しい pending B は消さない。
+      // clearPendingGeneration は key 非照合なので、pending 無し（他タブが A を
+      // 先に消した着地）または stored key が token A と一致するときだけ呼ぶ。
+      const stored = userId === null ? null : readPendingGeneration(userId, new Date());
+      if (stored === null || stored.request.idempotencyKey === token.idempotencyKey) {
+        clearPendingGeneration();
+      }
       void navigate(`/menus/${state.data.menuId}?recovered=1`);
     }
     if (
