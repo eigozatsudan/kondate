@@ -1141,13 +1141,14 @@ export function AuthProvider({
     const recoveryTtlMs =
       providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000;
     const storage = window.localStorage;
-    // C-R1: residual recovery 起動で arm（first session 待ち）。C2 で pin は authenticated 中ずっと有効。
-    const guard = residualSessionGuardRef.current;
-    guard.armed = true;
     const restrictToFlowId = readActiveLoginFlowId();
     // C4/C12: pin 無し idle /login では residual を始めない。
     // 期限切れ pin は read が捨てる。restrict 無し全件 claim を開かない。
+    // C12: armed は start 直前だけ。早期 return で残すと residual 無しでも first-writer pin が有効。
     if (restrictToFlowId === undefined) return undefined;
+    // C-R1: residual recovery 起動で arm（first session 待ち）。C2 で pin は authenticated 中ずっと有効。
+    const guard = residualSessionGuardRef.current;
+    guard.armed = true;
     const stopRecovery = startRecovery({
       gateway,
       storage,

@@ -2360,6 +2360,56 @@ describe("AuthProvider", () => {
     expect(startRecovery).not.toHaveBeenCalled();
   });
 
+  it("C12: idle /login without pin does not arm first-writer until residual actually starts", async () => {
+    // restrictToFlowId 確定前に armed=true すると、start しない idle /login でも
+    // first-writer pin が有効になる。arm は startRecovery 直前だけ。
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const startRecovery = vi.fn(() => vi.fn());
+    const authListeners: AuthStateListener[] = [];
+    const setSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        setSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    expect(startRecovery).not.toHaveBeenCalled();
+
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionA);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-a");
+    // residual 未起動の first session は通常 pin。意図しない first-writer arm ではない。
+    expect(startRecovery).not.toHaveBeenCalled();
+    expect(setSession).not.toHaveBeenCalled();
+  });
+
   it("C4: expired active-login-flow pin does not start /login residual", async () => {
     window.history.replaceState(null, "", "/login");
     window.localStorage.clear();
