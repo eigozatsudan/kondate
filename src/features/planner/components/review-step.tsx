@@ -1006,14 +1006,18 @@ export function ReviewStep({
               </div>
             )}
             {/* household / idea とも同一 CTA。旧 idea 切替案内「家族向けの緊急献立は…」は削除。
-                P8: audience 未完成時は disabled（生成 CTA と同じ一枚目ガード）。 */}
+                P8: audience 未完成時は disabled（生成 CTA と同じ一枚目ガード）。
+                P12: 未確認期限切れも主 CTA と同型で一次押下させない。 */}
             {(value.targetMode === "household" || value.targetMode === "idea") &&
               onOpenEmergencyMenus !== undefined && (
                 <Button
                   variant="secondary"
                   // P7: 生成主 CTA と同型。safety/pantry soft 中は previous 期限データで進めない
                   disabled={
-                    disabled || requiredQuestionsIncomplete || blockGenerationForStaleSafety
+                    disabled ||
+                    requiredQuestionsIncomplete ||
+                    hasUnconfirmedExpiredPantry ||
+                    blockGenerationForStaleSafety
                   }
                   onClick={onOpenEmergencyMenus}
                 >

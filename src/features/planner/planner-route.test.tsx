@@ -1520,6 +1520,29 @@ it("P1: leave flush timeout 後はロックを落とし、遅延 proceed で固�
   });
 });
 
+it("P9: pendingDisplayReady 前の leave flush は空下書きを正本にしない", async () => {
+  pendingGenerationMock.readPendingGeneration.mockReturnValue({
+    ownerUserId: draft.userId,
+    createdAt: "2026-07-11T00:00:00.000Z",
+    commandVersion: "generation-command.v3",
+    kind: "new_menu",
+    qualityMode: false,
+    request: {
+      idempotencyKey: "80000000-0000-4000-8000-000000000099",
+      draftId: draft.id,
+      draftRevision: draft.revision,
+      privacyNoticeVersion: "2026-07-29.v1",
+      expiredPantryConfirmations: [],
+    },
+  });
+  getGenerationStatusMock.mockReturnValue(new Promise(() => undefined));
+  render(<PlannerRoutePage />);
+  expect(screen.getByText("献立条件を読み込み中…")).toBeInTheDocument();
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
+});
+
 it("C6: leave flush timeout は通信失敗と同系統の理由を出す", async () => {
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
@@ -2339,6 +2362,9 @@ describe("PlannerRoutePage", () => {
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "献立の作成を開始できませんでした。もう一度お試しください。",
+    );
   });
 
   it("P3: claim 負け待ちのあいだに winner が clear したら空 resume しない", async () => {
@@ -2381,6 +2407,9 @@ describe("PlannerRoutePage", () => {
     expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "献立の作成を開始できませんでした。もう一度お試しください。",
+    );
   });
 
   it("入力をリセットすると進行中 pending も捨てる", async () => {
@@ -2476,6 +2505,39 @@ describe("PlannerRoutePage", () => {
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     // resume 導線は pending 無し（sticky にならない）
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
+  });
+
+  it("P4: claim 後の strip abort は公開済み sticky を消さない", async () => {
+    // 勝ちタブが claim+meta したあと strip が abort しても、負けタブが
+    // /generation?resumed=1 済みなら共有 sticky を残す（C7 は未公開の自 key だけ消す）。
+    const deferredClaim = createDeferred<{ pending: unknown; claimed: boolean }>();
+    pendingGenerationMock.claimPendingGeneration.mockImplementation((candidate: unknown) => {
+      pendingGenerationMock.savePendingGeneration(candidate);
+      return deferredClaim.promise.then(() => ({ pending: candidate, claimed: true }));
+    });
+    const user = userEvent.setup();
+    const view = render(<PlannerRoutePage />);
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+    await vi.waitFor(() => {
+      expect(pendingGenerationMock.claimPendingGeneration).toHaveBeenCalled();
+    });
+
+    queryState.safetyEligibleMemberIds = [];
+    view.rerender(<PlannerRoutePage />);
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    });
+
+    deferredClaim.resolve({
+      pending: pendingGenerationMock.claimPendingGeneration.mock.calls[0]?.[0],
+      claimed: true,
+    });
+    await vi.waitFor(() => {
+      expect(pendingGenerationMock.savePendingGenerationMeta).toHaveBeenCalled();
+    });
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
   });
 
   it("P2: targetMode 無効の saved では pending を書かず専用文言を出す", async () => {

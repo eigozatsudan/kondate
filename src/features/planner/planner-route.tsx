@@ -399,9 +399,10 @@ export function PlannerRoutePage() {
         clearPendingGeneration();
         throw error;
       }
-      // strip/abort が claim 後に走った場合は自タブ sticky 再開導線を残さない
-      if (signal.aborted) {
-        clearPendingGeneration();
+      // claim+meta 済みの sticky は共有正本。strip abort で消すと
+      // /generation?resumed=1 済みの負けタブが idle→planner で作成 ID を失う。
+      // reset の C7 は未公開の自 key だけ消す。公開済み claim は残す（P4）。
+      if (isAbortSignalAborted(signal)) {
         return false;
       }
       void navigate("/generation");
@@ -511,6 +512,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const leaveInFlightRef = useRef(false);
   // timeout 後の遅延 flush が proceed ロックを再武装しないよう flight 世代で stale 判定する。
   const leaveFlightIdRef = useRef(0);
+  // P9: leave handler は mount 時固定。init 前は ref で読み、空 persistable を正本にしない。
+  const initializedRef = useRef(false);
   // P2: leave-flush handler は mount 時のみ register。state は ref で読み stale クロージャと
   // deps 更新時 cleanup→null の窓を避ける（submittingRef と同型）。
   const hasDraftConflictRef = useRef(false);
@@ -524,6 +527,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   isOpeningEmergencyMenusRef.current = isOpeningEmergencyMenus;
   isOpeningPrivacyRef.current = isOpeningPrivacy;
   isOpeningSettingsRef.current = isOpeningSettings;
+  initializedRef.current = initialized;
   // P1: 利用者 reset 直後だけ route が flush を await する印（conflict resolve の resetToken とは分離）
   const resetFlushGenerationRef = useRef(0);
   const pendingResetFlushRef = useRef(false);
@@ -702,26 +706,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   const save = useCallback(
     async (next: PlannerDraftInput, revision: number) => {
-      try {
-        return await savePlannerDraft(client, userId ?? "", next, revision);
-      } catch (error) {
-        // 生成成功後に下書きは soft-delete され revision も進む。クライアントが古い
-        // revision を掴んだままだと conflict になる。live 行が無いときだけ rev=0 で
-        // 復活保存を1回試す（save_generation_draft の undelete 経路）。
-        if (!(error instanceof DraftRevisionConflictError) || revision === 0) {
-          throw error;
-        }
-        if (userId === undefined) throw error;
-        let live: PlannerDraft | null;
-        try {
-          live = await getPlannerDraft(client, userId);
-        } catch {
-          // live 確認自体が失敗したら元の conflict を維持（競合 UI / 再取得経路へ）
-          throw error;
-        }
-        if (live !== null) throw error;
-        return await savePlannerDraft(client, userId, next, 0);
-      }
+      // P6: conflict 時に live 無しでも rev=0 undelete しない。
+      // 生成成功後の soft-delete を無言で戻すと、他タブの旧条件が live 正本になる。
+      return await savePlannerDraft(client, userId ?? "", next, revision);
     },
     [client, userId],
   );
@@ -771,24 +758,49 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     saveOnUnload,
   });
   const flushAutosave = autosave.flush;
+  // P2: flushDraft 自体を単一 flight にする。timeout 後の再 leave や reset flush と
+  // 下ナビ leave が重なると、先行 N+1 / 後続 N+2 の cache 連番を競合と誤認する。
+  const flushDraftInFlightRef = useRef<Promise<PlannerDraft> | null>(null);
   const flushDraft = useCallback(async (): Promise<PlannerDraft> => {
-    const saved = await flushAutosave();
-    // 保存完了前に始まった古い再取得で revision を逆行させないよう、cache 更新前に停止する。
-    await queryClient.cancelQueries({
-      queryKey: plannerKeys.draft(userId ?? "missing"),
-      exact: true,
-    });
-    const current = queryClient.getQueryData<PlannerDraft | null>(
-      plannerKeys.draft(userId ?? "missing"),
-    );
-    if (current !== undefined && current !== null && current.revision > saved.revision) {
-      // 遅延した保存応答で別画面の新しい下書きを消さず、既存の明示的な競合解決へ合流させる。
-      await onConflict();
-      throw new DraftRevisionConflictError();
+    const existing = flushDraftInFlightRef.current;
+    if (existing !== null) {
+      return existing;
     }
-    // 緊急献立側が staleTime 内の古い下書きを再利用しないよう、保存結果を遷移前に同期する。
-    queryClient.setQueryData(plannerKeys.draft(userId ?? "missing"), saved);
-    return saved;
+    const flight = (async (): Promise<PlannerDraft> => {
+      const saved = await flushAutosave();
+      // 保存完了前に始まった古い再取得で revision を逆行させないよう、cache 更新前に停止する。
+      await queryClient.cancelQueries({
+        queryKey: plannerKeys.draft(userId ?? "missing"),
+        exact: true,
+      });
+      const current = queryClient.getQueryData<PlannerDraft | null>(
+        plannerKeys.draft(userId ?? "missing"),
+      );
+      if (current !== undefined && current !== null && current.revision > saved.revision) {
+        // 遅延した保存応答で別画面の新しい下書きを消さず、既存の明示的な競合解決へ合流させる。
+        await onConflict();
+        throw new DraftRevisionConflictError();
+      }
+      // 緊急献立側が staleTime 内の古い下書きを再利用しないよう、保存結果を遷移前に同期する。
+      queryClient.setQueryData(plannerKeys.draft(userId ?? "missing"), saved);
+      return saved;
+    })();
+    flushDraftInFlightRef.current = flight;
+    // finally だと拒否が再 throw され void が unhandled rejection になる。
+    // 呼び出し側は flight 自体を await して失敗を扱う。
+    void flight.then(
+      () => {
+        if (flushDraftInFlightRef.current === flight) {
+          flushDraftInFlightRef.current = null;
+        }
+      },
+      () => {
+        if (flushDraftInFlightRef.current === flight) {
+          flushDraftInFlightRef.current = null;
+        }
+      },
+    );
+    return flight;
   }, [flushAutosave, onConflict, queryClient, userId]);
   // P2: leave-flush は mount 時 handler 固定のため、最新 flush を ref 経由で読む
   flushDraftRef.current = flushDraft;
@@ -1187,6 +1199,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         if (leaveInFlightRef.current) {
           return "blocked";
         }
+        // P9: hydrate 前は value=emptyDraft / rev=0。空 persistable を正本にしない。
+        if (!initializedRef.current) {
+          return "proceed";
+        }
         // P4: ガード blocked は無言 stay にせず理由を可視化する。
         // 競合中は chrome に委任し、home では chrome が無いため wizard を開く。
         if (hasDraftConflictRef.current) {
@@ -1486,8 +1502,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         isSaving={
           // P4: debounce autosave 中は leave / privacy navigate と同様に flush join で進める。
           // saving を isSaving に載せると privacy/settings/emergency が無言 disable になる。
-          // 競合 UI は hasDraftConflict（onConflict）で止める。undelete プローブ中の固着は
-          // save() 側で live 確認後に conflict を再 throw して onConflict を発火させる。
+          // 競合 UI は hasDraftConflict（onConflict）で止める。
           // P5: leave-flush 中は privacy/settings と同型で isSaving に載せ、generate の見た目有効
           // ＋無言 early-return、および proceed 後 unmount 前の編集窓を閉じる。
           isSubmitting ||
@@ -1793,7 +1808,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             generationAbortControllerRef.current = controller;
             try {
               const result = await startGeneration(saved, commandAttempt, controller.signal);
-              if (controller.signal.aborted || result === false) return;
+              if (controller.signal.aborted) return;
+              // P5: claim 負け後に winner sticky が消えた等。CTA 再有効化だけの無言停止にしない。
+              if (result === false) {
+                setSubmissionError("献立の作成を開始できませんでした。もう一度お試しください。");
+                return;
+              }
               // resume は既存 pending を使うので attempt を回さない（期限確認を捨てない）。
               if (result !== "resumed") {
                 startNewAttempt();

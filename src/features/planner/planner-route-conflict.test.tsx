@@ -8,6 +8,12 @@ import { pantryKeys } from "@/features/pantry/pantry-api";
 import { privacyKeys } from "@/features/privacy/privacy-queries";
 import { AppToastProvider } from "@/shared/ui/app-toast";
 import { DraftRevisionConflictError, plannerKeys } from "./planner-api";
+import {
+  PLANNER_LEAVE_FLUSH_TIMEOUT_MS,
+  registerPlannerLeaveFlush,
+  resetPlannerLeaveNavigateFlightForTests,
+  runPlannerLeaveFlush,
+} from "./planner-leave-flush";
 
 const userId = "72000000-0000-4000-8000-000000000001";
 const memberId = "70000000-0000-4000-8000-000000000001";
@@ -172,12 +178,15 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  registerPlannerLeaveFlush(null);
+  resetPlannerLeaveNavigateFlightForTests();
+  vi.useRealTimers();
+});
 
 it("retained cache の refetch 完了だけでは入力を置換せず明示操作後だけ最新行へ切り替える", async () => {
   // P4: isSaving は autosave saving を載せない。競合 UI は onConflict→hasDraftConflict で止める。
-  // save() の undelete 用 getPlannerDraft と conflict refetch が同じ mock になるため、
-  // live 行あり（revisionTwo）を即返す。deferred hang だと conflict が発火せず saving 固着する。
+  // onConflict の refetch が hang すると解決ボタンが固着するため live 行を即返す。
   getPlannerDraftMock.mockResolvedValue(revisionTwo);
   savePlannerDraftMock
     .mockRejectedValueOnce(new DraftRevisionConflictError())
@@ -292,8 +301,6 @@ it("P5: 競合解決で incomplete な最新下書きを読むと firstIncomplet
 it("競合 refetch の失敗後は再取得できないことを alert で示し、入力を保持したまま再試行できる", async () => {
   const retryRefetch = createDeferred<PlannerDraft>();
   getPlannerDraftMock
-    // save の conflict 直後: live 確認（行がある → 復活保存せず競合 UI へ）
-    .mockResolvedValueOnce(revisionTwo)
     // onConflict の loadLatestConflictDraft
     .mockRejectedValueOnce(new Error("refetch failed"))
     // 競合 chrome の再試行
@@ -322,7 +329,7 @@ it("競合 refetch の失敗後は再取得できないことを alert で示し
   expect(conflictRetry).toBeTruthy();
   fireEvent.click(conflictRetry as HTMLButtonElement);
   await act(async () => Promise.resolve());
-  expect(getPlannerDraftMock).toHaveBeenCalledTimes(3);
+  expect(getPlannerDraftMock).toHaveBeenCalledTimes(2);
 
   await act(async () => {
     retryRefetch.resolve(revisionTwo);
@@ -470,18 +477,12 @@ it("緊急献立への移動前の保存失敗では遷移せず緊急専用の�
   expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeEnabled();
 });
 
-it("生成後 soft-delete で live 下書きが無い revision conflict は rev=0 で復活保存して緊急献立へ進む", async () => {
+it("生成後 soft-delete で live 下書きが無い revision conflict は undelete せず競合 chrome を出す", async () => {
   // 成功生成後は draft が soft-delete され revision が進む。stale cache の旧 revision で
-  // save すると conflict になる。live 行が null なら undelete 経路（rev=0）を1回試す。
-  // 初期表示は setQueryData 済みのため getPlannerDraft は conflict 後の live 確認だけ。
+  // save すると conflict になる。live 行が null でも rev=0 undelete すると、他タブの
+  // 未送信/旧条件が live 正本として復活する（P6）。競合 chrome へ寄せる。
   getPlannerDraftMock.mockResolvedValue(null);
-  savePlannerDraftMock
-    .mockRejectedValueOnce(new DraftRevisionConflictError())
-    .mockResolvedValueOnce({
-      ...revisionOne,
-      revision: 6,
-      updatedAt: "2026-07-01T03:00:00.000Z",
-    });
+  savePlannerDraftMock.mockRejectedValueOnce(new DraftRevisionConflictError());
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
@@ -492,10 +493,65 @@ it("生成後 soft-delete で live 下書きが無い revision conflict は rev=
   await act(async () => Promise.resolve());
   await act(async () => Promise.resolve());
 
-  expect(savePlannerDraftMock).toHaveBeenCalledTimes(2);
-  // save(client, userId, input, revision)
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
   expect(savePlannerDraftMock.mock.calls[0]?.[3]).toBe(1);
-  expect(savePlannerDraftMock.mock.calls[1]?.[3]).toBe(0);
-  expect(screen.getByTestId("current-path")).toHaveTextContent("/emergency-menus");
+  expect(screen.getByTestId("current-path")).toHaveTextContent("/planner");
+  expect(
+    screen.getByRole("heading", { name: "下書きが別の画面で更新されました" }),
+  ).toBeInTheDocument();
   expect(screen.queryByText(/緊急献立を開けませんでした/u)).not.toBeInTheDocument();
+});
+
+it("P2: timeout 後の再 leave は進行中 flush に join し自タブ連番を競合にしない", async () => {
+  // flushDraft に排他が無いと、timeout 後の再 leave が N+2 を cache に書いたあと
+  // 先行 N+1 の revision 比較が自タブ連番を競合と誤認する。
+  let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
+  savePlannerDraftMock.mockImplementation(
+    (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) => {
+      if (resolveFirst === undefined) {
+        return new Promise<PlannerDraft>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return Promise.resolve({
+        ...revisionOne,
+        ...next,
+        revision: revision + 1,
+        updatedAt: "2026-07-01T03:00:00.000Z",
+      });
+    },
+  );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  renderRetainedDraft(queryClient);
+  await act(async () => Promise.resolve());
+
+  const firstLeave = runPlannerLeaveFlush();
+  await act(async () => Promise.resolve());
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(PLANNER_LEAVE_FLUSH_TIMEOUT_MS + 10);
+  });
+  await expect(firstLeave).resolves.toBe("blocked");
+
+  const secondLeave = runPlannerLeaveFlush();
+  await act(async () => Promise.resolve());
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    resolveFirst?.({
+      ...revisionOne,
+      revision: 2,
+      updatedAt: "2026-07-01T03:00:00.000Z",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await expect(secondLeave).resolves.toBe("proceed");
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+  expect(
+    screen.queryByRole("heading", { name: "下書きが別の画面で更新されました" }),
+  ).not.toBeInTheDocument();
 });

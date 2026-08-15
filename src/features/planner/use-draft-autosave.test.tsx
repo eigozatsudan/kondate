@@ -173,15 +173,19 @@ it("idea 選択直後の servings=null は DB 不能のため保存せず error 
   // UI は mode 切替で idea+servings null の一時状態を作るが、generation_drafts CHECK と
   // plannerDraftInputSchema は idea 完了形だけを許す。autosave が 400 を吐いて「保存できませんでした」
   // にしないこと（人数確定後に初めて保存する）。
+  // 食事等は audience 未選択の persistable として既に hydrate 済み（実 UI の meal→cuisine 後）。
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>
     Promise.resolve(saved(value, revision + 1)),
   );
-  const incompleteIdea = {
+  const persistableMeal: PlannerDraftInput = {
     ...base,
-    mealType: "dinner" as const,
+    mealType: "dinner",
     mainIngredients: ["鶏肉"],
-    cuisineGenre: "japanese" as const,
+    cuisineGenre: "japanese",
+  };
+  const incompleteIdea = {
+    ...persistableMeal,
     targetMode: "idea" as const,
     targetMemberIds: [] as string[],
     servings: null,
@@ -190,7 +194,7 @@ it("idea 選択直後の servings=null は DB 不能のため保存せず error 
   const { rerender, result } = renderHook(
     ({ value }) =>
       useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
-    { initialProps: { value: base } },
+    { initialProps: { value: persistableMeal } },
   );
 
   rerender({ value: incompleteIdea });
@@ -636,6 +640,60 @@ it("P3: non-persistable へ遷移したあと audience 中立形を追記し旧 
     const flushed = await result.current.flush();
     expect(flushed.targetMode).toBeNull();
   });
+});
+
+it("P1: 中立保存後に meal を変えると incomplete でも中立形を追記する", async () => {
+  // household 完成形を hydrate したあと idea（servings=null）へ切ると audience 中立形を書く。
+  // そのあと meal だけ変えても lastPersisted に畳むと dirty にならずサーバに残らない。
+  vi.useFakeTimers();
+  const household: PlannerDraftInput = {
+    ...base,
+    mealType: "dinner",
+    mainIngredients: ["鶏肉"],
+    cuisineGenre: "japanese",
+    targetMode: "household",
+    targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+  };
+  const incompleteIdea: PlannerDraftInput = {
+    ...household,
+    targetMode: "idea",
+    targetMemberIds: [],
+    servings: null,
+  };
+  const neutralizedDinner: PlannerDraftInput = {
+    ...incompleteIdea,
+    targetMode: null,
+    targetMemberIds: [],
+    servings: null,
+  };
+  const lunchIdea: PlannerDraftInput = { ...incompleteIdea, mealType: "lunch" };
+  const neutralizedLunch: PlannerDraftInput = { ...neutralizedDinner, mealType: "lunch" };
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
+    { initialProps: { value: household } },
+  );
+
+  rerender({ value: incompleteIdea });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenNthCalledWith(1, neutralizedDinner, 1);
+
+  rerender({ value: lunchIdea });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(2, neutralizedLunch, 2);
+  expect(result.current.revision).toBe(3);
+
+  await act(async () => {
+    const flushed = await result.current.flush();
+    expect(flushed.mealType).toBe("lunch");
+    expect(flushed.targetMode).toBeNull();
+  });
+  expect(save).toHaveBeenCalledTimes(2);
 });
 
 it("P2: in-flight save が supersede 後も revision を引き継ぎ、後続 empty が conflict しない", async () => {

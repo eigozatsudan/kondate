@@ -1353,6 +1353,39 @@ describe("PlannerWizard review step", () => {
     vi.useRealTimers();
   });
 
+  it("P12: 未確認期限切れ pantry では緊急 CTA を一次押下できない", () => {
+    const expiredPantry: PantryItem = {
+      id: "74000000-0000-4000-8000-000000000099",
+      userId: eligibleMember.id,
+      name: "古い豆腐",
+      quantity: 1,
+      unit: "丁",
+      expiresOn: "2020-01-01",
+      expirationType: "use_by",
+      openedState: "opened",
+      createdAt: "2020-01-01T00:00:00.000Z",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    };
+    const onOpenEmergencyMenus = vi.fn();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...reviewDraft,
+          pantrySelections: [{ pantryItemId: expiredPantry.id, priority: "prefer_use" }],
+        }}
+        pantryItems={[expiredPantry]}
+        onOpenEmergencyMenus={onOpenEmergencyMenus}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
+    );
+  });
+
   it("review では緊急献立導線を出し、保存中は無効化する", async () => {
     const user = userEvent.setup();
     const onOpenEmergencyMenus = vi.fn();

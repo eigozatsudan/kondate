@@ -97,16 +97,23 @@ function audienceNeutralPersistable(value: PlannerDraftInput): PlannerDraftInput
 }
 
 /**
- * 旧 complete mode がサーバに残る遷移だけ中立形を書く。
- * 初回の incomplete idea 入力では書かない（false の保存・flush 成功を防ぐ）。
+ * 旧 complete mode がサーバに残る遷移、および中立保存後に meal 等だけ変わった
+ * incomplete を中立形で書く。初回の incomplete idea（lastPersisted 無し、または
+ * 中立形が lastPersisted と同じ）では書かない。
  */
 function shouldWriteAudienceNeutral(
   latest: PlannerDraftInput,
   lastPersisted: PlannerDraftInput | null,
 ): boolean {
   if (isPersistableDraft(latest)) return false;
-  if (audienceNeutralPersistable(latest) === null) return false;
-  return hasPersistedAudience(lastPersisted);
+  const neutralized = audienceNeutralPersistable(latest);
+  if (neutralized === null) return false;
+  if (hasPersistedAudience(lastPersisted)) return true;
+  // 中立保存後に meal/ingredients/cuisine だけ変わった incomplete は差分を書く（P1）
+  if (lastPersisted !== null && isPersistableDraft(lastPersisted)) {
+    return JSON.stringify(neutralized) !== JSON.stringify(lastPersisted);
+  }
+  return false;
 }
 
 /**
