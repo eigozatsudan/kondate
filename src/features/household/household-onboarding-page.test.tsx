@@ -2242,3 +2242,164 @@ it("H6: rolls back optimistic members cache when registered save fails", async (
   });
   expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
 });
+
+// H-R1: remount で pending overlay だけ落ちると、30s stale cache の registered のまま
+// DB none で complete できる。未 ACK overlay をサーバ正本へ戻す。
+it("H-R1: remount discards unacked registered overlay so complete uses DB status", async () => {
+  const user = userEvent.setup();
+  const dbNoneDraft = residualNoneDraft();
+  const overlayRegistered: HouseholdMemberRow = {
+    ...dbNoneDraft,
+    allergy_status: "registered",
+  };
+  const listMembers = vi.fn().mockResolvedValue([dbNoneDraft]);
+  const updateDraft = vi.fn();
+  const completeMember = vi.fn().mockResolvedValue({
+    ...dbNoneDraft,
+    status: "complete" as const,
+  });
+  const api = baseApi({
+    listMembers,
+    updateDraft,
+    completeMember,
+    listAllergies: vi.fn().mockResolvedValue([residualEggAllergy]),
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  client.setQueryData(householdKeys.members("user-1"), [overlayRegistered]);
+  client.setQueryData(householdKeys.profile("user-1"), mockProfile("in_progress"));
+  client.setQueryData(householdKeys.allergies("user-1", "member-1"), [residualEggAllergy]);
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
+  });
+
+  await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
+
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledWith("member-1");
+  });
+  expect(updateDraft).not.toHaveBeenCalled();
+});
+
+// H-R1: remount fetch 完了前の complete も、cache registered / DB none を正本にしない
+it("H-R1: refuses complete from stale registered overlay while remount members are in flight", async () => {
+  const user = userEvent.setup();
+  const dbNoneDraft = residualNoneDraft();
+  const overlayRegistered: HouseholdMemberRow = {
+    ...dbNoneDraft,
+    allergy_status: "registered",
+  };
+  const remountMembers = deferred<HouseholdMemberRow[]>();
+  const listMembers = vi
+    .fn()
+    .mockImplementationOnce(() => remountMembers.promise)
+    .mockResolvedValue([dbNoneDraft]);
+  const completeMember = vi.fn();
+  const api = baseApi({
+    listMembers,
+    completeMember,
+    listAllergies: vi.fn().mockResolvedValue([residualEggAllergy]),
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  client.setQueryData(householdKeys.members("user-1"), [overlayRegistered]);
+  client.setQueryData(householdKeys.profile("user-1"), mockProfile("in_progress"));
+  client.setQueryData(householdKeys.allergies("user-1", "member-1"), [residualEggAllergy]);
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(await screen.findByLabelText("アレルギーの確認")).toHaveValue("registered");
+  await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
+
+  await waitFor(() => {
+    expect(listMembers.mock.calls.length).toBeGreaterThan(1);
+  });
+  expect(completeMember).not.toHaveBeenCalled();
+  await waitFor(() => {
+    expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
+  });
+  remountMembers.resolve([dbNoneDraft]);
+});
+
+// H-R2: settings H5 と同型。registered 完了は cache 件数ではなく fresh fetch を正本にする
+it("H-R2: refuses registered-complete when stale non-empty cache hides an empty list", async () => {
+  const user = userEvent.setup();
+  const registeredDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "registered",
+    unsupported_diet_status: "none",
+  };
+  const listAllergies = vi.fn().mockResolvedValue([]);
+  const completeMember = vi.fn();
+  const updateDraft = vi.fn();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([registeredDraft]),
+    listAllergies,
+    completeMember,
+    updateDraft,
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  client.setQueryData(householdKeys.members("user-1"), [registeredDraft]);
+  client.setQueryData(householdKeys.profile("user-1"), mockProfile("in_progress"));
+  client.setQueryData(householdKeys.allergies("user-1", "member-1"), [residualEggAllergy]);
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  const callsBeforeComplete = listAllergies.mock.calls.length;
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+
+  await waitFor(() => {
+    expect(listAllergies.mock.calls.length).toBeGreaterThan(callsBeforeComplete);
+  });
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(updateDraft).not.toHaveBeenCalled();
+  expect(
+    screen.getAllByText("アレルギー「登録あり」のときは、1つ以上のアレルゲンを追加してください。")
+      .length,
+  ).toBeGreaterThan(0);
+});
+
+it("H-R2: allows registered-complete when stale empty cache hides a remaining allergy", async () => {
+  const user = userEvent.setup();
+  const registeredDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "registered",
+    unsupported_diet_status: "none",
+  };
+  const remaining = { ...residualEggAllergy, member_id: registeredDraft.id };
+  const listAllergies = vi.fn().mockResolvedValue([remaining]);
+  const completeMember = vi.fn().mockResolvedValue({
+    ...registeredDraft,
+    status: "complete" as const,
+  });
+  const updateDraft = vi.fn();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([registeredDraft]),
+    listAllergies,
+    completeMember,
+    updateDraft,
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  client.setQueryData(householdKeys.members("user-1"), [registeredDraft]);
+  client.setQueryData(householdKeys.profile("user-1"), mockProfile("in_progress"));
+  client.setQueryData(householdKeys.allergies("user-1", "member-1"), []);
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+
+  await waitFor(() => {
+    expect(completeMember).toHaveBeenCalledWith(registeredDraft.id);
+  });
+});

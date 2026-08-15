@@ -103,6 +103,9 @@ const ADD_SCOPE_NOTICE_TITLE_ID = "onboarding-add-scope-notice-title";
 const ALLERGIES_LIST_PENDING_MESSAGE = "アレルギー一覧の読み込みが終わるまで待ってください";
 /** H15: 残針があるのに catalog 未確定だと削除 UI が無く「なし」完了できる */
 const ALLERGEN_CATALOG_PENDING_MESSAGE = "アレルギー候補の読み込みが終わるまで待ってください";
+/** H-R2: registered 完了の件数ゲート。cache ではなく fresh fetch 後に同じ文言を使う */
+const REGISTERED_EMPTY_ALLERGY_MESSAGE =
+  "アレルギー「登録あり」のときは、1つ以上のアレルゲンを追加してください。";
 
 const ONBOARDING_FIELD_ORDER = [
   "ageBand",
@@ -132,8 +135,7 @@ function validateOnboardingDraft(
     errors.allergyStatus = "アレルギーの確認を選んでください";
   } else if (draft.allergy_status === "registered" && allergyCount === 0) {
     // 既存 completeBlockedReason と同じ意味（設計: 既存メッセージ + 同義 toast）
-    errors.allergyStatus =
-      "アレルギー「登録あり」のときは、1つ以上のアレルゲンを追加してください。";
+    errors.allergyStatus = REGISTERED_EMPTY_ALLERGY_MESSAGE;
   }
   // 共有定数（Task 1）。schema / settings と文字列を二重に持たない（設計 I6）
   if (!isOnboardingEnumFilled(draft.unsupported_diet_status)) {
@@ -343,6 +345,33 @@ export function HouseholdOnboardingForm({
     lastAckedMemberRef.current = draft ?? undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- id 切替のみ。updated_at は save 成功で進める
   }, [draft?.id]);
+  // H-R1: remount では pending だけ落とすと 30s stale cache の未 ACK registered が正本化する。
+  // members query は staleTime 内で refetch しないので、mount 時にサーバ正本へ戻す。
+  // 同一セッションで再選択済み / 保存開始後は overlay と CAS を潰さない。
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listMembers()
+      .then((rows) => {
+        if (cancelled) return;
+        if (pendingRegisteredRef.current || latestSaveVersion.current > 0) return;
+        queryClient.setQueryData<HouseholdMemberRow[]>(householdKeys.members(userId), rows);
+        const currentId = lastAckedMemberRef.current?.id;
+        const latest =
+          (currentId === undefined ? undefined : rows.find((row) => row.id === currentId)) ??
+          rows.find((row) => row.status === "draft");
+        if (latest !== undefined) {
+          lastAckedMemberRef.current = latest;
+          draftUpdatedAtRef.current = latest.updated_at;
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // remount のみ。api / queryClient は mount 時のものを使う
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const completeMembers = members.filter((member) => member.status === "complete");
   const onboardingStatus = profileQuery.data?.onboarding_status;
   // complete / skipped / 未取得では skip CTA を出さない（RPC 遷移表）
@@ -845,17 +874,44 @@ export function HouseholdOnboardingForm({
       // click 後の楽観更新を含め、キャッシュ上の最新 draft / allergies で検証する。
       // HR1: deferred registered 未コミット中は members 正本が non-registered でも
       // UI 意図どおり registered として検証し、直後の flush へ進める。
-      const membersNow =
+      // H-R1: remount 後は pending が落ちるので、members も fresh fetch して DB status と揃える。
+      const cachedMembers =
         queryClient.getQueryData<HouseholdMemberRow[]>(householdKeys.members(userId)) ?? [];
-      const rawDraftNow = membersNow.find((member) => member.id === memberId) ?? draft;
+      const cachedDraft = cachedMembers.find((member) => member.id === memberId) ?? draft;
+      let freshMembers: HouseholdMemberRow[];
+      try {
+        freshMembers = await api.listMembers();
+      } catch {
+        setCompleteError(true);
+        endActionPending();
+        return;
+      }
+      const rawDraftNow = freshMembers.find((member) => member.id === memberId) ?? cachedDraft;
       const draftNow =
         pendingRegisteredRef.current && rawDraftNow.status === "draft"
           ? { ...rawDraftNow, allergy_status: "registered" as const }
           : rawDraftNow;
+      if (!pendingRegisteredRef.current) {
+        queryClient.setQueryData<HouseholdMemberRow[]>(householdKeys.members(userId), freshMembers);
+        lastAckedMemberRef.current = rawDraftNow;
+        draftUpdatedAtRef.current = rawDraftNow.updated_at;
+        // remount で pending だけ落ちた overlay。DB に揃えて今回は complete しない。
+        if (
+          cachedDraft.allergy_status === "registered" &&
+          rawDraftNow.allergy_status !== "registered"
+        ) {
+          endActionPending();
+          return;
+        }
+      }
       const allergiesNow =
         queryClient.getQueryData<MemberAllergyRow[]>(householdKeys.allergies(userId, memberId)) ??
         allergies;
-      const nextErrors = validateOnboardingDraft(draftNow, allergiesNow.length);
+      // H-R2: registered の件数は cache ではなく直後の fresh fetch を正本にする（settings H5 と同型）。
+      const nextErrors = validateOnboardingDraft(
+        draftNow,
+        draftNow.allergy_status === "registered" ? 1 : allergiesNow.length,
+      );
       // H5: none/unconfirmed は件数ゲートが無い。一覧未確定なら complete しない
       // H12: 空 cache の refetch 中も同様（isPending だけでは旧 [] のまま通る）
       if (
@@ -920,6 +976,19 @@ export function HouseholdOnboardingForm({
       }
       const isResidualStatusNow =
         draftNow.allergy_status === "none" || draftNow.allergy_status === "unconfirmed";
+      if (draftNow.allergy_status === "registered" && freshAllergies.length === 0) {
+        const registeredEmptyErrors: OnboardingFieldErrors = {
+          allergyStatus: REGISTERED_EMPTY_ALLERGY_MESSAGE,
+        };
+        setFieldErrors(registeredEmptyErrors);
+        showToast({
+          message: REGISTERED_EMPTY_ALLERGY_MESSAGE,
+          tone: "error",
+        });
+        focusFirstInvalid(registeredEmptyErrors);
+        endActionPending();
+        return;
+      }
       if (isResidualStatusNow && allergiesNow.length === 0 && freshAllergies.length > 0) {
         const residualErrors: OnboardingFieldErrors = {
           allergyStatus: RESIDUAL_ALLERGY_WARNING,
