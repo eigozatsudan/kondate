@@ -166,10 +166,18 @@ export function WelcomeRoutePage() {
   /**
    * L1: timeout でちょうど 1 回だけ無効化された flight の遅延確定を reconcile。
    * unmount（mounted=false）や新 flight（ref !== generation+1）では no-op。
+   * ideaSkipFromInProgress: 表示 in_progress の skip。遅延 re-read / ゾンビ CAS が
+   * まだ in_progress なら first-writer 着地へ流さない（L-R2）。
+   * 先勝ち skipped|complete は従来どおり /planner（L6 / L-R1 再読込は壊さない）。
    */
-  function tryReconcileZombieWrite(generation: number, status: OnboardingStatus): boolean {
+  function tryReconcileZombieWrite(
+    generation: number,
+    status: OnboardingStatus,
+    ideaSkipFromInProgress = false,
+  ): boolean {
     if (!stillActive(generation) || userId === undefined) return false;
     if (status === "not_started") return false;
+    if (ideaSkipFromInProgress && status === "in_progress") return false;
     softInvalidateProfile(queryClient, userId);
     // userId は上で narrowed。再判定は generation/mounted のみ（softInvalidate は sync）。
     if (!stillActive(generation)) return false;
@@ -239,7 +247,10 @@ export function WelcomeRoutePage() {
    * 第二 deadline 超過は失敗 UI + single-flight 解除（never-settle の永久閉塞を避ける）。
    * Web Lock は伸ばさない。RPC cancel は主張しない。
    */
-  async function awaitOutstandingCasAfterGrace(generation: number): Promise<void> {
+  async function awaitOutstandingCasAfterGrace(
+    generation: number,
+    ideaSkipFromInProgress = false,
+  ): Promise<void> {
     const flight = casFlightRef.current;
     if (flight === null || flight.generation !== generation) {
       throw new Error("timeout");
@@ -252,7 +263,7 @@ export function WelcomeRoutePage() {
       // CAS 失敗 / 第二 deadline → 開始失敗 UI（single-flight はここで解除）
       throw new Error("timeout");
     }
-    if (tryReconcileZombieWrite(generation, written.onboarding_status)) {
+    if (tryReconcileZombieWrite(generation, written.onboarding_status, ideaSkipFromInProgress)) {
       // 遷移成功: WelcomePage は pending 維持のまま unmount する
       return;
     }
@@ -299,7 +310,7 @@ export function WelcomeRoutePage() {
         if (!isTimeoutError(reconcileError)) {
           throw reconcileError;
         }
-        await awaitOutstandingCasAfterGrace(generation);
+        await awaitOutstandingCasAfterGrace(generation, ideaSkipFromInProgress);
       }
     }
   }
@@ -350,8 +361,13 @@ export function WelcomeRoutePage() {
           // ロック内で最新 status を再読込し、別タブの確定を上書きしない
           const latest = await getProfile(client, userId);
           if (!isCurrent()) {
-            // L1: timeout 後の遅延 re-read。進んでいれば reconcile、未進行なら no-op
-            tryReconcileZombieWrite(generation, latest.onboarding_status);
+            // L1: timeout 後の遅延 re-read。進んでいれば reconcile、未進行なら no-op。
+            // L-R2: 表示 in_progress の skip は in_progress のままなら /onboarding に送らない。
+            tryReconcileZombieWrite(
+              generation,
+              latest.onboarding_status,
+              displayStatus === "in_progress",
+            );
             return;
           }
           const live = latest.onboarding_status;
@@ -382,7 +398,11 @@ export function WelcomeRoutePage() {
           );
           // L1: timeout 後のゾンビ CAS は generation+1 かつ mounted なら reconcile 遷移
           if (!isCurrent()) {
-            tryReconcileZombieWrite(generation, written.onboarding_status);
+            tryReconcileZombieWrite(
+              generation,
+              written.onboarding_status,
+              displayStatus === "in_progress",
+            );
             return;
           }
           // L2: CAS 成功後は invalidate hang を失敗扱いにしない

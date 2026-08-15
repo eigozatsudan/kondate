@@ -540,6 +540,60 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     expect(request).toHaveBeenCalled();
   });
 
+  it("L-R2: delayed lock re-read in_progress after idea skip does not yank to onboarding", async () => {
+    // 表示 in_progress の skip は lock 獲得後も、C5 遅延 re-read がまだ in_progress なら
+    // tryReconcileZombieWrite で /onboarding に潰さない（L-R1 miss 着地と同趣旨）。
+    // L1 ゾンビ（resolve 上書き）と違い、lock 内 re-read だけを遅延解決する。
+    const request = vi.fn(
+      (_name: string, options: LockOptions, callback: (lock: Lock | null) => unknown) => {
+        expect(options.ifAvailable).toBe(true);
+        return Promise.resolve(callback({ name: _name, mode: "exclusive" }));
+      },
+    );
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request },
+    });
+    let resolveLockReread: ((value: { onboarding_status: string }) => void) | undefined;
+    getProfileMock
+      .mockResolvedValueOnce({ onboarding_status: "in_progress" })
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ onboarding_status: string }>((resolve) => {
+            resolveLockReread = resolve;
+          }),
+      )
+      .mockReturnValue(new Promise(() => undefined));
+    const { router } = renderWelcome();
+    expect(
+      await screen.findByRole("button", { name: "設定せず献立アイデアを考える" }),
+    ).toBeVisible();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "設定せず献立アイデアを考える" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          COLD_START_SESSION_DEADLINE_MS + WELCOME_START_RECONCILE_GRACE_MS,
+        );
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("開始できませんでした");
+      expect(screen.getByRole("button", { name: "設定せず献立アイデアを考える" })).toBeEnabled();
+      // 遅延 lock 内 re-read が in_progress で着地しても first-writer 扱いしない
+      await act(async () => {
+        resolveLockReread?.({ onboarding_status: "in_progress" });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(setOnboardingStatusMock).not.toHaveBeenCalled();
+      expect(router.state.location.pathname).toBe("/welcome");
+      expect(screen.queryByRole("heading", { name: "家族設定" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "設定せず献立アイデアを考える" })).toBeVisible();
+      expect(request).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("L4: lock acquire hang past C5 re-enables CTA", async () => {
     Object.defineProperty(navigator, "locks", {
       configurable: true,
