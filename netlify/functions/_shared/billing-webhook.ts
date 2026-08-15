@@ -847,7 +847,10 @@ async function handleSubscriptionEvent(
     current_period_end: projection.current_period_end,
     trial_end: projection.trial_end,
     clear_past_due_since: clearPastDue,
-    kill_source_status: killSourceStatus,
+    // B-R5: 支払証拠の無い incomplete_expired で kill_source を null 上書きしない。
+    // BILLING_ENABLED=true の resolve は null を返すが、既存 unpaid の回復材料を消すと
+    // 次の deleted+canceled でも残存へ戻せない。キー欠落なら SQL は既存を残す。
+    ...(projectedStatus === "incomplete_expired" ? {} : { kill_source_status: killSourceStatus }),
     ...(pastDueSinceIso !== null ? { past_due_since: pastDueSinceIso } : {}),
     // B6: retrieved_subscription を載せない。SQL の same-second は terminality rank を使う。
     // 常に載せると stale retrieve の active が先に commit された canceled を上書きする。
@@ -1141,7 +1144,8 @@ async function handleInvoiceEvent(
     current_period_end: projection.current_period_end,
     trial_end: projection.trial_end,
     clear_past_due_since: clearPastDueSince,
-    kill_source_status: killSourceStatus,
+    // B-R5: invoice の incomplete_expired でも kill_source を null で消さない。
+    ...(status === "incomplete_expired" ? {} : { kill_source_status: killSourceStatus }),
     ...(pastDueSinceIso !== null ? { past_due_since: pastDueSinceIso } : {}),
     // B6: subscription 経路と同型。retrieved_subscription は載せない（same-second terminality）。
   });

@@ -998,6 +998,8 @@ describe("handleBillingWebhook", () => {
       }
     ).p_payload;
     expect(processPayload.status).toBe("canceled");
+    // B-R5: 支払証拠の canceled 残存は kill_source をクリアしてよい（status が正本）。
+    expect(processPayload.kill_source_status).toBeNull();
   });
 
   it("persists incomplete_expired when deleted snapshot is already canceled (B-R1)", async () => {
@@ -1025,6 +1027,66 @@ describe("handleBillingWebhook", () => {
     ).p_payload;
     expect(processPayload.status).toBe("incomplete_expired");
     expect(processPayload.clear_past_due_since).toBe(false);
+    // B-R5: 支払証拠の無い incomplete_expired で kill_source を null 上書きしない。
+    expect(processPayload).not.toHaveProperty("kill_source_status");
+  });
+
+  it("does not remap updated incomplete_expired to canceled (B-R3)", async () => {
+    // 第三 remap は deleted 専用。updated の未来 period で期限切れ canceled を Plus に戻さない。
+    const incompleteExpired = makeSubscription({
+      id: "sub_updated_incomplete_expired",
+      status: "incomplete_expired",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", incompleteExpired, {
+        id: "evt_updated_incomplete_expired",
+        created: 9_326,
+      }),
+    );
+    retrieve.mockResolvedValue(incompleteExpired);
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("incomplete_expired");
+    expect(processPayload.event_type).toBe("customer.subscription.updated");
+  });
+
+  it("does not remap invoice incomplete_expired to canceled (B-R3)", async () => {
+    const invoice = {
+      id: "in_incomplete_expired",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: "sub_invoice_incomplete_expired",
+    } as unknown as Stripe.Invoice;
+    const incompleteExpired = makeSubscription({
+      id: "sub_invoice_incomplete_expired",
+      status: "incomplete_expired",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.payment_failed", invoice, {
+        id: "evt_invoice_incomplete_expired",
+        created: 9_327,
+      }),
+    );
+    retrieve.mockResolvedValue(incompleteExpired);
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("incomplete_expired");
+    expect(processPayload.event_type).toBe("invoice.payment_failed");
+    expect(processPayload).not.toHaveProperty("kill_source_status");
   });
 
   it("does not clear past_due_since when deleting after past_due (B2)", async () => {
