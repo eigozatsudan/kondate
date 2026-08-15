@@ -403,9 +403,12 @@ export function EmergencyMenuPage() {
           })
       : [];
   const pendingExpiredItem = unconfirmedExpiredItems[0] ?? null;
+  // idle も閉じる。未読込のまま候補を出すと期限切れ確認前に API が走り、
+  // pantry 読込完了で enabled が再点灯して同一条件の二重 GET になる。
   const expiredPantryGateBlocks =
     pantryGateNeeded &&
-    (pantryLoadState === "loading" ||
+    (pantryLoadState === "idle" ||
+      pantryLoadState === "loading" ||
       pantryLoadState === "error" ||
       unconfirmedExpiredItems.length > 0);
 
@@ -465,7 +468,8 @@ export function EmergencyMenuPage() {
   const householdInitialLoading =
     householdQueryEnabled &&
     (householdQuery.isPending || (householdQuery.isFetching && householdQuery.data === undefined));
-  const pantryInitialLoading = pantryGateNeeded && pantryLoadState === "loading";
+  const pantryInitialLoading =
+    pantryGateNeeded && (pantryLoadState === "idle" || pantryLoadState === "loading");
   const candidateInitialLoading =
     candidateQueryEnabled && (query.isPending || (query.isFetching && query.data === undefined));
   const loading =

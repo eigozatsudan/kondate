@@ -1374,6 +1374,59 @@ it("renders complete human-labelled cooking instructions without raw identifiers
   expect(container.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27,}/u);
 });
 
+it("PE8: pantry-selected draft does not start candidate query before pantry load", () => {
+  // idle のあいだ候補を起動すると、読込完了後の再 enabled で二重 GET になる。
+  listPantryItemsMock.mockReturnValue(new Promise(() => undefined));
+  useQueryMock.mockImplementation((opts: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    const root = opts.queryKey[0];
+    if (root === "planner") {
+      return {
+        data: {
+          id: "draft-pantry-idle",
+          userId: "72000000-0000-4000-8000-000000000001",
+          mealType: "dinner",
+          mainIngredients: ["卵"],
+          cuisineGenre: null,
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+          timeLimitMinutes: null,
+          budgetPreference: null,
+          ingredientPreference: null,
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [
+            {
+              pantryItemId: "60000000-0000-4000-8000-000000000099",
+              priority: "prefer_use",
+            },
+          ],
+          revision: 1,
+          createdAt: "2026-07-11T00:00:00.000Z",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+        isSuccess: true,
+        isPending: false,
+        isFetching: false,
+        isError: false,
+      };
+    }
+    return {
+      data: undefined,
+      isSuccess: false,
+      isPending: false,
+      isFetching: false,
+      isError: false,
+    };
+  });
+
+  renderWithRouter(<EmergencyMenuPage />);
+
+  expect(emergencyMenusQueryCallEnabled(true)).toBe(false);
+  expect(emergencyMenusQueryCallEnabled(false)).toBe(true);
+  expect(getEmergencyMenusMock).not.toHaveBeenCalled();
+});
+
 it("PE8: direct /emergency-menus blocks candidate query for unconfirmed past-dated pantry", async () => {
   // planner CTA を経由せず URL 直打ちしたとき、未確認の期限切れ選択があるうちは候補 API を起動しない。
   const expiredId = "60000000-0000-4000-8000-000000000001";
