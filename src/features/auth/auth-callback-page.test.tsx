@@ -6,6 +6,7 @@ import { RouterProvider } from "react-router/dom";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
 import { AuthCallbackPage } from "./auth-callback-page";
+import { COLD_START_GET_SESSION_TIMEOUT_MS } from "./auth-provider";
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
 import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
 import { resetAuthCallbackUrlCaptureForTests } from "./auth-callback-url-capture";
@@ -823,6 +824,66 @@ it("fails closed when completeCallback never settles past the continuation TTL",
       await vi.advanceTimersByTimeAsync(300_000);
     });
     expect(leaveAuthCallback).toHaveBeenCalledWith("/login?authError=unbound_callback");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("C6: hangWatchdog fail-closes when getSession hangs despite a completion mark", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+  try {
+    const flowId = "10000000-0000-4000-8000-0000000000c6";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${flowId}`,
+      JSON.stringify({
+        id: flowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/onboarding",
+        sessionExchange: "supabase",
+        startedAt: "2026-07-13T00:00:00.000Z",
+        expiresAt: "2026-07-13T00:00:30.000Z",
+      }),
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.callback-owner.${flowId}`,
+      "2026-07-13T00:00:00.000Z",
+    );
+    window.localStorage.setItem(
+      `kondate.auth.supabase.continuation-complete.${flowId}`,
+      JSON.stringify({
+        flowId,
+        returnTo: "/onboarding",
+        completedAt: "2026-07-13T00:00:00.000Z",
+      }),
+    );
+    getSessionMock.mockReturnValue(new Promise(() => undefined));
+    const gateway: AuthGateway = {
+      signInWithGoogle: vi.fn(),
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
+      resumeFlow: vi.fn(),
+      confirmMagicLink: vi.fn(),
+    };
+    const { leaveAuthCallback } = renderCallback(gateway, {
+      ttlMs: 300_000,
+      initialEntry: `/auth/callback?flow=${flowId}`,
+    });
+    await act(async () => Promise.resolve());
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    // hangWatchdog は発火済みだが getSession hang 中は leave できない
+    expect(leaveAuthCallback).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COLD_START_GET_SESSION_TIMEOUT_MS);
+    });
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=unbound_callback&returnTo=%2Fonboarding",
+    );
   } finally {
     vi.useRealTimers();
   }

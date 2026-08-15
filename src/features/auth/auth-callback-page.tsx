@@ -26,6 +26,8 @@ import {
   isAuthSelfReturnPath,
   sanitizeReturnPath,
 } from "./auth-flow";
+import { withTimeout } from "./async-timeout";
+import { COLD_START_GET_SESSION_TIMEOUT_MS } from "./auth-provider";
 
 type AuthCallbackErrorCode =
   "oauth_cancelled" | "auth_callback_failed" | "magic_link_expired" | "unbound_callback";
@@ -50,10 +52,15 @@ function loginErrorHref(code: AuthCallbackErrorCode, returnTo?: string): string 
 
 /**
  * C6: resumeFlow C-R4 と同型。completion 印だけでは live session 無しの success leave をしない。
+ * getSession hang は AuthProvider / session.ts と同型の timeout で session 無し扱い（fail-closed）。
+ * hang のまま await すると hangWatchdog / TTL の leaveOnce に届かない。
  */
 async function hasLiveAuthSession(): Promise<boolean> {
   try {
-    const sessionResult = await getBrowserSupabaseClient().auth.getSession();
+    const sessionResult = await withTimeout(
+      getBrowserSupabaseClient().auth.getSession(),
+      COLD_START_GET_SESSION_TIMEOUT_MS,
+    );
     return sessionResult.data.session !== null;
   } catch {
     return false;
