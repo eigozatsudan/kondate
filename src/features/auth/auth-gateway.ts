@@ -44,6 +44,13 @@ import { IMMEDIATE_CLAIM_TIMEOUT_MS, withTimeout } from "./async-timeout";
 export { IMMEDIATE_CLAIM_TIMEOUT_MS };
 
 /**
+ * C-R1 / C6: discard 後の getSession 指紋取り。AuthProvider の
+ * COLD_START_GET_SESSION_TIMEOUT_MS と同値。auth-gateway は AuthProvider を
+ * import できない（循環）ため、ここに同値を置く。緩めない。
+ */
+const GET_SESSION_PROBE_TIMEOUT_MS = 5_000;
+
+/**
  * C1/C2: deposit 1 試行の hang 上限（claim 即時経路と同窓）。
  * never-settle でも completeCallback が settle し、secret を hangWatchdog 前に awaiting へ渡せる。
  */
@@ -549,30 +556,54 @@ function hasSiblingAuthContinuationCompletion(loserFlowId: string, storage: Stor
 }
 
 /**
+ * C-R1: discard 直後の session 指紋。C6 / AuthProvider と同型 timeout。
+ * hang / throw / session 無しは null（呼び出し側が sibling 無しなら local clear）。
+ */
+async function probeDiscardedExchangeSessionKey(
+  client: BrowserSupabaseClient,
+): Promise<string | null> {
+  try {
+    const postExchange = await withTimeout(client.auth.getSession(), GET_SESSION_PROBE_TIMEOUT_MS);
+    return sessionProbeKey(postExchange.data.session);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * C-R9: discard した exchange 自身の session が共有 storage に残っているときだけ local clear。
  * 現在 session が discarded fingerprint と一致するときのみ触る（別 token の勝者を壊さない）。
  * pin は AuthProvider 側のタブ local 権威。gateway は fingerprint 一致をその proxy とする。
  * C5: 勝者 completion があるときは signOut しない（上書き済み勝者を一緒に消さない）。
+ * C-R1: 指紋無し（timeout / throw / null）でも sibling が無い loser は local clear。
+ * verify 成功後は persist に magic が書かれている。指紋待ちで掃除しないと pin が後勝ち Google を拒む。
  */
 async function clearDiscardedExchangeSessionIfStillPresent(
   client: BrowserSupabaseClient,
   discardedExchangeSessionKey: string | null,
   context?: { loserFlowId: string; storage: Storage },
 ): Promise<void> {
-  if (discardedExchangeSessionKey === null) return;
   if (
     context !== undefined &&
     hasSiblingAuthContinuationCompletion(context.loserFlowId, context.storage)
   ) {
     return;
   }
-  try {
-    const sessionResult = await client.auth.getSession();
-    const currentKey = sessionProbeKey(sessionResult.data.session);
-    // 既に無い、または別 session（勝者等）が載っている → 触らない
-    if (currentKey === null || currentKey !== discardedExchangeSessionKey) return;
-  } catch {
-    // probe 失敗時は fail-closed（未知状態を wipe しない）
+  if (discardedExchangeSessionKey !== null) {
+    try {
+      const sessionResult = await withTimeout(
+        client.auth.getSession(),
+        GET_SESSION_PROBE_TIMEOUT_MS,
+      );
+      const currentKey = sessionProbeKey(sessionResult.data.session);
+      // 既に無い、または別 session（勝者等）が載っている → 触らない
+      if (currentKey === null || currentKey !== discardedExchangeSessionKey) return;
+    } catch {
+      // 指紋があるのに current を確認できないときは勝者を壊さない
+      return;
+    }
+  } else if (context === undefined) {
+    // 指紋も sibling 判定も無い → 従来どおり触らない
     return;
   }
   // local-only: 共有 session キー + client メモリ。global signOut はしない。
@@ -1542,13 +1573,7 @@ export function createAuthGateway(
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         clearPendingAuthDeposit(flow.id, storage);
         // discard 時点の session 指紋（exchange 結果）。C-R9 clear の一致判定に使う
-        let discardedExchangeSessionKey: string | null = null;
-        try {
-          const postExchange = await client.auth.getSession();
-          discardedExchangeSessionKey = sessionProbeKey(postExchange.data.session);
-        } catch {
-          discardedExchangeSessionKey = null;
-        }
+        const discardedExchangeSessionKey = await probeDiscardedExchangeSessionKey(client);
         await restoreSessionAfterDiscardedExchange(
           client,
           sessionBaseline,
@@ -1799,13 +1824,7 @@ export function createAuthGateway(
       // C-R6/C-R9: verify 後 sibling clear 済みなら complete を publish せず baseline 復元 or loser clear
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         clearPendingAuthDeposit(flow.id, storage);
-        let discardedExchangeSessionKey: string | null = null;
-        try {
-          const postExchange = await client.auth.getSession();
-          discardedExchangeSessionKey = sessionProbeKey(postExchange.data.session);
-        } catch {
-          discardedExchangeSessionKey = null;
-        }
+        const discardedExchangeSessionKey = await probeDiscardedExchangeSessionKey(client);
         await restoreSessionAfterDiscardedExchange(
           client,
           sessionBaseline,
@@ -1817,15 +1836,10 @@ export function createAuthGateway(
       // C-R2: verify 成功後も dismiss なら publish しない（後勝ち Google の secret を焼かない）
       // C2: sibling-clear と同型。破棄した magic session を baseline 復元 or loser 指紋一致時だけ local clear。
       // 残すと Login の authenticated Navigate と pin が後勝ち Google を拒む。
+      // C-R1: 指紋 getSession は timeout。指紋無しでも sibling 無しなら local clear。
       if (isInFlightResumeDismissed(flow.id, storage)) {
         clearPendingAuthDeposit(flow.id, storage);
-        let discardedExchangeSessionKey: string | null = null;
-        try {
-          const postExchange = await client.auth.getSession();
-          discardedExchangeSessionKey = sessionProbeKey(postExchange.data.session);
-        } catch {
-          discardedExchangeSessionKey = null;
-        }
+        const discardedExchangeSessionKey = await probeDiscardedExchangeSessionKey(client);
         await restoreSessionAfterDiscardedExchange(
           client,
           sessionBaseline,
