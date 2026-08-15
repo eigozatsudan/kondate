@@ -898,6 +898,10 @@ export type Database = {
         }
         Returns: Json
       }
+      assert_shopping_items_within_max: {
+        Args: { p_list_id: string; p_user_id: string }
+        Returns: undefined
+      }
       assign_regeneration_lineage: {
         Args: {
           p_change_reason: string
@@ -943,6 +947,10 @@ export type Database = {
       }
       current_safety_fingerprint: {
         Args: { p_target_member_ids: string[]; p_user_id: string }
+        Returns: string
+      }
+      expected_source_safety_fingerprint: {
+        Args: { p_captured: Json; p_menu_id: string }
         Returns: string
       }
       flyer_weekly_request_payload: {
