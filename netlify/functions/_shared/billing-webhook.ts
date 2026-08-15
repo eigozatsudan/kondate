@@ -754,13 +754,33 @@ async function handleSubscriptionEvent(
     return json(200, { ok: true, data: { outcome } });
   }
 
-  // deleted で discarded を keep へリダイレクトしているとき、keep を canceled に落とさない
+  // deleted で discarded を keep へリダイレクトしているとき、keep を canceled に落とさない。
+  // B1: 未払い incomplete / incomplete_expired を canceled にすると未来の period_end
+  // だけで Plus になる。retrieve か event 凍結 status が incomplete* なら A6 どおり残す。
+  // 支払済み（active/trialing/past_due 等）の deleted は従来どおり canceled。
+  const incompleteLike = (status: string): boolean =>
+    status === "incomplete" || status === "incomplete_expired";
+  const retrievedIncomplete = incompleteLike(projection.status);
+  const eventIncomplete = incompleteLike(sub.status);
+  const keepUnpaidIncomplete =
+    event.type === "customer.subscription.deleted" &&
+    !projectingDiscardedOntoKeep &&
+    (retrievedIncomplete || eventIncomplete);
   const forceCanceledFromDeleted =
-    event.type === "customer.subscription.deleted" && !projectingDiscardedOntoKeep;
+    event.type === "customer.subscription.deleted" &&
+    !projectingDiscardedOntoKeep &&
+    !keepUnpaidIncomplete;
+  const deletedStatus = keepUnpaidIncomplete
+    ? retrievedIncomplete
+      ? projection.status
+      : sub.status
+    : forceCanceledFromDeleted
+      ? "canceled"
+      : projection.status;
   // forceCanceled 後に B1/B7 ガード（deleted→canceled が kill 中に再昇格しないよう後段で適用）
   let guardedProjection: SubscriptionProjection = {
     ...projection,
-    status: forceCanceledFromDeleted ? "canceled" : projection.status,
+    status: deletedStatus,
   };
   const stripeCfg = deps.env.stripe;
   const priceOk =
@@ -782,8 +802,9 @@ async function handleSubscriptionEvent(
 
   // B-R7: clear は guard 前 status。kill 中は persist が unpaid でも
   // active/trialing 復帰なら since を消す（設計 L351: 復帰で NULL）。
-  const clearPastDue =
-    preGuardStatus === "active" || preGuardStatus === "trialing" || forceCanceledFromDeleted;
+  // B2: deleted で since を消すと grace 失効後の canceled が Plus に戻る。
+  // 支払済み残存の canceled は since 無しのまま期間内 Plus。
+  const clearPastDue = preGuardStatus === "active" || preGuardStatus === "trialing";
   // 初回 past_due の grace 起点は webhook 処理時刻ではなく Stripe event.created。
   // SQL は既存 past_due_since を優先 coalesce するため再送・延長では伸ばさない。
   // residual-intentional (B8): SQL 正本は payload 欠落時 clock_timestamp() fallback。

@@ -915,6 +915,117 @@ describe("handleBillingWebhook", () => {
     expect(processPayload.status).toBe("active");
   });
 
+  it.each(["incomplete", "incomplete_expired"] as const)(
+    "does not force-cancel unpaid %s on subscription.deleted (B1)",
+    async (status) => {
+      // 未払い incomplete を canceled にすると未来の period_end だけで Plus になる。
+      // A6 どおり incomplete* のまま投影し、支払済み残存の canceled は壊さない。
+      const incomplete = makeSubscription({
+        id: "sub_incomplete_deleted",
+        status,
+        metadata: { supabase_user_id: USER_ID },
+      });
+      constructEvent.mockReturnValue(
+        makeEvent("customer.subscription.deleted", incomplete, {
+          id: `evt_deleted_${status}`,
+          created: 9_300,
+        }),
+      );
+      retrieve.mockResolvedValue(incomplete);
+
+      const response = await handleBillingWebhook(signedRequest(), deps());
+      expect(response.status).toBe(200);
+      const processPayload = (
+        rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+          p_payload: Record<string, unknown>;
+        }
+      ).p_payload;
+      expect(processPayload.status).toBe(status);
+      expect(processPayload.clear_past_due_since).toBe(false);
+    },
+  );
+
+  it("keeps event-frozen incomplete when retrieve is already canceled (B1)", async () => {
+    // deleted 後の retrieve は canceled になりがち。event の incomplete を捨てない。
+    const eventObject = makeSubscription({
+      id: "sub_incomplete_frozen",
+      status: "incomplete",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    const retrievedCanceled = makeSubscription({
+      id: "sub_incomplete_frozen",
+      status: "canceled",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", eventObject, {
+        id: "evt_deleted_incomplete_retrieve_canceled",
+        created: 9_310,
+      }),
+    );
+    retrieve.mockResolvedValue(retrievedCanceled);
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("incomplete");
+    expect(processPayload.clear_past_due_since).toBe(false);
+  });
+
+  it("still force-cancels paid active on subscription.deleted (B1 paid remainder)", async () => {
+    const paid = makeSubscription({
+      id: "sub_paid_deleted",
+      status: "active",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", paid, {
+        id: "evt_deleted_paid_active",
+        created: 9_320,
+      }),
+    );
+    retrieve.mockResolvedValue(paid);
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("canceled");
+  });
+
+  it("does not clear past_due_since when deleting after past_due (B2)", async () => {
+    // grace 切れ証拠を消すと canceled 枝が期間内 Plus に戻す。deleted でも since を残す。
+    const pastDue = makeSubscription({
+      id: "sub_past_due_deleted",
+      status: "past_due",
+      metadata: { supabase_user_id: USER_ID },
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", pastDue, {
+        id: "evt_deleted_after_past_due",
+        created: 9_330,
+      }),
+    );
+    retrieve.mockResolvedValue(pastDue);
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const processPayload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(processPayload.status).toBe("canceled");
+    expect(processPayload.clear_past_due_since).toBe(false);
+  });
+
   it("invoice.paid for discarded dual-sub projects keep active instead of overwrite cancel", async () => {
     // F-U05-1: dual cancel 後の discard 側 invoice.paid が keep を上書きしない
     const keep = makeSubscription({

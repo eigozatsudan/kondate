@@ -2,7 +2,7 @@
 -- Task 2: private billing 表 + SECURITY DEFINER RPC（A6 / lock / process 冪等・stale・crash-safe）
 
 begin;
-select plan(67);
+select plan(85);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -17,6 +17,22 @@ select tests.create_supabase_user(
 select tests.create_supabase_user(
   'f2000000-0000-4000-8000-000000000003'::uuid,
   'billing-kill-since@example.invalid'
+);
+select tests.create_supabase_user(
+  'f2000000-0000-4000-8000-000000000004'::uuid,
+  'billing-b1-incomplete@example.invalid'
+);
+select tests.create_supabase_user(
+  'f2000000-0000-4000-8000-000000000005'::uuid,
+  'billing-b2-grace-cancel@example.invalid'
+);
+select tests.create_supabase_user(
+  'f2000000-0000-4000-8000-000000000006'::uuid,
+  'billing-b3-terminality@example.invalid'
+);
+select tests.create_supabase_user(
+  'f2000000-0000-4000-8000-000000000007'::uuid,
+  'billing-b3-same-rank@example.invalid'
 );
 
 -- ---------------------------------------------------------------------------
@@ -268,6 +284,38 @@ select is(
   false,
   'A6: canceled at/after period_end → plus_entitled false'
 );
+
+-- B2: grace 失効後の canceled は期間が残っても再付与しない
+update private.billing_subscriptions
+set past_due_since = '2026-07-21 12:00:00+00'::timestamptz
+where user_id = 'f2000000-0000-4000-8000-000000000001'::uuid;
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000001'::uuid,
+    '2026-07-25 12:00:00+00'::timestamptz
+  ) ->> 'plus_entitled')::boolean,
+  false,
+  'B2: canceled after past_due grace expired → not entitled'
+);
+
+-- B2: grace 内の canceled は支払済み残存として期間内 Plus
+update private.billing_subscriptions
+set past_due_since = '2026-07-25 00:00:00+00'::timestamptz
+where user_id = 'f2000000-0000-4000-8000-000000000001'::uuid;
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000001'::uuid,
+    '2026-07-25 12:00:00+00'::timestamptz
+  ) ->> 'plus_entitled')::boolean,
+  true,
+  'B2: canceled within past_due grace and period → entitled'
+);
+
+update private.billing_subscriptions
+set past_due_since = null
+where user_id = 'f2000000-0000-4000-8000-000000000001'::uuid;
 
 -- unpaid / incomplete / paused
 update private.billing_subscriptions
@@ -726,6 +774,231 @@ select is(
     where user_id = 'f2000000-0000-4000-8000-000000000003'::uuid),
   null,
   'B-R7 clear_past_due_since nulls since even when persist status is unpaid'
+);
+
+-- ---------------------------------------------------------------------------
+-- B1: 未払い incomplete への deleted(canceled) は incomplete_expired のまま非 Plus
+-- ---------------------------------------------------------------------------
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_b1_incomplete',
+    'event_type', 'customer.subscription.created',
+    'stripe_event_created', 10000,
+    'user_id', 'f2000000-0000-4000-8000-000000000004',
+    'stripe_subscription_id', 'sub_b1_incomplete',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'incomplete',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false
+  )) ->> 'outcome',
+  'applied',
+  'B1 incomplete created applies'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_b1_incomplete_deleted',
+    'event_type', 'customer.subscription.deleted',
+    'stripe_event_created', 11000,
+    'user_id', 'f2000000-0000-4000-8000-000000000004',
+    'stripe_subscription_id', 'sub_b1_incomplete',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'canceled',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true
+  )) ->> 'outcome',
+  'applied',
+  'B1 incomplete deleted payload applies'
+);
+
+select is(
+  (select status from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000004'::uuid),
+  'incomplete_expired',
+  'B1 deleted canceled over incomplete persists incomplete_expired'
+);
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000004'::uuid,
+    '2026-07-15 00:00:00+00'::timestamptz
+  ) ->> 'plus_entitled')::boolean,
+  false,
+  'B1 incomplete deleted remains not entitled inside period'
+);
+
+-- ---------------------------------------------------------------------------
+-- B2: grace 切れ past_due のあと canceled しても since を残し非 Plus
+-- ---------------------------------------------------------------------------
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_b2_past_due',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 12000,
+    'user_id', 'f2000000-0000-4000-8000-000000000005',
+    'stripe_subscription_id', 'sub_b2_grace',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'past_due',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false,
+    'past_due_since', '2026-07-10T00:00:00.000Z'
+  )) ->> 'outcome',
+  'applied',
+  'B2 past_due with expired since applies'
+);
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000005'::uuid,
+    '2026-07-14 00:00:00+00'::timestamptz
+  ) ->> 'plus_entitled')::boolean,
+  false,
+  'B2 past_due > 72h is not entitled'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_b2_deleted',
+    'event_type', 'customer.subscription.deleted',
+    'stripe_event_created', 13000,
+    'user_id', 'f2000000-0000-4000-8000-000000000005',
+    'stripe_subscription_id', 'sub_b2_grace',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'canceled',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true
+  )) ->> 'outcome',
+  'applied',
+  'B2 deleted after grace applies'
+);
+
+select is(
+  (select past_due_since from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000005'::uuid),
+  '2026-07-10 00:00:00+00'::timestamptz,
+  'B2 canceled keeps expired past_due_since even if payload clears'
+);
+
+select is(
+  (select status from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000005'::uuid),
+  'canceled',
+  'B2 deleted past_due persists canceled'
+);
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000005'::uuid,
+    '2026-07-14 00:00:00+00'::timestamptz
+  ) ->> 'plus_entitled')::boolean,
+  false,
+  'B2 canceled after grace remains not entitled'
+);
+
+-- ---------------------------------------------------------------------------
+-- B3: same-second で低い rank は period_end 増加でも canceled を上書きしない
+-- ---------------------------------------------------------------------------
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_b3_canceled',
+    'event_type', 'customer.subscription.deleted',
+    'stripe_event_created', 14000,
+    'user_id', 'f2000000-0000-4000-8000-000000000006',
+    'stripe_subscription_id', 'sub_b3_term',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'canceled',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-07-10T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', false
+  )) ->> 'outcome',
+  'applied',
+  'B3 first canceled applies'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_b3_later_active',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 14000,
+    'user_id', 'f2000000-0000-4000-8000-000000000006',
+    'stripe_subscription_id', 'sub_b3_term',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'active',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-09-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true
+  )) ->> 'outcome',
+  'same_second_skip',
+  'B3 later active with later period_end does not override canceled'
+);
+
+select is(
+  (select status from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000006'::uuid),
+  'canceled',
+  'B3 status remains canceled after same-second active'
+);
+
+-- 同 rank の period 増加は従来どおり apply（更新後 period の投影）
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_b3_same_rank_a',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 15000,
+    'user_id', 'f2000000-0000-4000-8000-000000000007',
+    'stripe_subscription_id', 'sub_b3_rank',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'active',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true
+  )) ->> 'outcome',
+  'applied',
+  'B3 same-rank first active applies'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_b3_same_rank_b',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 15000,
+    'user_id', 'f2000000-0000-4000-8000-000000000007',
+    'stripe_subscription_id', 'sub_b3_rank',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'active',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-08-01T00:00:00.000Z',
+    'current_period_end', '2026-09-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true
+  )) ->> 'outcome',
+  'applied',
+  'B3 same-rank later period_end still applies'
+);
+
+select is(
+  (select current_period_end from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000007'::uuid),
+  '2026-09-01 00:00:00+00'::timestamptz,
+  'B3 same-rank period increase is stored'
 );
 
 -- 禁止: insert_billing_webhook_event を public に export しない

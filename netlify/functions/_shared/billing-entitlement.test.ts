@@ -123,6 +123,50 @@ describe("computePlusEntitled", () => {
     ).toEqual({ plusEntitled: true, pastDueGrace: false });
   });
 
+  it("returns false for canceled after past_due grace expired (B2)", () => {
+    // grace 切れ past_due を canceled にしても未払期間のまま Plus に戻さない。
+    const pastDueSince = new Date(now.getTime() - 73 * 3600_000).toISOString();
+    expect(
+      computePlusEntitled(
+        {
+          status: "canceled",
+          past_due_since: pastDueSince,
+          current_period_end: "2026-08-01T00:00:00.000Z",
+        },
+        now,
+      ),
+    ).toEqual({ plusEntitled: false, pastDueGrace: false });
+  });
+
+  it("returns false for canceled at exact +72h grace after past_due (B2)", () => {
+    const pastDueSince = new Date(now.getTime() - PAST_DUE_GRACE_HOURS * 3600_000).toISOString();
+    expect(
+      computePlusEntitled(
+        {
+          status: "canceled",
+          past_due_since: pastDueSince,
+          current_period_end: "2026-08-01T00:00:00.000Z",
+        },
+        now,
+      ),
+    ).toEqual({ plusEntitled: false, pastDueGrace: false });
+  });
+
+  it("returns true for canceled within past_due grace and period (B2)", () => {
+    // 支払済み残存 + grace 内は従来どおり期間内 Plus。失効してから再付与しないだけ。
+    const pastDueSince = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+    expect(
+      computePlusEntitled(
+        {
+          status: "canceled",
+          past_due_since: pastDueSince,
+          current_period_end: "2026-08-01T00:00:00.000Z",
+        },
+        now,
+      ),
+    ).toEqual({ plusEntitled: true, pastDueGrace: false });
+  });
+
   it("returns false for canceled after period end", () => {
     expect(
       computePlusEntitled(
