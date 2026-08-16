@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/shared/types/database";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
+import { PWA_INSTALL_TIP_DISMISSED_KEY } from "@/features/pwa/install-tip-storage";
 import {
   clearExpiredSessionAuthAndDrafts,
   clearLocalAuthAndDrafts,
@@ -38,8 +39,9 @@ function seedOwnedKeys(storage: Storage): void {
     "bug_report\nアレルギーとメール address@example.com を含む自由記述",
   );
   storage.setItem(householdSafetyRevisionStorageKey, "revision-1");
-  // 無関係な設定は残す
+  // 無関係な設定は残す（PWA 案内 dismiss も端末設定として logout / second-pass 後に残す）
   storage.setItem("kondate:preferences", "keep-me");
+  storage.setItem(PWA_INSTALL_TIP_DISMISSED_KEY, "1");
 }
 
 describe("clearLocalAuthAndDrafts", () => {
@@ -82,6 +84,7 @@ describe("clearLocalAuthAndDrafts", () => {
       expect(storage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
       expect(storage.getItem(householdSafetyRevisionStorageKey)).toBeNull();
       expect(storage.getItem("kondate:preferences")).toBe("keep-me");
+      expect(storage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
     }
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
     expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBeNull();
@@ -114,6 +117,7 @@ describe("clearLocalAuthAndDrafts", () => {
     await expect(clearLocalAuthAndDrafts(client)).resolves.toBeUndefined();
     expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    expect(localStorage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
   });
 
   it("clears storage even when signOut never settles (A2)", async () => {
@@ -131,6 +135,7 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem("kondate.auth.supabase")).toBeNull();
     expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    expect(localStorage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
   });
 
   it("clearOwnedLocalDataBestEffort removes owned keys without signOut (AP5)", () => {
@@ -144,6 +149,7 @@ describe("clearLocalAuthAndDrafts", () => {
       // AP1: free-form fingerprint も second-pass で消える
       expect(storage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
       expect(storage.getItem("kondate:preferences")).toBe("keep-me");
+      expect(storage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
     }
     expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
   });
@@ -209,6 +215,7 @@ describe("clearLocalAuthAndDrafts", () => {
       localStorage.getItem("kondate.auth.flow.10000000-0000-4000-8000-000000000001"),
     ).not.toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    expect(localStorage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
     // C4: origin 共有 localStorage で residual recovery を抑止（新タブからも見える）
     expect(isSoftResidualRecoverySuppressed()).toBe(true);
     expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
@@ -242,6 +249,7 @@ describe("clearLocalAuthAndDrafts", () => {
       }),
     );
     localStorage.setItem("kondate:preferences", "keep-me");
+    localStorage.setItem(PWA_INSTALL_TIP_DISMISSED_KEY, "1");
 
     clearSoftSessionResidualBestEffort();
 
@@ -255,6 +263,7 @@ describe("clearLocalAuthAndDrafts", () => {
       localStorage.getItem(`kondate.auth.supabase.continuation-complete.${flowId}`),
     ).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    expect(localStorage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
     expect(isSoftResidualRecoverySuppressed()).toBe(true);
     expect(localStorage.getItem(SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY)).toBe("1");
   });
@@ -376,6 +385,7 @@ describe("clearLocalAuthAndDrafts", () => {
     localStorage.setItem("kondate:feedback:ambiguous-fingerprint", freeForm);
     sessionStorage.setItem("kondate:feedback:ambiguous-fingerprint", freeForm);
     localStorage.setItem("kondate:preferences", "keep-me");
+    localStorage.setItem(PWA_INSTALL_TIP_DISMISSED_KEY, "1");
 
     const signOut = vi.fn().mockResolvedValue({ error: null });
     const client = {
@@ -386,11 +396,13 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
     expect(sessionStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    expect(localStorage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
 
     // second-pass 経路でも同様
     localStorage.setItem("kondate:feedback:ambiguous-fingerprint", freeForm);
     clearOwnedLocalDataBestEffort();
     expect(localStorage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+    expect(localStorage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
   });
 });
