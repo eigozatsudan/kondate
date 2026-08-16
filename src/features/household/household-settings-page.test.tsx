@@ -3468,6 +3468,18 @@ it("caps the display name at 30 characters and shows a Japanese alert for 31", a
   expect(updateMember).not.toHaveBeenCalled();
 });
 
+it("shows a Japanese alert for a whitespace-only display name", async () => {
+  // H-R1: 空白のみは value || null で残り、trim 後 min(1) が英語 alert になる
+  const { updateMember } = await renderSettings();
+
+  fireEvent.change(await screen.findByLabelText("呼び名"), { target: { value: "   " } });
+
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent("呼び名は1文字以上で入力してください");
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
 it("persists a 30-character display name", async () => {
   const { updateMember } = await renderSettings();
   const name = "あ".repeat(30);

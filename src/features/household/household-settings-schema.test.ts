@@ -157,4 +157,19 @@ describe("householdSettingsSchema displayName (H10)", () => {
     expect(message).toBe("呼び名は30文字以内で入力してください");
     expect(message).not.toMatch(/too big|expected string|characters/iu);
   });
+
+  it("rejects whitespace-only with a Japanese field message, not Zod English", () => {
+    // H-R1: 空白のみは value || null で残り、trim 後 min(1) が Zod 4 英語になる
+    const parsed = householdSettingsSchema.safeParse({
+      ...validSettingsValue,
+      displayName: "   ",
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) {
+      return;
+    }
+    const message = toHouseholdFieldErrors(parsed.error).displayName;
+    expect(message).toBe("呼び名は1文字以上で入力してください");
+    expect(message).not.toMatch(/too small|expected string|characters/iu);
+  });
 });
