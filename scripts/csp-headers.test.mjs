@@ -43,7 +43,7 @@ test("production CSP header has no wildcard and matches VITE origin", () => {
   // Spec §7.5: /sw.js と manifest の MIME を /* CSP より先に固定する
   assert.match(
     headers,
-    /^\/sw\.js\n {2}Cache-Control: no-cache\n {2}Content-Type: text\/javascript; charset=utf-8\n\n\/manifest\.webmanifest\n {2}Content-Type: application\/manifest\+json\n\n\/\*\n {2}Content-Security-Policy: /u,
+    /^\/sw\.js\n {2}Cache-Control: no-cache\n {2}Content-Type: text\/javascript; charset=utf-8\n\n\/manifest\.webmanifest\n {2}Content-Type: application\/manifest\+json\n\n\/app\.html\n {2}X-Robots-Tag: noindex\n\n\/\*\n {2}Content-Security-Policy: /u,
   );
   assert.doesNotMatch(headers, /\*\.supabase\.co/u);
   assert.match(
