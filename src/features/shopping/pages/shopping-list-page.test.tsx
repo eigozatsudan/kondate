@@ -1509,6 +1509,40 @@ describe("CreateListSheet", () => {
     ).toBeInTheDocument();
   });
 
+  it("SHOP-R1: atItemCeiling disables append, defaults to new, and shows ceiling copy", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <CreateListSheet
+        activeList={{ id: LIST_ID, version: 3, itemCount: shoppingItemsMax }}
+        pending={false}
+        safetyBlocked={false}
+        atItemCeiling
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/今のリストへ追加/u)).toBeDisabled();
+    expect(
+      screen.getByText(
+        `このリストは${String(shoppingItemsMax)}件の上限に達しています。リストから外した項目も件数に入るため、新しい項目は足せません。別の献立から新しいリストを作ってください。`,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        new RegExp(
+          `新しいリストにすると、いまの買い物リスト（${String(shoppingItemsMax)}件）は消えます`,
+          "u",
+        ),
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "作成する" }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      mode: "new",
+      activeListId: LIST_ID,
+      expectedListVersion: 3,
+    });
+  });
+
   it("disables append and defaults to new when reconcilable (SHOP4)", async () => {
     const onSubmit = vi.fn();
     render(

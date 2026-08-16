@@ -24,6 +24,7 @@ import {
 import { categoryLabel } from "../category-label";
 import { ShoppingItemRow } from "../components/shopping-item-row";
 import { useShoppingList, useShoppingSafetyGate } from "../hooks/use-shopping-list";
+import { shoppingListAtItemCeilingCopy } from "../shopping-copy";
 import { historyPathForShopping } from "../shopping-intent";
 import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 
@@ -35,10 +36,6 @@ const sections: readonly StoreSection[] = [
   "seasonings",
   "other",
 ];
-
-/** SHOP6: soft-delete 行も 500 件天井に入る。空表示のまま追記不能なとき逃げ道を見せる。 */
-const shoppingListAtItemCeilingCopy =
-  `このリストは${String(shoppingItemsMax)}件の上限に達しています。リストから外した項目も件数に入るため、新しい項目は足せません。別の献立から新しいリストを作ってください。` as const;
 
 /** 画面が持つのは操作の中身だけ。リスト版数・fingerprint・冪等キーは送信直前に付ける。 */
 type LocalShoppingItemMutation<T = ShoppingItemMutationRequest> =

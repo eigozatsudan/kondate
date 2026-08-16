@@ -4,10 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  ShoppingDiff,
-  ShoppingList,
-  ShoppingListSafetyData,
+import {
+  shoppingItemsMax,
+  type ShoppingDiff,
+  type ShoppingList,
+  type ShoppingListSafetyData,
 } from "@shared/contracts/shopping";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
@@ -1088,6 +1089,44 @@ describe("HistoryDetailPage safety gate", () => {
     });
     expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
     expect(screen.getByText(/今のリストへ追加（0件）/u)).toBeInTheDocument();
+  });
+
+  it("SHOP-R1: all-removed at shoppingItemsMax forces new on create sheet", async () => {
+    const items = Array.from({ length: shoppingItemsMax }, (_, index) => ({
+      id: `40000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
+      listId: SHOPPING_LIST_ID,
+      displayName: `項目${String(index)}`,
+      normalizedName: `項目${String(index)}`,
+      storeSection: "produce" as const,
+      quantityValue: 1,
+      quantityText: "1",
+      unit: "個",
+      isChecked: false,
+      isManual: false,
+      isManuallyEdited: false,
+      isRemovedByUser: true,
+      pantryCheckRequired: false,
+      labelWarnings: [],
+    }));
+    shoppingApi.fetchActiveShoppingList.mockResolvedValue({
+      ...activeShoppingList,
+      items,
+    });
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+    renderHistoryDetail({
+      path: `/history/${MENU_ID}?for=shopping`,
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
+    expect(screen.getByLabelText(/今のリストへ追加/u)).toBeDisabled();
+    expect(
+      screen.getByText(new RegExp(`今のリストへ追加（${String(shoppingItemsMax)}件）`, "u")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `このリストは${String(shoppingItemsMax)}件の上限に達しています。リストから外した項目も件数に入るため、新しい項目は足せません。別の献立から新しいリストを作ってください。`,
+      ),
+    ).toBeInTheDocument();
   });
 });
 

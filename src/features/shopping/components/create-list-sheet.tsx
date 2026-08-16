@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { shoppingListAtItemCeilingCopy } from "../shopping-copy";
 
 export type CreateListSheetProps = {
   activeList: { id: string; version: number; itemCount: number } | null;
@@ -9,6 +10,12 @@ export type CreateListSheetProps = {
    * append 既定で壊れたリストに再トラップしないよう new を強制する。
    */
   forceNewMode?: boolean;
+  /**
+   * SHOP-R1: soft-delete 込みで shoppingItemsMax に達しているとき true。
+   * リスト面は「新しいリストを作ってください」と案内するが、lineage 無しの別献立では
+   * 既定 append のまま 422 するため、天井時は new 固定する。
+   */
+  atItemCeiling?: boolean;
   /**
    * SHOP4: 同 lineage が reconcilable のとき true。
    * append は二重行になるため閉じ、差分 CTA へ誘導する（mode=new は維持）。
@@ -32,16 +39,17 @@ export function CreateListSheet({
   pending,
   safetyBlocked,
   forceNewMode = false,
+  atItemCeiling = false,
   disableAppend = false,
   onSubmit,
   onCancel,
 }: CreateListSheetProps) {
-  // 確認不能 / reconcilable のときは append 既定を避ける（SP-I10 / SHOP4）
-  const appendBlocked = forceNewMode || disableAppend;
+  // 確認不能 / 天井 / reconcilable のときは append 既定を避ける（SP-I10 / SHOP-R1 / SHOP4）
+  const appendBlocked = forceNewMode || atItemCeiling || disableAppend;
   const [mode, setMode] = useState<"new" | "append">(
     activeList === null || appendBlocked ? "new" : "append",
   );
-  // forceNew は new 固定。disableAppend のみのときは new 既定だがユーザーは new のみ選択可
+  // forceNew / 天井は new 固定。disableAppend のみのときは new 既定だがユーザーは new のみ選択可
   const effectiveMode = appendBlocked ? "new" : mode;
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -82,7 +90,12 @@ export function CreateListSheet({
                 今のリストは家族設定で確認できないため、新しいリストを作ります。
               </p>
             )}
-            {disableAppend && !forceNewMode && (
+            {atItemCeiling && !forceNewMode && (
+              <p className="type-small" role="status">
+                {shoppingListAtItemCeilingCopy}
+              </p>
+            )}
+            {disableAppend && !forceNewMode && !atItemCeiling && (
               <p className="type-small" role="status">
                 この献立の更新は「買い物リストの差分を見る」から反映してください。追加ではなく新しいリストにする場合のみ選べます。
               </p>

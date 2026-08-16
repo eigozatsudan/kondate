@@ -5,6 +5,7 @@ import type { MenuResultViewModel } from "@shared/contracts/menu-result";
 import {
   createShoppingListRequestSchema,
   reconcileShoppingListRequestSchema,
+  shoppingItemsMax,
   type CreateShoppingListRequest,
   type ReconcileShoppingListRequest,
   type ShoppingDiff,
@@ -58,6 +59,7 @@ import {
   useShoppingList,
   useShoppingSafetyGate,
 } from "@/features/shopping/hooks/use-shopping-list";
+import { shoppingCommandCodedFailureCopy } from "@/features/shopping/shopping-copy";
 import {
   cancelPendingResumeSuppressClear,
   clearResumeSuppressOnDocumentBoot,
@@ -243,8 +245,13 @@ export function HouseholdMenuDetailBody({
   // HR2: notice と同型に gateOpen を要求。invalid 後に disabled 買い物を primary に残さない。
   // soft 中は gateOpen 維持のまま canCreate が false → shopping 枝だが disabled（一時）。
   const shoppingAsPrimary = (accepted && gateOpen) || (confirmedSingle && canCreateShoppingList);
+  const totalItemCount = activeList === null ? 0 : activeList.items.length;
+  // SHOP-R1: Function は is_removed_by_user を除外せず全行で天井判定する。
+  // 非 removed 件数だけだと 500 件 all-removed が「0件」に見え、append 422 する。
+  const atItemCeiling = totalItemCount >= shoppingItemsMax;
   const nonRemovedCount =
     activeList === null ? 0 : activeList.items.filter((item) => !item.isRemovedByUser).length;
+  const sheetItemCount = atItemCeiling ? totalItemCount : nonRemovedCount;
   // HR3: preview/apply の await 後に最新 gate を読む（クロージャ stale を避ける）
   const shoppingMutateBlockedRef = useRef(shoppingMutateBlocked);
   shoppingMutateBlockedRef.current = shoppingMutateBlocked;
@@ -462,7 +469,8 @@ export function HouseholdMenuDetailBody({
       setShoppingDiff(null);
       // 意図的クローズ後に sheetExpected 復帰で再 open しない
       clearShoppingSheetExpected();
-      setShoppingError("買い物リストの状態が変わりました。もう一度確認してください");
+      // SHOP-R1: 天井 422 は generic 畳みをせず、リスト面と同じ天井 copy を出す。
+      setShoppingError(shoppingCommandCodedFailureCopy(code));
       return;
     }
     setShoppingError("買い物リストを更新できませんでした。通信が戻ると自動で送り直します");
@@ -883,7 +891,7 @@ export function HouseholdMenuDetailBody({
                 : {
                     id: activeList.id,
                     version: activeList.version,
-                    itemCount: nonRemovedCount,
+                    itemCount: sheetItemCount,
                   }
             }
             pending={createList.isPending}
@@ -891,6 +899,8 @@ export function HouseholdMenuDetailBody({
             // 表示中の再取得で「作成する」が disable 点滅しないよう送信は actionsEnabled のみ見る。
             safetyBlocked={!actionsEnabled}
             forceNewMode={shoppingGate.error}
+            // SHOP-R1: 天井時は append を閉じ new 固定。件数は removed 込み（sheetItemCount）
+            atItemCeiling={atItemCeiling}
             // SHOP4: reconcilable 時は append を閉じ、差分 CTA へ誘導（mode=new は維持）
             disableAppend={reconcileTarget.data !== null && reconcileTarget.data !== undefined}
             onSubmit={(input) => {

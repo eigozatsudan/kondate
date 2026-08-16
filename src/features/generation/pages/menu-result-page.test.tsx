@@ -6,10 +6,11 @@ import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
 import type { PlannerSubmission } from "@shared/contracts/planner";
-import type {
-  ShoppingDiff,
-  ShoppingList,
-  ShoppingListSafetyData,
+import {
+  shoppingItemsMax,
+  type ShoppingDiff,
+  type ShoppingList,
+  type ShoppingListSafetyData,
 } from "@shared/contracts/shopping";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import type { RevalidationResult } from "@/features/history/api/revalidation-api";
@@ -662,6 +663,28 @@ describe("MenuResultPage", () => {
     );
     const stickyKey = pendingShoppingCommandStorageKey("create", VALID_MENU_ID);
     expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).toBeNull();
+  });
+
+  it("SHOP-R1: shows ceiling copy when create returns shopping_items_limit_exceeded", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.createShoppingList.mockRejectedValue(
+      Object.assign(new Error("買い物リストの品目が上限に達しました"), {
+        code: "shopping_items_limit_exceeded",
+      }),
+    );
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const createButton = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
+    await waitFor(() => {
+      expect(createButton).toBeEnabled();
+    });
+    await userEvent.click(createButton);
+    await userEvent.click(screen.getByRole("button", { name: "作成する" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      `このリストは${String(shoppingItemsMax)}件の上限に達しています。リストから外した項目も件数に入るため、新しい項目は足せません。別の献立から新しいリストを作ってください。`,
+    );
   });
 
   it("discards reconcile sticky on list_version_conflict so true-stale can remint (SHOP1)", async () => {
