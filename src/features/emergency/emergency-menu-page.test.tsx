@@ -24,6 +24,27 @@ function emergencyMenusQueryCallEnabled(enabled: boolean): boolean {
   });
 }
 
+function deferredPromise<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+type EmergencyMenusQueryCall = {
+  queryKey: readonly unknown[];
+  enabled: boolean | undefined;
+};
+
+function emergencyMenusQueryCallsAfter(callIndex: number): EmergencyMenusQueryCall[] {
+  return useQueryMock.mock.calls.slice(callIndex).flatMap((call) => {
+    const options = call[0] as { queryKey?: readonly unknown[]; enabled?: boolean } | undefined;
+    if (options?.queryKey?.[0] !== "emergency-menus") return [];
+    return [{ queryKey: options.queryKey, enabled: options.enabled }];
+  });
+}
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: useQueryMock,
   // PE9: 下書き invalidate 用。page テストは queryClient を持たないので no-op。
@@ -1850,3 +1871,128 @@ it.each(["CHANNEL_ERROR", "TIMED_OUT"] as const)(
     });
   },
 );
+
+it("PE3: unknown expired pantry ID added while ready does not enable candidate GET before confirmation", async () => {
+  // pantry ready のまま draft に旧 rows に無い期限切れ ID が着くと、
+  // item === undefined → 確認済み扱いで GET が先に走る窓があった。
+  const knownId = "60000000-0000-4000-8000-000000000010";
+  const unknownExpiredId = "60000000-0000-4000-8000-000000000011";
+  const userId = "72000000-0000-4000-8000-000000000001";
+  const knownItem: PantryItem = {
+    id: knownId,
+    userId,
+    name: "キャベツ",
+    quantity: 1,
+    unit: "個",
+    expiresOn: "2099-01-01",
+    expirationType: "best_before",
+    openedState: "unopened",
+    createdAt: "2020-01-01T00:00:00.000Z",
+    updatedAt: "2020-01-01T00:00:00.000Z",
+  };
+  let pantrySelections: { pantryItemId: string; priority: "prefer_use" }[] = [
+    { pantryItemId: knownId, priority: "prefer_use" },
+  ];
+  listPantryItemsMock.mockResolvedValue([knownItem]);
+
+  useQueryMock.mockImplementation((opts: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    const root = opts.queryKey[0];
+    if (root === "planner") {
+      return {
+        data: {
+          id: "draft-pe3",
+          userId,
+          mealType: "dinner",
+          mainIngredients: [],
+          cuisineGenre: null,
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+          timeLimitMinutes: null,
+          budgetPreference: null,
+          ingredientPreference: null,
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections,
+          revision: 1,
+          createdAt: "2026-07-11T00:00:00.000Z",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+        isSuccess: true,
+        isPending: false,
+        isFetching: false,
+        isError: false,
+      };
+    }
+    if (root === "emergency-menus" && opts.enabled === true) {
+      return {
+        data: undefined,
+        isSuccess: false,
+        isPending: true,
+        isFetching: true,
+        isError: false,
+      };
+    }
+    return {
+      data: undefined,
+      isSuccess: false,
+      isPending: false,
+      isFetching: false,
+      isError: false,
+    };
+  });
+
+  renderWithRouter(<EmergencyMenuPage />);
+
+  await waitFor(() => {
+    expect(listPantryItemsMock).toHaveBeenCalled();
+    expect(emergencyMenusQueryCallEnabled(true)).toBe(true);
+  });
+  expect(screen.queryByTestId("emergency-expired-pantry-gate")).toBeNull();
+
+  const nextPantry = deferredPromise<readonly PantryItem[]>();
+  listPantryItemsMock.mockReturnValue(nextPantry.promise);
+  pantrySelections = [
+    { pantryItemId: knownId, priority: "prefer_use" },
+    { pantryItemId: unknownExpiredId, priority: "prefer_use" },
+  ];
+  const callsBeforeDraftUpdate = useQueryMock.mock.calls.length;
+
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+
+  const afterDraftUpdate = emergencyMenusQueryCallsAfter(callsBeforeDraftUpdate);
+  expect(afterDraftUpdate.length).toBeGreaterThan(0);
+  expect(
+    afterDraftUpdate.some((call) => {
+      const pantryIds = call.queryKey[6];
+      return (
+        call.enabled === true && Array.isArray(pantryIds) && pantryIds.includes(unknownExpiredId)
+      );
+    }),
+  ).toBe(false);
+  // 再読込完了前はゲートを閉じ、確認前 GET を起動しない
+  expect(afterDraftUpdate.every((call) => call.enabled === false)).toBe(true);
+  expect(getEmergencyMenusMock).not.toHaveBeenCalled();
+
+  const expiredUnknown: PantryItem = {
+    ...knownItem,
+    id: unknownExpiredId,
+    name: "牛乳",
+    expiresOn: "2020-01-01",
+    expirationType: "use_by",
+  };
+  await act(async () => {
+    nextPantry.resolve([knownItem, expiredUnknown]);
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(screen.getByTestId("emergency-expired-pantry-gate")).toBeVisible();
+  });
+  expect(
+    emergencyMenusQueryCallsAfter(callsBeforeDraftUpdate).every((call) => call.enabled === false),
+  ).toBe(true);
+  expect(getEmergencyMenusMock).not.toHaveBeenCalled();
+});

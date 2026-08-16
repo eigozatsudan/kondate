@@ -106,6 +106,9 @@ export function EmergencyMenuPage() {
   const [pantryLoadState, setPantryLoadState] = useState<"idle" | "loading" | "ready" | "error">(
     "idle",
   );
+  // PE3: いま ready な pantryRows が対応する draft ID 集合。
+  // draft だけ先に変わると旧 rows に無い ID を確認済み扱いにして GET してしまう。
+  const [readyPantryDraftKey, setReadyPantryDraftKey] = useState<string | null>(null);
   // PE2: pantry 実物の再読込世代。ID CSV が同じでも期限更新で effect を再走させる。
   const [pantryRefreshTick, setPantryRefreshTick] = useState(0);
   const [householdSafetyRevision, setHouseholdSafetyRevision] = useState(() => {
@@ -367,6 +370,7 @@ export function EmergencyMenuPage() {
     if (userId === undefined || !pantryGateNeeded) {
       setPantryRows(null);
       setPantryLoadState("idle");
+      setReadyPantryDraftKey(null);
       return;
     }
     let cancelled = false;
@@ -376,11 +380,13 @@ export function EmergencyMenuPage() {
       .then((rows) => {
         if (cancelled) return;
         setPantryRows(rows);
+        setReadyPantryDraftKey(draftPantryKey);
         setPantryLoadState("ready");
       })
       .catch(() => {
         if (cancelled) return;
         setPantryRows(null);
+        setReadyPantryDraftKey(null);
         setPantryLoadState("error");
       });
     return () => {
@@ -396,7 +402,8 @@ export function EmergencyMenuPage() {
     if (declinedExpiredSet.has(id)) return false;
     if (pantryLoadState !== "ready" || pantryRows === null) return true;
     const item = pantryRows.find((row) => row.id === id);
-    if (item === undefined) return true;
+    // PE3: 旧 snapshot に無い ID は期限不明。確認済み扱いにせずスコア対象から外す。
+    if (item === undefined) return false;
     void sessionConfirmGeneration;
     return !(
       isPastEnteredExpiry(item, nowForExpiry) &&
@@ -419,6 +426,9 @@ export function EmergencyMenuPage() {
           })
       : [];
   const pendingExpiredItem = unconfirmedExpiredItems[0] ?? null;
+  // PE3: draft ID 集合だけ先に変わったフレームは、旧 rows で期限判定せず再読込まで GET しない。
+  const pantrySnapshotStaleForDraft =
+    pantryGateNeeded && pantryLoadState === "ready" && readyPantryDraftKey !== draftPantryKey;
   // idle も閉じる。未読込のまま候補を出すと期限切れ確認前に API が走り、
   // pantry 読込完了で enabled が再点灯して同一条件の二重 GET になる。
   const expiredPantryGateBlocks =
@@ -426,7 +436,8 @@ export function EmergencyMenuPage() {
     (pantryLoadState === "idle" ||
       pantryLoadState === "loading" ||
       pantryLoadState === "error" ||
-      unconfirmedExpiredItems.length > 0);
+      unconfirmedExpiredItems.length > 0 ||
+      pantrySnapshotStaleForDraft);
 
   // 設計 §5: idea は targetMemberIds 空・targetMode idea。eligible 0 でも候補 query を起動する。
   const request =
@@ -485,7 +496,8 @@ export function EmergencyMenuPage() {
     householdQueryEnabled &&
     (householdQuery.isPending || (householdQuery.isFetching && householdQuery.data === undefined));
   const pantryInitialLoading =
-    pantryGateNeeded && (pantryLoadState === "idle" || pantryLoadState === "loading");
+    pantryGateNeeded &&
+    (pantryLoadState === "idle" || pantryLoadState === "loading" || pantrySnapshotStaleForDraft);
   const candidateInitialLoading =
     candidateQueryEnabled && (query.isPending || (query.isFetching && query.data === undefined));
   const loading =
