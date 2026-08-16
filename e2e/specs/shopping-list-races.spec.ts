@@ -110,7 +110,7 @@ test("rejects creation after current household safety changes", async ({
   // （安全条件変更後は作成できない）は変えない。
   await markFirstMemberAllergyUnconfirmed(page);
   await page.goto(`/menus/${shoppingMenuId}`);
-  await expect(page.getByRole("alert")).toContainText(/現在の(家族設定|安全条件)/u, {
+  await expect(page.getByRole("alert")).toContainText(/この献立の対象家族の設定/u, {
     timeout: 30_000,
   });
   // HR2: 安全ゲート閉鎖時は作成 CTA を非表示（disabled で残さない）
@@ -380,7 +380,7 @@ test("pending create envelope does not create a list after household safety chan
   // メニュー結果は安全条件変更で fail closed。HR2: 作成 CTA は非表示。
   // shopping 側の別 alert（リスト状態）と strict 衝突しないよう文言で絞る。
   await expect(
-    page.getByRole("alert").filter({ hasText: /現在の(家族設定|安全条件)/u }),
+    page.getByRole("alert").filter({ hasText: /この献立の対象家族の設定/u }),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "材料の買い物リストを作る" })).toHaveCount(0);
 
@@ -625,7 +625,7 @@ test("pending reconcile envelope does not apply after household safety changes",
 
   // メニュー側も fail closed（差分 CTA は使えない）
   await expect(
-    page.getByRole("alert").filter({ hasText: /現在の(家族設定|安全条件)/u }),
+    page.getByRole("alert").filter({ hasText: /この献立の対象家族の設定/u }),
   ).toBeVisible({ timeout: 30_000 });
 
   // /shopping: 使用中リストがあっても操作は閉じたまま（safety invalid）
