@@ -1779,6 +1779,78 @@ it("H4: refuses last allergy delete on draft registered so status cannot become 
   }
 });
 
+// H3: draft registered の最終削除は UI cache ではなく fresh fetch を正本にする
+it("H3: refuses last draft-registered delete when stale cache still shows two allergies", async () => {
+  const user = userEvent.setup();
+  const registeredDraft: HouseholdMemberRow = {
+    ...draft,
+    age_band: "adult",
+    allergy_status: "registered",
+    unsupported_diet_status: "none",
+  };
+  const remaining = {
+    id: "allergy-egg",
+    user_id: "user-1",
+    member_id: registeredDraft.id,
+    allergen_id: "egg",
+    custom_name: null,
+    custom_aliases: [] as string[],
+    custom_confirmed: false,
+    created_at: "2026-07-11T00:00:00.000Z",
+  };
+  const alreadyGone = {
+    ...remaining,
+    id: "allergy-wheat",
+    allergen_id: "wheat",
+  };
+  const listAllergies = vi.fn().mockResolvedValue([remaining]);
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([registeredDraft]),
+    listAllergies,
+    listCatalog: vi.fn().mockResolvedValue([
+      {
+        id: "egg",
+        display_name: "卵",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+      {
+        id: "wheat",
+        display_name: "小麦",
+        regulatory_class: "standard",
+        catalog_version: "2026-07-11",
+        created_at: "2026-07-11T00:00:00.000Z",
+      },
+    ]),
+    listAliases: vi.fn().mockResolvedValue([]),
+    removeAllergy,
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  client.setQueryData(householdKeys.members("user-1"), [registeredDraft]);
+  client.setQueryData(householdKeys.allergies("user-1", registeredDraft.id), [
+    remaining,
+    alreadyGone,
+  ]);
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(await screen.findByRole("button", { name: "卵を削除" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "小麦を削除" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "卵を削除" }));
+
+  await waitFor(() => {
+    expect(listAllergies).toHaveBeenCalled();
+  });
+  expect(removeAllergy).not.toHaveBeenCalled();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "登録ありの場合は1つ以上選んでください",
+  );
+});
+
 // H4: 追加後も一覧が空なら直接 commit が registered を書かない（HR1 effect は length===0 で既に return）
 it("H4: commitPendingRegisteredIfNeeded does not write registered when allergy list is empty", async () => {
   const user = userEvent.setup();

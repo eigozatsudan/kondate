@@ -174,6 +174,8 @@ const FALLBACK_VALIDATION_TOAST = "入力内容を確認してください";
  * onboarding の ALLERGIES_LIST_PENDING_MESSAGE と同文（household-onboarding-page.tsx）。
  */
 const ALLERGIES_LIST_PENDING_MESSAGE = "アレルギー一覧の読み込みが終わるまで待ってください";
+/** H15: 残針があるのに catalog / aliases 未確定だと削除 UI が無く「なし」完了できる */
+const ALLERGEN_CATALOG_PENDING_MESSAGE = "アレルギー候補の読み込みが終わるまで待ってください";
 
 /**
  * H5: 「なし／未確認」は件数検証が無いので、一覧 pending（または未 success かつ cache 空）
@@ -194,6 +196,27 @@ function isSettingsAllergyListUnverified(
     query.isPending ||
     (!query.isSuccess && cachedCount === 0) ||
     (query.isFetching && cachedCount === 0)
+  );
+}
+
+/**
+ * H15: 残針が確定しているときだけ catalog / aliases を見る。H5 の allergies 関門は広げない。
+ * settings の Editor は両方必要。pending、または data が無い（初回 error）なら未確定。
+ * refetch error で直前 data が残る場合は確定済み（onboarding H16 と同型）。
+ */
+function isSettingsResidualCatalogUnverified(
+  hasResidualAllergies: boolean,
+  catalog: { isPending: boolean; data: unknown },
+  aliases: { isPending: boolean; data: unknown },
+): boolean {
+  if (!hasResidualAllergies) {
+    return false;
+  }
+  return (
+    catalog.isPending ||
+    catalog.data === undefined ||
+    aliases.isPending ||
+    aliases.data === undefined
   );
 }
 
@@ -1228,6 +1251,21 @@ export function HouseholdSettingsForm({
     // 警告を見たあとの再クリックは cache が 0 でないので通す（onboarding H11 と同型）。
     const isResidualStatus =
       parsed.data.allergyStatus === "none" || parsed.data.allergyStatus === "unconfirmed";
+    // H15: 残針があるのに catalog / aliases 未確定だと削除 UI が無く「なし」完了できる。
+    // H5 は allergies だけ。catalog は残針が確定しているときだけ見る（onboarding H15 と同型）。
+    const hasResidualNow =
+      isResidualStatus && allergiesQuery.isSuccess && currentAllergies.length > 0;
+    if (isSettingsResidualCatalogUnverified(hasResidualNow, catalogQuery, aliasesQuery)) {
+      releaseSavingGuard();
+      setMessage("");
+      setErrors({ allergyStatus: ALLERGEN_CATALOG_PENDING_MESSAGE });
+      showToast({
+        message: ALLERGEN_CATALOG_PENDING_MESSAGE,
+        tone: "error",
+      });
+      allergyStatusRef.current?.focus();
+      return;
+    }
     const needsFreshAllergyList = parsed.data.allergyStatus === "registered" || isResidualStatus;
     let freshAllergies: MemberAllergyRow[] | undefined;
     if (needsFreshAllergyList) {
@@ -1521,6 +1559,18 @@ export function HouseholdSettingsForm({
   const catalogReady = catalogQuery.isSuccess && aliasesQuery.isSuccess;
   const catalogPending = catalogQuery.isPending || aliasesQuery.isPending;
   const catalogFailed = (catalogQuery.isError || aliasesQuery.isError) && !catalogPending;
+  const hasResidualAllergies =
+    values !== undefined &&
+    (values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
+    allergiesQuery.isSuccess &&
+    currentAllergies.length > 0;
+  const residualCatalogUnresolved = isSettingsResidualCatalogUnverified(
+    hasResidualAllergies,
+    catalogQuery,
+    aliasesQuery,
+  );
+  // H15: 「削除できます」と残針 Editor は catalog / aliases が確定しているときだけ
+  const showResidualAllergyEditor = hasResidualAllergies && !residualCatalogUnresolved;
   // 編集を開いているときだけ values を要求する。一覧表示中に values 未初期化で
   // 画面全体をローディングへ落とさない（削除後の不整合を防ぐ）。
   if (editorOpen && values === undefined && selected !== undefined) {
@@ -1852,13 +1902,12 @@ export function HouseholdSettingsForm({
             )}
             {/* H1: residual は success 時の length。未確認は error / pending / 空 cache の fetching
                 （onboarding H5/H12。empty fallback で residual を消さない） */}
-            {(values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
-              allergiesQuery.isSuccess &&
-              currentAllergies.length > 0 && (
-                <p className="type-small" role="status">
-                  {RESIDUAL_ALLERGY_WARNING}
-                </p>
-              )}
+            {/* H15: 「削除できます」は Editor が出ているときだけ（onboarding と同型） */}
+            {showResidualAllergyEditor && (
+              <p className="type-small" role="status">
+                {RESIDUAL_ALLERGY_WARNING}
+              </p>
+            )}
             {(values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
               (allergiesQuery.isError ||
                 allergiesQuery.isPending ||
@@ -1888,97 +1937,108 @@ export function HouseholdSettingsForm({
               </div>
             )}
             {/* H2: なし／未確認でも残針があれば削除専用リストを出す。追加 UI は出さない。 */}
-            {/* H9: catalog 未確定なら Editor を閉じる（onboarding と同型）。 */}
-            {catalogReady &&
-              (values.allergyStatus === "registered" ||
-                ((values.allergyStatus === "none" || values.allergyStatus === "unconfirmed") &&
-                  allergiesQuery.isSuccess &&
-                  currentAllergies.length > 0)) && (
-                <AllergyEditor
-                  memberId={selected.id}
-                  catalog={catalogQuery.data}
-                  aliases={aliasesQuery.data}
-                  allergies={currentAllergies}
-                  removeOnly={
-                    values.allergyStatus === "none" || values.allergyStatus === "unconfirmed"
-                  }
-                  addStandard={(memberId, allergenId) =>
-                    runAllergyMutation(selected, async () => {
-                      await api.addStandardAllergy(memberId, allergenId);
-                      await finalizeAllergyChange(memberId);
-                    })
-                  }
-                  addCustom={(memberId, name, aliases) =>
-                    runAllergyMutation(selected, async () => {
-                      await api.addCustomAllergy(memberId, name, aliases);
-                      await finalizeAllergyChange(memberId);
-                    })
-                  }
-                  remove={(allergyId) =>
-                    runAllergyMutation(selected, async () => {
-                      if (
-                        values.allergyStatus === "registered" &&
-                        allergiesQuery.isSuccess &&
-                        currentAllergies.length <= 1
-                      ) {
-                        // H1: draft の UI registered でも最後の 1 件は消さない（onboarding H4 と同型）。
-                        // last-delete trigger は complete のみ。通すと registered+0 が残る。
-                        // DB トリガーは緩めない。
-                        setMessage("登録ありの場合は1つ以上選んでください");
-                        return;
-                      }
-                      await api.removeAllergy(allergyId);
-                      // H5: RPC は所有外でも silent success。再取得で行残存を検知し利用者へ示す（RPC 契約は変えない）。
-                      // H1: AppProviders の staleTime 30s だと削除前キャッシュが fresh になり queryFn が走らない。
-                      const afterRemove = await queryClient.fetchQuery({
-                        queryKey: householdKeys.allergies(userId, selected.id),
-                        queryFn: () => api.listAllergies(selected.id),
-                        staleTime: 0,
-                      });
-                      if (afterRemove.some((row) => row.id === allergyId)) {
+            {/* H9: registered は catalog 未確定なら Editor を閉じる。 */}
+            {/* H15/H16: 残針は data があれば refetch error でも名前付き削除を残す。 */}
+            {((catalogReady && values.allergyStatus === "registered") ||
+              showResidualAllergyEditor) && (
+              <AllergyEditor
+                memberId={selected.id}
+                catalog={catalogQuery.data ?? []}
+                aliases={aliasesQuery.data ?? []}
+                allergies={currentAllergies}
+                removeOnly={
+                  values.allergyStatus === "none" || values.allergyStatus === "unconfirmed"
+                }
+                addStandard={(memberId, allergenId) =>
+                  runAllergyMutation(selected, async () => {
+                    await api.addStandardAllergy(memberId, allergenId);
+                    await finalizeAllergyChange(memberId);
+                  })
+                }
+                addCustom={(memberId, name, aliases) =>
+                  runAllergyMutation(selected, async () => {
+                    await api.addCustomAllergy(memberId, name, aliases);
+                    await finalizeAllergyChange(memberId);
+                  })
+                }
+                remove={(allergyId) =>
+                  runAllergyMutation(selected, async () => {
+                    if (values.allergyStatus === "registered") {
+                      // H1: draft の UI registered でも最後の 1 件は消さない（onboarding H4 と同型）。
+                      // last-delete trigger は complete のみ。通すと registered+0 が残る。
+                      // H3: 件数は UI cache ではなく削除直前の fresh fetch を正本にする。
+                      // dual-tab / refetch 中の stale 2 件表示で最終 1 件を消さない。
+                      // DB トリガー / complete RPC は緩めない。
+                      let latestAllergies: MemberAllergyRow[];
+                      try {
+                        latestAllergies = await queryClient.fetchQuery({
+                          queryKey: householdKeys.allergies(userId, selected.id),
+                          queryFn: () => api.listAllergies(selected.id),
+                          staleTime: 0,
+                        });
+                      } catch {
                         if (selectedMemberIdRef.current === selected.id) {
                           setMessage(
-                            "アレルギーの削除を反映できませんでした。一覧を再読み込みして確認してください。",
+                            "アレルギー情報を確認できませんでした。もう一度お試しください",
                           );
                         }
                         return;
                       }
-                      const pending = pendingRegisteredIntents.current.get(selected.id);
-                      const refetchToken = { settled: false };
-                      if (pending?.values.allergyStatus === "registered") {
-                        pending.allergyRefetchPending = true;
-                        pending.allergyRefetchStarted = false;
-                        pending.registeredSaveEvidence = "unknown";
-                        pending.revision += 1;
-                        pending.allergyRefetchToken = refetchToken;
+                      if (latestAllergies.length <= 1) {
+                        setMessage("登録ありの場合は1つ以上選んでください");
+                        return;
                       }
-                      // fetchQuery 済みだが pending intent 用に epoch を進め、useEffect を走らせる
-                      if (
-                        pendingRegisteredIntents.current.get(selected.id) === pending &&
-                        pending?.allergyRefetchToken === refetchToken
-                      ) {
-                        refetchToken.settled = true;
-                        setAllergyRefetchEpoch((current) => current + 1);
+                    }
+                    await api.removeAllergy(allergyId);
+                    // H5: RPC は所有外でも silent success。再取得で行残存を検知し利用者へ示す（RPC 契約は変えない）。
+                    // H1: AppProviders の staleTime 30s だと削除前キャッシュが fresh になり queryFn が走らない。
+                    const afterRemove = await queryClient.fetchQuery({
+                      queryKey: householdKeys.allergies(userId, selected.id),
+                      queryFn: () => api.listAllergies(selected.id),
+                      staleTime: 0,
+                    });
+                    if (afterRemove.some((row) => row.id === allergyId)) {
+                      if (selectedMemberIdRef.current === selected.id) {
+                        setMessage(
+                          "アレルギーの削除を反映できませんでした。一覧を再読み込みして確認してください。",
+                        );
                       }
-                      // H-RR2: 削除コミット後の invalidate 失敗は soft（H3 form save と同型）
-                      // H4: 再確認失敗は利用者へ見せる（削除自体は適用済み）
-                      const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
-                      if (selectedMemberIdRef.current === selected.id && refresh === "failed") {
-                        setMessage(HOUSEHOLD_SAVED_REFRESH_FAILED);
-                      }
-                    })
-                  }
-                  onError={(error) => {
-                    if (selectedMemberIdRef.current !== selected.id) return;
-                    setMessage(
-                      error instanceof Error
-                        ? error.message
-                        : "アレルギー情報を更新できませんでした",
-                    );
-                  }}
-                  disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending || saving}
-                />
-              )}
+                      return;
+                    }
+                    const pending = pendingRegisteredIntents.current.get(selected.id);
+                    const refetchToken = { settled: false };
+                    if (pending?.values.allergyStatus === "registered") {
+                      pending.allergyRefetchPending = true;
+                      pending.allergyRefetchStarted = false;
+                      pending.registeredSaveEvidence = "unknown";
+                      pending.revision += 1;
+                      pending.allergyRefetchToken = refetchToken;
+                    }
+                    // fetchQuery 済みだが pending intent 用に epoch を進め、useEffect を走らせる
+                    if (
+                      pendingRegisteredIntents.current.get(selected.id) === pending &&
+                      pending?.allergyRefetchToken === refetchToken
+                    ) {
+                      refetchToken.settled = true;
+                      setAllergyRefetchEpoch((current) => current + 1);
+                    }
+                    // H-RR2: 削除コミット後の invalidate 失敗は soft（H3 form save と同型）
+                    // H4: 再確認失敗は利用者へ見せる（削除自体は適用済み）
+                    const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
+                    if (selectedMemberIdRef.current === selected.id && refresh === "failed") {
+                      setMessage(HOUSEHOLD_SAVED_REFRESH_FAILED);
+                    }
+                  })
+                }
+                onError={(error) => {
+                  if (selectedMemberIdRef.current !== selected.id) return;
+                  setMessage(
+                    error instanceof Error ? error.message : "アレルギー情報を更新できませんでした",
+                  );
+                }}
+                disabled={!allergiesQuery.isSuccess || selectedAllergyMutationPending || saving}
+              />
+            )}
             <label className="field">
               <span>{UNSUPPORTED_DIET_STATUS_LABEL}</span>
               <select

@@ -1454,15 +1454,27 @@ export function HouseholdOnboardingForm({
                 setAllergyError(null);
                 // H4: draft の UI registered（pending 含む）でも最後の 1 件は消さない。
                 // last-delete trigger は complete のみ。通すと registered+0 が残る。
+                // H3: 件数は UI cache ではなく削除直前の fresh fetch を正本にする。
+                // dual-tab / refetch 中の stale 2 件表示で最終 1 件を消さない。
+                // complete RPC / DB トリガーは緩めない。
                 const registeredIntent =
                   draft.allergy_status === "registered" || pendingRegisteredRef.current;
-                const listed =
-                  queryClient.getQueryData<MemberAllergyRow[]>(
-                    householdKeys.allergies(userId, draft.id),
-                  ) ?? allergies;
-                if (registeredIntent && listed.length <= 1) {
-                  setAllergyError("登録ありの場合は1つ以上選んでください");
-                  return;
+                if (registeredIntent) {
+                  let latestAllergies: MemberAllergyRow[];
+                  try {
+                    latestAllergies = await queryClient.fetchQuery({
+                      queryKey: householdKeys.allergies(userId, draft.id),
+                      queryFn: () => api.listAllergies(draft.id),
+                      staleTime: 0,
+                    });
+                  } catch {
+                    setAllergyError(ALLERGIES_LIST_PENDING_MESSAGE);
+                    return;
+                  }
+                  if (latestAllergies.length <= 1) {
+                    setAllergyError("登録ありの場合は1つ以上選んでください");
+                    return;
+                  }
                 }
                 // H5: silent RPC 後に再取得で行残存を検知（settings と同型）
                 // H1: 既定 staleTime 内の削除前キャッシュを正本扱いしない。
