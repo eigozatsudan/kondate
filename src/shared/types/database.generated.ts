@@ -3177,6 +3177,7 @@ export type Database = {
           p_now?: string
           p_quota_disabled?: boolean
           p_short_window_limit: number
+          p_stale_after_seconds?: number
           p_user_id: string
         }
         Returns: Json

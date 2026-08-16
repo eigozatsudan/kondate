@@ -2,7 +2,7 @@
 -- Task 2: private billing 表 + SECURITY DEFINER RPC（A6 / lock / process 冪等・stale・crash-safe）
 
 begin;
-select plan(142);
+select plan(143);
 
 create extension if not exists pgtap with schema extensions;
 
