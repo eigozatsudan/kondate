@@ -143,7 +143,16 @@ async function sendEmailAndWait(
   expect(await screen.findByRole("heading", { name: EMAIL_OTP_WAITING_HEADING })).toBeVisible();
 }
 
-afterEach(() => {
+afterEach(async () => {
+  // leftover は render 後 microtask で進む。C-R2/C-R3 は待たないので、次ケースへ漏らさない
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
   leftoverGetSession.mockReset();
   leftoverGetSession.mockResolvedValue({
     data: { session: leftoverMocks.leftover },
@@ -772,6 +781,35 @@ it.each([
     expect(screen.queryByText("planner-dest")).not.toBeInTheDocument();
   },
 );
+
+it("does not start leftover signOut when leftover-capable /login has a fresh waiting snapshot", async () => {
+  leftoverSignOut.mockClear();
+  leftoverGetSession.mockClear();
+  window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+  sessionStorage.setItem(
+    "kondate.auth.magicSentUi",
+    JSON.stringify({
+      email: "user@example.com",
+      resendAvailableAt: futureResendAt(),
+      storedAt: new Date().toISOString(),
+    }),
+  );
+  leftoverGetSession.mockResolvedValue({
+    data: { session: leftoverMocks.leftover },
+    error: null,
+  });
+  vi.mocked(useAuth).mockReturnValue(authenticatedAuth());
+  renderLoginAt("/login", stubGateway());
+
+  expect(await screen.findByRole("heading", { name: EMAIL_OTP_WAITING_HEADING })).toBeVisible();
+
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(leftoverGetSession).not.toHaveBeenCalled();
+  expect(leftoverSignOut).not.toHaveBeenCalled();
+});
 
 it.each([
   {

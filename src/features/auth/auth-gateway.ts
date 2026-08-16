@@ -696,7 +696,9 @@ function wipeBrowserSupabasePersistOnly(): void {
  *
  * C1: 指紋 null + context ありで clearDiscarded すると persist 無条件 wipe + signOut する。
  * withTimeout は signOut を cancel しないので、遅延 _removeSession が番号成功 session を消す。
+ * leftover 専用経路は clearDiscarded を呼ばない（C-R9 の discarded-exchange 意味は変えない）。
  * 番号成功印・指紋変化では触らない。指紋が取れないときは persist だけ消し signOut しない。
+ * 指紋一致時も persist wipe 後に印／指紋を再確認し、変わっていれば signOut しない。
  */
 export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
   client?: BrowserSupabaseClient,
@@ -720,10 +722,22 @@ export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
       return;
     }
 
-    await clearDiscardedExchangeSessionIfStillPresent(resolved, startKey, {
-      loserFlowId: "",
-      storage,
-    });
+    // 指紋一致 leftover。wipe 直前にも印・指紋を再確認する（C-R4 はここから signOut し得る）
+    if (isFreshEmailOtpCompletedMark()) return;
+    const beforeWipeKey = await probeDiscardedExchangeSessionKey(resolved);
+    if (beforeWipeKey !== startKey) return;
+
+    wipeBrowserSupabasePersistOnly();
+
+    // persist 掃除中に番号成功が載った／指紋が変わったならメモリ signOut しない
+    if (isFreshEmailOtpCompletedMark()) return;
+    const afterWipeKey = await probeDiscardedExchangeSessionKey(resolved);
+    if (afterWipeKey !== startKey) return;
+
+    if (typeof resolved.auth.signOut === "function") {
+      // hang でも leftover 経路を永久待ちにしない（C-R9 と同型）。cancel はできない
+      await withTimeout(resolved.auth.signOut({ scope: "local" }), 2_000);
+    }
   } catch {
     // leftover 掃除失敗でも Login は出す（C-R3）。pin は AuthProvider に残し得る。
   }

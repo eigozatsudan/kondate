@@ -561,29 +561,44 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     }
   };
 
+  // C-R4: leftover-capable Login は pin 前に leftover persist を local signOut する。
+  // ただしこのタブで今立てた番号成功印が新鮮なら、その session は leftover ではない。
+  // C1: unmount / 印書き込み後の late .then で leftover を再起動しない。
+  // C1b: 番号待ち snapshot（メールアプリ往復の再水和）または確認中は leftover を起動しない。
+  // C9 より先に判定する。後続 C9 が authenticated leftover で snapshot を消しても、
+  // このマウントでは起動済みにしない。
+  useEffect(() => {
+    if (!leftoverCapable || otpCompletedFresh) {
+      return;
+    }
+    const waitingForOtp =
+      readWaitingUi() !== null ||
+      state.status === "waiting" ||
+      state.status === "verifying" ||
+      verifyInFlightRef.current;
+    if (waitingForOtp) {
+      return;
+    }
+    let aborted = false;
+    void Promise.resolve().then(() => {
+      if (aborted) return;
+      // state.status は上で絞済み。snapshot / 確認中は後から立ち得るので再判定する
+      if (readWaitingUi() !== null || verifyInFlightRef.current) {
+        return;
+      }
+      void clearLeftoverLoginSessionIfNoSiblingCompletion();
+    });
+    return () => {
+      aborted = true;
+    };
+  }, [leftoverCapable, otpCompletedFresh, locationState.authError, location.search, state.status]);
+
   // ログイン成功後は宛先の PII を sessionStorage に残さない（C9）
   useEffect(() => {
     if (auth.status !== "authenticated") return;
     rememberLastMagicEmail("");
     rememberWaitingUi(null);
   }, [auth.status]);
-
-  // C-R4: leftover-capable Login は pin 前に leftover persist を local signOut する。
-  // ただしこのタブで今立てた番号成功印が新鮮なら、その session は leftover ではない。
-  // C1: unmount / 印書き込み後の late .then で leftover を再起動しない。
-  useEffect(() => {
-    if (!leftoverCapable || otpCompletedFresh) {
-      return;
-    }
-    let aborted = false;
-    void Promise.resolve().then(() => {
-      if (aborted) return;
-      void clearLeftoverLoginSessionIfNoSiblingCompletion();
-    });
-    return () => {
-      aborted = true;
-    };
-  }, [leftoverCapable, otpCompletedFresh, locationState.authError, location.search]);
 
   // 既にセッションがある場合はフォームを出さず returnTo へ進める。
   // C2 / C-R2 / C-R3: leftover を伴い得る leave はエラーより先に Navigate しない。
