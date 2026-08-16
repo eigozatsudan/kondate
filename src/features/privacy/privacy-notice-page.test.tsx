@@ -64,7 +64,7 @@ vi.mock("./share-consent-api", async (importOriginal) => {
 });
 
 import { MemoryRouter } from "react-router";
-import type { ComponentProps } from "react";
+import { useLayoutEffect, type ComponentProps } from "react";
 import {
   PRIVACY_ACCEPT_TIMEOUT_MS,
   PrivacyNoticeContent,
@@ -756,6 +756,62 @@ it("AP8: primary is disabled until share consent query settles so early submit c
   expect(shareCheckbox).toBeEnabled();
   expect(shareCheckbox).toBeChecked();
   expect(upsertShare).not.toHaveBeenCalled();
+});
+
+it("AP-R1: submit on the first ready render keeps server share consent without waiting for effect", async () => {
+  const user = userEvent.setup();
+  const onAccept = vi.fn();
+
+  // ready 化の同一コミットで layout から押す。RTL waitFor / 子の useEffect より前相当。
+  function ReadyThenSubmit({
+    shareConsentReady,
+    initialShareChecked,
+  }: {
+    shareConsentReady: boolean;
+    initialShareChecked: boolean;
+  }) {
+    useLayoutEffect(() => {
+      if (!shareConsentReady) return;
+      expect(
+        screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }),
+      ).toBeChecked();
+      screen.getByRole("button", { name: "確認して進む" }).click();
+    }, [shareConsentReady]);
+
+    return (
+      <PrivacyNoticeContent
+        saving={false}
+        onAccept={onAccept}
+        onSkip={vi.fn()}
+        shareConsentReady={shareConsentReady}
+        initialShareChecked={initialShareChecked}
+      />
+    );
+  }
+
+  const { rerender } = render(
+    <MemoryRouter>
+      <ReadyThenSubmit shareConsentReady={false} initialShareChecked={false} />
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  expect(screen.getByRole("button", { name: "確認して進む" })).toBeDisabled();
+  expect(
+    screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }),
+  ).not.toBeChecked();
+
+  rerender(
+    <MemoryRouter>
+      <ReadyThenSubmit shareConsentReady={true} initialShareChecked={true} />
+    </MemoryRouter>,
+  );
+
+  expect(onAccept).toHaveBeenCalledOnce();
+  expect(onAccept).toHaveBeenCalledWith({
+    shareConsentAccepted: true,
+    shareConsentTouched: false,
+  });
 });
 
 describe("AP7: stale share cache must not re-accept after other-tab revoke", () => {

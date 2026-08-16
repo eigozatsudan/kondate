@@ -259,6 +259,10 @@ export function PrivacyNoticeContent({
     if (userTouchedShareRef.current) return;
     setShareChecked(initialShareChecked);
   }, [shareConsentReady, initialShareChecked]);
+  // AP-R1: ready 化の同一描画では useState が mount 時 false のまま。
+  // 未タッチなら initialShareChecked を同期的に使い、effect 前 submit でサーバ同意を落とさない。
+  const effectiveShareChecked =
+    shareConsentReady && !userTouchedShareRef.current ? initialShareChecked : shareChecked;
   // 未チェックのまま primary を押したときの案内。チェックしたら消す。
   const [consentGateMessage, setConsentGateMessage] = useState<string | undefined>();
   const consentCheckboxRef = useRef<HTMLInputElement>(null);
@@ -313,7 +317,7 @@ export function PrivacyNoticeContent({
         <label className="control-label">
           <input
             type="checkbox"
-            checked={shareChecked}
+            checked={effectiveShareChecked}
             disabled={!shareConsentReady}
             onChange={(event) => {
               userTouchedShareRef.current = true;
@@ -348,8 +352,9 @@ export function PrivacyNoticeContent({
             return;
           }
           // 読取完了前は share を true で送らない（pending 中の default true 再 accept を防ぐ）
+          // AP-R1: 未タッチの ready 直後は shareChecked ではなくサーバ正を送る
           onAccept({
-            shareConsentAccepted: shareConsentReady && shareChecked,
+            shareConsentAccepted: shareConsentReady && effectiveShareChecked,
             shareConsentTouched: userTouchedShareRef.current,
           });
         }}
