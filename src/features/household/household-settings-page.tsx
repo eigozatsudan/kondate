@@ -469,11 +469,14 @@ export function HouseholdSettingsForm({
     queryFn: () => api.listAliases?.() ?? Promise.resolve([]),
   });
   const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
-  // 選択中IDが外部削除などで消えたら残存先頭へ同期し、空editorや誤保存対象を防ぐ。
-  const selected =
-    selectedId === undefined
-      ? members[0]
-      : (members.find((member) => member.id === selectedId) ?? members[0]);
+  const selectedMember =
+    selectedId === undefined ? undefined : members.find((member) => member.id === selectedId);
+  // 他タブ削除などで選択中IDが消えたら、残存先頭へ editor を開いたまま落とさない。
+  // 見出しが「名前未設定」同士だと、前メンバーを編集中のつもりで残存メンバーの
+  // アレルギーを消せる。同一タブの自分削除（wasSelected）と同じく editor を閉じる。
+  const selectedMemberVanished =
+    membersQuery.data !== undefined && selectedId !== undefined && selectedMember === undefined;
+  const selected = selectedMemberVanished ? undefined : (selectedMember ?? members[0]);
   selectedMemberIdRef.current = selected?.id;
   const allergiesQuery = useQuery({
     queryKey: selected
@@ -1041,6 +1044,23 @@ export function HouseholdSettingsForm({
     setAllergyMutationPendingMemberIds(new Set(allergyMutationPendingMemberIdsRef.current));
   }, []);
 
+  useEffect(() => {
+    if (!selectedMemberVanished) return;
+    // 同一タブの自分削除（wasSelected）と同じく、外部削除でも editor を閉じる。
+    // selectedId を落とすと次描画で残存先頭へ選択だけ同期する。
+    selectedMemberIdRef.current = undefined;
+    previousSelectedIdBeforeAddRef.current = undefined;
+    completingAllergyCheckRef.current = false;
+    feedbackRevisionRef.current += 1;
+    clearMemberLocalState(selectedId);
+    setSelectedId(undefined);
+    setValues(undefined);
+    setEditorOpen(false);
+    setMessage("");
+    setErrors({});
+    dismissToast();
+  }, [clearMemberLocalState, dismissToast, selectedId, selectedMemberVanished]);
+
   /**
    * メンバー削除の共通処理。
    * - asCancelDraft: 入力途中の「追加をやめる」。前の選択へ戻し、削除成功メッセージを変える。
@@ -1585,7 +1605,7 @@ export function HouseholdSettingsForm({
   const showResidualAllergyEditor = hasResidualAllergies && !residualCatalogUnresolved;
   // 編集を開いているときだけ values を要求する。一覧表示中に values 未初期化で
   // 画面全体をローディングへ落とさない（削除後の不整合を防ぐ）。
-  if (editorOpen && values === undefined && selected !== undefined) {
+  if (editorOpen && !selectedMemberVanished && values === undefined && selected !== undefined) {
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
   }
   if (members.length === 0) {
@@ -1631,8 +1651,9 @@ export function HouseholdSettingsForm({
       </main>
     );
   }
-  // 一覧表示のみ（編集クローズ）で selected/values が揃う前でも一覧を出す
-  if (editorOpen && (values === undefined || selected === undefined)) {
+  // 一覧表示のみ（編集クローズ）で selected/values が揃う前でも一覧を出す。
+  // 外部削除で選択が消えたフレームは loading に落とさず、同一タブ削除と同じく一覧へ戻す。
+  if (editorOpen && !selectedMemberVanished && (values === undefined || selected === undefined)) {
     return <main className="page-frame">家族設定を読み込んでいます…</main>;
   }
   const currentDislikes = dislikesQuery.data ?? [];

@@ -968,10 +968,17 @@ it("creates and selects a new draft while an existing member is present", async 
     queryClient.setQueryData(["household", "members", "settings"], [member]);
     await Promise.resolve();
   });
-  // 選択中draftがcacheから消えても、残存memberへ同期して空画面へ落とさない。
-  expect(await screen.findByLabelText("呼び名")).toHaveValue("大人");
+  // 選択中draftが外部削除相当で消えても空画面へは落とさない。
+  // editor は閉じ、残存memberは一覧に残す（開いたまま先頭へ落とさない）。
+  await waitFor(() => {
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+  expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
   expect(screen.queryByText("家族を追加してください")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "家族を削除" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "登録済みの家族" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "1人目の大人を編集" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "1人目の大人を削除" })).toBeVisible();
+  expect(screen.getByRole("button", { name: /^家族を追加$/u })).toBeVisible();
   expect(queryClient.getQueryData(["household", "members", "settings"])).toEqual([member]);
 });
 
@@ -1173,23 +1180,85 @@ it("closes a delete confirmation when its target disappears from the member cach
   await waitFor(() => {
     expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
   });
-  // 外部削除相当で選択中memberが消え、残存先頭memberへeditor・一覧・cacheが同期する。
+  // 外部削除相当: 選択中memberが消えたら editor を閉じ、残存先頭へ選択だけ同期する。
+  // 開いたまま members[0] へ落とすと、前メンバー文脈のまま残存メンバーを編集できてしまう。
   await waitFor(() => {
-    expect(screen.getByLabelText("呼び名")).toHaveValue("子ども");
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
   });
-  expect(
-    screen.getByRole("heading", {
-      name: "「子ども」を編集中",
-    }),
-  ).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "「子ども」を編集中" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("呼び名")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "1人目の子どもを編集" })).toHaveAttribute(
     "aria-pressed",
-    "true",
+    "false",
   );
   expect(queryClient.getQueryData(householdKeys.members("settings"))).toEqual([secondMember]);
   expect(screen.queryByRole("dialog", { name: "家族の削除確認" })).not.toBeInTheDocument();
   fireEvent.click(staleConfirm);
   expect(deleteMember).not.toHaveBeenCalled();
+});
+
+it("closes the editor on external member removal so remaining allergies are not cleared", async () => {
+  const unnamedA: HouseholdMemberRow = {
+    ...member,
+    id: "member-1",
+    display_name: "",
+    allergy_status: "none",
+  };
+  const unnamedB: HouseholdMemberRow = {
+    ...member,
+    id: "member-2",
+    display_name: "",
+    allergy_status: "registered",
+    sort_order: 1,
+  };
+  const remainingAllergy: MemberAllergyRow = {
+    ...standardAllergy,
+    id: "allergy-remaining",
+    member_id: unnamedB.id,
+  };
+  const listAllergies = vi.fn((memberId: string) =>
+    Promise.resolve(memberId === unnamedB.id ? [remainingAllergy] : []),
+  );
+  const removeAllergy = vi.fn().mockResolvedValue(undefined);
+  const updateMember = vi.fn((memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({
+      ...(memberId === unnamedB.id ? unnamedB : unnamedA),
+      ...patch,
+    }),
+  );
+  const { queryClient } = await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([unnamedA, unnamedB]),
+    listAllergies,
+    removeAllergy,
+    updateMember,
+  });
+
+  expect(screen.getByRole("heading", { name: "「名前未設定」を編集中" })).toBeVisible();
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
+
+  await act(async () => {
+    queryClient.setQueryData(householdKeys.members("settings"), [unnamedB]);
+    await Promise.resolve();
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByRole("region", { name: "家族情報を追加・編集" })).not.toBeInTheDocument();
+  });
+  expect(screen.queryByRole("heading", { name: "「名前未設定」を編集中" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("アレルギーの確認")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "くるみを削除" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "1人目の名前未設定を編集" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(removeAllergy).not.toHaveBeenCalled();
+  expect(updateMember).not.toHaveBeenCalled();
+
+  await userEvent.click(screen.getByRole("button", { name: "1人目の名前未設定を編集" }));
+  expect(await screen.findByLabelText("アレルギーの確認")).toHaveValue("registered");
+  expect(screen.getByRole("button", { name: "くるみを削除" })).toBeVisible();
+  expect(removeAllergy).not.toHaveBeenCalled();
+  expect(updateMember).not.toHaveBeenCalled();
 });
 
 it("submits a member delete confirmation only once", async () => {
