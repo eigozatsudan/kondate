@@ -4,14 +4,20 @@ import userEvent from "@testing-library/user-event";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import { registerPlannerLeaveFlush } from "@/features/planner/planner-leave-flush";
+import { PWA_INSTALL_TIP_DISMISSED_KEY } from "@/features/pwa/install-tip-storage";
 import { AppShell } from "./app-shell";
 
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
+
+beforeEach(() => {
+  // 既定は案内カード非表示。既存 heading 契約を侵さない。
+  window.localStorage.setItem(PWA_INSTALL_TIP_DISMISSED_KEY, "1");
+});
 
 afterEach(() => {
   registerPlannerLeaveFlush(null);

@@ -1,4 +1,5 @@
 import { expect, test as base, type Page } from "@playwright/test";
+import { seedPwaInstallTipDismissed } from "./pwa-install-tip";
 
 /** setup project が書き込む storageState のパス（gitignore 対象） */
 export const STORAGE_STATE_PATH = "e2e/.auth/user.json";
@@ -20,6 +21,7 @@ export const test = base.extend<SessionAuthFixtures>({
   reusedCompletedPage: async ({ browser }, provide) => {
     // 既定 page は storageState 無しのため、専用 context を開く
     const context = await browser.newContext({ storageState: STORAGE_STATE_PATH });
+    await seedPwaInstallTipDismissed(context);
     const page = await context.newPage();
     // seed 済みセッションで planner に立てることを固定（welcome へ戻らない）
     await page.goto("/planner");

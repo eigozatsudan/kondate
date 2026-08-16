@@ -12,6 +12,7 @@ import {
   runPlannerLeaveFlush,
   shouldInterceptPlannerLeaveClick,
 } from "@/features/planner/planner-leave-flush";
+import { HomeScreenInstallCard } from "@/features/pwa/home-screen-install-card";
 
 /** パスから配色セクションを決める。ルーティング定義は変えずに面の色だけを切り替える。 */
 function sectionForPath(pathname: string): string {
@@ -224,6 +225,8 @@ export function AppShell() {
       <div className="desktop-section-bar" aria-hidden="true">
         {sectionTitles[section] ?? sectionTitles.other}
       </div>
+      {/* 本体画面の初回案内。設定は常設節があるのでカード側で pathname を見る。 */}
+      <HomeScreenInstallCard />
       <Outlet />
       <nav className="bottom-nav" aria-label="メインメニュー" aria-busy={navLeaving || undefined}>
         {/* L9: leave-flush 中は aria-busy と対の polite status（何を待つかを SR に伝える） */}

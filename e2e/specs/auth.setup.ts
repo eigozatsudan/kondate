@@ -7,11 +7,15 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { expect, test } from "@playwright/test";
 import { requestMagicLinkAndReadUrl } from "../fixtures/auth";
+import { seedPwaInstallTipDismissed } from "../fixtures/pwa-install-tip";
 import { seedCompletedOnboardingState } from "../fixtures/seed-onboarding";
 import { STORAGE_STATE_PATH } from "../fixtures/session-auth";
 
 test("authenticate, seed completed onboarding, save storageState", async ({ page }) => {
   await mkdir(dirname(STORAGE_STATE_PATH), { recursive: true });
+
+  // 最初の goto より前に context へ書く。storageState() はその結果を保存するだけ。
+  await seedPwaInstallTipDismissed(page.context());
 
   // ランごとに一意。固定 email だと前回 E2E の DB 行が残り seed insert が衝突する。
   const setupAuthEmail = `e2e-setup-reused-${String(Date.now())}@example.invalid`;

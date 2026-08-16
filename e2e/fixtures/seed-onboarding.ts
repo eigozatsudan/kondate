@@ -4,6 +4,7 @@ import { expect, type Page } from "@playwright/test";
 import { z } from "zod";
 import { privacyNoticeVersion } from "../../shared/contracts/domain";
 import { accessTokenFromPage } from "./local-supabase";
+import { seedPwaInstallTipDismissed } from "./pwa-install-tip";
 
 const userIdSchema = z.uuid();
 
@@ -47,6 +48,8 @@ async function createServiceAdmin() {
  * completedOnboardingPage など「完了済み前提」の fixture 専用。
  */
 export async function seedCompletedOnboardingState(page: Page): Promise<void> {
+  // 再訪は同一 context の addInitScript が効く。未 seed の呼び出しでも planner 着地前に書く。
+  await seedPwaInstallTipDismissed(page.context());
   const accessToken = await accessTokenFromPage(page);
   const userId = userIdFromAccessToken(accessToken);
   const admin = await createServiceAdmin();
