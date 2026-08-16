@@ -1,7 +1,8 @@
 # 無料 LP を最初の HTML で読ませる設計
 
 - 日付: 2026-08-16
-- 状態: **対話でセクション承認済み。Plan 未作成**
+- 状態: **対話でセクション承認済み。Plan 作成済み**
+- 実装計画: `docs/superpowers/plans/2026-08-17-public-landing-html-seo.md`
 - 種別: 設計。実装指示は後続 Plan
 - 対象: `index.html`、新規 `app.html`、`src/features/landing/`、`src/styles.css`、`public/lp-boot.js`、`public/robots.txt`、`vite.config.ts`、`netlify.toml`、`scripts/csp-headers.mjs` / `scripts/emit-deploy-headers.mjs`、`scripts/generate-service-worker.mjs`、関連テスト
 - 非対象: `admin/`、Netlify Functions、Supabase、contracts、safety 評価パイプライン、公開レシピ面、Plus LP の公開化
