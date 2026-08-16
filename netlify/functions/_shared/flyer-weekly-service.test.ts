@@ -600,6 +600,60 @@ describe("loadFlyerInspectionSafety", () => {
       code: "safety_context_failed",
     });
   });
+
+  it("PE11: rejects cut_small on complete members before caller can mark", async () => {
+    const complete = thenableQuery({
+      data: [{ id: "55000000-0000-4000-8000-000000000001" }],
+      error: null,
+    });
+    const draft = thenableQuery({ data: [], error: null });
+    const admin = {
+      from: vi.fn(() => {
+        const query = {
+          select: vi.fn(),
+          eq: vi.fn(),
+          order: vi.fn(),
+          in: vi.fn(),
+          then: undefined as
+            | ((resolve: (value: { data: unknown; error: unknown }) => unknown) => Promise<unknown>)
+            | undefined,
+        };
+        const self = () => query;
+        query.select.mockImplementation(self);
+        query.order.mockImplementation(self);
+        query.in.mockImplementation(self);
+        query.eq.mockImplementation((_column: string, value: string) => {
+          if (value === "complete") {
+            query.then = (resolve) => Promise.resolve(complete).then((row) => resolve(row));
+          } else if (value === "draft") {
+            query.then = (resolve) => Promise.resolve(draft).then((row) => resolve(row));
+          }
+          return query;
+        });
+        query.then = (resolve) => Promise.resolve(complete).then((row) => resolve(row));
+        return query;
+      }),
+    };
+    const base = makeCurrentSafetyContext();
+    loadCurrentSafetyContextMock.mockResolvedValue(
+      makeCurrentSafetyContext({
+        members: [
+          {
+            ...base.members[0]!,
+            householdMemberId: "55000000-0000-4000-8000-000000000001",
+            ageBand: "age_3_5",
+            allergyStatus: "none",
+            allergenIds: [],
+            requiredSafetyConstraints: ["cut_small"],
+          },
+        ],
+      }),
+    );
+    await expect(loadFlyerInspectionSafety(admin as never, userId)).rejects.toMatchObject({
+      status: 422,
+      code: "current_safety_revalidation_required",
+    });
+  });
 });
 
 describe("jstWeekStartMonday", () => {
@@ -904,6 +958,56 @@ describe("assertFlyerMenuAgainstSafety", () => {
     expect(inspection.members[1]?.ageBand).toBe("age_3_5");
     expect(() => {
       assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "お雑煮（餅入り）" }), inspection);
+    }).toThrow(HttpError);
+  });
+
+  it("PE2: draft null age_band with confirmed needles is not treated as adult", () => {
+    // complete 成人 + draft（age_band null・確認済み針）を adult 既定にすると餅が通る
+    const base = makeCurrentSafetyContext();
+    const completeOnly = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          householdMemberId: "55000000-0000-4000-8000-000000000001",
+          ageBand: "adult",
+          allergyStatus: "none",
+          allergenIds: [],
+          customAllergies: [],
+          requiredSafetyConstraints: [],
+        },
+      ],
+    });
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "お雑煮（餅入り）" }), completeOnly);
+    }).not.toThrow();
+
+    const inspection = appendDraftMemberAllergiesForFlyerInspection(
+      completeOnly,
+      [
+        {
+          member_id: "55000000-0000-4000-8000-000000000099",
+          allergen_id: null,
+          custom_name: "ピーナッツ",
+          custom_aliases: [],
+          custom_confirmed: true,
+        },
+      ],
+      [
+        {
+          id: "55000000-0000-4000-8000-000000000099",
+          age_band: null,
+          required_safety_constraints: [],
+        },
+      ],
+    );
+    expect(inspection.members).toHaveLength(2);
+    expect(inspection.members[1]?.ageBand).not.toBe("adult");
+    expect(inspection.members[1]?.ageBand).toBe("post_weaning_to_2");
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "お雑煮（餅入り）" }), inspection);
+    }).toThrow(HttpError);
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "ピーナッツ和え" }), inspection);
     }).toThrow(HttpError);
   });
 

@@ -223,6 +223,7 @@ function mapFailureHttp(code: string, retryAt: string | null = null): never {
                     code === "unsupported_diet_unconfirmed" ||
                     code === "unsupported_diet" ||
                     code === "current_target_member_required" ||
+                    code === "current_safety_revalidation_required" ||
                     code === "consent_required"
                   ? 422
                   : 400;
@@ -280,6 +281,19 @@ function rejectFlyerSafetyHit(): never {
   );
 }
 
+/** PE11: flyer は cut_small 証拠を付けられない。mark 前 422（try 非消費）。 */
+function rejectFlyerCutSmallIfPresent(safety: CurrentSafetyContext): void {
+  for (const member of safety.members) {
+    if (member.requiredSafetyConstraints.includes("cut_small")) {
+      throw new HttpError(
+        422,
+        "current_safety_revalidation_required",
+        issueMessages.current_safety_revalidation_required,
+      );
+    }
+  }
+}
+
 /** 検査集合の DB / 一時障害。400 に写すと sticky が消え同一画像が新 key になる。 */
 function inspectionSafetyUnavailable(): HttpError {
   return new HttpError(500, "safety_context_failed", "現在の安全条件を読み込めませんでした");
@@ -294,8 +308,7 @@ export type FlyerDraftAllergyRow = {
   custom_confirmed: boolean;
 };
 
-/**
-/** draft メンバーの年齢帯・必須制約（検査用。部分 age は推測せず保存値だけ使う）。 */
+/** draft メンバーの年齢帯・必須制約（検査用。部分 age は adult と推測しない）。 */
 export type FlyerDraftMemberRow = {
   id: string;
   age_band: AgeBand | null;
@@ -306,7 +319,8 @@ export type FlyerDraftMemberRow = {
  * PE1: complete のみの safety に、draft（入力途中）メンバーの確認済みアレルギー針を検査集合へ union する。
  * get_current_safety_snapshot は status=complete のみのため draft は RPC に載せられない。
  * 表示ターゲットにはせず、banned / assert 用にだけ合成する。
- * PE5: 保存済み age_band / required_safety_constraints を使う。未保存の年齢は推測しない。
+ * PE5: 保存済み age_band / required_safety_constraints を使う。
+ * PE2: 未保存の年齢は adult 既定にしない。検査に載せる draft は幼児ルール fail-closed。
  */
 export function appendDraftMemberAllergiesForFlyerInspection(
   safety: CurrentSafetyContext,
@@ -344,10 +358,11 @@ export function appendDraftMemberAllergiesForFlyerInspection(
   for (const memberId of [...memberIds].sort()) {
     const bucket = byMember.get(memberId) ?? { allergenIds: [], customAllergies: [] };
     const meta = memberMeta.get(memberId);
-    const ageBand = meta?.age_band ?? "adult";
+    // PE2: null 帯を adult と推測すると離乳後〜5歳ルール（餅・硬い豆等）が外れる。
+    // 検査に載せるときだけ幼児帯へ fail-closed。針も制約も無い draft は下の continue で載せない。
+    const ageBand = meta?.age_band ?? "post_weaning_to_2";
     const constraints = meta?.required_safety_constraints ?? [];
     const hasAllergies = bucket.allergenIds.length > 0 || bucket.customAllergies.length > 0;
-    // 未保存 age は推測しない。保存済みの非成人 / 必須制約 / アレルギー針だけ載せる。
     const hasAgeRules = meta?.age_band != null && meta.age_band !== "adult";
     if (!hasAllergies && !hasAgeRules && constraints.length === 0) continue;
     refIndex += 1;
@@ -451,7 +466,10 @@ export async function loadFlyerInspectionSafety(
   }
   const draftMembers: FlyerDraftMemberRow[] = parsedDraftMembers.data;
   const draftMemberIds = draftMembers.map((row) => row.id);
-  if (draftMemberIds.length === 0) return safety;
+  if (draftMemberIds.length === 0) {
+    rejectFlyerCutSmallIfPresent(safety);
+    return safety;
+  }
   const { data: draftAllergyRows, error: draftAllergyError } = await admin
     .from("member_allergies")
     .select("member_id,allergen_id,custom_name,custom_aliases,custom_confirmed")
@@ -460,11 +478,13 @@ export async function loadFlyerInspectionSafety(
   if (draftAllergyError !== null) {
     throw inspectionSafetyUnavailable();
   }
-  return appendDraftMemberAllergiesForFlyerInspection(
+  const inspection = appendDraftMemberAllergiesForFlyerInspection(
     safety,
     Array.isArray(draftAllergyRows) ? draftAllergyRows : [],
     draftMembers,
   );
+  rejectFlyerCutSmallIfPresent(inspection);
+  return inspection;
 }
 
 /**

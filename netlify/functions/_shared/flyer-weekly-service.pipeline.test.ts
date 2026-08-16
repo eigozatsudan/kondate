@@ -275,6 +275,61 @@ describe("runFlyerWeekly pipeline (PE1/PE2/PE4/PE5/PE6/PE11)", () => {
     expect(openRouterSender).not.toHaveBeenCalled();
   });
 
+  it("PE11: rejects cut_small before mark so try is not consumed", async () => {
+    loadCurrentSafetyContextMock.mockResolvedValue(
+      makeCurrentSafetyContext({
+        members: [
+          {
+            ...makeCurrentSafetyContext().members[0]!,
+            householdMemberId: "55000000-0000-4000-8000-000000000001",
+            ageBand: "age_3_5",
+            allergyStatus: "none",
+            allergenIds: [],
+            customAllergies: [],
+            requiredSafetyConstraints: ["cut_small"],
+          },
+        ],
+      }),
+    );
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "00000000-0000-4000-8000-000000000001",
+            idempotency_key: "idem-pe11-cut",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-07-27",
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: { ok: true }, error: null });
+    });
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+
+    await expect(
+      runFlyerWeekly(
+        {
+          user,
+          openRouterSender,
+          assertPrivacyConsent: acceptConsent,
+        },
+        new Uint8Array([1, 2, 3]),
+        "idem-pe11-cut",
+      ),
+    ).rejects.toMatchObject({ status: 422, code: "current_safety_revalidation_required" });
+
+    expect(rpcNames()).toContain("reserve_flyer_weekly");
+    expect(rpcNames()).toContain("finalize_flyer_weekly_failure");
+    expect(rpcNames()).not.toContain("mark_flyer_weekly_sent");
+    expect(rpcArgsFor("finalize_flyer_weekly_failure")).toMatchObject({
+      p_sent: false,
+      p_failure_code: "current_safety_revalidation_required",
+    });
+    expect(openRouterSender).not.toHaveBeenCalled();
+  });
+
   it("PE2: replays succeeded ledger before Plus 403 without calling reserve", async () => {
     loadEntitlementMock.mockResolvedValue(freeEntitlement);
     rpcMock.mockImplementation((name: string) => {
