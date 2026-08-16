@@ -570,11 +570,19 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
 
   // C-R4: leftover-capable Login は pin 前に leftover persist を local signOut する。
   // ただしこのタブで今立てた番号成功印が新鮮なら、その session は leftover ではない。
+  // C1: unmount / 印書き込み後の late .then で leftover を再起動しない。
   useEffect(() => {
     if (!leftoverCapable || otpCompletedFresh) {
       return;
     }
-    void clearLeftoverLoginSessionIfNoSiblingCompletion();
+    let aborted = false;
+    void Promise.resolve().then(() => {
+      if (aborted) return;
+      void clearLeftoverLoginSessionIfNoSiblingCompletion();
+    });
+    return () => {
+      aborted = true;
+    };
   }, [leftoverCapable, otpCompletedFresh, locationState.authError, location.search]);
 
   // 既にセッションがある場合はフォームを出さず returnTo へ進める。

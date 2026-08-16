@@ -3918,7 +3918,14 @@ it("C-R12: present restore failure then clears when getSession still has discard
 
 it("C-R4: leftover-capable clear local-signs-out persist when no sibling completion", async () => {
   window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
-  const client = authClientMock();
+  const client = authClientMock({
+    getSessionResult: {
+      data: {
+        session: { access_token: "leftover-access", user: { id: "leftover-user" } },
+      },
+      error: null,
+    },
+  });
   try {
     await clearLeftoverLoginSessionIfNoSiblingCompletion(
       client as unknown as BrowserSupabaseClient,

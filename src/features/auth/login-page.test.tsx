@@ -20,11 +20,34 @@ import {
 import { LOGIN_EMAIL_HINT, LOGIN_PAGE_NOTE, LoginPage } from "./login-page";
 import { useAuth } from "./use-auth";
 
-const leftoverSignOut = vi.hoisted(() => vi.fn().mockResolvedValue({ error: null }));
+const leftoverMocks = vi.hoisted(() => {
+  const leftover = {
+    access_token: "leftover-access",
+    user: { id: "leftover-user" },
+  };
+  const otp = {
+    access_token: "otp-access",
+    user: { id: "otp-user" },
+  };
+  return {
+    leftover,
+    otp,
+    leftoverGetSession: vi.fn().mockResolvedValue({
+      data: { session: leftover },
+      error: null,
+    }),
+    leftoverSignOut: vi.fn().mockResolvedValue({ error: null }),
+  };
+});
+const leftoverGetSession = leftoverMocks.leftoverGetSession;
+const leftoverSignOut = leftoverMocks.leftoverSignOut;
 
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({
-    auth: { signOut: leftoverSignOut },
+    auth: {
+      getSession: leftoverMocks.leftoverGetSession,
+      signOut: leftoverMocks.leftoverSignOut,
+    },
   }),
 }));
 
@@ -121,7 +144,13 @@ async function sendEmailAndWait(
 }
 
 afterEach(() => {
-  leftoverSignOut.mockClear();
+  leftoverGetSession.mockReset();
+  leftoverGetSession.mockResolvedValue({
+    data: { session: leftoverMocks.leftover },
+    error: null,
+  });
+  leftoverSignOut.mockReset();
+  leftoverSignOut.mockResolvedValue({ error: null });
   window.localStorage.removeItem(leftoverSessionStorageKey);
   sessionStorage.removeItem(emailOtpCompletedKey);
   sessionStorage.removeItem("kondate.auth.lastMagicEmail");
@@ -223,6 +252,7 @@ it.each([
     expect(await screen.findByText(dest)).toBeInTheDocument();
 
     leftoverSignOut.mockClear();
+    leftoverGetSession.mockClear();
     view.unmount();
     window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
     vi.mocked(useAuth).mockReturnValue(authenticatedAuth());
@@ -233,6 +263,78 @@ it.each([
     });
     expect(leftoverSignOut).not.toHaveBeenCalled();
     expect(screen.getByText(dest)).toBeInTheDocument();
+  },
+);
+
+it.each([
+  {
+    label: "query-less leftover-capable /login",
+    entry: "/login",
+    dest: "welcome-dest",
+  },
+  {
+    label: "unbound leftover-capable",
+    entry: "/login?authError=unbound_callback",
+    dest: "welcome-dest",
+  },
+] as const)(
+  "does not let late leftover signOut wipe the OTP session on leftover-capable $label",
+  async ({ entry, dest }) => {
+    // leftover の 2 回目以降の getSession を番号成功後まで止め、指紋変化で掃除を見送らせる
+    let otpSessionReady = false;
+    let startProbeIssued = false;
+    let releaseHeldGetSession: (() => void) | undefined;
+    const heldGetSession = new Promise<void>((resolve) => {
+      releaseHeldGetSession = resolve;
+    });
+    leftoverGetSession.mockImplementation(async () => {
+      if (otpSessionReady) {
+        return { data: { session: leftoverMocks.otp }, error: null };
+      }
+      if (!startProbeIssued) {
+        startProbeIssued = true;
+        return { data: { session: leftoverMocks.leftover }, error: null };
+      }
+      await heldGetSession;
+      return { data: { session: leftoverMocks.otp }, error: null };
+    });
+
+    let resolveLeftoverSignOut: ((value: { error: null }) => void) | undefined;
+    leftoverSignOut.mockImplementation(
+      () =>
+        new Promise<{ error: null }>((resolve) => {
+          resolveLeftoverSignOut = resolve;
+        }),
+    );
+
+    window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+    vi.mocked(useAuth).mockReturnValue(authenticatedAuth());
+
+    const user = userEvent.setup();
+    const gateway = stubGateway({
+      sendEmailOtp: vi.fn().mockResolvedValue({
+        email: "user@example.com",
+        resendAvailableAt: readyResendAt(),
+      }),
+      verifyEmailOtp: vi.fn().mockResolvedValue({ kind: "complete" }),
+    });
+    renderLoginAt(entry, gateway);
+
+    await sendEmailAndWait(user);
+    await pasteOtpDigits(user, "123456");
+    expect(await screen.findByText(dest)).toBeInTheDocument();
+
+    otpSessionReady = true;
+    releaseHeldGetSession?.();
+    resolveLeftoverSignOut?.({ error: null });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(dest)).toBeInTheDocument();
+    expect(window.localStorage.getItem(leftoverSessionStorageKey)).toBe("leftover-persist");
+    expect(leftoverSignOut).not.toHaveBeenCalled();
   },
 );
 

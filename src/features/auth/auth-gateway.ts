@@ -646,11 +646,57 @@ async function clearDiscardedExchangeSessionIfStillPresent(
   }
 }
 
+/** leftover 成功印。login-page と同キー。storedAt のみ。番号は載せない。 */
+const EMAIL_OTP_COMPLETED_MARK_KEY = "kondate.auth.emailOtpCompleted";
+/**
+ * leftover 成功印の鮮度。login-page の MAGIC_RESIDUAL_TTL_MS と同値。
+ * leftover が番号成功直後の session を leftover と誤認しないための短寿命印。
+ */
+const EMAIL_OTP_COMPLETED_MARK_TTL_MS = 60_000;
+
+/**
+ * leftover 成功印が 60s 以内か。login-page の reader は循環になるのでここへ複製する。
+ * 期限切れ印は消さない（logout cleanup が正）。読めなければ fresh ではない。
+ */
+function isFreshEmailOtpCompletedMark(nowMs: number = Date.now()): boolean {
+  try {
+    const raw = sessionStorage.getItem(EMAIL_OTP_COMPLETED_MARK_KEY);
+    if (raw === null) return false;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const storedAt = "storedAt" in parsed ? parsed.storedAt : null;
+    if (typeof storedAt !== "string") return false;
+    const storedMs = Date.parse(storedAt);
+    if (Number.isNaN(storedMs)) return false;
+    return nowMs - storedMs <= EMAIL_OTP_COMPLETED_MARK_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+function wipeBrowserSupabasePersistOnly(): void {
+  if (typeof window === "undefined") return;
+  try {
+    clearBrowserSupabaseSessionStorage(window.localStorage);
+  } catch {
+    // best-effort
+  }
+  try {
+    clearBrowserSupabaseSessionStorage(window.sessionStorage);
+  } catch {
+    // best-effort
+  }
+}
+
 /**
  * C-R4: leftover-capable Login が pin 前に leftover persist を落とす。
  * C6 hangWatchdog は persist を消さず leave するため、ここで local signOut しないと
  * leftover が live pin され後勝ち Google を拒む。
  * C5: 任意の勝者 completion があるときは触らない（loserFlowId 空 = 全 completion が sibling）。
+ *
+ * C1: 指紋 null + context ありで clearDiscarded すると persist 無条件 wipe + signOut する。
+ * withTimeout は signOut を cancel しないので、遅延 _removeSession が番号成功 session を消す。
+ * 番号成功印・指紋変化では触らない。指紋が取れないときは persist だけ消し signOut しない。
  */
 export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
   client?: BrowserSupabaseClient,
@@ -658,7 +704,23 @@ export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
 ): Promise<void> {
   try {
     const resolved = client ?? getBrowserSupabaseClient();
-    await clearDiscardedExchangeSessionIfStillPresent(resolved, null, {
+    if (isFreshEmailOtpCompletedMark()) return;
+
+    const startKey = await probeDiscardedExchangeSessionKey(resolved);
+    if (hasSiblingAuthContinuationCompletion("", storage)) return;
+
+    const currentKey = await probeDiscardedExchangeSessionKey(resolved);
+    if (isFreshEmailOtpCompletedMark()) return;
+    // 番号成功や勝者で session が現れた／変わった。触らない
+    if (currentKey !== startKey) return;
+
+    if (startKey === null) {
+      // 指紋なしの signOut は後勝ち session を殺し得るので persist だけ消す
+      wipeBrowserSupabasePersistOnly();
+      return;
+    }
+
+    await clearDiscardedExchangeSessionIfStillPresent(resolved, startKey, {
       loserFlowId: "",
       storage,
     });
