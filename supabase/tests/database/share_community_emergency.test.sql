@@ -74,6 +74,13 @@ insert into public.menus (
   'b1000000-0000-4000-8000-0000000000c4', 1
 );
 
+-- ローカル永続 DB / 先行 E2E の pending・running が残ると、本ファイル前半の
+-- claim がそれらを running 化し maxGlobalRunning=4 を先に埋める。
+-- GHA は空 DB だがローカル CI はスタックを落とさないため、cap 検証の前に隔離する。
+-- 本ファイルは rollback するので、この削除は永続しない。
+delete from private.share_generalization_jobs
+where status in ('pending', 'running');
+
 -- ---------------------------------------------------------------------------
 -- Schema presence
 -- ---------------------------------------------------------------------------
