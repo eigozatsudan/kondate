@@ -72,6 +72,8 @@ export function ShareConsentSettingsSection({
   const residualId = useId();
   // AP12: 同一タブ内の遅延応答が古い mutation 結果で cache を上書きしない
   const mutationGenerationRef = useRef(0);
+  // AP5: timeout 後の遅延成功で cache が正になったら saveError を隠す
+  const lastToggleIntentRef = useRef<boolean | null>(null);
 
   const consentQuery = useQuery({
     queryKey: shareConsentKeys.current(userId),
@@ -135,36 +137,20 @@ export function ShareConsentSettingsSection({
   const toggleMutation = useMutation({
     mutationFn: async (nextEnabled: boolean) => {
       const generation = ++mutationGenerationRef.current;
-      if (onToggle !== undefined) {
-        // AP6: 注入ハンドラも同上限（テストの never-settle と本番 RPC を揃える）
-        await withTimeout(onToggle(nextEnabled), SHARE_CONSENT_TOGGLE_TIMEOUT_MS);
-        return { nextEnabled, generation };
-      }
-      const client = getBrowserSupabaseClient();
-      // off → revoke、on → 現行 version で reaccept（upsert 本体は API 側）
-      // AP6: never-settle で switch disabled 固着を防ぐ（timeout → saveError + 再有効化）
-      const next = await withTimeout(
-        nextEnabled ? reacceptMyShareConsent(client) : revokeMyShareConsent(client),
-        SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
-      );
-      // AP12: 古い mutation の応答は捨て、最新世代だけ cache を更新する
-      if (generation !== mutationGenerationRef.current) {
-        return { nextEnabled, generation, discarded: true as const };
-      }
-      // サーバ再読で最終状態を正とする（他タブ完了分を拾う）
-      // AP6: 再読も同上限。timeout/失敗時は mutation 結果 next にフォールバック（同意操作自体は成功扱い）
-      try {
-        const fresh = await withTimeout(getMyShareConsent(client), SHARE_CONSENT_TOGGLE_TIMEOUT_MS);
+      lastToggleIntentRef.current = nextEnabled;
+      const abortController = new AbortController();
+      const abortToggle = (): void => {
+        if (!abortController.signal.aborted) {
+          abortController.abort();
+        }
+      };
+      const applyFreshConsent = (fresh: ShareConsentState): void => {
         if (generation === mutationGenerationRef.current) {
           queryClient.setQueryData(shareConsentKeys.current(userId), fresh);
         }
-      } catch {
-        if (generation === mutationGenerationRef.current) {
-          queryClient.setQueryData(shareConsentKeys.current(userId), next);
-        }
-      }
-      // 他タブへ invalidate 通知
-      if (typeof BroadcastChannel !== "undefined") {
+      };
+      const notifyOtherTabs = (): void => {
+        if (typeof BroadcastChannel === "undefined") return;
         try {
           const channel = new BroadcastChannel(SHARE_CONSENT_BROADCAST_CHANNEL);
           channel.postMessage({ userId, at: Date.now() });
@@ -172,12 +158,69 @@ export function ShareConsentSettingsSection({
         } catch {
           // BroadcastChannel 失敗は focus 再同期に委ねる
         }
+      };
+
+      if (onToggle !== undefined) {
+        // AP6: 注入ハンドラも同上限（テストの never-settle と本番 RPC を揃える）
+        await withTimeout(onToggle(nextEnabled), SHARE_CONSENT_TOGGLE_TIMEOUT_MS, abortToggle);
+        return { nextEnabled, generation };
       }
-      return { nextEnabled, generation };
+      const client = getBrowserSupabaseClient();
+      // off → revoke、on → 現行 version で reaccept（upsert 本体は API 側）
+      // AP6: never-settle で switch disabled 固着を防ぐ（timeout → saveError + 再有効化）
+      // AP5: timeout 時に in-flight upsert を abort し、UI オフのままサーバ ON を残さない
+      const upsertPromise = nextEnabled
+        ? reacceptMyShareConsent(client, { signal: abortController.signal })
+        : revokeMyShareConsent(client, { signal: abortController.signal });
+
+      try {
+        const next = await withTimeout(upsertPromise, SHARE_CONSENT_TOGGLE_TIMEOUT_MS, abortToggle);
+        // AP12: 古い mutation の応答は捨て、最新世代だけ cache を更新する
+        if (generation !== mutationGenerationRef.current) {
+          return { nextEnabled, generation, discarded: true as const };
+        }
+        // サーバ再読で最終状態を正とする（他タブ完了分を拾う）
+        // AP6: 再読も同上限。timeout/失敗時は mutation 結果 next にフォールバック（同意操作自体は成功扱い）
+        try {
+          const fresh = await withTimeout(
+            getMyShareConsent(client),
+            SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
+          );
+          applyFreshConsent(fresh);
+        } catch {
+          applyFreshConsent(next);
+        }
+        notifyOtherTabs();
+        return { nextEnabled, generation };
+      } catch (error) {
+        // AP5: abort 後もサーバ処理済みになり得る。再読で cache を正にし、一致なら成功扱い。
+        if (generation !== mutationGenerationRef.current) {
+          throw error;
+        }
+        try {
+          const fresh = await withTimeout(
+            getMyShareConsent(client),
+            SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
+          );
+          applyFreshConsent(fresh);
+          if (hasCurrentShareConsent(fresh) === nextEnabled) {
+            notifyOtherTabs();
+            return { nextEnabled, generation, reconciled: true as const };
+          }
+        } catch {
+          // 再読失敗。abort が効かない SDK 向けに遅延成功で cache を正にする
+        }
+        void upsertPromise.then(applyFreshConsent).catch(() => undefined);
+        throw error;
+      }
     },
   });
 
   const pending = toggleMutation.isPending;
+  // AP5: 遅延成功で cache が意図状態になったら、timeout の saveError を残さない
+  const showSaveError =
+    toggleMutation.isError &&
+    (lastToggleIntentRef.current === null || enabled !== lastToggleIntentRef.current);
   // オフ状態では常時。オンからオフへ操作中も「既提供分は残る」を再表示（§7.2）
   const showResidual = !enabled || (pending && enabled);
 
@@ -224,7 +267,7 @@ export function ShareConsentSettingsSection({
               {shareConsentSettingsCopy.residualRetentionNotice}
             </p>
           ) : null}
-          {toggleMutation.isError ? <p role="alert">{shareConsentSettingsCopy.saveError}</p> : null}
+          {showSaveError ? <p role="alert">{shareConsentSettingsCopy.saveError}</p> : null}
         </div>
       ) : null}
 

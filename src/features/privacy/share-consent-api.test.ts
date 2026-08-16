@@ -182,6 +182,31 @@ it("treats only current version with revoked_at null as current consent", () => 
   expect(hasCurrentShareConsent(null)).toBe(false);
 });
 
+it("AP5: forwards AbortSignal to rpc abortSignal without changing the no-signal call shape", async () => {
+  const signal = new AbortController().signal;
+  const abortSignal = vi.fn().mockResolvedValue({
+    data: {
+      ok: true,
+      consent_version: shareConsentVersion,
+      accepted_at: "2026-08-01T00:00:00.000Z",
+      revoked_at: null,
+    },
+    error: null,
+  });
+  const rpc = vi.fn().mockReturnValue({ abortSignal });
+  const client = { rpc } as never;
+
+  await expect(upsertMyShareConsent(client, true, { signal })).resolves.toMatchObject({
+    consent_version: shareConsentVersion,
+    revoked_at: null,
+  });
+  expect(rpc).toHaveBeenCalledWith("upsert_my_share_consent", {
+    p_version: shareConsentVersion,
+    p_accept: true,
+  });
+  expect(abortSignal).toHaveBeenCalledWith(signal);
+});
+
 it("rejects malformed RPC payloads instead of trusting raw Json", async () => {
   const rpc = vi.fn().mockResolvedValue({
     data: { ok: true, unexpected: true },

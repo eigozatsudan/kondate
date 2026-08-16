@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactElement } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { shareConsentVersion } from "@shared/contracts/share-consent";
 import { shareConsentRequiredPhrases, shareConsentSettingsCopy } from "./privacy-copy";
 import type { ShareConsentState, SharedEmergencyRecipeListItem } from "./share-consent-api";
@@ -10,6 +10,26 @@ import {
   SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
   ShareConsentSettingsSection,
 } from "./share-consent-settings-section";
+
+const getMyShareConsentMock = vi.hoisted(() => vi.fn());
+const reacceptMyShareConsentMock = vi.hoisted(() => vi.fn());
+const revokeMyShareConsentMock = vi.hoisted(() => vi.fn());
+const listMySharedEmergencyRecipesMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/shared/lib/supabase", () => ({
+  getBrowserSupabaseClient: () => ({}),
+}));
+
+vi.mock("./share-consent-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./share-consent-api")>();
+  return {
+    ...actual,
+    getMyShareConsent: getMyShareConsentMock,
+    reacceptMyShareConsent: reacceptMyShareConsentMock,
+    revokeMyShareConsent: revokeMyShareConsentMock,
+    listMySharedEmergencyRecipes: listMySharedEmergencyRecipesMock,
+  };
+});
 
 const acceptedConsent: ShareConsentState = {
   consent_version: shareConsentVersion,
@@ -57,6 +77,14 @@ function renderSection(props: Partial<ComponentProps<typeof ShareConsentSettings
 }
 
 describe("ShareConsentSettingsSection", () => {
+  beforeEach(() => {
+    getMyShareConsentMock.mockReset();
+    reacceptMyShareConsentMock.mockReset();
+    revokeMyShareConsentMock.mockReset();
+    listMySharedEmergencyRecipesMock.mockReset();
+    listMySharedEmergencyRecipesMock.mockResolvedValue([]);
+  });
+
   it("renders toggle off by default when consent is absent, with residual retention copy", () => {
     renderSection({ consent: emptyConsent });
     const toggle = screen.getByRole("switch", {
@@ -259,6 +287,83 @@ describe("ShareConsentSettingsSection", () => {
         shareConsentSettingsCopy.saveError,
       );
       expect(toggle).not.toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP5: timeout after toggle on aborts upsert and reconciles cache from server ON", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const upsertSignals: AbortSignal[] = [];
+      getMyShareConsentMock.mockImplementation(() => {
+        // upsert 開始後の再読はサーバ正（ON）。初期 query はオフ。
+        if (reacceptMyShareConsentMock.mock.calls.length > 0) {
+          return Promise.resolve(acceptedConsent);
+        }
+        return Promise.resolve(revokedConsent);
+      });
+      reacceptMyShareConsentMock.mockImplementation(
+        (_client: unknown, options?: { signal?: AbortSignal }) => {
+          if (options?.signal !== undefined) {
+            upsertSignals.push(options.signal);
+          }
+          return new Promise<ShareConsentState>(() => undefined);
+        },
+      );
+
+      renderWithClient(<ShareConsentSettingsSection userId="user-1" />);
+      const toggle = await screen.findByRole("switch", {
+        name: shareConsentSettingsCopy.toggleLabel,
+      });
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+
+      await user.click(toggle);
+      await waitFor(() => {
+        expect(reacceptMyShareConsentMock).toHaveBeenCalledTimes(1);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_TOGGLE_TIMEOUT_MS + 50);
+      });
+
+      expect(upsertSignals[0]?.aborted).toBe(true);
+      await waitFor(() => {
+        expect(toggle).toHaveAttribute("aria-checked", "true");
+      });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP5: timeout after toggle on keeps saveError when server is still off", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      getMyShareConsentMock.mockResolvedValue(revokedConsent);
+      reacceptMyShareConsentMock.mockImplementation(
+        () => new Promise<ShareConsentState>(() => undefined),
+      );
+
+      renderWithClient(<ShareConsentSettingsSection userId="user-1" />);
+      const toggle = await screen.findByRole("switch", {
+        name: shareConsentSettingsCopy.toggleLabel,
+      });
+      await user.click(toggle);
+      await waitFor(() => {
+        expect(reacceptMyShareConsentMock).toHaveBeenCalledTimes(1);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_TOGGLE_TIMEOUT_MS + 50);
+      });
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        shareConsentSettingsCopy.saveError,
+      );
+      expect(toggle).toHaveAttribute("aria-checked", "false");
     } finally {
       vi.useRealTimers();
     }

@@ -37,9 +37,34 @@ const sharedEmergencyRecipeListSchema = z.array(sharedEmergencyRecipeListItemSch
 export type ShareConsentState = z.infer<typeof shareConsentStateSchema>;
 export type SharedEmergencyRecipeListItem = z.infer<typeof sharedEmergencyRecipeListItemSchema>;
 
+/** AP5: timeout 時に in-flight RPC を abort するための任意 signal。 */
+export type ShareConsentRpcOptions = {
+  signal?: AbortSignal;
+};
+
+/**
+ * supabase-js の rpc builder は thenable + abortSignal。
+ * signal が無い既存呼び出しは引数形を変えない。
+ */
+async function awaitShareConsentRpc<T>(
+  query: PromiseLike<T> & { abortSignal: (signal: AbortSignal) => PromiseLike<T> },
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (signal === undefined) {
+    return await query;
+  }
+  return await query.abortSignal(signal);
+}
+
 /** 本人の現行共有同意行を読む（未同意時は null フィールド）。 */
-export async function getMyShareConsent(client: BrowserSupabaseClient): Promise<ShareConsentState> {
-  const { data, error } = await client.rpc("get_my_share_consent");
+export async function getMyShareConsent(
+  client: BrowserSupabaseClient,
+  options?: ShareConsentRpcOptions,
+): Promise<ShareConsentState> {
+  const { data, error } = await awaitShareConsentRpc(
+    client.rpc("get_my_share_consent"),
+    options?.signal,
+  );
   if (error !== null) throw new Error("共有の同意状態を読み込めませんでした");
   const parsed = shareConsentStateSchema.safeParse(data);
   if (!parsed.success) throw new Error("共有の同意状態を読み込めませんでした");
@@ -53,11 +78,15 @@ export async function getMyShareConsent(client: BrowserSupabaseClient): Promise<
 export async function upsertMyShareConsent(
   client: BrowserSupabaseClient,
   accept: boolean,
+  options?: ShareConsentRpcOptions,
 ): Promise<ShareConsentState> {
-  const { data, error } = await client.rpc("upsert_my_share_consent", {
-    p_version: shareConsentVersion,
-    p_accept: accept,
-  });
+  const { data, error } = await awaitShareConsentRpc(
+    client.rpc("upsert_my_share_consent", {
+      p_version: shareConsentVersion,
+      p_accept: accept,
+    }),
+    options?.signal,
+  );
   if (error !== null) throw new Error("共有の同意を保存できませんでした");
   const parsed = upsertShareConsentResponseSchema.safeParse(data);
   if (!parsed.success) throw new Error("共有の同意を保存できませんでした");
@@ -69,13 +98,19 @@ export async function upsertMyShareConsent(
 }
 
 /** 設定トグル off: 新規共有化を止める（既提供分は残る）。 */
-export function revokeMyShareConsent(client: BrowserSupabaseClient): Promise<ShareConsentState> {
-  return upsertMyShareConsent(client, false);
+export function revokeMyShareConsent(
+  client: BrowserSupabaseClient,
+  options?: ShareConsentRpcOptions,
+): Promise<ShareConsentState> {
+  return upsertMyShareConsent(client, false, options);
 }
 
 /** 設定トグル on: 現行 version で再同意する。 */
-export function reacceptMyShareConsent(client: BrowserSupabaseClient): Promise<ShareConsentState> {
-  return upsertMyShareConsent(client, true);
+export function reacceptMyShareConsent(
+  client: BrowserSupabaseClient,
+  options?: ShareConsentRpcOptions,
+): Promise<ShareConsentState> {
+  return upsertMyShareConsent(client, true, options);
 }
 
 /**
