@@ -3888,6 +3888,48 @@ it("C-R2: leftover-capable clear keeps later PKCE verifier when leftover signOut
   }
 });
 
+it("C-R4: leftover-capable clear keeps PKCE verifier when leftover signOut settles between write and protect", async () => {
+  vi.useFakeTimers();
+  const pkceVerifierKey = `${browserSupabaseSessionStorageKey}-code-verifier`;
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
+  let releaseSignOut: (() => void) | undefined;
+  const client = authClientMock();
+  client.auth.signOut.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        releaseSignOut = () => {
+          window.localStorage.removeItem(pkceVerifierKey);
+          resolve({ error: null });
+        };
+      }),
+  );
+  try {
+    const pending = clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await Promise.resolve();
+    expect(settled).toBe(true);
+
+    // 実 SDK: setItem のあと generatePKCEChallenge を await してから protect
+    window.localStorage.setItem(pkceVerifierKey, "verifier-after-google-start");
+    releaseSignOut?.();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    protectPkceVerifierFromLateLeftoverSignOut();
+
+    expect(window.localStorage.getItem(pkceVerifierKey)).toBe("verifier-after-google-start");
+    await pending;
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    window.localStorage.removeItem(pkceVerifierKey);
+  }
+});
+
 it("C-R3: leftover-capable clear settles at 2s when local signOut never settles", async () => {
   vi.useFakeTimers();
   window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");

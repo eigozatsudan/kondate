@@ -774,7 +774,8 @@ function restorePkceCodeVerifier(storage: Storage, value: string | null): void {
 /**
  * leftover local signOut が 2s timeout 後に後着 _removeSession するとき、
  * その後に書かれた PKCE verifier を消させない（C-R2）。掃除自体は 2s で終える（C-R3）。
- * OAuth 直後の protectPkceVerifierFromLateLeftoverSignOut が控えを置く。
+ * C-R4: signInWithOAuth は verifier を先に setItem し generatePKCEChallenge を await する。
+ * protect はそのあとなので、書込時点で控えを取らないと後着 settle が空のままガードを消す。
  */
 type LeftoverPkceGuard = {
   storage: Storage;
@@ -782,6 +783,11 @@ type LeftoverPkceGuard = {
 };
 
 const leftoverPkceGuards = new Set<LeftoverPkceGuard>();
+
+/** storage インスタンスの setItem 差し戻し。never-settle leftover でも reset で外す。 */
+const leftoverPkceSetItemRestores = new Map<Storage, () => void>();
+/** jsdom localStorage はインスタンス代入を無視し得るので prototype も見る。 */
+let leftoverPkceProtoSetItemRestore: (() => void) | null = null;
 
 function restoreLeftoverProtectedPkce(guard: LeftoverPkceGuard): void {
   if (
@@ -792,30 +798,128 @@ function restoreLeftoverProtectedPkce(guard: LeftoverPkceGuard): void {
   }
 }
 
+function rememberPkceVerifierWrite(storage: Storage, key: string, value: string): void {
+  if (key !== PKCE_CODE_VERIFIER_KEY) {
+    return;
+  }
+  for (const guard of leftoverPkceGuards) {
+    if (guard.storage === storage) {
+      guard.protectedValue = value;
+    }
+  }
+}
+
+function wrapStoragePrototypeSetItemToCapturePkce(): void {
+  if (leftoverPkceProtoSetItemRestore !== null || typeof Storage === "undefined") {
+    return;
+  }
+  const proto = Storage.prototype;
+  const desc = Object.getOwnPropertyDescriptor(proto, "setItem");
+  if (desc?.value === undefined || desc.configurable === false) {
+    return;
+  }
+  const protoOriginal = desc.value as (this: Storage, key: string, value: string) => void;
+  try {
+    Object.defineProperty(proto, "setItem", {
+      ...desc,
+      value: function leftoverPkceCapturingSetItem(
+        this: Storage,
+        key: string,
+        value: string,
+      ): void {
+        protoOriginal.call(this, key, value);
+        rememberPkceVerifierWrite(this, key, value);
+      },
+    });
+    leftoverPkceProtoSetItemRestore = () => {
+      Object.defineProperty(proto, "setItem", desc);
+    };
+  } catch {
+    // prototype を触れない環境ではインスタンス wrap に委ねる
+  }
+}
+
+function wrapStorageSetItemToCapturePkce(storage: Storage): void {
+  wrapStoragePrototypeSetItemToCapturePkce();
+  if (leftoverPkceSetItemRestores.has(storage)) {
+    return;
+  }
+  const ownDesc = Object.getOwnPropertyDescriptor(storage, "setItem");
+  if (ownDesc?.value === undefined) {
+    leftoverPkceSetItemRestores.set(storage, () => undefined);
+    return;
+  }
+  const originalSetItem = ownDesc.value as (this: Storage, key: string, value: string) => void;
+  try {
+    Object.defineProperty(storage, "setItem", {
+      ...ownDesc,
+      value: function leftoverPkceCapturingOwnSetItem(key: string, value: string): void {
+        originalSetItem.call(storage, key, value);
+        rememberPkceVerifierWrite(storage, key, value);
+      },
+    });
+    leftoverPkceSetItemRestores.set(storage, () => {
+      Object.defineProperty(storage, "setItem", ownDesc);
+    });
+  } catch {
+    leftoverPkceSetItemRestores.set(storage, () => undefined);
+  }
+}
+
+function unwrapLeftoverPkceSetItemCaptures(): void {
+  for (const restore of leftoverPkceSetItemRestores.values()) {
+    restore();
+  }
+  leftoverPkceSetItemRestores.clear();
+  leftoverPkceProtoSetItemRestore?.();
+  leftoverPkceProtoSetItemRestore = null;
+}
+
+function unwrapStorageSetItemIfIdle(storage: Storage): void {
+  for (const guard of leftoverPkceGuards) {
+    if (guard.storage === storage) {
+      return;
+    }
+  }
+  leftoverPkceSetItemRestores.get(storage)?.();
+  leftoverPkceSetItemRestores.delete(storage);
+  if (leftoverPkceGuards.size === 0) {
+    leftoverPkceProtoSetItemRestore?.();
+    leftoverPkceProtoSetItemRestore = null;
+  }
+}
+
 function armLeftoverSignOutPkceProtection(
   signOutPromise: Promise<unknown>,
   storage: Storage,
 ): void {
   const guard: LeftoverPkceGuard = { storage, protectedValue: null };
   leftoverPkceGuards.add(guard);
+  // C-R4: protect より前の setItem を控える。後着 _removeSession が書込〜protect に入っても戻せる。
+  wrapStorageSetItemToCapturePkce(storage);
   void signOutPromise
     .catch(() => undefined)
     .then(() => {
       leftoverPkceGuards.delete(guard);
       restoreLeftoverProtectedPkce(guard);
+      unwrapStorageSetItemIfIdle(storage);
     });
 }
 
 /**
  * OAuth 開始直後の PKCE を後着 leftover _removeSession から守る。
  * leftover timeout 前は no-op。
+ * C-R4: 書込時点の控えを、後着 remove 後の null で上書きしない。
  */
 export function protectPkceVerifierFromLateLeftoverSignOut(
   storage: Storage = window.localStorage,
 ): void {
   const value = readPkceCodeVerifier(storage);
   for (const guard of leftoverPkceGuards) {
-    if (guard.storage === storage) {
+    if (guard.storage !== storage) {
+      continue;
+    }
+    if (value !== null) {
       guard.protectedValue = value;
     }
   }
@@ -824,6 +928,7 @@ export function protectPkceVerifierFromLateLeftoverSignOut(
 /** テスト専用: never-settle leftover signOut が残した控えを隔離する。本番からは呼ばない。 */
 export function resetLeftoverPkceProtectionForTests(): void {
   leftoverPkceGuards.clear();
+  unwrapLeftoverPkceSetItemCaptures();
 }
 
 /**

@@ -828,6 +828,65 @@ it("C-R2: leftover-capable Google start keeps PKCE verifier when leftover signOu
   }
 });
 
+it("C-R4: leftover-capable Google start keeps PKCE verifier when leftover signOut settles between write and protect", async () => {
+  vi.useFakeTimers();
+  const pkceVerifierKey = `${leftoverSessionStorageKey}-code-verifier`;
+  window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+
+  let releaseSignOut: (() => void) | undefined;
+  leftoverSignOut.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        releaseSignOut = () => {
+          // auth-js _removeSession 相当: local signOut 完了時に PKCE verifier を消す
+          window.localStorage.removeItem(pkceVerifierKey);
+          resolve({ error: null });
+        };
+      }),
+  );
+
+  // 実 SDK 同様、signInWithOAuth は protect より先に verifier を書く。
+  // その await（generatePKCEChallenge）中に後着 settle する列。
+  const signInWithGoogle = vi.fn().mockImplementation(() => {
+    window.localStorage.setItem(pkceVerifierKey, "verifier-after-google-start");
+    releaseSignOut?.();
+    return Promise.resolve();
+  });
+  const gateway: AuthGateway = {
+    signInWithGoogle,
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
+  };
+
+  try {
+    render(
+      <MemoryRouter initialEntries={["/login?authError=oauth_cancelled"]}>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
+
+    expect(leftoverSignOut).toHaveBeenCalledWith({ scope: "local" });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Googleで続ける" }));
+    });
+    expect(signInWithGoogle).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    });
+
+    expect(signInWithGoogle).toHaveBeenCalled();
+    // C-R4: 書込と login-page protect のあいだに settle しても verifier が残る
+    expect(window.localStorage.getItem(pkceVerifierKey)).toBe("verifier-after-google-start");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("C-R3: leftover-capable Google start proceeds after 2s when leftover signOut never settles", async () => {
   vi.useFakeTimers();
   const pkceVerifierKey = `${leftoverSessionStorageKey}-code-verifier`;
