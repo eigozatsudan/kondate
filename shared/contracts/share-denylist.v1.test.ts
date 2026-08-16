@@ -7,6 +7,7 @@ import {
   sharePiiGivenNameStems,
   sharePiiLiteralPhrases,
   textHitsShareDenylist,
+  textsHitClosedShareDenylistPhrases,
 } from "./share-denylist.v1.js";
 
 describe("share-denylist.v1", () => {
@@ -151,6 +152,12 @@ describe("share-denylist.v1", () => {
     expect(shareGuaranteePhrases).toContain("誰でも食べて大丈夫");
     expect(shareHarmfulInstructionPhrases).toContain("漂白剤を使う");
     expect(textHitsShareDenylist("この献立は安全です")).toBe(true);
+    // 全文 join は間テキストで針が成立しない。3 片以上の部分列は AP-R3 で見る
+    expect(textHitsShareDenylist("この野菜炒め献立は安全です")).toBe(false);
+    expect(textsHitClosedShareDenylistPhrases(["この", "野菜炒め", "献立は", "安全です"])).toBe(
+      true,
+    );
+    expect(textsHitClosedShareDenylistPhrases(["ごはん", "を", "握る", "にんじん"])).toBe(false);
     expect(textHitsShareDenylist("誰でも食べて大丈夫な量にする")).toBe(true);
     expect(textHitsShareDenylist("最後に漂白剤を使う")).toBe(true);
     // 既存ヒットは緩めない

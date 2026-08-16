@@ -159,9 +159,10 @@ describe("FeedbackSection", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("AP8: fetch never reached does not sticky same-body retry", async () => {
+  it("AP8: token fetch never reached does not sticky same-body retry", async () => {
     const user = userEvent.setup();
-    fetchMock.mockRejectedValue(new TypeError("network"));
+    // AP8: fetch 開始前（token）の TypeError は未到達。AP-R2 の送出後 TypeError とは別。
+    requireAccessTokenMock.mockRejectedValue(new TypeError("Failed to fetch"));
     render(<FeedbackSection />);
     await expandFeedback(user);
     const text = "到達前失敗のあと同じ本文を再送できる内容です。";
@@ -169,16 +170,35 @@ describe("FeedbackSection", () => {
     await user.click(screen.getByRole("button", { name: "送信する" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("送信できませんでした");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(localStorage.getItem(stickyKey)).toBeNull();
 
+    requireAccessTokenMock.mockResolvedValue("token");
     fetchMock.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ ok: true, data: { id: "feedback-retry" } }),
     });
     await user.click(screen.getByRole("button", { name: "送信する" }));
     expect(await screen.findByRole("status")).toHaveTextContent("フィードバックを受け付けました");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("AP-R2: TypeError after fetch starts is sticky same-body retry", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    render(<FeedbackSection />);
+    await expandFeedback(user);
+    const text = "送出後の通信失敗では同じ本文を再送したくない内容です。";
+    await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(stickyKey)).toMatch(/^[0-9a-f]{64}$/u);
+
+    await user.click(screen.getByRole("button", { name: "送信する" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("同じ内容を再送すると重複");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("AP10: allows retry after definitive server error (not ambiguous)", async () => {

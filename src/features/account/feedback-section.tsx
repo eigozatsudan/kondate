@@ -253,8 +253,8 @@ export function FeedbackSection() {
       return;
     }
 
-    // AP8: token 取得前・TypeError ネットワークは sticky しない（未到達の再送を封じない）。
-    // AP10: fetch 開始後の timeout/abort は headers 前でも insert 済みになり得るので sticky する。
+    // AP8: token 取得前は sticky しない（未到達の再送を封じない）。
+    // AP10 / AP-R2: fetch 開始後は timeout/abort/TypeError いずれも到達曖昧として sticky する。
     let requestStarted = false;
     let fetchInitiated = false;
     // AP9: 締切時に in-flight POST を abort し zombie 二重 insert 窓を縮める
@@ -322,9 +322,9 @@ export function FeedbackSection() {
       setBody("");
       setCategory("feature_request");
       setStatusMessage("ありがとうございます。フィードバックを受け付けました");
-    } catch (error) {
-      // AP10: headers 前 abort でも Function 到達済みになり得る。到達曖昧は再送抑止。
-      if (requestStarted || (fetchInitiated && isFeedbackTimeoutOrAbort(error))) {
+    } catch {
+      // AP10 / AP-R2: fetch 開始後は headers 前でも insert 済みになり得る。到達曖昧は再送抑止。
+      if (requestStarted || fetchInitiated) {
         rememberAmbiguousFingerprint(fingerprint);
         setErrorMessage(
           "送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",

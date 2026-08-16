@@ -182,6 +182,82 @@ function foldShareDenylistHaystack(text: string): string {
 }
 
 /**
+ * AP-R3: 閉じた針だけ（正規表現・オープン NER は見ない）。
+ * フィールドを順に採用 / スキップした連結に針が含まれるか。
+ */
+function listClosedShareDenylistNeedles(): readonly string[] {
+  const needles: string[] = [
+    ...shareGuaranteePhrases,
+    ...sharePiiLiteralPhrases,
+    ...shareHarmfulInstructionPhrases,
+    ...sharePiiGivenNameBareStems,
+  ];
+  for (const stem of sharePiiGivenNameStems) {
+    for (const particle of givenNameParticleSuffixes) {
+      needles.push(`${stem}${particle}`);
+    }
+  }
+  return needles;
+}
+
+/**
+ * 順序付きフィールド部分列の連結が needle を含むか。
+ * 間フィールドは飛ばせる。フィールド内は通常の部分一致（途中開始・余剰末尾可）。
+ */
+function orderedFieldSubsequenceContains(fields: readonly string[], needle: string): boolean {
+  if (needle === "") return false;
+  let states = new Set<number>([0]);
+  for (const field of fields) {
+    if (field.includes(needle)) return true;
+    const next = new Set(states);
+    for (const progress of states) {
+      if (progress === 0) {
+        for (let index = 0; index < field.length; index += 1) {
+          const suffix = field.slice(index);
+          if (suffix.startsWith(needle)) return true;
+          if (needle.startsWith(suffix)) {
+            next.add(suffix.length);
+          }
+        }
+      } else {
+        const remaining = needle.slice(progress);
+        if (field.startsWith(remaining)) return true;
+        if (remaining.startsWith(field)) {
+          next.add(progress + field.length);
+        }
+      }
+    }
+    states = next;
+  }
+  return false;
+}
+
+function stripGivenNameFoodCompounds(text: string): string {
+  let next = text;
+  for (const compound of givenNameFoodCompounds) {
+    next = next.split(compound).join("");
+  }
+  return next;
+}
+
+/**
+ * AP-R3: 3 フィールド以上に分け、間に別テキストを置いても閉じた針を拾う。
+ * 正規表現針は見ない。オープン NER にはしない。
+ */
+export function textsHitClosedShareDenylistPhrases(texts: readonly string[]): boolean {
+  const folded = texts.map(foldShareDenylistHaystack).filter((text) => text !== "");
+  if (folded.length === 0) return false;
+  const bareStemNeedles = new Set<string>(sharePiiGivenNameBareStems);
+  for (const needle of listClosedShareDenylistNeedles()) {
+    const haystacks = bareStemNeedles.has(needle)
+      ? folded.map(stripGivenNameFoodCompounds).filter((text) => text !== "")
+      : folded;
+    if (orderedFieldSubsequenceContains(haystacks, needle)) return true;
+  }
+  return false;
+}
+
+/**
  * 単一テキストが denylist に触れるか。
  * haystack のみ NFKC + Cf 除去 + 空白/読点/中点削除。針は緩めない。
  */

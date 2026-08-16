@@ -4,7 +4,10 @@
  * 不合格は server_gate_failed のみ（自由文・PII を返さない）。
  */
 
-import { textHitsShareDenylist } from "../../../shared/contracts/share-denylist.v1.js";
+import {
+  textHitsShareDenylist,
+  textsHitClosedShareDenylistPhrases,
+} from "../../../shared/contracts/share-denylist.v1.js";
 import { validatedMenuSchema, type ValidatedMenu } from "../../../shared/contracts/generation.js";
 import type { ShareFailureCode } from "../../../shared/contracts/share-job.js";
 import { collectMenuTextSources } from "../../../shared/safety/allergens.js";
@@ -107,6 +110,8 @@ export function menuHitsShareDenylist(menu: ValidatedMenu): boolean {
       if (textHitsShareDenylist(`${left}${right}`)) return true;
     }
   }
+  // AP-R3: 3 片以上 + 間テキストでも閉じた針を見る（正規表現針は増やさない）
+  if (textsHitClosedShareDenylistPhrases(texts)) return true;
   return false;
 }
 

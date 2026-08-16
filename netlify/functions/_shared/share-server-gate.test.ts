@@ -123,6 +123,42 @@ describe("runShareServerGate", () => {
     });
   });
 
+  it("AP-R3: rejects closed needle split across 3+ fields with intervening text", () => {
+    const base = makeValidatedMenu();
+    const firstDish = base.dishes[0];
+    if (firstDish === undefined) {
+      throw new Error("factory menu must have a first dish");
+    }
+    const firstStep = firstDish.steps[0];
+    if (firstStep === undefined) {
+      throw new Error("factory menu must have a first step");
+    }
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0
+          ? {
+              ...dish,
+              name: "この",
+              description: "野菜炒め",
+              steps: [
+                { ...firstStep, instruction: "献立は" },
+                {
+                  id: "51000000-0000-4000-8000-000000000099",
+                  position: 2,
+                  instruction: "安全です",
+                },
+              ],
+            }
+          : dish,
+      ),
+    });
+    const lock = captureShareIngredientGraphLock(menu);
+    expect(runShareServerGate(menu, lock)).toEqual({
+      ok: false,
+      code: "server_gate_failed",
+    });
+  });
+
   it("AP12: rejects closed guarantee neighbor この献立は安全です", () => {
     const base = makeValidatedMenu();
     const menu = makeValidatedMenu({
