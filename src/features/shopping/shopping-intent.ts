@@ -345,15 +345,17 @@ export function shouldKeepShoppingCommandSticky(code: unknown): boolean {
 }
 
 /**
- * SHOP2 + SHOP1: list gate が真に invalid/unverifiable（phase=blocked / error）のとき
- * create resume が enabled=false のため submitCreate 内の append clear が到達しない。
- * その遷移でのみ mode=append sticky を捨て、forceNew 誘導と ready 復帰後の旧 append
- * 自動再送を防ぐ。一時的な phase=checking（focus / Realtime hard recheck）では
- * 呼ばないこと — 呼ばれると失応答 append 復旧鍵を捨てる（SHOP1）。
+ * SHOP2 + SHOP1 + SHOP-R1: list gate が真に invalid/unverifiable（再検証
+ * status!==valid）のときだけ mode=append sticky を捨て、forceNew 誘導と
+ * ready 復帰後の旧 append 自動再送を防ぐ。create resume は blocked（checking
+ * 含む）で止むが、shoppingGate.error は offline / 一時 503 / CHANNEL_ERROR も
+ * true になる。その一時 blocked では listInvalid=false のまま呼び、SHOP1 が
+ * 残した失応答 append 復旧鍵を捨てない。phase=checking でも呼ばないこと。
  * mode=new は D-C1 どおり保持する。
  * @returns true のとき append sticky を捨てた
  */
-export function discardAppendCreateCommandIfPresent(menuId: string): boolean {
+export function discardAppendCreateCommandIfPresent(menuId: string, listInvalid: boolean): boolean {
+  if (!listInvalid) return false;
   const command = readPendingShoppingCommand("create", menuId, createShoppingListRequestSchema);
   if (command === null) return false;
   if (command.mode !== "append") return false;

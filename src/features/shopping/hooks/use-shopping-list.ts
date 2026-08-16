@@ -59,7 +59,7 @@ export function useShoppingSafetyGate() {
         safetyFingerprint: string | null;
         currentLabelWarnings: readonly CurrentShoppingLabelWarning[];
       }
-    | { phase: "blocked"; message: string }
+    | { phase: "blocked"; message: string; cause: "invalid" | "temporary" }
   >({ phase: "checking" });
   const applyChecked = useCallback(
     (
@@ -82,6 +82,9 @@ export function useShoppingSafetyGate() {
         setState({
           phase: "blocked",
           message: checked.issues.map((issue) => issue.message).join("。"),
+          // 再検証が status!==valid（invalid / unverifiable）で閉じたときだけ
+          // 真の list invalid。offline / catch 503 とは分ける（SHOP-R1）。
+          cause: "invalid",
         });
     },
     [],
@@ -107,7 +110,11 @@ export function useShoppingSafetyGate() {
       applyChecked(current, checked);
     } catch {
       if (epoch.current === current)
-        setState({ phase: "blocked", message: "現在の家族設定を確認できませんでした" });
+        setState({
+          phase: "blocked",
+          message: "現在の家族設定を確認できませんでした",
+          cause: "temporary",
+        });
     }
   }, [applyChecked, cache, userId]);
   /**
@@ -141,7 +148,11 @@ export function useShoppingSafetyGate() {
       applyChecked(current, checked);
     } catch {
       if (epoch.current === current)
-        setState({ phase: "blocked", message: "現在の家族設定を確認できませんでした" });
+        setState({
+          phase: "blocked",
+          message: "現在の家族設定を確認できませんでした",
+          cause: "temporary",
+        });
     }
   }, [applyChecked, cache, userId]);
   useEffect(() => {
@@ -159,7 +170,11 @@ export function useShoppingSafetyGate() {
     };
     const offline = () => {
       epoch.current += 1;
-      setState({ phase: "blocked", message: "ネット接続後に現在の家族設定を確認してください" });
+      setState({
+        phase: "blocked",
+        message: "ネット接続後に現在の家族設定を確認してください",
+        cause: "temporary",
+      });
     };
     window.addEventListener(householdSafetyChangedEvent, changed);
     window.addEventListener("storage", stored);
@@ -215,7 +230,11 @@ export function useShoppingSafetyGate() {
             if (state === "SUBSCRIBED") void refresh();
             if (state === "CHANNEL_ERROR" || state === "TIMED_OUT") {
               epoch.current += 1;
-              setState({ phase: "blocked", message: "現在の家族設定の更新を確認できませんでした" });
+              setState({
+                phase: "blocked",
+                message: "現在の家族設定の更新を確認できませんでした",
+                cause: "temporary",
+              });
             }
           });
       })
@@ -243,6 +262,9 @@ export function useShoppingSafetyGate() {
     blocked: state.phase !== "ready",
     checking: state.phase === "checking",
     error: state.phase === "blocked",
+    // 再検証が status!==valid のときだけ true。offline / 一時 503 /
+    // CHANNEL_ERROR の blocked は error=true のまま false（SHOP-R1）。
+    invalid: state.phase === "blocked" && state.cause === "invalid",
     message: state.phase === "blocked" ? state.message : null,
     safetyFingerprint: state.phase === "ready" ? state.safetyFingerprint : null,
     currentLabelWarnings: state.phase === "ready" ? state.currentLabelWarnings : [],

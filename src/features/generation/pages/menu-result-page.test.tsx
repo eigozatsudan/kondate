@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
@@ -229,8 +229,12 @@ function renderPage(
 }
 
 beforeEach(() => {
+  // offline イベントは TanStack Query の onlineManager を切ったまま残し、
+  // 後続テストの query を paused にする。各 it の先頭で戻す。
+  onlineManager.setOnline(true);
   vi.clearAllMocks();
   sessionStorage.clear();
+  localStorage.clear();
   getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
   listPantryItemsMock.mockResolvedValue([]);
   // jsdom 向け native dialog ポリフィル（再生成理由ダイアログ用）
@@ -799,6 +803,104 @@ describe("MenuResultPage", () => {
     );
     const stickyKey = pendingShoppingCommandStorageKey("create", VALID_MENU_ID);
     expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).not.toBeNull();
+  });
+
+  it("keeps append sticky after shopping_unavailable then offline/temporary gate error (SHOP-R1)", async () => {
+    // SHOP1 が 503 で残した mode=append を、gate.error（offline / 一時 503）が
+    // discard すると forceNew が使用中リストを archive する。一時 error では捨てない。
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.createShoppingList.mockRejectedValue(
+      Object.assign(new Error("読み込めませんでした"), { code: "shopping_unavailable" }),
+    );
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    await waitFor(() => {
+      expect(shoppingApi.revalidateActiveShoppingList).toHaveBeenCalled();
+    });
+    const createButton = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
+    await waitFor(() => {
+      expect(createButton).toBeEnabled();
+    });
+    await userEvent.click(createButton);
+    expect(screen.getByRole("radio", { name: /今のリストへ追加/u })).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "作成する" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "買い物リストの状態が変わりました。もう一度確認してください",
+    );
+    const stickyKey = pendingShoppingCommandStorageKey("create", VALID_MENU_ID);
+    const readSticky = () => sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey);
+    expect(readSticky()).not.toBeNull();
+    expect(JSON.parse(readSticky() ?? "{}")).toMatchObject({ command: { mode: "append" } });
+
+    const revalidateCallsAfterKeep = shoppingApi.revalidateActiveShoppingList.mock.calls.length;
+    shoppingApi.revalidateActiveShoppingList.mockRejectedValue(
+      Object.assign(new Error("読み込めませんでした"), { code: "shopping_unavailable" }),
+    );
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => {
+      expect(shoppingApi.revalidateActiveShoppingList.mock.calls.length).toBeGreaterThan(
+        revalidateCallsAfterKeep,
+      );
+    });
+    expect(readSticky()).not.toBeNull();
+    expect(JSON.parse(readSticky() ?? "{}")).toMatchObject({ command: { mode: "append" } });
+
+    const reopen = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
+    await waitFor(() => {
+      expect(reopen).toBeEnabled();
+    });
+    await userEvent.click(reopen);
+    expect(
+      screen.queryByText("今のリストは家族設定で確認できないため、新しいリストを作ります。"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /今のリストへ追加/u })).not.toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "キャンセル" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "買い物リストを作る" })).not.toBeInTheDocument();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(readSticky()).not.toBeNull();
+    expect(JSON.parse(readSticky() ?? "{}")).toMatchObject({ command: { mode: "append" } });
+    onlineManager.setOnline(true);
+  });
+
+  it("discards append sticky when the shopping list is truly invalid (SHOP-R1)", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+    shoppingApi.revalidateActiveShoppingList.mockResolvedValue(invalidShoppingSafety);
+    const stickyKey = pendingShoppingCommandStorageKey("create", VALID_MENU_ID);
+    const appendSticky = JSON.stringify({
+      createdAtMs: Date.now(),
+      command: {
+        menuId: VALID_MENU_ID,
+        mode: "append",
+        activeListId: SHOPPING_LIST_ID,
+        expectedListVersion: 4,
+        idempotencyKey: "00000000-0000-4000-8000-0000000000aa",
+      },
+    });
+    sessionStorage.setItem(stickyKey, appendSticky);
+    localStorage.setItem(stickyKey, appendSticky);
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    await waitFor(() => {
+      expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).toBeNull();
+    });
+    const createButton = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
+    await waitFor(() => {
+      expect(createButton).toBeEnabled();
+    });
+    await userEvent.click(createButton);
+    expect(
+      screen.getByText("今のリストは家族設定で確認できないため、新しいリストを作ります。"),
+    ).toBeInTheDocument();
   });
 
   it("keeps reconcile sticky on current_safety_revalidation_required for same-key resume (SHOP1)", async () => {

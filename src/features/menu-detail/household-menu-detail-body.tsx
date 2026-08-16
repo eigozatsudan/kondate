@@ -368,19 +368,19 @@ export function HouseholdMenuDetailBody({
     };
   }, [activeList?.id, menuId]);
 
-  // SHOP2 + SHOP1: list gate が真に invalid/unverifiable（error=phase blocked）のときだけ
-  // append sticky を捨てる。create resume は blocked（checking 含む）で止むが、checking 中の
-  // hard recheck（focus / Realtime）で sticky を捨てると失応答 append 復旧が壊れる（SHOP1）。
-  // forceNew 誘導と ready 復帰後の旧 append 自動再送防止は error 時のみ。
+  // SHOP2 + SHOP1 + SHOP-R1: 真の invalid/unverifiable（再検証 status!==valid）
+  // のときだけ append sticky を捨てる。shoppingGate.error は offline / 一時 503 /
+  // CHANNEL_ERROR も含むため使わない。checking 中および一時 blocked は invalid=false
+  // のまま SHOP1 の失応答 append 復旧鍵を残す。
   useEffect(() => {
-    if (!shoppingGate.error) return;
+    if (!shoppingGate.invalid) return;
     if (menuId.length === 0) return;
-    if (discardAppendCreateCommandIfPresent(menuId)) {
+    if (discardAppendCreateCommandIfPresent(menuId, shoppingGate.invalid)) {
       setShoppingError(
         "今のリストは家族設定で確認できないため、追加ではなく新しいリストを作り直してください",
       );
     }
-  }, [shoppingGate.error, menuId]);
+  }, [shoppingGate.invalid, menuId]);
 
   // auto-open / StrictMode sheetExpected 復帰
   useEffect(() => {
@@ -477,13 +477,13 @@ export function HouseholdMenuDetailBody({
   const submitCreate = async (command: CreateShoppingListRequest) => {
     // HR9: soft/checking 中の resume でも mutate しない（pending は enabled 復帰で再試行）
     if (!actionsEnabled) return;
-    // SHOP8 + SHOP1: list gate 非 ready 中の append は飛ばさない。
-    // 真の invalid/unverifiable（error）だけ sticky を捨て forceNew へ誘導する。
-    // checking 中は sticky を保持し ready 復帰後の同一 key 再送を残す（SHOP1）。
+    // SHOP8 + SHOP1 + SHOP-R1: list gate 非 ready 中の append は飛ばさない。
+    // 真の invalid/unverifiable（再検証 status!==valid）だけ sticky を捨て
+    // forceNew へ誘導する。checking および一時 blocked（offline / 503 /
+    // CHANNEL_ERROR）では sticky を保持し ready 復帰後の同一 key 再送を残す。
     // mode=new は D-C1 どおり blocked でも続行可。
     if (command.mode === "append" && shoppingGate.blocked) {
-      if (shoppingGate.error) {
-        clearShoppingCommand("create", command.menuId);
+      if (discardAppendCreateCommandIfPresent(command.menuId, shoppingGate.invalid)) {
         setShoppingError(
           "今のリストは家族設定で確認できないため、追加ではなく新しいリストを作り直してください",
         );
@@ -896,7 +896,7 @@ export function HouseholdMenuDetailBody({
             // L8: 開く条件 (canOpenCreateSheet) に isFetching を含むため、
             // 表示中の再取得で「作成する」が disable 点滅しないよう送信は actionsEnabled のみ見る。
             safetyBlocked={!actionsEnabled}
-            forceNewMode={shoppingGate.error}
+            forceNewMode={shoppingGate.invalid}
             // SHOP-R1: 天井時は append を閉じ new 固定。件数は removed 込み（sheetItemCount）
             atItemCeiling={atItemCeiling}
             // SHOP4: reconcilable 時は append を閉じ、差分 CTA へ誘導（mode=new は維持）

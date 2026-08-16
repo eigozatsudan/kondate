@@ -247,7 +247,7 @@ describe("discardAppendCreateCommandIfPresent (SHOP2)", () => {
       key(),
       JSON.stringify({ createdAtMs: Date.now(), command: appendCommand }),
     );
-    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(true);
+    expect(discardAppendCreateCommandIfPresent(MENU, true)).toBe(true);
     expect(sessionStorage.getItem(key())).toBeNull();
     expect(localStorage.getItem(key())).toBeNull();
     expect(hasPendingCreateCommand(MENU)).toBe(false);
@@ -259,21 +259,32 @@ describe("discardAppendCreateCommandIfPresent (SHOP2)", () => {
       key(),
       JSON.stringify({ createdAtMs: Date.now(), command: appendCommand }),
     );
-    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(true);
+    expect(discardAppendCreateCommandIfPresent(MENU, true)).toBe(true);
     expect(localStorage.getItem(key())).toBeNull();
     expect(sessionStorage.getItem(key())).toBeNull();
   });
 
   it("keeps mode=new sticky (D-C1) and returns false", () => {
     sessionStorage.setItem(key(), JSON.stringify({ createdAtMs: Date.now(), command: newCommand }));
-    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(false);
+    expect(discardAppendCreateCommandIfPresent(MENU, true)).toBe(false);
     expect(hasPendingCreateCommand(MENU)).toBe(true);
   });
 
   it("returns false when no sticky or corrupt", () => {
-    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(false);
+    expect(discardAppendCreateCommandIfPresent(MENU, true)).toBe(false);
     sessionStorage.setItem(key(), "{");
-    expect(discardAppendCreateCommandIfPresent(MENU)).toBe(false);
+    expect(discardAppendCreateCommandIfPresent(MENU, true)).toBe(false);
+  });
+
+  it("keeps mode=append sticky when the list is only temporarily blocked (SHOP-R1)", () => {
+    // offline / 一時 503 / CHANNEL_ERROR は listInvalid=false。復旧鍵を捨てない。
+    sessionStorage.setItem(
+      key(),
+      JSON.stringify({ createdAtMs: Date.now(), command: appendCommand }),
+    );
+    expect(discardAppendCreateCommandIfPresent(MENU, false)).toBe(false);
+    expect(hasPendingCreateCommand(MENU)).toBe(true);
+    expect(sessionStorage.getItem(key())).not.toBeNull();
   });
 });
 
