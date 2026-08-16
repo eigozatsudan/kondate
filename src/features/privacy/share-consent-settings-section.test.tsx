@@ -7,6 +7,8 @@ import { shareConsentVersion } from "@shared/contracts/share-consent";
 import { shareConsentRequiredPhrases, shareConsentSettingsCopy } from "./privacy-copy";
 import type { ShareConsentState, SharedEmergencyRecipeListItem } from "./share-consent-api";
 import {
+  SHARE_CONSENT_RECONCILE_ATTEMPTS,
+  SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS,
   SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
   ShareConsentSettingsSection,
 } from "./share-consent-settings-section";
@@ -359,11 +361,109 @@ describe("ShareConsentSettingsSection", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(SHARE_CONSENT_TOGGLE_TIMEOUT_MS + 50);
       });
+      // AP-R1: 再読 OFF でも遅延 commit 窓を空けるため追加再読がある
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          (SHARE_CONSENT_RECONCILE_ATTEMPTS - 1) * SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS + 50,
+        );
+      });
 
       expect(await screen.findByRole("alert")).toHaveTextContent(
         shareConsentSettingsCopy.saveError,
       );
       expect(toggle).toHaveAttribute("aria-checked", "false");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP-R1: timeout re-read miss then later server ON reconciles toggle on", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      let postUpsertReads = 0;
+      getMyShareConsentMock.mockImplementation(() => {
+        if (reacceptMyShareConsentMock.mock.calls.length === 0) {
+          return Promise.resolve(revokedConsent);
+        }
+        postUpsertReads += 1;
+        // 直後の再読はまだ revoked。遅延 commit 後の再読で ON
+        if (postUpsertReads === 1) {
+          return Promise.resolve(revokedConsent);
+        }
+        return Promise.resolve(acceptedConsent);
+      });
+      reacceptMyShareConsentMock.mockImplementation(
+        () => new Promise<ShareConsentState>(() => undefined),
+      );
+
+      renderWithClient(<ShareConsentSettingsSection userId="user-1" />);
+      const toggle = await screen.findByRole("switch", {
+        name: shareConsentSettingsCopy.toggleLabel,
+      });
+      await user.click(toggle);
+      await waitFor(() => {
+        expect(reacceptMyShareConsentMock).toHaveBeenCalledTimes(1);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_TOGGLE_TIMEOUT_MS + 50);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS + 50);
+      });
+
+      await waitFor(() => {
+        expect(toggle).toHaveAttribute("aria-checked", "true");
+      });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP-R1: timeout re-read throw stays fail-closed mixed until server can be read", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      getMyShareConsentMock.mockImplementation(() => {
+        if (reacceptMyShareConsentMock.mock.calls.length === 0) {
+          return Promise.resolve(revokedConsent);
+        }
+        return Promise.reject(new Error("network"));
+      });
+      reacceptMyShareConsentMock.mockImplementation(
+        () => new Promise<ShareConsentState>(() => undefined),
+      );
+
+      renderWithClient(<ShareConsentSettingsSection userId="user-1" />);
+      const toggle = await screen.findByRole("switch", {
+        name: shareConsentSettingsCopy.toggleLabel,
+      });
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      await user.click(toggle);
+      await waitFor(() => {
+        expect(reacceptMyShareConsentMock).toHaveBeenCalledTimes(1);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_TOGGLE_TIMEOUT_MS + 50);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          (SHARE_CONSENT_RECONCILE_ATTEMPTS - 1) * SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS + 50,
+        );
+      });
+
+      const switchAfter = await screen.findByRole("switch", {
+        name: shareConsentSettingsCopy.toggleLabel,
+      });
+      expect(switchAfter).toHaveAttribute("aria-checked", "mixed");
+      expect(switchAfter).toBeDisabled();
+      expect(await screen.findByText(shareConsentSettingsCopy.reconcileUnconfirmed)).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: shareConsentSettingsCopy.reconcileRetry }),
+      ).toBeVisible();
     } finally {
       vi.useRealTimers();
     }

@@ -112,4 +112,11 @@ export const shareConsentSettingsCopy = {
   consentLoading: "共有の設定を確認しています…",
   consentError: "共有の設定を読み込めませんでした。再読み込みしてください。",
   saveError: "共有の設定を保存できませんでした。時間をおいてもう一度お試しください。",
+  /**
+   * AP-R1: timeout 後の再読が全部失敗したとき。
+   * オフ確定にするとサーバ ON のまま生成へ進めてしまうので、未確定のまま再読を促す。
+   */
+  reconcileUnconfirmed:
+    "共有の設定を確認できませんでした。いまオンかオフかは分からないので、再読み込みしてから操作してください。",
+  reconcileRetry: "共有の設定を再読み込み",
 } as const;

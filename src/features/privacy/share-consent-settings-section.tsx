@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { withTimeout } from "@/features/auth/async-timeout";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { shareConsentSettingsCopy } from "./privacy-copy";
@@ -23,6 +23,21 @@ export const SHARE_CONSENT_BROADCAST_CHANNEL = "kondate:share-consent";
  * privacy accept（PRIVACY_ACCEPT_TIMEOUT_MS）と同値。
  */
 export const SHARE_CONSENT_TOGGLE_TIMEOUT_MS = 10_000;
+
+/**
+ * AP-R1: abort 直後の 1 回再読だけでは、到達済み upsert の commit 前 OFF を信じうる。
+ * 初回を含む再読回数。ロックの 10s 本体は変えない。
+ */
+export const SHARE_CONSENT_RECONCILE_ATTEMPTS = 3;
+
+/** AP-R1: 再読間隔。即時再読だけだとまだ revoked の窓を閉じられない。 */
+export const SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS = 1_000;
+
+function waitMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 export type ShareConsentSettingsSectionProps = {
   userId: string;
@@ -74,6 +89,10 @@ export function ShareConsentSettingsSection({
   const mutationGenerationRef = useRef(0);
   // AP5: timeout 後の遅延成功で cache が正になったら saveError を隠す
   const lastToggleIntentRef = useRef<boolean | null>(null);
+  // AP-R1: 再読が全部失敗したらオフ確定せず mixed のまま再読する
+  const [consentReconcileUnconfirmed, setConsentReconcileUnconfirmed] = useState(false);
+  const consentReconcileUnconfirmedAtRef = useRef(0);
+  const toggleInputRef = useRef<HTMLInputElement | null>(null);
 
   const consentQuery = useQuery({
     queryKey: shareConsentKeys.current(userId),
@@ -117,6 +136,32 @@ export function ShareConsentSettingsSection({
     };
   }, [injectedConsent, queryClient, userId]);
 
+  // AP-R1: 未確定より後の再読成功だけ mixed を解く（旧 cache の isSuccess では解かない）
+  useEffect(() => {
+    if (!consentReconcileUnconfirmed) return;
+    if (injectedConsent !== undefined) {
+      setConsentReconcileUnconfirmed(false);
+      return;
+    }
+    if (
+      consentQuery.isSuccess &&
+      consentQuery.dataUpdatedAt > consentReconcileUnconfirmedAtRef.current
+    ) {
+      setConsentReconcileUnconfirmed(false);
+    }
+  }, [
+    consentReconcileUnconfirmed,
+    consentQuery.dataUpdatedAt,
+    consentQuery.isSuccess,
+    injectedConsent,
+  ]);
+
+  useEffect(() => {
+    if (toggleInputRef.current !== null) {
+      toggleInputRef.current.indeterminate = consentReconcileUnconfirmed;
+    }
+  }, [consentReconcileUnconfirmed]);
+
   const consent = injectedConsent !== undefined ? injectedConsent : (consentQuery.data ?? null);
   const consentLoading =
     injectedConsentLoading !== undefined
@@ -138,6 +183,7 @@ export function ShareConsentSettingsSection({
     mutationFn: async (nextEnabled: boolean) => {
       const generation = ++mutationGenerationRef.current;
       lastToggleIntentRef.current = nextEnabled;
+      setConsentReconcileUnconfirmed(false);
       const abortController = new AbortController();
       const abortToggle = (): void => {
         if (!abortController.signal.aborted) {
@@ -147,6 +193,7 @@ export function ShareConsentSettingsSection({
       const applyFreshConsent = (fresh: ShareConsentState): void => {
         if (generation === mutationGenerationRef.current) {
           queryClient.setQueryData(shareConsentKeys.current(userId), fresh);
+          setConsentReconcileUnconfirmed(false);
         }
       };
       const notifyOtherTabs = (): void => {
@@ -194,22 +241,40 @@ export function ShareConsentSettingsSection({
         return { nextEnabled, generation };
       } catch (error) {
         // AP5: abort 後もサーバ処理済みになり得る。再読で cache を正にし、一致なら成功扱い。
+        // AP-R1: 1 回目 OFF / throw でも遅延 commit を取りこぼさないよう再読する。
         if (generation !== mutationGenerationRef.current) {
           throw error;
         }
-        try {
-          const fresh = await withTimeout(
-            getMyShareConsent(client),
-            SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
-          );
-          applyFreshConsent(fresh);
-          if (hasCurrentShareConsent(fresh) === nextEnabled) {
-            notifyOtherTabs();
-            return { nextEnabled, generation, reconciled: true as const };
+        let sawSuccessfulRead = false;
+        for (let attempt = 0; attempt < SHARE_CONSENT_RECONCILE_ATTEMPTS; attempt += 1) {
+          if (generation !== mutationGenerationRef.current) {
+            throw error;
           }
-        } catch {
-          // 再読失敗。abort が効かない SDK 向けに遅延成功で cache を正にする
+          try {
+            const fresh = await withTimeout(
+              getMyShareConsent(client),
+              SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
+            );
+            sawSuccessfulRead = true;
+            applyFreshConsent(fresh);
+            if (hasCurrentShareConsent(fresh) === nextEnabled) {
+              notifyOtherTabs();
+              return { nextEnabled, generation, reconciled: true as const };
+            }
+          } catch {
+            // この回の再読失敗。残回数でサーバを再確認する
+          }
+          if (attempt < SHARE_CONSENT_RECONCILE_ATTEMPTS - 1) {
+            await waitMs(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS);
+          }
         }
+        if (!sawSuccessfulRead && generation === mutationGenerationRef.current) {
+          // 再読が全部失敗: オフ表示のままサーバ ON を残さない
+          consentReconcileUnconfirmedAtRef.current = Date.now();
+          setConsentReconcileUnconfirmed(true);
+          void queryClient.invalidateQueries({ queryKey: shareConsentKeys.current(userId) });
+        }
+        // abort が効かない SDK 向けに遅延成功で cache を正にする
         void upsertPromise.then(applyFreshConsent).catch(() => undefined);
         throw error;
       }
@@ -218,7 +283,9 @@ export function ShareConsentSettingsSection({
 
   const pending = toggleMutation.isPending;
   // AP5: 遅延成功で cache が意図状態になったら、timeout の saveError を残さない
+  // AP-R1: 未確定中はオフ+saveError にせず mixed を出す
   const showSaveError =
+    !consentReconcileUnconfirmed &&
     toggleMutation.isError &&
     (lastToggleIntentRef.current === null || enabled !== lastToggleIntentRef.current);
   // オフ状態では常時。オンからオフへ操作中も「既提供分は残る」を再表示（§7.2）
@@ -237,22 +304,25 @@ export function ShareConsentSettingsSection({
       {consentLoading && consent === null ? (
         <p role="status">{shareConsentSettingsCopy.consentLoading}</p>
       ) : null}
-      {consentError && consent === null ? (
+      {consentError && consent === null && !consentReconcileUnconfirmed ? (
         <p role="alert">{shareConsentSettingsCopy.consentError}</p>
       ) : null}
 
-      {consent !== null || !consentLoading ? (
+      {consent !== null || !consentLoading || consentReconcileUnconfirmed ? (
         <div className="stack gap-2">
           <label className="inline-flex min-h-11 items-center gap-2" htmlFor={toggleId}>
             <input
               id={toggleId}
+              ref={toggleInputRef}
               type="checkbox"
               role="switch"
               className="min-h-11 min-w-11"
-              checked={enabled}
-              aria-checked={enabled}
+              checked={consentReconcileUnconfirmed ? false : enabled}
+              aria-checked={consentReconcileUnconfirmed ? "mixed" : enabled}
               aria-describedby={showResidual ? residualId : undefined}
-              disabled={pending || (consentError && consent === null)}
+              disabled={
+                pending || consentReconcileUnconfirmed || (consentError && consent === null)
+              }
               onChange={(event) => {
                 const next = event.target.checked;
                 // 楽観表示はせず、RPC 結果で query cache を更新する
@@ -266,6 +336,22 @@ export function ShareConsentSettingsSection({
             <p id={residualId} className="type-small" role="status">
               {shareConsentSettingsCopy.residualRetentionNotice}
             </p>
+          ) : null}
+          {consentReconcileUnconfirmed ? (
+            <div className="stack gap-2">
+              <p role="alert">{shareConsentSettingsCopy.reconcileUnconfirmed}</p>
+              <button
+                type="button"
+                className="secondary-button min-h-11"
+                onClick={() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: shareConsentKeys.current(userId),
+                  });
+                }}
+              >
+                {shareConsentSettingsCopy.reconcileRetry}
+              </button>
+            </div>
           ) : null}
           {showSaveError ? <p role="alert">{shareConsentSettingsCopy.saveError}</p> : null}
         </div>

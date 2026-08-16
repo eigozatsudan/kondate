@@ -75,6 +75,12 @@ it("documents pre-checked share consent without recommendation tone", () => {
   expect(shareConsentSection.defaultCheckedHint).not.toMatch(/ぜひ|おすすめ|推奨/u);
 });
 
+it("AP-R1: unconfirmed reconcile copy refuses to claim off", () => {
+  expect(shareConsentSettingsCopy.reconcileUnconfirmed).toContain("確認できませんでした");
+  expect(shareConsentSettingsCopy.reconcileUnconfirmed).toContain("分からない");
+  expect(shareConsentSettingsCopy.reconcileRetry).toContain("再読み込み");
+});
+
 it("locks residual retention copy for settings toggle off", () => {
   // 設計 §7.2: オフ操作時にも「既提供分は残る」を再表示
   expect(shareConsentSettingsCopy.residualRetentionNotice).toContain("既提供分は残");
