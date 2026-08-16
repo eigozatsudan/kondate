@@ -4131,6 +4131,124 @@ it.each(["catalog", "aliases"] as const)(
   },
 );
 
+// H-R2: allergies refetch error で isSuccess=false でも残針 data があるときは catalog 関門をスキップしない
+it("H-R2: does not skip catalog gate or complete when leftover residual cache survives allergies error", async () => {
+  const listAllergies = vi.fn().mockResolvedValue([standardAllergy]);
+  const completeMember = vi.fn();
+  const updateMember = vi.fn().mockResolvedValue(member);
+  const { queryClient } = await renderSettings({
+    listAllergies,
+    listCatalog: vi.fn().mockRejectedValue(new Error("catalog failed")),
+    completeMember,
+    updateMember,
+  });
+
+  await waitFor(() => {
+    expect(screen.getByText(/アレルギー候補を読み込めませんでした/u)).toBeVisible();
+  });
+  const allergiesKey = householdKeys.allergies("settings", member.id);
+  expect(queryClient.getQueryData(allergiesKey)).toEqual([standardAllergy]);
+
+  listAllergies.mockRejectedValue(new Error("allergies failed"));
+  await act(async () => {
+    await queryClient.refetchQueries({ queryKey: allergiesKey }).catch(() => undefined);
+  });
+  await waitFor(() => {
+    expect(queryClient.getQueryState(allergiesKey)?.status).toBe("error");
+  });
+  expect(queryClient.getQueryData(allergiesKey)).toEqual([standardAllergy]);
+
+  listAllergies.mockResolvedValue([standardAllergy]);
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+
+  await waitFor(() => {
+    expect(
+      screen.getAllByText("アレルギー候補の読み込みが終わるまで待ってください").length,
+    ).toBeGreaterThan(0);
+  });
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
+// H-R2: catalog が確定していても allergies error 中は残針のまま complete しない
+it("H-R2: refuses residual complete while allergies query is in error", async () => {
+  const listAllergies = vi.fn().mockResolvedValue([standardAllergy]);
+  const completeMember = vi.fn();
+  const updateMember = vi.fn().mockResolvedValue(member);
+  const { queryClient } = await renderSettings({
+    listAllergies,
+    completeMember,
+    updateMember,
+  });
+
+  const allergiesKey = householdKeys.allergies("settings", member.id);
+  await waitForAllergies(queryClient, member.id);
+  expect(await screen.findByRole("button", { name: "くるみを削除" })).toBeVisible();
+
+  listAllergies.mockRejectedValue(new Error("allergies failed"));
+  await act(async () => {
+    await queryClient.refetchQueries({ queryKey: allergiesKey }).catch(() => undefined);
+  });
+  await waitFor(() => {
+    expect(queryClient.getQueryState(allergiesKey)?.status).toBe("error");
+  });
+  expect(queryClient.getQueryData(allergiesKey)).toEqual([standardAllergy]);
+  expect(screen.queryByRole("button", { name: "くるみを削除" })).not.toBeInTheDocument();
+
+  listAllergies.mockResolvedValue([standardAllergy]);
+  await userEvent.click(await screen.findByRole("button", { name: "この家族の設定を完了" }));
+
+  await waitFor(() => {
+    expect(
+      screen.getAllByText("アレルギー一覧の読み込みが終わるまで待ってください").length,
+    ).toBeGreaterThan(0);
+  });
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
+// H-R1: H11（cache 0 + fresh 残針）でも catalog 未確定なら「削除できます」を出さない
+it("H-R1: refuses H11 residual warning while catalog is rejected", async () => {
+  const noneDraft: HouseholdMemberRow = {
+    ...member,
+    status: "draft",
+    allergy_status: "none",
+  };
+  const residual: MemberAllergyRow = { ...standardAllergy, member_id: noneDraft.id };
+  const listAllergies = vi.fn().mockResolvedValue([residual]);
+  const completeMember = vi.fn();
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  queryClient.setQueryData(householdKeys.members("settings"), [noneDraft]);
+  queryClient.setQueryData(householdKeys.allergies("settings", noneDraft.id), []);
+
+  await renderSettings(
+    {
+      listMembers: vi.fn().mockResolvedValue([noneDraft]),
+      listAllergies,
+      listCatalog: vi.fn().mockRejectedValue(new Error("catalog failed")),
+      completeMember,
+      updateDraft: vi.fn().mockResolvedValue(noneDraft),
+    },
+    { queryClient },
+  );
+
+  expect(await screen.findByRole("button", { name: "この家族の設定を完了" })).toBeEnabled();
+  const callsBeforeComplete = listAllergies.mock.calls.length;
+
+  await userEvent.click(screen.getByRole("button", { name: "この家族の設定を完了" }));
+
+  await waitFor(() => {
+    expect(listAllergies.mock.calls.length).toBeGreaterThan(callsBeforeComplete);
+  });
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(screen.queryByText(/下の一覧から削除できます/u)).not.toBeInTheDocument();
+  expect(
+    screen.getAllByText("アレルギー候補の読み込みが終わるまで待ってください").length,
+  ).toBeGreaterThan(0);
+});
+
 // H3: draft registered の最終削除は UI cache ではなく fresh fetch を正本にする
 it("H3: refuses last draft-registered delete when stale cache still shows two allergies", async () => {
   const draft = {

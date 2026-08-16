@@ -150,10 +150,11 @@ function validateOnboardingDraft(
 }
 
 /**
- * H5: 「なし／未確認」は件数検証が無いので、一覧 pending（または未 success かつ cache 空）
+ * H5: 「なし／未確認」は件数検証が無いので、一覧 pending（または未 success）
  * では residual を断定できない。validateOnboardingDraft にはねじ込まず query 状態で見る。
  * H12: refetch 中は isPending=false / isSuccess=true のまま旧 [] が見える。
  * 空 cache の in-flight も未確定として扱い、残針が既に見えている refetch は止めない。
+ * H-R2: 残針 cache 付きの error でも isSuccess=false なら未確定。error 中は complete しない。
  */
 function isOnboardingAllergyListUnverified(
   allergyStatus: string | null,
@@ -163,11 +164,7 @@ function isOnboardingAllergyListUnverified(
   if (allergyStatus !== "none" && allergyStatus !== "unconfirmed") {
     return false;
   }
-  return (
-    query.isPending ||
-    (!query.isSuccess && cachedCount === 0) ||
-    (query.isFetching && cachedCount === 0)
-  );
+  return query.isPending || !query.isSuccess || (query.isFetching && cachedCount === 0);
 }
 
 /**
@@ -912,23 +909,11 @@ export function HouseholdOnboardingForm({
         draftNow,
         draftNow.allergy_status === "registered" ? 1 : allergiesNow.length,
       );
-      // H5: none/unconfirmed は件数ゲートが無い。一覧未確定なら complete しない
-      // H12: 空 cache の refetch 中も同様（isPending だけでは旧 [] のまま通る）
-      if (
-        Object.keys(nextErrors).length === 0 &&
-        isOnboardingAllergyListUnverified(
-          draftNow.allergy_status,
-          allergiesQuery,
-          allergiesNow.length,
-        )
-      ) {
-        nextErrors.allergyStatus = ALLERGIES_LIST_PENDING_MESSAGE;
-      }
       // H15: 残針があるのに catalog 未確定だと削除 UI が無く「なし」完了できる。
-      // H5 は allergies だけ。catalog は残針が確定しているときだけ見る。
+      // H-R2: isSuccess に依存せず残針 data で catalog を見る。error 中でも関門をスキップしない。
+      // 一覧関門より先に評価し、catalog 未確定の文言を allergies pending で上書きしない。
       const hasResidualNow =
         (draftNow.allergy_status === "none" || draftNow.allergy_status === "unconfirmed") &&
-        allergiesQuery.isSuccess &&
         allergiesNow.length > 0;
       if (
         Object.keys(nextErrors).length === 0 &&
@@ -939,6 +924,19 @@ export function HouseholdOnboardingForm({
         )
       ) {
         nextErrors.allergyStatus = ALLERGEN_CATALOG_PENDING_MESSAGE;
+      }
+      // H5: none/unconfirmed は件数ゲートが無い。一覧未確定なら complete しない
+      // H12: 空 cache の refetch 中も同様（isPending だけでは旧 [] のまま通る）
+      // H-R2: 残針 data 付きの error も未確定。error 中は complete しない。
+      if (
+        Object.keys(nextErrors).length === 0 &&
+        isOnboardingAllergyListUnverified(
+          draftNow.allergy_status,
+          allergiesQuery,
+          allergiesNow.length,
+        )
+      ) {
+        nextErrors.allergyStatus = ALLERGIES_LIST_PENDING_MESSAGE;
       }
       if (Object.keys(nextErrors).length > 0) {
         setFieldErrors(nextErrors);
@@ -990,6 +988,23 @@ export function HouseholdOnboardingForm({
         return;
       }
       if (isResidualStatusNow && allergiesNow.length === 0 && freshAllergies.length > 0) {
+        // H-R1: 「削除できます」は catalog 確定かつ Editor があるときに限る。
+        // cache 0 のときは上の H15 関門が走らないので、fresh 残針でも同じ catalog 関門を見る。
+        if (
+          isOnboardingResidualCatalogUnverified(true, api.listCatalog !== undefined, catalogQuery)
+        ) {
+          const catalogErrors: OnboardingFieldErrors = {
+            allergyStatus: ALLERGEN_CATALOG_PENDING_MESSAGE,
+          };
+          setFieldErrors(catalogErrors);
+          showToast({
+            message: ALLERGEN_CATALOG_PENDING_MESSAGE,
+            tone: "error",
+          });
+          focusFirstInvalid(catalogErrors);
+          endActionPending();
+          return;
+        }
         const residualErrors: OnboardingFieldErrors = {
           allergyStatus: RESIDUAL_ALLERGY_WARNING,
         };
@@ -1453,10 +1468,10 @@ export function HouseholdOnboardingForm({
               try {
                 setAllergyError(null);
                 // H4: draft の UI registered（pending 含む）でも最後の 1 件は消さない。
-                // last-delete trigger は complete のみ。通すと registered+0 が残る。
+                // H-R3: last-delete trigger は draft registered も拒否する。UI は例外を避ける。
                 // H3: 件数は UI cache ではなく削除直前の fresh fetch を正本にする。
                 // dual-tab / refetch 中の stale 2 件表示で最終 1 件を消さない。
-                // complete RPC / DB トリガーは緩めない。
+                // complete RPC は緩めない。
                 const registeredIntent =
                   draft.allergy_status === "registered" || pendingRegisteredRef.current;
                 if (registeredIntent) {

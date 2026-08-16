@@ -2140,6 +2140,82 @@ it("H15: does not claim residual can be deleted or complete while catalog reject
   expect(completeMember).not.toHaveBeenCalled();
 });
 
+// H-R2: allergies refetch error で isSuccess=false でも残針 data があるときは catalog 関門をスキップしない
+it("H-R2: does not skip catalog gate or complete when leftover residual cache survives allergies error", async () => {
+  const user = userEvent.setup();
+  const listAllergies = vi.fn().mockResolvedValue([residualEggAllergy]);
+  const completeMember = vi.fn();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([residualNoneDraft()]),
+    listAllergies,
+    listCatalog: vi.fn().mockRejectedValue(new Error("アレルギー候補を読み込めませんでした")),
+    listAliases: vi.fn().mockResolvedValue([]),
+    completeMember,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  await waitFor(() => {
+    expect(screen.getByText(/アレルギー候補を読み込めませんでした/u)).toBeVisible();
+  });
+  const allergiesKey = householdKeys.allergies("user-1", "member-1");
+  expect(client.getQueryData(allergiesKey)).toEqual([residualEggAllergy]);
+
+  listAllergies.mockRejectedValue(new Error("allergies failed"));
+  await act(async () => {
+    await client.refetchQueries({ queryKey: allergiesKey }).catch(() => undefined);
+  });
+  await waitFor(() => {
+    expect(client.getQueryState(allergiesKey)?.status).toBe("error");
+  });
+  expect(client.getQueryData(allergiesKey)).toEqual([residualEggAllergy]);
+
+  listAllergies.mockResolvedValue([residualEggAllergy]);
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(
+    screen.getAllByText("アレルギー候補の読み込みが終わるまで待ってください").length,
+  ).toBeGreaterThan(0);
+});
+
+// H-R2: catalog が確定していても allergies error 中は残針のまま complete しない
+it("H-R2: refuses residual complete while allergies query is in error", async () => {
+  const user = userEvent.setup();
+  const listAllergies = vi.fn().mockResolvedValue([residualEggAllergy]);
+  const completeMember = vi.fn();
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([residualNoneDraft()]),
+    listAllergies,
+    listCatalog: vi.fn().mockResolvedValue(eggWheatCatalog),
+    listAliases: vi.fn().mockResolvedValue([]),
+    completeMember,
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  const allergiesKey = householdKeys.allergies("user-1", "member-1");
+  expect(await screen.findByRole("button", { name: "卵を削除" })).toBeVisible();
+
+  listAllergies.mockRejectedValue(new Error("allergies failed"));
+  await act(async () => {
+    await client.refetchQueries({ queryKey: allergiesKey }).catch(() => undefined);
+  });
+  await waitFor(() => {
+    expect(client.getQueryState(allergiesKey)?.status).toBe("error");
+  });
+  expect(client.getQueryData(allergiesKey)).toEqual([residualEggAllergy]);
+  expect(screen.queryByRole("button", { name: "卵を削除" })).not.toBeInTheDocument();
+
+  listAllergies.mockResolvedValue([residualEggAllergy]);
+  await user.click(await screen.findByRole("button", { name: "この家族の設定を完了する" }));
+
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(
+    screen.getAllByText("アレルギー一覧の読み込みが終わるまで待ってください").length,
+  ).toBeGreaterThan(0);
+});
+
 // H16: 初回 catalog 成功後の refetch error でも名前付き削除を残す
 it("H16: keeps residual delete after catalog refetch error", async () => {
   const listCatalog = vi.fn().mockResolvedValue(eggWheatCatalog);
@@ -2199,6 +2275,43 @@ it("H11: refuses none-complete when stale empty cache hides a residual allergy",
   });
   expect(completeMember).not.toHaveBeenCalled();
   expect(screen.getAllByText(/以前登録したアレルギーが残っています/u).length).toBeGreaterThan(0);
+});
+
+// H-R1: H11（cache 0 + fresh 残針）でも catalog 未確定なら「削除できます」を出さない
+it("H-R1: refuses H11 residual warning while catalog is rejected", async () => {
+  const user = userEvent.setup();
+  const noneDraft = residualNoneDraft();
+  const completeMember = vi.fn();
+  const listAllergies = vi.fn().mockResolvedValue([residualEggAllergy]);
+  const api = baseApi({
+    listMembers: vi.fn().mockResolvedValue([noneDraft]),
+    getProfile: vi.fn().mockResolvedValue(mockProfile("in_progress")),
+    listAllergies,
+    listCatalog: vi.fn().mockRejectedValue(new Error("アレルギー候補を読み込めませんでした")),
+    listAliases: vi.fn().mockResolvedValue([]),
+    completeMember,
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+  });
+  client.setQueryData(householdKeys.members("user-1"), [noneDraft]);
+  client.setQueryData(householdKeys.profile("user-1"), mockProfile("in_progress"));
+  client.setQueryData(householdKeys.allergies("user-1", "member-1"), []);
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(await screen.findByRole("button", { name: "この家族の設定を完了する" })).toBeEnabled();
+
+  await user.click(screen.getByRole("button", { name: "この家族の設定を完了する" }));
+
+  await waitFor(() => {
+    expect(listAllergies).toHaveBeenCalled();
+  });
+  expect(completeMember).not.toHaveBeenCalled();
+  expect(screen.queryByText(/下の一覧から削除できます/u)).not.toBeInTheDocument();
+  expect(
+    screen.getAllByText("アレルギー候補の読み込みが終わるまで待ってください").length,
+  ).toBeGreaterThan(0);
 });
 
 // H11: /onboarding も AppShell と同型に householdSafetyChangedEvent を受けて再取得する

@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(43);
+select plan(44);
 
 select tests.create_supabase_user('11111111-1111-1111-1111-111111111111', 'one@example.invalid');
 select tests.create_supabase_user('22222222-2222-2222-2222-222222222222', 'two@example.invalid');
@@ -316,6 +316,35 @@ select ok(
 select ok(
   not has_function_privilege('anon', 'public.set_onboarding_status(text, text)', 'execute'),
   'anonymous users cannot execute set_onboarding_status'
+);
+
+-- H-R3: draft registered の最終 1 件削除も拒否する（complete 条件は緩めない）。
+reset role;
+insert into public.household_members (
+  id, user_id, age_band, portion_size, spice_level, allergy_status, unsupported_diet_status, status
+) values (
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+  '11111111-1111-1111-1111-111111111111',
+  'adult', 'regular', 'regular', 'registered', 'none', 'draft'
+);
+insert into public.member_allergies (
+  id, user_id, member_id, custom_name, custom_confirmed
+) values (
+  'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  '11111111-1111-1111-1111-111111111111',
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+  'えんどう豆たんぱく',
+  true
+);
+select tests.authenticate_as('11111111-1111-1111-1111-111111111111');
+set local role authenticated;
+select throws_ok(
+  $sql$
+    select public.delete_member_allergy('dddddddd-dddd-dddd-dddd-dddddddddddd')
+  $sql$,
+  '23514',
+  'member_registered_allergy_required',
+  'deletion RPC cannot delete the last allergy of a draft registered member (H-R3)'
 );
 
 select * from finish();

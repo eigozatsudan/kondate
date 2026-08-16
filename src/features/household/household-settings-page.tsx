@@ -178,10 +178,11 @@ const ALLERGIES_LIST_PENDING_MESSAGE = "アレルギー一覧の読み込みが�
 const ALLERGEN_CATALOG_PENDING_MESSAGE = "アレルギー候補の読み込みが終わるまで待ってください";
 
 /**
- * H5: 「なし／未確認」は件数検証が無いので、一覧 pending（または未 success かつ cache 空）
+ * H5: 「なし／未確認」は件数検証が無いので、一覧 pending（または未 success）
  * では residual を断定できない。householdSettingsSchema にはねじ込まず query 状態で見る。
  * H12: refetch 中は isPending=false / isSuccess=true のまま旧 [] が見える。
  * 空 cache の in-flight も未確定として扱い、残針が既に見えている refetch は止めない。
+ * H-R2: 残針 cache 付きの error でも isSuccess=false なら未確定。error 中は complete しない。
  * onboarding の isOnboardingAllergyListUnverified と同型。
  */
 function isSettingsAllergyListUnverified(
@@ -192,11 +193,7 @@ function isSettingsAllergyListUnverified(
   if (allergyStatus !== "none" && allergyStatus !== "unconfirmed") {
     return false;
   }
-  return (
-    query.isPending ||
-    (!query.isSuccess && cachedCount === 0) ||
-    (query.isFetching && cachedCount === 0)
-  );
+  return query.isPending || !query.isSuccess || (query.isFetching && cachedCount === 0);
 }
 
 /**
@@ -1225,8 +1222,30 @@ export function HouseholdSettingsForm({
       if (allergiesQuery.isError) void allergiesQuery.refetch();
       return;
     }
+    // H5: registered も residual も stale cache を正本にしない。完了直前に fresh fetch する。
+    // H11: 既定 staleTime 内の空 success cache を正本扱いしない（H1 remove と同型）。
+    // none/unconfirmed でクリック前 0 件なのに fresh が残針なら、今回は complete しない。
+    // 警告を見たあとの再クリックは cache が 0 でないので通す（onboarding H11 と同型）。
+    const isResidualStatus =
+      parsed.data.allergyStatus === "none" || parsed.data.allergyStatus === "unconfirmed";
+    // H15: 残針があるのに catalog / aliases 未確定だと削除 UI が無く「なし」完了できる。
+    // H-R2: isSuccess に依存せず残針 data で catalog を見る。error 中でも関門をスキップしない。
+    // 一覧関門より先に評価し、catalog 未確定の文言を allergies pending で上書きしない。
+    const hasResidualNow = isResidualStatus && currentAllergies.length > 0;
+    if (isSettingsResidualCatalogUnverified(hasResidualNow, catalogQuery, aliasesQuery)) {
+      releaseSavingGuard();
+      setMessage("");
+      setErrors({ allergyStatus: ALLERGEN_CATALOG_PENDING_MESSAGE });
+      showToast({
+        message: ALLERGEN_CATALOG_PENDING_MESSAGE,
+        tone: "error",
+      });
+      allergyStatusRef.current?.focus();
+      return;
+    }
     // H5: none/unconfirmed は件数ゲートが無い。一覧未確定なら complete しない
     // H12: 空 cache の refetch 中も同様（isPending だけでは旧 [] のまま通る）
+    // H-R2: 残針 data 付きの error も未確定。error 中は complete しない。
     // onboarding handleCompleteClick の isOnboardingAllergyListUnverified と同型。
     if (
       isSettingsAllergyListUnverified(
@@ -1240,27 +1259,6 @@ export function HouseholdSettingsForm({
       setErrors({ allergyStatus: ALLERGIES_LIST_PENDING_MESSAGE });
       showToast({
         message: ALLERGIES_LIST_PENDING_MESSAGE,
-        tone: "error",
-      });
-      allergyStatusRef.current?.focus();
-      return;
-    }
-    // H5: registered も residual も stale cache を正本にしない。完了直前に fresh fetch する。
-    // H11: 既定 staleTime 内の空 success cache を正本扱いしない（H1 remove と同型）。
-    // none/unconfirmed でクリック前 0 件なのに fresh が残針なら、今回は complete しない。
-    // 警告を見たあとの再クリックは cache が 0 でないので通す（onboarding H11 と同型）。
-    const isResidualStatus =
-      parsed.data.allergyStatus === "none" || parsed.data.allergyStatus === "unconfirmed";
-    // H15: 残針があるのに catalog / aliases 未確定だと削除 UI が無く「なし」完了できる。
-    // H5 は allergies だけ。catalog は残針が確定しているときだけ見る（onboarding H15 と同型）。
-    const hasResidualNow =
-      isResidualStatus && allergiesQuery.isSuccess && currentAllergies.length > 0;
-    if (isSettingsResidualCatalogUnverified(hasResidualNow, catalogQuery, aliasesQuery)) {
-      releaseSavingGuard();
-      setMessage("");
-      setErrors({ allergyStatus: ALLERGEN_CATALOG_PENDING_MESSAGE });
-      showToast({
-        message: ALLERGEN_CATALOG_PENDING_MESSAGE,
         tone: "error",
       });
       allergyStatusRef.current?.focus();
@@ -1301,6 +1299,19 @@ export function HouseholdSettingsForm({
       return;
     }
     if (isResidualStatus && currentAllergies.length === 0 && (freshAllergies?.length ?? 0) > 0) {
+      // H-R1: 「削除できます」は catalog / aliases 確定かつ Editor があるときに限る。
+      // cache 0 のときは上の H15 関門が走らないので、fresh 残針でも同じ catalog 関門を見る。
+      if (isSettingsResidualCatalogUnverified(true, catalogQuery, aliasesQuery)) {
+        releaseSavingGuard();
+        setMessage("");
+        setErrors({ allergyStatus: ALLERGEN_CATALOG_PENDING_MESSAGE });
+        showToast({
+          message: ALLERGEN_CATALOG_PENDING_MESSAGE,
+          tone: "error",
+        });
+        allergyStatusRef.current?.focus();
+        return;
+      }
       releaseSavingGuard();
       setMessage("");
       setErrors({ allergyStatus: RESIDUAL_ALLERGY_WARNING });
@@ -1965,10 +1976,10 @@ export function HouseholdSettingsForm({
                   runAllergyMutation(selected, async () => {
                     if (values.allergyStatus === "registered") {
                       // H1: draft の UI registered でも最後の 1 件は消さない（onboarding H4 と同型）。
-                      // last-delete trigger は complete のみ。通すと registered+0 が残る。
+                      // H-R3: last-delete trigger は draft registered も拒否する。UI は例外を避ける。
                       // H3: 件数は UI cache ではなく削除直前の fresh fetch を正本にする。
                       // dual-tab / refetch 中の stale 2 件表示で最終 1 件を消さない。
-                      // DB トリガー / complete RPC は緩めない。
+                      // complete RPC は緩めない。
                       let latestAllergies: MemberAllergyRow[];
                       try {
                         latestAllergies = await queryClient.fetchQuery({
