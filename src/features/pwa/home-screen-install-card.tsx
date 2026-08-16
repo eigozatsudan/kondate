@@ -13,6 +13,7 @@ import {
 } from "./install-tip-copy";
 import {
   canUseAndroidChromeInstallSteps,
+  canUseIosSafariInstallSteps,
   detectInstallSurface,
   isStandaloneDisplayMode,
 } from "./install-surface";
@@ -66,7 +67,10 @@ export function HomeScreenInstallCard() {
 
   if (!visible) return null;
 
-  const showIosSteps = surface === "ios";
+  // Instagram / LINE / Facebook in-app は ios のまま Safari 3 手順を出さない。
+  const iosSafariStepsOk = canUseIosSafariInstallSteps(navigator.userAgent);
+  const showIosSteps = surface === "ios" && iosSafariStepsOk;
+  const showIosGenericBody = surface === "ios" && !iosSafariStepsOk;
   // WebView / Firefox は android でも Chrome 手順を出さない（偽 UI）。
   const androidChromeStepsOk = canUseAndroidChromeInstallSteps(navigator.userAgent);
   const showAndroidChromeSteps =
@@ -100,7 +104,7 @@ export function HomeScreenInstallCard() {
           ))}
         </ol>
       ) : null}
-      {showAndroidGenericBody ? <p>{INSTALL_TIP_OTHER_BODY}</p> : null}
+      {showIosGenericBody || showAndroidGenericBody ? <p>{INSTALL_TIP_OTHER_BODY}</p> : null}
       {androidPrompt !== null ? (
         <button
           type="button"

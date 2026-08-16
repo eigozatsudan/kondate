@@ -2,7 +2,7 @@
 // フック mount を待つと Android 主経路が死ぬ。surface では listen を遅らせない。
 // peek は現在値の一回読み。描画後 BIP は購読（useSyncExternalStore）でカード/設定へ届ける。
 
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 export type AndroidInstallPrompt = {
   prompt: () => Promise<void>;
@@ -10,7 +10,9 @@ export type AndroidInstallPrompt = {
 
 let held: AndroidInstallPrompt | null = null;
 let listening = false;
+let installStarted = false;
 const subscribers = new Set<() => void>();
+const installStartedSubscribers = new Set<() => void>();
 
 function notifyAndroidInstallPromptSubscribers(): void {
   for (const subscriber of subscribers) {
@@ -23,6 +25,23 @@ function subscribeAndroidInstallPrompt(subscriber: () => void): () => void {
   return () => {
     subscribers.delete(subscriber);
   };
+}
+
+function notifyAndroidInstallStartedSubscribers(): void {
+  for (const subscriber of installStartedSubscribers) {
+    subscriber();
+  }
+}
+
+function subscribeAndroidInstallStarted(subscriber: () => void): () => void {
+  installStartedSubscribers.add(subscriber);
+  return () => {
+    installStartedSubscribers.delete(subscriber);
+  };
+}
+
+function peekAndroidInstallStarted(): boolean {
+  return installStarted;
 }
 
 function isAndroidInstallPrompt(value: Event): value is Event & AndroidInstallPrompt {
@@ -56,18 +75,22 @@ export function useAndroidInstallPrompt(): AndroidInstallPrompt | null {
   );
 }
 
-// prompt() は同一 BIP で 1 回だけ。二度押しの reject を握り、prompt 中は disabled にする。
+// prompt() は同一 BIP で 1 回だけ。カードと設定で消費を共有し、他面も disabled にする。
+// held は消さない（手順リストへ戻さない）。userChoice では閉じない。
 export function useAndroidInstallAction(androidPrompt: AndroidInstallPrompt | null): {
   installInFlight: boolean;
   requestInstall: () => void;
 } {
-  const startedRef = useRef(false);
-  const [installInFlight, setInstallInFlight] = useState(false);
+  const installInFlight = useSyncExternalStore(
+    subscribeAndroidInstallStarted,
+    peekAndroidInstallStarted,
+    peekAndroidInstallStarted,
+  );
 
   function requestInstall(): void {
-    if (androidPrompt === null || startedRef.current) return;
-    startedRef.current = true;
-    setInstallInFlight(true);
+    if (androidPrompt === null || installStarted) return;
+    installStarted = true;
+    notifyAndroidInstallStartedSubscribers();
     void androidPrompt.prompt().catch(() => {
       // Chromium は再 prompt を reject する。unhandledrejection にせず UI は残す。
     });
@@ -78,7 +101,9 @@ export function useAndroidInstallAction(androidPrompt: AndroidInstallPrompt | nu
 
 export function resetAndroidInstallPromptForTests(): void {
   held = null;
+  installStarted = false;
   notifyAndroidInstallPromptSubscribers();
+  notifyAndroidInstallStartedSubscribers();
 }
 
 export function injectAndroidInstallPromptForTests(event: AndroidInstallPrompt): void {

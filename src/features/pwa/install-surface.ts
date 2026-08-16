@@ -15,6 +15,16 @@ export function detectInstallSurface(
   return "other";
 }
 
+// Safari 共有シートがある面だけ 3 手順を出す。三値は ios のまま。
+// Instagram / LINE / Facebook in-app はカスタム WKWebView で共有も追加も無い。
+// CriOS / FxiOS は共有 → ホーム画面追加ができるので落とさない。
+export function canUseIosSafariInstallSteps(userAgent: string): boolean {
+  if (/FBAN|FBAV|FB_IAB/iu.test(userAgent)) return false;
+  if (/Line\//iu.test(userAgent)) return false;
+  if (/Instagram/iu.test(userAgent)) return false;
+  return true;
+}
+
 // Android surface のまま Chrome 手順を出してよいか。三値契約は増やさない。
 // WebView / 主要 in-app / Firefox には「右上メニュー→アプリをインストール」が無い。
 export function canUseAndroidChromeInstallSteps(userAgent: string): boolean {

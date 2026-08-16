@@ -10,6 +10,7 @@ import {
   resetAndroidInstallPromptForTests,
 } from "./android-install-prompt";
 import { HomeScreenInstallCard } from "./home-screen-install-card";
+import { HomeScreenInstallSection } from "./home-screen-install-section";
 import { PWA_INSTALL_TIP_DISMISSED_KEY } from "./install-tip-storage";
 
 vi.mock("@/features/auth/use-auth", () => ({
@@ -22,6 +23,12 @@ vi.mock("@/features/auth/use-auth", () => ({
 }));
 
 const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15";
+const IPHONE_INSTAGRAM_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0";
+const IPHONE_LINE_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Safari Line/14.0.0";
+const IPHONE_FBAN_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/10.0.0.1.0;]";
 const ANDROID_UA = "Mozilla/5.0 (Linux; Android 14; Pixel)";
 const ANDROID_WEBVIEW_UA =
   "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.230 Mobile Safari/537.36";
@@ -186,6 +193,39 @@ describe("HomeScreenInstallCard", () => {
     expect(unhandled).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "ホーム画面に置く" })).toBeVisible();
     window.removeEventListener("unhandledrejection", unhandled);
+  });
+
+  it("disables the settings install button after the card consumed the same BIP", async () => {
+    stubSurface("android");
+    const prompt = vi.fn(() => Promise.resolve());
+    injectAndroidInstallPromptForTests({ prompt });
+    const user = userEvent.setup();
+    const { unmount } = renderCard();
+    await user.click(screen.getByRole("button", { name: "インストールする" }));
+    expect(prompt).toHaveBeenCalledTimes(1);
+    unmount();
+    render(<HomeScreenInstallSection />);
+    const install = screen.getByRole("button", { name: "インストールする" });
+    expect(install).toBeDisabled();
+    expect(screen.getByRole("heading", { name: "ホーム画面に追加" })).toBeVisible();
+    expect(screen.queryByText("右上のメニューを開きます")).not.toBeInTheDocument();
+    await user.click(install);
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not show Safari install steps on iPhone Instagram, LINE, or Facebook in-app", () => {
+    const otherBody =
+      "お使いのブラウザのメニューから、「ホーム画面に追加」または「アプリをインストール」を選んでください。";
+    for (const userAgent of [IPHONE_INSTAGRAM_UA, IPHONE_LINE_UA, IPHONE_FBAN_UA]) {
+      cleanup();
+      stubSurface("ios", userAgent);
+      renderCard();
+      expect(screen.getByRole("heading", { name: "ホーム画面に置く" })).toBeVisible();
+      expect(
+        screen.queryByText("画面の下（または上）の共有ボタンをタップします"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(otherBody)).toBeVisible();
+    }
   });
 
   it("does not show Chrome install steps on Android WebView or Firefox when no prompt is held", () => {

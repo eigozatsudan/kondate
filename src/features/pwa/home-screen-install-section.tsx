@@ -6,7 +6,11 @@ import {
   INSTALL_TIP_OTHER_BODY,
   INSTALL_TIP_SETTINGS_HEADING,
 } from "./install-tip-copy";
-import { canUseAndroidChromeInstallSteps, detectInstallSurface } from "./install-surface";
+import {
+  canUseAndroidChromeInstallSteps,
+  canUseIosSafariInstallSteps,
+  detectInstallSurface,
+} from "./install-surface";
 
 function readNavigatorPlatform(): string {
   // Navigator.platform は deprecated だが iPadOS 判定（MacIntel + タッチ）に必要
@@ -25,11 +29,15 @@ export function HomeScreenInstallSection() {
   const androidPrompt = surface === "android" ? heldAndroidPrompt : null;
   const { installInFlight, requestInstall } = useAndroidInstallAction(androidPrompt);
   // WebView / Firefox は android でも Chrome 手順を出さず other 文へ落とす。
+  // Instagram / LINE / Facebook in-app は ios のまま Safari 3 手順を出さない。
+  const iosSafariStepsOk = canUseIosSafariInstallSteps(navigator.userAgent);
+  const showIosSteps = surface === "ios" && iosSafariStepsOk;
   const androidChromeStepsOk = canUseAndroidChromeInstallSteps(navigator.userAgent);
   const showAndroidChromeSteps =
     surface === "android" && androidPrompt === null && androidChromeStepsOk;
   const showGenericInstallBody =
     surface === "other" ||
+    (surface === "ios" && !iosSafariStepsOk) ||
     (surface === "android" && androidPrompt === null && !androidChromeStepsOk);
 
   return (
@@ -40,7 +48,7 @@ export function HomeScreenInstallSection() {
       <h2 id="home-screen-install-section-title" className="settings-section-title">
         {INSTALL_TIP_SETTINGS_HEADING}
       </h2>
-      {surface === "ios" ? (
+      {showIosSteps ? (
         <ol>
           {INSTALL_TIP_IOS_STEPS.map((step) => (
             <li key={step}>{step}</li>

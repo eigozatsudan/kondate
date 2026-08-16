@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canUseAndroidChromeInstallSteps,
+  canUseIosSafariInstallSteps,
   detectInstallSurface,
   isStandaloneDisplayMode,
 } from "./install-surface";
@@ -62,6 +63,30 @@ describe("detectInstallSurface", () => {
     );
   });
 
+  it("keeps iPhone Instagram / LINE / Facebook in-app as ios (surface 三値は増やさない)", () => {
+    expect(
+      detectInstallSurface(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0",
+        "iPhone",
+        5,
+      ),
+    ).toBe("ios");
+    expect(
+      detectInstallSurface(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Safari Line/14.0.0",
+        "iPhone",
+        5,
+      ),
+    ).toBe("ios");
+    expect(
+      detectInstallSurface(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/10.0.0.1.0;]",
+        "iPhone",
+        5,
+      ),
+    ).toBe("ios");
+  });
+
   it("keeps Android WebView and Firefox Android as android (surface 三値は増やさない)", () => {
     expect(
       detectInstallSurface(
@@ -99,6 +124,44 @@ describe("detectInstallSurface", () => {
     expect(detectInstallSurface("Mozilla/5.0 (X11; Linux x86_64)", "Linux x86_64", 0)).toBe(
       "other",
     );
+  });
+});
+
+describe("canUseIosSafariInstallSteps", () => {
+  it("allows Safari-style steps on iPhone Safari, CriOS, and FxiOS", () => {
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+      ),
+    ).toBe(true);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1",
+      ),
+    ).toBe(true);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/122.0 Mobile/15E148 Safari/605.1.15",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects iPhone Instagram, LINE, and Facebook in-app", () => {
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0",
+      ),
+    ).toBe(false);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Safari Line/14.0.0",
+      ),
+    ).toBe(false);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/10.0.0.1.0;]",
+      ),
+    ).toBe(false);
   });
 });
 
