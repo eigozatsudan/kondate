@@ -73,7 +73,7 @@ Dashboard の **Settings → API Keys**（または Project の Connect ダイ�
    - Netlify 本番: `https://<production-host>/auth/callback`
    - 明示承認した deploy-preview コールバックのみ
 3. カスタムドメインへ切り替えるときは Site URL・Redirect・Netlify の `SERVER_SITE_ORIGIN` /
-   `VITE_SUPABASE_URL` 系を**同時**に更新する（ずれはマジックリンク・OAuth 両方を壊す）。
+   `VITE_SUPABASE_URL` 系を**同時**に更新する（ずれは Google OAuth コールバックを壊す。メール番号経路はリンクを踏まない）。
 
 ### 2.1 Google プロバイダ
 
@@ -84,54 +84,45 @@ Dashboard の **Settings → API Keys**（または Project の Connect ダイ�
 4. ステージングでの実 Google 成功証跡の形式は
    [google-oauth-staging.md](../testing/google-oauth-staging.md)（リポジトリ外 JSON。token / email 禁止）。
 
-### 2.2 マジックリンク用メールテンプレート（token_hash 必須）
+### 2.2 番号メールテンプレート（URL 禁止・`{{ .Token }}` 必須）
 
-1. Auth → Email Templates で **Magic Link** を設定する。
-2. 件名・本文は**日本語・平易**。氏名・メール本文の再掲・アレルギー等の PII、プロンプトは載せない。
-3. **リンクは Supabase の `/auth/v1/verify` を直接踏ませない。**  
-   GET `/verify` はワンタイム消費のため、iOS 長押しプレビュー・Gmail 安全確認・コピー前の先読みでトークンが死に、ユーザー操作ではログインできない。  
-   本番テンプレートは **アプリの callback に `token_hash` を載せる**（アプリがボタン操作後に `verifyOtp` POST で消費する）:
+1. Auth → Email Templates で **Magic Link** と **Confirm sign up** の両方を同じ制約で設定する。Invite / Recovery は触らない。
+2. 件名は両方とも `こんだて日和の番号`。氏名・メール本文の再掲・アレルギー等の PII、プロンプトは載せない。
+3. **本文に URL を置かない。** マジックリンクも `token_hash` も踏ませない。届いた 6 桁をアプリの画面に入力する。
 
    ```html
-   <h2>こんだて日和</h2>
-   <p>ログイン用のリンクをお送りします。</p>
-   <p>下のボタン（またはリンク）を開き、画面の「ログインを完了する」を押すとサービスに入れます。</p>
-   <p><a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email">ログインする</a></p>
-   <p>ボタンが開けないときは、次のリンクをコピーしてブラウザで開いてください。</p>
-   <p>{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email</p>
-   <ul>
-     <li>パスワードの設定は不要です</li>
-     <li>はじめての方も、このリンクからアカウントができます</li>
-     <li>iPhone などでリンクを長押しするとプレビューが出ることがあります。プレビューだけで開くと「すでに使われている」「ログインを確認できない」などのエラーになることがあります。リンクは普通にタップして開き、画面の「ログインを完了する」を押してください</li>
-     <li>リンクには有効期限があります。開けない・エラーになるときは、アプリのログイン画面からもう一度メールを送ってください</li>
-     <li>このメールに心当たりがない場合は、削除して問題ありません</li>
-   </ul>
+   <p>アプリの画面に、この 6 つの数字を入力してください。</p>
+   <p style="font-size:28px;letter-spacing:0.2em">{{ .Token }}</p>
    ```
 
-   - `{{ .RedirectTo }}` はクライアントが渡す `emailRedirectTo`（`/auth/callback?flow=…&state=…`）と一致する。  
-     **既に `?` があるため追記は `&token_hash=…` にする**（`?` を二重にしない）。
-   - `{{ .ConfirmationURL }}`（`/auth/v1/verify?...`）は **使わない**。
-4. リンク先が §2 の Site URL / Redirect URLs と矛盾しないことを確認する。
-5. テンプレートだけでは届かない。**次節の Custom SMTP が本番マジックリンクの前提**である。
-6. デプロイ後の確認: メール HTML の href が `https://www.…/auth/callback?flow=…&state=…&token_hash=…&type=email` であること。  
-   `…supabase.co/auth/v1/verify` が残っていたらテンプレ未更新。
+   - `{{ .Token }}` を置く（桁は 6）。
+   - 置かない: `{{ .ConfirmationURL }}` / `{{ .TokenHash }}` / `{{ .RedirectTo }}` / 生の `http` / `https`。
+4. 寿命・桁・レートはローカル override と本番 Dashboard で同一にする:
+   - OTP exp **3600** 秒
+   - OTP length **6**
+   - `RATE_LIMIT_OTP` **30**
+   - `RATE_LIMIT_VERIFY` **360**
+   - `SMTP_MAX_FREQUENCY` **60s**
+5. ローカル compose は `GOTRUE_EXTERNAL_EMAIL_MAGIC_LINK_ENABLED=false` を必須とする。hosted Dashboard でこのフラグを切れない場合、**URL 無しテンプレが唯一の防御**になる。それでも本文から URL を除く。
+6. テンプレートだけでは届かない。**次節の Custom SMTP が本番番号メールの前提**である。
+7. デプロイ後の確認: メール HTML に 6 桁があり、`http` / `https` が無いこと。`…supabase.co/auth/v1/verify` や callback URL が残っていたらテンプレ未更新。
 
 ## 2.3 Auth メール / Custom SMTP（本番必須）
 
-本プロダクトのログインは Google OAuth と **メール・マジックリンク**の二本立てである。
-マジックリンクは **Managed Supabase Auth が送信**する（Netlify Functions やアプリの
+本プロダクトのログインは Google OAuth と **メール 6 桁番号**の二本立てである。
+番号メールは **Managed Supabase Auth が送信**する（Netlify Functions やアプリの
 `SMTP_*` 環境変数は使わない）。
 
 ### なぜ Custom SMTP が必須か
 
 Supabase がプロジェクトに付ける**既定のメール送信**は探索・チーム内テスト向けであり、本番の
-一般利用者向けマジックリンクには使わない:
+一般利用者向け番号メールには使わない:
 
 - 組織チームに紐づくアドレス以外への配送を拒否し得る
 - 厳しい送信レート制限（変更され得る。本番 SLA なし）
 - 到達性・送信元レピュテーションの保証がない
 
-公式ガイドの趣旨どおり、マジックリンク等のメール Auth を本番で使うなら
+公式ガイドの趣旨どおり、番号メール等のメール Auth を本番で使うなら
 **Custom SMTP を有効化する**。
 
 ### 設定場所と項目
@@ -158,15 +149,15 @@ Dashboard: **Authentication → SMTP**（または Project の Auth SMTP 設定�
 
 ### 検証（ステージング優先）
 
-1. **チーム外**の実メールアドレスへマジックリンクを送る（既定 SMTP のチーム限定をすり抜けたつもりにならない）。
-2. 受信箱（必要なら迷惑メール）でリンクを開き、§2 の callback でセッションが完了する。
+1. **チーム外**の実メールアドレスへ番号メールを送る（既定 SMTP のチーム限定をすり抜けたつもりにならない）。
+2. 受信箱（必要なら迷惑メール）の 6 桁をアプリのログイン画面に入力し、セッションが完了する。
 3. Google コールバックも同じ Site URL 前提で確認する。
 
 ### 禁止
 
 - ローカル Compose の `SMTP_*` / mailpit（`mailpit:1025`）を本番 Supabase や Netlify にコピーしない
 - Netlify のサイト env に `SMTP_HOST` 等を置かない（Auth は Supabase Dashboard / Management API 側）
-- 送信ログ・サポート票に利用者メール全文やマジックリンク URL を残さない運用にする
+- 送信ログ・サポート票に利用者メール全文や確認番号を残さない運用にする
 
 ## 3. マイグレーション適用順
 
