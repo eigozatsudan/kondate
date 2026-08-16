@@ -22,6 +22,7 @@ const listMemberAllergiesMock = vi.hoisted(() => vi.fn());
 const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
 const realtime = vi.hoisted(() => ({
   handlers: [] as { table: string; filter: string; callback: () => void }[],
+  statusCallbacks: [] as ((status: string) => void)[],
   statusCallback: null as null | ((status: string) => void),
   removeChannel: vi.fn(),
 }));
@@ -41,6 +42,7 @@ vi.mock("@/shared/lib/supabase", () => ({
         return channel;
       },
       subscribe: (cb?: (status: string) => void) => {
+        if (cb !== undefined) realtime.statusCallbacks.push(cb);
         realtime.statusCallback = cb ?? null;
         return channel;
       },
@@ -146,6 +148,7 @@ beforeEach(() => {
   localStorage.clear();
   // 前テストのRealtime handlerが残ると他owner除外や再取得回数の検証が壊れる。
   realtime.handlers.length = 0;
+  realtime.statusCallbacks.length = 0;
   realtime.statusCallback = null;
   getPlannerDraftMock.mockResolvedValue({
     id: "draft-1",
@@ -463,6 +466,98 @@ it("PE9: generation_drafts Realtime refreshes draft target members into candidat
         targetMemberIds: [eligibleMember.id, childId],
       }),
     );
+  });
+  view.unmount();
+});
+
+it("PE6: idea front tab picks up generation_drafts idea→household without waiting for blur", async () => {
+  const userId = eligibleMember.user_id;
+  const ideaDraft = {
+    id: "draft-pe6-idea",
+    userId,
+    mealType: "dinner" as const,
+    mainIngredients: [],
+    cuisineGenre: null,
+    targetMode: "idea" as const,
+    targetMemberIds: [],
+    servings: null,
+    timeLimitMinutes: null,
+    budgetPreference: null,
+    ingredientPreference: null,
+    avoidIngredients: [],
+    memo: "",
+    pantrySelections: [],
+    revision: 1,
+    createdAt: "2026-07-25T00:00:00.000Z",
+    updatedAt: "2026-07-25T00:00:00.000Z",
+  };
+  getPlannerDraftMock.mockReset();
+  getPlannerDraftMock.mockResolvedValue(ideaDraft);
+  listHouseholdMembersMock.mockReset();
+  listHouseholdMembersMock.mockResolvedValue([eligibleMember]);
+  listMemberAllergiesMock.mockResolvedValue([]);
+  getEmergencyMenusMock.mockReset();
+  getEmergencyMenusMock.mockImplementation((request: { targetMode: string }) =>
+    Promise.resolve({
+      ...emergencyResponse(request.targetMode === "idea" ? "個人候補" : "家族候補"),
+      path: request.targetMode === "idea" ? ("idea" as const) : ("household" as const),
+    }),
+  );
+
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { staleTime: 0, retry: false } },
+  });
+  const view = render(
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByRole("heading", { name: "個人候補" })).toBeVisible();
+  expect(screen.getByText(/家族のアレルギー・年齢条件は適用していません/u)).toBeVisible();
+
+  getPlannerDraftMock.mockResolvedValue({
+    ...ideaDraft,
+    targetMode: "household",
+    targetMemberIds: [eligibleMember.id],
+    revision: 2,
+  });
+  act(() => {
+    emitRealtime("generation_drafts", userId);
+  });
+
+  expect(await screen.findByRole("heading", { name: "家族候補" })).toBeVisible();
+  expect(
+    screen.queryByText(/家族のアレルギー・年齢条件は適用していません/u),
+  ).not.toBeInTheDocument();
+  expect(getEmergencyMenusMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      targetMode: "household",
+      targetMemberIds: [eligibleMember.id],
+    }),
+  );
+  view.unmount();
+});
+
+it("PE8: tab-back focus + visibilitychange refresh household safety once", async () => {
+  const { view } = await renderVisibleEmergencyResponse();
+  const callsBefore = listHouseholdMembersMock.mock.calls.length;
+  const nextHousehold = deferredPromise<HouseholdMemberRow[]>();
+  listHouseholdMembersMock.mockReturnValueOnce(nextHousehold.promise);
+
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("focus"));
+  });
+
+  expect(listHouseholdMembersMock).toHaveBeenCalledTimes(callsBefore + 1);
+  expect(screen.getByText("候補を確認中…")).toBeVisible();
+
+  await act(async () => {
+    nextHousehold.resolve([eligibleMember]);
+    await Promise.resolve();
   });
   view.unmount();
 });

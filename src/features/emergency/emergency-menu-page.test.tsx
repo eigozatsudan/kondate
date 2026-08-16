@@ -15,6 +15,7 @@ const useQueryMock = vi.hoisted(() => vi.fn());
 const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
 const channelMock = vi.hoisted(() => vi.fn());
 const listPantryItemsMock = vi.hoisted(() => vi.fn());
+const subscribeCallbacks = vi.hoisted(() => [] as ((status: string) => void)[]);
 
 function emergencyMenusQueryCallEnabled(enabled: boolean): boolean {
   return useQueryMock.mock.calls.some((call) => {
@@ -35,7 +36,10 @@ vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => {
     const channel = {
       on: () => channel,
-      subscribe: () => channel,
+      subscribe: (cb?: (status: string) => void) => {
+        if (cb !== undefined) subscribeCallbacks.push(cb);
+        return channel;
+      },
     };
     return {
       channel: (...args: unknown[]) => {
@@ -60,6 +64,7 @@ import { EmergencyMenuContent, EmergencyMenuPage } from "./emergency-menu-page";
 beforeEach(() => {
   vi.clearAllMocks();
   sessionStorage.clear();
+  subscribeCallbacks.length = 0;
   listPantryItemsMock.mockReset();
   listPantryItemsMock.mockResolvedValue([]);
 });
@@ -299,7 +304,7 @@ it("does not fallback to idea when eligible members empty", () => {
   expect(screen.queryByText(/個人向けの固定候補です/u)).not.toBeInTheDocument();
 });
 
-it("does not subscribe household Realtime or safety poll when draft is idea", () => {
+it("PE6: idea draft still subscribes to generation_drafts safety channel", () => {
   useQueryMock
     .mockReturnValueOnce({
       data: {
@@ -339,7 +344,7 @@ it("does not subscribe household Realtime or safety poll when draft is idea", ()
     });
 
   renderWithRouter(<EmergencyMenuPage />);
-  expect(channelMock).not.toHaveBeenCalled();
+  expect(channelMock).toHaveBeenCalledWith("emergency-safety:72000000-0000-4000-8000-000000000001");
 });
 
 it("対象未選択の下書きでは後から登録した有効な家族だけを初期対象にする", async () => {
@@ -669,11 +674,13 @@ it("shows household safety_only banner only when matchMode is safety_only", () =
   // banner は role=note（idea intro の role=status と二重 status にしない）
   const banner = screen.getByRole("note");
   expect(
-    screen.getByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+    screen.getByText(
+      "メイン食材は一致しませんでした。いまの家族条件で絞った候補を表示しています。",
+    ),
   ).toBeVisible();
   expect(banner).toBeVisible();
   expect(banner).toHaveTextContent(
-    "メイン食材は一致しませんでした。安全条件に合う候補を表示しています。",
+    "メイン食材は一致しませんでした。いまの家族条件で絞った候補を表示しています。",
   );
   // §4 server message をそのまま chrome に出さない（「固定」付きの message は DOM 非表示）
   expect(
@@ -724,7 +731,9 @@ it("does not show household safety_only banner text on idea path", () => {
     />,
   );
   expect(
-    screen.queryByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+    screen.queryByText(
+      "メイン食材は一致しませんでした。いまの家族条件で絞った候補を表示しています。",
+    ),
   ).toBeNull();
 });
 
@@ -1039,7 +1048,9 @@ it("does not show safety_only banner when matchMode is none", () => {
     />,
   );
   expect(
-    screen.queryByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+    screen.queryByText(
+      "メイン食材は一致しませんでした。いまの家族条件で絞った候補を表示しています。",
+    ),
   ).toBeNull();
   expect(screen.queryByRole("status")).toBeNull();
 });
@@ -1064,7 +1075,9 @@ it("does not show safety_only banner when matchMode is main_ingredient", () => {
   );
   // メイン食材一致の成功応答では §5 safety_only バナーを出さない
   expect(
-    screen.queryByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+    screen.queryByText(
+      "メイン食材は一致しませんでした。いまの家族条件で絞った候補を表示しています。",
+    ),
   ).toBeNull();
   expect(screen.queryByRole("status")).toBeNull();
 });
@@ -1563,7 +1576,7 @@ it("PE8: confirming expired pantry on emergency page enables candidate query", a
   await waitFor(() => {
     expect(screen.getByTestId("emergency-expired-pantry-gate")).toBeVisible();
   });
-  await user.click(screen.getByRole("button", { name: "実物を確認して今回だけ使う" }));
+  await user.click(screen.getByRole("button", { name: "実物を確認して進む" }));
 
   await waitFor(() => {
     expect(screen.queryByTestId("emergency-expired-pantry-gate")).toBeNull();
@@ -1651,7 +1664,10 @@ it("PE1: confirmed expired pantry IDs are dropped from scoring pantryItemIds", a
   await waitFor(() => {
     expect(screen.getByTestId("emergency-expired-pantry-gate")).toBeVisible();
   });
-  await user.click(screen.getByRole("button", { name: "実物を確認して今回だけ使う" }));
+  expect(
+    screen.getByText("確認は候補を見るための解錠です。期限切れの食材は候補に使いません。"),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "実物を確認して進む" }));
 
   await waitFor(() => {
     expect(screen.queryByTestId("emergency-expired-pantry-gate")).toBeNull();
@@ -1747,3 +1763,90 @@ it("PE2: pantry gate reloads on focus after another tab changes expiry", async (
     expect(screen.getByTestId("emergency-expired-pantry-gate")).toBeVisible();
   });
 });
+
+it.each(["CHANNEL_ERROR", "TIMED_OUT"] as const)(
+  "PE7: pantry Realtime %s fail-closes the expiry gate",
+  async (status) => {
+    const milkId = "60000000-0000-4000-8000-000000000006";
+    const freshMilk: PantryItem = {
+      id: milkId,
+      userId: "72000000-0000-4000-8000-000000000001",
+      name: "牛乳",
+      quantity: 1,
+      unit: "本",
+      expiresOn: "2099-01-01",
+      expirationType: "use_by",
+      openedState: "unopened",
+      createdAt: "2020-01-01T00:00:00.000Z",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    };
+    const expiredMilk: PantryItem = { ...freshMilk, expiresOn: "2020-01-01" };
+    listPantryItemsMock.mockResolvedValue([freshMilk]);
+
+    useQueryMock.mockImplementation((opts: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+      const root = opts.queryKey[0];
+      if (root === "planner") {
+        return {
+          data: {
+            id: "draft-pe7",
+            userId: "72000000-0000-4000-8000-000000000001",
+            mealType: "dinner",
+            mainIngredients: [],
+            cuisineGenre: null,
+            targetMode: "idea",
+            targetMemberIds: [],
+            servings: 2,
+            timeLimitMinutes: null,
+            budgetPreference: null,
+            ingredientPreference: null,
+            avoidIngredients: [],
+            memo: "",
+            pantrySelections: [{ pantryItemId: milkId, priority: "prefer_use" }],
+            revision: 1,
+            createdAt: "2026-07-11T00:00:00.000Z",
+            updatedAt: "2026-07-11T00:00:00.000Z",
+          },
+          isSuccess: true,
+          isPending: false,
+          isFetching: false,
+          isError: false,
+        };
+      }
+      if (root === "emergency-menus" && opts.enabled === true) {
+        return {
+          data: undefined,
+          isSuccess: false,
+          isPending: true,
+          isFetching: true,
+          isError: false,
+        };
+      }
+      return {
+        data: undefined,
+        isSuccess: false,
+        isPending: false,
+        isFetching: false,
+        isError: false,
+      };
+    });
+
+    renderWithRouter(<EmergencyMenuPage />);
+
+    await waitFor(() => {
+      expect(listPantryItemsMock).toHaveBeenCalled();
+      expect(subscribeCallbacks.length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByTestId("emergency-expired-pantry-gate")).toBeNull();
+
+    listPantryItemsMock.mockResolvedValue([expiredMilk]);
+    act(() => {
+      for (const callback of subscribeCallbacks) {
+        callback(status);
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("emergency-expired-pantry-gate")).toBeVisible();
+    });
+  },
+);

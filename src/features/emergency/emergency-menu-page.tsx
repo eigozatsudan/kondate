@@ -47,11 +47,16 @@ const ideaIntroText =
 const ideaHouseholdNotAppliedNote =
   "この一覧はご家庭のアレルギー登録を見ていません。家族の制限がある場合は献立画面で「家族向け」に切り替えてください。";
 
-/** 設計 §5 path 条件付き safety_only バナー（exact plain JP） */
+/** 設計 §5 path 条件付き safety_only バナー。保証語「安全条件に合う」は使わない（PE5）。 */
 const householdSafetyOnlyBannerText =
-  "メイン食材は一致しませんでした。安全条件に合う候補を表示しています。";
+  "メイン食材は一致しませんでした。いまの家族条件で絞った候補を表示しています。";
 const ideaSafetyOnlyBannerText =
   "メイン食材は一致しませんでした。アレルギー条件は適用していません。";
+
+/** PE1: 確認はゲート解錠。期限切れは候補に使わない。 */
+const expiredPantryConfirmButtonText = "実物を確認して進む";
+const expiredPantryConfirmUnlockNote =
+  "確認は候補を見るための解錠です。期限切れの食材は候補に使いません。";
 
 /**
  * PE4: draft で選んだが緊急適格外のメンバーを silent drop しないための開示。
@@ -144,14 +149,13 @@ export function EmergencyMenuPage() {
 
   // 初回 draft 未解決の isFetching では household を起動しない。キャッシュがある背景 refetch は許可。
   const householdQueryEnabled = userId !== undefined && draftResolved && isHouseholdPath;
-  // Realtime / 60s poll も household 経路のみ（idea では購読しない）
-  const safetyRealtimeEnabled = householdQueryEnabled;
+  // PE6: idea 前面でも draft の idea→household を拾う。generation_drafts Realtime / 60s / focus が要る。
+  const safetyRealtimeEnabled = userId !== undefined && draftResolved;
 
   // 別端末・他タブでの家族/アレルギー変更を、history revalidation と同様に
   // owner-scoped Realtime + focus/visible/online + 60s poll で拾う。
   // revision を query key に載せ、signal 直後は旧候補を閉じて再取得完了まで fail closed。
   // PE6: CHANNEL_ERROR / TIMED_OUT も revision 更新（history / shopping 同型）。
-  // idea 下書きでは household 安全信号を購読しない（safetyRealtimeEnabled で gate）。
   useEffect(() => {
     if (userId === undefined || !safetyRealtimeEnabled) return;
     const revisionKey = householdSafetyRevisionKey(userId);
@@ -177,8 +181,14 @@ export function EmergencyMenuPage() {
         refreshRevision();
       }
     };
+    // PE8: tab-back は visibilitychange と focus が連続する。同一窓の二重 revision / 二重 GET をまとめる。
+    let lastVisibleRefreshAt = 0;
     const handleVisible = () => {
-      if (document.visibilityState === "visible") refreshRevision();
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastVisibleRefreshAt < 200) return;
+      lastVisibleRefreshAt = now;
+      refreshRevision();
     };
     const client = getBrowserSupabaseClient();
     // Realtime は user_id で絞り、他ownerの変更は購読側で捨てる。
@@ -332,7 +342,13 @@ export function EmergencyMenuPage() {
         { event: "*", schema: "public", table: "pantry_items", filter: ownerFilter },
         refreshPantry,
       )
-      .subscribe();
+      .subscribe((status) => {
+        // PE7: household 側と同型。購読死のまま最大 60s 古い期限ゲートを残さない。
+        const state: string = status;
+        if (state === "CHANNEL_ERROR" || state === "TIMED_OUT") {
+          refreshPantry();
+        }
+      });
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible" && navigator.onLine) refreshPantry();
     }, 60_000);
@@ -567,8 +583,9 @@ export function EmergencyMenuPage() {
           >
             <p id={expiredDialogDescriptionId}>
               「{item.name}
-              」は入力した期限を過ぎています。アプリは食べられるか判断しません。今回、実物の状態を確認しましたか？
+              」は入力した期限を過ぎています。アプリは食べられるか判断しません。
             </p>
+            <p>{expiredPantryConfirmUnlockNote}</p>
             <button
               ref={expiredConfirmRef}
               className="primary-button min-h-11"
@@ -581,7 +598,7 @@ export function EmergencyMenuPage() {
                 setExpiredConfirmTick((tick) => tick + 1);
               }}
             >
-              実物を確認して今回だけ使う
+              {expiredPantryConfirmButtonText}
             </button>
             <button
               ref={expiredSafeRef}

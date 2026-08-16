@@ -1049,9 +1049,11 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     const ideaRequestUrl = new URL(firstIdeaEmergency);
     expect(ideaRequestUrl.searchParams.get("targetMode")).toBe("idea");
     // 豆腐 main が Stage M に乗れば banner なし。miss 時のみ idea safety_only exact。
-    // いずれにせよ household の「安全条件に合う」文言は idea 表示中に出さない。
+    // いずれにせよ household の家族条件バナーは idea 表示中に出さない。
     await expect(
-      page.getByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+      page.getByText(
+        "メイン食材は一致しませんでした。いまの家族条件で絞った候補を表示しています。",
+      ),
     ).toHaveCount(0);
 
     expect(pageErrors).toHaveLength(0);

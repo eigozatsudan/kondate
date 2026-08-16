@@ -695,7 +695,7 @@ test("keeps chicken-allergic household on non-chicken emergency candidates witho
   await expect(firstCandidate.getByText("鶏ひき肉", { exact: false })).toHaveCount(0);
   // main=鶏肉 が Stage M で落ち、safety_only 開示バナーが必須（設計 §5 household exact）
   await expect(
-    page.getByText("メイン食材は一致しませんでした。安全条件に合う候補を表示しています。"),
+    page.getByText("メイン食材は一致しませんでした。いまの家族条件で絞った候補を表示しています。"),
   ).toBeVisible();
   expect(
     await page.evaluate(
