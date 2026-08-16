@@ -2415,7 +2415,7 @@ describe("PlannerRoutePage", () => {
   it("入力をリセットすると進行中 pending も捨てる", async () => {
     const user = userEvent.setup();
     render(<PlannerPage />);
-    // 自タブが mint した key と一致するときだけ clear する（C7 の対照）
+    // 未公開の自 key（body のみ・meta 無し）と一致するときだけ clear する（C7 の対照）
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
@@ -2433,6 +2433,37 @@ describe("PlannerRoutePage", () => {
     });
     await user.click(screen.getByRole("button", { name: "入力をリセット" }));
     expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalledTimes(1);
+  });
+
+  it("P2: 公開済み同一 key の sticky は reset しても共有 pending を消さない", async () => {
+    // 勝ちタブの attempt key と sticky が一致しても、claim+meta 済みなら
+    // 負けタブの /generation?resumed=1 が作成 ID を読むため残す。
+    const user = userEvent.setup();
+    render(<PlannerPage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: attemptKey,
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: attemptKey,
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    await user.click(screen.getByRole("button", { name: "入力をリセット" }));
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
   });
 
   it("C7: reset does not clear another tab's claimed pending after strip abort", async () => {
@@ -2538,6 +2569,70 @@ describe("PlannerRoutePage", () => {
     });
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+  });
+
+  it("P2: claim+meta 済みのあと strip abort しても reset は同一 key の共有 pending を消さない", async () => {
+    // strip が submittingRef を落とすと「入力をリセット」が押せる。
+    // 公開済み sticky を同じ key で消すと、負けタブの作成 ID が失われる。
+    const deferredClaim = createDeferred<{ pending: unknown; claimed: boolean }>();
+    pendingGenerationMock.claimPendingGeneration.mockImplementation((candidate: unknown) => {
+      pendingGenerationMock.savePendingGeneration(candidate);
+      return deferredClaim.promise.then(() => {
+        const claimed = candidate as { request: { idempotencyKey: string } };
+        pendingGenerationMock.readPendingGeneration.mockReturnValue({
+          ownerUserId: draft.userId,
+          createdAt: "2026-07-11T00:00:00.000Z",
+          commandVersion: "generation-command.v3",
+          kind: "new_menu",
+          qualityMode: false,
+          request: {
+            idempotencyKey: claimed.request.idempotencyKey,
+            draftId: draft.id,
+            draftRevision: draft.revision,
+            privacyNoticeVersion: "2026-07-29.v1",
+            expiredPantryConfirmations: [],
+          },
+        });
+        pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+          kind: "new_menu",
+          targetMode: "household",
+          idempotencyKey: claimed.request.idempotencyKey,
+          ownerUserId: draft.userId,
+          createdAt: "2026-07-11T00:00:00.000Z",
+        });
+        return { pending: candidate, claimed: true };
+      });
+    });
+    const user = userEvent.setup();
+    const view = render(<PlannerRoutePage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+    await vi.waitFor(() => {
+      expect(pendingGenerationMock.claimPendingGeneration).toHaveBeenCalled();
+    });
+
+    queryState.safetyEligibleMemberIds = [];
+    view.rerender(<PlannerRoutePage />);
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    });
+
+    deferredClaim.resolve({
+      pending: pendingGenerationMock.claimPendingGeneration.mock.calls[0]?.[0],
+      claimed: true,
+    });
+    await vi.waitFor(() => {
+      expect(pendingGenerationMock.savePendingGenerationMeta).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+    });
+    expect(screen.getByRole("button", { name: "入力をリセット" })).toBeEnabled();
+    expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
+
+    await user.click(screen.getByRole("button", { name: "入力をリセット" }));
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
   });
 
   it("P2: targetMode 無効の saved では pending を書かず専用文言を出す", async () => {

@@ -500,6 +500,50 @@ it("生成後 soft-delete で live 下書きが無い revision conflict は unde
     screen.getByRole("heading", { name: "下書きが別の画面で更新されました" }),
   ).toBeInTheDocument();
   expect(screen.queryByText(/緊急献立を開けませんでした/u)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "最新の下書きを読み込む" })).toBeEnabled();
+});
+
+it("P4: live 下書きが null の競合解決は rev=0 force save / undelete しない", async () => {
+  // 生成成功後は RLS で getPlannerDraft が null。解決 CTA は empty を表示するだけ。
+  // resetToken / baseline=0 すると save_generation_draft が deleted 行を undelete する。
+  getPlannerDraftMock.mockResolvedValue(null);
+  savePlannerDraftMock
+    .mockRejectedValueOnce(new DraftRevisionConflictError())
+    .mockImplementation(
+      (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
+        Promise.resolve({ ...revisionOne, ...next, revision: revision + 1 }),
+    );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  renderRetainedDraft(queryClient);
+  await openReviewOptionalDetails();
+
+  fireEvent.change(screen.getByLabelText("自由メモ"), { target: { value: "Aの入力" } });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(
+    screen.getByRole("heading", { name: "下書きが別の画面で更新されました" }),
+  ).toBeInTheDocument();
+  const resolveButton = screen.getByRole("button", { name: "最新の下書きを読み込む" });
+  expect(resolveButton).toBeEnabled();
+
+  fireEvent.click(resolveButton);
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(screen.getByRole("heading", { name: "1. 食事" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "下書きが別の画面で更新されました" }),
+  ).not.toBeInTheDocument();
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+  expect(savePlannerDraftMock.mock.calls.every((call) => call[3] !== 0)).toBe(true);
 });
 
 it("P2: timeout 後の再 leave は進行中 flush に join し自タブ連番を競合にしない", async () => {

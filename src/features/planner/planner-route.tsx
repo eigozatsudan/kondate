@@ -814,8 +814,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // P5: 最新が incomplete でも step を review に残さず firstIncomplete へ再整列する
     setStep(firstIncompletePlannerStep(sanitized));
     setWizardOpen(true);
-    setBaselineRevision(latestConflictDraft?.revision ?? 0);
-    setResetToken((current) => current + 1);
+    // 生成成功後の soft-delete は RLS で live が null。empty を表示するだけ。
+    // baseline=0 + resetToken は save_generation_draft が deleted 行を undelete する。
+    if (latestConflictDraft !== null) {
+      setBaselineRevision(latestConflictDraft.revision);
+      setResetToken((current) => current + 1);
+    }
     setLatestConflictDraft(undefined);
     hasDraftConflictRef.current = false;
     setHasDraftConflict(false);
@@ -830,13 +834,18 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     }
     generationAbortControllerRef.current?.abort();
     // 進行中の作成 ID（pending）を残すと、再「献立を作る」が C2 再開専用になり
-    // offline/processing から抜けられず操作不能になる。入力リセットは作成の破棄も兼ねる。
-    // C7: 共有 sticky のうち、このタブが mint / claim した key だけを消す。
-    // claim 負け後の strip abort で submittingRef が落ちても、勝ちタブの pending は残す。
+    // offline/processing から抜けられず操作不能になる。入力リセットは未公開の自作成の破棄も兼ねる。
+    // C7: 共有 sticky のうち、未公開の自 key だけを消す。
+    // 公開済み claim+meta（同一 key 含む）は、負けタブが /generation?resumed=1 済みだと
+    // 作成 ID を読むため残す。claim 負け後の別 key も残す。
     if (userId !== undefined) {
-      const pending = readPendingGeneration(userId, new Date());
+      const now = new Date();
+      const pending = readPendingGeneration(userId, now);
       if (pending !== null && pending.request.idempotencyKey === attempt.idempotencyKey) {
-        clearPendingGeneration();
+        const published = readPendingGenerationMeta(userId, now);
+        if (published === null) {
+          clearPendingGeneration();
+        }
       }
     }
     const empty = { ...emptyDraft };
