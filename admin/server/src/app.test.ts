@@ -41,6 +41,16 @@ describe("createApp security", () => {
     expect(body.ok).toBe(true);
   });
 
+  it("AO6: API JSON has XFO / nosniff / frame-ancestors", async () => {
+    const app = createApp({ pool: null, config: baseConfig, dbReady: false });
+    const res = await app.request("http://127.0.0.1:5193/api/health", {
+      headers: { host: "127.0.0.1:5193" },
+    });
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+  });
+
   it("requires token on non-health api when configured", async () => {
     const app = createApp({
       pool: null,

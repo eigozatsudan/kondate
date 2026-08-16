@@ -10,9 +10,13 @@
  * 本番 Docker は COPY 済み dist 前提（通常成果物に symlink は無い）。
  */
 import {
+  closeSync,
+  constants,
   createReadStream,
   existsSync,
+  fstatSync,
   lstatSync,
+  openSync,
   realpathSync,
   statSync,
   type Stats,
@@ -21,6 +25,7 @@ import { resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { getMimeType } from "hono/utils/mime";
+import { applyAdminSecurityHeaders } from "../middleware/secure-headers.js";
 
 /**
  * リクエスト path を root 配下の実ファイル path に解決する。
@@ -122,6 +127,39 @@ function resolveContainedExisting(candidate: string, rootResolved: string): Cont
 }
 
 /**
+ * AO3: realpath 成功〜 open のあいだに leaf が root 外向き symlink へ差し替わっても
+ * 外ファイルを 200 しない。O_NOFOLLOW で末端を辿らず、開いた fd の実体を再確認する。
+ */
+function openContainedFileStream(
+  realPath: string,
+  rootReal: string,
+): ReturnType<typeof createReadStream> | null {
+  let fd: number;
+  try {
+    fd = openSync(realPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
+    return null;
+  }
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile()) {
+      closeSync(fd);
+      return null;
+    }
+    // 中間ディレクトリ差し替えは O_NOFOLLOW では閉じない。fd 実体を再確認する。
+    const openedReal = tryRealpath(`/proc/self/fd/${String(fd)}`);
+    if (openedReal === null || !isPathInsideRoot(openedReal, rootReal)) {
+      closeSync(fd);
+      return null;
+    }
+    return createReadStream(realPath, { fd });
+  } catch {
+    closeSync(fd);
+    return null;
+  }
+}
+
+/**
  * root 配下の静的ファイルのみ配信する middleware。
  * 見つからない・root 外は next()（SPA フォールバックや 404 に委ねる）。
  * /api/* は触らない。
@@ -134,6 +172,7 @@ export function createSafeStaticMiddleware(root: string): MiddlewareHandler {
       return next();
     }
 
+    applyAdminSecurityHeaders(c);
     const pathname = new URL(c.req.url).pathname;
     if (pathname.startsWith("/api/")) {
       return next();
@@ -178,7 +217,12 @@ export function createSafeStaticMiddleware(root: string): MiddlewareHandler {
       return c.body(null, 200);
     }
 
-    return c.body(createStreamBody(createReadStream(existing.path)), 200);
+    const rootReal = tryRealpath(rootResolved) ?? rootResolved;
+    const stream = openContainedFileStream(existing.path, rootReal);
+    if (stream === null) {
+      return c.text("Not Found", 404);
+    }
+    return c.body(createStreamBody(stream), 200);
   };
 }
 
@@ -190,6 +234,7 @@ export function createSpaFallbackMiddleware(root: string): MiddlewareHandler {
   const indexPath = resolve(rootResolved, "index.html");
 
   return async (c: Context, next: Next) => {
+    applyAdminSecurityHeaders(c);
     const pathname = new URL(c.req.url).pathname;
     if (pathname.startsWith("/api/")) {
       return next();
@@ -209,6 +254,11 @@ export function createSpaFallbackMiddleware(root: string): MiddlewareHandler {
     if (c.req.method.toUpperCase() === "HEAD") {
       return c.body(null, 200);
     }
-    return c.body(createStreamBody(createReadStream(existing.path)), 200);
+    const rootReal = tryRealpath(rootResolved) ?? rootResolved;
+    const stream = openContainedFileStream(existing.path, rootReal);
+    if (stream === null) {
+      return next();
+    }
+    return c.body(createStreamBody(stream), 200);
   };
 }

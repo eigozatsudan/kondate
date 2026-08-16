@@ -2,6 +2,7 @@
  * admin プロセス設定の読み込み。
  * 秘密（URL・token）をログや toString に載せない。
  */
+import { ADMIN_LOCAL_TOKEN_MIN_LENGTH } from "./middleware/token.js";
 
 export type AdminConfig = {
   databaseUrl: string;
@@ -37,12 +38,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): AdminConfig {
   const rawBind = typeof env.ADMIN_BIND_HOST === "string" ? env.ADMIN_BIND_HOST.trim() : "";
   const bindHost = rawBind.length > 0 ? rawBind : "127.0.0.1";
 
-  const tokenRaw = env.ADMIN_LOCAL_TOKEN;
+  // AO8: UI / Bearer は trim する。env も揃えないと末尾空白で「見た目どおり」が 401 になる。
+  const tokenRaw = typeof env.ADMIN_LOCAL_TOKEN === "string" ? env.ADMIN_LOCAL_TOKEN.trim() : "";
   // ADM5: 空は従来どおり optional null。非空かつ短すぎる token は fail-closed。
   let localToken: string | null = null;
-  if (typeof tokenRaw === "string" && tokenRaw.length > 0) {
-    // 循環 import を避けるため長さ定数をここにもリテラルで固定（token.ts と一致）
-    if (tokenRaw.length < 16) {
+  if (tokenRaw.length > 0) {
+    if (tokenRaw.length < ADMIN_LOCAL_TOKEN_MIN_LENGTH) {
       throw new Error("admin_local_token_too_short");
     }
     localToken = tokenRaw;

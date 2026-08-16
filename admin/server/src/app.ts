@@ -9,6 +9,7 @@ import type { AdminConfig } from "./config.js";
 import { AdminClosedError, internalError } from "./errors.js";
 import { createHostGuard } from "./middleware/host.js";
 import { apiGetOnly } from "./middleware/method.js";
+import { adminSecureHeaders } from "./middleware/secure-headers.js";
 import { createTokenGuard } from "./middleware/token.js";
 import { healthHandler } from "./routes/health.js";
 import { registerApiRoutes } from "./routes/register.js";
@@ -30,6 +31,7 @@ export function createApp(deps: CreateAppDeps): Hono {
   const dbReady = deps.dbReady ?? false;
   const sessionUser = deps.sessionUser ?? null;
 
+  app.use("*", adminSecureHeaders);
   app.use("*", createHostGuard(deps.config.port));
   app.use("*", apiGetOnly);
   app.use(

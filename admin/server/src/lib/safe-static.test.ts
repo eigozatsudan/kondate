@@ -136,6 +136,37 @@ describe("createSafeStaticMiddleware integration", () => {
     }
   });
 
+  it("AO6: static 200 has XFO / nosniff / frame-ancestors", async () => {
+    const app = buildApp();
+    const res = await app.request("http://127.0.0.1:5193/assets/app.js");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+  });
+
+  it("AO3: replacing a served leaf with an outside symlink does not leak", async () => {
+    const outside = join(tmpRoot, "..", "ao3-secret.txt");
+    writeFileSync(outside, "AO3_SECRET_OUTSIDE\n", "utf8");
+    const leaf = join(tmpRoot, "assets", "app.js");
+    const original = "console.log('ok');\n";
+    try {
+      const app = buildApp();
+      const first = await app.request("http://127.0.0.1:5193/assets/app.js");
+      expect(first.status).toBe(200);
+      expect(await first.text()).toContain("console.log");
+      rmSync(leaf, { force: true });
+      symlinkSync(outside, leaf);
+      const second = await app.request("http://127.0.0.1:5193/assets/app.js");
+      expect(await second.text()).not.toContain("AO3_SECRET_OUTSIDE");
+      expect(second.status).toBe(404);
+    } finally {
+      rmSync(leaf, { force: true });
+      writeFileSync(leaf, original, "utf8");
+      rmSync(outside, { force: true });
+    }
+  });
+
   it("still serves a symlink whose realpath stays inside root", async () => {
     const target = join(tmpRoot, "assets", "app.js");
     const linkPath = join(tmpRoot, "assets", "app-alias.js");

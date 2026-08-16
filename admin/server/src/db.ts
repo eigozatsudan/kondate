@@ -285,6 +285,25 @@ export async function runStartupDbChecks(pool: pg.Pool): Promise<StartupDbCheckR
     // 代表 SELECT が permission エラーにならないこと
     await client.query("select id from public.user_feedback limit 1");
 
+    // AO9: 共有レシピ 2 表の SELECT と title 関数 EXECUTE が無いと listen しない。
+    // 20260812120000 未適用のまま canary 成功して実行時 500 になる fail-open を閉じる。
+    const sharePrivRes = await client.query<{ ok: boolean }>(
+      `select
+         has_table_privilege(current_user, 'private.shared_emergency_recipes', 'SELECT')
+         and has_table_privilege(current_user, 'private.shared_emergency_recipe_origins', 'SELECT')
+         and has_function_privilege(
+           current_user,
+           'private.share_recipe_title_from_payload(jsonb)',
+           'EXECUTE'
+         )
+         as ok`,
+    );
+    if (sharePrivRes.rows[0]?.ok !== true) {
+      databaseStartupFailed();
+    }
+    await client.query("select id from private.shared_emergency_recipes limit 1");
+    await client.query("select recipe_id from private.shared_emergency_recipe_origins limit 1");
+
     return { sessionUser };
   } catch (e) {
     if (e instanceof Error && e.message.includes("database_startup")) {
