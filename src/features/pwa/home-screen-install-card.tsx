@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useLocation } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
-import { peekAndroidInstallPrompt } from "./android-install-prompt";
+import { useAndroidInstallPrompt } from "./android-install-prompt";
 import {
   INSTALL_TIP_ANDROID_INSTALL_LABEL,
   INSTALL_TIP_ANDROID_STEPS,
@@ -54,10 +54,12 @@ export function HomeScreenInstallCard() {
     dismissed: memoryDismissed || readInstallTipDismissed(window.localStorage),
   });
 
+  // 描画後 BIP を拾うため peek ではなく購読する。userChoice / appinstalled では自動 dismiss しない。
+  const heldAndroidPrompt = useAndroidInstallPrompt();
+
   if (!visible) return null;
 
-  // Android のボタン正本は peek。userChoice / appinstalled では自動 dismiss しない。
-  const androidPrompt = surface === "android" ? peekAndroidInstallPrompt() : null;
+  const androidPrompt = surface === "android" ? heldAndroidPrompt : null;
   const showIosSteps = surface === "ios";
   const showAndroidSteps = surface === "android" && androidPrompt === null;
 

@@ -1,10 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   injectAndroidInstallPromptForTests,
+  listenForAndroidInstallPrompt,
   peekAndroidInstallPrompt,
   resetAndroidInstallPromptForTests,
 } from "./android-install-prompt";
@@ -73,6 +74,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   resetAndroidInstallPromptForTests();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -128,6 +130,26 @@ describe("HomeScreenInstallCard", () => {
     renderCard();
     expect(peekAndroidInstallPrompt()?.prompt).toBe(prompt);
     expect(screen.getByRole("button", { name: "インストールする" })).toBeVisible();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+    expect(screen.queryByText("右上のメニューを開きます")).not.toBeInTheDocument();
+  });
+
+  it("replaces Android steps with the install button when BIP arrives after first paint", async () => {
+    // Chrome は SW addAll 後に BIP を飛ばす。描画後到着を購読しないと手順リストのまま固着する。
+    listenForAndroidInstallPrompt();
+    stubSurface("android");
+    renderCard();
+    expect(screen.getByText("右上のメニューを開きます")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "インストールする" })).not.toBeInTheDocument();
+
+    const prompt = vi.fn(() => Promise.resolve());
+    const event = new CustomEvent("beforeinstallprompt", { cancelable: true });
+    Object.defineProperty(event, "prompt", { value: prompt });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+
+    expect(await screen.findByRole("button", { name: "インストールする" })).toBeVisible();
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
     expect(screen.queryByText("右上のメニューを開きます")).not.toBeInTheDocument();
   });

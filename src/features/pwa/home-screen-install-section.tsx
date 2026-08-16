@@ -1,4 +1,4 @@
-import { peekAndroidInstallPrompt } from "./android-install-prompt";
+import { useAndroidInstallPrompt } from "./android-install-prompt";
 import {
   INSTALL_TIP_ANDROID_INSTALL_LABEL,
   INSTALL_TIP_ANDROID_STEPS,
@@ -20,8 +20,9 @@ export function HomeScreenInstallSection() {
     readNavigatorPlatform(),
     navigator.maxTouchPoints,
   );
-  // 設定は常設。Android で BIP を保持しているときだけインストールボタンを出してよい。
-  const androidPrompt = surface === "android" ? peekAndroidInstallPrompt() : null;
+  // 設定は常設。描画後 BIP も購読してインストールボタンを出す。userChoice では閉じない。
+  const heldAndroidPrompt = useAndroidInstallPrompt();
+  const androidPrompt = surface === "android" ? heldAndroidPrompt : null;
 
   return (
     <section

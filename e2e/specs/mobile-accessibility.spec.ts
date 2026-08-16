@@ -254,6 +254,7 @@ for (const width of [320, 375, 430]) {
       const householdId = await seedGeneratedMenu(page);
       await page.goto(`/history/${householdId}`);
       await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole("heading").first()).not.toHaveAccessibleName("ホーム画面に置く");
       await assertNoHorizontalScroll(page);
       await page.goto("/planner");
       // history.ts: idea seed requires caller to set mock scenario (default success rejects idea).

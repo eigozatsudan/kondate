@@ -318,3 +318,46 @@ describe("AppShell planner leave flush (P2)", () => {
     expect(defaultPrevented).toBe(false);
   });
 });
+
+describe("AppShell heading contract (I2)", () => {
+  it("does not expose the install-card heading when the dismiss key is already 1", () => {
+    // 受け入れ 9: heading.first() がカード h2「ホーム画面に置く」に侵食しないこと。
+    // 資格が揃っていても dismiss 済みなら、document 順の先頭見出しはページ側のまま。
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+      platform: "iPhone",
+      maxTouchPoints: 5,
+      standalone: undefined,
+    });
+    const authenticated: AuthContextValue = {
+      status: "authenticated",
+      session: { user: { id: "user-1" } } as AuthContextValue["session"],
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    };
+    const router = createMemoryRouter(
+      [
+        {
+          element: <AppShell />,
+          children: [{ path: "/history/:menuId", element: <h1>履歴詳細</h1> }],
+        },
+      ],
+      { initialEntries: ["/history/m1"] },
+    );
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <AuthContext.Provider value={authenticated}>
+          <RouterProvider router={router} />
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+    expect(window.localStorage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
+    const firstHeading = screen.getAllByRole("heading")[0];
+    expect(firstHeading).not.toHaveAccessibleName("ホーム画面に置く");
+    expect(screen.queryByRole("heading", { name: "ホーム画面に置く" })).not.toBeInTheDocument();
+    expect(firstHeading).toHaveAccessibleName("履歴詳細");
+    vi.unstubAllGlobals();
+  });
+});
