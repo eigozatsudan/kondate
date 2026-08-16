@@ -469,6 +469,52 @@ it("AP1: unsigned null fields keep default-on share and upsert true", async () =
   expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
 });
 
+it("AP1: mount getMyShareConsent reject does not treat share as confirmed off", async () => {
+  const user = userEvent.setup();
+  getShare.mockRejectedValue(new Error("共有の同意状態を読み込めませんでした"));
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  // 設定と同型: 初回読取 error は確定オフにせず、トグルを閉じる
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(shareConsentSettingsCopy.consentError);
+  });
+  const shareCheckbox = screen.getByRole("checkbox", {
+    name: shareConsentSection.checkboxLabel,
+  });
+  expect(shareCheckbox).toBeDisabled();
+  expect(shareCheckbox).not.toBeChecked();
+
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  const accept = screen.getByRole("button", { name: "確認して進む" });
+  expect(accept).toBeDisabled();
+  await user.click(accept);
+
+  expect(acceptConsent).not.toHaveBeenCalled();
+  expect(upsertShare).not.toHaveBeenCalled();
+  expect(screen.queryByRole("heading", { name: "献立" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "今はAIを使わない" })).toBeEnabled();
+});
+
 it("AP5: revoke failure stays on privacy and does not proceed as success", async () => {
   const user = userEvent.setup();
   getShare.mockResolvedValue(currentShareState);

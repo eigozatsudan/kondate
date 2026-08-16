@@ -60,6 +60,7 @@ export type PrivacyAcceptInput = {
  * 有効同意 → true、revoke 済み（行はあるが current でない）→ false、
  * 未同意（null フィールド）→ true（初回推奨既定）。
  * data 無し（pending / 初回 error）では false（revoke 済みを default true で出さない — AP10）。
+ * 初回 error の false は確定オフではない。ready にせず primary を閉じる（設定と同型）。
  * AP12: success 後の refetch error は v5 が直前 data を残す。isSuccess が false でも
  * その data を使い、未タッチのボックスをオフ追従させない。
  */
@@ -115,8 +116,10 @@ export function PrivacyNoticePage() {
       channel?.close();
     };
   }, [queryClient, userId]);
-  // isFetched: 成功・失敗どちらでも読取は終わっている。disabled（未ログイン）は false。
-  const shareConsentReady = shareQuery.isFetched;
+  // AP1: 初回読取 error（data 無し）は isFetched でも未確定。確定オフとして進めない。
+  // AP12: success 後の refetch error は v5 が直前 data を残すので ready のまま。
+  const shareConsentReady = shareQuery.data !== undefined;
+  const shareConsentReadError = shareQuery.isError && shareQuery.data === undefined;
   const initialShareChecked = initialShareCheckedFromConsent(shareQuery.data);
   const mutation = useMutation({
     mutationFn: async (input: PrivacyAcceptInput) => {
@@ -209,7 +212,13 @@ export function PrivacyNoticePage() {
   return (
     <PrivacyNoticeContent
       saving={mutation.isPending}
-      error={mutation.isError ? privacyAcceptErrorMessage(mutation.error) : undefined}
+      error={
+        mutation.isError
+          ? privacyAcceptErrorMessage(mutation.error)
+          : shareConsentReadError
+            ? shareConsentSettingsCopy.consentError
+            : undefined
+      }
       initialShareChecked={initialShareChecked}
       shareConsentReady={shareConsentReady}
       onAccept={(input) => {
