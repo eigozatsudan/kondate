@@ -838,7 +838,7 @@ describe("MenuResultPage", () => {
     shoppingApi.revalidateActiveShoppingList.mockRejectedValue(
       Object.assign(new Error("読み込めませんでした"), { code: "shopping_unavailable" }),
     );
-    await act(async () => {
+    act(() => {
       window.dispatchEvent(new Event("focus"));
     });
     await waitFor(() => {
