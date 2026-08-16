@@ -1356,6 +1356,29 @@ describe("PlannerWizard review step", () => {
     vi.useRealTimers();
   });
 
+  it("P8: 削除済み pantry 選択では緊急 CTA を一次押下できない", () => {
+    const deletedPantryId = "74000000-0000-4000-8000-000000000099";
+    const onOpenEmergencyMenus = vi.fn();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...reviewDraft,
+          pantrySelections: [{ pantryItemId: deletedPantryId, priority: "prefer_use" }],
+        }}
+        pantryItems={[]}
+        onOpenEmergencyMenus={onOpenEmergencyMenus}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "冷蔵庫から削除された食材の選択を解除してから献立を作ってください。",
+    );
+    expect(onOpenEmergencyMenus).not.toHaveBeenCalled();
+  });
+
   it("P12: 未確認期限切れ pantry では緊急 CTA を一次押下できない", () => {
     const expiredPantry: PantryItem = {
       id: "74000000-0000-4000-8000-000000000099",

@@ -1093,6 +1093,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       );
       return;
     }
+    // P8: 公開 sticky の flush 短絡は pin を返す。削除/期限ゲートは
+    // 押下時の local 選択を見る。pin の古い pantry ID で同じ文言に
+    // 戻ると解除後も /emergency-menus に届かない（P2 と同根）。
+    const pantrySelectionsForGate = value.pantrySelections;
     // P1: setState 再描画前に ref を武装し、generate onSubmit との二重 flight を同期抑止
     const operationId = ++emergencyOperationIdRef.current;
     emergencyOpeningRef.current = true;
@@ -1121,11 +1125,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         }
         // P3: flush 中の pantry 削除/期限更新 TOCTOU を pantryRowsRef で再検証（生成 post-flush と同型）。
         // pre-flush 成功だけでは session に載せてから失敗したときの stale handoff が残る。
+        // P8: ゲートは pin の saved ではなく押下時 local（P2 と同型）。
         {
           const pantryRowsLatest = pantryRowsRef.current;
           const pantryIdSetLatest = new Set(pantryRowsLatest.map((item) => item.id));
           if (
-            saved.pantrySelections.some(
+            pantrySelectionsForGate.some(
               (selection) => !pantryIdSetLatest.has(selection.pantryItemId),
             )
           ) {
@@ -1135,7 +1140,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             return;
           }
           const nowForExpiryPostFlush = new Date();
-          const hasUnconfirmedExpiredPostFlush = saved.pantrySelections.some((selection) => {
+          const hasUnconfirmedExpiredPostFlush = pantrySelectionsForGate.some((selection) => {
             const item = pantryRowsLatest.find((entry) => entry.id === selection.pantryItemId);
             if (item === undefined) return false;
             return (

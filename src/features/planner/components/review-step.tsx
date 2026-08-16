@@ -1008,7 +1008,9 @@ export function ReviewStep({
             )}
             {/* household / idea とも同一 CTA。旧 idea 切替案内「家族向けの緊急献立は…」は削除。
                 P8: audience 未完成時は disabled（生成 CTA と同じ一枚目ガード）。
-                P12: 未確認期限切れも主 CTA と同型で一次押下させない。 */}
+                P12: 未確認期限切れも主 CTA と同型で一次押下させない。
+                P8: 削除済み pantry 選択も主 CTA と同型で一次押下させない。
+                押せるまま post-flush で stay すると公開 pin 中は同じ文言でループする。 */}
             {(value.targetMode === "household" || value.targetMode === "idea") &&
               onOpenEmergencyMenus !== undefined && (
                 <Button
@@ -1017,6 +1019,7 @@ export function ReviewStep({
                   disabled={
                     disabled ||
                     requiredQuestionsIncomplete ||
+                    hasUnavailablePantrySelections ||
                     hasUnconfirmedExpiredPantry ||
                     blockGenerationForStaleSafety
                   }

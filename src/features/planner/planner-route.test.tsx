@@ -2910,6 +2910,57 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
   });
 
+  it("P8: 公開 sticky 中に削除済み pantry を UI 解除した緊急は pin の古い ID で止めず navigate する", async () => {
+    // 短絡 flush は cache の pin を返す。pin に削除済み ID が残っていても、
+    // 確認 UI で解除した local 選択でゲートし、/emergency-menus へ進む。
+    const deletedPantryId = "74000000-0000-4000-8000-000000000099";
+    queryState.draft = {
+      ...draft,
+      pantrySelections: [{ pantryItemId: deletedPantryId, priority: "prefer_use" }],
+    };
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: "80000000-0000-4000-8000-000000000099",
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+    act(() => {
+      const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+      props.onDraftChange({
+        ...props.draft,
+        pantrySelections: [],
+      });
+    });
+    savePlannerDraftMock.mockClear();
+    await user.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/emergency-menus");
+    });
+    expect(savePlannerDraftMock).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText("冷蔵庫から削除された食材の選択を解除してから緊急献立を開いてください。"),
+    ).not.toBeInTheDocument();
+  });
+
   it("P4: flush〜claim のあいだに pending が消えたら pin で新規 sticky を書かない", async () => {
     // 公開 pin の flush 短絡後、pantry 再読のあいだに他タブが terminal 完了して
     // sticky を消し draft を soft-delete する。確認 copy は再開のみなので、
