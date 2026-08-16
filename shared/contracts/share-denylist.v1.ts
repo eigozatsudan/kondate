@@ -34,6 +34,41 @@ export const shareGuaranteePhrases = [
 ] as const;
 
 /**
+ * AP4: 既収録の親族 stem。和名 stem と同じ助詞（は/を/に/が）と取り分けの「用」を閉じた行列で付ける。
+ * 既存の「次男の」「ママ用」等リテラルは残す。四男以降・新規親族語・オープン NER は載せない。
+ */
+const sharePiiKinshipStems = [
+  "弟",
+  "姉",
+  "兄",
+  "妹",
+  "息子",
+  "娘",
+  "長男",
+  "長女",
+  "次男",
+  "次女",
+  "三男",
+  "三女",
+  "祖母",
+  "祖父",
+  "子供",
+  "こども",
+  "ママ",
+  "パパ",
+  "母",
+  "父",
+  "おばあちゃん",
+  "おじいちゃん",
+] as const;
+
+const kinshipParticleAndPurposeSuffixes = ["は", "を", "に", "が", "用"] as const;
+
+const sharePiiKinshipParticleAndPurposePhrases = sharePiiKinshipStems.flatMap((stem) =>
+  kinshipParticleAndPurposeSuffixes.map((suffix) => `${stem}${suffix}`),
+);
+
+/**
  * 人名っぽい・世帯固有の呼びかけ残渣。
  * ソースの個人名が ingredient.name や手順に残る経路を fail-closed する。
  */
@@ -88,6 +123,8 @@ export const sharePiiLiteralPhrases = [
   "おじいちゃんの",
   // 年齢帯の世帯残渣（「1歳用」等）。一般の分量表現とは衝突しにくい
   "歳用",
+  // AP4: 既収録親族の は/を/に/が/用。既存「次男の」「ママ用」は上に残す
+  ...sharePiiKinshipParticleAndPurposePhrases,
 ] as const;
 
 /**

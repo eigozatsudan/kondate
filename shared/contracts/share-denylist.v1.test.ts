@@ -82,6 +82,22 @@ describe("share-denylist.v1", () => {
     expect(textHitsShareDenylist("長男の弁当用")).toBe(true);
   });
 
+  it("AP4: flags kinship は / 用 counterparts 次男は / 息子は / 母用", () => {
+    // 既収録親族の助詞欠け・用欠け。オープン NER や新規親族語は足さない
+    expect(sharePiiLiteralPhrases).toContain("次男は");
+    expect(sharePiiLiteralPhrases).toContain("息子は");
+    expect(sharePiiLiteralPhrases).toContain("母用");
+    expect(textHitsShareDenylist("次男は小さく切って取り分けてください")).toBe(true);
+    expect(textHitsShareDenylist("息子は食べないハンバーグ")).toBe(true);
+    expect(textHitsShareDenylist("母用の小皿")).toBe(true);
+    expect(textHitsShareDenylist("息子用")).toBe(true);
+    // 既存ヒットは緩めない
+    expect(sharePiiLiteralPhrases).toContain("次男の");
+    expect(textHitsShareDenylist("次男の弁当用に詰める")).toBe(true);
+    expect(textHitsShareDenylist("息子の残り")).toBe(true);
+    expect(textHitsShareDenylist("母の特製だれ")).toBe(true);
+  });
+
   it("AP2: flags whitespace / 中点 / 読点 separators and spaced phone", () => {
     expect(textHitsShareDenylist("健太 の特製")).toBe(true);
     expect(textHitsShareDenylist("弟 の")).toBe(true);
