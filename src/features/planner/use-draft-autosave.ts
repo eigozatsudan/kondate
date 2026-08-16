@@ -78,7 +78,34 @@ function isPersistableDraft(value: PlannerDraftInput): boolean {
 }
 
 /**
+ * fingerprint / Zod と同じ persistable 入力。保存応答は trim 済み、UI は raw のまま。
+ */
+function canonicalPersistableInput(value: PlannerDraftInput | PlannerDraft): PlannerDraftInput {
+  const fields = toDraftInputFields(value);
+  const parsed = plannerDraftInputSchema.safeParse(fields);
+  return parsed.success ? parsed.data : fields;
+}
+
+/**
+ * raw hydrate の lastSaved が、sanitize 済み latest の上位集合か。
+ * ineligible 除外以外が同じときだけ同一 persistable とみなす（P-R1）。
+ * persistOnReset=false の empty に旧 complete を載せない。
+ */
+function isSanitizedSubsetOfLastSaved(
+  lastSaved: PlannerDraftInput,
+  latest: PlannerDraftInput,
+): boolean {
+  const { targetMemberIds: savedIds, ...savedRest } = lastSaved;
+  const { targetMemberIds: latestIds, ...latestRest } = latest;
+  if (JSON.stringify(savedRest) !== JSON.stringify(latestRest)) return false;
+  if (latestIds.length === 0) return false;
+  const savedSet = new Set(savedIds);
+  return latestIds.every((id) => savedSet.has(id));
+}
+
+/**
  * flush が RPC せず返す lastSaved が、現行 persistable と同一入力か。
+ * 照合は sanitize / fingerprint と同じ canonical 入力を使う（P-R1）。
  * persistOnReset=false 後の empty に旧 complete を返すと cache へ undelete 相当を書く。
  */
 function lastSavedMatchesLatest(
@@ -86,10 +113,20 @@ function lastSavedMatchesLatest(
   latest: PlannerDraftInput,
   lastPersisted: PlannerDraftInput | null,
 ): boolean {
-  return (
-    persistenceFingerprint(toDraftInputFields(lastSaved), lastPersisted) ===
-    persistenceFingerprint(toDraftInputFields(latest), lastPersisted)
-  );
+  const latestCanon = canonicalPersistableInput(latest);
+  const savedCanon = canonicalPersistableInput(lastSaved);
+  const latestFp = persistenceFingerprint(latestCanon, lastPersisted);
+  if (persistenceFingerprint(savedCanon, lastPersisted) === latestFp) {
+    return true;
+  }
+  // lastSaved は raw hydrate。fingerprint / lastPersisted は sanitize 済み。
+  if (lastPersisted === null) return false;
+  if (
+    persistenceFingerprint(canonicalPersistableInput(lastPersisted), lastPersisted) !== latestFp
+  ) {
+    return false;
+  }
+  return isSanitizedSubsetOfLastSaved(savedCanon, latestCanon);
 }
 
 /**
@@ -367,8 +404,12 @@ export function useDraftAutosave({
 
   useEffect(() => {
     // query 到着後の種。古い lastSaved を新しい live revision で上書きする。
-    // null では消さない（生成後 remount は初回 effect が種を置かない）。
-    if (hydratedDraft === null) return;
+    // null は live 消滅（他タブ soft-delete / 生成後）。削除済み id を残さない（P-R2）。
+    // 生成後 remount は初回 effect も種を置かない（P1 undelete）。
+    if (hydratedDraft === null) {
+      lastSavedDraftRef.current = null;
+      return;
+    }
     const current = lastSavedDraftRef.current;
     if (current === null || hydratedDraft.revision >= current.revision) {
       lastSavedDraftRef.current = hydratedDraft;
@@ -689,13 +730,22 @@ export function useDraftAutosave({
     // save(empty, 0) → save_generation_draft の undelete に落ち、
     // 消費済み下書きが空行として live に戻るのを防ぐ。
     // 公開 pin と reset 強制保存は上で処理済み。
+    // lastSaved 短絡は live query があるときだけ（P-R2）。
+    // cache null のまま削除済み id を返すと flushDraft が ghost を戻し POST が draft_not_found。
     if (latestFingerprintRef.current === baselineSerializedRef.current) {
+      const live = hydratedDraftRef.current;
       const lastSaved = lastSavedDraftRef.current;
+      // live 消滅は effect が lastSaved を消す（P-R2）。save 由来の種は query 無しでも返す。
       if (
         lastSaved !== null &&
+        (live === null || lastSaved.id === live.id) &&
         lastSavedMatchesLatest(lastSaved, latest, lastPersistedInputRef.current)
       ) {
-        return Promise.resolve(lastSaved);
+        // sanitize / trim 済み latest を id/rev に載せる。raw の ineligible を返さない（P-R1）。
+        return Promise.resolve({
+          ...lastSaved,
+          ...canonicalPersistableInput(latest),
+        });
       }
       return Promise.reject(new IncompleteDraftSaveError());
     }

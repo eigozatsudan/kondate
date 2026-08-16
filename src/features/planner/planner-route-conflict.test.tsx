@@ -105,7 +105,7 @@ vi.mock("./planner-api", async (importOriginal) => {
   };
 });
 
-import { PlannerPage } from "./planner-route";
+import { PlannerPage, type PlannerPageProps } from "./planner-route";
 
 function createDeferred<T>(): {
   promise: Promise<T>;
@@ -121,7 +121,10 @@ function createDeferred<T>(): {
   };
 }
 
-function renderRetainedDraft(queryClient: QueryClient) {
+function renderRetainedDraft(
+  queryClient: QueryClient,
+  startGeneration: PlannerPageProps["startGeneration"] = vi.fn(),
+) {
   queryClient.setQueryData(plannerKeys.draft(userId), revisionOne);
   queryClient.setQueryData([...householdKeys.members(userId), "planner-safety"], {
     members: [
@@ -146,7 +149,7 @@ function renderRetainedDraft(queryClient: QueryClient) {
     <MemoryRouter initialEntries={["/planner"]}>
       <QueryClientProvider client={queryClient}>
         <AppToastProvider>
-          <PlannerPage startGeneration={vi.fn()} />
+          <PlannerPage startGeneration={startGeneration} />
           <CurrentPath />
         </AppToastProvider>
       </QueryClientProvider>
@@ -514,6 +517,48 @@ it("生成後 soft-delete で live 下書きが無い revision conflict は unde
   ).toBeInTheDocument();
   expect(screen.queryByText(/緊急献立を開けませんでした/u)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "最新の下書きを読み込む" })).toBeEnabled();
+});
+
+it("P-R2: 他タブ soft-delete 後の leave は lastSaved を cache に戻さない", async () => {
+  // hydrate 種があるまま cache を null にすると、短絡が削除済み行を setQueryData する。
+  getPlannerDraftMock.mockResolvedValue(null);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  renderRetainedDraft(queryClient);
+  await act(async () => Promise.resolve());
+  await act(async () => Promise.resolve());
+
+  queryClient.setQueryData(plannerKeys.draft(userId), null);
+  await act(async () => Promise.resolve());
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
+  expect(queryClient.getQueryData(plannerKeys.draft(userId))).toBeNull();
+});
+
+it("P-R2: 他タブ soft-delete 後の献立を作るは削除済み id で生成しない", async () => {
+  getPlannerDraftMock.mockResolvedValue(null);
+  const startGeneration = vi.fn();
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  renderRetainedDraft(queryClient, startGeneration);
+  await act(async () => Promise.resolve());
+  await act(async () => Promise.resolve());
+
+  queryClient.setQueryData(plannerKeys.draft(userId), null);
+  await act(async () => Promise.resolve());
+
+  fireEvent.click(screen.getByRole("button", { name: "献立を作る" }));
+  await act(async () => Promise.resolve());
+  await act(async () => Promise.resolve());
+
+  expect(startGeneration).not.toHaveBeenCalled();
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "人数など必要な条件が未設定のため、生成を開始しませんでした。確認画面で内容を見直してください。",
+  );
 });
 
 it("P1: 生成後 empty hydrate の leave は save_generation_draft を呼ばない", async () => {

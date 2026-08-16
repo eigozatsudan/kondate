@@ -80,7 +80,7 @@ const autosaveInputs = vi.hoisted(() => [] as unknown[]);
 /** P1/P3/P2: flush が Incomplete / 通信失敗 / revision conflict を投げる経路を再現する */
 const autosaveFlushMode = vi.hoisted(
   (): {
-    mode: "save" | "incomplete" | "network_error" | "conflict";
+    mode: "save" | "incomplete" | "network_error" | "conflict" | "lastSaved";
   } => ({
     mode: "save",
   }),
@@ -351,6 +351,14 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
           // P2: 実 autosave は onConflict 後に DraftRevisionConflictError を再 throw
           if (autosaveFlushMode.mode === "conflict") {
             return Promise.reject(new DraftRevisionConflictError());
+          }
+          // P-R2: lastSaved 短絡（RPC なし）。cache null の ghost 戻しを flushDraft 側で見る。
+          if (autosaveFlushMode.mode === "lastSaved") {
+            return Promise.resolve({
+              ...draft,
+              ...input.value,
+              revision: input.baselineRevision,
+            });
           }
           // P-R5: 公開 pin 中は mock でも live を進めない（flushDraft 短絡の第二防衛）。
           if (input.holdLiveRevision === true) {
@@ -1550,6 +1558,72 @@ it("P9: pendingDisplayReady 前の leave flush は空下書きを正本にしな
 
   await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
   expect(savePlannerDraftMock).not.toHaveBeenCalled();
+});
+
+it("P-R1: hydratedDraft は ineligible 家族を除いた sanitize 済み入力を渡す", async () => {
+  // lastSaved 種が raw 行だと fingerprint（sanitize 済み）と字面がずれ Incomplete になる。
+  const ineligibleId = "70000000-0000-4000-8000-000000000099";
+  const eligibleId = draft.targetMemberIds[0] ?? "70000000-0000-4000-8000-000000000001";
+  queryState.draft = {
+    ...draft,
+    targetMemberIds: [eligibleId, ineligibleId],
+  };
+  queryState.safetyEligibleMemberIds = [eligibleId];
+  render(<PlannerPage />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  const latestAutosave = autosaveInputs.at(-1) as {
+    hydratedDraft: PlannerDraft | null;
+  };
+  expect(latestAutosave.hydratedDraft?.id).toBe(draft.id);
+  expect(latestAutosave.hydratedDraft?.revision).toBe(draft.revision);
+  expect(latestAutosave.hydratedDraft?.targetMemberIds).toEqual([eligibleId]);
+});
+
+it("P-R2: lastSaved flush は cache null のとき ghost を戻さない", async () => {
+  // 他タブ soft-delete 後。flush 短絡が削除済み行を返すと setQueryData が cache を戻す。
+  autosaveFlushMode.mode = "lastSaved";
+  getQueryDataMock.mockImplementation((queryKey: readonly unknown[]) => {
+    if (queryKey[0] === "planner") return null;
+    return { onboarding_status: "not_started" };
+  });
+  setQueryDataMock.mockClear();
+  render(<PlannerPage startGeneration={vi.fn()} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
+  expect(setQueryDataMock).not.toHaveBeenCalledWith(
+    ["planner", "draft", draft.userId],
+    expect.anything(),
+  );
+});
+
+it("P-R2: cache null の lastSaved flush は生成を開始しない", async () => {
+  autosaveFlushMode.mode = "lastSaved";
+  getQueryDataMock.mockImplementation((queryKey: readonly unknown[]) => {
+    if (queryKey[0] === "planner") return null;
+    return { onboarding_status: "not_started" };
+  });
+  const startGeneration = vi.fn();
+  render(<PlannerPage startGeneration={startGeneration} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  await props.onSubmit();
+  expect(startGeneration).not.toHaveBeenCalled();
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
+  await vi.waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "人数など必要な条件が未設定のため、生成を開始しませんでした。確認画面で内容を見直してください。",
+    );
+  });
 });
 
 it("P1: 生成後 empty / rev=0 hydrate の leave は undelete しない", async () => {

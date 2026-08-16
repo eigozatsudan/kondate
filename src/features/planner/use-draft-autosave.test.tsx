@@ -283,6 +283,103 @@ it("P1: 保存成功後の clean flush は lastSaved を返し再 RPC しない"
   expect(second).toEqual(first);
 });
 
+it("P-R1: Zod trim 済み lastSaved でも fingerprint === baseline の flush は Incomplete にしない", async () => {
+  // 保存応答は boundedCanonicalText.trim 済み。UI latest / fingerprint は raw。
+  // lastSaved 字面と比較すると clean なのに Incomplete になり生成が止まる。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved({ ...value, memo: value.memo.trimEnd() }, revision + 1)),
+  );
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 4, resetToken: 0, save }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  const withTrailingSpace = { ...reviewDraft, memo: "野菜多め " };
+  rerender({ value: withTrailingSpace });
+  let first: PlannerDraft | undefined;
+  await act(async () => {
+    first = await result.current.flush();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(first?.memo).toBe("野菜多め");
+
+  let second: PlannerDraft | undefined;
+  await act(async () => {
+    second = await result.current.flush();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(second).toEqual(first);
+});
+
+it("P-R1: lastSaved が raw 家族でも sanitize 済み latest の clean flush は Incomplete にしない", async () => {
+  // hydrate 種はサーバ行（ineligible 込み）。value / fingerprint は sanitize 済み。
+  // 照合が raw lastSaved だと fingerprint === baseline なのに生成入口が止まる。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const ineligibleId = "70000000-0000-4000-8000-000000000099";
+  const eligibleId = reviewDraft.targetMemberIds[0] ?? "70000000-0000-4000-8000-000000000001";
+  const rawRow = saved({ ...reviewDraft, targetMemberIds: [eligibleId, ineligibleId] }, 4);
+  const sanitized = { ...reviewDraft, targetMemberIds: [eligibleId] };
+  const { result } = renderHook(() =>
+    useDraftAutosave({
+      value: sanitized,
+      enabled: true,
+      baselineRevision: 4,
+      resetToken: 0,
+      save,
+      hydratedDraft: rawRow,
+    }),
+  );
+
+  let flushed: PlannerDraft | undefined;
+  await act(async () => {
+    flushed = await result.current.flush();
+  });
+  expect(save).not.toHaveBeenCalled();
+  expect(flushed?.id).toBe(rawRow.id);
+  expect(flushed?.revision).toBe(4);
+  expect(flushed?.targetMemberIds).toEqual([eligibleId]);
+});
+
+it("P-R2: query が null なら lastSaved 短絡は削除済み id を返さない", async () => {
+  // 他タブ soft-delete 後。種は残っても live が無い短絡は ghost を成功扱いする。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const row = saved(reviewDraft, 4);
+  const initialHydrated: { hydratedDraft: PlannerDraft | null } = { hydratedDraft: row };
+  const { rerender, result } = renderHook(
+    ({ hydratedDraft }: { hydratedDraft: PlannerDraft | null }) =>
+      useDraftAutosave({
+        value: reviewDraft,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        hydratedDraft,
+      }),
+    { initialProps: initialHydrated },
+  );
+
+  let first: PlannerDraft | undefined;
+  await act(async () => {
+    first = await result.current.flush();
+  });
+  expect(save).not.toHaveBeenCalled();
+  expect(first).toEqual(row);
+
+  rerender({ hydratedDraft: null });
+  await act(async () => {
+    await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
+  });
+  expect(save).not.toHaveBeenCalled();
+});
+
 it("idea 選択直後の servings=null は DB 不能のため保存せず error にもしない", async () => {
   // UI は mode 切替で idea+servings null の一時状態を作るが、generation_drafts CHECK と
   // plannerDraftInputSchema は idea 完了形だけを許す。autosave が 400 を吐いて「保存できませんでした」
@@ -682,6 +779,61 @@ it("P1: resetToken で空下書きを強制保存しサーバと揃える", asyn
   expect(save).toHaveBeenNthCalledWith(2, empty, 2);
   expect(result.current.revision).toBe(3);
   expect(result.current.state).toBe("saved");
+});
+
+it("P1: persistOnReset=false の empty flush は旧 complete lastSaved を返さない", async () => {
+  // lastSaved 照合を lastPersisted だけにすると、empty に旧 complete を載せて cache undelete する。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const row = saved(reviewDraft, 4);
+  const { rerender, result } = renderHook(
+    ({
+      value,
+      persistOnReset,
+      resetToken,
+      hydratedDraft,
+    }: {
+      value: PlannerDraftInput;
+      persistOnReset: boolean;
+      resetToken: number;
+      hydratedDraft: PlannerDraft | null;
+    }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken,
+        persistOnReset,
+        save,
+        hydratedDraft,
+      }),
+    {
+      initialProps: {
+        value: reviewDraft,
+        persistOnReset: true,
+        resetToken: 0,
+        hydratedDraft: row,
+      },
+    },
+  );
+
+  rerender({
+    value: { ...base },
+    persistOnReset: false,
+    resetToken: 1,
+    hydratedDraft: row,
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  await act(async () => {
+    await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
+  });
+  expect(save).not.toHaveBeenCalled();
 });
 
 it("P-R1: persistOnReset=false の resetToken は empty を強制保存せず local baseline だけ揃える", async () => {

@@ -143,6 +143,20 @@ function toPlannerDraftInput(draft: PlannerDraft): PlannerDraftInput {
   };
 }
 
+/**
+ * live 行を lastSaved の種にする。hydrate の value / fingerprint と同じ
+ * sanitize 済み入力を載せ、ineligible 家族の字面ずれで Incomplete にしない（P-R1）。
+ * query 未到着 / live-null は null。短絡しない（P-R2 / P1 undelete）。
+ */
+function toHydratedAutosaveDraft(
+  draft: PlannerDraft | null | undefined,
+  eligibleMemberIds: readonly string[] | undefined,
+): PlannerDraft | null {
+  if (draft == null) return null;
+  if (eligibleMemberIds === undefined) return draft;
+  return { ...draft, ...sanitizeDraft(draft, eligibleMemberIds) };
+}
+
 function sanitizeDraft(
   draft: PlannerDraft | null,
   eligibleMemberIds: readonly string[],
@@ -770,8 +784,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     onConflict,
     onSaved: onDraftSaved,
     saveOnUnload,
-    // 生成後 null は種を置かず empty / rev=0 leave の undelete を防ぐ。
-    hydratedDraft: draftQuery.data ?? null,
+    // 生成後 / live-null は種を置かず empty / rev=0 leave の undelete を防ぐ。
+    // live 行は sanitize 済み入力を載せ、fingerprint と同じ照合入力にする（P-R1）。
+    hydratedDraft: toHydratedAutosaveDraft(draftQuery.data, safetyQuery.data?.eligibleMemberIds),
   });
   const flushAutosave = autosave.flush;
   // P-R5: 公開 pin 中の flush 短絡は hydrate 済み live 行を返す（C2 の draftRevision）。
@@ -806,6 +821,10 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         // 遅延した保存応答で別画面の新しい下書きを消さず、既存の明示的な競合解決へ合流させる。
         await onConflict();
         throw new DraftRevisionConflictError();
+      }
+      if (current === null) {
+        // 他タブ soft-delete / 生成後 live-null。削除済み lastSaved を cache に戻さない（P-R2）。
+        throw new IncompleteDraftSaveError();
       }
       // 緊急献立側が staleTime 内の古い下書きを再利用しないよう、保存結果を遷移前に同期する。
       queryClient.setQueryData(plannerKeys.draft(userId ?? "missing"), saved);
