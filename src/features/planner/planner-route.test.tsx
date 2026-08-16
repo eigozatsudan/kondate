@@ -2618,6 +2618,113 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
   });
 
+  it("P-R6: 公開 sticky 中の strip 後 generate は pin household の eligibility で止めず C2 再開する", async () => {
+    // 短絡 flush は cache の pin household を返す。strip は local value だけ落とす。
+    // eligibility を C2 より前に saved で見ると、残る家族を選び直しても再開できない。
+    const memberA = "70000000-0000-4000-8000-000000000001";
+    const memberB = "70000000-0000-4000-8000-000000000002";
+    queryState.draft = { ...draft, targetMemberIds: [memberA, memberB] };
+    queryState.safetyEligibleMemberIds = [memberA, memberB];
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: "80000000-0000-4000-8000-000000000099",
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    const view = render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+
+    queryState.safetyEligibleMemberIds = [memberA];
+    view.rerender(<PlannerRoutePage />);
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    });
+
+    await user.click(screen.getByRole("button", { name: "review へ進む" }));
+    savePlannerDraftMock.mockClear();
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(savePlannerDraftMock).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("wizard step")).not.toHaveTextContent("audience");
+  });
+
+  it("P-R6: 公開 sticky 中に idea へ選び直しても短絡 household で止めず C2 再開する", async () => {
+    // idea 再選択でも saved.targetMode は pin household のまま。eligibility に使わない。
+    const memberA = "70000000-0000-4000-8000-000000000001";
+    const memberB = "70000000-0000-4000-8000-000000000002";
+    queryState.draft = { ...draft, targetMemberIds: [memberA, memberB] };
+    queryState.safetyEligibleMemberIds = [memberA, memberB];
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: "80000000-0000-4000-8000-000000000099",
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    const view = render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+
+    queryState.safetyEligibleMemberIds = [memberA];
+    view.rerender(<PlannerRoutePage />);
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    });
+
+    act(() => {
+      const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+      props.onDraftChange({
+        ...props.draft,
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 2,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
+    savePlannerDraftMock.mockClear();
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(savePlannerDraftMock).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+  });
+
   it("C7: reset does not clear another tab's claimed pending after strip abort", async () => {
     const user = userEvent.setup();
     render(<PlannerPage />);

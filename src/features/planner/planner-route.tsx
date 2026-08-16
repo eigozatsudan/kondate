@@ -753,6 +753,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // persistOnReset は resetToken 専用。live-null 解決の追記 flush は止めない。
   const holdLiveRevision =
     userId !== undefined && readPendingGenerationMeta(userId, new Date()) !== null;
+  // P-R7: hold は render snapshot。enqueue / debounce / pagehide 発火時に
+  // storage の meta を再読し、未再描画の予約済み書き込みで pin を進めない。
+  const shouldHoldLiveRevision = useCallback((): boolean => {
+    return userId !== undefined && readPendingGenerationMeta(userId, new Date()) !== null;
+  }, [userId]);
   const autosave = useDraftAutosave({
     value,
     enabled: initialized && userId !== undefined,
@@ -760,6 +765,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     resetToken,
     persistOnReset,
     holdLiveRevision,
+    shouldHoldLiveRevision,
     save,
     onConflict,
     onSaved: onDraftSaved,
@@ -1727,26 +1733,34 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             if (!mountedRef.current || submitOperationId !== submitOperationIdRef.current) {
               return;
             }
-            // P1: flush 済み saved を最新 eligibility で再検証（strip 前 snapshot での生成禁止）
-            if (saved.targetMode === "household") {
-              const eligibleIds = new Set(eligibleMemberIdsRef.current);
-              const stillEligible =
-                saved.targetMemberIds.length > 0 &&
-                saved.targetMemberIds.every((id) => eligibleIds.has(id));
-              if (!stillEligible) {
+            // P-R6: 既存 pending は C2 再開のみ。公開 sticky の flush 短絡は pin した
+            // household を返すため、eligibility を先に見ると strip 後の選び直しが
+            // 「対象の選び直し」で止まり /generation?resumed=1 に届かない。
+            // 短絡 saved は再開判定に使わず、pending があるときだけ eligibility を飛ばす。
+            const shouldResumePending =
+              userId !== undefined && readPendingGeneration(userId, new Date()) !== null;
+            if (!shouldResumePending) {
+              // P1: flush 済み saved を最新 eligibility で再検証（strip 前 snapshot での生成禁止）
+              if (saved.targetMode === "household") {
+                const eligibleIds = new Set(eligibleMemberIdsRef.current);
+                const stillEligible =
+                  saved.targetMemberIds.length > 0 &&
+                  saved.targetMemberIds.every((id) => eligibleIds.has(id));
+                if (!stillEligible) {
+                  setSubmissionError(
+                    "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
+                  );
+                  setStep("audience");
+                  return;
+                }
+              } else if (saved.targetMode !== "idea") {
+                // P2 接続: flush 中 strip で targetMode null になった saved は生成しない
                 setSubmissionError(
                   "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
                 );
                 setStep("audience");
                 return;
               }
-            } else if (saved.targetMode !== "idea") {
-              // P2 接続: flush 中 strip で targetMode null になった saved は生成しない
-              setSubmissionError(
-                "作る相手の条件が変わったため、対象の選び直しが必要です。家族を確認してください。",
-              );
-              setStep("audience");
-              return;
             }
             // AP5: 読取失敗中は /privacy 誘導せず再試行（未同意と誤認しない）
             if (privacyConsentLoadFailed) {

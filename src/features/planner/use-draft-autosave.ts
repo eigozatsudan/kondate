@@ -158,6 +158,7 @@ export function useDraftAutosave({
   resetToken,
   persistOnReset = true,
   holdLiveRevision = false,
+  shouldHoldLiveRevision,
   save,
   onConflict,
   onSaved,
@@ -176,8 +177,14 @@ export function useDraftAutosave({
    * true のとき flush / debounce / unload は live 下書きを書かない。
    * 公開 sticky の draftRevision pin（C2 再開）を N のまま残す（P-R5）。
    * persistOnReset=false（live-null 解決）とは独立。局所 UI は変えてよい。
+   * render 時点の snapshot。跨タブ claim 後の未再描画は shouldHoldLiveRevision で再判定する。
    */
   holdLiveRevision?: boolean;
+  /**
+   * enqueue / debounce / pagehide 発火時に storage の公開 meta を再読する口（P-R7）。
+   * holdLiveRevision が false のままの予約済み timer / unload でも live を進めない。
+   */
+  shouldHoldLiveRevision?: () => boolean;
   save: (value: PlannerDraftInput, revision: number) => Promise<PlannerDraft>;
   onConflict?: () => void | Promise<void>;
   /** サーバ確定後の cache 同期など。supersede で破棄した書込では呼ばない。 */
@@ -227,6 +234,7 @@ export function useDraftAutosave({
   const saveOnUnloadRef = useRef(saveOnUnload);
   const persistOnResetRef = useRef(persistOnReset);
   const holdLiveRevisionRef = useRef(holdLiveRevision);
+  const shouldHoldLiveRevisionRef = useRef(shouldHoldLiveRevision);
   /** pagehide と beforeunload が連続しても keepalive は 1 回だけ。 */
   const unloadPersistStartedRef = useRef(false);
   latestRef.current = value;
@@ -238,6 +246,7 @@ export function useDraftAutosave({
   saveOnUnloadRef.current = saveOnUnload;
   persistOnResetRef.current = persistOnReset;
   holdLiveRevisionRef.current = holdLiveRevision;
+  shouldHoldLiveRevisionRef.current = shouldHoldLiveRevision;
 
   const resetBaseline = useCallback((revision: number): void => {
     revisionRef.current = revision;
@@ -327,7 +336,8 @@ export function useDraftAutosave({
   const enqueue = useCallback(
     (next: PlannerDraftInput): Promise<PlannerDraft> => {
       // 公開 sticky の pin を進める live 書込を止める。局所 UI / lastPersisted は変えてよい。
-      if (holdLiveRevisionRef.current) {
+      // P-R7: render snapshot だけでなく発火時に storage meta を再読する。
+      if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
         const lastSaved = lastSavedDraftRef.current;
         if (lastSaved !== null) return Promise.resolve(lastSaved);
         return Promise.reject(new IncompleteDraftSaveError());
@@ -484,7 +494,7 @@ export function useDraftAutosave({
       pendingDebounceRef.current = false;
       return undefined;
     }
-    if (holdLiveRevision) {
+    if (holdLiveRevision || shouldHoldLiveRevisionRef.current?.() === true) {
       // dirty でも RPC しない。enable 初回扱いにすると hold 解除後の追記が消える。
       wasEnabledRef.current = true;
       pendingDebounceRef.current = false;
@@ -504,6 +514,10 @@ export function useDraftAutosave({
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
       pendingDebounceRef.current = false;
+      // P-R7: 予約時は hold 無しでも、発火時に公開 sticky があれば破棄する。
+      if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
+        return;
+      }
       void enqueue(latestRef.current).catch(() => undefined);
     }, 600);
     return () => {
@@ -519,7 +533,10 @@ export function useDraftAutosave({
       // debounce 待ちだけでなく、error 後などで dirty のまま残った編集も離脱時に再試行する
       const dirty = latestFingerprintRef.current !== baselineSerializedRef.current;
       if (!pendingDebounceRef.current && !dirty) return;
-      if (holdLiveRevisionRef.current) return;
+      // P-R7: unmount 時点で storage の公開 meta を再読する。
+      if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
+        return;
+      }
       pendingDebounceRef.current = false;
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -534,7 +551,10 @@ export function useDraftAutosave({
     const persistOnDocumentUnload = (): void => {
       if (unloadPersistStartedRef.current) return;
       if (!enabledRef.current) return;
-      if (holdLiveRevisionRef.current) return;
+      // P-R7: pagehide は render を待たない。発火時に公開 meta を再読する。
+      if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
+        return;
+      }
       const persist = saveOnUnloadRef.current;
       if (persist === undefined) return;
       if (peekDraftConflict(conflictRef) !== null) return;
@@ -574,7 +594,8 @@ export function useDraftAutosave({
     }
     pendingDebounceRef.current = false;
     // 公開 pin 中は persistable でも RPC しない。lastSaved があれば C2 再開用に返す。
-    if (holdLiveRevisionRef.current) {
+    // P-R7: flush 呼出時にも storage を再読し、未再描画の pin を進める。
+    if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
       const lastSaved = lastSavedDraftRef.current;
       if (lastSaved !== null) return Promise.resolve(lastSaved);
       return Promise.reject(new IncompleteDraftSaveError());

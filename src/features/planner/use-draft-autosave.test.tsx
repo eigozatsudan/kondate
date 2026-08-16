@@ -776,6 +776,68 @@ it("P-R5: holdLiveRevision 中の pagehide は persistable dirty を keepalive �
   expect(save).not.toHaveBeenCalled();
 });
 
+it("P-R7: claim+meta 後に再描画していない debounce 発火は live revision を進めない", async () => {
+  // hold は render snapshot。予約済み 600ms は holdLiveRevisionRef===false のまま
+  // 発火し得る。発火時に storage meta を再読し、公開 sticky があれば書かない。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  let published = false;
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        holdLiveRevision: false,
+        shouldHoldLiveRevision: () => published,
+        save,
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: { ...reviewDraft, mealType: "lunch" as const } });
+  published = true;
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+
+  expect(save).not.toHaveBeenCalled();
+  expect(result.current.revision).toBe(4);
+});
+
+it("P-R7: claim+meta 後に再描画していない pagehide は live revision を進めない", () => {
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const saveOnUnload = vi.fn();
+  let published = false;
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        holdLiveRevision: false,
+        shouldHoldLiveRevision: () => published,
+        save,
+        saveOnUnload,
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: { ...reviewDraft, mealType: "lunch" as const } });
+  published = true;
+  act(() => {
+    window.dispatchEvent(new Event("pagehide"));
+  });
+
+  expect(saveOnUnload).not.toHaveBeenCalled();
+  expect(save).not.toHaveBeenCalled();
+});
+
 it("P1: flush は reset 強制保存の完了を await し失敗を隠さない", async () => {
   vi.useFakeTimers();
   let rejectForce: ((error: Error) => void) | undefined;
