@@ -614,12 +614,13 @@ it("accepts an already-expired date on create so pantry CRUD can record leftover
   expect(screen.getByText("期限日は日本時間で判定します。")).toBeInTheDocument();
 });
 
-it("PE12: local calendar today is stored as the JST calendar day", async () => {
-  const { alignLocalDateInputToJstDay, getJstDateKey, getLocalDateKey } =
+it("PE12: behind-TZ local today is stored as the JST calendar day", async () => {
+  const { alignDateInputTodayToJst, alignLocalDateInputToJstDay } =
     await import("@shared/time/jst");
-  const now = new Date("2026-08-16T16:00:00.000Z");
-  expect(alignLocalDateInputToJstDay(getLocalDateKey(now), now)).toBe(getJstDateKey(now));
-  expect(alignLocalDateInputToJstDay("2000-01-01", now)).toBe("2000-01-01");
+  expect(alignDateInputTodayToJst("2026-08-16", "2026-08-16", "2026-08-17")).toBe("2026-08-17");
+  expect(alignLocalDateInputToJstDay("2000-01-01", new Date("2026-08-16T16:00:00.000Z"))).toBe(
+    "2000-01-01",
+  );
 });
 
 it("shows and associates a Japanese schema error, then focuses the invalid field", async () => {

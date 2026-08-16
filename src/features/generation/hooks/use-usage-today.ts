@@ -30,6 +30,9 @@ export function usageTodayQueryKey(userId: string, jstDay: string = jstDayKey())
   return ["usage-today", userId, jstDay] as const;
 }
 
+/** PE-R4: Plus 表示中だけ短い poll。quota 枠の数値は変えない。 */
+export const plusUsageRefetchIntervalMs = 3_000;
+
 /**
  * プランナーと終端パネルが共有する当日利用状況クエリ。
  * QUOTA-M1 / G12: アイドル中の JST 日跨ぎで queryKey が古いまま残らないよう、
@@ -66,11 +69,13 @@ export function useUsageToday(userId: string) {
   return useQuery({
     queryKey: usageTodayQueryKey(userId, jstDay),
     queryFn: () => getUsageToday(),
-    // PE10: Plus 表示の 30s 残像を残さない。kill 後も upload UI を出さない。
+    // PE10 / PE-R4: Plus 表示の残像を短くする。kill 後も upload UI を出さない。
+    // quota 数値は変えない。前面タブは 3s 以内に entitlement を取り直す。
     staleTime: 0,
     refetchOnWindowFocus: "always",
     refetchOnReconnect: "always",
-    refetchInterval: (query) => (query.state.data?.plusEntitled === true ? 15_000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.plusEntitled === true ? plusUsageRefetchIntervalMs : false,
     enabled: userId.length > 0,
   });
 }

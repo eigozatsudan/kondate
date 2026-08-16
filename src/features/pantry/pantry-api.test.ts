@@ -101,6 +101,30 @@ describe("pantry create single-flight (PE14)", () => {
     vi.unstubAllGlobals();
   });
 
+  it("PE-R3: without navigator.locks, waits for localStorage fallback then inserts once", async () => {
+    vi.stubGlobal("navigator", {});
+    window.localStorage.setItem(
+      "kondate:pantry-create:fallback",
+      `${Date.now().toString()}:other-tab`,
+    );
+    const chain = {
+      insert: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({
+        data: pantryRow(),
+        error: null,
+      }),
+    };
+    const client = { from: vi.fn().mockReturnValue(chain) } as never;
+    const created = createPantryItem(client, userId, input);
+    await Promise.resolve();
+    expect(chain.insert).not.toHaveBeenCalled();
+    window.localStorage.removeItem("kondate:pantry-create:fallback");
+    await expect(created).resolves.toMatchObject({ id: itemId, name: input.name });
+    expect(chain.insert).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem("kondate:pantry-create:fallback")).toBeNull();
+  });
+
   it("PE8: normalizes unit synonyms on write (グラム → g)", async () => {
     const chain = {
       insert: vi.fn().mockReturnThis(),

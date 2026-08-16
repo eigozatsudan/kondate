@@ -42,6 +42,59 @@ let createPantryItemLocked = false;
 /** PE9: タブ間 create を直列化する Web Lock。name 一意は無く、同時 submit の残差は残る。 */
 const pantryCreateLockName = "kondate:pantry-create";
 
+/** PE-R3: Locks 非対応 UA の同一オリジン向け。別端末は残差。 */
+const pantryCreateFallbackLockKey = "kondate:pantry-create:fallback";
+const pantryCreateFallbackLockTtlMs = 8_000;
+const pantryCreateFallbackLockPollMs = 15;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function fallbackLockIsHeld(held: string | null, now: number): boolean {
+  if (held === null) return false;
+  const heldAt = Number(held.split(":")[0]);
+  return Number.isFinite(heldAt) && now - heldAt <= pantryCreateFallbackLockTtlMs;
+}
+
+async function runPantryCreateFallbackLock(
+  insertRow: () => Promise<PantryItem>,
+): Promise<PantryItem> {
+  const storage = globalThis.localStorage;
+  if (typeof storage === "undefined") {
+    return insertRow();
+  }
+  const token = `${Date.now().toString()}:${Math.random().toString(36).slice(2)}`;
+  const deadline = Date.now() + pantryCreateFallbackLockTtlMs;
+  while (Date.now() < deadline) {
+    if (!fallbackLockIsHeld(storage.getItem(pantryCreateFallbackLockKey), Date.now())) {
+      storage.setItem(pantryCreateFallbackLockKey, token);
+      await sleep(0);
+      if (storage.getItem(pantryCreateFallbackLockKey) === token) {
+        try {
+          return await insertRow();
+        } finally {
+          if (storage.getItem(pantryCreateFallbackLockKey) === token) {
+            storage.removeItem(pantryCreateFallbackLockKey);
+          }
+        }
+      }
+    }
+    await sleep(pantryCreateFallbackLockPollMs);
+  }
+  throw new Error("食材を追加できませんでした");
+}
+
+async function runExclusivePantryCreate(insertRow: () => Promise<PantryItem>): Promise<PantryItem> {
+  const locksApi = (globalThis.navigator as { locks?: LockManager } | undefined)?.locks;
+  if (locksApi !== undefined && typeof locksApi.request === "function") {
+    return await locksApi.request(pantryCreateLockName, insertRow);
+  }
+  return await runPantryCreateFallbackLock(insertRow);
+}
+
 /** PE10: updated_at 楽観ロック衝突。RLS + user_id で他ユーザー横断は閉じ済み。 */
 export class PantryVersionConflictError extends Error {
   readonly code = "pantry_version_conflict" as const;
@@ -93,12 +146,8 @@ export async function createPantryItem(
       return mapRow(data);
     };
     // PE9: タブ間は Web Lock で直列化。一意制約は無いので同時開始の残差は残る。
-    // jsdom 等は locks が無い。DOM 型は必須なので任意として読む。
-    const locksApi = (globalThis.navigator as { locks?: LockManager }).locks;
-    if (locksApi !== undefined) {
-      return await locksApi.request(pantryCreateLockName, insertRow);
-    }
-    return await insertRow();
+    // PE-R3: locks が無い UA は localStorage で同一オリジンだけ直列化する。別端末は残差。
+    return await runExclusivePantryCreate(insertRow);
   } finally {
     createPantryItemLocked = false;
   }

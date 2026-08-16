@@ -24,14 +24,24 @@ export function getLocalDateKey(now: Date): string {
 }
 
 /**
- * PE12: date 入力の「今日」がローカル暦日のとき、保存値を JST 今日へ揃える。
- * パッケージ記載の他日はそのまま（暦日ラベルをずらさない）。
+ * PE12 / PE-R5: 入力がローカル今日のときだけ JST と揃える。
+ * 遅れ TZ（local < jst）は JST 今日へ進める（即期限切れを避ける）。
+ * 進み TZ（local > jst）は巻き戻さない（入力表示と保存を一致させる）。
+ * パッケージ記載の他日はそのまま。
  */
-export function alignLocalDateInputToJstDay(value: string, now: Date): string {
-  if (value === getLocalDateKey(now)) {
-    return getJstDateKey(now);
+export function alignDateInputTodayToJst(
+  value: string,
+  localToday: string,
+  jstToday: string,
+): string {
+  if (value === localToday && localToday < jstToday) {
+    return jstToday;
   }
   return value;
+}
+
+export function alignLocalDateInputToJstDay(value: string, now: Date): string {
+  return alignDateInputTodayToJst(value, getLocalDateKey(now), getJstDateKey(now));
 }
 
 export function getNextJstMidnight(now: Date): Date {

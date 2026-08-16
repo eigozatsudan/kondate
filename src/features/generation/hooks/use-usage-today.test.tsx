@@ -12,6 +12,7 @@ vi.mock("../api/usage-today-api", () => ({
 import {
   jstDayKey,
   msUntilNextJstMidnight,
+  plusUsageRefetchIntervalMs,
   usageTodayQueryKey,
   useUsageToday,
 } from "./use-usage-today";
@@ -106,7 +107,8 @@ describe("useUsageToday", () => {
     expect(options.refetchOnWindowFocus).toBe("always");
     expect(typeof options.refetchInterval).toBe("function");
     if (cached !== undefined && typeof options.refetchInterval === "function") {
-      expect(options.refetchInterval(cached)).toBe(15_000);
+      expect(options.refetchInterval(cached)).toBe(plusUsageRefetchIntervalMs);
+      expect(plusUsageRefetchIntervalMs).toBe(3_000);
     }
   });
 
