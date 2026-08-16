@@ -8,6 +8,23 @@ import { defineConfig } from "vite";
 const isE2eFunctionServer = process.env.KONDATE_E2E_FUNCTION_SERVER === "1";
 
 /**
+ * 本番ビルドの末尾で許可リスト型 sw.js を書く。
+ * package.json の build 文字列は変えず、manifest はここの config だけで必須化する。
+ */
+function kondateServiceWorker(): Plugin {
+  return {
+    name: "kondate-service-worker",
+    config() {
+      return { build: { manifest: true } };
+    },
+    async closeBundle() {
+      const { generateServiceWorker } = await import("./scripts/generate-service-worker.mjs");
+      await generateServiceWorker({ distDir: fileURLToPath(new URL("./dist", import.meta.url)) });
+    },
+  };
+}
+
+/**
  * netlify.toml の本番 CSP は @netlify/vite-plugin の middleware 経由で
  * ローカル HTML にも注入される。connect-src が 127.0.0.1:8000（local Supabase）
  * と oauth-mock を含まないため、CSP を残すと SPA が白画面になる。
@@ -49,6 +66,7 @@ export default defineConfig({
     netlify({
       functions: { enabled: !isE2eFunctionServer },
     }),
+    kondateServiceWorker(),
   ],
   resolve: {
     alias: {

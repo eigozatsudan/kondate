@@ -7,6 +7,7 @@ import { createAppRouter } from "./app/router";
 import { captureAndStripAuthCallbackUrl } from "./features/auth/auth-callback-url-capture";
 import { AuthProvider } from "./features/auth/auth-provider";
 import { listenForAndroidInstallPrompt } from "./features/pwa/android-install-prompt";
+import { registerServiceWorker } from "./features/pwa/register-service-worker";
 import "./styles.css";
 
 // C7: React / lazy route より前に認可 code を可視 URL から除く（最短 strip）。
@@ -14,6 +15,8 @@ import "./styles.css";
 captureAndStripAuthCallbackUrl();
 // Android の beforeinstallprompt は createRoot より前に取る。フック mount を待たない。
 listenForAndroidInstallPrompt();
+// 本番だけ /sw.js を登録する。callback strip の後なので認可 query は SW に渡さない。
+registerServiceWorker();
 
 const root = document.getElementById("root");
 

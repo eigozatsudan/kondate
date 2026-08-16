@@ -344,6 +344,15 @@ test("Vite ignores Playwright output directories", async () => {
   assert.match(config, /"\*\*\/test-results\/\*\*"/u);
 });
 
+test("Vite build emits the allowlist service worker via the kondate plugin", async () => {
+  // closeBundle が dist/sw.js を書く。manifest: true は generator の入力。
+  // この追加はグローバル [[headers]] の CSP 無し契約を緩めない。
+  const config = await readFile("vite.config.ts", "utf8");
+  assert.match(config, /name:\s*"kondate-service-worker"/u);
+  assert.match(config, /manifest:\s*true/u);
+  assert.match(config, /generateServiceWorker/u);
+});
+
 /**
  * Netlify CSP は context 別に dist/_headers へ emit する。
  * グローバル [[headers]] に Content-Security-Policy を戻すと production exact origin が無効化される。
