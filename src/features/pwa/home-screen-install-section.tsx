@@ -1,4 +1,4 @@
-import { useAndroidInstallPrompt } from "./android-install-prompt";
+import { useAndroidInstallAction, useAndroidInstallPrompt } from "./android-install-prompt";
 import {
   INSTALL_TIP_ANDROID_INSTALL_LABEL,
   INSTALL_TIP_ANDROID_STEPS,
@@ -6,7 +6,7 @@ import {
   INSTALL_TIP_OTHER_BODY,
   INSTALL_TIP_SETTINGS_HEADING,
 } from "./install-tip-copy";
-import { detectInstallSurface } from "./install-surface";
+import { canUseAndroidChromeInstallSteps, detectInstallSurface } from "./install-surface";
 
 function readNavigatorPlatform(): string {
   // Navigator.platform は deprecated だが iPadOS 判定（MacIntel + タッチ）に必要
@@ -23,6 +23,14 @@ export function HomeScreenInstallSection() {
   // 設定は常設。描画後 BIP も購読してインストールボタンを出す。userChoice では閉じない。
   const heldAndroidPrompt = useAndroidInstallPrompt();
   const androidPrompt = surface === "android" ? heldAndroidPrompt : null;
+  const { installInFlight, requestInstall } = useAndroidInstallAction(androidPrompt);
+  // WebView / Firefox は android でも Chrome 手順を出さず other 文へ落とす。
+  const androidChromeStepsOk = canUseAndroidChromeInstallSteps(navigator.userAgent);
+  const showAndroidChromeSteps =
+    surface === "android" && androidPrompt === null && androidChromeStepsOk;
+  const showGenericInstallBody =
+    surface === "other" ||
+    (surface === "android" && androidPrompt === null && !androidChromeStepsOk);
 
   return (
     <section
@@ -39,25 +47,24 @@ export function HomeScreenInstallSection() {
           ))}
         </ol>
       ) : null}
-      {surface === "android" && androidPrompt !== null ? (
+      {androidPrompt !== null ? (
         <button
           type="button"
           className="primary-button min-h-11"
-          onClick={() => {
-            void androidPrompt.prompt();
-          }}
+          disabled={installInFlight}
+          onClick={requestInstall}
         >
           {INSTALL_TIP_ANDROID_INSTALL_LABEL}
         </button>
       ) : null}
-      {surface === "android" && androidPrompt === null ? (
+      {showAndroidChromeSteps ? (
         <ol>
           {INSTALL_TIP_ANDROID_STEPS.map((step) => (
             <li key={step}>{step}</li>
           ))}
         </ol>
       ) : null}
-      {surface === "other" ? <p>{INSTALL_TIP_OTHER_BODY}</p> : null}
+      {showGenericInstallBody ? <p>{INSTALL_TIP_OTHER_BODY}</p> : null}
     </section>
   );
 }

@@ -1112,6 +1112,18 @@ textarea:focus-visible {
     0 8px 24px rgb(15 23 42 / 6%);
 }
 
+/*
+ * AppShell はカードを .page-frame の外に置く。
+ * 本文と同じ幅（320 で 16px ガター、720+ で 680px 中央）に揃える。
+ */
+.home-screen-install-card {
+  width: min(100% - 32px, 680px);
+  min-width: 0;
+  margin-inline: auto;
+  margin-block-start: 16px;
+  overflow-wrap: anywhere;
+}
+
 .stack {
   display: grid;
   gap: 16px;

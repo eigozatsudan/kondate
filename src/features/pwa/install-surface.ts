@@ -15,6 +15,17 @@ export function detectInstallSurface(
   return "other";
 }
 
+// Android surface のまま Chrome 手順を出してよいか。三値契約は増やさない。
+// WebView / 主要 in-app / Firefox には「右上メニュー→アプリをインストール」が無い。
+export function canUseAndroidChromeInstallSteps(userAgent: string): boolean {
+  if (/;\s*wv\)/iu.test(userAgent)) return false;
+  if (/FBAN|FBAV|FB_IAB/iu.test(userAgent)) return false;
+  if (/Line\//iu.test(userAgent)) return false;
+  if (/Instagram/iu.test(userAgent)) return false;
+  if (/Firefox\//iu.test(userAgent)) return false;
+  return true;
+}
+
 // matchMedia standalone と iOS の navigator.standalone のどちらかが真ならホーム画面起動
 export function isStandaloneDisplayMode(
   matchesStandalone: boolean,

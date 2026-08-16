@@ -2,7 +2,7 @@
 // フック mount を待つと Android 主経路が死ぬ。surface では listen を遅らせない。
 // peek は現在値の一回読み。描画後 BIP は購読（useSyncExternalStore）でカード/設定へ届ける。
 
-import { useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 
 export type AndroidInstallPrompt = {
   prompt: () => Promise<void>;
@@ -54,6 +54,26 @@ export function useAndroidInstallPrompt(): AndroidInstallPrompt | null {
     peekAndroidInstallPrompt,
     peekAndroidInstallPrompt,
   );
+}
+
+// prompt() は同一 BIP で 1 回だけ。二度押しの reject を握り、prompt 中は disabled にする。
+export function useAndroidInstallAction(androidPrompt: AndroidInstallPrompt | null): {
+  installInFlight: boolean;
+  requestInstall: () => void;
+} {
+  const startedRef = useRef(false);
+  const [installInFlight, setInstallInFlight] = useState(false);
+
+  function requestInstall(): void {
+    if (androidPrompt === null || startedRef.current) return;
+    startedRef.current = true;
+    setInstallInFlight(true);
+    void androidPrompt.prompt().catch(() => {
+      // Chromium は再 prompt を reject する。unhandledrejection にせず UI は残す。
+    });
+  }
+
+  return { installInFlight, requestInstall };
 }
 
 export function resetAndroidInstallPromptForTests(): void {

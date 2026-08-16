@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { detectInstallSurface, isStandaloneDisplayMode } from "./install-surface";
+import {
+  canUseAndroidChromeInstallSteps,
+  detectInstallSurface,
+  isStandaloneDisplayMode,
+} from "./install-surface";
 
 describe("detectInstallSurface", () => {
   it("classifies iPhone as ios", () => {
@@ -58,6 +62,23 @@ describe("detectInstallSurface", () => {
     );
   });
 
+  it("keeps Android WebView and Firefox Android as android (surface 三値は増やさない)", () => {
+    expect(
+      detectInstallSurface(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.230 Mobile Safari/537.36",
+        "Linux armv8l",
+        5,
+      ),
+    ).toBe("android");
+    expect(
+      detectInstallSurface(
+        "Mozilla/5.0 (Android 14; Mobile; rv:122.0) Gecko/122.0 Firefox/122.0",
+        "Linux armv8l",
+        5,
+      ),
+    ).toBe("android");
+  });
+
   it("classifies Windows NT as other", () => {
     expect(
       detectInstallSurface(
@@ -78,6 +99,43 @@ describe("detectInstallSurface", () => {
     expect(detectInstallSurface("Mozilla/5.0 (X11; Linux x86_64)", "Linux x86_64", 0)).toBe(
       "other",
     );
+  });
+});
+
+describe("canUseAndroidChromeInstallSteps", () => {
+  it("allows Chrome-style steps on a Pixel Chrome UA", () => {
+    expect(canUseAndroidChromeInstallSteps("Mozilla/5.0 (Linux; Android 14; Pixel)")).toBe(true);
+  });
+
+  it("rejects Android WebView and major in-app browsers", () => {
+    expect(
+      canUseAndroidChromeInstallSteps(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.230 Mobile Safari/537.36",
+      ),
+    ).toBe(false);
+    expect(
+      canUseAndroidChromeInstallSteps(
+        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 [FBAN/FB4A;FBAV/10.0.0.1.0;]",
+      ),
+    ).toBe(false);
+    expect(
+      canUseAndroidChromeInstallSteps(
+        "Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 Line/14.0.0",
+      ),
+    ).toBe(false);
+    expect(
+      canUseAndroidChromeInstallSteps(
+        "Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 Instagram 300.0.0.0.0",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects Firefox for Android so Chrome menu copy is not shown", () => {
+    expect(
+      canUseAndroidChromeInstallSteps(
+        "Mozilla/5.0 (Android 14; Mobile; rv:122.0) Gecko/122.0 Firefox/122.0",
+      ),
+    ).toBe(false);
   });
 });
 
