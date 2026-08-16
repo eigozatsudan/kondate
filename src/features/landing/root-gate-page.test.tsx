@@ -75,6 +75,10 @@ describe("RootGatePage", () => {
     renderGate();
     const pending = screen.getByText("ログイン状態を確認しています…");
     expect(pending).toBeVisible();
+    // L4: AppShell 外待ちは Welcome / RootEntry と同型の h1 を置く
+    expect(
+      screen.getByRole("heading", { level: 1, name: "ログイン状態を確認しています" }),
+    ).toBeVisible();
     // L10: main busy + status live（mount 後に sr-only status が埋まる）
     expect(pending.closest("main")).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");

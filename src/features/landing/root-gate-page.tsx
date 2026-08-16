@@ -125,7 +125,8 @@ export function RootGatePage() {
 
   if (showLoading) {
     // L10: セッション確認待ちを SR に通知（初期 live は mount 後に埋める）
-    return <LivePendingMain message={SESSION_CHECK_COPY} />;
+    // L4: AppShell 外のためシェルの遷移後 h1 フォーカスが無い。Welcome / RootEntry pending と同型。
+    return <LivePendingMain heading="ログイン状態を確認しています" message={SESSION_CHECK_COPY} />;
   }
 
   // L1: loading が C5 期限を超えたら未ログイン相当（Free LP）へ fail-closed。
