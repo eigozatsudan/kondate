@@ -10,6 +10,7 @@ import { LivePendingMain } from "@/shared/ui/feedback";
 import {
   clearLeftoverLoginSessionIfNoSiblingCompletion,
   createAuthGateway,
+  protectPkceVerifierFromLateLeftoverSignOut,
   type AuthGateway,
 } from "./auth-gateway";
 import type { MagicLinkState } from "./magic-link-state";
@@ -380,9 +381,9 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     }
   };
 
-  // leftover-capable の local signOut 完了を startGoogle が待つ（C2 / C-R2）。
-  // 待たないと signInWithOAuth が書いた PKCE verifier を後着 signOut が消す。
-  // leftover 掃除は 2s timeout 後も元 signOut が settle するまで終わらない。
+  // leftover-capable の local signOut を startGoogle が待つ（C2）。
+  // 2s で掃除は終わり Google を開始する（C-R3: hang で CTA を永久 disable しない）。
+  // timeout 後の後着 _removeSession は protect で新規 verifier を消さない（C-R2）。
   const leftoverCleanupRef = useRef<Promise<void>>(Promise.resolve());
 
   const startGoogle = async (): Promise<void> => {
@@ -392,6 +393,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     try {
       await leftoverCleanupRef.current.catch(() => undefined);
       await activeGateway.signInWithGoogle(returnTo);
+      // 注入 gateway は SDK を通さないので、OAuth 直後に控えを取る
+      protectPkceVerifierFromLateLeftoverSignOut();
     } catch {
       setGoogleError(true);
       setGooglePending(false);

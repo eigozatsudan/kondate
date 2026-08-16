@@ -628,9 +628,11 @@ async function clearDiscardedExchangeSessionIfStillPresent(
         await withTimeout(signOutPromise, 2_000);
       } catch {
         if (context?.awaitLocalSignOutSettle === true) {
-          // C-R2: leftover は 2s 数値を伸ばさず、timeout 後も元 Promise の settle を待つ。
-          // withTimeout は cancel しない。後着 _removeSession が Google PKCE を消すのを防ぐ。
-          await signOutPromise.catch(() => undefined);
+          // C-R3: 2s 数値は伸ばさず、timeout で掃除を終わらせ startGoogle を進める。
+          // withTimeout は元 Promise を cancel しない。後着 _removeSession は
+          // armLeftoverSignOutPkceProtection が新規 PKCE を戻す（C-R2）。
+          const pkceStorage = typeof window !== "undefined" ? window.localStorage : context.storage;
+          armLeftoverSignOutPkceProtection(signOutPromise, pkceStorage);
         }
       }
     } catch {
@@ -644,8 +646,8 @@ async function clearDiscardedExchangeSessionIfStillPresent(
  * C6 hangWatchdog は persist を消さず leave するため、ここで local signOut しないと
  * leftover が live pin され後勝ち Google を拒む。
  * C5: 任意の勝者 completion があるときは触らない（loserFlowId 空 = 全 completion が sibling）。
- * C-R2: 2s timeout 後も元 local signOut が settle するまで終わらない。
- * startGoogle が先に PKCE を書くと後着 _removeSession が消す。
+ * C-R3: leftover 掃除は 2s で終わる（hang で startGoogle を永久待ちにしない）。
+ * C-R2: timeout 後の後着 _removeSession は新規 PKCE verifier を消さない。
  */
 export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
   client?: BrowserSupabaseClient,
@@ -767,6 +769,61 @@ function restorePkceCodeVerifier(storage: Storage, value: string | null): void {
   } catch {
     // best-effort。storage 障害でも Google 開始失敗の throw は止めない
   }
+}
+
+/**
+ * leftover local signOut が 2s timeout 後に後着 _removeSession するとき、
+ * その後に書かれた PKCE verifier を消させない（C-R2）。掃除自体は 2s で終える（C-R3）。
+ * OAuth 直後の protectPkceVerifierFromLateLeftoverSignOut が控えを置く。
+ */
+type LeftoverPkceGuard = {
+  storage: Storage;
+  protectedValue: string | null;
+};
+
+const leftoverPkceGuards = new Set<LeftoverPkceGuard>();
+
+function restoreLeftoverProtectedPkce(guard: LeftoverPkceGuard): void {
+  if (
+    guard.protectedValue !== null &&
+    readPkceCodeVerifier(guard.storage) !== guard.protectedValue
+  ) {
+    restorePkceCodeVerifier(guard.storage, guard.protectedValue);
+  }
+}
+
+function armLeftoverSignOutPkceProtection(
+  signOutPromise: Promise<unknown>,
+  storage: Storage,
+): void {
+  const guard: LeftoverPkceGuard = { storage, protectedValue: null };
+  leftoverPkceGuards.add(guard);
+  void signOutPromise
+    .catch(() => undefined)
+    .then(() => {
+      leftoverPkceGuards.delete(guard);
+      restoreLeftoverProtectedPkce(guard);
+    });
+}
+
+/**
+ * OAuth 開始直後の PKCE を後着 leftover _removeSession から守る。
+ * leftover timeout 前は no-op。
+ */
+export function protectPkceVerifierFromLateLeftoverSignOut(
+  storage: Storage = window.localStorage,
+): void {
+  const value = readPkceCodeVerifier(storage);
+  for (const guard of leftoverPkceGuards) {
+    if (guard.storage === storage) {
+      guard.protectedValue = value;
+    }
+  }
+}
+
+/** テスト専用: never-settle leftover signOut が残した控えを隔離する。本番からは呼ばない。 */
+export function resetLeftoverPkceProtectionForTests(): void {
+  leftoverPkceGuards.clear();
 }
 
 /**
@@ -951,6 +1008,8 @@ export function createAuthGateway(
           if (error !== null) {
             throw new Error("Googleログインを開始できませんでした");
           }
+          // C-R2: leftover timeout 後の後着 _removeSession から今書いた verifier を守る
+          protectPkceVerifierFromLateLeftoverSignOut(storage);
           dismissSiblingOauthAuthorizationFlows(flow.id, storage);
           clearAuthFlowUserDismissed(flow.id, storage);
         } catch {

@@ -7,7 +7,9 @@ import {
   dropInflightResumeMapForTests,
   IMMEDIATE_CLAIM_TIMEOUT_MS,
   INFLIGHT_RESUME_MAP_TTL_MS,
+  protectPkceVerifierFromLateLeftoverSignOut,
   resetInflightResumeForTests,
+  resetLeftoverPkceProtectionForTests,
   type AuthGatewayDeps,
 } from "./auth-gateway";
 import {
@@ -52,6 +54,7 @@ async function flushGoogleStartLock(): Promise<void> {
 afterEach(() => {
   // モジュール共有 in-flight Map をテスト間で隔離（C4 hang 等が次ケースへ漏れないようにする）
   resetInflightResumeForTests();
+  resetLeftoverPkceProtectionForTests();
   resetAuthFlowUserDismissedMemoryForTests();
   vi.useRealTimers();
 });
@@ -3839,7 +3842,7 @@ it("C-R4: leftover-capable clear local-signs-out persist when no sibling complet
   }
 });
 
-it("C-R2: leftover-capable clear waits for local signOut settle after 2s timeout so PKCE can be written after _removeSession", async () => {
+it("C-R2: leftover-capable clear keeps later PKCE verifier when leftover signOut settles after 2s timeout", async () => {
   vi.useFakeTimers();
   const pkceVerifierKey = `${browserSupabaseSessionStorageKey}-code-verifier`;
   window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
@@ -3865,19 +3868,47 @@ it("C-R2: leftover-capable clear waits for local signOut settle after 2s timeout
     });
     await vi.advanceTimersByTimeAsync(2_000);
     await Promise.resolve();
-    expect(settled).toBe(false);
+    // C-R3: leftover 掃除は 2s で終わり、後着 _removeSession を待たない
+    expect(settled).toBe(true);
     expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBeNull();
     expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
 
-    releaseSignOut?.();
-    await pending;
-    expect(settled).toBe(true);
-
     window.localStorage.setItem(pkceVerifierKey, "verifier-after-google-start");
+    // startGoogle / signInWithOAuth 直後と同型。jsdom は setItem wrap を無視し得る
+    protectPkceVerifierFromLateLeftoverSignOut();
+    releaseSignOut?.();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+
+    // C-R2: timeout 後に書いた PKCE を後着 _removeSession が消さない
     expect(window.localStorage.getItem(pkceVerifierKey)).toBe("verifier-after-google-start");
+    await pending;
   } finally {
     window.localStorage.removeItem(browserSupabaseSessionStorageKey);
     window.localStorage.removeItem(pkceVerifierKey);
+  }
+});
+
+it("C-R3: leftover-capable clear settles at 2s when local signOut never settles", async () => {
+  vi.useFakeTimers();
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
+  const client = authClientMock();
+  client.auth.signOut.mockImplementation(() => new Promise(() => undefined));
+  try {
+    const pending = clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await Promise.resolve();
+    expect(settled).toBe(true);
+    expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+    await pending;
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
   }
 });
 
