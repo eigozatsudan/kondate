@@ -155,6 +155,10 @@ const ensureQueryDataMock = vi.hoisted(() =>
 );
 const cancelQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const invalidateQueriesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+/** P-R2: flush 短絡前の live refetch。既定は cache と同じ live 行。 */
+const draftQueryRefetchMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ isError: false, data: undefined as PlannerDraft | null | undefined }),
+);
 /** P4: 緊急 post-flush の list 再読を観測する */
 const listPantryItemsMock = vi.hoisted(() =>
   vi.fn(() => Promise.resolve(queryState.pantry.data ?? [])),
@@ -287,7 +291,7 @@ vi.mock("@tanstack/react-query", () => ({
               : (queryState.draft ?? (queryState.draft === null ? null : draft)),
           isError: queryState.draftIsError,
           isPending: isOwnerBPending,
-          refetch: vi.fn().mockResolvedValue({ isError: false, data: draft }),
+          refetch: draftQueryRefetchMock,
         }
       : queryKey[0] === "pantry"
         ? isOwnerBPending
@@ -335,6 +339,7 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
       holdLiveRevision?: boolean;
       save(value: PlannerDraftInput, revision: number): Promise<PlannerDraft>;
       saveOnUnload?(value: PlannerDraftInput, revision: number): void;
+      refreshLiveDraft?: () => Promise<PlannerDraft | null>;
     }) => {
       autosaveInputs.push(input);
       return {
@@ -352,13 +357,19 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
           if (autosaveFlushMode.mode === "conflict") {
             return Promise.reject(new DraftRevisionConflictError());
           }
-          // P-R2: lastSaved 短絡（RPC なし）。cache null の ghost 戻しを flushDraft 側で見る。
+          // P-R2: lastSaved 短絡（RPC なし）。stale live は refresh が null なら落とす。
           if (autosaveFlushMode.mode === "lastSaved") {
-            return Promise.resolve({
-              ...draft,
-              ...input.value,
-              revision: input.baselineRevision,
-            });
+            return (async () => {
+              const live = await input.refreshLiveDraft?.();
+              if (live === null) {
+                throw new original.IncompleteDraftSaveError();
+              }
+              return {
+                ...draft,
+                ...input.value,
+                revision: input.baselineRevision,
+              };
+            })();
           }
           // P-R5: 公開 pin 中は mock でも live を進めない（flushDraft 短絡の第二防衛）。
           if (input.holdLiveRevision === true) {
@@ -718,6 +729,13 @@ beforeEach(() => {
   getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
   pendingGenerationMock.readPendingGenerationMeta.mockReturnValue(null);
+  draftQueryRefetchMock.mockReset();
+  draftQueryRefetchMock.mockImplementation(() =>
+    Promise.resolve({
+      isError: false,
+      data: queryState.draft === undefined ? draft : queryState.draft,
+    }),
+  );
   pendingGenerationMock.createPendingGeneration.mockImplementation(
     (command: unknown, ownerUserId: string) => ({
       ownerUserId,
@@ -1614,6 +1632,34 @@ it("P-R2: cache null の lastSaved flush は生成を開始しない", async () 
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
+
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  await props.onSubmit();
+  expect(startGeneration).not.toHaveBeenCalled();
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
+  await vi.waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "人数など必要な条件が未設定のため、生成を開始しませんでした。確認画面で内容を見直してください。",
+    );
+  });
+});
+
+it("P-R2: stale live cache でも refetch が null なら lastSaved を生成に使わない", async () => {
+  // 他タブ soft-delete 後も既定 30s で cache に live が残る。短絡前の refetch を見る。
+  autosaveFlushMode.mode = "lastSaved";
+  draftQueryRefetchMock.mockResolvedValue({ isError: false, data: null });
+  getQueryDataMock.mockImplementation((queryKey: readonly unknown[]) => {
+    if (queryKey[0] === "planner") return draft;
+    return { onboarding_status: "not_started" };
+  });
+  const startGeneration = vi.fn();
+  render(<PlannerPage startGeneration={startGeneration} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+  expect((autosaveInputs.at(-1) as { refreshLiveDraft?: unknown }).refreshLiveDraft).toEqual(
+    expect.any(Function),
+  );
 
   const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
   await props.onSubmit();

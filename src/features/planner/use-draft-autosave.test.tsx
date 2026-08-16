@@ -315,7 +315,7 @@ it("P-R1: Zod trim 済み lastSaved でも fingerprint === baseline の flush �
 
 it("P-R1: lastSaved が raw 家族でも sanitize 済み latest の clean flush は Incomplete にしない", async () => {
   // hydrate 種はサーバ行（ineligible 込み）。value / fingerprint は sanitize 済み。
-  // 照合が raw lastSaved だと fingerprint === baseline なのに生成入口が止まる。
+  // P-R1: Incomplete で入口を止めない。P-R3: overlay せず sanitized を書く。
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>
     Promise.resolve(saved(value, revision + 1)),
@@ -339,9 +339,10 @@ it("P-R1: lastSaved が raw 家族でも sanitize 済み latest の clean flush 
   await act(async () => {
     flushed = await result.current.flush();
   });
-  expect(save).not.toHaveBeenCalled();
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(sanitized, 4);
   expect(flushed?.id).toBe(rawRow.id);
-  expect(flushed?.revision).toBe(4);
+  expect(flushed?.revision).toBe(5);
   expect(flushed?.targetMemberIds).toEqual([eligibleId]);
 });
 
@@ -378,6 +379,69 @@ it("P-R2: query が null なら lastSaved 短絡は削除済み id を返さな�
     await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
   });
   expect(save).not.toHaveBeenCalled();
+});
+
+it("P-R2: stale live でも refresh が null なら lastSaved 短絡は削除済み id を返さない", async () => {
+  // 他タブ soft-delete 後も query 既定 30s で live が残る。短絡前に取り直す。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const row = saved(reviewDraft, 4);
+  const refreshLiveDraft = vi.fn().mockResolvedValue(null);
+  const { result } = renderHook(() =>
+    useDraftAutosave({
+      value: reviewDraft,
+      enabled: true,
+      baselineRevision: 4,
+      resetToken: 0,
+      save,
+      hydratedDraft: row,
+      refreshLiveDraft,
+    }),
+  );
+
+  await act(async () => {
+    await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
+  });
+  expect(refreshLiveDraft).toHaveBeenCalledTimes(1);
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("P-R3: sanitize 済み overlay 種でもサーバ行の memberIds が違えば save する", async () => {
+  // route 種は sanitize 済み。integrity 正本は DB の旧 target_member_ids。
+  // 短絡 overlay だと POST が 422 になるので、一致しなければ書く。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const ineligibleId = "70000000-0000-4000-8000-000000000099";
+  const eligibleId = reviewDraft.targetMemberIds[0] ?? "70000000-0000-4000-8000-000000000001";
+  const rawRow = saved({ ...reviewDraft, targetMemberIds: [eligibleId, ineligibleId] }, 4);
+  const sanitized = { ...reviewDraft, targetMemberIds: [eligibleId] };
+  const overlaySeed = { ...rawRow, ...sanitized };
+  const refreshLiveDraft = vi.fn().mockResolvedValue(rawRow);
+  const { result } = renderHook(() =>
+    useDraftAutosave({
+      value: sanitized,
+      enabled: true,
+      baselineRevision: 4,
+      resetToken: 0,
+      save,
+      hydratedDraft: overlaySeed,
+      refreshLiveDraft,
+    }),
+  );
+
+  let flushed: PlannerDraft | undefined;
+  await act(async () => {
+    flushed = await result.current.flush();
+  });
+  expect(refreshLiveDraft).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(sanitized, 4);
+  expect(flushed?.targetMemberIds).toEqual([eligibleId]);
+  expect(flushed?.revision).toBe(5);
 });
 
 it("idea 選択直後の servings=null は DB 不能のため保存せず error にもしない", async () => {

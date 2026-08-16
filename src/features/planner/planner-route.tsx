@@ -729,6 +729,16 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     [client, userId],
   );
   const { refetch: refetchDraft } = draftQuery;
+  const refreshLiveDraft = useCallback(async (): Promise<PlannerDraft | null> => {
+    // P-R2: 短絡前に live を取り直す。staleTime 30s の cache を信じない。
+    const result = await refetchDraft();
+    if (result.isError) {
+      throw result.error instanceof Error
+        ? result.error
+        : new Error("下書きの再取得に失敗しました");
+    }
+    return result.data ?? null;
+  }, [refetchDraft]);
   const loadLatestConflictDraft = useCallback(async (): Promise<void> => {
     setDraftConflictRefetchError(false);
     const result = await refetchDraft();
@@ -787,6 +797,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // 生成後 / live-null は種を置かず empty / rev=0 leave の undelete を防ぐ。
     // live 行は sanitize 済み入力を載せ、fingerprint と同じ照合入力にする（P-R1）。
     hydratedDraft: toHydratedAutosaveDraft(draftQuery.data, safetyQuery.data?.eligibleMemberIds),
+    refreshLiveDraft,
   });
   const flushAutosave = autosave.flush;
   // P-R5: 公開 pin 中の flush 短絡は hydrate 済み live 行を返す（C2 の draftRevision）。

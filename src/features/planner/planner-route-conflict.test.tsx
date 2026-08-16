@@ -537,6 +537,114 @@ it("P-R2: 他タブ soft-delete 後の leave は lastSaved を cache に戻さ�
   expect(queryClient.getQueryData(plannerKeys.draft(userId))).toBeNull();
 });
 
+it("P-R2: stale live cache のまま他タブ soft-delete 後の leave は lastSaved を cache に戻さない", async () => {
+  // A の query は既定 30s fresh。B の setQueryData(null) は届かない。
+  getPlannerDraftMock.mockResolvedValue(null);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  renderRetainedDraft(queryClient);
+  await act(async () => Promise.resolve());
+  await act(async () => Promise.resolve());
+  expect(queryClient.getQueryData(plannerKeys.draft(userId))).toEqual(revisionOne);
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
+  expect(queryClient.getQueryData(plannerKeys.draft(userId))).toBeNull();
+});
+
+it("P-R2: stale live cache のまま他タブ soft-delete 後の献立を作るは削除済み id で生成しない", async () => {
+  getPlannerDraftMock.mockResolvedValue(null);
+  const startGeneration = vi.fn();
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  renderRetainedDraft(queryClient, startGeneration);
+  await act(async () => Promise.resolve());
+  await act(async () => Promise.resolve());
+  expect(queryClient.getQueryData(plannerKeys.draft(userId))).toEqual(revisionOne);
+
+  fireEvent.click(screen.getByRole("button", { name: "献立を作る" }));
+  await act(async () => Promise.resolve());
+  await act(async () => Promise.resolve());
+
+  expect(startGeneration).not.toHaveBeenCalled();
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
+  expect(queryClient.getQueryData(plannerKeys.draft(userId))).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "人数など必要な条件が未設定のため、生成を開始しませんでした。確認画面で内容を見直してください。",
+  );
+});
+
+it("P-R3: ineligible 家族を除いた確認のまま献立を作るは sanitized members を保存する", async () => {
+  // sanitize overlay を RPC せず返すと、integrity がサーバの旧 target_member_ids を見る。
+  const ineligibleId = "70000000-0000-4000-8000-000000000099";
+  const serverRow: PlannerDraft = {
+    ...revisionOne,
+    targetMemberIds: [memberId, ineligibleId],
+  };
+  getPlannerDraftMock.mockResolvedValue(serverRow);
+  savePlannerDraftMock.mockImplementation(
+    (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
+      Promise.resolve({
+        ...serverRow,
+        ...next,
+        revision: revision + 1,
+      }),
+  );
+  const startGeneration = vi.fn().mockResolvedValue(true);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  queryClient.setQueryData(plannerKeys.draft(userId), serverRow);
+  queryClient.setQueryData([...householdKeys.members(userId), "planner-safety"], {
+    members: [
+      {
+        id: memberId,
+        displayName: "子ども",
+        ageBandLabel: "3〜5歳",
+        allergyLabel: "アレルギーなし",
+        safetyLabels: [],
+        blockedReason: null,
+      },
+    ],
+    eligibleMemberIds: [memberId],
+  });
+  queryClient.setQueryData(pantryKeys.list(userId), []);
+  queryClient.setQueryData(privacyKeys.current(userId), {
+    user_id: userId,
+    notice_version: "2026-07-29.v1",
+  });
+  render(
+    <MemoryRouter initialEntries={["/planner"]}>
+      <QueryClientProvider client={queryClient}>
+        <AppToastProvider>
+          <PlannerPage startGeneration={startGeneration} />
+          <CurrentPath />
+        </AppToastProvider>
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  await act(async () => Promise.resolve());
+  await act(async () => Promise.resolve());
+
+  fireEvent.click(screen.getByRole("button", { name: "献立を作る" }));
+  await act(async () => Promise.resolve());
+  await act(async () => Promise.resolve());
+
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+  expect(savePlannerDraftMock).toHaveBeenCalledWith(
+    {},
+    userId,
+    expect.objectContaining({ targetMemberIds: [memberId] }),
+    1,
+  );
+  expect(startGeneration).toHaveBeenCalled();
+  const generated = startGeneration.mock.calls[0]?.[0] as PlannerDraft;
+  expect(generated.targetMemberIds).toEqual([memberId]);
+  expect(generated.revision).toBe(2);
+});
+
 it("P-R2: 他タブ soft-delete 後の献立を作るは削除済み id で生成しない", async () => {
   getPlannerDraftMock.mockResolvedValue(null);
   const startGeneration = vi.fn();
