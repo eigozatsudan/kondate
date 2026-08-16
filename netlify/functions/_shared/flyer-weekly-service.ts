@@ -281,15 +281,27 @@ function rejectFlyerSafetyHit(): never {
   );
 }
 
-/** PE11: flyer は cut_small 証拠を付けられない。mark 前 422（try 非消費）。 */
-function rejectFlyerCutSmallIfPresent(safety: CurrentSafetyContext): void {
+function rejectFlyerUnsatisfiableSafety(): never {
+  throw new HttpError(
+    422,
+    "current_safety_revalidation_required",
+    issueMessages.current_safety_revalidation_required,
+  );
+}
+
+/** PE11 / PE-R2: flyer はタグ証拠を付けられない。mark 前 422（try 非消費）。 */
+function rejectFlyerUnsatisfiableSafetyIfPresent(safety: CurrentSafetyContext): void {
   for (const member of safety.members) {
     if (member.requiredSafetyConstraints.includes("cut_small")) {
-      throw new HttpError(
-        422,
-        "current_safety_revalidation_required",
-        issueMessages.current_safety_revalidation_required,
-      );
+      rejectFlyerUnsatisfiableSafety();
+    }
+    // PE-R2: cut_small が空でも、年齢帯の requires_tag（ぶどう・魚・根菜等）は
+    // flyer がタグを持てないため mark 後 400 で try を焼く。検査集合に載った時点で 422。
+    const hasUnsatisfiableAgeTag = safety.foodSafetyRules.some(
+      (rule) => rule.ruleKind === "requires_tag" && rule.appliesToAgeBands.includes(member.ageBand),
+    );
+    if (hasUnsatisfiableAgeTag) {
+      rejectFlyerUnsatisfiableSafety();
     }
   }
 }
@@ -321,6 +333,7 @@ export type FlyerDraftMemberRow = {
  * 表示ターゲットにはせず、banned / assert 用にだけ合成する。
  * PE5: 保存済み age_band / required_safety_constraints を使う。
  * PE2: 未保存の年齢は adult 既定にしない。検査に載せる draft は幼児ルール fail-closed。
+ * PE-R1: 幼児帯だけだと senior 専用（硬い食材 / 根菜）が外れる。null 帯は幼児+シニア両方。
  */
 export function appendDraftMemberAllergiesForFlyerInspection(
   safety: CurrentSafetyContext,
@@ -359,25 +372,30 @@ export function appendDraftMemberAllergiesForFlyerInspection(
     const bucket = byMember.get(memberId) ?? { allergenIds: [], customAllergies: [] };
     const meta = memberMeta.get(memberId);
     // PE2: null 帯を adult と推測すると離乳後〜5歳ルール（餅・硬い豆等）が外れる。
-    // 検査に載せるときだけ幼児帯へ fail-closed。針も制約も無い draft は下の continue で載せない。
-    const ageBand = meta?.age_band ?? "post_weaning_to_2";
+    // PE-R1: 幼児だけだと senior 専用（硬い / 根菜）も外れる。検査に載せるときだけ両方当てる。
+    // 針も制約も無い draft は下の continue で載せない。アレルギー針は先頭メンバーだけで union。
+    const savedAgeBand = meta?.age_band ?? null;
     const constraints = meta?.required_safety_constraints ?? [];
     const hasAllergies = bucket.allergenIds.length > 0 || bucket.customAllergies.length > 0;
-    const hasAgeRules = meta?.age_band != null && meta.age_band !== "adult";
+    const hasAgeRules = savedAgeBand != null && savedAgeBand !== "adult";
     if (!hasAllergies && !hasAgeRules && constraints.length === 0) continue;
-    refIndex += 1;
-    extraMembers.push({
-      householdMemberId: memberId,
-      anonymousRef: `member_${String(refIndex)}`,
-      ageBand,
-      allergyStatus: hasAllergies ? "registered" : "none",
-      allergenIds: bucket.allergenIds,
-      hasUnmappedCustomAllergy: bucket.customAllergies.length > 0,
-      customAllergies: bucket.customAllergies,
-      requiredSafetyConstraints: [...constraints],
-      unsupportedDietStatus: "none",
-      unsupportedDietKinds: [],
-    });
+    const ageBandsForInspection: readonly AgeBand[] =
+      savedAgeBand == null ? ["post_weaning_to_2", "senior"] : [savedAgeBand];
+    for (const [bandIndex, ageBand] of ageBandsForInspection.entries()) {
+      refIndex += 1;
+      extraMembers.push({
+        householdMemberId: memberId,
+        anonymousRef: `member_${String(refIndex)}`,
+        ageBand,
+        allergyStatus: bandIndex === 0 && hasAllergies ? "registered" : "none",
+        allergenIds: bandIndex === 0 ? bucket.allergenIds : [],
+        hasUnmappedCustomAllergy: bandIndex === 0 && bucket.customAllergies.length > 0,
+        customAllergies: bandIndex === 0 ? bucket.customAllergies : [],
+        requiredSafetyConstraints: [...constraints],
+        unsupportedDietStatus: "none",
+        unsupportedDietKinds: [],
+      });
+    }
   }
   if (extraMembers.length === 0) return safety;
   return {
@@ -467,7 +485,7 @@ export async function loadFlyerInspectionSafety(
   const draftMembers: FlyerDraftMemberRow[] = parsedDraftMembers.data;
   const draftMemberIds = draftMembers.map((row) => row.id);
   if (draftMemberIds.length === 0) {
-    rejectFlyerCutSmallIfPresent(safety);
+    rejectFlyerUnsatisfiableSafetyIfPresent(safety);
     return safety;
   }
   const { data: draftAllergyRows, error: draftAllergyError } = await admin
@@ -483,7 +501,7 @@ export async function loadFlyerInspectionSafety(
     Array.isArray(draftAllergyRows) ? draftAllergyRows : [],
     draftMembers,
   );
-  rejectFlyerCutSmallIfPresent(inspection);
+  rejectFlyerUnsatisfiableSafetyIfPresent(inspection);
   return inspection;
 }
 

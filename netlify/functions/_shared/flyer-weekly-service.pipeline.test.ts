@@ -133,6 +133,8 @@ function mockInspectionQueries(options?: {
   completeError?: { message: string };
   draftError?: { message: string };
   allergyError?: { message: string };
+  draftRows?: readonly unknown[];
+  allergyRows?: readonly unknown[];
 }) {
   const complete = thenableQuery(
     options?.completeError !== undefined
@@ -142,12 +144,12 @@ function mockInspectionQueries(options?: {
   const draft = thenableQuery(
     options?.draftError !== undefined
       ? { data: null, error: options.draftError }
-      : { data: [], error: null },
+      : { data: options?.draftRows ?? [], error: null },
   );
   const allergies = thenableQuery(
     options?.allergyError !== undefined
       ? { data: null, error: options.allergyError }
-      : { data: [], error: null },
+      : { data: options?.allergyRows ?? [], error: null },
   );
   fromMock.mockImplementation((table: string) => {
     if (table === "member_allergies") return allergies;
@@ -317,6 +319,66 @@ describe("runFlyerWeekly pipeline (PE1/PE2/PE4/PE5/PE6/PE11)", () => {
         },
         new Uint8Array([1, 2, 3]),
         "idem-pe11-cut",
+      ),
+    ).rejects.toMatchObject({ status: 422, code: "current_safety_revalidation_required" });
+
+    expect(rpcNames()).toContain("reserve_flyer_weekly");
+    expect(rpcNames()).toContain("finalize_flyer_weekly_failure");
+    expect(rpcNames()).not.toContain("mark_flyer_weekly_sent");
+    expect(rpcArgsFor("finalize_flyer_weekly_failure")).toMatchObject({
+      p_sent: false,
+      p_failure_code: "current_safety_revalidation_required",
+    });
+    expect(openRouterSender).not.toHaveBeenCalled();
+  });
+
+  it("PE-R2: rejects grapes/fish age-tag rules before mark so try is not consumed", async () => {
+    // complete 成人 + draft（null 帯・針あり・制約空）は cut_small が無いが
+    // PE2 既定でぶどう・魚の requires_tag が当たる。mark 前 422 にする。
+    mockInspectionQueries({
+      draftRows: [
+        {
+          id: "55000000-0000-4000-8000-000000000099",
+          age_band: null,
+          required_safety_constraints: [],
+        },
+      ],
+      allergyRows: [
+        {
+          member_id: "55000000-0000-4000-8000-000000000099",
+          allergen_id: null,
+          custom_name: "ピーナッツ",
+          custom_aliases: [],
+          custom_confirmed: true,
+        },
+      ],
+    });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "00000000-0000-4000-8000-000000000001",
+            idempotency_key: "idem-pe-r2-tags",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-07-27",
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: { ok: true }, error: null });
+    });
+    const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));
+
+    await expect(
+      runFlyerWeekly(
+        {
+          user,
+          openRouterSender,
+          assertPrivacyConsent: acceptConsent,
+        },
+        new Uint8Array([1, 2, 3]),
+        "idem-pe-r2-tags",
       ),
     ).rejects.toMatchObject({ status: 422, code: "current_safety_revalidation_required" });
 

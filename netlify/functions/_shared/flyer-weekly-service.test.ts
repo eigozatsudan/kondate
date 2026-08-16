@@ -654,6 +654,82 @@ describe("loadFlyerInspectionSafety", () => {
       code: "current_safety_revalidation_required",
     });
   });
+
+  it("PE-R2: rejects null-age draft tag rules before caller can mark", async () => {
+    const complete = thenableQuery({
+      data: [{ id: "55000000-0000-4000-8000-000000000001" }],
+      error: null,
+    });
+    const draft = thenableQuery({
+      data: [
+        {
+          id: "55000000-0000-4000-8000-000000000099",
+          age_band: null,
+          required_safety_constraints: [],
+        },
+      ],
+      error: null,
+    });
+    const allergies = thenableQuery({
+      data: [
+        {
+          member_id: "55000000-0000-4000-8000-000000000099",
+          allergen_id: null,
+          custom_name: "ピーナッツ",
+          custom_aliases: [],
+          custom_confirmed: true,
+        },
+      ],
+      error: null,
+    });
+    const admin = {
+      from: vi.fn((table: string) => {
+        if (table === "member_allergies") return allergies;
+        const query = {
+          select: vi.fn(),
+          eq: vi.fn(),
+          order: vi.fn(),
+          in: vi.fn(),
+          then: undefined as
+            | ((resolve: (value: { data: unknown; error: unknown }) => unknown) => Promise<unknown>)
+            | undefined,
+        };
+        const self = () => query;
+        query.select.mockImplementation(self);
+        query.order.mockImplementation(self);
+        query.in.mockImplementation(self);
+        query.eq.mockImplementation((_column: string, value: string) => {
+          if (value === "complete") {
+            query.then = (resolve) => Promise.resolve(complete).then((row) => resolve(row));
+          } else if (value === "draft") {
+            query.then = (resolve) => Promise.resolve(draft).then((row) => resolve(row));
+          }
+          return query;
+        });
+        query.then = (resolve) => Promise.resolve(complete).then((row) => resolve(row));
+        return query;
+      }),
+    };
+    const base = makeCurrentSafetyContext();
+    loadCurrentSafetyContextMock.mockResolvedValue(
+      makeCurrentSafetyContext({
+        members: [
+          {
+            ...base.members[0]!,
+            householdMemberId: "55000000-0000-4000-8000-000000000001",
+            ageBand: "adult",
+            allergyStatus: "none",
+            allergenIds: [],
+            requiredSafetyConstraints: [],
+          },
+        ],
+      }),
+    );
+    await expect(loadFlyerInspectionSafety(admin as never, userId)).rejects.toMatchObject({
+      status: 422,
+      code: "current_safety_revalidation_required",
+    });
+  });
 });
 
 describe("jstWeekStartMonday", () => {
@@ -886,8 +962,12 @@ describe("assertFlyerMenuAgainstSafety", () => {
         custom_confirmed: false,
       },
     ]);
-    expect(inspection.members).toHaveLength(2);
+    // PE-R1: 年齢未設定 draft は幼児+シニアの2枠。針は先頭だけ。
+    expect(inspection.members).toHaveLength(3);
     expect(inspection.members[1]?.allergenIds).toEqual(["egg"]);
+    expect(inspection.members[1]?.ageBand).toBe("post_weaning_to_2");
+    expect(inspection.members[2]?.ageBand).toBe("senior");
+    expect(inspection.members[2]?.allergenIds).toEqual([]);
     expect(() => {
       assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "卵焼き" }), inspection);
     }).toThrow(HttpError);
@@ -1000,14 +1080,63 @@ describe("assertFlyerMenuAgainstSafety", () => {
         },
       ],
     );
-    expect(inspection.members).toHaveLength(2);
+    expect(inspection.members).toHaveLength(3);
     expect(inspection.members[1]?.ageBand).not.toBe("adult");
     expect(inspection.members[1]?.ageBand).toBe("post_weaning_to_2");
+    expect(inspection.members[2]?.ageBand).toBe("senior");
     expect(() => {
       assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "お雑煮（餅入り）" }), inspection);
     }).toThrow(HttpError);
     expect(() => {
       assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "ピーナッツ和え" }), inspection);
+    }).toThrow(HttpError);
+  });
+
+  it("PE-R1: draft null age_band also applies senior hard-food rules", () => {
+    // 幼児帯だけだと hard_food_for_senior（根菜 / 硬い）が外れる
+    const base = makeCurrentSafetyContext();
+    const completeOnly = makeCurrentSafetyContext({
+      members: [
+        {
+          ...base.members[0]!,
+          householdMemberId: "55000000-0000-4000-8000-000000000001",
+          ageBand: "adult",
+          allergyStatus: "none",
+          allergenIds: [],
+          customAllergies: [],
+          requiredSafetyConstraints: [],
+        },
+      ],
+    });
+    const inspection = appendDraftMemberAllergiesForFlyerInspection(
+      completeOnly,
+      [
+        {
+          member_id: "55000000-0000-4000-8000-000000000099",
+          allergen_id: null,
+          custom_name: "ピーナッツ",
+          custom_aliases: [],
+          custom_confirmed: true,
+        },
+      ],
+      [
+        {
+          id: "55000000-0000-4000-8000-000000000099",
+          age_band: null,
+          required_safety_constraints: [],
+        },
+      ],
+    );
+    expect(inspection.members.map((member) => member.ageBand)).toEqual([
+      "adult",
+      "post_weaning_to_2",
+      "senior",
+    ]);
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ mainName: "根菜の煮物" }), inspection);
+    }).toThrow(HttpError);
+    expect(() => {
+      assertFlyerMenuAgainstSafety(sampleMenu({ ingredients: ["硬いごぼう"] }), inspection);
     }).toThrow(HttpError);
   });
 
