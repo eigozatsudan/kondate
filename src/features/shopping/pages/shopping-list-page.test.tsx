@@ -11,6 +11,7 @@ import {
   createShoppingListRequestSchema,
   reconcileShoppingListRequestSchema,
   shoppingItemMutationRequestSchema,
+  shoppingItemsMax,
   type ShoppingDiff,
   type ShoppingItem,
   type ShoppingLabelSnapshot,
@@ -897,6 +898,25 @@ describe("ShoppingListPage warnings and grouping", () => {
     expect(screen.getByRole("button", { name: "＋ 項目を追加" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "別の献立から作る" })).toBeInTheDocument();
     expect(screen.queryByText("玉ねぎをリストから外しました")).not.toBeInTheDocument();
+  });
+
+  it("SHOP6: all-removed at shoppingItemsMax shows ceiling copy and hides add", async () => {
+    const items = Array.from({ length: shoppingItemsMax }, (_, index) =>
+      makeItem({
+        id: `40000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
+        displayName: `項目${String(index)}`,
+        isRemovedByUser: true,
+      }),
+    );
+    await renderPage(makeShoppingList(items));
+    expect(screen.getByText("買うものは今ありません")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `このリストは${String(shoppingItemsMax)}件の上限に達しています。リストから外した項目も件数に入るため、新しい項目は足せません。別の献立から新しいリストを作ってください。`,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "＋ 項目を追加" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "別の献立から作る" })).toBeInTheDocument();
   });
 
   it("matches edit form field chrome to the add form", async () => {

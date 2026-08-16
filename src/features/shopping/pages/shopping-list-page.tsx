@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import {
   shoppingItemMutationRequestSchema,
+  shoppingItemsMax,
   type ShoppingItem,
   type ShoppingItemMutationRequest,
   type StoreSection,
@@ -34,6 +35,10 @@ const sections: readonly StoreSection[] = [
   "seasonings",
   "other",
 ];
+
+/** SHOP6: soft-delete 行も 500 件天井に入る。空表示のまま追記不能なとき逃げ道を見せる。 */
+const shoppingListAtItemCeilingCopy =
+  `このリストは${String(shoppingItemsMax)}件の上限に達しています。リストから外した項目も件数に入るため、新しい項目は足せません。別の献立から新しいリストを作ってください。` as const;
 
 /** 画面が持つのは操作の中身だけ。リスト版数・fingerprint・冪等キーは送信直前に付ける。 */
 type LocalShoppingItemMutation<T = ShoppingItemMutationRequest> =
@@ -317,6 +322,13 @@ export function ShoppingListPage() {
       } else if (
         error instanceof Error &&
         "code" in error &&
+        error.code === "shopping_items_limit_exceeded"
+      ) {
+        // SHOP6: soft-delete 込み 500 件天井。空表示のまま追記 422 を案内する。
+        setMutationError(shoppingListAtItemCeilingCopy);
+      } else if (
+        error instanceof Error &&
+        "code" in error &&
         error.code === "idempotency_payload_mismatch"
       ) {
         // SHOP3: FP rebuild 後の hash mismatch は「旧 body で適用済み」の強い信号。
@@ -420,6 +432,8 @@ export function ShoppingListPage() {
     list.items.length > 0 &&
     list.items.every((item) => item.isRemovedByUser) &&
     pendingUndoIds.size === 0;
+  // SHOP6: Zod / SQL は removed 込み count。画面が空でも天井なら追記 UI を出さない。
+  const atItemCeiling = list.items.length >= shoppingItemsMax;
 
   return (
     <main className="page-frame stack">
@@ -541,8 +555,12 @@ export function ShoppingListPage() {
       {allRemovedNoPending && (
         <section className="card stack">
           <p>買うものは今ありません</p>
+          {atItemCeiling ? <p>{shoppingListAtItemCeilingCopy}</p> : null}
         </section>
       )}
+      {atItemCeiling && !allRemovedNoPending ? (
+        <p role="status">{shoppingListAtItemCeilingCopy}</p>
+      ) : null}
       {editingItem !== null && (
         <form
           className="card stack"
@@ -620,7 +638,7 @@ export function ShoppingListPage() {
           </button>
         </form>
       )}
-      {adding ? (
+      {atItemCeiling ? null : adding ? (
         <form
           className="card stack"
           onSubmit={(event) => {
