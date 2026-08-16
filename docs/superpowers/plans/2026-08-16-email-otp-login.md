@@ -40,7 +40,14 @@
 | `docs/deployment/supabase.md` | token_hash 必須を番号テンプレ必須へ |
 | `e2e/fixtures/auth.ts` | 製品は 6 桁、bootstrap は action_link 非 goto |
 
-ロック値: `OTP_LENGTH = 6`、`GOTRUE_MAILER_OTP_EXP = 3600`、画面再送は既存 `VITE_MAGIC_LINK_RESEND_SECONDS`。
+ロック値:
+- `GOTRUE_MAILER_OTP_LENGTH = 6`
+- `GOTRUE_MAILER_OTP_EXP = 3600`
+- `GOTRUE_SMTP_MAX_FREQUENCY = 60s`（画面再送 local 60 以上。`compose.e2e.yaml` の `1s` は suite 専用で製品 override に写さない）
+- `GOTRUE_RATE_LIMIT_OTP = 30`
+- `GOTRUE_RATE_LIMIT_VERIFY = 360`（hosted `/auth/v1/verify` の IP あたり既定。local CONFIG 既定 30 のままにしない）
+- 画面再送は既存 `VITE_MAGIC_LINK_RESEND_SECONDS`
+- 番号成功印キー: `kondate.auth.emailOtpCompleted`（sessionStorage。値は時刻だけ。番号も returnTo も入れない。TTL ≤ 60s。logout の residual キーに足す）
 
 ---
 
@@ -171,6 +178,7 @@ git commit -m "feat(auth): メール番号の送信と確認を gateway に足�
 - Modify: `src/features/auth/auth-callback-page.tsx`（confirm CTA と `confirmMagicLink` 呼び出しを削除）
 - Modify: `src/features/auth/auth-callback-page.test.tsx`（needs_confirmation ケースを unbound に合わせる）
 - Modify: `src/features/auth/magic-link-state.ts`（番号待ち state に置き換え、または縮小して login から参照）
+- Modify: `src/features/auth/auth-cleanup.ts`（`kondate.auth.emailOtpCompleted` を residual 掃除キーに足す）
 
 **Interfaces:**
 - Consumes: Task 1 `OtpDigitField` / `normalizeOtpDigits`、Task 2 `sendEmailOtp` / `verifyEmailOtp` / copy
@@ -183,9 +191,10 @@ git commit -m "feat(auth): メール番号の送信と確認を gateway に足�
 1. 主ボタン名 `番号をメールで受け取る`。副 `Googleで続ける`。長押しプレビュー文が無い。
 2. 送信成功後も URL は `/login`。見出し `メールを確認してください`。6 マスがある。
 3. 6 桁入力で `verifyEmailOtp` が一度だけ（in-flight）。確認中は再送・変更が disabled。
-4. leftover-capable（query 無し、および `?authError=unbound_callback`）で verify `complete` → `returnTo`（query 無しなら `/welcome`）へ Navigate。再マウントで session が残る（`signOut` されない）。
-5. Google 開始成功のあと番号待ち UI が消える。
+4. leftover-capable（query 無し、および `?authError=unbound_callback`）で verify `complete` → `returnTo`（query 無しなら `/welcome`）へ Navigate。**同じ leftover-capable URL で Login を unmount/remount** しても `signOut` されない。inbound leftover（番号成功印なし）の C-R2 / C-R4 は残す。
+5. Google 開始成功のあと番号待ち UI が消える。storage に Google `authorization_code` flow がある状態で番号 `complete` → その flow が無い。
 6. `otp_expired` 相当の mismatch でマスが空。コピーは `番号が違います。メールの 6 桁をもう一度入力してください。`
+7. `<StrictMode>` で 6 桁入力しても `verifyEmailOtp` は **1 回**。
 
 callback テスト: `token_hash` URL で「ログインを完了する」が無い。
 
@@ -202,9 +211,10 @@ Expected: FAIL
 - 単一 in-flight フラグ。stale 応答破棄。
 - snapshot: sessionStorage に `email` / `resendAvailableAt` / `storedAt` のみ。TTL は現行 60s。番号も `returnTo` も書かない。
 - `returnTo` は `sanitizeLoginReturnPath`（既定 `/welcome`）。
-- 成功: `emailOtpCompletedRef.current = true` のあと Navigate。`isLeftoverCapableLoginLeave` が true でも、この ref が true なら Navigate し、`clearLeftoverLoginSessionIfNoSiblingCompletion` を走らせない。
+- 成功: sessionStorage に `kondate.auth.emailOtpCompleted`（`storedAt` のみ、TTL ≤ 60s）を書いてから Navigate。**component ref だけを正にしない**（再マウントで消える）。`isLeftoverCapableLoginLeave` が true でも、印が新鮮なら Navigate し、`clearLeftoverLoginSessionIfNoSiblingCompletion` を走らせない。印が無い inbound leftover は今どおり C-R2 / C-R4。logout で印を消す（`MAGIC_LINK_RESIDUAL_KEYS` に足す）。
+- 単一 verify: callback と同型の **同期 ref**（`verifyInFlightRef`。state 更新前に立てる）。`useState` in-flight だけは StrictMode remount で戻るので禁止。IME composition 中は親でも verify しない。
 - Google 開始成功: snapshot とマスと番号待ちを捨てる。
-- verify 成功直前: `clearSiblingUnexpiredAuthFlows` を、完了 id が無い場合は「番号用ダミーを作らず」既存 Google flow をすべて clear するヘルパを login 側で呼ぶ。`listUnexpiredAuthFlows` + `clearAuthFlow` で足りる。`ContinuationApi.create` はしない。
+- verify 成功直前: login 側ヘルパが未期限切れの Google / `authorization_code`（および残存 `token_hash`）を **すべて** `markAuthFlowUserDismissed` + `clearAuthFlow`。ダミー completed id 禁止。`ContinuationApi.create` 禁止。`clearSiblingUnexpiredAuthFlows` は完了 id が無いので呼ばない（空文字を渡して全消し、も禁止）。
 - callback: `needs_confirmation` 分岐と confirm ボタンを削除。`token_hash` は gateway が unbound を返すので既存 error UI に乗る。
 
 - [ ] **Step 4: GREEN**
@@ -257,20 +267,26 @@ HTML はプレーンでよい。本文:
 <p style="font-size:28px;letter-spacing:0.2em">{{ .Token }}</p>
 ```
 
-override の auth.environment に（パスはコンテナから読める bind に合わせる）:
+`infra/supabase.override.yaml` の auth に `./templates` を bind する（`infra/supabase/templates` → コンテナ `/home/templates`）。GoTrue の TEMPLATES は **同じファイル**を指す。`file://` は live 根拠が無いので使わない。auth が HTTP で取る必要があるなら、既存スタックで届く絶対 URL を 1 本書き、Linux で `host.docker.internal` を使う場合だけ `extra_hosts` を本文に書く。未検証 URL や `…` を残さない。
 
 ```yaml
 GOTRUE_MAILER_OTP_EXP: "3600"
 GOTRUE_MAILER_OTP_LENGTH: "6"
-GOTRUE_MAILER_TEMPLATES_MAGIC_LINK: http://host.docker.internal:… または file が使えるなら repo 相対
-GOTRUE_MAILER_TEMPLATES_CONFIRMATION: （同じ HTML）
+GOTRUE_SMTP_MAX_FREQUENCY: "60s"
+GOTRUE_RATE_LIMIT_OTP: "30"
+GOTRUE_RATE_LIMIT_VERIFY: "360"
+GOTRUE_EXTERNAL_EMAIL_MAGIC_LINK_ENABLED: "false"
+GOTRUE_MAILER_TEMPLATES_MAGIC_LINK: <到達可能な同一 HTML の絶対 URL>
+GOTRUE_MAILER_TEMPLATES_CONFIRMATION: <同じ URL>
 GOTRUE_MAILER_SUBJECTS_MAGIC_LINK: こんだて日和の番号
 GOTRUE_MAILER_SUBJECTS_CONFIRMATION: こんだて日和の番号
 ```
 
-ローカルでテンプレ URL が host 経由必須なら、既存 mailpit / kong の出し方に合わせる。Invite / Recovery は触らない。
+`MAGIC_LINK_ENABLED` を切れないなら false を諦め、Task 4 と `docs/deployment/supabase.md` に「URL 無しテンプレが唯一の防御」と書く。Invite / Recovery は触らない。`compose.e2e.yaml` の `GOTRUE_SMTP_MAX_FREQUENCY: "1s"` は suite 専用のまま。
 
-`docs/deployment/supabase.md` の token_hash 必須を、「Magic Link と Confirm の本文に URL を置かない・`{{ .Token }}` を置く・OTP exp 3600 / length 6」に置き換える。
+`docs/deployment/supabase.md` の token_hash 必須を、「Magic Link と Confirm の本文に URL を置かない・`{{ .Token }}` を置く・OTP exp 3600 / length 6 / RATE_LIMIT_OTP 30 / RATE_LIMIT_VERIFY 360 / SMTP_MAX_FREQUENCY 60s」に置き換える。
+
+Task 4 GREEN は YAML キー存在だけで通さない。両 TEMPLATES が同じ到達可能 URL / 同じファイルであること、本文に `http`/`https`/`ConfirmationURL` が無いことを固定する。Mailpit 本文の受け入れは Task 5 の `requestEmailOtpAndReadCode` が担う。
 
 - [ ] **Step 3: GREEN**
 
@@ -296,22 +312,22 @@ git commit -m "feat(auth): 番号メール文面とOTP寿命3600秒を固定す�
 - Modify: ボタン名を参照する spec（`oauth-mock.spec.ts` 等。grep `ログイン用メール`）
 
 **Interfaces:**
-- Produces: `requestEmailOtpAndReadCode(page, email): Promise<string>`（ちょうど 6 桁）
-- `loginAsNewUser` は **page.goto(action_link) しない**。generateLink の token 取得は Playwright `request`（ページ外）または既存 hash 注入の製品外 bootstrap。製品ログイン定義にしない
+- Produces: `requestEmailOtpAndReadCode(page, email): Promise<string>`（ちょうど 6 桁。本文に `http` / `https` が 1 つでもあれば throw）
+- `loginAsNewUser`: `generateLinkPropertiesSchema` の `hashed_token` をページ外で `verifyOtp({ token_hash, type: "email" })`（service admin または `page.request` POST `/auth/v1/verify`）。返った access/refresh を現行どおり storage へ載せて `/planner` を開く。`email_otp` を schema に足さない。`page.goto(action_link)` も `request.get(action_link)` も使わない。コメント「製品外 bootstrap」
 
 - [ ] **Step 1: RED / 置換**
 
-`requestMagicLinkAndReadUrl` を削除または内部で番号読みに置換。Mailpit から **6 桁** を取る。URL 正規表現を残さない。
+`requestMagicLinkAndReadUrl` を削除または番号読みに置換。Mailpit の Magic **と** Confirm 本文を見る。URL 正規表現を残さない。
 
 `auth.setup.ts`: UI で `番号をメールで受け取る` → `requestEmailOtpAndReadCode` → 6 マス入力。`goto` でメール URL を開かない。
 
 `auth-recovery.spec.ts`: 同一ブラウザ / 孤立 WebView の **メール callback** 2 本を削除。Google cancel / leftover は残し、ボタン名を新コピーへ。
 
-`loginAsNewUser`: `page.goto(browserUrl)` をやめる。コメントで「製品外 bootstrap」。session は generateLink 応答をページ外で解決してから、現行どおり storage へ載せて `/planner` を開く。
+`loginAsNewUser`: `page.goto(browserUrl)` と `request.get(action_link)` をやめる。`hashed_token` + ページ外 `verifyOtp`。`normalizeGenerateLinkActionUrl` を残すならテスト専用と Files に書く。
 
 - [ ] **Step 2: ユニット相当**
 
-fixture のヘルパに、Mailpit HTML から 6 桁を抜く純関数テストを `e2e/fixtures/auth-otp-parse.test.ts`（または `src` 外なら `node --test`）で固定: `"番号 123456 です"` → `"123456"`。`https://example` だけの本文は throw。
+Mailpit HTML から 6 桁を抜く純関数: 製品テンプレ相当（`{{ .Token }}` を `123456` に置換、`http`/`https` 無し）→ `"123456"`。本文に `http` または `https` が 1 つでもあれば throw。`https://example` だけのケースだけでは足りない。
 
 Run: そのテストが PASS すること（製品 E2E 全件はこの Task では回さない。CLAUDE.md）。
 
@@ -369,4 +385,6 @@ git commit -m "test(auth): 番号ログインの横断ゲートを固定する"
 | Auth ロック非再定義 / Continuation 非新設 | Global + Task 2–3 |
 | iPhone 案内図解 | 非対象 |
 
-Placeholders: テンプレの compose 配信 URL は既存 mail パターンに合わせる（新規ホストを発明しない）。
+Placeholders: なし（テンプレは bind + 同一到達 URL。`host.docker.internal:…` は禁止）。
+
+**Plan レビュー:** `docs/superpowers/reviews/2026-08-16-email-otp-login-plan-{primary,adversarial,secondary}.md`（二次 REVISE_PLAN / MF-P1…P6 を本文へ反映済み）。

@@ -1,7 +1,8 @@
 # こんだて日和 メール 6 桁番号ログイン設計
 
 - 日付: 2026-08-16
-- 状態: **レビュー MF 反映済み・Plan 未作成**（1次 REVISE / 敵対 BLOCK_WITH_CONDITIONS / 2次 REVISE → MF-C1 / MF-I1…I8 を本文へ反映）
+- 状態: **レビュー MF 反映済み・Plan 作成済み**（Spec MF-C1 / MF-I1…I8、Plan MF-P1…P6 を本文へ反映）
+- 実装計画: `docs/superpowers/plans/2026-08-16-email-otp-login.md`
 - 種別: 設計。マジックリンクを廃止し、同じタブの 6 桁メール OTP にする
 - 対象: `src/features/auth/`（login・gateway・callback UI）、メール文面（Magic Link と Confirm sign up）、GoTrue OTP 設定、関連 Vitest / E2E、`docs/deployment/supabase.md`
 - 非対象: iPhone ホーム画面案内の短縮・図解（別スライス）、SMS、パスワード、パスキー、Google の standalone 修復、`admin/`、safety、課金
