@@ -611,6 +611,15 @@ it("accepts an already-expired date on create so pantry CRUD can record leftover
   });
   expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ name: "キャベツ", expiresOn: "2000-01-01" });
   expect(screen.getByLabelText("期限日")).not.toHaveAttribute("min");
+  expect(screen.getByText("期限日は日本時間で判定します。")).toBeInTheDocument();
+});
+
+it("PE12: local calendar today is stored as the JST calendar day", async () => {
+  const { alignLocalDateInputToJstDay, getJstDateKey, getLocalDateKey } =
+    await import("@shared/time/jst");
+  const now = new Date("2026-08-16T16:00:00.000Z");
+  expect(alignLocalDateInputToJstDay(getLocalDateKey(now), now)).toBe(getJstDateKey(now));
+  expect(alignLocalDateInputToJstDay("2000-01-01", now)).toBe("2000-01-01");
 });
 
 it("shows and associates a Japanese schema error, then focuses the invalid field", async () => {

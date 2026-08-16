@@ -36,8 +36,11 @@ function writeRow(userId: string, input: PantryItemInput) {
   };
 }
 
-/** PE14: create の同一タブ連打による二重 insert を抑止する（multi-tab は残差）。 */
+/** PE14: create の同一タブ連打による二重 insert を抑止する。 */
 let createPantryItemLocked = false;
+
+/** PE9: タブ間 create を直列化する Web Lock。name 一意は無く、同時 submit の残差は残る。 */
+const pantryCreateLockName = "kondate:pantry-create";
 
 /** PE10: updated_at 楽観ロック衝突。RLS + user_id で他ユーザー横断は閉じ済み。 */
 export class PantryVersionConflictError extends Error {
@@ -80,13 +83,22 @@ export async function createPantryItem(
   }
   createPantryItemLocked = true;
   try {
-    const { data, error } = await client
-      .from("pantry_items")
-      .insert(writeRow(requireUserId(userId), input))
-      .select("*")
-      .single();
-    if (error !== null) throw new Error("食材を追加できませんでした");
-    return mapRow(data);
+    const insertRow = async (): Promise<PantryItem> => {
+      const { data, error } = await client
+        .from("pantry_items")
+        .insert(writeRow(requireUserId(userId), input))
+        .select("*")
+        .single();
+      if (error !== null) throw new Error("食材を追加できませんでした");
+      return mapRow(data);
+    };
+    // PE9: タブ間は Web Lock で直列化。一意制約は無いので同時開始の残差は残る。
+    // jsdom 等は locks が無い。DOM 型は必須なので任意として読む。
+    const locksApi = (globalThis.navigator as { locks?: LockManager }).locks;
+    if (locksApi !== undefined) {
+      return await locksApi.request(pantryCreateLockName, insertRow);
+    }
+    return await insertRow();
   } finally {
     createPantryItemLocked = false;
   }

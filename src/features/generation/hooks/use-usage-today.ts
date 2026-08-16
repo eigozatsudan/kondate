@@ -66,7 +66,11 @@ export function useUsageToday(userId: string) {
   return useQuery({
     queryKey: usageTodayQueryKey(userId, jstDay),
     queryFn: () => getUsageToday(),
-    staleTime: 30_000,
+    // PE10: Plus 表示の 30s 残像を残さない。kill 後も upload UI を出さない。
+    staleTime: 0,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
+    refetchInterval: (query) => (query.state.data?.plusEntitled === true ? 15_000 : false),
     enabled: userId.length > 0,
   });
 }

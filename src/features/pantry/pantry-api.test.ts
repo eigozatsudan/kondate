@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PantryItemInput } from "@shared/contracts/pantry";
 import {
   createPantryItem,
@@ -6,6 +6,10 @@ import {
   PantryVersionConflictError,
   updatePantryItem,
 } from "./pantry-api";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const userId = "61000000-0000-4000-8000-000000000001";
 const itemId = "60000000-0000-4000-8000-000000000001";
@@ -77,6 +81,24 @@ describe("pantry create single-flight (PE14)", () => {
     resolveInsert?.({ data: pantryRow(), error: null });
     await expect(first).resolves.toMatchObject({ id: itemId, name: input.name });
     expect(chain.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it("PE9: serializes create through navigator.locks when available", async () => {
+    const request = vi.fn(async (_name: string, run: () => Promise<unknown>) => run());
+    vi.stubGlobal("navigator", { locks: { request } });
+    const chain = {
+      insert: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({
+        data: pantryRow(),
+        error: null,
+      }),
+    };
+    const client = { from: vi.fn().mockReturnValue(chain) } as never;
+    await createPantryItem(client, userId, input);
+    expect(request).toHaveBeenCalledWith("kondate:pantry-create", expect.any(Function));
+    expect(chain.insert).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 
   it("PE8: normalizes unit synonyms on write (グラム → g)", async () => {

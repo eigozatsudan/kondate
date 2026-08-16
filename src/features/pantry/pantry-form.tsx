@@ -6,6 +6,7 @@ import {
   type PantryItemInput,
   pantryItemInputSchema,
 } from "@shared/contracts/pantry";
+import { alignLocalDateInputToJstDay } from "@shared/time/jst";
 import { Button } from "@/shared/ui/button";
 import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
@@ -182,10 +183,12 @@ export function PantryForm({
               type="date"
               {...errorAttributes("expiresOn")}
               {...form.register("expiresOn", {
-                setValueAs: (value: string) => (value === "" ? null : value),
+                setValueAs: (value: string) =>
+                  value === "" ? null : alignLocalDateInputToJstDay(value, new Date()),
               })}
             />
           </label>
+          <p className="muted">期限日は日本時間で判定します。</p>
           {fieldError("expiresOn")}
           <label className="field">
             期限の種類
