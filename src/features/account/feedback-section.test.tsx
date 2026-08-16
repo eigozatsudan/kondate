@@ -354,10 +354,11 @@ describe("FeedbackSection", () => {
 
       await vi.advanceTimersByTimeAsync(FEEDBACK_POST_CLIENT_TIMEOUT_MS + 50);
 
-      expect(await screen.findByRole("alert")).toHaveTextContent("送信できませんでした");
+      expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
       expect(screen.getByRole("button", { name: "閉じる" })).not.toBeDisabled();
       expect(screen.getByRole("button", { name: "送信する" })).not.toBeDisabled();
-      expect(localStorage.getItem(stickyKey)).toBeNull();
+      // AP10: headers 前 timeout も到達曖昧として sticky する
+      expect(localStorage.getItem(stickyKey)).toMatch(/^[0-9a-f]{64}$/u);
       // AP9: abortable POST
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/feedback",
@@ -366,6 +367,30 @@ describe("FeedbackSection", () => {
           signal: expect.any(AbortSignal) as AbortSignal,
         }),
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AP10: timeout before headers blocks same-body resubmit", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      fetchMock.mockReturnValue(new Promise(() => undefined));
+      render(<FeedbackSection />);
+      await expandFeedback(user);
+      const text = "ヘッダ前タイムアウト後に同じ本文を再送したくない内容です。";
+      await user.type(screen.getByLabelText("内容（10〜2000文字）"), text);
+      await user.click(screen.getByRole("button", { name: "送信する" }));
+      expect(await screen.findByRole("button", { name: "送信しています…" })).toBeDisabled();
+
+      await vi.advanceTimersByTimeAsync(FEEDBACK_POST_CLIENT_TIMEOUT_MS + 50);
+      expect(await screen.findByRole("alert")).toHaveTextContent("送信結果を確認できませんでした");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      await user.click(screen.getByRole("button", { name: "送信する" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("同じ内容を再送すると重複");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

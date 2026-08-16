@@ -101,6 +101,63 @@ describe("runShareServerGate", () => {
     expect(runShareServerGate(rewritten, lock)).toEqual({ ok: true });
   });
 
+  it("AP11: rejects PII split across dish name and ingredient name", () => {
+    const base = makeValidatedMenu();
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0
+          ? {
+              ...dish,
+              name: "太",
+              ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+                ingredientIndex === 0 ? { ...ingredient, name: "郎の特製みそ" } : ingredient,
+              ),
+            }
+          : dish,
+      ),
+    });
+    const lock = captureShareIngredientGraphLock(menu);
+    expect(runShareServerGate(menu, lock)).toEqual({
+      ok: false,
+      code: "server_gate_failed",
+    });
+  });
+
+  it("AP12: rejects closed guarantee neighbor この献立は安全です", () => {
+    const base = makeValidatedMenu();
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0 ? { ...dish, description: "この献立は安全です" } : dish,
+      ),
+    });
+    const lock = captureShareIngredientGraphLock(menu);
+    expect(runShareServerGate(menu, lock)).toEqual({
+      ok: false,
+      code: "server_gate_failed",
+    });
+  });
+
+  it("AP12: rejects closed harmful neighbor 漂白剤を使う", () => {
+    const base = makeValidatedMenu();
+    const menu = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0
+          ? {
+              ...dish,
+              steps: dish.steps.map((step, stepIndex) =>
+                stepIndex === 0 ? { ...step, instruction: "最後に漂白剤を使う" } : step,
+              ),
+            }
+          : dish,
+      ),
+    });
+    const lock = captureShareIngredientGraphLock(menu);
+    expect(runShareServerGate(menu, lock)).toEqual({
+      ok: false,
+      code: "server_gate_failed",
+    });
+  });
+
   it("allows free-text name change when graph quantities stay locked", () => {
     const menu = makeValidatedMenu();
     const lock = captureShareIngredientGraphLock(menu);

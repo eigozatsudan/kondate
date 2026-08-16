@@ -8,7 +8,7 @@
  * を fail-closed で追加する。オープン集合の完全人名認識は製品再設計域のため residual。
  */
 
-export const shareDenylistVersion = "2026-08-16.v7" as const;
+export const shareDenylistVersion = "2026-08-16.v8" as const;
 
 /**
  * 安全を保証する表現。共有プールでは安全を保証しない方針と矛盾するため拒否。
@@ -28,6 +28,9 @@ export const shareGuaranteePhrases = [
   "安心してお召し上がりください",
   "誰でも食べられる",
   "誰でも安全",
+  // AP12: 閉じた近傍。オープン言い換え集合にはしない
+  "この献立は安全です",
+  "誰でも食べて大丈夫",
 ] as const;
 
 /**
@@ -138,6 +141,7 @@ const givenNameFoodCompounds = ["桃太郎", "金太郎", "浦島太郎"] as con
 export const shareHarmfulInstructionPhrases = [
   "洗剤を入れる",
   "漂白剤を入れる",
+  "漂白剤を使う",
   "農薬を",
   "薬品を混ぜ",
   "毒を",

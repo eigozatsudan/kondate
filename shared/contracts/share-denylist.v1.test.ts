@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   shareDenylistVersion,
   shareGuaranteePhrases,
+  shareHarmfulInstructionPhrases,
   sharePiiGivenNameBareStems,
   sharePiiGivenNameStems,
   sharePiiLiteralPhrases,
@@ -10,7 +11,7 @@ import {
 
 describe("share-denylist.v1", () => {
   it("locks a single denylist version", () => {
-    expect(shareDenylistVersion).toBe("2026-08-16.v7");
+    expect(shareDenylistVersion).toBe("2026-08-16.v8");
   });
 
   it("flags guarantee phrase アレルギーでも安心", () => {
@@ -143,6 +144,18 @@ describe("share-denylist.v1", () => {
     expect(textHitsShareDenylist("太郎\u200bの特製みそ")).toBe(true);
     expect(textHitsShareDenylist("連絡は family@example.com まで")).toBe(true);
     expect(textHitsShareDenylist("連絡は family＠example.com まで")).toBe(true);
+  });
+
+  it("AP12: flags closed guarantee and harmful neighbors without opening NER", () => {
+    expect(shareGuaranteePhrases).toContain("この献立は安全です");
+    expect(shareGuaranteePhrases).toContain("誰でも食べて大丈夫");
+    expect(shareHarmfulInstructionPhrases).toContain("漂白剤を使う");
+    expect(textHitsShareDenylist("この献立は安全です")).toBe(true);
+    expect(textHitsShareDenylist("誰でも食べて大丈夫な量にする")).toBe(true);
+    expect(textHitsShareDenylist("最後に漂白剤を使う")).toBe(true);
+    // 既存ヒットは緩めない
+    expect(textHitsShareDenylist("アレルギーでも安心")).toBe(true);
+    expect(textHitsShareDenylist("漂白剤を入れる")).toBe(true);
   });
 
   it("does not flag ordinary food phrases", () => {

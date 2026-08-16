@@ -51,6 +51,22 @@ export function feedbackAmbiguousFingerprintStorageKey(
   return `${FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX}:${userId.toLowerCase()}`;
 }
 
+/** withTimeout の timeout と AbortSignal abort を締切扱いする */
+function isFeedbackTimeoutOrAbort(error: unknown): boolean {
+  if (error instanceof Error && error.message === "timeout") return true;
+  if (
+    typeof DOMException !== "undefined" &&
+    error instanceof DOMException &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  ) {
+    return true;
+  }
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
+    return true;
+  }
+  return false;
+}
+
 function mapError(code: string | undefined, fallback: string): string {
   if (code === "feedback_rate_limited") {
     return "送信回数の上限に達しました。時間をおいてもう一度お試しください";
@@ -237,9 +253,10 @@ export function FeedbackSection() {
       return;
     }
 
-    // Response を得たあとの欠落だけを ambiguous 扱いする。
-    // token 取得後・fetch 未到達（abort / timeout / ネットワーク）は sticky しない（AP8）
+    // AP8: token 取得前・TypeError ネットワークは sticky しない（未到達の再送を封じない）。
+    // AP10: fetch 開始後の timeout/abort は headers 前でも insert 済みになり得るので sticky する。
     let requestStarted = false;
+    let fetchInitiated = false;
     // AP9: 締切時に in-flight POST を abort し zombie 二重 insert 窓を縮める
     const abortController = new AbortController();
     const abortPost = (): void => {
@@ -251,6 +268,7 @@ export function FeedbackSection() {
     const remainingPostBudgetMs = (): number => Math.max(1, postDeadlineMs - Date.now());
     try {
       const accessToken = await requireAccessToken(getBrowserSupabaseClient());
+      fetchInitiated = true;
       // AP6/AP9: settle + body を同一予算。withTimeout は UI 回復、onTimeout で AbortSignal
       const response = await withTimeout(
         fetch("/api/feedback", {
@@ -274,13 +292,7 @@ export function FeedbackSection() {
         raw = await withTimeout(response.json(), remainingPostBudgetMs(), abortPost);
       } catch (error) {
         // 締切 / abort は外側 catch で ambiguous 扱い
-        if (
-          (error instanceof Error && error.message === "timeout") ||
-          (typeof DOMException !== "undefined" &&
-            error instanceof DOMException &&
-            (error.name === "AbortError" || error.name === "TimeoutError")) ||
-          (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
-        ) {
+        if (isFeedbackTimeoutOrAbort(error)) {
           throw error;
         }
         // 到達後の非 JSON: 二重 insert を避けるため同一本文の再送を抑止
@@ -310,8 +322,9 @@ export function FeedbackSection() {
       setBody("");
       setCategory("feature_request");
       setStatusMessage("ありがとうございます。フィードバックを受け付けました");
-    } catch {
-      if (requestStarted) {
+    } catch (error) {
+      // AP10: headers 前 abort でも Function 到達済みになり得る。到達曖昧は再送抑止。
+      if (requestStarted || (fetchInitiated && isFeedbackTimeoutOrAbort(error))) {
         rememberAmbiguousFingerprint(fingerprint);
         setErrorMessage(
           "送信結果を確認できませんでした。同じ内容を再送すると重複する可能性があります。内容を少し変えるか、時間をおいてからお試しください",

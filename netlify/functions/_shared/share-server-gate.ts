@@ -92,8 +92,20 @@ function graphsMatch(menu: ValidatedMenu, locked: ShareIngredientGraphLock): boo
  */
 export function menuHitsShareDenylist(menu: ValidatedMenu): boolean {
   // collectMenuTextSources は ingredient.name / quantityText / 手順 / adaptation 等を網羅
-  for (const source of collectMenuTextSources(menu)) {
-    if (textHitsShareDenylist(source.text)) return true;
+  const texts = collectMenuTextSources(menu).map((source) => source.text);
+  for (const text of texts) {
+    if (textHitsShareDenylist(text)) return true;
+  }
+  // AP11: フィールド分割（dish.name=太 + ingredient.name=郎の）を閉じた針で拾う。
+  // 全文 haystack と任意 2 フィールド join。オープン NER にはしない。
+  if (textHitsShareDenylist(texts.join(""))) return true;
+  for (let i = 0; i < texts.length; i += 1) {
+    for (let j = i + 1; j < texts.length; j += 1) {
+      const left = texts[i];
+      const right = texts[j];
+      if (left === undefined || right === undefined) continue;
+      if (textHitsShareDenylist(`${left}${right}`)) return true;
+    }
   }
   return false;
 }
