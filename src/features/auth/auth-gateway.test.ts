@@ -232,7 +232,7 @@ it("uses Supabase Google and never the mock URL in production mode", async () =>
   expect(fetchImpl).not.toHaveBeenCalled();
 });
 
-it("token_hash magic: completeCallback needs user confirmation without verifyOtp", async () => {
+it("completeCallback treats token_hash as unbound without pending or verifyOtp", async () => {
   configurePublicEnv();
   const storage = new MapStorage();
   const deposit = vi.fn().mockResolvedValue(undefined);
@@ -243,31 +243,113 @@ it("token_hash magic: completeCallback needs user confirmation without verifyOtp
     storage,
     gatewayDeps(),
   );
-  const sent = await gateway.sendMagicLink("user@example.com", "/onboarding");
-  const flow = readAuthFlow(sent.flowId, storage);
-  if (flow === null) throw new Error("magic-link flow was not stored");
-  expect(flow.credentialKind).toBe("token_hash");
-
+  const flowId = "10000000-0000-4000-8000-0000000000ef";
   const tokenHash = "a".repeat(40);
+  const state = "A".repeat(43);
+
   await expect(
     gateway.completeCallback(
       new URL(
-        `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
+        `http://127.0.0.1:5173/auth/callback?flow=${flowId}&state=${state}&token_hash=${tokenHash}&type=email`,
       ),
     ),
   ).resolves.toEqual({
-    kind: "needs_confirmation",
-    flowId: flow.id,
-    returnTo: "/onboarding",
-    tokenHash,
-    otpType: "email",
-    state: flow.state,
+    kind: "error",
+    code: "unbound_callback",
+    returnTo: "/planner",
   });
-  // プレビュー耐性: 表示時点では server deposit / verify しない（pending のみ）
+  // 旧マジックリンクは pending / verify / deposit しない
   expect(deposit).not.toHaveBeenCalled();
   expect(client.auth.verifyOtp).not.toHaveBeenCalled();
   expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
-  expect(readAuthFlow(flow.id, storage)).not.toBeNull();
+  expect(readPendingAuthDeposit(flowId, storage)).toBeNull();
+  expect(storage.getItem(`kondate.auth.supabase.pending-deposit.${flowId}`)).toBeNull();
+});
+
+it("sendEmailOtp calls signInWithOtp without emailRedirectTo and does not create an AuthFlow", async () => {
+  configurePublicEnv();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-08-16T00:00:00.000Z"));
+  const storage = new MapStorage();
+  const create = vi.fn();
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock({ create }),
+    storage,
+    gatewayDeps(),
+  );
+
+  await expect(gateway.sendEmailOtp(" user@example.com ")).resolves.toEqual({
+    email: "user@example.com",
+    resendAvailableAt: "2026-08-16T00:01:00.000Z",
+  });
+  expect(client.auth.signInWithOtp).toHaveBeenCalledWith({
+    email: "user@example.com",
+    options: { shouldCreateUser: true },
+  });
+  const otpCall = client.auth.signInWithOtp.mock.calls[0]?.[0] as {
+    options?: Record<string, unknown>;
+  };
+  expect(otpCall.options).not.toHaveProperty("emailRedirectTo");
+  expect(create).not.toHaveBeenCalled();
+  expect(
+    Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter((key) =>
+      key?.startsWith("kondate.auth.flow."),
+    ),
+  ).toEqual([]);
+});
+
+it("verifyEmailOtp completes a 6-digit token and rejects non-6-digit tokens without verifyOtp", async () => {
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock(),
+    new MapStorage(),
+    gatewayDeps(),
+  );
+
+  await expect(
+    gateway.verifyEmailOtp({ email: "user@example.com", token: "123456" }),
+  ).resolves.toEqual({ kind: "complete" });
+  expect(client.auth.verifyOtp).toHaveBeenCalledWith({
+    email: "user@example.com",
+    token: "123456",
+    type: "email",
+  });
+
+  client.auth.verifyOtp.mockClear();
+  for (const token of ["12ab34", "12345", "1234567"] as const) {
+    await expect(gateway.verifyEmailOtp({ email: "user@example.com", token })).resolves.toEqual({
+      kind: "mismatch",
+    });
+  }
+  expect(client.auth.verifyOtp).not.toHaveBeenCalled();
+});
+
+it.each([
+  { code: "otp_expired", kind: "mismatch" as const },
+  { code: "token_expired", kind: "mismatch" as const },
+  { code: "otp_disabled", kind: "unavailable" as const },
+  { code: "over_request_rate_limit", kind: "unavailable" as const },
+  { code: "unexpected_provider_code", kind: "unavailable" as const },
+])("verifyEmailOtp maps GoTrue $code to $kind", async ({ code, kind }) => {
+  const client = authClientMock({
+    verifyOtpResult: {
+      data: null,
+      error: { code, message: "do-not-surface" } as AuthError,
+    },
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    continuationApiMock(),
+    new MapStorage(),
+    gatewayDeps(),
+  );
+
+  await expect(
+    gateway.verifyEmailOtp({ email: "user@example.com", token: "123456" }),
+  ).resolves.toEqual({ kind });
 });
 
 it("C1: resumeFlow does not verifyOtp an unconfirmed token_hash pending", async () => {
@@ -286,11 +368,16 @@ it("C1: resumeFlow does not verifyOtp an unconfirmed token_hash pending", async 
   const flow = readAuthFlow(sent.flowId, storage);
   if (flow === null) throw new Error("magic-link flow was not stored");
   const tokenHash = "e".repeat(40);
-
-  await gateway.completeCallback(
-    new URL(
-      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
-    ),
+  // completeCallback は token_hash を書かない。resume の awaitingConfirm 拒否を残件 pending で固定する。
+  writePendingAuthDeposit(
+    sent.flowId,
+    {
+      state: flow.state,
+      code: tokenHash,
+      expiresAtMs: Date.now() + 300_000,
+      awaitingConfirm: true,
+    },
+    storage,
   );
   expect(readPendingAuthDeposit(sent.flowId, storage)?.awaitingConfirm).toBe(true);
 
@@ -323,11 +410,15 @@ it("C1: awaitingConfirm residual does not claim ciphertext or terminal-clear the
   const flow = readAuthFlow(sent.flowId, storage);
   if (flow === null) throw new Error("magic-link flow was not stored");
   const tokenHash = "f".repeat(40);
-
-  await gateway.completeCallback(
-    new URL(
-      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
-    ),
+  writePendingAuthDeposit(
+    sent.flowId,
+    {
+      state: flow.state,
+      code: tokenHash,
+      expiresAtMs: Date.now() + 300_000,
+      awaitingConfirm: true,
+    },
+    storage,
   );
   expect(readPendingAuthDeposit(sent.flowId, storage)?.awaitingConfirm).toBe(true);
 
@@ -355,10 +446,16 @@ it("token_hash magic: strip reload restores needs_confirmation from pending", as
   const flow = readAuthFlow(sent.flowId, storage);
   if (flow === null) throw new Error("magic-link flow was not stored");
   const tokenHash = "d".repeat(40);
-  await gateway.completeCallback(
-    new URL(
-      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
-    ),
+  // strip 後相当: token_hash URL は unbound。残件 pending だけから確認 UI を再構成する。
+  writePendingAuthDeposit(
+    flow.id,
+    {
+      state: flow.state,
+      code: tokenHash,
+      expiresAtMs: Date.now() + 300_000,
+      awaitingConfirm: true,
+    },
+    storage,
   );
   // strip 後相当: flow のみ
   await expect(
@@ -863,11 +960,6 @@ it("C5: Google start dismisses token_hash so confirmMagicLink does not verifyOtp
   const flow = readAuthFlow(sent.flowId, storage);
   if (flow === null) throw new Error("magic-link flow was not stored");
   const tokenHash = "c".repeat(40);
-  await gateway.completeCallback(
-    new URL(
-      `http://127.0.0.1:5173/auth/callback?flow=${flow.id}&state=${flow.state}&token_hash=${tokenHash}&type=email`,
-    ),
-  );
 
   await gateway.signInWithGoogle("/planner");
   expect(isAuthFlowUserDismissed(sent.flowId, storage)).toBe(true);
