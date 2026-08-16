@@ -749,18 +749,26 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     if (token === undefined || token.length === 0) return;
     startPlannerDraftKeepaliveSave(token, next, revision);
   }, []);
+  // 公開 sticky があるあいだは live revision を進めない（P-R5 / C2 pin）。
+  // persistOnReset は resetToken 専用。live-null 解決の追記 flush は止めない。
+  const holdLiveRevision =
+    userId !== undefined && readPendingGenerationMeta(userId, new Date()) !== null;
   const autosave = useDraftAutosave({
     value,
     enabled: initialized && userId !== undefined,
     baselineRevision,
     resetToken,
     persistOnReset,
+    holdLiveRevision,
     save,
     onConflict,
     onSaved: onDraftSaved,
     saveOnUnload,
   });
   const flushAutosave = autosave.flush;
+  // P-R5: 公開 pin 中の flush 短絡は hydrate 済み live 行を返す（C2 の draftRevision）。
+  const liveDraftRef = useRef<PlannerDraft | null>(null);
+  liveDraftRef.current = draftQuery.data ?? null;
   // P2: flushDraft 自体を単一 flight にする。timeout 後の再 leave や reset flush と
   // 下ナビ leave が重なると、先行 N+1 / 後続 N+2 の cache 連番を競合と誤認する。
   const flushDraftInFlightRef = useRef<Promise<PlannerDraft> | null>(null);
@@ -770,6 +778,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       return existing;
     }
     const flight = (async (): Promise<PlannerDraft> => {
+      // 公開 sticky 中は RPC せず pin した live を返す。C2 再開の draftRevision を壊さない。
+      if (userId !== undefined && readPendingGenerationMeta(userId, new Date()) !== null) {
+        const pinned = liveDraftRef.current;
+        if (pinned !== null) {
+          return pinned;
+        }
+      }
       const saved = await flushAutosave();
       // 保存完了前に始まった古い再取得で revision を逆行させないよう、cache 更新前に停止する。
       await queryClient.cancelQueries({
@@ -886,11 +901,15 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       pendingResetFlushRef.current = false;
     }
     setResetToken((current) => current + 1);
-    // 強制 empty 保存完了前の remount で旧 cache が戻らないよう、入力フィールドだけ空に揃える
-    const key = plannerKeys.draft(userId ?? "missing");
-    const current = queryClient.getQueryData<PlannerDraft | null>(key);
-    if (current !== undefined && current !== null) {
-      queryClient.setQueryData(key, { ...current, ...empty });
+    // 強制 empty 保存完了前の remount で旧 cache が戻らないよう、入力フィールドだけ空に揃える。
+    // 公開 sticky 中は live を書き換えない（P-R5）。cache を empty にすると
+    // flush 短絡が pin した household を空と誤認する。
+    if (persistResetToServer) {
+      const key = plannerKeys.draft(userId ?? "missing");
+      const current = queryClient.getQueryData<PlannerDraft | null>(key);
+      if (current !== undefined && current !== null) {
+        queryClient.setQueryData(key, { ...current, ...empty });
+      }
     }
   }, [attempt.idempotencyKey, autosave.revision, queryClient, userId]);
 

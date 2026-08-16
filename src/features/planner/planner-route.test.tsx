@@ -332,6 +332,7 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
     useDraftAutosave: (input: {
       value: PlannerDraftInput;
       baselineRevision: number;
+      holdLiveRevision?: boolean;
       save(value: PlannerDraftInput, revision: number): Promise<PlannerDraft>;
       saveOnUnload?(value: PlannerDraftInput, revision: number): void;
     }) => {
@@ -350,6 +351,14 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
           // P2: 実 autosave は onConflict 後に DraftRevisionConflictError を再 throw
           if (autosaveFlushMode.mode === "conflict") {
             return Promise.reject(new DraftRevisionConflictError());
+          }
+          // P-R5: 公開 pin 中は mock でも live を進めない（flushDraft 短絡の第二防衛）。
+          if (input.holdLiveRevision === true) {
+            return Promise.resolve({
+              ...draft,
+              ...input.value,
+              revision: input.baselineRevision,
+            });
           }
           return input.save(input.value, input.baselineRevision);
         }),
@@ -2500,6 +2509,113 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
     expect(savePlannerDraftMock).not.toHaveBeenCalled();
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("meal");
+  });
+
+  it("P-R5: 公開 sticky 中の reset 後 leave flush は empty を expected=N で書かない", async () => {
+    // P-R1 は reset 本体だけ止めた。leave の明示 flush は persistable empty を
+    // そのまま書くため、負けタブの draftRevision=N pin が外れる。
+    const user = userEvent.setup();
+    render(<PlannerPage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: attemptKey,
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: attemptKey,
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    await user.click(screen.getByRole("button", { name: "入力をリセット" }));
+    savePlannerDraftMock.mockClear();
+
+    await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+    expect(savePlannerDraftMock).not.toHaveBeenCalled();
+  });
+
+  it("P-R5: 公開 sticky 中の reset 後 settings flush は empty を書かない", async () => {
+    const user = userEvent.setup();
+    render(<PlannerPage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: attemptKey,
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: attemptKey,
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    await user.click(screen.getByRole("button", { name: "入力をリセット" }));
+    savePlannerDraftMock.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "家族設定" }));
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/settings");
+    });
+    expect(savePlannerDraftMock).not.toHaveBeenCalled();
+  });
+
+  it("P-R5: 公開 sticky 中の generate flush は live revision を進めず C2 再開する", async () => {
+    // 公開 pin 中に献立を作る flush が expected=N で書くと同じ lookup miss。
+    // C2 は既存 pending 再開のみ。draftRevision は N のまま。
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: "80000000-0000-4000-8000-000000000099",
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+    savePlannerDraftMock.mockClear();
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(savePlannerDraftMock).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
   });
 
   it("C7: reset does not clear another tab's claimed pending after strip abort", async () => {

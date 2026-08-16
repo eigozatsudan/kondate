@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
 import { DraftRevisionConflictError } from "./planner-api";
-import { useDraftAutosave } from "./use-draft-autosave";
+import { IncompleteDraftSaveError, useDraftAutosave } from "./use-draft-autosave";
 
 const base: PlannerDraftInput = {
   mealType: null,
@@ -608,6 +608,172 @@ it("P-R1: persistOnReset=false の resetToken は empty を強制保存せず lo
   expect(save).not.toHaveBeenCalled();
   expect(result.current.revision).toBe(4);
   expect(result.current.state).toBe("idle");
+});
+
+it("P-R5: holdLiveRevision 中の flush は persistable empty を expected=N で書かない", async () => {
+  // 公開 sticky 中の reset 後 leave/settings/generate flush が empty を書くと
+  // live が N+1 になり、負けタブの pin した draftRevision=N が lookup miss になる。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { rerender, result } = renderHook(
+    ({ value, baselineRevision, resetToken, persistOnReset, holdLiveRevision }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision,
+        resetToken,
+        persistOnReset,
+        holdLiveRevision,
+        save,
+      }),
+    {
+      initialProps: {
+        value: reviewDraft,
+        baselineRevision: 4,
+        resetToken: 0,
+        persistOnReset: true,
+        holdLiveRevision: false,
+      },
+    },
+  );
+
+  const empty = { ...base };
+  rerender({
+    value: empty,
+    baselineRevision: 4,
+    resetToken: 1,
+    persistOnReset: false,
+    holdLiveRevision: true,
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  await act(async () => {
+    // hydrate 後未保存なので lastSaved は無い。RPC せず Incomplete（leave は proceed）。
+    await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
+  });
+
+  expect(save).not.toHaveBeenCalled();
+  expect(result.current.revision).toBe(4);
+});
+
+it("P-R5: holdLiveRevision 中の夕食選択は debounce でも live revision を進めない", async () => {
+  // reset 後 wizard に残って夕食だけ選んでも persistable dirty になる。
+  // 600ms debounce が expected=N で書くと同じ pin 外れになる。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { rerender, result } = renderHook(
+    ({ value, baselineRevision, resetToken, persistOnReset, holdLiveRevision }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision,
+        resetToken,
+        persistOnReset,
+        holdLiveRevision,
+        save,
+      }),
+    {
+      initialProps: {
+        value: reviewDraft,
+        baselineRevision: 4,
+        resetToken: 0,
+        persistOnReset: true,
+        holdLiveRevision: false,
+      },
+    },
+  );
+
+  const empty = { ...base };
+  rerender({
+    value: empty,
+    baselineRevision: 4,
+    resetToken: 1,
+    persistOnReset: false,
+    holdLiveRevision: true,
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  const dinner = { ...empty, mealType: "dinner" as const };
+  rerender({
+    value: dinner,
+    baselineRevision: 4,
+    resetToken: 1,
+    persistOnReset: false,
+    holdLiveRevision: true,
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+
+  expect(save).not.toHaveBeenCalled();
+  expect(result.current.revision).toBe(4);
+});
+
+it("P-R5: holdLiveRevision 中の pagehide は persistable dirty を keepalive しない", async () => {
+  // unload は dirty なら keepalive する。公開 pin 中は live を進めてはならない。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const saveOnUnload = vi.fn();
+  const { rerender } = renderHook(
+    ({ value, baselineRevision, resetToken, persistOnReset, holdLiveRevision }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision,
+        resetToken,
+        persistOnReset,
+        holdLiveRevision,
+        save,
+        saveOnUnload,
+      }),
+    {
+      initialProps: {
+        value: reviewDraft,
+        baselineRevision: 4,
+        resetToken: 0,
+        persistOnReset: true,
+        holdLiveRevision: false,
+      },
+    },
+  );
+
+  const empty = { ...base };
+  rerender({
+    value: empty,
+    baselineRevision: 4,
+    resetToken: 1,
+    persistOnReset: false,
+    holdLiveRevision: true,
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  const dinner = { ...empty, mealType: "dinner" as const };
+  rerender({
+    value: dinner,
+    baselineRevision: 4,
+    resetToken: 1,
+    persistOnReset: false,
+    holdLiveRevision: true,
+  });
+  act(() => {
+    window.dispatchEvent(new Event("pagehide"));
+  });
+
+  expect(saveOnUnload).not.toHaveBeenCalled();
+  expect(save).not.toHaveBeenCalled();
 });
 
 it("P1: flush は reset 強制保存の完了を await し失敗を隠さない", async () => {

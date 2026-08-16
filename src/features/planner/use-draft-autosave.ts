@@ -157,6 +157,7 @@ export function useDraftAutosave({
   baselineRevision,
   resetToken,
   persistOnReset = true,
+  holdLiveRevision = false,
   save,
   onConflict,
   onSaved,
@@ -171,6 +172,12 @@ export function useDraftAutosave({
    * 公開 sticky 中の empty 強制保存や live-null 解決の undelete を避ける（P-R1 / P-R3）。
    */
   persistOnReset?: boolean;
+  /**
+   * true のとき flush / debounce / unload は live 下書きを書かない。
+   * 公開 sticky の draftRevision pin（C2 再開）を N のまま残す（P-R5）。
+   * persistOnReset=false（live-null 解決）とは独立。局所 UI は変えてよい。
+   */
+  holdLiveRevision?: boolean;
   save: (value: PlannerDraftInput, revision: number) => Promise<PlannerDraft>;
   onConflict?: () => void | Promise<void>;
   /** サーバ確定後の cache 同期など。supersede で破棄した書込では呼ばない。 */
@@ -219,6 +226,7 @@ export function useDraftAutosave({
   const onSavedRef = useRef(onSaved);
   const saveOnUnloadRef = useRef(saveOnUnload);
   const persistOnResetRef = useRef(persistOnReset);
+  const holdLiveRevisionRef = useRef(holdLiveRevision);
   /** pagehide と beforeunload が連続しても keepalive は 1 回だけ。 */
   const unloadPersistStartedRef = useRef(false);
   latestRef.current = value;
@@ -229,6 +237,7 @@ export function useDraftAutosave({
   onSavedRef.current = onSaved;
   saveOnUnloadRef.current = saveOnUnload;
   persistOnResetRef.current = persistOnReset;
+  holdLiveRevisionRef.current = holdLiveRevision;
 
   const resetBaseline = useCallback((revision: number): void => {
     revisionRef.current = revision;
@@ -317,6 +326,12 @@ export function useDraftAutosave({
 
   const enqueue = useCallback(
     (next: PlannerDraftInput): Promise<PlannerDraft> => {
+      // 公開 sticky の pin を進める live 書込を止める。局所 UI / lastPersisted は変えてよい。
+      if (holdLiveRevisionRef.current) {
+        const lastSaved = lastSavedDraftRef.current;
+        if (lastSaved !== null) return Promise.resolve(lastSaved);
+        return Promise.reject(new IncompleteDraftSaveError());
+      }
       {
         const existingConflict = peekDraftConflict(conflictRef);
         if (existingConflict !== null) {
@@ -469,6 +484,12 @@ export function useDraftAutosave({
       pendingDebounceRef.current = false;
       return undefined;
     }
+    if (holdLiveRevision) {
+      // dirty でも RPC しない。enable 初回扱いにすると hold 解除後の追記が消える。
+      wasEnabledRef.current = true;
+      pendingDebounceRef.current = false;
+      return undefined;
+    }
     if (!wasEnabledRef.current) {
       wasEnabledRef.current = true;
       baselineSerializedRef.current = fingerprint;
@@ -489,7 +510,7 @@ export function useDraftAutosave({
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = null;
     };
-  }, [enabled, enqueue, fingerprint]);
+  }, [enabled, enqueue, fingerprint, holdLiveRevision]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -498,6 +519,7 @@ export function useDraftAutosave({
       // debounce 待ちだけでなく、error 後などで dirty のまま残った編集も離脱時に再試行する
       const dirty = latestFingerprintRef.current !== baselineSerializedRef.current;
       if (!pendingDebounceRef.current && !dirty) return;
+      if (holdLiveRevisionRef.current) return;
       pendingDebounceRef.current = false;
       if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -512,6 +534,7 @@ export function useDraftAutosave({
     const persistOnDocumentUnload = (): void => {
       if (unloadPersistStartedRef.current) return;
       if (!enabledRef.current) return;
+      if (holdLiveRevisionRef.current) return;
       const persist = saveOnUnloadRef.current;
       if (persist === undefined) return;
       if (peekDraftConflict(conflictRef) !== null) return;
@@ -550,6 +573,12 @@ export function useDraftAutosave({
       timerRef.current = null;
     }
     pendingDebounceRef.current = false;
+    // 公開 pin 中は persistable でも RPC しない。lastSaved があれば C2 再開用に返す。
+    if (holdLiveRevisionRef.current) {
+      const lastSaved = lastSavedDraftRef.current;
+      if (lastSaved !== null) return Promise.resolve(lastSaved);
+      return Promise.reject(new IncompleteDraftSaveError());
+    }
     // P1: reset 強制保存が走っている間はそれを await し、完了/失敗を呼び出し元へ返す。
     // 成功後にまだ dirty（reset 直後の追記編集など）なら通常 enqueue で追従する。
     const pending = pendingForceSaveRef.current;
