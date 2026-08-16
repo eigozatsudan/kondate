@@ -546,6 +546,59 @@ it("P4: live 下書きが null の競合解決は rev=0 force save / undelete �
   expect(savePlannerDraftMock.mock.calls.every((call) => call[3] !== 0)).toBe(true);
 });
 
+it("P-R3: live-null 解決後は conflict を落とし、追記 flush を無言拒否しない", async () => {
+  // chrome だけ閉じると conflictRef が残り、enqueue が RPC 前に同じ conflict を reject する。
+  // persistOnReset=false の resetToken で conflict だけ落とし、rev=0 undelete はしない。
+  getPlannerDraftMock.mockResolvedValue(null);
+  savePlannerDraftMock
+    .mockRejectedValueOnce(new DraftRevisionConflictError())
+    .mockImplementation(
+      (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
+        Promise.resolve({ ...revisionOne, ...next, revision: revision + 1 }),
+    );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  renderRetainedDraft(queryClient);
+  await openReviewOptionalDetails();
+
+  fireEvent.change(screen.getByLabelText("自由メモ"), { target: { value: "Aの入力" } });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "最新の下書きを読み込む" }));
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+  expect(savePlannerDraftMock.mock.calls.every((call) => call[3] !== 0)).toBe(true);
+  expect(
+    screen.queryByRole("heading", { name: "下書きが別の画面で更新されました" }),
+  ).not.toBeInTheDocument();
+
+  // empty は persistable。local baseline が揃っていれば 600ms では書かない。
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByRole("radio", { name: "夕食" }));
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(savePlannerDraftMock).toHaveBeenCalledTimes(2);
+  expect(savePlannerDraftMock.mock.calls[1]?.[2]).toEqual(
+    expect.objectContaining({ mealType: "dinner" }),
+  );
+  expect(savePlannerDraftMock.mock.calls[1]?.[3]).toBe(1);
+});
+
 it("P2: timeout 後の再 leave は進行中 flush に join し自タブ連番を競合にしない", async () => {
   // flushDraft に排他が無いと、timeout 後の再 leave が N+2 を cache に書いたあと
   // 先行 N+1 の revision 比較が自タブ連番を競合と誤認する。

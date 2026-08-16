@@ -2433,6 +2433,8 @@ describe("PlannerRoutePage", () => {
     });
     await user.click(screen.getByRole("button", { name: "入力をリセット" }));
     expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalledTimes(1);
+    // 未公開の自 key は従来どおり empty をサーバへ揃える（P-R1 の対照）
+    expect(savePlannerDraftMock).toHaveBeenCalled();
   });
 
   it("P2: 公開済み同一 key の sticky は reset しても共有 pending を消さない", async () => {
@@ -2464,6 +2466,40 @@ describe("PlannerRoutePage", () => {
     });
     await user.click(screen.getByRole("button", { name: "入力をリセット" }));
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+  });
+
+  it("P-R1: 公開済み同一 key の reset は empty をサーバへ強制保存しない", async () => {
+    // empty は persistable。force-save すると live revision が N+1 になり、
+    // 負けタブの pin した draftRevision=N が lookup miss → draft_not_found になる。
+    const user = userEvent.setup();
+    render(<PlannerPage />);
+    const attemptKey = screen.getByLabelText("attempt key").textContent;
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: attemptKey,
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: attemptKey,
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    savePlannerDraftMock.mockClear();
+    await user.click(screen.getByRole("button", { name: "入力をリセット" }));
+    expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
+    expect(savePlannerDraftMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("meal");
   });
 
   it("C7: reset does not clear another tab's claimed pending after strip abort", async () => {

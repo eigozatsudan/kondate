@@ -407,6 +407,79 @@ it("競合後は baselineRevision だけ変わっても競合を解除せず保�
   expect(save).toHaveBeenCalledTimes(1);
 });
 
+it("P-R3: persistOnReset=false の resetToken は conflictRef を落とし flush を無言拒否しない", async () => {
+  // live-null 解決は undelete しないが、古い conflict のまま enqueue を reject すると
+  // generate / leave flush が chrome も submissionError も出さず止まる。
+  vi.useFakeTimers();
+  const conflict = new DraftRevisionConflictError();
+  const stale = { ...reviewDraft, memo: "Aの入力" };
+  const empty = { ...base };
+  const after = { ...reviewDraft, mealType: "lunch" as const };
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return Promise.reject(conflict);
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const { rerender, result } = renderHook(
+    ({ value, baselineRevision, resetToken, persistOnReset }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision,
+        resetToken,
+        persistOnReset,
+        save,
+      }),
+    {
+      initialProps: {
+        value: reviewDraft,
+        baselineRevision: 1,
+        resetToken: 0,
+        persistOnReset: true,
+      },
+    },
+  );
+
+  rerender({
+    value: stale,
+    baselineRevision: 1,
+    resetToken: 0,
+    persistOnReset: true,
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(result.current.state).toBe("error");
+  expect(save).toHaveBeenCalledTimes(1);
+
+  rerender({
+    value: empty,
+    baselineRevision: 1,
+    resetToken: 1,
+    persistOnReset: false,
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(result.current.state).toBe("idle");
+
+  rerender({
+    value: after,
+    baselineRevision: 1,
+    resetToken: 1,
+    persistOnReset: false,
+  });
+  await act(async () => {
+    await expect(result.current.flush()).resolves.toMatchObject({
+      mealType: "lunch",
+      revision: 2,
+    });
+  });
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(2, after, 1);
+});
+
 it("明示 reset は reset 前の保存継続を無効化し reset 後の編集だけを新 revision で保存する", async () => {
   vi.useFakeTimers();
   let rejectFirst: ((error: DraftRevisionConflictError) => void) | undefined;
@@ -495,6 +568,46 @@ it("P1: resetToken で空下書きを強制保存しサーバと揃える", asyn
   expect(save).toHaveBeenNthCalledWith(2, empty, 2);
   expect(result.current.revision).toBe(3);
   expect(result.current.state).toBe("saved");
+});
+
+it("P-R1: persistOnReset=false の resetToken は empty を強制保存せず local baseline だけ揃える", async () => {
+  // 公開 sticky がある reset は live revision を進めてはならない。
+  // empty は persistable なので、local baseline を揃えないと debounce が 600ms 後に書いてしまう。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { rerender, result } = renderHook(
+    ({ value, baselineRevision, resetToken, persistOnReset }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision,
+        resetToken,
+        persistOnReset,
+        save,
+      }),
+    {
+      initialProps: {
+        value: reviewDraft,
+        baselineRevision: 4,
+        resetToken: 0,
+        persistOnReset: true,
+      },
+    },
+  );
+
+  const empty = { ...base };
+  rerender({ value: empty, baselineRevision: 4, resetToken: 1, persistOnReset: false });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+
+  expect(save).not.toHaveBeenCalled();
+  expect(result.current.revision).toBe(4);
+  expect(result.current.state).toBe("idle");
 });
 
 it("P1: flush は reset 強制保存の完了を await し失敗を隠さない", async () => {
@@ -984,14 +1097,76 @@ it("P3: household 完成形から incomplete idea への unload は中立形を 
   expect(save).not.toHaveBeenCalled();
 });
 
-it("P2: persistable でない途中下書きは document unload で keepalive しない", async () => {
+it("P-R4: 中立 persistable のあと meal だけ変えた incomplete も unload で中立形を送る", async () => {
+  // debounce は shouldWriteAudienceNeutral 第 2 枝で書く。unload が hasPersistedAudience
+  // だけ見ると、中立保存後の meal 変更が 600ms 以内の reload で落ちる。
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>
     Promise.resolve(saved(value, revision + 1)),
   );
   const saveOnUnload = vi.fn();
+  const household: PlannerDraftInput = { ...reviewDraft };
   const incompleteIdea: PlannerDraftInput = {
-    ...reviewDraft,
+    ...household,
+    targetMode: "idea",
+    targetMemberIds: [],
+    servings: null,
+  };
+  const neutralizedDinner: PlannerDraftInput = {
+    ...incompleteIdea,
+    targetMode: null,
+    targetMemberIds: [],
+    servings: null,
+  };
+  const lunchIdea: PlannerDraftInput = { ...incompleteIdea, mealType: "lunch" };
+  const neutralizedLunch: PlannerDraftInput = { ...neutralizedDinner, mealType: "lunch" };
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 3,
+        resetToken: 0,
+        save,
+        saveOnUnload,
+      }),
+    { initialProps: { value: household } },
+  );
+
+  rerender({ value: incompleteIdea });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenNthCalledWith(1, neutralizedDinner, 3);
+
+  rerender({ value: lunchIdea });
+  await act(async () => vi.advanceTimersByTimeAsync(100));
+  expect(save).toHaveBeenCalledTimes(1);
+
+  act(() => {
+    window.dispatchEvent(new Event("pagehide"));
+  });
+
+  expect(saveOnUnload).toHaveBeenCalledTimes(1);
+  expect(saveOnUnload).toHaveBeenCalledWith(neutralizedLunch, 4);
+  expect(save).toHaveBeenCalledTimes(1);
+});
+
+it("P2: persistable でない途中下書きは document unload で keepalive しない", async () => {
+  // 実 UI は meal→cuisine の中立 persistable から idea+servings=null へ切る。
+  // 中立形が lastPersisted と同じなので debounce も RPC しない。unload も同じ。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const saveOnUnload = vi.fn();
+  const persistableMeal: PlannerDraftInput = {
+    ...base,
+    mealType: "dinner",
+    mainIngredients: ["鶏肉"],
+    cuisineGenre: "japanese",
+  };
+  const incompleteIdea: PlannerDraftInput = {
+    ...persistableMeal,
     targetMode: "idea",
     targetMemberIds: [],
     servings: null,
@@ -1006,7 +1181,7 @@ it("P2: persistable でない途中下書きは document unload で keepalive �
         save,
         saveOnUnload,
       }),
-    { initialProps: { value: base } },
+    { initialProps: { value: persistableMeal } },
   );
 
   rerender({ value: incompleteIdea });

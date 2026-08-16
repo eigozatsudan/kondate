@@ -156,6 +156,7 @@ export function useDraftAutosave({
   enabled,
   baselineRevision,
   resetToken,
+  persistOnReset = true,
   save,
   onConflict,
   onSaved,
@@ -165,13 +166,18 @@ export function useDraftAutosave({
   enabled: boolean;
   baselineRevision: number;
   resetToken: number;
+  /**
+   * false のとき resetToken は conflict 解除と local baseline 揃えだけ行う。
+   * 公開 sticky 中の empty 強制保存や live-null 解決の undelete を避ける（P-R1 / P-R3）。
+   */
+  persistOnReset?: boolean;
   save: (value: PlannerDraftInput, revision: number) => Promise<PlannerDraft>;
   onConflict?: () => void | Promise<void>;
   /** サーバ確定後の cache 同期など。supersede で破棄した書込では呼ばない。 */
   onSaved?: (draft: PlannerDraft) => void;
   /**
-   * persistable dirty、または household 完成形からの audience 中立 strip が
-   * 必要な incomplete の document unload（pagehide / beforeunload）で同期開始する口。
+   * persistable dirty、または shouldWriteAudienceNeutral が真の incomplete を
+   * document unload（pagehide / beforeunload）で同期開始する口。
    * useBlocker は unload を見ない。通常 enqueue は keepalive 無しで中断され得る。
    * 呼び出し側は keepalive 可能な経路を渡す。失敗は可視化しない（best-effort）。
    */
@@ -212,6 +218,7 @@ export function useDraftAutosave({
   const pendingForceSaveRef = useRef<PendingForceSave | null>(null);
   const onSavedRef = useRef(onSaved);
   const saveOnUnloadRef = useRef(saveOnUnload);
+  const persistOnResetRef = useRef(persistOnReset);
   /** pagehide と beforeunload が連続しても keepalive は 1 回だけ。 */
   const unloadPersistStartedRef = useRef(false);
   latestRef.current = value;
@@ -221,6 +228,7 @@ export function useDraftAutosave({
   enabledRef.current = enabled;
   onSavedRef.current = onSaved;
   saveOnUnloadRef.current = saveOnUnload;
+  persistOnResetRef.current = persistOnReset;
 
   const resetBaseline = useCallback((revision: number): void => {
     revisionRef.current = revision;
@@ -267,6 +275,20 @@ export function useDraftAutosave({
         initial,
         lastPersistedInputRef.current,
       );
+      latestFingerprintRef.current = baselineSerializedRef.current;
+      return;
+    }
+
+    // 公開 sticky / live-null 解決: conflict は落とすが empty をサーバへ書かない。
+    // persistable empty を dirty のままにすると debounce が 600ms 後に revision を進める。
+    if (!persistOnResetRef.current) {
+      const local = latestRef.current;
+      if (isPersistableDraft(local)) {
+        lastPersistedInputRef.current = local;
+      } else {
+        lastPersistedInputRef.current = audienceNeutralPersistable(local);
+      }
+      baselineSerializedRef.current = persistenceFingerprint(local, lastPersistedInputRef.current);
       latestFingerprintRef.current = baselineSerializedRef.current;
       return;
     }
@@ -496,12 +518,12 @@ export function useDraftAutosave({
       const dirty = latestFingerprintRef.current !== baselineSerializedRef.current;
       if (!pendingDebounceRef.current && !dirty) return;
       const latest = latestRef.current;
-      // persistable dirty、または household 完成形からの audience 中立 strip。
+      // persistable dirty、または debounce/flush と同じ audience 中立 strip。
       // 初回の途中 idea（audience 無しの persistable から servings=null）は RPC 不能なので送らない。
       let toPersist: PlannerDraftInput | null = null;
       if (isPersistableDraft(latest)) {
         toPersist = latest;
-      } else if (hasPersistedAudience(lastPersistedInputRef.current)) {
+      } else if (shouldWriteAudienceNeutral(latest, lastPersistedInputRef.current)) {
         toPersist = audienceNeutralPersistable(latest);
       }
       if (toPersist === null) return;

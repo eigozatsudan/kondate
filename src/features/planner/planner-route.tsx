@@ -473,6 +473,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const [wizardOpen, setWizardOpen] = useState(false);
   const [baselineRevision, setBaselineRevision] = useState(0);
   const [resetToken, setResetToken] = useState(0);
+  // 公開 sticky / live-null 解決では empty をサーバへ書かない（P-R1 / P-R3）。
+  const [persistOnReset, setPersistOnReset] = useState(true);
   const [latestConflictDraft, setLatestConflictDraft] = useState<PlannerDraft | null | undefined>(
     undefined,
   );
@@ -752,6 +754,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     enabled: initialized && userId !== undefined,
     baselineRevision,
     resetToken,
+    persistOnReset,
     save,
     onConflict,
     onSaved: onDraftSaved,
@@ -815,9 +818,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     setStep(firstIncompletePlannerStep(sanitized));
     setWizardOpen(true);
     // 生成成功後の soft-delete は RLS で live が null。empty を表示するだけ。
-    // baseline=0 + resetToken は save_generation_draft が deleted 行を undelete する。
+    // persistOnReset=false で resetToken を進め conflictRef を落とす。
+    // force save / baseline=0 は save_generation_draft が deleted 行を undelete する。
     if (latestConflictDraft !== null) {
+      setPersistOnReset(true);
       setBaselineRevision(latestConflictDraft.revision);
+      setResetToken((current) => current + 1);
+    } else {
+      setPersistOnReset(false);
       setResetToken((current) => current + 1);
     }
     setLatestConflictDraft(undefined);
@@ -838,14 +846,21 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // C7: 共有 sticky のうち、未公開の自 key だけを消す。
     // 公開済み claim+meta（同一 key 含む）は、負けタブが /generation?resumed=1 済みだと
     // 作成 ID を読むため残す。claim 負け後の別 key も残す。
+    // P-R1: 公開 sticky 中に empty を force-save すると live revision が N+1 になり、
+    // 負けタブの pin した draftRevision=N が lookup miss → draft_not_found になる。
+    let persistResetToServer = true;
     if (userId !== undefined) {
       const now = new Date();
       const pending = readPendingGeneration(userId, now);
+      const published = readPendingGenerationMeta(userId, now);
       if (pending !== null && pending.request.idempotencyKey === attempt.idempotencyKey) {
-        const published = readPendingGenerationMeta(userId, now);
         if (published === null) {
           clearPendingGeneration();
         }
+      }
+      // 同一 key 以外でも、公開 sticky がある間は live revision を進めない。
+      if (published !== null) {
+        persistResetToServer = false;
       }
     }
     const empty = { ...emptyDraft };
@@ -862,9 +877,14 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // hydrate 時の baseline ではなく、autosave が把握している現 revision を渡す。
     // 古い baseline のまま resetToken すると revisionRef が巻き戻り conflict になる。
     setBaselineRevision(autosave.revision);
-    // P1: 強制 empty の完了を後続 effect が await する（fire-and-forget 握りつぶし禁止）
-    resetFlushGenerationRef.current += 1;
-    pendingResetFlushRef.current = true;
+    setPersistOnReset(persistResetToServer);
+    if (persistResetToServer) {
+      // P1: 強制 empty の完了を後続 effect が await する（fire-and-forget 握りつぶし禁止）
+      resetFlushGenerationRef.current += 1;
+      pendingResetFlushRef.current = true;
+    } else {
+      pendingResetFlushRef.current = false;
+    }
     setResetToken((current) => current + 1);
     // 強制 empty 保存完了前の remount で旧 cache が戻らないよう、入力フィールドだけ空に揃える
     const key = plannerKeys.draft(userId ?? "missing");
