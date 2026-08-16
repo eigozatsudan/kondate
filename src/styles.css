@@ -3304,3 +3304,13 @@ h1.ui-page-header__title {
   font-weight: 600;
   color: var(--text);
 }
+
+/*
+ * 公開 LP の静的コピーは JS 利用者に見せない。
+ * エントリ CSS に置く（LP CSS は遅延 chunk）。
+ * HTML 側には hidden を書かない（クローラが本文を読むため）。
+ */
+html.kondate-js #kondate-public-lp {
+  display: none;
+}
+
