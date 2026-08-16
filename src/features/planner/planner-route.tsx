@@ -770,6 +770,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     onConflict,
     onSaved: onDraftSaved,
     saveOnUnload,
+    // 生成後 null は種を置かず empty / rev=0 leave の undelete を防ぐ。
+    hydratedDraft: draftQuery.data ?? null,
   });
   const flushAutosave = autosave.flush;
   // P-R5: 公開 pin 中の flush 短絡は hydrate 済み live 行を返す（C2 の draftRevision）。

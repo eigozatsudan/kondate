@@ -130,8 +130,9 @@ it("サーバー baseline の再取得は保存せず、その後のユーザー
   expect(save).toHaveBeenCalledWith(edited, 2);
 });
 
-it("hydrate 由来の id/revision が混ざった完了 idea 下書きでも flush できる", async () => {
-  // sanitize 漏れや cache 直載せで row メタが state に混ざっても、入力整合だけ見て保存する
+it("hydrate 由来の id/revision が混ざった完了 idea 下書きでも dirty flush できる", async () => {
+  // sanitize 漏れや cache 直載せで row メタが state に混ざっても、入力整合だけ見て保存する。
+  // 無編集 flush は fingerprint === baseline で RPC しない（P1）。余剰キーでも dirty なら書く。
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>
     Promise.resolve(saved(value, revision + 1)),
@@ -150,16 +151,25 @@ it("hydrate 由来の id/revision が混ざった完了 idea 下書きでも flu
     createdAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-01T00:00:00.000Z",
   } as PlannerDraftInput;
-  const { result } = renderHook(() =>
-    useDraftAutosave({
-      value: hydratedCompleteIdea,
-      enabled: true,
-      baselineRevision: 1,
-      resetToken: 0,
-      save,
-    }),
+  const { rerender, result } = renderHook(
+    ({ value }: { value: PlannerDraftInput }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 1,
+        resetToken: 0,
+        save,
+      }),
+    { initialProps: { value: hydratedCompleteIdea } },
   );
 
+  await act(async () => {
+    await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
+  });
+  expect(save).not.toHaveBeenCalled();
+
+  const edited = { ...hydratedCompleteIdea, memo: "余剰キーでも dirty は書く" };
+  rerender({ value: edited });
   let row: PlannerDraft | undefined;
   await act(async () => {
     row = await result.current.flush();
@@ -167,6 +177,110 @@ it("hydrate 由来の id/revision が混ざった完了 idea 下書きでも flu
   expect(save).toHaveBeenCalledTimes(1);
   expect(row?.revision).toBe(2);
   expect(result.current.state).toBe("saved");
+});
+
+it("P1: hydratedDraft がある clean persistable flush は RPC せずその行を返す", async () => {
+  // generate / emergency は id/revision が要る。hydrate 種があれば undelete せず返す。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const row = saved(reviewDraft, 4);
+  const { result } = renderHook(() =>
+    useDraftAutosave({
+      value: reviewDraft,
+      enabled: true,
+      baselineRevision: 4,
+      resetToken: 0,
+      save,
+      hydratedDraft: row,
+    }),
+  );
+
+  let flushed: PlannerDraft | undefined;
+  await act(async () => {
+    flushed = await result.current.flush();
+  });
+  expect(save).not.toHaveBeenCalled();
+  expect(flushed).toEqual(row);
+  expect(result.current.revision).toBe(4);
+});
+
+it("P1: persistable でも fingerprint === baseline なら flush は save しない", async () => {
+  // debounce と同型。無編集の persistable flush が revision を進めると他タブが conflict する。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { result } = renderHook(() =>
+    useDraftAutosave({
+      value: reviewDraft,
+      enabled: true,
+      baselineRevision: 4,
+      resetToken: 0,
+      save,
+    }),
+  );
+
+  await act(async () => {
+    await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
+  });
+  expect(save).not.toHaveBeenCalled();
+  expect(result.current.revision).toBe(4);
+  expect(result.current.state).toBe("idle");
+});
+
+it("P1: 生成後 empty / rev=0 hydrate の flush は undelete しない", async () => {
+  // new_menu 成功後は cache null + sanitize(null) + baseline=0。
+  // empty は persistable。dirty を見ない flush は save(empty, 0) になり
+  // save_generation_draft が消費済み行を undelete する。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { result } = renderHook(() =>
+    useDraftAutosave({
+      value: base,
+      enabled: true,
+      baselineRevision: 0,
+      resetToken: 0,
+      save,
+    }),
+  );
+
+  await act(async () => {
+    await expect(result.current.flush()).rejects.toBeInstanceOf(IncompleteDraftSaveError);
+  });
+  expect(save).not.toHaveBeenCalled();
+  expect(result.current.revision).toBe(0);
+});
+
+it("P1: 保存成功後の clean flush は lastSaved を返し再 RPC しない", async () => {
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 4, resetToken: 0, save }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  const edited = { ...reviewDraft, memo: "野菜多め" };
+  rerender({ value: edited });
+  let first: PlannerDraft | undefined;
+  await act(async () => {
+    first = await result.current.flush();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(first?.revision).toBe(5);
+
+  let second: PlannerDraft | undefined;
+  await act(async () => {
+    second = await result.current.flush();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(second).toEqual(first);
 });
 
 it("idea 選択直後の servings=null は DB 不能のため保存せず error にもしない", async () => {

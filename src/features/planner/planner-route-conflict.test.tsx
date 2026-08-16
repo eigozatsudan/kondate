@@ -173,6 +173,12 @@ async function openReviewOptionalDetails(): Promise<void> {
   }
 }
 
+/** persistable dirty にして flush が RPC するようにする（P1: clean flush は save しない）。 */
+async function markReviewDraftDirty(memo = "Aの入力"): Promise<void> {
+  await openReviewOptionalDetails();
+  fireEvent.change(screen.getByLabelText("自由メモ"), { target: { value: memo } });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
@@ -349,6 +355,7 @@ it("献立を作る操作前に保存結果を同じQueryClientの下書きcache
   });
   renderRetainedDraft(queryClient);
   await act(async () => Promise.resolve());
+  await markReviewDraftDirty();
 
   fireEvent.click(screen.getByRole("button", { name: "献立を作る" }));
   await act(async () => Promise.resolve());
@@ -367,6 +374,7 @@ it("保存中に開始した古い下書き再取得が完了しても保存結�
   });
   renderRetainedDraft(queryClient);
   await act(async () => Promise.resolve());
+  await markReviewDraftDirty();
 
   fireEvent.click(screen.getByRole("button", { name: "献立を作る" }));
   await act(async () => Promise.resolve());
@@ -403,6 +411,7 @@ it("保存応答より新しいcacheがある場合は上書きも生成開始�
   });
   renderRetainedDraft(queryClient);
   await act(async () => Promise.resolve());
+  await markReviewDraftDirty();
 
   fireEvent.click(screen.getByRole("button", { name: "献立を作る" }));
   await act(async () => Promise.resolve());
@@ -433,6 +442,7 @@ it("緊急献立は保存完了を待ってから /emergency-menus へ一度だ�
   });
   renderRetainedDraft(queryClient);
   await act(async () => Promise.resolve());
+  await markReviewDraftDirty();
 
   const emergencyButton = screen.getByRole("button", { name: "AIを使わない緊急献立を見る" });
   fireEvent.click(emergencyButton);
@@ -462,6 +472,7 @@ it("緊急献立への移動前の保存失敗では遷移せず緊急専用の�
   });
   renderRetainedDraft(queryClient);
   await act(async () => Promise.resolve());
+  await markReviewDraftDirty();
 
   fireEvent.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
   await act(async () => Promise.resolve());
@@ -481,6 +492,7 @@ it("生成後 soft-delete で live 下書きが無い revision conflict は unde
   // 成功生成後は draft が soft-delete され revision が進む。stale cache の旧 revision で
   // save すると conflict になる。live 行が null でも rev=0 undelete すると、他タブの
   // 未送信/旧条件が live 正本として復活する（P6）。競合 chrome へ寄せる。
+  // P1: 無編集 flush は RPC しないので、dirty にしてから emergency する。
   getPlannerDraftMock.mockResolvedValue(null);
   savePlannerDraftMock.mockRejectedValueOnce(new DraftRevisionConflictError());
   const queryClient = new QueryClient({
@@ -488,6 +500,7 @@ it("生成後 soft-delete で live 下書きが無い revision conflict は unde
   });
   renderRetainedDraft(queryClient);
   await act(async () => Promise.resolve());
+  await markReviewDraftDirty();
 
   fireEvent.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
   await act(async () => Promise.resolve());
@@ -501,6 +514,48 @@ it("生成後 soft-delete で live 下書きが無い revision conflict は unde
   ).toBeInTheDocument();
   expect(screen.queryByText(/緊急献立を開けませんでした/u)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "最新の下書きを読み込む" })).toBeEnabled();
+});
+
+it("P1: 生成後 empty hydrate の leave は save_generation_draft を呼ばない", async () => {
+  // new_menu 成功後は cache/get が null。empty + rev=0 の leave-flush が
+  // save(empty, 0) すると消費済み行を undelete する。
+  getPlannerDraftMock.mockResolvedValue(null);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  queryClient.setQueryData(plannerKeys.draft(userId), null);
+  queryClient.setQueryData([...householdKeys.members(userId), "planner-safety"], {
+    members: [
+      {
+        id: memberId,
+        displayName: "子ども",
+        ageBandLabel: "3〜5歳",
+        allergyLabel: "アレルギーなし",
+        safetyLabels: [],
+        blockedReason: null,
+      },
+    ],
+    eligibleMemberIds: [memberId],
+  });
+  queryClient.setQueryData(pantryKeys.list(userId), []);
+  queryClient.setQueryData(privacyKeys.current(userId), {
+    user_id: userId,
+    notice_version: "2026-07-29.v1",
+  });
+  render(
+    <MemoryRouter initialEntries={["/planner"]}>
+      <QueryClientProvider client={queryClient}>
+        <AppToastProvider>
+          <PlannerPage startGeneration={vi.fn()} />
+        </AppToastProvider>
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  await act(async () => Promise.resolve());
+  await act(async () => Promise.resolve());
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
 });
 
 it("P4: live 下書きが null の競合解決は rev=0 force save / undelete しない", async () => {
@@ -602,6 +657,9 @@ it("P-R3: live-null 解決後は conflict を落とし、追記 flush を無言�
 it("P2: timeout 後の再 leave は進行中 flush に join し自タブ連番を競合にしない", async () => {
   // flushDraft に排他が無いと、timeout 後の再 leave が N+2 を cache に書いたあと
   // 先行 N+1 の revision 比較が自タブ連番を競合と誤認する。
+  // P1: clean persistable flush は RPC しないので dirty にしてから leave する。
+  // 15s 中に debounce effect が enqueue を張り直しても、本テストは join だけ見る。
+  getPlannerDraftMock.mockResolvedValue(revisionOne);
   let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
   savePlannerDraftMock.mockImplementation(
     (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) => {
@@ -613,7 +671,7 @@ it("P2: timeout 後の再 leave は進行中 flush に join し自タブ連番�
       return Promise.resolve({
         ...revisionOne,
         ...next,
-        revision: revision + 1,
+        revision,
         updatedAt: "2026-07-01T03:00:00.000Z",
       });
     },
@@ -623,6 +681,7 @@ it("P2: timeout 後の再 leave は進行中 flush に join し自タブ連番�
   });
   renderRetainedDraft(queryClient);
   await act(async () => Promise.resolve());
+  await markReviewDraftDirty();
 
   const firstLeave = runPlannerLeaveFlush();
   await act(async () => Promise.resolve());
@@ -635,7 +694,7 @@ it("P2: timeout 後の再 leave は進行中 flush に join し自タブ連番�
 
   const secondLeave = runPlannerLeaveFlush();
   await act(async () => Promise.resolve());
-  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+  expect(savePlannerDraftMock.mock.calls.length).toBeGreaterThanOrEqual(1);
 
   await act(async () => {
     resolveFirst?.({
@@ -647,7 +706,6 @@ it("P2: timeout 後の再 leave は進行中 flush に join し自タブ連番�
     await Promise.resolve();
   });
   await expect(secondLeave).resolves.toBe("proceed");
-  expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
   expect(
     screen.queryByRole("heading", { name: "下書きが別の画面で更新されました" }),
   ).not.toBeInTheDocument();

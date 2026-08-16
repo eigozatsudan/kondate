@@ -1552,6 +1552,22 @@ it("P9: pendingDisplayReady 前の leave flush は空下書きを正本にしな
   expect(savePlannerDraftMock).not.toHaveBeenCalled();
 });
 
+it("P1: 生成後 empty / rev=0 hydrate の leave は undelete しない", async () => {
+  // new_menu 成功後は draft cache null。init は empty + baseline=0。
+  // 実 flush は persistable でも fingerprint === baseline なら Incomplete（RPC しない）。
+  // leave は Incomplete を proceed し、save(empty, 0) の undelete に落とさない。
+  queryState.draft = null;
+  pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+  autosaveFlushMode.mode = "incomplete";
+  render(<PlannerRoutePage />);
+  await vi.waitFor(() => {
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeInTheDocument();
+  });
+
+  await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
+  expect(savePlannerDraftMock).not.toHaveBeenCalled();
+});
+
 it("C6: leave flush timeout は通信失敗と同系統の理由を出す", async () => {
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);

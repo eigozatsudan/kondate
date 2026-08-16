@@ -56,8 +56,8 @@ function peekDraftConflict(ref: {
   return ref.current;
 }
 
-function isPersistableDraft(value: PlannerDraftInput): boolean {
-  return plannerDraftInputSchema.safeParse({
+function toDraftInputFields(value: PlannerDraftInput | PlannerDraft): PlannerDraftInput {
+  return {
     mealType: value.mealType,
     mainIngredients: value.mainIngredients,
     cuisineGenre: value.cuisineGenre,
@@ -70,7 +70,26 @@ function isPersistableDraft(value: PlannerDraftInput): boolean {
     avoidIngredients: value.avoidIngredients,
     memo: value.memo,
     pantrySelections: value.pantrySelections,
-  }).success;
+  };
+}
+
+function isPersistableDraft(value: PlannerDraftInput): boolean {
+  return plannerDraftInputSchema.safeParse(toDraftInputFields(value)).success;
+}
+
+/**
+ * flush が RPC せず返す lastSaved が、現行 persistable と同一入力か。
+ * persistOnReset=false 後の empty に旧 complete を返すと cache へ undelete 相当を書く。
+ */
+function lastSavedMatchesLatest(
+  lastSaved: PlannerDraft,
+  latest: PlannerDraftInput,
+  lastPersisted: PlannerDraftInput | null,
+): boolean {
+  return (
+    persistenceFingerprint(toDraftInputFields(lastSaved), lastPersisted) ===
+    persistenceFingerprint(toDraftInputFields(latest), lastPersisted)
+  );
 }
 
 /**
@@ -163,6 +182,7 @@ export function useDraftAutosave({
   onConflict,
   onSaved,
   saveOnUnload,
+  hydratedDraft = null,
 }: {
   value: PlannerDraftInput;
   enabled: boolean;
@@ -196,6 +216,12 @@ export function useDraftAutosave({
    * 呼び出し側は keepalive 可能な経路を渡す。失敗は可視化しない（best-effort）。
    */
   saveOnUnload?: (value: PlannerDraftInput, revision: number) => void;
+  /**
+   * hydrate 済み live 行。fingerprint === baseline の flush が RPC しないとき
+   * generate / emergency へ id/revision を返す（lastSaved の種）。
+   * 生成成功後の null は種を置かず、empty / rev=0 leave の undelete を防ぐ。
+   */
+  hydratedDraft?: PlannerDraft | null;
 }): DraftAutosaveController {
   const [state, setState] = useState<DraftSaveState>("idle");
   const [savedRevision, setSavedRevision] = useState(baselineRevision);
@@ -235,6 +261,7 @@ export function useDraftAutosave({
   const persistOnResetRef = useRef(persistOnReset);
   const holdLiveRevisionRef = useRef(holdLiveRevision);
   const shouldHoldLiveRevisionRef = useRef(shouldHoldLiveRevision);
+  const hydratedDraftRef = useRef(hydratedDraft);
   /** pagehide と beforeunload が連続しても keepalive は 1 回だけ。 */
   const unloadPersistStartedRef = useRef(false);
   latestRef.current = value;
@@ -247,6 +274,7 @@ export function useDraftAutosave({
   persistOnResetRef.current = persistOnReset;
   holdLiveRevisionRef.current = holdLiveRevision;
   shouldHoldLiveRevisionRef.current = shouldHoldLiveRevision;
+  hydratedDraftRef.current = hydratedDraft;
 
   const resetBaseline = useCallback((revision: number): void => {
     revisionRef.current = revision;
@@ -294,6 +322,10 @@ export function useDraftAutosave({
         lastPersistedInputRef.current,
       );
       latestFingerprintRef.current = baselineSerializedRef.current;
+      // live 行があれば clean flush が id/rev を返せる。null（生成後）は種を置かない。
+      if (hydratedDraftRef.current !== null) {
+        lastSavedDraftRef.current = hydratedDraftRef.current;
+      }
       return;
     }
 
@@ -332,6 +364,16 @@ export function useDraftAutosave({
       );
     }
   }, [resetToken]);
+
+  useEffect(() => {
+    // query 到着後の種。古い lastSaved を新しい live revision で上書きする。
+    // null では消さない（生成後 remount は初回 effect が種を置かない）。
+    if (hydratedDraft === null) return;
+    const current = lastSavedDraftRef.current;
+    if (current === null || hydratedDraft.revision >= current.revision) {
+      lastSavedDraftRef.current = hydratedDraft;
+    }
+  }, [hydratedDraft]);
 
   const enqueue = useCallback(
     (next: PlannerDraftInput): Promise<PlannerDraft> => {
@@ -640,6 +682,21 @@ export function useDraftAutosave({
         return Promise.resolve(lastSaved);
       }
       // 途中 idea（servings=null 等）は明示的に拒否
+      return Promise.reject(new IncompleteDraftSaveError());
+    }
+    // persistable でも fingerprint === baseline なら debounce と同型で RPC しない。
+    // 生成成功後の empty / rev=0 hydrate からの leave-flush が
+    // save(empty, 0) → save_generation_draft の undelete に落ち、
+    // 消費済み下書きが空行として live に戻るのを防ぐ。
+    // 公開 pin と reset 強制保存は上で処理済み。
+    if (latestFingerprintRef.current === baselineSerializedRef.current) {
+      const lastSaved = lastSavedDraftRef.current;
+      if (
+        lastSaved !== null &&
+        lastSavedMatchesLatest(lastSaved, latest, lastPersistedInputRef.current)
+      ) {
+        return Promise.resolve(lastSaved);
+      }
       return Promise.reject(new IncompleteDraftSaveError());
     }
     return enqueue(latest);
