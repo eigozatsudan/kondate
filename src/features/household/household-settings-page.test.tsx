@@ -3453,6 +3453,36 @@ it("applies age defaults when the user selects an age band", async () => {
   });
 });
 
+it("caps the display name at 30 characters and shows a Japanese alert for 31", async () => {
+  // H10: onboarding は maxLength=30。settings は未設定だと 31 文字が schema 失敗し
+  // Zod 既定の英語が role=alert に出る。HTML 上限と日本語メッセージの両方を固定する。
+  const { updateMember } = await renderSettings();
+  const input = await screen.findByLabelText("呼び名");
+  expect(input).toHaveAttribute("maxLength", "30");
+
+  fireEvent.change(input, { target: { value: "あ".repeat(31) } });
+
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent("呼び名は30文字以内で入力してください");
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+});
+
+it("persists a 30-character display name", async () => {
+  const { updateMember } = await renderSettings();
+  const name = "あ".repeat(30);
+  fireEvent.change(await screen.findByLabelText("呼び名"), { target: { value: name } });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ display_name: name }),
+      expect.any(String),
+    );
+  });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("persists an edit that only changes the display name", async () => {
   const { updateMember } = await renderSettings();
   const input = await screen.findByLabelText("呼び名");

@@ -25,7 +25,13 @@ import {
 
 export const householdSettingsSchema = z
   .object({
-    displayName: z.string().trim().min(1).max(30).nullable(),
+    // H10: 31 文字は Zod 4 既定の英語が role=alert に出る。onboarding の 30 字上限と揃えて日本語にする
+    displayName: z
+      .string()
+      .trim()
+      .min(1)
+      .max(30, "呼び名は30文字以内で入力してください")
+      .nullable(),
     ageBand: z.enum(ageBands, "年齢のめやすを選んでください"),
     allergyStatus: z.enum(allergyStatuses, "アレルギーの確認を選んでください"),
     unsupportedDietStatus: z.enum(unsupportedDietStatuses, UNSUPPORTED_DIET_STATUS_REQUIRED),

@@ -1817,6 +1817,8 @@ export function HouseholdSettingsForm({
               <span>呼び名</span>
               <input
                 value={values.displayName ?? ""}
+                // H10: onboarding と同じ 30 字。超分は schema が日本語で拒否する
+                maxLength={30}
                 onChange={(event) => {
                   updateAndSave({ displayName: event.target.value || null });
                 }}

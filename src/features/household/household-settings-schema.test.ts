@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   householdSettingsSchema,
   householdSettingsValueFromDbRow,
+  toHouseholdFieldErrors,
   type HouseholdMemberSettingsRow,
 } from "./household-settings-schema";
 
@@ -112,5 +113,48 @@ describe("householdSettingsValueFromDbRow (H12)", () => {
     expect(value.ageBand).toBe("");
     expect(value.portionSize).toBe("large");
     expect(value.spiceLevel).toBe("mild");
+  });
+});
+
+const validSettingsValue = {
+  displayName: "太郎",
+  ageBand: "adult",
+  allergyStatus: "none",
+  unsupportedDietStatus: "none",
+  unsupportedDietKinds: [],
+  requiredSafetyConstraints: [],
+  portionSize: "regular",
+  spiceLevel: "regular",
+  easePreferences: [],
+} as const;
+
+describe("householdSettingsSchema displayName (H10)", () => {
+  it("accepts a 30-character display name and null", () => {
+    expect(
+      householdSettingsSchema.safeParse({
+        ...validSettingsValue,
+        displayName: "あ".repeat(30),
+      }).success,
+    ).toBe(true);
+    expect(
+      householdSettingsSchema.safeParse({
+        ...validSettingsValue,
+        displayName: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects 31 characters with a Japanese field message, not Zod English", () => {
+    const parsed = householdSettingsSchema.safeParse({
+      ...validSettingsValue,
+      displayName: "あ".repeat(31),
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) {
+      return;
+    }
+    const message = toHouseholdFieldErrors(parsed.error).displayName;
+    expect(message).toBe("呼び名は30文字以内で入力してください");
+    expect(message).not.toMatch(/too big|expected string|characters/iu);
   });
 });
