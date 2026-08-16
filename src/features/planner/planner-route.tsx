@@ -1856,8 +1856,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             {
               const pantryRowsLatest = pantryRowsRef.current;
               const pantryIdSetLatest = new Set(pantryRowsLatest.map((item) => item.id));
+              // P2: 公開 sticky の flush 短絡は pin を返す。削除/期限ゲートは
+              // local の解除済み選択を見る。pin の古い pantry ID で同じ文言に
+              // 戻ると C2 再開に届かない。
+              const pantrySelectionsForGate = parsed.data.pantrySelections;
               if (
-                saved.pantrySelections.some(
+                pantrySelectionsForGate.some(
                   (selection) => !pantryIdSetLatest.has(selection.pantryItemId),
                 )
               ) {
@@ -1868,7 +1872,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
                 return;
               }
               const nowForExpiryPostFlush = new Date();
-              const hasUnconfirmedExpiredPostFlush = saved.pantrySelections.some((selection) => {
+              const hasUnconfirmedExpiredPostFlush = pantrySelectionsForGate.some((selection) => {
                 const item = pantryRowsLatest.find((entry) => entry.id === selection.pantryItemId);
                 if (item === undefined) return false;
                 return (
