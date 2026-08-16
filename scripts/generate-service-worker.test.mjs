@@ -41,12 +41,13 @@ const expectedPrecacheUrls = [
   "/icons/icon-192.png",
   "/icons/icon-512-maskable.png",
   "/icons/icon-512.png",
+  "/lp-boot.js",
   "/manifest.webmanifest",
 ];
 
 /**
  * @param {string} distDir
- * @param {{ indexHtml?: string, hashedJs?: string, icon192?: Buffer }} [overrides]
+ * @param {{ indexHtml?: string, hashedJs?: string, icon192?: Buffer, lpBootJs?: string, skipLpBoot?: boolean }} [overrides]
  */
 async function writeFixtureDist(distDir, overrides = {}) {
   await mkdir(join(distDir, ".vite"), { recursive: true });
@@ -76,12 +77,19 @@ async function writeFixtureDist(distDir, overrides = {}) {
   await writeFile(join(distDir, "fonts/x-dddddddd.woff2"), Buffer.from("woff2"));
   await writeFile(join(distDir, "fonts/y-eeeeeeee.woff"), Buffer.from("woff"));
   await writeFile(join(distDir, "assets/page-11111111.js"), "export const page=1");
+  if (!overrides.skipLpBoot) {
+    await writeFile(
+      join(distDir, "lp-boot.js"),
+      overrides.lpBootJs ?? 'document.documentElement.classList.add("kondate-js");',
+    );
+  }
 }
 
 test("buildPrecacheUrls keeps js/css plus fixed shell assets and drops fonts images html and api", () => {
   const urls = buildPrecacheUrls(fixtureManifest);
   assert.deepEqual(urls, expectedPrecacheUrls);
   assert.ok(!urls.includes("/index.html"));
+  assert.ok(!urls.includes("/app.html"));
   assert.ok(!urls.some((url) => url.endsWith(".woff") || url.endsWith(".woff2")));
   assert.ok(!urls.some((url) => url.endsWith(".webp")));
   assert.ok(!urls.includes("/api"));
@@ -152,6 +160,28 @@ test("generateServiceWorker throws when the Vite manifest or index.html is missi
   );
 });
 
+test("generateServiceWorker throws when lp-boot.js is missing from dist", async () => {
+  const missingLpBoot = join(tmpdir(), `kondate-sw-${String(Date.now())}-lp-missing`);
+  await writeFixtureDist(missingLpBoot, { skipLpBoot: true });
+  await assert.rejects(
+    () => generateServiceWorker({ distDir: missingLpBoot }),
+    /sw_precache_file_missing/u,
+  );
+});
+
+test("CACHE_NAME follows lp-boot.js bytes", async () => {
+  const baseDir = join(tmpdir(), `kondate-sw-${String(Date.now())}-lp-base`);
+  await writeFixtureDist(baseDir);
+  const baseline = await generateServiceWorker({ distDir: baseDir });
+
+  const lpBootChanged = join(tmpdir(), `kondate-sw-${String(Date.now())}-lp-changed`);
+  await writeFixtureDist(lpBootChanged, {
+    lpBootJs: 'document.documentElement.classList.add("kondate-js");X',
+  });
+  const afterLpBoot = await generateServiceWorker({ distDir: lpBootChanged });
+  assert.notEqual(afterLpBoot.cacheName, baseline.cacheName);
+});
+
 test("generator source has no clock or random and stringifies esbuild defines", async () => {
   const source = await readFile(join(root, "scripts/generate-service-worker.mjs"), "utf8");
   assert.doesNotMatch(source, /Date\.now\s*\(/u);
@@ -176,6 +206,7 @@ test("CACHE_NAME is the SHA-256 prefix of sorted URLs plus non-hashed file diges
     "/icons/icon-192.png": Buffer.from("icon-192"),
     "/icons/icon-512.png": Buffer.from("icon-512"),
     "/icons/icon-512-maskable.png": Buffer.from("icon-mask"),
+    "/lp-boot.js": 'document.documentElement.classList.add("kondate-js");',
   };
   const urlPart = result.precacheUrls.join("\n");
   const hashPart = nonHashed.map((url) => sha256Hex(contentByUrl[url])).join("\n");
