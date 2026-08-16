@@ -170,7 +170,8 @@ export function useDraftAutosave({
   /** サーバ確定後の cache 同期など。supersede で破棄した書込では呼ばない。 */
   onSaved?: (draft: PlannerDraft) => void;
   /**
-   * persistable dirty の document unload（pagehide / beforeunload）で同期開始する口。
+   * persistable dirty、または household 完成形からの audience 中立 strip が
+   * 必要な incomplete の document unload（pagehide / beforeunload）で同期開始する口。
    * useBlocker は unload を見ない。通常 enqueue は keepalive 無しで中断され得る。
    * 呼び出し側は keepalive 可能な経路を渡す。失敗は可視化しない（best-effort）。
    */
@@ -495,10 +496,17 @@ export function useDraftAutosave({
       const dirty = latestFingerprintRef.current !== baselineSerializedRef.current;
       if (!pendingDebounceRef.current && !dirty) return;
       const latest = latestRef.current;
-      // review memo 等の persistable dirty だけ。途中 idea は RPC 不能なので送らない。
-      if (!isPersistableDraft(latest)) return;
+      // persistable dirty、または household 完成形からの audience 中立 strip。
+      // 初回の途中 idea（audience 無しの persistable から servings=null）は RPC 不能なので送らない。
+      let toPersist: PlannerDraftInput | null = null;
+      if (isPersistableDraft(latest)) {
+        toPersist = latest;
+      } else if (hasPersistedAudience(lastPersistedInputRef.current)) {
+        toPersist = audienceNeutralPersistable(latest);
+      }
+      if (toPersist === null) return;
       unloadPersistStartedRef.current = true;
-      persist(latest, revisionRef.current);
+      persist(toPersist, revisionRef.current);
     };
     const resetUnloadGuard = (): void => {
       // bfcache 復帰後に再編集→再離脱できるよう、1 回フラグだけ戻す。

@@ -938,6 +938,52 @@ it("P2: beforeunload でも persistable dirty を 1 回だけ keepalive 経路�
   expect(saveOnUnload).toHaveBeenCalledWith(edited, 4);
 });
 
+it("P3: household 完成形から incomplete idea への unload は中立形を keepalive する", async () => {
+  // debounce 前の reload / タブ閉じでも、flush と同じ audience 中立形を送る。
+  // persistable 判定だけで return するとサーバに旧 household が残る。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const saveOnUnload = vi.fn();
+  const incompleteIdea: PlannerDraftInput = {
+    ...reviewDraft,
+    targetMode: "idea",
+    targetMemberIds: [],
+    servings: null,
+  };
+  const neutralized: PlannerDraftInput = {
+    ...incompleteIdea,
+    targetMode: null,
+    targetMemberIds: [],
+    servings: null,
+  };
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 3,
+        resetToken: 0,
+        save,
+        saveOnUnload,
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: incompleteIdea });
+  await act(async () => vi.advanceTimersByTimeAsync(100));
+  expect(save).not.toHaveBeenCalled();
+
+  act(() => {
+    window.dispatchEvent(new Event("pagehide"));
+  });
+
+  expect(saveOnUnload).toHaveBeenCalledTimes(1);
+  expect(saveOnUnload).toHaveBeenCalledWith(neutralized, 3);
+  expect(save).not.toHaveBeenCalled();
+});
+
 it("P2: persistable でない途中下書きは document unload で keepalive しない", async () => {
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>
