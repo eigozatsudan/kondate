@@ -50,8 +50,6 @@ export const LOGIN_PAGE_NOTE =
   "新規登録の別画面はありません。下のボタンで進むと、はじめての方はアカウントができます。" as const;
 /** メール導線を出すときの補足（SHOW_EMAIL_LOGIN / ?emailLogin=1 / 復旧導線） */
 export const LOGIN_PAGE_NOTE_WITH_EMAIL = EMAIL_OTP_LOGIN_NOTE;
-export const LOGIN_EMAIL_HINT =
-  "届いたメールのリンクを開き、画面の「ログインを完了する」を押すと入れます。iPhone でリンクを長押ししてプレビューだけ見ると「すでに使われている」「確認できない」と出ることがあります。リンクは普通にタップしてください。はじめてのメールアドレスでも大丈夫です。" as const;
 
 /**
  * ログイン画面のメール導線を表示する。

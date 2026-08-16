@@ -17,7 +17,7 @@ import {
   EMAIL_OTP_SWITCH_TO_GOOGLE,
   EMAIL_OTP_WAITING_HEADING,
 } from "./email-otp-copy";
-import { LOGIN_EMAIL_HINT, LOGIN_PAGE_NOTE, LoginPage } from "./login-page";
+import { LOGIN_PAGE_NOTE, LoginPage } from "./login-page";
 import { useAuth } from "./use-auth";
 
 const leftoverMocks = vi.hoisted(() => {
@@ -173,7 +173,7 @@ it("uses email number send as the primary action and Google as secondary without
   expect(screen.getByRole("button", { name: EMAIL_OTP_SEND_BUTTON })).toBeVisible();
   expect(screen.getByRole("button", { name: EMAIL_OTP_GOOGLE_BUTTON })).toBeVisible();
   expect(screen.queryByText(/長押し/)).toBeNull();
-  expect(screen.queryByText(LOGIN_EMAIL_HINT)).toBeNull();
+  expect(screen.queryByText(/ログインを完了する/)).toBeNull();
   const names = screen.getAllByRole("button").map((button) => button.textContent);
   expect(names.indexOf(EMAIL_OTP_SEND_BUTTON)).toBeLessThan(names.indexOf(EMAIL_OTP_GOOGLE_BUTTON));
 });

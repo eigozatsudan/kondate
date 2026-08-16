@@ -99,17 +99,18 @@ http://127.0.0.1:5173
 
 そのため `localhost` で開くと、認証継続 create が Origin 不一致で失敗したり、callback / CORS が噛み合わず、Google ログインが成立しません。ブックマークやアドレスバーも常に `127.0.0.1` を使ってください。
 
-#### メール（マジックリンク）
+#### メール（番号ログイン）
 
-`AuthGateway.sendMagicLink`・callback・sent/expired UI と、ログイン画面のメール入力（**`SHOW_EMAIL_LOGIN = true`**）が有効です。一時的に隠すときは定数を `false` にし、`?emailLogin=1` または期限切れ復帰で再表示できます。
+`AuthGateway.sendEmailOtp` / `verifyEmailOtp` と、ログイン画面のメール入力（**`SHOW_EMAIL_LOGIN = true`**）が有効です。一時的に隠すときは定数を `false` にし、`?emailLogin=1` または期限切れ復帰で再表示できます。
 
 ローカルでの手動確認:
 
 1. [http://127.0.0.1:5173/login](http://127.0.0.1:5173/login) を開く
-2. メールアドレスを入れ「ログイン用メールを送る」
-3. Mailpit UI（[http://127.0.0.1:8025](http://127.0.0.1:8025)）でメールを開き、リンクから続行する
+2. メールアドレスを入れ「番号をメールで受け取る」
+3. Mailpit UI（[http://127.0.0.1:8025](http://127.0.0.1:8025)）でメール本文の **6 桁**を確認する（メール内の URL は開かない）
+4. 同じ `/login` の 6 マスに番号を入力して続行する
 
-ローカルの SMTP は Compose の `mailpit`（ホスト `1025` / `8025`）です。本番のマジックリンクは Managed Supabase の **Custom SMTP** が必須（ローカル `SMTP_*` を本番へコピーしない）。手順は [docs/deployment/supabase.md](docs/deployment/supabase.md) §2.3。本番 Google の検証は [docs/testing/google-oauth-staging.md](docs/testing/google-oauth-staging.md) を参照してください。
+ローカルの SMTP は Compose の `mailpit`（ホスト `1025` / `8025`）です。本番の番号メールは Managed Supabase の **Custom SMTP** が必須（ローカル `SMTP_*` を本番へコピーしない）。手順は [docs/deployment/supabase.md](docs/deployment/supabase.md) §2.3。本番 Google の検証は [docs/testing/google-oauth-staging.md](docs/testing/google-oauth-staging.md) を参照してください。
 
 #### `/api/auth/continuations` が 404 になる場合
 
@@ -187,7 +188,7 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 #### 5. ブラウザで試す
 
 1. [http://127.0.0.1:5173](http://127.0.0.1:5173) を開く（`localhost` ではない。未ログインなら無料 LP）
-2. `/login` で Google（oauth-mock）またはメール（マジックリンク。Mailpit で受信）
+2. `/login` で Google（oauth-mock）またはメール番号（「番号をメールで受け取る」→ Mailpit の 6 桁 → 同じ `/login` の 6 マス）
 3. 初回は `/welcome`。「献立アイデアを考える」または「家族情報を登録する」を選ぶ
 4. `/planner` のウィザード（食事 → 食材 → ジャンル → 家族/アイデア → 確認）で条件を入れ、**献立を作る**
    - 未同意なら AI 情報送信の説明（`/privacy`）を先に確認する（必須）

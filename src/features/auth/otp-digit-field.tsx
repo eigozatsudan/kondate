@@ -1,16 +1,7 @@
 import { useRef, type ChangeEvent, type ClipboardEvent, type JSX, type KeyboardEvent } from "react";
+import { EMAIL_OTP_DIGIT_ARIA_LABELS } from "./email-otp-copy";
 
 const OTP_DIGIT_COUNT = 6;
-
-/** マスの名前。スクリーンリーダー向けのユーザー向け文言でもある。 */
-const OTP_DIGIT_ARIA_LABELS = [
-  "確認番号の1けた目",
-  "確認番号の2けた目",
-  "確認番号の3けた目",
-  "確認番号の4けた目",
-  "確認番号の5けた目",
-  "確認番号の6けた目",
-] as const;
 
 /**
  * 全角数字や混在文字列を、確認に使える半角数字だけにする。
@@ -124,7 +115,7 @@ export function OtpDigitField(props: {
         }}
       />
       <div className="flex w-full min-w-0 flex-nowrap justify-start gap-0.5">
-        {OTP_DIGIT_ARIA_LABELS.map((label, index) => (
+        {EMAIL_OTP_DIGIT_ARIA_LABELS.map((label, index) => (
           <input
             key={label}
             ref={(node) => {
