@@ -4,8 +4,31 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
+import {
+  injectPublicLandingHtml,
+  isPublicLandingIndexFilename,
+} from "./src/features/landing/inject-public-landing-html";
 
 const isE2eFunctionServer = process.env.KONDATE_E2E_FUNCTION_SERVER === "1";
+
+/**
+ * `/` 用 index.html にだけ静的 LP を埋め込む。
+ * app.html は薄いシェルのままにし、transform の二重呼び出しは挿入側で冪等にする。
+ */
+function kondatePublicLandingHtml(): Plugin {
+  return {
+    name: "kondate-public-landing-html",
+    transformIndexHtml: {
+      order: "pre",
+      handler(html, ctx) {
+        if (!isPublicLandingIndexFilename(ctx.filename)) {
+          return html;
+        }
+        return injectPublicLandingHtml(html);
+      },
+    },
+  };
+}
 
 /**
  * 本番ビルドの末尾で許可リスト型 sw.js を書く。
@@ -58,6 +81,7 @@ export default defineConfig({
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   plugins: [
     react(),
+    kondatePublicLandingHtml(),
     tailwindcss(),
     // Netlify より先に setHeader をラップし、後段の CSP 注入を無効化する。
     stripNetlifyDevContentSecurityPolicy(),
@@ -89,6 +113,12 @@ export default defineConfig({
   // （data: 不可）なので、フォントは常に同一オリジンのファイル URL にする。
   build: {
     assetsInlineLimit: 0,
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        app: fileURLToPath(new URL("./app.html", import.meta.url)),
+      },
+    },
   },
   cacheDir: "/tmp/vite",
 });
