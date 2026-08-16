@@ -182,9 +182,10 @@ export const privacyNoticeRequiredMessage =
 /**
  * 進行中 pending がある確認画面向け。C2 で新条件を送らず再開する前提を、
  * 生成画面の resumed 案内と同趣旨で押下前に明示する（P2）。
+ * 公開済み同一 key は reset しても残るので、破棄指示は書かない（P-R2）。
  */
 export const pendingResumeBeforeGenerateMessage =
-  "すでに作成中の献立があります。「献立を作る」を押すと、いま入力した条件では新しく作り直さず、進行中の作成を再開します。今の条件で作り直すには、先に「入力をリセット」で進行中の作成を破棄してください。";
+  "すでに作成中の献立があります。「献立を作る」を押すと、いま入力した条件では新しく作り直さず、進行中の作成を再開します。入力をリセットしても進行中の作成は破棄されません。完了または期限まで、次も同じ作成を再開します。";
 
 /**
  * 任意条件（時間・予算・材料の使い方・避ける食材・memo・pantry選択）を
@@ -714,7 +715,7 @@ export function ReviewStep({
               </p>
             )}
             {medicalBlocked && <p role="alert">{medicalRequestBlockedMessage}</p>}
-            {/* P2: 新条件は送らず再開のみ。生成画面 resumed 案内に加え、確認画面でも押下前に明示する */}
+            {/* P2/P-R2: 新条件は送らず再開のみ。公開済みは reset しても破棄されない */}
             {hasResumablePendingGeneration ? (
               <p role="status" className="review-pending-resume-notice">
                 {pendingResumeBeforeGenerateMessage}

@@ -978,7 +978,10 @@ describe("PlannerWizard review step", () => {
     expect(notice).toBeVisible();
     expect(notice).toHaveAttribute("role", "status");
     expect(notice).toHaveTextContent(/いま入力した条件では新しく作り直さず/u);
-    expect(notice).toHaveTextContent(/入力をリセット/u);
+    // P-R2: 公開済み同一 key は reset しても残る。破棄指示は嘘なので再開である旨だけ書く。
+    expect(notice).toHaveTextContent(/入力をリセットしても/u);
+    expect(notice).toHaveTextContent(/破棄されません/u);
+    expect(notice).not.toHaveTextContent(/破棄してください/u);
   });
 
   it("privacy未確認では説明ボタンを表示し、生成押下でダイアログへ誘導する", async () => {
