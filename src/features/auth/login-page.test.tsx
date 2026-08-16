@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -762,6 +762,68 @@ it.each([
     expect(window.localStorage.getItem(pkceVerifierKey)).toBe("verifier-after-google-start");
   },
 );
+
+it("C-R2: leftover-capable Google start keeps PKCE verifier when leftover signOut settles after 2s timeout", async () => {
+  vi.useFakeTimers();
+  const pkceVerifierKey = `${leftoverSessionStorageKey}-code-verifier`;
+  window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+
+  let releaseSignOut: (() => void) | undefined;
+  leftoverSignOut.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        releaseSignOut = () => {
+          // auth-js _removeSession 相当: local signOut 完了時に PKCE verifier を消す
+          window.localStorage.removeItem(pkceVerifierKey);
+          resolve({ error: null });
+        };
+      }),
+  );
+
+  const signInWithGoogle = vi.fn().mockImplementation(() => {
+    window.localStorage.setItem(pkceVerifierKey, "verifier-after-google-start");
+    return Promise.resolve();
+  });
+  const gateway: AuthGateway = {
+    signInWithGoogle,
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
+  };
+
+  try {
+    render(
+      <MemoryRouter initialEntries={["/login?authError=oauth_cancelled"]}>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
+
+    expect(leftoverSignOut).toHaveBeenCalledWith({ scope: "local" });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Googleで続ける" }));
+    });
+    expect(signInWithGoogle).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    // 2s timeout 後も元 signOut が未完了なら verifier を書かない（C-R2）
+    expect(signInWithGoogle).not.toHaveBeenCalled();
+
+    await act(async () => {
+      releaseSignOut?.();
+      // leftoverCleanup → startGoogle の microtask を flush（fake timers 下の waitFor を使わない）
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    });
+
+    expect(signInWithGoogle).toHaveBeenCalled();
+    expect(window.localStorage.getItem(pkceVerifierKey)).toBe("verifier-after-google-start");
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("C-R4: leftover-capable login does not signOut leftover when sibling completion exists", async () => {
   window.localStorage.setItem(leftoverSessionStorageKey, "winner-persist");

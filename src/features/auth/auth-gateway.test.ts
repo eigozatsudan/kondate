@@ -3839,6 +3839,48 @@ it("C-R4: leftover-capable clear local-signs-out persist when no sibling complet
   }
 });
 
+it("C-R2: leftover-capable clear waits for local signOut settle after 2s timeout so PKCE can be written after _removeSession", async () => {
+  vi.useFakeTimers();
+  const pkceVerifierKey = `${browserSupabaseSessionStorageKey}-code-verifier`;
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
+  let releaseSignOut: (() => void) | undefined;
+  const client = authClientMock();
+  client.auth.signOut.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        releaseSignOut = () => {
+          window.localStorage.removeItem(pkceVerifierKey);
+          resolve({ error: null });
+        };
+      }),
+  );
+  try {
+    const pending = clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBeNull();
+    expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+
+    releaseSignOut?.();
+    await pending;
+    expect(settled).toBe(true);
+
+    window.localStorage.setItem(pkceVerifierKey, "verifier-after-google-start");
+    expect(window.localStorage.getItem(pkceVerifierKey)).toBe("verifier-after-google-start");
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    window.localStorage.removeItem(pkceVerifierKey);
+  }
+});
+
 it("C-R4: leftover-capable clear does not signOut when sibling completion exists", async () => {
   window.localStorage.setItem(browserSupabaseSessionStorageKey, "winner-persist");
   publishAuthContinuationCompletion({ flowId: "google-winner", returnTo: "/planner" });

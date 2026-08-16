@@ -581,7 +581,7 @@ async function probeDiscardedExchangeSessionKey(
 async function clearDiscardedExchangeSessionIfStillPresent(
   client: BrowserSupabaseClient,
   discardedExchangeSessionKey: string | null,
-  context?: { loserFlowId: string; storage: Storage },
+  context?: { loserFlowId: string; storage: Storage; awaitLocalSignOutSettle?: boolean },
 ): Promise<void> {
   if (
     context !== undefined &&
@@ -623,7 +623,16 @@ async function clearDiscardedExchangeSessionIfStillPresent(
     try {
       // hang でも discard 経路を永久待ちにしない（A2 と同型）
       // method call のまま呼び unbound-method を避ける
-      await withTimeout(client.auth.signOut({ scope: "local" }), 2_000);
+      const signOutPromise = client.auth.signOut({ scope: "local" });
+      try {
+        await withTimeout(signOutPromise, 2_000);
+      } catch {
+        if (context?.awaitLocalSignOutSettle === true) {
+          // C-R2: leftover は 2s 数値を伸ばさず、timeout 後も元 Promise の settle を待つ。
+          // withTimeout は cancel しない。後着 _removeSession が Google PKCE を消すのを防ぐ。
+          await signOutPromise.catch(() => undefined);
+        }
+      }
     } catch {
       // storage は上で消済み。メモリ clear 失敗は AuthProvider / 次回 getSession に委ねる
     }
@@ -635,6 +644,8 @@ async function clearDiscardedExchangeSessionIfStillPresent(
  * C6 hangWatchdog は persist を消さず leave するため、ここで local signOut しないと
  * leftover が live pin され後勝ち Google を拒む。
  * C5: 任意の勝者 completion があるときは触らない（loserFlowId 空 = 全 completion が sibling）。
+ * C-R2: 2s timeout 後も元 local signOut が settle するまで終わらない。
+ * startGoogle が先に PKCE を書くと後着 _removeSession が消す。
  */
 export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
   client?: BrowserSupabaseClient,
@@ -645,6 +656,7 @@ export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
     await clearDiscardedExchangeSessionIfStillPresent(resolved, null, {
       loserFlowId: "",
       storage,
+      awaitLocalSignOutSettle: true,
     });
   } catch {
     // leftover 掃除失敗でも Login は出す（C-R3）。pin は AuthProvider に残し得る。

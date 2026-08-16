@@ -380,8 +380,9 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     }
   };
 
-  // leftover-capable の local signOut 完了を startGoogle が待つ（C2）。
+  // leftover-capable の local signOut 完了を startGoogle が待つ（C2 / C-R2）。
   // 待たないと signInWithOAuth が書いた PKCE verifier を後着 signOut が消す。
+  // leftover 掃除は 2s timeout 後も元 signOut が settle するまで終わらない。
   const leftoverCleanupRef = useRef<Promise<void>>(Promise.resolve());
 
   const startGoogle = async (): Promise<void> => {
