@@ -338,7 +338,6 @@ export function PlannerRoutePage() {
       // false は startNewAttempt を抑止する。true だと未消費 attempt
       // （期限確認など）が回転して捨てられる。
       // "resumed" は既存 sticky 再開（attempt は回さず、navigate 済みなので isSaving 維持）。
-      // G-R1: terminal 済み sticky は status GET で clear し、新規作成を許す。
       // processing / status 失敗は keep→再開（G1/G2 維持。無条件 clear しない）。
       if (readPendingGeneration(userId, new Date()) !== null) {
         const outcome = await reconcileTerminalPendingGeneration(userId);
@@ -348,7 +347,10 @@ export function PlannerRoutePage() {
           void navigate("/generation?resumed=1");
           return "resumed";
         }
-        // cleared / none: 下へ進み新 pending を書く
+        // P4: cleared / none。他タブが terminal + draft soft-delete したあとに
+        // 同じ pin（draftId+revision）で新規 sticky を書くと POST が draft_not_found。
+        // 確認 copy は再開のみ。terminal 後の新規は pending 無しの次 submit で live を使う。
+        return false;
       }
       // P2: mode 判定は savePendingGeneration より前。throw 後に sticky pending を残さない。
       // household 補助文用 meta も new_menu のみ・draft.targetMode を正本に upsert。
@@ -1901,6 +1903,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
                 nowForCommand,
               ),
             };
+            // P4: flush〜claim のあいだに他タブが sticky を消すと、短絡 saved は削除済み pin。
+            // 確認 copy は再開のみ。pin で新規 sticky を書かず、次の submit で live を使う。
+            if (shouldResumePending && !isPendingGenerationPresent(userId)) {
+              setSubmissionError("献立の作成を開始できませんでした。もう一度お試しください。");
+              return;
+            }
             const controller = new AbortController();
             generationAbortControllerRef.current?.abort();
             generationAbortControllerRef.current = controller;
@@ -1988,6 +1996,15 @@ async function waitForWinnerPendingSticky(userId: string, signal: AbortSignal): 
 /** await 跨ぎの AbortSignal 再読。制御フロー解析に aborted=false と畳まれないよう関数経由。 */
 function isAbortSignalAborted(signal: AbortSignal): boolean {
   return signal.aborted;
+}
+
+/**
+ * await 跨ぎの pending 再読。flush 直後の非 null と畳まれないよう関数経由。
+ * owner 未確定は無いものとして扱う（再開経路に入らない）。
+ */
+function isPendingGenerationPresent(userId: string | undefined): boolean {
+  if (userId === undefined) return false;
+  return readPendingGeneration(userId, new Date()) !== null;
 }
 
 /** await 跨ぎの strip/unmount を ref 再読で検知する（制御フロー解析に畳まれないよう関数経由）。 */

@@ -2910,6 +2910,128 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
   });
 
+  it("P4: flush〜claim のあいだに pending が消えたら pin で新規 sticky を書かない", async () => {
+    // 公開 pin の flush 短絡後、pantry 再読のあいだに他タブが terminal 完了して
+    // sticky を消し draft を soft-delete する。確認 copy は再開のみなので、
+    // 削除済み pin の draftId+revision で新規 sticky を書いてはいけない。
+    const existingPending = {
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3" as const,
+      kind: "new_menu" as const,
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    };
+    pendingGenerationMock.readPendingGeneration.mockReturnValue(existingPending);
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: existingPending.request.idempotencyKey,
+      ownerUserId: draft.userId,
+      createdAt: existingPending.createdAt,
+    });
+    const pantryDeferred = createDeferred<PantryItem[]>();
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+    listPantryItemsMock.mockImplementationOnce(() => pantryDeferred.promise);
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(listPantryItemsMock).toHaveBeenCalled();
+    });
+
+    pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue(null);
+    queryState.draft = null;
+    draftQueryRefetchMock.mockResolvedValue({ isError: false, data: null });
+    act(() => {
+      pantryDeferred.resolve(queryState.pantry.data ?? []);
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "献立の作成を開始できませんでした。もう一度お試しください。",
+      );
+    });
+    expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
+  });
+
+  it("P4: startGeneration の reconcile が cleared なら pin で新規 sticky を書かない", async () => {
+    // G-R4 init は status 不明 keep。生成時の reconcile だけ succeeded → clear。
+    // 確認は再開のみ。削除済み pin で新規 createPendingGeneration しない。
+    const existingPending = {
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3" as const,
+      kind: "new_menu" as const,
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    };
+    pendingGenerationMock.readPendingGeneration.mockReturnValue(existingPending);
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: existingPending.request.idempotencyKey,
+      ownerUserId: draft.userId,
+      createdAt: existingPending.createdAt,
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+    expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
+
+    getGenerationStatusMock.mockResolvedValue({
+      status: "succeeded",
+      idempotencyKey: existingPending.request.idempotencyKey,
+      requestId: "50000000-0000-4000-8000-000000000099",
+      menuId: "61000000-0000-4000-8000-000000000001",
+      completedAt: "2026-07-20T05:01:00.000Z",
+      quota: {
+        consumed: true,
+        remaining: 1,
+        userDailyLimit: 3,
+        limitKind: "user",
+        retryAt: null,
+      },
+    });
+    pendingGenerationMock.clearPendingGeneration.mockImplementation(() => {
+      pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
+      pendingGenerationMock.readPendingGenerationMeta.mockReturnValue(null);
+    });
+
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "献立の作成を開始できませんでした。もう一度お試しください。",
+      );
+    });
+    expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
+  });
+
   it("C7: reset does not clear another tab's claimed pending after strip abort", async () => {
     const user = userEvent.setup();
     render(<PlannerPage />);
