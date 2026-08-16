@@ -43,8 +43,10 @@ function renderLoginAt(entry: string, gateway: AuthGateway) {
 }
 
 afterEach(() => {
-  leftoverSignOut.mockClear();
+  leftoverSignOut.mockReset();
+  leftoverSignOut.mockResolvedValue({ error: null });
   window.localStorage.removeItem(leftoverSessionStorageKey);
+  window.localStorage.removeItem(`${leftoverSessionStorageKey}-code-verifier`);
 });
 
 it("explains that first-time users can register on the same screen with Google and email", () => {
@@ -691,6 +693,73 @@ it.each([
         sessionProbeDegraded: false,
       });
     }
+  },
+);
+
+it.each([
+  {
+    label: "oauth_cancelled leave",
+    entry: "/login?authError=oauth_cancelled",
+    googleName: "Googleで続ける",
+  },
+  {
+    label: "query-less restart",
+    entry: "/login",
+    googleName: "Googleで続ける",
+  },
+] as const)(
+  "C2: leftover-capable $label waits for leftover signOut before Google start so PKCE verifier remains",
+  async ({ entry, googleName }) => {
+    const user = userEvent.setup();
+    const pkceVerifierKey = `${leftoverSessionStorageKey}-code-verifier`;
+    window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+
+    let releaseSignOut: (() => void) | undefined;
+    leftoverSignOut.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSignOut = () => {
+            // auth-js _removeSession 相当: local signOut 完了時に PKCE verifier を消す
+            window.localStorage.removeItem(pkceVerifierKey);
+            resolve({ error: null });
+          };
+        }),
+    );
+
+    const signInWithGoogle = vi.fn().mockImplementation(() => {
+      window.localStorage.setItem(pkceVerifierKey, "verifier-after-google-start");
+      return Promise.resolve();
+    });
+    const gateway: AuthGateway = {
+      signInWithGoogle,
+      sendMagicLink: vi.fn(),
+      completeCallback: vi.fn(),
+      resumeFlow: vi.fn(),
+      confirmMagicLink: vi.fn(),
+    };
+
+    render(
+      <MemoryRouter initialEntries={[entry]}>
+        <LoginPage gateway={gateway} />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: googleName }));
+
+    await waitFor(() => {
+      expect(leftoverSignOut).toHaveBeenCalledWith({ scope: "local" });
+    });
+    // 掃除完了前は signInWithOAuth（verifier 書き込み）に入らない
+    expect(signInWithGoogle).not.toHaveBeenCalled();
+
+    act(() => {
+      releaseSignOut?.();
+    });
+
+    await waitFor(() => {
+      expect(signInWithGoogle).toHaveBeenCalled();
+    });
+    expect(window.localStorage.getItem(pkceVerifierKey)).toBe("verifier-after-google-start");
   },
 );
 
