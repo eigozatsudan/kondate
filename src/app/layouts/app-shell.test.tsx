@@ -4,14 +4,20 @@ import userEvent from "@testing-library/user-event";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import { registerPlannerLeaveFlush } from "@/features/planner/planner-leave-flush";
+import { PWA_INSTALL_TIP_DISMISSED_KEY } from "@/features/pwa/install-tip-storage";
 import { AppShell } from "./app-shell";
 
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
+
+beforeEach(() => {
+  // 既定は案内カード非表示。既存 heading 契約を侵さない。
+  window.localStorage.setItem(PWA_INSTALL_TIP_DISMISSED_KEY, "1");
+});
 
 afterEach(() => {
   registerPlannerLeaveFlush(null);
@@ -310,5 +316,48 @@ describe("AppShell planner leave flush (P2)", () => {
 
     expect(flush).not.toHaveBeenCalled();
     expect(defaultPrevented).toBe(false);
+  });
+});
+
+describe("AppShell heading contract (I2)", () => {
+  it("does not expose the install-card heading when the dismiss key is already 1", () => {
+    // 受け入れ 9: heading.first() がカード h2「ホーム画面に置く」に侵食しないこと。
+    // 資格が揃っていても dismiss 済みなら、document 順の先頭見出しはページ側のまま。
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+      platform: "iPhone",
+      maxTouchPoints: 5,
+      standalone: undefined,
+    });
+    const authenticated: AuthContextValue = {
+      status: "authenticated",
+      session: { user: { id: "user-1" } } as AuthContextValue["session"],
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
+    };
+    const router = createMemoryRouter(
+      [
+        {
+          element: <AppShell />,
+          children: [{ path: "/history/:menuId", element: <h1>履歴詳細</h1> }],
+        },
+      ],
+      { initialEntries: ["/history/m1"] },
+    );
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <AuthContext.Provider value={authenticated}>
+          <RouterProvider router={router} />
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+    expect(window.localStorage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY)).toBe("1");
+    const firstHeading = screen.getAllByRole("heading")[0];
+    expect(firstHeading).not.toHaveAccessibleName("ホーム画面に置く");
+    expect(screen.queryByRole("heading", { name: "ホーム画面に置く" })).not.toBeInTheDocument();
+    expect(firstHeading).toHaveAccessibleName("履歴詳細");
+    vi.unstubAllGlobals();
   });
 });

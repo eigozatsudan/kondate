@@ -1,4 +1,5 @@
 import { expect, requestMagicLinkAndReadUrl, test } from "../fixtures/auth";
+import { seedPwaInstallTipDismissed } from "../fixtures/pwa-install-tip";
 
 test(
   "same-browser callback restores both callback and original tabs",
@@ -6,6 +7,7 @@ test(
     tag: ["@smoke"],
   },
   async ({ page, context, authEmail }) => {
+    await seedPwaInstallTipDismissed(context);
     const magicLink = await requestMagicLinkAndReadUrl(page, authEmail);
     const callbackTab = await context.newPage();
     await callbackTab.goto(magicLink);
@@ -24,8 +26,10 @@ test("isolated WebView deposits once and the original browser claims with its se
   browser,
   authEmail,
 }) => {
+  await seedPwaInstallTipDismissed(page.context());
   const magicLink = await requestMagicLinkAndReadUrl(page, authEmail);
   const isolated = await browser.newContext();
+  await seedPwaInstallTipDismissed(isolated);
   const webView = await isolated.newPage();
   await webView.goto(magicLink);
   await expect(

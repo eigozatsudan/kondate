@@ -5,6 +5,7 @@ import { z } from "zod";
 import { browserSupabaseSessionStorageKey } from "../../src/features/auth/auth-flow";
 import { confirmAddScopeNotice } from "./household";
 import { readLocalPublishableKey } from "./local-supabase";
+import { seedPwaInstallTipDismissed } from "./pwa-install-tip";
 
 const messageListSchema = z.object({
   messages: z.array(
@@ -204,8 +205,14 @@ function parseSessionTokensFromHref(href: string): HashSessionTokens | null {
  * 製品 SPA は detectSessionInUrl:false（C7: implicit fragment 拒否）のため、
  * GoTrue verify が hash に載せた実トークンを storage へ載せてから /planner を開き直す。
  * addInitScript による事前 session 手注入は行わない（Spec §7.5）。
+ * ホーム画面案内の dismiss フラグ addInitScript は session 手注入とは別関心であり、
+ * 既存 E2E の見出し契約を守るために許可する。
  */
-export async function loginAsNewUser(page: Page, email: string): Promise<void> {
+export async function loginAsNewUser(
+  page: Page,
+  email: string,
+  options?: { seedPwaInstallTipDismissed?: boolean },
+): Promise<void> {
   const admin = await createServiceAdmin();
   const { data, error } = await admin.auth.admin.generateLink({
     type: "magiclink",
@@ -314,6 +321,12 @@ export async function loginAsNewUser(page: Page, email: string): Promise<void> {
       sessionJson: JSON.stringify(session),
     },
   );
+
+  // session 手注入（上の evaluate）のあと、/planner 着地の前に context へ案内フラグを書く。
+  // evaluate(setItem) をこのフラグの正本にしない。
+  if (options?.seedPwaInstallTipDismissed !== false) {
+    await seedPwaInstallTipDismissed(page.context());
+  }
 
   // hash を捨て、AuthProvider が storage から session を拾うよう clean に /planner を開く。
   // callback→session 確立はモバイル・負荷下で 5s 既定を超え得る（oauth-mock と同様 30s）。

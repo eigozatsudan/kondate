@@ -58,6 +58,9 @@ vi.mock("@/shared/lib/supabase", () => ({
 vi.mock("@/features/billing/plan-settings-section", () => ({
   PlanSettingsSection: () => <section aria-label="プラン">プラン</section>,
 }));
+vi.mock("@/features/pwa/home-screen-install-section", () => ({
+  HomeScreenInstallSection: () => <section aria-label="ホーム画面に追加">ホーム画面に追加</section>,
+}));
 // 共有同意 UI は privacy 専用テストで検証。家族 CRUD は share RPC に依存させない。
 vi.mock("@/features/privacy/share-consent-settings-section", () => ({
   ShareConsentSettingsSection: () => (
@@ -874,6 +877,7 @@ it("家族0件でも登録済み領域と追加領域を分けて表示する", 
   expect(screen.getByText("まだ家族は登録されていません。")).toBeVisible();
   expect(screen.getByRole("heading", { name: "家族を追加する" })).toBeVisible();
   expect(screen.getByRole("button", { name: "家族を追加" })).toBeVisible();
+  expect(screen.getByLabelText("ホーム画面に追加")).toBeVisible();
 });
 
 it("keeps family CRUD controls and composes the account danger zone on the same Plan 1 page", async () => {
@@ -4089,6 +4093,7 @@ it("H9: keeps account surfaces when allergen catalog fails and closes the allerg
   expect(await screen.findByRole("heading", { name: "家族設定" })).toBeVisible();
   expect(screen.getByRole("button", { name: "ログアウト" })).toBeVisible();
   expect(screen.getByLabelText("プラン")).toBeVisible();
+  expect(screen.getByLabelText("ホーム画面に追加")).toBeVisible();
   expect(screen.getByLabelText("匿名の緊急候補への協力")).toBeVisible();
   expect(screen.queryByRole("region", { name: "アレルギー編集" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "くるみを追加" })).not.toBeInTheDocument();

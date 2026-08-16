@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { seedPwaInstallTipDismissed } from "../fixtures/pwa-install-tip";
 
 test(
   "local Google success returns the bound code to the app and establishes a Supabase session",
@@ -6,6 +7,7 @@ test(
     tag: ["@smoke"],
   },
   async ({ page }) => {
+    await seedPwaInstallTipDismissed(page.context());
     // continuation APIは裸の"/"を拒否する契約のため、rootへの安全な戻り先として
     // query付きrootを渡す。callback後にRootEntryPageがnot_startedを/welcomeへ導く。
     await page.goto("/login?returnTo=%2F%3Fsource%3Doauth");
@@ -43,6 +45,7 @@ test(
     tag: ["@smoke"],
   },
   async ({ page }) => {
+    await seedPwaInstallTipDismissed(page.context());
     await page.goto("/login?returnTo=%2Fplanner");
     await page.getByRole("button", { name: "Googleで続ける" }).click();
     await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);

@@ -14,6 +14,7 @@ import { AccountSettingsSection } from "@/features/account/account-settings-sect
 import { FeedbackSection } from "@/features/account/feedback-section";
 import { useAuth } from "@/features/auth/use-auth";
 import { PlanSettingsSection } from "@/features/billing/plan-settings-section";
+import { HomeScreenInstallSection } from "@/features/pwa/home-screen-install-section";
 import { ShareConsentSettingsSection } from "@/features/privacy/share-consent-settings-section";
 import { EASE_SOFT_NOT_SWALLOW_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -1614,6 +1615,8 @@ export function HouseholdSettingsForm({
           </button>
         </section>
         {addScopeNoticeDialog}
+        {/* ホーム画面追加は常設。読込中 early return には置かない。 */}
+        <HomeScreenInstallSection />
         {/* L10-5: プラン管理はアカウント操作の直前。Checkout 成功時は短周期 re-fetch。 */}
         <PlanSettingsSection
           userId={userId}
@@ -2354,6 +2357,8 @@ export function HouseholdSettingsForm({
         </div>
       )}
       {addScopeNoticeDialog}
+      {/* ホーム画面追加は常設。読込中 early return には置かない。 */}
+      <HomeScreenInstallSection />
       {/* L10-5: プラン管理はアカウント操作の直前。Checkout 成功時は短周期 re-fetch。 */}
       <PlanSettingsSection
         userId={userId}
