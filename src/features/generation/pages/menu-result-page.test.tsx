@@ -774,6 +774,33 @@ describe("MenuResultPage", () => {
     expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).not.toBeNull();
   });
 
+  it("keeps create sticky on shopping_unavailable after committed replay (SHOP1)", async () => {
+    // 適用済み create + 応答ロスト後の同一 key resume が、replay 後の
+    // assertReplayStillCurrentlySafe で 503 shopping_unavailable になる。
+    // sticky を捨てると次シートが新 UUID / mode=new で第二リストになる。
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
+    shoppingApi.createShoppingList.mockRejectedValue(
+      Object.assign(new Error("読み込めませんでした"), { code: "shopping_unavailable" }),
+    );
+
+    renderPage(`/menus/${VALID_MENU_ID}`);
+
+    const createButton = await screen.findByRole("button", { name: "材料の買い物リストを作る" });
+    await waitFor(() => {
+      expect(createButton).toBeEnabled();
+    });
+    await userEvent.click(createButton);
+    const newChoice = screen.queryByRole("radio", { name: "新しいリストにする" });
+    if (newChoice !== null) await userEvent.click(newChoice);
+    await userEvent.click(screen.getByRole("button", { name: "作成する" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "買い物リストの状態が変わりました。もう一度確認してください",
+    );
+    const stickyKey = pendingShoppingCommandStorageKey("create", VALID_MENU_ID);
+    expect(sessionStorage.getItem(stickyKey) ?? localStorage.getItem(stickyKey)).not.toBeNull();
+  });
+
   it("keeps reconcile sticky on current_safety_revalidation_required for same-key resume (SHOP1)", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
     shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({

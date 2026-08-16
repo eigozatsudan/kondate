@@ -319,6 +319,32 @@ export function cancelPendingResumeSuppressClear(
 }
 
 /**
+ * SHOP1: create/reconcile の coded fail で sticky を残すか。
+ *
+ * 適用済み + 応答ロスト後の同一 key resume は、replay 後に
+ * `assertReplayStillCurrentlySafe` が safety 2 code 以外も投げる。
+ * ここで捨てると次シートが新 UUID になり、mode=new は使用中リストを
+ * archive して第二リストを作る（safety 409 と同じ穴）。
+ * 一時 5xx と非 safety 422 は safety 409 と同じ keep。
+ * list_version_conflict は未適用確定なので残さない。
+ */
+const shoppingCommandStickyKeepCodes = new Set<string>([
+  "current_safety_revalidation_required",
+  "safety_fingerprint_changed",
+  "shopping_unavailable",
+  "menu_load_failed",
+  "revalidation_unavailable",
+  "request_failed",
+  "safety_check_failed",
+  "current_target_member_required",
+  "idea_menu_not_supported",
+]);
+
+export function shouldKeepShoppingCommandSticky(code: unknown): boolean {
+  return typeof code === "string" && shoppingCommandStickyKeepCodes.has(code);
+}
+
+/**
  * SHOP2 + SHOP1: list gate が真に invalid/unverifiable（phase=blocked / error）のとき
  * create resume が enabled=false のため submitCreate 内の append clear が到達しない。
  * その遷移でのみ mode=append sticky を捨て、forceNew 誘導と ready 復帰後の旧 append

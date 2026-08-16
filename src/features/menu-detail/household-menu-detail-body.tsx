@@ -71,6 +71,7 @@ import {
   isShoppingSheetExpected,
   markShoppingResumeSuppress,
   scheduleResumeSuppressClear,
+  shouldKeepShoppingCommandSticky,
   waitForShoppingSheetOccupancyRelease,
 } from "@/features/shopping/shopping-intent";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -448,16 +449,13 @@ export function HouseholdMenuDetailBody({
       // version rebuild（同一 key で expectedListVersion だけ載せ替え）は hash 変更で
       // dual-create を再発させるので行わない。isReusable の version 非照合は維持。
       //
-      // current_safety_revalidation_required と safety_fingerprint_changed は sticky を保持する。
-      // 適用済み create/reconcile + 応答ロスト後に safety が一時 invalid / FP だけずれると
-      // replay が 409 になる。ここで clear するとユーザー再送が新 idempotency key になり、
-      // mode=new は active を archive して第二リストを作る（進捗 wipe / dual-create）。
-      // suppress で auto-resume の 409 ループは止め、safety 復帰後の同一 key 再送を残す。
-      // 他 code（list_version_conflict 含む）は sticky+suppress clear。
-      if (
-        code === "current_safety_revalidation_required" ||
-        code === "safety_fingerprint_changed"
-      ) {
+      // current_safety_revalidation_required / safety_fingerprint_changed に加え、
+      // commit 済み replay の一時 5xx（shopping_unavailable 等）と非 safety 422 も keep。
+      // 適用済み + 応答ロスト後に replay がこれらの code を返すとき clear すると、
+      // 再送が新 idempotency key になり mode=new は active を archive して第二リストを作る。
+      // suppress で auto-resume の失敗ループは止め、復帰後の同一 key 再送を残す。
+      // list_version_conflict は未適用確定のため sticky+suppress clear（item 対称）。
+      if (shouldKeepShoppingCommandSticky(code)) {
         markShoppingResumeSuppress(kind, targetId);
       } else {
         clearShoppingCommand(kind, targetId);

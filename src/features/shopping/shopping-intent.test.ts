@@ -21,6 +21,7 @@ import {
   resetResumeSuppressDocumentBootForTests,
   scheduleIntentClear,
   scheduleResumeSuppressClear,
+  shouldKeepShoppingCommandSticky,
   shoppingDidAutoOpenKey,
   shoppingIntentStorageKey,
   shoppingResumeSuppressKey,
@@ -102,6 +103,26 @@ afterEach(() => {
   localStorage.clear();
   resetResumeSuppressDocumentBootForTests();
   Reflect.deleteProperty(navigator, "locks");
+});
+
+describe("shouldKeepShoppingCommandSticky (SHOP1)", () => {
+  it("keeps sticky on committed-replay 503 shopping_unavailable", () => {
+    expect(shouldKeepShoppingCommandSticky("shopping_unavailable")).toBe(true);
+  });
+
+  it("keeps sticky on safety 409 and non-safety 422 from replay", () => {
+    expect(shouldKeepShoppingCommandSticky("current_safety_revalidation_required")).toBe(true);
+    expect(shouldKeepShoppingCommandSticky("safety_fingerprint_changed")).toBe(true);
+    expect(shouldKeepShoppingCommandSticky("current_target_member_required")).toBe(true);
+    expect(shouldKeepShoppingCommandSticky("idea_menu_not_supported")).toBe(true);
+    expect(shouldKeepShoppingCommandSticky("menu_load_failed")).toBe(true);
+  });
+
+  it("drops sticky on list_version_conflict so true-stale can remint", () => {
+    expect(shouldKeepShoppingCommandSticky("list_version_conflict")).toBe(false);
+    expect(shouldKeepShoppingCommandSticky("shopping_items_limit_exceeded")).toBe(false);
+    expect(shouldKeepShoppingCommandSticky(undefined)).toBe(false);
+  });
 });
 
 describe("shopping-intent paths", () => {
