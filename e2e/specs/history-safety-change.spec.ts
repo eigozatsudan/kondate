@@ -24,8 +24,8 @@ test(
     await changeFirstMemberSafety(page);
     await page.goto(`/history/${menuId}`);
     // H11 / A-I3: unconfirmed は snapshot available（500 safety_context_failed ではない）。
-    // revalidate 200 invalid（allergy_unconfirmed 等）→ UI は「現在の家族設定…」系でゲート閉鎖。
-    await expect(page.getByRole("alert")).toContainText(/現在の家族設定/u, {
+    // revalidate 200 invalid（allergy_unconfirmed 等）→ UI は対象家族の設定系でゲート閉鎖。
+    await expect(page.getByRole("alert")).toContainText(/この献立の対象家族の設定/u, {
       timeout: 30_000,
     });
     await expect(

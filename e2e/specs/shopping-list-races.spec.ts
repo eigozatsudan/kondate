@@ -451,13 +451,13 @@ test("resumes create with the same key after the first tab closes", async ({
     });
 
     await page.goto(`/menus/${shoppingMenuId}`);
-    await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+    await expect(page.getByText("この献立の対象家族の設定を再確認しています")).toHaveCount(0, {
       timeout: 90_000,
     });
-    await expect(page.getByText("現在の家族設定で確認しています")).toHaveCount(0, {
+    await expect(page.getByText("この献立の対象家族の設定で確認しています")).toHaveCount(0, {
       timeout: 90_000,
     });
-    await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({
+    await expect(page.getByText(/この献立の対象家族の設定で確認しました/u)).toBeVisible({
       timeout: 30_000,
     });
     const labelConfirm = page.getByRole("button", {

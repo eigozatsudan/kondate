@@ -124,14 +124,14 @@ export async function createListFromMenu(page: Page, menuId: string): Promise<vo
   await page.goto(`/menus/${menuId}`);
   // full-journey と同型: soft recheck / mount recheck の両方を idle にする（E2E3）。
   // 片方だけ待つなのは、製品が両コピーを出し分けるため（household-menu-detail-body）。
-  await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+  await expect(page.getByText("この献立の対象家族の設定を再確認しています")).toHaveCount(0, {
     timeout: 90_000,
   });
-  await expect(page.getByText("現在の家族設定で確認しています")).toHaveCount(0, {
+  await expect(page.getByText("この献立の対象家族の設定で確認しています")).toHaveCount(0, {
     timeout: 90_000,
   });
   // 再検証完了コピーが出るまで待つ（URL 遷移直後の shallow ready を避ける）
-  await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({
+  await expect(page.getByText(/この献立の対象家族の設定で確認しました/u)).toBeVisible({
     timeout: 30_000,
   });
   // 小麦 mock 経路では labelConfirmation が出る。見える場合は必須で確認する（黙って飛ばさない）。
@@ -176,7 +176,9 @@ export async function regenerateWholeMenu(page: Page, menuId: string): Promise<s
   // 成功 fixture と material が重複しない別案を返す（history-regeneration と同じ）
   await setMockScenario(page, "alternate-menu");
   await page.goto(`/history/${menuId}`);
-  await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/この献立の対象家族の設定で確認しました/u)).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(page.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled({
     timeout: 15_000,
   });

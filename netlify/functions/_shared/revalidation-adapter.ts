@@ -563,7 +563,11 @@ export async function reconcileCurrentMenuLabelWarnings(
   });
 
   if (error !== null) {
-    throw new HttpError(503, "revalidation_unavailable", "現在の家族設定で確認できませんでした");
+    throw new HttpError(
+      503,
+      "revalidation_unavailable",
+      "この献立の対象家族の設定で確認できませんでした",
+    );
   }
 
   const rows = Array.isArray(data) ? data : [];
@@ -571,7 +575,11 @@ export async function reconcileCurrentMenuLabelWarnings(
   // HR8: catalog 読取 error を空 Map に畳むと allergenName が汎用文言になり確認判断を誤らせる。
   // reconcile 行 parse 失敗と同型の 503 fail-closed（表示名欠落を silent にしない）。
   if (catalogResult.error !== null) {
-    throw new HttpError(503, "revalidation_unavailable", "現在の家族設定で確認できませんでした");
+    throw new HttpError(
+      503,
+      "revalidation_unavailable",
+      "この献立の対象家族の設定で確認できませんでした",
+    );
   }
   const catalogRows = catalogResult.data;
   const catalog = new Map(catalogRows.map((row) => [row.id, row.display_name] as const));
@@ -580,7 +588,11 @@ export async function reconcileCurrentMenuLabelWarnings(
   for (const raw of rows) {
     const parsed = reconcileRowSchema.safeParse(raw);
     if (!parsed.success) {
-      throw new HttpError(503, "revalidation_unavailable", "現在の家族設定で確認できませんでした");
+      throw new HttpError(
+        503,
+        "revalidation_unavailable",
+        "この献立の対象家族の設定で確認できませんでした",
+      );
     }
     const row = parsed.data;
     const allergenName = (catalog.get(row.allergen_id) ?? "").trim() || "確認対象アレルゲン";
@@ -812,7 +824,7 @@ export function createRevalidationDeps(user: AuthenticatedUser): RevalidationDep
         throw new HttpError(
           503,
           "revalidation_unavailable",
-          "現在の家族設定で確認できませんでした",
+          "この献立の対象家族の設定で確認できませんでした",
         );
       }
     },

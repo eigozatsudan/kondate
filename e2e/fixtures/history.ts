@@ -241,7 +241,7 @@ export async function seedGeneratedMenu(page: Page): Promise<string> {
   });
   await page.getByRole("button", { name: "献立を作る" }).click();
   await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 60_000 });
-  await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({
+  await expect(page.getByText(/この献立の対象家族の設定で確認しました/u)).toBeVisible({
     timeout: 60_000,
   });
   await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
@@ -291,7 +291,7 @@ async function openMenuResultForRegeneration(
 ): Promise<void> {
   await page.goto(`/menus/${menuId}`);
   if (targetMode === "household") {
-    await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({
+    await expect(page.getByText(/この献立の対象家族の設定で確認しました/u)).toBeVisible({
       timeout: 30_000,
     });
   } else {

@@ -405,7 +405,7 @@ describe("MenuResultPage", () => {
     renderPage(`/menus/${VALID_MENU_ID}`);
     // 献立本体の取得が終わったあとも再検証が終わるまで操作を閉じる
     expect(await screen.findByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
-    expect(screen.getByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(screen.getByText("この献立の対象家族の設定で確認しています")).toBeVisible();
     expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
     expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
@@ -455,7 +455,7 @@ describe("MenuResultPage", () => {
     );
 
     // invalidate 完了を待たず、同一ターン相当で checking に戻る
-    expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(await screen.findByText("この献立の対象家族の設定で確認しています")).toBeVisible();
     expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
   });

@@ -178,11 +178,11 @@ export function MenuActions({
           <p role="status">この献立で買い物リストを作れます</p>
         ) : null}
         {shoppingIntentActive && revalidationPhase === "checking" ? (
-          <p role="status">買い物リストを作る前に、いまの家族設定を確認しています</p>
+          <p role="status">買い物リストを作る前に、この献立の対象家族の設定を確認しています</p>
         ) : null}
         {/* HR1: soft 飛行中は恒久拒否ではなく再確認待ち（invalid アラートと混同しない） */}
         {shoppingIntentActive && isSoftRechecking ? (
-          <p role="status">買い物リストを作る前に、いまの家族設定を再確認しています</p>
+          <p role="status">買い物リストを作る前に、この献立の対象家族の設定を再確認しています</p>
         ) : null}
         {shoppingIntentActive &&
         (revalidationPhase === "error" || (revalidationPhase === "checked" && !gateOpen)) ? (
@@ -191,7 +191,7 @@ export function MenuActions({
               <Stack gap={3}>
                 <p>
                   {shoppingRejectedMessage ??
-                    "現在の家族設定ではこの献立から買い物リストを作れません"}
+                    "この献立の対象家族の設定では買い物リストを作れません"}
                 </p>
                 <Link className="button-link" to={historyPathForShopping()}>
                   履歴に戻る

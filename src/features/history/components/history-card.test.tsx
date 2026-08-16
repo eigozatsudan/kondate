@@ -109,6 +109,12 @@ describe("HistoryCard mode badge", () => {
     expect(screen.queryByText("アイデア")).toBeNull();
   });
 
+  it("scopes household recheck copy to this menu's target members", () => {
+    renderCard(householdGroup());
+    expect(screen.getByText("開くとこの献立の対象家族の設定で再確認します")).toBeVisible();
+    expect(screen.queryByText(/現在の家族設定/u)).toBeNull();
+  });
+
   it("shows an idea badge for idea-mode representative menus", () => {
     renderCard(ideaGroup());
     expect(screen.getByText("アイデア")).toBeVisible();

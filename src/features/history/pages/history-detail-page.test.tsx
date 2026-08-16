@@ -462,7 +462,7 @@ describe("HistoryDetailPage safety gate", () => {
   it("revalidates on mount and blocks actions while current safety is loading", async () => {
     const revalidate = deferredPromise<RevalidationResult>();
     renderHistoryDetail({ revalidate: () => revalidate.promise });
-    expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(await screen.findByText("この献立の対象家族の設定で確認しています")).toBeVisible();
     expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
     expect(document.querySelector(".gen-status-indicator")).not.toBeNull();
     expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
@@ -474,7 +474,7 @@ describe("HistoryDetailPage safety gate", () => {
     act(() => {
       revalidate.resolve(validRevalidation);
     });
-    expect(await screen.findByText("現在の家族設定で確認しました")).toBeVisible();
+    expect(await screen.findByText("この献立の対象家族の設定で確認しました")).toBeVisible();
     expect(document.querySelector(".revalidation-checking-overlay")).toBeNull();
   });
 
@@ -497,7 +497,9 @@ describe("HistoryDetailPage safety gate", () => {
       },
     });
     expect(
-      await screen.findByText("現在の家族設定で確認しました。作成時から条件が変わっています"),
+      await screen.findByText(
+        "この献立の対象家族の設定で確認しました。作成時から条件が変わっています",
+      ),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled();
   });
@@ -543,7 +545,7 @@ describe("HistoryDetailPage safety gate", () => {
         isSoftRechecking: true,
       },
     });
-    expect(await screen.findByText("いまの家族設定を再確認しています")).toBeVisible();
+    expect(await screen.findByText("この献立の対象家族の設定を再確認しています")).toBeVisible();
     // 本文ゲートは開いたまま（フル画面 checking オーバーレイは出さない）
     expect(document.querySelector(".revalidation-checking-overlay")).toBeNull();
     expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
@@ -563,9 +565,11 @@ describe("HistoryDetailPage safety gate", () => {
         isOfflineHold: true,
       },
     });
-    expect(await screen.findByText("ネット接続後に現在の家族設定を確認してください")).toBeVisible();
+    expect(
+      await screen.findByText("ネット接続後にこの献立の対象家族の設定を確認してください"),
+    ).toBeVisible();
     expect(document.querySelector(".revalidation-checking-overlay")).not.toBeNull();
-    expect(screen.queryByText("現在の家族設定で確認しています")).toBeNull();
+    expect(screen.queryByText("この献立の対象家族の設定で確認しています")).toBeNull();
   });
 
   it("disables regenerate when source pantry selection is missing from live (HR5)", async () => {
@@ -643,7 +647,7 @@ describe("HistoryDetailPage safety gate", () => {
         isSoftRechecking: true,
       },
     });
-    expect(await screen.findByText("いまの家族設定を再確認しています")).toBeVisible();
+    expect(await screen.findByText("この献立の対象家族の設定を再確認しています")).toBeVisible();
     const acceptButtons = screen.queryAllByRole("button", { name: "この献立にする" });
     for (const button of acceptButtons) {
       expect(button).toBeDisabled();
@@ -931,7 +935,7 @@ describe("HistoryDetailPage safety gate", () => {
       },
     });
 
-    await screen.findByText("いまの家族設定を再確認しています");
+    await screen.findByText("この献立の対象家族の設定を再確認しています");
     await act(async () => {
       await Promise.resolve();
     });
@@ -1020,7 +1024,7 @@ describe("HistoryDetailPage safety gate", () => {
       screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
     );
 
-    expect(await screen.findByText("現在の家族設定で確認しています")).toBeVisible();
+    expect(await screen.findByText("この献立の対象家族の設定で確認しています")).toBeVisible();
     expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
     expect(confirmLabelConfirmationMock).toHaveBeenCalledWith(
       MENU_ID,
@@ -1334,7 +1338,7 @@ describe("MenuResultPage shared revalidation gate", () => {
     expect(
       screen
         .getAllByRole("status")
-        .some((node) => node.textContent.includes("現在の家族設定で確認しています")),
+        .some((node) => node.textContent.includes("この献立の対象家族の設定で確認しています")),
     ).toBe(true);
     expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
@@ -1356,7 +1360,7 @@ describe("MenuResultPage shared revalidation gate", () => {
       expect(
         screen
           .getAllByRole("status")
-          .some((node) => node.textContent.includes("現在の家族設定で確認しています")),
+          .some((node) => node.textContent.includes("この献立の対象家族の設定で確認しています")),
       ).toBe(true);
       expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
       act(() => {
@@ -1389,9 +1393,9 @@ describe("MenuResultPage shared revalidation gate", () => {
       expect(
         screen
           .queryAllByRole("status")
-          .some((node) => node.textContent.includes("現在の家族設定で確認しています")),
+          .some((node) => node.textContent.includes("この献立の対象家族の設定で確認しています")),
       ).toBe(false);
-      expect(await screen.findByText("いまの家族設定を再確認しています")).toBeVisible();
+      expect(await screen.findByText("この献立の対象家族の設定を再確認しています")).toBeVisible();
       expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
       expect(screen.getByRole("heading", { name: /献立/u })).toBeVisible();
       await act(async () => {

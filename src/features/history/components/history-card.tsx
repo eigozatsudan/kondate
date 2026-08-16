@@ -93,10 +93,11 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
                 timeStyle: "short",
               }).format(new Date(representative.createdAt))}
             </p>
+            {/* 再検証は作成時の対象メンバーだけ。世帯全員と読める「現在の家族設定」は使わない。 */}
             <p className="type-small">
               {representative.targetMode === "idea"
                 ? "開いても家族条件は確認しません"
-                : "開くと現在の家族設定で再確認します"}
+                : "開くとこの献立の対象家族の設定で再確認します"}
             </p>
           </Stack>
           <div className="history-card-actions">

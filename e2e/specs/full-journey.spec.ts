@@ -81,7 +81,9 @@ test(
     await expect(page.getByRole("heading", { name: "献立ができました" })).toBeVisible({
       timeout: 90_000,
     });
-    await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/この献立の対象家族の設定で確認しました/u)).toBeVisible({
+      timeout: 30_000,
+    });
     // success fixture 主菜（shallow 回避: 見出し/URL だけでない中身）
     await expect(page.getByRole("heading", { name: "鶏肉と白菜のやわらか煮" })).toBeVisible({
       timeout: 15_000,
@@ -106,10 +108,10 @@ test(
 
     // 先に source から買い物リストを作成し、後段の新案 reconcile の土台にする。
     // soft recheck / mount recheck 中は採用・買い物 CTA が disabled。idle 後に settle する。
-    await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+    await expect(page.getByText("この献立の対象家族の設定を再確認しています")).toHaveCount(0, {
       timeout: 90_000,
     });
-    await expect(page.getByText("現在の家族設定で確認しています")).toHaveCount(0, {
+    await expect(page.getByText("この献立の対象家族の設定で確認しています")).toHaveCount(0, {
       timeout: 90_000,
     });
     const acceptSource = page.getByRole("button", { name: "この献立にする" });
@@ -138,7 +140,7 @@ test(
     // 単一案 (confirmedSingle) でも補助に「この献立にする」が出る。既 isSelected なら count 0。
     if ((await acceptSource.count()) > 0) {
       // soft recheck 中の no-op click を避ける: enabled かつ再確認文言が消えてから採用
-      await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+      await expect(page.getByText("この献立の対象家族の設定を再確認しています")).toHaveCount(0, {
         timeout: 90_000,
       });
       await expect(acceptSource).toBeEnabled({ timeout: 30_000 });
@@ -147,7 +149,7 @@ test(
       try {
         await expect(acceptSource).toHaveCount(0, { timeout: 15_000 });
       } catch {
-        await expect(page.getByText("いまの家族設定を再確認しています")).toHaveCount(0, {
+        await expect(page.getByText("この献立の対象家族の設定を再確認しています")).toHaveCount(0, {
           timeout: 90_000,
         });
         if (await createSheetHeading.isVisible().catch(() => false)) {
@@ -210,7 +212,7 @@ test(
 
     // E2E3: 新案を採用し、既存リストとの差分 reconcile まで通す（source には戻らない）
     await page.goto(`/menus/${alternateMenuId}`);
-    await expect(page.getByText(/現在の家族設定で確認しました/u)).toBeVisible({
+    await expect(page.getByText(/この献立の対象家族の設定で確認しました/u)).toBeVisible({
       timeout: 30_000,
     });
     await expect(page.getByRole("heading", { name: "鶏肉のさっぱり煮" })).toBeVisible({
@@ -326,7 +328,7 @@ test(
     await generate.click();
     await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
     await expectIdeaResultSurface(page, { timeout: 30_000 });
-    await expect(page.getByText(/現在の家族設定で確認しました/u)).toHaveCount(0);
+    await expect(page.getByText(/この献立の対象家族の設定で確認しました/u)).toHaveCount(0);
     // idea success fixture 主菜
     await expect(page.getByRole("heading", { name: "鶏肉と白菜のやわらか煮" })).toBeVisible({
       timeout: 15_000,

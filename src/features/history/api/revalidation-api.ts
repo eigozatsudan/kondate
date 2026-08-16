@@ -110,16 +110,22 @@ export async function revalidateMenu(
   try {
     json = await response.json();
   } catch {
-    throw new RevalidationApiError("invalid_envelope", "現在の家族設定で確認できませんでした");
+    throw new RevalidationApiError(
+      "invalid_envelope",
+      "この献立の対象家族の設定で確認できませんでした",
+    );
   }
   const envelope = revalidationEnvelopeSchema.safeParse(json);
   if (!envelope.success) {
-    throw new RevalidationApiError("invalid_envelope", "現在の家族設定で確認できませんでした");
+    throw new RevalidationApiError(
+      "invalid_envelope",
+      "この献立の対象家族の設定で確認できませんでした",
+    );
   }
   if (!envelope.data.ok) {
     throw new RevalidationApiError(
       envelope.data.error.code,
-      envelope.data.error.message || "現在の家族設定で確認できませんでした",
+      envelope.data.error.message || "この献立の対象家族の設定で確認できませんでした",
     );
   }
   return envelope.data.data;

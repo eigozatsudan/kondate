@@ -32,7 +32,7 @@ it("exposes checking as role=status with busy", () => {
   );
   const status = screen.getByRole("status");
   expect(status).toHaveAttribute("aria-busy", "true");
-  expect(status).toHaveTextContent("現在の家族設定で確認しています");
+  expect(status).toHaveTextContent("この献立の対象家族の設定で確認しています");
 });
 
 it("exposes error copy as role=alert and a retry control", () => {
@@ -63,7 +63,7 @@ it("exposes invalid issues under role=alert", () => {
     />,
   );
   const alert = screen.getByRole("alert");
-  expect(alert).toHaveTextContent("現在の家族設定ではこの献立を利用できません");
+  expect(alert).toHaveTextContent("この献立の対象家族の設定では利用できません");
   expect(alert).toHaveTextContent("アレルゲンが含まれます");
 });
 
@@ -73,12 +73,12 @@ it("exposes gate status as role=status when open", () => {
       section="gate"
       phase="checked"
       isOfflineHold={false}
-      statusCopy="現在の家族設定で確認しました"
+      statusCopy="この献立の対象家族の設定で確認しました"
       showGateStatus
       changedDetailLines={["好みの設定が変わっています"]}
     />,
   );
   const status = screen.getByRole("status");
-  expect(status).toHaveTextContent("現在の家族設定で確認しました");
+  expect(status).toHaveTextContent("この献立の対象家族の設定で確認しました");
   expect(status).toHaveTextContent("好みの設定が変わっています");
 });

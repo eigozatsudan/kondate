@@ -51,7 +51,7 @@ export type MenuSafetyNoticeProps = {
 
 /**
  * household 献立詳細の安全・アレルギー表示。
- * 表示専用。文言は不変契約どおり一字一句変えない。
+ * 表示専用。ゲート文は作成時の対象家族に限り、世帯全員とは書かない。保証フレーズは出さない。
  * role=alert / role=status の使い分けも維持する。
  * sticky は .menu-result-gate-status 意味クラスへ退避（生 utility 禁止）。
  */
@@ -110,8 +110,8 @@ export function MenuSafetyNotice({
             {/* HR1: offline hold は shopping と同型の接続誘導。通常 checking は確認中 */}
             <p>
               {isOfflineHold
-                ? "ネット接続後に現在の家族設定を確認してください"
-                : "現在の家族設定で確認しています"}
+                ? "ネット接続後にこの献立の対象家族の設定を確認してください"
+                : "この献立の対象家族の設定で確認しています"}
             </p>
           </div>
         </div>
@@ -135,7 +135,7 @@ export function MenuSafetyNotice({
         <Surface tone="notice" role="alert">
           <Inset pad={5}>
             <Stack gap={2}>
-              <p>現在の家族設定ではこの献立を利用できません</p>
+              <p>この献立の対象家族の設定では利用できません</p>
               <ul className="menu-detail-issue-list">
                 {invalidIssues.map((issue) => (
                   <li key={`${issue.code}:${issue.path}`}>{issue.message}</li>

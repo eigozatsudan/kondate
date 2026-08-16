@@ -241,13 +241,13 @@ export function useMenuRevalidation(menuId: string) {
 
   // マウント時から offline で初回 POST が落ちた場合も shopping と同型の誘導を出す
   // navigator.onLine を Error.message より優先（汎用 network 文言で offline が埋もれない）
-  const offlineErrorFallback = "ネット接続後に現在の家族設定を確認してください";
+  const offlineErrorFallback = "ネット接続後にこの献立の対象家族の設定を確認してください";
   const errorMessage =
     typeof navigator !== "undefined" && !navigator.onLine
       ? offlineErrorFallback
       : query.error instanceof Error
         ? query.error.message
-        : "現在の家族設定で確認できませんでした";
+        : "この献立の対象家族の設定で確認できませんでした";
 
   const refetch = useCallback(() => {
     // エラー画面の「もう一度確認」は hard と同型（操作再開前に閉じたゲートを取り直す）。

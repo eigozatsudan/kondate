@@ -66,12 +66,12 @@ it("exposes shopping intent rejection as role=alert", () => {
         shoppingIntentActive
         gateOpen={false}
         revalidationPhase="checked"
-        shoppingRejectedMessage="現在の家族設定ではこの献立から買い物リストを作れません"
+        shoppingRejectedMessage="この献立の対象家族の設定では買い物リストを作れません"
       />
     </MemoryRouter>,
   );
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "現在の家族設定ではこの献立から買い物リストを作れません",
+    "この献立の対象家族の設定では買い物リストを作れません",
   );
   expect(screen.getByRole("link", { name: "履歴に戻る" })).toBeVisible();
   expect(screen.getByRole("link", { name: "買い物に戻る" })).toBeVisible();

@@ -29,7 +29,7 @@ const closedRevalidationIssueMessages = {
   safety_action_contradiction: "安全対応と料理手順が矛盾しています",
 } as const satisfies Partial<Record<MenuValidationIssueCode, string>>;
 
-const genericRevalidationIssueMessage = "現在の家族設定ではこの献立を利用できません";
+const genericRevalidationIssueMessage = "この献立の対象家族の設定では利用できません";
 
 export function toPersistedRevalidationIssues(
   issues: readonly Pick<MenuValidationIssue, "code" | "path">[],

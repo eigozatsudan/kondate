@@ -622,18 +622,19 @@ export function HouseholdMenuDetailBody({
   ]);
 
   const statusCopy = useMemo(() => {
+    // 再検証母集団は作成時の対象メンバー。世帯全員と読める「現在の家族設定」は使わない。
     // HR1: offline hold は shopping gate と同型の接続誘導（「確認中」で固まらない）
     if (revalidation.phase === "checking" && isOfflineHold) {
-      return "ネット接続後に現在の家族設定を確認してください";
+      return "ネット接続後にこの献立の対象家族の設定を確認してください";
     }
-    if (revalidation.phase === "checking") return "現在の家族設定で確認しています";
+    if (revalidation.phase === "checking") return "この献立の対象家族の設定で確認しています";
     if (revalidation.phase === "error") return revalidation.errorMessage ?? "確認できませんでした";
     // soft 飛行中は本文を維持しつつ「再確認中」を示し CTA だけ閉じる
-    if (isSoftRechecking) return "いまの家族設定を再確認しています";
+    if (isSoftRechecking) return "この献立の対象家族の設定を再確認しています";
     if (revalidation.result?.status === "changed") {
-      return "現在の家族設定で確認しました。作成時から条件が変わっています";
+      return "この献立の対象家族の設定で確認しました。作成時から条件が変わっています";
     }
-    if (revalidation.result?.status === "valid") return "現在の家族設定で確認しました";
+    if (revalidation.result?.status === "valid") return "この献立の対象家族の設定で確認しました";
     return null;
   }, [isOfflineHold, isSoftRechecking, revalidation]);
 
@@ -805,7 +806,7 @@ export function HouseholdMenuDetailBody({
           revalidationPhase={revalidation.phase}
           isSoftRechecking={isSoftRechecking}
           shoppingRejectedMessage={
-            revalidation.errorMessage ?? "現在の家族設定ではこの献立から買い物リストを作れません"
+            revalidation.errorMessage ?? "この献立の対象家族の設定では買い物リストを作れません"
           }
           onAccept={() => {
             // HR3: RPC は所有権のみ。クライアントで checked+actionable を再確認してから呼ぶ
