@@ -786,14 +786,12 @@ it("does not start leftover signOut when leftover-capable /login has a fresh wai
   leftoverSignOut.mockClear();
   leftoverGetSession.mockClear();
   window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
-  sessionStorage.setItem(
-    "kondate.auth.magicSentUi",
-    JSON.stringify({
-      email: "user@example.com",
-      resendAvailableAt: futureResendAt(),
-      storedAt: new Date().toISOString(),
-    }),
-  );
+  const waitingSnapshot = {
+    email: "user@example.com",
+    resendAvailableAt: futureResendAt(),
+    storedAt: new Date().toISOString(),
+  };
+  sessionStorage.setItem("kondate.auth.magicSentUi", JSON.stringify(waitingSnapshot));
   leftoverGetSession.mockResolvedValue({
     data: { session: leftoverMocks.leftover },
     error: null,
@@ -802,13 +800,22 @@ it("does not start leftover signOut when leftover-capable /login has a fresh wai
   renderLoginAt("/login", stubGateway());
 
   expect(await screen.findByRole("heading", { name: EMAIL_OTP_WAITING_HEADING })).toBeVisible();
+  for (const label of DIGIT_LABELS) {
+    expect(getDigitBox(label)).toBeVisible();
+  }
 
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
   });
+  // C1b: leftover 掃除は起動しない。M1: C9 が認証 leftover で waiting snapshot を消さない
   expect(leftoverGetSession).not.toHaveBeenCalled();
   expect(leftoverSignOut).not.toHaveBeenCalled();
+  expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBe(JSON.stringify(waitingSnapshot));
+  expect(screen.getByRole("heading", { name: EMAIL_OTP_WAITING_HEADING })).toBeVisible();
+  for (const label of DIGIT_LABELS) {
+    expect(getDigitBox(label)).toBeVisible();
+  }
 });
 
 it.each([
@@ -854,7 +861,8 @@ it("C-R4: leftover-capable login does not signOut leftover when sibling completi
   }
 });
 
-it("C9: clears number-wait residual sessionStorage when already authenticated", () => {
+it("C9: clears number-wait residual sessionStorage on real authenticated success", () => {
+  // leftover-capable ではない leave（returnTo のみ）での成功 Navigate 時だけ residual を消す
   sessionStorage.setItem(
     "kondate.auth.lastMagicEmail",
     JSON.stringify({ email: "user@example.com", storedAt: new Date().toISOString() }),
@@ -873,7 +881,7 @@ it("C9: clears number-wait residual sessionStorage when already authenticated", 
     refreshSession: vi.fn(),
     sessionProbeDegraded: false,
   });
-  renderLoginAt("/login", stubGateway());
+  renderLoginAt("/login?returnTo=%2Fwelcome", stubGateway());
 
   expect(sessionStorage.getItem("kondate.auth.lastMagicEmail")).toBeNull();
   expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBeNull();

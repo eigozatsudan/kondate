@@ -563,8 +563,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   // ただしこのタブで今立てた番号成功印が新鮮なら、その session は leftover ではない。
   // C1: unmount / 印書き込み後の late .then で leftover を再起動しない。
   // C1b: 番号待ち snapshot（メールアプリ往復の再水和）または確認中は leftover を起動しない。
-  // C9 より先に判定する。後続 C9 が authenticated leftover で snapshot を消しても、
-  // このマウントでは起動済みにしない。
+  // C9 は本物の成功時だけ snapshot を消す（M1）。leftover-capable authenticated では残す。
   useEffect(() => {
     if (!leftoverCapable || otpCompletedFresh) {
       return;
@@ -591,12 +590,18 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     };
   }, [leftoverCapable, otpCompletedFresh, locationState.authError, location.search, state.status]);
 
-  // ログイン成功後は宛先の PII を sessionStorage に残さない（C9）
+  // ログイン成功後は宛先の PII を sessionStorage に残さない（C9）。
+  // leftover-capable の authenticated は本物の成功ではない（M1 / C1b residual）。
+  // otp 成功印が無く complete でもないなら番号待ち snapshot を残す（再マウント再水和用）。
   useEffect(() => {
-    if (auth.status !== "authenticated") return;
+    const realSuccess =
+      otpCompletedFresh ||
+      state.status === "complete" ||
+      (auth.status === "authenticated" && !leftoverCapable);
+    if (!realSuccess) return;
     rememberLastMagicEmail("");
     rememberWaitingUi(null);
-  }, [auth.status]);
+  }, [auth.status, leftoverCapable, otpCompletedFresh, state.status]);
 
   // 既にセッションがある場合はフォームを出さず returnTo へ進める。
   // C2 / C-R2 / C-R3: leftover を伴い得る leave はエラーより先に Navigate しない。
