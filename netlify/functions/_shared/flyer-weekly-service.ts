@@ -761,6 +761,8 @@ export async function runFlyerWeekly(
       p_short_window_limit: limits.shortWindowLimit,
       p_global_limit: env.openRouter.globalDailyLimit,
       p_quota_disabled: env.aiQuotaDisabled,
+      // SC12: SQL リテラル 180 ではなく ENV / mjs の stale 秒を渡す（値は 180 のまま）。
+      p_stale_after_seconds: env.openRouter.staleAfterSeconds,
     },
   );
   if (reserveError !== null) {

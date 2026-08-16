@@ -33,6 +33,6 @@ export const OPENROUTER_TIMEOUT_MS_ENV = "24000";
 export const FUNCTION_TOTAL_BUDGET_MS = 55_000;
 export const FUNCTION_TOTAL_BUDGET_MS_ENV = "55000";
 
-/** processing 孤児解放までの秒（AI_PROCESSING_STALE_SECONDS）。 */
+/** processing 孤児解放までの秒（AI_PROCESSING_STALE_SECONDS）。generation / flyer reserve が同一値を渡す。 */
 export const AI_PROCESSING_STALE_SECONDS = 180;
 export const AI_PROCESSING_STALE_SECONDS_ENV = "180";

@@ -197,6 +197,7 @@ beforeEach(() => {
       timeoutMs: 24_000,
       functionTotalBudgetMs: 55_000,
       globalDailyLimit: 20,
+      staleAfterSeconds: 180,
     },
   });
   loadEntitlementMock.mockResolvedValue(plusEntitlement);
@@ -268,6 +269,9 @@ describe("runFlyerWeekly pipeline (PE1/PE2/PE4/PE5/PE6/PE11)", () => {
     ).rejects.toMatchObject({ status: 422, code: "allergy_unconfirmed" });
 
     expect(rpcNames()).toContain("reserve_flyer_weekly");
+    expect(rpcArgsFor("reserve_flyer_weekly")).toMatchObject({
+      p_stale_after_seconds: 180,
+    });
     expect(rpcNames()).toContain("finalize_flyer_weekly_failure");
     expect(rpcNames()).not.toContain("mark_flyer_weekly_sent");
     expect(rpcArgsFor("finalize_flyer_weekly_failure")).toMatchObject({

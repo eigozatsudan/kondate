@@ -416,6 +416,7 @@ describe("PE-R2 empty-image lookup while Plus", () => {
         timeoutMs: 24_000,
         functionTotalBudgetMs: 55_000,
         globalDailyLimit: 20,
+        staleAfterSeconds: 180,
       },
     });
     loadEntitlementMock.mockResolvedValue(plusEntitlement);

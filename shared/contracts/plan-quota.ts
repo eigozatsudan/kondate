@@ -14,6 +14,20 @@ import {
   GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX as productMaxFromShared,
 } from "./plan-quota-constants.mjs";
 
+/** Plus 製品上限。defense 天井はここから導出し、独立リテラルにしない（SC3）。 */
+const plusQuota = {
+  successPerDay: 10,
+  attemptsPerDay: 20,
+  shortWindowLimit: 8,
+  shortWindowSeconds: FREE_SHORT_WINDOW_SECONDS,
+} as const;
+
+const flyerWeeklyQuota = {
+  successPerJstWeek: 2,
+  /** OpenRouter 送信前に数える週次試行（成功 2 と独立） */
+  triesPerJstWeek: 6,
+} as const;
+
 /** プラン別製品上限と DB/Zod 防御天井。設計 2026-07-29 L6–L9。 */
 export const planQuota = {
   free: {
@@ -22,28 +36,19 @@ export const planQuota = {
     shortWindowLimit: FREE_SHORT_WINDOW_LIMIT,
     shortWindowSeconds: FREE_SHORT_WINDOW_SECONDS,
   },
-  plus: {
-    successPerDay: 10,
-    attemptsPerDay: 20,
-    shortWindowLimit: 8,
-    shortWindowSeconds: FREE_SHORT_WINDOW_SECONDS,
-  },
+  plus: plusQuota,
   quality: {
     perDay: 3,
     perMonth: 20,
   },
-  flyerWeekly: {
-    successPerJstWeek: 2,
-    /** OpenRouter 送信前に数える週次試行（成功 2 と独立） */
-    triesPerJstWeek: 6,
-  },
-  /** DB CHECK / Zod max の防御上限（製品最大） */
+  flyerWeekly: flyerWeeklyQuota,
+  /** DB CHECK / Zod max の防御上限（製品最大）。plus / flyerWeekly と同一参照。 */
   defense: {
-    maxSuccessPerDay: 10,
-    maxAttemptsPerDay: 20,
-    maxShortWindow: 8,
-    maxFlyerSuccessPerWeek: 2,
-    maxFlyerTriesPerWeek: 6,
+    maxSuccessPerDay: plusQuota.successPerDay,
+    maxAttemptsPerDay: plusQuota.attemptsPerDay,
+    maxShortWindow: plusQuota.shortWindowLimit,
+    maxFlyerSuccessPerWeek: flyerWeeklyQuota.successPerJstWeek,
+    maxFlyerTriesPerWeek: flyerWeeklyQuota.triesPerJstWeek,
   },
   /**
    * アプリ全体の外部 AI 日次枠（GLOBAL_DAILY_AI_LIMIT）の製品 max。

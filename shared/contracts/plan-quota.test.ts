@@ -32,6 +32,12 @@ describe("planQuota", () => {
       maxFlyerSuccessPerWeek: 2,
       maxFlyerTriesPerWeek: 6,
     });
+    // SC3: defense は plus / flyerWeekly の単一ソース。独立リテラルに戻さない。
+    expect(planQuota.defense.maxSuccessPerDay).toBe(planQuota.plus.successPerDay);
+    expect(planQuota.defense.maxAttemptsPerDay).toBe(planQuota.plus.attemptsPerDay);
+    expect(planQuota.defense.maxShortWindow).toBe(planQuota.plus.shortWindowLimit);
+    expect(planQuota.defense.maxFlyerSuccessPerWeek).toBe(planQuota.flyerWeekly.successPerJstWeek);
+    expect(planQuota.defense.maxFlyerTriesPerWeek).toBe(planQuota.flyerWeekly.triesPerJstWeek);
   });
 
   it("exports a single product max for GLOBAL_DAILY_AI_LIMIT (ENV-only; SQL has no range gate)", async () => {
