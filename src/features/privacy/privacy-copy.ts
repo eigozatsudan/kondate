@@ -17,6 +17,10 @@ export const accountDeletionStripeResidualNote =
 export const accountDeletionOtherDeviceNote =
   "他の端末に残った下書きや一時データは、この操作では消えません。";
 
+/** AP8: 当該端末の owned 草稿が掃除しきれなかったとき成功バナーで再掲する。 */
+export const accountDeletionThisDeviceResidualNote =
+  "この端末に下書きや一時データが残っている場合があります。ブラウザの保存データを消すか、他の人と共有している端末では注意してください。";
+
 /** AP14: 既に外部へ送った一般化用テキストはアプリ削除では消えない。 */
 export const accountDeletionProviderPromptNote =
   "すでに外部のAIへ送った一般化用の文章は、この削除では消えません。";

@@ -6,6 +6,7 @@ import {
   clearExpiredSessionAuthAndDrafts,
   clearLocalAuthAndDrafts,
   clearOwnedLocalDataBestEffort,
+  hasOwnedLocalDataResidual,
   clearSoftResidualRecoverySuppressed,
   clearSoftSessionResidualBestEffort,
   isSoftResidualRecoverySuppressed,
@@ -131,6 +132,16 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(localStorage.getItem("kondate.auth.supabase")).toBeNull();
     expect(localStorage.getItem("kondate:generation:v2")).toBeNull();
     expect(localStorage.getItem("kondate:preferences")).toBe("keep-me");
+  });
+
+  it("AP8: hasOwnedLocalDataResidual is true only while owned keys remain", () => {
+    expect(hasOwnedLocalDataResidual()).toBe(false);
+    localStorage.setItem("kondate:generation:v2", "{}");
+    expect(hasOwnedLocalDataResidual()).toBe(true);
+    localStorage.removeItem("kondate:generation:v2");
+    expect(hasOwnedLocalDataResidual()).toBe(false);
+    sessionStorage.setItem("kondate:feedback:ambiguous-fingerprint:x", "hash");
+    expect(hasOwnedLocalDataResidual()).toBe(true);
   });
 
   it("clearOwnedLocalDataBestEffort removes owned keys without signOut (AP5)", () => {

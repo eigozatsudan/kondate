@@ -180,6 +180,25 @@ function clearOwnedBrowserStorage(): void {
 }
 
 /**
+ * AP8: 削除成功後に当該端末へ owned key が残っているか。
+ * 列挙できないときは残存の可能性を否定できないので true（fail-closed）。
+ */
+export function hasOwnedLocalDataResidual(): boolean {
+  for (const storage of [localStorage, sessionStorage]) {
+    let keys: string[] = [];
+    try {
+      keys = Object.keys(storage);
+    } catch {
+      return true;
+    }
+    for (const key of keys) {
+      if (isOwnedBrowserStorageKey(key)) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * signOut なしで owned ローカルデータを消す（AP5 second pass）。
  * アカウント削除成功後に clearLocalAuthAndDrafts が throw したとき、
  * 共有端末に draft / pending が残らないよう key 単位 best-effort で再試行する。

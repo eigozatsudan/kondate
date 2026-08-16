@@ -10,6 +10,7 @@ import {
 
 const clearLocalAuthAndDraftsMock = vi.hoisted(() => vi.fn());
 const clearOwnedLocalDataBestEffortMock = vi.hoisted(() => vi.fn());
+const hasOwnedLocalDataResidualMock = vi.hoisted(() => vi.fn());
 const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 const getBrowserSupabaseClientMock = vi.hoisted(() => vi.fn());
 const getSessionMock = vi.hoisted(() => vi.fn());
@@ -20,6 +21,7 @@ const locationReplaceMock = vi.hoisted(() => vi.fn());
 vi.mock("@/features/auth/auth-cleanup", () => ({
   clearLocalAuthAndDrafts: clearLocalAuthAndDraftsMock,
   clearOwnedLocalDataBestEffort: clearOwnedLocalDataBestEffortMock,
+  hasOwnedLocalDataResidual: hasOwnedLocalDataResidualMock,
   // AP1: 本番は signOut と同窓。モックでも数値定数を export する
   SIGN_OUT_TIMEOUT_MS: 4_000,
 }));
@@ -47,6 +49,8 @@ function seedOwnedStorage(): void {
 beforeEach(() => {
   clearLocalAuthAndDraftsMock.mockReset();
   clearOwnedLocalDataBestEffortMock.mockReset();
+  hasOwnedLocalDataResidualMock.mockReset();
+  hasOwnedLocalDataResidualMock.mockReturnValue(false);
   requireAccessTokenMock.mockReset();
   getBrowserSupabaseClientMock.mockReset();
   getSessionMock.mockReset();
@@ -309,6 +313,8 @@ describe("AccountSettingsSection", () => {
       }),
     );
     clearLocalAuthAndDraftsMock.mockRejectedValue(new Error("storage quota"));
+    // AP8: 掃除失敗後に当該端末キーが残るなら成功バナー側で扱う
+    hasOwnedLocalDataResidualMock.mockReturnValue(true);
 
     render(<AccountSettingsSection />);
     await user.click(screen.getByRole("button", { name: "アカウントを削除" }));
@@ -318,7 +324,7 @@ describe("AccountSettingsSection", () => {
 
     await waitFor(() => {
       expect(clearOwnedLocalDataBestEffortMock).toHaveBeenCalled();
-      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1");
+      expect(locationReplaceMock).toHaveBeenCalledWith("/login?accountDeleted=1&localResidual=1");
     });
   });
 

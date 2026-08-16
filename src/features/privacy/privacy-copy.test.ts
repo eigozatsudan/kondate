@@ -5,6 +5,7 @@ import {
   accountDeletionProviderPromptNote,
   accountDeletionSharedDeviceNote,
   accountDeletionStripeResidualNote,
+  accountDeletionThisDeviceResidualNote,
   privacySections,
   shareConsentRequiredPhrases,
   shareConsentSection,
@@ -52,6 +53,11 @@ it("discloses Stripe residual, provider prompt residual, and in-flight share sen
   expect(shareConsentSettingsCopy.revokeFailed).toContain("共有の停止");
   expect(accountDeletionOtherDeviceNote).toContain("他の端末");
   expect(accountDeletionSharedDeviceNote).toContain("共有");
+});
+
+it("AP8: this-device residual note is locked for the success banner", () => {
+  expect(accountDeletionThisDeviceResidualNote).toContain("この端末");
+  expect(accountDeletionThisDeviceResidualNote).toContain("残っている");
 });
 
 it("keeps share consent optional and separate from AI privacy sections", () => {

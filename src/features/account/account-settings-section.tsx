@@ -4,6 +4,7 @@ import { withTimeout } from "@/features/auth/async-timeout";
 import {
   clearLocalAuthAndDrafts,
   clearOwnedLocalDataBestEffort,
+  hasOwnedLocalDataResidual,
   SIGN_OUT_TIMEOUT_MS,
 } from "@/features/auth/auth-cleanup";
 import { requireAccessToken } from "@/features/auth/session";
@@ -214,7 +215,12 @@ export function AccountSettingsSection() {
     } catch {
       clearOwnedLocalDataBestEffort();
     }
-    window.location.replace("/login?accountDeleted=1");
+    // AP8: 当該端末の掃除失敗を成功確定から切り離し、バナー側で扱える query を付ける。
+    // Auth 削除成功の遷移自体は変えない。
+    const localResidual = hasOwnedLocalDataResidual();
+    window.location.replace(
+      localResidual ? "/login?accountDeleted=1&localResidual=1" : "/login?accountDeleted=1",
+    );
   }
 
   async function handleConfirmDelete(confirmation: "削除する"): Promise<void> {

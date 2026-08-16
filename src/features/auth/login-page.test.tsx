@@ -232,8 +232,31 @@ it("does not rehydrate sent UI when accountDeleted notice must show", () => {
   expect(screen.getByRole("status")).toHaveTextContent("アカウントを削除しました");
   // AP8: 方針 B（匿名共有残存）を成功バナーでも再掲
   expect(screen.getByRole("status")).toHaveTextContent(/匿名一般化済みの緊急候補本文/);
+  // AP9: dialog と単一ソースで Stripe / 他端末残存を再掲
+  expect(screen.getByRole("status")).toHaveTextContent(/Stripe/);
+  expect(screen.getByRole("status")).toHaveTextContent(/他の端末に残った下書き/);
   expect(screen.queryByText("メールを確認してください")).not.toBeInTheDocument();
   sessionStorage.removeItem("kondate.auth.magicSentUi");
+});
+
+it("AP8: accountDeleted banner mentions this-device residual when localResidual=1", () => {
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    completeCallback: vi.fn(),
+    resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter initialEntries={["/login?accountDeleted=1&localResidual=1"]}>
+      <LoginPage gateway={gateway} />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByRole("status")).toHaveTextContent("この端末に下書きや一時データが残っている");
+  expect(screen.getByRole("status")).toHaveTextContent(/Stripe/);
+  expect(screen.getByRole("status")).toHaveTextContent(/他の端末に残った下書き/);
 });
 
 it("shows sessionExpired notice and does not rehydrate sent UI", () => {
