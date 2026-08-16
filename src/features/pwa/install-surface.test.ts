@@ -53,9 +53,9 @@ describe("detectInstallSurface", () => {
   });
 
   it("classifies an Android Pixel UA as android", () => {
-    expect(
-      detectInstallSurface("Mozilla/5.0 (Linux; Android 14; Pixel)", "Linux armv8l", 5),
-    ).toBe("android");
+    expect(detectInstallSurface("Mozilla/5.0 (Linux; Android 14; Pixel)", "Linux armv8l", 5)).toBe(
+      "android",
+    );
   });
 
   it("classifies Windows NT as other", () => {
