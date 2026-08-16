@@ -47,6 +47,8 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
   "kondate.auth.magicSentUi",
   // C2/C13: 今開始した login flow（session + origin 共有 local）。logout / 401 後に次ユーザの residual target にしない
   "kondate.auth.active-login-flow",
+  // leftover 成功印。logout 後に残すと次ユーザの leftover 例外になる
+  "kondate.auth.emailOtpCompleted",
 ] as const;
 
 /**

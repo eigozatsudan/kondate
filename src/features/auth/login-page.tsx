@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { Navigate, useLocation } from "react-router";
 import {
   accountDeletionAnonymousShareNote,
@@ -12,24 +12,49 @@ import {
   createAuthGateway,
   type AuthGateway,
 } from "./auth-gateway";
-import type { MagicLinkState } from "./magic-link-state";
-import { sanitizeLoginReturnPath } from "./auth-flow";
+import type { EmailOtpLoginState } from "./magic-link-state";
+import {
+  clearAuthFlow,
+  defaultAuthContinuationTtlMs,
+  markAuthFlowUserDismissed,
+  readAuthFlow,
+  sanitizeLoginReturnPath,
+} from "./auth-flow";
+import {
+  EMAIL_OTP_CHANGE_EMAIL,
+  EMAIL_OTP_GOOGLE_BUTTON,
+  EMAIL_OTP_GOOGLE_START_FAILED,
+  EMAIL_OTP_GOOGLE_STARTING,
+  EMAIL_OTP_LOGIN_LEAD,
+  EMAIL_OTP_LOGIN_NOTE,
+  EMAIL_OTP_MISMATCH,
+  EMAIL_OTP_RESEND_BUTTON,
+  EMAIL_OTP_SEND_BUTTON,
+  EMAIL_OTP_SEND_FAILED,
+  EMAIL_OTP_SENDING,
+  EMAIL_OTP_SWITCH_TO_GOOGLE,
+  EMAIL_OTP_UNAVAILABLE,
+  EMAIL_OTP_WAITING_BODY,
+  EMAIL_OTP_WAITING_HEADING,
+  EMAIL_OTP_WAITING_HINT,
+  emailOtpResendWaitSeconds,
+  emailOtpSentTo,
+} from "./email-otp-copy";
+import { normalizeOtpDigits, OtpDigitField } from "./otp-digit-field";
 import { useAuth } from "./use-auth";
 
 /** 低リテラシー向け：登録とログインが同じ操作であることを明示（MVP 設計の単一画面方針） */
-export const LOGIN_PAGE_LEAD =
-  "はじめての方も、すでに使っている方も、この画面から進めます。" as const;
+export const LOGIN_PAGE_LEAD = EMAIL_OTP_LOGIN_LEAD;
 /** Google のみ表示時（メール導線をいったん隠している間） */
 export const LOGIN_PAGE_NOTE =
   "新規登録の別画面はありません。下のボタンで進むと、はじめての方はアカウントができます。" as const;
 /** メール導線を出すときの補足（SHOW_EMAIL_LOGIN / ?emailLogin=1 / 復旧導線） */
-export const LOGIN_PAGE_NOTE_WITH_EMAIL =
-  "新規登録の別画面はありません。下のボタンかメールで進むと、はじめての方はアカウントができます。パスワードの設定は不要です。" as const;
+export const LOGIN_PAGE_NOTE_WITH_EMAIL = EMAIL_OTP_LOGIN_NOTE;
 export const LOGIN_EMAIL_HINT =
   "届いたメールのリンクを開き、画面の「ログインを完了する」を押すと入れます。iPhone でリンクを長押ししてプレビューだけ見ると「すでに使われている」「確認できない」と出ることがあります。リンクは普通にタップしてください。はじめてのメールアドレスでも大丈夫です。" as const;
 
 /**
- * ログイン画面のメール（マジックリンク）導線を表示する。
+ * ログイン画面のメール導線を表示する。
  * false にするとフォームを隠し、`?emailLogin=1` または期限切れ復帰などで再表示できる。
  * （boolean 注釈は定数切替時に lint の always-falsy を避けるため）
  */
@@ -48,10 +73,17 @@ type LoginLocationState = {
 /** 期限切れ復帰用。秘密は載せず、直近に送った宛先メールだけを短寿命で覚える（B-I8）。 */
 const lastMagicEmailStorageKey = "kondate.auth.lastMagicEmail";
 /**
- * U1-I2 / B-I9: 送信済み UI の再表示用（秘密は載せない）。
- * リロード後も「送信済み・再送まで Ns」を復元し、無意味な再送で live secret を焼かない。
+ * 番号待ち UI の再表示用（秘密は載せない）。
+ * リロード後も「送信済み・再送まで Ns」を復元し、無意味な再送を避ける。
+ * 番号も returnTo も書かない。
  */
 const magicSentUiStorageKey = "kondate.auth.magicSentUi";
+/**
+ * leftover-capable でも番号成功 session を残す印。
+ * component ref は再マウントで消えるので sessionStorage を正とする。
+ * storedAt のみ。番号 / メール / returnTo は載せない。
+ */
+const emailOtpCompletedStorageKey = "kondate.auth.emailOtpCompleted";
 /**
  * C13: 未完了マジックの PII を sessionStorage に長く残さない。
  * 共有端末での宛先露出窓を縮めるため continuation TTL（5 分）より短い 60s にする。
@@ -59,9 +91,8 @@ const magicSentUiStorageKey = "kondate.auth.magicSentUi";
  */
 const MAGIC_RESIDUAL_TTL_MS = 60_000;
 
-type MagicSentUiSnapshot = {
+type WaitingUiSnapshot = {
   email: string;
-  flowId: string;
   resendAvailableAt: string;
   /** 保存時刻。無い（旧形式）は即無効として消す */
   storedAt: string;
@@ -69,6 +100,10 @@ type MagicSentUiSnapshot = {
 
 type LastMagicEmailSnapshot = {
   email: string;
+  storedAt: string;
+};
+
+type EmailOtpCompletedSnapshot = {
   storedAt: string;
 };
 
@@ -125,21 +160,18 @@ function rememberLastMagicEmail(email: string): void {
   }
 }
 
-function readMagicSentUi(): MagicSentUiSnapshot | null {
+function readWaitingUi(): WaitingUiSnapshot | null {
   try {
     const raw = sessionStorage.getItem(magicSentUiStorageKey);
     if (raw === null) return null;
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return null;
     const email = "email" in parsed ? parsed.email : null;
-    const flowId = "flowId" in parsed ? parsed.flowId : null;
     const resendAvailableAt = "resendAvailableAt" in parsed ? parsed.resendAvailableAt : null;
     const storedAt = "storedAt" in parsed ? parsed.storedAt : null;
     if (
       typeof email !== "string" ||
       email.trim() === "" ||
-      typeof flowId !== "string" ||
-      flowId.length === 0 ||
       typeof resendAvailableAt !== "string" ||
       Number.isNaN(Date.parse(resendAvailableAt)) ||
       typeof storedAt !== "string" ||
@@ -151,7 +183,6 @@ function readMagicSentUi(): MagicSentUiSnapshot | null {
     }
     return {
       email: email.trim(),
-      flowId,
       resendAvailableAt,
       storedAt,
     };
@@ -160,8 +191,8 @@ function readMagicSentUi(): MagicSentUiSnapshot | null {
   }
 }
 
-function rememberMagicSentUi(
-  snapshot: Omit<MagicSentUiSnapshot, "storedAt"> | MagicSentUiSnapshot | null,
+function rememberWaitingUi(
+  snapshot: Omit<WaitingUiSnapshot, "storedAt"> | WaitingUiSnapshot | null,
 ): void {
   try {
     if (snapshot === null) {
@@ -170,9 +201,8 @@ function rememberMagicSentUi(
     }
     const existingStoredAt =
       "storedAt" in snapshot && typeof snapshot.storedAt === "string" ? snapshot.storedAt : null;
-    const withTtl: MagicSentUiSnapshot = {
+    const withTtl: WaitingUiSnapshot = {
       email: snapshot.email,
-      flowId: snapshot.flowId,
       resendAvailableAt: snapshot.resendAvailableAt,
       storedAt: existingStoredAt ?? new Date().toISOString(),
     };
@@ -182,21 +212,75 @@ function rememberMagicSentUi(
   }
 }
 
+function writeEmailOtpCompletedMark(): void {
+  try {
+    const snapshot: EmailOtpCompletedSnapshot = { storedAt: new Date().toISOString() };
+    sessionStorage.setItem(emailOtpCompletedStorageKey, JSON.stringify(snapshot));
+  } catch {
+    // 印が書けなくても Navigate はする。再マウント leftover 掃除は残差
+  }
+}
+
+function isFreshEmailOtpCompleted(nowMs: number = Date.now()): boolean {
+  try {
+    const raw = sessionStorage.getItem(emailOtpCompletedStorageKey);
+    if (raw === null) return false;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) {
+      sessionStorage.removeItem(emailOtpCompletedStorageKey);
+      return false;
+    }
+    const storedAt = "storedAt" in parsed ? parsed.storedAt : null;
+    if (typeof storedAt !== "string" || !isFreshStoredAt(storedAt, nowMs)) {
+      sessionStorage.removeItem(emailOtpCompletedStorageKey);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 番号成功直前に未期限切れの Google / authorization_code と残存 token_hash を捨てる。
+ * 完了 id が無いので clearSiblingUnexpiredAuthFlows は呼ばない（空文字で全消しもしない）。
+ */
+function dismissUnexpiredSiblingAuthFlowsForEmailOtp(storage: Storage = window.localStorage): void {
+  const prefix = "kondate.auth.flow.";
+  const nowMs = Date.now();
+  const flowIds: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(prefix) === true) {
+      flowIds.push(key.slice(prefix.length));
+    }
+  }
+  for (const flowId of flowIds) {
+    const existing = readAuthFlow(flowId, storage);
+    if (existing === null) continue;
+    const startedMs = Date.parse(existing.startedAt);
+    if (Number.isNaN(startedMs) || nowMs - startedMs > defaultAuthContinuationTtlMs) continue;
+    markAuthFlowUserDismissed(existing.id, storage);
+    clearAuthFlow(existing.id, storage);
+  }
+}
+
 /** C10: マウント時に期限切れ residual をまとめて捨てる（読まないキーが残らないようにする） */
 function purgeExpiredMagicResiduals(): void {
   // read* は期限切れを remove する副作用付き
   void readLastMagicEmail();
-  void readMagicSentUi();
+  void readWaitingUi();
+  void isFreshEmailOtpCompleted();
 }
 
-function initialMagicLinkState(
+function initialEmailOtpState(
   authError: LoginLocationState["authError"],
   search: string,
-): MagicLinkState {
+): EmailOtpLoginState {
   purgeExpiredMagicResiduals();
-  // マジックリンク期限切れは送信済み文脈へ戻す（再入力を強いない）
+  // 旧リンク期限切れは idle に戻し、宛先だけあれば再送できるようにする
   if (authError === "magic_link_expired") {
-    return { status: "expired", email: readLastMagicEmail() };
+    return { status: "idle", email: readLastMagicEmail() };
   }
   // サインアウト / アカウント削除 / セッション失効の案内は idle フォーム上の status で出す。
   // sent UI 再水和が優先されると案内が消える（account-deletion E2E）。
@@ -206,17 +290,15 @@ function initialMagicLinkState(
     query.get("signedOut") === "1" ||
     query.get("sessionExpired") === "1"
   ) {
-    rememberMagicSentUi(null);
+    rememberWaitingUi(null);
     return { status: "idle", email: "" };
   }
-  // U1-I2: リロード後も sent UI を復元（再送クールダウン中は特に重要）
-  const sent = readMagicSentUi();
+  // U1-I2: リロード後も番号待ち UI を復元（再送クールダウン中は特に重要）
+  const sent = readWaitingUi();
   if (sent !== null) {
-    // storedAt は storage 用メタ。MagicLinkState には載せない
     return {
-      status: "sent",
+      status: "waiting",
       email: sent.email,
-      flowId: sent.flowId,
       resendAvailableAt: sent.resendAvailableAt,
     };
   }
@@ -277,13 +359,18 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const locationState = readLoginAuthError(location.state, location.search);
   const params = new URLSearchParams(location.search);
   // 明示的な復帰先は安全化し、/login・/auth/callback 自己参照は載せない（C1）。
-  // 指定がない初回ログインだけ使い方の案内へ導く。
+  // 指定がない初回ログインだけ使い方の案内へ導く。login 成功既定は /welcome。
   const returnTo = params.has("returnTo")
     ? sanitizeLoginReturnPath(params.get("returnTo"), "/welcome")
     : "/welcome";
-  const [state, setState] = useState<MagicLinkState>(() =>
-    initialMagicLinkState(locationState.authError, location.search),
+  const [state, setState] = useState<EmailOtpLoginState>(() =>
+    initialEmailOtpState(locationState.authError, location.search),
   );
+  const [otpDigits, setOtpDigits] = useState("");
+  const [otpError, setOtpError] = useState<"mismatch" | "unavailable" | null>(null);
+  // 同期 in-flight。useState だけだと StrictMode remount で戻り二重 verify する
+  const verifyInFlightRef = useRef(false);
+  const requestSeqRef = useRef(0);
   // 既定は非表示。クエリ・期限切れ・送信済み復元・「メールアドレスを変更」でフォームを出す。
   const [emailUnlocked, setEmailUnlocked] = useState(() => {
     if (emailLoginRequested(location.search)) return true;
@@ -296,20 +383,22 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     ) {
       return false;
     }
-    return readMagicSentUi() !== null;
+    return readWaitingUi() !== null;
   });
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [googleError, setGoogleError] = useState(false);
   const [googlePending, setGooglePending] = useState(false);
+  const leftoverCapable = isLeftoverCapableLoginLeave(locationState.authError, location.search);
+  const otpCompletedFresh = isFreshEmailOtpCompleted();
   const showEmailSection =
     emailUnlocked ||
     state.status === "sending" ||
     state.status === "send_failed" ||
-    state.status === "sent" ||
-    state.status === "expired";
+    state.status === "waiting" ||
+    state.status === "verifying";
 
   useEffect(() => {
-    if (state.status !== "sent") return;
+    if (state.status !== "waiting" && state.status !== "verifying") return;
     const update = () => {
       setSecondsLeft(
         Math.max(0, Math.ceil((new Date(state.resendAvailableAt).getTime() - Date.now()) / 1_000)),
@@ -357,26 +446,102 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     return null;
   }, [location.search]);
 
+  const beginExclusive = (): boolean => {
+    if (verifyInFlightRef.current) return false;
+    verifyInFlightRef.current = true;
+    return true;
+  };
+
+  const endExclusive = (): void => {
+    verifyInFlightRef.current = false;
+  };
+
+  const discardWaiting = (email: string): void => {
+    rememberWaitingUi(null);
+    setOtpDigits("");
+    setOtpError(null);
+    setState({ status: "idle", email });
+  };
+
   const send = async (event?: SyntheticEvent) => {
     event?.preventDefault();
+    if (!beginExclusive()) return;
     const email = "email" in state ? state.email : "";
+    const seq = ++requestSeqRef.current;
     setEmailUnlocked(true);
+    setOtpError(null);
     setState({ status: "sending", email });
     try {
-      const sent = await activeGateway.sendMagicLink(email, returnTo);
+      const sent = await activeGateway.sendEmailOtp(email);
+      if (seq !== requestSeqRef.current) return;
       rememberLastMagicEmail(sent.email);
-      rememberMagicSentUi({
+      rememberWaitingUi({
         email: sent.email,
-        flowId: sent.flowId,
         resendAvailableAt: sent.resendAvailableAt,
       });
-      setState({ status: "sent", ...sent });
+      setOtpDigits("");
+      setState({
+        status: "waiting",
+        email: sent.email,
+        resendAvailableAt: sent.resendAvailableAt,
+      });
     } catch {
+      if (seq !== requestSeqRef.current) return;
       setState({
         status: "send_failed",
         email,
-        message: "送信できませんでした。通信を確認して、もう一度お試しください。",
+        message: EMAIL_OTP_SEND_FAILED,
       });
+    } finally {
+      if (seq === requestSeqRef.current) endExclusive();
+    }
+  };
+
+  const verifyDigits = (digits: string, email: string, resendAvailableAt: string): void => {
+    if (digits.length !== 6) return;
+    if (!beginExclusive()) return;
+    const seq = ++requestSeqRef.current;
+    setState({ status: "verifying", email, resendAvailableAt });
+    void activeGateway
+      .verifyEmailOtp({ email, token: digits })
+      .then((result) => {
+        if (seq !== requestSeqRef.current) return;
+        if (result.kind === "complete") {
+          // sibling を先に捨て、印を書いてから Navigate する（ref だけを正にしない）
+          dismissUnexpiredSiblingAuthFlowsForEmailOtp();
+          writeEmailOtpCompletedMark();
+          rememberLastMagicEmail("");
+          rememberWaitingUi(null);
+          setOtpDigits("");
+          setOtpError(null);
+          setState({ status: "complete" });
+          endExclusive();
+          return;
+        }
+        if (result.kind === "mismatch") {
+          setOtpDigits("");
+          setOtpError("mismatch");
+        } else {
+          setOtpError("unavailable");
+        }
+        setState({ status: "waiting", email, resendAvailableAt });
+        endExclusive();
+      })
+      .catch(() => {
+        if (seq !== requestSeqRef.current) return;
+        setOtpError("unavailable");
+        setState({ status: "waiting", email, resendAvailableAt });
+        endExclusive();
+      });
+  };
+
+  const handleOtpChange = (next: string, email: string, resendAvailableAt: string): void => {
+    // OtpDigitField は composition 中 onChange しない。親も 6 桁揃い以外では verify しない
+    const digits = normalizeOtpDigits(next);
+    setOtpDigits(digits);
+    if (otpError !== null) setOtpError(null);
+    if (digits.length === 6) {
+      verifyDigits(digits, email, resendAvailableAt);
     }
   };
 
@@ -386,35 +551,38 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     setGooglePending(true);
     try {
       await activeGateway.signInWithGoogle(returnTo);
+      // 開始成功後はその番号では確認しない（sibling §4.3）
+      requestSeqRef.current += 1;
+      verifyInFlightRef.current = false;
+      discardWaiting("email" in state ? state.email : "");
     } catch {
       setGoogleError(true);
       setGooglePending(false);
     }
   };
 
-  // ログイン成功後はマジックリンク宛先の PII を sessionStorage に残さない（C9）
+  // ログイン成功後は宛先の PII を sessionStorage に残さない（C9）
   useEffect(() => {
     if (auth.status !== "authenticated") return;
     rememberLastMagicEmail("");
-    rememberMagicSentUi(null);
+    rememberWaitingUi(null);
   }, [auth.status]);
 
   // C-R4: leftover-capable Login は pin 前に leftover persist を local signOut する。
-  // C6 hang は persist を残したまま leave するため、ここで落とさないと live pin になる。
-  // 勝者 sibling completion があるときは触らない（C5）。
+  // ただしこのタブで今立てた番号成功印が新鮮なら、その session は leftover ではない。
   useEffect(() => {
-    if (!isLeftoverCapableLoginLeave(locationState.authError, location.search)) {
+    if (!leftoverCapable || otpCompletedFresh) {
       return;
     }
     void clearLeftoverLoginSessionIfNoSiblingCompletion();
-  }, [locationState.authError, location.search]);
+  }, [leftoverCapable, otpCompletedFresh, locationState.authError, location.search]);
 
   // 既にセッションがある場合はフォームを出さず returnTo へ進める。
   // C2 / C-R2 / C-R3: leftover を伴い得る leave はエラーより先に Navigate しない。
-  // 入ると pin が後勝ち Google を拒み leftover magic が残る。
+  // 番号成功印があるときだけ leftover-capable でも Navigate する（MF-C1）。
   if (
-    auth.status === "authenticated" &&
-    !isLeftoverCapableLoginLeave(locationState.authError, location.search)
+    state.status === "complete" ||
+    (auth.status === "authenticated" && (!leftoverCapable || otpCompletedFresh))
   ) {
     return <Navigate to={returnTo} replace />;
   }
@@ -425,53 +593,53 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     return <LivePendingMain message="読み込み中…" />;
   }
 
-  // 送信済み・期限切れは同一文脈（宛先・再送・変更・Google）でやり直せる（B-I8 / L174 / L644）
-  if (state.status === "sent" || state.status === "expired") {
-    const emailLabel = state.email.trim() === "" ? "メール" : state.email;
-    const resendDisabled = state.status === "sent" && secondsLeft > 0;
+  if (state.status === "waiting" || state.status === "verifying") {
+    const verifying = state.status === "verifying" || verifyInFlightRef.current;
+    const resendDisabled = secondsLeft > 0 || verifying || state.email.trim() === "";
     return (
       <main className="page-frame stack">
-        <h1>
-          {state.status === "expired" ? "リンクの期限が切れました" : "メールを確認してください"}
-        </h1>
+        <h1>{EMAIL_OTP_WAITING_HEADING}</h1>
         <section className="card stack" aria-live="polite">
-          {state.status === "expired" && (
+          {state.email.trim() !== "" ? <strong>{emailOtpSentTo(state.email)}</strong> : null}
+          <p>{EMAIL_OTP_WAITING_BODY}</p>
+          <p>{EMAIL_OTP_WAITING_HINT}</p>
+          {otpError === "mismatch" && (
             <p className="error-message" role="alert">
-              {authErrorCopy ?? "このリンクは期限切れか、すでに使用されています。"}
+              {EMAIL_OTP_MISMATCH}
             </p>
           )}
-          {state.email.trim() !== "" ? (
-            <strong>{state.email} に送りました</strong>
-          ) : (
-            <strong>ログイン用メールを再送できます</strong>
+          {otpError === "unavailable" && (
+            <p className="error-message" role="alert">
+              {EMAIL_OTP_UNAVAILABLE}
+            </p>
           )}
-          <p>迷惑メールフォルダも確認してください</p>
-          <p>
-            {state.status === "expired"
-              ? "新しいログイン用メールを送って、もう一度お試しください。"
-              : "リンクを開くと認証を確認します。"}
-          </p>
+          <OtpDigitField
+            value={otpDigits}
+            disabled={verifying}
+            onChange={(next) => {
+              handleOtpChange(next, state.email, state.resendAvailableAt);
+            }}
+          />
           <button
             className="primary-button"
             type="button"
-            disabled={resendDisabled || state.email.trim() === ""}
+            disabled={resendDisabled}
             onClick={() => void send()}
           >
-            {resendDisabled
-              ? `${String(secondsLeft)}秒後に再送できます`
-              : state.email.trim() === ""
-                ? "メールアドレスを入力して再送"
-                : "ログイン用メールを再送"}
+            {secondsLeft > 0 ? emailOtpResendWaitSeconds(secondsLeft) : EMAIL_OTP_RESEND_BUTTON}
           </button>
           <button
             className="text-button"
             type="button"
+            disabled={verifying}
             onClick={() => {
+              if (verifyInFlightRef.current) return;
+              requestSeqRef.current += 1;
               setEmailUnlocked(true);
-              setState({ status: "idle", email: state.email });
+              discardWaiting(state.email);
             }}
           >
-            メールアドレスを変更
+            {EMAIL_OTP_CHANGE_EMAIL}
           </button>
           <button
             className="secondary-button"
@@ -479,35 +647,26 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
             disabled={googlePending}
             onClick={() => void startGoogle()}
           >
-            {googlePending ? "Googleへ移動中…" : "Googleに切り替える"}
+            {googlePending ? EMAIL_OTP_GOOGLE_STARTING : EMAIL_OTP_SWITCH_TO_GOOGLE}
           </button>
           {googleError && (
             <p className="error-message" role="alert">
-              Googleログインを開始できませんでした。もう一度お試しください。
+              {EMAIL_OTP_GOOGLE_START_FAILED}
             </p>
           )}
-          {state.email.trim() === "" && (
-            <p className="type-small">
-              宛先が分からないときは、下でメールアドレスを変更してください。
-            </p>
-          )}
-          {/* emailLabel は aria 用の文脈。表示は上の strong で足りる */}
-          <span className="sr-only">{emailLabel}</span>
         </section>
       </main>
     );
   }
 
-  const email = state.status === "verifying" || state.status === "complete" ? "" : state.email;
+  const email = state.email;
   return (
     <main className="page-frame stack">
       <div className="stack gap-2">
         <p className="eyebrow">毎日の献立を、家族に合わせて</p>
         <h1>こんだて日和</h1>
-        <p>{LOGIN_PAGE_LEAD}</p>
-        <p className="type-small">
-          {showEmailSection ? LOGIN_PAGE_NOTE_WITH_EMAIL : LOGIN_PAGE_NOTE}
-        </p>
+        <p>{EMAIL_OTP_LOGIN_LEAD}</p>
+        <p className="type-small">{showEmailSection ? EMAIL_OTP_LOGIN_NOTE : LOGIN_PAGE_NOTE}</p>
       </div>
       {authErrorCopy !== null && (
         <section className="card stack" role="alert">
@@ -524,23 +683,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
           <p>{statusNotice}</p>
         </section>
       )}
-      <button
-        className="primary-button min-h-11"
-        type="button"
-        disabled={googlePending}
-        onClick={() => void startGoogle()}
-      >
-        {googlePending ? "Googleへ移動中…" : "Googleで続ける"}
-      </button>
-      <p className="type-small">Google アカウントではじめての方も、そのまま使えます。</p>
-      {googleError && (
-        <p className="error-message" role="alert">
-          Googleログインを開始できませんでした。もう一度お試しください。
-        </p>
-      )}
       {showEmailSection && (
         <form className="card stack" onSubmit={(event) => void send(event)}>
-          <p className="type-small">メールで進む場合</p>
           <label className="field">
             <span>メールアドレス</span>
             <input
@@ -553,13 +697,12 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
               }}
             />
           </label>
-          <p className="type-small">{LOGIN_EMAIL_HINT}</p>
           <button
-            className="secondary-button min-h-11"
+            className="primary-button min-h-11"
             disabled={state.status === "sending"}
             type="submit"
           >
-            {state.status === "sending" ? "送信中…" : "ログイン用メールを送る"}
+            {state.status === "sending" ? EMAIL_OTP_SENDING : EMAIL_OTP_SEND_BUTTON}
           </button>
           {state.status === "send_failed" && (
             <p className="error-message" role="alert">
@@ -567,6 +710,20 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
             </p>
           )}
         </form>
+      )}
+      <button
+        className="secondary-button min-h-11"
+        type="button"
+        disabled={googlePending}
+        onClick={() => void startGoogle()}
+      >
+        {googlePending ? EMAIL_OTP_GOOGLE_STARTING : EMAIL_OTP_GOOGLE_BUTTON}
+      </button>
+      <p className="type-small">Google アカウントではじめての方も、そのまま使えます。</p>
+      {googleError && (
+        <p className="error-message" role="alert">
+          {EMAIL_OTP_GOOGLE_START_FAILED}
+        </p>
       )}
     </main>
   );

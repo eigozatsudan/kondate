@@ -90,18 +90,15 @@ export function AuthCallbackPage({
   leaveAuthCallback?: (href: string) => void;
 }) {
   const [result, setResult] = useState<AuthCallbackResult | null>(null);
-  // C14: deposited / needs_confirmation 案内が TTL 超過後も残らないよう期限切れ二次 UI へ切替
+  // C14: deposited 案内が TTL 超過後も残らないよう期限切れ二次 UI へ切替
   const [depositedExpired, setDepositedExpired] = useState(false);
-  const [confirmPending, setConfirmPending] = useState(false);
   const [defaultGateway] = useState<AuthGateway>(() => gateway ?? createAuthGateway());
   const activeGateway = gateway ?? defaultGateway;
   const callbackPromise = useRef<Promise<AuthCallbackResult> | null>(null);
   const callbackFlowId = useRef<string | null>(null);
   // 二重 leave を防ぐ（StrictMode 再実行や complete + recovery 競合）
   const leftRef = useRef(false);
-  // confirm 二重タップ: state 更新前の第2タップを同期で落とす（I-3）
-  const confirmInFlightRef = useRef(false);
-  // deposited / needs_confirmation は案内を読み終わるまで watchdog で強制 leave しない（C14）
+  // deposited は案内を読み終わるまで watchdog で強制 leave しない（C14）
   const stayOnDepositedRef = useRef(false);
   // hangWatchdog は storage に flow が無いケースでも returnTo を落とさない（テスト・strip 後）
   const hangWatchReturnToRef = useRef<string | undefined>(undefined);
@@ -147,61 +144,6 @@ export function AuthCallbackPage({
       }
     }
     leaveLoginError("unbound_callback", returnTo);
-  };
-
-  const applyTerminalResult = (next: AuthCallbackResult): void => {
-    hangWatchReturnToRef.current = next.returnTo;
-    if (next.kind === "complete") {
-      publishCompletionSafely({ flowId: next.flowId, returnTo: next.returnTo });
-      leaveSuccess(next.returnTo);
-      return;
-    }
-    if (next.kind === "deposited") {
-      stayOnDepositedRef.current = true;
-      setResult(next);
-      setDepositedExpired(false);
-      return;
-    }
-    if (next.kind === "expired") {
-      dismissFlowBestEffort(next.flowId);
-      leaveLoginError("magic_link_expired", next.returnTo);
-      return;
-    }
-    if (next.kind === "error") {
-      dismissFlowBestEffort(next.flowId);
-      leaveLoginError(next.code, next.returnTo);
-      return;
-    }
-    if (next.kind === "awaiting_completion") {
-      // I-4: 一時的 awaiting を unbound に落とさない。needs_confirmation UI を維持し再タップ可能にする。
-      // token_hash は React state / pending に残り、OTP 未受理なら再試行できる。
-      return;
-    }
-  };
-
-  const confirmMagicLink = (): void => {
-    if (result?.kind !== "needs_confirmation" || leftRef.current) return;
-    // 同期 ref で二重起動を止め、state の confirmPending は a11y/disabled 用
-    if (confirmInFlightRef.current) return;
-    confirmInFlightRef.current = true;
-    setConfirmPending(true);
-    void activeGateway
-      .confirmMagicLink({
-        flowId: result.flowId,
-        tokenHash: result.tokenHash,
-        otpType: result.otpType,
-        state: result.state,
-      })
-      .then((next) => {
-        applyTerminalResult(next);
-      })
-      .catch(() => {
-        leaveLoginError("unbound_callback", result.returnTo);
-      })
-      .finally(() => {
-        confirmInFlightRef.current = false;
-        setConfirmPending(false);
-      });
   };
 
   useEffect(() => {
@@ -321,8 +263,7 @@ export function AuthCallbackPage({
       } else if (next.kind === "deposited") {
         stayOnDepositedRef.current = true;
       } else if (next.kind === "needs_confirmation") {
-        // token_hash: ユーザー操作まで OTP を消費しない（プレビュー / スキャナ耐性）
-        stayOnDepositedRef.current = true;
+        leaveLoginError("unbound_callback", next.returnTo);
       } else if (next.kind === "awaiting_completion") {
         void (async () => {
           if (isAbandoned()) return;
@@ -477,54 +418,6 @@ export function AuthCallbackPage({
       window.clearTimeout(hangWatchdog);
     };
   }, [activeGateway, ttlMs, leaveAuthCallback]);
-
-  if (result?.kind === "needs_confirmation") {
-    return (
-      <main className="page-frame stack">
-        <h1>{depositedExpired ? "ログインの確認期限が切れました" : "ログインを完了します"}</h1>
-        <section className="card stack">
-          {depositedExpired ? (
-            <p>
-              確認の有効期限が過ぎました。下のボタンから最初の画面に戻り、ログイン用メールを送り直してください。
-            </p>
-          ) : (
-            <>
-              <p>
-                メールのリンクを開けました。下のボタンを押すとログインが完了します。プレビューや自動確認だけではログインしません。
-              </p>
-              <p className="type-small">
-                iPhone
-                の長押しプレビューだけで開いたあとにエラーになることがあります。この画面で「ログインを完了する」を押してください。
-              </p>
-            </>
-          )}
-          {depositedExpired ? (
-            <button
-              type="button"
-              className="primary-button min-h-11"
-              onClick={() => {
-                // C8: やり直すは当該 flow を clear（residual recovery が拾わない）
-                restartFromLogin(result.flowId, result.returnTo);
-              }}
-            >
-              最初からやり直す
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="primary-button min-h-11"
-              disabled={confirmPending}
-              onClick={() => {
-                confirmMagicLink();
-              }}
-            >
-              {confirmPending ? "ログインを完了しています…" : "ログインを完了する"}
-            </button>
-          )}
-        </section>
-      </main>
-    );
-  }
 
   if (result?.kind === "deposited") {
     return (

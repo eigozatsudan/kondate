@@ -263,6 +263,8 @@ describe("route accessibility", () => {
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn(),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),

@@ -132,6 +132,8 @@ it("deposits in an isolated WebView and directs the user to the original browser
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "deposited",
       continuation: "original_browser",
@@ -153,17 +155,41 @@ it("deposits in an isolated WebView and directs the user to the original browser
   expect(screen.queryByRole("heading", { name: "家族の初回設定" })).not.toBeInTheDocument();
 });
 
-it("token_hash magic: shows confirm CTA and only then calls confirmMagicLink", async () => {
-  const user = userEvent.setup();
-  const confirmMagicLink = vi.fn().mockResolvedValue({
-    kind: "complete",
-    continuation: "same_browser",
-    flowId: "flow-1",
-    returnTo: "/onboarding",
-  });
+it("token_hash URL does not show the magic-link confirm CTA", async () => {
+  const confirmMagicLink = vi.fn();
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "error",
+      code: "unbound_callback",
+      returnTo: "/planner",
+    }),
+    resumeFlow: vi.fn(),
+    confirmMagicLink,
+  };
+  const { leaveAuthCallback } = renderCallback(gateway, {
+    initialEntry: `/auth/callback?token_hash=${"a".repeat(40)}`,
+  });
+
+  await waitFor(() => {
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=unbound_callback&returnTo=%2Fplanner",
+    );
+  });
+  expect(screen.queryByRole("button", { name: "ログインを完了する" })).toBeNull();
+  expect(confirmMagicLink).not.toHaveBeenCalled();
+});
+
+it("needs_confirmation leftover result does not show confirm CTA or call confirmMagicLink", async () => {
+  const confirmMagicLink = vi.fn();
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "needs_confirmation",
       flowId: "flow-1",
@@ -177,60 +203,21 @@ it("token_hash magic: shows confirm CTA and only then calls confirmMagicLink", a
   };
   const { leaveAuthCallback } = renderCallback(gateway);
 
-  expect(await screen.findByRole("heading", { name: "ログインを完了します" })).toBeVisible();
-  expect(confirmMagicLink).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "ログインを完了する" }));
-  expect(confirmMagicLink).toHaveBeenCalledWith({
-    flowId: "flow-1",
-    tokenHash: "a".repeat(40),
-    otpType: "email",
-    state: "A".repeat(43),
-  });
   await waitFor(() => {
-    expect(leaveAuthCallback).toHaveBeenCalledWith("/onboarding");
+    expect(screen.queryByRole("button", { name: "ログインを完了する" })).toBeNull();
   });
-});
-
-it("token_hash magic: rapid double confirm invokes confirmMagicLink once", async () => {
-  const user = userEvent.setup();
-  let resolveConfirm: ((value: AuthCallbackResult) => void) | undefined;
-  const confirmMagicLink = vi.fn().mockImplementation(
-    () =>
-      new Promise<AuthCallbackResult>((resolve) => {
-        resolveConfirm = resolve;
-      }),
+  expect(confirmMagicLink).not.toHaveBeenCalled();
+  expect(leaveAuthCallback).toHaveBeenCalledWith(
+    "/login?authError=unbound_callback&returnTo=%2Fonboarding",
   );
-  const gateway: AuthGateway = {
-    signInWithGoogle: vi.fn(),
-    sendMagicLink: vi.fn(),
-    completeCallback: vi.fn().mockResolvedValue({
-      kind: "needs_confirmation",
-      flowId: "flow-1",
-      returnTo: "/onboarding",
-      tokenHash: "a".repeat(40),
-      otpType: "email",
-      state: "A".repeat(43),
-    }),
-    resumeFlow: vi.fn(),
-    confirmMagicLink,
-  };
-  renderCallback(gateway);
-  const button = await screen.findByRole("button", { name: "ログインを完了する" });
-  await user.click(button);
-  await user.click(button);
-  expect(confirmMagicLink).toHaveBeenCalledOnce();
-  resolveConfirm?.({
-    kind: "complete",
-    continuation: "same_browser",
-    flowId: "flow-1",
-    returnTo: "/onboarding",
-  });
 });
 
 it("removes callback credentials from the browser URL before completing the callback", () => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
     resumeFlow: vi.fn(),
     confirmMagicLink: vi.fn(),
@@ -261,6 +248,8 @@ it("C5: strips unknown query keys such as access_token from the visible URL", ()
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
     resumeFlow: vi.fn(),
     confirmMagicLink: vi.fn(),
@@ -287,6 +276,8 @@ it("creates the default gateway once and completes the callback once", async () 
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "deposited",
       continuation: "original_browser",
@@ -322,6 +313,8 @@ it("keeps waiting when another same-browser tab wins the one-time claim", async 
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "awaiting_completion",
       flowId: "flow-1",
@@ -349,6 +342,8 @@ it("uses completion published before the losing callback starts waiting", async 
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "awaiting_completion",
       flowId: "flow-1",
@@ -382,6 +377,8 @@ it("C6: awaiting_completion does not leaveSuccess on stale completion without a 
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "awaiting_completion",
       flowId: "flow-1",
@@ -410,6 +407,8 @@ it("returns a synthetic 404 handoff to a safe error at the existing flow TTL", a
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "awaiting_completion",
       flowId: "flow-1",
@@ -466,6 +465,8 @@ it("normalizes a callback-only future flow and stops retries at one fixed TTL", 
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "awaiting_completion",
       flowId,
@@ -528,6 +529,8 @@ it("AUTH-01: re-claims on the callback owner tab after a transient awaiting_comp
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockResolvedValue({
         kind: "awaiting_completion",
         flowId: "flow-1",
@@ -570,6 +573,8 @@ it("fails closed when completeCallback rejects without leaking the rejection", a
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockRejectedValue(rejection),
     resumeFlow: vi.fn(),
     confirmMagicLink: vi.fn(),
@@ -596,6 +601,8 @@ it("maps a targeted recovery expiry to the existing callback terminal flow", asy
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "awaiting_completion",
       flowId: "flow-1",
@@ -633,6 +640,8 @@ it("C5: code-less oauth_cancelled / expired results do not clear the terminal fl
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockResolvedValue(result),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
@@ -656,6 +665,8 @@ it("C8: restart from deposited UI clears the flow secret", async () => {
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "deposited",
       continuation: "original_browser",
@@ -684,6 +695,8 @@ it("handles the original callback result after StrictMode remounts the effect", 
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockReturnValue(callbackResult),
     resumeFlow: vi.fn().mockResolvedValue({
       kind: "awaiting_completion",
@@ -725,6 +738,8 @@ it("leaves after immediate completion even when publishing completion fails", as
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "complete",
       continuation: "same_browser",
@@ -756,6 +771,8 @@ it("cleans up and leaves after recovery completion when publishing fails", async
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "awaiting_completion",
       flowId: "flow-1",
@@ -792,6 +809,8 @@ it("uses full-page leave for success so SPA navigate is not required", async () 
   const gateway: AuthGateway = {
     signInWithGoogle: vi.fn(),
     sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
     completeCallback: vi.fn().mockResolvedValue({
       kind: "complete",
       continuation: "same_browser",
@@ -815,6 +834,8 @@ it("fails closed when completeCallback never settles past the continuation TTL",
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
@@ -865,6 +886,8 @@ it("C6: hangWatchdog fail-closes when getSession hangs despite a completion mark
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
@@ -916,6 +939,8 @@ it("C6: hangWatchdog fails closed at server expiresAt when shorter than local TT
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
@@ -973,6 +998,8 @@ it("C9: hangWatchdog does not clear secret while callback-prelease is held (post
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
@@ -1037,6 +1064,8 @@ it("C-RR2: AUTH-R1 awaiting + pre-lease near-TTL failClosed does not clear secre
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockResolvedValue({
         kind: "awaiting_completion",
         flowId,
@@ -1097,6 +1126,8 @@ it("C9/C12: hangWatchdog does not extend past wall serverExpires via positive cl
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockImplementation(() => new Promise(() => undefined)),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
@@ -1147,6 +1178,8 @@ it("C9/C12: awaiting_completion wait does not extend past wall serverExpires via
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockResolvedValue({
         kind: "awaiting_completion",
         flowId,
@@ -1183,6 +1216,8 @@ it("C14: deposited WebView switches to expired retry UI after hang watchdog TTL"
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn().mockResolvedValue({
         kind: "deposited",
         continuation: "original_browser",
