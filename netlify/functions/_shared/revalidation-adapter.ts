@@ -17,7 +17,11 @@ import type { Json } from "../../../src/shared/types/database.generated.js";
 import type { AuthenticatedUser } from "./generation-repository.js";
 import { loadCurrentSafetyContext } from "./current-safety.js";
 import { HttpError } from "./http.js";
-import type { CurrentMenuLabelWarning, RevalidationDeps } from "./revalidation-service.js";
+import {
+  toPersistedRevalidationIssues,
+  type CurrentMenuLabelWarning,
+  type RevalidationDeps,
+} from "./revalidation-service.js";
 import { projectMenuForSurvivingTargets } from "./regeneration-context.js";
 import {
   loadStoredMenu,
@@ -787,7 +791,10 @@ export function createRevalidationDeps(user: AuthenticatedUser): RevalidationDep
     reconcileCurrentLabelWarnings: (input) => reconcileCurrentMenuLabelWarnings(admin, user, input),
     save: async (value) => {
       // menu_id,user_id 一意で最新 1 行を置換。マウント連打でも増殖しない。
-      const issuesJson = JSON.parse(JSON.stringify(value.issues)) as Json;
+      // HR8: 表示名・アレルゲン名・食品名は永続しない。閉じた code + path だけ書く。
+      const issuesJson = JSON.parse(
+        JSON.stringify(toPersistedRevalidationIssues(value.issues)),
+      ) as Json;
       const { error } = await admin.from("menu_revalidations").upsert(
         {
           user_id: value.userId,

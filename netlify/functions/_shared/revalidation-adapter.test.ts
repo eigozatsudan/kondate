@@ -1163,4 +1163,46 @@ describe("createRevalidationDeps save abuse boundary", () => {
     expect(from).toHaveBeenCalledTimes(10);
     expect(from.mock.calls.every(([table]) => table === "menu_revalidations")).toBe(true);
   });
+
+  it("HR8: persisted issues omit display names and allergen display names", async () => {
+    const upsert = vi.fn().mockResolvedValue({ data: null, error: null });
+    const from = vi.fn((table: string) => {
+      if (table === "menu_revalidations") {
+        return { upsert, insert: vi.fn() };
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+    vi.mocked(getSupabaseAdmin).mockReturnValue({ from, rpc: vi.fn() } as never);
+
+    const deps = createRevalidationDeps(user);
+    const issuesWithPii = [
+      {
+        code: "direct_allergen_match" as const,
+        path: "pantryUsage.0.pantryItemName",
+        message: "「太郎」さんの登録アレルギー「卵」が「マヨネーズ」に残っています",
+      },
+    ];
+    await deps.save({
+      userId: USER_ID,
+      menuId: MENU_ID,
+      status: "invalid",
+      safetyFingerprint: "c".repeat(64),
+      allergenCatalogVersion: "jp-caa-2026-04.v1",
+      foodRuleVersion: "jp-caa-child-shape-2026-07.v1",
+      issues: issuesWithPii,
+      changedDetails: [],
+      currentLabelWarnings: [],
+    });
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const row = upsert.mock.calls[0]?.[0] as { issues: unknown };
+    expect(row.issues).toEqual([
+      { code: "direct_allergen_match", path: "pantryUsage.0.pantryItemName" },
+    ]);
+    const serialized = JSON.stringify(row.issues);
+    expect(serialized).not.toContain("太郎");
+    expect(serialized).not.toContain("卵");
+    expect(serialized).not.toContain("マヨネーズ");
+    expect(serialized).not.toMatch(/displayName|allergenName|allergenDisplayName/iu);
+  });
 });

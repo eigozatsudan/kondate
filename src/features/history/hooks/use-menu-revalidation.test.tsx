@@ -334,6 +334,28 @@ describe("useMenuRevalidation", () => {
     expect(result.current.result?.issues[0]?.code).toBe("allergen_present");
   });
 
+  it("HR8: keeps assembled Japanese issue copy for UI without displayName fields", async () => {
+    const assembled: RevalidationResult = {
+      ...invalid,
+      issues: [
+        {
+          code: "direct_allergen_match",
+          path: "dishes.0.ingredients.0.name",
+          message: "登録アレルギーが献立に残っています",
+        },
+      ],
+    };
+    revalidateMenuMock.mockResolvedValue(assembled);
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    expect(result.current.result?.issues[0]?.message).toBe("登録アレルギーが献立に残っています");
+    expect(JSON.stringify(result.current.result?.issues)).not.toMatch(
+      /displayName|allergenName|allergenDisplayName/iu,
+    );
+  });
+
   it("soft network failure closes gate (error) instead of reopening last-known-good valid", async () => {
     // H5: 検知〜再検査完了まで fail-closed。soft 失敗で旧 valid の CTA を開かない。
     const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });

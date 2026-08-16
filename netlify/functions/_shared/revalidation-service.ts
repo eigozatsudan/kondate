@@ -1,8 +1,68 @@
-import type { GeneratedMenu, MenuValidationIssue } from "../../../shared/contracts/generation.js";
+import type {
+  GeneratedMenu,
+  MenuValidationIssue,
+  MenuValidationIssueCode,
+} from "../../../shared/contracts/generation.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import type { StoredMenuAggregate } from "./stored-menu-loader.js";
 
 export type RevalidationStatus = "valid" | "changed" | "invalid";
+
+/** DB に書く再検証 issue。閉じた code + path のみ。表示名・アレルゲン名・食品名は持たない。 */
+export type PersistedRevalidationIssue = {
+  code: MenuValidationIssueCode;
+  path: string;
+};
+
+/**
+ * HR8: 読取（200 / UI）用の閉じた日本語。表示名・アレルゲン名・食品名は埋め込まない。
+ * 既存の利用者向けコピー族を残し、人名付きテンプレートは組み立てない。
+ */
+const closedRevalidationIssueMessages = {
+  direct_allergen_match: "登録アレルギーが献立に残っています",
+  allergy_unconfirmed: "アレルギー確認が必要です",
+  allergen_missing: "登録アレルゲンを選んでください",
+  unmapped_custom_allergy: "自由登録アレルギーを固定候補へ対応付けできません",
+  unsupported_diet_unconfirmed: "対象外条件の確認が必要です",
+  unsupported_diet_present: "対象外条件のあるメンバーは対象にできません",
+  required_safety_action: "必要な安全工程がありません",
+  safety_action_contradiction: "安全対応と料理手順が矛盾しています",
+} as const satisfies Partial<Record<MenuValidationIssueCode, string>>;
+
+const genericRevalidationIssueMessage = "現在の家族設定ではこの献立を利用できません";
+
+export function toPersistedRevalidationIssues(
+  issues: readonly Pick<MenuValidationIssue, "code" | "path">[],
+): readonly PersistedRevalidationIssue[] {
+  return issues.map((issue) => ({
+    code: issue.code,
+    path: issue.path,
+  }));
+}
+
+function displayRevalidationIssueMessage(issue: MenuValidationIssue): string {
+  const closed =
+    issue.code in closedRevalidationIssueMessages
+      ? closedRevalidationIssueMessages[issue.code as keyof typeof closedRevalidationIssueMessages]
+      : undefined;
+  if (closed !== undefined) return closed;
+  // age_shape_rule 等はカタログ固定文。人名敬称が混ざったときだけ閉じる。
+  if (/[一-龯ぁ-んァ-ン]{1,4}(?:ちゃん|くん|さん|様)/u.test(issue.message)) {
+    return genericRevalidationIssueMessage;
+  }
+  return issue.message;
+}
+
+/** 読取時に利用者向け日本語を組み立てる。永続ペイロードには使わない。 */
+export function toDisplayRevalidationIssues(
+  issues: readonly MenuValidationIssue[],
+): readonly MenuValidationIssue[] {
+  return issues.map((issue) => ({
+    code: issue.code,
+    path: issue.path,
+    message: displayRevalidationIssueMessage(issue),
+  }));
+}
 
 export type CurrentMenuLabelWarning = {
   confirmationId: string;
@@ -58,7 +118,13 @@ export type RevalidationDeps = {
     candidate: GeneratedMenu;
     safetyFingerprint: string;
   }): Promise<readonly CurrentMenuLabelWarning[]>;
-  save(input: RevalidationResult & { userId: string; menuId: string }): Promise<void>;
+  save(
+    input: Omit<RevalidationResult, "issues"> & {
+      userId: string;
+      menuId: string;
+      issues: readonly PersistedRevalidationIssue[];
+    },
+  ): Promise<void>;
 };
 
 /**
@@ -96,10 +162,15 @@ export async function revalidateStoredMenu(
     safetyFingerprint: current.fingerprint,
     allergenCatalogVersion: current.allergenCatalogVersion,
     foodRuleVersion: current.foodRuleVersion,
-    issues: validation.ok ? [] : validation.issues,
+    // HR8: 200 は読取時組み立て。DB へは code+path だけ渡す。
+    issues: validation.ok ? [] : toDisplayRevalidationIssues(validation.issues),
     changedDetails: validation.changedDetails,
     currentLabelWarnings,
   };
-  await deps.save({ ...persisted, ...input });
+  await deps.save({
+    ...persisted,
+    ...input,
+    issues: toPersistedRevalidationIssues(persisted.issues),
+  });
   return persisted;
 }
