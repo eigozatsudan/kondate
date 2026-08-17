@@ -10,12 +10,28 @@ import {
   canUseAndroidChromeInstallSteps,
   canUseIosSafariInstallSteps,
   detectInstallSurface,
+  isStandaloneDisplayMode,
 } from "./install-surface";
+
+type NavigatorWithStandalone = Navigator & {
+  standalone?: boolean;
+};
 
 function readNavigatorPlatform(): string {
   // Navigator.platform は deprecated だが iPadOS 判定（MacIntel + タッチ）に必要
   const value: unknown = Reflect.get(navigator, "platform");
   return typeof value === "string" ? value : "";
+}
+
+function readStandaloneDisplayMode(): boolean {
+  const matchesStandalone =
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(display-mode: standalone)").matches
+      : false;
+  return isStandaloneDisplayMode(
+    matchesStandalone,
+    (navigator as NavigatorWithStandalone).standalone,
+  );
 }
 
 export function HomeScreenInstallSection() {
@@ -24,6 +40,7 @@ export function HomeScreenInstallSection() {
     readNavigatorPlatform(),
     navigator.maxTouchPoints,
   );
+  const safariStepsOk = canUseIosSafariInstallSteps(navigator.userAgent);
   // 設定は常設。描画後 BIP も購読してインストールボタンを出す。userChoice では閉じない。
   const heldAndroidPrompt = useAndroidInstallPrompt();
   const androidPrompt = surface === "android" ? heldAndroidPrompt : null;
@@ -31,10 +48,14 @@ export function HomeScreenInstallSection() {
   // 手順可否と BIP 有無は helper に任せ、4 つの真偽値をここで持たない。
   const presentation = resolveHomeScreenInstallPresentation({
     surface,
-    safariStepsOk: canUseIosSafariInstallSteps(navigator.userAgent),
+    safariStepsOk,
     androidChromeStepsOk: canUseAndroidChromeInstallSteps(navigator.userAgent),
     hasAndroidPrompt: androidPrompt !== null,
   });
+  // iOS は Safari の共有シートだけ。Chrome / in-app / ホーム画面起動では節ごと出さない。
+  if (surface === "ios" && (!safariStepsOk || readStandaloneDisplayMode())) {
+    return null;
+  }
 
   return (
     <section

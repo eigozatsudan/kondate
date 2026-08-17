@@ -21,6 +21,10 @@ vi.mock("@/features/auth/use-auth", () => ({
 }));
 
 const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15";
+const IPHONE_CRIOS_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1";
+const IPHONE_FXIOS_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/122.0 Mobile/15E148 Safari/605.1.15";
 const IPHONE_INSTAGRAM_UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0";
 const IPHONE_LINE_UA =
@@ -169,17 +173,58 @@ describe("HomeScreenInstallSection", () => {
     expect(prompt).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to the other-surface sentence on iPhone Instagram, LINE, and Facebook in-app", () => {
-    const otherBody =
-      "お使いのブラウザのメニューから、「ホーム画面に追加」または「アプリをインストール」を選んでください。";
-    for (const userAgent of [IPHONE_INSTAGRAM_UA, IPHONE_LINE_UA, IPHONE_FBAN_UA]) {
+  it("hides the section on iPhone Chrome, Firefox, Instagram, LINE, and Facebook", () => {
+    for (const userAgent of [
+      IPHONE_CRIOS_UA,
+      IPHONE_FXIOS_UA,
+      IPHONE_INSTAGRAM_UA,
+      IPHONE_LINE_UA,
+      IPHONE_FBAN_UA,
+    ]) {
       cleanup();
       stubSurface("ios", userAgent);
       render(<HomeScreenInstallSection />);
-      expect(screen.getByRole("heading", { name: /^ホーム画面に追加$/u })).toBeVisible();
-      expect(screen.queryByRole("list")).not.toBeInTheDocument();
-      expect(screen.getByText(otherBody)).toBeVisible();
+      expect(
+        screen.queryByRole("heading", { name: /^ホーム画面に追加$/u }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole("listitem", { name: /^共有$/u })).not.toBeInTheDocument();
     }
+  });
+
+  it("hides the section on iOS standalone because the icon is already on the home screen", () => {
+    stubSurface("ios");
+    vi.stubGlobal("navigator", {
+      userAgent: IPHONE_UA,
+      platform: "iPhone",
+      maxTouchPoints: 5,
+      standalone: true,
+    });
+    vi.stubGlobal(
+      "matchMedia",
+      (query: string) =>
+        ({
+          matches: query === "(display-mode: standalone)",
+          media: query,
+          onchange: null,
+          addListener() {
+            return undefined;
+          },
+          removeListener() {
+            return undefined;
+          },
+          addEventListener() {
+            return undefined;
+          },
+          removeEventListener() {
+            return undefined;
+          },
+          dispatchEvent() {
+            return false;
+          },
+        }) satisfies MediaQueryList,
+    );
+    render(<HomeScreenInstallSection />);
+    expect(screen.queryByRole("heading", { name: /^ホーム画面に追加$/u })).not.toBeInTheDocument();
   });
 
   it("falls back to the other-surface sentence on Android WebView and Firefox without a held prompt", () => {

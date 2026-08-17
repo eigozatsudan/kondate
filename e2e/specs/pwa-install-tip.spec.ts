@@ -31,6 +31,26 @@ test(
 );
 
 test(
+  "hides the iOS install guide under Chrome iOS",
+  { tag: ["@mobile-only"] },
+  async ({ browser, authEmail }) => {
+    const context = await browser.newContext({
+      ...devices["iPhone SE"],
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1",
+    });
+    const page = await context.newPage();
+    await loginAsNewUser(page, authEmail, { seedPwaInstallTipDismissed: false });
+    await expect(page.getByRole("heading", { name: "ホーム画面に置く" })).toHaveCount(0);
+    await page.goto("/settings");
+    await expect(page.getByRole("heading", { name: "ホーム画面に追加", exact: true })).toHaveCount(
+      0,
+    );
+    await context.close();
+  },
+);
+
+test(
   "shows Android install steps under an Android UA",
   { tag: ["@mobile-only"] },
   async ({ browser, authEmail }) => {

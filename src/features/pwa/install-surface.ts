@@ -15,13 +15,14 @@ export function detectInstallSurface(
   return "other";
 }
 
-// Safari 共有シートがある面だけ 3 手順を出す。三値は ios のまま。
+// iOS の「ホーム画面に追加」は Safari の共有シートだけ。三値は ios のまま。
 // Instagram / LINE / Facebook in-app はカスタム WKWebView で共有も追加も無い。
-// CriOS / FxiOS は共有 → ホーム画面追加ができるので落とさない。
+// Chrome / Firefox / Edge は UA に Safari トークンが残るが共有シートが無い。
 export function canUseIosSafariInstallSteps(userAgent: string): boolean {
   if (/FBAN|FBAV|FB_IAB/iu.test(userAgent)) return false;
   if (/Line\//iu.test(userAgent)) return false;
   if (/Instagram/iu.test(userAgent)) return false;
+  if (/CriOS|FxiOS|EdgiOS/u.test(userAgent)) return false;
   return true;
 }
 

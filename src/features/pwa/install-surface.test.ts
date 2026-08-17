@@ -128,7 +128,7 @@ describe("detectInstallSurface", () => {
 });
 
 describe("canUseIosSafariInstallSteps", () => {
-  it("allows Safari-style steps on iPhone Safari, CriOS, and FxiOS", () => {
+  it("allows Safari-style steps only on iPhone Safari", () => {
     expect(
       canUseIosSafariInstallSteps(
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
@@ -136,14 +136,27 @@ describe("canUseIosSafariInstallSteps", () => {
     ).toBe(true);
     expect(
       canUseIosSafariInstallSteps(
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
       ),
     ).toBe(true);
+  });
+
+  it("rejects iPhone Chrome, Firefox, and Edge because they have no Safari share sheet", () => {
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1",
+      ),
+    ).toBe(false);
     expect(
       canUseIosSafariInstallSteps(
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/122.0 Mobile/15E148 Safari/605.1.15",
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/120.0.2210.86 Version/17.0 Mobile/15E148 Safari/604.1",
+      ),
+    ).toBe(false);
   });
 
   it("rejects iPhone Instagram, LINE, and Facebook in-app", () => {

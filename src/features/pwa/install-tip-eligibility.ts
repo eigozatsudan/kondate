@@ -26,12 +26,14 @@ export function shouldShowInstallTip(input: {
   surface: InstallSurface;
   standalone: boolean;
   dismissed: boolean;
+  safariStepsOk: boolean;
 }): boolean {
+  const surfaceOk = input.surface === "android" || (input.surface === "ios" && input.safariStepsOk);
   return (
     input.hasSession &&
     !input.standalone &&
     !input.dismissed &&
-    (input.surface === "ios" || input.surface === "android") &&
+    surfaceOk &&
     isInstallTipPath(input.pathname)
   );
 }

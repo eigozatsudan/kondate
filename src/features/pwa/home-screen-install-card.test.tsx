@@ -23,6 +23,10 @@ vi.mock("@/features/auth/use-auth", () => ({
 }));
 
 const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15";
+const IPHONE_CRIOS_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1";
+const IPHONE_FXIOS_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/122.0 Mobile/15E148 Safari/605.1.15";
 const IPHONE_INSTAGRAM_UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0";
 const IPHONE_LINE_UA =
@@ -220,17 +224,19 @@ describe("HomeScreenInstallCard", () => {
     expect(prompt).toHaveBeenCalledTimes(1);
   });
 
-  it("does not show Safari install steps on iPhone Instagram, LINE, or Facebook in-app", () => {
-    const otherBody =
-      "お使いのブラウザのメニューから、「ホーム画面に追加」または「アプリをインストール」を選んでください。";
-    for (const userAgent of [IPHONE_INSTAGRAM_UA, IPHONE_LINE_UA, IPHONE_FBAN_UA]) {
+  it("hides the card on iPhone Chrome, Firefox, Instagram, LINE, and Facebook", () => {
+    for (const userAgent of [
+      IPHONE_CRIOS_UA,
+      IPHONE_FXIOS_UA,
+      IPHONE_INSTAGRAM_UA,
+      IPHONE_LINE_UA,
+      IPHONE_FBAN_UA,
+    ]) {
       cleanup();
       stubSurface("ios", userAgent);
       renderCard();
-      expect(screen.getByRole("heading", { name: "ホーム画面に置く" })).toBeVisible();
-      expect(screen.queryByRole("list")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "ホーム画面に置く" })).not.toBeInTheDocument();
       expect(screen.queryByRole("listitem", { name: /^共有$/u })).not.toBeInTheDocument();
-      expect(screen.getByText(otherBody)).toBeVisible();
     }
   });
 

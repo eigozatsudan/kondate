@@ -52,12 +52,14 @@ export function HomeScreenInstallCard() {
     readNavigatorPlatform(),
     navigator.maxTouchPoints,
   );
+  const safariStepsOk = canUseIosSafariInstallSteps(navigator.userAgent);
   const visible = shouldShowInstallTip({
     hasSession: auth.session !== null,
     pathname: location.pathname,
     surface,
     standalone: readStandaloneDisplayMode(),
     dismissed: memoryDismissed || readInstallTipDismissed(window.localStorage),
+    safariStepsOk,
   });
 
   // 描画後 BIP を拾うため peek ではなく購読する。userChoice / appinstalled では自動 dismiss しない。
@@ -65,11 +67,11 @@ export function HomeScreenInstallCard() {
   const androidPrompt = surface === "android" ? heldAndroidPrompt : null;
   const { installInFlight, requestInstall } = useAndroidInstallAction(androidPrompt);
 
-  // Instagram / LINE / Facebook と WebView / Firefox の手順可否は UA 判定のまま helper へ渡す。
+  // iOS 非 Safari は visible が false。Android WebView / Firefox の手順可否は helper へ渡す。
   // 4 つの真偽値をここで持たず、戻り（steps / body）だけを描く。
   const presentation = resolveHomeScreenInstallPresentation({
     surface,
-    safariStepsOk: canUseIosSafariInstallSteps(navigator.userAgent),
+    safariStepsOk,
     androidChromeStepsOk: canUseAndroidChromeInstallSteps(navigator.userAgent),
     hasAndroidPrompt: androidPrompt !== null,
   });

@@ -7,6 +7,7 @@ const eligible = {
   surface: "ios" as const,
   standalone: false,
   dismissed: false,
+  safariStepsOk: true,
 };
 
 describe("shouldShowInstallTip", () => {
@@ -28,6 +29,16 @@ describe("shouldShowInstallTip", () => {
 
   it("hides on other surfaces", () => {
     expect(shouldShowInstallTip({ ...eligible, surface: "other" })).toBe(false);
+  });
+
+  it("hides on iOS when Safari share-sheet steps are not available", () => {
+    expect(shouldShowInstallTip({ ...eligible, safariStepsOk: false })).toBe(false);
+  });
+
+  it("still shows on Android when safariStepsOk is false", () => {
+    expect(shouldShowInstallTip({ ...eligible, surface: "android", safariStepsOk: false })).toBe(
+      true,
+    );
   });
 
   it("hides on settings, welcome, root, onboarding, and privacy", () => {
