@@ -65,7 +65,7 @@ describe("buildPublicLandingHtml", () => {
     expect(html).not.toContain("display:none");
     for (const word of FORBIDDEN) expect(html).not.toContain(word);
 
-    const imgs = [...html.matchAll(/<img\b([^>]*)>/gu)].map((match) => match[1]);
+    const imgs = [...html.matchAll(/<img\b([^>]*)>/gu)].map((match) => match[1] ?? "");
     expect(imgs).toHaveLength(4);
     expect(imgs[0]).toContain(`src="${PUBLIC_LANDING_ASSET_PATHS.heroSrc}"`);
     expect(imgs[0]).toContain('alt=""');
@@ -88,7 +88,7 @@ describe("buildPublicLandingHtml", () => {
     );
     render(<RouterProvider router={router} />);
     expect(screen.getByRole("heading", { level: 1, name: FREE_LP_H1 })).toBeVisible();
-    const reactText = flattenText(document.body.textContent);
+    const reactText = flattenText(document.body.textContent ?? "");
     const staticText = stripTags(buildPublicLandingHtml(PUBLIC_LANDING_ASSET_PATHS));
     expect(staticText).toBe(reactText);
   });
