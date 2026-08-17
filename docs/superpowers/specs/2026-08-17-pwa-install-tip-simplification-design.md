@@ -1,7 +1,8 @@
 # こんだて日和 ホーム画面案内の簡易化設計
 
 - 日付: 2026-08-17
-- 状態: **敵対レビュー MF 反映済み**（I1–I4 / I6 / I7 / M1–M3。I5 は残差）
+- 状態: **敵対レビュー MF 反映済み・Plan 作成済み**（I1–I4 / I6 / I7 / M1–M3。I5 は残差）
+- 実装計画: `docs/superpowers/plans/2026-08-17-pwa-install-tip-simplification.md`
 - 種別: 設計。出荷済み PWA 案内の手順文を、短い見出し＋記号図にする
 - 親: [PWA インストール可能アプリシェル](./2026-08-16-pwa-installable-app-shell-design.md)（出す条件・BIP・SW・dismiss の正本）
 - 関連: [メール 6 桁番号ログイン](./2026-08-16-email-otp-login-design.md)（案内の短縮・図解を本スライスへ分離していた）
