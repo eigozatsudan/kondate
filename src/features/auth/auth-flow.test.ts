@@ -104,6 +104,29 @@ describe("auth flow storage", () => {
     expect(sanitizeReturnPath("/planner")).toBe("/planner");
   });
 
+  it("C6: sanitizeReturnPath rejects search/hash // like isSafeAuthReturnTo", () => {
+    // RequireSession は pathname+search を returnTo にする。search の https:// が残ると
+    // create Zod / DB CHECK が文字列全体の // を拒否し、Google 開始が 400 になる。
+    expect(sanitizeReturnPath("/planner?next=https://example.com")).toBe("/planner");
+    expect(sanitizeReturnPath("/planner#//x")).toBe("/planner");
+    expect(sanitizeReturnPath("/planner?resume=1")).toBe("/planner?resume=1");
+    expect(isSafeAuthReturnTo("/planner?next=https://example.com")).toBe(false);
+    expect(isSafeAuthReturnTo("/planner?resume=1")).toBe(true);
+    expect(sanitizeLoginReturnPath("/planner?next=https://example.com")).toBe("/planner");
+  });
+
+  it("C6: createAuthFlow does not send search // to continuation create", async () => {
+    const api = continuationApiMock();
+    const flow = await createAuthFlow(
+      "/planner?next=https://example.com",
+      api,
+      new MapStorage(),
+      fixedFlowDeps,
+    );
+    expect(api.lastCreateInput?.returnTo).toBe("/planner");
+    expect(flow.returnTo).toBe("/planner");
+  });
+
   it("C1: login return path drops auth self-references", () => {
     expect(isAuthSelfReturnPath("/login")).toBe(true);
     expect(isAuthSelfReturnPath("/login?x=1")).toBe(true);

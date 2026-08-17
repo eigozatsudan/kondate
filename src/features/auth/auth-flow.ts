@@ -317,10 +317,11 @@ function base64url(bytes: Uint8Array): string {
 }
 
 export function sanitizeReturnPath(value: string | null | undefined): string {
-  // B-I3/B-I5: URL 正規化**後**の pathname が安全であること。
+  // B-I3/B-I5: URL 正規化**後**の pathname+search+hash が安全であること。
   // - 裸 "/" は RootEntry（welcome/planner 分岐）へ戻すために許可する
   // - "/planner/..//evil" のような collapse 後 "//evil" は拒否する
   // - protocol-relative "//host" は拒否する
+  // - C6: search/hash の `https://` も文字列全体の `//` として拒否（create Zod / DB と同型）
   // - C7: 制御文字は isSafeAuthReturnTo / サーバ Zod と同型で拒否（fallback /planner）
   if (value === undefined || value === null || value === "") {
     return "/planner";
@@ -341,23 +342,26 @@ export function sanitizeReturnPath(value: string | null | undefined): string {
       return "/planner";
     }
     const { pathname } = parsed;
-    // collapse 後に protocol-relative や不正パスになったら拒否
-    if (pathname.startsWith("//") || pathname.includes("\\") || pathname.includes("//")) {
+    const next = `${pathname}${parsed.search}${parsed.hash}`;
+    // collapse 後の protocol-relative / 埋め込み `//` に加え、
+    // C6: search/hash の `https://` も isSafeAuthReturnTo / create Zod / DB と同型で拒否する。
+    // pathname だけ見ると Google 開始の api.create が 400 になる。
+    if (pathname.includes("\\") || next.includes("//")) {
       return "/planner";
     }
     // C7: 正規化後の path/search/hash にも制御文字が残らないこと
     // eslint-disable-next-line no-control-regex -- 同上
-    if (/[\u0000-\u001f\u007f]/u.test(`${pathname}${parsed.search}${parsed.hash}`)) {
+    if (/[\u0000-\u001f\u007f]/u.test(next)) {
       return "/planner";
     }
     if (pathname === "/") {
-      return `${pathname}${parsed.search}${parsed.hash}`;
+      return next;
     }
     // 正規化後も「先頭 / のあと非 /」を要求（DB/Function 契約と同型）
     if (!/^\/[^/]/u.test(pathname)) {
       return "/planner";
     }
-    return `${pathname}${parsed.search}${parsed.hash}`;
+    return next;
   } catch {
     return "/planner";
   }

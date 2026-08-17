@@ -67,6 +67,31 @@ it("C7: SPA leave+reenter recaptures a new callback URL", () => {
   expect(replaced).toEqual(["/auth/callback?flow=f1", "/auth/callback?flow=f2"]);
 });
 
+it("C10: strips callback secrets when pathname has a trailing slash", () => {
+  const replaced: string[] = [];
+  captureAndStripAuthCallbackUrl(
+    "http://127.0.0.1:5173/auth/callback/?flow=flow-1&state=s1&code=c1",
+    (url) => {
+      replaced.push(url);
+    },
+  );
+  expect(replaced).toEqual(["/auth/callback/?flow=flow-1"]);
+  expect(takeCapturedAuthCallbackUrl().pathname).toBe("/auth/callback/");
+  expect(takeCapturedAuthCallbackUrl().searchParams.get("code")).toBe("c1");
+});
+
+it("C10: does not treat /auth/callback/extra as a callback strip target", () => {
+  const replaced: string[] = [];
+  captureAndStripAuthCallbackUrl(
+    "http://127.0.0.1:5173/auth/callback/extra?flow=f&code=c",
+    (url) => {
+      replaced.push(url);
+    },
+  );
+  expect(replaced).toEqual([]);
+  expect(takeCapturedAuthCallbackUrl("http://127.0.0.1/login").href).toBe("http://127.0.0.1/login");
+});
+
 it("C-R5: soft-nav same-path with a new code recaptures without leave", () => {
   const replaced: string[] = [];
   captureAndStripAuthCallbackUrl(

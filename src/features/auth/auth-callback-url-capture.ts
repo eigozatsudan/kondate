@@ -61,7 +61,7 @@ export function resetAuthCallbackUrlCaptureIfLeftCallback(pathname: string): voi
 }
 
 /**
- * pathname が /auth/callback のときだけ、code/state 等を history から除き閉包に保持する。
+ * pathname が /auth/callback または /auth/callback/ のとき、code/state 等を history から除き閉包に保持する。
  * 同一 entry では冪等（StrictMode / main+page 二重呼び出し）。
  * C-R5: leave 無しの soft-nav で **別 code/query** が来たら recapture する。
  * callback 外の href では sticky を解除する（C7 SPA 再入場）。
@@ -80,7 +80,9 @@ export function captureAndStripAuthCallbackUrl(
   } catch {
     return;
   }
-  if (url.pathname !== "/auth/callback") {
+  // C10: SW の isAuthCallbackPath と同型。`/auth/callback/` も strip しないと
+  // IdP / 手動 URL で code が可視 URL に残る。`/auth/callback/extra` は対象外。
+  if (url.pathname !== "/auth/callback" && url.pathname !== "/auth/callback/") {
     // C7: callback 外では sticky を落とし、次の入場で recapture 可能にする
     resetAuthCallbackUrlCaptureIfLeftCallback(url.pathname);
     return;
