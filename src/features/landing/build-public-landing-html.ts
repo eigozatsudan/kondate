@@ -64,10 +64,12 @@ export function buildPublicLandingHtml(assets: PublicLandingAssets): string {
 export function buildPublicLandingHeadHtml(): string {
   const lead = escapeHtml(FREE_LP_LEAD);
   const brand = escapeHtml(FREE_LP_BRAND);
+  // Vite 8 は <link href> をすべてアセットとして読む。href="/" はリポジトリ根になり
+  // readFile が EISDIR で本番ビルドを落とす。vite-ignore は属性だけ落とし href は残す。
   return `<meta name="description" content="${lead}" />
     <meta property="og:title" content="${brand}" />
     <meta property="og:description" content="${lead}" />
     <meta property="og:locale" content="ja_JP" />
     <meta name="twitter:card" content="summary" />
-    <link rel="canonical" href="/" />`;
+    <link rel="canonical" href="/" vite-ignore />`;
 }

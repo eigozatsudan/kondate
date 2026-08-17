@@ -26,7 +26,7 @@ describe("injectPublicLandingHtml", () => {
     expect(once).toContain(FREE_LP_LEAD);
     expect(once).toContain('id="kondate-public-lp"');
     expect(once).toContain('name="description"');
-    expect(once).toContain('rel="canonical" href="/"');
+    expect(once).toContain('rel="canonical" href="/" vite-ignore');
     expect(once).not.toContain(PUBLIC_LANDING_HEAD_MARK);
     expect(injectPublicLandingHtml(once)).toBe(once);
   });

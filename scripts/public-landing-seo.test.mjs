@@ -3,6 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { buildDeployHeadersFile } from "./csp-headers.mjs";
 
+test("canonical link is vite-ignored so href=/ is not read as a directory", async () => {
+  const source = await readFile("src/features/landing/build-public-landing-html.ts", "utf8");
+  // Vite 8 は <link href="/"> を root の readFile にし EISDIR で落とす。
+  assert.match(source, /<link rel="canonical" href="\/" vite-ignore \/>/u);
+});
+
 test("robots.txt allows only the homepage", async () => {
   const body = (await readFile("public/robots.txt", "utf8")).replace(/\n$/u, "");
   assert.equal(body, "User-agent: *\nAllow: /$\nDisallow: /");

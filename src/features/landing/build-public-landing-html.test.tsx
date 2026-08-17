@@ -101,7 +101,7 @@ describe("buildPublicLandingHeadHtml", () => {
     expect(head).toContain(`content="${escapeHtml(FREE_LP_BRAND)}"`);
     expect(head).toContain('property="og:locale" content="ja_JP"');
     expect(head).toContain('name="twitter:card" content="summary"');
-    expect(head).toContain('rel="canonical" href="/"');
+    expect(head).toContain('rel="canonical" href="/" vite-ignore');
     expect(head).not.toContain("og:url");
     expect(head).not.toContain("og:image");
   });
