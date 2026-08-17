@@ -5,10 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   FREE_LP_BRAND,
   FREE_LP_CLOSING,
-  FREE_LP_CTA,
   FREE_LP_EXISTING,
   FREE_LP_FAMILY_BODY,
-  FREE_LP_FAMILY_POINTS,
   FREE_LP_FAMILY_TITLE,
   FREE_LP_FEATURES_TITLE,
   FREE_LP_FLOW_STEPS,
@@ -16,12 +14,7 @@ import {
   FREE_LP_H1,
   FREE_LP_LEAD,
   FREE_LP_LEAD_SUB,
-  FREE_LP_LOGIN,
-  FREE_LP_MENU_BODY,
-  FREE_LP_MENU_POINTS,
   FREE_LP_MENU_TITLE,
-  FREE_LP_PANTRY_BODY,
-  FREE_LP_PANTRY_POINTS,
   FREE_LP_PANTRY_TITLE,
 } from "./free-landing-copy";
 import {
@@ -72,7 +65,7 @@ describe("buildPublicLandingHtml", () => {
     expect(html).not.toContain("display:none");
     for (const word of FORBIDDEN) expect(html).not.toContain(word);
 
-    const imgs = [...html.matchAll(/<img\b([^>]*)>/gu)].map((match) => match[1] ?? "");
+    const imgs = [...html.matchAll(/<img\b([^>]*)>/gu)].map((match) => match[1]);
     expect(imgs).toHaveLength(4);
     expect(imgs[0]).toContain(`src="${PUBLIC_LANDING_ASSET_PATHS.heroSrc}"`);
     expect(imgs[0]).toContain('alt=""');
@@ -95,7 +88,7 @@ describe("buildPublicLandingHtml", () => {
     );
     render(<RouterProvider router={router} />);
     expect(screen.getByRole("heading", { level: 1, name: FREE_LP_H1 })).toBeVisible();
-    const reactText = flattenText(document.body.textContent ?? "");
+    const reactText = flattenText(document.body.textContent);
     const staticText = stripTags(buildPublicLandingHtml(PUBLIC_LANDING_ASSET_PATHS));
     expect(staticText).toBe(reactText);
   });

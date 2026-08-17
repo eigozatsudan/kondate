@@ -5,8 +5,12 @@ import { describe, expect, it } from "vitest";
 describe("lp-boot", () => {
   it("adds kondate-js on the document element", () => {
     document.documentElement.className = "";
+    // 本番 public/lp-boot.js を classic script として実行し、classList 付与を検証する
     const source = readFileSync(resolve("public/lp-boot.js"), "utf8");
-    new Function(source)();
+    const script = document.createElement("script");
+    script.textContent = source;
+    document.documentElement.appendChild(script);
+    script.remove();
     expect(document.documentElement.classList.contains("kondate-js")).toBe(true);
   });
 
