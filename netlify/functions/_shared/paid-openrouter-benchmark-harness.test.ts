@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
+import {
+  resetOpenRouterRuntimeModelPolicyCacheForTests,
+  seedOpenRouterRuntimeModelPolicyOkForTests,
+} from "./openrouter.js";
 import {
   runPaidBenchmarkUnit,
   type PaidBenchmarkRepositoryTransition,
@@ -140,6 +144,41 @@ async function runWithSteps(
 }
 
 describe("runPaidBenchmarkUnit", () => {
+  beforeEach(() => {
+    // 公式 base の sender は markSent 前に Models API 政策を走らせる。
+    // 本ファイルの fetch mock は chat completions 専用なので、G4 専用でない
+    // 既存 chat 経路と同じく seed で remote をスキップする。
+    // CI の mock env では本番 Models API 成功キャッシュが無く、未 seed だと
+    // model_unavailable で 25 件落ちる。
+    seedOpenRouterRuntimeModelPolicyOkForTests();
+  });
+
+  afterEach(() => {
+    resetOpenRouterRuntimeModelPolicyCacheForTests();
+    vi.unstubAllEnvs();
+  });
+
+  it("finalizes a primary success when process env is the CI mock OpenRouter allowlist", async () => {
+    // GHA generate-local-secrets は mock base。公式 base の sender 政策が
+    // chat 専用 fetch mock に当たると model_unavailable になる（本番 env の
+    // Models API 成功キャッシュに依存してはいけない）。
+    vi.stubEnv("OPENROUTER_BASE_URL", "http://openrouter-mock:8787/api/v1");
+    vi.stubEnv("OPENROUTER_MODELS", "mock/kondate-primary:free,mock/kondate-repair:free");
+    vi.stubEnv("OPENROUTER_PLUS_MODELS", "mock/kondate-primary:free,mock/kondate-repair:free");
+    vi.stubEnv("OPENROUTER_FLYER_MODELS", "");
+
+    const { result, requests } = await runWithSteps([
+      { kind: "output", model: primaryModel, output: validIdeaOutput() },
+    ]);
+
+    expect(result).toMatchObject({
+      ok: true,
+      outcome: "primary_success",
+      failureCodes: [],
+    });
+    expect(requests).toHaveLength(1);
+  });
+
   it("finalizes a primary success after one production-service send", async () => {
     const { result, requests } = await runWithSteps([
       { kind: "output", model: primaryModel, output: validIdeaOutput() },
