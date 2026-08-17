@@ -23,18 +23,16 @@ describe("install tip copy", () => {
   });
 
   it("keeps the iOS three-step list exact", () => {
-    expect(INSTALL_TIP_IOS_STEPS).toEqual([
-      "画面の下（または上）の共有ボタンをタップします",
-      "「ホーム画面に追加」を選びます",
-      "「追加」をタップします",
-    ]);
+    expect(INSTALL_TIP_IOS_STEPS).toEqual(["共有", "ホーム画面に追加", "追加"]);
   });
 
   it("keeps the Android two-step list exact", () => {
-    expect(INSTALL_TIP_ANDROID_STEPS).toEqual([
-      "右上のメニューを開きます",
-      "「アプリをインストール」または「ホーム画面に追加」を選びます",
-    ]);
+    expect(INSTALL_TIP_ANDROID_STEPS).toEqual(["メニュー", "ホーム画面に追加"]);
+  });
+
+  it("does not put インストール as an Android step substring of the button", () => {
+    expect(INSTALL_TIP_ANDROID_INSTALL_LABEL.includes(INSTALL_TIP_ANDROID_STEPS[1])).toBe(false);
+    expect(INSTALL_TIP_ANDROID_STEPS[1]).not.toBe("インストール");
   });
 
   it("keeps the other-surface sentence exact", () => {
