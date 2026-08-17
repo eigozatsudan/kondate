@@ -38,6 +38,7 @@ describe("OtpDigitField", () => {
 
     const boxes = DIGIT_LABELS.map((name) => getDigitBox(name));
     expect(boxes).toHaveLength(6);
+    expect(boxes[0]?.parentElement).toHaveClass("justify-center");
   });
 
   it("reports the first typed digit", async () => {

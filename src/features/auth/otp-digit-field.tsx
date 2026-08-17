@@ -114,7 +114,7 @@ export function OtpDigitField(props: {
           emit(event.currentTarget.value);
         }}
       />
-      <div className="flex w-full min-w-0 flex-nowrap justify-start gap-0.5">
+      <div className="flex w-full min-w-0 flex-nowrap justify-center gap-0.5">
         {EMAIL_OTP_DIGIT_ARIA_LABELS.map((label, index) => (
           <input
             key={label}
