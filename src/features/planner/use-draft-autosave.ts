@@ -490,6 +490,18 @@ export function useDraftAutosave({
           if (resetGeneration !== resetGenerationRef.current) {
             throw new SupersededDraftSaveError();
           }
+          // P1: hold は enqueue 入口だけだと、キュー待ち / 追記ループが claim 後も live を進める。
+          // 既開始 RPC は cancel 不能（残差）。save 直前の再読で後続書込だけ止める。
+          if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
+            const lastSaved = lastSavedDraftRef.current;
+            if (lastSaved !== null) {
+              return {
+                saved: lastSaved,
+                toSave: lastPersistedInputRef.current ?? toSave,
+              };
+            }
+            throw new IncompleteDraftSaveError();
+          }
 
           try {
             // P4 残差: 既に飛んだ RPC のペイロードは開始時 toSave のまま commit される。
@@ -705,11 +717,11 @@ export function useDraftAutosave({
       );
     }
 
-    const latest = latestRef.current;
-    if (!isPersistableDraft(latest)) {
+    const latestAtFlushStart = latestRef.current;
+    if (!isPersistableDraft(latestAtFlushStart)) {
       // 旧 mode strip が必要なときだけ中立形を書く
-      if (shouldWriteAudienceNeutral(latest, lastPersistedInputRef.current)) {
-        return enqueue(latest);
+      if (shouldWriteAudienceNeutral(latestAtFlushStart, lastPersistedInputRef.current)) {
+        return enqueue(latestAtFlushStart);
       }
       // P3 中立保存後: 直前永続化が既に audience 無しで latest の収束先と同じなら RPC なしで返す。
       // dirty fingerprint の re-render 待ちに依存せず Incomplete で旧 mode 成功扱いにしない。
@@ -719,7 +731,7 @@ export function useDraftAutosave({
         lastSaved !== null &&
         lastPersisted !== null &&
         !hasPersistedAudience(lastPersisted) &&
-        convergenceFingerprint(latest) === JSON.stringify(lastPersisted)
+        convergenceFingerprint(latestAtFlushStart) === JSON.stringify(lastPersisted)
       ) {
         return Promise.resolve(lastSaved);
       }
@@ -747,6 +759,20 @@ export function useDraftAutosave({
           if (currentSaved === null || live.revision >= currentSaved.revision) {
             lastSavedDraftRef.current = live;
           }
+        }
+        // P1: GET 待ち中に公開された pin で live を進めない。
+        if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
+          const held = lastSavedDraftRef.current;
+          if (held !== null) return held;
+          throw new IncompleteDraftSaveError();
+        }
+        // P2: leave 開始時 latest を閉じたまま timeout 後の編集を POST しない。
+        const latest = latestRef.current;
+        if (!isPersistableDraft(latest)) {
+          if (shouldWriteAudienceNeutral(latest, lastPersistedInputRef.current)) {
+            return enqueue(latest);
+          }
+          throw new IncompleteDraftSaveError();
         }
         const lastSaved = lastSavedDraftRef.current;
         const serverRow = live ?? lastSaved;
@@ -776,7 +802,7 @@ export function useDraftAutosave({
         throw new IncompleteDraftSaveError();
       })();
     }
-    return enqueue(latest);
+    return enqueue(latestAtFlushStart);
   }, [enqueue]);
 
   return { state, revision: savedRevision, flush };

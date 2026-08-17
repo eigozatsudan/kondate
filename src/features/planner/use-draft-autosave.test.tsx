@@ -1168,6 +1168,117 @@ it("P-R7: claim+meta 後に再描画していない pagehide は live revision �
   expect(save).not.toHaveBeenCalled();
 });
 
+it("P1: キュー済み追記は claim 後の hold で live revision を進めない", async () => {
+  // hold は enqueue 入口だけだと、save 待ちの for ループが claim 後も live を N+1 する。
+  // 既開始 RPC は cancel 不能（残差）。ループ先頭の再読で後続 save を止める。
+  vi.useFakeTimers();
+  let resolveSave: ((draft: PlannerDraft) => void) | undefined;
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    void value;
+    void revision;
+    return new Promise<PlannerDraft>((resolve) => {
+      resolveSave = resolve;
+    });
+  });
+  let published = false;
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        holdLiveRevision: false,
+        shouldHoldLiveRevision: () => published,
+        save,
+        hydratedDraft: saved(reviewDraft, 4),
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  const firstEdit = { ...reviewDraft, memo: "野菜多め" };
+  rerender({ value: firstEdit });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(firstEdit, 4);
+
+  const secondEdit = { ...reviewDraft, memo: "もっと野菜" };
+  rerender({ value: secondEdit });
+  published = true;
+
+  await act(async () => {
+    resolveSave?.(saved(firstEdit, 5));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(result.current.revision).toBe(5);
+});
+
+it("P2: clean flush は refresh 完了後に latest を再読し変更を書く", async () => {
+  // fingerprint === baseline の短絡は latest を refresh 前に閉じる。
+  // timeout 後に join した generate が leave 開始時の家族/pantry を POST しないよう再読する。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  let resolveRefresh: ((row: PlannerDraft | null) => void) | undefined;
+  const refreshLiveDraft = vi.fn(
+    () =>
+      new Promise<PlannerDraft | null>((resolve) => {
+        resolveRefresh = resolve;
+      }),
+  );
+  const row = saved(reviewDraft, 4);
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        hydratedDraft: row,
+        refreshLiveDraft,
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  let flushPromise: Promise<PlannerDraft> | undefined;
+  act(() => {
+    flushPromise = result.current.flush();
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(refreshLiveDraft).toHaveBeenCalledTimes(1);
+  expect(save).not.toHaveBeenCalled();
+
+  const edited = {
+    ...reviewDraft,
+    pantrySelections: [
+      {
+        pantryItemId: "74000000-0000-4000-8000-000000000001",
+        priority: "prefer_use" as const,
+      },
+    ],
+  };
+  rerender({ value: edited });
+
+  let flushed: PlannerDraft | undefined;
+  await act(async () => {
+    resolveRefresh?.(row);
+    flushed = await flushPromise;
+  });
+
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(edited, 4);
+  expect(flushed?.pantrySelections).toEqual(edited.pantrySelections);
+  expect(flushed?.revision).toBe(5);
+});
+
 it("P1: flush は reset 強制保存の完了を await し失敗を隠さない", async () => {
   vi.useFakeTimers();
   let rejectForce: ((error: Error) => void) | undefined;

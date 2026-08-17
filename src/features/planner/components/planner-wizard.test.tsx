@@ -1037,6 +1037,48 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
   });
 
+  it("P3: 進行中 pending があるとき医療メモでも主 CTA は再開できる", async () => {
+    // 確認コピーは再開専用。ホーム再開は医療を見ない。確認 CTA だけ止めると入口が割れる。
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(() => Promise.resolve());
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...reviewDraft,
+          memo: "離乳食",
+        }}
+        hasResumablePendingGeneration
+        onSubmit={onSubmit}
+      />,
+    );
+    const generate = screen.getByRole("button", { name: "献立を作る" });
+    expect(generate).toBeEnabled();
+    await user.click(generate);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("P3: 進行中 pending があるとき privacy 未同意でも主 CTA は再開する", async () => {
+    // ホーム「作成中の献立を続ける」は privacy を通らない。確認だけ説明誘導すると入口が割れる。
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(() => Promise.resolve());
+    const onOpenPrivacyNotice = vi.fn();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        hasResumablePendingGeneration
+        hasAcceptedOrDeclinedPrivacy={false}
+        onOpenPrivacyNotice={onOpenPrivacyNotice}
+        onSubmit={onSubmit}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "献立を作る" }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onOpenPrivacyNotice).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
   it("P4: soft safety/pantry 失敗中は献立を作る CTA を disable する", () => {
     render(
       <Harness initialStep="review" initialDraft={reviewDraft} blockGenerationForStaleSafety />,

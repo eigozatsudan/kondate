@@ -360,9 +360,23 @@ export function PlannerRoutePage() {
         throw new Error("target_mode_required");
       }
       // P1: 送信 confirmation は選択中 ∩ 期限切れのみ（attempt 残存 surplus を載せない）
-      // onSubmit が selected∩expired 済みの checks を渡す前提。ここは選択中のみ再絞り。
+      // P6: flush 後〜claim 前に他タブが expiresOn を延ばし得る。checks 自身を
+      // 「現期限切れ」とみなすと surplus が exact-set 422 になるので再読する。
       // P2/P3/P5: Free / 非 Plus / plan 未取得 / quality 枠なしでは qualityMode を必ず false
       // （onSubmit clamp をすり抜けた注入・将来呼び出しでも pending に true を載せない）
+      const nowForExpired = new Date();
+      let currentlyExpiredIds = new Set(
+        attempt.expiredPantryChecks.map((check) => check.pantryItemId),
+      );
+      if (attempt.expiredPantryChecks.length > 0) {
+        try {
+          const freshPantry = await listPantryItems(getBrowserSupabaseClient(), userId);
+          if (isAbortSignalAborted(signal)) return false;
+          currentlyExpiredIds = currentlyExpiredPantryItemIds(freshPantry, new Date());
+        } catch {
+          // 再読失敗時は onSubmit 済み checks を現期限切れとみなす。サーバ exact-set は fail-closed。
+        }
+      }
       const candidate = createPendingGeneration(
         {
           commandVersion: "generation-command.v3",
@@ -376,8 +390,8 @@ export function PlannerRoutePage() {
             expiredPantryConfirmations: filterExpiredPantryChecksForSelections(
               attempt.expiredPantryChecks,
               draft.pantrySelections,
-              // 期限切れは onSubmit 済み。選択 ∩ 残 checks で非選択 extra だけ落とす
-              new Set(attempt.expiredPantryChecks.map((check) => check.pantryItemId)),
+              currentlyExpiredIds,
+              nowForExpired,
             ),
           },
         },
@@ -777,6 +791,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   }, []);
   // 公開 sticky があるあいだは live revision を進めない（P-R5 / C2 pin）。
   // persistOnReset は resetToken 専用。live-null 解決の追記 flush は止めない。
+  // hold は meta 突合必須。body のみは未公開の自 key（C7）として empty persist を許す。
   const holdLiveRevision =
     userId !== undefined && readPendingGenerationMeta(userId, new Date()) !== null;
   // P-R7: hold は render snapshot。enqueue / debounce / pagehide 発火時に
@@ -1725,7 +1740,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           }
           // Plan 2 クライアント医療境界（サーバー preflight と同 detector）。
           // レビュー画面でも disabled にしているが、submit 経路でも再確認して AI 開始を止める。
-          if (detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0) {
+          // P3: 進行中 pending は C2 再開のみ（ホーム再開と同型）。新条件の医療検出で止めない。
+          if (
+            !isPendingGenerationPresent(userId) &&
+            detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0
+          ) {
             setSubmissionError(medicalRequestBlockedMessage);
             setStep("review");
             return;
@@ -1779,6 +1798,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             const shouldResumePending =
               userId !== undefined && readPendingGeneration(userId, new Date()) !== null;
             if (!shouldResumePending) {
+              // P3: flush 中に pending が消えたら、スキップした医療境界を新規生成前に戻す。
+              if (detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0) {
+                setSubmissionError(medicalRequestBlockedMessage);
+                setStep("review");
+                return;
+              }
               // P1: flush 済み saved を最新 eligibility で再検証（strip 前 snapshot での生成禁止）
               if (saved.targetMode === "household") {
                 const eligibleIds = new Set(eligibleMemberIdsRef.current);
@@ -1802,16 +1827,19 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               }
             }
             // AP5: 読取失敗中は /privacy 誘導せず再試行（未同意と誤認しない）
-            if (privacyConsentLoadFailed) {
-              setSubmissionError(
-                "AI情報の確認状態を読み込めませんでした。通信を確認して再試行してください。",
-              );
-              return;
-            }
-            if (!hasAcceptedPrivacy) {
-              // P8: privacy 委譲の flush/navigate 完了まで submitting を維持（finally で解除）
-              await runPrivacyNavigation();
-              return;
+            // P3: C2 再開はホーム再開と同型。privacy 未同意でも進行中 pending は再開する。
+            if (!shouldResumePending) {
+              if (privacyConsentLoadFailed) {
+                setSubmissionError(
+                  "AI情報の確認状態を読み込めませんでした。通信を確認して再試行してください。",
+                );
+                return;
+              }
+              if (!hasAcceptedPrivacy) {
+                // P8: privacy 委譲の flush/navigate 完了まで submitting を維持（finally で解除）
+                await runPrivacyNavigation();
+                return;
+              }
             }
             // resume で audience を踏まず review に着いた idea 下書きでも skipped を揃える安全網。
             // complete|skipped は no-op。取得/書込失敗では生成を開始しない（fail-closed）。

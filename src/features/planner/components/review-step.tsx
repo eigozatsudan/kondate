@@ -307,7 +307,9 @@ export function ReviewStep({
       );
     });
   // Plan 2: AI 送信前のクライアント医療境界。サーバー preflight と同一 detector を使う。
+  // P3: 進行中 pending は再開のみ。ホーム再開と対称に、新条件の医療検出で CTA を止めない。
   const medicalBlocked =
+    !hasResumablePendingGeneration &&
     detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0;
   // C-C2: 生成を止めるエラーの直しどころが閉じた details に隠れると操作不能に見える。
   // ブロック中はユーザーが閉じても強制で開き直す。
@@ -931,15 +933,18 @@ export function ReviewStep({
                 variant="primary"
                 disabled={generateDisabled}
                 onClick={() => {
-                  // AP5: 読取失敗中は説明誘導ではなく再試行を促す（未同意ダイアログに潰さない）
-                  if (privacyConsentLoadFailed) {
-                    onRetryPrivacyConsent?.();
-                    return;
-                  }
-                  // 同意前は生成を開始せず、ダイアログで説明へ誘導する
-                  if (!hasAcceptedOrDeclinedPrivacy) {
-                    setPrivacyGateOpen(true);
-                    return;
+                  // P3: 進行中 pending はホーム再開と同型。privacy 未同意でも再開する。
+                  if (!hasResumablePendingGeneration) {
+                    // AP5: 読取失敗中は説明誘導ではなく再試行を促す（未同意ダイアログに潰さない）
+                    if (privacyConsentLoadFailed) {
+                      onRetryPrivacyConsent?.();
+                      return;
+                    }
+                    // 同意前は生成を開始せず、ダイアログで説明へ誘導する
+                    if (!hasAcceptedOrDeclinedPrivacy) {
+                      setPrivacyGateOpen(true);
+                      return;
+                    }
                   }
                   closePrivacyGate();
                   onSubmit();
