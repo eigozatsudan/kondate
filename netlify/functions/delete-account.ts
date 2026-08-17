@@ -96,9 +96,9 @@ export type DeleteAccountDeps = {
     userId: string,
   ) => Promise<{ error: { message: string } | null }>;
   /**
-   * customer 単位で live subscription を cancel。
-   * 失敗時は throw し、呼び出し側が Auth 削除を中止する（AP1 fail-closed）。
-   * 戻り値は cancel 実副作用の有無（AP3）。
+   * customer 単位で open Checkout Session を expire し、live subscription を cancel。
+   * 失敗時は throw し、呼び出し側が Auth 削除を中止する（AP1/AP2 fail-closed）。
+   * 戻り値は cancel 実副作用の有無（AP3）。expire だけでは true にしない。
    */
   cancelBillingSubscriptions: (userId: string) => Promise<CancelBillingResult>;
   /** 注入時は userId のみ。本番アダプタは Admin hard delete (shouldSoftDelete=false) を渡す。 */
@@ -108,8 +108,10 @@ export type DeleteAccountDeps = {
 /**
  * 認証済み本人の Auth ユーザーを Admin API で hard delete する。
  * リクエスト body の user_id は契約外（無視）であり、削除対象は常に bearer の userId のみ。
- * Auth 削除前に processing 予約解放 → flyer reserved 解放 → Stripe live sub cancel を行う。
- * Stripe cancel が失敗した場合は Auth 削除しない（請求 orphan を優先して防ぐ）。
+ * Auth 削除前に processing 予約解放 → flyer reserved 解放 →
+ * open Checkout Session expire + Stripe live sub cancel を行う。
+ * expire / cancel が失敗した場合は Auth 削除しない（請求 orphan を優先して防ぐ）。
+ * Stripe Customer は税務・請求記録のため残す。open Session だけ閉じる。
  * AP1: 同一 user の並行 DELETE は acquireDeleteLock で serialize（client abort ≠ server 完了）。
  */
 export const createDeleteAccountHandler =
@@ -158,7 +160,7 @@ export const createDeleteAccountHandler =
           // flyer 解放失敗は Auth 削除を阻害しない
         }
       }
-      // AP1: Stripe cancel 失敗時は Auth 削除を中止（請求 orphan を優先して防ぐ）
+      // AP1/AP2: Stripe expire/cancel 失敗時は Auth 削除を中止（請求 orphan を優先して防ぐ）
       let cancelResult: CancelBillingResult = { cancelledLiveSubscription: false };
       try {
         cancelResult = await deps.cancelBillingSubscriptions(auth.userId);
@@ -197,14 +199,126 @@ export const createDeleteAccountHandler =
   };
 
 /**
- * customer の全 subscription を list し、live/non-terminal を cancel する。
+ * 削除時の Stripe 面。live sub cancel に加え、未完了 Checkout を expire する（AP2）。
+ * Customer 作成・Price・host は触らない。
+ */
+export type DeleteAccountStripeClient = Pick<Stripe, "subscriptions" | "checkout">;
+
+/**
+ * AP2: customer の status=open な Checkout Session を辿って expire する。
+ * Checkout 作成側と同型の list(status=open)+expire。完了済みは list に出ない。
+ * list / expire 失敗は fail-closed（Auth 削除前）。部分 expire 失敗は残りを試して最後に throw。
+ * ページ上限は subscription list と同じ（病理 has_more で壁時計を食わない）。
+ */
+async function expireOpenCheckoutSessionsForDelete(options: {
+  customerId: string;
+  stripe: DeleteAccountStripeClient;
+  log: (event: SafeLogEvent) => void;
+  requestId: string;
+  startedAt: number;
+}): Promise<void> {
+  const { customerId, stripe, log, requestId, startedAt } = options;
+  let startingAfter: string | undefined;
+  let pageCount = 0;
+  let expireFailed = false;
+
+  for (;;) {
+    pageCount += 1;
+    if (pageCount > MAX_STRIPE_SUBSCRIPTION_LIST_PAGES) {
+      log({
+        level: "warn",
+        requestId,
+        code: "billing_cancel_failed",
+        durationMs: Date.now() - startedAt,
+        stripeCustomerId: customerId,
+      });
+      throw new Error("stripe_checkout_session_list_page_limit");
+    }
+
+    let listed: Stripe.ApiList<Stripe.Checkout.Session>;
+    try {
+      // AP13: ページ取得前に壁時計。遅延 list で Auth 削除前に platform を食わない
+      assertWithinBillingCancelBudget(startedAt);
+      listed = await stripe.checkout.sessions.list({
+        customer: customerId,
+        status: "open",
+        limit: 100,
+        ...(startingAfter === undefined ? {} : { starting_after: startingAfter }),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "stripe_billing_cancel_budget_exceeded") {
+        log({
+          level: "warn",
+          requestId,
+          code: "billing_cancel_failed",
+          durationMs: Date.now() - startedAt,
+          stripeCustomerId: customerId,
+        });
+        throw error;
+      }
+      log({
+        level: "warn",
+        requestId,
+        code: "billing_cancel_failed",
+        durationMs: Date.now() - startedAt,
+        stripeCustomerId: customerId,
+      });
+      throw new Error("stripe_checkout_session_list_failed");
+    }
+
+    for (const session of listed.data) {
+      if (typeof session.id !== "string" || session.id.length === 0) continue;
+      try {
+        assertWithinBillingCancelBudget(startedAt);
+        await stripe.checkout.sessions.expire(session.id);
+      } catch (error) {
+        if (error instanceof Error && error.message === "stripe_billing_cancel_budget_exceeded") {
+          log({
+            level: "warn",
+            requestId,
+            code: "billing_cancel_failed",
+            durationMs: Date.now() - startedAt,
+            stripeCustomerId: customerId,
+          });
+          throw error;
+        }
+        expireFailed = true;
+        log({
+          level: "warn",
+          requestId,
+          code: "billing_cancel_failed",
+          durationMs: Date.now() - startedAt,
+          stripeCustomerId: customerId,
+        });
+      }
+    }
+
+    if (!listed.has_more || listed.data.length === 0) {
+      break;
+    }
+    const last = listed.data[listed.data.length - 1];
+    if (last === undefined || typeof last.id !== "string" || last.id.length === 0) {
+      break;
+    }
+    startingAfter = last.id;
+  }
+
+  if (expireFailed) {
+    throw new Error("stripe_checkout_session_expire_failed");
+  }
+}
+
+/**
+ * customer の open Checkout Session を expire してから、
+ * 全 subscription を list し live/non-terminal を cancel する。
  * DB の billing_subscriptions 1 行だけに依存しない（二重 sub 残差を取りこぼさない）。
  * 失敗は throw（呼び出し側が Auth 削除を fail-closed で止める）。部分失敗も最後に throw。
+ * AP2: 手元の Checkout URL 完了で孤児 subscription が立つのを防ぐ。Customer は残す。
  */
 export async function cancelAllLiveSubscriptionsForUser(options: {
   userId: string;
   admin: Pick<AdminSupabaseClient, "rpc">;
-  stripe: Pick<Stripe, "subscriptions"> | null;
+  stripe: DeleteAccountStripeClient | null;
   log: (event: SafeLogEvent) => void;
   requestId: string;
   startedAt: number;
@@ -249,7 +363,7 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
     return { cancelledLiveSubscription: false };
   }
 
-  // customer があるのに Stripe クライアントが無いと live sub を触れない → fail-closed
+  // customer があるのに Stripe クライアントが無いと live sub / open Session を触れない → fail-closed
   if (stripe === null) {
     log({
       level: "warn",
@@ -260,6 +374,16 @@ export async function cancelAllLiveSubscriptionsForUser(options: {
     });
     throw new Error("stripe_client_unavailable");
   }
+
+  // AP2: live sub cancel より先に open Checkout を閉じる。
+  // 手元 URL 完了で削除後に孤児 subscription が立つのを防ぐ。Customer は残す。
+  await expireOpenCheckoutSessionsForDelete({
+    customerId,
+    stripe,
+    log,
+    requestId,
+    startedAt,
+  });
 
   let subscriptions: Stripe.Subscription[];
   try {

@@ -25,11 +25,16 @@
    - `get_billing_customer_by_user` → `stripe_customer_id` が無ければスキップして Auth 削除へ
    - customer があるのに Stripe クライアントが無い / customer 解決失敗 / list 失敗 → **Auth 削除しない**
      （`billing_cancel_failed` 503）
-   - `stripe.subscriptions.list({ customer, status: "all" })` で **customer 単位の全 sub** を取得
+   - **先に** `stripe.checkout.sessions.list({ customer, status: "open" })` で未完了 Checkout を辿り
+     各 `checkout.sessions.expire`（手元 URL 完了で孤児 subscription が立つのを防ぐ）
+   - expire の list / expire 失敗も **Auth 削除しない**（`billing_cancel_failed` 503）。
+     1 件 expire 失敗しても残りを試行し、最後に throw
+   - Stripe Customer は税務・請求記録のため残す。消すのは open Session と live sub だけ
+   - 続けて `stripe.subscriptions.list({ customer, status: "all" })` で **customer 単位の全 sub** を取得
      （DB の `billing_subscriptions` 1 行だけを cancel 対象にしない）
    - live/non-terminal（`canceled` / `incomplete_expired` 以外）を各 `subscriptions.cancel`
    - 1 件失敗しても残りを試行し、SafeLog `billing_cancel_failed`（opaque sub/customer id のみ）
-   - **いずれか 1 件でも cancel 失敗したら Auth 削除しない**（請求 orphan を優先して防ぐ）
+   - **いずれか 1 件でも expire / cancel 失敗したら Auth 削除しない**（請求 orphan を優先して防ぐ）
 5. Auth Admin hard delete（CASCADE で user 所有行・billing_customers/subscriptions 削除）。
    identity 日次表と `billing_trial_history`（identity_key）は user_id 無しのため残る。
 6. 防御第2経路: `private.ai_generation_requests` の BEFORE DELETE トリガでも reserved を解放する

@@ -48,6 +48,8 @@ const SUB_ACTIVE = "sub_active_1";
 const SUB_TRIALING = "sub_trialing_1";
 const SUB_PAST_DUE = "sub_past_due_1";
 const SUB_CANCELED = "sub_canceled_1";
+const CHECKOUT_OPEN_1 = "cs_open_delete_1";
+const CHECKOUT_OPEN_2 = "cs_open_delete_2";
 
 function makeDeleteRequest(
   body: unknown,
@@ -335,20 +337,33 @@ describe("createDeleteAccountHandler", () => {
 describe("cancelAllLiveSubscriptionsForUser", () => {
   const listMock = vi.fn();
   const cancelMock = vi.fn();
+  const listSessionsMock = vi.fn();
+  const expireSessionMock = vi.fn();
   const rpc = vi.fn();
   const events: SafeLogEvent[] = [];
 
   beforeEach(() => {
     listMock.mockReset();
     cancelMock.mockReset();
+    listSessionsMock.mockReset();
+    expireSessionMock.mockReset();
     rpc.mockReset();
     events.length = 0;
+    // AP2: customer がある既存テストは open Session 0 件で expire を通す
+    listSessionsMock.mockResolvedValue({ data: [], has_more: false });
+    expireSessionMock.mockResolvedValue({ id: "cs_expired", status: "expired" });
   });
 
   const stripe = {
     subscriptions: {
       list: listMock,
       cancel: cancelMock,
+    },
+    checkout: {
+      sessions: {
+        list: listSessionsMock,
+        expire: expireSessionMock,
+      },
     },
   };
 
@@ -600,6 +615,128 @@ describe("cancelAllLiveSubscriptionsForUser", () => {
     ).rejects.toThrow(/stripe_client_unavailable/u);
     expect(events.some((e) => e.code === "billing_cancel_failed")).toBe(true);
   });
+
+  it("AP2: expires open Checkout Sessions before canceling live subscriptions", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    listSessionsMock.mockResolvedValue({
+      data: [
+        { id: CHECKOUT_OPEN_1, status: "open" },
+        { id: CHECKOUT_OPEN_2, status: "open" },
+      ],
+      has_more: false,
+    });
+    listMock.mockResolvedValue({
+      data: [{ id: SUB_ACTIVE, status: "active" }],
+      has_more: false,
+    });
+    cancelMock.mockResolvedValue({ id: SUB_ACTIVE, status: "canceled" });
+
+    const result = await cancelAllLiveSubscriptionsForUser({
+      userId: USER_ID,
+      admin: { rpc },
+      stripe: stripe as never,
+      log,
+      requestId: "req-ap2-expire",
+      startedAt: Date.now(),
+    });
+
+    expect(result).toEqual({ cancelledLiveSubscription: true });
+    expect(listSessionsMock).toHaveBeenCalledWith({
+      customer: CUSTOMER_ID,
+      status: "open",
+      limit: 100,
+    });
+    expect(expireSessionMock).toHaveBeenCalledTimes(2);
+    expect(expireSessionMock).toHaveBeenCalledWith(CHECKOUT_OPEN_1);
+    expect(expireSessionMock).toHaveBeenCalledWith(CHECKOUT_OPEN_2);
+    expect(expireSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
+      cancelMock.mock.invocationCallOrder[0]!,
+    );
+    expect(cancelMock).toHaveBeenCalledWith(SUB_ACTIVE);
+  });
+
+  it("AP2: expires open Sessions even when the customer has no live subscription", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    listSessionsMock.mockResolvedValue({
+      data: [{ id: CHECKOUT_OPEN_1, status: "open" }],
+      has_more: false,
+    });
+    listMock.mockResolvedValue({
+      data: [{ id: SUB_CANCELED, status: "canceled" }],
+      has_more: false,
+    });
+
+    const result = await cancelAllLiveSubscriptionsForUser({
+      userId: USER_ID,
+      admin: { rpc },
+      stripe: stripe as never,
+      log,
+      requestId: "req-ap2-no-live",
+      startedAt: Date.now(),
+    });
+
+    expect(result).toEqual({ cancelledLiveSubscription: false });
+    expect(expireSessionMock).toHaveBeenCalledWith(CHECKOUT_OPEN_1);
+    expect(cancelMock).not.toHaveBeenCalled();
+  });
+
+  it("AP2: throws and skips subscription cancel when open Session expire fails", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    listSessionsMock.mockResolvedValue({
+      data: [
+        { id: CHECKOUT_OPEN_1, status: "open" },
+        { id: CHECKOUT_OPEN_2, status: "open" },
+      ],
+      has_more: false,
+    });
+    expireSessionMock
+      .mockRejectedValueOnce(new Error("stripe expire boom"))
+      .mockResolvedValueOnce({ id: CHECKOUT_OPEN_2, status: "expired" });
+    listMock.mockResolvedValue({
+      data: [{ id: SUB_ACTIVE, status: "active" }],
+      has_more: false,
+    });
+
+    await expect(
+      cancelAllLiveSubscriptionsForUser({
+        userId: USER_ID,
+        admin: { rpc },
+        stripe: stripe as never,
+        log,
+        requestId: "req-ap2-expire-fail",
+        startedAt: Date.now(),
+      }),
+    ).rejects.toThrow(/stripe_checkout_session_expire_failed/u);
+
+    expect(expireSessionMock).toHaveBeenCalledTimes(2);
+    expect(expireSessionMock).toHaveBeenCalledWith(CHECKOUT_OPEN_1);
+    expect(expireSessionMock).toHaveBeenCalledWith(CHECKOUT_OPEN_2);
+    expect(listMock).not.toHaveBeenCalled();
+    expect(cancelMock).not.toHaveBeenCalled();
+    expect(events.some((e) => e.code === "billing_cancel_failed")).toBe(true);
+    expect(JSON.stringify(events)).not.toContain(EMAIL);
+  });
+
+  it("AP2: throws when open Session list fails before Auth delete path", async () => {
+    rpc.mockResolvedValue({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+    listSessionsMock.mockRejectedValue(new Error("stripe list boom"));
+
+    await expect(
+      cancelAllLiveSubscriptionsForUser({
+        userId: USER_ID,
+        admin: { rpc },
+        stripe: stripe as never,
+        log,
+        requestId: "req-ap2-list-fail",
+        startedAt: Date.now(),
+      }),
+    ).rejects.toThrow(/stripe_checkout_session_list_failed/u);
+
+    expect(expireSessionMock).not.toHaveBeenCalled();
+    expect(listMock).not.toHaveBeenCalled();
+    expect(cancelMock).not.toHaveBeenCalled();
+    expect(events.some((e) => e.code === "billing_cancel_failed")).toBe(true);
+  });
 });
 
 describe("production deleteUser adapter", () => {
@@ -712,8 +849,11 @@ describe("production deleteUser adapter", () => {
       data: [{ id: SUB_ACTIVE, status: "active" }],
     });
     const cancelMock = vi.fn().mockResolvedValue({ id: SUB_ACTIVE, status: "canceled" });
+    const listSessionsMock = vi.fn().mockResolvedValue({ data: [], has_more: false });
+    const expireSessionMock = vi.fn();
     getStripeClientFromEnvMock.mockReturnValue({
       subscriptions: { list: listMock, cancel: cancelMock },
+      checkout: { sessions: { list: listSessionsMock, expire: expireSessionMock } },
     });
     getServerEnvMock.mockReturnValue({
       billingEnabled: true,
@@ -759,6 +899,124 @@ describe("production deleteUser adapter", () => {
     );
   });
 
+  it("AP2: expires open Checkout Session then cancels live sub then auth-deletes", async () => {
+    const listMock = vi.fn().mockResolvedValue({
+      data: [{ id: SUB_ACTIVE, status: "active" }],
+      has_more: false,
+    });
+    const cancelMock = vi.fn().mockResolvedValue({ id: SUB_ACTIVE, status: "canceled" });
+    const listSessionsMock = vi.fn().mockResolvedValue({
+      data: [{ id: CHECKOUT_OPEN_1, status: "open" }],
+      has_more: false,
+    });
+    const expireSessionMock = vi.fn().mockResolvedValue({
+      id: CHECKOUT_OPEN_1,
+      status: "expired",
+    });
+    getStripeClientFromEnvMock.mockReturnValue({
+      subscriptions: { list: listMock, cancel: cancelMock },
+      checkout: { sessions: { list: listSessionsMock, expire: expireSessionMock } },
+    });
+    getServerEnvMock.mockReturnValue({
+      billingEnabled: true,
+      stripe: {
+        secretKey: "sk_test_x",
+        webhookSecret: "whsec_x",
+        pricePlusMonthly: "price_m",
+        pricePlusYearly: "price_y",
+        apiVersion: "2026-06-24.dahlia",
+      },
+    });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "acquire_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, lock_token: "tok" }, error: null });
+      }
+      if (name === "release_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, released: true }, error: null });
+      }
+      if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "release_flyer_weekly_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "get_billing_customer_by_user") {
+        return Promise.resolve({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(response.status).toBe(200);
+    expect(listSessionsMock).toHaveBeenCalledWith({
+      customer: CUSTOMER_ID,
+      status: "open",
+      limit: 100,
+    });
+    expect(expireSessionMock).toHaveBeenCalledWith(CHECKOUT_OPEN_1);
+    expect(cancelMock).toHaveBeenCalledWith(SUB_ACTIVE);
+    expect(adminDeleteUserMock).toHaveBeenCalledWith(USER_ID, false);
+    expect(expireSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
+      cancelMock.mock.invocationCallOrder[0]!,
+    );
+    expect(cancelMock.mock.invocationCallOrder[0]).toBeLessThan(
+      adminDeleteUserMock.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("AP2: blocks auth-delete when open Checkout Session expire fails", async () => {
+    const listMock = vi.fn();
+    const cancelMock = vi.fn();
+    const listSessionsMock = vi.fn().mockResolvedValue({
+      data: [{ id: CHECKOUT_OPEN_1, status: "open" }],
+      has_more: false,
+    });
+    const expireSessionMock = vi.fn().mockRejectedValue(new Error("stripe expire boom"));
+    getStripeClientFromEnvMock.mockReturnValue({
+      subscriptions: { list: listMock, cancel: cancelMock },
+      checkout: { sessions: { list: listSessionsMock, expire: expireSessionMock } },
+    });
+    getServerEnvMock.mockReturnValue({
+      billingEnabled: true,
+      stripe: {
+        secretKey: "sk_test_x",
+        webhookSecret: "whsec_x",
+        pricePlusMonthly: "price_m",
+        pricePlusYearly: "price_y",
+        apiVersion: "2026-06-24.dahlia",
+      },
+    });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "acquire_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, lock_token: "tok" }, error: null });
+      }
+      if (name === "release_account_delete_lock") {
+        return Promise.resolve({ data: { ok: true, released: true }, error: null });
+      }
+      if (name === "release_identity_and_global_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "release_flyer_weekly_for_user_processing") {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      if (name === "get_billing_customer_by_user") {
+        return Promise.resolve({ data: { stripe_customer_id: CUSTOMER_ID }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const response = await productionHandler(makeDeleteRequest({ confirmation: "削除する" }));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "billing_cancel_failed" },
+    });
+    expect(expireSessionMock).toHaveBeenCalledWith(CHECKOUT_OPEN_1);
+    expect(listMock).not.toHaveBeenCalled();
+    expect(cancelMock).not.toHaveBeenCalled();
+    expect(adminDeleteUserMock).not.toHaveBeenCalled();
+  });
+
   it("blocks auth-delete when one cancel fails among multiple live subs (AP1)", async () => {
     const listMock = vi.fn().mockResolvedValue({
       data: [
@@ -772,6 +1030,12 @@ describe("production deleteUser adapter", () => {
       .mockResolvedValueOnce({});
     getStripeClientFromEnvMock.mockReturnValue({
       subscriptions: { list: listMock, cancel: cancelMock },
+      checkout: {
+        sessions: {
+          list: vi.fn().mockResolvedValue({ data: [], has_more: false }),
+          expire: vi.fn(),
+        },
+      },
     });
     getServerEnvMock.mockReturnValue({
       billingEnabled: true,
