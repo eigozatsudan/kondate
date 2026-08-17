@@ -1,5 +1,5 @@
 /**
- * Vite の closeBundle からだけ呼ぶ。許可リスト型 dist/sw.js を esbuild で書く。
+ * Vite の writeBundle からだけ呼ぶ。許可リスト型 dist/sw.js を esbuild で書く。
  * CACHE_NAME は URL 集合と非ハッシュ資産の内容ハッシュだけで決まり、時計や乱数は使わない。
  */
 import { createHash } from "node:crypto";
@@ -125,7 +125,7 @@ async function readNonHashedBytes(distDir, url, indexHtmlBytes) {
   try {
     return await readFile(join(distDir, url.slice(1)));
   } catch {
-    throw new Error("sw_precache_file_missing");
+    throw new Error(`sw_precache_file_missing:${url}`);
   }
 }
 

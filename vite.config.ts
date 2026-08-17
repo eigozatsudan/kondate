@@ -1,6 +1,7 @@
 import netlify from "@netlify/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { resolve } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
@@ -33,16 +34,36 @@ function kondatePublicLandingHtml(): Plugin {
 /**
  * 本番ビルドの末尾で許可リスト型 sw.js を書く。
  * package.json の build 文字列は変えず、manifest はここの config だけで必須化する。
+ *
+ * dist は import.meta.url で辿らない。Vite 8 は本ファイルを
+ * node_modules/.vite-temp/vite.config.ts.timestamp-*.mjs へ移して読むため、
+ * `new URL("./dist", import.meta.url)` は実 dist ではなく temp 配下を指し、
+ * Netlify では sw_precache_file_missing / sw_manifest_missing になる。
  */
 function kondateServiceWorker(): Plugin {
+  let outDir = resolve("dist");
   return {
     name: "kondate-service-worker",
+    apply: "build",
     config() {
       return { build: { manifest: true } };
     },
-    async closeBundle() {
-      const { generateServiceWorker } = await import("./scripts/generate-service-worker.mjs");
-      await generateServiceWorker({ distDir: fileURLToPath(new URL("./dist", import.meta.url)) });
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir);
+    },
+    // closeBundle は Vite 8 / Rolldown では write 前に走ることがあり dist が空。
+    // writeBundle はディスクへ出したあとなので manifest / public が揃う。
+    writeBundle: {
+      sequential: true,
+      order: "post",
+      async handler() {
+        const environmentName = (this as { environment?: { name?: string } }).environment?.name;
+        if (environmentName !== undefined && environmentName !== "client") {
+          return;
+        }
+        const { generateServiceWorker } = await import("./scripts/generate-service-worker.mjs");
+        await generateServiceWorker({ distDir: outDir });
+      },
     },
   };
 }
