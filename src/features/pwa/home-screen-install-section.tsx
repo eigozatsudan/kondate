@@ -52,8 +52,9 @@ export function HomeScreenInstallSection() {
     androidChromeStepsOk: canUseAndroidChromeInstallSteps(navigator.userAgent),
     hasAndroidPrompt: androidPrompt !== null,
   });
-  // iOS は Safari の共有シートだけ。Chrome / in-app / ホーム画面起動では節ごと出さない。
-  if (surface === "ios" && (!safariStepsOk || readStandaloneDisplayMode())) {
+  // ホーム画面起動では既に置いてあるので節ごと出さない（iOS / Android 共通）。
+  // iOS 非 Safari は共有シートが無いので節を出さない。
+  if (readStandaloneDisplayMode() || (surface === "ios" && !safariStepsOk)) {
     return null;
   }
 

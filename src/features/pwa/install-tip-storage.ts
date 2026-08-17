@@ -2,7 +2,12 @@
 export const PWA_INSTALL_TIP_DISMISSED_KEY = "kondate:preferences:pwa-install-tip-dismissed";
 
 export function readInstallTipDismissed(storage: Pick<Storage, "getItem">): boolean {
-  return storage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY) === "1";
+  try {
+    return storage.getItem(PWA_INSTALL_TIP_DISMISSED_KEY) === "1";
+  } catch {
+    // getItem 失敗・storage 欠落は未 dismiss。カードは出してシェルは落とさない
+    return false;
+  }
 }
 
 export function writeInstallTipDismissed(storage: Pick<Storage, "setItem">): boolean {

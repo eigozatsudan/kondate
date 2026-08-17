@@ -17,6 +17,16 @@ describe("readInstallTipDismissed", () => {
   it('is true only for exact "1"', () => {
     expect(readInstallTipDismissed({ getItem: () => "1" })).toBe(true);
   });
+
+  it("L1: is false when getItem throws", () => {
+    expect(
+      readInstallTipDismissed({
+        getItem: () => {
+          throw new Error("SecurityError");
+        },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("writeInstallTipDismissed", () => {

@@ -22,7 +22,24 @@ vi.mock("@/features/auth/use-auth", () => ({
   }),
 }));
 
-const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15";
+const IPHONE_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+const IPAD_SAFARI_DESKTOP_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+const IPAD_CHROME_DESKTOP_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const IPHONE_TWITTER_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Twitter for iPhone";
+const IPHONE_X_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 X/10.0";
+const IPHONE_TIKTOK_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 musical_ly_32.5.0 BytedanceWebview/d8a21c6";
+const IPHONE_GSA_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) GSA/282.0.564170234 Mobile/15E148 Safari/604.1";
+const IPHONE_DDG_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 DuckDuckGo/7 Safari/604.1";
+const IPHONE_OPIOS_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 OPiOS/16.0.15.124414";
 const IPHONE_CRIOS_UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1";
 const IPHONE_FXIOS_UA =
@@ -130,6 +147,17 @@ describe("HomeScreenInstallCard", () => {
     expect(screen.queryByRole("heading", { name: "ホーム画面に置く" })).not.toBeInTheDocument();
   });
 
+  it("L1: still renders when getItem throws so AppShell does not crash", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation((key) => {
+      if (key === PWA_INSTALL_TIP_DISMISSED_KEY) {
+        throw new Error("SecurityError");
+      }
+      return null;
+    });
+    renderCard();
+    expect(screen.getByRole("heading", { name: "ホーム画面に置く" })).toBeVisible();
+  });
+
   it("hides the heading on the same mount even when setItem throws", async () => {
     const user = userEvent.setup();
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
@@ -224,13 +252,19 @@ describe("HomeScreenInstallCard", () => {
     expect(prompt).toHaveBeenCalledTimes(1);
   });
 
-  it("hides the card on iPhone Chrome, Firefox, Instagram, LINE, and Facebook", () => {
+  it("hides the card on iPhone Chrome, Firefox, Instagram, LINE, Facebook, and other non-Safari iOS UAs", () => {
     for (const userAgent of [
       IPHONE_CRIOS_UA,
       IPHONE_FXIOS_UA,
       IPHONE_INSTAGRAM_UA,
       IPHONE_LINE_UA,
       IPHONE_FBAN_UA,
+      IPHONE_TWITTER_UA,
+      IPHONE_X_UA,
+      IPHONE_TIKTOK_UA,
+      IPHONE_GSA_UA,
+      IPHONE_DDG_UA,
+      IPHONE_OPIOS_UA,
     ]) {
       cleanup();
       stubSurface("ios", userAgent);
@@ -238,6 +272,29 @@ describe("HomeScreenInstallCard", () => {
       expect(screen.queryByRole("heading", { name: "ホーム画面に置く" })).not.toBeInTheDocument();
       expect(screen.queryByRole("listitem", { name: /^共有$/u })).not.toBeInTheDocument();
     }
+  });
+
+  it("L2: shows Safari steps on iPad desktop-mode Safari", () => {
+    vi.stubGlobal("navigator", {
+      userAgent: IPAD_SAFARI_DESKTOP_UA,
+      platform: "MacIntel",
+      maxTouchPoints: 5,
+      standalone: undefined,
+    });
+    renderCard();
+    expect(screen.getByRole("listitem", { name: /^共有$/u })).toBeVisible();
+  });
+
+  it("L2: hides the card on iPad desktop-mode Chrome without CriOS", () => {
+    vi.stubGlobal("navigator", {
+      userAgent: IPAD_CHROME_DESKTOP_UA,
+      platform: "MacIntel",
+      maxTouchPoints: 5,
+      standalone: undefined,
+    });
+    renderCard();
+    expect(screen.queryByRole("heading", { name: "ホーム画面に置く" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("listitem", { name: /^共有$/u })).not.toBeInTheDocument();
   });
 
   it("does not show Chrome install steps on Android WebView or Firefox when no prompt is held", () => {

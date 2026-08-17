@@ -20,4 +20,9 @@ describe("lp-boot", () => {
     const landingCss = readFileSync(resolve("src/features/landing/free-landing-page.css"), "utf8");
     expect(landingCss).not.toMatch(/#kondate-public-lp/u);
   });
+
+  it("L8: main.tsx also adds kondate-js so a missing lp-boot still hides the static LP", () => {
+    const source = readFileSync(resolve("src/main.tsx"), "utf8");
+    expect(source).toMatch(/document\.documentElement\.classList\.add\("kondate-js"\)/u);
+  });
 });

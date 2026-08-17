@@ -128,17 +128,63 @@ describe("detectInstallSurface", () => {
 });
 
 describe("canUseIosSafariInstallSteps", () => {
-  it("allows Safari-style steps only on iPhone Safari", () => {
-    expect(
-      canUseIosSafariInstallSteps(
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-      ),
-    ).toBe(true);
+  it("allows Safari-style steps only when Version/ and Safari/ are present", () => {
     expect(
       canUseIosSafariInstallSteps(
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
       ),
     ).toBe(true);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+      ),
+    ).toBe(false);
+  });
+
+  it("L2: allows iPad desktop-mode Safari and rejects iPad desktop-mode Chrome", () => {
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+      ),
+    ).toBe(true);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      ),
+    ).toBe(false);
+  });
+
+  it("L2: rejects Twitter, X, TikTok, GSA, DuckDuckGo, and OPiOS", () => {
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Twitter for iPhone",
+      ),
+    ).toBe(false);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 X/10.0",
+      ),
+    ).toBe(false);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 musical_ly_32.5.0 BytedanceWebview/d8a21c6",
+      ),
+    ).toBe(false);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) GSA/282.0.564170234 Mobile/15E148 Safari/604.1",
+      ),
+    ).toBe(false);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 DuckDuckGo/7 Safari/604.1",
+      ),
+    ).toBe(false);
+    expect(
+      canUseIosSafariInstallSteps(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 OPiOS/16.0.15.124414",
+      ),
+    ).toBe(false);
   });
 
   it("rejects iPhone Chrome, Firefox, and Edge because they have no Safari share sheet", () => {

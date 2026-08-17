@@ -10,6 +10,9 @@ import { listenForAndroidInstallPrompt } from "./features/pwa/android-install-pr
 import { registerServiceWorker } from "./features/pwa/register-service-worker";
 import "./styles.css";
 
+// lp-boot.js 欠落・ブロック時も静的 LP を隠す。クローラは class 無しの HTML を読む。
+document.documentElement.classList.add("kondate-js");
+
 // C7: React / lazy route より前に認可 code を可視 URL から除く（最短 strip）。
 // エッジ access log の初回 URL はインフラ管轄。
 captureAndStripAuthCallbackUrl();
