@@ -1152,3 +1152,130 @@ describe("AP12: refetch error must not turn share off and revoke", () => {
     expect(upsertShare).not.toHaveBeenCalled();
   });
 });
+
+describe("AP1: touched OFF must reread server before skipping revoke", () => {
+  it("AP1: stale revoked cache + touched OFF upserts false after standalone reread of current server", async () => {
+    const user = userEvent.setup();
+    getShare.mockResolvedValue(revokedShareState);
+    acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+    upsertShare.mockResolvedValue(revokedShareState);
+
+    const { client } = renderPrivacyPageWithWarmShareCache(revokedShareState);
+    await waitForShareConsentReady();
+    await waitFor(() => {
+      expect(client.getQueryState(shareConsentKeys.current("user-1"))?.fetchStatus).toBe("idle");
+    });
+
+    // mount 後にサーバが再同意。cache は revoked のまま
+    getShare.mockResolvedValue(currentShareState);
+
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).not.toBeChecked();
+    // revoked 表示からオフを touched にするには一度オンにして戻す
+    await user.click(shareCheckbox);
+    expect(shareCheckbox).toBeChecked();
+    await user.click(shareCheckbox);
+    expect(shareCheckbox).not.toBeChecked();
+
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(upsertShare).toHaveBeenCalledWith({}, false);
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  });
+
+  it("AP1: stale unsigned cache + touched OFF upserts false after standalone reread of current server", async () => {
+    const user = userEvent.setup();
+    getShare.mockResolvedValue(unsignedShareState);
+    acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+    upsertShare.mockResolvedValue(revokedShareState);
+
+    const { client } = renderPrivacyPageWithWarmShareCache(unsignedShareState);
+    await waitForShareConsentReady();
+    await waitFor(() => {
+      expect(client.getQueryState(shareConsentKeys.current("user-1"))?.fetchStatus).toBe("idle");
+    });
+
+    getShare.mockResolvedValue(currentShareState);
+
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    expect(shareCheckbox).toBeChecked();
+    await user.click(shareCheckbox);
+    expect(shareCheckbox).not.toBeChecked();
+
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(upsertShare).toHaveBeenCalledWith({}, false);
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  });
+
+  it("AP1: stale revoked cache + touched OFF still upserts false when standalone reread fails", async () => {
+    const user = userEvent.setup();
+    getShare.mockResolvedValue(revokedShareState);
+    acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+    upsertShare.mockResolvedValue(revokedShareState);
+
+    const { client } = renderPrivacyPageWithWarmShareCache(revokedShareState);
+    await waitForShareConsentReady();
+    await waitFor(() => {
+      expect(client.getQueryState(shareConsentKeys.current("user-1"))?.fetchStatus).toBe("idle");
+    });
+
+    getShare.mockRejectedValue(new Error("共有の同意状態を読み込めませんでした"));
+
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    await user.click(shareCheckbox);
+    await user.click(shareCheckbox);
+    expect(shareCheckbox).not.toBeChecked();
+
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(upsertShare).toHaveBeenCalledWith({}, false);
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  });
+
+  it("AP1: stale revoked cache + touched OFF does not upsert when standalone reread is still revoked", async () => {
+    const user = userEvent.setup();
+    getShare.mockResolvedValue(revokedShareState);
+    acceptConsent.mockResolvedValue(acceptedPrivacyConsent);
+
+    const { client } = renderPrivacyPageWithWarmShareCache(revokedShareState);
+    await waitForShareConsentReady();
+    await waitFor(() => {
+      expect(client.getQueryState(shareConsentKeys.current("user-1"))?.fetchStatus).toBe("idle");
+    });
+
+    const shareCheckbox = screen.getByRole("checkbox", {
+      name: shareConsentSection.checkboxLabel,
+    });
+    await user.click(shareCheckbox);
+    await user.click(shareCheckbox);
+    expect(shareCheckbox).not.toBeChecked();
+
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    await waitFor(() => {
+      expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+    });
+    expect(upsertShare).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeInTheDocument();
+  });
+});

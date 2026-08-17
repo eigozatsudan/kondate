@@ -44,8 +44,9 @@ export type PrivacyAcceptInput = {
   /**
    * 共有任意チェック。
    * true → 単独再読が現行/未同意なら upsert(true)。未タッチの再読失敗・fresh revoke は書かない。
-   * false かつ利用者がオフにした場合だけ、現行同意なら upsert(false)。
-   * 未タッチのオフ追従 / 未同意 / 既 revoke は upsert しない。
+   * false かつ利用者がオフにした場合だけ、単独再読の現行同意なら upsert(false)。
+   * 再読失敗時は cache を信じず upsert(false)（stale OFF + サーバ ON を残さない）。
+   * 未タッチのオフ追従 / 再読成功の未同意 / 既 revoke は upsert しない。
    */
   shareConsentAccepted: boolean;
   /**
@@ -140,7 +141,10 @@ export function PrivacyNoticePage() {
         let freshReadFailed = false;
         // AP11: 同一キー fetchQuery は mount/focus の in-flight accepted に合流する。
         // 単独 RPC なら revoke 後のサーバ正を読める。throw / timeout は cache を accept 根拠にしない。
-        if (input.shareConsentAccepted) {
+        // AP1: 利用者がオフにしたときも cache ではなく単独再読する。
+        // stale revoked/unsigned のまま upsert(false) を省略するとサーバ同意が残り抽選対象になる。
+        const shouldRereadShare = input.shareConsentAccepted || input.shareConsentTouched === true;
+        if (shouldRereadShare) {
           try {
             current = await withTimeout(getMyShareConsent(client), PRIVACY_ACCEPT_TIMEOUT_MS);
             // AP13: 単独再読の成功値は cache に載せる（revoked / accepted とも）。
@@ -173,11 +177,13 @@ export function PrivacyNoticePage() {
           !(freshReadFailed && input.shareConsentTouched !== true) &&
           !(freshRevoked && input.shareConsentTouched !== true);
         // AP12: 未タッチのオフ追従では revoke しない。
-        // revoke は利用者がオフにしたときだけ。fresh 現行かつ入力 false は触っている場合に限る。
+        // revoke は利用者がオフにしたときだけ。再読の現行同意は upsert(false)。
+        // 再読失敗時は cache を信じず revoke する（stale OFF + サーバ ON を残さない）。
+        // upsert(false) は未同意/既 revoke では no-op なので、失敗時の呼び出しは安全。
         const shouldRevoke =
           !input.shareConsentAccepted &&
           input.shareConsentTouched === true &&
-          hasCurrentShareConsent(current ?? null);
+          (freshReadFailed || hasCurrentShareConsent(current ?? null));
         if (shouldRevoke) {
           try {
             const share = await withTimeout(
