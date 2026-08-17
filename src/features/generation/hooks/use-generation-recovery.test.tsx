@@ -947,6 +947,42 @@ describe("useGenerationRecovery", () => {
     }
   });
 
+  // G-R1: A 完了後の再 POST は本生成で終端まで返らない。飛行中も合成 failed のまま
+  // だと破棄 confirm が無く、clearGeneration が succeeded を捨てる。
+  it("G-R1: enters submitting before in_progress retry POST resolves", async () => {
+    vi.useFakeTimers();
+    mockPost.mockReset();
+    const retry = deferred<GenerationStatusData>();
+    try {
+      mockPost.mockResolvedValueOnce(inProgressStatus(KEY_A)).mockReturnValueOnce(retry.promise);
+      const recovery = renderRecoveryAt(idleState, null);
+      await act(() => recovery.result.current.startGeneration(pendingA));
+      expect(recovery.result.current.state.phase).toBe("failed");
+      if (recovery.result.current.state.phase !== "failed") {
+        throw new Error("expected failed");
+      }
+      expect(recovery.result.current.state.data.error.code).toBe("generation_in_progress");
+      mockDispatches.length = 0;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(GENERATION_IN_PROGRESS_RETRY_MS);
+      });
+      expect(mockPost).toHaveBeenCalledTimes(2);
+      expect(recovery.result.current.state.phase).toBe("submitting");
+      expect(mockDispatches.map((event) => event.type)).toEqual(["clear", "submit"]);
+      expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject(pendingA);
+      await act(async () => {
+        retry.resolve(processingA);
+        await flushPromises();
+      });
+      expect(recovery.result.current.state.phase).toBe("processing");
+    } finally {
+      retry.resolve(processingA);
+      vi.clearAllTimers();
+      mockPost.mockReset();
+      vi.useRealTimers();
+    }
+  });
+
   it("G14: does not auto-retry a non in_progress failed status", async () => {
     vi.useFakeTimers();
     mockPost.mockReset();

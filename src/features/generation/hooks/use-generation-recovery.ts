@@ -611,11 +611,19 @@ export function useGenerationRecovery(
       });
     }
     // G14: 合成 in_progress は台帳行が無い。GET は not_started なので POST を遅延再送する。
+    // G-R1: 再 POST は A 完了後の reserveNew 本生成で終端まで返らない。
+    // startGeneration と同じく token.phase と submit を先に進め、飛行中は
+    // submitting パネル（破棄 confirm あり）にする。submit は idle からしか
+    // submitting に入らないため、failed からは clear してから submit する。
     if (state.phase === "failed" && state.data.error.code === "generation_in_progress") {
       const pending = read();
       const waitToken = lifecycleRef.current;
       if (pending !== null && waitToken !== null && isCurrent(waitToken)) {
         const timer = window.setTimeout(() => {
+          if (!isCurrent(waitToken)) return;
+          waitToken.phase = "submitting";
+          dispatch({ type: "clear" });
+          dispatch({ type: "submit" });
           void submitWithToken(waitToken, pending);
         }, GENERATION_IN_PROGRESS_RETRY_MS);
         return () => {
@@ -625,6 +633,7 @@ export function useGenerationRecovery(
     }
     return undefined;
   }, [
+    dispatch,
     isActiveToken,
     isCurrent,
     navigate,
