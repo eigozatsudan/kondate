@@ -5,6 +5,7 @@ import {
   clearSiblingUnexpiredAuthFlows,
   sanitizeLoginReturnPath,
 } from "./auth-flow";
+import { commitLiveAuthSessionMark } from "./live-auth-session-mark";
 
 /**
  * C7: flow 単位の完了印。単一グローバルキーだと並行 flow の後着 publish が先着を上書きし、
@@ -164,6 +165,8 @@ export function publishAuthContinuationCompletion(
     completedAt: new Date().toISOString(),
   };
   storage.setItem(completionStorageKeyFor(safe.flowId), JSON.stringify(stored));
+  // C1/C3: Google 完了は 300s completion と別に committed live 印を立てる（TTL 切れ後の leftover 誤認を閉じる）
+  commitLiveAuthSessionMark(storage);
   // storage イベントは書き込み同一タブでは発火しない。late publish を wait/listener が拾えるよう same-tab 通知する。
   window.dispatchEvent(new CustomEvent(completionEventName, { detail: safe }));
   clearAuthFlow(completion.flowId, storage);

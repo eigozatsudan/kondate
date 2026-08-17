@@ -91,6 +91,21 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBeNull();
   });
 
+  it("clears committed live session mark from localStorage", async () => {
+    localStorage.setItem(
+      "kondate.auth.liveSession",
+      JSON.stringify({ userId: "user-1", storedAt: new Date().toISOString() }),
+    );
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const client = {
+      auth: { signOut },
+    } as unknown as SupabaseClient<Database>;
+
+    await clearLocalAuthAndDrafts(client);
+
+    expect(localStorage.getItem("kondate.auth.liveSession")).toBeNull();
+  });
+
   it("clears leftover email OTP completed mark from sessionStorage", async () => {
     sessionStorage.setItem(
       "kondate.auth.emailOtpCompleted",

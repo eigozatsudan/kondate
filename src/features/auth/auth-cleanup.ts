@@ -10,6 +10,7 @@ import {
   ownedAuthStoragePrefixes,
 } from "./auth-flow";
 // C4/R3/R4: suppress 正本は leaf に置き auth-flow 循環を避ける。公開 API は本モジュールから re-export。
+import { LIVE_AUTH_SESSION_MARK_KEY } from "./live-auth-session-mark";
 import {
   markSoftResidualRecoverySuppressed,
   SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY,
@@ -49,6 +50,8 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
   "kondate.auth.active-login-flow",
   // leftover 成功印。logout 後に残すと次ユーザの leftover 例外になる
   "kondate.auth.emailOtpCompleted",
+  // C1/C3: committed live 印。logout 後に残すと次ユーザ leftover を live と誤認する
+  LIVE_AUTH_SESSION_MARK_KEY,
 ] as const;
 
 /**

@@ -163,6 +163,7 @@ afterEach(async () => {
   resetLeftoverPkceProtectionForTests();
   window.localStorage.removeItem(leftoverSessionStorageKey);
   window.localStorage.removeItem(`${leftoverSessionStorageKey}-code-verifier`);
+  window.localStorage.removeItem("kondate.auth.liveSession");
   sessionStorage.removeItem(emailOtpCompletedKey);
   sessionStorage.removeItem("kondate.auth.lastMagicEmail");
   sessionStorage.removeItem("kondate.auth.magicSentUi");
@@ -784,7 +785,146 @@ it.each([
   },
 );
 
-it("does not start leftover signOut when leftover-capable /login has a fresh waiting snapshot", async () => {
+it("C1/C3: leftover-capable /login does not local-signOut a live persist after OTP/Google TTL", async () => {
+  // C1: 番号印 60s / Google completion 300s 切れ後も origin 共有 live 印があれば leftover ではない
+  // C3: 印は localStorage。他タブ leftover-capable /login の sessionStorage には番号印が無い
+  window.localStorage.setItem(leftoverSessionStorageKey, "live-persist");
+  window.localStorage.setItem(
+    "kondate.auth.liveSession",
+    JSON.stringify({
+      userId: leftoverMocks.leftover.user.id,
+      storedAt: new Date(Date.now() - 120_000).toISOString(),
+    }),
+  );
+  leftoverGetSession.mockResolvedValue({
+    data: { session: leftoverMocks.leftover },
+    error: null,
+  });
+  vi.mocked(useAuth).mockReturnValue(authenticatedAuth());
+  renderLoginAt("/login", stubGateway());
+
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(leftoverSignOut).not.toHaveBeenCalled();
+  expect(window.localStorage.getItem(leftoverSessionStorageKey)).toBe("live-persist");
+  expect(screen.getByRole("heading", { name: "こんだて日和" })).toBeInTheDocument();
+  expect(screen.queryByText("welcome-dest")).not.toBeInTheDocument();
+});
+
+it("C2: afterWipe leftover fingerprint plus OTP mark written during probe does not signOut", async () => {
+  let probes = 0;
+  let releaseAfterWipe: (() => void) | undefined;
+  const afterWipeGate = new Promise<void>((resolve) => {
+    releaseAfterWipe = resolve;
+  });
+  leftoverGetSession.mockImplementation(async () => {
+    probes += 1;
+    if (probes >= 4) {
+      await afterWipeGate;
+      return { data: { session: leftoverMocks.leftover }, error: null };
+    }
+    return { data: { session: leftoverMocks.leftover }, error: null };
+  });
+  window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+  renderLoginAt("/login", stubGateway());
+
+  await act(async () => {
+    for (let i = 0; i < 20 && probes < 4; i += 1) {
+      await Promise.resolve();
+    }
+  });
+  expect(probes).toBeGreaterThanOrEqual(4);
+
+  sessionStorage.setItem(
+    emailOtpCompletedKey,
+    JSON.stringify({ storedAt: new Date().toISOString() }),
+  );
+  window.localStorage.setItem(
+    "kondate.auth.liveSession",
+    JSON.stringify({ userId: leftoverMocks.otp.user.id, storedAt: new Date().toISOString() }),
+  );
+  releaseAfterWipe?.();
+
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(leftoverSignOut).not.toHaveBeenCalled();
+});
+
+it("C4: waiting snapshot still clears leftover persist so it cannot pin", async () => {
+  leftoverSignOut.mockClear();
+  leftoverGetSession.mockClear();
+  window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+  const waitingSnapshot = {
+    email: "user@example.com",
+    resendAvailableAt: futureResendAt(),
+    storedAt: new Date().toISOString(),
+  };
+  sessionStorage.setItem("kondate.auth.magicSentUi", JSON.stringify(waitingSnapshot));
+  leftoverGetSession.mockResolvedValue({
+    data: { session: leftoverMocks.leftover },
+    error: null,
+  });
+  vi.mocked(useAuth).mockReturnValue(authenticatedAuth());
+  renderLoginAt("/login", stubGateway());
+
+  expect(await screen.findByRole("heading", { name: EMAIL_OTP_WAITING_HEADING })).toBeVisible();
+  await waitFor(() => {
+    expect(leftoverSignOut).toHaveBeenCalledWith({ scope: "local" });
+  });
+  expect(window.localStorage.getItem(leftoverSessionStorageKey)).toBeNull();
+  expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBe(JSON.stringify(waitingSnapshot));
+  expect(screen.getByRole("heading", { name: EMAIL_OTP_WAITING_HEADING })).toBeVisible();
+});
+
+it("C5: leftover-incapable /login?returnTo= clears leftover persist instead of navigating", async () => {
+  window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+  leftoverGetSession.mockResolvedValue({
+    data: { session: leftoverMocks.leftover },
+    error: null,
+  });
+  vi.mocked(useAuth).mockReturnValue(authenticatedAuth());
+  renderLoginAt("/login?returnTo=%2Fplanner", stubGateway());
+
+  await waitFor(() => {
+    expect(leftoverSignOut).toHaveBeenCalledWith({ scope: "local" });
+  });
+  expect(window.localStorage.getItem(leftoverSessionStorageKey)).toBeNull();
+  expect(screen.queryByText("planner-dest")).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "こんだて日和" })).toBeInTheDocument();
+});
+
+it("C5: leftover-incapable /login?returnTo= navigates when persist is a committed live session", async () => {
+  window.localStorage.setItem(leftoverSessionStorageKey, "live-persist");
+  window.localStorage.setItem(
+    "kondate.auth.liveSession",
+    JSON.stringify({
+      userId: leftoverMocks.leftover.user.id,
+      storedAt: new Date().toISOString(),
+    }),
+  );
+  leftoverGetSession.mockResolvedValue({
+    data: { session: leftoverMocks.leftover },
+    error: null,
+  });
+  vi.mocked(useAuth).mockReturnValue(authenticatedAuth());
+  renderLoginAt("/login?returnTo=%2Fplanner", stubGateway());
+
+  expect(await screen.findByText("planner-dest")).toBeInTheDocument();
+  expect(leftoverSignOut).not.toHaveBeenCalled();
+  expect(window.localStorage.getItem(leftoverSessionStorageKey)).toBe("live-persist");
+});
+
+it("keeps waiting snapshot after leftover persist is cleared (C4 / M1)", async () => {
   leftoverSignOut.mockClear();
   leftoverGetSession.mockClear();
   window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
@@ -806,13 +946,11 @@ it("does not start leftover signOut when leftover-capable /login has a fresh wai
     expect(getDigitBox(label)).toBeVisible();
   }
 
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+  await waitFor(() => {
+    expect(leftoverSignOut).toHaveBeenCalledWith({ scope: "local" });
   });
-  // C1b: leftover 掃除は起動しない。M1: C9 が認証 leftover で waiting snapshot を消さない
-  expect(leftoverGetSession).not.toHaveBeenCalled();
-  expect(leftoverSignOut).not.toHaveBeenCalled();
+  // C4: leftover persist は掃く。M1: C9 が認証 leftover で waiting snapshot を消さない
+  expect(window.localStorage.getItem(leftoverSessionStorageKey)).toBeNull();
   expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBe(JSON.stringify(waitingSnapshot));
   expect(screen.getByRole("heading", { name: EMAIL_OTP_WAITING_HEADING })).toBeVisible();
   for (const label of DIGIT_LABELS) {
@@ -865,6 +1003,10 @@ it("C-R4: leftover-capable login does not signOut leftover when sibling completi
 
 it("C9: clears number-wait residual sessionStorage on real authenticated success", () => {
   // leftover-capable ではない leave（returnTo のみ）での成功 Navigate 時だけ residual を消す
+  window.localStorage.setItem(
+    "kondate.auth.liveSession",
+    JSON.stringify({ userId: "user-1", storedAt: new Date().toISOString() }),
+  );
   sessionStorage.setItem(
     "kondate.auth.lastMagicEmail",
     JSON.stringify({ email: "user@example.com", storedAt: new Date().toISOString() }),

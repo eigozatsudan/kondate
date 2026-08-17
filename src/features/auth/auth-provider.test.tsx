@@ -92,6 +92,7 @@ describe("AuthProvider", () => {
       window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem("kondate.auth.liveSession");
     } catch {
       // ignore
     }
@@ -108,6 +109,7 @@ describe("AuthProvider", () => {
       window.sessionStorage.removeItem("kondate.auth.soft-residual-recovery-suppress");
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem("kondate.auth.liveSession");
     } catch {
       // ignore
     }
@@ -139,6 +141,71 @@ describe("AuthProvider", () => {
     });
     expect(await screen.findByText("authenticated")).toBeInTheDocument();
     expect(getSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("C1: successful apply outside /login writes a durable live session mark", async () => {
+    window.history.replaceState(null, "", "/planner");
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session }, error: null }),
+        onAuthStateChange: () => ({
+          data: { subscription: createAuthSubscription() },
+        }),
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    const raw = window.localStorage.getItem("kondate.auth.liveSession");
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw ?? "{}")).toMatchObject({ userId: "user-1" });
+  });
+
+  it("C5: first pin refuses leftover persist whose userId differs from the live mark", async () => {
+    window.history.replaceState(null, "", "/planner");
+    window.localStorage.setItem(
+      "kondate.auth.liveSession",
+      JSON.stringify({ userId: "user-a", storedAt: new Date().toISOString() }),
+    );
+    const leftover = {
+      access_token: "leftover-access",
+      refresh_token: "leftover-refresh",
+      user: { id: "leftover-user" },
+    } as Session;
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: leftover }, error: null }),
+        signOut,
+        onAuthStateChange: () => ({
+          data: { subscription: createAuthSubscription() },
+        }),
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(document.title).not.toBe("leftover-user");
+    const mark = JSON.parse(window.localStorage.getItem("kondate.auth.liveSession") ?? "{}") as {
+      userId?: string;
+    };
+    expect(mark.userId).toBe("user-a");
   });
 
   it("keeps the previous session when focus getSession returns an error", async () => {

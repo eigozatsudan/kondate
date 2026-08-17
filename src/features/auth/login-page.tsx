@@ -13,6 +13,7 @@ import {
   protectPkceVerifierFromLateLeftoverSignOut,
   type AuthGateway,
 } from "./auth-gateway";
+import { readLiveAuthSessionMark, writeLiveAuthSessionMark } from "./live-auth-session-mark";
 import type { EmailOtpLoginState } from "./magic-link-state";
 import {
   clearAuthFlow,
@@ -218,6 +219,8 @@ function writeEmailOtpCompletedMark(): void {
   } catch {
     // 印が書けなくても Navigate はする。再マウント leftover 掃除は残差
   }
+  // C1/C3: 同一タブ 60s 印に加え、origin 共有 live 印を立てて他タブ leftover 掃除から守る
+  writeLiveAuthSessionMark();
 }
 
 function isFreshEmailOtpCompleted(nowMs: number = Date.now()): boolean {
@@ -389,6 +392,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const [googlePending, setGooglePending] = useState(false);
   const leftoverCapable = isLeftoverCapableLoginLeave(locationState.authError, location.search);
   const otpCompletedFresh = isFreshEmailOtpCompleted();
+  // C1/C3/C5: origin 共有 committed live。TTL 切れ番号印がなくても leftover ではない
+  const liveSessionCommitted = readLiveAuthSessionMark() !== null;
   const showEmailSection =
     emailUnlocked ||
     state.status === "sending" ||
@@ -568,56 +573,50 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     }
   };
 
-  // C-R4: leftover-capable Login は pin 前に leftover persist を local signOut する。
-  // ただしこのタブで今立てた番号成功印が新鮮なら、その session は leftover ではない。
+  // C-R4: Login は pin 前に leftover persist を local signOut する。
+  // 番号成功印が新鮮、または origin 共有 live 印が指紋と一致すれば leftover ではない。
   // C1: unmount / 印書き込み後の late .then で leftover を再起動しない。
-  // C1b: 番号待ち snapshot（メールアプリ往復の再水和）または確認中は leftover を起動しない。
+  // C4: 番号待ち snapshot でも leftover persist は掃く（待ちと leftover pin の衝突を閉じる）。
+  // C5: leftover-capable 以外の /login でも武装する（returnTo / sessionExpired 等）。
   // C9 は本物の成功時だけ snapshot を消す（M1）。leftover-capable authenticated では残す。
   useEffect(() => {
-    if (!leftoverCapable || otpCompletedFresh) {
-      return;
-    }
-    const waitingForOtp =
-      readWaitingUi() !== null ||
-      state.status === "waiting" ||
-      state.status === "verifying" ||
-      verifyInFlightRef.current;
-    if (waitingForOtp) {
+    if (otpCompletedFresh) {
       return;
     }
     let aborted = false;
     leftoverCleanupRef.current = Promise.resolve().then(() => {
       if (aborted) return;
-      // state.status は上で絞済み。snapshot / 確認中は後から立ち得るので再判定する
-      if (readWaitingUi() !== null || verifyInFlightRef.current) {
-        return;
-      }
+      if (isFreshEmailOtpCompleted()) return;
       return clearLeftoverLoginSessionIfNoSiblingCompletion();
     });
     return () => {
       aborted = true;
     };
-  }, [leftoverCapable, otpCompletedFresh, locationState.authError, location.search, state.status]);
+  }, [otpCompletedFresh, locationState.authError, location.search, state.status]);
 
   // ログイン成功後は宛先の PII を sessionStorage に残さない（C9）。
   // leftover-capable の authenticated は本物の成功ではない（M1 / C1b residual）。
+  // leftover-incapable でも committed live が無い authenticated は leftover pin（C5）。
   // otp 成功印が無く complete でもないなら番号待ち snapshot を残す（再マウント再水和用）。
   useEffect(() => {
     const realSuccess =
       otpCompletedFresh ||
       state.status === "complete" ||
-      (auth.status === "authenticated" && !leftoverCapable);
+      (auth.status === "authenticated" && !leftoverCapable && liveSessionCommitted);
     if (!realSuccess) return;
     rememberLastMagicEmail("");
     rememberWaitingUi(null);
-  }, [auth.status, leftoverCapable, otpCompletedFresh, state.status]);
+  }, [auth.status, leftoverCapable, liveSessionCommitted, otpCompletedFresh, state.status]);
 
   // 既にセッションがある場合はフォームを出さず returnTo へ進める。
   // C2 / C-R2 / C-R3: leftover を伴い得る leave はエラーより先に Navigate しない。
   // 番号成功印があるときだけ leftover-capable でも Navigate する（MF-C1）。
+  // C5: leftover-incapable でも committed live が無い authenticated は leftover persist の
+  // first-writer pin なので Navigate せず、上の leftover 掃除に任せる。
   if (
     state.status === "complete" ||
-    (auth.status === "authenticated" && (!leftoverCapable || otpCompletedFresh))
+    (auth.status === "authenticated" &&
+      (otpCompletedFresh || (!leftoverCapable && liveSessionCommitted)))
   ) {
     return <Navigate to={returnTo} replace />;
   }

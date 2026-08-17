@@ -33,6 +33,11 @@ import {
   startAuthFlowDismissBroadcastListener,
 } from "./auth-flow";
 import { resetAuthCallbackUrlCaptureIfLeftCallback } from "./auth-callback-url-capture";
+import {
+  readLiveAuthSessionMark,
+  shouldCommitLiveAuthSessionMark,
+  writeLiveAuthSessionMark,
+} from "./live-auth-session-mark";
 import { setAccessTokenPinDataPlaneBlocked, setAccessTokenPinnedUserId } from "./session";
 
 /**
@@ -532,6 +537,31 @@ export function AuthProvider({
         rememberAccessToken(hardLeftoverAccessTokensRef.current, nextSession);
         return false;
       }
+      // C5: committed live と違う leftover persist を first-writer pin しない。
+      // /planner 直入場でも世帯 API が leftover user のまま動かない。
+      if (nextSession !== null && residualSessionGuardRef.current.pinnedUserId === null) {
+        const liveMark = readLiveAuthSessionMark();
+        if (liveMark?.userId !== undefined && liveMark.userId !== nextSession.user.id) {
+          if (typeof window !== "undefined") {
+            try {
+              clearBrowserSupabaseSessionStorage(window.localStorage);
+            } catch {
+              // best-effort
+            }
+            try {
+              clearBrowserSupabaseSessionStorage(window.sessionStorage);
+            } catch {
+              // best-effort
+            }
+          }
+          if (typeof client.auth.signOut === "function") {
+            void Promise.resolve(client.auth.signOut.call(client.auth, { scope: "local" })).catch(
+              () => undefined,
+            );
+          }
+          return false;
+        }
+      }
       if (
         nextSession !== null &&
         hasHardLeftoverAccessToken(
@@ -709,6 +739,14 @@ export function AuthProvider({
       // 残すと focus getSession の同一 user refresh 回転（T2）まで leftover 扱いになる。
       localSignOutClearedSdkRef.current = false;
       setSession(nextSession);
+      // C1: /login 以外の成功 apply で origin 共有 live 印を書く（既存 persist の grandfather 含む）。
+      // /login では leftover persist の pin を live と誤認しない。
+      if (
+        typeof window !== "undefined" &&
+        shouldCommitLiveAuthSessionMark(window.location.pathname)
+      ) {
+        writeLiveAuthSessionMark(nextSession.user.id);
+      }
       return true;
     },
     [clearMismatchedClientSessionBestEffort, client],

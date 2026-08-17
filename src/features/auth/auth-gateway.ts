@@ -40,6 +40,12 @@ import { getPublicEnv, type PublicEnv } from "@/shared/config/public-env";
 import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
 import { IMMEDIATE_CLAIM_TIMEOUT_MS, withTimeout } from "./async-timeout";
 import { EMAIL_OTP_SEND_FAILED } from "./email-otp-copy";
+import {
+  liveAuthSessionMarkAppearedOrUpdated,
+  liveAuthSessionMarkProtectsFingerprint,
+  readLiveAuthSessionMark,
+  writeLiveAuthSessionMark,
+} from "./live-auth-session-mark";
 import { normalizeOtpDigits } from "./otp-digit-field";
 
 /** 互換 re-export（正本は async-timeout.ts） */
@@ -710,6 +716,8 @@ function wipeBrowserSupabasePersistOnly(): void {
  * C1: 指紋 null + context ありで clearDiscarded すると persist 無条件 wipe + signOut する。
  * leftover 専用経路は clearDiscarded を呼ばない（C-R9 の discarded-exchange 意味は変えない）。
  * 番号成功印・指紋変化では触らない。指紋が取れないときは persist だけ消し signOut しない。
+ * C1/C3: origin 共有 live 印が指紋と一致すれば leftover ではない（60s/300s TTL 切れ後も守る）。
+ * C2: afterWipe probe のあと印を再読する。probe 中の番号成功を後着 signOut しない。
  */
 export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
   client?: BrowserSupabaseClient,
@@ -717,32 +725,46 @@ export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
 ): Promise<void> {
   try {
     const resolved = client ?? getBrowserSupabaseClient();
+    const liveMarkAtStart = readLiveAuthSessionMark(storage);
+    const shouldSpare = (sessionKey: string | null): boolean => {
+      if (isFreshEmailOtpCompletedMark()) return true;
+      return liveAuthSessionMarkProtectsFingerprint(sessionKey, storage);
+    };
     if (isFreshEmailOtpCompletedMark()) return;
 
     const startKey = await probeDiscardedExchangeSessionKey(resolved);
     if (hasSiblingAuthContinuationCompletion("", storage)) return;
+    if (shouldSpare(startKey)) return;
 
     const currentKey = await probeDiscardedExchangeSessionKey(resolved);
-    if (isFreshEmailOtpCompletedMark()) return;
+    if (shouldSpare(currentKey)) return;
     // 番号成功や勝者で session が現れた／変わった。触らない
     if (currentKey !== startKey) return;
 
     if (startKey === null) {
       // 指紋なしの signOut は後勝ち session を殺し得るので persist だけ消す
+      // live 印がある probe miss は live persist の hang であり消さない（C1）
+      if (readLiveAuthSessionMark(storage) !== null) return;
       wipeBrowserSupabasePersistOnly();
       return;
     }
 
     // 指紋一致 leftover。wipe 直前にも印・指紋を再確認する（C-R4 はここから signOut し得る）
-    if (isFreshEmailOtpCompletedMark()) return;
+    if (shouldSpare(startKey)) return;
     const beforeWipeKey = await probeDiscardedExchangeSessionKey(resolved);
+    if (shouldSpare(beforeWipeKey)) return;
     if (beforeWipeKey !== startKey) return;
 
     wipeBrowserSupabasePersistOnly();
 
     // persist 掃除中に番号成功が載った／指紋が変わったならメモリ signOut しない
-    if (isFreshEmailOtpCompletedMark()) return;
+    if (shouldSpare(startKey)) return;
     const afterWipeKey = await probeDiscardedExchangeSessionKey(resolved);
+    // C2: probe 後に印を再読する。in-flight leftover 指紋のままでも番号成功を殺さない
+    if (isFreshEmailOtpCompletedMark()) return;
+    const liveMarkAfterProbe = readLiveAuthSessionMark(storage);
+    if (liveAuthSessionMarkAppearedOrUpdated(liveMarkAtStart, liveMarkAfterProbe)) return;
+    if (shouldSpare(afterWipeKey)) return;
     if (afterWipeKey !== startKey) return;
 
     if (typeof resolved.auth.signOut === "function") {
@@ -1289,6 +1311,15 @@ export function createAuthGateway(
           type: "email",
         });
         if (error === null) {
+          // C1/C3: 番号成功は origin 共有 live 印。他タブ leftover 掃除が live session を消さない
+          try {
+            const sessionResult = await client.auth.getSession();
+            const session = sessionResult.data.session;
+            const userId = session === null ? undefined : session.user.id;
+            writeLiveAuthSessionMark(typeof userId === "string" ? userId : undefined);
+          } catch {
+            writeLiveAuthSessionMark();
+          }
           return { kind: "complete" };
         }
         return { kind: mapEmailOtpVerifyKind(error.code) };

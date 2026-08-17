@@ -56,6 +56,8 @@ afterEach(() => {
   resetInflightResumeForTests();
   resetLeftoverPkceProtectionForTests();
   resetAuthFlowUserDismissedMemoryForTests();
+  window.localStorage.removeItem("kondate.auth.liveSession");
+  window.sessionStorage.removeItem("kondate.auth.emailOtpCompleted");
   vi.useRealTimers();
 });
 
@@ -4058,6 +4060,109 @@ it("C-R3: leftover-capable clear settles at 2s when local signOut never settles"
     await pending;
   } finally {
     window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+  }
+});
+
+it("C1/C3: leftover clear does not signOut a live persist after OTP/Google TTL", async () => {
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, "live-persist");
+  window.localStorage.setItem(
+    "kondate.auth.liveSession",
+    JSON.stringify({
+      userId: "leftover-user",
+      storedAt: new Date(Date.now() - 120_000).toISOString(),
+    }),
+  );
+  const client = authClientMock({
+    getSessionResult: {
+      data: {
+        session: { access_token: "leftover-access", user: { id: "leftover-user" } },
+      },
+      error: null,
+    },
+  });
+  try {
+    await clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    expect(client.auth.signOut).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBe("live-persist");
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    window.localStorage.removeItem("kondate.auth.liveSession");
+  }
+});
+
+it("C2: leftover clear does not signOut when afterWipe probe returns leftover after OTP mark", async () => {
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
+  const leftoverSession = { access_token: "leftover-access", user: { id: "leftover-user" } };
+  let probes = 0;
+  let releaseAfterWipe: (() => void) | undefined;
+  const afterWipeGate = new Promise<void>((resolve) => {
+    releaseAfterWipe = resolve;
+  });
+  const client = authClientMock({
+    getSessionResult: { data: { session: leftoverSession }, error: null },
+  });
+  client.auth.getSession = vi.fn().mockImplementation(async () => {
+    probes += 1;
+    if (probes >= 4) {
+      await afterWipeGate;
+      return { data: { session: leftoverSession }, error: null };
+    }
+    return { data: { session: leftoverSession }, error: null };
+  });
+  try {
+    const pending = clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    for (let i = 0; i < 40 && probes < 4; i += 1) {
+      await Promise.resolve();
+    }
+    expect(probes).toBeGreaterThanOrEqual(4);
+    window.sessionStorage.setItem(
+      "kondate.auth.emailOtpCompleted",
+      JSON.stringify({ storedAt: new Date().toISOString() }),
+    );
+    releaseAfterWipe?.();
+    await pending;
+    expect(client.auth.signOut).not.toHaveBeenCalled();
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    window.sessionStorage.removeItem("kondate.auth.emailOtpCompleted");
+    window.localStorage.removeItem("kondate.auth.liveSession");
+  }
+});
+
+it("C5: leftover clear still local-signs-out persist that does not match the live mark", async () => {
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
+  window.localStorage.setItem(
+    "kondate.auth.liveSession",
+    JSON.stringify({
+      userId: "live-user",
+      storedAt: new Date().toISOString(),
+    }),
+  );
+  const client = authClientMock({
+    getSessionResult: {
+      data: {
+        session: { access_token: "leftover-access", user: { id: "leftover-user" } },
+      },
+      error: null,
+    },
+  });
+  try {
+    await clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBeNull();
+    expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(window.localStorage.getItem("kondate.auth.liveSession")).not.toBeNull();
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    window.localStorage.removeItem("kondate.auth.liveSession");
   }
 });
 

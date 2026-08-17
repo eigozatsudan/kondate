@@ -76,6 +76,7 @@ it("notifies the same tab when publish completes the bound flow", () => {
   expect(onComplete).toHaveBeenCalledWith({ flowId: "flow-1", returnTo: "/onboarding" });
   stop();
   window.localStorage.removeItem("kondate.auth.supabase.continuation-complete.flow-1");
+  window.localStorage.removeItem("kondate.auth.liveSession");
 });
 
 it("completes wait from same-tab publish after the waiter has started", () => {
