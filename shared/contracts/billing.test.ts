@@ -11,9 +11,32 @@ import {
 describe("billing contracts", () => {
   it("accepts month|year interval and rejects priceInterval", () => {
     expect(checkoutRequestSchema.parse({ interval: "month" })).toEqual({ interval: "month" });
-    expect(checkoutRequestSchema.parse({ interval: "year" })).toEqual({ interval: "year" });
     expect(checkoutRequestSchema.safeParse({ priceInterval: "month" }).success).toBe(false);
     expect(checkoutRequestSchema.safeParse({ interval: "week" }).success).toBe(false);
+  });
+
+  // B4: 年額は UI checkbox だけでなく API 同意が必須。interval 値域は緩めない。
+  it("B4: yearly checkout requires refund acknowledgment without loosening interval", () => {
+    expect(checkoutRequestSchema.safeParse({ interval: "year" }).success).toBe(false);
+    expect(
+      checkoutRequestSchema.safeParse({
+        interval: "year",
+        yearlyRefundAcknowledged: false,
+      }).success,
+    ).toBe(false);
+    expect(
+      checkoutRequestSchema.parse({
+        interval: "year",
+        yearlyRefundAcknowledged: true,
+      }),
+    ).toEqual({ interval: "year", yearlyRefundAcknowledged: true });
+    expect(checkoutRequestSchema.parse({ interval: "month" })).toEqual({ interval: "month" });
+    expect(
+      checkoutRequestSchema.safeParse({
+        interval: "month",
+        yearlyRefundAcknowledged: true,
+      }).success,
+    ).toBe(false);
   });
 
   it("locks entitlement wire shape including productSurfacesOpen and quotaPlan", () => {

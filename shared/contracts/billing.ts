@@ -1,7 +1,19 @@
 import { z } from "zod";
 
-/** Checkout body。設計 mermaid の priceInterval は diagram-only 誤り — interval が正。 */
-export const checkoutRequestSchema = z.object({ interval: z.enum(["month", "year"]) }).strict();
+/**
+ * Checkout body。設計 mermaid の priceInterval は diagram-only 誤り — interval が正。
+ * B4: 年額は UI checkbox だけでなく API でも返金不可同意を必須にする。
+ * interval 値域は month|year のまま。月額形は従来どおり { interval: "month" } のみ。
+ */
+export const checkoutRequestSchema = z.discriminatedUnion("interval", [
+  z.object({ interval: z.literal("month") }).strict(),
+  z
+    .object({
+      interval: z.literal("year"),
+      yearlyRefundAcknowledged: z.literal(true),
+    })
+    .strict(),
+]);
 
 export type CheckoutRequest = z.infer<typeof checkoutRequestSchema>;
 

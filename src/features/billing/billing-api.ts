@@ -89,7 +89,7 @@ export async function getEntitlement(deps: BillingApiDeps = {}): Promise<Entitle
 
 /**
  * POST /api/billing/checkout → Hosted Checkout URL。
- * Price ID はサーバのみ。ブラウザは interval だけ送る。
+ * Price ID はサーバのみ。ブラウザは interval と、年額なら返金不可同意だけ送る（B4）。
  */
 export async function createCheckoutSession(
   body: CheckoutRequest,

@@ -243,7 +243,12 @@ export function PlanSettingsSection({
                       if (onCheckout !== undefined) {
                         await onCheckout(interval);
                       } else {
-                        const { url } = await createCheckoutSession({ interval });
+                        // B4: 年額は form の確認後のみここに来る。API 契約へ同意を載せる。
+                        const { url } = await createCheckoutSession(
+                          interval === "year"
+                            ? { interval: "year", yearlyRefundAcknowledged: true }
+                            : { interval: "month" },
+                        );
                         window.location.assign(url);
                       }
                     } catch (err) {

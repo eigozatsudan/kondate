@@ -345,8 +345,20 @@ describe("runBillingCheckout", () => {
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
-  it("acquire → sessions.create → bind → returns url (happy path)", async () => {
+  it("rejects yearly checkout without refund acknowledgment (B4)", async () => {
     const response = await runBillingCheckout(request({ interval: "year" }), deps());
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "invalid_request" },
+    });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("acquire → sessions.create → bind → returns url (happy path)", async () => {
+    const response = await runBillingCheckout(
+      request({ interval: "year", yearlyRefundAcknowledged: true }),
+      deps(),
+    );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,

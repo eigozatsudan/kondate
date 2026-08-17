@@ -100,8 +100,12 @@ export function PlusLandingPage({
   const userId = injectedUserId ?? auth.session?.user.id ?? "";
   const query = useEntitlement(userId);
   const data = injected !== undefined ? injected : (query.data ?? null);
-  const loading =
+  const fetching =
     entitlementLoading !== undefined ? entitlementLoading : query.isPending || query.isFetching;
+  // B2: cache がある再 fetch（focus / 30s stale）では loading 短形に落とさない。
+  // resolvePlusLandingView は loading なら data を捨てる（B6 入力契約）。
+  // Settings は loading && data === null だけスピナー（plan-settings-section）。
+  const loading = fetching && data === null;
   const error = entitlementError !== undefined ? entitlementError : query.isError;
 
   const location = useLocation();
@@ -170,7 +174,12 @@ export function PlusLandingPage({
       if (onCheckout !== undefined) {
         await onCheckout(interval);
       } else {
-        const { url } = await createCheckoutSession({ interval });
+        // B4: 年額は form の確認後のみここに来る。API 契約へ同意を載せる。
+        const { url } = await createCheckoutSession(
+          interval === "year"
+            ? { interval: "year", yearlyRefundAcknowledged: true }
+            : { interval: "month" },
+        );
         window.location.assign(url);
       }
     } catch (err) {

@@ -185,6 +185,36 @@ describe("PlusLandingPage", () => {
     expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
   });
 
+  // B2: cache がある再 fetch（focus / 30s stale）で加入中 Portal を捨てない。
+  // Settings は loading && data === null だけスピナー。LP も同じ入力にする。
+  it("keeps entitled portal while refetching cached entitlement (B2)", () => {
+    renderLp({
+      entitlement: {
+        ...freeOpen,
+        plan: "plus",
+        status: "active",
+        plusEntitled: true,
+        dbPlusEntitled: true,
+        quotaPlan: "plus",
+      },
+      entitlementLoading: true,
+    });
+    expect(screen.getByText(PLUS_LP_ACTIVE)).toBeVisible();
+    expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL })).toBeVisible();
+    expect(screen.getByRole("link", { name: PLUS_LP_SETTINGS_LINK })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
+    expect(screen.queryByText("プラン情報を確認しています…")).not.toBeInTheDocument();
+  });
+
+  it("shows loading short form only when entitlement cache is empty (B2)", () => {
+    renderLp({ entitlement: null, entitlementLoading: true });
+    expect(screen.getByText("プラン情報を確認しています…")).toBeVisible();
+    expect(screen.queryByText(PLUS_LP_ACTIVE)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+  });
+
   it("keeps Plus start button non-interactive while upgrade is under development", async () => {
     const onCheckout = vi.fn(() => Promise.resolve());
     const user = userEvent.setup();
