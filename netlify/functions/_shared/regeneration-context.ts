@@ -342,36 +342,35 @@ export function buildDishRegenerationPrompt(input: {
 
   // pantry: selectionId または pantryItemId を pantry_N に写す（現行コンテキスト順を優先）
   // retained 食材投影と同じ item→pantry_N 順序を使い、sourcePantryUsage と整合させる
-  const pantryIdToRef = new Map<string, string>();
-  input.generationContext.submission.pantrySelections.forEach((selection, index) => {
-    pantryIdToRef.set(selection.pantryItemId, `pantry_${String(index + 1)}`);
-  });
-  let pantryFallback = pantryIdToRef.size;
-  const sourcePantryUsage = source.menu.pantryUsage.map((usage) => {
-    let pantryRef =
-      (usage.pantryItemId !== null ? pantryIdToRef.get(usage.pantryItemId) : undefined) ??
-      pantryIdToRef.get(usage.selectionId);
+  const pantrySelectionIdToRef = buildPantrySelectionIdToRef(
+    source.menu,
+    input.generationContext.submission.pantrySelections,
+  );
+  const sourcePantryUsage = source.menu.pantryUsage.flatMap((usage) => {
+    const pantryRef = pantrySelectionIdToRef.get(usage.selectionId);
     if (pantryRef === undefined) {
-      // G11 residual: 現行に無い source-only 在庫は phantom pantry_N（materialize は unknown_pantry_ref で拒否）
-      pantryFallback += 1;
-      pantryRef = `pantry_${String(pantryFallback)}`;
+      // G29: 現行に無い source-only 在庫へ pantry_{n>selectionCount} を合成しない。
+      // 合成 ref は materialize が unknown_pantry_ref で拒否し、repair が attempt を焼く。
+      return [];
     }
     mutableRefMap.set(pantryRef, usage.selectionId);
-    return {
-      pantryRef,
-      pantryItemName: usage.pantryItemName,
-      priority: usage.priority,
-      usageStatus: usage.usageStatus,
-      plannedQuantity: usage.plannedQuantity,
-      inventoryQuantity: usage.inventoryQuantity,
-      shortageQuantity: usage.shortageQuantity,
-      unit: usage.unit,
-      dishRefs: usage.dishIds.flatMap((id) => {
-        const ref = idToRef.get(id);
-        return ref === undefined ? [] : [ref];
-      }),
-      unusedReason: usage.unusedReason,
-    };
+    return [
+      {
+        pantryRef,
+        pantryItemName: usage.pantryItemName,
+        priority: usage.priority,
+        usageStatus: usage.usageStatus,
+        plannedQuantity: usage.plannedQuantity,
+        inventoryQuantity: usage.inventoryQuantity,
+        shortageQuantity: usage.shortageQuantity,
+        unit: usage.unit,
+        dishRefs: usage.dishIds.flatMap((id) => {
+          const ref = idToRef.get(id);
+          return ref === undefined ? [] : [ref];
+        }),
+        unusedReason: usage.unusedReason,
+      },
+    ];
   });
 
   // timeline / adaptation を id→ref に合流させる。label の sourceId は
