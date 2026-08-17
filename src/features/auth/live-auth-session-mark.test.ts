@@ -7,6 +7,7 @@ import {
   liveAuthSessionMarkProtectsFingerprint,
   readLiveAuthSessionMark,
   shouldCommitLiveAuthSessionMark,
+  shouldRefuseUnmarkedLeftoverFirstPin,
   userIdFromSessionProbeKey,
   writeLiveAuthSessionMark,
 } from "./live-auth-session-mark";
@@ -65,6 +66,15 @@ it("commits live marks off /login and not on leftover Login", () => {
   expect(shouldCommitLiveAuthSessionMark("/auth/callback")).toBe(true);
   expect(shouldCommitLiveAuthSessionMark("/login")).toBe(false);
   expect(shouldCommitLiveAuthSessionMark("/login/")).toBe(false);
+});
+
+it("C5: leftover first pin is refused off leftover-capable auth surfaces", () => {
+  expect(shouldRefuseUnmarkedLeftoverFirstPin("/planner")).toBe(true);
+  expect(shouldRefuseUnmarkedLeftoverFirstPin("/")).toBe(true);
+  expect(shouldRefuseUnmarkedLeftoverFirstPin("/welcome")).toBe(true);
+  expect(shouldRefuseUnmarkedLeftoverFirstPin("/login")).toBe(false);
+  expect(shouldRefuseUnmarkedLeftoverFirstPin("/login/")).toBe(false);
+  expect(shouldRefuseUnmarkedLeftoverFirstPin("/auth/callback")).toBe(false);
 });
 
 it("clears the live mark", () => {

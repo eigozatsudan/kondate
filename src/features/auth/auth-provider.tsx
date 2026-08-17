@@ -34,8 +34,10 @@ import {
 } from "./auth-flow";
 import { resetAuthCallbackUrlCaptureIfLeftCallback } from "./auth-callback-url-capture";
 import {
+  liveAuthSessionMarkProtectsFingerprint,
   readLiveAuthSessionMark,
   shouldCommitLiveAuthSessionMark,
+  shouldRefuseUnmarkedLeftoverFirstPin,
   writeLiveAuthSessionMark,
 } from "./live-auth-session-mark";
 import { setAccessTokenPinDataPlaneBlocked, setAccessTokenPinnedUserId } from "./session";
@@ -184,6 +186,17 @@ function readPersistedAccessTokenFromUnknown(value: unknown): string | null {
   }
   const token = value.access_token;
   return typeof token === "string" && token.length > 0 ? token : null;
+}
+
+/** leftover persist が origin 共有キーに残っているか。印なし first pin 拒否の入力。 */
+function hasPersistedBrowserSupabaseSession(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = window.localStorage.getItem(browserSupabaseSessionStorageKey);
+    return raw !== null && raw !== "";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -537,11 +550,22 @@ export function AuthProvider({
         rememberAccessToken(hardLeftoverAccessTokensRef.current, nextSession);
         return false;
       }
-      // C5: committed live と違う leftover persist を first-writer pin しない。
-      // /planner 直入場でも世帯 API が leftover user のまま動かない。
+      // C5: leftover persist を leftover-incapable path（/planner 等）で first-writer pin しない。
+      // 印なし persist は leftover。live 印 userId 不一致も leftover。wipe 後の retry は persist-hard。
       if (nextSession !== null && residualSessionGuardRef.current.pinnedUserId === null) {
         const liveMark = readLiveAuthSessionMark();
-        if (liveMark?.userId !== undefined && liveMark.userId !== nextSession.user.id) {
+        const pathname = typeof window !== "undefined" ? window.location.pathname : "";
+        const sessionKey = `${nextSession.user.id}:${nextSession.access_token}`;
+        const refuseMismatchedLiveMark =
+          liveMark?.userId !== undefined && liveMark.userId !== nextSession.user.id;
+        const refuseUnmarkedLeftoverPersist =
+          shouldRefuseUnmarkedLeftoverFirstPin(pathname) &&
+          hasPersistedBrowserSupabaseSession() &&
+          !liveAuthSessionMarkProtectsFingerprint(sessionKey);
+        if (refuseMismatchedLiveMark || refuseUnmarkedLeftoverPersist) {
+          if (refuseUnmarkedLeftoverPersist) {
+            rememberAccessToken(persistHardLeftoverAccessTokensRef.current, nextSession);
+          }
           if (typeof window !== "undefined") {
             try {
               clearBrowserSupabaseSessionStorage(window.localStorage);
@@ -739,11 +763,11 @@ export function AuthProvider({
       // 残すと focus getSession の同一 user refresh 回転（T2）まで leftover 扱いになる。
       localSignOutClearedSdkRef.current = false;
       setSession(nextSession);
-      // C1: /login 以外の成功 apply で origin 共有 live 印を書く（既存 persist の grandfather 含む）。
-      // /login では leftover persist の pin を live と誤認しない。
+      // C5: 既存 live 印があるときだけ userId を埋める。印なし leftover を live に昇格しない。
       if (
         typeof window !== "undefined" &&
-        shouldCommitLiveAuthSessionMark(window.location.pathname)
+        shouldCommitLiveAuthSessionMark(window.location.pathname) &&
+        readLiveAuthSessionMark() !== null
       ) {
         writeLiveAuthSessionMark(nextSession.user.id);
       }

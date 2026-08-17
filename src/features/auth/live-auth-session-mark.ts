@@ -44,7 +44,8 @@ export function readLiveAuthSessionMark(
 }
 
 /**
- * 番号 verify / 非 /login の成功 apply で書く。
+ * 番号 verify / 既存 live 印の userId 埋め。
+ * 印なし leftover persist を /planner 等の成功 apply で昇格させない。
  * userId 無しで書くときは既存 userId を落とさない（OTP 直後の race）。
  */
 export function writeLiveAuthSessionMark(
@@ -127,7 +128,18 @@ export function liveAuthSessionMarkAppearedOrUpdated(
   return afterMs > beforeMs;
 }
 
-/** /login 上の leftover persist を live と誤認しない。callback / planner は committed。 */
+/**
+ * 既存 live 印の userId を埋めてよい path。
+ * /login 上の leftover persist を live と誤認しない。印なし persist は昇格しない。
+ */
 export function shouldCommitLiveAuthSessionMark(pathname: string): boolean {
   return pathname !== "/login" && !pathname.startsWith("/login/");
+}
+
+/**
+ * leftover persist を first-writer pin してはいけない path。
+ * /login と /auth/callback は番号 / Google の誕生点なので印なし first pin を許す。
+ */
+export function shouldRefuseUnmarkedLeftoverFirstPin(pathname: string): boolean {
+  return pathname !== "/login" && !pathname.startsWith("/login/") && pathname !== "/auth/callback";
 }

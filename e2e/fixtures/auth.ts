@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { expect, test as base, type Page } from "@playwright/test";
 import { z } from "zod";
 import { browserSupabaseSessionStorageKey } from "../../src/features/auth/auth-flow";
+import { LIVE_AUTH_SESSION_MARK_KEY } from "../../src/features/auth/live-auth-session-mark";
 import { confirmAddScopeNotice } from "./household";
 import { readLocalPublishableKey } from "./local-supabase";
 import { parseMailpitOtpCode } from "./mailpit-otp-code";
@@ -237,13 +238,20 @@ export async function loginAsNewUser(
   // commit で origin が付いた時点で十分（landing の JS は待たない）。
   // session の addInitScript 手注入はしない（再ナビで session が復活して sign-out 検証を壊す）。
   await page.goto(APP_ORIGIN, { waitUntil: "commit" });
+  // C5: 手注入 persist は leftover ではない committed live。印なしだと /planner first pin が拒否する。
   await page.evaluate(
-    ({ storageKey, sessionJson }) => {
+    ({ storageKey, sessionJson, liveMarkKey, userId }) => {
       window.localStorage.setItem(storageKey, sessionJson);
+      window.localStorage.setItem(
+        liveMarkKey,
+        JSON.stringify({ userId, storedAt: new Date().toISOString() }),
+      );
     },
     {
       storageKey: browserSupabaseSessionStorageKey,
       sessionJson: JSON.stringify(session),
+      liveMarkKey: LIVE_AUTH_SESSION_MARK_KEY,
+      userId: user.id,
     },
   );
 
