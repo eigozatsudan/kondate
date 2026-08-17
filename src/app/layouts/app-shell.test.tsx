@@ -21,6 +21,9 @@ beforeEach(() => {
 
 afterEach(() => {
   registerPlannerLeaveFlush(null);
+  // 公開 LP の静的コピーと本番同様の #root をテスト間で残さない
+  document.getElementById("kondate-public-lp")?.remove();
+  document.getElementById("root")?.remove();
 });
 
 const unauthenticated: AuthContextValue = {
@@ -29,6 +32,18 @@ const unauthenticated: AuthContextValue = {
   refreshSession: vi.fn(),
   sessionProbeDegraded: false,
 };
+
+/** 本番 index.html と同様、シェルは #root に載せる。無いときは作る。 */
+function ensureAppRoot(): HTMLElement {
+  const existing = document.getElementById("root");
+  if (existing instanceof HTMLElement) {
+    return existing;
+  }
+  const root = document.createElement("div");
+  root.id = "root";
+  document.body.appendChild(root);
+  return root;
+}
 
 function renderAppShellAt(path: string, children?: { path: string; element: ReactNode }[]) {
   const router = createMemoryRouter(
@@ -52,6 +67,7 @@ function renderAppShellAt(path: string, children?: { path: string; element: Reac
     ],
     { initialEntries: [path] },
   );
+  // 静的公開 LP は #root の外に残るため、RTL も本番と同じマウント先にする
   render(
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
@@ -60,6 +76,7 @@ function renderAppShellAt(path: string, children?: { path: string; element: Reac
         <RouterProvider router={router} />
       </AuthContext.Provider>
     </QueryClientProvider>,
+    { container: ensureAppRoot() },
   );
 }
 
@@ -209,6 +226,45 @@ describe("AppShell route focus (L2)", () => {
     await waitFor(() => {
       expect(settingsHeading).toHaveFocus();
     });
+  });
+
+  it("does not focus the hidden static public LP h1 outside #root (ADV-I1)", async () => {
+    // 本番は静的 LP が #root の外に残り、display:none でも document 順の main h1 に拾われる
+    document.body.insertAdjacentHTML(
+      "afterbegin",
+      `<div id="kondate-public-lp" style="display:none"><main><h1>今日の献立、家族に合わせて。</h1></main></div>`,
+    );
+
+    renderAppShellAt("/planner", [
+      {
+        path: "/planner",
+        element: (
+          <main className="page-frame">
+            <h1>献立</h1>
+          </main>
+        ),
+      },
+    ]);
+
+    const plannerHeading = screen.getByRole("heading", { name: "献立" });
+    // shell の rAF focus が完了するまで2フレーム待つ（dialog 契約と同じ）
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+    });
+
+    expect(document.activeElement).toBe(plannerHeading);
+    const hiddenLpHeading = document.querySelector("#kondate-public-lp h1");
+    if (!(hiddenLpHeading instanceof HTMLElement)) {
+      throw new Error("expected #kondate-public-lp h1");
+    }
+    expect(hiddenLpHeading).not.toHaveAttribute("tabindex");
+    expect(document.activeElement).not.toBe(hiddenLpHeading);
   });
 });
 
