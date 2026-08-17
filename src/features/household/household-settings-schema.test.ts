@@ -114,6 +114,17 @@ describe("householdSettingsValueFromDbRow (H12)", () => {
     expect(value.portionSize).toBe("large");
     expect(value.spiceLevel).toBe("mild");
   });
+
+  it("H1: maps whitespace-only display_name from DB to null so the form is schema-valid", () => {
+    // onboarding が空白のみを書いた行は CHECK を通る。raw のまま残すと trim().min(1) で
+    // 安全項目の save 全体が落ちるため、未設定（null）へ正規化する。
+    const value = householdSettingsValueFromDbRow({
+      ...validRow,
+      display_name: "   ",
+    });
+    expect(value.displayName).toBeNull();
+    expect(householdSettingsSchema.safeParse(value).success).toBe(true);
+  });
 });
 
 const validSettingsValue = {

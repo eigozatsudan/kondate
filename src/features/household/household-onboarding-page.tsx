@@ -33,6 +33,7 @@ import {
 } from "./household-api";
 import { EASE_SOFT_NOT_SWALLOW_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { defaultsForAgeBand } from "./household-defaults";
+import { normalizeOptionalDisplayName } from "./household-settings-schema";
 import {
   householdKeys,
   householdSafetyChangedEvent,
@@ -1275,7 +1276,9 @@ export function HouseholdOnboardingForm({
           <input
             value={draft.display_name ?? ""}
             maxLength={30}
-            onChange={(event) => void save({ display_name: event.target.value || null })}
+            onChange={(event) =>
+              void save({ display_name: normalizeOptionalDisplayName(event.target.value) })
+            }
           />
         </label>
         <label className="field">

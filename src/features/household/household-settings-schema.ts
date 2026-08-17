@@ -80,6 +80,18 @@ export type HouseholdSettingsFormValue = {
   easePreferences: EasePreference[];
 };
 
+/**
+ * 空白のみの呼び名は未設定（null）。
+ * DB CHECK は btrim せず char_length 1–30 のため "   " を通す。settings schema は
+ * trim().min(1) で同じ値を拒否し、アレルギー/年齢の PATCH 全体が落ちる。
+ */
+export function normalizeOptionalDisplayName(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  return value.trim() === "" ? null : value;
+}
+
 /** household_members 行のうち、フォーム初期化に使う列（string 境界の生値） */
 export type HouseholdMemberSettingsRow = {
   display_name: string | null;
@@ -153,7 +165,7 @@ export function householdSettingsValueFromDbRow(
   const defaults = defaultsForAgeBand(ageBand ?? "adult");
 
   const formValue: HouseholdSettingsFormValue = {
-    displayName: row.display_name,
+    displayName: normalizeOptionalDisplayName(row.display_name),
     ageBand: ageBand ?? "",
     allergyStatus: parseEnumField(z.enum(allergyStatuses), row.allergy_status) ?? "",
     unsupportedDietStatus:

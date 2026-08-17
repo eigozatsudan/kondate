@@ -3480,6 +3480,37 @@ it("shows a Japanese alert for a whitespace-only display name", async () => {
   expect(updateMember).not.toHaveBeenCalled();
 });
 
+it("H1: persists allergy change when DB display_name is whitespace-only", async () => {
+  // onboarding 由来の空白呼び名が settings schema 全体を落とすと、アレルギー変更が
+  // ローカルだけ進み権威経路（snapshot）は none のままになる。
+  const whitespaceNamed: HouseholdMemberRow = { ...member, display_name: "   " };
+  const updateMember = vi.fn().mockResolvedValue({
+    ...whitespaceNamed,
+    display_name: null,
+    allergy_status: "unconfirmed",
+  });
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([whitespaceNamed]),
+    updateMember,
+  });
+
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("");
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "unconfirmed");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        allergy_status: "unconfirmed",
+        display_name: null,
+      }),
+      expect.any(String),
+    );
+  });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("unconfirmed");
+});
+
 it("persists a 30-character display name", async () => {
   const { updateMember } = await renderSettings();
   const name = "あ".repeat(30);

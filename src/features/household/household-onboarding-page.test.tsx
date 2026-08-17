@@ -388,6 +388,24 @@ it("serializes rapid draft updates in input order", async () => {
   );
 });
 
+it("H1: saves whitespace-only display name as null", async () => {
+  // value || null だと "   " が truthy のまま DB に残る。settings schema が
+  // 同じ値で PATCH 全体を落とす入口を、入力境界で閉じる。
+  const updateDraft = vi.fn().mockResolvedValue({ ...draft, display_name: null });
+  const api = baseApi({ updateDraft });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  fireEvent.change(await screen.findByLabelText("呼び名（任意・AIには送りません）"), {
+    target: { value: "   " },
+  });
+
+  await waitFor(() => {
+    expect(updateDraft).toHaveBeenCalledWith("member-1", { display_name: null }, draft.updated_at);
+  });
+});
+
 it("preserves rapid changes to the same field while the first save is pending", async () => {
   const user = userEvent.setup();
   const membersState = createMembersApiState([draft]);
