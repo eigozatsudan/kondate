@@ -103,7 +103,7 @@ Dashboard の **Settings → API Keys**（または Project の Connect ダイ�
    - `RATE_LIMIT_OTP` **30**
    - `RATE_LIMIT_VERIFY` **360**
    - `SMTP_MAX_FREQUENCY` **60s**
-5. ローカル compose は `GOTRUE_EXTERNAL_EMAIL_MAGIC_LINK_ENABLED=false` を必須とする。hosted Dashboard でこのフラグを切れない場合、**URL 無しテンプレが唯一の防御**になる。それでも本文から URL を除く。
+5. GoTrue の `POST /auth/v1/otp`（メール）は内部で Magic Link と同じ入口なので、ローカル compose は `GOTRUE_EXTERNAL_EMAIL_MAGIC_LINK_ENABLED=true` のままにする（false だと 6 桁番号も `email_provider_disabled` になる）。リンク経路を閉じる防御は **URL 無しテンプレ**側に置く。hosted Dashboard でこのフラグを切れなくても同じ。本文から URL を除く。
 6. テンプレートだけでは届かない。**次節の Custom SMTP が本番番号メールの前提**である。
 7. デプロイ後の確認: メール HTML に 6 桁があり、`http` / `https` が無いこと。`…supabase.co/auth/v1/verify` や callback URL が残っていたらテンプレ未更新。
 

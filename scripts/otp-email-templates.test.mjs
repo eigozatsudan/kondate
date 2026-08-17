@@ -63,4 +63,7 @@ test("override pins OTP lifetime and the same reachable template URL", async () 
   assert.equal(magicLink, EXPECTED_TEMPLATE_URL);
   assert.equal(confirmation, EXPECTED_TEMPLATE_URL);
   assert.equal(magicLink, confirmation);
+
+  // /otp メールは GoTrue 内部で MagicLink。false だと番号送信が 422 になる。
+  assert.equal(readYamlScalar(override, "GOTRUE_EXTERNAL_EMAIL_MAGIC_LINK_ENABLED"), "true");
 });

@@ -108,7 +108,10 @@ services:
       GOTRUE_SMTP_MAX_FREQUENCY: "60s"
       GOTRUE_RATE_LIMIT_OTP: "30"
       GOTRUE_RATE_LIMIT_VERIFY: "360"
-      GOTRUE_EXTERNAL_EMAIL_MAGIC_LINK_ENABLED: "false"
+      # GoTrue の POST /otp（メール）は内部で MagicLink と同じ入口。
+      # false にすると 6 桁番号も 422 email_provider_disabled になる。
+      # URL 経路の防御は URL 無しテンプレ側に置く。
+      GOTRUE_EXTERNAL_EMAIL_MAGIC_LINK_ENABLED: "true"
       GOTRUE_MAILER_TEMPLATES_MAGIC_LINK: http://otp-templates:8080/otp-code.html
       GOTRUE_MAILER_TEMPLATES_CONFIRMATION: http://otp-templates:8080/otp-code.html
       GOTRUE_MAILER_SUBJECTS_MAGIC_LINK: こんだて日和の番号
