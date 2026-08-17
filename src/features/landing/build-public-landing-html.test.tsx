@@ -88,7 +88,7 @@ describe("buildPublicLandingHtml", () => {
     );
     render(<RouterProvider router={router} />);
     expect(screen.getByRole("heading", { level: 1, name: FREE_LP_H1 })).toBeVisible();
-    const reactText = flattenText(document.body.textContent ?? "");
+    const reactText = flattenText(document.body.textContent);
     const staticText = stripTags(buildPublicLandingHtml(PUBLIC_LANDING_ASSET_PATHS));
     expect(staticText).toBe(reactText);
   });

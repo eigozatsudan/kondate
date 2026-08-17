@@ -14,7 +14,7 @@ describe("HomeScreenInstallSteps", () => {
       expect(item).not.toHaveAccessibleName(/[0-9]/u);
     }
     expect(screen.getByRole("list")).toHaveAttribute("role", "list");
-    expect(screen.getByRole("list").className).toContain("min-w-0");
+    expect(screen.getByRole("list").className).toContain("home-screen-install-steps");
     expect(screen.getByRole("list").className).not.toContain("whitespace-nowrap");
     expect(screen.getByRole("list").tagName).toBe("OL");
     expect(items[0]?.querySelector("span:not([aria-hidden])")?.tagName).toBe("SPAN");

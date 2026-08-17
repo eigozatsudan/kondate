@@ -77,7 +77,7 @@ const requiredSmokeTitles = [
   ],
   [
     "e2e/specs/auth-recovery.spec.ts",
-    "same-browser callback restores both callback and original tabs",
+    "Google cancel and expired links return actionable login choices",
   ],
   [
     "e2e/specs/generation-recovery-results.spec.ts",

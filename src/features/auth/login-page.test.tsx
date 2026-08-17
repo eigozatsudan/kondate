@@ -5,10 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { COLD_START_SESSION_DEADLINE_MS } from "./auth-provider";
 import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
-import {
-  resetLeftoverPkceProtectionForTests,
-  type AuthGateway,
-} from "./auth-gateway";
+import { resetLeftoverPkceProtectionForTests, type AuthGateway } from "./auth-gateway";
 import {
   EMAIL_OTP_CHANGE_EMAIL,
   EMAIL_OTP_GOOGLE_BUTTON,

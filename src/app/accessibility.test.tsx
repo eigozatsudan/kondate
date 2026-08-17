@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, MemoryRouter, NavLink } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import { makeMenuResultViewModel } from "@shared/testing/factories";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
@@ -136,6 +136,18 @@ const unauthenticated: AuthContextValue = {
   sessionProbeDegraded: false,
 };
 
+/** 本番 index.html と同様、シェルは #root に載せる。無いときは作る。 */
+function ensureAppRoot(): HTMLElement {
+  const existing = document.getElementById("root");
+  if (existing instanceof HTMLElement) {
+    return existing;
+  }
+  const root = document.createElement("div");
+  root.id = "root";
+  document.body.appendChild(root);
+  return root;
+}
+
 beforeEach(() => {
   getMenuResultMock.mockReset();
   getGenerationStatusMock.mockReset();
@@ -185,6 +197,11 @@ beforeEach(() => {
     changedDetails: [],
     currentLabelWarnings: [],
   });
+});
+
+afterEach(() => {
+  // シェルの遷移フォーカスは #root 内だけを見る。テスト間に残さない。
+  document.getElementById("root")?.remove();
 });
 
 function Providers({
@@ -251,10 +268,12 @@ function renderShellRoute(path: string, page: ReactElement): ReturnType<typeof r
     ],
     { initialEntries: [path] },
   );
+  // AppShell の h1 フォーカスは #root 内だけを見る（静的 LP の h1 を拾わない）。
   return render(
     <Providers>
       <RouterProvider router={router} />
     </Providers>,
+    { container: ensureAppRoot() },
   );
 }
 
@@ -408,6 +427,7 @@ describe("route accessibility", () => {
       <Providers>
         <RouterProvider router={router} />
       </Providers>,
+      { container: ensureAppRoot() },
     );
 
     const pantryHeading = await screen.findByRole("heading", { name: "食材リスト" });

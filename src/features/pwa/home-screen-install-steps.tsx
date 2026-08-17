@@ -18,19 +18,16 @@ export function HomeScreenInstallSteps(props: {
   const steps = props.kind === "ios" ? INSTALL_TIP_IOS_STEPS : INSTALL_TIP_ANDROID_STEPS;
   const icons = props.kind === "ios" ? IOS_ICONS : ANDROID_ICONS;
   return (
-    <ol
-      role="list"
-      className="m-0 flex list-none min-w-0 flex-col gap-2 p-0 [overflow-wrap:anywhere]"
-    >
+    <ol role="list" className="home-screen-install-steps">
       {steps.map((label, index) => {
         const Icon = icons[index];
         if (Icon === undefined) return null;
         // listitem は name-from-content されないため、手順文言を aria-label で明示する
         return (
-          <li key={label} className="flex min-w-0 items-start gap-2" aria-label={label}>
+          <li key={label} className="home-screen-install-step" aria-label={label}>
             <span aria-hidden="true">{String(index + 1)}</span>
             <Icon />
-            <span className="min-w-0">{label}</span>
+            <span className="home-screen-install-step-label">{label}</span>
           </li>
         );
       })}

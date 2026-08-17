@@ -113,7 +113,7 @@ PR の壁時計目標を守るため、smoke は **おおむね 14〜22 本 × m
 | OAuth mock | `oauth-mock.spec.ts` | 2 | success + cancel（ファイルが 2 本なら両方） |
 | Full journey | `full-journey.spec.ts` | 2 | household + idea |
 | Auth callback | `auth-callback-security.spec.ts` | 2 | cancel + expired（残り full） |
-| Auth recovery | `auth-recovery.spec.ts` | 1 | same-browser |
+| Auth recovery | `auth-recovery.spec.ts` | 1 | Google cancel / expired leftover |
 | Generation | `generation-recovery-results.spec.ts` | 2 | recovery 1 + result details 1 |
 | Shopping | `shopping-list.spec.ts` | 1 | protected rows |
 | Shopping race | `shopping-list-races.spec.ts` | 1 | idempotency または safety change |

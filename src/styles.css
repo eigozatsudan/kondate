@@ -1124,6 +1124,32 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/*
+ * 手順リスト。features 配下は生 Tailwind の flex/gap/p/m が禁止なので
+ * カードと同じく専用クラスで縦積みと 320px 折り返しを持つ。
+ */
+.home-screen-install-steps {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.home-screen-install-step {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.home-screen-install-step-label {
+  min-width: 0;
+}
+
 .stack {
   display: grid;
   gap: 16px;
