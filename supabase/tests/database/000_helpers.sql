@@ -74,3 +74,20 @@ set search_path = pg_catalog
 as $function$
   select lpad(replace(p_user_id::text, '-', ''), 64, '0');
 $function$;
+
+-- ローカル永続 DB / 先行 E2E が当日の ai_global_daily_usage.sent_count を
+-- 製品 GLOBAL_DAILY_AI_LIMIT（20）超まで積むと、now() 向け reserve が
+-- global_daily_limit で静かに失敗する。GHA は空 DB だがローカル CI は
+-- スタックを落とさない。呼び出し側 TX 内で実行し rollback する前提。
+create or replace function tests.isolate_local_ai_global_usage(
+  p_now timestamptz default now()
+)
+returns void
+language sql
+set search_path = ''
+as $function$
+  update private.ai_global_daily_usage
+  set reserved_count = 0,
+      sent_count = 0
+  where usage_day = private.ai_jst_day(p_now);
+$function$;

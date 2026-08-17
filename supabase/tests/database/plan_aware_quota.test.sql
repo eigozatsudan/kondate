@@ -6,6 +6,9 @@ select plan(13);
 
 create extension if not exists pgtap with schema extensions;
 
+-- 先行 E2E の全体 AI 枠残留を隔離（本ファイルは rollback するので永続しない）
+select tests.isolate_local_ai_global_usage();
+
 select tests.create_supabase_user(
   'f1000000-0000-4000-8000-000000000001'::uuid,
   'plan-aware-quota@example.invalid'
