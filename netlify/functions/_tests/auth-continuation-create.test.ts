@@ -1,5 +1,10 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import { config, createHandler } from "../auth-continuation-create.js";
+import {
+  config,
+  createHandler,
+  parseCreateAuthContinuationRpcData,
+} from "../auth-continuation-create.js";
 import { sha256 } from "../_shared/auth-continuation-crypto.js";
 
 const ORIGIN = "https://app.test";
@@ -133,5 +138,33 @@ describe("auth continuation create", () => {
     expect(text).not.toContain(SECRET);
     expect(text).not.toContain(STATE);
     expect(JSON.parse(text)).not.toHaveProperty("secret");
+  });
+
+  it("C7: parses generated create RPC rows with Zod and rejects drift", () => {
+    expect(
+      parseCreateAuthContinuationRpcData([
+        { id: "10000000-0000-4000-8000-000000000001", expires_at: "2026-07-11T00:05:00Z" },
+      ]),
+    ).toEqual({
+      id: "10000000-0000-4000-8000-000000000001",
+      expiresAt: "2026-07-11T00:05:00Z",
+    });
+    expect(parseCreateAuthContinuationRpcData(null)).toBeNull();
+    expect(parseCreateAuthContinuationRpcData([])).toBeNull();
+    expect(
+      parseCreateAuthContinuationRpcData([
+        { id: "10000000-0000-4000-8000-000000000001", expires_at: "2026-07-11T00:05:00Z" },
+        { id: "20000000-0000-4000-8000-000000000002", expires_at: "2026-07-11T00:06:00Z" },
+      ]),
+    ).toBeNull();
+    expect(parseCreateAuthContinuationRpcData([{ expires_at: "2026-07-11T00:05:00Z" }])).toBeNull();
+    expect(parseCreateAuthContinuationRpcData("not-rows")).toBeNull();
+  });
+
+  it("C7: production create transition does not unchecked-cast the admin client", async () => {
+    const source = await readFile("netlify/functions/auth-continuation-create.ts", "utf8");
+    expect(source).not.toMatch(/as unknown as/);
+    expect(source).toMatch(/createAdminSupabaseClient\(\)/);
+    expect(source).toMatch(/parseCreateAuthContinuationRpcData/);
   });
 });

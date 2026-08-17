@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "./http.js";
 
@@ -55,6 +56,31 @@ describe("requireUser", () => {
       status: 401,
       code: "auth_required",
     });
+  });
+
+  it("C8: returns 401 when getUser user.id is not a non-empty string", async () => {
+    for (const user of [
+      { id: 123, email: "owner@example.com" },
+      { email: "owner@example.com" },
+      { id: "" },
+    ]) {
+      getUserMock.mockResolvedValue({
+        data: { user },
+        error: null,
+      });
+      await expect(requireUser(bearerRequest())).rejects.toMatchObject({
+        status: 401,
+        code: "auth_required",
+      });
+    }
+  });
+
+  it("C8: requireUser does not unchecked-cast getUser data.user", async () => {
+    const source = await readFile("netlify/functions/_shared/auth.ts", "utf8");
+    expect(source).not.toMatch(/\bdata\.user as\b/);
+    expect(source).not.toMatch(/as \{ id: string/);
+    expect(source).not.toMatch(/as unknown as/);
+    expect(source).toMatch(/safeParse/);
   });
 });
 

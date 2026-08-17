@@ -7,6 +7,12 @@ import { getSupabaseAdmin } from "./supabase-admin.js";
 const closedServiceUnavailable = () =>
   new HttpError(503, "request_failed", "処理を完了できませんでした");
 
+// C8: getUser は network 境界。id 必須、email は user.email のみ（identities は見ない）。
+const supabaseAuthUserSchema = z.object({
+  id: z.string().min(1),
+  email: z.string().nullable().optional(),
+});
+
 async function authenticateBearer(
   request: Request,
 ): Promise<{ userId: string; accessToken: string; email: string | null | undefined }> {
@@ -22,17 +28,17 @@ async function authenticateBearer(
   if (error !== null) {
     throw new HttpError(401, "auth_required", "ログインが必要です");
   }
-  // SDK 型は error===null で user 非 null だが、実ランタイムの null user を 401 に閉じる
-  // （TypeError→500 の形状差を作らない）
-  const user = data.user as { id: string; email?: string | null } | null | undefined;
-  if (user == null || typeof user.id !== "string" || user.id === "") {
+  // SDK 型は error===null で user 非 null だが、実ランタイムの null / 形崩れは Zod で 401 に閉じる
+  // （TypeError→500 の形状差を作らない。unchecked cast はしない）
+  const parsed = supabaseAuthUserSchema.safeParse(data.user);
+  if (!parsed.success) {
     throw new HttpError(401, "auth_required", "ログインが必要です");
   }
   // identities[].identity_data.email は使わない（user.email のみが正）
   return {
-    userId: user.id,
+    userId: parsed.data.id,
     accessToken,
-    email: user.email,
+    email: parsed.data.email,
   };
 }
 

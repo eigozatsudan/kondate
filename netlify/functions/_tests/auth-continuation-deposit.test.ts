@@ -1,5 +1,10 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import { config, createHandler } from "../auth-continuation-deposit.js";
+import {
+  config,
+  createHandler,
+  parseDepositAuthContinuationRpcData,
+} from "../auth-continuation-deposit.js";
 import {
   decryptContinuationCode,
   encryptContinuationCode,
@@ -352,5 +357,20 @@ describe("auth continuation deposit", () => {
     const raw = JSON.stringify(body);
     expect(raw).not.toMatch(/ciphertext|encrypted/iu);
     expect(raw).not.toContain(Buffer.from(store.row!.ciphertext).toString("hex"));
+  });
+
+  it("C7: parses generated deposit RPC boolean with Zod and rejects drift", () => {
+    expect(parseDepositAuthContinuationRpcData(true)).toBe(true);
+    expect(parseDepositAuthContinuationRpcData(false)).toBe(false);
+    expect(parseDepositAuthContinuationRpcData(null)).toBe(false);
+    expect(parseDepositAuthContinuationRpcData("true")).toBe(false);
+    expect(parseDepositAuthContinuationRpcData(1)).toBe(false);
+  });
+
+  it("C7: production deposit transition does not unchecked-cast the admin client", async () => {
+    const source = await readFile("netlify/functions/auth-continuation-deposit.ts", "utf8");
+    expect(source).not.toMatch(/as unknown as/);
+    expect(source).toMatch(/createAdminSupabaseClient\(\)/);
+    expect(source).toMatch(/parseDepositAuthContinuationRpcData/);
   });
 });

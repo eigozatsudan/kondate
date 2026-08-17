@@ -50,28 +50,22 @@ type DepositHandlerDependencies = {
   deposit: DepositTransition;
 };
 
-type DepositRpcClient = {
-  rpc(
-    functionName: "deposit_auth_continuation",
-    args: {
-      p_id: string;
-      p_state_hash: string;
-      p_origin: string;
-      p_ciphertext: string;
-      p_iv: string;
-      p_now: string;
-      p_secret_hash?: string;
-    },
-  ): Promise<{ data: boolean | null; error: unknown }>;
-};
-
 function toBytea(value: Uint8Array): string {
   return `\\x${Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
+/**
+ * C7: deposit_auth_continuation の生成型 Returns（boolean）を実行時検証する。
+ * true 以外は失敗（handler が unavailable）。
+ */
+export function parseDepositAuthContinuationRpcData(data: unknown): boolean {
+  return z.literal(true).safeParse(data).success;
+}
+
 function createAdminTransition(): DepositTransition {
-  // 型生成は未適用のマイグレーションを含まないため、公開RPCの入出力だけをここで固定する。
-  const client = createAdminSupabaseClient() as unknown as DepositRpcClient;
+  // C7: AdminSupabaseClient は Database 生成型の rpc を正本にする。
+  // 手書き RpcClient への unchecked cast はしない。応答は Zod で fail-closed。
+  const client = createAdminSupabaseClient();
   return async (input) => {
     const { data, error } = await client.rpc("deposit_auth_continuation", {
       p_id: input.id,
@@ -83,7 +77,7 @@ function createAdminTransition(): DepositTransition {
       // C2: 所有者 secret があるときだけ上書き可能な hash を渡す
       ...(input.secretHash === undefined ? {} : { p_secret_hash: toBytea(input.secretHash) }),
     });
-    return error === null && data === true;
+    return error === null && parseDepositAuthContinuationRpcData(data);
   };
 }
 

@@ -66,21 +66,13 @@ type ClaimHandlerDependencies = {
   claim: ClaimTransition;
 };
 
-type ClaimRpcClient = {
-  rpc(
-    functionName: "claim_auth_continuation",
-    args: {
-      p_id: string;
-      p_state_hash: string;
-      p_secret_hash: string;
-      p_origin: string;
-      p_now: string;
-    },
-  ): Promise<{
-    data: Array<{ encrypted_code: string; code_iv: string; return_to: string }> | null;
-    error: unknown;
-  }>;
-};
+// 生成型 Database.Functions.claim_auth_continuation.Returns と同型。
+// C7: rpc data は network/DB 境界なので生成型を信じず Zod で検証する。
+const claimRpcRowSchema = z.object({
+  encrypted_code: z.string(),
+  code_iv: z.string(),
+  return_to: z.string(),
+});
 
 function toBytea(value: Uint8Array): string {
   return `\\x${Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
@@ -112,9 +104,23 @@ export function parseClaimedContinuationRow(row: {
   return { ciphertext, iv, returnTo: row.return_to };
 }
 
+/**
+ * C7: claim_auth_continuation の Returns を実行時検証する。
+ * 行数不正は null（404）。1 行だが列/型不正は gone（410。404 リトライにしない）。
+ */
+export function parseClaimAuthContinuationRpcData(
+  data: unknown,
+): ClaimTransitionResult | "gone" | null {
+  if (!Array.isArray(data) || data.length !== 1) return null;
+  const parsed = claimRpcRowSchema.safeParse(data[0]);
+  if (!parsed.success) return "gone";
+  return parseClaimedContinuationRow(parsed.data);
+}
+
 function createAdminTransition(): ClaimTransition {
-  // 型生成は未適用のマイグレーションを含まないため、公開RPCの入出力だけをここで固定する。
-  const client = createAdminSupabaseClient() as unknown as ClaimRpcClient;
+  // C7: AdminSupabaseClient は Database 生成型の rpc を正本にする。
+  // 手書き RpcClient への unchecked cast はしない。応答は Zod で fail-closed。
+  const client = createAdminSupabaseClient();
   return async (input) => {
     const { data, error } = await client.rpc("claim_auth_continuation", {
       p_id: input.id,
@@ -123,11 +129,9 @@ function createAdminTransition(): ClaimTransition {
       p_origin: input.origin,
       p_now: input.now,
     });
-    const row = data?.[0];
-    // 未存在・binding 失敗・RPC エラー・行数不正は 404（リトライ可）
-    if (error !== null || data === null || row === undefined || data.length !== 1) return null;
-    // 初回/冪等 re-claim とも ciphertext 行が返る。bytea 破損は gone。
-    return parseClaimedContinuationRow(row);
+    // 未存在・binding 失敗・RPC エラーは 404（リトライ可）
+    if (error !== null) return null;
+    return parseClaimAuthContinuationRpcData(data);
   };
 }
 

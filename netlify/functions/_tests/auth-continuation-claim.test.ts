@@ -1,5 +1,11 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import { config, createHandler, parseClaimedContinuationRow } from "../auth-continuation-claim.js";
+import {
+  config,
+  createHandler,
+  parseClaimAuthContinuationRpcData,
+  parseClaimedContinuationRow,
+} from "../auth-continuation-claim.js";
 import { encryptContinuationCode, sha256 } from "../_shared/auth-continuation-crypto.js";
 
 const ORIGIN = "https://app.test";
@@ -360,5 +366,53 @@ describe("auth continuation claim", () => {
       expect(ok.ciphertext).toEqual(Uint8Array.from([0xde, 0xad, 0xbe, 0xef]));
       expect(ok.iv.byteLength).toBe(12);
     }
+  });
+
+  it("C7: parses generated claim RPC rows with Zod and fail-closes drift", () => {
+    expect(parseClaimAuthContinuationRpcData(null)).toBeNull();
+    expect(parseClaimAuthContinuationRpcData([])).toBeNull();
+    expect(
+      parseClaimAuthContinuationRpcData([
+        {
+          encrypted_code: "\\xdeadbeef",
+          code_iv: "\\x000000000000000000000000",
+          return_to: RETURN_TO,
+        },
+        {
+          encrypted_code: "\\xdeadbeef",
+          code_iv: "\\x000000000000000000000000",
+          return_to: RETURN_TO,
+        },
+      ]),
+    ).toBeNull();
+    // 1 行だが列が無い / 型が違うのは payload 破損 → gone（410。404 リトライにしない）
+    expect(parseClaimAuthContinuationRpcData([{}])).toBe("gone");
+    expect(
+      parseClaimAuthContinuationRpcData([
+        { encrypted_code: 1, code_iv: "\\x000000000000000000000000", return_to: RETURN_TO },
+      ]),
+    ).toBe("gone");
+
+    const ok = parseClaimAuthContinuationRpcData([
+      {
+        encrypted_code: "\\xdeadbeef",
+        code_iv: "\\x000000000000000000000000",
+        return_to: RETURN_TO,
+      },
+    ]);
+    expect(ok).not.toBe("gone");
+    expect(ok).not.toBeNull();
+    if (ok !== "gone" && ok !== null) {
+      expect(ok.returnTo).toBe(RETURN_TO);
+      expect(ok.ciphertext).toEqual(Uint8Array.from([0xde, 0xad, 0xbe, 0xef]));
+      expect(ok.iv.byteLength).toBe(12);
+    }
+  });
+
+  it("C7: production claim transition does not unchecked-cast the admin client", async () => {
+    const source = await readFile("netlify/functions/auth-continuation-claim.ts", "utf8");
+    expect(source).not.toMatch(/as unknown as/);
+    expect(source).toMatch(/createAdminSupabaseClient\(\)/);
+    expect(source).toMatch(/parseClaimAuthContinuationRpcData/);
   });
 });

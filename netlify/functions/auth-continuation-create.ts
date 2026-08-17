@@ -61,27 +61,35 @@ type CreateHandlerDependencies = {
   create: CreateTransition;
 };
 
-type CreateRpcClient = {
-  rpc(
-    functionName: "create_auth_continuation",
-    args: {
-      p_state_hash: string;
-      p_secret_hash: string;
-      p_origin: string;
-      p_return_to: string;
-      p_now: string;
-      p_ttl_seconds: number;
-    },
-  ): Promise<{ data: Array<{ id: string; expires_at: string }> | null; error: unknown }>;
-};
+// 生成型 Database.Functions.create_auth_continuation.Returns と同型。
+// C7: rpc data は network/DB 境界なので生成型を信じず Zod で検証する。
+const createRpcRowSchema = z.object({
+  id: z.string(),
+  expires_at: z.string(),
+});
 
 function toBytea(value: Uint8Array): string {
   return `\\x${Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
+/**
+ * C7: create_auth_continuation の Returns を実行時検証する。
+ * 行数不正・列欠落は null（handler が unavailable）。
+ */
+export function parseCreateAuthContinuationRpcData(
+  data: unknown,
+): { id: string; expiresAt: string } | null {
+  const parsed = z.array(createRpcRowSchema).safeParse(data);
+  if (!parsed.success || parsed.data.length !== 1) return null;
+  const row = parsed.data[0];
+  if (row === undefined) return null;
+  return { id: row.id, expiresAt: row.expires_at };
+}
+
 function createAdminTransition(): CreateTransition {
-  // 型生成は未適用のマイグレーションを含まないため、公開RPCの入出力だけをここで固定する。
-  const client = createAdminSupabaseClient() as unknown as CreateRpcClient;
+  // C7: AdminSupabaseClient は Database 生成型の rpc を正本にする。
+  // 手書き RpcClient への unchecked cast はしない。応答は Zod で fail-closed。
+  const client = createAdminSupabaseClient();
   return async (input) => {
     const { data, error } = await client.rpc("create_auth_continuation", {
       p_state_hash: toBytea(input.stateHash),
@@ -91,9 +99,8 @@ function createAdminTransition(): CreateTransition {
       p_now: input.now,
       p_ttl_seconds: input.ttlSeconds,
     });
-    const row = data?.[0];
-    if (error !== null || data === null || row === undefined || data.length !== 1) return null;
-    return { id: row.id, expiresAt: row.expires_at };
+    if (error !== null) return null;
+    return parseCreateAuthContinuationRpcData(data);
   };
 }
 
