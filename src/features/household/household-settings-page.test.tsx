@@ -3468,16 +3468,51 @@ it("caps the display name at 30 characters and shows a Japanese alert for 31", a
   expect(updateMember).not.toHaveBeenCalled();
 });
 
-it("shows a Japanese alert for a whitespace-only display name", async () => {
-  // H-R1: 空白のみは value || null で残り、trim 後 min(1) が英語 alert になる
+it("persists a whitespace-only display name as null", async () => {
+  // H-R1: settings 入力も onboarding と同じ正規化。空白のみは未設定（null）として persist し、
+  // schema 全体失敗で後続のアレルギー/年齢 PATCH が落ちないようにする。
   const { updateMember } = await renderSettings();
 
   fireEvent.change(await screen.findByLabelText("呼び名"), { target: { value: "   " } });
 
   await waitFor(() => {
-    expect(screen.getByRole("alert")).toHaveTextContent("呼び名は1文字以上で入力してください");
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ display_name: null }),
+      expect.any(String),
+    );
   });
-  expect(updateMember).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("呼び名")).toHaveValue("");
+});
+
+it("H-R1: persists allergy change after settings whitespace-only display name input", async () => {
+  // settings 上で "   " を打った直後のアレルギー変更は、displayName が空白のままだと
+  // schema 全体失敗で persist しない。正規化して null なら両方 persist する。
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({
+      ...member,
+      display_name: patch.display_name ?? null,
+      allergy_status: patch.allergy_status ?? member.allergy_status,
+    }),
+  );
+  await renderSettings({ updateMember });
+
+  fireEvent.change(await screen.findByLabelText("呼び名"), { target: { value: "   " } });
+  await userEvent.selectOptions(await screen.findByLabelText("アレルギーの確認"), "unconfirmed");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        allergy_status: "unconfirmed",
+        display_name: null,
+      }),
+      expect.any(String),
+    );
+  });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("unconfirmed");
 });
 
 it("H1: persists allergy change when DB display_name is whitespace-only", async () => {

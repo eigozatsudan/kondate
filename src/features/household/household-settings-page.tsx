@@ -48,6 +48,7 @@ import { defaultsForAgeBand } from "./household-defaults";
 import {
   householdSettingsSchema,
   householdSettingsValueFromDbRow,
+  normalizeOptionalDisplayName,
   toHouseholdFieldErrors,
   type HouseholdFieldErrors,
   type HouseholdSettingsFormValue,
@@ -1820,7 +1821,11 @@ export function HouseholdSettingsForm({
                 // H10: onboarding と同じ 30 字。超分は schema が日本語で拒否する
                 maxLength={30}
                 onChange={(event) => {
-                  updateAndSave({ displayName: event.target.value || null });
+                  // H-R1: "   " は truthy のため value || null だと schema 全体が落ち、
+                  // 直後のアレルギー/年齢 PATCH が persist しない。空白のみは未設定（null）。
+                  updateAndSave({
+                    displayName: normalizeOptionalDisplayName(event.target.value),
+                  });
                 }}
               />
             </label>
