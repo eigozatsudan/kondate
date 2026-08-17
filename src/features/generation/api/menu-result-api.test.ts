@@ -298,8 +298,8 @@ function rawMenuRow() {
         requirement_safety_fingerprint: "a".repeat(64),
         is_current: true,
         confirmation_status: "pending",
-        confirmed_at: null,
-        confirmed_by: null,
+        confirmed_at: null as string | null,
+        confirmed_by: null as string | null,
         allergen_catalog: { display_name: "小麦" },
       },
       // 同一 sourceId/allergen/member でも path と snapshot が異なれば別警告
@@ -315,8 +315,8 @@ function rawMenuRow() {
         requirement_safety_fingerprint: "a".repeat(64),
         is_current: true,
         confirmation_status: "pending",
-        confirmed_at: null,
-        confirmed_by: null,
+        confirmed_at: null as string | null,
+        confirmed_by: null as string | null,
         allergen_catalog: { display_name: "小麦" },
       },
     ],
@@ -326,6 +326,7 @@ function rawMenuRow() {
 function mockClient(options: {
   menu: { data: unknown; error: unknown };
   pantryRows?: readonly Record<string, unknown>[];
+  pantryError?: { message: string } | null;
   /** get_menu_generation_model RPC の戻り。省略時は null（モデル未記録） */
   generationModel?: { data: unknown; error: unknown };
 }) {
@@ -334,7 +335,15 @@ function mockClient(options: {
     maybeSingle: vi.fn(() => Promise.resolve(options.menu)),
   };
   const pantryChain = {
-    in: vi.fn(() => Promise.resolve({ data: options.pantryRows ?? [], error: null })),
+    in: vi.fn(() =>
+      Promise.resolve({
+        data:
+          options.pantryError === undefined || options.pantryError === null
+            ? (options.pantryRows ?? [])
+            : null,
+        error: options.pantryError ?? null,
+      }),
+    ),
   };
   const from = vi.fn((table: string) => {
     if (table === "pantry_items") {
@@ -527,6 +536,7 @@ describe("getMenuResult", () => {
           openedState: "opened",
           updatedAt: "2026-07-11T00:00:00.000Z",
         },
+        liveUnavailable: false,
       },
     ]);
     // モデル未記録（RPC null）は generationModelId null
@@ -586,8 +596,98 @@ describe("getMenuResult", () => {
         plannedQuantity: 1,
         unit: "個",
         currentPantryRow: null,
+        liveUnavailable: false,
       },
     ]);
+  });
+
+  it("G26: live pantry SELECT error is not treated as deleted", async () => {
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({
+        menu: { data: rawMenuRow(), error: null },
+        pantryError: { message: "temporary pantry outage" },
+      }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.pantryPostCookTargets).toEqual([
+      {
+        selectionId: PANTRY_SELECTION_USED_ID,
+        pantryItemId: PANTRY_ITEM_USED_ID,
+        pantryItemName: "ごはん",
+        plannedQuantity: 300,
+        unit: "g",
+        currentPantryRow: null,
+        liveUnavailable: true,
+      },
+    ]);
+  });
+
+  it("G7: drops archived confirmations and reads is_current", async () => {
+    const row = rawMenuRow();
+    row.menu_label_confirmations.push({
+      id: "27000000-0000-4000-8000-000000000099",
+      source_type: "ingredient",
+      source_id: INGREDIENT1_ID,
+      source_path: "dishes.0.ingredients.0.name",
+      source_text_snapshot: "ごはん",
+      allergen_id: "wheat",
+      anonymous_member_ref: "member_1",
+      dictionary_version: "jp-caa-2026-04.v1",
+      requirement_safety_fingerprint: "b".repeat(64),
+      is_current: false,
+      confirmation_status: "confirmed",
+      confirmed_at: "2026-07-01T00:00:00.000Z",
+      confirmed_by: "10000000-0000-4000-8000-000000000001",
+      allergen_catalog: { display_name: "小麦" },
+    });
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.labelConfirmations).toHaveLength(2);
+    expect(result.labelConfirmations.map((item) => item.confirmationId)).toEqual([
+      CONFIRMATION_ROW_ID,
+      CONFIRMATION_ROW_ID_2,
+    ]);
+    expect(result.labelConfirmations.every((item) => item.confirmationStatus === "pending")).toBe(
+      true,
+    );
+  });
+
+  it("G7: filters non-current rows before the 200 confirmation ceiling", async () => {
+    const row = rawMenuRow();
+    const archived = Array.from({ length: 200 }, (_, index) => ({
+      id: `27000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      source_type: "ingredient" as const,
+      source_id: INGREDIENT1_ID,
+      source_path: "dishes.0.ingredients.0.name",
+      source_text_snapshot: "ごはん",
+      allergen_id: "wheat",
+      anonymous_member_ref: "member_1",
+      dictionary_version: "jp-caa-2026-04.v1",
+      requirement_safety_fingerprint: "c".repeat(64),
+      is_current: false,
+      confirmation_status: "confirmed" as const,
+      confirmed_at: "2026-07-01T00:00:00.000Z",
+      confirmed_by: "10000000-0000-4000-8000-000000000001",
+      allergen_catalog: { display_name: "小麦" },
+    }));
+    row.menu_label_confirmations = [...archived, ...row.menu_label_confirmations];
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+    );
+    const result = await getMenuResult(MENU_ID);
+    expect(result.labelConfirmations).toHaveLength(2);
+    expect(result.menu.labelConfirmations).toHaveLength(2);
+  });
+
+  it("G7: Zod parse failure becomes menu_not_found", async () => {
+    const row = rawMenuRow();
+    row.meal_type = "not-a-meal";
+    getBrowserSupabaseClientMock.mockReturnValue(
+      mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+    );
+    await expect(getMenuResult(MENU_ID)).rejects.toThrow("menu_not_found");
   });
 
   it("preference_snapshot.submissionが解析できない場合はsourceSubmissionをnullにする", async () => {

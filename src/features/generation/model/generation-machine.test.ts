@@ -177,6 +177,13 @@ describe("generationReducer", () => {
     },
   );
 
+  it.each(["online", "recover"] as const)(
+    "G28: keeps succeeded phase on %s (no checking thrash)",
+    (type) => {
+      expect(generationReducer(succeeded, { type })).toBe(succeeded);
+    },
+  );
+
   it("G15: offline with previous failed still rechecks on online", () => {
     const offlineFailed: GenerationClientState = {
       phase: "offline",

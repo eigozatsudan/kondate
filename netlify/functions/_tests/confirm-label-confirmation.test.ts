@@ -4,7 +4,12 @@ import { confirmLabelConfirmationHandler } from "../confirm-label-confirmation.j
 describe("confirm-label-confirmation", () => {
   const requireUser = vi.fn();
   const rpc = vi.fn();
-  const handler = confirmLabelConfirmationHandler(() => ({ requireUser, rpc }));
+  const lookupConfirmedReplay = vi.fn();
+  const handler = confirmLabelConfirmationHandler(() => ({
+    requireUser,
+    rpc,
+    lookupConfirmedReplay,
+  }));
   const context = {
     params: {
       menuId: "40000000-0000-4000-8000-000000000001",
@@ -15,10 +20,13 @@ describe("confirm-label-confirmation", () => {
   beforeEach(() => {
     requireUser.mockReset();
     rpc.mockReset();
+    lookupConfirmedReplay.mockReset();
     requireUser.mockResolvedValue({
       userId: "10000000-0000-4000-8000-000000000001",
       accessToken: "token",
     });
+    // 既定は replay 無し。empty RPC は従来どおり 404。
+    lookupConfirmedReplay.mockResolvedValue({ data: null, error: null });
   });
 
   it("rejects non-POST methods", async () => {
@@ -160,6 +168,68 @@ describe("confirm-label-confirmation", () => {
       p_menu_id: "40000000-0000-4000-8000-000000000001",
       p_confirmation_id: "48000000-0000-4000-8000-000000000001",
       p_expected_safety_fingerprint: "stale-fingerprint",
+    });
+  });
+
+  it("G6: replays a same-body confirmed current row as 200", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    lookupConfirmedReplay.mockResolvedValue({
+      data: {
+        id: "48000000-0000-4000-8000-000000000001",
+        confirmation_status: "confirmed",
+        confirmed_at: "2026-07-11T00:00:00.000Z",
+        confirmed_by: "10000000-0000-4000-8000-000000000001",
+      },
+      error: null,
+    });
+    const fingerprint = "a".repeat(64);
+    const response = await handler(
+      new Request("http://127.0.0.1/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedSafetyFingerprint: fingerprint }),
+      }),
+      context,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        confirmationId: "48000000-0000-4000-8000-000000000001",
+        confirmationStatus: "confirmed",
+        confirmedBy: "10000000-0000-4000-8000-000000000001",
+      },
+    });
+    expect(lookupConfirmedReplay).toHaveBeenCalledWith("token", {
+      p_menu_id: "40000000-0000-4000-8000-000000000001",
+      p_confirmation_id: "48000000-0000-4000-8000-000000000001",
+      p_expected_safety_fingerprint: fingerprint,
+    });
+  });
+
+  it("G6: does not replay a pending lookup row as success", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    lookupConfirmedReplay.mockResolvedValue({
+      data: {
+        id: "48000000-0000-4000-8000-000000000001",
+        confirmation_status: "pending",
+        confirmed_at: null,
+        confirmed_by: null,
+      },
+      error: null,
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedSafetyFingerprint: "a".repeat(64) }),
+      }),
+      context,
+    );
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "confirmation_not_found" },
     });
   });
 });

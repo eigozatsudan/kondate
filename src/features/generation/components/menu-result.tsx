@@ -473,7 +473,11 @@ export function MenuResult({
                   return (
                     <li key={target.selectionId} className="menu-result-post-cook-item">
                       <strong>{target.pantryItemName}</strong>
-                      {isDeleted || live === null || target.pantryItemId === null ? (
+                      {target.liveUnavailable ? (
+                        <p className="menu-result-post-cook-deleted">
+                          冷蔵庫の最新状態を確認できません
+                        </p>
+                      ) : isDeleted || live === null || target.pantryItemId === null ? (
                         <p className="menu-result-post-cook-deleted">冷蔵庫から削除済み</p>
                       ) : (
                         <>

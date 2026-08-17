@@ -72,6 +72,12 @@ const OFFLINE_RETRY_BASE_MS = 5_000;
 const OFFLINE_RETRY_MAX_MS = 60_000;
 
 /**
+ * G14: 他端末 processing の合成 generation_in_progress を前面タブで再 POST する間隔。
+ * POST IP 40/180s を超えないよう 5s（36/180s）。cancel RPC は足さない。
+ */
+export const GENERATION_IN_PROGRESS_RETRY_MS = 5_000;
+
+/**
  * ok:false 端末失敗を GenerationStatusData failed に載せ替え（issueMessages 正本）。
  * G17: userDailyLimit を Free 3 固定にしない。usage キャッシュがあれば success.limit を採用し、
  * 無ければ planQuota.free をスキーマ充足用フォールバックにする（パネルは userId ありで usage を正とする）。
@@ -604,8 +610,31 @@ export function useGenerationRecovery(
         queryKey: usageTodayQueryKey(userId, jstDayKey()),
       });
     }
+    // G14: 合成 in_progress は台帳行が無い。GET は not_started なので POST を遅延再送する。
+    if (state.phase === "failed" && state.data.error.code === "generation_in_progress") {
+      const pending = read();
+      const waitToken = lifecycleRef.current;
+      if (pending !== null && waitToken !== null && isCurrent(waitToken)) {
+        const timer = window.setTimeout(() => {
+          void submitWithToken(waitToken, pending);
+        }, GENERATION_IN_PROGRESS_RETRY_MS);
+        return () => {
+          window.clearTimeout(timer);
+        };
+      }
+    }
     return undefined;
-  }, [isActiveToken, isCurrent, navigate, queryClient, retryStatus, state, userId]);
+  }, [
+    isActiveToken,
+    isCurrent,
+    navigate,
+    queryClient,
+    read,
+    retryStatus,
+    state,
+    submitWithToken,
+    userId,
+  ]);
 
   useEffect(() => {
     // イベント駆動の復旧は「保存済み pending があるときだけ」。
@@ -619,7 +648,13 @@ export function useGenerationRecovery(
       // G15: サーバ終端で pending をメッセージ表示用に保持している間、online /
       // TOKEN_REFRESHED で checking 再入 + status re-fetch すると UI thrash する。
       // サーバ終端は不変なので recheck もしない（processing 中の recover は従来どおり）。
-      if (token !== null && (token.phase === "failed" || token.phase === "constraint_conflict")) {
+      // G28: succeeded も同じ。navigate 前の TOKEN_REFRESHED で checking に戻さない。
+      if (
+        token !== null &&
+        (token.phase === "failed" ||
+          token.phase === "constraint_conflict" ||
+          token.phase === "succeeded")
+      ) {
         return;
       }
       if (token !== null) token.phase = "checking";

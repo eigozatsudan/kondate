@@ -77,48 +77,26 @@ export function buildMenuResultQuery(
     .maybeSingle();
 }
 
+type LivePantryRow = Pick<
+  ReturnType<typeof pantryItemSchema.parse>,
+  "id" | "name" | "quantity" | "unit" | "expiresOn" | "expirationType" | "openedState" | "updatedAt"
+>;
+
 /** used 選択に紐づく live pantry_items を所有者 RLS で読み、mutation version に使う。 */
 async function loadLivePantryRows(
   client: ReturnType<typeof getBrowserSupabaseClient>,
   pantryItemIds: readonly string[],
-): Promise<
-  Map<
-    string,
-    Pick<
-      ReturnType<typeof pantryItemSchema.parse>,
-      | "id"
-      | "name"
-      | "quantity"
-      | "unit"
-      | "expiresOn"
-      | "expirationType"
-      | "openedState"
-      | "updatedAt"
-    >
-  >
-> {
-  const map = new Map<
-    string,
-    Pick<
-      ReturnType<typeof pantryItemSchema.parse>,
-      | "id"
-      | "name"
-      | "quantity"
-      | "unit"
-      | "expiresOn"
-      | "expirationType"
-      | "openedState"
-      | "updatedAt"
-    >
-  >();
-  if (pantryItemIds.length === 0) return map;
+): Promise<{ ok: true; rows: Map<string, LivePantryRow> } | { ok: false }> {
+  const map = new Map<string, LivePantryRow>();
+  if (pantryItemIds.length === 0) return { ok: true, rows: map };
   const { data, error } = await client
     .from("pantry_items")
     .select(
       "id, name, quantity, unit, expires_on, expiration_type, opened_state, updated_at, user_id, created_at",
     )
     .in("id", [...pantryItemIds]);
-  if (error !== null) return map;
+  // G26: query error は空 Map（削除済み）に畳まない。献立本体は返し write だけ閉じる。
+  if (error !== null) return { ok: false };
   for (const row of data) {
     const parsed = pantryItemSchema.safeParse({
       id: row.id,
@@ -144,7 +122,7 @@ async function loadLivePantryRows(
       updatedAt: parsed.data.updatedAt,
     });
   }
-  return map;
+  return { ok: true, rows: map };
 }
 
 export async function getMenuResult(
@@ -219,7 +197,10 @@ export async function getMenuResult(
           instruction: action.instruction,
         })),
     }));
-  const menu = validatedMenuSchema.parse({
+  // H3 / G7: PostgREST の is_current 絞りに加え、万一アーカイブが混入しても
+  // 契約 max(200) 前に落とす。列を読まず isCurrent:true を合成しない。
+  const currentLabelRows = data.menu_label_confirmations.filter((item) => item.is_current);
+  const parsedMenu = validatedMenuSchema.safeParse({
     schemaVersion: data.output_schema_version,
     menuId: data.id,
     mealType: data.meal_type,
@@ -253,7 +234,7 @@ export async function getMenuResult(
       dishIds: [...(pantryDishIds.get(item.id) ?? new Set<string>())],
       unusedReason: item.unused_reason,
     })),
-    labelConfirmations: data.menu_label_confirmations.map((item) => ({
+    labelConfirmations: currentLabelRows.map((item) => ({
       sourceType: item.source_type,
       sourceId: item.source_id,
       sourcePath: item.source_path,
@@ -266,6 +247,8 @@ export async function getMenuResult(
       confirmedBy: item.confirmed_by,
     })),
   });
+  if (!parsedMenu.success) throw new Error("menu_not_found");
+  const menu = parsedMenu.data;
   const memberLabels = new Map(
     [...data.menu_target_members]
       .sort(
@@ -306,11 +289,23 @@ export async function getMenuResult(
   const liveIds = usedSelections
     .map((item) => item.pantry_item_id)
     .filter((id): id is string => id !== null);
-  const liveRows = await loadLivePantryRows(client, liveIds);
+  const liveLoad = await loadLivePantryRows(client, liveIds);
 
   const pantryPostCookTargets: PantryPostCookTarget[] = usedSelections.map((item) => {
     const pantryItemId = item.pantry_item_id;
-    const live = pantryItemId === null ? undefined : liveRows.get(pantryItemId);
+    if (!liveLoad.ok) {
+      // G26: SELECT 失敗は削除済みに畳まない。mutation は currentPantryRow 無しで閉じる。
+      return {
+        selectionId: item.id,
+        pantryItemId,
+        pantryItemName: item.pantry_name_snapshot,
+        plannedQuantity: item.planned_quantity,
+        unit: item.unit,
+        currentPantryRow: null,
+        liveUnavailable: true,
+      };
+    }
+    const live = pantryItemId === null ? undefined : liveLoad.rows.get(pantryItemId);
     // 削除済み・RLS 外は pantryItemId を null に閉じ、mutation 制御を出さない
     if (pantryItemId === null || live === undefined) {
       return {
@@ -320,6 +315,7 @@ export async function getMenuResult(
         plannedQuantity: item.planned_quantity,
         unit: item.unit,
         currentPantryRow: null,
+        liveUnavailable: false,
       };
     }
     return {
@@ -329,6 +325,7 @@ export async function getMenuResult(
       plannedQuantity: item.planned_quantity,
       unit: item.unit,
       currentPantryRow: live,
+      liveUnavailable: false,
     };
   });
 
@@ -375,7 +372,8 @@ export async function getMenuResult(
     isSelected: data.is_selected,
     menu,
     memberLabels: Object.fromEntries(memberLabels),
-    labelConfirmations: data.menu_label_confirmations.map((item) => {
+    labelConfirmations: currentLabelRows.map((item) => {
+      if (!item.is_current) throw new Error("menu_confirmation_mapping_failed");
       const key = [
         item.source_type,
         item.source_id,

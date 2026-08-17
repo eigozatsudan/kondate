@@ -526,6 +526,7 @@ export function makeMenuResultViewModel(
           openedState: "opened",
           updatedAt: "2026-07-11T00:00:00.000Z",
         },
+        liveUnavailable: false,
       },
       {
         selectionId: "65000000-0000-4000-8000-000000000002",
@@ -534,6 +535,7 @@ export function makeMenuResultViewModel(
         plannedQuantity: 1,
         unit: "個",
         currentPantryRow: null,
+        liveUnavailable: false,
       },
     ],
     ...overrides,

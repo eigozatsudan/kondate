@@ -388,6 +388,28 @@ it("renders 44px post-cook controls and deleted state without mutation buttons",
   expect(screen.getByText("冷蔵庫から削除済み")).toBeVisible();
 });
 
+it("G26: live pantry lookup failure is not shown as deleted", () => {
+  const base = makeMenuResultViewModel();
+  const result = {
+    ...base,
+    pantryPostCookTargets: [
+      {
+        selectionId: "65000000-0000-4000-8000-000000000001",
+        pantryItemId: "66000000-0000-4000-8000-000000000001",
+        pantryItemName: "ごはん",
+        plannedQuantity: 300,
+        unit: "g",
+        currentPantryRow: null,
+        liveUnavailable: true,
+      },
+    ],
+  };
+  renderPostCookOpen(result);
+  expect(screen.getByText("冷蔵庫の最新状態を確認できません")).toBeVisible();
+  expect(screen.queryByText("冷蔵庫から削除済み")).toBeNull();
+  expect(screen.queryByRole("button", { name: "使い切った" })).toBeNull();
+});
+
 it("cancels destructive pantry delete without writing", async () => {
   const onDeletePantry = vi.fn(() => Promise.resolve());
   const actions = makeActions({ onDeletePantry });

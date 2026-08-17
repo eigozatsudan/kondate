@@ -20,6 +20,11 @@ export type PantryPostCookTarget = {
     | "openedState"
     | "updatedAt"
   > | null;
+  /**
+   * live pantry SELECT が失敗したとき true。
+   * currentPantryRow === null でも削除済みとみなさず、mutation は出さない（G26）。
+   */
+  liveUnavailable: boolean;
 };
 
 /**

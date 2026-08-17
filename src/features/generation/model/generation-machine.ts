@@ -87,8 +87,14 @@ export function generationReducer(
   if (event.type === "online" || event.type === "recover") {
     // G15: サーバ終端 failed / constraint_conflict はメッセージ表示のため pending を残す。
     // online / TOKEN_REFRESHED 経由の recover で checking に落とすと UI thrash になる。
+    // G28: succeeded も同様。navigate 前の TOKEN_REFRESHED で checking に戻すと
+    // 2 回目 navigate が他タブ pending を消し得る。
     // offline 包み（phase === "offline"）からの online は下の checking へ進む。
-    if (state.phase === "failed" || state.phase === "constraint_conflict") {
+    if (
+      state.phase === "failed" ||
+      state.phase === "constraint_conflict" ||
+      state.phase === "succeeded"
+    ) {
       return state;
     }
     return { phase: "checking", effect: "status" };

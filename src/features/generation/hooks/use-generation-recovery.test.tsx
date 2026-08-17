@@ -83,7 +83,8 @@ vi.mock("../model/generation-machine", async (importOriginal) => {
 });
 
 // モック適用後にフックを import する。
-const { useGenerationRecovery } = await import("./use-generation-recovery");
+const { GENERATION_IN_PROGRESS_RETRY_MS, useGenerationRecovery } =
+  await import("./use-generation-recovery");
 
 function recoveryWrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({
@@ -181,6 +182,22 @@ function failedStatus(idempotencyKey: string): Extract<GenerationStatusData, { s
     idempotencyKey,
     requestId: "50000000-0000-4000-8000-000000000001",
     error: { code: "model_unavailable", message: "利用できません", retryable: true },
+    completedAt: "2026-07-11T00:00:01.000Z",
+    quota,
+  };
+}
+function inProgressStatus(
+  idempotencyKey: string,
+): Extract<GenerationStatusData, { status: "failed" }> {
+  return {
+    status: "failed",
+    idempotencyKey,
+    requestId: "00000000-0000-4000-8000-000000000098",
+    error: {
+      code: "generation_in_progress",
+      message: "別の献立を作成中です。",
+      retryable: true,
+    },
     completedAt: "2026-07-11T00:00:01.000Z",
     quota,
   };
@@ -867,6 +884,86 @@ describe("useGenerationRecovery", () => {
     expect(recovery.result.current.state).toMatchObject(failedState);
     expect(mockStatus).not.toHaveBeenCalled();
     expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
+  });
+
+  it("G28: keeps succeeded UI with pending when TOKEN_REFRESHED fires", async () => {
+    realPendingGeneration.savePendingGeneration(pendingA, storage);
+    mockStatus.mockResolvedValue(succeededA);
+    const recovery = renderHook(
+      () =>
+        useGenerationRecovery({
+          state: succeededState,
+          token: {
+            ownerUserId: USER_ID,
+            idempotencyKey: KEY_A,
+            epoch: 0,
+            phase: "succeeded",
+          },
+        }),
+      { wrapper: recoveryWrapper },
+    );
+    mockStatus.mockClear();
+    mockDispatches.length = 0;
+    navigateMock.mockClear();
+    await act(async () => {
+      emitAuth("TOKEN_REFRESHED", { user: { id: USER_ID } } as Session);
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("succeeded");
+    expect(recovery.result.current.state).toMatchObject(succeededState);
+    expect(mockStatus).not.toHaveBeenCalled();
+    expect(mockDispatches.filter((event) => event.type === "online")).toHaveLength(0);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("G14: retries POST after generation_in_progress while pending remains", async () => {
+    vi.useFakeTimers();
+    mockPost.mockReset();
+    try {
+      mockPost.mockResolvedValueOnce(inProgressStatus(KEY_A)).mockResolvedValueOnce(processingA);
+      const recovery = renderRecoveryAt(idleState, null);
+      await act(() => recovery.result.current.startGeneration(pendingA));
+      expect(recovery.result.current.state.phase).toBe("failed");
+      if (recovery.result.current.state.phase !== "failed") {
+        throw new Error("expected failed");
+      }
+      expect(recovery.result.current.state.data.error.code).toBe("generation_in_progress");
+      expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject(pendingA);
+      expect(mockPost).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(GENERATION_IN_PROGRESS_RETRY_MS - 1);
+      });
+      expect(mockPost).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(mockPost).toHaveBeenCalledTimes(2);
+      expect(recovery.result.current.state.phase).toBe("processing");
+      expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject(pendingA);
+    } finally {
+      vi.clearAllTimers();
+      mockPost.mockReset();
+      vi.useRealTimers();
+    }
+  });
+
+  it("G14: does not auto-retry a non in_progress failed status", async () => {
+    vi.useFakeTimers();
+    mockPost.mockReset();
+    try {
+      mockPost.mockResolvedValueOnce(failedA);
+      const recovery = renderRecoveryAt(idleState, null);
+      await act(() => recovery.result.current.startGeneration(pendingA));
+      expect(recovery.result.current.state.phase).toBe("failed");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(GENERATION_IN_PROGRESS_RETRY_MS * 2);
+      });
+      expect(mockPost).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      mockPost.mockReset();
+      vi.useRealTimers();
+    }
   });
 
   it("G15: keeps constraint_conflict UI with pending when TOKEN_REFRESHED fires", async () => {
