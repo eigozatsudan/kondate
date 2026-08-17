@@ -1003,6 +1003,11 @@ body {
   min-height: 100vh;
   font-size: 16px;
   line-height: var(--leading-body);
+  /*
+   * viewport-fit=cover でステータスバー下に食い込む場合だけ乗る。
+   * apple-mobile-web-app-status-bar-style が default なら 0 のまま。
+   */
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 /* ページ見出しの基本階層。Tailwind 直書きの結果画面は独自 class を優先する。 */
@@ -1732,6 +1737,8 @@ dialog:not([open]) {
  * 背景はセクション tint に連動させず --surface（白）に固定する。
  * tint と同じ色だとタブ面と一体化して「床」が判別しづらい。
  * 半透明＋ blur は使わず不透明にし、safe-area でホームインジケータを避ける。
+ * padding が効く前提は index.html / app.html の viewport-fit=cover。
+ * cover が無いと iOS スタンドアロンでは inset が 0 のまま重なる。
  */
 .bottom-nav {
   position: fixed;

@@ -9,7 +9,7 @@
    * .page-frame の下余白は固定ナビ（56px）前提だが、/ は AppShell の外にあり
    * LP に下ナビは無い。死に余白になるので LP 側で上書きする（設計書 §4.2）。
    */
-  padding-bottom: var(--space-7);
+  padding-bottom: calc(var(--space-7) + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: var(--space-7);

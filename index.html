@@ -2,7 +2,13 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      iOS のホーム画面アプリは viewport-fit が auto だと
+      env(safe-area-inset-bottom) が 0 のままになり、Face ID の
+      ホームインジケータが下タブラベルに重なる。.bottom-nav の
+      padding を効かせるため cover にする。
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#faf9f8" />
     <!-- C8: OAuth callback の code が Referer 経由で外部へ漏れないよう既定を厳しくする -->
     <meta name="referrer" content="strict-origin-when-cross-origin" />
