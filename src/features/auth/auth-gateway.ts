@@ -39,6 +39,8 @@ import {
 import { getPublicEnv, type PublicEnv } from "@/shared/config/public-env";
 import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
 import { IMMEDIATE_CLAIM_TIMEOUT_MS, withTimeout } from "./async-timeout";
+import { EMAIL_OTP_SEND_FAILED } from "./email-otp-copy";
+import { normalizeOtpDigits } from "./otp-digit-field";
 
 /** 互換 re-export（正本は async-timeout.ts） */
 export { IMMEDIATE_CLAIM_TIMEOUT_MS };
@@ -412,6 +414,17 @@ export function dropInflightResumeMapForTests(): void {
 export interface AuthGateway {
   signInWithGoogle(returnTo: string): Promise<void>;
   sendMagicLink(email: string, returnTo: string): Promise<SentMagicLink>;
+  /**
+   * 同じタブの 6 桁メール番号。AuthFlow / Continuation / emailRedirectTo は付けない。
+   */
+  sendEmailOtp(email: string): Promise<{ email: string; resendAvailableAt: string }>;
+  /**
+   * ちょうど 6 桁だけ verifyOtp する。returnTo は返さない（画面が持つ）。
+   */
+  verifyEmailOtp(input: {
+    email: string;
+    token: string;
+  }): Promise<{ kind: "complete" } | { kind: "mismatch" } | { kind: "unavailable" }>;
   completeCallback(url: URL): Promise<AuthCallbackResult>;
   /**
    * token_hash magic のユーザー確認後。verifyOtp(POST) で初めて OTP を消費する。
@@ -419,12 +432,6 @@ export interface AuthGateway {
    */
   confirmMagicLink(input: ConfirmMagicLinkInput): Promise<AuthCallbackResult>;
   resumeFlow(flowId: string): Promise<AuthResumeResult>;
-}
-
-/** verifyOtp の type。magiclink は deprecated だがメールテンプレ互換で受け、email に正規化する。 */
-function normalizeMagicOtpType(value: string | null): "email" | "magiclink" | null {
-  if (value === "email" || value === "magiclink") return value;
-  return null;
 }
 
 /** supabase-js: magiclink type は deprecated。email で magic / signup OTP を扱う。 */
@@ -497,6 +504,15 @@ const localCredentialsSchema = z
 function isExpired(error: AuthError | null, url: URL): boolean {
   const code = error?.code ?? url.searchParams.get("error_code");
   return code === "otp_expired" || code === "otp_disabled" || code === "token_expired";
+}
+
+/**
+ * メール 6 桁確認の GoTrue code 写像。
+ * 不正も期限切れも mismatch。未知は fail-closed で unavailable。サーバ文は出さない。
+ */
+function mapEmailOtpVerifyKind(code: string | undefined): "mismatch" | "unavailable" {
+  if (code === "otp_expired" || code === "token_expired") return "mismatch";
+  return "unavailable";
 }
 
 /**
@@ -641,6 +657,48 @@ async function clearDiscardedExchangeSessionIfStillPresent(
   }
 }
 
+/** leftover 成功印。login-page と同キー。storedAt のみ。番号は載せない。 */
+const EMAIL_OTP_COMPLETED_MARK_KEY = "kondate.auth.emailOtpCompleted";
+/**
+ * leftover 成功印の鮮度。login-page の MAGIC_RESIDUAL_TTL_MS と同値。
+ * leftover が番号成功直後の session を leftover と誤認しないための短寿命印。
+ */
+const EMAIL_OTP_COMPLETED_MARK_TTL_MS = 60_000;
+
+/**
+ * leftover 成功印が 60s 以内か。login-page の reader は循環になるのでここへ複製する。
+ * 期限切れ印は消さない（logout cleanup が正）。読めなければ fresh ではない。
+ */
+function isFreshEmailOtpCompletedMark(nowMs: number = Date.now()): boolean {
+  try {
+    const raw = sessionStorage.getItem(EMAIL_OTP_COMPLETED_MARK_KEY);
+    if (raw === null) return false;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const storedAt = "storedAt" in parsed ? parsed.storedAt : null;
+    if (typeof storedAt !== "string") return false;
+    const storedMs = Date.parse(storedAt);
+    if (Number.isNaN(storedMs)) return false;
+    return nowMs - storedMs <= EMAIL_OTP_COMPLETED_MARK_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+function wipeBrowserSupabasePersistOnly(): void {
+  if (typeof window === "undefined") return;
+  try {
+    clearBrowserSupabaseSessionStorage(window.localStorage);
+  } catch {
+    // best-effort
+  }
+  try {
+    clearBrowserSupabaseSessionStorage(window.sessionStorage);
+  } catch {
+    // best-effort
+  }
+}
+
 /**
  * C-R4: leftover-capable Login が pin 前に leftover persist を落とす。
  * C6 hangWatchdog は persist を消さず leave するため、ここで local signOut しないと
@@ -648,6 +706,10 @@ async function clearDiscardedExchangeSessionIfStillPresent(
  * C5: 任意の勝者 completion があるときは触らない（loserFlowId 空 = 全 completion が sibling）。
  * C-R3: leftover 掃除は 2s で終わる（hang で startGoogle を永久待ちにしない）。
  * C-R2: timeout 後の後着 _removeSession は新規 PKCE verifier を消さない。
+ *
+ * C1: 指紋 null + context ありで clearDiscarded すると persist 無条件 wipe + signOut する。
+ * leftover 専用経路は clearDiscarded を呼ばない（C-R9 の discarded-exchange 意味は変えない）。
+ * 番号成功印・指紋変化では触らない。指紋が取れないときは persist だけ消し signOut しない。
  */
 export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
   client?: BrowserSupabaseClient,
@@ -655,11 +717,44 @@ export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
 ): Promise<void> {
   try {
     const resolved = client ?? getBrowserSupabaseClient();
-    await clearDiscardedExchangeSessionIfStillPresent(resolved, null, {
-      loserFlowId: "",
-      storage,
-      awaitLocalSignOutSettle: true,
-    });
+    if (isFreshEmailOtpCompletedMark()) return;
+
+    const startKey = await probeDiscardedExchangeSessionKey(resolved);
+    if (hasSiblingAuthContinuationCompletion("", storage)) return;
+
+    const currentKey = await probeDiscardedExchangeSessionKey(resolved);
+    if (isFreshEmailOtpCompletedMark()) return;
+    // 番号成功や勝者で session が現れた／変わった。触らない
+    if (currentKey !== startKey) return;
+
+    if (startKey === null) {
+      // 指紋なしの signOut は後勝ち session を殺し得るので persist だけ消す
+      wipeBrowserSupabasePersistOnly();
+      return;
+    }
+
+    // 指紋一致 leftover。wipe 直前にも印・指紋を再確認する（C-R4 はここから signOut し得る）
+    if (isFreshEmailOtpCompletedMark()) return;
+    const beforeWipeKey = await probeDiscardedExchangeSessionKey(resolved);
+    if (beforeWipeKey !== startKey) return;
+
+    wipeBrowserSupabasePersistOnly();
+
+    // persist 掃除中に番号成功が載った／指紋が変わったならメモリ signOut しない
+    if (isFreshEmailOtpCompletedMark()) return;
+    const afterWipeKey = await probeDiscardedExchangeSessionKey(resolved);
+    if (afterWipeKey !== startKey) return;
+
+    if (typeof resolved.auth.signOut === "function") {
+      const signOutPromise = resolved.auth.signOut({ scope: "local" });
+      try {
+        await withTimeout(signOutPromise, 2_000);
+      } catch {
+        // C-R3: 2s で掃除を終わらせ startGoogle を進める。後着は PKCE 保護。
+        const pkceStorage = typeof window !== "undefined" ? window.localStorage : storage;
+        armLeftoverSignOutPkceProtection(signOutPromise, pkceStorage);
+      }
+    }
   } catch {
     // leftover 掃除失敗でも Login は出す（C-R3）。pin は AuthProvider に残し得る。
   }
@@ -1160,6 +1255,49 @@ export function createAuthGateway(
       };
     },
 
+    async sendEmailOtp(email) {
+      // 番号送信は同じタブで完結する。リダイレクト URL も AuthFlow も作らない。
+      const trimmed = email.trim();
+      try {
+        const { error } = await client.auth.signInWithOtp({
+          email: trimmed,
+          options: { shouldCreateUser: true },
+        });
+        if (error !== null) throw new Error("email otp send failed");
+      } catch {
+        throw new Error(EMAIL_OTP_SEND_FAILED);
+      }
+      return {
+        email: trimmed,
+        resendAvailableAt: new Date(
+          Date.now() + getPublicEnv().magicLinkResendSeconds * 1_000,
+        ).toISOString(),
+      };
+    },
+
+    async verifyEmailOtp(input) {
+      // ちょうど 6 桁だけサーバへ送る。7 桁以上は normalize が先頭 6 に切るので切る前も見る。
+      const digits = normalizeOtpDigits(input.token);
+      const unslicedLength = input.token.normalize("NFKC").replace(/\D/gu, "").length;
+      if (digits.length !== 6 || unslicedLength !== 6) {
+        return { kind: "mismatch" };
+      }
+      try {
+        const { error } = await client.auth.verifyOtp({
+          email: input.email,
+          token: digits,
+          type: "email",
+        });
+        if (error === null) {
+          return { kind: "complete" };
+        }
+        return { kind: mapEmailOtpVerifyKind(error.code) };
+      } catch {
+        // 未知・通信失敗も fail-closed。raw GoTrue 文は出さない。
+        return { kind: "unavailable" };
+      }
+    },
+
     async completeCallback(url) {
       // C7: implicit token fragment と未知 fragment は fail-closed。
       // GoTrue PKCE の error-only fragment は許可し、query の error_code 判定へ進む。
@@ -1176,48 +1314,12 @@ export function createAuthGateway(
       const state = url.searchParams.get("state");
       const code = url.searchParams.get("code");
       const tokenHash = url.searchParams.get("token_hash");
-      const otpType = normalizeMagicOtpType(url.searchParams.get("type"));
       const stored = flowId === null ? null : readAuthFlow(flowId, storage);
       const returnTo = sanitizeReturnPath(stored?.returnTo);
-      // token_hash magic: ページ表示では消費しない（プレビュー / スキャナ耐性）。確認 UI へ。
-      // code と同時に載る異常 URL は fail-closed（どちらを優先するか曖昧）。
+      // 旧 token_hash リンクは pending / 確認 UI / verify / deposit しない。
+      // code 同時載りも従来どおり unbound（どちらを優先するか曖昧）。
       if (tokenHash !== null) {
-        if (code !== null) {
-          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
-        }
-        if (flowId === null || otpType === null || tokenHash.length < 16) {
-          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
-        }
-        if (stored !== null && state !== null && state !== stored.state) {
-          return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
-        }
-        // C-ML1: strip 後リロードでも確認できるよう pending に短寿命保存（verify はまだしない）。
-        // secret 無し（WebView）でも state があれば保存し、同タブ再表示に耐える。
-        // C1: awaitingConfirm を付け、他タブ residual が confirm 前に OTP を消費しないようにする。
-        if (state !== null) {
-          const pendingExpiresAtMs =
-            stored?.expiresAt !== undefined
-              ? new Date(stored.expiresAt).getTime()
-              : Date.now() + deps.getPublicEnv().authContinuationTtlMs;
-          writePendingAuthDeposit(
-            flowId,
-            {
-              state,
-              code: tokenHash,
-              expiresAtMs: pendingExpiresAtMs,
-              awaitingConfirm: true,
-            },
-            storage,
-          );
-        }
-        return {
-          kind: "needs_confirmation",
-          flowId,
-          returnTo,
-          tokenHash,
-          otpType,
-          state,
-        };
+        return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
       }
       // C1: code+state があるときは spoofable な URL error_code より deposit を優先する。
       // 攻撃者が有効な code に error_code=otp_expired を足しても short-circuit で捨てない。

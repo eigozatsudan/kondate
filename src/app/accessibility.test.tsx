@@ -263,6 +263,8 @@ describe("route accessibility", () => {
     const gateway: AuthGateway = {
       signInWithGoogle: vi.fn(),
       sendMagicLink: vi.fn(),
+      sendEmailOtp: vi.fn(),
+      verifyEmailOtp: vi.fn(),
       completeCallback: vi.fn(),
       resumeFlow: vi.fn(),
       confirmMagicLink: vi.fn(),
@@ -281,7 +283,7 @@ describe("route accessibility", () => {
     expect(screen.queryByRole("navigation", { name: "メインメニュー" })).toBeNull();
     expect(screen.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
     expect(screen.getByLabelText("メールアドレス")).toBeVisible();
-    expect(screen.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "番号をメールで受け取る" })).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent(/Googleログインがキャンセル/);
   });
 

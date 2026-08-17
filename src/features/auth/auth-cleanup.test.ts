@@ -91,6 +91,21 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(sessionStorage.getItem("kondate.auth.magicSentUi")).toBeNull();
   });
 
+  it("clears leftover email OTP completed mark from sessionStorage", async () => {
+    sessionStorage.setItem(
+      "kondate.auth.emailOtpCompleted",
+      JSON.stringify({ storedAt: new Date().toISOString() }),
+    );
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const client = {
+      auth: { signOut },
+    } as unknown as SupabaseClient<Database>;
+
+    await clearLocalAuthAndDrafts(client);
+
+    expect(sessionStorage.getItem("kondate.auth.emailOtpCompleted")).toBeNull();
+  });
+
   it("uses global signOut when signOutScope is global and falls back to local on failure", async () => {
     const signOut = vi
       .fn()

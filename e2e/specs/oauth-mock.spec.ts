@@ -67,7 +67,7 @@ test(
       timeout: 15_000,
     });
     // SHOW_EMAIL_LOGIN=true: メール導線は既定表示（gateway 維持）
-    await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible({
+    await expect(page.getByRole("button", { name: "番号をメールで受け取る" })).toBeVisible({
       timeout: 15_000,
     });
   },

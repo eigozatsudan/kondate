@@ -51,7 +51,7 @@ test(
     });
     await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
     // SHOW_EMAIL_LOGIN=true: メール導線は既定表示（gateway 維持）
-    await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "番号をメールで受け取る" })).toBeVisible();
 
     // transient code/state がアドレスバーから消えている
     const visible = new URL(page.url());
@@ -113,7 +113,7 @@ test(
     ).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("button", { name: "Googleで続ける" })).toBeVisible();
     // SHOW_EMAIL_LOGIN=true: メール導線は既定表示（gateway 維持）
-    await expect(page.getByRole("button", { name: "ログイン用メールを送る" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "番号をメールで受け取る" })).toBeVisible();
 
     // transient code/state 消去
     const visible = new URL(page.url());
