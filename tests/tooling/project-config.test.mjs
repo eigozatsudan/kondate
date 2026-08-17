@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { rewriteDevDocumentUrl } from "../../scripts/vite-dev-app-html-fallback.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -346,6 +347,47 @@ test("Vite ignores Playwright output directories", async () => {
   const config = await readFile("vite.config.ts", "utf8");
   assert.match(config, /"\*\*\/playwright-report\/\*\*"/u);
   assert.match(config, /"\*\*\/test-results\/\*\*"/u);
+});
+
+test("Vite dev does not let Netlify static/redirects serve the module graph", async () => {
+  const config = await readFile("vite.config.ts", "utf8");
+  // project root を static にすると /src/main.tsx が生 TS（空 MIME）で返り SPA が白画面になる。
+  assert.match(config, /redirects:\s*\{\s*enabled:\s*false\s*\}/u);
+  assert.match(config, /staticFiles:\s*\{\s*enabled:\s*false\s*\}/u);
+  assert.match(config, /rewriteDevDocumentUrl/u);
+  assert.match(config, /name:\s*"kondate-dev-app-html-fallback"/u);
+});
+
+test("dev document fallback sends app routes to app.html and leaves the LP and modules", () => {
+  const html = "text/html,application/xhtml+xml";
+  assert.equal(
+    rewriteDevDocumentUrl({
+      method: "GET",
+      url: "/login?returnTo=%2Fplanner&emailLogin=1",
+      accept: html,
+    }),
+    "/app.html?returnTo=%2Fplanner&emailLogin=1",
+  );
+  assert.equal(
+    rewriteDevDocumentUrl({ method: "GET", url: "/planner", accept: html }),
+    "/app.html",
+  );
+  assert.equal(rewriteDevDocumentUrl({ method: "GET", url: "/", accept: html }), null);
+  assert.equal(rewriteDevDocumentUrl({ method: "GET", url: "/index.html", accept: html }), null);
+  assert.equal(rewriteDevDocumentUrl({ method: "GET", url: "/src/main.tsx", accept: "*/*" }), null);
+  assert.equal(rewriteDevDocumentUrl({ method: "GET", url: "/@vite/client", accept: "*/*" }), null);
+  assert.equal(
+    rewriteDevDocumentUrl({ method: "POST", url: "/api/auth/continuations", accept: html }),
+    null,
+  );
+  assert.equal(
+    rewriteDevDocumentUrl({ method: "GET", url: "/api/emergency-menus", accept: html }),
+    null,
+  );
+  assert.equal(
+    rewriteDevDocumentUrl({ method: "GET", url: "/manifest.webmanifest", accept: html }),
+    null,
+  );
 });
 
 test("Vite build emits the allowlist service worker via the kondate plugin", async () => {
