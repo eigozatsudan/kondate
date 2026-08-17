@@ -6,7 +6,7 @@ import {
   householdSafetyChangedEvent,
   householdSafetyRevisionKey,
 } from "@/features/household/household-queries";
-import type { RevalidationResult } from "../api/revalidation-api";
+import { RevalidationApiError, type RevalidationResult } from "../api/revalidation-api";
 import { useMenuRevalidation } from "./use-menu-revalidation";
 
 const revalidateMenuMock = vi.hoisted(() => vi.fn());
@@ -377,6 +377,24 @@ describe("useMenuRevalidation", () => {
     });
     expect(result.current.result).toBeUndefined();
     expect(result.current.errorMessage).toMatch(/network|確認できませんでした/u);
+    expect(result.current.errorCode).toBeUndefined();
+  });
+
+  it("HR2: exposes current_target_member_required so history can open the retarget escape", async () => {
+    // 生存ターゲット 0 は 422 のまま（silent valid 回避）。code だけ UI の公式 escape に渡す。
+    revalidateMenuMock.mockRejectedValue(
+      new RevalidationApiError(
+        "current_target_member_required",
+        "現在の家族を1人以上選んでください",
+      ),
+    );
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("error");
+    });
+    expect(result.current.result).toBeUndefined();
+    expect(result.current.errorMessage).toBe("現在の家族を1人以上選んでください");
+    expect(result.current.errorCode).toBe("current_target_member_required");
   });
 
   it("hard recheck network failure ends in error without reopening prior valid", async () => {
@@ -399,6 +417,7 @@ describe("useMenuRevalidation", () => {
     });
     expect(result.current.result).toBeUndefined();
     expect(result.current.errorMessage).toMatch(/network|確認できませんでした/u);
+    expect(result.current.errorCode).toBeUndefined();
   });
 
   it("soft in-flight then hard safety event drops to checking without prior result", async () => {

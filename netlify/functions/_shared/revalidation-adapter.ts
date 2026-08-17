@@ -9,6 +9,7 @@ import {
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import { evaluateFoodSafetyRules } from "../../../shared/safety/food-rules.js";
+import { collectGuaranteePhraseIssues } from "../../../shared/safety/guarantee-phrases.js";
 import type {
   GenerationContext,
   HouseholdGenerationContext,
@@ -394,10 +395,12 @@ function detectChangedDetails(
  * invalid ではなく changedDetails に閉じる。
  *
  * residual-intentional (adversarial HR7): mount 再検証は allergen / food-rules /
- * pantry 名 / member status + changedDetails の subset。再生成入口は
+ * pantry 名 / member status / 保証フレーズ + changedDetails の subset。再生成入口は
  * validateGeneratedMenu full（adaptation 全員一致・portion/spice/ease hard 等）。
  * 経路ごとにゲート集合が違う dual-validator は意図的（履歴 CTA を full まで
  * 揃えると誤 invalid が増え、full を緩めると再生成安全性が落ちる）。
+ * 保証フレーズだけは endorsement / CTA を閉じる（「確認しました」と「安全です」を
+ * 並べない）。再生成ソース関門の checkGuaranteePhrases:false（G2）は別経路。
  * subset ok でも再生成が 422 になり得る residual はサーバ fail-closed で受ける。
  */
 export async function validateStoredMenuCurrentSafety(input: {
@@ -447,7 +450,15 @@ export async function validateStoredMenuCurrentSafety(input: {
   });
   const foodIssues = evaluateFoodSafetyRules(candidate, safety);
   const pantryIssues = scanPantryNameSnapshotIssues(candidate, safety, stored);
-  const issues: MenuValidationIssue[] = [...allergenResult.issues, ...foodIssues, ...pantryIssues];
+  // HR1: 保存本文の保証句は allergen が空でも endorsement しない。
+  // 射影後 candidate だけを見る（削除済みメンバーの残渣で false-invalid しない）。
+  const guaranteeIssues = collectGuaranteePhraseIssues(candidate);
+  const issues: MenuValidationIssue[] = [
+    ...allergenResult.issues,
+    ...foodIssues,
+    ...pantryIssues,
+    ...guaranteeIssues,
+  ];
 
   for (const member of safety.members) {
     if (member.allergyStatus === "unconfirmed") {

@@ -10,6 +10,11 @@ export type MenuDetailRevalidationView = {
   phase: RevalidationPhaseName;
   result?: RevalidationResult;
   errorMessage?: string;
+  /**
+   * phase=error のときだけ。RevalidationApiError.code。
+   * HR2: 生存ターゲット 0 の 422 は公式 retarget escape を開ける判定に使う。
+   */
+  errorCode?: string;
   /** soft 再検査飛行中。省略時は false（テスト注入互換） */
   isSoftRechecking?: boolean;
   /**

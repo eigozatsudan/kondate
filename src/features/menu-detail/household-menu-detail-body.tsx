@@ -114,6 +114,7 @@ export function HouseholdMenuDetailBody({
     phase: live.phase,
     ...(live.result !== undefined ? { result: live.result } : {}),
     ...(live.errorMessage !== undefined ? { errorMessage: live.errorMessage } : {}),
+    ...(live.errorCode !== undefined ? { errorCode: live.errorCode } : {}),
     isSoftRechecking: live.isSoftRechecking,
     isOfflineHold: live.isOfflineHold,
     refetch: () => {
@@ -195,22 +196,27 @@ export function HouseholdMenuDetailBody({
   // 残っても、最新値で RPC を止める（primary / 補助採用の両方）
   const actionsEnabledRef = useRef(actionsEnabled);
   actionsEnabledRef.current = actionsEnabled;
-  // HR4: retarget は checking/error 中は閉じる。checked なら invalid でも許可
+  // HR4: retarget は checking 中は閉じる。checked なら invalid でも許可
   // （使えない献立から条件を変えて作り直す escape hatch）。accept/regen は actionsEnabled。
   // soft 飛行中も retarget は許可（条件変更の escape を閉じない）。
-  const retargetEnabled = revalidation.phase === "checked";
+  // HR2: 生存ターゲット 0 は 422 のまま（silent valid 回避）。この code だけ公式
+  // escape（createPlannerDraftFromMenu で audience 再開）を error 面から開ける。
+  const retargetEnabled =
+    revalidation.phase === "checked" ||
+    (revalidation.phase === "error" && revalidation.errorCode === "current_target_member_required");
   const canUpdatePostCook = result.pantryPostCookTargets.length > 0;
 
   // D-M7: 安全再検査で操作が閉じたらシート・在庫ダイアログも閉じる（開いたまま送信して unhandled reject しない）
   // soft 飛行中も actionsEnabled=false でシートを閉じる（HR1）。
+  // HR3: pantryGateReady が落ちてもシートを残すと stale 送信→reserve 後 422 になる。
   useEffect(() => {
-    if (!actionsEnabled && sheetMode !== null) {
+    if ((!actionsEnabled || !pantryGateReady) && sheetMode !== null) {
       setSheetMode(null);
     }
     if (!actionsEnabled && postCookOpen) {
       setPostCookOpen(false);
     }
-  }, [actionsEnabled, postCookOpen, sheetMode]);
+  }, [actionsEnabled, pantryGateReady, postCookOpen, sheetMode]);
 
   // 結果画面と同等: 買い物は献立再検証と買い物ゲートの両方が通るまで組み立てない
   const shoppingList = useShoppingList();
@@ -654,6 +660,8 @@ export function HouseholdMenuDetailBody({
   }, [revalidation.result]);
 
   const onSubmitReason = async (value: RegenerationReasonInput) => {
+    // HR3: pantry 欠落後も start* は pantry を見ない。pending を書く前にここで閉じる。
+    if (!actionsEnabled || !pantryGateReady) return;
     if (sheetMode === "dish") {
       if (dishIdForRegen === null) return;
       await regeneration.startDish(dishIdForRegen, value);
@@ -664,7 +672,8 @@ export function HouseholdMenuDetailBody({
   };
 
   const onRetarget = async () => {
-    // HR4: checking/error 中は下書き上書きを始めない
+    // HR4 / HR2: checking 中と generic error は下書き上書きを始めない。
+    // 生存 0 の 422 だけは公式 escape として許可する。
     if (!retargetEnabled || result.sourceSubmission === null || userId === undefined) return;
     setRetargetError(null);
     setRetargetPending(true);
@@ -1005,7 +1014,7 @@ export function HouseholdMenuDetailBody({
           <RegenerationSheet
             targetMode="household"
             usage={usageView}
-            actionsEnabled={actionsEnabled}
+            actionsEnabled={actionsEnabled && pantryGateReady}
             expiredPantryItems={expiredPantryItems}
             onSubmit={onSubmitReason}
             onCancel={() => {

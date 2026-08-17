@@ -17,6 +17,7 @@ import {
   householdSafetyChangedEvent,
   householdSafetyRevisionKey,
 } from "@/features/household/household-queries";
+import { pantryKeys } from "@/features/pantry/pantry-api";
 import { pendingShoppingCommandStorageKey } from "@/features/shopping/api/shopping-api";
 import type { RevalidationResult } from "../api/revalidation-api";
 import { HistoryDetailPage, type HistoryDetailRevalidationView } from "./history-detail-page";
@@ -93,7 +94,9 @@ vi.mock("@/features/shopping/api/shopping-api", async (importOriginal) => {
 });
 // 冷蔵庫 CRUD は Supabase client 境界を mock し、actions 到達だけを固定する。
 // HR-I1: listPantryItems も success に固定し、再生成 CTA が pending/error で塞がらないようにする。
-const listPantryItemsMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])));
+const listPantryItemsMock = vi.hoisted(() =>
+  vi.fn((): Promise<import("@shared/contracts/pantry").PantryItem[]> => Promise.resolve([])),
+);
 vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/features/pantry/pantry-api")>();
   return {
@@ -797,6 +800,126 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByRole("button", { name: "条件を変えて作り直す" })).toBeEnabled();
     // accept は invalid で閉じたまま
     expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
+  });
+
+  it("HR1: leftover guarantee phrase does not endorse the menu or open CTAs", async () => {
+    // subset invalid なら gateOpen が閉じ、料理本文の「安全です」も出さない。
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: regenerableSubmission,
+      }),
+    );
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "invalid",
+          issues: [
+            {
+              code: "invalid_menu_structure",
+              path: "dishes.0.description",
+              message: "利用者向け本文に安全保証の表現は書けません",
+            },
+          ],
+        },
+      },
+    });
+    expect(await screen.findByText("この献立の対象家族の設定では利用できません")).toBeVisible();
+    expect(screen.getByText("利用者向け本文に安全保証の表現は書けません")).toBeVisible();
+    expect(screen.queryByText("この献立の対象家族の設定で確認しました")).toBeNull();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "条件を変えて作り直す" })).toBeEnabled();
+  });
+
+  it("HR2: enables retarget on current_target_member_required while keeping accept closed", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: regenerableSubmission,
+      }),
+    );
+    renderHistoryDetail({
+      revalidation: {
+        phase: "error",
+        errorMessage: "現在の家族を1人以上選んでください",
+        errorCode: "current_target_member_required",
+      },
+    });
+    expect(await screen.findByText("現在の家族を1人以上選んでください")).toBeVisible();
+    expect(screen.getByRole("button", { name: "もう一度確認" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "条件を変えて作り直す" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
+  });
+
+  it("HR2: keeps retarget disabled on a generic revalidation error", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: regenerableSubmission,
+      }),
+    );
+    renderHistoryDetail({
+      revalidation: {
+        phase: "error",
+        errorMessage: "確認できませんでした",
+        errorCode: "request_failed",
+      },
+    });
+    expect(await screen.findByText("確認できませんでした")).toBeVisible();
+    expect(screen.getByRole("button", { name: "条件を変えて作り直す" })).toBeDisabled();
+  });
+
+  it("HR3: closes regenerate sheet when live pantry selection disappears", async () => {
+    const pantryItemId = "66000000-0000-4000-8000-000000000010";
+    const livePantryItem = {
+      id: pantryItemId,
+      userId: USER_ID,
+      name: "ごはん",
+      quantity: 200,
+      unit: "g",
+      expiresOn: "2026-12-01",
+      expirationType: "best_before" as const,
+      openedState: "unopened" as const,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    };
+    listPantryItemsMock.mockResolvedValue([livePantryItem]);
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: {
+          ...regenerableSubmission,
+          pantrySelections: [{ pantryItemId, priority: "prefer_use" }],
+        },
+      }),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    renderHistoryDetail({
+      queryClient,
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" }));
+    expect(screen.getByRole("dialog", { name: "どのように変えますか？" })).toBeVisible();
+
+    act(() => {
+      queryClient.setQueryData(pantryKeys.list(USER_ID), []);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "どのように変えますか？" })).toBeNull();
+    });
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
+    expect(
+      screen.getByText("作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。"),
+    ).toBeVisible();
   });
 
   it("wires shopping create sheet and fridge tip when household actions are enabled", async () => {

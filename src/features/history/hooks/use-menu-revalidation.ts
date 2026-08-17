@@ -8,7 +8,11 @@ import {
   subscribeHouseholdSafetyBroadcast,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
-import { revalidateMenu, type RevalidationResult } from "../api/revalidation-api";
+import {
+  revalidateMenu,
+  RevalidationApiError,
+  type RevalidationResult,
+} from "../api/revalidation-api";
 
 export type RevalidationPhaseName = "checking" | "checked" | "error";
 
@@ -248,6 +252,10 @@ export function useMenuRevalidation(menuId: string) {
       : query.error instanceof Error
         ? query.error.message
         : "この献立の対象家族の設定で確認できませんでした";
+  // HR2: 生存 0 の 422 は phase=error のまま。code だけ公式 escape 判定に渡す。
+  // ネットワーク失敗など generic Error は code 無し（retarget を開かない）。
+  const errorCode =
+    phase === "error" && query.error instanceof RevalidationApiError ? query.error.code : undefined;
 
   const refetch = useCallback(() => {
     // エラー画面の「もう一度確認」は hard と同型（操作再開前に閉じたゲートを取り直す）。
@@ -272,6 +280,7 @@ export function useMenuRevalidation(menuId: string) {
     phase,
     result: phase === "checked" ? query.data : undefined,
     errorMessage: phase === "error" ? errorMessage : undefined,
+    errorCode,
     isSoftRechecking,
     /** HR1: offline hold 中。UI は shopping gate と同型の接続誘導を出す */
     isOfflineHold: offlineHoldActive,

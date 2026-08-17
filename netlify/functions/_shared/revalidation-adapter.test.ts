@@ -578,6 +578,52 @@ describe("validateStoredMenuCurrentSafety", () => {
     expect(loadCurrentSafetyContext).not.toHaveBeenCalled();
   });
 
+  it("HR1: leftover guarantee phrase fails mount revalidation without endorsing current safety", async () => {
+    // 生成時ゲートをすり抜けた「安全です」は allergen が空でも subset ok にしない。
+    // 履歴 CTA / 「確認しました」を開くと料理本文の保証句と並ぶ。
+    const baseMenu = makeValidatedMenu({
+      menuId: MENU_ID,
+      pantryUsage: [],
+      labelConfirmations: [],
+    });
+    const stored = makeStored({
+      menu: {
+        ...baseMenu,
+        dishes: baseMenu.dishes.map((dish, index) =>
+          index === 0 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
+        ),
+      },
+    });
+    const ownerClient = ownerClientWith({
+      pantry_items: { data: [], error: null },
+      household_members: {
+        data: [
+          {
+            id: LIVE_MEMBER_ID,
+            portion_size: "regular",
+            spice_level: "regular",
+            ease_preferences: [],
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await validateStoredMenuCurrentSafety({
+      ownerClient: ownerClient as never,
+      admin: {} as never,
+      stored,
+      userId: USER_ID,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.filter((issue) => /allergen|allergy/i.test(issue.code))).toEqual([]);
+    expect(result.issues.some((issue) => issue.code === "invalid_menu_structure")).toBe(true);
+    expect(result.issues.some((issue) => issue.message.includes("安全保証"))).toBe(true);
+    // ヒット本文は issue に載せない（PII / 生 AI 出力をログに残さない）
+    expect(JSON.stringify(result.issues)).not.toContain("安全です");
+  });
+
   it("fails closed with current_target_member_required when no surviving targets remain", async () => {
     const stored = makeStored({
       targetMemberIds: [],
