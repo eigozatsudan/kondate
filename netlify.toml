@@ -33,7 +33,7 @@
 
 [[redirects]]
   from = "/*"
-  to = "/index.html"
+  to = "/app.html"
   status = 200
 
 # CSP は context 別に dist/_headers へ emit する（scripts/emit-deploy-headers.mjs）。

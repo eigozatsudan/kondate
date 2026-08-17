@@ -54,7 +54,8 @@ export function buildContentSecurityPolicy(connectSrc) {
 /**
  * Netlify publish 用 _headers 本文。
  * /sw.js は SPA rewrite で HTML に化けないよう JS MIME + no-cache を先に固定し、
- * manifest は application/manifest+json。CSP は /* にだけ載せ、文字列自体は変えない。
+ * manifest は application/manifest+json。/app.html のみ noindex（公開 LP の / は索引対象）。
+ * CSP は /* にだけ載せ、文字列自体は変えない。
  * @param {string} csp
  */
 export function buildHeadersFileContent(csp) {
@@ -64,6 +65,9 @@ export function buildHeadersFileContent(csp) {
 
 /manifest.webmanifest
   Content-Type: application/manifest+json
+
+/app.html
+  X-Robots-Tag: noindex
 
 /*
   Content-Security-Policy: ${csp}

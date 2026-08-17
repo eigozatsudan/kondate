@@ -181,7 +181,8 @@ export function AppShell() {
       ) {
         return true;
       }
-      const heading = document.querySelector("main h1") ?? document.querySelector("h1");
+      // 静的公開 LP の main h1 は #root の外に残るため、シェルの遷移フォーカスは #root 内だけを見る。
+      const heading = document.querySelector("#root main h1") ?? document.querySelector("#root h1");
       if (!(heading instanceof HTMLElement)) return false;
       if (!heading.hasAttribute("tabindex")) {
         heading.tabIndex = -1;

@@ -286,6 +286,10 @@ test("ci.sh and GitHub Actions CI keep the same verification gate order", async 
   assert.match(workflow, /assert-privacy-logs\.test\.mjs/u);
   assert.match(script, /csp-headers\.test\.mjs/u);
   assert.match(workflow, /csp-headers\.test\.mjs/u);
+  assert.match(script, /public-landing-seo\.test\.mjs/u);
+  assert.match(workflow, /public-landing-seo\.test\.mjs/u);
+  assert.match(script, /generate-service-worker\.test\.mjs/u);
+  assert.match(workflow, /generate-service-worker\.test\.mjs/u);
   assert.match(script, /emit-deploy-headers\.test\.mjs/u);
   assert.match(workflow, /emit-deploy-headers\.test\.mjs/u);
   assert.match(script, /verify-release-evidence\.test\.mjs/u);

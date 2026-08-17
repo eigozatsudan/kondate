@@ -18,6 +18,7 @@ export const FIXED_PRECACHE_URLS = Object.freeze([
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/icon-512-maskable.png",
+  "/lp-boot.js",
 ]);
 
 /** Vite の `-` + 8 桁以上 hex。これが無い path だけ内容を CACHE_NAME に入れる。 */

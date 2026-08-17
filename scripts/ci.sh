@@ -31,6 +31,8 @@ docker compose run --rm --no-deps app node --test \
   scripts/benchmark-paid-openrouter-models.test.mjs \
   scripts/provision-maintenance-role.test.mjs \
   scripts/csp-headers.test.mjs \
+  scripts/public-landing-seo.test.mjs \
+  scripts/generate-service-worker.test.mjs \
   scripts/emit-deploy-headers.test.mjs \
   scripts/preflight-production.test.mjs \
   scripts/smoke-production.test.mjs \
