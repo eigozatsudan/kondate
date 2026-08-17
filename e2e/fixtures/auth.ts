@@ -232,6 +232,11 @@ export async function loginAsNewUser(
     user,
   };
 
+  // about:blank は opaque origin のため localStorage が SecurityError になる。
+  // action_link は踏まないので、手注入の直前にアプリ origin のドキュメントだけ開く。
+  // commit で origin が付いた時点で十分（landing の JS は待たない）。
+  // session の addInitScript 手注入はしない（再ナビで session が復活して sign-out 検証を壊す）。
+  await page.goto(APP_ORIGIN, { waitUntil: "commit" });
   await page.evaluate(
     ({ storageKey, sessionJson }) => {
       window.localStorage.setItem(storageKey, sessionJson);
