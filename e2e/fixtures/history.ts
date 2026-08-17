@@ -25,7 +25,7 @@ export async function openWizardFromHome(page: Page): Promise<void> {
   await page.goto("/planner");
   const mealHeading = page.getByRole("heading", { name: "1. 食事" });
   const homeStart = page.getByRole("button", { name: "今日の献立をつくる" });
-  await expect(homeStart.or(mealHeading).first()).toBeVisible({ timeout: 15_000 });
+  await expect(homeStart.or(mealHeading).first()).toBeVisible({ timeout: 30_000 });
   if (await homeStart.isVisible()) {
     await homeStart.click();
   }

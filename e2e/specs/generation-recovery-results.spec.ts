@@ -16,6 +16,9 @@ import type { Locator, Page, Request, Route } from "@playwright/test";
 // 切断復旧、タブ再開、結果画面（/menus/:menuId）の詳細表示、320px幅でのレイアウトを検証する。
 // Spec §7.4: 生成・recovery route mock が密集するため file 全体を serial にする。
 test.describe.configure({ mode: "serial" });
+// 個別 test.setTimeout は本体開始後にしか効かない。authenticatedPage fixture を
+// 既定 30s で切ると serial 残りが skip される。
+test.setTimeout(180_000);
 
 /**
  * welcomeから「家族設定を省略」してideaモードで4質問→人数N→privacy→reviewへ進める。

@@ -68,21 +68,24 @@ export const test = base.extend<AuthFixtures>({
     await provide(`${prefix}-${safeTitle}@example.invalid`);
   },
 
-  authenticatedPage: async ({ page, authEmail }, provide) => {
-    // Phase 3 Task 12: 使い捨て認証の既定は Admin generateLink（Mailpit 非経由）。
-    // UI メール送信 + Mailpit 成功 path は auth.setup / auth-recovery が担う。
-    await loginAsNewUser(page, authEmail);
-    // sanitizeReturnPath は継続 API が拒否する裸の "/" を "/planner" へ正規化するため、
-    // magic-link 経由のログイン自体は常に /planner へ着地する（既存仕様・変更なし）。
-    // RootEntryPage の新規振分け（not_started|in_progress→/welcome）を検証するには、
-    // ログイン後に改めて "/" へ遷移して RootEntryPage の profile 判定を経由する必要がある。
-    await page.goto("/");
-    await expect(page).toHaveURL((url) => url.pathname === "/welcome", { timeout: 30_000 });
-    await expect(page.getByRole("heading", { name: "どちらから始めますか？" })).toBeVisible();
-    // AI 共有枠の truncate は fixture / test から呼ばない（Phase 3: suite/project 境界の shell のみ）。
-    // 並列 workers 下で test/fixture から truncate すると他 worker の予約枠を破壊する。
-    await provide(page);
-  },
+  authenticatedPage: [
+    async ({ page, authEmail }, provide) => {
+      // Phase 3 Task 12: 使い捨て認証の既定は Admin generateLink（Mailpit 非経由）。
+      // UI メール送信 + Mailpit 成功 path は auth.setup / auth-recovery が担う。
+      await loginAsNewUser(page, authEmail);
+      // sanitizeReturnPath は継続 API が拒否する裸の "/" を "/planner" へ正規化するため、
+      // magic-link 経由のログイン自体は常に /planner へ着地する（既存仕様・変更なし）。
+      // RootEntryPage の新規振分け（not_started|in_progress→/welcome）を検証するには、
+      // ログイン後に改めて "/" へ遷移して RootEntryPage の profile 判定を経由する必要がある。
+      await gotoWelcomeAfterLogin(page);
+      // AI 共有枠の truncate は fixture / test から呼ばない（Phase 3: suite/project 境界の shell のみ）。
+      // 並列 workers 下で test/fixture から truncate すると他 worker の予約枠を破壊する。
+      await provide(page);
+    },
+    // 本体の test.setTimeout は fixture 完了後にしか効かない。login + RootEntry を
+    // 既定 30s で切ると serial file が後続を skip する。
+    { timeout: 90_000 },
+  ],
 
   completedOnboardingPage: async ({ authenticatedPage: page }, provide) => {
     // UI クリック経路は onboarding.spec / full-journey household が担う。
@@ -196,6 +199,29 @@ function parseSessionTokensFromHref(href: string): HashSessionTokens | null {
     expires_at: fromHash.get("expires_at") ?? fromQuery.get("expires_at"),
     token_type: fromHash.get("token_type") ?? fromQuery.get("token_type"),
   };
+}
+
+/**
+ * ログイン済み session を載せたあと RootEntry 経由で /welcome へ着地させる。
+ * Vite 冷起動 + C5 15s で "/" が LP / 再試行面に落ちると pathname が変わらない。
+ * アサーションは同じ（welcome 見出し）。再試行は 1 回だけ。
+ */
+async function gotoWelcomeAfterLogin(page: Page): Promise<void> {
+  const isWelcome = (url: URL) => url.pathname === "/welcome";
+  const welcomeHeading = page.getByRole("heading", { name: "どちらから始めますか？" });
+  await page.goto("/");
+  try {
+    await expect(page).toHaveURL(isWelcome, { timeout: 30_000 });
+  } catch {
+    const retry = page.getByRole("button", { name: "再試行" });
+    if (await retry.isVisible()) {
+      await retry.click();
+    } else {
+      await page.reload();
+    }
+    await expect(page).toHaveURL(isWelcome, { timeout: 30_000 });
+  }
+  await expect(welcomeHeading).toBeVisible();
 }
 
 /**
@@ -341,6 +367,8 @@ export async function loginAsNewUser(
 export async function requestMagicLinkAndReadUrl(page: Page, email: string): Promise<string> {
   // メール導線は SHOW_EMAIL_LOGIN=true で既定表示。emailLogin=1 は互換・明示用。
   await page.goto("/login?returnTo=%2Fplanner&emailLogin=1");
+  // Vite 冷起動では form が 5s 既定より遅く mount する。fill の action timeout に溶かさない。
+  await expect(page.getByLabel("メールアドレス")).toBeVisible({ timeout: 30_000 });
   await page.getByLabel("メールアドレス").fill(email);
   await page.getByRole("button", { name: "ログイン用メールを送る" }).click();
   await expect(page.getByText(`${email} に送りました`)).toBeVisible();

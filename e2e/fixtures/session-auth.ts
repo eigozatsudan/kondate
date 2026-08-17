@@ -18,20 +18,29 @@ type SessionAuthFixtures = {
  * seed / magic-link は setup project が済ませているので、ここでは context 復元のみ。
  */
 export const test = base.extend<SessionAuthFixtures>({
-  reusedCompletedPage: async ({ browser }, provide) => {
-    // 既定 page は storageState 無しのため、専用 context を開く
-    const context = await browser.newContext({ storageState: STORAGE_STATE_PATH });
-    await seedPwaInstallTipDismissed(context);
-    const page = await context.newPage();
-    // seed 済みセッションで planner に立てることを固定（welcome へ戻らない）
-    await page.goto("/planner");
-    await expect(page).toHaveURL((url) => url.pathname === "/planner", { timeout: 30_000 });
-    await expect(page.getByRole("navigation", { name: "メインメニュー" })).toBeVisible({
-      timeout: 15_000,
-    });
-    await provide(page);
-    await context.close();
-  },
+  reusedCompletedPage: [
+    async ({ browser }, provide) => {
+      // 既定 page は storageState 無しのため、専用 context を開く
+      const context = await browser.newContext({ storageState: STORAGE_STATE_PATH });
+      await seedPwaInstallTipDismissed(context);
+      const page = await context.newPage();
+      // seed 済みセッションで planner に立てることを固定（welcome へ戻らない）
+      await page.goto("/planner");
+      await expect(page).toHaveURL((url) => url.pathname === "/planner", { timeout: 30_000 });
+      const nav = page.getByRole("navigation", { name: "メインメニュー" });
+      try {
+        await expect(nav).toBeVisible({ timeout: 30_000 });
+      } catch {
+        // URL だけ /planner で SPA 未 mount（Vite 冷起動）なら 1 回だけ再読込
+        await page.reload();
+        await expect(page).toHaveURL((url) => url.pathname === "/planner", { timeout: 30_000 });
+        await expect(nav).toBeVisible({ timeout: 30_000 });
+      }
+      await provide(page);
+      await context.close();
+    },
+    { timeout: 90_000 },
+  ],
 });
 
 export { expect };

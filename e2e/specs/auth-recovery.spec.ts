@@ -1,6 +1,9 @@
 import { expect, requestMagicLinkAndReadUrl, test } from "../fixtures/auth";
 import { seedPwaInstallTipDismissed } from "../fixtures/pwa-install-tip";
 
+// Mailpit + 孤立 WebView + 元タブ claim は既定 30s に収まらない（並列負荷）。
+test.setTimeout(120_000);
+
 test(
   "same-browser callback restores both callback and original tabs",
   {
