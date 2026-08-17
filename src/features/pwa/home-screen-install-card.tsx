@@ -2,12 +2,12 @@ import { useState } from "react";
 import { useLocation } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import { useAndroidInstallAction, useAndroidInstallPrompt } from "./android-install-prompt";
+import { resolveHomeScreenInstallPresentation } from "./home-screen-install-presentation";
+import { HomeScreenInstallSteps } from "./home-screen-install-steps";
 import {
   INSTALL_TIP_ANDROID_INSTALL_LABEL,
-  INSTALL_TIP_ANDROID_STEPS,
   INSTALL_TIP_CARD_HEADING,
   INSTALL_TIP_DISMISS_LABEL,
-  INSTALL_TIP_IOS_STEPS,
   INSTALL_TIP_LEAD,
   INSTALL_TIP_OTHER_BODY,
 } from "./install-tip-copy";
@@ -65,18 +65,16 @@ export function HomeScreenInstallCard() {
   const androidPrompt = surface === "android" ? heldAndroidPrompt : null;
   const { installInFlight, requestInstall } = useAndroidInstallAction(androidPrompt);
 
-  if (!visible) return null;
+  // Instagram / LINE / Facebook と WebView / Firefox の手順可否は UA 判定のまま helper へ渡す。
+  // 4 つの真偽値をここで持たず、戻り（steps / body）だけを描く。
+  const presentation = resolveHomeScreenInstallPresentation({
+    surface,
+    safariStepsOk: canUseIosSafariInstallSteps(navigator.userAgent),
+    androidChromeStepsOk: canUseAndroidChromeInstallSteps(navigator.userAgent),
+    hasAndroidPrompt: androidPrompt !== null,
+  });
 
-  // Instagram / LINE / Facebook in-app は ios のまま Safari 3 手順を出さない。
-  const iosSafariStepsOk = canUseIosSafariInstallSteps(navigator.userAgent);
-  const showIosSteps = surface === "ios" && iosSafariStepsOk;
-  const showIosGenericBody = surface === "ios" && !iosSafariStepsOk;
-  // WebView / Firefox は android でも Chrome 手順を出さない（偽 UI）。
-  const androidChromeStepsOk = canUseAndroidChromeInstallSteps(navigator.userAgent);
-  const showAndroidChromeSteps =
-    surface === "android" && androidPrompt === null && androidChromeStepsOk;
-  const showAndroidGenericBody =
-    surface === "android" && androidPrompt === null && !androidChromeStepsOk;
+  if (!visible) return null;
 
   function handleDismiss(): void {
     writeInstallTipDismissed(window.localStorage);
@@ -90,22 +88,9 @@ export function HomeScreenInstallCard() {
     >
       <h2 id="home-screen-install-card-title">{INSTALL_TIP_CARD_HEADING}</h2>
       <p>{INSTALL_TIP_LEAD}</p>
-      {showIosSteps ? (
-        <ol>
-          {INSTALL_TIP_IOS_STEPS.map((step) => (
-            <li key={step}>{step}</li>
-          ))}
-        </ol>
-      ) : null}
-      {showAndroidChromeSteps ? (
-        <ol>
-          {INSTALL_TIP_ANDROID_STEPS.map((step) => (
-            <li key={step}>{step}</li>
-          ))}
-        </ol>
-      ) : null}
-      {showIosGenericBody || showAndroidGenericBody ? <p>{INSTALL_TIP_OTHER_BODY}</p> : null}
-      {androidPrompt !== null ? (
+      <HomeScreenInstallSteps kind={presentation.steps} />
+      {presentation.body === "generic" ? <p>{INSTALL_TIP_OTHER_BODY}</p> : null}
+      {presentation.body === "prompt" ? (
         <button
           type="button"
           className="primary-button min-h-11"

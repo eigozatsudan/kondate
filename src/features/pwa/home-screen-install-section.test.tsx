@@ -89,31 +89,33 @@ describe("HomeScreenInstallSection", () => {
   it("uses the settings heading", () => {
     stubSurface("ios");
     render(<HomeScreenInstallSection />);
-    expect(screen.getByRole("heading", { level: 2, name: "ホーム画面に追加" })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 2, name: /^ホーム画面に追加$/u })).toBeVisible();
   });
 
   it("shows iOS steps on iOS", () => {
     stubSurface("ios");
     render(<HomeScreenInstallSection />);
-    expect(screen.getByText("画面の下（または上）の共有ボタンをタップします")).toBeVisible();
-    expect(screen.getByText("「ホーム画面に追加」を選びます")).toBeVisible();
-    expect(screen.getByText("「追加」をタップします")).toBeVisible();
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(items[0]).toHaveAccessibleName("共有");
+    expect(items[1]).toHaveAccessibleName("ホーム画面に追加");
+    expect(items[2]).toHaveAccessibleName("追加");
+    expect(screen.getAllByRole("heading")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: /^ホーム画面に追加$/u })).toBeVisible();
   });
 
   it("shows Android steps on Android when no install prompt is held", () => {
     stubSurface("android");
     render(<HomeScreenInstallSection />);
-    expect(screen.getByText("右上のメニューを開きます")).toBeVisible();
-    expect(
-      screen.getByText("「アプリをインストール」または「ホーム画面に追加」を選びます"),
-    ).toBeVisible();
+    expect(screen.getByRole("listitem", { name: /^メニュー$/u })).toBeVisible();
+    expect(screen.getByRole("listitem", { name: /^ホーム画面に追加$/u })).toBeVisible();
   });
 
   it("replaces Android steps with the install button when BIP arrives after first paint", async () => {
     listenForAndroidInstallPrompt();
     stubSurface("android");
     render(<HomeScreenInstallSection />);
-    expect(screen.getByText("右上のメニューを開きます")).toBeVisible();
+    expect(screen.getByRole("listitem", { name: /^メニュー$/u })).toBeVisible();
     expect(screen.queryByRole("button", { name: "インストールする" })).not.toBeInTheDocument();
 
     const prompt = vi.fn(() => Promise.resolve());
@@ -125,7 +127,6 @@ describe("HomeScreenInstallSection", () => {
 
     expect(await screen.findByRole("button", { name: "インストールする" })).toBeVisible();
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
-    expect(screen.queryByText("右上のメニューを開きます")).not.toBeInTheDocument();
   });
 
   it("disables the install button after the first prompt and swallows a rejected prompt", async () => {
@@ -146,7 +147,7 @@ describe("HomeScreenInstallSection", () => {
       await Promise.resolve();
     });
     expect(unhandled).not.toHaveBeenCalled();
-    expect(screen.getByRole("heading", { name: "ホーム画面に追加" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: /^ホーム画面に追加$/u })).toBeVisible();
     window.removeEventListener("unhandledrejection", unhandled);
   });
 
@@ -163,7 +164,7 @@ describe("HomeScreenInstallSection", () => {
     const install = screen.getByRole("button", { name: "インストールする" });
     expect(install).toBeDisabled();
     expect(screen.getByRole("heading", { name: "ホーム画面に置く" })).toBeVisible();
-    expect(screen.queryByText("右上のメニューを開きます")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
     await user.click(install);
     expect(prompt).toHaveBeenCalledTimes(1);
   });
@@ -175,10 +176,8 @@ describe("HomeScreenInstallSection", () => {
       cleanup();
       stubSurface("ios", userAgent);
       render(<HomeScreenInstallSection />);
-      expect(screen.getByRole("heading", { name: "ホーム画面に追加" })).toBeVisible();
-      expect(
-        screen.queryByText("画面の下（または上）の共有ボタンをタップします"),
-      ).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /^ホーム画面に追加$/u })).toBeVisible();
+      expect(screen.queryByRole("list")).not.toBeInTheDocument();
       expect(screen.getByText(otherBody)).toBeVisible();
     }
   });
@@ -186,7 +185,7 @@ describe("HomeScreenInstallSection", () => {
   it("falls back to the other-surface sentence on Android WebView and Firefox without a held prompt", () => {
     stubSurface("android", ANDROID_WEBVIEW_UA);
     render(<HomeScreenInstallSection />);
-    expect(screen.queryByText("右上のメニューを開きます")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "インストールする" })).not.toBeInTheDocument();
     expect(
       screen.getByText(
@@ -197,7 +196,7 @@ describe("HomeScreenInstallSection", () => {
     cleanup();
     stubSurface("android", FIREFOX_ANDROID_UA);
     render(<HomeScreenInstallSection />);
-    expect(screen.queryByText("右上のメニューを開きます")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
     expect(
       screen.getByText(
         "お使いのブラウザのメニューから、「ホーム画面に追加」または「アプリをインストール」を選んでください。",

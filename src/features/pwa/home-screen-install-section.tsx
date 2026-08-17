@@ -1,8 +1,8 @@
 import { useAndroidInstallAction, useAndroidInstallPrompt } from "./android-install-prompt";
+import { resolveHomeScreenInstallPresentation } from "./home-screen-install-presentation";
+import { HomeScreenInstallSteps } from "./home-screen-install-steps";
 import {
   INSTALL_TIP_ANDROID_INSTALL_LABEL,
-  INSTALL_TIP_ANDROID_STEPS,
-  INSTALL_TIP_IOS_STEPS,
   INSTALL_TIP_OTHER_BODY,
   INSTALL_TIP_SETTINGS_HEADING,
 } from "./install-tip-copy";
@@ -28,17 +28,13 @@ export function HomeScreenInstallSection() {
   const heldAndroidPrompt = useAndroidInstallPrompt();
   const androidPrompt = surface === "android" ? heldAndroidPrompt : null;
   const { installInFlight, requestInstall } = useAndroidInstallAction(androidPrompt);
-  // WebView / Firefox は android でも Chrome 手順を出さず other 文へ落とす。
-  // Instagram / LINE / Facebook in-app は ios のまま Safari 3 手順を出さない。
-  const iosSafariStepsOk = canUseIosSafariInstallSteps(navigator.userAgent);
-  const showIosSteps = surface === "ios" && iosSafariStepsOk;
-  const androidChromeStepsOk = canUseAndroidChromeInstallSteps(navigator.userAgent);
-  const showAndroidChromeSteps =
-    surface === "android" && androidPrompt === null && androidChromeStepsOk;
-  const showGenericInstallBody =
-    surface === "other" ||
-    (surface === "ios" && !iosSafariStepsOk) ||
-    (surface === "android" && androidPrompt === null && !androidChromeStepsOk);
+  // 手順可否と BIP 有無は helper に任せ、4 つの真偽値をここで持たない。
+  const presentation = resolveHomeScreenInstallPresentation({
+    surface,
+    safariStepsOk: canUseIosSafariInstallSteps(navigator.userAgent),
+    androidChromeStepsOk: canUseAndroidChromeInstallSteps(navigator.userAgent),
+    hasAndroidPrompt: androidPrompt !== null,
+  });
 
   return (
     <section
@@ -48,14 +44,9 @@ export function HomeScreenInstallSection() {
       <h2 id="home-screen-install-section-title" className="settings-section-title">
         {INSTALL_TIP_SETTINGS_HEADING}
       </h2>
-      {showIosSteps ? (
-        <ol>
-          {INSTALL_TIP_IOS_STEPS.map((step) => (
-            <li key={step}>{step}</li>
-          ))}
-        </ol>
-      ) : null}
-      {androidPrompt !== null ? (
+      <HomeScreenInstallSteps kind={presentation.steps} />
+      {presentation.body === "generic" ? <p>{INSTALL_TIP_OTHER_BODY}</p> : null}
+      {presentation.body === "prompt" ? (
         <button
           type="button"
           className="primary-button min-h-11"
@@ -65,14 +56,6 @@ export function HomeScreenInstallSection() {
           {INSTALL_TIP_ANDROID_INSTALL_LABEL}
         </button>
       ) : null}
-      {showAndroidChromeSteps ? (
-        <ol>
-          {INSTALL_TIP_ANDROID_STEPS.map((step) => (
-            <li key={step}>{step}</li>
-          ))}
-        </ol>
-      ) : null}
-      {showGenericInstallBody ? <p>{INSTALL_TIP_OTHER_BODY}</p> : null}
     </section>
   );
 }
