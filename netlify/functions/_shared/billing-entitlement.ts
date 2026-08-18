@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { EntitlementData } from "../../../shared/contracts/billing.js";
+import { entitlementDataSchema, type EntitlementData } from "../../../shared/contracts/billing.js";
 import { planQuota, type PlanCode } from "../../../shared/contracts/plan-quota.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
 
@@ -129,6 +129,22 @@ export function productSurfacesOpen(billingEnabled: boolean): boolean {
 }
 
 /**
+ * GET wire / entitlementDataSchema と同じ ISO-8601（offset 必須）。
+ * SQL 正本 private.billing_iso_z の出力形と揃える。
+ */
+const entitlementIsoDateSchema = z.iso.datetime({ offset: true });
+
+/**
+ * B10: RPC 日時は任意 string。Function 境界で ISO+offset に閉じ、
+ * 壊れた string は null（日時は elevation に使わない。plusEntitled は RPC を信頼）。
+ */
+function closeEntitlementIsoDate(value: string | null): string | null {
+  if (value === null) return null;
+  const parsed = entitlementIsoDateSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * GET /api/billing/entitlement 用: DB 投影 + kill 分割面を合成する。
  * productSurfacesOpen / quotaPlan は env.billingEnabled 由来。
  * B5: plusEntitled は usage.plusEntitled と同義（quotaPlan === "plus"）。
@@ -142,18 +158,19 @@ export function toEntitlementData(
   // B15: restore と apply を同じ時計で見る（終端ちょうどで plan と plusEntitled が割れない）
   const restored = restoreKillMaskedEntitlement(entitlement, billingEnabled, now);
   const quotaPlan = applyQuotaPlan(entitlement, billingEnabled, now);
-  return {
+  // B10: 日時 wire を entitlementDataSchema で閉じる。壊れた string は null にして 200 を落とさない。
+  return entitlementDataSchema.parse({
     plan: restored.plan,
     status: restored.status,
     plusEntitled: quotaPlan === "plus",
     pastDueGrace: restored.pastDueGrace,
-    currentPeriodEnd: restored.currentPeriodEnd,
+    currentPeriodEnd: closeEntitlementIsoDate(restored.currentPeriodEnd),
     cancelAtPeriodEnd: restored.cancelAtPeriodEnd,
-    trialEnd: restored.trialEnd,
+    trialEnd: closeEntitlementIsoDate(restored.trialEnd),
     dbPlusEntitled: entitlement.dbPlusEntitled,
     productSurfacesOpen: productSurfacesOpen(billingEnabled),
     quotaPlan,
-  };
+  });
 }
 
 export function limitsForPlan(plan: PlanCode) {
@@ -177,6 +194,7 @@ const entitlementRpcSchema = z
     ]),
     plus_entitled: z.boolean(),
     past_due_grace: z.boolean(),
+    // B10: RPC 受理は任意 string。GET wire は toEntitlementData が ISO+offset に閉じる。
     current_period_end: z.string().nullable(),
     cancel_at_period_end: z.boolean(),
     trial_end: z.string().nullable(),

@@ -1,5 +1,5 @@
 import type { Config } from "@netlify/functions";
-import type { EntitlementData } from "../../shared/contracts/billing.js";
+import { entitlementDataSchema } from "../../shared/contracts/billing.js";
 import { requireUser } from "./_shared/auth.js";
 import {
   BillingEntitlementUnavailableError,
@@ -36,7 +36,9 @@ export default async function billingEntitlement(request: Request): Promise<Resp
         "プラン情報を確認できませんでした。しばらくしてからお試しください。",
       );
     }
-    const data: EntitlementData = toEntitlementData(entitlement, env.billingEnabled);
+    // B10: GET 境界で entitlementDataSchema に閉じる。壊れた日時は toEntitlementData が null。
+    // parse 失敗（想定外 shape）は handleError で 500。クライアント z.iso.datetime を落とさない。
+    const data = entitlementDataSchema.parse(toEntitlementData(entitlement, env.billingEnabled));
     return json(200, { ok: true, data });
   } catch (error: unknown) {
     return handleError(error);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { entitlementDataSchema } from "../../../shared/contracts/billing.js";
 import {
   applyQuotaPlan,
   computePlusEntitled,
@@ -271,6 +272,37 @@ describe("toEntitlementData / productSurfacesOpen (A3)", () => {
     expect(data.productSurfacesOpen).toBe(true);
     expect(data.quotaPlan).toBe("plus");
     expect(data.plusEntitled).toBe(true);
+  });
+
+  it("closes non-ISO currentPeriodEnd so entitlementDataSchema still parses (B10)", () => {
+    // RPC は z.string のまま。GET wire に壊れた日時を乗せてクライアント z.iso.datetime を落とさない。
+    const data = toEntitlementData({ ...baseEntitlement, currentPeriodEnd: "not-a-date" }, true);
+    expect(data.currentPeriodEnd).toBeNull();
+    expect(entitlementDataSchema.parse(data).currentPeriodEnd).toBeNull();
+    // 日時は elevation に使わない。RPC の plusEntitled を日時で上書きしない。
+    expect(data.plusEntitled).toBe(true);
+    expect(data.quotaPlan).toBe("plus");
+  });
+
+  it("closes non-ISO trialEnd so entitlementDataSchema still parses (B10)", () => {
+    const data = toEntitlementData({ ...baseEntitlement, trialEnd: "soon" }, true);
+    expect(data.trialEnd).toBeNull();
+    expect(entitlementDataSchema.parse(data).trialEnd).toBeNull();
+    expect(data.plusEntitled).toBe(true);
+  });
+
+  it("keeps ISO+Z period and trial dates on the wire (B10)", () => {
+    const data = toEntitlementData(
+      {
+        ...baseEntitlement,
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        trialEnd: "2026-07-20T15:00:00.000Z",
+      },
+      true,
+    );
+    expect(data.currentPeriodEnd).toBe("2026-08-01T00:00:00.000Z");
+    expect(data.trialEnd).toBe("2026-07-20T15:00:00.000Z");
+    expect(entitlementDataSchema.parse(data)).toEqual(data);
   });
 });
 
