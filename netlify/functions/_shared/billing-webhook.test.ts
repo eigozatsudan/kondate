@@ -725,6 +725,143 @@ describe("handleBillingWebhook", () => {
     expect(rpc.mock.calls.some(([n]) => n === "insert_billing_trial_history")).toBe(true);
   });
 
+  it("burns trial history on subscription.deleted when trial_end is set (B8)", async () => {
+    // created 焼成失敗のあと再送が尽きても、trial 付き deleted で history を焼く。
+    const deleted = makeSubscription({
+      status: "canceled",
+      trial_end: 1_720_086_400,
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", deleted, { id: "evt_deleted_trial_burn" }),
+    );
+    retrieve.mockResolvedValue(deleted);
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const trialCall = rpc.mock.calls.find(([n]) => n === "insert_billing_trial_history");
+    expect(trialCall).toBeDefined();
+    const args = trialCall![1] as { p_identity_key: string };
+    // B5 の email HMAC 契約は変えない（64 hex / server identity）。
+    expect(args.p_identity_key).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("does not burn trial on subscription.deleted without trial_end (B8)", async () => {
+    // 過焼成防止。trial の無い canceled は焼かない。
+    const deleted = makeSubscription({ status: "canceled", trial_end: null });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", deleted, {
+        id: "evt_deleted_no_trial_evidence",
+      }),
+    );
+    retrieve.mockResolvedValue(deleted);
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    expect(rpc.mock.calls.some(([n]) => n === "insert_billing_trial_history")).toBe(false);
+  });
+
+  it("returns 500 when deleted trial burn cannot resolve email (B8 fail-closed)", async () => {
+    // email 欠落で静かに 200 すると再 Checkout で 7 日が付く。throw して再送する。
+    const deleted = makeSubscription({
+      status: "canceled",
+      trial_end: 1_720_086_400,
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", deleted, {
+        id: "evt_deleted_trial_no_email",
+      }),
+    );
+    retrieve.mockResolvedValue(deleted);
+    getUserById.mockResolvedValue({
+      data: { user: { id: USER_ID, email: "" } },
+      error: null,
+    });
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    expect(rpc.mock.calls.some(([n]) => n === "insert_billing_trial_history")).toBe(false);
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "billing_trial_identity_unavailable" }),
+    );
+  });
+
+  it("burns trial on deleted after created applied but trial insert failed (B8)", async () => {
+    // 失敗経路: created は process 済み・insert 500。再送尽き後の deleted で焼く。
+    rpc.mockImplementation((name: string) => {
+      if (name === "process_billing_stripe_event") {
+        return Promise.resolve({ data: { ok: true, outcome: "applied" }, error: null });
+      }
+      if (name === "insert_billing_trial_history") {
+        return Promise.resolve({
+          data: null,
+          error: { message: "insert failed", code: "57014" },
+        });
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return Promise.resolve({
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    constructEvent.mockReturnValue(
+      makeEvent(
+        "customer.subscription.created",
+        makeSubscription({ status: "trialing", trial_end: 1_720_086_400 }),
+        { id: "evt_created_burn_fail" },
+      ),
+    );
+    retrieve.mockResolvedValue(makeSubscription({ status: "trialing", trial_end: 1_720_086_400 }));
+    const created = await handleBillingWebhook(signedRequest(), deps());
+    expect(created.status).toBe(500);
+
+    rpc.mockClear();
+    rpc.mockImplementation((name: string) => {
+      if (name === "process_billing_stripe_event") {
+        return Promise.resolve({ data: { ok: true, outcome: "applied" }, error: null });
+      }
+      if (name === "insert_billing_trial_history") {
+        return Promise.resolve({ data: { ok: true, inserted: true }, error: null });
+      }
+      if (name === "get_billing_customer_by_stripe_id") {
+        return Promise.resolve({
+          data: { user_id: USER_ID, stripe_customer_id: CUSTOMER_ID },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const deleted = makeSubscription({
+      status: "canceled",
+      trial_end: 1_720_086_400,
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", deleted, {
+        id: "evt_deleted_after_created_burn_fail",
+      }),
+    );
+    retrieve.mockResolvedValue(deleted);
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    expect(rpc.mock.calls.some(([n]) => n === "insert_billing_trial_history")).toBe(true);
+  });
+
+  it("burns trial on deleted retrieve 404 when event trial_end is set (B8)", async () => {
+    // B4 投影は trial_end を捨てる。event の trial_end を証拠にする。
+    const eventObject = makeSubscription({
+      id: "sub_deleted_404_trial",
+      status: "canceled",
+      trial_end: 1_720_086_400,
+    });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", eventObject, {
+        id: "evt_deleted_404_trial_burn",
+      }),
+    );
+    retrieve.mockRejectedValue(stripeResourceMissingError());
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    expect(rpc.mock.calls.some(([n]) => n === "insert_billing_trial_history")).toBe(true);
+  });
+
   it("rejects invalid signature with 400 before body parse", async () => {
     constructEvent.mockImplementation(() => {
       throw new Error("Invalid signature");

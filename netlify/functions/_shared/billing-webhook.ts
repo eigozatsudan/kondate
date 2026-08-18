@@ -970,7 +970,18 @@ async function handleSubscriptionEvent(
   // live retrieve（projection）だと、applied 後 burn 500 → cancel → 同一 event 再送で
   // retrieve=canceled となり burn が永久スキップされ、同一 identity の再 trial が開く。
   // 非 allowlist price は Plus 対象外なので焼成しない（B1 と整合。過焼成を避ける）。
-  const statusForTrial = event.type === "customer.subscription.deleted" ? "canceled" : sub.status;
+  // B8: deleted は frozen が canceled でも trial 付きなら焼く。
+  // created で process 後に burn 500 → 再送尽き → deleted が焼かないと
+  // 再 Checkout で 7 日が再付与される。
+  // 証拠は event の trial_end を優先（B4 の 404 投影は trial_end を捨てる）。
+  // email 欠落は maybeInsertTrialHistory が throw → 500 再送（再 trial しない）。
+  const hasDeletedTrialBurnEvidence = sub.trial_end != null || projection.trial_end != null;
+  const statusForTrial =
+    event.type === "customer.subscription.deleted"
+      ? hasDeletedTrialBurnEvidence
+        ? "active"
+        : "canceled"
+      : sub.status;
   if (
     deps.env.stripe !== undefined &&
     isAllowlistedPlusPrice(projection.stripe_price_id, deps.env.stripe)
