@@ -955,4 +955,48 @@ describe("GenerationStatusPanel", () => {
     expect(onClear).toHaveBeenCalledOnce();
     confirmSpy.mockRestore();
   });
+
+  it("G4: requires confirm while generation_in_progress wait is still failed", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const inProgressFailed: GenerationClientState = {
+      phase: "failed",
+      data: {
+        ...failedData,
+        error: {
+          code: "generation_in_progress",
+          message: "別の献立を作成中です。",
+          retryable: true,
+        },
+      },
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={inProgressFailed} onClear={onClear} />);
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).toHaveBeenCalledOnce();
+    confirmSpy.mockRestore();
+  });
+
+  it("G4: does not discard in_progress pending when confirm is cancelled", () => {
+    const onClear = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const inProgressFailed: GenerationClientState = {
+      phase: "failed",
+      data: {
+        ...failedData,
+        error: {
+          code: "generation_in_progress",
+          message: "別の献立を作成中です。",
+          retryable: true,
+        },
+      },
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={inProgressFailed} onClear={onClear} />);
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expect(onClear).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
 });

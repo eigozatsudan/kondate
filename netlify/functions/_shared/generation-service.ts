@@ -174,6 +174,12 @@ export type GenerationDependencies = {
    * mock base は remote skip。失敗は model_unavailable で attempt を焼かない。
    */
   ensureOpenRouterModelPolicy?: (input: { models: readonly string[] }) => Promise<void>;
+  /**
+   * G3: ローカル mock のリクエスト単位シナリオ。
+   * qualityMode は callOpenRouter を plus sender に置換するため、
+   * createGenerationDeps の ALS wrap を同じ値で sender にも載せる。
+   */
+  openRouterMockScenario?: string;
   now(): Date;
   /** 単調時計。認証・予約も同じ 55s 総予算を消費する */
   monotonicNow(): number;
@@ -524,6 +530,7 @@ export function createGenerationDeps(
   return {
     ...base,
     callOpenRouter,
+    ...(localTestScenario === undefined ? {} : { openRouterMockScenario: localTestScenario }),
     loadExecutionContext: async (command, requestId, deadlineAtMonotonicMs) => {
       if (command.kind === "new_menu") {
         return base.loadExecutionContext(command, requestId, deadlineAtMonotonicMs);
@@ -732,14 +739,24 @@ export async function runGeneration(
   // sendMenuGeneration 既定は OPENROUTER_MODELS のため、deps.models 差し替えだけでは足りない。
   const envForModels = getServerEnv();
   const models = command.qualityMode ? envForModels.openRouter.plusModels : inputDeps.models;
-  const callOpenRouter: GenerationDependencies["callOpenRouter"] = command.qualityMode
+  // G3: qualityMode は plus sender で inputDeps.callOpenRouter を置換する。
+  // createGenerationDeps の ALS wrap は sendMenuGeneration だけに付くため、
+  // 置換後も同じ local mock シナリオを ALS に載せ、X-Kondate-Mock-Scenario が quality chat に乗る。
+  const mockScenario = inputDeps.openRouterMockScenario;
+  const qualitySender = command.qualityMode
     ? createOpenRouterGenerationSender({
         apiKey: envForModels.openRouter.apiKey,
         baseUrl: envForModels.openRouter.baseUrl,
         models: envForModels.openRouter.plusModels,
         timeoutMs: envForModels.openRouter.timeoutMs,
       })
-    : (input) => inputDeps.callOpenRouter(input);
+    : null;
+  const callOpenRouter: GenerationDependencies["callOpenRouter"] =
+    qualitySender === null
+      ? (input) => inputDeps.callOpenRouter(input)
+      : mockScenario === undefined
+        ? qualitySender
+        : (input) => runWithOpenRouterMockScenario(mockScenario, () => qualitySender(input));
   const deps: GenerationDependencies = {
     ...inputDeps,
     models,

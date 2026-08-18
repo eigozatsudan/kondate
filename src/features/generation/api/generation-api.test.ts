@@ -7,12 +7,20 @@ import {
   generationEndpointFor,
   getGenerationStatus,
   postGeneration,
+  readLiveGenerationDraftPin,
 } from "./generation-api";
 
 const requireAccessTokenMock = vi.hoisted(() => vi.fn());
+const assertBrowserDataPlaneAlignedMock = vi.hoisted(() => vi.fn());
+const getBrowserSupabaseClientMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/features/auth/session", () => ({ requireAccessToken: requireAccessTokenMock }));
-vi.mock("@/shared/lib/supabase", () => ({ getBrowserSupabaseClient: () => ({}) }));
+vi.mock("@/features/auth/session", () => ({
+  requireAccessToken: requireAccessTokenMock,
+  assertBrowserDataPlaneAligned: assertBrowserDataPlaneAlignedMock,
+}));
+vi.mock("@/shared/lib/supabase", () => ({
+  getBrowserSupabaseClient: getBrowserSupabaseClientMock,
+}));
 
 const IDEMPOTENCY_KEY = "10000000-0000-4000-8000-000000000001";
 const OTHER_KEY = "10000000-0000-4000-8000-000000000002";
@@ -72,10 +80,45 @@ function response(data: unknown, status = 200): Response {
   });
 }
 
+function liveDraftPinClient(result: { data: unknown; error: unknown }) {
+  return {
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          is: vi.fn(() => ({
+            maybeSingle: vi.fn(() => Promise.resolve(result)),
+          })),
+        })),
+      })),
+    })),
+  };
+}
+
 describe("generation API", () => {
   beforeEach(() => {
     requireAccessTokenMock.mockReset();
     requireAccessTokenMock.mockResolvedValue("access-token");
+    assertBrowserDataPlaneAlignedMock.mockReset();
+    assertBrowserDataPlaneAlignedMock.mockResolvedValue(undefined);
+    getBrowserSupabaseClientMock.mockReset();
+    getBrowserSupabaseClientMock.mockReturnValue({});
+  });
+
+  it("G1: reads live draft id and revision without menu body", async () => {
+    const draftId = "20000000-0000-4000-8000-000000000001";
+    getBrowserSupabaseClientMock.mockReturnValue(
+      liveDraftPinClient({ data: { id: draftId, revision: 4 }, error: null }),
+    );
+    await expect(
+      readLiveGenerationDraftPin("40000000-0000-4000-8000-000000000001"),
+    ).resolves.toEqual({ draftId, revision: 4 });
+  });
+
+  it("G1: live draft pin returns null when the row is gone", async () => {
+    getBrowserSupabaseClientMock.mockReturnValue(liveDraftPinClient({ data: null, error: null }));
+    await expect(
+      readLiveGenerationDraftPin("40000000-0000-4000-8000-000000000001"),
+    ).resolves.toBeNull();
   });
 
   it.each([

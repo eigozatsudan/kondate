@@ -8,7 +8,7 @@ import {
   type GenerationStatusData,
 } from "@shared/contracts/generation";
 
-import { requireAccessToken } from "@/features/auth/session";
+import { assertBrowserDataPlaneAligned, requireAccessToken } from "@/features/auth/session";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
 /**
@@ -80,6 +80,40 @@ async function call(
 
 export function generationEndpointFor(command: GenerationCommand): string {
   return command.kind === "regenerate_dish" ? "/api/generations/dish" : "/api/generations/menu";
+}
+
+const liveDraftPinSchema = z
+  .object({
+    id: z.uuid(),
+    revision: z.number().int().positive(),
+  })
+  .strict();
+
+export type LiveGenerationDraftPin = {
+  draftId: string;
+  revision: number;
+};
+
+/**
+ * G1: new_menu pending が pin した draftRevision が live 行と食い違うかを見る。
+ * 下書きは in-place 更新なので旧 N は残らない。本文は読まず id+revision だけ返す
+ * （名前・メモ等をクライアント recovery に載せない）。
+ */
+export async function readLiveGenerationDraftPin(
+  userId: string,
+): Promise<LiveGenerationDraftPin | null> {
+  const client = getBrowserSupabaseClient();
+  await assertBrowserDataPlaneAligned(client);
+  const { data, error } = await client
+    .from("generation_drafts")
+    .select("id, revision")
+    .eq("user_id", userId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error !== null || data === null) return null;
+  const parsed = liveDraftPinSchema.safeParse(data);
+  if (!parsed.success) return null;
+  return { draftId: parsed.data.id, revision: parsed.data.revision };
 }
 
 export function postGeneration(

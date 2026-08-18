@@ -21,6 +21,7 @@ import {
 import { materializeAiGeneratedMenu } from "./generation-materializer.js";
 import { GenerationOutputError } from "./generation-repair.js";
 import { HttpError } from "./http.js";
+import { readOpenRouterMockScenario } from "./openrouter-mock-scenario.js";
 import { OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
 import { toRetainedDishPrompt } from "./regeneration-context.js";
 vi.mock("./generation-integrity-context.js", () => ({
@@ -38,12 +39,20 @@ vi.mock("./supabase-admin.js", () => ({
   getSupabaseAdmin: vi.fn(() => ({})),
 }));
 // succeed 後 enqueue は接続検証用に差し替え（OpenRouter 経路を触らない）
-const { maybeEnqueueShareJobMock } = vi.hoisted(() => ({
+const { maybeEnqueueShareJobMock, createOpenRouterGenerationSenderMock } = vi.hoisted(() => ({
   maybeEnqueueShareJobMock: vi.fn(() => Promise.resolve()),
+  createOpenRouterGenerationSenderMock: vi.fn(),
 }));
 vi.mock("./share-enqueue.js", () => ({
   maybeEnqueueShareJob: maybeEnqueueShareJobMock,
 }));
+vi.mock("./openrouter.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./openrouter.js")>();
+  return {
+    ...actual,
+    createOpenRouterGenerationSender: createOpenRouterGenerationSenderMock,
+  };
+});
 import { resolveGenerationIntegrityContext } from "./generation-integrity-context.js";
 import {
   ATTEMPT_TIMEOUT_MS,
@@ -1949,6 +1958,41 @@ describe("runGeneration", () => {
     expect(mockRepository.markSent).toHaveBeenCalledTimes(2);
     expect(mockRepository.succeed).not.toHaveBeenCalled();
   });
+
+  it("G3: qualityMode sender sees ALS mock scenario from deps", async () => {
+    let seen: string | undefined;
+    const sender = vi.fn(() => {
+      seen = readOpenRouterMockScenario();
+      return Promise.resolve({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: "plus-model",
+      });
+    });
+    createOpenRouterGenerationSenderMock.mockReturnValue(sender);
+    getServerEnvMock.mockReturnValue({
+      openRouter: {
+        apiKey: "k",
+        baseUrl: "http://openrouter-mock:8787/api/v1",
+        models: [...models],
+        plusModels: ["plus-model"],
+        timeoutMs: 24_000,
+        functionTotalBudgetMs: 55_000,
+      },
+    });
+    const repository = makeRepository();
+    const result = await runGeneration(
+      makeDeps({
+        repository,
+        openRouterMockScenario: "duplicate-menu",
+      }),
+      { ...command, qualityMode: true },
+    );
+    expect(sender).toHaveBeenCalled();
+    expect(seen).toBe("duplicate-menu");
+    expect(readOpenRouterMockScenario()).toBeUndefined();
+    expect(result.status).toBe("succeeded");
+  });
 });
 
 describe("createGenerationDeps loadExecutionContext contract", () => {
@@ -2004,6 +2048,14 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     }
     await expect(resolveIntegrityContext(command)).resolves.toEqual(integrity);
     expect(resolveGenerationIntegrityContext).toHaveBeenCalledWith({}, user.userId, command);
+  });
+
+  it("G3: copies localTestScenario onto deps for quality ALS wrap", () => {
+    const deps = createGenerationDeps(user, {
+      ...timing,
+      localTestScenario: "duplicate-menu",
+    });
+    expect(deps.openRouterMockScenario).toBe("duplicate-menu");
   });
 
   it("returns a full new_menu GenerationExecutionContext with regeneration null", async () => {

@@ -7,6 +7,7 @@ import {
   claimPendingGeneration,
   clearPendingGeneration,
   createPendingGeneration,
+  pendingGenerationClaimFallbackLockKey,
   pendingGenerationClaimLockName,
   pendingGenerationSchema,
   pendingGenerationCommand,
@@ -351,8 +352,10 @@ describe("pending generation storage", () => {
       );
       expect(result.claimed).toBe(false);
       expect(result.pending.request.idempotencyKey).toBe(OTHER_KEY);
-      // setItem は呼ばれない（上書きしない）
-      expect(storage.setItem).not.toHaveBeenCalled();
+      // pending 本体は上書きしない。Locks 無しでは fallback lock キーだけ書く。
+      expect(storage.setItem.mock.calls.filter(([writtenKey]) => writtenKey === KEY)).toHaveLength(
+        0,
+      );
       expect(
         readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)?.request.idempotencyKey,
       ).toBe(OTHER_KEY);
@@ -370,14 +373,13 @@ describe("pending generation storage", () => {
         },
       });
       const map = new Map<string, string>();
-      let setCount = 0;
       const storage = {
         getItem: vi.fn((k: string) => map.get(k) ?? null),
         setItem: vi.fn((k: string, next: string) => {
-          setCount += 1;
           map.set(k, next);
-          // 1 回目の自 claim 書込直後に他タブ sticky へ差替え（re-read で負けを観測）
-          if (setCount === 1 && k === KEY) {
+          // pending 本体の自 claim 書込直後に他タブ sticky へ差替え（re-read で負けを観測）。
+          // G6 fallback lock が先に別キーを書くので、KEY の書込だけを対象にする。
+          if (k === KEY) {
             map.set(k, JSON.stringify(winner));
           }
         }),
@@ -543,6 +545,36 @@ describe("pending generation storage", () => {
         expect(stored?.request.idempotencyKey).toBe(resultA.pending.request.idempotencyKey);
         // ロック名が generation claim であることを固定
         expect(pendingGenerationClaimLockName).toBe("kondate:generation:v3:claim");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("G6: locks 無しでも後タブは先勝ち sticky を上書きしない", async () => {
+      vi.stubGlobal("navigator", {});
+      try {
+        const storage = memoryStorage();
+        const first = storedPending();
+        const second = storedPending({
+          request: {
+            idempotencyKey: OTHER_KEY,
+            draftId: "20000000-0000-4000-8000-000000000001",
+            draftRevision: 3,
+            privacyNoticeVersion: "2026-07-29.v1",
+            expiredPantryConfirmations: [],
+          },
+        });
+        const started = claimPendingGeneration(first, USER_ID, new Date(STARTED_AT), storage);
+        await Promise.resolve();
+        const late = claimPendingGeneration(second, USER_ID, new Date(STARTED_AT), storage);
+        const [resultFirst, resultLate] = await Promise.all([started, late]);
+        expect(resultFirst.claimed).toBe(true);
+        expect(resultLate.claimed).toBe(false);
+        expect(resultLate.pending.request.idempotencyKey).toBe(IDEMPOTENCY_KEY);
+        expect(
+          readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)?.request.idempotencyKey,
+        ).toBe(IDEMPOTENCY_KEY);
+        expect(storage.getItem(pendingGenerationClaimFallbackLockKey)).toBeNull();
       } finally {
         vi.unstubAllGlobals();
       }

@@ -79,7 +79,10 @@ export async function resolveGenerationIntegrityContext(
   command: GenerationCommandV3,
 ): Promise<GenerationIntegrityContextV2> {
   if (command.kind === "new_menu") {
-    // draftId + draftRevision + owner で凍結候補を読む（削除済みは不可）
+    // draftId + draftRevision + owner で凍結候補を読む（削除済みは不可）。
+    // G1: 下書きは in-place で revision だけ進む。別端末が N+1 にすると旧 N は 0 行。
+    // 行自体は残っているので「見つからない」ではない。クライアントは live revision
+    // を同じ idempotencyKey に載せて再 POST する（HMAC は N+1。台帳 miss なら衝突しない）。
     const { data, error } = await admin
       .from("generation_drafts")
       .select("target_mode, servings, target_member_ids")

@@ -13,7 +13,11 @@ import {
   type UsageTodayData,
 } from "@shared/contracts/generation";
 import { planQuota } from "@shared/contracts/plan-quota";
-import { getGenerationStatus, postGeneration } from "../api/generation-api";
+import {
+  getGenerationStatus,
+  postGeneration,
+  readLiveGenerationDraftPin,
+} from "../api/generation-api";
 import {
   generationReducer,
   type GenerationClientState,
@@ -22,6 +26,7 @@ import {
 import {
   clearPendingGeneration,
   pendingGenerationCommand,
+  pendingGenerationSchema,
   readPendingGeneration,
   savePendingGeneration,
   type PendingGeneration,
@@ -157,7 +162,8 @@ function classifyGenerationClientError(
   }
   if (isGenerationFailureCode(code)) {
     // G7: POST の Error 経路では post-reserve 系を offline にして pending を守る。
-    // pre-reserve / 合成業務 code（draft_not_found 等）は従来どおり failed。
+    // pre-reserve / 合成業務 code（draft_not_found 等）は classify 上 failed。
+    // G1: new_menu の draft_not_found だけは submit 側で live revision 採用を試みる。
     if (surface === "post" && POST_ERROR_STATUS_RECOVERABLE_FAILURE_CODES.has(code)) {
       return { kind: "offline" };
     }
@@ -169,6 +175,31 @@ function classifyGenerationClientError(
     return { kind: "offline" };
   }
   return { kind: "offline" };
+}
+
+/**
+ * G1: 別端末が live draft を in-place で N+1 に進めると、pin した N は 0 行になり
+ * integrity が draft_not_found を返す。下書き本体は残っているので pending を焼かず、
+ * 同じ idempotencyKey のまま revision だけ進める。generation_in_progress は台帳行を
+ * 増やさないため HMAC 再計算でも payload_mismatch にならない。削除・別 id・同 revision は null。
+ */
+async function adoptStalePinnedDraftRevision(
+  pending: PendingGeneration,
+): Promise<PendingGeneration | null> {
+  if (pending.kind !== "new_menu") return null;
+  const live = await readLiveGenerationDraftPin(pending.ownerUserId);
+  if (live === null) return null;
+  if (live.draftId !== pending.request.draftId) return null;
+  if (live.revision <= pending.request.draftRevision) return null;
+  const next = pendingGenerationSchema.parse({
+    ...pending,
+    request: {
+      ...pending.request,
+      draftRevision: live.revision,
+    },
+  });
+  savePendingGeneration(next);
+  return next;
 }
 
 export type GenerationRecoveryController = {
@@ -284,57 +315,88 @@ export function useGenerationRecovery(
       const current = submitInFlightRef.current;
       if (current?.token === token) return current.promise;
       const operation = Promise.resolve().then(async () => {
-        try {
-          const data = await postGeneration(pendingGenerationCommand(pending));
-          // 他タブが先に結果着地して pending を消しても、同一 lifecycle の
-          // processing / succeeded は回収する。not_started 再POST は pending 必須。
-          if (data.status === "succeeded" || data.status === "processing") {
-            if (!isActiveToken(token)) return;
-          } else if (!isCurrent(token)) {
+        let commandPending = pending;
+        let adoptedStaleDraft = false;
+        for (;;) {
+          try {
+            const data = await postGeneration(pendingGenerationCommand(commandPending));
+            // 他タブが先に結果着地して pending を消しても、同一 lifecycle の
+            // processing / succeeded は回収する。not_started 再POST は pending 必須。
+            if (data.status === "succeeded" || data.status === "processing") {
+              if (!isActiveToken(token)) return;
+            } else if (!isCurrent(token)) {
+              return;
+            }
+            token.phase = data.status === "not_started" ? "submitting" : data.status;
+            dispatch({ type: "status", data });
+            return;
+          } catch (error) {
+            if (!isCurrent(token)) return;
+            const classified = classifyGenerationClientError(error, "post");
+            // Plan 3: 409 idempotency_payload_mismatch は offline 再試行ループへ落とさない。
+            if (classified.kind === "request_conflict") {
+              token.phase = "request_conflict";
+              // remount / C1 安全のため pending は即消し、端末 UI はメモリ上に残す。
+              clearPendingGeneration();
+              dispatch({
+                type: "request_conflict",
+                code: "idempotency_payload_mismatch",
+                message: issueMessages.idempotency_payload_mismatch,
+              });
+              return;
+            }
+            // 業務・品質・閉じたサーバ code は failed。offline「通信確認」に落とさない（本番 422 調査）。
+            if (classified.kind === "failed") {
+              // G1: 別端末の live revision 進行で pin N が消えたときは 1 回だけ N+1 を載せて再 POST。
+              // 削除済み・adopt 不能は従来どおり終端。live 読取の一時障害は pending を焼かない。
+              if (classified.code === "draft_not_found" && !adoptedStaleDraft) {
+                let adopted: PendingGeneration | null;
+                try {
+                  adopted = await adoptStalePinnedDraftRevision(commandPending);
+                } catch (adoptError) {
+                  const adoptClassified = classifyGenerationClientError(adoptError, "post");
+                  if (adoptClassified.kind === "auth") {
+                    clearPendingGeneration();
+                    invalidateLifecycle();
+                    dispatch({ type: "clear" });
+                    void redirectToLoginForExpiredSession({ returnTo: "/planner" });
+                    return;
+                  }
+                  token.phase = "offline";
+                  dispatch({ type: "network_error" });
+                  return;
+                }
+                if (adopted !== null && isCurrent(token)) {
+                  adoptedStaleDraft = true;
+                  commandPending = adopted;
+                  continue;
+                }
+              }
+              clearPendingGeneration();
+              const failed = syntheticFailedStatus(
+                commandPending.request.idempotencyKey,
+                classified.code,
+                classified.message,
+                readCachedUsageSuccess(queryClient, token.ownerUserId),
+              );
+              token.phase = "failed";
+              dispatch({ type: "status", data: failed });
+              return;
+            }
+            // 認証切れを offline にすると「通信確認」のまま永久に止まる（複数端末ログアウト等）。
+            // lifecycle も無効化し、replace 遅延中に再試行が「operation is active」で詰まるのを防ぐ（A2）。
+            if (classified.kind === "auth") {
+              clearPendingGeneration();
+              invalidateLifecycle();
+              dispatch({ type: "clear" });
+              void redirectToLoginForExpiredSession({ returnTo: "/planner" });
+              return;
+            }
+            // transport / 未知の Error.message のみ offline
+            token.phase = "offline";
+            dispatch({ type: "network_error" });
             return;
           }
-          token.phase = data.status === "not_started" ? "submitting" : data.status;
-          dispatch({ type: "status", data });
-        } catch (error) {
-          if (!isCurrent(token)) return;
-          const classified = classifyGenerationClientError(error, "post");
-          // Plan 3: 409 idempotency_payload_mismatch は offline 再試行ループへ落とさない。
-          if (classified.kind === "request_conflict") {
-            token.phase = "request_conflict";
-            // remount / C1 安全のため pending は即消し、端末 UI はメモリ上に残す。
-            clearPendingGeneration();
-            dispatch({
-              type: "request_conflict",
-              code: "idempotency_payload_mismatch",
-              message: issueMessages.idempotency_payload_mismatch,
-            });
-            return;
-          }
-          // 業務・品質・閉じたサーバ code は failed。offline「通信確認」に落とさない（本番 422 調査）。
-          if (classified.kind === "failed") {
-            clearPendingGeneration();
-            const failed = syntheticFailedStatus(
-              pending.request.idempotencyKey,
-              classified.code,
-              classified.message,
-              readCachedUsageSuccess(queryClient, token.ownerUserId),
-            );
-            token.phase = "failed";
-            dispatch({ type: "status", data: failed });
-            return;
-          }
-          // 認証切れを offline にすると「通信確認」のまま永久に止まる（複数端末ログアウト等）。
-          // lifecycle も無効化し、replace 遅延中に再試行が「operation is active」で詰まるのを防ぐ（A2）。
-          if (classified.kind === "auth") {
-            clearPendingGeneration();
-            invalidateLifecycle();
-            dispatch({ type: "clear" });
-            void redirectToLoginForExpiredSession({ returnTo: "/planner" });
-            return;
-          }
-          // transport / 未知の Error.message のみ offline
-          token.phase = "offline";
-          dispatch({ type: "network_error" });
         }
       });
       const record: InFlightRecord = { token, promise: operation };

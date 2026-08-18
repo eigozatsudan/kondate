@@ -180,8 +180,10 @@ type PendingGenerationClaimStorage = Pick<Storage, "getItem" | "setItem" | "remo
  * P1: dual-tab localStorage pending の check-then-act last-writer-wins を閉じる。
  * shopping の claimShoppingCommand / claimItemMutationSticky と同型:
  * - Web Locks で読取→書込を直列化（pre-write TOCTOU を閉じる）
- * - Locks 非対応は書込後 re-read + 1 ティック後の再確認で他 sticky を見たら負け
- *   （即時 re-read だけだと両タブが自 key を見て両方 claimed になり得る）
+ * - Locks 非対応は localStorage fallback lock（PE-R3 同型）で同一オリジンを直列化し、
+ *   書込後 re-read + 1 ティック再確認で他 sticky を見たら負け
+ * G6: 1 ティック再読だけでは先勝ち確定後に後タブが last-writer で上書きし、
+ * 先勝ち key が端末から消える。fallback lock 保持中だけ mint する。
  * C2: 既に有効 pending があるときは上書きせず claimed=false（同一タブ再開と同契約）。
  * recovery 中の requestId 更新など「同一 sticky の上書き」は savePendingGeneration を直接使う。
  */
@@ -234,11 +236,28 @@ function yieldClaimTurn(): Promise<void> {
   });
 }
 
+function sleepClaimMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/** G6: Locks 非対応 UA の同一オリジン向け。別端末は残差。 */
+export const pendingGenerationClaimFallbackLockKey = "kondate:generation:v3:claim-lock" as const;
+const pendingGenerationClaimFallbackLockTtlMs = 8_000;
+const pendingGenerationClaimFallbackLockPollMs = 15;
+
+function claimFallbackLockIsHeld(held: string | null, nowMs: number): boolean {
+  if (held === null) return false;
+  const heldAt = Number(held.split(":")[0]);
+  return Number.isFinite(heldAt) && nowMs - heldAt <= pendingGenerationClaimFallbackLockTtlMs;
+}
+
 /**
  * Locks 非対応: 書いた直後の自 key を信じず、1 ティック後にもう一度読む。
  * 他 sticky が見えたら負け（両方 claimed にしない）。Locks 経路は触らない。
  */
-async function claimPendingGenerationWithoutLocks(
+async function confirmClaimAfterFirstWrite(
   candidate: PendingGeneration,
   currentUserId: string,
   now: Date,
@@ -257,6 +276,53 @@ async function claimPendingGenerationWithoutLocks(
     return { pending: again, claimed: false };
   }
   return { pending: again, claimed: true };
+}
+
+/**
+ * G6: pantry PE-R3 同型の localStorage fallback lock。
+ * 1 ティック再読の前に同一オリジンの mint を直列化し、先勝ち key の last-writer 消失を閉じる。
+ * 期限切れは献立開始を止めず、ロック無しの 1 ティック再読へ落とす。
+ */
+async function runWithGenerationClaimFallbackLock<T>(
+  storage: PendingGenerationClaimStorage,
+  run: () => Promise<T>,
+): Promise<T | null> {
+  const token = `${Date.now().toString()}:${Math.random().toString(36).slice(2)}`;
+  const deadline = Date.now() + pendingGenerationClaimFallbackLockTtlMs;
+  while (Date.now() < deadline) {
+    if (
+      !claimFallbackLockIsHeld(storage.getItem(pendingGenerationClaimFallbackLockKey), Date.now())
+    ) {
+      storage.setItem(pendingGenerationClaimFallbackLockKey, token);
+      await yieldClaimTurn();
+      if (storage.getItem(pendingGenerationClaimFallbackLockKey) === token) {
+        try {
+          return await run();
+        } finally {
+          if (storage.getItem(pendingGenerationClaimFallbackLockKey) === token) {
+            storage.removeItem(pendingGenerationClaimFallbackLockKey);
+          }
+        }
+      }
+    }
+    await sleepClaimMs(pendingGenerationClaimFallbackLockPollMs);
+  }
+  return null;
+}
+
+async function claimPendingGenerationWithoutLocks(
+  candidate: PendingGeneration,
+  currentUserId: string,
+  now: Date,
+  storage: PendingGenerationClaimStorage,
+): Promise<ClaimPendingGenerationResult> {
+  const locked = await runWithGenerationClaimFallbackLock(storage, () =>
+    confirmClaimAfterFirstWrite(candidate, currentUserId, now, storage),
+  );
+  if (locked !== null) {
+    return locked;
+  }
+  return confirmClaimAfterFirstWrite(candidate, currentUserId, now, storage);
 }
 
 export function clearPendingGeneration(

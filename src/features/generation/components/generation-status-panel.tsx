@@ -107,7 +107,8 @@ function confirmProcessingDiscard(): boolean {
  * Navigate と <a href> が競合するため）。
  * 緊急献立 CTA は household / idea とも常時表示（2026-07-28 設計: idea 個人固定候補パス）。
  *
- * requireDiscardConfirm: processing / offline 用。localStorage の冪等キー破棄前に確認する。
+ * requireDiscardConfirm: processing / offline / 合成 in_progress 待ち用。
+ * localStorage の冪等キー破棄前に確認する。
  *
  * 真の <button> だけ Button 化する。button-link の <a> は Button 化しない（契約）。
  */
@@ -481,7 +482,14 @@ export function GenerationStatusPanel({
           retryAt={state.data.quota.retryAt}
           showHardLimitCta={hardLimitFailure}
         />
-        <RecoveryLinks {...(onClear === undefined ? {} : { onClear })} />
+        {/* G4: 合成 generation_in_progress の 5s 待ちは failed のまま。
+            G-R1 の submitting confirm は再 POST 発火後だけ。待ち中に
+            やり直す/緊急/履歴が pending を confirm 無しで消すと自動再 POST が死ぬ。
+            破棄は processing 占有中と同じ confirm を要求する。 */}
+        <RecoveryLinks
+          requireDiscardConfirm={state.data.error.code === "generation_in_progress"}
+          {...(onClear === undefined ? {} : { onClear })}
+        />
       </PanelShell>
     );
   }

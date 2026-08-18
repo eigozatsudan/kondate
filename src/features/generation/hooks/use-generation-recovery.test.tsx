@@ -17,6 +17,7 @@ import type { GenerationClientState, GenerationEvent } from "../model/generation
 
 const mockPost = vi.hoisted(() => vi.fn());
 const mockStatus = vi.hoisted(() => vi.fn());
+const mockReadLiveDraftPin = vi.hoisted(() => vi.fn());
 const mockReadPending = vi.hoisted(() => vi.fn());
 const mockSavePending = vi.hoisted(() => vi.fn());
 const mockClearPending = vi.hoisted(() => vi.fn());
@@ -60,6 +61,7 @@ vi.mock("react-router", async (importOriginal) => {
 vi.mock("../api/generation-api", () => ({
   postGeneration: mockPost,
   getGenerationStatus: mockStatus,
+  readLiveGenerationDraftPin: mockReadLiveDraftPin,
 }));
 vi.mock("../model/pending-generation", async (importOriginal) => {
   const original = await importOriginal<typeof import("../model/pending-generation")>();
@@ -382,6 +384,8 @@ beforeEach(() => {
   authCallbackRef.current = null;
   reducerListenerRef.current = undefined;
   mockDispatches.length = 0;
+  mockReadLiveDraftPin.mockReset();
+  mockReadLiveDraftPin.mockResolvedValue(null);
   mockReadPending.mockImplementation((userId: string, now: Date) =>
     realPendingGeneration.readPendingGeneration(userId, now, storage),
   );
@@ -1187,6 +1191,66 @@ describe("useGenerationRecovery", () => {
 
   // 本番調査: ok:false 業務 code を offline「通信確認」に落とすと第三者端末で永久停止する。
   // pre-reserve / 合成確定失敗のみ Error 名で failed に焼く（G7）。
+  it("G1: adopts live draft revision after POST draft_not_found and keeps pending", async () => {
+    const liveRevision = pendingA.kind === "new_menu" ? pendingA.request.draftRevision + 1 : 4;
+    mockReadLiveDraftPin.mockResolvedValue({
+      draftId: pendingA.kind === "new_menu" ? pendingA.request.draftId : "missing",
+      revision: liveRevision,
+    });
+    mockPost.mockRejectedValueOnce(new Error("draft_not_found")).mockResolvedValueOnce(processingA);
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(mockPost).toHaveBeenCalledTimes(2);
+    const secondCommand = mockPost.mock.calls[1]?.[0] as GenerationCommand;
+    expect(secondCommand).toMatchObject({
+      kind: "new_menu",
+      request: {
+        idempotencyKey: KEY_A,
+        draftRevision: liveRevision,
+      },
+    });
+    expect(recovery.result.current.state.phase).toBe("processing");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject({
+      request: { idempotencyKey: KEY_A, draftRevision: liveRevision },
+    });
+    expect(mockClearPending).not.toHaveBeenCalled();
+  });
+
+  it("G1: G14 retry adopts live revision instead of burning pending on draft_not_found", async () => {
+    vi.useFakeTimers();
+    mockPost.mockReset();
+    try {
+      const liveRevision = pendingA.kind === "new_menu" ? pendingA.request.draftRevision + 1 : 4;
+      mockReadLiveDraftPin.mockResolvedValue({
+        draftId: pendingA.kind === "new_menu" ? pendingA.request.draftId : "missing",
+        revision: liveRevision,
+      });
+      mockPost
+        .mockResolvedValueOnce(inProgressStatus(KEY_A))
+        .mockRejectedValueOnce(new Error("draft_not_found"))
+        .mockResolvedValueOnce(processingA);
+      const recovery = renderRecoveryAt(idleState, null);
+      await act(() => recovery.result.current.startGeneration(pendingA));
+      expect(recovery.result.current.state.phase).toBe("failed");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(GENERATION_IN_PROGRESS_RETRY_MS);
+      });
+      expect(mockPost).toHaveBeenCalledTimes(3);
+      const retryCommand = mockPost.mock.calls[2]?.[0] as GenerationCommand;
+      expect(retryCommand).toMatchObject({
+        request: { idempotencyKey: KEY_A, draftRevision: liveRevision },
+      });
+      expect(recovery.result.current.state.phase).toBe("processing");
+      expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject({
+        request: { idempotencyKey: KEY_A, draftRevision: liveRevision },
+      });
+    } finally {
+      vi.clearAllTimers();
+      mockPost.mockReset();
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ["consent_required", "AIへ送る情報の説明"],
     ["draft_not_found", "献立条件が見つかりません"],

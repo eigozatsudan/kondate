@@ -40,6 +40,7 @@ vi.mock("@/shared/lib/supabase", () => ({
 vi.mock("../api/generation-api", () => ({
   postGeneration: mockPost,
   getGenerationStatus: mockStatus,
+  readLiveGenerationDraftPin: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("../api/usage-today-api", () => ({
   getUsageToday: mockGetUsageToday,
