@@ -6,9 +6,10 @@
 import { serve } from "@hono/node-server";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, connectionHostLabel } from "./config.js";
+import { loadConfig } from "./config.js";
 import { createPool, runStartupDbChecks } from "./db.js";
 import { createApp } from "./app.js";
+import { formatAdminListenLog } from "./lib/redact-connection.js";
 import { createSafeStaticMiddleware, createSpaFallbackMiddleware } from "./lib/safe-static.js";
 
 async function main(): Promise<void> {
@@ -44,10 +45,14 @@ async function main(): Promise<void> {
     app.get("*", createSpaFallbackMiddleware(clientRoot));
   }
 
-  // 接続先表示用（userinfo 無し）
-  const hostLabel = connectionHostLabel(config.databaseUrl);
+  // health と同じ丸め。project-ref / リージョン / パスワードは出さない
   console.info(
-    `[admin] listening on ${config.bindHost}:${config.port} (db host=${hostLabel}, session_user=${sessionUser})`,
+    formatAdminListenLog({
+      bindHost: config.bindHost,
+      port: config.port,
+      databaseUrl: config.databaseUrl,
+      sessionUser,
+    }),
   );
 
   serve({

@@ -48,7 +48,34 @@ describe("createApp security", () => {
     });
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("frame-ancestors 'none'");
+    // A8: XSS 後の sessionStorage 読取を狭める。'self' のみ（inline は足さない）
+    expect(csp).toContain("script-src 'self'");
+  });
+
+  it("A8: API JSON has Cache-Control no-store", async () => {
+    const app = createApp({ pool: null, config: baseConfig, dbReady: false });
+    const res = await app.request("http://127.0.0.1:5193/api/health", {
+      headers: { host: "127.0.0.1:5193" },
+    });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("A8: token-required API 401 also has Cache-Control no-store", async () => {
+    const app = createApp({
+      pool: null,
+      config: baseConfig,
+      dbReady: false,
+      registerRoutes: (app) => {
+        app.get("/api/dashboard", (c) => c.json({ ok: true, data: {} }));
+      },
+    });
+    const res = await app.request("http://127.0.0.1:5193/api/dashboard", {
+      headers: { host: "127.0.0.1:5193" },
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
   it("requires token on non-health api when configured", async () => {
@@ -273,5 +300,34 @@ describe("health redaction", () => {
     expect(body.data.connectionHost).toBe("db.***.supabase.co:5432");
     expect(body.data.sessionUser).toBe("kondate_ops_readonly.***");
     expect(JSON.stringify(body)).not.toContain(ref);
+  });
+
+  it("A9: redacts pooler region without requiring a token", async () => {
+    const ref = "abcdefghij1234567890";
+    const password = "super-secret-pass";
+    const app = createApp({
+      pool: null,
+      config: {
+        ...baseConfig,
+        databaseUrl: `postgresql://kondate_ops_readonly.${ref}:${password}@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require`,
+        allowInsecureLocalDb: false,
+      },
+      dbReady: true,
+      sessionUser: `kondate_ops_readonly.${ref}`,
+    });
+    const res = await app.request("http://127.0.0.1:5193/api/health", {
+      headers: { host: "127.0.0.1:5193" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { connectionHost: string | null; sessionUser: string | null };
+    };
+    expect(body.data.connectionHost).toBe("***.pooler.supabase.com:5432");
+    expect(body.data.sessionUser).toBe("kondate_ops_readonly.***");
+    const dumped = JSON.stringify(body);
+    expect(dumped).not.toContain(ref);
+    expect(dumped).not.toContain("ap-northeast-1");
+    expect(dumped).not.toContain("aws-0");
+    expect(dumped).not.toContain(password);
   });
 });

@@ -11,6 +11,8 @@ export default defineConfig({
   build: {
     outDir: resolve(rootDir, "dist/client"),
     emptyOutDir: true,
+    // A8: CSP script-src 'self' と両立させる。inline polyfill は出さない。
+    modulePreload: { polyfill: false },
   },
   server: {
     port: 5194,

@@ -142,7 +142,23 @@ describe("createSafeStaticMiddleware integration", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("script-src 'self'");
+  });
+
+  it("A8: static 200 has Cache-Control no-store", async () => {
+    const app = buildApp();
+    const res = await app.request("http://127.0.0.1:5193/assets/app.js");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("A8: SPA fallback has Cache-Control no-store", async () => {
+    const app = buildApp();
+    const res = await app.request("http://127.0.0.1:5193/unknown-client-route");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
   it("AO3: replacing a served leaf with an outside symlink does not leak", async () => {
