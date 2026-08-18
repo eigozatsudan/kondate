@@ -1555,6 +1555,40 @@ it("P1: leave flush timeout 後はロックを落とし、遅延 proceed で固�
   });
 });
 
+it("P1: leave flush timeout 後は never-settle の flush に join せず generate できる", async () => {
+  // timeout は元 Promise を cancel しない。flight を残すと次の generate が
+  // 同じ never-settle GET/RPC に join し isSubmitting が解けない。
+  const hang = new Promise<PlannerDraft>(() => undefined);
+  savePlannerDraftMock.mockImplementationOnce(() => hang);
+  const startGeneration = vi.fn().mockResolvedValue(true);
+  render(<PlannerPage startGeneration={startGeneration} />);
+  await vi.waitFor(() => {
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  });
+
+  vi.useFakeTimers();
+  try {
+    const leavePromise = runPlannerLeaveFlush();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PLANNER_LEAVE_FLUSH_TIMEOUT_MS + 10);
+    });
+    await expect(leavePromise).resolves.toBe("blocked");
+    expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
+  } finally {
+    vi.useRealTimers();
+  }
+
+  // hang は resolve しない。2 回目の save は既定 mock で settle する。
+  const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+  await props.onSubmit();
+  await vi.waitFor(() => {
+    expect(startGeneration).toHaveBeenCalled();
+  });
+});
+
 it("P9: pendingDisplayReady 前の leave flush は空下書きを正本にしない", async () => {
   pendingGenerationMock.readPendingGeneration.mockReturnValue({
     ownerUserId: draft.userId,
@@ -2177,6 +2211,60 @@ describe("PlannerRoutePage", () => {
     expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 
+  it("P3: startGeneration は pantry 再読後の JST 当日以外 confirmation を載せない", async () => {
+    // list 前に閉じた now のままだと、再読が JST 0:00 を跨いだあと昨日 checkedAt が残る。
+    const beforeMidnight = new Date("2026-08-17T14:59:00.000Z");
+    const afterMidnight = new Date("2026-08-17T15:00:30.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(beforeMidnight);
+    try {
+      let pantryReads = 0;
+      listPantryItemsMock.mockImplementation(() => {
+        pantryReads += 1;
+        if (pantryReads >= 2) {
+          vi.setSystemTime(afterMidnight);
+        }
+        return Promise.resolve(queryState.pantry.data ?? []);
+      });
+      render(<PlannerRoutePage />);
+      act(() => {
+        const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+        props.onDraftChange({
+          ...props.draft,
+          pantrySelections: [
+            {
+              pantryItemId: pantryItem.id,
+              priority: "prefer_use",
+            },
+          ],
+        });
+        const latest = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+        latest.onAttemptChange({
+          idempotencyKey: latest.attempt.idempotencyKey,
+          qualityMode: false,
+          expiredPantryChecks: [
+            {
+              pantryItemId: pantryItem.id,
+              checkedAt: "2026-08-17T14:50:00.000Z",
+            },
+          ],
+        });
+      });
+      const submitProps = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+      await submitProps.onSubmit();
+
+      await vi.waitFor(() => {
+        expect(pendingGenerationMock.createPendingGeneration).toHaveBeenCalled();
+      });
+      const command = pendingGenerationMock.createPendingGeneration.mock.calls[0]?.[0] as {
+        request: { expiredPantryConfirmations: unknown[] };
+      };
+      expect(command.request.expiredPantryConfirmations).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("P6: startGeneration は期限切れ解消済み confirmation を sticky に載せない", async () => {
     // onSubmit 再読時点では期限切れ、claim 前再読で未来日。第 3 引数が checks 自身だと surplus 422。
     const resolved = { ...pantryItem, expiresOn: "2099-12-31" };
@@ -2370,6 +2458,67 @@ describe("PlannerRoutePage", () => {
     expect(screen.queryByRole("button", { name: "作成中の献立を続ける" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
     expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalled();
+  });
+
+  it("P2: 他タブ claim の storage 後は確認に再開注意を出す", async () => {
+    render(<PlannerRoutePage />);
+    expect(await screen.findByLabelText("wizard step")).toHaveTextContent("review");
+    expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
+
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: { idempotencyKey: "existing" },
+    });
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "kondate:generation:v3",
+          newValue: "{}",
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
+    });
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("P2: 再開注意前の generate は旧 sticky を再開しない", async () => {
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    expect(await screen.findByLabelText("wizard step")).toHaveTextContent("review");
+    expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
+
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: { idempotencyKey: "existing" },
+    });
+
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
+    expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
+    });
+
+    await user.click(screen.getByRole("button", { name: "生成" }));
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
   });
 
   it("?resume= 付きは pending があってもウィザードを優先する（不変契約 4b）", async () => {

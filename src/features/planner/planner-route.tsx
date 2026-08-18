@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavigationType, useBlocker, useNavigate, useSearchParams } from "react-router";
 import type { PantryItem } from "@shared/contracts/pantry";
@@ -85,6 +85,12 @@ const HOME_EXPIRING_PANTRY_LIMIT = 5;
 const CLAIM_LOSER_WAIT_MS = 160;
 /** 負けタブの pending / meta 再読間隔。 */
 const CLAIM_LOSER_POLL_MS = 16;
+/**
+ * 他タブ claim の storage イベント絞り。
+ * pending-generation.ts の v3 body / meta / claim-lock と同じ接頭辞。
+ * generation 内部は変えず、planner 側で再開注意を再描画する。
+ */
+const GENERATION_PENDING_STORAGE_PREFIX = "kondate:generation:";
 
 const emptyDraft: PlannerDraftInput = {
   mealType: null,
@@ -364,7 +370,9 @@ export function PlannerRoutePage() {
       // 「現期限切れ」とみなすと surplus が exact-set 422 になるので再読する。
       // P2/P3/P5: Free / 非 Plus / plan 未取得 / quality 枠なしでは qualityMode を必ず false
       // （onSubmit clamp をすり抜けた注入・将来呼び出しでも pending に true を載せない）
-      const nowForExpired = new Date();
+      // P3 (f297396c): list 前の now のままだと JST 0:00 跨ぎで昨日 checkedAt が残る。
+      // 再読後の now で当日判定を揃え、サーバ validateTransientChecks と同じ fail-closed にする。
+      let nowForExpired = new Date();
       let currentlyExpiredIds = new Set(
         attempt.expiredPantryChecks.map((check) => check.pantryItemId),
       );
@@ -372,7 +380,8 @@ export function PlannerRoutePage() {
         try {
           const freshPantry = await listPantryItems(getBrowserSupabaseClient(), userId);
           if (isAbortSignalAborted(signal)) return false;
-          currentlyExpiredIds = currentlyExpiredPantryItemIds(freshPantry, new Date());
+          nowForExpired = new Date();
+          currentlyExpiredIds = currentlyExpiredPantryItemIds(freshPantry, nowForExpired);
         } catch {
           // 再読失敗時は onSubmit 済み checks を現期限切れとみなす。サーバ exact-set は fail-closed。
         }
@@ -459,6 +468,21 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   accessTokenRef.current = typeof accessToken === "string" ? accessToken : undefined;
   // G-R4: home/review の再開 UI は status reconcile 後の kept のみ（localStorage 非 null だけでは出さない）
   const { hasResumablePending, pendingDisplayReady } = useResumablePendingAfterReconcile(userId);
+  // P2 (f297396c): 他タブ claim は storage だけ進み、planner は購読していなかった。
+  // epoch を進めて hook の syncDisplay を再走させ、再開注意を出す。
+  const [, bumpPendingStorageEpoch] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && !event.key.startsWith(GENERATION_PENDING_STORAGE_PREFIX)) {
+        return;
+      }
+      bumpPendingStorageEpoch();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
   const draftQuery = useQuery({
     queryKey: plannerKeys.draft(userId ?? "missing"),
     queryFn: () => getPlannerDraft(client, userId ?? ""),
@@ -552,8 +576,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const isOpeningEmergencyMenusRef = useRef(false);
   const isOpeningPrivacyRef = useRef(false);
   const isOpeningSettingsRef = useRef(false);
-  const flushDraftRef = useRef<() => Promise<PlannerDraft>>(() =>
-    Promise.reject(new Error("flush_not_ready")),
+  const flushDraftRef = useRef<(options?: { abandonTimedOut?: boolean }) => Promise<PlannerDraft>>(
+    () => Promise.reject(new Error("flush_not_ready")),
   );
   hasDraftConflictRef.current = hasDraftConflict;
   isOpeningEmergencyMenusRef.current = isOpeningEmergencyMenus;
@@ -823,58 +847,69 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // P2: flushDraft 自体を単一 flight にする。timeout 後の再 leave や reset flush と
   // 下ナビ leave が重なると、先行 N+1 / 後続 N+2 の cache 連番を競合と誤認する。
   const flushDraftInFlightRef = useRef<Promise<PlannerDraft> | null>(null);
-  const flushDraft = useCallback(async (): Promise<PlannerDraft> => {
-    const existing = flushDraftInFlightRef.current;
-    if (existing !== null) {
-      return existing;
-    }
-    const flight = (async (): Promise<PlannerDraft> => {
-      // 公開 sticky 中は RPC せず pin した live を返す。C2 再開の draftRevision を壊さない。
-      if (userId !== undefined && readPendingGenerationMeta(userId, new Date()) !== null) {
-        const pinned = liveDraftRef.current;
-        if (pinned !== null) {
-          return pinned;
-        }
+  // P1 (f297396c): leave timeout 後も元 GET/RPC は残る。再 leave は join を維持し、
+  // generate だけ abandonTimedOut で新 flight を始める（never-settle への固着防止）。
+  const flushDraftTimedOutRef = useRef(false);
+  const flushDraft = useCallback(
+    async (options?: { abandonTimedOut?: boolean }): Promise<PlannerDraft> => {
+      const existing = flushDraftInFlightRef.current;
+      const abandonTimedOut = options?.abandonTimedOut === true && flushDraftTimedOutRef.current;
+      if (existing !== null && !abandonTimedOut) {
+        return existing;
       }
-      const saved = await flushAutosave();
-      // 保存完了前に始まった古い再取得で revision を逆行させないよう、cache 更新前に停止する。
-      await queryClient.cancelQueries({
-        queryKey: plannerKeys.draft(userId ?? "missing"),
-        exact: true,
-      });
-      const current = queryClient.getQueryData<PlannerDraft | null>(
-        plannerKeys.draft(userId ?? "missing"),
+      if (abandonTimedOut) {
+        flushDraftTimedOutRef.current = false;
+        flushDraftInFlightRef.current = null;
+      }
+      const flight = (async (): Promise<PlannerDraft> => {
+        // 公開 sticky 中は RPC せず pin した live を返す。C2 再開の draftRevision を壊さない。
+        if (userId !== undefined && readPendingGenerationMeta(userId, new Date()) !== null) {
+          const pinned = liveDraftRef.current;
+          if (pinned !== null) {
+            return pinned;
+          }
+        }
+        const saved = await flushAutosave();
+        // 保存完了前に始まった古い再取得で revision を逆行させないよう、cache 更新前に停止する。
+        await queryClient.cancelQueries({
+          queryKey: plannerKeys.draft(userId ?? "missing"),
+          exact: true,
+        });
+        const current = queryClient.getQueryData<PlannerDraft | null>(
+          plannerKeys.draft(userId ?? "missing"),
+        );
+        if (current !== undefined && current !== null && current.revision > saved.revision) {
+          // 遅延した保存応答で別画面の新しい下書きを消さず、既存の明示的な競合解決へ合流させる。
+          await onConflict();
+          throw new DraftRevisionConflictError();
+        }
+        if (current === null) {
+          // 他タブ soft-delete / 生成後 live-null。削除済み lastSaved を cache に戻さない（P-R2）。
+          throw new IncompleteDraftSaveError();
+        }
+        // 緊急献立側が staleTime 内の古い下書きを再利用しないよう、保存結果を遷移前に同期する。
+        queryClient.setQueryData(plannerKeys.draft(userId ?? "missing"), saved);
+        return saved;
+      })();
+      flushDraftInFlightRef.current = flight;
+      // finally だと拒否が再 throw され void が unhandled rejection になる。
+      // 呼び出し側は flight 自体を await して失敗を扱う。
+      void flight.then(
+        () => {
+          if (flushDraftInFlightRef.current === flight) {
+            flushDraftInFlightRef.current = null;
+          }
+        },
+        () => {
+          if (flushDraftInFlightRef.current === flight) {
+            flushDraftInFlightRef.current = null;
+          }
+        },
       );
-      if (current !== undefined && current !== null && current.revision > saved.revision) {
-        // 遅延した保存応答で別画面の新しい下書きを消さず、既存の明示的な競合解決へ合流させる。
-        await onConflict();
-        throw new DraftRevisionConflictError();
-      }
-      if (current === null) {
-        // 他タブ soft-delete / 生成後 live-null。削除済み lastSaved を cache に戻さない（P-R2）。
-        throw new IncompleteDraftSaveError();
-      }
-      // 緊急献立側が staleTime 内の古い下書きを再利用しないよう、保存結果を遷移前に同期する。
-      queryClient.setQueryData(plannerKeys.draft(userId ?? "missing"), saved);
-      return saved;
-    })();
-    flushDraftInFlightRef.current = flight;
-    // finally だと拒否が再 throw され void が unhandled rejection になる。
-    // 呼び出し側は flight 自体を await して失敗を扱う。
-    void flight.then(
-      () => {
-        if (flushDraftInFlightRef.current === flight) {
-          flushDraftInFlightRef.current = null;
-        }
-      },
-      () => {
-        if (flushDraftInFlightRef.current === flight) {
-          flushDraftInFlightRef.current = null;
-        }
-      },
-    );
-    return flight;
-  }, [flushAutosave, onConflict, queryClient, userId]);
+      return flight;
+    },
+    [flushAutosave, onConflict, queryClient, userId],
+  );
   // P2: leave-flush は mount 時 handler 固定のため、最新 flush を ref 経由で読む
   flushDraftRef.current = flushDraft;
 
@@ -1430,6 +1465,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           // withTimeout 後も handler は続く。世代を進め route ロックを同期で落とす。
           leaveFlightIdRef.current += 1;
           leaveInFlightRef.current = false;
+          // P1 (f297396c): 元 GET/RPC は cancel しない。再 leave は同じ flight に join する。
+          // generate は abandonTimedOut でこの印を見て新 flight を始める。
+          flushDraftTimedOutRef.current = true;
           if (mountedRef.current) {
             setIsLeaving(false);
             // ロック解除だけでは無言 stay になる。通信失敗と同系統の理由を出す。
@@ -1700,6 +1738,17 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           }
           setSubmissionError(null);
           setFieldErrors({});
+          // P2 (f297396c): 他タブ claim 後、再開注意を見せる前に旧 pin へ合流しない。
+          // storage 未購読・reconcile WAITING 中の click は注意を出して stay。
+          if (
+            userId !== undefined &&
+            !hasResumablePending &&
+            readPendingGeneration(userId, new Date()) !== null
+          ) {
+            bumpPendingStorageEpoch();
+            setStep("review");
+            return;
+          }
           // P4: safety/pantry soft 失敗中は stale previous data で送信しない
           if (staleBackgroundSafetyPantry) {
             setSubmissionError(
@@ -1786,7 +1835,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           // 生成成功（/generation 遷移）後は finally で isSaving を落とさない
           let generationProceeded = false;
           try {
-            const saved = await flushDraft();
+            const saved = await flushDraft({ abandonTimedOut: true });
             // strip は operationId を先に無効化するので submittingRef の再読は冗長
             if (!mountedRef.current || submitOperationId !== submitOperationIdRef.current) {
               return;
@@ -1797,6 +1846,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             // 短絡 saved は再開判定に使わず、pending があるときだけ eligibility を飛ばす。
             const shouldResumePending =
               userId !== undefined && readPendingGeneration(userId, new Date()) !== null;
+            // flush 中に他タブが claim しても、注意未表示のまま再開しない。
+            if (shouldResumePending && !hasResumablePending) {
+              bumpPendingStorageEpoch();
+              setStep("review");
+              return;
+            }
             if (!shouldResumePending) {
               // P3: flush 中に pending が消えたら、スキップした医療境界を新規生成前に戻す。
               if (detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0) {
