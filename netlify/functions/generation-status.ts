@@ -69,10 +69,12 @@ export default async function generationStatus(
   }
 }
 
-// G16 residual-intentional: status は path/method のみ（POST の IP 40/180s と非対称）。
-// 認証必須・processing 中 2s poll・終端後停止で緩和。追加 rateLimit は契約/運用判断
-//（quota 数値は触らない）。洪水コスト残差は観測として残す。
+// G16: status GET も menu/dish POST と同型の IP rateLimit（40/180s）。数値は緩めない。
+// 通常 1 クライアントの processing 2s poll は Function 総予算（55s）で 28 回、
+// platform 60s でも 31 回のため 40 に届かない。終端後は poll 停止。
+// 同一 IP の多キー並列・長時間洪水は 429（stale cleanup RPC 抑止）。quota は未変更。
 export const config: Config = {
   path: "/api/generations/:idempotencyKey/status",
   method: "GET",
+  rateLimit: { windowLimit: 40, windowSize: 180, aggregateBy: ["ip"] },
 };

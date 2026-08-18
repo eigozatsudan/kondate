@@ -4,10 +4,14 @@ import {
   generationFailureCodes,
   type GenerationFailureCode,
 } from "../../../shared/contracts/generation.js";
+import {
+  FUNCTION_TOTAL_BUDGET_MS,
+  NETLIFY_SYNC_FUNCTION_LIMIT_MS,
+} from "../../../shared/contracts/function-budget.js";
 import { requireUserWithEmail } from "../_shared/auth.js";
 import { createGenerationRepository } from "../_shared/generation-repository.js";
 import { HttpError } from "../_shared/http.js";
-import handler from "../generation-status.js";
+import handler, { config } from "../generation-status.js";
 
 vi.mock("../_shared/auth.js", () => ({ requireUserWithEmail: vi.fn() }));
 vi.mock("../_shared/generation-repository.js", () => ({
@@ -71,6 +75,22 @@ beforeEach(() => {
 });
 
 describe("GET /api/generations/:idempotencyKey/status", () => {
+  it("G6: applies the same IP rateLimit as generation POST so one 2s poller stays under the window", () => {
+    // menu/dish POST と同じ 40/180s。数値を緩めると洪水窓が広がるので固定する。
+    expect(config).toMatchObject({
+      path: "/api/generations/:idempotencyKey/status",
+      method: "GET",
+      rateLimit: { windowLimit: 40, windowSize: 180, aggregateBy: ["ip"] },
+    });
+    // processing poll は use-generation-recovery の 2s。通常 1 クライアントは
+    // Function 総予算（または platform 60s）で終端し、初回 GET + 2s 間隔でも 40 未満。
+    const processingPollIntervalMs = 2_000;
+    const pollsDuring = (durationMs: number): number =>
+      1 + Math.floor(durationMs / processingPollIntervalMs);
+    expect(pollsDuring(FUNCTION_TOTAL_BUDGET_MS)).toBeLessThanOrEqual(40);
+    expect(pollsDuring(NETLIFY_SYNC_FUNCTION_LIMIT_MS)).toBeLessThanOrEqual(40);
+  });
+
   it("rejects other methods before authentication or repository access", async () => {
     const response = await handler(request("POST"), context(key));
 
