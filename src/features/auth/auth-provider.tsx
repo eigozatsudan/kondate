@@ -14,7 +14,11 @@ import {
   startAuthContinuationCompletionListener,
 } from "./auth-continuation-completion";
 import { withTimeout } from "./async-timeout";
-import { armLeftoverRefuseSignOutWinnerPersistProtection, createAuthGateway } from "./auth-gateway";
+import {
+  armLeftoverRefuseSignOutWinnerPersistProtection,
+  createAuthGateway,
+  protectLeftoverRefuseWinnerPersist,
+} from "./auth-gateway";
 import {
   clearSoftResidualRecoverySuppressed,
   clearSoftSessionResidualBestEffort,
@@ -158,6 +162,33 @@ function hasHardLeftoverAccessToken(
   return hasAccessToken(observed, nextSession) || hasAccessToken(persistSeeded, nextSession);
 }
 
+/**
+ * C-R8: persist-hard leftover **user** も拒否する。
+ * leftoverSetsNonEmpty には載せない（C23 / C24）。
+ */
+function isHardLeftoverSession(
+  observed: Set<string>,
+  persistSeeded: Set<string>,
+  persistUsers: Set<string>,
+  nextSession: Session,
+): boolean {
+  return (
+    hasHardLeftoverAccessToken(observed, persistSeeded, nextSession) ||
+    persistUsers.has(nextSession.user.id)
+  );
+}
+
+/** C-R7: leftover 拒否 wrap 武装中の SIGNED_IN 勝者だけを控えに載せる。 */
+function protectLeftoverRefuseWinnerAfterSignedInApply(
+  event: string,
+  applied: boolean,
+  nextSession: Session | null,
+): void {
+  if (!applied || event !== "SIGNED_IN" || nextSession === null) return;
+  if (typeof window === "undefined") return;
+  protectLeftoverRefuseWinnerPersist(nextSession, window.localStorage);
+}
+
 function leftoverSetsNonEmpty(hard: Set<string>, soft: Set<string>): boolean {
   return hard.size > 0 || soft.size > 0;
 }
@@ -212,6 +243,30 @@ function readLeftoverPersistAccessTokenAtMount(): string | null {
     const raw = window.localStorage.getItem(browserSupabaseSessionStorageKey);
     if (raw === null || raw === "") return null;
     return readPersistedAccessTokenFromUnknown(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+function readPersistedUserIdFromUnknown(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || !("user" in value)) {
+    return null;
+  }
+  const user = value.user;
+  if (typeof user !== "object" || user === null || !("id" in user)) {
+    return null;
+  }
+  const userId = user.id;
+  return typeof userId === "string" && userId.length > 0 ? userId : null;
+}
+
+/** C-R8: /auth/callback 到着時点の leftover persist user。回転 A2 を token hard だけで取りこぼさない。 */
+function readLeftoverPersistUserIdAtMount(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(browserSupabaseSessionStorageKey);
+    if (raw === null || raw === "") return null;
+    return readPersistedUserIdFromUnknown(JSON.parse(raw) as unknown);
   } catch {
     return null;
   }
@@ -477,6 +532,12 @@ export function AuthProvider({
    */
   const persistHardLeftoverAccessTokensRef = useRef<Set<string>>(new Set());
   /**
+   * C-R8: switch first-pin 時の leftover persist user。
+   * 回転 A2 は mount leftover token と違うので token hard だけではすり抜ける。
+   * leftoverSetsNonEmpty には載せない（C23 / C24）。
+   */
+  const persistHardLeftoverUserIdsRef = useRef<Set<string>>(new Set());
+  /**
    * C16 / C23: re-arm 後に leftover として学習した access_token。
    * 通常 apply は拒否。residual onComplete の trustNextRefresh だけ通過してよい（C20）。
    */
@@ -499,6 +560,7 @@ export function AuthProvider({
   const residualSessionGuardRef = useRef<ResidualSessionGuard>(createResidualSessionGuard());
   // C4: callback 到着時 leftover persist。後着 Google token と区別する。
   const leftoverPersistAccessTokenAtMountRef = useRef(readLeftoverPersistAccessTokenAtMount());
+  const leftoverPersistUserIdAtMountRef = useRef(readLeftoverPersistUserIdAtMount());
   // C12: probe timeout 中は authenticated shell が stale になり得る。storage は焼かず UX のみ。
   const [sessionProbeDegraded, setSessionProbeDegraded] = useState(false);
   /**
@@ -612,6 +674,13 @@ export function AuthProvider({
           if (leftoverToken !== null && leftoverToken !== nextSession.access_token) {
             persistHardLeftoverAccessTokensRef.current.add(leftoverToken);
           }
+          // C-R8: leftover getSession の回転 A2 は mount leftover token と違う。
+          // token hard だけだと pin-mismatch wipe する。leftover user も hard にする
+          // （B 自身の user は載せない。C-R7 同一 user first-pin はこの枝に来ない）。
+          const leftoverUserId = leftoverPersistUserIdAtMountRef.current;
+          if (leftoverUserId !== null && leftoverUserId !== nextSession.user.id) {
+            persistHardLeftoverUserIdsRef.current.add(leftoverUserId);
+          }
         } else if (refuseMismatchedLiveMark || refuseUnmarkedLeftoverPersist) {
           if (refuseUnmarkedLeftoverPersist) {
             rememberAccessToken(persistHardLeftoverAccessTokensRef.current, nextSession);
@@ -662,9 +731,10 @@ export function AuthProvider({
       }
       if (
         nextSession !== null &&
-        hasHardLeftoverAccessToken(
+        isHardLeftoverSession(
           hardLeftoverAccessTokensRef.current,
           persistHardLeftoverAccessTokensRef.current,
+          persistHardLeftoverUserIdsRef.current,
           nextSession,
         )
       ) {
@@ -1010,9 +1080,10 @@ export function AuthProvider({
         }
         if (
           data.session !== null &&
-          hasHardLeftoverAccessToken(
+          isHardLeftoverSession(
             hardLeftoverAccessTokensRef.current,
             persistHardLeftoverAccessTokensRef.current,
+            persistHardLeftoverUserIdsRef.current,
             data.session,
           )
         ) {
@@ -1103,9 +1174,10 @@ export function AuthProvider({
       }
       if (
         nextSession !== null &&
-        hasHardLeftoverAccessToken(
+        isHardLeftoverSession(
           hardLeftoverAccessTokensRef.current,
           persistHardLeftoverAccessTokensRef.current,
+          persistHardLeftoverUserIdsRef.current,
           nextSession,
         )
       ) {
@@ -1135,7 +1207,8 @@ export function AuthProvider({
         const pendingToken = pendingLoginEraAccessTokenRef.current;
         const incomingToken = readAccessToken(nextSession);
         if (pendingToken !== null && incomingToken === pendingToken) {
-          applyAuthSession(nextSession);
+          const applied = applyAuthSession(nextSession);
+          protectLeftoverRefuseWinnerAfterSignedInApply(event, applied, nextSession);
           hasResolvedSessionOnce.current = true;
           setLoaded(true);
           return;
@@ -1148,7 +1221,8 @@ export function AuthProvider({
             softQuarantineAccessTokensRef.current,
           )
         ) {
-          applyAuthSession(nextSession);
+          const applied = applyAuthSession(nextSession);
+          protectLeftoverRefuseWinnerAfterSignedInApply(event, applied, nextSession);
           hasResolvedSessionOnce.current = true;
           setLoaded(true);
           return;
@@ -1168,7 +1242,8 @@ export function AuthProvider({
         // pending login-era token 一致はこの枝に来ない（C21）。
         // C28: signOut 成功後は SDK 空とみなし、正規 SIGNED_IN B を通す。失敗時は C23 を残す。
         if (localSignOutClearedSdkRef.current) {
-          applyAuthSession(nextSession);
+          const applied = applyAuthSession(nextSession);
+          protectLeftoverRefuseWinnerAfterSignedInApply(event, applied, nextSession);
           hasResolvedSessionOnce.current = true;
           setLoaded(true);
           return;
@@ -1176,7 +1251,8 @@ export function AuthProvider({
         rememberAccessToken(softQuarantineAccessTokensRef.current, nextSession);
         return;
       }
-      applyAuthSession(nextSession);
+      const applied = applyAuthSession(nextSession);
+      protectLeftoverRefuseWinnerAfterSignedInApply(event, applied, nextSession);
       hasResolvedSessionOnce.current = true;
       setLoaded(true);
     });

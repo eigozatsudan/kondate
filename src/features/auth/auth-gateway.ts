@@ -961,6 +961,11 @@ type LeftoverPkceGuard = {
    * persist が武装前に消えていても呼び出し側から渡す。
    */
   leftoverUserIdAtArm: string | null;
+  /**
+   * C-R7: SIGNED_IN が明示した勝者 persist。同一 leftover user の Google B を戻す。
+   * leftover 回転 A2 の setItem 控えは C-R5 skip のまま。
+   */
+  leftoverRefuseExplicitWinner: boolean;
 };
 
 function readPersistAccessTokenFromRaw(raw: string): string | null {
@@ -1030,11 +1035,13 @@ function restoreLeftoverProtectedWinnerSession(guard: LeftoverPkceGuard): void {
   const capturedUserId = readPersistUserIdFromRaw(guard.protectedSessionValue);
   // C-R1: leftover 拒否後に書いた Google persist は OTP 印を待たず戻す
   // C-R5: leftover user の回転 A2 は token が違っても勝者にしない
+  // C-R7: 同一 leftover user の Google B は SIGNED_IN 明示勝者だけ戻す
   const leftoverRefuseWinner =
     guard.leftoverAccessTokenAtArm !== null &&
     capturedToken !== null &&
     capturedToken !== guard.leftoverAccessTokenAtArm &&
-    (guard.leftoverUserIdAtArm === null ||
+    (guard.leftoverRefuseExplicitWinner ||
+      guard.leftoverUserIdAtArm === null ||
       capturedUserId === null ||
       capturedUserId !== guard.leftoverUserIdAtArm);
   const shouldRestore =
@@ -1182,6 +1189,7 @@ function armLeftoverSignOutPkceProtection(
     liveMarkAtArm,
     leftoverAccessTokenAtArm,
     leftoverUserIdAtArm,
+    leftoverRefuseExplicitWinner: false,
   };
   leftoverPkceGuards.add(guard);
   // C-R4: protect より前の setItem を控える。後着 _removeSession が書込〜protect に入っても戻せる。
@@ -1195,6 +1203,81 @@ function armLeftoverSignOutPkceProtection(
       restoreLeftoverProtectedWinnerSession(guard);
       unwrapStorageSetItemIfIdle(storage);
     });
+}
+
+/**
+ * C-R7: leftover-user skip で控えなかった同一 user の Google B を明示勝者として控える。
+ * leftover 回転 A2 は既に控えがあるとき上書きしない（C-R5）。
+ */
+export function protectLeftoverRefuseWinnerPersist(
+  session: {
+    access_token: string;
+    refresh_token?: string | null;
+    user: { id: string };
+  },
+  storage: Storage = window.localStorage,
+): void {
+  const persistValue = persistValueForLeftoverRefuseWinner(session, storage);
+  if (persistValue === null) return;
+  const incomingToken = readPersistAccessTokenFromRaw(persistValue);
+  const incomingUserId = readPersistUserIdFromRaw(persistValue);
+  for (const guard of leftoverPkceGuards) {
+    if (guard.storage !== storage) continue;
+    if (guard.leftoverAccessTokenAtArm === null) continue;
+    if (incomingToken === null || incomingToken === guard.leftoverAccessTokenAtArm) {
+      continue;
+    }
+    if (
+      guard.leftoverUserIdAtArm !== null &&
+      incomingUserId === guard.leftoverUserIdAtArm &&
+      guard.protectedSessionValue !== null
+    ) {
+      const capturedUserId = readPersistUserIdFromRaw(guard.protectedSessionValue);
+      // 既に控えた別 user の勝者（C-R5 の B）を leftover 回転で上書きしない
+      if (capturedUserId !== null && capturedUserId !== incomingUserId) {
+        continue;
+      }
+      // 同一 leftover user の明示勝者 B を後着 A2 で last-wins しない
+      if (guard.leftoverRefuseExplicitWinner) {
+        continue;
+      }
+    }
+    guard.protectedSessionValue = persistValue;
+    guard.leftoverRefuseExplicitWinner = true;
+  }
+}
+
+function persistValueForLeftoverRefuseWinner(
+  session: {
+    access_token: string;
+    refresh_token?: string | null;
+    user: { id: string };
+  },
+  storage: Storage,
+): string | null {
+  const incomingToken =
+    typeof session.access_token === "string" && session.access_token.length > 0
+      ? session.access_token
+      : null;
+  if (incomingToken === null) return null;
+  try {
+    const raw = storage.getItem(browserSupabaseSessionStorageKey);
+    if (raw !== null && raw !== "" && readPersistAccessTokenFromRaw(raw) === incomingToken) {
+      return raw;
+    }
+  } catch {
+    // persist が読めなくても session から最小 JSON を作る
+  }
+  const userId = session.user.id;
+  if (typeof userId !== "string" || userId.length === 0) return null;
+  return JSON.stringify({
+    access_token: incomingToken,
+    refresh_token:
+      typeof session.refresh_token === "string" && session.refresh_token.length > 0
+        ? session.refresh_token
+        : undefined,
+    user: { id: userId },
+  });
 }
 
 /**

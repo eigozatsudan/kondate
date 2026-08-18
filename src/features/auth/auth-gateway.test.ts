@@ -8,6 +8,7 @@ import {
   dropInflightResumeMapForTests,
   IMMEDIATE_CLAIM_TIMEOUT_MS,
   INFLIGHT_RESUME_MAP_TTL_MS,
+  protectLeftoverRefuseWinnerPersist,
   protectPkceVerifierFromLateLeftoverSignOut,
   resetInflightResumeForTests,
   resetLeftoverPkceProtectionForTests,
@@ -4423,6 +4424,78 @@ it("C-R5: leftover refuse wrap does not last-wins leftover rotation over Google 
     releaseSignOut?.();
     for (let i = 0; i < 20; i += 1) await Promise.resolve();
     expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBe(googlePersist);
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    resetLeftoverPkceProtectionForTests();
+  }
+});
+
+it("C-R7: leftover refuse wrap restores same-user Google persist after late leftover signOut", async () => {
+  const leftoverPersist = JSON.stringify({
+    access_token: "leftover-access",
+    user: { id: "same-user" },
+  });
+  const googlePersist = JSON.stringify({
+    access_token: "google-access",
+    user: { id: "same-user" },
+  });
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, leftoverPersist);
+  let releaseSignOut: (() => void) | undefined;
+  const signOutPromise = new Promise((resolve) => {
+    releaseSignOut = () => {
+      window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+      resolve({ error: null });
+    };
+  });
+  try {
+    armLeftoverRefuseSignOutWinnerPersistProtection(
+      signOutPromise,
+      "leftover-access",
+      window.localStorage,
+      "same-user",
+    );
+    window.localStorage.setItem(browserSupabaseSessionStorageKey, googlePersist);
+    protectLeftoverRefuseWinnerPersist(
+      { access_token: "google-access", user: { id: "same-user" } },
+      window.localStorage,
+    );
+    releaseSignOut?.();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBe(googlePersist);
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    resetLeftoverPkceProtectionForTests();
+  }
+});
+
+it("C-R5: leftover rotation persist alone is not restored as winner", async () => {
+  const leftoverPersist = JSON.stringify({
+    access_token: "leftover-access",
+    user: { id: "leftover-user" },
+  });
+  const leftoverRotationPersist = JSON.stringify({
+    access_token: "leftover-access-rotated",
+    user: { id: "leftover-user" },
+  });
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, leftoverPersist);
+  let releaseSignOut: (() => void) | undefined;
+  const signOutPromise = new Promise((resolve) => {
+    releaseSignOut = () => {
+      window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+      resolve({ error: null });
+    };
+  });
+  try {
+    armLeftoverRefuseSignOutWinnerPersistProtection(
+      signOutPromise,
+      "leftover-access",
+      window.localStorage,
+      "leftover-user",
+    );
+    window.localStorage.setItem(browserSupabaseSessionStorageKey, leftoverRotationPersist);
+    releaseSignOut?.();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBeNull();
   } finally {
     window.localStorage.removeItem(browserSupabaseSessionStorageKey);
     resetLeftoverPkceProtectionForTests();

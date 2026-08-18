@@ -4867,4 +4867,200 @@ describe("AuthProvider", () => {
     expect(window.localStorage.getItem("kondate.auth.supabase")).toBe(persistB);
     expect(screen.queryByText("authenticated:degraded")).not.toBeInTheDocument();
   });
+
+  it("C-R7: delayed leftover refuse signOut does not wipe same-user Google B persist", async () => {
+    window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
+    const leftoverPersist = JSON.stringify({
+      access_token: "leftover-access",
+      refresh_token: "leftover-refresh",
+      user: { id: "same-user" },
+    });
+    const googlePersist = JSON.stringify({
+      access_token: "google-access",
+      refresh_token: "google-refresh",
+      user: { id: "same-user" },
+    });
+    window.localStorage.setItem("kondate.auth.supabase", leftoverPersist);
+    const leftover = {
+      access_token: "leftover-access",
+      refresh_token: "leftover-refresh",
+      user: { id: "same-user" },
+    } as Session;
+    const googleB = {
+      access_token: "google-access",
+      refresh_token: "google-refresh",
+      user: { id: "same-user" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    let releaseSignOut: (() => void) | undefined;
+    const signOut = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSignOut = () => {
+            window.localStorage.removeItem("kondate.auth.supabase");
+            for (const listener of authListeners) {
+              listener("SIGNED_OUT", null);
+            }
+            resolve({ error: null });
+          };
+        }),
+    );
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: leftover }, error: null }),
+        signOut,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+
+    window.localStorage.setItem("kondate.auth.supabase", googlePersist);
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", googleB);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("same-user");
+
+    await act(async () => {
+      releaseSignOut?.();
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    });
+    expect(window.localStorage.getItem("kondate.auth.supabase")).toBe(googlePersist);
+    expect(screen.getByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("same-user");
+    expect(screen.queryByText("authenticated:degraded")).not.toBeInTheDocument();
+  });
+
+  it("C-R8: leftover rotation getSession after switch first-pin does not wipe Google B", async () => {
+    window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
+    window.localStorage.setItem(
+      "kondate.auth.liveSession",
+      JSON.stringify({ userId: "user-a", storedAt: new Date().toISOString() }),
+    );
+    const persistA = JSON.stringify({
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    });
+    const persistB = JSON.stringify({
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    });
+    window.localStorage.setItem("kondate.auth.supabase", persistA);
+    const sessionA2 = {
+      access_token: "token-a-rotated",
+      refresh_token: "refresh-a-rotated",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const heldGetSessions: Array<(session: Session) => void> = [];
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const getSession = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          heldGetSessions.push((session) => {
+            resolve({ data: { session }, error: null });
+          });
+        }),
+    );
+    const client = {
+      auth: {
+        getSession,
+        signOut,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    const first = render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("loading")).toBeInTheDocument();
+
+    armIntentionalAuthSessionSwitch("google_callback");
+    window.localStorage.setItem("kondate.auth.supabase", persistB);
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-b");
+
+    await act(async () => {
+      for (const release of heldGetSessions) {
+        release(sessionA2);
+      }
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    });
+    expect(signOut).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("kondate.auth.supabase")).toBe(persistB);
+    expect(screen.getByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-b");
+    expect(screen.queryByText("authenticated:degraded")).not.toBeInTheDocument();
+
+    first.unmount();
+    const remountGetSession = vi.fn().mockResolvedValue({
+      data: { session: sessionB },
+      error: null,
+    });
+    const remountClient = {
+      auth: {
+        getSession: remountGetSession,
+        signOut: vi.fn().mockResolvedValue({ error: null }),
+        onAuthStateChange: () => ({
+          data: { subscription: createAuthSubscription() },
+        }),
+      },
+    } satisfies AuthProviderClient;
+    render(
+      <AuthProvider
+        client={remountClient}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-b");
+    expect(window.localStorage.getItem("kondate.auth.supabase")).toBe(persistB);
+    expect(screen.queryByText("authenticated:degraded")).not.toBeInTheDocument();
+  });
 });
