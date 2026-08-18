@@ -85,6 +85,10 @@ const autosaveFlushMode = vi.hoisted(
     mode: "save",
   }),
 );
+/** P-R1: 本番 enqueue と同じ直列。abandonQueued で never-settle save から切る。 */
+const autosaveFlushQueue = vi.hoisted(() => ({
+  current: Promise.resolve(),
+}));
 /** P4: autosave UI state。saving 中でも privacy/settings/emergency が join できることを固定 */
 const autosaveUiState = vi.hoisted((): { state: "idle" | "saving" | "saved" | "error" } => ({
   state: "saved",
@@ -345,7 +349,7 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
       return {
         state: autosaveUiState.state,
         revision: 3,
-        flush: vi.fn(() => {
+        flush: vi.fn((options?: { abandonQueued?: boolean }) => {
           // P1/P3: Incomplete は RPC 前の意図的拒否。通信失敗とは別経路。
           if (autosaveFlushMode.mode === "incomplete") {
             return Promise.reject(new original.IncompleteDraftSaveError());
@@ -379,7 +383,18 @@ vi.mock("./use-draft-autosave", async (importOriginal) => {
               revision: input.baselineRevision,
             });
           }
-          return input.save(input.value, input.baselineRevision);
+          // P-R1: dirty enqueue 相当。abandon しないと先行 hang に再合流する。
+          if (options?.abandonQueued === true) {
+            autosaveFlushQueue.current = Promise.resolve();
+          }
+          const operation = autosaveFlushQueue.current.then(() =>
+            input.save(input.value, input.baselineRevision),
+          );
+          autosaveFlushQueue.current = operation.then(
+            () => undefined,
+            () => undefined,
+          );
+          return operation;
         }),
       };
     },
@@ -676,6 +691,7 @@ beforeEach(() => {
   resetPlannerLeaveNavigateFlightForTests();
   autosaveInputs.length = 0;
   autosaveFlushMode.mode = "save";
+  autosaveFlushQueue.current = Promise.resolve();
   autosaveUiState.state = "saved";
   listPantryItemsMock.mockImplementation(() => Promise.resolve(queryState.pantry.data ?? []));
   queryState.userId = draft.userId;
@@ -1558,6 +1574,7 @@ it("P1: leave flush timeout 後はロックを落とし、遅延 proceed で固�
 it("P1: leave flush timeout 後は never-settle の flush に join せず generate できる", async () => {
   // timeout は元 Promise を cancel しない。flight を残すと次の generate が
   // 同じ never-settle GET/RPC に join し isSubmitting が解けない。
+  // P-R1: mock flush も enqueue 相当の直列。abandonQueued 無しだと 2 回目 save に届かない。
   const hang = new Promise<PlannerDraft>(() => undefined);
   savePlannerDraftMock.mockImplementationOnce(() => hang);
   const startGeneration = vi.fn().mockResolvedValue(true);

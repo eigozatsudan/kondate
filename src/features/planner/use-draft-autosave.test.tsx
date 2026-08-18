@@ -1885,3 +1885,102 @@ it("P2: dirty でない pagehide は keepalive しない", () => {
 
   expect(saveOnUnload).not.toHaveBeenCalled();
 });
+
+it("P-R1: abandonQueued flush は never-settle の先行 enqueue に join しない", async () => {
+  // dirty leave の enqueue は queueRef.then(save)。route IIFE を捨てても
+  // 新 flush が同じキューに繋がると isSubmitting が解けない。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>(() => undefined);
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const dirty = { ...reviewDraft, memo: "少し変更" };
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        hydratedDraft: saved(reviewDraft, 4),
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: dirty });
+  act(() => {
+    void result.current.flush();
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+
+  let abandoned: PlannerDraft | undefined;
+  await act(async () => {
+    abandoned = await result.current.flush({ abandonQueued: true });
+  });
+
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(2, dirty, 4);
+  expect(abandoned?.revision).toBe(5);
+  expect(abandoned?.memo).toBe("少し変更");
+});
+
+it("P-R1: abandon なしの dirty flush は先行 enqueue に直列する", async () => {
+  // 再 leave は queue を切らない。先行 save が終わるまで 2 本目 RPC を出さない。
+  vi.useFakeTimers();
+  let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>((resolve) => {
+        resolveFirst = resolve;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const dirty = { ...reviewDraft, memo: "少し変更" };
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        hydratedDraft: saved(reviewDraft, 4),
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: dirty });
+  act(() => {
+    void result.current.flush();
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+
+  let joined: Promise<PlannerDraft> | undefined;
+  act(() => {
+    joined = result.current.flush();
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    resolveFirst?.(saved(dirty, 5));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await expect(joined).resolves.toMatchObject({ memo: "少し変更", revision: 6 });
+  expect(save).toHaveBeenCalledTimes(2);
+});

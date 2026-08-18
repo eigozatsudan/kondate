@@ -12,7 +12,12 @@ export type DraftSaveState = "idle" | "saving" | "saved" | "error";
 export type DraftAutosaveController = {
   state: DraftSaveState;
   revision: number;
-  flush: () => Promise<PlannerDraft>;
+  /**
+   * `abandonQueued` は leave timeout 後の generate 専用。
+   * dirty enqueue の never-settle 連鎖を切り、新 save が先行 RPC に再合流しない。
+   * 既開始 RPC は cancel しない。再 leave は渡さない（直列 join を維持）。
+   */
+  flush: (options?: { abandonQueued?: boolean }) => Promise<PlannerDraft>;
 };
 
 /** 明示 reset 直後の強制保存 Promise。flush が完了を await できるように共有する（P1）。 */
@@ -683,127 +688,136 @@ export function useDraftAutosave({
     };
   }, []);
 
-  const flush = useCallback((): Promise<PlannerDraft> => {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    pendingDebounceRef.current = false;
-    // 公開 pin 中は persistable でも RPC しない。lastSaved があれば C2 再開用に返す。
-    // P-R7: flush 呼出時にも storage を再読し、未再描画の pin を進める。
-    if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
-      const lastSaved = lastSavedDraftRef.current;
-      if (lastSaved !== null) return Promise.resolve(lastSaved);
-      return Promise.reject(new IncompleteDraftSaveError());
-    }
-    // P1: reset 強制保存が走っている間はそれを await し、完了/失敗を呼び出し元へ返す。
-    // 成功後にまだ dirty（reset 直後の追記編集など）なら通常 enqueue で追従する。
-    const pending = pendingForceSaveRef.current;
-    if (pending !== null) {
-      return pending.promise.then(
-        (saved) => {
-          if (latestFingerprintRef.current !== baselineSerializedRef.current) {
-            return enqueue(latestRef.current);
-          }
-          return saved;
-        },
-        (error: unknown) => {
-          // supersede された強制保存は最新でやり直す。それ以外（ネットワーク等）は失敗を隠さない。
-          if (error instanceof SupersededDraftSaveError) {
-            return enqueue(latestRef.current);
-          }
-          throw error;
-        },
-      );
-    }
-
-    const latestAtFlushStart = latestRef.current;
-    if (!isPersistableDraft(latestAtFlushStart)) {
-      // 旧 mode strip が必要なときだけ中立形を書く
-      if (shouldWriteAudienceNeutral(latestAtFlushStart, lastPersistedInputRef.current)) {
-        return enqueue(latestAtFlushStart);
+  const flush = useCallback(
+    (options?: { abandonQueued?: boolean }): Promise<PlannerDraft> => {
+      // P-R1: route が IIFE を捨てても dirty leave の enqueue は queueRef に残る。
+      // 新 flush が then 連結すると never-settle save に再合流し isSubmitting が固着する。
+      // 既開始 RPC は cancel しない。キュー先頭だけ切って新 save を始める。
+      if (options?.abandonQueued === true) {
+        queueRef.current = Promise.resolve();
       }
-      // P3 中立保存後: 直前永続化が既に audience 無しで latest の収束先と同じなら RPC なしで返す。
-      // dirty fingerprint の re-render 待ちに依存せず Incomplete で旧 mode 成功扱いにしない。
-      const lastSaved = lastSavedDraftRef.current;
-      const lastPersisted = lastPersistedInputRef.current;
-      if (
-        lastSaved !== null &&
-        lastPersisted !== null &&
-        !hasPersistedAudience(lastPersisted) &&
-        convergenceFingerprint(latestAtFlushStart) === JSON.stringify(lastPersisted)
-      ) {
-        return Promise.resolve(lastSaved);
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
       }
-      // 途中 idea（servings=null 等）は明示的に拒否
-      return Promise.reject(new IncompleteDraftSaveError());
-    }
-    // persistable でも fingerprint === baseline なら debounce と同型で RPC しない。
-    // 生成成功後の empty / rev=0 hydrate からの leave-flush が
-    // save(empty, 0) → save_generation_draft の undelete に落ち、
-    // 消費済み下書きが空行として live に戻るのを防ぐ。
-    // 公開 pin と reset 強制保存は上で処理済み。
-    // lastSaved 短絡は live が新鮮なときだけ（P-R2）。
-    // stale live を信じると削除済み id+rev で POST が draft_not_found。
-    if (latestFingerprintRef.current === baselineSerializedRef.current) {
-      return (async (): Promise<PlannerDraft> => {
-        const refresh = refreshLiveDraftRef.current;
-        let live = hydratedDraftRef.current;
-        if (refresh !== undefined) {
-          live = await refresh();
-          if (live === null) {
-            lastSavedDraftRef.current = null;
-            throw new IncompleteDraftSaveError();
-          }
-          const currentSaved = lastSavedDraftRef.current;
-          if (currentSaved === null || live.revision >= currentSaved.revision) {
-            lastSavedDraftRef.current = live;
-          }
-        }
-        // P1: GET 待ち中に公開された pin で live を進めない。
-        if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
-          const held = lastSavedDraftRef.current;
-          if (held !== null) return held;
-          throw new IncompleteDraftSaveError();
-        }
-        // P2: leave 開始時 latest を閉じたまま timeout 後の編集を POST しない。
-        const latest = latestRef.current;
-        if (!isPersistableDraft(latest)) {
-          if (shouldWriteAudienceNeutral(latest, lastPersistedInputRef.current)) {
-            return enqueue(latest);
-          }
-          throw new IncompleteDraftSaveError();
-        }
+      pendingDebounceRef.current = false;
+      // 公開 pin 中は persistable でも RPC しない。lastSaved があれば C2 再開用に返す。
+      // P-R7: flush 呼出時にも storage を再読し、未再描画の pin を進める。
+      if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
         const lastSaved = lastSavedDraftRef.current;
-        const serverRow = live ?? lastSaved;
-        // サーバ行と latest の persist 対象（memberIds 含む）が違うなら書く（P-R3）。
-        // empty は undelete になるので書かない（P1）。
-        if (
-          serverRow !== null &&
-          isPersistableDraft(latest) &&
-          !lastSavedMatchesLatest(serverRow, latest, lastPersistedInputRef.current) &&
-          !isEmptyPersistableInput(latest)
-        ) {
-          return enqueue(latest);
+        if (lastSaved !== null) return Promise.resolve(lastSaved);
+        return Promise.reject(new IncompleteDraftSaveError());
+      }
+      // P1: reset 強制保存が走っている間はそれを await し、完了/失敗を呼び出し元へ返す。
+      // 成功後にまだ dirty（reset 直後の追記編集など）なら通常 enqueue で追従する。
+      const pending = pendingForceSaveRef.current;
+      if (pending !== null) {
+        return pending.promise.then(
+          (saved) => {
+            if (latestFingerprintRef.current !== baselineSerializedRef.current) {
+              return enqueue(latestRef.current);
+            }
+            return saved;
+          },
+          (error: unknown) => {
+            // supersede された強制保存は最新でやり直す。それ以外（ネットワーク等）は失敗を隠さない。
+            if (error instanceof SupersededDraftSaveError) {
+              return enqueue(latestRef.current);
+            }
+            throw error;
+          },
+        );
+      }
+
+      const latestAtFlushStart = latestRef.current;
+      if (!isPersistableDraft(latestAtFlushStart)) {
+        // 旧 mode strip が必要なときだけ中立形を書く
+        if (shouldWriteAudienceNeutral(latestAtFlushStart, lastPersistedInputRef.current)) {
+          return enqueue(latestAtFlushStart);
         }
-        // live 消滅は effect / refresh が lastSaved を消す（P-R2）。
-        // save 由来の種は query 無しでも返す（P1）。
+        // P3 中立保存後: 直前永続化が既に audience 無しで latest の収束先と同じなら RPC なしで返す。
+        // dirty fingerprint の re-render 待ちに依存せず Incomplete で旧 mode 成功扱いにしない。
+        const lastSaved = lastSavedDraftRef.current;
+        const lastPersisted = lastPersistedInputRef.current;
         if (
           lastSaved !== null &&
-          (live === null || lastSaved.id === live.id) &&
-          lastSavedMatchesLatest(lastSaved, latest, lastPersistedInputRef.current)
+          lastPersisted !== null &&
+          !hasPersistedAudience(lastPersisted) &&
+          convergenceFingerprint(latestAtFlushStart) === JSON.stringify(lastPersisted)
         ) {
-          // sanitize / trim 済み latest を id/rev に載せる。raw の ineligible を返さない（P-R1）。
-          return {
-            ...lastSaved,
-            ...canonicalPersistableInput(latest),
-          };
+          return Promise.resolve(lastSaved);
         }
-        throw new IncompleteDraftSaveError();
-      })();
-    }
-    return enqueue(latestAtFlushStart);
-  }, [enqueue]);
+        // 途中 idea（servings=null 等）は明示的に拒否
+        return Promise.reject(new IncompleteDraftSaveError());
+      }
+      // persistable でも fingerprint === baseline なら debounce と同型で RPC しない。
+      // 生成成功後の empty / rev=0 hydrate からの leave-flush が
+      // save(empty, 0) → save_generation_draft の undelete に落ち、
+      // 消費済み下書きが空行として live に戻るのを防ぐ。
+      // 公開 pin と reset 強制保存は上で処理済み。
+      // lastSaved 短絡は live が新鮮なときだけ（P-R2）。
+      // stale live を信じると削除済み id+rev で POST が draft_not_found。
+      if (latestFingerprintRef.current === baselineSerializedRef.current) {
+        return (async (): Promise<PlannerDraft> => {
+          const refresh = refreshLiveDraftRef.current;
+          let live = hydratedDraftRef.current;
+          if (refresh !== undefined) {
+            live = await refresh();
+            if (live === null) {
+              lastSavedDraftRef.current = null;
+              throw new IncompleteDraftSaveError();
+            }
+            const currentSaved = lastSavedDraftRef.current;
+            if (currentSaved === null || live.revision >= currentSaved.revision) {
+              lastSavedDraftRef.current = live;
+            }
+          }
+          // P1: GET 待ち中に公開された pin で live を進めない。
+          if (holdLiveRevisionRef.current || shouldHoldLiveRevisionRef.current?.() === true) {
+            const held = lastSavedDraftRef.current;
+            if (held !== null) return held;
+            throw new IncompleteDraftSaveError();
+          }
+          // P2: leave 開始時 latest を閉じたまま timeout 後の編集を POST しない。
+          const latest = latestRef.current;
+          if (!isPersistableDraft(latest)) {
+            if (shouldWriteAudienceNeutral(latest, lastPersistedInputRef.current)) {
+              return enqueue(latest);
+            }
+            throw new IncompleteDraftSaveError();
+          }
+          const lastSaved = lastSavedDraftRef.current;
+          const serverRow = live ?? lastSaved;
+          // サーバ行と latest の persist 対象（memberIds 含む）が違うなら書く（P-R3）。
+          // empty は undelete になるので書かない（P1）。
+          if (
+            serverRow !== null &&
+            isPersistableDraft(latest) &&
+            !lastSavedMatchesLatest(serverRow, latest, lastPersistedInputRef.current) &&
+            !isEmptyPersistableInput(latest)
+          ) {
+            return enqueue(latest);
+          }
+          // live 消滅は effect / refresh が lastSaved を消す（P-R2）。
+          // save 由来の種は query 無しでも返す（P1）。
+          if (
+            lastSaved !== null &&
+            (live === null || lastSaved.id === live.id) &&
+            lastSavedMatchesLatest(lastSaved, latest, lastPersistedInputRef.current)
+          ) {
+            // sanitize / trim 済み latest を id/rev に載せる。raw の ineligible を返さない（P-R1）。
+            return {
+              ...lastSaved,
+              ...canonicalPersistableInput(latest),
+            };
+          }
+          throw new IncompleteDraftSaveError();
+        })();
+      }
+      return enqueue(latestAtFlushStart);
+    },
+    [enqueue],
+  );
 
   return { state, revision: savedRevision, flush };
 }

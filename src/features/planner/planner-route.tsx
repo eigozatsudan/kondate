@@ -849,6 +849,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   const flushDraftInFlightRef = useRef<Promise<PlannerDraft> | null>(null);
   // P1 (f297396c): leave timeout 後も元 GET/RPC は残る。再 leave は join を維持し、
   // generate だけ abandonTimedOut で新 flight を始める（never-settle への固着防止）。
+  // P-R1: 新 IIFE の flush は abandonQueued で dirty enqueue の queueRef も切る。
   const flushDraftTimedOutRef = useRef(false);
   const flushDraft = useCallback(
     async (options?: { abandonTimedOut?: boolean }): Promise<PlannerDraft> => {
@@ -869,7 +870,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             return pinned;
           }
         }
-        const saved = await flushAutosave();
+        const saved = await flushAutosave(abandonTimedOut ? { abandonQueued: true } : undefined);
         // 保存完了前に始まった古い再取得で revision を逆行させないよう、cache 更新前に停止する。
         await queryClient.cancelQueries({
           queryKey: plannerKeys.draft(userId ?? "missing"),
@@ -1467,6 +1468,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           leaveInFlightRef.current = false;
           // P1 (f297396c): 元 GET/RPC は cancel しない。再 leave は同じ flight に join する。
           // generate は abandonTimedOut でこの印を見て新 flight を始める。
+          // P-R1: 新 flight は abandonQueued で dirty enqueue の queueRef も切る。
           flushDraftTimedOutRef.current = true;
           if (mountedRef.current) {
             setIsLeaving(false);
