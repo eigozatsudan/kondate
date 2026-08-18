@@ -1754,6 +1754,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           // P2: C2 再開はホーム再開と同型。新規生成の期限切れ未確認 / 削除済み /
           // 質問未完了 / stale safety で入口を割らない（医療・privacy と同じ）。
           // flush 後に pending が消えたら !shouldResumePending 側でゲートを戻す。
+          // C1: usage も新規生成のみ（確認 CTA）。再開は枠を消費しないのでここで止めない。
           const resumeExistingPending = isPendingGenerationPresent(userId);
           // P4: safety/pantry soft 失敗中は stale previous data で送信しない
           if (staleBackgroundSafetyPantry && !resumeExistingPending) {

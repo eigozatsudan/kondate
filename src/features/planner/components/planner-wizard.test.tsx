@@ -1185,6 +1185,51 @@ describe("PlannerWizard review step", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    {
+      name: "成功残 0",
+      props: { usageRemaining: 0 as const, plan: "free" as const },
+    },
+    {
+      name: "attempt 残 0",
+      props: { usageRemaining: 3 as const, attemptsRemaining: 0 as const },
+    },
+    {
+      name: "global 不可",
+      props: {
+        usageRemaining: 3 as const,
+        attemptsRemaining: 5 as const,
+        globalAvailable: false as const,
+      },
+    },
+    {
+      name: "shortWindow",
+      props: {
+        usageRemaining: 3 as const,
+        attemptsRemaining: 5 as const,
+        shortWindowRetryAt: "2026-07-25T05:10:00.000Z",
+      },
+    },
+  ])("C1: 進行中 pending があるとき $name でも主 CTA は再開できる", async ({ props }) => {
+    // 再開は /generation?resumed=1 だけ。ホーム再開は remainingToday===0 でも押せる。
+    // 確認だけ usage で止めると wizard からホームへ戻れず再開不能。
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(() => Promise.resolve());
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        hasResumablePendingGeneration
+        onSubmit={onSubmit}
+        {...props}
+      />,
+    );
+    const generate = screen.getByRole("button", { name: "献立を作る" });
+    expect(generate).toBeEnabled();
+    await user.click(generate);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
   it("idea 確認では家族安全未確認の案内と対象人数を表示する", () => {
     render(
       <Harness

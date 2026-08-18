@@ -350,13 +350,15 @@ export function ReviewStep({
   // P2: 進行中 pending は C2 再開のみ。ホーム再開は pantry / 必須質問 / stale を見ない。
   // 確認だけ新規生成ゲートで止めると、wizard にホーム導線がなく再開できない。
   // 医療・privacy と同じく再開は入口を割らない。新規生成（pending なし）のゲートは維持する。
+  // C1: 再開は /generation?resumed=1 のみで枠を消費しない。ホームは remainingToday===0
+  // でも再開可。usage blocker で主 CTA を止めると wizard からホームへ戻れない。
   const generateDisabled =
     disabled ||
     medicalBlocked ||
-    hasActiveUsageBlocker ||
     avoidIngredientLocalError != null ||
     (!hasResumablePendingGeneration &&
-      (requiredQuestionsIncomplete ||
+      (hasActiveUsageBlocker ||
+        requiredQuestionsIncomplete ||
         hasUnavailablePantrySelections ||
         hasUnconfirmedExpiredPantry ||
         // P4: soft safety/pantry 失敗中は stale 送信を主 CTA で止める
