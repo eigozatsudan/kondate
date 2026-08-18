@@ -52,6 +52,12 @@ const ANDROID_UA = "Mozilla/5.0 (Linux; Android 14; Pixel)";
 const ANDROID_WEBVIEW_UA =
   "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.230 Mobile Safari/537.36";
 const FIREFOX_ANDROID_UA = "Mozilla/5.0 (Android 14; Mobile; rv:122.0) Gecko/122.0 Firefox/122.0";
+const SAMSUNG_ANDROID_UA =
+  "Mozilla/5.0 (Linux; Android 14; SAMSUNG SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/110.0.5481.154 Mobile Safari/537.36";
+const EDGE_ANDROID_UA =
+  "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36 EdgA/120.0.2210.141";
+const OPERA_ANDROID_UA =
+  "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36 OPR/80.0.4170.72";
 const WINDOWS_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -190,7 +196,7 @@ describe("HomeScreenInstallSection", () => {
     expect(prompt).toHaveBeenCalledTimes(1);
   });
 
-  it("hides the section on iPhone Chrome, Firefox, Instagram, LINE, Facebook, and other non-Safari iOS UAs", () => {
+  it("shows generic copy on iPhone Chrome, Firefox, Instagram, LINE, Facebook, and other non-Safari iOS UAs", () => {
     for (const userAgent of [
       IPHONE_CRIOS_UA,
       IPHONE_FXIOS_UA,
@@ -207,10 +213,13 @@ describe("HomeScreenInstallSection", () => {
       cleanup();
       stubSurface("ios", userAgent);
       render(<HomeScreenInstallSection />);
-      expect(
-        screen.queryByRole("heading", { name: /^ホーム画面に追加$/u }),
-      ).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /^ホーム画面に追加$/u })).toBeVisible();
       expect(screen.queryByRole("listitem", { name: /^共有$/u })).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "お使いのブラウザのメニューから、「ホーム画面に追加」または「アプリをインストール」を選んでください。",
+        ),
+      ).toBeVisible();
     }
   });
 
@@ -225,7 +234,7 @@ describe("HomeScreenInstallSection", () => {
     expect(screen.getByRole("listitem", { name: /^共有$/u })).toBeVisible();
   });
 
-  it("L2: hides the section on iPad desktop-mode Chrome without CriOS", () => {
+  it("L2: shows generic copy on iPad desktop-mode Chrome without Safari steps", () => {
     vi.stubGlobal("navigator", {
       userAgent: IPAD_CHROME_DESKTOP_UA,
       platform: "MacIntel",
@@ -233,8 +242,13 @@ describe("HomeScreenInstallSection", () => {
       standalone: undefined,
     });
     render(<HomeScreenInstallSection />);
-    expect(screen.queryByRole("heading", { name: /^ホーム画面に追加$/u })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^ホーム画面に追加$/u })).toBeVisible();
     expect(screen.queryByRole("listitem", { name: /^共有$/u })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "お使いのブラウザのメニューから、「ホーム画面に追加」または「アプリをインストール」を選んでください。",
+      ),
+    ).toBeVisible();
   });
 
   it("hides the section on iOS standalone because the icon is already on the home screen", () => {
@@ -330,6 +344,21 @@ describe("HomeScreenInstallSection", () => {
         "お使いのブラウザのメニューから、「ホーム画面に追加」または「アプリをインストール」を選んでください。",
       ),
     ).toBeVisible();
+  });
+
+  it("falls back to the other-surface sentence on Samsung Internet, Edge Android, and Opera without a held prompt", () => {
+    for (const userAgent of [SAMSUNG_ANDROID_UA, EDGE_ANDROID_UA, OPERA_ANDROID_UA]) {
+      cleanup();
+      stubSurface("android", userAgent);
+      render(<HomeScreenInstallSection />);
+      expect(screen.queryByRole("listitem", { name: /^メニュー$/u })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "インストールする" })).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "お使いのブラウザのメニューから、「ホーム画面に追加」または「アプリをインストール」を選んでください。",
+        ),
+      ).toBeVisible();
+    }
   });
 
   it("shows the other-surface sentence on desktop", () => {

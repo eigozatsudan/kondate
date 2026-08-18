@@ -28,7 +28,9 @@ export function shouldShowInstallTip(input: {
   dismissed: boolean;
   safariStepsOk: boolean;
 }): boolean {
-  const surfaceOk = input.surface === "android" || (input.surface === "ios" && input.safariStepsOk);
+  // iOS 非 Safari もカードを出す。Safari 3 手順は出さず generic 本文（presentation）。
+  // safariStepsOk は手順可否だけで、surface ゲートには使わない。
+  const surfaceOk = input.surface === "android" || input.surface === "ios";
   return (
     input.hasSession &&
     !input.standalone &&

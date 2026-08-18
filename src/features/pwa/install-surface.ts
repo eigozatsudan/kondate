@@ -31,13 +31,17 @@ export function canUseIosSafariInstallSteps(userAgent: string): boolean {
 }
 
 // Android surface のまま Chrome 手順を出してよいか。三値契約は増やさない。
-// WebView / 主要 in-app / Firefox には「右上メニュー→アプリをインストール」が無い。
+// WebView / 主要 in-app / Firefox / Samsung / Edge / Opera には
+// Chrome の「メニュー→ホーム画面に追加」文言が無い。
 export function canUseAndroidChromeInstallSteps(userAgent: string): boolean {
   if (/;\s*wv\)/iu.test(userAgent)) return false;
   if (/FBAN|FBAV|FB_IAB/iu.test(userAgent)) return false;
   if (/Line\//iu.test(userAgent)) return false;
   if (/Instagram/iu.test(userAgent)) return false;
   if (/Firefox\//iu.test(userAgent)) return false;
+  if (/SamsungBrowser\//iu.test(userAgent)) return false;
+  if (/EdgA\//u.test(userAgent)) return false;
+  if (/OPR\//u.test(userAgent)) return false;
   return true;
 }
 

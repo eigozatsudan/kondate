@@ -24,6 +24,7 @@ afterEach(() => {
   // 公開 LP の静的コピーと本番同様の #root をテスト間で残さない
   document.getElementById("kondate-public-lp")?.remove();
   document.getElementById("root")?.remove();
+  vi.unstubAllGlobals();
 });
 
 const unauthenticated: AuthContextValue = {
@@ -45,7 +46,18 @@ function ensureAppRoot(): HTMLElement {
   return root;
 }
 
-function renderAppShellAt(path: string, children?: { path: string; element: ReactNode }[]) {
+const authenticated: AuthContextValue = {
+  status: "authenticated",
+  session: { user: { id: "user-1" } } as AuthContextValue["session"],
+  refreshSession: vi.fn(),
+  sessionProbeDegraded: false,
+};
+
+function renderAppShellAt(
+  path: string,
+  children?: { path: string; element: ReactNode }[],
+  auth: AuthContextValue = unauthenticated,
+) {
   const router = createMemoryRouter(
     [
       {
@@ -72,7 +84,7 @@ function renderAppShellAt(path: string, children?: { path: string; element: Reac
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
-      <AuthContext.Provider value={unauthenticated}>
+      <AuthContext.Provider value={auth}>
         <RouterProvider router={router} />
       </AuthContext.Provider>
     </QueryClientProvider>,
@@ -265,6 +277,71 @@ describe("AppShell route focus (L2)", () => {
     }
     expect(hiddenLpHeading).not.toHaveAttribute("tabindex");
     expect(document.activeElement).not.toBe(hiddenLpHeading);
+  });
+
+  it("L6: focuses the visible install card heading instead of skipping to page h1", async () => {
+    window.localStorage.removeItem(PWA_INSTALL_TIP_DISMISSED_KEY);
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      platform: "iPhone",
+      maxTouchPoints: 5,
+      standalone: undefined,
+    });
+    vi.stubGlobal(
+      "matchMedia",
+      (query: string) =>
+        ({
+          matches: false,
+          media: query,
+          onchange: null,
+          addListener() {
+            return undefined;
+          },
+          removeListener() {
+            return undefined;
+          },
+          addEventListener() {
+            return undefined;
+          },
+          removeEventListener() {
+            return undefined;
+          },
+          dispatchEvent() {
+            return false;
+          },
+        }) satisfies MediaQueryList,
+    );
+
+    renderAppShellAt(
+      "/planner",
+      [
+        {
+          path: "/planner",
+          element: (
+            <main className="page-frame">
+              <h1>献立</h1>
+            </main>
+          ),
+        },
+      ],
+      authenticated,
+    );
+
+    const cardHeading = screen.getByRole("heading", { name: "ホーム画面に置く" });
+    expect(cardHeading).toBeVisible();
+    expect(screen.getByRole("heading", { name: "献立" })).toBeVisible();
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+    });
+    expect(document.activeElement).toBe(cardHeading);
+    expect(screen.getByRole("heading", { name: "献立" })).not.toHaveFocus();
   });
 });
 

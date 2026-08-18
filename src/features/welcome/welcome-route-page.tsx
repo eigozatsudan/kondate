@@ -127,9 +127,9 @@ export function WelcomeRoutePage() {
   const startGenerationRef = useRef(0);
   const mountedRef = useRef(true);
   // L1: setOnboardingStatus 発行後〜settle までの outstanding。Web Lock は C5 で解放したまま
-  // （dual-tab 閉塞を維持）。false failure 後に opposite CTA が第二 CAS を出すのを防ぐため、
-  // post-grace timeout ではこの Promise が settle するまで WelcomePage の single-flight を保持する。
-  // pre-CAS hang（re-read never-settle）では null のまま → 双方 CTA 再有効化を許可。
+  // （dual-tab 閉塞を維持）。第二 deadline 後は失敗 UI で pending を下ろすが、
+  // この Promise が残っている間は新 flight / 第二 CAS を出さない（opposite first-writer 競合）。
+  // settle（resolve/reject）で finally が下ろす。pre-CAS hang は null のまま。
   const casFlightRef = useRef<{
     generation: number;
     promise: Promise<{ onboarding_status: OnboardingStatus }>;
@@ -231,27 +231,39 @@ export function WelcomeRoutePage() {
   /**
    * L1: CAS 発行を generation 付きで記録する（呼び出し前に同期 arm）。
    * body と post-grace catch の両方が同一 Promise を await できる。
+   * settle 後は ref を下ろし、未進行なら同じ CTA の再試行 CAS を許す。
    */
   function trackCasFlight(
     generation: number,
     promise: Promise<{ onboarding_status: OnboardingStatus }>,
   ): Promise<{ onboarding_status: OnboardingStatus }> {
-    casFlightRef.current = { generation, promise };
-    return promise;
+    const tracked = promise.finally(() => {
+      const current = casFlightRef.current;
+      if (current !== null && current.generation === generation) {
+        casFlightRef.current = null;
+      }
+    });
+    casFlightRef.current = { generation, promise: tracked };
+    return tracked;
   }
 
   /**
    * L1: C5+grace 後も CAS が in-flight なら第二 deadline まで待ち、opposite CTA dual-flight を防ぐ。
    * pre-CAS hang（casFlight なし）は即 timeout を再 throw → 双方 CTA 再有効化。
    * settle 後は tryReconcileZombieWrite で遷移を保証（body 側と二重呼び出し可）。
-   * 第二 deadline 超過は失敗 UI + single-flight 解除（never-settle の永久閉塞を避ける）。
+   * 第二 deadline 超過は失敗 UI + pending 解除（never-settle の永久閉塞を避ける）。
+   * 未完了 CAS の ref は残し、再クリックは第二 CAS を出さず同一 Promise を待つ。
    * Web Lock は伸ばさない。RPC cancel は主張しない。
    */
   async function awaitOutstandingCasAfterGrace(
     generation: number,
     ideaSkipFromInProgress = false,
+    knownFlight: {
+      generation: number;
+      promise: Promise<{ onboarding_status: OnboardingStatus }>;
+    } | null = null,
   ): Promise<void> {
-    const flight = casFlightRef.current;
+    const flight = knownFlight ?? casFlightRef.current;
     if (flight === null || flight.generation !== generation) {
       throw new Error("timeout");
     }
@@ -260,7 +272,7 @@ export function WelcomeRoutePage() {
       // L1: 第二 deadline。無期限 await は「準備しています…」で CTA を永久閉塞する
       written = await withTimeout(flight.promise, WELCOME_START_CAS_SETTLE_MS);
     } catch {
-      // CAS 失敗 / 第二 deadline → 開始失敗 UI（single-flight はここで解除）
+      // CAS 失敗 / 第二 deadline → 開始失敗 UI。pending 中の CAS は ref に残す。
       throw new Error("timeout");
     }
     if (tryReconcileZombieWrite(generation, written.onboarding_status, ideaSkipFromInProgress)) {
@@ -286,6 +298,17 @@ export function WelcomeRoutePage() {
     body: (isCurrent: () => boolean, generation: number) => Promise<void>,
     ideaSkipFromInProgress = false,
   ): Promise<void> {
+    const outstanding = casFlightRef.current;
+    if (outstanding !== null) {
+      // L1: 未完了 CAS がある間は generation を進めず第二 CAS を出さない。
+      // 失敗 UI 後の opposite クリックも同一 Promise を待ち、遅延 first-writer と競合しない。
+      await awaitOutstandingCasAfterGrace(
+        outstanding.generation,
+        ideaSkipFromInProgress,
+        outstanding,
+      );
+      return;
+    }
     const generation = ++startGenerationRef.current;
     // 新 flight 開始時に旧 CAS 追跡を捨てる（前 flight の settle 待ちに reverse しない）
     casFlightRef.current = null;

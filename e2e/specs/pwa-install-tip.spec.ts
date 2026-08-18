@@ -31,7 +31,7 @@ test(
 );
 
 test(
-  "hides the iOS install guide under Chrome iOS",
+  "shows generic iOS install copy under Chrome iOS without Safari steps",
   { tag: ["@mobile-only"] },
   async ({ browser, authEmail }) => {
     const context = await browser.newContext({
@@ -41,11 +41,18 @@ test(
     });
     const page = await context.newPage();
     await loginAsNewUser(page, authEmail, { seedPwaInstallTipDismissed: false });
-    await expect(page.getByRole("heading", { name: "ホーム画面に置く" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "ホーム画面に置く" })).toBeVisible();
+    await expect(
+      page.getByText(
+        "お使いのブラウザのメニューから、「ホーム画面に追加」または「アプリをインストール」を選んでください。",
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("listitem", { name: "共有", exact: true })).toHaveCount(0);
     await page.goto("/settings");
-    await expect(page.getByRole("heading", { name: "ホーム画面に追加", exact: true })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("heading", { name: "ホーム画面に追加", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("listitem", { name: "共有", exact: true })).toHaveCount(0);
     await context.close();
   },
 );

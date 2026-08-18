@@ -53,8 +53,8 @@ export function HomeScreenInstallSection() {
     hasAndroidPrompt: androidPrompt !== null,
   });
   // ホーム画面起動では既に置いてあるので節ごと出さない（iOS / Android 共通）。
-  // iOS 非 Safari は共有シートが無いので節を出さない。
-  if (readStandaloneDisplayMode() || (surface === "ios" && !safariStepsOk)) {
+  // iOS 非 Safari は共有シート手順を出さず generic 本文（presentation helper）。
+  if (readStandaloneDisplayMode()) {
     return null;
   }
 

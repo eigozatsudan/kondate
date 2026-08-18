@@ -12,6 +12,8 @@ const LANDING_CHUNK_FALLBACK_COPY = "読み込み中…" as const;
 /** L2: chunk hang 打ち切り後。秘密や内部理由は出さない。 */
 const LANDING_CHUNK_TIMEOUT_COPY =
   "読み込みに時間がかかっています。通信を確認して再読み込みしてください。" as const;
+/** L3: timeout 面の可視 main 見出し。alert 本文は LANDING_CHUNK_TIMEOUT_COPY のまま。 */
+const LANDING_CHUNK_TIMEOUT_HEADING = "読み込みに時間がかかっています" as const;
 
 // 未ログイン時だけマーケ chunk（webp 含む）を取る。ログイン済み / では落とさない。
 const FreeLandingPage = lazy(async () => {
@@ -68,11 +70,13 @@ function FreeLandingChunkGate() {
   // L3: timeout UI を出しても Suspense ツリーは unmount しない。
   // timer microtask が setTimedOut(true) した直後に chunk が settle しても
   // probe の layoutEffect が loadedRef + setTimedOut(false) で成功 UI へ戻せる。
-  // L3 a11y: timeout 側は <main> にしない（Free LP の hidden main と dual landmark を避ける）。
+  // L3 a11y: timeout 側を可視 <main> にする。成功ツリーは hidden + aria-hidden のまま残し、
+  // sticky 誤 timeout からの復帰を保つ。a11y ツリーの dual landmark にはならない。
   return (
     <>
       {timedOut ? (
-        <div className="page-frame stack" role="region" aria-label="読み込みエラー">
+        <main className="page-frame stack">
+          <h1>{LANDING_CHUNK_TIMEOUT_HEADING}</h1>
           <p className="error-message" role="alert">
             {LANDING_CHUNK_TIMEOUT_COPY}
           </p>
@@ -85,7 +89,7 @@ function FreeLandingChunkGate() {
           >
             再読み込み
           </button>
-        </div>
+        </main>
       ) : null}
       <div hidden={timedOut} aria-hidden={timedOut || undefined}>
         <Suspense

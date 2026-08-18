@@ -369,6 +369,58 @@ describe("WelcomeRoutePage L4 first-writer", () => {
     }
   });
 
+  it("L1: after second deadline, opposite CTA does not issue a second CAS", async () => {
+    // 失敗 UI で双方 CTA は開くが、未完了 first CAS がある間は opposite が第二 CAS を出さない
+    let resolveCas: ((value: { onboarding_status: string }) => void) | undefined;
+    getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
+    setOnboardingStatusMock.mockImplementation(
+      () =>
+        new Promise<{ onboarding_status: string }>((resolve) => {
+          resolveCas = resolve;
+        }),
+    );
+    const { router } = renderWelcome();
+    expect(await screen.findByRole("button", { name: "献立アイデアを考える" })).toBeVisible();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "献立アイデアを考える" }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(setOnboardingStatusMock).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          COLD_START_SESSION_DEADLINE_MS +
+            WELCOME_START_RECONCILE_GRACE_MS +
+            WELCOME_START_CAS_SETTLE_MS,
+        );
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("開始できませんでした");
+      expect(screen.getByRole("button", { name: "家族情報を登録する" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "家族情報を登録する" }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(setOnboardingStatusMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "準備しています…" })).toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
+    await act(async () => {
+      resolveCas?.({ onboarding_status: "skipped" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await screen.findByRole("heading", { name: "献立" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/planner");
+    expect(setOnboardingStatusMock).toHaveBeenCalledTimes(1);
+    expect(setOnboardingStatusMock).toHaveBeenCalledWith(expect.anything(), userId, "skipped", {
+      expectedStatus: "not_started",
+    });
+  });
+
   it("L2: unmount during start does not zombie-navigate after late CAS", async () => {
     // 離脱後に CAS が成功しても generation 無効化で router yank しない
     let resolveCas: ((value: { onboarding_status: string }) => void) | undefined;

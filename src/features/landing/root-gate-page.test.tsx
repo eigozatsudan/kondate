@@ -194,6 +194,11 @@ describe("RootGatePage", () => {
       ).toBeVisible();
       expect(screen.getByRole("button", { name: "再読み込み" })).toBeVisible();
       expect(screen.queryByRole("heading", { name: FREE_LP_H1 })).not.toBeInTheDocument();
+      // L3: hang 中の可視ランドマークは timeout 側 main だけ（hidden LP は a11y ツリー外）
+      expect(
+        screen.getByRole("heading", { level: 1, name: "読み込みに時間がかかっています" }),
+      ).toBeVisible();
+      expect(screen.getAllByRole("main")).toHaveLength(1);
     } finally {
       freeLpSuspend.finish();
       vi.useRealTimers();

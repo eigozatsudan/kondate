@@ -31,8 +31,8 @@ describe("shouldShowInstallTip", () => {
     expect(shouldShowInstallTip({ ...eligible, surface: "other" })).toBe(false);
   });
 
-  it("hides on iOS when Safari share-sheet steps are not available", () => {
-    expect(shouldShowInstallTip({ ...eligible, safariStepsOk: false })).toBe(false);
+  it("shows on iOS when Safari share-sheet steps are not available (generic body)", () => {
+    expect(shouldShowInstallTip({ ...eligible, safariStepsOk: false })).toBe(true);
   });
 
   it("still shows on Android when safariStepsOk is false", () => {

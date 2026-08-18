@@ -67,7 +67,7 @@ export function HomeScreenInstallCard() {
   const androidPrompt = surface === "android" ? heldAndroidPrompt : null;
   const { installInFlight, requestInstall } = useAndroidInstallAction(androidPrompt);
 
-  // iOS 非 Safari は visible が false。Android WebView / Firefox の手順可否は helper へ渡す。
+  // iOS 非 Safari は Safari 手順ではなく generic 本文。Android 手順可否は helper へ渡す。
   // 4 つの真偽値をここで持たず、戻り（steps / body）だけを描く。
   const presentation = resolveHomeScreenInstallPresentation({
     surface,

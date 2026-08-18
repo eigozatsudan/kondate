@@ -880,6 +880,26 @@ it("家族0件でも登録済み領域と追加領域を分けて表示する", 
   expect(screen.getByLabelText("ホーム画面に追加")).toBeVisible();
 });
 
+it("L9: members pending still shows the home-screen install section", async () => {
+  await renderSettings(
+    { listMembers: vi.fn().mockReturnValue(new Promise(() => undefined)) },
+    { startClosed: true },
+  );
+
+  expect(await screen.findByText("家族設定を読み込んでいます…")).toBeVisible();
+  expect(screen.getByLabelText("ホーム画面に追加")).toBeVisible();
+});
+
+it("L9: members load failure still shows the home-screen install section", async () => {
+  await renderSettings(
+    { listMembers: vi.fn().mockRejectedValue(new Error("network")) },
+    { startClosed: true },
+  );
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("家族設定を読み込めませんでした");
+  expect(screen.getByLabelText("ホーム画面に追加")).toBeVisible();
+});
+
 it("keeps family CRUD controls and composes the account danger zone on the same Plan 1 page", async () => {
   const second: HouseholdMemberRow = {
     ...member,

@@ -259,6 +259,24 @@ describe("canUseAndroidChromeInstallSteps", () => {
       ),
     ).toBe(false);
   });
+
+  it("rejects Samsung Internet, Edge Android, and Opera Android so Chrome steps are not shown", () => {
+    expect(
+      canUseAndroidChromeInstallSteps(
+        "Mozilla/5.0 (Linux; Android 14; SAMSUNG SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/110.0.5481.154 Mobile Safari/537.36",
+      ),
+    ).toBe(false);
+    expect(
+      canUseAndroidChromeInstallSteps(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36 EdgA/120.0.2210.141",
+      ),
+    ).toBe(false);
+    expect(
+      canUseAndroidChromeInstallSteps(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36 OPR/80.0.4170.72",
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("isStandaloneDisplayMode", () => {

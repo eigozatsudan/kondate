@@ -1675,7 +1675,13 @@ export function HouseholdSettingsForm({
   ]);
 
   if (membersQuery.isPending)
-    return <main className="page-frame">家族設定を読み込んでいます…</main>;
+    return (
+      <main className="page-frame stack">
+        家族設定を読み込んでいます…
+        {/* L9: ホーム画面追加は常設。members 読込中でも設定面から案内する。 */}
+        <HomeScreenInstallSection />
+      </main>
+    );
   if (membersQuery.isError)
     return (
       <main className="page-frame stack">
@@ -1690,6 +1696,8 @@ export function HouseholdSettingsForm({
         >
           再試行
         </button>
+        {/* L9: members 失敗でもインストール再掲口を残す。 */}
+        <HomeScreenInstallSection />
       </main>
     );
   // H9: catalog / aliases 失敗でも下段（Plan/共有/Account）へ到達する。
@@ -1712,7 +1720,13 @@ export function HouseholdSettingsForm({
   // 編集を開いているときだけ values を要求する。一覧表示中に values 未初期化で
   // 画面全体をローディングへ落とさない（削除後の不整合を防ぐ）。
   if (editorOpen && !selectedMemberVanished && values === undefined && selected !== undefined) {
-    return <main className="page-frame">家族設定を読み込んでいます…</main>;
+    return (
+      <main className="page-frame stack">
+        家族設定を読み込んでいます…
+        {/* L9: editor 読込中 early return でもインストール節を残す。 */}
+        <HomeScreenInstallSection />
+      </main>
+    );
   }
   if (members.length === 0) {
     return (
@@ -1741,7 +1755,7 @@ export function HouseholdSettingsForm({
           </button>
         </section>
         {addScopeNoticeDialog}
-        {/* ホーム画面追加は常設。読込中 early return には置かない。 */}
+        {/* ホーム画面追加は常設。members / editor 読込中・失敗面にも置く。 */}
         <HomeScreenInstallSection />
         {/* L10-5: プラン管理はアカウント操作の直前。Checkout 成功時は短周期 re-fetch。 */}
         <PlanSettingsSection
@@ -1760,7 +1774,13 @@ export function HouseholdSettingsForm({
   // 一覧表示のみ（編集クローズ）で selected/values が揃う前でも一覧を出す。
   // 外部削除で選択が消えたフレームは loading に落とさず、同一タブ削除と同じく一覧へ戻す。
   if (editorOpen && !selectedMemberVanished && (values === undefined || selected === undefined)) {
-    return <main className="page-frame">家族設定を読み込んでいます…</main>;
+    return (
+      <main className="page-frame stack">
+        家族設定を読み込んでいます…
+        {/* L9: editor 読込中 early return でもインストール節を残す。 */}
+        <HomeScreenInstallSection />
+      </main>
+    );
   }
   const currentDislikes = dislikesQuery.data ?? [];
   const selectedAllergyMutationPending =
@@ -2490,7 +2510,7 @@ export function HouseholdSettingsForm({
         </div>
       )}
       {addScopeNoticeDialog}
-      {/* ホーム画面追加は常設。読込中 early return には置かない。 */}
+      {/* ホーム画面追加は常設。members / editor 読込中・失敗面にも置く。 */}
       <HomeScreenInstallSection />
       {/* L10-5: プラン管理はアカウント操作の直前。Checkout 成功時は短周期 re-fetch。 */}
       <PlanSettingsSection

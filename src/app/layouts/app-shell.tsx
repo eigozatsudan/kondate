@@ -182,7 +182,11 @@ export function AppShell() {
         return true;
       }
       // 静的公開 LP の main h1 は #root の外に残るため、シェルの遷移フォーカスは #root 内だけを見る。
-      const heading = document.querySelector("#root main h1") ?? document.querySelector("#root h1");
+      // L6: インストールカードは Outlet より前。ページ h1 へ飛ばすとカード操作が Tab 順の後方に残る。
+      const heading =
+        document.querySelector("#root #home-screen-install-card-title") ??
+        document.querySelector("#root main h1") ??
+        document.querySelector("#root h1");
       if (!(heading instanceof HTMLElement)) return false;
       if (!heading.hasAttribute("tabindex")) {
         heading.tabIndex = -1;
