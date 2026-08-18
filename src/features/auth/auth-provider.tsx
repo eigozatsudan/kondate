@@ -605,6 +605,13 @@ export function AuthProvider({
           isIntentionalAuthSessionSwitchArmed(pathname);
         if (adoptArmedSwitchFirstPin) {
           clearIntentionalAuthSessionSwitch();
+          // C-R6: first-pin B のあと in-flight leftover getSession が A で settle すると
+          // switch 消費済みで pin-mismatch wipe になる。mount leftover token を persist-hard
+          // にして late apply を拒否する（B 自身は載せない）。
+          const leftoverToken = leftoverPersistAccessTokenAtMountRef.current;
+          if (leftoverToken !== null && leftoverToken !== nextSession.access_token) {
+            persistHardLeftoverAccessTokensRef.current.add(leftoverToken);
+          }
         } else if (refuseMismatchedLiveMark || refuseUnmarkedLeftoverPersist) {
           if (refuseUnmarkedLeftoverPersist) {
             rememberAccessToken(persistHardLeftoverAccessTokensRef.current, nextSession);
@@ -635,6 +642,7 @@ export function AuthProvider({
                 signOutPromise,
                 leftoverToken,
                 window.localStorage,
+                nextSession.user.id,
               );
               void signOutPromise.finally(() => {
                 const pinned = residualSessionGuardRef.current.pinnedSession;

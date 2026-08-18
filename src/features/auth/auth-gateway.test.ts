@@ -4390,6 +4390,45 @@ it("C-R1: leftover refuse signOut late settle restores Google persist without an
   }
 });
 
+it("C-R5: leftover refuse wrap does not last-wins leftover rotation over Google persist", async () => {
+  const leftoverPersist = JSON.stringify({
+    access_token: "leftover-access",
+    user: { id: "leftover-user" },
+  });
+  const googlePersist = JSON.stringify({
+    access_token: "google-access",
+    user: { id: "google-user" },
+  });
+  const leftoverRotationPersist = JSON.stringify({
+    access_token: "leftover-access-rotated",
+    user: { id: "leftover-user" },
+  });
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, leftoverPersist);
+  let releaseSignOut: (() => void) | undefined;
+  const signOutPromise = new Promise((resolve) => {
+    releaseSignOut = () => {
+      window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+      resolve({ error: null });
+    };
+  });
+  try {
+    armLeftoverRefuseSignOutWinnerPersistProtection(
+      signOutPromise,
+      "leftover-access",
+      window.localStorage,
+      "leftover-user",
+    );
+    window.localStorage.setItem(browserSupabaseSessionStorageKey, googlePersist);
+    window.localStorage.setItem(browserSupabaseSessionStorageKey, leftoverRotationPersist);
+    releaseSignOut?.();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBe(googlePersist);
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    resetLeftoverPkceProtectionForTests();
+  }
+});
+
 it("C6: leftover clear signs out persist when the live mark has no userId", async () => {
   window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
   window.localStorage.setItem(
