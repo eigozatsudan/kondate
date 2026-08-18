@@ -182,26 +182,44 @@ function RecoveryLinks({
 }
 
 /**
- * markSent 後 fail で attempt 消費を issueMessages が開示する code。
- * success 未減の NotConsumedNotice と並立すると「回数は減っていない」優先で即リトライし得る（G-R2）。
- * 枠返却・retryable・数値は不変。UI 二重信号のみ抑止。
+ * markSent 後に attempt を消費した終端。success 未減の NotConsumedNotice と並立すると
+ * 「回数は減っていない」優先で即リトライし得る（G-R2 / G1）。
+ * timeout / model_unavailable / invalid_ai_response は文面でも開示。
+ * duplicate_output は文面非開示だが attempt は消費済み。枠返却・数値は不変。
  */
 const ATTEMPT_DISCLOSED_FAILURE_CODES = new Set([
   "generation_timeout",
   "model_unavailable",
   "invalid_ai_response",
+  "duplicate_output",
 ]);
+
+/**
+ * preflight だけが付ける conflict。これ以外（mandatory_safety / dish_count /
+ * current_safety_changed）が混ざれば markSent 後として notice を出さない（G1）。
+ */
+const PREFLIGHT_UNSENT_CONFLICT_CODES = new Set(["must_use_conflict", "allergen_pantry_conflict"]);
+
+function isPreflightUnsentConflict(conflicts: readonly { code: string }[]): boolean {
+  return (
+    conflicts.length > 0 &&
+    conflicts.every((item) => PREFLIGHT_UNSENT_CONFLICT_CODES.has(item.code))
+  );
+}
 
 /** 未消費時の共通1行（message 本文に埋め込まない。設計 L 未減 UI）。 */
 function NotConsumedNotice({
   consumed,
   errorCode,
+  attemptConsumed = false,
 }: {
   consumed: boolean;
-  /** failed のみ。attempt 開示 code では notice を出さない（G-R2）。 */
+  /** failed のみ。attempt 開示 code では notice を出さない（G-R2 / G1）。 */
   errorCode?: string;
+  /** markSent 後の constraint_conflict。success 未減でも attempt は消費済み（G1）。 */
+  attemptConsumed?: boolean;
 }) {
-  if (consumed) return null;
+  if (consumed || attemptConsumed) return null;
   if (errorCode !== undefined && ATTEMPT_DISCLOSED_FAILURE_CODES.has(errorCode)) {
     return null;
   }
@@ -453,7 +471,10 @@ export function GenerationStatusPanel({
           <p key={`${item.code}-${item.conditionRefs.join()}`}>{item.message}</p>
         ))}
         {showHouseholdHelper ? <p>{HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY}</p> : null}
-        <NotConsumedNotice consumed={state.data.quota.consumed} />
+        <NotConsumedNotice
+          consumed={state.data.quota.consumed}
+          attemptConsumed={!isPreflightUnsentConflict(state.data.conflicts)}
+        />
         <TerminalQuotaBlock
           {...(userId === undefined ? {} : { userId })}
           remaining={state.data.quota.remaining}

@@ -586,6 +586,88 @@ describe("GenerationStatusPanel", () => {
     expect(screen.queryByText("献立は完成していないので、作成回数は減っていません")).toBeNull();
   });
 
+  it("G1: hides not-consumed notice on duplicate_output even if success unconsumed", () => {
+    // markSent 後の重複は success 未減だが attempt は消費済み。timeout 系と同型で notice を出さない。
+    const duplicateFailed: GenerationClientState = {
+      phase: "failed",
+      data: {
+        ...failedData,
+        error: {
+          code: "duplicate_output",
+          message: "元の献立とほぼ同じ案だったため保存しませんでした。",
+          retryable: true,
+        },
+        quota: { ...quota, consumed: false },
+      },
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={duplicateFailed} />);
+    expect(screen.getByText("元の献立とほぼ同じ案だったため保存しませんでした。")).toBeVisible();
+    expect(screen.queryByText("献立は完成していないので、作成回数は減っていません")).toBeNull();
+  });
+
+  it.each(["mandatory_safety_conflict", "dish_count_conflict", "current_safety_changed"] as const)(
+    "G1: hides not-consumed notice on post-send constraint_conflict (%s)",
+    (code) => {
+      // provider / finalize 後の conflict。success 未減でも attempt は markSent 済み。
+      const postSendConflict: GenerationClientState = {
+        phase: "constraint_conflict",
+        data: {
+          status: "constraint_conflict",
+          idempotencyKey: KEY,
+          requestId: REQUEST_ID,
+          conflicts: [
+            {
+              code,
+              message: "必須の安全条件を満たす献立を作成できません。",
+              conditionRefs: [],
+            },
+          ],
+          completedAt: "2026-07-11T00:00:01.000Z",
+          quota,
+        },
+        effect: "none",
+      };
+      render(<GenerationStatusPanel state={postSendConflict} />);
+      expect(screen.getByText("必須の安全条件を満たす献立を作成できません。")).toBeVisible();
+      expect(screen.queryByText("献立は完成していないので、作成回数は減っていません")).toBeNull();
+    },
+  );
+
+  it("G1: hides not-consumed notice when post-send conflict mixes preflight codes", () => {
+    // 既存 household fixture と同じく mandatory_safety + must_use。送信後を優先して notice を隠す。
+    render(<GenerationStatusPanel state={constraintConflictState()} />);
+    expect(screen.queryByText("献立は完成していないので、作成回数は減っていません")).toBeNull();
+  });
+
+  it.each(["must_use_conflict", "allergen_pantry_conflict"] as const)(
+    "G1: shows not-consumed notice on preflight unsent constraint_conflict (%s)",
+    (code) => {
+      // validatePreflight の未送信 conflict。attempt は焼いていないので従来どおり「減っていない」。
+      const preflightConflict: GenerationClientState = {
+        phase: "constraint_conflict",
+        data: {
+          status: "constraint_conflict",
+          idempotencyKey: KEY,
+          requestId: REQUEST_ID,
+          conflicts: [
+            {
+              code,
+              message: "条件を同時に満たせません。",
+              conditionRefs: ["pantry_1"],
+            },
+          ],
+          completedAt: "2026-07-11T00:00:01.000Z",
+          quota,
+        },
+        effect: "none",
+      };
+      render(<GenerationStatusPanel state={preflightConflict} />);
+      expect(screen.getByText("条件を同時に満たせません。")).toBeVisible();
+      expect(screen.getByText("献立は完成していないので、作成回数は減っていません")).toBeVisible();
+    },
+  );
+
   it("shows a status message while checking saved progress", () => {
     render(<GenerationStatusPanel state={{ phase: "checking", effect: "status" }} />);
     expect(screen.getByRole("status")).toHaveTextContent("保存した作成状況を確認しています");
