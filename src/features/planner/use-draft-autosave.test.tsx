@@ -1279,6 +1279,74 @@ it("P2: clean flush は refresh 完了後に latest を再読し変更を書く"
   expect(flushed?.revision).toBe(5);
 });
 
+it("P1: abandon 後に遅延した clean refresh は timeout 後の編集を再 enqueue しない", async () => {
+  // clean leave の GET hang → timeout 後に編集して generate。
+  // 旧 IIFE が resetGeneration を見ず latest を再 enqueue すると revision が N+2 になり、
+  // claim pin（N+1）とずれて onConflict / draft_not_found で生成が消える。
+  vi.useFakeTimers();
+  const row = saved(reviewDraft, 4);
+  let resolveRefresh: ((live: PlannerDraft | null) => void) | undefined;
+  const refreshLiveDraft = vi.fn(
+    () =>
+      new Promise<PlannerDraft | null>((resolve) => {
+        resolveRefresh = resolve;
+      }),
+  );
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const onConflict = vi.fn();
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        onConflict,
+        hydratedDraft: row,
+        refreshLiveDraft,
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  let leftover: Promise<PlannerDraft> | undefined;
+  act(() => {
+    leftover = result.current.flush();
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(refreshLiveDraft).toHaveBeenCalledTimes(1);
+  expect(save).not.toHaveBeenCalled();
+
+  const edited = { ...reviewDraft, memo: "timeout後の追記" };
+  rerender({ value: edited });
+
+  let generated: PlannerDraft | undefined;
+  await act(async () => {
+    generated = await result.current.flush({ abandonQueued: true });
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(edited, 4);
+  expect(generated?.revision).toBe(5);
+  expect(generated?.memo).toBe("timeout後の追記");
+  expect(onConflict).not.toHaveBeenCalled();
+
+  await act(async () => {
+    resolveRefresh?.(row);
+    // lastSaved 成功だと route の旧 IIFE が cache N+1 > saved N で onConflict する。
+    await expect(leftover).rejects.toMatchObject({ name: "SupersededDraftSaveError" });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(result.current.revision).toBe(5);
+  expect(onConflict).not.toHaveBeenCalled();
+});
+
 it("P1: flush は reset 強制保存の完了を await し失敗を隠さない", async () => {
   vi.useFakeTimers();
   let rejectForce: ((error: Error) => void) | undefined;

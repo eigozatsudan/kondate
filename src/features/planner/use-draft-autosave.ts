@@ -837,10 +837,17 @@ export function useDraftAutosave({
       // stale live を信じると削除済み id+rev で POST が draft_not_found。
       if (latestFingerprintRef.current === baselineSerializedRef.current) {
         return (async (): Promise<PlannerDraft> => {
+          // abandon / reset 前に始めた GET。timeout 後 generate が generation を進めても
+          // この IIFE は生き残る。await 後に latest を再 enqueue すると N+2 になり
+          // claim pin（N+1）とずれ、route 旧 IIFE の onConflict で生成が消える。
+          const refreshGeneration = resetGenerationRef.current;
           const refresh = refreshLiveDraftRef.current;
           let live = hydratedDraftRef.current;
           if (refresh !== undefined) {
             live = await refresh();
+            if (refreshGeneration !== resetGenerationRef.current) {
+              throw new SupersededDraftSaveError();
+            }
             if (live === null) {
               lastSavedDraftRef.current = null;
               throw new IncompleteDraftSaveError();
@@ -856,7 +863,11 @@ export function useDraftAutosave({
             if (held !== null) return held;
             throw new IncompleteDraftSaveError();
           }
-          // P2: leave 開始時 latest を閉じたまま timeout 後の編集を POST しない。
+          if (refreshGeneration !== resetGenerationRef.current) {
+            throw new SupersededDraftSaveError();
+          }
+          // P2: 同一 leave 中（abandon 前）は refresh 後に latest を再読して書く。
+          // timeout 後 generate の abandon 済み IIFE は上で切る（再 enqueue しない）。
           const latest = latestRef.current;
           if (!isPersistableDraft(latest)) {
             if (shouldWriteAudienceNeutral(latest, lastPersistedInputRef.current)) {
