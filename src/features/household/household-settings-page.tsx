@@ -48,7 +48,9 @@ import { defaultsForAgeBand } from "./household-defaults";
 import {
   householdSettingsSchema,
   householdSettingsValueFromDbRow,
+  householdSettingsValuesEqual,
   normalizeOptionalDisplayName,
+  persistableHouseholdSettings,
   toHouseholdFieldErrors,
   type HouseholdFieldErrors,
   type HouseholdSettingsFormValue,
@@ -589,6 +591,7 @@ export function HouseholdSettingsForm({
       member: HouseholdMemberRow,
       next: HouseholdSettingsFormValue,
       lineage: SaveLineage,
+      uiSnapshot: HouseholdSettingsFormValue = next,
     ): Promise<boolean> => {
       const parsed = householdSettingsSchema.safeParse(next);
       if (!parsed.success) {
@@ -597,8 +600,11 @@ export function HouseholdSettingsForm({
         }
         return false;
       }
+      // H3: 部分 PATCH 成功時も UI に残る未完了項目（空年齢など）の field error を消さない
+      const uiParsed = householdSettingsSchema.safeParse(uiSnapshot);
+      const uiErrors = uiParsed.success ? {} : toHouseholdFieldErrors(uiParsed.error);
       if (canPublishSaveMessage(lineage)) {
-        setErrors({});
+        setErrors(uiErrors);
       }
       try {
         const patch = toMemberPatch(parsed.data);
@@ -622,7 +628,7 @@ export function HouseholdSettingsForm({
         // revision/event は invalidateHouseholdSafetyDependents 内で query より先に発火する。
         // 権威経路（生成/confirm）は live revalidate。H4: 成功コピーは invalidate 成否で分ける。
         const refresh = await tryInvalidateSafety(() => api.invalidateSafety());
-        if (canPublishSaveMessage(lineage)) {
+        if (canPublishSaveMessage(lineage) && uiParsed.success) {
           const pending = pendingRegisteredIntents.current.get(member.id);
           // allergy_status=registered をコミット済みなら成功文言を優先する。
           // soft invalidate が allergies を再取得中、useEffect が evidence を unknown へ
@@ -758,13 +764,18 @@ export function HouseholdSettingsForm({
             skipped = true;
             return true;
           }
-          return save(member, persistedValues, lineage);
+          return save(member, persistedValues, lineage, localSnapshot);
         })
         .catch(() => false)
         .then((saved) => {
           if (!skipped && isLatestSaveRevision(lineage)) {
             if (saved) {
-              failedSaveMemberIdsRef.current.delete(member.id);
+              // H3: 部分 PATCH 後もローカルが未完了なら members 再同期で空年齢などを消さない
+              if (householdSettingsSchema.safeParse(localSnapshot).success) {
+                failedSaveMemberIdsRef.current.delete(member.id);
+              } else {
+                failedSaveMemberIdsRef.current.add(member.id);
+              }
               versionConflictRecoveredMemberIdsRef.current.delete(member.id);
             } else if (versionConflictRecoveredMemberIdsRef.current.has(member.id)) {
               // H9: CAS 衝突は members 再同期済み。failedSave 固定で再衝突ループにしない。
@@ -1407,6 +1418,35 @@ export function HouseholdSettingsForm({
     }
   };
 
+  const enqueueResolvedSettingsSave = (
+    member: HouseholdMemberRow,
+    localNext: HouseholdSettingsFormValue,
+    lastPersisted: HouseholdSettingsFormValue,
+    persistShape: HouseholdSettingsFormValue,
+  ) => {
+    const localParsed = householdSettingsSchema.safeParse(localNext);
+    if (!localParsed.success) {
+      setErrors(toHouseholdFieldErrors(localParsed.error));
+    }
+    const persistParsed = householdSettingsSchema.safeParse(persistShape);
+    if (!persistParsed.success) {
+      void queueSave(member, localNext, persistShape);
+      return;
+    }
+    const lastParsed = householdSettingsSchema.safeParse(lastPersisted);
+    // persist が last と同じでも、登録あり取消しなど妥当な明示操作は PATCH する。
+    // 空年齢などローカル不正で載せられる項目が無いときだけ送らない。
+    if (
+      lastParsed.success &&
+      householdSettingsValuesEqual(persistParsed.data, lastParsed.data) &&
+      !localParsed.success
+    ) {
+      failedSaveMemberIdsRef.current.add(member.id);
+      return;
+    }
+    void queueSave(member, localNext, persistParsed.data);
+  };
+
   const updateAndSave = (patch: Partial<HouseholdSettingsFormValue>) => {
     if (savingRef.current) return;
     completingAllergyCheckRef.current = false;
@@ -1416,13 +1456,16 @@ export function HouseholdSettingsForm({
       queryClient
         .getQueryData<HouseholdMemberRow[]>(membersKey)
         ?.find((member) => member.id === selected.id) ?? selected;
-    const persistedAllergyStatus = memberValue(persistedMember).allergyStatus;
+    const lastPersisted = memberValue(persistedMember);
+    const persistedAllergyStatus = lastPersisted.allergyStatus;
     const existingIntent = pendingRegisteredIntents.current.get(selected.id);
+    const persistable = persistableHouseholdSettings(next, lastPersisted);
 
     // 「なし」「未確認」への明示変更は、保留中の「登録あり」より常に優先する。
     if (next.allergyStatus !== "registered") {
       pendingRegisteredIntents.current.delete(selected.id);
-      void queueSave(selected, next);
+      // H3: 空年齢や present+kinds 0 で全体が落ちても、妥当な安全項目だけ PATCH する
+      enqueueResolvedSettingsSave(selected, next, lastPersisted, persistable ?? next);
       return;
     }
     // H12: draft でも empty registered を DB に即書きしない（onboarding H13 defer と同方向）。
@@ -1433,7 +1476,7 @@ export function HouseholdSettingsForm({
       persistedAllergyStatus !== "registered" &&
       (selected.status === "complete" || !hasAllergyEvidence);
     if (!requiresRegisteredIntent && existingIntent === undefined) {
-      void queueSave(selected, next);
+      enqueueResolvedSettingsSave(selected, next, lastPersisted, persistable ?? next);
       return;
     }
     if (existingIntent === undefined) {
@@ -1488,7 +1531,14 @@ export function HouseholdSettingsForm({
     // 登録可否の確認中でも、他項目はDB上の旧アレルギー状態を保ったまま保存する。
     const hasSafeFieldChange = Object.keys(patch).some((key) => key !== "allergyStatus");
     if (hasSafeFieldChange) {
-      void queueSave(selected, next, { ...next, allergyStatus: persistedAllergyStatus });
+      enqueueResolvedSettingsSave(
+        selected,
+        next,
+        lastPersisted,
+        persistable === undefined
+          ? { ...next, allergyStatus: persistedAllergyStatus }
+          : { ...persistable, allergyStatus: persistedAllergyStatus },
+      );
     }
     if (allergiesQuery.isError) {
       setMessage("アレルギー情報を確認できませんでした。もう一度お試しください");

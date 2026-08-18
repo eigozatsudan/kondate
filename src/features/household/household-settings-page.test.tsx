@@ -3546,6 +3546,88 @@ it("H1: persists allergy change when DB display_name is whitespace-only", async 
   expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("unconfirmed");
 });
 
+it("H3: persists allergy after emptying age without leaving only the UI ahead", async () => {
+  // 空年齢で全体 parse が落ちても、未確認への変更は last の年齢のまま PATCH する
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({
+      ...member,
+      age_band: patch.age_band ?? member.age_band,
+      allergy_status: patch.allergy_status ?? member.allergy_status,
+    }),
+  );
+  await renderSettings({ updateMember });
+
+  fireEvent.change(await screen.findByLabelText("年齢のめやす"), { target: { value: "" } });
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+
+  await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "unconfirmed");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        allergy_status: "unconfirmed",
+        age_band: "adult",
+      }),
+      expect.any(String),
+    );
+  });
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("unconfirmed");
+  expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
+  expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
+
+  await userEvent.selectOptions(screen.getByLabelText("年齢のめやす"), "age_3_5");
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        age_band: "age_3_5",
+        allergy_status: "unconfirmed",
+      }),
+      expect.any(String),
+    );
+  });
+});
+
+it("H3: persists allergy after present-without-kinds without blocking the PATCH", async () => {
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({
+      ...member,
+      allergy_status: patch.allergy_status ?? member.allergy_status,
+      unsupported_diet_status: patch.unsupported_diet_status ?? member.unsupported_diet_status,
+      unsupported_diet_kinds: patch.unsupported_diet_kinds ?? member.unsupported_diet_kinds,
+    }),
+  );
+  await renderSettings({ updateMember });
+
+  await userEvent.selectOptions(
+    await screen.findByLabelText(unsupportedDietStatusLabel),
+    "present",
+  );
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent(UNSUPPORTED_DIET_KINDS_REQUIRED);
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+
+  await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "unconfirmed");
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        allergy_status: "unconfirmed",
+        unsupported_diet_status: "none",
+      }),
+      expect.any(String),
+    );
+  });
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("unconfirmed");
+  expect(screen.getByLabelText(unsupportedDietStatusLabel)).toHaveValue("present");
+});
+
 it("persists a 30-character display name", async () => {
   const { updateMember } = await renderSettings();
   const name = "あ".repeat(30);

@@ -80,6 +80,58 @@ export type HouseholdSettingsFormValue = {
   easePreferences: EasePreference[];
 };
 
+export function householdSettingsValuesEqual(
+  left: HouseholdSettingsValue,
+  right: HouseholdSettingsValue,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * 全体 schema が落ちても、直前の妥当な保存値へ載せられる項目だけ返す。
+ * 年齢＋量/辛さ/食べやすさ/安全制約と、対象外 status＋kinds はセットで検証する。
+ * 空年齢や present+kinds 0 を部分適用してデフォルトや矛盾 kinds を黙って書かない。
+ * last も不正なら undefined（呼び出し側は従来どおり全体 parse 失敗へ）。
+ */
+export function persistableHouseholdSettings(
+  next: HouseholdSettingsFormValue,
+  lastPersisted: HouseholdSettingsFormValue,
+): HouseholdSettingsValue | undefined {
+  const full = householdSettingsSchema.safeParse(next);
+  if (full.success) {
+    return full.data;
+  }
+  const last = householdSettingsSchema.safeParse(lastPersisted);
+  if (!last.success) {
+    return undefined;
+  }
+
+  const groups: Partial<HouseholdSettingsFormValue>[] = [
+    { displayName: next.displayName },
+    {
+      ageBand: next.ageBand,
+      portionSize: next.portionSize,
+      spiceLevel: next.spiceLevel,
+      easePreferences: next.easePreferences,
+      requiredSafetyConstraints: next.requiredSafetyConstraints,
+    },
+    { allergyStatus: next.allergyStatus },
+    {
+      unsupportedDietStatus: next.unsupportedDietStatus,
+      unsupportedDietKinds: next.unsupportedDietKinds,
+    },
+  ];
+
+  let candidate: HouseholdSettingsValue = last.data;
+  for (const group of groups) {
+    const parsed = householdSettingsSchema.safeParse({ ...candidate, ...group });
+    if (parsed.success) {
+      candidate = parsed.data;
+    }
+  }
+  return candidate;
+}
+
 /**
  * 空白のみの呼び名は未設定（null）。
  * DB CHECK は btrim せず char_length 1–30 のため "   " を通す。settings schema は

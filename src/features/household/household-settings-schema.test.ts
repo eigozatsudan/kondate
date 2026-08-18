@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   householdSettingsSchema,
   householdSettingsValueFromDbRow,
+  persistableHouseholdSettings,
   toHouseholdFieldErrors,
   type HouseholdMemberSettingsRow,
+  type HouseholdSettingsFormValue,
 } from "./household-settings-schema";
 
 const validRow: HouseholdMemberSettingsRow = {
@@ -182,5 +184,63 @@ describe("householdSettingsSchema displayName (H10)", () => {
     const message = toHouseholdFieldErrors(parsed.error).displayName;
     expect(message).toBe("呼び名は1文字以上で入力してください");
     expect(message).not.toMatch(/too small|expected string|characters/iu);
+  });
+});
+
+describe("persistableHouseholdSettings (H3)", () => {
+  const last: HouseholdSettingsFormValue = {
+    displayName: "太郎",
+    ageBand: "adult",
+    allergyStatus: "none",
+    unsupportedDietStatus: "none",
+    unsupportedDietKinds: [],
+    requiredSafetyConstraints: [],
+    portionSize: "regular",
+    spiceLevel: "regular",
+    easePreferences: [],
+  };
+
+  it("returns the full next value when the form is schema-valid", () => {
+    const next: HouseholdSettingsFormValue = { ...last, allergyStatus: "unconfirmed" };
+    expect(persistableHouseholdSettings(next, last)).toEqual(next);
+  });
+
+  it("overlays a valid allergy onto last when age is empty", () => {
+    const next: HouseholdSettingsFormValue = {
+      ...last,
+      ageBand: "",
+      allergyStatus: "unconfirmed",
+    };
+    expect(persistableHouseholdSettings(next, last)).toEqual({
+      ...last,
+      allergyStatus: "unconfirmed",
+    });
+  });
+
+  it("does not persist present+empty kinds or the age-linked defaults of an empty age", () => {
+    const next: HouseholdSettingsFormValue = {
+      ...last,
+      ageBand: "",
+      portionSize: "small",
+      spiceLevel: "none",
+      unsupportedDietStatus: "present",
+      unsupportedDietKinds: [],
+    };
+    expect(persistableHouseholdSettings(next, last)).toEqual(last);
+  });
+
+  it("persists present+kinds together when the pair is valid", () => {
+    const next: HouseholdSettingsFormValue = {
+      ...last,
+      unsupportedDietStatus: "present",
+      unsupportedDietKinds: ["weaning_food"],
+    };
+    expect(persistableHouseholdSettings(next, last)).toEqual(next);
+  });
+
+  it("returns undefined when last persisted values are also invalid", () => {
+    const invalidLast: HouseholdSettingsFormValue = { ...last, ageBand: "" };
+    const next: HouseholdSettingsFormValue = { ...invalidLast, allergyStatus: "unconfirmed" };
+    expect(persistableHouseholdSettings(next, invalidLast)).toBeUndefined();
   });
 });
