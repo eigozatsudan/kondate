@@ -8,6 +8,8 @@ import {
   spiceLevels,
   unsupportedDietKinds,
   unsupportedDietStatuses,
+  type AgeBand,
+  type RequiredSafetyConstraint,
 } from "../../../shared/contracts/domain.js";
 import { safetyActionKinds } from "../../../shared/contracts/generation.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
@@ -567,4 +569,179 @@ export async function loadEmergencyCurrentSafety(
 ): Promise<EmergencyCurrentSafety> {
   const { snapshot, context } = await loadSnapshot(admin, userId, targetMemberIds);
   return { context, memberLabels: captureLabels(snapshot) };
+}
+
+/** draft メンバーの member_allergies 行（検査用 union 入力）。 */
+export type DraftInspectionAllergyRow = {
+  member_id: string;
+  allergen_id: string | null;
+  custom_name: string | null;
+  custom_aliases: readonly string[] | null;
+  custom_confirmed: boolean;
+};
+
+/** draft メンバーの年齢帯・必須制約（検査用。部分 age は adult と推測しない）。 */
+export type DraftInspectionMemberRow = {
+  id: string;
+  age_band: AgeBand | null;
+  required_safety_constraints: readonly RequiredSafetyConstraint[];
+};
+
+/**
+ * PE2: complete のみの safety に、draft（入力途中）メンバーの確認済みアレルギー針を検査集合へ union する。
+ * get_current_safety_snapshot は status=complete のみのため draft は RPC に載せられない。
+ * 表示ターゲットにはせず、banned / Stage S 用にだけ合成する。
+ * flyer と同趣旨。null 帯は幼児+シニア両方（成人既定にしない）。
+ */
+export function appendDraftMemberAllergiesForInspection(
+  safety: CurrentSafetyContext,
+  draftAllergyRows: readonly DraftInspectionAllergyRow[],
+  draftMembers: readonly DraftInspectionMemberRow[] = [],
+): CurrentSafetyContext {
+  if (draftAllergyRows.length === 0 && draftMembers.length === 0) return safety;
+
+  const byMember = new Map<
+    string,
+    { allergenIds: string[]; customAllergies: { name: string; aliases: string[] }[] }
+  >();
+  for (const row of draftAllergyRows) {
+    const bucket = byMember.get(row.member_id) ?? { allergenIds: [], customAllergies: [] };
+    if (row.allergen_id !== null && row.allergen_id.trim() !== "") {
+      if (!bucket.allergenIds.includes(row.allergen_id)) {
+        bucket.allergenIds.push(row.allergen_id);
+      }
+    } else if (row.custom_confirmed && row.custom_name !== null && row.custom_name.trim() !== "") {
+      // RPC と同型: custom_confirmed のみ検査針にする
+      bucket.customAllergies.push({
+        name: row.custom_name,
+        aliases: [...(row.custom_aliases ?? [])].filter((alias) => alias.trim() !== ""),
+      });
+    }
+    byMember.set(row.member_id, bucket);
+  }
+
+  const memberMeta = new Map(draftMembers.map((member) => [member.id, member]));
+  const memberIds = new Set([...byMember.keys(), ...memberMeta.keys()]);
+
+  // member_id 昇順で合成し、anonymousRef 採番を決定的にする
+  const extraMembers: CurrentSafetyContext["members"][number][] = [];
+  let refIndex = safety.members.length;
+  for (const memberId of [...memberIds].sort()) {
+    const bucket = byMember.get(memberId) ?? { allergenIds: [], customAllergies: [] };
+    const meta = memberMeta.get(memberId);
+    // null 帯を adult と推測すると離乳後〜5歳ルールが外れる。検査に載せるときだけ幼児+シニア。
+    const savedAgeBand = meta?.age_band ?? null;
+    const constraints = meta?.required_safety_constraints ?? [];
+    const hasAllergies = bucket.allergenIds.length > 0 || bucket.customAllergies.length > 0;
+    const hasAgeRules = savedAgeBand != null && savedAgeBand !== "adult";
+    if (!hasAllergies && !hasAgeRules && constraints.length === 0) continue;
+    const ageBandsForInspection: readonly AgeBand[] =
+      savedAgeBand == null ? ["post_weaning_to_2", "senior"] : [savedAgeBand];
+    for (const [bandIndex, ageBand] of ageBandsForInspection.entries()) {
+      refIndex += 1;
+      extraMembers.push({
+        householdMemberId: memberId,
+        anonymousRef: `member_${String(refIndex)}`,
+        ageBand,
+        allergyStatus: bandIndex === 0 && hasAllergies ? "registered" : "none",
+        allergenIds: bandIndex === 0 ? bucket.allergenIds : [],
+        hasUnmappedCustomAllergy: bandIndex === 0 && bucket.customAllergies.length > 0,
+        customAllergies: bandIndex === 0 ? bucket.customAllergies : [],
+        requiredSafetyConstraints: [...constraints],
+        unsupportedDietStatus: "none",
+        unsupportedDietKinds: [],
+      });
+    }
+  }
+  if (extraMembers.length === 0) return safety;
+  return {
+    ...safety,
+    members: [...safety.members, ...extraMembers],
+  };
+}
+
+const draftInspectionMemberRowSchema = z.object({
+  id: z.string().min(1),
+  age_band: z.enum(ageBands).nullable(),
+  required_safety_constraints: z
+    .array(z.enum(requiredSafetyConstraints))
+    .nullish()
+    .transform((value) => value ?? []),
+});
+
+/**
+ * 世帯の draft 行と確認済み針を読む。snapshot SQL は触らない。
+ * 読めないときは complete だけ返さず fail-closed（針を無視して候補を出さない）。
+ */
+async function loadDraftInspectionInputs(
+  admin: AdminSupabaseClient,
+  userId: string,
+): Promise<{
+  draftMembers: DraftInspectionMemberRow[];
+  draftAllergyRows: DraftInspectionAllergyRow[];
+}> {
+  const { data: draftMemberRows, error: draftMemberError } = await admin
+    .from("household_members")
+    .select("id,age_band,required_safety_constraints")
+    .eq("user_id", userId)
+    .eq("status", "draft");
+  if (draftMemberError !== null) throw safetyUnavailable();
+  const parsedDraftMembers = z
+    .array(draftInspectionMemberRowSchema)
+    .safeParse(Array.isArray(draftMemberRows) ? draftMemberRows : []);
+  if (!parsedDraftMembers.success) throw safetyUnavailable();
+  const draftMembers = parsedDraftMembers.data;
+  if (draftMembers.length === 0) {
+    return { draftMembers, draftAllergyRows: [] };
+  }
+  const { data: draftAllergyRows, error: draftAllergyError } = await admin
+    .from("member_allergies")
+    .select("member_id,allergen_id,custom_name,custom_aliases,custom_confirmed")
+    .eq("user_id", userId)
+    .in(
+      "member_id",
+      draftMembers.map((row) => row.id),
+    );
+  if (draftAllergyError !== null) throw safetyUnavailable();
+  return {
+    draftMembers,
+    draftAllergyRows: Array.isArray(draftAllergyRows) ? draftAllergyRows : [],
+  };
+}
+
+function extendEmergencyInspectionLabels(
+  base: Readonly<Record<string, string>>,
+  context: CurrentSafetyContext,
+): Readonly<Record<string, string>> {
+  const next: Record<string, string> = { ...base };
+  for (const member of context.members) {
+    if (next[member.anonymousRef] === undefined) {
+      // 検査合成メンバーは snapshot に名前が無い。PII を追加取得しない。
+      const index = member.anonymousRef.replace(/^member_/u, "");
+      next[member.anonymousRef] = `家族${index}`;
+    }
+  }
+  return Object.freeze(next);
+}
+
+/**
+ * PE2: emergency household の検査集合。complete snapshot + draft 確認済み針。
+ * loadEmergencyCurrentSafety は snapshot のみ（SQL を draft に緩めない）。
+ */
+export async function loadEmergencyInspectionSafety(
+  admin: AdminSupabaseClient,
+  userId: string,
+  targetMemberIds: readonly string[],
+): Promise<EmergencyCurrentSafety> {
+  const loaded = await loadEmergencyCurrentSafety(admin, userId, targetMemberIds);
+  const { draftMembers, draftAllergyRows } = await loadDraftInspectionInputs(admin, userId);
+  const context = appendDraftMemberAllergiesForInspection(
+    loaded.context,
+    draftAllergyRows,
+    draftMembers,
+  );
+  return {
+    context,
+    memberLabels: extendEmergencyInspectionLabels(loaded.memberLabels, context),
+  };
 }

@@ -12,6 +12,7 @@ import {
   hasExactCurrentSafetyManifest,
   loadCurrentSafetyContext,
   loadEmergencyCurrentSafety,
+  loadEmergencyInspectionSafety,
 } from "./current-safety.js";
 
 const userId = "70000000-0000-4000-8000-000000000001";
@@ -459,5 +460,137 @@ describe("current safety snapshot RPC boundary", () => {
 
     expect(hasExactCurrentSafetyManifest(context)).toBe(true);
     expect(hasExactCurrentSafetyManifest(mutate(context))).toBe(false);
+  });
+});
+
+function thenableQuery(result: { data: unknown; error: unknown }) {
+  const query: {
+    select: ReturnType<typeof vi.fn>;
+    eq: ReturnType<typeof vi.fn>;
+    order: ReturnType<typeof vi.fn>;
+    in: ReturnType<typeof vi.fn>;
+    then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => Promise<unknown>;
+  } = {
+    select: vi.fn(),
+    eq: vi.fn(),
+    order: vi.fn(),
+    in: vi.fn(),
+    then: (resolve) => Promise.resolve(result).then(resolve),
+  };
+  query.select.mockReturnValue(query);
+  query.eq.mockReturnValue(query);
+  query.order.mockReturnValue(query);
+  query.in.mockReturnValue(query);
+  return query;
+}
+
+const draftChildId = "71000000-0000-4000-8000-000000000099";
+
+function adminWithSnapshotAndDrafts(options: {
+  snapshot?: unknown;
+  snapshotError?: unknown;
+  draftMembers?: unknown;
+  draftMembersError?: unknown;
+  draftAllergies?: unknown;
+  draftAllergiesError?: unknown;
+}) {
+  const rpc = vi.fn().mockResolvedValue({
+    data: options.snapshot ?? availableSnapshot([secondMemberId]),
+    error: options.snapshotError ?? null,
+  });
+  const draftMembersQuery = thenableQuery({
+    data: options.draftMembers ?? [],
+    error: options.draftMembersError ?? null,
+  });
+  const draftAllergiesQuery = thenableQuery({
+    data: options.draftAllergies ?? [],
+    error: options.draftAllergiesError ?? null,
+  });
+  const from = vi.fn((table: string) => {
+    if (table === "member_allergies") return draftAllergiesQuery;
+    return draftMembersQuery;
+  });
+  return {
+    admin: { rpc, from } as unknown as AdminSupabaseClient,
+    rpc,
+    from,
+  };
+}
+
+describe("loadEmergencyInspectionSafety", () => {
+  it("PE2: unions draft confirmed standard allergen needles without sending draft IDs to snapshot", async () => {
+    // complete 親だけが RPC 対象。draft 子の卵針は検査 union で載せる（SQL を緩めない）。
+    const { admin, rpc, from } = adminWithSnapshotAndDrafts({
+      draftMembers: [
+        {
+          id: draftChildId,
+          age_band: "age_3_5",
+          required_safety_constraints: [],
+        },
+      ],
+      draftAllergies: [
+        {
+          member_id: draftChildId,
+          allergen_id: "egg",
+          custom_name: null,
+          custom_aliases: null,
+          custom_confirmed: false,
+        },
+      ],
+    });
+
+    const result = await loadEmergencyInspectionSafety(admin, userId, [secondMemberId]);
+
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("get_current_safety_snapshot", {
+      p_user_id: userId,
+      p_target_member_ids: [secondMemberId],
+    });
+    expect(from).toHaveBeenCalledWith("household_members");
+    expect(from).toHaveBeenCalledWith("member_allergies");
+    expect(result.context.members.some((member) => member.allergenIds.includes("egg"))).toBe(true);
+    expect(result.context.members.map((member) => member.householdMemberId)).toContain(
+      draftChildId,
+    );
+    expect(result.memberLabels.member_1).toBe("大人");
+    expect(result.memberLabels.member_2).toBe("家族2");
+    expect(Object.isFrozen(result.memberLabels)).toBe(true);
+  });
+
+  it("PE2: empty drafts leave complete snapshot members unchanged", async () => {
+    const { admin, from } = adminWithSnapshotAndDrafts({
+      draftMembers: [],
+    });
+
+    const result = await loadEmergencyInspectionSafety(admin, userId, [secondMemberId]);
+
+    expect(from).toHaveBeenCalledWith("household_members");
+    expect(from).not.toHaveBeenCalledWith("member_allergies");
+    expect(result.context.members).toHaveLength(1);
+    expect(result.context.members[0]?.householdMemberId).toBe(secondMemberId);
+    expect(result.context.members[0]?.allergenIds).toEqual([]);
+  });
+
+  it("PE2: fails closed when draft member rows cannot be read", async () => {
+    const { admin } = adminWithSnapshotAndDrafts({
+      draftMembersError: { message: "draft members unavailable" },
+    });
+
+    await expectClosedFailure(loadEmergencyInspectionSafety(admin, userId, [secondMemberId]));
+  });
+
+  it("PE2: fails closed when draft allergy rows cannot be read", async () => {
+    const { admin } = adminWithSnapshotAndDrafts({
+      draftMembers: [
+        {
+          id: draftChildId,
+          age_band: null,
+          required_safety_constraints: [],
+        },
+      ],
+      draftAllergiesError: { message: "draft allergies unavailable" },
+    });
+
+    await expectClosedFailure(loadEmergencyInspectionSafety(admin, userId, [secondMemberId]));
   });
 });

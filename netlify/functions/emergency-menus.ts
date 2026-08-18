@@ -23,7 +23,7 @@ import { buildIdeaPersonalSafetyContext } from "../../shared/emergency/idea-cont
 import { getJstDateKey } from "../../shared/time/jst.js";
 import { requireUser } from "./_shared/auth.js";
 import {
-  loadEmergencyCurrentSafety,
+  loadEmergencyInspectionSafety,
   type EmergencyCurrentSafety,
 } from "./_shared/current-safety.js";
 import {
@@ -438,7 +438,7 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
       const salt = requestId;
 
       if (resolved.targetMode === "idea") {
-        // loadEmergencyCurrentSafety / loadContext 禁止（家族 current safety を読まない）
+        // loadEmergencyInspectionSafety / loadContext 禁止（家族 current safety を読まない）
         const idea = buildIdeaPersonalSafetyContext();
         const filtered = await resolveMultiSourceEmergencyMenus({
           mealType: resolved.meal,
@@ -514,8 +514,9 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
       }
 
       // household: 既存 loadContext 経路
-      // PE9: targetMemberIds 改ざん・順序不一致は loadEmergencyCurrentSafety/validateSnapshot が
+      // PE9: targetMemberIds 改ざん・順序不一致は loadEmergencyInspectionSafety/validateSnapshot が
       // safetyUnavailable で閉じ、候補を偽 valid にしない（防衛確認・挙動変更なし）。
+      // PE2: inspection は complete snapshot + draft 確認済み針。SQL は complete のまま。
       const loaded = await deps.loadContext(userId, resolved.targetMemberIds);
       const filtered = await resolveMultiSourceEmergencyMenus({
         mealType: resolved.meal,
@@ -625,7 +626,7 @@ export function pantryNamesFromSelectResult(
 
 const handler = createEmergencyMenusHandler({
   authenticate: requireUser,
-  loadContext: (userId, ids) => loadEmergencyCurrentSafety(getSupabaseAdmin(), userId, ids),
+  loadContext: (userId, ids) => loadEmergencyInspectionSafety(getSupabaseAdmin(), userId, ids),
   loadPantryNames: async (userId, ids) => {
     if (ids.length === 0) return [];
     const { data, error } = await getSupabaseAdmin()

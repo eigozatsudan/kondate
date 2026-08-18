@@ -21,8 +21,6 @@ import {
   ageBands,
   privacyNoticeVersion,
   requiredSafetyConstraints,
-  type AgeBand,
-  type RequiredSafetyConstraint,
 } from "../../../shared/contracts/domain.js";
 import { planQuota } from "../../../shared/contracts/plan-quota.js";
 import { foodTextContainsAlias, normalizeFoodText } from "../../../shared/safety/allergens.js";
@@ -36,7 +34,12 @@ import {
   productSurfacesOpen,
   type Entitlement,
 } from "./billing-entitlement.js";
-import { loadCurrentSafetyContext } from "./current-safety.js";
+import {
+  appendDraftMemberAllergiesForInspection,
+  loadCurrentSafetyContext,
+  type DraftInspectionAllergyRow,
+  type DraftInspectionMemberRow,
+} from "./current-safety.js";
 import { getServerEnv } from "./env.js";
 import { FlyerImageError, prepareFlyerImage } from "./flyer-image.js";
 import { HttpError } from "./http.js";
@@ -311,98 +314,10 @@ function inspectionSafetyUnavailable(): HttpError {
   return new HttpError(500, "safety_context_failed", "現在の安全条件を読み込めませんでした");
 }
 
-/** draft メンバーの member_allergies 行（検査用 union 入力）。 */
-export type FlyerDraftAllergyRow = {
-  member_id: string;
-  allergen_id: string | null;
-  custom_name: string | null;
-  custom_aliases: readonly string[] | null;
-  custom_confirmed: boolean;
-};
-
-/** draft メンバーの年齢帯・必須制約（検査用。部分 age は adult と推測しない）。 */
-export type FlyerDraftMemberRow = {
-  id: string;
-  age_band: AgeBand | null;
-  required_safety_constraints: readonly RequiredSafetyConstraint[];
-};
-
-/**
- * PE1: complete のみの safety に、draft（入力途中）メンバーの確認済みアレルギー針を検査集合へ union する。
- * get_current_safety_snapshot は status=complete のみのため draft は RPC に載せられない。
- * 表示ターゲットにはせず、banned / assert 用にだけ合成する。
- * PE5: 保存済み age_band / required_safety_constraints を使う。
- * PE2: 未保存の年齢は adult 既定にしない。検査に載せる draft は幼児ルール fail-closed。
- * PE-R1: 幼児帯だけだと senior 専用（硬い食材 / 根菜）が外れる。null 帯は幼児+シニア両方。
- */
-export function appendDraftMemberAllergiesForFlyerInspection(
-  safety: CurrentSafetyContext,
-  draftAllergyRows: readonly FlyerDraftAllergyRow[],
-  draftMembers: readonly FlyerDraftMemberRow[] = [],
-): CurrentSafetyContext {
-  if (draftAllergyRows.length === 0 && draftMembers.length === 0) return safety;
-
-  const byMember = new Map<
-    string,
-    { allergenIds: string[]; customAllergies: { name: string; aliases: string[] }[] }
-  >();
-  for (const row of draftAllergyRows) {
-    const bucket = byMember.get(row.member_id) ?? { allergenIds: [], customAllergies: [] };
-    if (row.allergen_id !== null && row.allergen_id.trim() !== "") {
-      if (!bucket.allergenIds.includes(row.allergen_id)) {
-        bucket.allergenIds.push(row.allergen_id);
-      }
-    } else if (row.custom_confirmed && row.custom_name !== null && row.custom_name.trim() !== "") {
-      // RPC と同型: custom_confirmed のみ検査針にする
-      bucket.customAllergies.push({
-        name: row.custom_name,
-        aliases: [...(row.custom_aliases ?? [])].filter((alias) => alias.trim() !== ""),
-      });
-    }
-    byMember.set(row.member_id, bucket);
-  }
-
-  const memberMeta = new Map(draftMembers.map((member) => [member.id, member]));
-  const memberIds = new Set([...byMember.keys(), ...memberMeta.keys()]);
-
-  // member_id 昇順で合成し、anonymousRef 採番を決定的にする
-  const extraMembers: CurrentSafetyContext["members"][number][] = [];
-  let refIndex = safety.members.length;
-  for (const memberId of [...memberIds].sort()) {
-    const bucket = byMember.get(memberId) ?? { allergenIds: [], customAllergies: [] };
-    const meta = memberMeta.get(memberId);
-    // PE2: null 帯を adult と推測すると離乳後〜5歳ルール（餅・硬い豆等）が外れる。
-    // PE-R1: 幼児だけだと senior 専用（硬い / 根菜）も外れる。検査に載せるときだけ両方当てる。
-    // 針も制約も無い draft は下の continue で載せない。アレルギー針は先頭メンバーだけで union。
-    const savedAgeBand = meta?.age_band ?? null;
-    const constraints = meta?.required_safety_constraints ?? [];
-    const hasAllergies = bucket.allergenIds.length > 0 || bucket.customAllergies.length > 0;
-    const hasAgeRules = savedAgeBand != null && savedAgeBand !== "adult";
-    if (!hasAllergies && !hasAgeRules && constraints.length === 0) continue;
-    const ageBandsForInspection: readonly AgeBand[] =
-      savedAgeBand == null ? ["post_weaning_to_2", "senior"] : [savedAgeBand];
-    for (const [bandIndex, ageBand] of ageBandsForInspection.entries()) {
-      refIndex += 1;
-      extraMembers.push({
-        householdMemberId: memberId,
-        anonymousRef: `member_${String(refIndex)}`,
-        ageBand,
-        allergyStatus: bandIndex === 0 && hasAllergies ? "registered" : "none",
-        allergenIds: bandIndex === 0 ? bucket.allergenIds : [],
-        hasUnmappedCustomAllergy: bandIndex === 0 && bucket.customAllergies.length > 0,
-        customAllergies: bandIndex === 0 ? bucket.customAllergies : [],
-        requiredSafetyConstraints: [...constraints],
-        unsupportedDietStatus: "none",
-        unsupportedDietKinds: [],
-      });
-    }
-  }
-  if (extraMembers.length === 0) return safety;
-  return {
-    ...safety,
-    members: [...safety.members, ...extraMembers],
-  };
-}
+/** flyer 既存 import 互換。本体は current-safety の検査 union。 */
+export type FlyerDraftAllergyRow = DraftInspectionAllergyRow;
+export type FlyerDraftMemberRow = DraftInspectionMemberRow;
+export const appendDraftMemberAllergiesForFlyerInspection = appendDraftMemberAllergiesForInspection;
 
 /**
  * PE2: complete + draft 検査用の現行 safety を組み立てる。

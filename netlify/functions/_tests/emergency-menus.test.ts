@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { shareQuota } from "../../../shared/contracts/share-quota.js";
 import type { EmergencyMenusData } from "../../../shared/emergency/contracts.js";
@@ -16,6 +17,7 @@ import {
   type ListActiveSharedEmergencyRecipesInput,
   type SharedEmergencyListRow,
 } from "../emergency-menus.js";
+import { appendDraftMemberAllergiesForInspection } from "../_shared/current-safety.js";
 import { HttpError } from "../_shared/http.js";
 import * as logger from "../_shared/logger.js";
 import type { SafeLogEvent } from "../_shared/logger.js";
@@ -1102,5 +1104,78 @@ describe("GET /api/emergency-menus", () => {
         }),
       );
     });
+  });
+});
+
+const breakfastSalmonMenuId = "82000000-0000-4000-8000-000000000002";
+const breakfastEggMenuId = "82000000-0000-4000-8000-000000000010";
+const draftChildId = "81000000-0000-4000-8000-000000000099";
+
+describe("PE2 household draft allergen inspection", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("PE2: production household loadContext uses inspection union, not snapshot-only", () => {
+    // snapshot SQL は complete のまま。draft 針は loadEmergencyInspectionSafety で union する。
+    const source = readFileSync("netlify/functions/emergency-menus.ts", "utf8");
+    expect(source).toMatch(/loadEmergencyInspectionSafety/);
+    expect(source).not.toMatch(
+      /loadContext:\s*\(userId,\s*ids\)\s*=>\s*loadEmergencyCurrentSafety/u,
+    );
+  });
+
+  it("PE2: complete-only context still returns breakfast egg fixture", async () => {
+    const handler = createEmergencyMenusHandler(householdDeps());
+    const response = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=breakfast&targetMode=household&targetMemberIds=${memberId}`,
+      ),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as SuccessEnvelope;
+    const ids = body.data.candidates.map((candidate) => candidate.menu.menuId);
+    expect(ids).toContain(breakfastEggMenuId);
+    expect(ids).toContain(breakfastSalmonMenuId);
+  });
+
+  it("PE2: household Stage S drops egg fixtures when draft child has confirmed egg needle", async () => {
+    const completeOnly = makeCurrentSafetyContext();
+    const inspection = appendDraftMemberAllergiesForInspection(completeOnly, [
+      {
+        member_id: draftChildId,
+        allergen_id: "egg",
+        custom_name: null,
+        custom_aliases: null,
+        custom_confirmed: false,
+      },
+    ]);
+    const handler = createEmergencyMenusHandler(
+      householdDeps({
+        loadContext: () =>
+          Promise.resolve({
+            context: inspection,
+            memberLabels: Object.freeze({
+              member_1: "家族1",
+              member_2: "家族2",
+              member_3: "家族3",
+            }),
+          }),
+      }),
+    );
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/emergency-menus?meal=breakfast&targetMode=household&targetMemberIds=${memberId}`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as SuccessEnvelope;
+    const ids = body.data.candidates.map((candidate) => candidate.menu.menuId);
+    expect(ids).not.toContain(breakfastEggMenuId);
+    expect(ids).toContain(breakfastSalmonMenuId);
+    expect(body.data.message).not.toContain("安全です");
+    expect(JSON.stringify(body)).not.toContain("安全です");
   });
 });
