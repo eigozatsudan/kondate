@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { mealTypes } from "../contracts/domain.js";
 import { labelSourceTypes, validatedMenuSchema } from "../contracts/generation.js";
 
 const memberRefSchema = z.string().regex(/^member_[1-9][0-9]*$/u);
@@ -17,6 +18,46 @@ export const emergencyMainIngredientsSchema = z
   .array(emergencyMainIngredientSchema)
   .max(8)
   .refine((values) => new Set(values).size === values.length, "メイン食材は重複なしにしてください");
+
+function uniqueUuidListSchema(maxItems: number) {
+  return z
+    .array(z.uuid())
+    .max(maxItems)
+    .refine((ids) => new Set(ids).size === ids.length);
+}
+
+/**
+ * 緊急候補の製品リクエスト契約。
+ * 自由文 mainIngredients は JSON body 専用。GET query に載せると
+ * 本番 Observability が URL ごと保持し、アレルギー含意が基盤ログに残る。
+ */
+export const emergencyMenusRequestSchema = z.discriminatedUnion("targetMode", [
+  z
+    .object({
+      mealType: z.enum(mealTypes),
+      mainIngredients: emergencyMainIngredientsSchema,
+      targetMode: z.literal("household"),
+      targetMemberIds: z
+        .array(z.uuid())
+        .min(1)
+        .max(20)
+        .refine((ids) => new Set(ids).size === ids.length),
+      pantryItemIds: uniqueUuidListSchema(50),
+    })
+    .strict(),
+  z
+    .object({
+      mealType: z.enum(mealTypes),
+      mainIngredients: emergencyMainIngredientsSchema,
+      targetMode: z.literal("idea"),
+      // 長さ 0 のみ。非空はクライアント schema で拒否し query に載せない
+      targetMemberIds: z.tuple([]),
+      pantryItemIds: uniqueUuidListSchema(50),
+    })
+    .strict(),
+]);
+
+export type EmergencyMenusRequest = z.infer<typeof emergencyMenusRequestSchema>;
 
 export const emergencyLabelWarningSchema = z
   .object({

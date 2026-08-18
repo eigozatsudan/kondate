@@ -37,6 +37,13 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
+function methodAllowed(configured, incoming) {
+  // Netlify Config.method は string | string[] | undefined。配列を厳密等価すると POST が 404 になる。
+  if (configured === undefined) return true;
+  if (Array.isArray(configured)) return configured.includes(incoming);
+  return configured === incoming;
+}
+
 function createMatcher(path) {
   const pattern = path
     .split("/")
@@ -90,7 +97,7 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
       // Plan 5 の一部 Function は method を宣言しないため、undefined を
       // 「メソッド制限なし」として扱わないと E2E だけ 404 になる。
       ({ method, matcher }) =>
-        (method === undefined || method === nodeRequest.method) && matcher.test(url.pathname),
+        methodAllowed(method, nodeRequest.method) && matcher.test(url.pathname),
     );
     if (route === undefined) {
       nodeResponse.statusCode = 404;

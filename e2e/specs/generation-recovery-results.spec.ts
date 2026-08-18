@@ -895,7 +895,7 @@ test("offers only in-range servings so an out-of-range draft cannot be composed"
 // skippedかつ家族0人の利用者が/pantry, /history, /shopping, /settings,
 // /emergency-menusを直接開いた場合、onboarding redirectなし・page errorなし・
 // 理解可能なempty state・禁止 side-effect が0件であることを固定する。
-// idea 下書き時の GET /api/emergency-menus?targetMode=idea は許可する。
+// idea 下書き時の POST /api/emergency-menus（body.targetMode=idea）は許可する。
 
 test.describe("5-route smoke matrix for a skipped user with zero household members", () => {
   test("visits pantry, history, shopping, settings, and emergency-menus without onboarding redirect or family-safety activity", async ({
@@ -930,14 +930,30 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
       const url = new URL(request.url());
       const path = url.pathname;
 
-      // 許可: GET /api/emergency-menus?targetMode=idea
+      // 許可: POST /api/emergency-menus（body.targetMode=idea）。query に自由文は載せない。
       // 禁止（idea 訪問中 activeRoute==="emergency-menus" でも 0 件）:
       //   - household emergency API（targetMode≠idea）
       //   - shopping / generation / revalidate
       //   - get_current_safety_snapshot RPC
       //   - PostgREST household_members / member_allergies（settings 以外）
       const isEmergencyMenus = path === "/api/emergency-menus";
-      const isIdeaEmergency = isEmergencyMenus && url.searchParams.get("targetMode") === "idea";
+      let isIdeaEmergency = false;
+      if (isEmergencyMenus) {
+        if (url.searchParams.get("targetMode") === "idea") {
+          isIdeaEmergency = true;
+        } else if (request.method() === "POST") {
+          try {
+            const body: unknown = request.postDataJSON();
+            isIdeaEmergency =
+              typeof body === "object" &&
+              body !== null &&
+              "targetMode" in body &&
+              body.targetMode === "idea";
+          } catch {
+            isIdeaEmergency = false;
+          }
+        }
+      }
 
       const isSafetyRpc =
         path.endsWith("/rest/v1/rpc/get_current_safety_snapshot") ||
@@ -1018,13 +1034,23 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     );
     await page.getByRole("button", { name: "2人" }).click();
     expect((await servingsSaveResponse).ok()).toBe(true);
-    // idea 経路の emergency API を明示捕捉（targetMode=idea 固定）
-    const ideaEmergencyUrls: string[] = [];
+    // idea 経路の emergency API を明示捕捉（POST body.targetMode=idea）
+    const ideaEmergencyPosts: { method: string; targetMode: unknown }[] = [];
     page.on("request", (request) => {
       const url = new URL(request.url());
-      if (url.pathname === "/api/emergency-menus") {
-        ideaEmergencyUrls.push(request.url());
+      if (url.pathname !== "/api/emergency-menus") return;
+      let targetMode: unknown = url.searchParams.get("targetMode");
+      if (request.method() === "POST") {
+        try {
+          const body: unknown = request.postDataJSON();
+          if (typeof body === "object" && body !== null && "targetMode" in body) {
+            targetMode = body.targetMode;
+          }
+        } catch {
+          targetMode = null;
+        }
       }
+      ideaEmergencyPosts.push({ method: request.method(), targetMode });
     });
     activeRoute = "emergency-menus";
     await page.goto("/emergency-menus");
@@ -1044,13 +1070,13 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     ).toBeVisible();
     // 豆腐 main で idea 夕食 fixture が載る設計 coverage。候補 chrome も非空であること。
     await expect(page.getByText("候補 1", { exact: true })).toBeVisible();
-    await expect.poll(() => ideaEmergencyUrls.length).toBeGreaterThan(0);
-    const firstIdeaEmergency = ideaEmergencyUrls.at(0);
+    await expect.poll(() => ideaEmergencyPosts.length).toBeGreaterThan(0);
+    const firstIdeaEmergency = ideaEmergencyPosts.at(0);
     if (firstIdeaEmergency === undefined) {
       throw new Error("idea emergency request was not captured");
     }
-    const ideaRequestUrl = new URL(firstIdeaEmergency);
-    expect(ideaRequestUrl.searchParams.get("targetMode")).toBe("idea");
+    expect(firstIdeaEmergency.method).toBe("POST");
+    expect(firstIdeaEmergency.targetMode).toBe("idea");
     // 豆腐 main が Stage M に乗れば banner なし。miss 時のみ idea safety_only exact。
     // いずれにせよ household の家族条件バナーは idea 表示中に出さない。
     await expect(

@@ -1,7 +1,7 @@
-import { mealTypes, type MealType } from "@shared/contracts/domain";
+import type { MealType } from "@shared/contracts/domain";
 import {
-  emergencyMainIngredientsSchema,
   emergencyMenusDataSchema,
+  emergencyMenusRequestSchema,
   type EmergencyMenusData,
 } from "@shared/emergency/contracts";
 import { z } from "zod";
@@ -20,39 +20,6 @@ const emergencyResponseSchema = z.discriminatedUnion("ok", [
           details: z.record(z.string(), z.unknown()).optional(),
         })
         .strict(),
-    })
-    .strict(),
-]);
-
-// household / idea を targetMode で判別。idea は targetMemberIds を空 tuple のみ許可。
-const emergencyMenuRequestSchema = z.discriminatedUnion("targetMode", [
-  z
-    .object({
-      mealType: z.enum(mealTypes),
-      mainIngredients: emergencyMainIngredientsSchema,
-      targetMode: z.literal("household"),
-      targetMemberIds: z
-        .array(z.uuid())
-        .min(1)
-        .max(20)
-        .refine((ids) => new Set(ids).size === ids.length),
-      pantryItemIds: z
-        .array(z.uuid())
-        .max(50)
-        .refine((ids) => new Set(ids).size === ids.length),
-    })
-    .strict(),
-  z
-    .object({
-      mealType: z.enum(mealTypes),
-      mainIngredients: emergencyMainIngredientsSchema,
-      targetMode: z.literal("idea"),
-      // 長さ 0 のみ。非空はクライアント schema で拒否し query に載せない
-      targetMemberIds: z.tuple([]),
-      pantryItemIds: z
-        .array(z.uuid())
-        .max(50)
-        .refine((ids) => new Set(ids).size === ids.length),
     })
     .strict(),
 ]);
@@ -100,25 +67,17 @@ export async function getEmergencyMenus(input: {
   targetMemberIds: readonly string[];
   pantryItemIds: readonly string[];
 }): Promise<EmergencyMenusData> {
-  const validatedInput = emergencyMenuRequestSchema.parse(input);
+  const validatedInput = emergencyMenusRequestSchema.parse(input);
   const token = await requireAccessToken(getBrowserSupabaseClient());
-  // targetMode は household / idea とも常に明示送信（サーバ optional でも省略しない）
-  const query = new URLSearchParams({
-    meal: validatedInput.mealType,
-    targetMode: validatedInput.targetMode,
-  });
-  // idea では targetMemberIds キー自体を省略（サーバ: キー未送出のみ許可）
-  if (validatedInput.targetMode === "household") {
-    query.set("targetMemberIds", validatedInput.targetMemberIds.join(","));
-  }
-  for (const mainIngredient of validatedInput.mainIngredients) {
-    query.append("mainIngredients", mainIngredient);
-  }
-  if (validatedInput.pantryItemIds.length > 0) {
-    query.set("pantryItemIds", validatedInput.pantryItemIds.join(","));
-  }
-  const response = await fetch(`/api/emergency-menus?${query.toString()}`, {
-    headers: { authorization: `Bearer ${token}` },
+  // 自由文 mainIngredients を query に載せない。Observability は URL を保持する。
+  const response = await fetch("/api/emergency-menus", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(validatedInput),
+    cache: "no-store",
   });
   const body: unknown = await response.json();
   // path 相関は parse 側に寄せる（household chrome の誤表示を防ぐ防御）。

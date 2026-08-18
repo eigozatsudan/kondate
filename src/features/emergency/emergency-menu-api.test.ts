@@ -24,6 +24,29 @@ function emptyHouseholdData(message = "条件に合う緊急献立がありま�
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function postedEmergencyRequest(call: readonly unknown[] | undefined): {
+  url: string;
+  method: unknown;
+  headers: unknown;
+  body: unknown;
+} {
+  const url = call?.[0];
+  const init = call?.[1];
+  if (typeof url !== "string" || !isRecord(init) || typeof init.body !== "string") {
+    throw new Error("緊急献立の POST を確認できませんでした");
+  }
+  return {
+    url,
+    method: init.method,
+    headers: init.headers,
+    body: JSON.parse(init.body) as unknown,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   requireAccessTokenMock.mockResolvedValue("token");
@@ -125,13 +148,14 @@ it("冷蔵庫食材が空なら空のクエリ値を送らずサーバーの省�
     pantryItemIds: [],
   });
 
-  const requestedUrl = vi.mocked(fetch).mock.calls[0]?.[0];
-  if (typeof requestedUrl !== "string")
-    throw new Error("緊急献立のリクエストURLを確認できませんでした");
-  expect(new URL(requestedUrl, "http://localhost").searchParams.has("pantryItemIds")).toBe(false);
+  const posted = postedEmergencyRequest(vi.mocked(fetch).mock.calls[0]);
+  expect(new URL(posted.url, "http://localhost").searchParams.has("pantryItemIds")).toBe(false);
+  expect(posted.body).toEqual(
+    expect.objectContaining({ pantryItemIds: [], targetMode: "household" }),
+  );
 });
 
-it("always sends targetMode=household on the query string", async () => {
+it("always sends targetMode=household in the POST body", async () => {
   vi.mocked(fetch).mockResolvedValue(
     new Response(
       JSON.stringify({
@@ -150,11 +174,10 @@ it("always sends targetMode=household on the query string", async () => {
     pantryItemIds: [],
   });
 
-  const requestedUrl = vi.mocked(fetch).mock.calls[0]?.[0];
-  if (typeof requestedUrl !== "string")
-    throw new Error("緊急献立のリクエストURLを確認できませんでした");
-  expect(new URL(requestedUrl, "http://localhost").searchParams.get("targetMode")).toBe(
-    "household",
+  const posted = postedEmergencyRequest(vi.mocked(fetch).mock.calls[0]);
+  expect(new URL(posted.url, "http://localhost").search).toBe("");
+  expect(posted.body).toEqual(
+    expect.objectContaining({ targetMode: "household", mealType: "dinner" }),
   );
 });
 
@@ -171,7 +194,7 @@ function emptyIdeaData(message = "条件に合う緊急献立がありません"
   };
 }
 
-it("sends targetMode=idea and omits targetMemberIds on the query string", async () => {
+it("sends targetMode=idea and empty targetMemberIds in the POST body", async () => {
   vi.mocked(fetch).mockResolvedValue(
     new Response(
       JSON.stringify({
@@ -190,13 +213,17 @@ it("sends targetMode=idea and omits targetMemberIds on the query string", async 
     pantryItemIds: [],
   });
 
-  const requestedUrl = vi.mocked(fetch).mock.calls[0]?.[0];
-  if (typeof requestedUrl !== "string")
-    throw new Error("緊急献立のリクエストURLを確認できませんでした");
-  const params = new URL(requestedUrl, "http://localhost").searchParams;
-  expect(params.get("targetMode")).toBe("idea");
-  // idea では targetMemberIds キー自体を載せない（サーバ: キー未送出のみ許可）
+  const posted = postedEmergencyRequest(vi.mocked(fetch).mock.calls[0]);
+  const params = new URL(posted.url, "http://localhost").searchParams;
+  expect(params.has("targetMode")).toBe(false);
   expect(params.has("targetMemberIds")).toBe(false);
+  expect(posted.body).toEqual({
+    mealType: "dinner",
+    mainIngredients: [],
+    targetMode: "idea",
+    targetMemberIds: [],
+    pantryItemIds: [],
+  });
 });
 
 it("rejects when response path does not match request targetMode", async () => {
@@ -260,7 +287,9 @@ it("keys candidates by every ordered request dimension and the household safety 
   ]);
 });
 
-it("main ingredients are normalized, sent as repeated query values, and included in the cache key", async () => {
+it("PE4: posts normalized mainIngredients in JSON body and never puts them on the request URL", async () => {
+  // 本番 Observability は request URL（query 含む）を保持する。
+  // アレルギー含意の自由文を query に載せると基盤ログに残るため、製品経路は POST body。
   vi.mocked(fetch).mockResolvedValue(
     new Response(
       JSON.stringify({
@@ -279,13 +308,25 @@ it("main ingredients are normalized, sent as repeated query values, and included
     pantryItemIds: [],
   });
 
-  const requestedUrl = vi.mocked(fetch).mock.calls[0]?.[0];
-  if (typeof requestedUrl !== "string")
-    throw new Error("緊急献立のリクエストURLを確認できませんでした");
-  expect(new URL(requestedUrl, "http://localhost").searchParams.getAll("mainIngredients")).toEqual([
-    "鶏肉",
-    "キャベツ",
-  ]);
+  const posted = postedEmergencyRequest(vi.mocked(fetch).mock.calls[0]);
+  const url = new URL(posted.url, "http://localhost");
+  expect(url.pathname).toBe("/api/emergency-menus");
+  expect(url.search).toBe("");
+  expect(url.searchParams.has("mainIngredients")).toBe(false);
+  expect(posted.method).toBe("POST");
+  expect(posted.headers).toEqual(
+    expect.objectContaining({
+      authorization: "Bearer token",
+      "content-type": "application/json",
+    }),
+  );
+  expect(posted.body).toEqual({
+    mealType: "dinner",
+    mainIngredients: ["鶏肉", "キャベツ"],
+    targetMode: "household",
+    targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+    pantryItemIds: [],
+  });
 });
 
 it.each([

@@ -11,8 +11,33 @@ function renderWithRouter(ui: React.ReactNode) {
   return render(<MemoryRouter>{ui}</MemoryRouter>);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function postedEmergencyRequest(call: readonly unknown[] | undefined): {
+  url: string;
+  method: unknown;
+  body: unknown;
+} {
+  const url = call?.[0];
+  const init = call?.[1];
+  if (typeof url !== "string" || !isRecord(init) || typeof init.body !== "string") {
+    throw new Error("緊急献立の POST を確認できませんでした");
+  }
+  return {
+    url,
+    method: init.method,
+    body: JSON.parse(init.body) as unknown,
+  };
+}
+
 const useQueryMock = vi.hoisted(() => vi.fn());
 const getEmergencyMenusMock = vi.hoisted(() => vi.fn());
+const requireAccessTokenMock = vi.hoisted(() => vi.fn());
+const originalGetEmergencyMenus = vi.hoisted(() => ({
+  current: undefined as undefined | typeof import("./emergency-menu-api").getEmergencyMenus,
+}));
 const channelMock = vi.hoisted(() => vi.fn());
 const listPantryItemsMock = vi.hoisted(() => vi.fn());
 const subscribeCallbacks = vi.hoisted(() => [] as ((status: string) => void)[]);
@@ -71,6 +96,7 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: "72000000-0000-4000-8000-000000000001" } } }),
 }));
+vi.mock("@/features/auth/session", () => ({ requireAccessToken: requireAccessTokenMock }));
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => {
     const channel = {
@@ -95,6 +121,7 @@ vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
 });
 vi.mock("./emergency-menu-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("./emergency-menu-api")>();
+  originalGetEmergencyMenus.current = original.getEmergencyMenus;
   return { ...original, getEmergencyMenus: getEmergencyMenusMock };
 });
 
@@ -102,6 +129,9 @@ import { EmergencyMenuContent, EmergencyMenuPage } from "./emergency-menu-page";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  getEmergencyMenusMock.mockReset();
+  requireAccessTokenMock.mockReset();
   sessionStorage.clear();
   subscribeCallbacks.length = 0;
   listPantryItemsMock.mockReset();
@@ -229,6 +259,99 @@ it("enables idea candidate query without household members", async () => {
   // 旧 idea ブロック文言は出さない
   expect(screen.queryByText(/アイデアモードでは緊急献立を表示できません/u)).not.toBeInTheDocument();
   expect(screen.queryByText(/家族が登録されていない/u)).not.toBeInTheDocument();
+});
+
+it("PE4: queryFn posts allergy-implying mains in JSON body, not on the request URL", async () => {
+  // page は getEmergencyMenus 経由。製品クライアントが GET query に自由文を載せないことを固定する。
+  const original = originalGetEmergencyMenus.current;
+  if (original === undefined) {
+    throw new Error("getEmergencyMenus の実装を testdouble から復元できませんでした");
+  }
+  getEmergencyMenusMock.mockImplementation((input: Parameters<typeof original>[0]) =>
+    original(input),
+  );
+  requireAccessTokenMock.mockResolvedValue("token");
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        ok: true,
+        data: {
+          fixtureVersion: "2026-07-28.v1",
+          candidates: [],
+          message: "条件に合う緊急献立がありません",
+          consumesAiQuota: false,
+          path: "idea",
+          matchMode: null,
+          emptyReason: "no_matching_fixture",
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        id: "draft-pe4",
+        userId: "72000000-0000-4000-8000-000000000001",
+        mealType: "dinner",
+        mainIngredients: ["卵アレルギー疑い"],
+        cuisineGenre: null,
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 3,
+        timeLimitMinutes: null,
+        budgetPreference: null,
+        ingredientPreference: null,
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+        revision: 1,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        updatedAt: "2026-07-11T00:00:00.000Z",
+      },
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+  const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
+    enabled: boolean;
+    queryFn: () => Promise<unknown>;
+  };
+  expect(candidateQuery.enabled).toBe(true);
+  await candidateQuery.queryFn();
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const posted = postedEmergencyRequest(fetchMock.mock.calls[0]);
+  const url = new URL(posted.url, "http://localhost");
+  expect(url.pathname).toBe("/api/emergency-menus");
+  expect(url.searchParams.has("mainIngredients")).toBe(false);
+  expect(url.search).toBe("");
+  expect(posted.method).toBe("POST");
+  expect(posted.body).toEqual(
+    expect.objectContaining({
+      mealType: "dinner",
+      mainIngredients: ["卵アレルギー疑い"],
+      targetMode: "idea",
+      targetMemberIds: [],
+    }),
+  );
+  expect(screen.queryByText("安全です")).not.toBeInTheDocument();
 });
 
 it("does not request idea path when draft is household", async () => {

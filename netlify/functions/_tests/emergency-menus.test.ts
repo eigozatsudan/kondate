@@ -73,9 +73,78 @@ function householdDeps(overrides: Partial<EmergencyHandlerDeps> = {}): Emergency
   };
 }
 
+function postEmergencyMenus(body: Record<string, unknown>): Request {
+  return new Request("http://localhost/api/emergency-menus", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("GET /api/emergency-menus", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("PE4: GET query mainIngredients is rejected before authentication", async () => {
+    // Observability が URL を保持しても、製品契約は query 自由文を受理しない。
+    const authenticate = vi.fn();
+    const loadContext = vi.fn();
+    const handler = createEmergencyMenusHandler({
+      authenticate,
+      loadContext,
+      loadPantryNames: vi.fn(),
+    });
+    const query = new URLSearchParams({
+      meal: "dinner",
+      targetMemberIds: memberId,
+      mainIngredients: "卵アレルギー疑い",
+    });
+
+    const response = await handler(
+      new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
+    );
+
+    expect(response.status).toBe(400);
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(loadContext).not.toHaveBeenCalled();
+    const body = (await response.json()) as {
+      ok: false;
+      error: { code: string; details?: { fields?: Record<string, string[]> } };
+    };
+    expect(body).toMatchObject({
+      ok: false,
+      error: { code: "invalid_request" },
+    });
+    expect(body.error.details?.fields?.mainIngredients?.length).toBeGreaterThan(0);
+    expect(JSON.stringify(body)).not.toContain("卵");
+    expect(JSON.stringify(body)).not.toContain("アレルギー");
+  });
+
+  it("PE4: POST body mains are used and safeLog keeps count only", async () => {
+    const logSpy = vi.spyOn(logger, "safeLog");
+    const handler = createEmergencyMenusHandler(householdDeps());
+    const response = await handler(
+      postEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients: ["卵アレルギー疑い"],
+        targetMode: "household",
+        targetMemberIds: [memberId],
+        pantryItemIds: [],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as SuccessEnvelope;
+    expect(body.ok).toBe(true);
+    expect(body.data.path).toBe("household");
+    const emergencyLog: SafeLogEvent | undefined = logSpy.mock.calls
+      .map((call) => call[0])
+      .find((event) => event.code === "emergency_menus");
+    expect(emergencyLog?.mainIngredientCount).toBe(1);
+    expect(JSON.stringify(emergencyLog)).not.toContain("卵");
+    expect(JSON.stringify(emergencyLog)).not.toContain("アレルギー");
+    expect(JSON.stringify(emergencyLog)).not.toContain("卵アレルギー疑い");
   });
 
   it("returns an authenticated explicit no-candidate response without quota use", async () => {
@@ -166,14 +235,14 @@ describe("GET /api/emergency-menus", () => {
           }),
         loadPantryNames: () => Promise.resolve([]),
       });
-      const query = new URLSearchParams({
-        meal: "dinner",
-        targetMemberIds: memberId,
-        mainIngredients: "鶏肉",
-      });
-
       const response = await handler(
-        new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
+        postEmergencyMenus({
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          targetMode: "household",
+          targetMemberIds: [memberId],
+          pantryItemIds: [],
+        }),
       );
 
       // PE6: 早期 safety 除外は current_safety_unavailable → 専用空メッセージ
@@ -256,9 +325,13 @@ describe("GET /api/emergency-menus", () => {
     });
 
     const response = await handler(
-      new Request(
-        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&mainIngredients=%E3%80%80%E9%B6%8F%E8%82%89%E3%80%80&mainIngredients=%EF%BD%B7%EF%BD%AC%EF%BE%8D%EF%BE%9E%EF%BE%82`,
-      ),
+      postEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients: ["　鶏肉　", "ｷｬﾍﾞﾂ"],
+        targetMode: "household",
+        targetMemberIds: [memberId],
+        pantryItemIds: [],
+      }),
     );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -275,9 +348,13 @@ describe("GET /api/emergency-menus", () => {
 
     // 豚肉は Stage M 不一致 → safety_only で非空候補 + サーバ用 safety_only 文言
     const unrelated = await handler(
-      new Request(
-        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&mainIngredients=%E8%B1%9A%E8%82%89`,
-      ),
+      postEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients: ["豚肉"],
+        targetMode: "household",
+        targetMemberIds: [memberId],
+        pantryItemIds: [],
+      }),
     );
     expect(unrelated.status).toBe(200);
     const unrelatedBody = (await unrelated.json()) as SuccessEnvelope;
@@ -307,9 +384,13 @@ describe("GET /api/emergency-menus", () => {
     });
 
     const response = await handler(
-      new Request(
-        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&mainIngredients=%E9%B6%8F%E8%82%89&mainIngredients=%E3%80%80%E9%B6%8F%E8%82%89%E3%80%80`,
-      ),
+      postEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients: ["鶏肉", "　鶏肉　"],
+        targetMode: "household",
+        targetMemberIds: [memberId],
+        pantryItemIds: [],
+      }),
     );
 
     expect(response.status).toBe(400);
@@ -329,14 +410,14 @@ describe("GET /api/emergency-menus", () => {
           }),
         loadPantryNames: () => Promise.resolve([]),
       });
-      const query = new URLSearchParams({
-        meal: "dinner",
-        targetMemberIds: memberId,
-        mainIngredients: mainIngredient,
-      });
-
       const response = await handler(
-        new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
+        postEmergencyMenus({
+          mealType: "dinner",
+          mainIngredients: [mainIngredient],
+          targetMode: "household",
+          targetMemberIds: [memberId],
+          pantryItemIds: [],
+        }),
       );
 
       // forward 一致しない敵対的トークン → safety_only フォールバック（空にしない）
@@ -379,9 +460,13 @@ describe("GET /api/emergency-menus", () => {
     });
 
     const response = await handler(
-      new Request(
-        `http://localhost/api/emergency-menus?meal=dinner&targetMemberIds=${memberId}&mainIngredients=%E9%B6%8F%E8%82%89`,
-      ),
+      postEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients: ["鶏肉"],
+        targetMode: "household",
+        targetMemberIds: [memberId],
+        pantryItemIds: [],
+      }),
     );
 
     expect(response.status).toBe(200);
@@ -407,13 +492,14 @@ describe("GET /api/emergency-menus", () => {
         }),
       loadPantryNames: () => Promise.resolve([]),
     });
-    const query = new URLSearchParams({
-      meal: "dinner",
-      targetMemberIds: memberId,
-      mainIngredients: "存在しないメイン食材XYZ",
-    });
     const res = await handler(
-      new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
+      postEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients: ["存在しないメイン食材XYZ"],
+        targetMode: "household",
+        targetMemberIds: [memberId],
+        pantryItemIds: [],
+      }),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as SuccessEnvelope;
@@ -583,13 +669,14 @@ describe("GET /api/emergency-menus", () => {
       loadContext,
       loadPantryNames: () => Promise.resolve([]),
     });
-    const query = new URLSearchParams({
-      meal: "dinner",
-      targetMode: "idea",
-      mainIngredients: "存在しないメイン食材XYZ",
-    });
     const res = await handler(
-      new Request(`http://localhost/api/emergency-menus?${query.toString()}`),
+      postEmergencyMenus({
+        mealType: "dinner",
+        mainIngredients: ["存在しないメイン食材XYZ"],
+        targetMode: "idea",
+        targetMemberIds: [],
+        pantryItemIds: [],
+      }),
     );
     expect(res.status).toBe(200);
     expect(loadContext).not.toHaveBeenCalled();

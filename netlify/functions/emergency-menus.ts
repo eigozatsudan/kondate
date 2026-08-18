@@ -4,8 +4,9 @@ import { ageBands, mealTypes } from "../../shared/contracts/domain.js";
 import { issueMessages, validatedMenuSchema } from "../../shared/contracts/generation.js";
 import { shareQuota } from "../../shared/contracts/share-quota.js";
 import {
-  emergencyMainIngredientsSchema,
+  emergencyMenusRequestSchema,
   type EmergencyMenusData,
+  type EmergencyMenusRequest,
 } from "../../shared/emergency/contracts.js";
 import {
   emergencyFixtureMetadataV1,
@@ -31,6 +32,7 @@ import {
   HttpError,
   json,
   methodNotAllowed,
+  parseJson,
 } from "./_shared/http.js";
 import { safeLog } from "./_shared/logger.js";
 import { getSupabaseAdmin } from "./_shared/supabase-admin.js";
@@ -60,10 +62,10 @@ function uuidListSchema(maxItems: number) {
 const mealSchema = z.enum(mealTypes);
 const targetModeSchema = z.enum(["household", "idea"]);
 
+// GET は ID / 列挙のみ。自由文 mainIngredients は query に載せない（Observability が URL を保持する）。
 // 未知キーは拒否しない（.strict() にしない）
 const rawQuerySchema = z.object({
   meal: mealSchema,
-  mainIngredients: emergencyMainIngredientsSchema,
   targetMode: targetModeSchema.optional(),
   targetMemberIds: z.string().optional(),
   pantryItemIds: z.string().optional(),
@@ -140,7 +142,7 @@ function resolveEmergencyQuery(
       ok: true,
       value: {
         meal: raw.meal,
-        mainIngredients: raw.mainIngredients,
+        mainIngredients: [],
         targetMode: "household",
         targetMemberIds: membersParsed.data,
         pantryItemIds,
@@ -162,7 +164,7 @@ function resolveEmergencyQuery(
       ok: true,
       value: {
         meal: raw.meal,
-        mainIngredients: raw.mainIngredients,
+        mainIngredients: [],
         targetMode: "idea",
         pantryItemIds,
       },
@@ -191,11 +193,29 @@ function resolveEmergencyQuery(
     ok: true,
     value: {
       meal: raw.meal,
-      mainIngredients: raw.mainIngredients,
+      mainIngredients: [],
       targetMode: "household",
       targetMemberIds: membersParsed.data,
       pantryItemIds,
     },
+  };
+}
+
+function resolvedFromPostBody(body: EmergencyMenusRequest): ResolvedEmergencyQuery {
+  if (body.targetMode === "idea") {
+    return {
+      meal: body.mealType,
+      mainIngredients: body.mainIngredients,
+      targetMode: "idea",
+      pantryItemIds: [...body.pantryItemIds],
+    };
+  }
+  return {
+    meal: body.mealType,
+    mainIngredients: body.mainIngredients,
+    targetMode: "household",
+    targetMemberIds: [...body.targetMemberIds],
+    pantryItemIds: [...body.pantryItemIds],
   };
 }
 
@@ -364,39 +384,51 @@ export function createEmergencyMenusHandler(deps: EmergencyHandlerDeps) {
   };
 
   return async (request: Request): Promise<Response> => {
-    if (request.method !== "GET") return methodNotAllowed(["GET"]);
+    if (request.method !== "GET" && request.method !== "POST") {
+      return methodNotAllowed(["GET", "POST"]);
+    }
     const startedAt = Date.now();
     const requestId = crypto.randomUUID();
     try {
       const url = new URL(request.url);
-      // ★ critical: URLSearchParams.get は欠落時 null。Zod .optional() は undefined のみ受理。
-      // null を渡すと idea omit / targetMode omit が 400 になる。必ず ?? undefined する。
-      const rawParsed = rawQuerySchema.safeParse({
-        meal: url.searchParams.get("meal") ?? undefined,
-        mainIngredients: url.searchParams.getAll("mainIngredients"),
-        targetMode: url.searchParams.get("targetMode") ?? undefined,
-        // キー未送出 → null → undefined（omit）
-        // キーあり空文字 ?targetMemberIds= → ""（idea では 400。omit と混同しない）
-        targetMemberIds: url.searchParams.get("targetMemberIds") ?? undefined,
-        pantryItemIds: url.searchParams.get("pantryItemIds") ?? undefined,
-      });
-      if (!rawParsed.success) {
-        // S8: Zod 既定 message を wire に出さない（parseJson の closedFieldErrors と対称）
-        return json(400, {
-          ok: false,
-          error: {
-            code: "invalid_request",
-            message: "検索条件を確認してください",
-            details: {
-              fields: closedFieldErrors(z.flattenError(rawParsed.error).fieldErrors),
-            },
-          },
-        });
+      // 製品経路は POST body。query の自由文は受理せず、基盤ログ残留を契約から外す。
+      if (url.searchParams.has("mainIngredients")) {
+        return invalidRequestFields({ mainIngredients: ["invalid"] });
       }
 
-      const resolvedResult = resolveEmergencyQuery(rawParsed.data);
-      if (!resolvedResult.ok) return resolvedResult.response;
-      const resolved = resolvedResult.value;
+      let resolved: ResolvedEmergencyQuery;
+      if (request.method === "POST") {
+        const body = await parseJson(request, emergencyMenusRequestSchema);
+        resolved = resolvedFromPostBody(body);
+      } else {
+        // ★ critical: URLSearchParams.get は欠落時 null。Zod .optional() は undefined のみ受理。
+        // null を渡すと idea omit / targetMode omit が 400 になる。必ず ?? undefined する。
+        const rawParsed = rawQuerySchema.safeParse({
+          meal: url.searchParams.get("meal") ?? undefined,
+          targetMode: url.searchParams.get("targetMode") ?? undefined,
+          // キー未送出 → null → undefined（omit）
+          // キーあり空文字 ?targetMemberIds= → ""（idea では 400。omit と混同しない）
+          targetMemberIds: url.searchParams.get("targetMemberIds") ?? undefined,
+          pantryItemIds: url.searchParams.get("pantryItemIds") ?? undefined,
+        });
+        if (!rawParsed.success) {
+          // S8: Zod 既定 message を wire に出さない（parseJson の closedFieldErrors と対称）
+          return json(400, {
+            ok: false,
+            error: {
+              code: "invalid_request",
+              message: "検索条件を確認してください",
+              details: {
+                fields: closedFieldErrors(z.flattenError(rawParsed.error).fieldErrors),
+              },
+            },
+          });
+        }
+
+        const resolvedResult = resolveEmergencyQuery(rawParsed.data);
+        if (!resolvedResult.ok) return resolvedResult.response;
+        resolved = resolvedResult.value;
+      }
       const mainIngredientCount = resolved.mainIngredients.length;
 
       const { userId } = await deps.authenticate(request);
@@ -609,4 +641,4 @@ const handler = createEmergencyMenusHandler({
 
 export default handler;
 
-export const config: Config = { path: "/api/emergency-menus", method: "GET" };
+export const config: Config = { path: "/api/emergency-menus", method: ["GET", "POST"] };
