@@ -10,6 +10,7 @@ import {
 } from "@/features/household/household-onboarding-page";
 import {
   householdSafetyChangedEvent,
+  householdSafetyRevisionKey,
   householdSafetyRevisionStorageKey,
   invalidateHouseholdSafetyDependents,
 } from "@/features/household/household-queries";
@@ -738,4 +739,80 @@ it("既存revisionの更新に失敗しても同一家族の安全変更後に�
   } finally {
     setItem.mockRestore();
   }
+});
+
+it("PE1: remount after Realtime does not revive stored-key 30s candidate cache", async () => {
+  const userId = eligibleMember.user_id;
+  localStorage.setItem(householdSafetyRevisionKey(userId), "stored-before-allergy");
+  listHouseholdMembersMock.mockReset();
+  listHouseholdMembersMock.mockResolvedValue([eligibleMember]);
+  listMemberAllergiesMock.mockResolvedValue([]);
+  getEmergencyMenusMock.mockReset();
+  getEmergencyMenusMock
+    .mockResolvedValueOnce(emergencyResponse("卵あり旧候補"))
+    .mockResolvedValue(emergencyResponse("卵なし新候補"));
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { staleTime: 30_000, retry: false } },
+  });
+  const first = render(
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  expect(await screen.findByRole("heading", { name: "卵あり旧候補" })).toBeVisible();
+  await waitFor(() => {
+    expect(realtime.handlers.length).toBeGreaterThanOrEqual(2);
+  });
+
+  act(() => {
+    emitRealtime("member_allergies", userId);
+  });
+  expect(await screen.findByRole("heading", { name: "卵なし新候補" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "卵あり旧候補" })).not.toBeInTheDocument();
+  const callsAfterRealtime = getEmergencyMenusMock.mock.calls.length;
+  expect(localStorage.getItem(householdSafetyRevisionKey(userId))).not.toBe(
+    "stored-before-allergy",
+  );
+  first.unmount();
+
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  expect(screen.queryByRole("heading", { name: "卵あり旧候補" })).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(getEmergencyMenusMock.mock.calls.length).toBeGreaterThan(callsAfterRealtime);
+  });
+  expect(await screen.findByRole("heading", { name: "卵なし新候補" })).toBeVisible();
+  expect(
+    screen.getByText("現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます", {
+      exact: false,
+    }),
+  ).toBeVisible();
+});
+
+it("PE1: remount without stored revision change still refetches 30s candidate cache", async () => {
+  const { queryClient, view } = await renderVisibleEmergencyResponse();
+  const callsBeforeRemount = getEmergencyMenusMock.mock.calls.length;
+  expect(screen.getByRole("heading", { name: "旧候補" })).toBeVisible();
+  view.unmount();
+
+  getEmergencyMenusMock.mockResolvedValue(emergencyResponse("再入場後候補"));
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  expect(screen.queryByRole("heading", { name: "旧候補" })).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(getEmergencyMenusMock.mock.calls.length).toBeGreaterThan(callsBeforeRemount);
+  });
+  expect(await screen.findByRole("heading", { name: "再入場後候補" })).toBeVisible();
 });

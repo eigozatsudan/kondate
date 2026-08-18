@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
+import type { ValidatedMenu } from "@shared/contracts/generation";
 import type { EmergencyMenusData } from "@shared/emergency/contracts";
 import type { PantryItem } from "@shared/contracts/pantry";
 import { useAuth } from "@/features/auth/use-auth";
@@ -27,6 +28,7 @@ import {
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { emergencyMenuKeys, getEmergencyMenus } from "./emergency-menu-api";
+import { listEmergencyPantryScoreMatches } from "./emergency-pantry-score-display";
 
 const roleLabels = {
   main: "主菜",
@@ -57,6 +59,15 @@ const ideaSafetyOnlyBannerText =
 const expiredPantryConfirmButtonText = "実物を確認して進む";
 const expiredPantryConfirmUnlockNote =
   "確認は候補を見るための解錠です。期限切れの食材は候補に使いません。";
+
+/**
+ * PE4: fixture / share-canonical は pantryUsage が空。選んだ食材が順位に効いていても
+ * 「今回選んだ冷蔵庫食材はありません。」は不正確。空 usage のときだけ差し替える。
+ */
+const emergencyPantryUsageEmptyNoSelectionText = "今回選んだ冷蔵庫食材はありません。";
+const emergencyPantryUsageSelectedUnusedText = "選んだ冷蔵庫食材は、この候補では使っていません。";
+const emergencyPantryScoreMatchNote =
+  "献立の材料や手順に名前が出ています。分量は記録していません。";
 
 /**
  * PE4: draft で選んだが緊急適格外のメンバーを silent drop しないための開示。
@@ -91,6 +102,48 @@ function quantityText(value: number | null, unit: string | null, fallback: strin
   return value === null ? fallback : `${String(value)}${unit ?? ""}`;
 }
 
+/** U4-003: user-scoped を優先、レガシー固定キーは移行読取のみ。 */
+function readStoredHouseholdSafetyRevision(userId: string): string | null {
+  try {
+    return (
+      localStorage.getItem(householdSafetyRevisionKey(userId)) ??
+      localStorage.getItem(householdSafetyRevisionStorageKey)
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PE1: refreshRevision の :event:N を React state だけにすると unmount 再入場で stored に巻き戻る。
+ * 新規書込は user-scoped UUID（invalidateHouseholdSafetyDependents と同型）。レガシーキーは書かない。
+ */
+function persistHouseholdSafetyRevision(userId: string): void {
+  try {
+    localStorage.setItem(householdSafetyRevisionKey(userId), crypto.randomUUID());
+  } catch {
+    // storage 不可でも state の key 変更で当画面は fail-closed
+  }
+}
+
+/** PE4: スコア対象 ID の表示名。期限切れ除外後の pantryItemIds だけを見る。 */
+function selectedPantryNamesForDisplay(
+  pantryRows: readonly PantryItem[] | null,
+  pantryItemIds: readonly string[],
+): readonly string[] {
+  if (pantryRows === null || pantryItemIds.length === 0) return [];
+  const byId = new Map(pantryRows.map((row) => [row.id, row.name]));
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const id of pantryItemIds) {
+    const name = byId.get(id)?.trim() ?? "";
+    if (name.length === 0 || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
+}
+
 export function EmergencyMenuPage() {
   const userId = useAuth().session?.user.id;
   const draftQueryEnabled = userId !== undefined;
@@ -113,16 +166,10 @@ export function EmergencyMenuPage() {
   const [pantryRefreshTick, setPantryRefreshTick] = useState(0);
   const [householdSafetyRevision, setHouseholdSafetyRevision] = useState(() => {
     if (userId === undefined) return "initial";
-    try {
-      // U4-003: user-scoped を優先、レガシー固定キーは移行読取
-      return (
-        localStorage.getItem(householdSafetyRevisionKey(userId)) ??
-        localStorage.getItem(householdSafetyRevisionStorageKey) ??
-        "initial"
-      );
-    } catch {
-      return "initial";
-    }
+    const stored = readStoredHouseholdSafetyRevision(userId) ?? "initial";
+    // PE1: stored キーそのままだと QueryClient に残った 30s cache を再入場で出す。
+    // :event:reenter は当マウント専用。refreshRevision は user-scoped persist で次入場の基点を進める。
+    return `${stored}:event:reenter:${crypto.randomUUID()}`;
   });
 
   const queryClient = useQueryClient();
@@ -161,20 +208,15 @@ export function EmergencyMenuPage() {
   // PE6: CHANNEL_ERROR / TIMED_OUT も revision 更新（history / shopping 同型）。
   useEffect(() => {
     if (userId === undefined || !safetyRealtimeEnabled) return;
-    const revisionKey = householdSafetyRevisionKey(userId);
     const refreshRevision = () => {
       householdSafetyEventVersion.current += 1;
       setHouseholdSafetyRevision((current) => {
-        try {
-          // U4-003: user-scoped key を優先し、レガシー固定キーは移行読取のみ
-          const storedRevision =
-            localStorage.getItem(revisionKey) ??
-            localStorage.getItem(householdSafetyRevisionStorageKey);
-          return `${storedRevision ?? current}:event:${String(householdSafetyEventVersion.current)}`;
-        } catch {
-          return `${current}:event:${String(householdSafetyEventVersion.current)}`;
-        }
+        // U4-003: user-scoped key を優先し、レガシー固定キーは移行読取のみ
+        const storedRevision = readStoredHouseholdSafetyRevision(userId);
+        return `${storedRevision ?? current}:event:${String(householdSafetyEventVersion.current)}`;
       });
+      // PE1: :event:N を state だけに残すと unmount 再入場で stored に巻き戻る。
+      persistHouseholdSafetyRevision(userId);
       // PE9: 家族 Realtime だけでは draft ∩ eligible の draft 側が古いまま。下書きを取り直す。
       void queryClient.invalidateQueries({ queryKey: plannerKeys.draft(userId) });
     };
@@ -252,6 +294,8 @@ export function EmergencyMenuPage() {
     // 同画面・別画面の安全更新eventのどちらでもfresh cacheを再利用しない。
     queryKey: [...householdKeys.members(userId ?? "missing"), "emergency", householdSafetyRevision],
     enabled: householdQueryEnabled,
+    // PE1: 既定 30s stale だと unmount 再入場で stored key の旧名簿を再利用する。
+    staleTime: 0,
     queryFn: async (): Promise<EmergencyHouseholdMember[]> => {
       const client = getBrowserSupabaseClient();
       const uid = userId ?? "";
@@ -410,6 +454,7 @@ export function EmergencyMenuPage() {
       hasExpiredPantryConfirmation(null, userId, item.id, nowForExpiry)
     );
   });
+  const selectedPantryNames = selectedPantryNamesForDisplay(pantryRows, pantryItemIds);
   const unconfirmedExpiredItems: PantryItem[] =
     pantryLoadState === "ready" && pantryRows !== null
       ? draftPantryItemIds
@@ -478,6 +523,8 @@ export function EmergencyMenuPage() {
       householdSafetyRevision,
     }),
     enabled: candidateQueryEnabled,
+    // PE1: draft と同様。30s fresh の旧候補を世帯 intro のまま出さない。
+    staleTime: 0,
     queryFn: () => {
       if (request === null) {
         throw new Error("emergency request missing mealType");
@@ -689,7 +736,35 @@ export function EmergencyMenuPage() {
       expectedPath={expectedPath}
       response={loading || error !== null ? null : (query.data ?? null)}
       ineligibleSelectedNotice={ineligibleSelectedNotice}
+      selectedPantryNames={selectedPantryNames}
     />
+  );
+}
+
+/** PE4: 空 pantryUsage でも選んだ食材が順位に効いているときは「ありません」と出さない。 */
+function EmergencyEmptyPantryUsage({
+  menu,
+  selectedPantryNames,
+}: {
+  menu: ValidatedMenu;
+  selectedPantryNames: readonly string[];
+}) {
+  if (selectedPantryNames.length === 0) {
+    return <p>{emergencyPantryUsageEmptyNoSelectionText}</p>;
+  }
+  const matchedNames = listEmergencyPantryScoreMatches({ menu, selectedPantryNames });
+  if (matchedNames.length === 0) {
+    return <p>{emergencyPantryUsageSelectedUnusedText}</p>;
+  }
+  return (
+    <ul>
+      {matchedNames.map((name) => (
+        <li key={name}>
+          <strong>{name}</strong>
+          <p>{emergencyPantryScoreMatchNote}</p>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -717,6 +792,7 @@ export function EmergencyMenuContent({
   expectedPath,
   response,
   ineligibleSelectedNotice = null,
+  selectedPantryNames = [],
 }: {
   loading: boolean;
   error: string | null;
@@ -728,6 +804,10 @@ export function EmergencyMenuContent({
   response: EmergencyMenusData | null;
   /** PE4: 適格外メンバーを対象から外したときの開示。null なら出さない。 */
   ineligibleSelectedNotice?: string | null;
+  /**
+   * PE4: スコア対象の選んだ冷蔵庫食材名。fixture の空 pantryUsage を「選んでいない」と誤表示しない。
+   */
+  selectedPantryNames?: readonly string[];
 }) {
   // wire path と draft 推定が食い違うときは fail-closed（誤った家族絞り込み chrome を出さない）。
   const pathMismatch =
@@ -912,7 +992,10 @@ export function EmergencyMenuContent({
               <section aria-labelledby={`${candidateDomId}-pantry`}>
                 <h3 id={`${candidateDomId}-pantry`}>冷蔵庫食材の使い方</h3>
                 {menu.pantryUsage.length === 0 ? (
-                  <p>今回選んだ冷蔵庫食材はありません。</p>
+                  <EmergencyEmptyPantryUsage
+                    menu={menu}
+                    selectedPantryNames={selectedPantryNames}
+                  />
                 ) : (
                   <ul>
                     {menu.pantryUsage.map((usage) => (

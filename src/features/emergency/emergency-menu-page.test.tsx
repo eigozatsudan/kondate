@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router";
@@ -1406,6 +1406,80 @@ it("renders complete human-labelled cooking instructions without raw identifiers
   expect(container.textContent).not.toContain("member_1");
   expect(container.textContent).not.toContain("dishes.0.ingredients.0.name");
   expect(container.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27,}/u);
+});
+
+it("PE4: empty pantryUsage with matching selected pantry does not claim none were selected", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="household"
+      selectedPantryNames={["ごはん"]}
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: "none",
+        emptyReason: null,
+      }}
+    />,
+  );
+  expect(screen.queryByText("今回選んだ冷蔵庫食材はありません。")).not.toBeInTheDocument();
+  const pantrySection = screen
+    .getByRole("heading", { name: "冷蔵庫食材の使い方" })
+    .closest("section");
+  if (pantrySection === null) throw new Error("pantry section missing");
+  expect(within(pantrySection).getByText("ごはん")).toBeVisible();
+  expect(
+    within(pantrySection).getByText("献立の材料や手順に名前が出ています。分量は記録していません。"),
+  ).toBeVisible();
+});
+
+it("PE4: empty pantryUsage with unmatched selected pantry does not claim none were selected", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="household"
+      selectedPantryNames={["とうふ"]}
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: "none",
+        emptyReason: null,
+      }}
+    />,
+  );
+  expect(screen.queryByText("今回選んだ冷蔵庫食材はありません。")).not.toBeInTheDocument();
+  expect(screen.getByText("選んだ冷蔵庫食材は、この候補では使っていません。")).toBeVisible();
+});
+
+it("PE4: empty pantryUsage without selected pantry keeps the no-selection copy", () => {
+  const menu = makeValidatedMenu();
+  renderWithRouter(
+    <EmergencyMenuContent
+      loading={false}
+      error={null}
+      expectedPath="household"
+      response={{
+        fixtureVersion: "2026-07-28.v1",
+        candidates: [{ menu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+        message: "AIを使わない15分緊急献立です",
+        consumesAiQuota: false,
+        path: "household",
+        matchMode: "none",
+        emptyReason: null,
+      }}
+    />,
+  );
+  expect(screen.getByText("今回選んだ冷蔵庫食材はありません。")).toBeVisible();
 });
 
 it("PE8: pantry-selected draft does not start candidate query before pantry load", () => {
