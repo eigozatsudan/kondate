@@ -312,7 +312,7 @@ function isStripeResourceMissingError(error: unknown): boolean {
 }
 
 /**
- * deleted + retrieve 404 用。event.status は権威にしない（B10）。
+ * deleted / 終端 updated の retrieve 404 用。event.status は権威にしない（B10）。
  * price / period は process 行識別と SQL 残存判定だけに使い、status は不明の fail-closed。
  */
 function failClosedUnknownDeletedProjection(
@@ -759,24 +759,30 @@ async function handleSubscriptionEvent(
     : sub.id;
 
   let retrieved: SubscriptionProjection | null = null;
-  // deleted + retrieve 404 だけ event.status を捨てて不明降格する（B4）。他は 5xx。
-  let deletedRetrieveMissing = false;
+  // deleted / 終端 updated + retrieve 404 だけ event.status を捨てて不明降格する（B4）。
+  // 5xx / 429 と live updated の 404 は未 claim のまま再送（一時障害で降格しない）。
+  let unknownRetrieveMissing = false;
   try {
     const liveSub = await deps.stripe.subscriptions.retrieve(projectSubscriptionId);
     // B4: allowlist item 優先で投影
     retrieved = projectionFromSubscription(liveSub, prices);
   } catch (error) {
-    const deletedOwnSubMissing =
-      event.type === "customer.subscription.deleted" &&
-      projectSubscriptionId === sub.id &&
-      isStripeResourceMissingError(error);
-    if (deletedOwnSubMissing) {
+    const ownSubResourceMissing =
+      projectSubscriptionId === sub.id && isStripeResourceMissingError(error);
+    // event.status はゲートだけ。canceled を権威投影しない（B10）。
+    const terminalUpdatedMissing =
+      event.type === "customer.subscription.updated" &&
+      (sub.status === "canceled" || sub.status === "incomplete_expired");
+    const failClosedOwnSubMissing =
+      ownSubResourceMissing &&
+      (event.type === "customer.subscription.deleted" || terminalUpdatedMissing);
+    if (failClosedOwnSubMissing) {
       const unknownProjection = failClosedUnknownDeletedProjection(sub, prices);
       if (unknownProjection !== null) {
         // B4: 永続 404 は再送しても戻らない。event.status は使わず incomplete_expired。
         // 行識別の price/period だけ event から取る。権威投影（B10）ではない。
         retrieved = unknownProjection;
-        deletedRetrieveMissing = true;
+        unknownRetrieveMissing = true;
         log({
           level: "warn",
           requestId,
@@ -831,7 +837,7 @@ async function handleSubscriptionEvent(
     status === "incomplete" || status === "incomplete_expired";
   const retrievedStatus = projection.status;
   // B4: 404 不明降格では event.status を past_due/支払証拠に使わない。
-  const eventFrozenStatus = deletedRetrieveMissing ? "incomplete_expired" : sub.status;
+  const eventFrozenStatus = unknownRetrieveMissing ? "incomplete_expired" : sub.status;
   const retrievedIncomplete = incompleteLike(retrievedStatus);
   const eventIncomplete = incompleteLike(eventFrozenStatus);
   const keepUnpaidIncomplete =

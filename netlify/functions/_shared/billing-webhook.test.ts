@@ -2163,17 +2163,98 @@ describe("handleBillingWebhook", () => {
     );
   });
 
-  it("does not project updated canceled when retrieve is 404 (B4/B10)", async () => {
-    // updated は終端確定ではない。404 でも event.status を投影せず 5xx 再送。
-    const sub = makeSubscription({ status: "canceled" });
-    constructEvent.mockReturnValue(
-      makeEvent("customer.subscription.updated", sub, { id: "evt_updated_canceled_404" }),
-    );
-    retrieve.mockRejectedValue(stripeResourceMissingError());
-    const response = await handleBillingWebhook(signedRequest(), deps());
-    expect(response.status).toBe(500);
-    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
-  });
+  it.each(["canceled", "incomplete_expired"] as const)(
+    "fail-closes updated %s retrieve 404 without projecting event status (B4)",
+    async (eventStatus) => {
+      // updated 終端 + 永続 404 は sub 不在が確定。event.status を権威にすると
+      // canceled 残存の未来 period_end Plus が残る。deleted と同じ不明降格。
+      const eventObject = makeSubscription({
+        id: "sub_updated_404",
+        status: eventStatus,
+        metadata: { supabase_user_id: USER_ID },
+      });
+      constructEvent.mockReturnValue(
+        makeEvent("customer.subscription.updated", eventObject, {
+          id: `evt_updated_retrieve_404_${eventStatus}`,
+          created: 9_500,
+        }),
+      );
+      retrieve.mockRejectedValue(
+        stripeResourceMissingError("No such subscription: sub_updated_404"),
+      );
+
+      const response = await handleBillingWebhook(signedRequest(), deps());
+      expect(response.status).toBe(200);
+      const processCall = rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event");
+      expect(processCall).toBeDefined();
+      const processPayload = (
+        processCall![1] as {
+          p_payload: Record<string, unknown>;
+        }
+      ).p_payload;
+      expect(processPayload.status).toBe("incomplete_expired");
+      expect(processPayload.stripe_subscription_id).toBe("sub_updated_404");
+      expect(processPayload.clear_past_due_since).toBe(false);
+      expect(processPayload).not.toHaveProperty("kill_source_status");
+      expect(processPayload).not.toHaveProperty("past_due_since");
+    },
+  );
+
+  it.each(["active", "past_due", "unpaid"] as const)(
+    "still returns 500 when updated %s retrieve is 404 (B4/B10)",
+    async (eventStatus) => {
+      // live updated は終端確定ではない。永続 404 でも event.status を投影せず再送。
+      const sub = makeSubscription({ status: eventStatus });
+      constructEvent.mockReturnValue(
+        makeEvent("customer.subscription.updated", sub, {
+          id: `evt_updated_live_404_${eventStatus}`,
+        }),
+      );
+      retrieve.mockRejectedValue(stripeResourceMissingError());
+      const response = await handleBillingWebhook(signedRequest(), deps());
+      expect(response.status).toBe(500);
+      expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
+    },
+  );
+
+  it.each([
+    {
+      label: "5xx",
+      error: Object.assign(new Error("stripe 500"), {
+        type: "StripeAPIError",
+        statusCode: 500,
+      }),
+    },
+    {
+      label: "429",
+      error: Object.assign(new Error("stripe 429"), {
+        type: "StripeRateLimitError",
+        code: "rate_limit",
+        statusCode: 429,
+      }),
+    },
+  ])(
+    "still returns 500 when updated canceled retrieve is $label (B4)",
+    async ({ label, error }) => {
+      // 一時障害で不明降格して claim すると、再送が尽きる前に Plus を落とす。
+      const sub = makeSubscription({ status: "canceled" });
+      constructEvent.mockReturnValue(
+        makeEvent("customer.subscription.updated", sub, {
+          id: `evt_updated_canceled_${label}`,
+        }),
+      );
+      retrieve.mockRejectedValue(error);
+      const response = await handleBillingWebhook(signedRequest(), deps());
+      expect(response.status).toBe(500);
+      expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
+      expect(logSink).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "billing_subscription_retrieve_failed",
+          alertMetric: 1,
+        }),
+      );
+    },
+  );
 
   it("still returns 500 when deleted retrieve 404 lacks resource_missing (B4)", async () => {
     const sub = makeSubscription({ status: "canceled" });
