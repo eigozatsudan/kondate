@@ -8,6 +8,7 @@ import {
 } from "@/features/privacy/privacy-copy";
 import { LivePendingMain } from "@/shared/ui/feedback";
 import {
+  abortInFlightResumeFlows,
   clearLeftoverLoginSessionIfNoSiblingCompletion,
   createAuthGateway,
   protectPkceVerifierFromLateLeftoverSignOut,
@@ -23,7 +24,11 @@ import {
   sanitizeLoginReturnPath,
   writeSessionActiveLoginFlowId,
 } from "./auth-flow";
-import { notifySoftResidualRecoveryRearm } from "./soft-residual-recovery-suppress";
+import {
+  clearTabLocalResidualRecoveryDisarm,
+  notifySoftResidualRecoveryDisarm,
+  notifySoftResidualRecoveryRearm,
+} from "./soft-residual-recovery-suppress";
 import {
   EMAIL_OTP_CHANGE_EMAIL,
   EMAIL_OTP_GOOGLE_BUTTON,
@@ -248,14 +253,30 @@ function isFreshEmailOtpCompleted(nowMs: number = Date.now()): boolean {
 /**
  * C4: OTP 送信/待ち中のタブが origin 共有 sibling Google pin を residual claim しない。
  * sessionStorage だけを別 UUID で上書きし、localStorage の開始タブ pin は残す。
- * 既に走っている residual は呼び出し側で re-arm して止め直す。
+ * 書けたときだけ true。失敗時は origin 共有 pin のままなので re-arm してはいけない（N2）。
  */
-function pinThisTabAwayFromSharedLoginFlow(): void {
+function pinThisTabAwayFromSharedLoginFlow(): boolean {
   try {
-    writeSessionActiveLoginFlowId(crypto.randomUUID());
+    return writeSessionActiveLoginFlowId(crypto.randomUUID());
   } catch {
-    // session 失敗時は origin 共有 pin のまま。re-arm しても sibling を claim し得る residual
+    return false;
   }
+}
+
+/**
+ * N1/N2/C4: OTP 送信/待ち開始でこのタブを sibling Google residual から切り離す。
+ * - 既走 resume を abort し、exchange 後も completion で Navigate しない（N1）
+ * - pin 成功時だけ re-arm して dummy UUID に restrict する（C4）
+ * - pin 失敗時は re-arm せずタブ局所 disarm で residual を止める（N2）
+ */
+function isolateThisTabFromSharedLoginResidual(): void {
+  abortInFlightResumeFlows();
+  if (pinThisTabAwayFromSharedLoginFlow()) {
+    clearTabLocalResidualRecoveryDisarm();
+    notifySoftResidualRecoveryRearm();
+    return;
+  }
+  notifySoftResidualRecoveryDisarm();
 }
 
 /**
@@ -420,6 +441,13 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     state.status === "waiting" ||
     state.status === "verifying";
 
+  const isOtpWaiting = state.status === "waiting" || state.status === "verifying";
+  useEffect(() => {
+    if (!isOtpWaiting) return;
+    // 待ち UI 復元（リロード / remount）でも既走 residual を止める。送信成功は send() でも isolate する。
+    isolateThisTabFromSharedLoginResidual();
+  }, [isOtpWaiting]);
+
   useEffect(() => {
     if (state.status !== "waiting" && state.status !== "verifying") return;
     const update = () => {
@@ -502,9 +530,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
         email: sent.email,
         resendAvailableAt: sent.resendAvailableAt,
       });
-      // C4: 送信成功後に自タブ pin をずらし、既起動 residual を re-arm で止める
-      pinThisTabAwayFromSharedLoginFlow();
-      notifySoftResidualRecoveryRearm();
+      // C4/N1/N2: 送信成功後に自タブを sibling Google residual から切り離す
+      isolateThisTabFromSharedLoginResidual();
       setOtpDigits("");
       setState({
         status: "waiting",

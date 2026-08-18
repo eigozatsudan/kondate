@@ -2,6 +2,7 @@ import type { AuthError } from "@supabase/supabase-js";
 import { afterEach, expect, it, vi } from "vitest";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
+  abortInFlightResumeFlows,
   armLeftoverRefuseSignOutWinnerPersistProtection,
   clearLeftoverLoginSessionIfNoSiblingCompletion,
   createAuthGateway,
@@ -2957,6 +2958,118 @@ it("C-R1: discards in-flight resume exchange after sibling clear of flow secret"
     returnTo: "/onboarding",
   });
   expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+});
+
+it("N1: abortInFlightResumeFlows stops an in-flight resume before exchange and does not publish", async () => {
+  const storage = new MapStorage();
+  let releaseClaim: (() => void) | undefined;
+  const claimGate = new Promise<void>((resolve) => {
+    releaseClaim = resolve;
+  });
+  const claim = vi.fn().mockImplementation(async () => {
+    await claimGate;
+    return { code: "auth-code-n1", returnTo: "/onboarding" };
+  });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(flow.id);
+  for (let i = 0; i < 50 && claim.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(claim).toHaveBeenCalledOnce();
+
+  abortInFlightResumeFlows();
+  releaseClaim?.();
+  await flushResumeUntilExchange();
+
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/onboarding",
+  });
+  expect(client.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+  expect(readAuthContinuationCompletion(flow.id, storage)).toBeNull();
+  expect(readAuthFlow(flow.id, storage)).not.toBeNull();
+});
+
+it("N1: abort during exchange skips completion publish and leaves the Google flow", async () => {
+  const storage = new MapStorage();
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-n1", returnTo: "/planner" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  let releaseExchange: (() => void) | undefined;
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(
+    () =>
+      new Promise<{ data: unknown; error: AuthError | null }>((resolve) => {
+        releaseExchange = () => {
+          resolve({ data: { user: { id: "google-user" } }, error: null });
+        };
+      }),
+  );
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/planner", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(flow.id);
+  await flushResumeUntilExchange();
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalledOnce();
+
+  abortInFlightResumeFlows();
+  releaseExchange?.();
+  await flushResumeUntilExchange();
+
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flow.id,
+    returnTo: "/planner",
+  });
+  expect(readAuthContinuationCompletion(flow.id, storage)).toBeNull();
+  expect(readAuthFlow(flow.id, storage)).not.toBeNull();
+});
+
+it("N1: a new resume after abort can still complete the owning tab Google flow", async () => {
+  const storage = new MapStorage();
+  const api = continuationApiMock({
+    claim: vi.fn().mockResolvedValue({ code: "auth-code-owner", returnTo: "/planner" }),
+  });
+  const client = authClientMock();
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flow = await createAuthFlow("/planner", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  abortInFlightResumeFlows();
+  await flushResumeUntilExchange();
+  await expect(gateway.resumeFlow(flow.id)).resolves.toMatchObject({
+    kind: "complete",
+    flowId: flow.id,
+    returnTo: "/planner",
+  });
+  expect(readAuthContinuationCompletion(flow.id, storage)).not.toBeNull();
 });
 
 it("C-R2: in-flight resume skips exchange when a later Google start dismisses the flow", async () => {

@@ -11,6 +11,7 @@ import { z } from "zod";
  * R4: storage から印を消すだけでは residual useEffect が再評価されない（deps に suppress 無し）。
  * clear 時に window イベントで AuthProvider に通知し、unauthenticated /login 上で再武装する。
  * C4 は suppress 中の silent complete を閉じたまま — re-arm は clear 後だけ。
+ * N2: session pin 書込失敗時は re-arm せずタブ局所 disarm（origin 共有 Google を claim しない）。
  */
 
 export const SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY =
@@ -19,6 +20,37 @@ export const SOFT_RESIDUAL_RECOVERY_SUPPRESS_KEY =
 /** R4: suppress 解除後に residual recovery を再評価させるタブ内イベント */
 export const SOFT_RESIDUAL_RECOVERY_REARM_EVENT =
   "kondate.auth.soft-residual-recovery-rearm" as const;
+
+/**
+ * N2: session pin をずらせなかった OTP タブが origin 共有 Google を claim しないための
+ * タブ局所 disarm。re-arm とは別イベント（origin 共有 pin を restrict し直さない）。
+ */
+export const SOFT_RESIDUAL_RECOVERY_DISARM_EVENT =
+  "kondate.auth.soft-residual-recovery-disarm" as const;
+
+let tabLocalResidualRecoveryDisarmed = false;
+
+export function isTabLocalResidualRecoveryDisarmed(): boolean {
+  return tabLocalResidualRecoveryDisarmed;
+}
+
+export function clearTabLocalResidualRecoveryDisarm(): void {
+  tabLocalResidualRecoveryDisarmed = false;
+}
+
+export function notifySoftResidualRecoveryDisarm(): void {
+  tabLocalResidualRecoveryDisarmed = true;
+  if (typeof window === "undefined") return;
+  try {
+    window.dispatchEvent(new Event(SOFT_RESIDUAL_RECOVERY_DISARM_EVENT));
+  } catch {
+    // best-effort
+  }
+}
+
+export function resetTabLocalResidualRecoveryDisarmForTests(): void {
+  tabLocalResidualRecoveryDisarmed = false;
+}
 
 /** C4: soft residual 実行後に origin 共有の residual recovery を抑止する */
 export function markSoftResidualRecoverySuppressed(): void {

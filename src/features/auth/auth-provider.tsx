@@ -26,7 +26,11 @@ import {
   markSoftResidualRecoverySuppressed,
   SIGN_OUT_TIMEOUT_MS,
 } from "./auth-cleanup";
-import { SOFT_RESIDUAL_RECOVERY_REARM_EVENT } from "./soft-residual-recovery-suppress";
+import {
+  isTabLocalResidualRecoveryDisarmed,
+  SOFT_RESIDUAL_RECOVERY_DISARM_EVENT,
+  SOFT_RESIDUAL_RECOVERY_REARM_EVENT,
+} from "./soft-residual-recovery-suppress";
 import {
   browserSupabaseSessionStorageKey,
   clearActiveLoginFlowId,
@@ -34,6 +38,8 @@ import {
   clearBrowserSupabaseSessionStorage,
   listUnexpiredAuthFlows,
   readActiveLoginFlowId,
+  readAuthFlow,
+  readSessionActiveLoginFlowId,
   startAuthFlowDismissBroadcastListener,
 } from "./auth-flow";
 import { resetAuthCallbackUrlCaptureIfLeftCallback } from "./auth-callback-url-capture";
@@ -348,6 +354,19 @@ function shouldNavigateOnAuthComplete(
   options?: { ownedByThisTab?: boolean },
 ): boolean {
   if (!isAuthWaitingPath(window.location.pathname)) return false;
+  const sessionPin = readSessionActiveLoginFlowId();
+  // N1: OTP 待ちで session pin をダミー UUID にずらしたタブは、sibling Google の
+  // completion bus で Navigate しない。AuthFlow がある pin（このタブが開始した Google）は通す。
+  // ownedByThisTab の residual onComplete は abort 後 isStopped で捨てる。ここは listener 専用。
+  if (options?.ownedByThisTab !== true && sessionPin !== undefined && sessionPin !== flowId) {
+    try {
+      if (readAuthFlow(sessionPin, window.localStorage) === null) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
   const waiting = listUnexpiredAuthFlows(window.localStorage, new Date());
   if (waiting.some((flow) => flow.id === flowId)) return true;
   if (waiting.length > 0) {
@@ -1344,9 +1363,15 @@ export function AuthProvider({
       coldStartFailClosedRef.current = false;
       setResidualRecoveryRearmTick((n) => n + 1);
     };
+    const onDisarm = (): void => {
+      // N2: pin 失敗の disarm は fail-closed を下ろさない。effect を再評価して residual を止めるだけ。
+      setResidualRecoveryRearmTick((n) => n + 1);
+    };
     window.addEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+    window.addEventListener(SOFT_RESIDUAL_RECOVERY_DISARM_EVENT, onDisarm);
     return () => {
       window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+      window.removeEventListener(SOFT_RESIDUAL_RECOVERY_DISARM_EVENT, onDisarm);
     };
   }, []);
 
@@ -1369,6 +1394,8 @@ export function AuthProvider({
     // C4/R3: soft residual 後は origin 共有 suppress で residual recovery を抑止
     // （secret 温存でも新タブ含む silent complete しない。解除は createAuthFlow / session 適用 + R4 re-arm）
     if (isSoftResidualRecoverySuppressed()) return undefined;
+    // N2: session pin をずらせなかった OTP タブは origin 共有 Google pin を claim しない
+    if (isTabLocalResidualRecoveryDisarmed()) return undefined;
     const recoveryTtlMs =
       providedClient === undefined ? getPublicEnv().authContinuationTtlMs : 300_000;
     const storage = window.localStorage;

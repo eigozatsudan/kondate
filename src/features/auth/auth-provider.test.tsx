@@ -17,7 +17,12 @@ import {
   writeActiveLoginFlowId,
   writeSessionActiveLoginFlowId,
 } from "./auth-flow";
-import { notifySoftResidualRecoveryRearm } from "./soft-residual-recovery-suppress";
+import { publishAuthContinuationCompletion } from "./auth-continuation-completion";
+import {
+  notifySoftResidualRecoveryDisarm,
+  notifySoftResidualRecoveryRearm,
+  resetTabLocalResidualRecoveryDisarmForTests,
+} from "./soft-residual-recovery-suppress";
 import { resetLeftoverPkceProtectionForTests } from "./auth-gateway";
 import { AUTH_SESSION_SWITCH_KEY, armIntentionalAuthSessionSwitch } from "./live-auth-session-mark";
 import { resetAccessTokenPinGateForTests } from "./session";
@@ -107,6 +112,7 @@ describe("AuthProvider", () => {
     // R1: module pin ゲートが他テストへ漏れないようにする
     resetAccessTokenPinGateForTests();
     resetLeftoverPkceProtectionForTests();
+    resetTabLocalResidualRecoveryDisarmForTests();
     try {
       window.localStorage.removeItem("kondate.auth.supabase");
     } catch {
@@ -2647,6 +2653,140 @@ describe("AuthProvider", () => {
     expect(stopRecovery).toHaveBeenCalled();
     expect(startRecovery.mock.calls.at(-1)?.[0]?.restrictToFlowId).toBe(otpPinId);
     expect(startRecovery.mock.calls.at(-1)?.[0]?.restrictToFlowId).not.toBe(googleFlowId);
+  });
+
+  it("N1: OTP session pin blocks sibling Google completion-bus Navigate", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const googleFlowId = "10000000-0000-4000-8000-0000000000b1";
+    const otpPinId = "20000000-0000-4000-8000-0000000000b1";
+    window.localStorage.setItem(
+      `kondate.auth.flow.${googleFlowId}`,
+      JSON.stringify({
+        id: googleFlowId,
+        secret: "A".repeat(43),
+        state: "B".repeat(43),
+        origin: "https://app.test",
+        returnTo: "/planner",
+        sessionExchange: "supabase",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    writeActiveLoginFlowId(googleFlowId);
+    writeSessionActiveLoginFlowId(otpPinId);
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } satisfies AuthProviderClient;
+    const navigateTo = vi.fn();
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        navigateTo={navigateTo}
+        startRecovery={() => vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+
+    await act(async () => {
+      publishAuthContinuationCompletion({ flowId: googleFlowId, returnTo: "/planner" });
+      await Promise.resolve();
+    });
+
+    expect(navigateTo).not.toHaveBeenCalled();
+  });
+
+  it("N2: pin-write failure disarm stops residual instead of claiming sibling Google", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const googleFlowId = "10000000-0000-4000-8000-0000000000b2";
+    writeActiveLoginFlowId(googleFlowId);
+    window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    const stopRecovery = vi.fn();
+    const startRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+    startRecovery.mockReturnValue(stopRecovery);
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    await waitFor(() => {
+      expect(startRecovery).toHaveBeenCalled();
+    });
+    expect(startRecovery.mock.calls.at(-1)?.[0]?.restrictToFlowId).toBe(googleFlowId);
+    const startsBeforeDisarm = startRecovery.mock.calls.length;
+
+    await act(async () => {
+      notifySoftResidualRecoveryDisarm();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(stopRecovery).toHaveBeenCalled();
+    });
+    expect(startRecovery.mock.calls.length).toBe(startsBeforeDisarm);
+    expect(startRecovery.mock.calls.at(-1)?.[0]?.restrictToFlowId).toBe(googleFlowId);
+  });
+
+  it("N2: createAuthFlow after OTP disarm still starts the owning-tab Google residual", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    notifySoftResidualRecoveryDisarm();
+    const ownerFlowId = "30000000-0000-4000-8000-0000000000b2";
+    const startRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+    startRecovery.mockReturnValue(vi.fn());
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    expect(startRecovery).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await startTestAuthFlow(ownerFlowId);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(startRecovery).toHaveBeenCalled();
+    });
+    expect(startRecovery.mock.calls.at(-1)?.[0]?.restrictToFlowId).toBe(ownerFlowId);
   });
 
   it("C4: expired active-login-flow pin does not start /login residual", async () => {

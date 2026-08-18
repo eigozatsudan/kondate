@@ -278,6 +278,11 @@ type InflightResumeEntry = {
 const inflightResumeByFlowId = new Map<string, InflightResumeEntry>();
 let inflightResumeGeneration = 0;
 /**
+ * N1: このタブの in-flight resume を止める世代。increment した時点より前の run は
+ * claim/exchange 後も publish しない。新しい resume は新しい世代で通常完了できる。
+ */
+let inflightResumeAbortEpoch = 0;
+/**
  * Map 保持の soft TTL。depositWithRetry 最悪壁 + claim/exchange 外側窓。
  * 旧 IMMEDIATE_CLAIM 単独だと re-deposit hang 中に Map が外れ dual deposit が起き得た（RR2）。
  */
@@ -410,6 +415,17 @@ export function resetInflightResumeForTests(): void {
   inflightResumeByFlowId.clear();
   redepositInFlightByFlowId.clear();
   googleStartChain = Promise.resolve();
+  inflightResumeAbortEpoch = 0;
+}
+
+/**
+ * N1: このタブで既に走っている resumeFlow を止める。
+ * OTP 送信/待ち開始から呼ぶ。in-flight の claim/exchange は await するが、
+ * 世代が変わった run は publish / complete しない（sibling Google 完了で Navigate しない）。
+ * 所有タブの新規 resume は新しい世代なので通常どおり complete できる。
+ */
+export function abortInFlightResumeFlows(): void {
+  inflightResumeAbortEpoch += 1;
 }
 
 /**
@@ -1903,7 +1919,9 @@ export function createAuthGateway(
       }
       // C11: generation で Map 除去を世代一致に限定（soft TTL / settle の競合でも後続を壊さない）
       const generation = (inflightResumeGeneration += 1);
-      const runPromise = runResumeFlow(flowId);
+      // N1: 開始時の abort 世代を閉じる。途中で increment されたらこの run は complete しない。
+      const abortEpochAtStart = inflightResumeAbortEpoch;
+      const runPromise = runResumeFlow(flowId, abortEpochAtStart);
       const entry: InflightResumeEntry = {
         generation,
         promise: runPromise.finally(() => {
@@ -1929,9 +1947,16 @@ export function createAuthGateway(
     },
   };
 
-  async function runResumeFlow(flowId: string): Promise<AuthResumeResult> {
+  async function runResumeFlow(
+    flowId: string,
+    abortEpochAtStart: number,
+  ): Promise<AuthResumeResult> {
+    const isAborted = (): boolean => inflightResumeAbortEpoch !== abortEpochAtStart;
     const flow = readAuthFlow(flowId, storage);
     if (flow === null) return { kind: "error", code: "unbound_callback", returnTo: "/planner" };
+    if (isAborted()) {
+      return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+    }
     // C3: dismiss 済みは residual recovery でも拾わない（secret は TTL まで残る）
     if (isAuthFlowUserDismissed(flow.id, storage)) {
       return { kind: "error", code: "oauth_cancelled", returnTo: flow.returnTo, flowId: flow.id };
@@ -2035,6 +2060,9 @@ export function createAuthGateway(
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
+      if (isAborted()) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
     }
     // exchange 失敗（provider 拒否）だけ terminal。claim 成功後も secret は exchange 成功まで残す（C3/C4）。
     let exchangeStarted = false;
@@ -2062,6 +2090,9 @@ export function createAuthGateway(
       }
       // C-R1: claim 直前にも storage を再確認（redeposit await 中の sibling clear）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
+      if (isAborted()) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       // storage 上の最新 secret/state を優先（クリア済みは上で discard）
@@ -2128,6 +2159,9 @@ export function createAuthGateway(
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
+      if (isAborted()) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
       // C1: exchange 直前の session 指紋。loser probe は「変化した session」だけ complete する。
       sessionBaseline = await captureSessionProbeBaseline(client);
       liveMarkAtExchangeStart = readLiveAuthSessionMark(storage);
@@ -2142,6 +2176,9 @@ export function createAuthGateway(
       }
       // baseline await 後の最終 discard（C-R1）
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
+      }
+      if (isAborted()) {
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       pkceGenerationAtExchangeStart = readPkceVerifierGeneration(storage);
@@ -2192,10 +2229,11 @@ export function createAuthGateway(
       // 自 complete を bus に載せない（navigate/onComplete の loser 適用を抑止）。
       // C-R6/C-R9: client/storage session は既に loser に置換済みになり得る
       // → baseline present なら setSession 復元、absent/unknown なら loser fingerprint 一致時のみ local clear
-      if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+      if (isAborted() || isInFlightResumeDiscardedByStorage(flow.id, storage)) {
         clearIntentionalAuthSessionSwitch();
         clearPendingAuthDeposit(flow.id, storage);
         // discard 時点の session 指紋（exchange 結果）。C-R9 clear の一致判定に使う
+        // N1: OTP 待ち開始の abort も同じ復元。completion bus に載せない。
         const discardedExchangeSessionKey = await probeDiscardedExchangeSessionKey(client);
         await restoreSessionAfterDiscardedExchange(
           client,

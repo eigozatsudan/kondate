@@ -2,6 +2,7 @@ import { z } from "zod";
 // C4/R4: createAuthFlow 成功時の suppress clear + re-arm（auth-cleanup 循環回避）
 import {
   clearSoftResidualRecoverySuppressed,
+  clearTabLocalResidualRecoveryDisarm,
   isSoftResidualRecoverySuppressed,
   notifySoftResidualRecoveryRearm,
 } from "./soft-residual-recovery-suppress";
@@ -1142,6 +1143,8 @@ export async function createAuthFlow(
   }
   // C36: pin 書込前に印を見る。書込後は開始タブの session pin で isSoft が false になる。
   const wasSuppressed = isSoftResidualRecoverySuppressed();
+  // N2: 所有タブの正当 Google 開始は OTP pin 失敗で立てたタブ局所 disarm を外す
+  clearTabLocalResidualRecoveryDisarm();
   // C2: persist 成功後にこのタブの対象 flow を先に書く（re-arm より前。effect が読む）
   const wroteLocalPin = writeActiveLoginFlowId(flow.id);
   // C36: origin 共有 suppress は local pin が書けたときだけ落とす。

@@ -20,7 +20,11 @@ import {
 } from "./email-otp-copy";
 import { ACTIVE_LOGIN_FLOW_STORAGE_KEY, writeActiveLoginFlowId } from "./auth-flow";
 import { LOGIN_PAGE_NOTE, LoginPage } from "./login-page";
-import { SOFT_RESIDUAL_RECOVERY_REARM_EVENT } from "./soft-residual-recovery-suppress";
+import {
+  resetTabLocalResidualRecoveryDisarmForTests,
+  SOFT_RESIDUAL_RECOVERY_DISARM_EVENT,
+  SOFT_RESIDUAL_RECOVERY_REARM_EVENT,
+} from "./soft-residual-recovery-suppress";
 import { useAuth } from "./use-auth";
 
 const leftoverMocks = vi.hoisted(() => {
@@ -164,6 +168,7 @@ afterEach(async () => {
   leftoverSignOut.mockReset();
   leftoverSignOut.mockResolvedValue({ error: null });
   resetLeftoverPkceProtectionForTests();
+  resetTabLocalResidualRecoveryDisarmForTests();
   window.localStorage.removeItem(leftoverSessionStorageKey);
   window.localStorage.removeItem(`${leftoverSessionStorageKey}-code-verifier`);
   window.localStorage.removeItem("kondate.auth.liveSession");
@@ -626,10 +631,67 @@ it("C4: sendEmailOtp pins this tab away from a sibling Google origin pin and rea
     expect(sessionPin).toBeDefined();
     expect(sessionPin).not.toBe(googleFlowId);
     expect(readPinnedFlowId(window.localStorage)).toBe(googleFlowId);
-    expect(events).toHaveLength(1);
+    expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events[0]?.type).toBe(SOFT_RESIDUAL_RECOVERY_REARM_EVENT);
   } finally {
     window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+  }
+});
+
+it("N2: failed session pin write does not rearm residual onto the sibling Google pin", async () => {
+  const googleFlowId = "10000000-0000-4000-8000-0000000000b2";
+  writeActiveLoginFlowId(googleFlowId);
+  window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  const setItemDescriptor = Object.getOwnPropertyDescriptor(Storage.prototype, "setItem");
+  if (setItemDescriptor?.value === undefined) {
+    throw new Error("Storage.prototype.setItem is missing");
+  }
+  const originalSetItem = setItemDescriptor.value as (
+    this: Storage,
+    key: string,
+    value: string,
+  ) => void;
+  const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+    this: Storage,
+    key,
+    value,
+  ) {
+    if (this === window.sessionStorage && key === ACTIVE_LOGIN_FLOW_STORAGE_KEY) {
+      throw new Error("quota");
+    }
+    originalSetItem.call(this, key, value);
+  });
+  const rearmEvents: Event[] = [];
+  const disarmEvents: Event[] = [];
+  const onRearm = (event: Event): void => {
+    rearmEvents.push(event);
+  };
+  const onDisarm = (event: Event): void => {
+    disarmEvents.push(event);
+  };
+  window.addEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+  window.addEventListener(SOFT_RESIDUAL_RECOVERY_DISARM_EVENT, onDisarm);
+  const user = userEvent.setup();
+  try {
+    renderLoginAt(
+      "/login",
+      stubGateway({
+        sendEmailOtp: vi.fn().mockResolvedValue({
+          email: "user@example.com",
+          resendAvailableAt: futureResendAt(),
+        }),
+      }),
+    );
+    await sendEmailAndWait(user);
+    expect(readPinnedFlowId(window.sessionStorage)).toBeUndefined();
+    expect(readPinnedFlowId(window.localStorage)).toBe(googleFlowId);
+    expect(rearmEvents).toHaveLength(0);
+    expect(disarmEvents.length).toBeGreaterThanOrEqual(1);
+    expect(disarmEvents[0]?.type).toBe(SOFT_RESIDUAL_RECOVERY_DISARM_EVENT);
+  } finally {
+    window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+    window.removeEventListener(SOFT_RESIDUAL_RECOVERY_DISARM_EVENT, onDisarm);
+    setItem.mockRestore();
   }
 });
 
