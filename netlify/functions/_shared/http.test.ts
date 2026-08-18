@@ -429,6 +429,51 @@ describe("S8 closedHttpErrorDetails / handleError", () => {
     expect(prefixedText).not.toContain("アレルギー食材を除いてください");
   });
 
+  it("closes particle-separated and choon-suffixed allergy phrases (SC-R4)", async () => {
+    const particle = handleError(
+      new HttpError(400, "invalid_request", "小麦のアレルギー食材を除いてください"),
+    );
+    const particleBody = (await particle.json()) as {
+      ok: false;
+      error: { code: string; message: string };
+    };
+    expect(particleBody.error.code).toBe("invalid_request");
+    expect(particleBody.error.message).toBe("処理を完了できませんでした");
+    const particleText = JSON.stringify(particleBody);
+    expect(particleText).not.toContain("小麦");
+    expect(particleText).not.toContain("アレルギー食材を除いてください");
+
+    const choon = handleError(
+      new HttpError(400, "invalid_request", "カレーアレルギー食材を除いてください"),
+    );
+    const choonBody = (await choon.json()) as {
+      ok: false;
+      error: { message: string };
+    };
+    expect(choonBody.error.message).toBe("処理を完了できませんでした");
+    const choonText = JSON.stringify(choonBody);
+    expect(choonText).not.toContain("カレー");
+    expect(choonText).not.toContain("アレルギー食材を除いてください");
+
+    const quotedItem = handleError(
+      new HttpError(400, "invalid_request", "「小麦」アレルギー食材を除いてください"),
+    );
+    const quotedItemBody = (await quotedItem.json()) as { error: { message: string } };
+    expect(quotedItemBody.error.message).toBe("処理を完了できませんでした");
+    const quotedItemText = JSON.stringify(quotedItemBody);
+    expect(quotedItemText).not.toContain("小麦");
+    expect(quotedItemText).not.toContain("アレルギー食材を除いてください");
+
+    const punctuated = handleError(
+      new HttpError(400, "invalid_request", "小麦、アレルギー食材を除いてください"),
+    );
+    const punctuatedBody = (await punctuated.json()) as { error: { message: string } };
+    expect(punctuatedBody.error.message).toBe("処理を完了できませんでした");
+    const punctuatedText = JSON.stringify(punctuatedBody);
+    expect(punctuatedText).not.toContain("小麦");
+    expect(punctuatedText).not.toContain("アレルギー食材を除いてください");
+  });
+
   it("omits details entirely when only unknown keys were provided", async () => {
     const response = handleError(
       new HttpError(500, "request_failed", "処理を完了できませんでした", {
