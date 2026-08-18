@@ -131,7 +131,22 @@ export async function revalidateMenu(
   return envelope.data.data;
 }
 
+/**
+ * 献立本文を出してよいか。invalid / 好み drift は現行条件が勝つので隠す。
+ * pending ラベルは確認 UI が本文内にあるためここでは閉じない（HR8 は CTA 側）。
+ */
+export function isRevalidationBodyVisible(result: RevalidationResult): boolean {
+  if (result.status !== "valid" && result.status !== "changed") return false;
+  if (result.issues.length > 0) return false;
+  // HR2: ease / dislike / 分量は changedDetails のまま残すが、骨付き魚などを
+  // 現行条件のまま調理できないよう本文も閉じる。
+  return !result.changedDetails.includes("preference_changed");
+}
+
 /** 調理・再生成・買い物操作を許可する閉じた判定。manual-success は存在しない。 */
 export function isRevalidationActionable(result: RevalidationResult): boolean {
-  return result.status === "valid" || (result.status === "changed" && result.issues.length === 0);
+  if (!isRevalidationBodyVisible(result)) return false;
+  // HR8: 新規 processed ラベルの pending は確認前に採用 / 買い物 / 再生成しない。
+  // 確認 UI は本文側に残す。
+  return !result.currentLabelWarnings.some((item) => item.confirmationStatus === "pending");
 }

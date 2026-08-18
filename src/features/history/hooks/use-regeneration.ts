@@ -35,6 +35,13 @@ export type UseRegenerationInput =
       result: RevalidationResult | undefined;
       /** HR1: soft 再検査飛行中は canRegenerate を閉じる（phase は checked のまま） */
       isSoftRechecking?: boolean;
+      /**
+       * HR1: hard/soft 開始と同ターンに倒す ref。
+       * render の isSoftRechecking が立つ前の start* が stale true を読まない。
+       */
+      actionGateClosedRef?: { readonly current: boolean };
+      /** HR1: 再検証開始〜当該世代完了まで true。render 時 canRegenerate 用。 */
+      isActionGateClosed?: boolean;
     }
   | {
       targetMode: "idea";
@@ -61,14 +68,17 @@ export function useRegeneration(input: UseRegenerationInput) {
         input.result !== undefined &&
         isRevalidationActionable(input.result) &&
         // soft 飛行中は旧 actionable のまま POST しない（HR1）
-        !(input.isSoftRechecking ?? false);
+        !(input.isSoftRechecking ?? false) &&
+        !(input.isActionGateClosed ?? false);
 
   // HRV10: soft/hard と同フレームでも start* が stale な canRegenerate=true を閉じないよう
   // accept の actionsEnabledRef と同型に最新値を読む（server は再検証で DiD）
   const canRegenerateRef = useRef(canRegenerate);
   canRegenerateRef.current = canRegenerate;
+  const actionGateClosedRef = targetMode === "household" ? input.actionGateClosedRef : undefined;
   // ref 再読を関数経由にし、await 前後の CFA が「常に true」と誤判定しないようにする
-  const readCanRegenerate = (): boolean => canRegenerateRef.current;
+  const readCanRegenerate = (): boolean =>
+    canRegenerateRef.current && !(actionGateClosedRef?.current ?? false);
 
   const startWhole = useCallback(
     async (reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {

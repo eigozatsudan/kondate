@@ -628,10 +628,9 @@ describe("loadRegenerationExecutionContext", () => {
     ).rejects.toMatchObject({ code: "current_safety_revalidation_required" });
   });
 
-  it("does not map source guarantee phrases to current_safety_revalidation_required", async () => {
-    // G2: 歴史行の「安全です」は家族 allergen/food-rules 失敗ではない。
-    // ソース関門を 422 current_safety_revalidation_required に畳むと、
-    // 家族安全 OK のまま「家族設定では使えない」と誤誘導し再生成が始まらない。
+  it("HR5: maps source guarantee phrases to current_safety_revalidation_required", async () => {
+    // ソース関門は保証句も現行安全失敗に畳む。stale client / 直接 API の
+    // reserve 後通過を閉じる。G3 の保持葉剥離は関門通過後の materialize 専用。
     const base = makeStoredMenu();
     const source = makeStoredMenu({
       menu: {
@@ -642,15 +641,61 @@ describe("loadRegenerationExecutionContext", () => {
       },
     });
     const deps = makeLoaderDeps(source);
-    const context = await loadRegenerationExecutionContext(
-      deps,
-      user,
-      dishCommand,
-      "91000000-0000-4000-8000-000000000001",
-      50_000,
-    );
-    expect(context.kind).toBe("regenerate_dish");
-    expect(deps.buildCurrentContext).toHaveBeenCalled();
+    await expect(
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
+    ).rejects.toMatchObject({ code: "current_safety_revalidation_required", status: 422 });
+  });
+
+  it("HR5: idea source guarantee phrases fail closed as invalid_menu_structure", async () => {
+    const base = makeStoredMenu({ targetMode: "idea", targetMemberIds: [], targetMembers: [] });
+    const source = makeStoredMenu({
+      targetMode: "idea",
+      targetMemberIds: [],
+      targetMembers: [],
+      menu: {
+        ...base.menu,
+        dishes: base.menu.dishes.map((dish, index) =>
+          index === 0 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
+        ),
+      },
+    });
+    const ideaContext = makeIdeaGenerationContext();
+    const deps = makeLoaderDeps(source, { generationContext: ideaContext });
+    snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+      const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+      return Promise.resolve({
+        data: [
+          {
+            request_id: args.p_request_id,
+            user_id: args.p_user_id,
+            kind: "regenerate_dish",
+            source_menu_id: "52000000-0000-4000-8000-000000000001",
+            source_menu_version: 1,
+            replace_dish_id: dish2Id,
+            target_mode: "idea",
+            servings: 2,
+            target_member_ids: [],
+            created_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+        error: null,
+      });
+    });
+    await expect(
+      loadRegenerationExecutionContext(
+        deps,
+        user,
+        dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_menu_structure", status: 422 });
   });
 
   it("maps foreign or missing source to source_menu_changed before current context", async () => {

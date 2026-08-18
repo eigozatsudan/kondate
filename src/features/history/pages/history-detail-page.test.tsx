@@ -36,6 +36,7 @@ const createPantryItemMock = vi.hoisted(() => vi.fn());
 const channelHandlers = vi.hoisted(() => ({
   members: [] as Array<() => void>,
   allergies: [] as Array<() => void>,
+  dislikes: [] as Array<() => void>,
 }));
 // hoisted mock から参照する固定 UUID（下の const より前に置く）
 const MOCK_USER_ID = "31000000-0000-4000-8000-000000000001";
@@ -114,6 +115,7 @@ vi.mock("@/shared/lib/supabase", () => ({
         on: (_event: string, filter: { table?: string }, callback: () => void) => {
           if (filter.table === "household_members") channelHandlers.members.push(callback);
           if (filter.table === "member_allergies") channelHandlers.allergies.push(callback);
+          if (filter.table === "member_dislikes") channelHandlers.dislikes.push(callback);
           return api;
         },
         subscribe: (statusCallback?: (status: string) => void) => {
@@ -334,6 +336,7 @@ function fireSafetySignal(
     | "online"
     | "realtime-household-member"
     | "realtime-member-allergy"
+    | "realtime-member-dislike"
     | "sixty-second-poll"
     | "same-tab-event",
 ): void {
@@ -365,6 +368,10 @@ function fireSafetySignal(
     for (const handler of channelHandlers.allergies) handler();
     return;
   }
+  if (signal === "realtime-member-dislike") {
+    for (const handler of channelHandlers.dislikes) handler();
+    return;
+  }
   if (signal === "same-tab-event") {
     window.dispatchEvent(new CustomEvent(householdSafetyChangedEvent));
     return;
@@ -387,6 +394,7 @@ beforeEach(() => {
   }
   channelHandlers.members = [];
   channelHandlers.allergies = [];
+  channelHandlers.dislikes = [];
   revalidateMenuMock.mockResolvedValue(validRevalidation);
   getMenuResultMock.mockResolvedValue(makeMenuResultViewModel());
   listPantryItemsMock.mockResolvedValue([]);
@@ -481,7 +489,33 @@ describe("HistoryDetailPage safety gate", () => {
     expect(document.querySelector(".revalidation-checking-overlay")).toBeNull();
   });
 
-  it("allows regeneration after a changed but valid current-safety result", async () => {
+  it("allows regeneration after pantry-only changed current-safety result", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: regenerableSubmission,
+      }),
+    );
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "changed",
+          issues: [],
+          changedDetails: ["pantry_quantity_changed"],
+        },
+      },
+    });
+    expect(
+      await screen.findByText(
+        "この献立の対象家族の設定で確認しました。作成時から条件が変わっています",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled();
+  });
+
+  it("HR2: preference drift closes recipe body and mutation CTAs", async () => {
     getMenuResultMock.mockResolvedValue(
       makeMenuResultViewModel({
         targetMode: "household",
@@ -499,12 +533,51 @@ describe("HistoryDetailPage safety gate", () => {
         },
       },
     });
+    expect(await screen.findByText("好みの設定が変わっています")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "条件を変えて作り直す" })).toBeEnabled();
+  });
+
+  it("HR8: pending processed labels keep the body so the user can confirm", async () => {
+    const view = makeMenuResultViewModel({
+      targetMode: "household",
+      sourceSubmission: regenerableSubmission,
+    });
+    getMenuResultMock.mockResolvedValue(view);
+    const sourceId =
+      view.menu.dishes[0]?.ingredients[0]?.id ?? "53000000-0000-4000-8000-000000000001";
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "changed",
+          currentLabelWarnings: [
+            {
+              confirmationId: "48000000-0000-4000-8000-000000000099",
+              sourceType: "ingredient",
+              sourceId,
+              sourcePath: "dishes.0.ingredients.0.name",
+              sourceText: "しょうゆ",
+              allergenId: "wheat",
+              allergenName: "小麦",
+              anonymousMemberRef: "member_2",
+              memberLabel: "大人",
+              dictionaryVersion: "jp-caa-2026-04.v1",
+              confirmationStatus: "pending",
+            },
+          ],
+        },
+      },
+    });
     expect(
-      await screen.findByText(
-        "この献立の対象家族の設定で確認しました。作成時から条件が変わっています",
-      ),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled();
+      await screen.findByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("heading", { name: "材料" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
   });
 
   it("disables この献立にする while checking and enables when revalidation is actionable", async () => {
@@ -1333,6 +1406,77 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
     expect(themedRoot?.textContent).not.toMatch(/確認済み|安全に配慮|アレルギー対応済み/u);
   });
 
+  it("HR3: hides idea dish text that contains a leftover guarantee phrase", async () => {
+    const view = makeMenuResultViewModel({ targetMode: "idea" });
+    const first = view.menu.dishes[0];
+    if (first === undefined) throw new Error("fixture must contain a dish");
+    getMenuResultMock.mockResolvedValue({
+      ...view,
+      menu: {
+        ...view.menu,
+        dishes: view.menu.dishes.map((dish, index) =>
+          index === 0 ? { ...dish, description: "小麦アレルギーでも安全です" } : dish,
+        ),
+      },
+    });
+    renderHistoryDetail();
+    expect(
+      await screen.findByText("この献立の説明は表示できません。条件を変えて作り直してください。"),
+    ).toBeVisible();
+    expect(screen.queryByText(/安全です/u)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
+  });
+
+  it("HR4: closes idea regenerate sheet when live pantry selection disappears", async () => {
+    const pantryItemId = "66000000-0000-4000-8000-000000000010";
+    const livePantryItem = {
+      id: pantryItemId,
+      userId: USER_ID,
+      name: "ごはん",
+      quantity: 200,
+      unit: "g",
+      expiresOn: "2026-12-01",
+      expirationType: "best_before" as const,
+      openedState: "unopened" as const,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    };
+    listPantryItemsMock.mockResolvedValue([livePantryItem]);
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "idea",
+        sourceSubmission: {
+          ...regenerableSubmission,
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+          pantrySelections: [{ pantryItemId, priority: "prefer_use" }],
+        },
+      }),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    renderHistoryDetail({ queryClient });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" }));
+    expect(screen.getByRole("dialog", { name: "どのように変えますか？" })).toBeVisible();
+
+    act(() => {
+      queryClient.setQueryData(pantryKeys.list(USER_ID), []);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "どのように変えますか？" })).toBeNull();
+    });
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
+    expect(
+      screen.getByText("作成時に選んだ冷蔵庫の食材がありません。条件を変えて作り直してください。"),
+    ).toBeVisible();
+  });
+
   it("hides child_friendly in idea regeneration dialog", async () => {
     getMenuResultMock.mockResolvedValue(
       makeMenuResultViewModel({
@@ -1467,31 +1611,33 @@ describe("MenuResultPage shared revalidation gate", () => {
     expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
   });
 
-  it.each(["realtime-household-member", "realtime-member-allergy", "online"] as const)(
-    "fails closed and starts a fresh current-safety check for %s",
-    async (signal) => {
-      const revalidate = deferredPromise<RevalidationResult>();
-      renderMenuResultPage({
-        initialRevalidation: validRevalidation,
-        nextRevalidation: revalidate.promise,
-      });
-      expect(await screen.findByRole("heading", { name: /献立/u })).toBeVisible();
-      act(() => {
-        fireSafetySignal(signal);
-      });
-      // Realtime / online 復帰は hard: フルゲートで本文・操作を閉じる
-      expect(
-        screen
-          .getAllByRole("status")
-          .some((node) => node.textContent.includes("この献立の対象家族の設定で確認しています")),
-      ).toBe(true);
-      expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
-      act(() => {
-        revalidate.resolve(validRevalidation);
-      });
-      expect(await screen.findByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
-    },
-  );
+  it.each([
+    "realtime-household-member",
+    "realtime-member-allergy",
+    "realtime-member-dislike",
+    "online",
+  ] as const)("fails closed and starts a fresh current-safety check for %s", async (signal) => {
+    const revalidate = deferredPromise<RevalidationResult>();
+    renderMenuResultPage({
+      initialRevalidation: validRevalidation,
+      nextRevalidation: revalidate.promise,
+    });
+    expect(await screen.findByRole("heading", { name: /献立/u })).toBeVisible();
+    act(() => {
+      fireSafetySignal(signal);
+    });
+    // Realtime / online 復帰は hard: フルゲートで本文・操作を閉じる
+    expect(
+      screen
+        .getAllByRole("status")
+        .some((node) => node.textContent.includes("この献立の対象家族の設定で確認しています")),
+    ).toBe(true);
+    expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
+    act(() => {
+      revalidate.resolve(validRevalidation);
+    });
+    expect(await screen.findByRole("button", { name: "使った食材の在庫を更新" })).toBeEnabled();
+  });
 
   it.each(["focus", "visible-visibilitychange", "sixty-second-poll"] as const)(
     "soft-rechecks in background without hard overlay for %s (HR1 shared body)",

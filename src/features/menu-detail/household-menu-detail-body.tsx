@@ -17,7 +17,10 @@ import { MenuSafetyNotice } from "@/features/menu-detail/menu-safety-notice";
 import { confirmLabelConfirmation } from "@/features/generation/api/confirm-label-api";
 import { MenuResult, type MenuResultActions } from "@/features/generation/components/menu-result";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
-import { isRevalidationActionable } from "@/features/history/api/revalidation-api";
+import {
+  isRevalidationActionable,
+  isRevalidationBodyVisible,
+} from "@/features/history/api/revalidation-api";
 import {
   RegenerationSheet,
   type RegenerationReasonInput,
@@ -125,6 +128,10 @@ export function HouseholdMenuDetailBody({
   const revalidation = injectedRevalidation ?? liveView;
   const isSoftRechecking = revalidation.isSoftRechecking ?? false;
   const isOfflineHold = revalidation.isOfflineHold ?? false;
+  // 注入テストは live 初回 fetch の閉じを見ない。本番は live の同ターン ref を正とする。
+  const usingInjectedRevalidation = injectedRevalidation !== undefined;
+  const actionGateClosed =
+    !usingInjectedRevalidation && (live.isActionGateClosed || live.actionGateClosedRef.current);
 
   const usage = useUsageToday(userId ?? "");
   const usageView = usageViewFromQuery(usage);
@@ -164,6 +171,12 @@ export function HouseholdMenuDetailBody({
     phase: revalidation.phase,
     result: revalidation.result,
     isSoftRechecking,
+    ...(usingInjectedRevalidation
+      ? {}
+      : {
+          actionGateClosedRef: live.actionGateClosedRef,
+          isActionGateClosed: live.isActionGateClosed,
+        }),
   });
   const accept = useAcceptMenuVersion();
   const versionsQuery = useDerivationVersions(result.derivationGroupId);
@@ -186,14 +199,21 @@ export function HouseholdMenuDetailBody({
   }, [menuId, result.isSelected]);
 
   // gateOpen: 本文表示（soft 飛行中も直前 checked を維持 = focus 点滅防止）
+  // HR2: preference_changed はレシピ調理を許さないので本文も閉じる。
+  // HR8: pending ラベルは確認 UI が本文内にあるため本文は開く。
   const gateOpen =
     revalidation.phase === "checked" &&
     revalidation.result !== undefined &&
-    isRevalidationActionable(revalidation.result);
-  // actionsEnabled: 採用/再生成/買い物 mutation（HR1: soft 飛行中は閉じる）
-  const actionsEnabled = gateOpen && !isSoftRechecking;
-  // HR8: soft 開始〜再描画のあいだ onClick クロージャが stale な actionsEnabled=true のまま
-  // 残っても、最新値で RPC を止める（primary / 補助採用の両方）
+    isRevalidationBodyVisible(revalidation.result);
+  // actionsEnabled: 採用/再生成/買い物 mutation（HR1: soft 飛行中・開始同ターンは閉じる）
+  const actionsEnabled =
+    gateOpen &&
+    !isSoftRechecking &&
+    revalidation.result !== undefined &&
+    isRevalidationActionable(revalidation.result) &&
+    !actionGateClosed;
+  // HR8/HR1: soft 開始〜再描画のあいだ onClick クロージャが stale な true のまま
+  // 残っても、最新値と live ref で RPC を止める（primary / 補助採用の両方）
   const actionsEnabledRef = useRef(actionsEnabled);
   actionsEnabledRef.current = actionsEnabled;
   // HR4: retarget は checking 中は閉じる。checked なら invalid でも許可
@@ -712,7 +732,16 @@ export function HouseholdMenuDetailBody({
           invalidIssues={
             revalidation.phase === "checked" && revalidation.result?.status === "invalid"
               ? revalidation.result.issues
-              : undefined
+              : revalidation.phase === "checked" &&
+                  revalidation.result?.changedDetails.includes("preference_changed")
+                ? [
+                    {
+                      code: "preference_changed",
+                      path: "memberPreferences",
+                      message: "好みの設定が変わっています",
+                    },
+                  ]
+                : undefined
           }
           onRetry={() => {
             revalidation.refetch?.();
@@ -822,7 +851,10 @@ export function HouseholdMenuDetailBody({
             // HR8: ref で soft-flight 中の stale クロージャも塞ぐ
             // soft 開始直後は補助「この献立にする」が 1 フレーム enabled のまま残ることがあり、
             // silent return だと click が消えて E2E/desktop で採用 0 のまま固まる。
-            if (!actionsEnabledRef.current) {
+            if (
+              !actionsEnabledRef.current ||
+              (!usingInjectedRevalidation && live.actionGateClosedRef.current)
+            ) {
               setAcceptError("家族設定の確認中です。確認が終わってからもう一度お試しください");
               return;
             }
@@ -914,7 +946,13 @@ export function HouseholdMenuDetailBody({
             onSubmit={(input) => {
               // HRV10: soft 開始と同 tick でも stale actionsEnabled=true で create しない
               // （accept の actionsEnabledRef と同型。表示中 isFetching では止めない）
-              if (!actionsEnabledRef.current || createList.isPending) return;
+              if (
+                !actionsEnabledRef.current ||
+                createList.isPending ||
+                (!usingInjectedRevalidation && live.actionGateClosedRef.current)
+              ) {
+                return;
+              }
               // SHOP2: mint を Web Locks で直列化し multi-tab 別 UUID を閉じる
               void claimShoppingCommand(
                 "create",

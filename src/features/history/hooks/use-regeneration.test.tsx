@@ -328,7 +328,30 @@ describe("useRegeneration", () => {
     expect(navigateMock).toHaveBeenCalledWith("/generation");
   });
 
-  it("allows regeneration after a changed but valid current-safety result", async () => {
+  it("allows regeneration after pantry-only changed current-safety result", async () => {
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "household",
+          menuId: MENU_ID,
+          phase: "checked",
+          result: {
+            ...validRevalidation,
+            status: "changed",
+            changedDetails: ["pantry_quantity_changed"],
+          },
+        }),
+      { wrapper },
+    );
+    expect(result.current.canRegenerate).toBe(true);
+    await act(async () => {
+      await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
+    });
+    expect(navigateMock).toHaveBeenCalledWith("/generation");
+    expect(readPendingGeneration(USER_ID, new Date())).not.toBeNull();
+  });
+
+  it("HR2: refuses regeneration when preference drift is the only change", async () => {
     const { result } = renderHook(
       () =>
         useRegeneration({
@@ -343,12 +366,34 @@ describe("useRegeneration", () => {
         }),
       { wrapper },
     );
+    expect(result.current.canRegenerate).toBe(false);
+    await expect(
+      result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null }),
+    ).rejects.toThrow("revalidation_required");
+    expect(readPendingGeneration(USER_ID, new Date())).toBeNull();
+  });
+
+  it("HR1: stale startWhole re-reads actionGateClosedRef before writing pending", async () => {
+    const actionGateClosedRef = { current: false };
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "household",
+          menuId: MENU_ID,
+          phase: "checked",
+          result: validRevalidation,
+          actionGateClosedRef,
+        }),
+      { wrapper },
+    );
     expect(result.current.canRegenerate).toBe(true);
-    await act(async () => {
-      await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
-    });
-    expect(navigateMock).toHaveBeenCalledWith("/generation");
-    expect(readPendingGeneration(USER_ID, new Date())).not.toBeNull();
+    const staleStartWhole = result.current.startWhole;
+    actionGateClosedRef.current = true;
+    await expect(
+      staleStartWhole({ changeReason: "simpler", changeReasonCustom: null }),
+    ).rejects.toThrow("revalidation_required");
+    expect(readPendingGeneration(USER_ID, new Date())).toBeNull();
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 
   it("allows idea regeneration without revalidation phase or result", async () => {

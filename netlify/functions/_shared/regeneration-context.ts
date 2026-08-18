@@ -30,6 +30,7 @@ import {
   guaranteePhraseRedaction,
   redactGuaranteePhraseText,
 } from "../../../shared/safety/guarantee-phrases.js";
+import { validatedMenuHitsGuaranteePhrase } from "../../../shared/safety-pure/guarantee-phrases-display.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { formatQuantityValue } from "../../../shared/shopping/normalize.js";
 import { normalizeIngredientQuantity } from "../../../shared/shopping/quantity-display.js";
@@ -602,13 +603,11 @@ export async function loadRegenerationExecutionContext(
       generationContext.targetMembers.map((member) => member.anonymousRef),
     );
     const projectedForGate = projectMenuForSurvivingTargets(source.menu, survivingRefs);
-    // G2: ソースの保証フレーズ残渣は家族安全失敗ではない。
-    // 既定ゲートだと 422 current_safety_revalidation_required に畳み、
-    // 表示側（allergen / food-rules）が OK のまま再生成が始まらない。
+    // HR5: ソース保証句も家族安全失敗に畳む。G2 の false は stale client /
+    // 直接 API が reserve 後に保証句付きソースを通す窓だった。
     const validation = validateGeneratedMenu(
       toStoredRevalidationCandidate(projectedForGate, generationContext),
       generationContext,
-      { checkGuaranteePhrases: false },
     );
     if (!validation.ok) {
       throw new HttpError(
@@ -617,6 +616,14 @@ export async function loadRegenerationExecutionContext(
         "現在の家族設定ではこの献立を利用できません",
       );
     }
+  } else if (validatedMenuHitsGuaranteePhrase(source.menu)) {
+    // idea は家族 subset を走らせない。保証句だけここで閉じ、reserve 後の
+    // 表示経路へ「安全です」を持ち込まない。
+    throw new HttpError(
+      422,
+      "invalid_menu_structure",
+      "利用者向け本文に安全保証の表現は書けません",
+    );
   }
 
   // source 自身も除外集合へ（group に含まれない場合の保険）。build 共通化で finalize 再読と一致。

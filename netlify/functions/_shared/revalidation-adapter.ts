@@ -400,8 +400,9 @@ function detectChangedDetails(
  * 経路ごとにゲート集合が違う dual-validator は意図的（履歴 CTA を full まで
  * 揃えると誤 invalid が増え、full を緩めると再生成安全性が落ちる）。
  * 保証フレーズだけは endorsement / CTA を閉じる（「確認しました」と「安全です」を
- * 並べない）。再生成ソース関門の checkGuaranteePhrases:false（G2）は別経路。
+ * 並べない）。再生成ソース関門も保証句を現行安全失敗に畳む（HR5）。
  * subset ok でも再生成が 422 になり得る residual はサーバ fail-closed で受ける。
+ * preference_changed は status=changed のまま残し、クライアント CTA を閉じる（HR2）。
  */
 export async function validateStoredMenuCurrentSafety(input: {
   ownerClient: UserSupabaseClient;

@@ -1,5 +1,5 @@
 begin;
-select plan(45);
+select plan(46);
 
 -- この pgTAP 1.3 は has_column(schema, table, column) の3引数形がなく、
 -- schema 付きは description 付きの4引数形だけが使える。
@@ -25,6 +25,12 @@ select ok(
 );
 select has_function('private','assign_regeneration_lineage',
   array['uuid','uuid','uuid','text','text']);
+select ok((select count(*)=1 from pg_publication_tables
+    where pubname='supabase_realtime' and schemaname='public'
+      and tablename='member_dislikes')
+    and (select relreplident='f' from pg_class
+      where oid='public.member_dislikes'::regclass),
+  'member_dislikes publish full-row cross-device preference changes');
 select policies_are(
   'public',
   'menu_revalidations',

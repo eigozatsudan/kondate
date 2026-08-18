@@ -58,6 +58,10 @@ export function useMenuRevalidation(menuId: string) {
   isOfflineHoldRef.current = isOfflineHold;
   // 単調増加。完了時に最新世代だけが forcedChecking を解除する
   const requestGenerationRef = useRef(0);
+  // HR1: hard/soft 開始と同ターンの採用を止める。render 前でも ref を倒す。
+  const actionGateClosedRef = useRef(true);
+  const completedGenerationRef = useRef(0);
+  const [closedUntilGeneration, setClosedUntilGeneration] = useState(0);
 
   // 配列参照を render ごとに変えない（callback/effect thrash で poll・Realtime が壊れる）
   const queryKey = useMemo(() => menuRevalidationQueryKey(menuId), [menuId]);
@@ -71,6 +75,7 @@ export function useMenuRevalidation(menuId: string) {
       } finally {
         // 古い飛行中レスポンスが後から到着しても、最新要求の閉じ状態を開けない
         if (generation === requestGenerationRef.current) {
+          completedGenerationRef.current = generation;
           setForcedChecking(false);
         }
       }
@@ -84,17 +89,26 @@ export function useMenuRevalidation(menuId: string) {
   });
 
   /**
-   * offline: hard と同じく世代を進めて閉じるが、offline 中は再 POST しない。
-   * online 復帰の hard 契約と衝突させない（resetQueries しない）。
+   * HR1: accept / 再生成 / 買い物の ref を同期的に倒す。
+   * isFetching が立つ前の同ターン click は render 値を見ない。
+   * closedUntil は「この開始より後の queryFn 完了」まで hold する。
    */
+  const armActionGateClose = useCallback(() => {
+    actionGateClosedRef.current = true;
+    const until = requestGenerationRef.current + 1;
+    setClosedUntilGeneration((prev) => Math.max(prev, until));
+  }, []);
+
+  /** offline: 世代を進めて閉じるが再 POST しない。online hard と衝突させない。 */
   const beginOfflineHold = useCallback(() => {
     if (menuId.length === 0) return;
     // HR3: 飛行中 soft の finally が generation 一致で forcedChecking を下ろすのを防ぐ
+    armActionGateClose();
     requestGenerationRef.current += 1;
     setIsOfflineHold(true);
     setForcedChecking(true);
     void cache.cancelQueries({ queryKey, exact: true });
-  }, [cache, menuId, queryKey]);
+  }, [armActionGateClose, cache, menuId, queryKey]);
 
   /**
    * soft: キャッシュを残したまま再 POST。表示は直前の checked を維持する。
@@ -110,12 +124,14 @@ export function useMenuRevalidation(menuId: string) {
       beginOfflineHold();
       return;
     }
+    // HR1: invalidate が isFetching を立てる前に ref を倒す（focus 直後の採用窓）
+    armActionGateClose();
     void cache.invalidateQueries({
       queryKey,
       exact: true,
       refetchType: "active",
     });
-  }, [beginOfflineHold, cache, menuId, queryKey]);
+  }, [armActionGateClose, beginOfflineHold, cache, menuId, queryKey]);
 
   /**
    * hard: 同期的に checking へ落とし、キャッシュを本当に捨ててから再 POST する。
@@ -131,6 +147,8 @@ export function useMenuRevalidation(menuId: string) {
       beginOfflineHold();
       return;
     }
+    // HR1: setForcedChecking の flush 前に accept ref を倒す
+    armActionGateClose();
     // 進行中 soft の finally が generation 一致で forcedChecking を下ろすのを防ぐ
     requestGenerationRef.current += 1;
     // online hard 等へ遷移したら offline 専用文言は下ろす（再 POST 中は通常 checking copy）
@@ -139,7 +157,7 @@ export function useMenuRevalidation(menuId: string) {
     void cache.cancelQueries({ queryKey, exact: true });
     // data を消してから active refetch（失敗時 hasData=false → error、旧 valid に戻さない）
     void cache.resetQueries({ queryKey, exact: true });
-  }, [beginOfflineHold, cache, menuId, queryKey]);
+  }, [armActionGateClose, beginOfflineHold, cache, menuId, queryKey]);
 
   /**
    * 公開 API は hard（ラベル確認後・stale confirm 失敗など fail-closed が必要な呼び出し元向け）。
@@ -174,6 +192,8 @@ export function useMenuRevalidation(menuId: string) {
       .channel(`menu-safety:${menuId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "household_members" }, hard)
       .on("postgres_changes", { event: "*", schema: "public", table: "member_allergies" }, hard)
+      // HR6: dislike だけ他デバイスで変わっても 60s / focus を待たない
+      .on("postgres_changes", { event: "*", schema: "public", table: "member_dislikes" }, hard)
       .subscribe((status) => {
         // Realtime 購読状態は文字列比較（テストからも素の文字列が届く）。
         // CHANNEL_ERROR / TIMED_OUT は hard 再検査へ（旧 valid のまま 60s soft 依存にしない）。
@@ -265,15 +285,28 @@ export function useMenuRevalidation(menuId: string) {
       beginOfflineHold();
       return;
     }
+    armActionGateClose();
     requestGenerationRef.current += 1;
     setIsOfflineHold(false);
     setForcedChecking(true);
     void cache.cancelQueries({ queryKey, exact: true });
     return cache.resetQueries({ queryKey, exact: true });
-  }, [beginOfflineHold, cache, queryKey]);
+  }, [armActionGateClose, beginOfflineHold, cache, queryKey]);
 
   // offline hold 中だけ true（online hard 開始で下ろす）。テスト注入互換のため phase と独立
   const offlineHoldActive = isOfflineHold && phase === "checking";
+
+  // HR1: 開始世代より後の queryFn 完了まで閉じる。isFetching 遅延の中間 render で再開しない。
+  const recheckHold = completedGenerationRef.current < closedUntilGeneration;
+  if (!recheckHold && !forcedChecking && phase === "checked" && !query.isFetching) {
+    actionGateClosedRef.current = false;
+  }
+  const isActionGateClosed =
+    actionGateClosedRef.current ||
+    recheckHold ||
+    isSoftRechecking ||
+    forcedChecking ||
+    phase !== "checked";
 
   return {
     ...query,
@@ -284,6 +317,9 @@ export function useMenuRevalidation(menuId: string) {
     isSoftRechecking,
     /** HR1: offline hold 中。UI は shopping gate と同型の接続誘導を出す */
     isOfflineHold: offlineHoldActive,
+    /** HR1: hard/soft 開始〜当該世代の再検証完了まで true。render と ref の両方。 */
+    isActionGateClosed,
+    actionGateClosedRef,
     beginRecheck,
     beginSoftRecheck,
     beginHardRecheck,

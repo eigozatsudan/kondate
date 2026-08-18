@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import type { MenuResultViewModel } from "@shared/contracts/menu-result";
+import { validatedMenuHitsGuaranteePhrase } from "@shared/safety-pure/guarantee-phrases-display";
 import { FlyerUpsellBanner } from "@/features/billing/flyer-upsell-banner";
 import { IdeaMenuSafetyNotice } from "@/features/generation/components/idea-menu-safety-notice";
 import {
@@ -99,6 +100,9 @@ export function IdeaMenuDetailBody({
   // HR5: 欠落 selection / null submission のときは再生成 CTA を閉じる（server 422 を先回り）
   const pantryGateReady =
     pantryQuery.isSuccess && !missingPantrySelections && !sourceSubmissionMissing;
+  // HR3: idea は家族再検証を走らせない。保存本文の保証句は表示も再生成開始も閉じる。
+  const ideaGuaranteeBlocked = validatedMenuHitsGuaranteePhrase(result.menu);
+  const ideaRegenReady = pantryGateReady && !ideaGuaranteeBlocked;
   const pantryGateMessage = pantryQuery.isError
     ? "冷蔵庫を確認できません。通信を確認してから別案を作り直してください。"
     : pantryQuery.isPending
@@ -142,6 +146,14 @@ export function IdeaMenuDetailBody({
     setAccepted(result.isSelected);
   }, [menuId, result.isSelected]);
 
+  // HR4: household と同型。pantry / 保証句ゲートが落ちたシートを残すと
+  // stale 送信 → reserve 後 422 になる。
+  useEffect(() => {
+    if (!ideaRegenReady && sheetMode !== null) {
+      setSheetMode(null);
+    }
+  }, [ideaRegenReady, sheetMode]);
+
   const firstDishId = result.menu.dishes[0]?.id ?? null;
   const dishIdForRegen = selectedDishId ?? firstDishId;
   const canUpdatePostCook = result.pantryPostCookTargets.length > 0;
@@ -175,6 +187,8 @@ export function IdeaMenuDetailBody({
   }, [menuId, queryClient, queryKey, userId]);
 
   const onSubmitReason = async (value: RegenerationReasonInput) => {
+    // HR4: シート props だけでなく submit でも pantry / 保証句を見る
+    if (!ideaRegenReady) return;
     if (sheetMode === "dish") {
       if (dishIdForRegen === null) return;
       await regeneration.startDish(dishIdForRegen, value);
@@ -244,7 +258,13 @@ export function IdeaMenuDetailBody({
             </Button>
           </p>
         ) : null}
-        {actions === undefined ? (
+        {ideaGuaranteeBlocked ? (
+          <Surface as="section" role="alert" tone="notice">
+            <Inset pad={5}>
+              <p>この献立の説明は表示できません。条件を変えて作り直してください。</p>
+            </Inset>
+          </Surface>
+        ) : actions === undefined ? (
           <MenuResult
             result={result}
             mode="idea"
@@ -254,10 +274,10 @@ export function IdeaMenuDetailBody({
             }}
             onSelectedDishChange={setSelectedDishId}
             onRegenerateSelectedDish={() => {
-              if (!pantryGateReady) return;
+              if (!ideaRegenReady) return;
               setSheetMode("dish");
             }}
-            regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
+            regenerateSelectedDishDisabled={dishIdForRegen === null || !ideaRegenReady}
           />
         ) : (
           <MenuResult
@@ -270,10 +290,10 @@ export function IdeaMenuDetailBody({
             }}
             onSelectedDishChange={setSelectedDishId}
             onRegenerateSelectedDish={() => {
-              if (!pantryGateReady) return;
+              if (!ideaRegenReady) return;
               setSheetMode("dish");
             }}
-            regenerateSelectedDishDisabled={dishIdForRegen === null || !pantryGateReady}
+            regenerateSelectedDishDisabled={dishIdForRegen === null || !ideaRegenReady}
           />
         )}
         {acceptError !== null && <p role="alert">{acceptError}</p>}
@@ -297,8 +317,9 @@ export function IdeaMenuDetailBody({
             ) : (
               <Button
                 variant="primary"
-                disabled={accept.isPending}
+                disabled={accept.isPending || ideaGuaranteeBlocked}
                 onClick={() => {
+                  if (ideaGuaranteeBlocked) return;
                   setAcceptError(null);
                   accept.mutate(menuId, {
                     onSuccess: () => {
@@ -319,8 +340,9 @@ export function IdeaMenuDetailBody({
               {!accepted && confirmedSingle ? (
                 <Button
                   variant="secondary"
-                  disabled={accept.isPending}
+                  disabled={accept.isPending || ideaGuaranteeBlocked}
                   onClick={() => {
+                    if (ideaGuaranteeBlocked) return;
                     setAcceptError(null);
                     accept.mutate(menuId, {
                       onSuccess: () => {
@@ -337,9 +359,9 @@ export function IdeaMenuDetailBody({
               ) : null}
               <Button
                 variant="secondary"
-                disabled={!pantryGateReady}
+                disabled={!ideaRegenReady}
                 onClick={() => {
-                  if (!pantryGateReady) return;
+                  if (!ideaRegenReady) return;
                   setSheetMode("whole");
                 }}
               >
@@ -399,6 +421,7 @@ export function IdeaMenuDetailBody({
           <RegenerationSheet
             targetMode="idea"
             usage={usageView}
+            actionsEnabled={ideaRegenReady}
             expiredPantryItems={expiredPantryItems}
             onSubmit={onSubmitReason}
             onCancel={() => {

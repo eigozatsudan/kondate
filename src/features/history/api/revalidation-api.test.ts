@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   isRevalidationActionable,
+  isRevalidationBodyVisible,
   revalidateMenu,
   revalidationResultSchema,
   type RevalidationResult,
@@ -90,16 +91,51 @@ describe("revalidateMenu", () => {
     });
   });
 
-  it("accepts pantry and preference drift as non-blocking changed", async () => {
+  it("accepts pantry drift as non-blocking changed", async () => {
     const changed: RevalidationResult = {
       ...validResult,
       status: "changed",
-      changedDetails: ["pantry_item_removed", "pantry_quantity_changed", "preference_changed"],
+      changedDetails: ["pantry_item_removed", "pantry_quantity_changed"],
     };
     const fetchImpl = vi.fn(() => Promise.resolve(okResponse(changed)));
     const result = await revalidateMenu(MENU_ID, { fetchImpl });
     expect(result.status).toBe("changed");
+    expect(isRevalidationBodyVisible(result)).toBe(true);
     expect(isRevalidationActionable(result)).toBe(true);
+  });
+
+  it("HR2: preference drift keeps changed status but closes body and CTAs", () => {
+    const changed: RevalidationResult = {
+      ...validResult,
+      status: "changed",
+      changedDetails: ["preference_changed"],
+    };
+    expect(isRevalidationBodyVisible(changed)).toBe(false);
+    expect(isRevalidationActionable(changed)).toBe(false);
+  });
+
+  it("HR8: pending processed label warnings keep body visible but close CTAs", () => {
+    const pending: RevalidationResult = {
+      ...validResult,
+      status: "changed",
+      currentLabelWarnings: [
+        {
+          confirmationId: "48000000-0000-4000-8000-000000000001",
+          sourceType: "ingredient",
+          sourceId: "53000000-0000-4000-8000-000000000001",
+          sourcePath: "dishes.0.ingredients.0.name",
+          sourceText: "しょうゆ",
+          allergenId: "wheat",
+          allergenName: "小麦",
+          anonymousMemberRef: "member_1",
+          memberLabel: "子ども",
+          dictionaryVersion: "jp-caa-2026-04.v1",
+          confirmationStatus: "pending",
+        },
+      ],
+    };
+    expect(isRevalidationBodyVisible(pending)).toBe(true);
+    expect(isRevalidationActionable(pending)).toBe(false);
   });
 
   it("accepts all status variants and bounds currentLabelWarnings", async () => {

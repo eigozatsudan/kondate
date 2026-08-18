@@ -13,6 +13,7 @@ const revalidateMenuMock = vi.hoisted(() => vi.fn());
 const channelHandlers = vi.hoisted(() => ({
   members: null as null | (() => void),
   allergies: null as null | (() => void),
+  dislikes: null as null | (() => void),
   statusCallback: null as null | ((status: string) => void),
   unsubscribe: vi.fn(),
 }));
@@ -40,6 +41,7 @@ vi.mock("@/shared/lib/supabase", () => ({
         on: (_event: string, filter: { table?: string }, callback: () => void) => {
           if (filter.table === "household_members") channelHandlers.members = callback;
           if (filter.table === "member_allergies") channelHandlers.allergies = callback;
+          if (filter.table === "member_dislikes") channelHandlers.dislikes = callback;
           return api;
         },
         subscribe: (cb?: (status: string) => void) => {
@@ -91,6 +93,7 @@ describe("useMenuRevalidation", () => {
     vi.clearAllMocks();
     channelHandlers.members = null;
     channelHandlers.allergies = null;
+    channelHandlers.dislikes = null;
     channelHandlers.statusCallback = null;
     revalidateMenuMock.mockResolvedValue(valid);
   });
@@ -173,6 +176,7 @@ describe("useMenuRevalidation", () => {
     });
     expect(channelHandlers.members).not.toBeNull();
     expect(channelHandlers.allergies).not.toBeNull();
+    expect(channelHandlers.dislikes).not.toBeNull();
     const deferred = deferredPromise<RevalidationResult>();
     revalidateMenuMock.mockReturnValueOnce(deferred.promise);
     act(() => {
@@ -253,6 +257,72 @@ describe("useMenuRevalidation", () => {
     });
     expect(result.current.phase).toBe("checking");
     expect(result.current.result).toBeUndefined();
+    act(() => {
+      deferred.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+  });
+
+  it("HR1: beginSoftRecheck closes the action gate before isFetching flips", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    expect(result.current.actionGateClosedRef.current).toBe(false);
+    expect(result.current.isActionGateClosed).toBe(false);
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      result.current.beginSoftRecheck();
+      expect(result.current.actionGateClosedRef.current).toBe(true);
+    });
+    expect(result.current.isActionGateClosed).toBe(true);
+    expect(result.current.phase).toBe("checked");
+    act(() => {
+      deferred.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.isActionGateClosed).toBe(false);
+      expect(result.current.actionGateClosedRef.current).toBe(false);
+    });
+  });
+
+  it("HR1: beginHardRecheck closes the action gate in the same turn", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      result.current.beginHardRecheck();
+      expect(result.current.actionGateClosedRef.current).toBe(true);
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.isActionGateClosed).toBe(true);
+    act(() => {
+      deferred.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+      expect(result.current.isActionGateClosed).toBe(false);
+    });
+  });
+
+  it("HR6: member_dislikes realtime changes start a hard recheck", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      channelHandlers.dislikes?.();
+    });
+    expect(result.current.phase).toBe("checking");
+    expect(result.current.actionGateClosedRef.current).toBe(true);
     act(() => {
       deferred.resolve(valid);
     });
