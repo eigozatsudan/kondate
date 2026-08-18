@@ -577,6 +577,75 @@ function writeAllPendingItemMutationEntries(
 }
 
 /**
+ * S3: このタブが最後に claim/write した item mutate。
+ * 共有 sticky とは別キー。peer の成功 clear は消さない。
+ * このタブの成功 / conflict / mismatch drop だけ忘れる。
+ */
+export const itemMutationLastSentStorageKey = (listId: string) =>
+  `kondate:shopping:item-mutate-last-sent:v1:${listId}`;
+
+function readItemMutationLastSentEntries(listId: string): PendingItemMutationEntry[] {
+  return (
+    readPendingItemMutationEntriesFrom(sessionStorage, itemMutationLastSentStorageKey(listId)) ?? []
+  );
+}
+
+function writeItemMutationLastSentEntries(
+  listId: string,
+  entries: PendingItemMutationEntry[],
+): void {
+  const key = itemMutationLastSentStorageKey(listId);
+  if (entries.length === 0) {
+    removeStorageBestEffort(sessionStorage, key);
+    return;
+  }
+  writeStorageBestEffort(sessionStorage, key, serializePendingItemMutationStore(entries));
+}
+
+function rememberItemMutationLastSent(listId: string, sticky: PendingItemMutationSticky): void {
+  const nowMs = Date.now();
+  const existing = readItemMutationLastSentEntries(listId).filter(
+    (entry) => entry.intentKey !== sticky.intentKey,
+  );
+  writeItemMutationLastSentEntries(listId, [
+    ...existing,
+    {
+      createdAtMs: nowMs,
+      intentKey: sticky.intentKey,
+      request: sticky.request,
+    },
+  ]);
+}
+
+export function readItemMutationLastSent(
+  listId: string,
+  intentKey: string,
+): PendingItemMutationSticky | null {
+  const hit = readItemMutationLastSentEntries(listId).find(
+    (entry) => entry.intentKey === intentKey,
+  );
+  if (hit === undefined) return null;
+  return { intentKey: hit.intentKey, request: hit.request };
+}
+
+/** このタブの端末操作（成功 / conflict / mismatch abandon）で last-sent を捨てる。 */
+export async function forgetItemMutationLastSent(
+  listId: string,
+  intentKey?: string,
+): Promise<void> {
+  await withPendingItemMutationClaimLock(listId, () => {
+    if (intentKey === undefined) {
+      writeItemMutationLastSentEntries(listId, []);
+      return;
+    }
+    writeItemMutationLastSentEntries(
+      listId,
+      readItemMutationLastSentEntries(listId).filter((entry) => entry.intentKey !== intentKey),
+    );
+  });
+}
+
+/**
  * list の sticky を読む。
  * - intentKey 指定: その intent の slot（無ければ null）
  * - 省略: 先頭の live entry（単一 slot 時代のテスト互換。multi 時は任意の 1 件）
@@ -635,6 +704,8 @@ function writePendingItemMutationUnlocked(listId: string, sticky: PendingItemMut
     next.splice(dropIndex, 1);
   }
   writeAllPendingItemMutationEntries(listId, next);
+  // S3: 共有 sticky の peer clear 後も、このタブの同一内容再送は同一 key replay にする
+  rememberItemMutationLastSent(listId, sticky);
 }
 
 /** intent 単位 clear のロック外本体。intentKey 省略時は list 全 slot。 */
@@ -691,12 +762,25 @@ export async function claimItemMutationSticky(
   return withPendingItemMutationClaimLock(listId, () => {
     const existing = readPendingItemMutation(listId, intentKey);
     if (existing !== null && existing.request.listId === listId) {
+      writeMismatchGuardReplay(listId, intentKey, existing.request);
       return existing;
+    }
+    // S3: peer 成功 clear で共有 sticky が消えても、このタブの last-sent で同一 key replay
+    const lastSent = readItemMutationLastSent(listId, intentKey);
+    if (lastSent !== null && lastSent.request.listId === listId) {
+      writeMismatchGuardReplay(listId, intentKey, lastSent.request);
+      return lastSent;
+    }
+    // S4: mismatch 確認後に他タブが mint 済みならその request を replay（新 UUID にしない）
+    const replay = readMismatchGuardReplay(listId, intentKey);
+    if (replay !== null && replay.listId === listId) {
+      return { intentKey, request: replay };
     }
     const request = buildNew();
     const sticky: PendingItemMutationSticky = { intentKey, request };
     // 既に claim lock 内なので unlocked 本体を使う（再帰 request で deadlock しない）
     writePendingItemMutationUnlocked(listId, sticky);
+    writeMismatchGuardReplay(listId, intentKey, request);
     // ロック無し競合や書込失敗時: 同一 intent が既に他タブで勝っていればそちらを使う
     const again = readPendingItemMutation(listId, intentKey);
     if (again !== null && again.request.listId === listId) {
@@ -714,10 +798,23 @@ export async function claimItemMutationSticky(
  * sticky TTL と同窓（24h）。
  * SHOP3 (adversarial 869bbe94): localStorage を multi-tab 正本にし（item sticky と同型）、
  * 他タブでの mismatch abandon 後 dual-add を縮退。session は mirror / legacy 昇格用。
- * 意図的 2 回目 re-add（armed 消費）は維持。content サーバ冪等は product 非対象。
+ * 意図的 2 回目 re-add（このタブが警告済みなら送信）は維持。content サーバ冪等は product 非対象。
+ * S4: pending→armed は item mutation lock と共有。armed 消費は tab-arm（session）単位。
+ * 確認後の mint は共有 replayRequest に残し、他タブは新 UUID しない。
  */
 export const itemMutationMismatchGuardStorageKey = (listId: string) =>
   `kondate:shopping:item-mismatch-guard:v1:${listId}`;
+
+/** このタブが mismatch 警告を出した intent。session のみ。他タブの armed 消費を防ぐ（S4）。 */
+export const itemMutationMismatchGuardTabStorageKey = (listId: string) =>
+  `kondate:shopping:item-mismatch-guard:tab:v1:${listId}`;
+
+const itemMutationMismatchGuardTabStoreSchema = z
+  .object({
+    v: z.literal(1),
+    intentKeys: z.array(z.string().min(1)),
+  })
+  .strict();
 
 const itemMutationMismatchGuardEntrySchema = z
   .object({
@@ -725,6 +822,8 @@ const itemMutationMismatchGuardEntrySchema = z
     /** pending = 未確認 / armed = 警告表示済みで次送信を許可 */
     state: z.enum(["pending", "armed"]),
     atMs: z.number().int().nonnegative(),
+    // S4: 確認後に mint した request。他タブは新 UUID せずこれを replay する
+    replayRequest: shoppingItemMutationRequestSchema.optional(),
   })
   .strict();
 
@@ -818,55 +917,149 @@ function writeMismatchGuardEntries(
   writeStorageBestEffort(sessionStorage, key, payload);
 }
 
-/** mismatch abandon 直後に呼ぶ。同一 intent の次 1 回を確認ブロック対象にする。 */
-export function markItemMutationMismatchGuard(listId: string, intentKey: string): void {
+function readTabArmedIntentKeys(listId: string): string[] {
+  let raw: string | null = null;
+  try {
+    raw = sessionStorage.getItem(itemMutationMismatchGuardTabStorageKey(listId));
+  } catch {
+    return [];
+  }
+  if (raw === null) return [];
+  try {
+    const parsed = itemMutationMismatchGuardTabStoreSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data.intentKeys : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeTabArmedIntentKeys(listId: string, intentKeys: string[]): void {
+  const key = itemMutationMismatchGuardTabStorageKey(listId);
+  if (intentKeys.length === 0) {
+    removeStorageBestEffort(sessionStorage, key);
+    return;
+  }
+  writeStorageBestEffort(sessionStorage, key, JSON.stringify({ v: 1 as const, intentKeys }));
+}
+
+function isTabArmedForIntent(listId: string, intentKey: string): boolean {
+  return readTabArmedIntentKeys(listId).includes(intentKey);
+}
+
+function armTabForIntent(listId: string, intentKey: string): void {
+  const keys = readTabArmedIntentKeys(listId);
+  if (keys.includes(intentKey)) return;
+  writeTabArmedIntentKeys(listId, [...keys, intentKey]);
+}
+
+function disarmTabForIntent(listId: string, intentKey: string): void {
+  writeTabArmedIntentKeys(
+    listId,
+    readTabArmedIntentKeys(listId).filter((key) => key !== intentKey),
+  );
+}
+
+function readMismatchGuardReplay(
+  listId: string,
+  intentKey: string,
+): ShoppingItemMutationRequest | null {
+  const hit = readMismatchGuardEntries(listId, Date.now()).find(
+    (entry) => entry.intentKey === intentKey,
+  );
+  return hit?.replayRequest ?? null;
+}
+
+function writeMismatchGuardReplay(
+  listId: string,
+  intentKey: string,
+  request: ShoppingItemMutationRequest,
+): void {
+  const nowMs = Date.now();
+  const entries = readMismatchGuardEntries(listId, nowMs);
+  const hit = entries.find((entry) => entry.intentKey === intentKey);
+  if (hit === undefined || hit.replayRequest !== undefined) return;
+  writeMismatchGuardEntries(
+    listId,
+    entries.map((entry) =>
+      entry.intentKey === intentKey ? { ...entry, replayRequest: request, atMs: nowMs } : entry,
+    ),
+  );
+}
+
+function markItemMutationMismatchGuardUnlocked(listId: string, intentKey: string): void {
   const nowMs = Date.now();
   const others = readMismatchGuardEntries(listId, nowMs).filter(
     (entry) => entry.intentKey !== intentKey,
   );
   writeMismatchGuardEntries(listId, [...others, { intentKey, state: "pending", atMs: nowMs }]);
+  // 新しい mismatch ではこのタブの警告済みも戻し、再確認させる
+  disarmTabForIntent(listId, intentKey);
 }
 
-/**
- * add_manual 再送前に呼ぶ。
- * @returns true のとき送信を止める（pending→armed へ進め警告を出す）。
- *          false のとき送信してよい（ガード無し、または armed を消費して解除）。
- */
-export function shouldBlockItemMutationAfterMismatch(listId: string, intentKey: string): boolean {
+function shouldBlockItemMutationAfterMismatchUnlocked(listId: string, intentKey: string): boolean {
   const nowMs = Date.now();
   const entries = readMismatchGuardEntries(listId, nowMs);
   const hit = entries.find((entry) => entry.intentKey === intentKey);
   if (hit === undefined) return false;
-  if (hit.state === "pending") {
+  const tabArmed = isTabArmedForIntent(listId, intentKey);
+  if (hit.state === "pending" || !tabArmed) {
     writeMismatchGuardEntries(
       listId,
       entries.map((entry) =>
-        entry.intentKey === intentKey ? { intentKey, state: "armed" as const, atMs: nowMs } : entry,
+        entry.intentKey === intentKey ? { ...entry, state: "armed" as const, atMs: nowMs } : entry,
       ),
     );
+    armTabForIntent(listId, intentKey);
     return true;
   }
-  // armed: 2 回目は許可しガードを外す（意図的な再追加）
-  writeMismatchGuardEntries(
-    listId,
-    entries.filter((entry) => entry.intentKey !== intentKey),
-  );
+  // このタブは警告済み。共有 entry は残し、claim が replay を書いて 1 行に閉じる
   return false;
 }
 
-/** テスト・成功後掃除用 */
-export function clearItemMutationMismatchGuard(listId: string, intentKey?: string): void {
+function clearItemMutationMismatchGuardUnlocked(listId: string, intentKey?: string): void {
   if (intentKey === undefined) {
     const key = itemMutationMismatchGuardStorageKey(listId);
     removeStorageBestEffort(localStorage, key);
     removeStorageBestEffort(sessionStorage, key);
+    writeTabArmedIntentKeys(listId, []);
     return;
   }
-  const nowMs = Date.now();
-  writeMismatchGuardEntries(
-    listId,
-    readMismatchGuardEntries(listId, nowMs).filter((entry) => entry.intentKey !== intentKey),
+  // 成功時: このタブの警告済みだけ外す。共有 replay は他タブの確認後 1 行のために残す
+  disarmTabForIntent(listId, intentKey);
+}
+
+/** mismatch abandon 直後に呼ぶ。同一 intent の次 1 回を確認ブロック対象にする。 */
+export async function markItemMutationMismatchGuard(
+  listId: string,
+  intentKey: string,
+): Promise<void> {
+  await withPendingItemMutationClaimLock(listId, () => {
+    markItemMutationMismatchGuardUnlocked(listId, intentKey);
+  });
+}
+
+/**
+ * add_manual 再送前に呼ぶ。item mutation lock 下で pending→armed を直列化する（S4）。
+ * @returns true のとき送信を止める（このタブが未確認なら pending→armed し警告を出す）。
+ *          false のとき送信してよい（ガード無し、またはこのタブが警告済み）。
+ */
+export async function shouldBlockItemMutationAfterMismatch(
+  listId: string,
+  intentKey: string,
+): Promise<boolean> {
+  return withPendingItemMutationClaimLock(listId, () =>
+    shouldBlockItemMutationAfterMismatchUnlocked(listId, intentKey),
   );
+}
+
+/** テストは引数なしで共有+tab を全消し。成功時は intent 指定でこのタブの arm だけ外す。 */
+export async function clearItemMutationMismatchGuard(
+  listId: string,
+  intentKey?: string,
+): Promise<void> {
+  await withPendingItemMutationClaimLock(listId, () => {
+    clearItemMutationMismatchGuardUnlocked(listId, intentKey);
+  });
 }
 
 export type ReconcilableMenuSource = { sourceMenuId: string; sourceMenuVersion: number };

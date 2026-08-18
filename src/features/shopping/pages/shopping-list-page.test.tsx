@@ -32,6 +32,7 @@ import {
   clearPendingItemMutation,
   clearShoppingCommand,
   fetchReconcilableMenuSource,
+  forgetItemMutationLastSent,
   isCreateShoppingStickyReusable,
   isReconcileShoppingStickyReusable,
   itemMutationMismatchGuardStorageKey,
@@ -1199,44 +1200,44 @@ describe("ShoppingListPage mutations", () => {
     expect(secondPayload).toMatchObject({ displayName: "白菜" });
   });
 
-  it("mismatch guard helpers arm then release same intentKey (SHOP1 unit)", () => {
-    clearItemMutationMismatchGuard(LIST_ID);
+  it("mismatch guard helpers arm then release same intentKey (SHOP1 unit)", async () => {
+    await clearItemMutationMismatchGuard(LIST_ID);
     const intentKey = JSON.stringify({
       operation: "add_manual",
       itemId: null,
       payload: { displayName: "白菜" },
     });
-    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
-    markItemMutationMismatchGuard(LIST_ID, intentKey);
-    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
+    await markItemMutationMismatchGuard(LIST_ID, intentKey);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
     // 2 回目は許可してガード解除
-    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
-    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
   });
 
-  it("shares mismatch guard via localStorage when session is empty (SHOP3 multi-tab)", () => {
+  it("shares mismatch guard via localStorage when session is empty (SHOP3 multi-tab)", async () => {
     // mismatch abandon 後に新タブが session 空でも local 正本から 1 回ブロックする。
-    clearItemMutationMismatchGuard(LIST_ID);
+    await clearItemMutationMismatchGuard(LIST_ID);
     const intentKey = JSON.stringify({
       operation: "add_manual",
       itemId: null,
       payload: { displayName: "白菜" },
     });
-    markItemMutationMismatchGuard(LIST_ID, intentKey);
+    await markItemMutationMismatchGuard(LIST_ID, intentKey);
     const guardKey = itemMutationMismatchGuardStorageKey(LIST_ID);
     expect(localStorage.getItem(guardKey)).not.toBeNull();
     expect(sessionStorage.getItem(guardKey)).not.toBeNull();
     // 他タブ相当: session だけ空（per-tab）
     sessionStorage.removeItem(guardKey);
-    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
     // 読取で session にも promote
     expect(sessionStorage.getItem(guardKey)).not.toBeNull();
     // armed 消費で許可（意図的再追加は維持）
-    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
   });
 
-  it("promotes legacy session-only mismatch guard into localStorage (SHOP3)", () => {
-    clearItemMutationMismatchGuard(LIST_ID);
+  it("promotes legacy session-only mismatch guard into localStorage (SHOP3)", async () => {
+    await clearItemMutationMismatchGuard(LIST_ID);
     const intentKey = "intent-legacy-guard";
     const guardKey = itemMutationMismatchGuardStorageKey(LIST_ID);
     sessionStorage.setItem(
@@ -1247,8 +1248,24 @@ describe("ShoppingListPage mutations", () => {
       }),
     );
     expect(localStorage.getItem(guardKey)).toBeNull();
-    expect(shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
     expect(localStorage.getItem(guardKey)).not.toBeNull();
+  });
+
+  it("S4: peer tab first click still blocks after this tab armed the mismatch guard", async () => {
+    // 共有 armed を他タブが初回で消費すると確認なし送信になる。
+    // session を空にしても local 正本の pending/armed は残る。他タブ初回はブロック。
+    await clearItemMutationMismatchGuard(LIST_ID);
+    const intentKey = JSON.stringify({
+      operation: "add_manual",
+      itemId: null,
+      payload: { displayName: "白菜" },
+    });
+    await markItemMutationMismatchGuard(LIST_ID, intentKey);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
+    sessionStorage.clear();
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
   });
 
   it("reuses item mutation sticky from sessionStorage after remount (SHOP2)", async () => {
@@ -1298,9 +1315,9 @@ describe("ShoppingListPage mutations", () => {
     expect(readPendingItemMutation(LIST_ID)).toBeNull();
   });
 
-  it("mints a new key when peer tab cleared Storage while Map may still hold sticky (SHOP2)", async () => {
-    // Tab A が失応答後 Map に K1 を持ち、Tab B が成功 clear したあと、
-    // 同一フォーム再送が Storage 欠落を正本と見て新 key を mint すること（under-add 回避）。
+  it("S3: reuses last-sent key after peer tab cleared Storage so add_manual is not reminted", async () => {
+    // Tab A 失応答のあと Tab B が成功 clear しても、同一内容再送は K1 replay。
+    // Storage 欠落を新 UUID mint にすると add_manual が二重 INSERT になる。
     const stickyRequest = shoppingItemMutationRequestSchema.parse({
       operation: "add_manual",
       itemId: null,
@@ -1336,7 +1353,7 @@ describe("ShoppingListPage mutations", () => {
       expect(mutateShoppingItem).toHaveBeenCalledTimes(1);
     });
     expect(mutateShoppingItem.mock.calls[0]?.[0].idempotencyKey).toBe(stickyRequest.idempotencyKey);
-    // peer 成功 clear: Storage だけ消す（同一タブ Map は remount 無しで残る）
+    // peer 成功 clear: 共有 sticky だけ消す（このタブの last-sent は残す）
     await clearPendingItemMutation(LIST_ID, intentKey);
     expect(readPendingItemMutation(LIST_ID, intentKey)).toBeNull();
 
@@ -1344,15 +1361,14 @@ describe("ShoppingListPage mutations", () => {
       listId: LIST_ID,
       version: 2,
       itemId: "40000000-0000-4000-8000-0000000000c6",
-      replayed: false,
+      replayed: true,
     });
     await user.click(screen.getByRole("button", { name: "追加する" }));
     await waitFor(() => {
       expect(mutateShoppingItem).toHaveBeenCalledTimes(2);
     });
     const sent = mutateShoppingItem.mock.calls[1]?.[0];
-    // Storage 空 → 新 mint。適用済み K1 を Map から再利用しない。
-    expect(sent?.idempotencyKey).not.toBe(stickyRequest.idempotencyKey);
+    expect(sent?.idempotencyKey).toBe(stickyRequest.idempotencyKey);
     expect(sent?.payload).toMatchObject({ displayName: "もやし" });
   });
 
@@ -2733,6 +2749,70 @@ describe("claimItemMutationSticky (SHOP6 pre-write concurrent mint)", () => {
     expect(lockNames.every((name) => name === pendingItemMutationClaimLockName(LIST_ID))).toBe(
       true,
     );
+  });
+
+  it("S3: claim reuses last-sent key after peer cleared shared sticky", async () => {
+    const existing = buildRequest("40000000-0000-4000-8000-0000000000c5");
+    const intentKey = "intent-s3-last-sent";
+    await writePendingItemMutation(LIST_ID, { intentKey, request: existing });
+    await clearPendingItemMutation(LIST_ID, intentKey);
+    expect(readPendingItemMutation(LIST_ID, intentKey)).toBeNull();
+    const claimed = await claimItemMutationSticky(LIST_ID, intentKey, () =>
+      buildRequest("40000000-0000-4000-8000-0000000000c7"),
+    );
+    expect(claimed.request.idempotencyKey).toBe(existing.idempotencyKey);
+  });
+
+  it("S3: forgetting last-sent after this tab terminals allows a new mint", async () => {
+    const existing = buildRequest("40000000-0000-4000-8000-0000000000c5");
+    const intentKey = "intent-s3-forget";
+    await writePendingItemMutation(LIST_ID, { intentKey, request: existing });
+    await clearPendingItemMutation(LIST_ID, intentKey);
+    await forgetItemMutationLastSent(LIST_ID, intentKey);
+    const claimed = await claimItemMutationSticky(LIST_ID, intentKey, () =>
+      buildRequest("40000000-0000-4000-8000-0000000000c8"),
+    );
+    expect(claimed.request.idempotencyKey).toBe("40000000-0000-4000-8000-0000000000c8");
+  });
+
+  it("S4: mismatch guard RMW takes the item mutation claim lock", async () => {
+    const lockNames: string[] = [];
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: <T,>(name: string, callback: () => T) => {
+          lockNames.push(name);
+          return Promise.resolve(callback());
+        },
+      },
+    });
+    const intentKey = "intent-s4-lock";
+    await markItemMutationMismatchGuard(LIST_ID, intentKey);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
+    expect(lockNames.length).toBeGreaterThanOrEqual(2);
+    expect(lockNames.every((name) => name === pendingItemMutationClaimLockName(LIST_ID))).toBe(
+      true,
+    );
+  });
+
+  it("S4: claim after mismatch confirm reuses shared replay instead of reminting", async () => {
+    // 確認後の mint を共有し、他タブ session が空でも新 UUID にしない（1 行まで）。
+    const intentKey = "intent-s4-replay";
+    await markItemMutationMismatchGuard(LIST_ID, intentKey);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(true);
+    expect(await shouldBlockItemMutationAfterMismatch(LIST_ID, intentKey)).toBe(false);
+    const first = await claimItemMutationSticky(LIST_ID, intentKey, () =>
+      buildRequest("40000000-0000-4000-8000-0000000000d1"),
+    );
+    await clearPendingItemMutation(LIST_ID, intentKey);
+    const guardRaw = localStorage.getItem(itemMutationMismatchGuardStorageKey(LIST_ID));
+    sessionStorage.clear();
+    if (guardRaw !== null) {
+      localStorage.setItem(itemMutationMismatchGuardStorageKey(LIST_ID), guardRaw);
+    }
+    const second = await claimItemMutationSticky(LIST_ID, intentKey, () =>
+      buildRequest("40000000-0000-4000-8000-0000000000d2"),
+    );
+    expect(second.request.idempotencyKey).toBe(first.request.idempotencyKey);
   });
 });
 

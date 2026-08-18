@@ -12,6 +12,7 @@ import {
   claimItemMutationSticky,
   clearItemMutationMismatchGuard,
   clearPendingItemMutation,
+  forgetItemMutationLastSent,
   markItemMutationMismatchGuard,
   mutateShoppingItem,
   pendingItemMutationStorageKey,
@@ -74,20 +75,21 @@ export function ShoppingListPage() {
   // SHOP3: shopping_safety_fingerprint_changed は適用済み+early FP fail もあり得るため
   // sticky を保持し、同一 intent の再送鍵を固定して dual-add に転化させない。
   // SHOP2 (adversarial multi-slot): ref / Storage は intentKey 単位。異 intent を clobber しない。
-  // SHOP2 (adversarial 869bbe94): Storage が multi-tab 正本。Map だけ残る peer-clear 後は
-  // 適用済み key 再利用 → under-add になるため load は毎回 Storage を再検証する。
+  // SHOP2 (adversarial 869bbe94): 共有 sticky の正本は Storage。peer-clear 後の同一内容再送は
+  // last-sent（このタブ session）で同一 key replay し、新 UUID の二重 INSERT を閉じる（S3）。
   // SHOP3 (adversarial): preflight の live FP が sticky と違うときは **同一 key のまま FP だけ
   // 書き戻して**再送する。適用済みなら hash mismatch → form abandon で dual-add を避ける。
   // SHOP1 (adversarial): mismatch 後の手動再入力は mismatch guard で 1 回確認ブロック（RLS 非緩和）。
   // SHOP1 (adversarial 869bbe94): write/clear は claim と同じ Web Lock で multi-slot RMW を直列化。
+  // S4: mismatch guard の pending→armed も同じ lock。他タブ初回は tab-arm が無く確認なし送信しない。
   const pendingItemMutationRef = useRef(new Map<string, PendingItemMutationSticky>());
   const [itemMutationPending, setItemMutationPending] = useState(false);
 
   const itemStickyMapKey = (listId: string, intentKey: string) => `${listId}\0${intentKey}`;
 
   /**
-   * Storage を multi-tab 正本として読む（SHOP2 multi-slot + peer-clear）。
-   * Map はキャッシュ。Storage 欠落時は Map の stale を捨て claim の新 mint へ進ませる。
+   * 共有 sticky を読む（SHOP2 multi-slot）。Map はキャッシュ。
+   * Storage 欠落時は Map を捨てる。S3 の同一 key replay は claim の last-sent。
    */
   const loadItemMutationSticky = (
     listId: string,
@@ -111,6 +113,8 @@ export function ShoppingListPage() {
   const dropItemMutationSticky = async (listId: string, intentKey: string): Promise<void> => {
     pendingItemMutationRef.current.delete(itemStickyMapKey(listId, intentKey));
     await clearPendingItemMutation(listId, intentKey);
+    // このタブの端末操作。peer clear では呼ばないので last-sent は残る（S3）。
+    await forgetItemMutationLastSent(listId, intentKey);
   };
 
   // SHOP2: 他タブの localStorage clear/update で Map を即 purge（submit 前の stale 窓を縮退）
@@ -225,10 +229,10 @@ export function ShoppingListPage() {
     try {
       setMutationError(null);
       // SHOP1: mismatch abandon 後の同内容手動再入力。1 回目は送信せず確認を求め dual-add を縮退。
-      // 2 回目（armed 消費）で新 key 送信を許可。RLS / request_hash 冪等は非緩和。
+      // 2 回目（このタブが警告済み）で送信を許可。S4: lock + tab-arm で他タブ初回の確認なし送信を閉じる。
       if (
         value.operation === "add_manual" &&
-        shouldBlockItemMutationAfterMismatch(list.id, intentKey)
+        (await shouldBlockItemMutationAfterMismatch(list.id, intentKey))
       ) {
         setMutationError(
           "同じ内容はすでにリストへ追加済みの可能性があります。リストを確認し、まだ無ければもう一度「追加する」を押してください",
@@ -281,7 +285,7 @@ export function ShoppingListPage() {
       await mutateShoppingItem(request);
       // 成功（replay 含む）したら sticky を捨て、次の意図的な同内容 add は新 key になる
       await dropItemMutationSticky(list.id, intentKey);
-      clearItemMutationMismatchGuard(list.id, intentKey);
+      await clearItemMutationMismatchGuard(list.id, intentKey);
       shouldClearUi = true;
       // 成功時のみ確認行用 id を更新（失敗後の refetch でも pending を汚さない）
       if (
@@ -333,7 +337,7 @@ export function ShoppingListPage() {
         // SHOP1: 手動再入力 dual-add は mismatch guard（1 回確認ブロック）でさらに縮退。
         await dropItemMutationSticky(list.id, intentKey);
         if (value.operation === "add_manual") {
-          markItemMutationMismatchGuard(list.id, intentKey);
+          await markItemMutationMismatchGuard(list.id, intentKey);
         }
         setMutationError(
           "すでにリストへ反映済みの可能性があります。リストを確認してから操作してください",
