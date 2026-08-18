@@ -219,11 +219,18 @@ test("waits for the latest draft save before requesting emergency menus", async 
   const observedSave = new Promise<Readonly<Record<string, unknown>>>((resolve) => {
     observeSave = resolve;
   });
-  const emergencyRequests: string[] = [];
+  const emergencyRequests: { method: string; body: unknown }[] = [];
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/api/emergency-menus") {
-      emergencyRequests.push(request.url());
+    if (new URL(request.url()).pathname !== "/api/emergency-menus") return;
+    let body: unknown = null;
+    if (request.method() === "POST") {
+      try {
+        body = request.postDataJSON();
+      } catch {
+        body = null;
+      }
     }
+    emergencyRequests.push({ method: request.method(), body });
   });
   await page.route("**/rest/v1/rpc/save_generation_draft", async (route) => {
     const body = JSON.parse(route.request().postData() ?? "null") as unknown;
@@ -287,11 +294,16 @@ test("waits for the latest draft save before requesting emergency menus", async 
   await expect.poll(() => emergencyRequests.length).toBe(1);
   const emergencyRequest = emergencyRequests.at(0);
   if (emergencyRequest === undefined) throw new Error("緊急献立のリクエストを確認できませんでした");
-  const requestUrl = new URL(emergencyRequest);
-  expect(requestUrl.searchParams.get("meal")).toBe("lunch");
-  expect(requestUrl.searchParams.get("targetMode")).toBe("household");
-  expect(requestUrl.searchParams.get("targetMemberIds")?.split(",")).toEqual([selectedMemberId]);
-  expect(requestUrl.searchParams.get("pantryItemIds")?.split(",")).toEqual([selectedPantryItemId]);
+  expect(emergencyRequest.method).toBe("POST");
+  const body = emergencyRequest.body;
+  expect(body).toEqual(
+    expect.objectContaining({
+      mealType: "lunch",
+      targetMode: "household",
+      targetMemberIds: [selectedMemberId],
+      pantryItemIds: [selectedPantryItemId],
+    }),
+  );
 });
 
 async function expectCompleteCandidate(
