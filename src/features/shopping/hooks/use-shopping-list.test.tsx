@@ -173,4 +173,27 @@ describe("useShoppingSafetyGate soft vs hard (SHOP4)", () => {
     expect(result.current.error).toBe(true);
     expect(result.current.blocked).toBe(true);
   });
+
+  it("HR10: hard refresh arms blockedRef before checking state flushes", async () => {
+    fetchActiveShoppingListMock.mockResolvedValue(makeList());
+    revalidateActiveShoppingListMock.mockResolvedValue(makeValid());
+
+    const { result } = renderHook(() => useShoppingSafetyGate(), { wrapper });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.blocked).toBe(false);
+    expect(result.current.blockedRef.current).toBe(false);
+
+    act(() => {
+      window.dispatchEvent(new Event(householdSafetyChangedEvent));
+      // setState(checking) の flush を待たずに、同一ターンで Apply が読む値
+      expect(result.current.blockedRef.current).toBe(true);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
 });

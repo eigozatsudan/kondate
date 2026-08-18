@@ -256,7 +256,11 @@ export function HouseholdMenuDetailBody({
     menuId.length === 0 ||
     (!shoppingList.isSuccess && (shoppingList.isPending || shoppingList.isLoading));
   const shoppingMutateBlocked =
-    !actionsEnabled || shoppingGate.blocked || shoppingListBusy || shoppingList.isFetching;
+    !actionsEnabled ||
+    shoppingGate.blocked ||
+    shoppingGate.blockedRef.current ||
+    shoppingListBusy ||
+    shoppingList.isFetching;
   // 開く条件（ボタン disabled / auto-open）。閉じる条件とは分離（L8）
   const canOpenCreateSheet = actionsEnabled && !shoppingListBusy && !createList.isPending;
   // 一時的な phase=checking ではシートを閉じない（invalid/error のみ fail-closed）
@@ -288,6 +292,18 @@ export function HouseholdMenuDetailBody({
   revalidationFingerprintRef.current = revalidation.result?.safetyFingerprint;
   // HR3: preview 開始時 FP。Apply 前に照合して hard 後の stale diff 適用を閉じる
   const reconcileDiffFingerprintRef = useRef<string | null>(null);
+  const shoppingGateBlockedRef = shoppingGate.blockedRef;
+  // HR10: Apply / claim 後は render クロージャではなく最新 ref を読む。
+  // shoppingMutateBlocked は isFetching を含む（シートの safetyBlocked と同型）。
+  const isReconcileApplyBlockedNow = (): boolean =>
+    shoppingMutateBlockedRef.current ||
+    shoppingGateBlockedRef.current ||
+    (!usingInjectedRevalidation && live.actionGateClosedRef.current);
+  // HR10: resume / mutate 直前。isFetching では止めない（HR9 の resume 契約）
+  const isReconcileSafetyClosedNow = (): boolean =>
+    !actionsEnabledRef.current ||
+    shoppingGateBlockedRef.current ||
+    (!usingInjectedRevalidation && live.actionGateClosedRef.current);
 
   // 安全 fail-closed: create/reconcile シートを閉じる（isPending では閉じない）
   useEffect(() => {
@@ -530,8 +546,9 @@ export function HouseholdMenuDetailBody({
     command: ReconcileShoppingListRequest,
     stickyTargetId: string,
   ) => {
-    // HR9: 献立 gate が閉じているあいだは resume も送らない
-    if (!actionsEnabled || shoppingGate.blocked) return;
+    // HR9 + HR10: 献立 / list gate が閉じているあいだは resume も送らない。
+    // render クロージャではなく ref を再読する（stale submit が claim 後に POST しない）。
+    if (isReconcileSafetyClosedNow()) return;
     try {
       await reconcileList.mutateAsync({ listId, input: command });
       await finishShoppingCommand("reconcile", stickyTargetId);
@@ -993,12 +1010,19 @@ export function HouseholdMenuDetailBody({
               safetyBlocked={shoppingMutateBlocked}
               onApply={(approval) => {
                 const target = reconcileTarget.data;
-                // HR3: Apply 直前に gate と preview 時 FP を再確認（hard 後の stale diff 適用を閉じる）
-                if (shoppingMutateBlocked || target === null) return;
+                // HR10: render の shoppingMutateBlocked ではなく ref / live gate を再読する。
+                // soft/hard 開始と同ターンでも actionGateClosedRef / shopping blockedRef が倒れている。
+                if (target === null) return;
+                if (isReconcileApplyBlockedNow()) {
+                  setShoppingError(
+                    "家族設定の確認中です。確認が終わってからもう一度お試しください",
+                  );
+                  return;
+                }
                 const stickyTargetId = reconcileCommandTargetId(activeList.id, menuId);
                 if (
                   reconcileDiffFingerprintRef.current !== null &&
-                  reconcileDiffFingerprintRef.current !== revalidation.result?.safetyFingerprint
+                  reconcileDiffFingerprintRef.current !== revalidationFingerprintRef.current
                 ) {
                   setShoppingError("家族設定が変わったため、差分を開き直してください");
                   clearShoppingResumeSuppress("reconcile", stickyTargetId);
@@ -1032,6 +1056,14 @@ export function HouseholdMenuDetailBody({
                       previewedQuantities,
                     }),
                 ).then((command) => {
+                  // claim 待ちのあいだに soft/hard が始まったら stale command を送らない。
+                  // sticky は残し、gate 復帰後の resume に委ねる（HR9）。
+                  if (isReconcileApplyBlockedNow()) {
+                    setShoppingError(
+                      "家族設定の確認中です。確認が終わってからもう一度お試しください",
+                    );
+                    return;
+                  }
                   void submitReconcile(listId, command, stickyTargetId);
                 });
               }}

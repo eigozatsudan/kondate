@@ -1251,6 +1251,35 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByRole("heading", { name: "献立変更の差分" })).toBeVisible();
   });
 
+  it("HR10: same-turn household change does not apply stale reconcile diff", async () => {
+    shoppingApi.fetchReconcilableMenuSource.mockResolvedValue({
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 2,
+    });
+    const user = userEvent.setup();
+    // 注入だと live.actionGateClosedRef を見ない。本番と同じ live 再検証を使う
+    renderHistoryDetail();
+
+    const reconcile = await screen.findByRole("button", { name: "買い物リストの差分を見る" });
+    await waitFor(() => {
+      expect(reconcile).toBeEnabled();
+    });
+    await user.click(reconcile);
+    const apply = await screen.findByRole("button", { name: "選んだ変更を反映" });
+    expect(apply).toBeEnabled();
+
+    act(() => {
+      fireSafetySignal("same-tab-event");
+      apply.click();
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(shoppingApi.reconcileShoppingListRequest).not.toHaveBeenCalled();
+  });
+
   it("auto-opens create sheet from /history/:id?for=shopping when household can create", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
     renderHistoryDetail({

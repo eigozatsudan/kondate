@@ -52,6 +52,9 @@ export function useShoppingSafetyGate() {
   const cache = useQueryClient();
   const userId = useAuth().session?.user.id;
   const epoch = useRef(0);
+  // HR10: hard refresh / offline の setState flush 前に Apply が stale ready を見ないよう、
+  // 開始と同ターンで倒す。render の blocked は従来どおり phase 派生のまま。
+  const blockedRef = useRef(true);
   const [state, setState] = useState<
     | { phase: "checking" }
     | {
@@ -72,13 +75,15 @@ export function useShoppingSafetyGate() {
       },
     ) => {
       if (epoch.current !== current) return;
-      if (checked.status === "valid")
+      if (checked.status === "valid") {
+        blockedRef.current = false;
         setState({
           phase: "ready",
           safetyFingerprint: checked.safetyFingerprint,
           currentLabelWarnings: checked.currentLabelWarnings,
         });
-      else
+      } else {
+        blockedRef.current = true;
         setState({
           phase: "blocked",
           message: checked.issues.map((issue) => issue.message).join("。"),
@@ -86,6 +91,7 @@ export function useShoppingSafetyGate() {
           // 真の list invalid。offline / catch 503 とは分ける（SHOP-R1）。
           cause: "invalid",
         });
+      }
     },
     [],
   );
@@ -93,6 +99,8 @@ export function useShoppingSafetyGate() {
   const refresh = useCallback(async () => {
     const ownerId = userId ?? "missing";
     const current = ++epoch.current;
+    // HR10: setState(checking) より先に ref を倒す（同一ターンの reconcile Apply）
+    blockedRef.current = true;
     setState({ phase: "checking" });
     try {
       await cache.invalidateQueries({ queryKey: shoppingKeys.active(ownerId), exact: true });
@@ -102,19 +110,23 @@ export function useShoppingSafetyGate() {
         staleTime: 0,
       });
       if (list === null) {
-        if (epoch.current === current)
+        if (epoch.current === current) {
+          blockedRef.current = false;
           setState({ phase: "ready", safetyFingerprint: null, currentLabelWarnings: [] });
+        }
         return;
       }
       const checked = await revalidateActiveShoppingList(list.id);
       applyChecked(current, checked);
     } catch {
-      if (epoch.current === current)
+      if (epoch.current === current) {
+        blockedRef.current = true;
         setState({
           phase: "blocked",
           message: "現在の家族設定を確認できませんでした",
           cause: "temporary",
         });
+      }
     }
   }, [applyChecked, cache, userId]);
   /**
@@ -147,12 +159,14 @@ export function useShoppingSafetyGate() {
       }
       applyChecked(current, checked);
     } catch {
-      if (epoch.current === current)
+      if (epoch.current === current) {
+        blockedRef.current = true;
         setState({
           phase: "blocked",
           message: "現在の家族設定を確認できませんでした",
           cause: "temporary",
         });
+      }
     }
   }, [applyChecked, cache, userId]);
   useEffect(() => {
@@ -170,6 +184,7 @@ export function useShoppingSafetyGate() {
     };
     const offline = () => {
       epoch.current += 1;
+      blockedRef.current = true;
       setState({
         phase: "blocked",
         message: "ネット接続後に現在の家族設定を確認してください",
@@ -230,6 +245,7 @@ export function useShoppingSafetyGate() {
             if (state === "SUBSCRIBED") void refresh();
             if (state === "CHANNEL_ERROR" || state === "TIMED_OUT") {
               epoch.current += 1;
+              blockedRef.current = true;
               setState({
                 phase: "blocked",
                 message: "現在の家族設定の更新を確認できませんでした",
@@ -260,6 +276,8 @@ export function useShoppingSafetyGate() {
   }, [refresh]);
   return {
     blocked: state.phase !== "ready",
+    // HR10: hard 開始と同ターンの reconcile Apply が render の blocked=false を見ない
+    blockedRef,
     checking: state.phase === "checking",
     error: state.phase === "blocked",
     // 再検証が status!==valid のときだけ true。offline / 一時 503 /
