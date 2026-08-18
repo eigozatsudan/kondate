@@ -292,6 +292,92 @@ describe("S8 closedHttpErrorDetails / handleError", () => {
     expect(text).not.toContain("アレルギーを確認してください");
   });
 
+  it("closes name+allergy without honorific, 君, and phone numbers (SC2)", async () => {
+    const nameAllergy = handleError(
+      new HttpError(400, "invalid_request", "山田太郎の小麦アレルギーを確認してください"),
+    );
+    const nameAllergyBody = (await nameAllergy.json()) as {
+      ok: false;
+      error: { code: string; message: string };
+    };
+    expect(nameAllergyBody.error.code).toBe("invalid_request");
+    expect(nameAllergyBody.error.message).toBe("処理を完了できませんでした");
+    const nameAllergyText = JSON.stringify(nameAllergyBody);
+    expect(nameAllergyText).not.toContain("山田");
+    expect(nameAllergyText).not.toContain("太郎");
+    expect(nameAllergyText).not.toContain("小麦");
+    expect(nameAllergyText).not.toContain("アレルギーを確認してください");
+
+    const customAllergy = handleError(
+      new HttpError(400, "invalid_request", "そば粉アレルギーを確認してください"),
+    );
+    const customAllergyBody = (await customAllergy.json()) as {
+      ok: false;
+      error: { message: string };
+    };
+    expect(customAllergyBody.error.message).toBe("処理を完了できませんでした");
+    expect(JSON.stringify(customAllergyBody)).not.toContain("そば粉");
+
+    const kun = handleError(
+      new HttpError(400, "invalid_request", "山田君の連絡先を確認してください"),
+    );
+    const kunBody = (await kun.json()) as { ok: false; error: { message: string } };
+    expect(kunBody.error.message).toBe("処理を完了できませんでした");
+    const kunText = JSON.stringify(kunBody);
+    expect(kunText).not.toContain("山田");
+    expect(kunText).not.toContain("山田君");
+
+    const phone = handleError(
+      new HttpError(400, "invalid_request", "090-1234-5678へ連絡してください"),
+    );
+    const phoneBody = (await phone.json()) as { ok: false; error: { message: string } };
+    expect(phoneBody.error.message).toBe("処理を完了できませんでした");
+    const phoneText = JSON.stringify(phoneBody);
+    expect(phoneText).not.toContain("090");
+    expect(phoneText).not.toContain("1234");
+    expect(phoneText).not.toContain("5678");
+
+    const compactPhone = handleError(
+      new HttpError(400, "invalid_request", "連絡先は09012345678です"),
+    );
+    const compactPhoneBody = (await compactPhone.json()) as { error: { message: string } };
+    expect(compactPhoneBody.error.message).toBe("処理を完了できませんでした");
+    expect(JSON.stringify(compactPhoneBody)).not.toContain("09012345678");
+  });
+
+  it("keeps closed allergy and quota copy that is not free-text (SC2)", async () => {
+    const allergenMissing = handleError(
+      new HttpError(
+        422,
+        "allergen_missing",
+        "アレルギー情報の登録が必要です。家族の設定を確認してください。",
+      ),
+    );
+    const allergenMissingBody = (await allergenMissing.json()) as { error: { message: string } };
+    expect(allergenMissingBody.error.message).toBe(
+      "アレルギー情報の登録が必要です。家族の設定を確認してください。",
+    );
+
+    const quota = handleError(
+      new HttpError(
+        429,
+        "user_daily_limit",
+        "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+      ),
+    );
+    const quotaBody = (await quota.json()) as { error: { code: string; message: string } };
+    expect(quotaBody.error.code).toBe("user_daily_limit");
+    expect(quotaBody.error.message).toBe(
+      "本日の作成上限に達しています。明日0:00（日本時間）以降にお試しください。",
+    );
+
+    const flyerWeek = handleError(
+      new HttpError(403, "flyer_requires_plus", "チラシ写真から 1 週間の献立は Plus の機能です。"),
+    );
+    const flyerWeekBody = (await flyerWeek.json()) as { error: { message: string } };
+    expect(flyerWeekBody.error.message).toBe("チラシ写真から 1 週間の献立は Plus の機能です。");
+  });
+
   it("omits details entirely when only unknown keys were provided", async () => {
     const response = handleError(
       new HttpError(500, "request_failed", "処理を完了できませんでした", {

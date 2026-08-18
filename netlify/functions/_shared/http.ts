@@ -257,6 +257,29 @@ function closedHttpErrorCode(raw: string): string {
 const closedHttpErrorMessageFallback = "処理を完了できませんでした";
 
 /**
+ * 製品コピーの閉じた「アレルギー○」だけを除き、残った アレルギー は自由文とみなす。
+ * 氏名＋品目（小麦アレルギー）やカスタムアレルギーを wire に出さない。
+ */
+function hasAllergyFreeText(raw: string): boolean {
+  const withoutClosed = raw.replace(
+    /(?:登録されたアレルギー内容|自由登録アレルギー|登録アレルギー|アレルギー確認|アレルギー情報|アレルギー条件|アレルギー内容|アレルギー食材)/gu,
+    "",
+  );
+  return /アレルギー/u.test(withoutClosed);
+}
+
+/**
+ * 国内電話らしい 10–11 桁。全角数字も見る。
+ * 製品コピーの「明日0:00」「1 週間」は桁不足なので落とさない。
+ */
+function hasJapanesePhoneNumber(raw: string): boolean {
+  const halfWidth = raw.replace(/[０-９]/gu, (ch) =>
+    String.fromCharCode(ch.charCodeAt(0) - 0xfee0),
+  );
+  return /(?:\+81|0)(?:\d[-‐−–—ー－\s]?){8,10}\d/u.test(halfWidth);
+}
+
+/**
  * 既存の閉じた日本語 message を通し、email / stack / 人名混じり free-text は潰す。
  * 製品語（JSON / JPEG / PNG / WebP / Plus / multipart / ID / AI）は現行文言に残る。
  */
@@ -266,8 +289,12 @@ function closedHttpErrorMessage(raw: string): string {
   const withoutProductTokens = raw.replace(/\b(?:JSON|JPEG|PNG|WebP|Plus|multipart|ID|AI)\b/gu, "");
   if (/[A-Za-z]/u.test(withoutProductTokens)) return closedHttpErrorMessageFallback;
   if (!/[\u3040-\u30ff\u4e00-\u9fff]/u.test(raw)) return closedHttpErrorMessageFallback;
-  // 人名混じり（敬称付き和文）を潰す。閉じた製品コピーは さん/様 を含まない。
-  if (/[一-龯ぁ-んァ-ン]{1,4}(?:ちゃん|くん|さん|様)/u.test(raw)) {
+  // 人名混じり（敬称付き和文）。製品コピーは さん/様/君 を含まない。
+  if (/[一-龯ぁ-んァ-ン]{1,4}(?:ちゃん|くん|さん|様|君)/u.test(raw)) {
+    return closedHttpErrorMessageFallback;
+  }
+  // 氏名なしの品目・自由文アレルギー、および和文に混ざった電話番号。
+  if (hasAllergyFreeText(raw) || hasJapanesePhoneNumber(raw)) {
     return closedHttpErrorMessageFallback;
   }
   return raw;
