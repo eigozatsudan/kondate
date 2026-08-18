@@ -3,7 +3,8 @@
  * プラットフォーム硬上限は 60s・非設定。アプリは headroom を残して必ず内側に収める。
  * 変更は設計改訂 + env / preflight / generation-service 同時更新。
  *
- * S1: 数値正本は plan-quota-constants.mjs。本ファイルは導出・再 export のみ。
+ * S1 / SC5: quota 由来の総予算・OpenRouter timeout の正本は plan-quota-constants.mjs。
+ * プラットフォーム 60s・finalize 余裕・クライアント headroom は本ファイルの導出定数。
  *
  * 算術（repair 2 本を残す）:
  * - REQUIRED_SEND = OPENROUTER_TIMEOUT + FINALIZE_RESERVE = 24s + 2s = 26s
