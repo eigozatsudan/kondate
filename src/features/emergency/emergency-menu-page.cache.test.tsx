@@ -772,9 +772,9 @@ it("PE1: remount after Realtime does not revive stored-key 30s candidate cache",
   expect(await screen.findByRole("heading", { name: "卵なし新候補" })).toBeVisible();
   expect(screen.queryByRole("heading", { name: "卵あり旧候補" })).not.toBeInTheDocument();
   const callsAfterRealtime = getEmergencyMenusMock.mock.calls.length;
-  expect(localStorage.getItem(householdSafetyRevisionKey(userId))).not.toBe(
-    "stored-before-allergy",
-  );
+  // PE-R1 / PE-R2: Realtime は state の :event:N だけ。stored を進めると他タブと ping-pong する。
+  expect(localStorage.getItem(householdSafetyRevisionKey(userId))).toBe("stored-before-allergy");
+  expect(localStorage.getItem(householdSafetyRevisionStorageKey)).toBeNull();
   first.unmount();
 
   render(
@@ -815,4 +815,66 @@ it("PE1: remount without stored revision change still refetches 30s candidate ca
     expect(getEmergencyMenusMock.mock.calls.length).toBeGreaterThan(callsBeforeRemount);
   });
   expect(await screen.findByRole("heading", { name: "再入場後候補" })).toBeVisible();
+});
+
+it("PE-R1: other-tab household-safety storage refreshes without persisting a new UUID", async () => {
+  const userId = eligibleMember.user_id;
+  const key = householdSafetyRevisionKey(userId);
+  localStorage.setItem(key, "rev-from-settings");
+  const { view } = await renderVisibleEmergencyResponse();
+  await waitFor(() => {
+    expect(realtime.handlers.length).toBeGreaterThanOrEqual(2);
+  });
+  const nextHousehold = deferredPromise<HouseholdMemberRow[]>();
+  listHouseholdMembersMock.mockReturnValueOnce(nextHousehold.promise);
+
+  // 本物の persist（settings / onboarding）相当。受信タブは読むだけで書き戻さない。
+  localStorage.setItem(key, "rev-from-other-tab");
+  act(() => {
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key,
+        newValue: "rev-from-other-tab",
+        oldValue: "rev-from-settings",
+      }),
+    );
+  });
+
+  expect(screen.getByText("候補を確認中…")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "旧候補" })).not.toBeInTheDocument();
+  expect(localStorage.getItem(key)).toBe("rev-from-other-tab");
+  expect(localStorage.getItem(householdSafetyRevisionStorageKey)).toBeNull();
+
+  await act(async () => {
+    nextHousehold.resolve([eligibleMember]);
+    await Promise.resolve();
+  });
+  view.unmount();
+});
+
+it("PE-R2: focus, drafts Realtime, and 60s poll do not persist household-safety revision", async () => {
+  const userId = eligibleMember.user_id;
+  const key = householdSafetyRevisionKey(userId);
+  localStorage.setItem(key, "unchanged-household-rev");
+  const setIntervalSpy = vi.spyOn(window, "setInterval");
+  const { view } = await renderVisibleEmergencyResponse();
+  await waitFor(() => {
+    expect(realtime.handlers.length).toBeGreaterThanOrEqual(2);
+  });
+  const pollCall = setIntervalSpy.mock.calls.find((call) => call[1] === 60_000);
+  expect(pollCall).toBeDefined();
+
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+    emitRealtime("generation_drafts", userId);
+    if (typeof pollCall?.[0] === "function") {
+      pollCall[0]();
+    }
+  });
+
+  expect(screen.getByText("候補を確認中…")).toBeVisible();
+  expect(localStorage.getItem(key)).toBe("unchanged-household-rev");
+  expect(localStorage.getItem(householdSafetyRevisionStorageKey)).toBeNull();
+  setIntervalSpy.mockRestore();
+  view.unmount();
 });

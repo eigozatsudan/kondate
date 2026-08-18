@@ -114,18 +114,6 @@ function readStoredHouseholdSafetyRevision(userId: string): string | null {
   }
 }
 
-/**
- * PE1: refreshRevision の :event:N を React state だけにすると unmount 再入場で stored に巻き戻る。
- * 新規書込は user-scoped UUID（invalidateHouseholdSafetyDependents と同型）。レガシーキーは書かない。
- */
-function persistHouseholdSafetyRevision(userId: string): void {
-  try {
-    localStorage.setItem(householdSafetyRevisionKey(userId), crypto.randomUUID());
-  } catch {
-    // storage 不可でも state の key 変更で当画面は fail-closed
-  }
-}
-
 /** PE4: スコア対象 ID の表示名。期限切れ除外後の pantryItemIds だけを見る。 */
 function selectedPantryNamesForDisplay(
   pantryRows: readonly PantryItem[] | null,
@@ -168,7 +156,7 @@ export function EmergencyMenuPage() {
     if (userId === undefined) return "initial";
     const stored = readStoredHouseholdSafetyRevision(userId) ?? "initial";
     // PE1: stored キーそのままだと QueryClient に残った 30s cache を再入場で出す。
-    // :event:reenter は当マウント専用。refreshRevision は user-scoped persist で次入場の基点を進める。
+    // :event:reenter は当マウント専用。次入場の基点は再入場 UUID であり、stored を進めない。
     return `${stored}:event:reenter:${crypto.randomUUID()}`;
   });
 
@@ -215,8 +203,10 @@ export function EmergencyMenuPage() {
         const storedRevision = readStoredHouseholdSafetyRevision(userId);
         return `${storedRevision ?? current}:event:${String(householdSafetyEventVersion.current)}`;
       });
-      // PE1: :event:N を state だけに残すと unmount 再入場で stored に巻き戻る。
-      persistHouseholdSafetyRevision(userId);
+      // PE-R1 / PE-R2: focus / poll / Realtime / storage 受信では household-safety キーを進めない。
+      // 偽 UUID persist は他タブ handleStorage と ping-pong し、history hard / shopping ゲートを誤発火する。
+      // 当画面の fail-closed は state の :event:N。再入場は :event:reenter。本物の persist は
+      // invalidateHouseholdSafetyDependents だけ（settings / onboarding）。
       // PE9: 家族 Realtime だけでは draft ∩ eligible の draft 側が古いまま。下書きを取り直す。
       void queryClient.invalidateQueries({ queryKey: plannerKeys.draft(userId) });
     };

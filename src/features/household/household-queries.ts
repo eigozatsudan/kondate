@@ -140,6 +140,8 @@ export async function invalidateHouseholdSafetyQueries(
  * Realtime 欠落時の hard recheck 窓（最大〜60s soft poll）を縮める。
  * H-R3: setItem 失敗時は storage イベントが飛ばないため BroadcastChannel で open tabs へ hard を補う。
  * 呼び出し側は query 失敗を soft 扱いにしてよいが、成功コピーは invalidate 成否と分ける（H4）。
+ * 新規 UUID persist はここだけ。emergency の refreshRevision（focus / poll / Realtime / storage 受信）
+ * は同じキーを進めない（PE-R1 ping-pong / PE-R2 偽 hard）。
  */
 export async function invalidateHouseholdSafetyDependents(
   queryClient: QueryClient,
