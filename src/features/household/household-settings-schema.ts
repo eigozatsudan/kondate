@@ -87,10 +87,34 @@ export function householdSettingsValuesEqual(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * 空年齢の onChange が adult 既定へ置き換えただけの安全制約か。
+ * 幼児既定を空年齢の [] で黙って消さないための判定。明示チェックは false。
+ */
+function isEmptyAgeLinkedConstraintDefault(
+  next: HouseholdSettingsFormValue,
+  last: HouseholdSettingsValue,
+): boolean {
+  if (next.ageBand !== "") {
+    return false;
+  }
+  const emptyAgeDefaults = defaultsForAgeBand("adult");
+  const lastAgeDefaults = defaultsForAgeBand(last.ageBand);
+  return (
+    sameStringArray(next.requiredSafetyConstraints, emptyAgeDefaults.required_safety_constraints) &&
+    sameStringArray(last.requiredSafetyConstraints, lastAgeDefaults.required_safety_constraints)
+  );
+}
+
 /**
  * 全体 schema が落ちても、直前の妥当な保存値へ載せられる項目だけ返す。
  * 年齢＋量/辛さ/食べやすさ/安全制約と、対象外 status＋kinds はセットで検証する。
  * 空年齢や present+kinds 0 を部分適用してデフォルトや矛盾 kinds を黙って書かない。
+ * 空年齢でもユーザーが明示した安全制約は last の年齢へ載せる（H-R2）。
  * last も不正なら undefined（呼び出し側は従来どおり全体 parse 失敗へ）。
  */
 export function persistableHouseholdSettings(
@@ -121,6 +145,12 @@ export function persistableHouseholdSettings(
       unsupportedDietKinds: next.unsupportedDietKinds,
     },
   ];
+
+  // H-R2: 空年齢で年齢セット全体が落ちても、明示した小さく切る/骨を除くは last の年齢へ載せる。
+  // 空年齢の adult 既定へ置き換わっただけの制約は載せない（H3 の黙った既定上書き防止を維持）。
+  if (next.ageBand === "" && !isEmptyAgeLinkedConstraintDefault(next, last.data)) {
+    groups.push({ requiredSafetyConstraints: next.requiredSafetyConstraints });
+  }
 
   let candidate: HouseholdSettingsValue = last.data;
   for (const group of groups) {

@@ -229,6 +229,39 @@ describe("persistableHouseholdSettings (H3)", () => {
     expect(persistableHouseholdSettings(next, last)).toEqual(last);
   });
 
+  it("H-R2: overlays explicit safety constraints onto last when age is empty", () => {
+    const next: HouseholdSettingsFormValue = {
+      ...last,
+      ageBand: "",
+      requiredSafetyConstraints: ["cut_small"],
+    };
+    expect(persistableHouseholdSettings(next, last)).toEqual({
+      ...last,
+      requiredSafetyConstraints: ["cut_small"],
+    });
+  });
+
+  it("does not persist adult empty-age constraint defaults over a child last", () => {
+    const lastChild: HouseholdSettingsFormValue = {
+      ...last,
+      displayName: "子ども",
+      ageBand: "age_3_5",
+      requiredSafetyConstraints: ["remove_bones", "cut_small"],
+      portionSize: "small",
+      spiceLevel: "none",
+      easePreferences: ["small_pieces", "boneless", "soft"],
+    };
+    const next: HouseholdSettingsFormValue = {
+      ...lastChild,
+      ageBand: "",
+      portionSize: "regular",
+      spiceLevel: "regular",
+      easePreferences: [],
+      requiredSafetyConstraints: [],
+    };
+    expect(persistableHouseholdSettings(next, lastChild)).toEqual(lastChild);
+  });
+
   it("persists present+kinds together when the pair is valid", () => {
     const next: HouseholdSettingsFormValue = {
       ...last,

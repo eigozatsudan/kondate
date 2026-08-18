@@ -255,6 +255,25 @@ function memberValue(member: HouseholdMemberRow): HouseholdSettingsFormValue {
   return householdSettingsValueFromDbRow(member);
 }
 
+/** 部分 persist の last。revision が新しい enqueue / 成功だけ進める（H-R1）。 */
+type LastPersistedSnapshot = {
+  revision: number;
+  values: HouseholdSettingsValue;
+};
+
+function rememberPersistedSettings(
+  store: Map<string, LastPersistedSnapshot>,
+  memberId: string,
+  values: HouseholdSettingsValue,
+  revision: number,
+): void {
+  const current = store.get(memberId);
+  if (current !== undefined && current.revision > revision) {
+    return;
+  }
+  store.set(memberId, { revision, values });
+}
+
 function toMemberPatch(value: HouseholdSettingsValue): HouseholdMemberPatch {
   return {
     display_name: value.displayName,
@@ -373,6 +392,9 @@ export function HouseholdSettingsForm({
   const operationTokensByMemberRef = useRef(new Map<string, number>());
   const pendingOperationCountsRef = useRef(new Map<string, number>());
   const failedSaveMemberIdsRef = useRef(new Set<string>());
+  // H-R1: クリック時点の members cache ではなく、直列キューへ載せた persistable を last にする。
+  // 先行 PATCH が latest でないと cache が進まず、第二 PATCH が旧 last を書き戻すのを防ぐ。
+  const lastPersistedByMemberRef = useRef(new Map<string, LastPersistedSnapshot>());
   // H9: CAS 衝突後に members 再同期済みの member。queueSave が failedSave 固定しないため。
   const versionConflictRecoveredMemberIdsRef = useRef(new Set<string>());
   const allergyMutationPendingMemberIdsRef = useRef(new Set<string>());
@@ -521,6 +543,15 @@ export function HouseholdSettingsForm({
       // ローカル編集中は CAS 基準をサーバ最新へ進めない（他タブ更新との衝突を検知するため）
       if (!keepLocalSnapshot) {
         completeMemberUpdatedAtRef.current.set(selected.id, latestSelected.updated_at);
+        const serverPersisted = householdSettingsSchema.safeParse(baseValues);
+        if (serverPersisted.success) {
+          lastPersistedByMemberRef.current.set(selected.id, {
+            revision: editRevisionsByMemberRef.current.get(selected.id) ?? 0,
+            values: serverPersisted.data,
+          });
+        } else {
+          lastPersistedByMemberRef.current.delete(selected.id);
+        }
       } else if (!completeMemberUpdatedAtRef.current.has(selected.id)) {
         completeMemberUpdatedAtRef.current.set(selected.id, latestSelected.updated_at);
       }
@@ -616,6 +647,12 @@ export function HouseholdSettingsForm({
             ? await api.updateDraft(member.id, patch, expectedUpdatedAt)
             : await api.updateMember(member.id, patch, expectedUpdatedAt);
         completeMemberUpdatedAtRef.current.set(member.id, saved.updated_at);
+        rememberPersistedSettings(
+          lastPersistedByMemberRef.current,
+          member.id,
+          parsed.data,
+          lineage.revision,
+        );
         if (isLatestSaveRevision(lineage)) {
           const cachedMember = { ...saved, ...patch };
           queryClient.setQueryData<HouseholdMemberRow[]>(membersKey, (current = []) =>
@@ -662,6 +699,15 @@ export function HouseholdSettingsForm({
             // ローカル snapshot をサーバ正本へ戻し、useEffect の keepLocal でも stale form を残さない
             const serverValues = memberValue(latest);
             valuesByMemberRef.current.set(member.id, serverValues);
+            const serverPersisted = householdSettingsSchema.safeParse(serverValues);
+            if (serverPersisted.success) {
+              lastPersistedByMemberRef.current.set(member.id, {
+                revision: editRevisionsByMemberRef.current.get(member.id) ?? 0,
+                values: serverPersisted.data,
+              });
+            } else {
+              lastPersistedByMemberRef.current.delete(member.id);
+            }
             if (selectedMemberIdRef.current === member.id) {
               setValues(serverValues);
             }
@@ -1051,6 +1097,7 @@ export function HouseholdSettingsForm({
     operationTokensByMemberRef.current.delete(targetId);
     pendingOperationCountsRef.current.delete(targetId);
     failedSaveMemberIdsRef.current.delete(targetId);
+    lastPersistedByMemberRef.current.delete(targetId);
     pendingRegisteredIntents.current.delete(targetId);
     allergyMutationPendingMemberIdsRef.current.delete(targetId);
     setAllergyMutationPendingMemberIds(new Set(allergyMutationPendingMemberIdsRef.current));
@@ -1444,6 +1491,13 @@ export function HouseholdSettingsForm({
       failedSaveMemberIdsRef.current.add(member.id);
       return;
     }
+    // H-R1: キューへ載せる時点で last を進め、未完了 PATCH の cache 未反映を次の投影に使わない
+    rememberPersistedSettings(
+      lastPersistedByMemberRef.current,
+      member.id,
+      persistParsed.data,
+      editRevisionsByMemberRef.current.get(member.id) ?? 0,
+    );
     void queueSave(member, localNext, persistParsed.data);
   };
 
@@ -1456,7 +1510,8 @@ export function HouseholdSettingsForm({
       queryClient
         .getQueryData<HouseholdMemberRow[]>(membersKey)
         ?.find((member) => member.id === selected.id) ?? selected;
-    const lastPersisted = memberValue(persistedMember);
+    const lastPersisted =
+      lastPersistedByMemberRef.current.get(selected.id)?.values ?? memberValue(persistedMember);
     const persistedAllergyStatus = lastPersisted.allergyStatus;
     const existingIntent = pendingRegisteredIntents.current.get(selected.id);
     const persistable = persistableHouseholdSettings(next, lastPersisted);

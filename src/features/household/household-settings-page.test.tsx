@@ -3628,6 +3628,108 @@ it("H3: persists allergy after present-without-kinds without blocking the PATCH"
   expect(screen.getByLabelText(unsupportedDietStatusLabel)).toHaveValue("present");
 });
 
+it("H-R1: second partial persist keeps an in-flight spice PATCH instead of stale cache last", async () => {
+  // 先行辛さ PATCH が cache 未反映のまま空年齢→未確認すると、旧 last の regular を書き戻していた
+  const firstSave = deferred<HouseholdMemberRow>();
+  const secondSave = deferred<HouseholdMemberRow>();
+  let callCount = 0;
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) => {
+    callCount += 1;
+    const saved: HouseholdMemberRow = {
+      ...member,
+      spice_level: patch.spice_level ?? member.spice_level,
+      allergy_status: patch.allergy_status ?? member.allergy_status,
+      age_band: patch.age_band ?? member.age_band,
+      updated_at: `2026-07-12T00:00:0${String(callCount)}.000Z`,
+    };
+    return callCount === 1
+      ? firstSave.promise.then(() => saved)
+      : secondSave.promise.then(() => saved);
+  });
+  await renderSettings({ updateMember });
+
+  fireEvent.change(await screen.findByLabelText("辛さ"), { target: { value: "mild" } });
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(1);
+  });
+  expect(updateMember.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ spice_level: "mild" }));
+
+  fireEvent.change(screen.getByLabelText("年齢のめやす"), { target: { value: "" } });
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
+  });
+  expect(updateMember).toHaveBeenCalledTimes(1);
+
+  await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "unconfirmed");
+
+  await act(async () => {
+    firstSave.resolve({
+      ...member,
+      spice_level: "mild",
+      updated_at: "2026-07-12T00:00:01.000Z",
+    });
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledTimes(2);
+  });
+  expect(updateMember.mock.calls[1]?.[1]).toEqual(
+    expect.objectContaining({
+      spice_level: "mild",
+      allergy_status: "unconfirmed",
+      age_band: "adult",
+    }),
+  );
+  expect(screen.getByLabelText("辛さ")).toHaveValue("mild");
+  expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("unconfirmed");
+  expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
+  expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
+
+  await act(async () => {
+    secondSave.resolve({
+      ...member,
+      spice_level: "mild",
+      allergy_status: "unconfirmed",
+      updated_at: "2026-07-12T00:00:02.000Z",
+    });
+    await Promise.resolve();
+  });
+});
+
+it("H-R2: persists explicit cut_small after emptying age", async () => {
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({
+      ...member,
+      age_band: patch.age_band ?? member.age_band,
+      required_safety_constraints:
+        patch.required_safety_constraints ?? member.required_safety_constraints,
+    }),
+  );
+  await renderSettings({ updateMember });
+
+  fireEvent.change(await screen.findByLabelText("年齢のめやす"), { target: { value: "" } });
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+
+  await userEvent.click(screen.getByLabelText("小さく切る"));
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        required_safety_constraints: ["cut_small"],
+        age_band: "adult",
+      }),
+      expect.any(String),
+    );
+  });
+  expect(screen.getByLabelText("小さく切る")).toBeChecked();
+  expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
+  expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
+});
+
 it("persists a 30-character display name", async () => {
   const { updateMember } = await renderSettings();
   const name = "あ".repeat(30);
