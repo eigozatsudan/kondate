@@ -15,7 +15,9 @@ export type DraftAutosaveController = {
   /**
    * `abandonQueued` は leave timeout 後の generate 専用。
    * dirty enqueue の never-settle 連鎖を切り、新 save が先行 RPC に再合流しない。
-   * 既開始 RPC は cancel しない。再 leave は渡さない（直列 join を維持）。
+   * 既開始 RPC は cancel しない。reset の pendingForceSave も切る（hung force に再合流しない）。
+   * 旧 success / conflict は generation を進めて無効化する（遅延 CAS の onConflict abort 防止）。
+   * 再 leave は渡さない（直列 join を維持）。
    */
   flush: (options?: { abandonQueued?: boolean }) => Promise<PlannerDraft>;
 };
@@ -106,6 +108,22 @@ function lastSavedMatchesLatest(
   const savedCanon = canonicalPersistableInput(lastSaved);
   const latestFp = persistenceFingerprint(latestCanon, lastPersisted);
   return persistenceFingerprint(savedCanon, lastPersisted) === latestFp;
+}
+
+/**
+ * abandon 後の自タブ CAS 負け。live が latest と同じなら旧 leave が同じ内容で勝った。
+ * live が放棄済みペイロードと同じなら timeout 後の追記を live.revision で再送する。
+ * どちらでもない（他タブ）は本物の conflict。
+ */
+function classifyAbandonedConflict(
+  live: PlannerDraft,
+  latest: PlannerDraftInput,
+  abandoned: PlannerDraftInput,
+  lastPersisted: PlannerDraftInput | null,
+): "adopt" | "retry" | "conflict" {
+  if (lastSavedMatchesLatest(live, latest, lastPersisted)) return "adopt";
+  if (lastSavedMatchesLatest(live, abandoned, lastPersisted)) return "retry";
+  return "conflict";
 }
 
 /** empty / rev=0 の undelete 防止。persistable empty をサーバへ書かない（P1）。 */
@@ -297,6 +315,12 @@ export function useDraftAutosave({
   );
   // P1: reset 強制保存を fire-and-forget で握りつぶさず、flush から await 可能にする
   const pendingForceSaveRef = useRef<PendingForceSave | null>(null);
+  /** 既開始 save のペイロード。abandon 時に自タブ CAS 回収の照合元にする（P-R2）。 */
+  const inFlightSaveRef = useRef<PlannerDraftInput | null>(null);
+  /** abandon した in-flight ペイロード。次の conflict 1 回だけ回収に使う。 */
+  const abandonedSaveRef = useRef<PlannerDraftInput | null>(null);
+  /** 無効化後に commit した旧 save の行。refresh 前の回収フォールバック。 */
+  const orphanedCommittedDraftRef = useRef<PlannerDraft | null>(null);
   const onSavedRef = useRef(onSaved);
   const saveOnUnloadRef = useRef(saveOnUnload);
   const persistOnResetRef = useRef(persistOnReset);
@@ -511,17 +535,27 @@ export function useDraftAutosave({
           try {
             // P4 残差: 既に飛んだ RPC のペイロードは開始時 toSave のまま commit される。
             // キャンセル可能な transport は持たないため、成功後の追記ループで latest に収束する。
-            const saved = await save(toSave, revisionRef.current);
+            inFlightSaveRef.current = toSave;
+            let saved: PlannerDraft;
+            try {
+              saved = await save(toSave, revisionRef.current);
+            } finally {
+              if (inFlightSaveRef.current === toSave) inFlightSaveRef.current = null;
+            }
+            if (resetGeneration !== resetGenerationRef.current) {
+              // 無効化後でもサーバ revision は進んでいる。後続 CAS が stale expected にならないよう引き継ぐ。
+              // lastPersisted / lastSaved / onSaved は触らない（timeout 後の追記 B を跨ぎ前の A で消さない）。
+              revisionRef.current = Math.max(revisionRef.current, saved.revision);
+              if (mountedRef.current) setSavedRevision(revisionRef.current);
+              orphanedCommittedDraftRef.current = saved;
+              throw new SupersededDraftSaveError();
+            }
+            abandonedSaveRef.current = null;
+            orphanedCommittedDraftRef.current = null;
             // 同一 op の追記判定用に、成功した書き込みをすぐ lastPersisted へ反映する
             // （household 保存直後に incomplete へ切替 → 中立 strip を許可するため）
             lastPersistedInputRef.current = toSave;
             lastSavedDraftRef.current = saved;
-            if (resetGeneration !== resetGenerationRef.current) {
-              // 無効化後でもサーバ revision は進んでいる。後続の空保存が conflict しないよう引き継ぐ。
-              revisionRef.current = saved.revision;
-              if (mountedRef.current) setSavedRevision(saved.revision);
-              throw new SupersededDraftSaveError();
-            }
             // ループ継続用にローカル revision を進める。
             // P2 で Incomplete に落ちても次の persistable 保存が conflict しないよう UI revision も同期する。
             revisionRef.current = saved.revision;
@@ -536,6 +570,43 @@ export function useDraftAutosave({
           } catch (error: unknown) {
             if (resetGeneration !== resetGenerationRef.current) {
               throw new SupersededDraftSaveError();
+            }
+            // P-R2: abandon 後の新 save が自タブの遅延 leave に CAS 負けしても
+            // onConflict せず、同じ内容なら live を採用、追記なら live.revision で再送する。
+            if (error instanceof DraftRevisionConflictError && abandonedSaveRef.current !== null) {
+              const abandoned = abandonedSaveRef.current;
+              abandonedSaveRef.current = null;
+              let live: PlannerDraft | null =
+                orphanedCommittedDraftRef.current ?? lastSavedDraftRef.current;
+              const refresh = refreshLiveDraftRef.current;
+              if (refresh !== undefined) {
+                live = await refresh();
+                if (resetGeneration !== resetGenerationRef.current) {
+                  throw new SupersededDraftSaveError();
+                }
+              }
+              if (live === null) {
+                lastSavedDraftRef.current = null;
+                throw new IncompleteDraftSaveError();
+              }
+              revisionRef.current = Math.max(revisionRef.current, live.revision);
+              if (mountedRef.current) setSavedRevision(revisionRef.current);
+              const classified = classifyAbandonedConflict(
+                live,
+                latestRef.current,
+                abandoned,
+                lastPersistedInputRef.current,
+              );
+              if (classified === "adopt") {
+                const toAdopt = canonicalPersistableInput(latestRef.current);
+                lastPersistedInputRef.current = toAdopt;
+                lastSavedDraftRef.current = { ...live, ...toAdopt };
+                orphanedCommittedDraftRef.current = null;
+                return { saved: lastSavedDraftRef.current, toSave: toAdopt };
+              }
+              if (classified === "retry") {
+                continue;
+              }
             }
             throw error;
           }
@@ -693,8 +764,15 @@ export function useDraftAutosave({
       // P-R1: route が IIFE を捨てても dirty leave の enqueue は queueRef に残る。
       // 新 flush が then 連結すると never-settle save に再合流し isSubmitting が固着する。
       // 既開始 RPC は cancel しない。キュー先頭だけ切って新 save を始める。
+      // P-R2: 旧 handler を generation で無効化し、遅延 CAS 負けの onConflict abort を止める。
+      // P-R3: reset が hung queue に載せた pendingForceSave も切る（abandon 後 generate が再合流しない）。
       if (options?.abandonQueued === true) {
+        if (inFlightSaveRef.current !== null) {
+          abandonedSaveRef.current = inFlightSaveRef.current;
+        }
         queueRef.current = Promise.resolve();
+        resetGenerationRef.current += 1;
+        pendingForceSaveRef.current = null;
       }
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);

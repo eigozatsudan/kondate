@@ -1984,3 +1984,308 @@ it("P-R1: abandon なしの dirty flush は先行 enqueue に直列する", asyn
   await expect(joined).resolves.toMatchObject({ memo: "少し変更", revision: 6 });
   expect(save).toHaveBeenCalledTimes(2);
 });
+
+it("P-R2: abandon 後に遅延した先行 save が勝っても generate flush は conflict にしない", async () => {
+  // 15s timeout 後も旧 RPC は生きる。同じ expected revision の新 save が
+  // CAS 負けしても、自タブの旧 leave なら live を採用して generate を止めない。
+  vi.useFakeTimers();
+  const dirty = { ...reviewDraft, memo: "少し変更" };
+  const firstRow = saved(dirty, 5);
+  let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
+  let rejectSecond: ((error: Error) => void) | undefined;
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>((resolve) => {
+        resolveFirst = resolve;
+      });
+    }
+    if (save.mock.calls.length === 2) {
+      return new Promise<PlannerDraft>((_resolve, reject) => {
+        rejectSecond = reject;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const onConflict = vi.fn();
+  const refreshLiveDraft = vi.fn(() => Promise.resolve(firstRow));
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        onConflict,
+        refreshLiveDraft,
+        hydratedDraft: saved(reviewDraft, 4),
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: dirty });
+  act(() => {
+    void result.current.flush().catch(() => undefined);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+
+  let abandoned: Promise<PlannerDraft> | undefined;
+  act(() => {
+    abandoned = result.current.flush({ abandonQueued: true });
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(2, dirty, 4);
+
+  let flushed: PlannerDraft | undefined;
+  await act(async () => {
+    resolveFirst?.(firstRow);
+    rejectSecond?.(new DraftRevisionConflictError());
+    flushed = await abandoned;
+  });
+
+  expect(flushed).toMatchObject({ memo: "少し変更", revision: 5 });
+  expect(onConflict).not.toHaveBeenCalled();
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(refreshLiveDraft).toHaveBeenCalled();
+});
+
+it("P-R2: abandon 後の新 save が勝ったあと遅延 conflict は onConflict しない", async () => {
+  // 新 save が先に commit すると旧 RPC は conflict する。旧 handler が
+  // onConflict すると claim 待ちの generate が abort される。
+  vi.useFakeTimers();
+  const dirty = { ...reviewDraft, memo: "少し変更" };
+  let rejectFirst: ((error: Error) => void) | undefined;
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>((_resolve, reject) => {
+        rejectFirst = reject;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const onConflict = vi.fn();
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        onConflict,
+        hydratedDraft: saved(reviewDraft, 4),
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: dirty });
+  act(() => {
+    void result.current.flush().catch(() => undefined);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  let flushed: PlannerDraft | undefined;
+  await act(async () => {
+    flushed = await result.current.flush({ abandonQueued: true });
+  });
+  expect(flushed).toMatchObject({ memo: "少し変更", revision: 5 });
+  expect(onConflict).not.toHaveBeenCalled();
+
+  await act(async () => {
+    rejectFirst?.(new DraftRevisionConflictError());
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(onConflict).not.toHaveBeenCalled();
+  expect(result.current.state).not.toBe("error");
+});
+
+it("P-R2: abandon 後の追記は旧 leave が勝っても latest を live revision で再送する", async () => {
+  // timeout 後にメモを B へ。旧 A が commit しても B を消さず N+1 で書く。
+  vi.useFakeTimers();
+  const dirtyA = { ...reviewDraft, memo: "A" };
+  const dirtyB = { ...reviewDraft, memo: "B" };
+  const firstRow = saved(dirtyA, 5);
+  let resolveFirst: ((draft: PlannerDraft) => void) | undefined;
+  let rejectSecond: ((error: Error) => void) | undefined;
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>((resolve) => {
+        resolveFirst = resolve;
+      });
+    }
+    if (save.mock.calls.length === 2) {
+      return new Promise<PlannerDraft>((_resolve, reject) => {
+        rejectSecond = reject;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const onConflict = vi.fn();
+  const refreshLiveDraft = vi.fn(() => Promise.resolve(firstRow));
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        onConflict,
+        refreshLiveDraft,
+        hydratedDraft: saved(reviewDraft, 4),
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: dirtyA });
+  act(() => {
+    void result.current.flush().catch(() => undefined);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  rerender({ value: dirtyB });
+  let abandoned: Promise<PlannerDraft> | undefined;
+  act(() => {
+    abandoned = result.current.flush({ abandonQueued: true });
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenNthCalledWith(2, dirtyB, 4);
+
+  let flushed: PlannerDraft | undefined;
+  await act(async () => {
+    resolveFirst?.(firstRow);
+    rejectSecond?.(new DraftRevisionConflictError());
+    flushed = await abandoned;
+  });
+
+  expect(save).toHaveBeenCalledTimes(3);
+  expect(save).toHaveBeenNthCalledWith(3, dirtyB, 5);
+  expect(flushed).toMatchObject({ memo: "B", revision: 6 });
+  expect(onConflict).not.toHaveBeenCalled();
+});
+
+it("P-R2: abandon 後の他タブ live は自タブ回収せず onConflict する", async () => {
+  vi.useFakeTimers();
+  const dirty = { ...reviewDraft, memo: "少し変更" };
+  const otherRow = saved({ ...reviewDraft, memo: "他タブ" }, 5);
+  let rejectSecond: ((error: Error) => void) | undefined;
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>(() => undefined);
+    }
+    if (save.mock.calls.length === 2) {
+      return new Promise<PlannerDraft>((_resolve, reject) => {
+        rejectSecond = reject;
+      });
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const onConflict = vi.fn();
+  const refreshLiveDraft = vi.fn(() => Promise.resolve(otherRow));
+  const { rerender, result } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken: 0,
+        save,
+        onConflict,
+        refreshLiveDraft,
+        hydratedDraft: saved(reviewDraft, 4),
+      }),
+    { initialProps: { value: reviewDraft } },
+  );
+
+  rerender({ value: dirty });
+  act(() => {
+    void result.current.flush().catch(() => undefined);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  let abandoned: Promise<PlannerDraft> | undefined;
+  act(() => {
+    abandoned = result.current.flush({ abandonQueued: true });
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  await act(async () => {
+    rejectSecond?.(new DraftRevisionConflictError());
+    await expect(abandoned).rejects.toBeInstanceOf(DraftRevisionConflictError);
+  });
+  expect(onConflict).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledTimes(2);
+});
+
+it("P-R3: abandonQueued flush は hung force enqueue の pending に再合流しない", async () => {
+  // timeout 後の入力リセットは empty を hung queue に force enqueue する。
+  // abandon が queueRef だけ切ると pending.promise 待ちで isSubmitting が固着する。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) => {
+    if (save.mock.calls.length === 1) {
+      return new Promise<PlannerDraft>(() => undefined);
+    }
+    return Promise.resolve(saved(value, revision + 1));
+  });
+  const dirty = { ...reviewDraft, memo: "少し変更" };
+  const refilled = { ...reviewDraft, memo: "埋め直し" };
+  const { rerender, result } = renderHook(
+    ({ value, resetToken }) =>
+      useDraftAutosave({
+        value,
+        enabled: true,
+        baselineRevision: 4,
+        resetToken,
+        save,
+        hydratedDraft: saved(reviewDraft, 4),
+      }),
+    { initialProps: { value: reviewDraft, resetToken: 0 } },
+  );
+
+  rerender({ value: dirty, resetToken: 0 });
+  act(() => {
+    void result.current.flush().catch(() => undefined);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+
+  rerender({ value: { ...base }, resetToken: 1 });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+
+  rerender({ value: refilled, resetToken: 1 });
+  let abandoned: PlannerDraft | undefined;
+  await act(async () => {
+    abandoned = await result.current.flush({ abandonQueued: true });
+  });
+
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save).toHaveBeenNthCalledWith(2, refilled, 4);
+  expect(abandoned?.memo).toBe("埋め直し");
+  expect(abandoned?.revision).toBe(5);
+});
