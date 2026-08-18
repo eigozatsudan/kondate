@@ -58,6 +58,7 @@ afterEach(() => {
   resetAuthFlowUserDismissedMemoryForTests();
   window.localStorage.removeItem("kondate.auth.liveSession");
   window.sessionStorage.removeItem("kondate.auth.emailOtpCompleted");
+  window.sessionStorage.removeItem("kondate.auth.sessionSwitch");
   vi.useRealTimers();
 });
 
@@ -4180,5 +4181,208 @@ it("C-R4: leftover-capable clear does not signOut when sibling completion exists
   } finally {
     window.localStorage.removeItem(browserSupabaseSessionStorageKey);
     window.localStorage.removeItem("kondate.auth.supabase.continuation-complete.google-winner");
+  }
+});
+
+it("C1: discarded Google exchange does not restore baseline over an OTP live winner", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const pinSession = {
+    access_token: "pin-access",
+    refresh_token: "pin-refresh",
+    expires_in: 3600,
+    token_type: "bearer",
+    user: { id: "user-pin" },
+  };
+  let releaseExchange: (() => void) | undefined;
+  const exchangeGate = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-loser", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock({
+    getSessionResult: {
+      data: { session: pinSession },
+      error: null,
+    },
+  });
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(async () => {
+    await exchangeGate;
+    return { data: { session: { user: { id: "user-loser" } } }, error: null };
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flowA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(flowA.id);
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.exchangeCodeForSession.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  expect(client.auth.exchangeCodeForSession).toHaveBeenCalled();
+  storage.setItem(
+    "kondate.auth.liveSession",
+    JSON.stringify({ userId: "otp-user", storedAt: new Date().toISOString() }),
+  );
+  clearAuthFlowForTest(flowA.id, storage);
+
+  releaseExchange?.();
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flowA.id,
+    returnTo: "/onboarding",
+  });
+  expect(client.auth.setSession).not.toHaveBeenCalled();
+  expect(client.auth.signOut).not.toHaveBeenCalled();
+});
+
+it("C1: discarded Google exchange probe miss does not signOut an OTP live winner", async () => {
+  configurePublicEnv();
+  const storage = new MapStorage();
+  const pinSession = {
+    access_token: "pin-access",
+    refresh_token: "pin-refresh",
+    user: { id: "user-pin" },
+  };
+  let throwAfterExchange = false;
+  let releaseExchange: (() => void) | undefined;
+  const exchangeGate = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  const claim = vi.fn().mockResolvedValue({ code: "auth-code-loser", returnTo: "/onboarding" });
+  const api = continuationApiMock({ claim });
+  const client = authClientMock();
+  client.auth.getSession = vi.fn().mockImplementation(() => {
+    if (throwAfterExchange) {
+      return Promise.reject(new Error("probe miss"));
+    }
+    return Promise.resolve({ data: { session: pinSession }, error: null });
+  });
+  client.auth.exchangeCodeForSession = vi.fn().mockImplementation(async () => {
+    await exchangeGate;
+    throwAfterExchange = true;
+    return { data: { session: { user: { id: "user-loser" } } }, error: null };
+  });
+  const gateway = createAuthGateway(
+    client as unknown as BrowserSupabaseClient,
+    api,
+    storage,
+    gatewayDeps(),
+  );
+  const flowA = await createAuthFlow("/onboarding", api, storage, {
+    ...fixedFlowDeps,
+    now: () => new Date(),
+  });
+
+  const pending = gateway.resumeFlow(flowA.id);
+  await flushResumeUntilExchange();
+  for (let i = 0; i < 50 && client.auth.exchangeCodeForSession.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+  }
+  storage.setItem(
+    "kondate.auth.liveSession",
+    JSON.stringify({ userId: "otp-user", storedAt: new Date().toISOString() }),
+  );
+  window.sessionStorage.setItem(
+    "kondate.auth.emailOtpCompleted",
+    JSON.stringify({ storedAt: new Date().toISOString() }),
+  );
+  clearAuthFlowForTest(flowA.id, storage);
+  releaseExchange?.();
+  await expect(pending).resolves.toEqual({
+    kind: "awaiting_completion",
+    flowId: flowA.id,
+    returnTo: "/onboarding",
+  });
+  expect(client.auth.setSession).not.toHaveBeenCalled();
+  expect(client.auth.signOut).not.toHaveBeenCalled();
+});
+
+it("C3: leftover signOut late settle restores OTP persist written during the in-flight wipe", async () => {
+  vi.useFakeTimers();
+  const leftoverPersist = JSON.stringify({
+    access_token: "leftover-access",
+    user: { id: "leftover-user" },
+  });
+  const otpPersist = JSON.stringify({
+    access_token: "otp-access",
+    user: { id: "otp-user" },
+  });
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, leftoverPersist);
+  let releaseSignOut: (() => void) | undefined;
+  const leftoverSession = { access_token: "leftover-access", user: { id: "leftover-user" } };
+  const client = authClientMock({
+    getSessionResult: { data: { session: leftoverSession }, error: null },
+  });
+  client.auth.signOut.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        releaseSignOut = () => {
+          window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+          resolve({ error: null });
+        };
+      }),
+  );
+  try {
+    const pending = clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await Promise.resolve();
+    expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+
+    window.localStorage.setItem(browserSupabaseSessionStorageKey, otpPersist);
+    window.localStorage.setItem(
+      "kondate.auth.liveSession",
+      JSON.stringify({ userId: "otp-user", storedAt: new Date().toISOString() }),
+    );
+    window.sessionStorage.setItem(
+      "kondate.auth.emailOtpCompleted",
+      JSON.stringify({ storedAt: new Date().toISOString() }),
+    );
+    releaseSignOut?.();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    await pending;
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBe(otpPersist);
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    window.localStorage.removeItem("kondate.auth.liveSession");
+    window.sessionStorage.removeItem("kondate.auth.emailOtpCompleted");
+  }
+});
+
+it("C6: leftover clear signs out persist when the live mark has no userId", async () => {
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, "leftover-persist");
+  window.localStorage.setItem(
+    "kondate.auth.liveSession",
+    JSON.stringify({ storedAt: new Date().toISOString() }),
+  );
+  const client = authClientMock({
+    getSessionResult: {
+      data: {
+        session: { access_token: "leftover-access", user: { id: "leftover-user" } },
+      },
+      error: null,
+    },
+  });
+  try {
+    await clearLeftoverLoginSessionIfNoSiblingCompletion(
+      client as unknown as BrowserSupabaseClient,
+      window.localStorage,
+    );
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBeNull();
+    expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    window.localStorage.removeItem("kondate.auth.liveSession");
   }
 });

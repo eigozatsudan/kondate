@@ -154,6 +154,7 @@ export function clearAuthContinuationCompletion(
 export function publishAuthContinuationCompletion(
   completion: AuthContinuationCompletion,
   storage: Storage = window.localStorage,
+  liveUserId?: string,
 ): void {
   const safe = toSafeCompletion(completion);
   // C10: completion を先に書く。setItem 失敗時は throw のまま secret を残し、
@@ -166,7 +167,8 @@ export function publishAuthContinuationCompletion(
   };
   storage.setItem(completionStorageKeyFor(safe.flowId), JSON.stringify(stored));
   // C1/C3: Google 完了は 300s completion と別に committed live 印を立てる（TTL 切れ後の leftover 誤認を閉じる）
-  commitLiveAuthSessionMark(storage);
+  // C6: 分かれば userId を埋め、userId 無し印が別 persist を spare しない
+  commitLiveAuthSessionMark(storage, liveUserId);
   // storage イベントは書き込み同一タブでは発火しない。late publish を wait/listener が拾えるよう same-tab 通知する。
   window.dispatchEvent(new CustomEvent(completionEventName, { detail: safe }));
   clearAuthFlow(completion.flowId, storage);

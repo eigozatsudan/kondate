@@ -121,6 +121,21 @@ describe("clearLocalAuthAndDrafts", () => {
     expect(sessionStorage.getItem("kondate.auth.emailOtpCompleted")).toBeNull();
   });
 
+  it("clears intentional session switch mark from sessionStorage", async () => {
+    sessionStorage.setItem(
+      "kondate.auth.sessionSwitch",
+      JSON.stringify({ kind: "email_otp", storedAt: new Date().toISOString() }),
+    );
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const client = {
+      auth: { signOut },
+    } as unknown as SupabaseClient<Database>;
+
+    await clearLocalAuthAndDrafts(client);
+
+    expect(sessionStorage.getItem("kondate.auth.sessionSwitch")).toBeNull();
+  });
+
   it("uses global signOut when signOutScope is global and falls back to local on failure", async () => {
     const signOut = vi
       .fn()

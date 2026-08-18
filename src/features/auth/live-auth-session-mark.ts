@@ -68,10 +68,17 @@ export function writeLiveAuthSessionMark(
 /**
  * Google completion など「新しい committed live」。旧 userId は残さない
  * （前ユーザ leftover 印を Google 成功後に引き継がない）。
+ * userId が分かるときは埋める（C6: userId 無し印が任意 persist を spare しない）。
  */
-export function commitLiveAuthSessionMark(storage: Storage = window.localStorage): void {
+export function commitLiveAuthSessionMark(
+  storage: Storage = window.localStorage,
+  userId?: string,
+): void {
   try {
-    const snapshot: LiveAuthSessionMark = { storedAt: new Date().toISOString() };
+    const snapshot: LiveAuthSessionMark = {
+      storedAt: new Date().toISOString(),
+      ...(typeof userId === "string" && userId !== "" ? { userId } : {}),
+    };
     storage.setItem(LIVE_AUTH_SESSION_MARK_KEY, JSON.stringify(snapshot));
   } catch {
     // 印が書けなくても completion 自体は既に書けている
@@ -98,7 +105,7 @@ export function userIdFromSessionProbeKey(sessionKey: string | null): string | n
 /**
  * persist 指紋が committed live と一致するか。
  * - 印なし → leftover
- * - userId 無しの印 → committed（wipe/signOut を控える）
+ * - userId 無しの印 → 任意 persist は spare しない（C6）。指紋不明（probe miss）だけ触らない
  * - userId 一致 → live
  * - userId 不一致 → 別 user の leftover
  */
@@ -108,8 +115,10 @@ export function liveAuthSessionMarkProtectsFingerprint(
 ): boolean {
   const mark = readLiveAuthSessionMark(storage);
   if (mark === null) return false;
-  if (mark.userId === undefined) return true;
   const sessionUserId = userIdFromSessionProbeKey(sessionKey);
+  if (mark.userId === undefined) {
+    return sessionUserId === null;
+  }
   if (sessionUserId === null) return true;
   return sessionUserId === mark.userId;
 }
@@ -138,8 +147,89 @@ export function shouldCommitLiveAuthSessionMark(pathname: string): boolean {
 
 /**
  * leftover persist を first-writer pin してはいけない path。
- * /login と /auth/callback は番号 / Google の誕生点なので印なし first pin を許す。
+ * /login は番号の誕生点なので印なし first pin を許す。
+ * /auth/callback は印なし leftover を first-pin すると後着 Google を拒む（C4）。
+ * 新規 exchange session は AuthProvider が mount 時 persist token と照合して通す。
  */
 export function shouldRefuseUnmarkedLeftoverFirstPin(pathname: string): boolean {
-  return pathname !== "/login" && !pathname.startsWith("/login/") && pathname !== "/auth/callback";
+  return pathname !== "/login" && !pathname.startsWith("/login/");
+}
+
+/** 番号 / Google 成功の意図的 pin 付け替え。sessionStorage。token は載せない。 */
+export const AUTH_SESSION_SWITCH_KEY = "kondate.auth.sessionSwitch";
+const AUTH_SESSION_SWITCH_TTL_MS = 60_000;
+
+export type AuthSessionSwitchKind = "email_otp" | "google_callback";
+
+type AuthSessionSwitchMark = {
+  kind: AuthSessionSwitchKind;
+  storedAt: string;
+};
+
+function parseAuthSessionSwitchMark(raw: string): AuthSessionSwitchMark | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const kind = "kind" in parsed ? parsed.kind : null;
+    const storedAt = "storedAt" in parsed ? parsed.storedAt : null;
+    if (kind !== "email_otp" && kind !== "google_callback") return null;
+    if (typeof storedAt !== "string" || Number.isNaN(Date.parse(storedAt))) return null;
+    return { kind, storedAt };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * verifyOtp / exchange 直前に立てる。onAuthStateChange が pin 拒否する前に届く。
+ * 同一タブの誕生点だけ有効（C2 / C4）。
+ */
+export function armIntentionalAuthSessionSwitch(
+  kind: AuthSessionSwitchKind,
+  storage: Storage = window.sessionStorage,
+): void {
+  try {
+    const snapshot: AuthSessionSwitchMark = { kind, storedAt: new Date().toISOString() };
+    storage.setItem(AUTH_SESSION_SWITCH_KEY, JSON.stringify(snapshot));
+  } catch {
+    // 印が書けなくても verify / exchange 自体は進める
+  }
+}
+
+export function clearIntentionalAuthSessionSwitch(storage: Storage = window.sessionStorage): void {
+  try {
+    storage.removeItem(AUTH_SESSION_SWITCH_KEY);
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * leftover pin A の上に今このタブで立てた番号 / Google session を載せてよいか。
+ * 他 path では residual / 他タブ last-writer を pin で拒む（既存 C2）。
+ */
+export function isIntentionalAuthSessionSwitchArmed(
+  pathname: string,
+  storage: Storage = window.sessionStorage,
+): boolean {
+  try {
+    const raw = storage.getItem(AUTH_SESSION_SWITCH_KEY);
+    if (raw === null) return false;
+    const mark = parseAuthSessionSwitchMark(raw);
+    if (mark === null) {
+      storage.removeItem(AUTH_SESSION_SWITCH_KEY);
+      return false;
+    }
+    const storedMs = Date.parse(mark.storedAt);
+    if (Number.isNaN(storedMs) || Date.now() - storedMs > AUTH_SESSION_SWITCH_TTL_MS) {
+      storage.removeItem(AUTH_SESSION_SWITCH_KEY);
+      return false;
+    }
+    if (mark.kind === "email_otp") {
+      return pathname === "/login" || pathname.startsWith("/login/");
+    }
+    return pathname === "/auth/callback" || pathname.startsWith("/auth/callback/");
+  } catch {
+    return false;
+  }
 }

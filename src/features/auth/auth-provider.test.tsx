@@ -18,6 +18,7 @@ import {
 } from "./auth-flow";
 import { resetAccessTokenPinGateForTests } from "./session";
 import { useAuth } from "./use-auth";
+import { AUTH_SESSION_SWITCH_KEY, armIntentionalAuthSessionSwitch } from "./live-auth-session-mark";
 
 const session = { access_token: "token", user: { id: "user-1" } } as Session;
 type AuthSubscription = ReturnType<
@@ -93,6 +94,7 @@ describe("AuthProvider", () => {
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       window.localStorage.removeItem("kondate.auth.liveSession");
+      window.sessionStorage.removeItem(AUTH_SESSION_SWITCH_KEY);
     } catch {
       // ignore
     }
@@ -110,6 +112,7 @@ describe("AuthProvider", () => {
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       window.localStorage.removeItem("kondate.auth.liveSession");
+      window.sessionStorage.removeItem(AUTH_SESSION_SWITCH_KEY);
     } catch {
       // ignore
     }
@@ -4327,5 +4330,190 @@ describe("AuthProvider", () => {
       window.localStorage.clear();
       vi.useRealTimers();
     }
+  });
+
+  it("C2: leftover-capable /login adopts OTP session B instead of restoring pin A", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.setItem(
+      "kondate.auth.liveSession",
+      JSON.stringify({ userId: "user-a", storedAt: new Date().toISOString() }),
+    );
+    window.localStorage.setItem(
+      "kondate.auth.supabase",
+      JSON.stringify({
+        access_token: "token-a",
+        refresh_token: "refresh-a",
+        user: { id: "user-a" },
+      }),
+    );
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const setSession = vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null });
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null }),
+        setSession,
+        signOut,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-a");
+
+    armIntentionalAuthSessionSwitch("email_otp");
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.title).toBe("user-b");
+    expect(screen.getByText("authenticated")).toBeInTheDocument();
+    expect(screen.queryByText("authenticated:degraded")).not.toBeInTheDocument();
+    expect(signOut).not.toHaveBeenCalled();
+  });
+
+  it("C4: /auth/callback refuses unmarked leftover persist then first-pins Google B", async () => {
+    window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
+    window.localStorage.setItem(
+      "kondate.auth.supabase",
+      JSON.stringify({
+        access_token: "leftover-access",
+        refresh_token: "leftover-refresh",
+        user: { id: "leftover-user" },
+      }),
+    );
+    const leftover = {
+      access_token: "leftover-access",
+      refresh_token: "leftover-refresh",
+      user: { id: "leftover-user" },
+    } as Session;
+    const googleB = {
+      access_token: "google-access",
+      refresh_token: "google-refresh",
+      user: { id: "google-user" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce({ data: { session: leftover }, error: null })
+      .mockResolvedValue({ data: { session: googleB }, error: null });
+    const client = {
+      auth: {
+        getSession,
+        signOut,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", googleB);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("google-user");
+  });
+
+  it("C4: leftover live A on /auth/callback adopts Google B when the switch is armed", async () => {
+    window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
+    window.localStorage.setItem(
+      "kondate.auth.liveSession",
+      JSON.stringify({ userId: "user-a", storedAt: new Date().toISOString() }),
+    );
+    window.localStorage.setItem(
+      "kondate.auth.supabase",
+      JSON.stringify({
+        access_token: "token-a",
+        refresh_token: "refresh-a",
+        user: { id: "user-a" },
+      }),
+    );
+    const sessionA = {
+      access_token: "token-a",
+      refresh_token: "refresh-a",
+      user: { id: "user-a" },
+    } as Session;
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const setSession = vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null });
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: sessionA }, error: null }),
+        setSession,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-a");
+
+    armIntentionalAuthSessionSwitch("google_callback");
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+    });
+    expect(document.title).toBe("user-b");
+    expect(screen.queryByText("authenticated:degraded")).not.toBeInTheDocument();
   });
 });

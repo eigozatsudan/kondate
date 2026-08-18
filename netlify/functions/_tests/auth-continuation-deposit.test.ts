@@ -373,4 +373,51 @@ describe("auth continuation deposit", () => {
     expect(source).toMatch(/createAdminSupabaseClient\(\)/);
     expect(source).toMatch(/parseDepositAuthContinuationRpcData/);
   });
+
+  it("C7: anonymous last-wins overwrites a prior deposit (residual; do not revert to first-wins)", async () => {
+    // 正当 code のあと、形式を通る後着毒が暗号文を上書きする可用性 DoS。
+    // first-wins に戻すと毒 first-wins（旧 C2）が再発する。RPC ポリシーは変えない。
+    const POISON_CODE = "poison-authorization-code-value-ok";
+    const encryptionKey = crypto.getRandomValues(new Uint8Array(32));
+    type Stored = { ciphertext: Uint8Array; iv: Uint8Array; secretHash?: Uint8Array };
+    const store: { row: Stored | null } = { row: null };
+    const deposit = vi
+      .fn()
+      .mockImplementation(
+        (input: { ciphertext: Uint8Array; iv: Uint8Array; secretHash?: Uint8Array }) => {
+          // RPC 匿名枝と同型: claimed 前なら last-wins
+          if (input.secretHash === undefined) {
+            store.row = { ciphertext: input.ciphertext, iv: input.iv };
+            return Promise.resolve(true);
+          }
+          return Promise.resolve(false);
+        },
+      );
+    const handler = createHandler({ origin: ORIGIN, encryptionKey, deposit });
+    const post = async (code: string): Promise<Response> =>
+      handler(
+        new Request("https://functions.test", {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/json" },
+          body: JSON.stringify({ state: STATE, code }),
+        }),
+        { params: { continuationId: CONTINUATION_ID } },
+      );
+
+    expect((await post(AUTH_CODE)).status).toBe(204);
+    expect((await post(POISON_CODE)).status).toBe(204);
+    expect(deposit).toHaveBeenCalledTimes(2);
+    expect(store.row).not.toBeNull();
+    await expect(
+      decryptContinuationCode(
+        { ciphertext: store.row!.ciphertext, iv: store.row!.iv },
+        CONTINUATION_ID,
+        ORIGIN,
+        encryptionKey,
+      ),
+    ).resolves.toBe(POISON_CODE);
+    const source = await readFile("netlify/functions/auth-continuation-deposit.ts", "utf8");
+    expect(source).toMatch(/first-wins に戻すと毒 first-wins/);
+    expect(source).toMatch(/RPC \/ last-wins は変えない/);
+  });
 });

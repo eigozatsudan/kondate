@@ -165,6 +165,7 @@ afterEach(async () => {
   window.localStorage.removeItem(`${leftoverSessionStorageKey}-code-verifier`);
   window.localStorage.removeItem("kondate.auth.liveSession");
   sessionStorage.removeItem(emailOtpCompletedKey);
+  sessionStorage.removeItem("kondate.auth.sessionSwitch");
   sessionStorage.removeItem("kondate.auth.lastMagicEmail");
   sessionStorage.removeItem("kondate.auth.magicSentUi");
   vi.mocked(useAuth).mockReturnValue(unauthenticatedAuth());
@@ -1222,4 +1223,109 @@ it("C-R3: leftover-capable Google start proceeds after 2s when leftover signOut 
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("C5: disables Google switch while email OTP is verifying", async () => {
+  const user = userEvent.setup();
+  let releaseVerify: ((value: { kind: "complete" }) => void) | undefined;
+  const verifyEmailOtp = vi.fn().mockImplementation(
+    () =>
+      new Promise<{ kind: "complete" }>((resolve) => {
+        releaseVerify = resolve;
+      }),
+  );
+  const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
+  const gateway = stubGateway({
+    sendEmailOtp: vi.fn().mockResolvedValue({
+      email: "user@example.com",
+      resendAvailableAt: readyResendAt(),
+    }),
+    verifyEmailOtp,
+    signInWithGoogle,
+  });
+  renderLoginAt("/login", gateway);
+
+  await sendEmailAndWait(user);
+  await pasteOtpDigits(user, "123456");
+
+  const googleSwitch = await screen.findByRole("button", { name: EMAIL_OTP_SWITCH_TO_GOOGLE });
+  expect(googleSwitch).toBeDisabled();
+  await user.click(googleSwitch);
+  expect(signInWithGoogle).not.toHaveBeenCalled();
+  act(() => {
+    releaseVerify?.({ kind: "complete" });
+  });
+});
+
+it("C3: leftover cleanup does not re-arm when waiting becomes verifying", async () => {
+  leftoverSignOut.mockImplementation(() => new Promise(() => undefined));
+  window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+  sessionStorage.setItem(
+    "kondate.auth.magicSentUi",
+    JSON.stringify({
+      email: "user@example.com",
+      resendAvailableAt: readyResendAt(),
+      storedAt: new Date().toISOString(),
+    }),
+  );
+  leftoverGetSession.mockResolvedValue({
+    data: { session: leftoverMocks.leftover },
+    error: null,
+  });
+  let releaseVerify: ((value: { kind: "complete" }) => void) | undefined;
+  const gateway = stubGateway({
+    verifyEmailOtp: vi.fn().mockImplementation(
+      () =>
+        new Promise<{ kind: "complete" }>((resolve) => {
+          releaseVerify = resolve;
+        }),
+    ),
+  });
+  const user = userEvent.setup();
+  renderLoginAt("/login", gateway);
+
+  expect(await screen.findByRole("heading", { name: EMAIL_OTP_WAITING_HEADING })).toBeVisible();
+  await waitFor(() => {
+    expect(leftoverSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  await pasteOtpDigits(user, "123456");
+  expect(await screen.findByRole("button", { name: EMAIL_OTP_SWITCH_TO_GOOGLE })).toBeDisabled();
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(leftoverSignOut).toHaveBeenCalledTimes(1);
+  act(() => {
+    releaseVerify?.({ kind: "complete" });
+  });
+});
+
+it("C2: complete with sessionProbeDegraded does not Navigate into leftover pin A", async () => {
+  const user = userEvent.setup();
+  vi.mocked(useAuth).mockReturnValue({
+    status: "authenticated",
+    session: { user: { id: "leftover-user" } } as never,
+    refreshSession: vi.fn(),
+    sessionProbeDegraded: true,
+  });
+  const verifyEmailOtp = vi.fn().mockResolvedValue({ kind: "complete" });
+  const gateway = stubGateway({
+    sendEmailOtp: vi.fn().mockResolvedValue({
+      email: "user@example.com",
+      resendAvailableAt: readyResendAt(),
+    }),
+    verifyEmailOtp,
+  });
+  renderLoginAt("/login", gateway);
+
+  await sendEmailAndWait(user);
+  await pasteOtpDigits(user, "123456");
+
+  await waitFor(() => {
+    expect(verifyEmailOtp).toHaveBeenCalled();
+  });
+  expect(screen.queryByText("welcome-dest")).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "こんだて日和" })).toBeInTheDocument();
 });

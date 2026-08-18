@@ -556,6 +556,9 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
 
   const startGoogle = async (): Promise<void> => {
     if (googlePending) return;
+    // C5: 番号確認中は Google を並走させない。書いた B を leftover / discard と競合させない。
+    if (verifyInFlightRef.current) return;
+    if (state.status === "verifying" || state.status === "sending") return;
     setGoogleError(false);
     setGooglePending(true);
     try {
@@ -578,6 +581,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   // C1: unmount / 印書き込み後の late .then で leftover を再起動しない。
   // C4: 番号待ち snapshot でも leftover persist は掃く（待ちと leftover pin の衝突を閉じる）。
   // C5: leftover-capable 以外の /login でも武装する（returnTo / sessionExpired 等）。
+  // C3: 設計 §3.3 どおりマウント時点の persist に限る。waiting→verifying で再武装しない。
   // C9 は本物の成功時だけ snapshot を消す（M1）。leftover-capable authenticated では残す。
   useEffect(() => {
     if (otpCompletedFresh) {
@@ -592,7 +596,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     return () => {
       aborted = true;
     };
-  }, [otpCompletedFresh, locationState.authError, location.search, state.status]);
+  }, [otpCompletedFresh, locationState.authError, location.search]);
 
   // ログイン成功後は宛先の PII を sessionStorage に残さない（C9）。
   // leftover-capable の authenticated は本物の成功ではない（M1 / C1b residual）。
@@ -611,12 +615,14 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   // 既にセッションがある場合はフォームを出さず returnTo へ進める。
   // C2 / C-R2 / C-R3: leftover を伴い得る leave はエラーより先に Navigate しない。
   // 番号成功印があるときだけ leftover-capable でも Navigate する（MF-C1）。
+  // C2: pin mismatch の degraded のまま leftover A の Authenticated shell へ入らない。
   // C5: leftover-incapable でも committed live が無い authenticated は leftover persist の
   // first-writer pin なので Navigate せず、上の leftover 掃除に任せる。
   if (
-    state.status === "complete" ||
-    (auth.status === "authenticated" &&
-      (otpCompletedFresh || (!leftoverCapable && liveSessionCommitted)))
+    !auth.sessionProbeDegraded &&
+    (state.status === "complete" ||
+      (auth.status === "authenticated" &&
+        (otpCompletedFresh || (!leftoverCapable && liveSessionCommitted))))
   ) {
     return <Navigate to={returnTo} replace />;
   }
@@ -678,7 +684,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
           <button
             className="secondary-button"
             type="button"
-            disabled={googlePending}
+            disabled={googlePending || verifying}
             onClick={() => void startGoogle()}
           >
             {googlePending ? EMAIL_OTP_GOOGLE_STARTING : EMAIL_OTP_SWITCH_TO_GOOGLE}
@@ -693,7 +699,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
     );
   }
 
-  const email = state.email;
+  // complete + degraded は Navigate しない（C2）。complete 型に email は無い。
+  const email = "email" in state ? state.email : "";
   return (
     <main className="page-frame stack">
       <div className="stack gap-2">
@@ -748,7 +755,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
       <button
         className="secondary-button min-h-11"
         type="button"
-        disabled={googlePending}
+        disabled={googlePending || state.status === "sending"}
         onClick={() => void startGoogle()}
       >
         {googlePending ? EMAIL_OTP_GOOGLE_STARTING : EMAIL_OTP_GOOGLE_BUTTON}

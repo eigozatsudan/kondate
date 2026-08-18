@@ -41,10 +41,13 @@ import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/l
 import { IMMEDIATE_CLAIM_TIMEOUT_MS, withTimeout } from "./async-timeout";
 import { EMAIL_OTP_SEND_FAILED } from "./email-otp-copy";
 import {
+  armIntentionalAuthSessionSwitch,
+  clearIntentionalAuthSessionSwitch,
   liveAuthSessionMarkAppearedOrUpdated,
   liveAuthSessionMarkProtectsFingerprint,
   readLiveAuthSessionMark,
   writeLiveAuthSessionMark,
+  type LiveAuthSessionMark,
 } from "./live-auth-session-mark";
 import { normalizeOtpDigits } from "./otp-digit-field";
 
@@ -534,6 +537,17 @@ type SessionProbeBaseline =
   | { kind: "present"; key: string; accessToken: string; refreshToken: string }
   | { kind: "unknown" };
 
+/** exchange / verify 成功結果から live 印用 userId を取る。無いときは undefined。 */
+function userIdFromAuthResultData(data: unknown): string | undefined {
+  if (typeof data !== "object" || data === null || !("session" in data)) return undefined;
+  const session = data.session;
+  if (typeof session !== "object" || session === null || !("user" in session)) return undefined;
+  const user = session.user;
+  if (typeof user !== "object" || user === null || !("id" in user)) return undefined;
+  const userId = user.id;
+  return typeof userId === "string" && userId !== "" ? userId : undefined;
+}
+
 /** loser probe 用。token 変化 or 新規出現だけ sibling 成功とみなす。 */
 function sessionProbeKey(
   session: { access_token?: string; user?: { id?: string } } | null,
@@ -593,21 +607,47 @@ async function probeDiscardedExchangeSessionKey(
 }
 
 /**
+ * C1: 番号成功は continuation-complete を書かない。live 印（userId あり）または
+ * 同一タブ 60s 番号印があれば、discard した Google が baseline 復元 / 無条件 signOut してはいけない。
+ * Google commit の userId 無し印は OTP 勝者ではない（C-R6 の baseline 復元を残す）。
+ */
+function isEmailOtpSiblingWinner(
+  liveMarkAtStart: LiveAuthSessionMark | null,
+  storage: Storage,
+): boolean {
+  if (isFreshEmailOtpCompletedMark()) return true;
+  const now = readLiveAuthSessionMark(storage);
+  if (now === null || now.userId === undefined) return false;
+  if (liveMarkAtStart === null) return true;
+  if (now.userId !== liveMarkAtStart.userId) return true;
+  return liveAuthSessionMarkAppearedOrUpdated(liveMarkAtStart, now);
+}
+
+type DiscardedExchangeClearContext = {
+  loserFlowId: string;
+  storage: Storage;
+  awaitLocalSignOutSettle?: boolean;
+  liveMarkAtStart?: LiveAuthSessionMark | null;
+};
+
+/**
  * C-R9: discard した exchange 自身の session が共有 storage に残っているときだけ local clear。
  * 現在 session が discarded fingerprint と一致するときのみ触る（別 token の勝者を壊さない）。
  * pin は AuthProvider 側のタブ local 権威。gateway は fingerprint 一致をその proxy とする。
  * C5: 勝者 completion があるときは signOut しない（上書き済み勝者を一緒に消さない）。
+ * C1: 番号勝者印があるときも signOut しない（OTP は continuation-complete を書かない）。
  * C-R1: 指紋無し（timeout / throw / null）でも sibling が無い loser は local clear。
  * verify 成功後は persist に magic が書かれている。指紋待ちで掃除しないと pin が後勝ち Google を拒む。
  */
 async function clearDiscardedExchangeSessionIfStillPresent(
   client: BrowserSupabaseClient,
   discardedExchangeSessionKey: string | null,
-  context?: { loserFlowId: string; storage: Storage; awaitLocalSignOutSettle?: boolean },
+  context?: DiscardedExchangeClearContext,
 ): Promise<void> {
   if (
     context !== undefined &&
-    hasSiblingAuthContinuationCompletion(context.loserFlowId, context.storage)
+    (hasSiblingAuthContinuationCompletion(context.loserFlowId, context.storage) ||
+      isEmailOtpSiblingWinner(context.liveMarkAtStart ?? null, context.storage))
   ) {
     return;
   }
@@ -768,13 +808,15 @@ export async function clearLeftoverLoginSessionIfNoSiblingCompletion(
     if (afterWipeKey !== startKey) return;
 
     if (typeof resolved.auth.signOut === "function") {
+      const pkceStorage = typeof window !== "undefined" ? window.localStorage : storage;
+      const liveMarkAtSignOut = readLiveAuthSessionMark(pkceStorage);
       const signOutPromise = resolved.auth.signOut({ scope: "local" });
+      // C3: timeout 前後を問わず後着 _removeSession から番号 persist を守る。wrap は発行前に武装。
+      armLeftoverSignOutPkceProtection(signOutPromise, pkceStorage, liveMarkAtSignOut);
       try {
         await withTimeout(signOutPromise, 2_000);
       } catch {
-        // C-R3: 2s で掃除を終わらせ startGoogle を進める。後着は PKCE 保護。
-        const pkceStorage = typeof window !== "undefined" ? window.localStorage : storage;
-        armLeftoverSignOutPkceProtection(signOutPromise, pkceStorage);
+        // C-R3: 2s で掃除を終わらせ startGoogle を進める。後着は PKCE / 番号 persist 保護。
       }
     }
   } catch {
@@ -796,8 +838,17 @@ async function restoreSessionAfterDiscardedExchange(
   client: BrowserSupabaseClient,
   baseline: SessionProbeBaseline,
   discardedExchangeSessionKey: string | null = null,
-  context?: { loserFlowId: string; storage: Storage },
+  context?: DiscardedExchangeClearContext,
 ): Promise<void> {
+  // C1: 番号勝者が書いた session を baseline leftover/live A で巻き戻さない。
+  // sibling Google completion があるときは C-R6 どおり baseline 復元する。
+  if (
+    context !== undefined &&
+    !hasSiblingAuthContinuationCompletion(context.loserFlowId, context.storage) &&
+    isEmailOtpSiblingWinner(context.liveMarkAtStart ?? null, context.storage)
+  ) {
+    return;
+  }
   if (
     baseline.kind === "present" &&
     baseline.accessToken.length > 0 &&
@@ -897,6 +948,9 @@ function restorePkceCodeVerifier(storage: Storage, value: string | null): void {
 type LeftoverPkceGuard = {
   storage: Storage;
   protectedValue: string | null;
+  /** leftover signOut 中に番号が書いた persist。後着 _removeSession のあと戻す（C3） */
+  protectedSessionValue: string | null;
+  liveMarkAtArm: LiveAuthSessionMark | null;
 };
 
 const leftoverPkceGuards = new Set<LeftoverPkceGuard>();
@@ -915,13 +969,32 @@ function restoreLeftoverProtectedPkce(guard: LeftoverPkceGuard): void {
   }
 }
 
-function rememberPkceVerifierWrite(storage: Storage, key: string, value: string): void {
-  if (key !== PKCE_CODE_VERIFIER_KEY) {
-    return;
+function restoreLeftoverProtectedWinnerSession(guard: LeftoverPkceGuard): void {
+  if (guard.protectedSessionValue === null) return;
+  const shouldRestore =
+    isFreshEmailOtpCompletedMark() ||
+    liveAuthSessionMarkAppearedOrUpdated(
+      guard.liveMarkAtArm,
+      readLiveAuthSessionMark(guard.storage),
+    );
+  if (!shouldRestore) return;
+  try {
+    if (guard.storage.getItem(browserSupabaseSessionStorageKey) !== guard.protectedSessionValue) {
+      guard.storage.setItem(browserSupabaseSessionStorageKey, guard.protectedSessionValue);
+    }
+  } catch {
+    // best-effort。storage 障害でも leftover 掃除の完了は止めない
   }
+}
+
+function rememberPkceVerifierWrite(storage: Storage, key: string, value: string): void {
   for (const guard of leftoverPkceGuards) {
-    if (guard.storage === storage) {
+    if (guard.storage !== storage) continue;
+    if (key === PKCE_CODE_VERIFIER_KEY) {
       guard.protectedValue = value;
+    }
+    if (key === browserSupabaseSessionStorageKey) {
+      guard.protectedSessionValue = value;
     }
   }
 }
@@ -1009,16 +1082,24 @@ function unwrapStorageSetItemIfIdle(storage: Storage): void {
 function armLeftoverSignOutPkceProtection(
   signOutPromise: Promise<unknown>,
   storage: Storage,
+  liveMarkAtArm: LiveAuthSessionMark | null = readLiveAuthSessionMark(storage),
 ): void {
-  const guard: LeftoverPkceGuard = { storage, protectedValue: null };
+  const guard: LeftoverPkceGuard = {
+    storage,
+    protectedValue: null,
+    protectedSessionValue: null,
+    liveMarkAtArm,
+  };
   leftoverPkceGuards.add(guard);
   // C-R4: protect より前の setItem を控える。後着 _removeSession が書込〜protect に入っても戻せる。
+  // C3: 番号が書いた persist も同じ wrap で控え、後着 wipe のあと戻す。
   wrapStorageSetItemToCapturePkce(storage);
   void signOutPromise
     .catch(() => undefined)
     .then(() => {
       leftoverPkceGuards.delete(guard);
       restoreLeftoverProtectedPkce(guard);
+      restoreLeftoverProtectedWinnerSession(guard);
       unwrapStorageSetItemIfIdle(storage);
     });
 }
@@ -1305,6 +1386,8 @@ export function createAuthGateway(
         return { kind: "mismatch" };
       }
       try {
+        // C2: leftover pin A が verify 中の SIGNED_IN B を拒否しないよう、verify 前に武装する
+        armIntentionalAuthSessionSwitch("email_otp");
         const { error } = await client.auth.verifyOtp({
           email: input.email,
           token: digits,
@@ -1322,9 +1405,11 @@ export function createAuthGateway(
           }
           return { kind: "complete" };
         }
+        clearIntentionalAuthSessionSwitch();
         return { kind: mapEmailOtpVerifyKind(error.code) };
       } catch {
         // 未知・通信失敗も fail-closed。raw GoTrue 文は出さない。
+        clearIntentionalAuthSessionSwitch();
         return { kind: "unavailable" };
       }
     },
@@ -1437,9 +1522,10 @@ export function createAuthGateway(
       }
       // クロスブラウザ（secret 無し）: deposit のみ。pre-lease は立てない（元タブ global を塞がない）。
       // C2: 匿名 deposit は未 claim なら last-wins（毒 first-wins を正当 WebView が覆せる）。
-      // R1 residual-intentional: 正当 deposit 後の後着毒も last-wins で上書きし得る（可用性 DoS、
-      // アカウント奪取ではない）。first-wins に戻すと C2 が再発するため維持。deposit API は
-      // code 形式を厳格化して明らかなゴミを弾くが、形式を通る毒は閉じない。
+      // R1 residual-intentional / C7: 正当 deposit 後の後着毒も last-wins で上書きし得る（可用性 DoS、
+      // アカウント奪取ではない）。first-wins に戻すと毒 first-wins（旧 C2）が再発するため維持。
+      // C7 は回帰テストとコメントで residual を固定するだけで、RPC / last-wins は変えない。
+      // deposit API は code 形式を厳格化して明らかなゴミを弾くが、形式を通る毒は閉じない。
       // C1: 429/5xx/transport は code 閉包保持のまま backoff 再試行。budget 後のみ terminal。
       if (stored === null) {
         const depositOutcome = await depositWithRetry(() =>
@@ -1753,6 +1839,8 @@ export function createAuthGateway(
     let exchangeStarted = false;
     // C1: exchange 直前 fingerprint。catch の loser probe から参照するため try 外で保持する。
     let sessionBaseline: SessionProbeBaseline = { kind: "unknown" };
+    // C1: exchange 開始時の live 印。番号勝者が後から書いた印と区別する。
+    let liveMarkAtExchangeStart: LiveAuthSessionMark | null = null;
     // C-R2-1: exchange 開始時の PKCE 世代/値。catch から参照するため try 外。
     let pkceGenerationAtExchangeStart = 0;
     let pkceVerifierAtExchangeStart: string | null = null;
@@ -1841,6 +1929,7 @@ export function createAuthGateway(
       }
       // C1: exchange 直前の session 指紋。loser probe は「変化した session」だけ complete する。
       sessionBaseline = await captureSessionProbeBaseline(client);
+      liveMarkAtExchangeStart = readLiveAuthSessionMark(storage);
       // C-R2: baseline await 後の最終 dismiss 再検査
       if (isInFlightResumeDismissed(flow.id, storage)) {
         return {
@@ -1856,6 +1945,8 @@ export function createAuthGateway(
       }
       pkceGenerationAtExchangeStart = readPkceVerifierGeneration(storage);
       pkceVerifierAtExchangeStart = readPkceCodeVerifier(storage);
+      // C4: leftover first-pin A が後着 Google B を拒否しないよう exchange 前に武装する
+      armIntentionalAuthSessionSwitch("google_callback");
       exchangeStarted = true;
       const result =
         claimFlow.sessionExchange === "oauth_mock"
@@ -1881,7 +1972,7 @@ export function createAuthGateway(
                 type: verifyOtpType(),
               })
             : client.auth.exchangeCodeForSession(claimedCode.code);
-      const { error } = await result;
+      const { data: exchangeData, error } = await result;
       if (error !== null) {
         // token_hash 期限切れは resume でも expired に写す（unbound より再送 UI へ）
         if (
@@ -1901,6 +1992,7 @@ export function createAuthGateway(
       // C-R6/C-R9: client/storage session は既に loser に置換済みになり得る
       // → baseline present なら setSession 復元、absent/unknown なら loser fingerprint 一致時のみ local clear
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
+        clearIntentionalAuthSessionSwitch();
         clearPendingAuthDeposit(flow.id, storage);
         // discard 時点の session 指紋（exchange 結果）。C-R9 clear の一致判定に使う
         const discardedExchangeSessionKey = await probeDiscardedExchangeSessionKey(client);
@@ -1908,7 +2000,7 @@ export function createAuthGateway(
           client,
           sessionBaseline,
           discardedExchangeSessionKey,
-          { loserFlowId: flow.id, storage },
+          { loserFlowId: flow.id, storage, liveMarkAtStart: liveMarkAtExchangeStart },
         );
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
@@ -1917,7 +2009,11 @@ export function createAuthGateway(
       // C4: withTimeout で結果が discard されても storage 経由で recovery/listener が拾えるよう公開。
       // gateway に注入された storage と同じ領域へ書き、テストの MapStorage とも一致させる。
       try {
-        publishAuthContinuationCompletion({ flowId: flow.id, returnTo: safeReturnTo }, storage);
+        publishAuthContinuationCompletion(
+          { flowId: flow.id, returnTo: safeReturnTo },
+          storage,
+          userIdFromAuthResultData(exchangeData),
+        );
       } catch {
         // setItem 失敗時 publish は clear しない → secret 残存（他タブ re-claim / ページ側再 publish 可）。
         // セッションは既に確立済みなので outer catch の terminal clear に落とさず complete を返す。
@@ -1931,6 +2027,7 @@ export function createAuthGateway(
         flowId: flow.id,
       };
     } catch (error) {
+      clearIntentionalAuthSessionSwitch();
       // provider exchange が明示失敗したときだけ terminal（hang/timeout は下層で kind 返却しない）
       const isRetryableTransport =
         error instanceof ContinuationHttpError ||
@@ -2066,6 +2163,7 @@ export function createAuthGateway(
     let stopExchangeHeartbeat: (() => void) | undefined;
     let exchangeStarted = false;
     let sessionBaseline: SessionProbeBaseline = { kind: "unknown" };
+    let liveMarkAtExchangeStart: LiveAuthSessionMark | null = null;
     try {
       // C-R6: lease 前に sibling clear 済みなら verifyOtp しない
       if (isInFlightResumeDiscardedByStorage(flow.id, storage)) {
@@ -2126,6 +2224,7 @@ export function createAuthGateway(
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       sessionBaseline = await captureSessionProbeBaseline(client);
+      liveMarkAtExchangeStart = readLiveAuthSessionMark(storage);
       // C-R2: baseline await 後の最終 dismiss 再検査
       if (isInFlightResumeDismissed(flow.id, storage)) {
         return {
@@ -2140,7 +2239,7 @@ export function createAuthGateway(
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
       exchangeStarted = true;
-      const { error } = await client.auth.verifyOtp({
+      const { data: magicVerifyData, error } = await client.auth.verifyOtp({
         token_hash: tokenHash,
         type: verifyOtpType(),
       });
@@ -2159,7 +2258,7 @@ export function createAuthGateway(
           client,
           sessionBaseline,
           discardedExchangeSessionKey,
-          { loserFlowId: flow.id, storage },
+          { loserFlowId: flow.id, storage, liveMarkAtStart: liveMarkAtExchangeStart },
         );
         return { kind: "awaiting_completion", flowId: flow.id, returnTo: flow.returnTo };
       }
@@ -2174,7 +2273,7 @@ export function createAuthGateway(
           client,
           sessionBaseline,
           discardedExchangeSessionKey,
-          { loserFlowId: flow.id, storage },
+          { loserFlowId: flow.id, storage, liveMarkAtStart: liveMarkAtExchangeStart },
         );
         return {
           kind: "error",
@@ -2185,7 +2284,11 @@ export function createAuthGateway(
       }
       const safeReturnTo = sanitizeLoginReturnPath(flow.returnTo);
       try {
-        publishAuthContinuationCompletion({ flowId: flow.id, returnTo: safeReturnTo }, storage);
+        publishAuthContinuationCompletion(
+          { flowId: flow.id, returnTo: safeReturnTo },
+          storage,
+          userIdFromAuthResultData(magicVerifyData),
+        );
       } catch {
         // publish 失敗時も session は確立済み。complete を返す（resume と同型）。
       }

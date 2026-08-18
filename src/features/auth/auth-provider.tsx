@@ -34,6 +34,8 @@ import {
 } from "./auth-flow";
 import { resetAuthCallbackUrlCaptureIfLeftCallback } from "./auth-callback-url-capture";
 import {
+  clearIntentionalAuthSessionSwitch,
+  isIntentionalAuthSessionSwitchArmed,
   liveAuthSessionMarkProtectsFingerprint,
   readLiveAuthSessionMark,
   shouldCommitLiveAuthSessionMark,
@@ -56,7 +58,8 @@ import { setAccessTokenPinDataPlaneBlocked, setAccessTokenPinnedUserId } from ".
  * 防衛:
  * - 最初に確立した session の user を pin する（residual arm 有無に依存しない — C2）
  * - pin 中に別 user が来たら setSession を捨て、可能なら pin token を復元する
- * - session null（logout / 失効）で解除。意図的なアカウント切替は一度 unauthenticated を経由する
+ * - session null（logout / 失効）で解除。意図的な切替は unauthenticated 経由、または
+ *   /login・/auth/callback の sessionSwitch 印（C2 / C4）で pin を付け替える
  * - residual recovery 起動中は pin 前の first-writer も同様（C-R1）
  * - C-R2: multi-tab 別 account 並立は製品非対応。setSession 復元は cooldown + 窓上限で thrash を抑える
  */
@@ -196,6 +199,21 @@ function hasPersistedBrowserSupabaseSession(): boolean {
     return raw !== null && raw !== "";
   } catch {
     return false;
+  }
+}
+
+/**
+ * C4: /auth/callback 到着時点の leftover persist token。
+ * 後着 Google session は token が違うので first-pin してよい。
+ */
+function readLeftoverPersistAccessTokenAtMount(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(browserSupabaseSessionStorageKey);
+    if (raw === null || raw === "") return null;
+    return readPersistedAccessTokenFromUnknown(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
   }
 }
 
@@ -479,6 +497,8 @@ export function AuthProvider({
   const hadAuthenticatedSessionRef = useRef(false);
   // C-R1 / C2: residual recovery と multi-tab callback 後着の session 世代ガード
   const residualSessionGuardRef = useRef<ResidualSessionGuard>(createResidualSessionGuard());
+  // C4: callback 到着時 leftover persist。後着 Google token と区別する。
+  const leftoverPersistAccessTokenAtMountRef = useRef(readLeftoverPersistAccessTokenAtMount());
   // C12: probe timeout 中は authenticated shell が stale になり得る。storage は焼かず UX のみ。
   const [sessionProbeDegraded, setSessionProbeDegraded] = useState(false);
   /**
@@ -558,10 +578,19 @@ export function AuthProvider({
         const sessionKey = `${nextSession.user.id}:${nextSession.access_token}`;
         const refuseMismatchedLiveMark =
           liveMark?.userId !== undefined && liveMark.userId !== nextSession.user.id;
+        const isCallbackPath =
+          pathname === "/auth/callback" || pathname.startsWith("/auth/callback/");
+        const leftoverTokenAtMount = leftoverPersistAccessTokenAtMountRef.current;
+        // C4: callback は mount 時 leftover token だけ拒否。新規 exchange session は通す。
+        const refuseCallbackMountLeftover =
+          isCallbackPath &&
+          leftoverTokenAtMount !== null &&
+          nextSession.access_token === leftoverTokenAtMount;
         const refuseUnmarkedLeftoverPersist =
           shouldRefuseUnmarkedLeftoverFirstPin(pathname) &&
           hasPersistedBrowserSupabaseSession() &&
-          !liveAuthSessionMarkProtectsFingerprint(sessionKey);
+          !liveAuthSessionMarkProtectsFingerprint(sessionKey) &&
+          (!isCallbackPath || refuseCallbackMountLeftover);
         if (refuseMismatchedLiveMark || refuseUnmarkedLeftoverPersist) {
           if (refuseUnmarkedLeftoverPersist) {
             rememberAccessToken(persistHardLeftoverAccessTokensRef.current, nextSession);
@@ -633,103 +662,112 @@ export function AuthProvider({
           guard.pinnedUserId = nextSession.user.id;
           guard.pinnedSession = nextSession;
         } else if (nextSession.user.id !== guard.pinnedUserId) {
-          // 後着 residual / multi-tab callback 等による無言差し替えを拒否（C-R1 / C2）
-          // C-R2: 同一 user の pin token だけを restore。cooldown/上限で multi-tab thrash を抑える。
-          // C-R7: restore 見送り（cap/cooldown）や setSession 失敗時は sessionProbeDegraded を立て、
-          // React pin と共有 storage session の一時乖離を UI に最小通知する（タブ横断 pin 権威は非導入）。
-          // C1/R1: pin user は setAccessTokenPinnedUserId 済みのまま。client が B のまま残ると
-          // PostgREST/RPC が B で動く（R1）。先に data plane を閉じ、可能なら pin A を restore する。
-          // R2: requireAccessToken は PinMismatch（isAuthSessionFailure 外）で草稿 wipe しない。
-          const rejectGeneration = ++pinRejectGenerationRef.current;
-          setAccessTokenPinDataPlaneBlocked(true);
-          setSessionProbeDegraded(true);
-          const pinned = guard.pinnedSession;
-          const restore = client.auth.setSession;
-          const schedulePinRestoreRetry = (pinnedSession: Session): void => {
-            // C12: 窓上限で restore を見送ったあと、窓明けに 1 回だけ再試行する。
-            // 永続 thrash を避けるためタイマーは 1 本。成功しなければ degraded UX + 手動再ログイン。
-            if (typeof window === "undefined") return;
-            if (pinRestoreRetryTimerRef.current !== null) {
-              window.clearTimeout(pinRestoreRetryTimerRef.current);
-            }
-            pinRestoreRetryTimerRef.current = window.setTimeout(() => {
-              pinRestoreRetryTimerRef.current = null;
-              if (rejectGeneration !== pinRejectGenerationRef.current) return;
-              const g = residualSessionGuardRef.current;
-              if (g.pinnedUserId === null || g.pinnedSession === null) return;
-              const retryRestore = client.auth.setSession;
-              if (typeof retryRestore !== "function") return;
-              if (!shouldAttemptPinSessionRestore(g, Date.now())) return;
-              void (async () => {
-                try {
-                  const result = await retryRestore.call(client.auth, {
-                    access_token: pinnedSession.access_token,
-                    refresh_token: pinnedSession.refresh_token,
-                  });
-                  if (rejectGeneration !== pinRejectGenerationRef.current) return;
-                  if (result.error !== null) {
+          const switchPathname = typeof window !== "undefined" ? window.location.pathname : "";
+          if (isIntentionalAuthSessionSwitchArmed(switchPathname)) {
+            // C2 / C4: leftover-capable /login または /auth/callback で今立てた番号 / Google。
+            // 意図的切替なので pin を付け替え、baseline A へ戻さない。
+            clearIntentionalAuthSessionSwitch();
+            guard.pinnedUserId = nextSession.user.id;
+            guard.pinnedSession = nextSession;
+          } else {
+            // 後着 residual / multi-tab callback 等による無言差し替えを拒否（C-R1 / C2）
+            // C-R2: 同一 user の pin token だけを restore。cooldown/上限で multi-tab thrash を抑える。
+            // C-R7: restore 見送り（cap/cooldown）や setSession 失敗時は sessionProbeDegraded を立て、
+            // React pin と共有 storage session の一時乖離を UI に最小通知する（タブ横断 pin 権威は非導入）。
+            // C1/R1: pin user は setAccessTokenPinnedUserId 済みのまま。client が B のまま残ると
+            // PostgREST/RPC が B で動く（R1）。先に data plane を閉じ、可能なら pin A を restore する。
+            // R2: requireAccessToken は PinMismatch（isAuthSessionFailure 外）で草稿 wipe しない。
+            const rejectGeneration = ++pinRejectGenerationRef.current;
+            setAccessTokenPinDataPlaneBlocked(true);
+            setSessionProbeDegraded(true);
+            const pinned = guard.pinnedSession;
+            const restore = client.auth.setSession;
+            const schedulePinRestoreRetry = (pinnedSession: Session): void => {
+              // C12: 窓上限で restore を見送ったあと、窓明けに 1 回だけ再試行する。
+              // 永続 thrash を避けるためタイマーは 1 本。成功しなければ degraded UX + 手動再ログイン。
+              if (typeof window === "undefined") return;
+              if (pinRestoreRetryTimerRef.current !== null) {
+                window.clearTimeout(pinRestoreRetryTimerRef.current);
+              }
+              pinRestoreRetryTimerRef.current = window.setTimeout(() => {
+                pinRestoreRetryTimerRef.current = null;
+                if (rejectGeneration !== pinRejectGenerationRef.current) return;
+                const g = residualSessionGuardRef.current;
+                if (g.pinnedUserId === null || g.pinnedSession === null) return;
+                const retryRestore = client.auth.setSession;
+                if (typeof retryRestore !== "function") return;
+                if (!shouldAttemptPinSessionRestore(g, Date.now())) return;
+                void (async () => {
+                  try {
+                    const result = await retryRestore.call(client.auth, {
+                      access_token: pinnedSession.access_token,
+                      refresh_token: pinnedSession.refresh_token,
+                    });
+                    if (rejectGeneration !== pinRejectGenerationRef.current) return;
+                    if (result.error !== null) {
+                      setAccessTokenPinDataPlaneBlocked(true);
+                      setSessionProbeDegraded(true);
+                      return;
+                    }
+                    setAccessTokenPinDataPlaneBlocked(false);
+                  } catch {
+                    if (rejectGeneration !== pinRejectGenerationRef.current) return;
                     setAccessTokenPinDataPlaneBlocked(true);
                     setSessionProbeDegraded(true);
-                    return;
                   }
-                  setAccessTokenPinDataPlaneBlocked(false);
-                } catch {
-                  if (rejectGeneration !== pinRejectGenerationRef.current) return;
-                  setAccessTokenPinDataPlaneBlocked(true);
-                  setSessionProbeDegraded(true);
-                }
-              })();
-            }, PIN_RESTORE_WINDOW_MS);
-          };
-          void (async () => {
-            // R1: まず B を data plane から落とす（shopping/planner が auth.uid()=B で動く窓を閉じる）
-            await clearMismatchedClientSessionBestEffort();
-            // 後続 clobber が新しい世代を立てていたら、この restore 結果で UX を上書きしない
-            if (rejectGeneration !== pinRejectGenerationRef.current) return;
-            if (
-              pinned === null ||
-              typeof restore !== "function" ||
-              typeof pinned.access_token !== "string" ||
-              typeof pinned.refresh_token !== "string" ||
-              pinned.access_token.length === 0 ||
-              pinned.refresh_token.length === 0
-            ) {
-              return;
-            }
-            if (!shouldAttemptPinSessionRestore(guard, Date.now())) {
-              // cooldown / 窓上限: client は既に clear 済み。React pin + blocked のまま。
-              // C12: 窓明けに再 probe し、固着 UX を緩和する
-              schedulePinRestoreRetry(pinned);
-              return;
-            }
-            try {
-              const result = await restore.call(client.auth, {
-                access_token: pinned.access_token,
-                refresh_token: pinned.refresh_token,
-              });
+                })();
+              }, PIN_RESTORE_WINDOW_MS);
+            };
+            void (async () => {
+              // R1: まず B を data plane から落とす（shopping/planner が auth.uid()=B で動く窓を閉じる）
+              await clearMismatchedClientSessionBestEffort();
+              // 後続 clobber が新しい世代を立てていたら、この restore 結果で UX を上書きしない
               if (rejectGeneration !== pinRejectGenerationRef.current) return;
-              if (result.error !== null) {
-                setAccessTokenPinDataPlaneBlocked(true);
-                setSessionProbeDegraded(true);
-                // C12: 失敗後も窓明け再試行（token 一時不整合の回復余地）
+              if (
+                pinned === null ||
+                typeof restore !== "function" ||
+                typeof pinned.access_token !== "string" ||
+                typeof pinned.refresh_token !== "string" ||
+                pinned.access_token.length === 0 ||
+                pinned.refresh_token.length === 0
+              ) {
+                return;
+              }
+              if (!shouldAttemptPinSessionRestore(guard, Date.now())) {
+                // cooldown / 窓上限: client は既に clear 済み。React pin + blocked のまま。
+                // C12: 窓明けに再 probe し、固着 UX を緩和する
                 schedulePinRestoreRetry(pinned);
                 return;
               }
-              // restore 成功: data plane block は必ず下ろす（client は A に戻った）。
-              // degraded UX は onAuthStateChange の apply または後続 clobber に任せる。
-              // 連続 clobber で後発世代が degraded を立てたあと、先発成功が degraded を消さないよう
-              // degraded はここでは触らない（C-R2/C-R7）。
-              setAccessTokenPinDataPlaneBlocked(false);
-            } catch {
-              if (rejectGeneration !== pinRejectGenerationRef.current) return;
-              // 復元失敗でも React 状態は pin 維持。data plane は閉じたまま（C-R7 / R1）
-              setAccessTokenPinDataPlaneBlocked(true);
-              setSessionProbeDegraded(true);
-              schedulePinRestoreRetry(pinned);
-            }
-          })();
-          // React 状態は勝者のまま。B への setSession は行わない。
-          return false;
+              try {
+                const result = await restore.call(client.auth, {
+                  access_token: pinned.access_token,
+                  refresh_token: pinned.refresh_token,
+                });
+                if (rejectGeneration !== pinRejectGenerationRef.current) return;
+                if (result.error !== null) {
+                  setAccessTokenPinDataPlaneBlocked(true);
+                  setSessionProbeDegraded(true);
+                  // C12: 失敗後も窓明け再試行（token 一時不整合の回復余地）
+                  schedulePinRestoreRetry(pinned);
+                  return;
+                }
+                // restore 成功: data plane block は必ず下ろす（client は A に戻った）。
+                // degraded UX は onAuthStateChange の apply または後続 clobber に任せる。
+                // 連続 clobber で後発世代が degraded を立てたあと、先発成功が degraded を消さないよう
+                // degraded はここでは触らない（C-R2/C-R7）。
+                setAccessTokenPinDataPlaneBlocked(false);
+              } catch {
+                if (rejectGeneration !== pinRejectGenerationRef.current) return;
+                // 復元失敗でも React 状態は pin 維持。data plane は閉じたまま（C-R7 / R1）
+                setAccessTokenPinDataPlaneBlocked(true);
+                setSessionProbeDegraded(true);
+                schedulePinRestoreRetry(pinned);
+              }
+            })();
+            // React 状態は勝者のまま。B への setSession は行わない。
+            return false;
+          }
         } else {
           // 同一 user の TOKEN_REFRESHED 等: pin を新しい token で更新
           guard.pinnedSession = nextSession;

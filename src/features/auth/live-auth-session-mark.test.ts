@@ -1,8 +1,12 @@
 import { afterEach, expect, it } from "vitest";
 import {
+  AUTH_SESSION_SWITCH_KEY,
   LIVE_AUTH_SESSION_MARK_KEY,
+  armIntentionalAuthSessionSwitch,
+  clearIntentionalAuthSessionSwitch,
   clearLiveAuthSessionMark,
   commitLiveAuthSessionMark,
+  isIntentionalAuthSessionSwitchArmed,
   liveAuthSessionMarkAppearedOrUpdated,
   liveAuthSessionMarkProtectsFingerprint,
   readLiveAuthSessionMark,
@@ -14,6 +18,7 @@ import {
 
 afterEach(() => {
   window.localStorage.removeItem(LIVE_AUTH_SESSION_MARK_KEY);
+  window.sessionStorage.removeItem(AUTH_SESSION_SWITCH_KEY);
 });
 
 it("writes and reads a live mark without tokens or email", () => {
@@ -45,9 +50,16 @@ it("protects a matching persist fingerprint and not a different user leftover", 
   expect(liveAuthSessionMarkProtectsFingerprint(null)).toBe(true);
 });
 
-it("treats a userId-less committed mark as live", () => {
+it("C6: does not let a userId-less committed mark spare an arbitrary persist fingerprint", () => {
   writeLiveAuthSessionMark();
-  expect(liveAuthSessionMarkProtectsFingerprint("anyone:token")).toBe(true);
+  expect(liveAuthSessionMarkProtectsFingerprint("anyone:token")).toBe(false);
+  expect(liveAuthSessionMarkProtectsFingerprint(null)).toBe(true);
+});
+
+it("commitLiveAuthSessionMark can bind the new live userId", () => {
+  writeLiveAuthSessionMark("user-1");
+  commitLiveAuthSessionMark(window.localStorage, "user-google");
+  expect(readLiveAuthSessionMark()?.userId).toBe("user-google");
 });
 
 it("detects a live mark that appeared during leftover cleanup", () => {
@@ -74,7 +86,18 @@ it("C5: leftover first pin is refused off leftover-capable auth surfaces", () =>
   expect(shouldRefuseUnmarkedLeftoverFirstPin("/welcome")).toBe(true);
   expect(shouldRefuseUnmarkedLeftoverFirstPin("/login")).toBe(false);
   expect(shouldRefuseUnmarkedLeftoverFirstPin("/login/")).toBe(false);
-  expect(shouldRefuseUnmarkedLeftoverFirstPin("/auth/callback")).toBe(false);
+  expect(shouldRefuseUnmarkedLeftoverFirstPin("/auth/callback")).toBe(true);
+});
+
+it("C2/C4: session switch is armed only on the matching birth path", () => {
+  armIntentionalAuthSessionSwitch("email_otp");
+  expect(isIntentionalAuthSessionSwitchArmed("/login")).toBe(true);
+  expect(isIntentionalAuthSessionSwitchArmed("/auth/callback")).toBe(false);
+  clearIntentionalAuthSessionSwitch();
+  armIntentionalAuthSessionSwitch("google_callback");
+  expect(isIntentionalAuthSessionSwitchArmed("/auth/callback")).toBe(true);
+  expect(isIntentionalAuthSessionSwitchArmed("/login")).toBe(false);
+  expect(isIntentionalAuthSessionSwitchArmed("/planner")).toBe(false);
 });
 
 it("clears the live mark", () => {

@@ -50,6 +50,8 @@ const MAGIC_LINK_RESIDUAL_KEYS = [
   "kondate.auth.active-login-flow",
   // leftover 成功印。logout 後に残すと次ユーザの leftover 例外になる
   "kondate.auth.emailOtpCompleted",
+  // C2/C4: 意図的 pin 付け替え印。logout 後に残すと次ユーザの first pin をすり抜ける
+  "kondate.auth.sessionSwitch",
   // C1/C3: committed live 印。logout 後に残すと次ユーザ leftover を live と誤認する
   LIVE_AUTH_SESSION_MARK_KEY,
 ] as const;

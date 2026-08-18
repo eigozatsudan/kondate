@@ -122,7 +122,8 @@ export function createHandler(
         iv: encrypted.iv,
         now: new Date().toISOString(),
         // C2: 所有者は secret 付き。WebView は secret 無しで未 claim なら last-wins。
-        // R1 residual-intentional: 匿名 last-wins は正当後の後着毒を許す。first-wins は C2 再発。
+        // R1 residual-intentional / C7: 匿名 last-wins は正当後の後着毒を許す可用性 DoS。
+        // first-wins に戻すと毒 first-wins（旧 C2）が再発する。RPC / last-wins は変えない。
         ...(body.secret === undefined ? {} : { secretHash: await sha256(body.secret) }),
       });
       // U1-004: 空 204 でも continuation 経路は no-store を揃える（json/jsonResponse と同型）
