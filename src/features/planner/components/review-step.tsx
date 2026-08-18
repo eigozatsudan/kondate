@@ -347,16 +347,20 @@ export function ReviewStep({
   // 主 CTA を一枚目で止める。サーバ schema / flush fail-closed に加え確認 UI でも進めない。
   const requiredQuestionsIncomplete =
     firstIncompletePlannerStep(value, eligibleMemberIdSet) !== "review";
+  // P2: 進行中 pending は C2 再開のみ。ホーム再開は pantry / 必須質問 / stale を見ない。
+  // 確認だけ新規生成ゲートで止めると、wizard にホーム導線がなく再開できない。
+  // 医療・privacy と同じく再開は入口を割らない。新規生成（pending なし）のゲートは維持する。
   const generateDisabled =
     disabled ||
-    requiredQuestionsIncomplete ||
-    hasUnavailablePantrySelections ||
-    hasUnconfirmedExpiredPantry ||
     medicalBlocked ||
     hasActiveUsageBlocker ||
     avoidIngredientLocalError != null ||
-    // P4: soft safety/pantry 失敗中は stale 送信を主 CTA で止める
-    blockGenerationForStaleSafety;
+    (!hasResumablePendingGeneration &&
+      (requiredQuestionsIncomplete ||
+        hasUnavailablePantrySelections ||
+        hasUnconfirmedExpiredPantry ||
+        // P4: soft safety/pantry 失敗中は stale 送信を主 CTA で止める
+        blockGenerationForStaleSafety));
   const closePrivacyGate = (): void => {
     setPrivacyGateOpen(false);
   };

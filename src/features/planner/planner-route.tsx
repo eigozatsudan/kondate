@@ -1751,8 +1751,12 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             setStep("review");
             return;
           }
+          // P2: C2 再開はホーム再開と同型。新規生成の期限切れ未確認 / 削除済み /
+          // 質問未完了 / stale safety で入口を割らない（医療・privacy と同じ）。
+          // flush 後に pending が消えたら !shouldResumePending 側でゲートを戻す。
+          const resumeExistingPending = isPendingGenerationPresent(userId);
           // P4: safety/pantry soft 失敗中は stale previous data で送信しない
-          if (staleBackgroundSafetyPantry) {
+          if (staleBackgroundSafetyPantry && !resumeExistingPending) {
             setSubmissionError(
               "家族または冷蔵庫の最新情報を再取得できないため、献立を開始できません。再試行してからお試しください。",
             );
@@ -1774,7 +1778,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             pantrySelections: value.pantrySelections,
           };
           const parsed = plannerSubmissionSchema.safeParse(submissionCandidate);
-          if (!parsed.success) {
+          if (!parsed.success && !resumeExistingPending) {
             const { fieldErrors: nextFieldErrors, firstInvalidStep } =
               buildPlannerSubmissionFieldErrors(
                 parsed.error.issues.map((issue) => ({ path: issue.path, message: issue.message })),
@@ -1793,7 +1797,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           // レビュー画面でも disabled にしているが、submit 経路でも再確認して AI 開始を止める。
           // P3: 進行中 pending は C2 再開のみ（ホーム再開と同型）。新条件の医療検出で止めない。
           if (
-            !isPendingGenerationPresent(userId) &&
+            !resumeExistingPending &&
             detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0
           ) {
             setSubmissionError(medicalRequestBlockedMessage);
@@ -1801,32 +1805,35 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             return;
           }
           // 医療と同様、期限切れ未確認・削除済み pantry を submit でも再検証する
-          const pantryRows = pantryData;
-          const pantryIdSet = new Set(pantryRows.map((item) => item.id));
-          if (
-            value.pantrySelections.some((selection) => !pantryIdSet.has(selection.pantryItemId))
-          ) {
-            setSubmissionError(
-              "冷蔵庫から削除された食材の選択を解除してから献立を作ってください。",
-            );
-            setStep("review");
-            return;
-          }
-          const nowForExpiry = new Date();
-          const hasUnconfirmedExpired = value.pantrySelections.some((selection) => {
-            const item = pantryRows.find((entry) => entry.id === selection.pantryItemId);
-            if (item === undefined) return false;
-            return (
-              isPastEnteredExpiry(item, nowForExpiry) &&
-              !hasCurrentExpiredConfirmation(attempt, item.id, nowForExpiry)
-            );
-          });
-          if (hasUnconfirmedExpired) {
-            setSubmissionError(
-              "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
-            );
-            setStep("review");
-            return;
+          // P2: C2 再開では新条件を送らないので、ここでも止めない。
+          if (!resumeExistingPending) {
+            const pantryRows = pantryData;
+            const pantryIdSet = new Set(pantryRows.map((item) => item.id));
+            if (
+              value.pantrySelections.some((selection) => !pantryIdSet.has(selection.pantryItemId))
+            ) {
+              setSubmissionError(
+                "冷蔵庫から削除された食材の選択を解除してから献立を作ってください。",
+              );
+              setStep("review");
+              return;
+            }
+            const nowForExpiry = new Date();
+            const hasUnconfirmedExpired = value.pantrySelections.some((selection) => {
+              const item = pantryRows.find((entry) => entry.id === selection.pantryItemId);
+              if (item === undefined) return false;
+              return (
+                isPastEnteredExpiry(item, nowForExpiry) &&
+                !hasCurrentExpiredConfirmation(attempt, item.id, nowForExpiry)
+              );
+            });
+            if (hasUnconfirmedExpired) {
+              setSubmissionError(
+                "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
+              );
+              setStep("review");
+              return;
+            }
           }
           if (startGeneration === undefined) return;
           // P1: strip が flush 中に走ったら operationId 不一致で startGeneration を止める
@@ -1855,6 +1862,29 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
               return;
             }
             if (!shouldResumePending) {
+              // P2: flush 中に pending が消えたら、スキップした新規生成ゲートを戻す。
+              if (staleBackgroundSafetyPantry) {
+                setSubmissionError(
+                  "家族または冷蔵庫の最新情報を再取得できないため、献立を開始できません。再試行してからお試しください。",
+                );
+                setStep("review");
+                return;
+              }
+              if (!parsed.success) {
+                const { fieldErrors: nextFieldErrors, firstInvalidStep } =
+                  buildPlannerSubmissionFieldErrors(
+                    parsed.error.issues.map((issue) => ({
+                      path: issue.path,
+                      message: issue.message,
+                    })),
+                  );
+                setFieldErrors(nextFieldErrors);
+                if (Object.keys(nextFieldErrors).length === 0) {
+                  setSubmissionError("入力内容を確認してください。");
+                }
+                if (firstInvalidStep !== null) setStep(firstInvalidStep);
+                return;
+              }
               // P3: flush 中に pending が消えたら、スキップした医療境界を新規生成前に戻す。
               if (detectUnsupportedMedicalRequest(collectPlannerRequestText(value)).length > 0) {
                 setSubmissionError(medicalRequestBlockedMessage);
@@ -1900,7 +1930,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             }
             // resume で audience を踏まず review に着いた idea 下書きでも skipped を揃える安全網。
             // complete|skipped は no-op。取得/書込失敗では生成を開始しない（fail-closed）。
-            if (parsed.data.targetMode === "idea" && userId !== undefined) {
+            // C2 再開で schema をスキップした incomplete は parsed.data を持たない。
+            if (parsed.success && parsed.data.targetMode === "idea" && userId !== undefined) {
               try {
                 await ensureIdeaOnboardingSkipped(client, userId, queryClient);
               } catch (error) {
@@ -1945,7 +1976,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
                 // 既存 pantryRowsRef でゲート・command を組み立てる
               }
             }
-            {
+            if (!shouldResumePending && parsed.success) {
               const pantryRowsLatest = pantryRowsRef.current;
               const pantryIdSetLatest = new Set(pantryRowsLatest.map((item) => item.id));
               // P2: 公開 sticky の flush 短絡は pin を返す。削除/期限ゲートは

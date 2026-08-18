@@ -541,7 +541,11 @@ vi.mock("./components/planner-wizard", () => ({
         </button>
         <button
           type="button"
-          disabled={props.isSaving || props.blockGenerationForStaleSafety === true}
+          disabled={
+            props.isSaving ||
+            (props.blockGenerationForStaleSafety === true &&
+              props.hasResumablePendingGeneration !== true)
+          }
           onClick={() => void props.onSubmit().catch(() => undefined)}
         >
           生成
@@ -3008,6 +3012,201 @@ describe("PlannerRoutePage", () => {
       expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
     });
     expect(navigateMock).not.toHaveBeenCalledWith("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+  });
+
+  it("P2: 公開 sticky 中の未確認期限切れでも確認 CTA は C2 再開する", async () => {
+    // ホーム再開は期限確認を見ない。確認だけ未確認期限切れで止めると再開入口が割れる。
+    const expiredItem: PantryItem = {
+      ...pantryItem,
+      expiresOn: "2020-01-01",
+    };
+    queryState.pantry = { data: [expiredItem], isError: false, isPending: false };
+    queryState.draft = {
+      ...draft,
+      pantrySelections: [{ pantryItemId: expiredItem.id, priority: "prefer_use" }],
+    };
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: "80000000-0000-4000-8000-000000000099",
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(
+      screen.queryByText(
+        "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
+      ),
+    ).not.toBeInTheDocument();
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+  });
+
+  it("P2: 公開 sticky 中に削除済み pantry が残っていても確認 CTA は C2 再開する", async () => {
+    // UI 解除せず削除済み ID が残る。新規生成ゲートのままでは再開できない。
+    const deletedPantryId = "74000000-0000-4000-8000-000000000099";
+    queryState.draft = {
+      ...draft,
+      pantrySelections: [{ pantryItemId: deletedPantryId, priority: "prefer_use" }],
+    };
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: "80000000-0000-4000-8000-000000000099",
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(
+      screen.queryByText("冷蔵庫から削除された食材の選択を解除してから献立を作ってください。"),
+    ).not.toBeInTheDocument();
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+  });
+
+  it("P2: 公開 sticky 中に必須質問が欠けても確認 CTA は C2 再開する", async () => {
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: "80000000-0000-4000-8000-000000000099",
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+    act(() => {
+      const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+      props.onDraftChange({ ...props.draft, mainIngredients: [] });
+    });
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+  });
+
+  it("P2: 公開 sticky 中の stale safety でも確認 CTA は C2 再開する", async () => {
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: "80000000-0000-4000-8000-000000000099",
+        draftId: draft.id,
+        draftRevision: draft.revision,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    });
+    pendingGenerationMock.readPendingGenerationMeta.mockReturnValue({
+      kind: "new_menu",
+      targetMode: "household",
+      idempotencyKey: "80000000-0000-4000-8000-000000000099",
+      ownerUserId: draft.userId,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    const view = render(<PlannerRoutePage />);
+    await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
+
+    queryState.pantry = { data: [pantryItem], isError: true, isPending: false };
+    view.rerender(<PlannerRoutePage />);
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText("block generation stale")).toHaveTextContent("true");
+    });
+
+    await user.click(screen.getByRole("button", { name: "生成" }));
+    await vi.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    expect(
+      screen.queryByText(
+        "家族または冷蔵庫の最新情報を再取得できないため、献立を開始できません。再試行してからお試しください。",
+      ),
+    ).not.toBeInTheDocument();
+    expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
+  });
+
+  it("P2: pending なしの未確認期限切れは新規生成を止める", async () => {
+    const expiredItem: PantryItem = {
+      ...pantryItem,
+      expiresOn: "2020-01-01",
+    };
+    queryState.pantry = { data: [expiredItem], isError: false, isPending: false };
+    queryState.draft = {
+      ...draft,
+      pantrySelections: [{ pantryItemId: expiredItem.id, priority: "prefer_use" }],
+    };
+    const user = userEvent.setup();
+    render(<PlannerRoutePage />);
+    await user.click(screen.getByRole("button", { name: "生成" }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
+      );
+    });
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
   });
 

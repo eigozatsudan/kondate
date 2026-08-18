@@ -1086,6 +1086,105 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("button", { name: "献立を作る" })).toBeDisabled();
   });
 
+  it("P2: 進行中 pending があるとき未確認期限切れでも主 CTA は再開できる", async () => {
+    // ホーム再開は pantry を見ない。確認だけ止めていると wizard からホームへ戻れず再開不能。
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(() => Promise.resolve());
+    const expiredPantry: PantryItem = {
+      id: "74000000-0000-4000-8000-000000000099",
+      userId: eligibleMember.id,
+      name: "古い豆腐",
+      quantity: 1,
+      unit: "丁",
+      expiresOn: "2020-01-01",
+      expirationType: "use_by",
+      openedState: "opened",
+      createdAt: "2020-01-01T00:00:00.000Z",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    };
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...reviewDraft,
+          pantrySelections: [{ pantryItemId: expiredPantry.id, priority: "prefer_use" }],
+        }}
+        pantryItems={[expiredPantry]}
+        hasResumablePendingGeneration
+        onSubmit={onSubmit}
+        onOpenEmergencyMenus={vi.fn()}
+      />,
+    );
+    const generate = screen.getByRole("button", { name: "献立を作る" });
+    expect(generate).toBeEnabled();
+    await user.click(generate);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    // 緊急は新規生成ゲートのまま
+    expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
+  });
+
+  it("P2: 進行中 pending があるとき削除済み pantry でも主 CTA は再開できる", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(() => Promise.resolve());
+    const deletedPantryId = "74000000-0000-4000-8000-000000000099";
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...reviewDraft,
+          pantrySelections: [{ pantryItemId: deletedPantryId, priority: "prefer_use" }],
+        }}
+        pantryItems={[]}
+        hasResumablePendingGeneration
+        onSubmit={onSubmit}
+        onOpenEmergencyMenus={vi.fn()}
+      />,
+    );
+    const generate = screen.getByRole("button", { name: "献立を作る" });
+    expect(generate).toBeEnabled();
+    await user.click(generate);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" })).toBeDisabled();
+  });
+
+  it("P2: 進行中 pending があるとき必須質問未完了でも主 CTA は再開できる", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(() => Promise.resolve());
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...reviewDraft,
+          mainIngredients: [],
+        }}
+        hasResumablePendingGeneration
+        onSubmit={onSubmit}
+      />,
+    );
+    const generate = screen.getByRole("button", { name: "献立を作る" });
+    expect(generate).toBeEnabled();
+    await user.click(generate);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("P2: 進行中 pending があるとき stale safety でも主 CTA は再開できる", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(() => Promise.resolve());
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={reviewDraft}
+        hasResumablePendingGeneration
+        blockGenerationForStaleSafety
+        onSubmit={onSubmit}
+      />,
+    );
+    const generate = screen.getByRole("button", { name: "献立を作る" });
+    expect(generate).toBeEnabled();
+    await user.click(generate);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
   it("idea 確認では家族安全未確認の案内と対象人数を表示する", () => {
     render(
       <Harness
