@@ -98,6 +98,30 @@ function isEmergencyEligibleMember(member: EmergencyHouseholdMember): boolean {
   );
 }
 
+/**
+ * PE1: サーバ isCurrentSafetyUnavailable と同型。complete だが未確認 / 確認済み自由登録 /
+ * 対象外食のメンバーを送ると Stage S は空になる。未選択で適格親だけ送ると迂回する。
+ */
+function wouldEmptyEmergencyStageS(member: EmergencyHouseholdMember): boolean {
+  return (
+    member.status === "complete" &&
+    (member.allergy_status === "unconfirmed" ||
+      member.hasConfirmedCustomAllergy ||
+      member.unsupported_diet_status !== "none")
+  );
+}
+
+/** PE1: 未選択で Stage S 空メンバーがいるときのクライアント側 current_safety_unavailable。 */
+const unselectedHouseholdSafetyUnavailableResponse: EmergencyMenusData = {
+  fixtureVersion: "2026-07-28.v1",
+  candidates: [],
+  message: "条件に合う緊急献立がありません",
+  consumesAiQuota: false,
+  path: "household",
+  matchMode: null,
+  emptyReason: "current_safety_unavailable",
+};
+
 function quantityText(value: number | null, unit: string | null, fallback: string): string {
   return value === null ? fallback : `${String(value)}${unit ?? ""}`;
 }
@@ -310,14 +334,22 @@ export function EmergencyMenuPage() {
   });
   // mode未選択の下書きだけは、後から完了した家族を初期対象にできる。
   // ideaまたは明示済みhouseholdから別家族へ黙って切り替えない。
-  const eligibleMemberIds = (householdQuery.data ?? [])
+  const householdRoster = householdQuery.data ?? [];
+  const eligibleMemberIds = householdRoster
     .filter(isEmergencyEligibleMember)
     .map((member) => member.id);
+  // PE1: 未選択で Stage S を空にする名簿がいるなら適格親だけの部分集合 GET をしない。
+  const unselectedHouseholdSafetyBlocked =
+    shouldResolveUnselectedTargets &&
+    householdQuery.isSuccess &&
+    householdRoster.some(wouldEmptyEmergencyStageS);
   // idea は対象メンバーなし。household のみ eligible と draft 選択の積集合。
   const targetMemberIds = isIdea
     ? []
     : shouldResolveUnselectedTargets
-      ? eligibleMemberIds.slice(0, emergencyTargetMemberLimit)
+      ? unselectedHouseholdSafetyBlocked
+        ? []
+        : eligibleMemberIds.slice(0, emergencyTargetMemberLimit)
       : draft?.targetMode === "household"
         ? draft.targetMemberIds
             .filter((memberId) => eligibleMemberIds.includes(memberId))
@@ -325,29 +357,32 @@ export function EmergencyMenuPage() {
         : [];
   const hasEligibleHouseholdMembers = targetMemberIds.length > 0;
   // PE4: 明示 household 選択のうち適格外を落としたとき、部分集合候補であることを開示する。
-  // 未選択下書きの自動 eligible 補充は「落とした選択」ではないので対象外。
+  // PE1: 未選択でも Stage S 空メンバーを黙って外さない。告知は明示 household と同趣旨。
   let ineligibleSelectedNotice: string | null = null;
-  if (
-    !isIdea &&
-    draft?.targetMode === "household" &&
-    hasEligibleHouseholdMembers &&
-    householdQuery.isSuccess
-  ) {
-    // isSuccess 後は data が定義済み（?? [] は型上不要）
+  if (!isIdea && householdQuery.isSuccess) {
     const roster = householdQuery.data;
-    const selectedIds = new Set(draft.targetMemberIds);
-    const droppedOnRoster = roster.filter(
-      (member) => selectedIds.has(member.id) && !isEmergencyEligibleMember(member),
-    );
-    const missingFromRoster = draft.targetMemberIds.filter(
-      (id) => !roster.some((member) => member.id === id),
-    ).length;
-    if (droppedOnRoster.length + missingFromRoster > 0) {
+    if (shouldResolveUnselectedTargets && unselectedHouseholdSafetyBlocked) {
       ineligibleSelectedNotice = buildIneligibleSelectedNotice(
-        droppedOnRoster
+        roster
+          .filter(wouldEmptyEmergencyStageS)
           .map((member) => member.display_name?.trim() ?? "")
           .filter((name) => name.length > 0),
       );
+    } else if (draft?.targetMode === "household" && hasEligibleHouseholdMembers) {
+      const selectedIds = new Set(draft.targetMemberIds);
+      const droppedOnRoster = roster.filter(
+        (member) => selectedIds.has(member.id) && !isEmergencyEligibleMember(member),
+      );
+      const missingFromRoster = draft.targetMemberIds.filter(
+        (id) => !roster.some((member) => member.id === id),
+      ).length;
+      if (droppedOnRoster.length + missingFromRoster > 0) {
+        ineligibleSelectedNotice = buildIneligibleSelectedNotice(
+          droppedOnRoster
+            .map((member) => member.display_name?.trim() ?? "")
+            .filter((name) => name.length > 0),
+        );
+      }
     }
   }
 
@@ -683,7 +718,9 @@ export function EmergencyMenuPage() {
     error === null &&
     !candidateQueryEnabled &&
     !expiredPantryGateBlocks &&
-    !hasEligibleHouseholdMembers;
+    !hasEligibleHouseholdMembers &&
+    // PE1: Stage S 空メンバーがいる未選択は pre-API 0人空に落とさず current_safety_unavailable 相当にする
+    !unselectedHouseholdSafetyBlocked;
 
   if (showPreApiEmpty) {
     // C-I6: 空理由を正直に分岐する。適格0 / 選択フィルタ / 真の0人を混同しない。
@@ -727,7 +764,13 @@ export function EmergencyMenuPage() {
       loading={loading}
       error={error}
       expectedPath={expectedPath}
-      response={loading || error !== null ? null : (query.data ?? null)}
+      response={
+        loading || error !== null
+          ? null
+          : unselectedHouseholdSafetyBlocked
+            ? unselectedHouseholdSafetyUnavailableResponse
+            : (query.data ?? null)
+      }
       ineligibleSelectedNotice={ineligibleSelectedNotice}
       selectedPantryNames={selectedPantryNames}
     />

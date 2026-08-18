@@ -45,6 +45,24 @@ function emergencyMenusQueryCallsAfter(callIndex: number): EmergencyMenusQueryCa
   });
 }
 
+/** PE1: 未選択で適格親だけ GET するとサーバが返し得る卵候補。fail-closed では出さない。 */
+function eggHouseholdEmergencyResponse(): EmergencyMenusData {
+  const base = makeValidatedMenu();
+  const eggMenu: ValidatedMenu = {
+    ...base,
+    dishes: [{ ...base.dishes[0]!, name: "卵焼き" }, base.dishes[1]!],
+  };
+  return {
+    fixtureVersion: "2026-07-28.v1",
+    candidates: [{ menu: eggMenu, memberLabels: {}, allergenLabels: {}, labelWarnings: [] }],
+    message: "AIを使わない15分緊急献立です",
+    consumesAiQuota: false,
+    path: "household",
+    matchMode: "none",
+    emptyReason: null,
+  };
+}
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: useQueryMock,
   // PE9: 下書き invalidate 用。page テストは queryClient を持たないので no-op。
@@ -368,7 +386,162 @@ it("PE6: idea draft still subscribes to generation_drafts safety channel", () =>
   expect(channelMock).toHaveBeenCalledWith("emergency-safety:72000000-0000-4000-8000-000000000001");
 });
 
-it("対象未選択の下書きでは後から登録した有効な家族だけを初期対象にする", async () => {
+it("PE1: 未選択で適格親と未確認の子がいるときは部分集合 GET せず卵候補も出さない", () => {
+  const eligibleId = "72000000-0000-4000-8000-000000000010";
+  const unconfirmedId = "72000000-0000-4000-8000-000000000012";
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        id: "draft-1",
+        userId: "72000000-0000-4000-8000-000000000001",
+        mealType: "dinner",
+        mainIngredients: ["鶏肉"],
+        cuisineGenre: "japanese",
+        targetMode: null,
+        targetMemberIds: [],
+        servings: null,
+        timeLimitMinutes: null,
+        budgetPreference: null,
+        ingredientPreference: null,
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+        revision: 1,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        updatedAt: "2026-07-11T00:00:00.000Z",
+      },
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: [
+        {
+          id: eligibleId,
+          display_name: "太郎",
+          status: "complete",
+          allergy_status: "none",
+          unsupported_diet_status: "none",
+          hasConfirmedCustomAllergy: false,
+        },
+        {
+          id: "72000000-0000-4000-8000-000000000011",
+          display_name: "下書き",
+          status: "draft",
+          allergy_status: "none",
+          unsupported_diet_status: "none",
+          hasConfirmedCustomAllergy: false,
+        },
+        {
+          id: unconfirmedId,
+          display_name: "花子",
+          status: "complete",
+          allergy_status: "unconfirmed",
+          unsupported_diet_status: "none",
+          hasConfirmedCustomAllergy: false,
+        },
+      ],
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: eggHouseholdEmergencyResponse(),
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+
+  const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
+    enabled: boolean;
+    queryKey: readonly unknown[];
+    queryFn: () => Promise<unknown>;
+  };
+  expect(candidateQuery.enabled).toBe(false);
+  expect(candidateQuery.queryKey[5]).toEqual([]);
+  expect(getEmergencyMenusMock).not.toHaveBeenCalled();
+  expect(screen.queryByText("卵焼き", { exact: false })).not.toBeInTheDocument();
+  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent("花子");
+  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent(
+    "対象から外して",
+  );
+  expect(
+    screen.getByText(
+      "アレルギー確認未了・自由登録アレルギー、または対応できない食事条件のため、候補を表示していません。条件は緩めていません",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText(/安全です/u)).not.toBeInTheDocument();
+});
+
+it("PE1: 未選択で対象外食の子がいるときは registered 親だけの部分集合 GET をしない", () => {
+  const registeredId = "72000000-0000-4000-8000-000000000020";
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        id: "draft-matrix",
+        userId: "72000000-0000-4000-8000-000000000001",
+        mealType: "dinner",
+        targetMode: null,
+        targetMemberIds: [],
+        pantrySelections: [],
+      },
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: [
+        {
+          id: registeredId,
+          display_name: "親",
+          status: "complete",
+          allergy_status: "registered",
+          unsupported_diet_status: "none",
+          hasConfirmedCustomAllergy: false,
+        },
+        {
+          id: "72000000-0000-4000-8000-000000000021",
+          display_name: "次郎",
+          status: "complete",
+          allergy_status: "none",
+          unsupported_diet_status: "present",
+          hasConfirmedCustomAllergy: false,
+        },
+        {
+          id: "72000000-0000-4000-8000-000000000022",
+          display_name: "三郎",
+          status: "complete",
+          allergy_status: "none",
+          unsupported_diet_status: "unconfirmed",
+          hasConfirmedCustomAllergy: false,
+        },
+      ],
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValueOnce({
+      data: eggHouseholdEmergencyResponse(),
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+  const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
+    enabled: boolean;
+    queryFn: () => Promise<unknown>;
+  };
+  expect(candidateQuery.enabled).toBe(false);
+  expect(getEmergencyMenusMock).not.toHaveBeenCalled();
+  expect(screen.queryByText("卵焼き", { exact: false })).not.toBeInTheDocument();
+  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent("次郎");
+  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent("三郎");
+});
+
+it("対象未選択で未完了 draft だけが混ざるときは eligible だけを初期対象にする", async () => {
   const eligibleId = "72000000-0000-4000-8000-000000000010";
   useQueryMock
     .mockReturnValueOnce({
@@ -409,12 +582,6 @@ it("対象未選択の下書きでは後から登録した有効な家族だけ�
           allergy_status: "none",
           unsupported_diet_status: "none",
         },
-        {
-          id: "72000000-0000-4000-8000-000000000012",
-          status: "complete",
-          allergy_status: "unconfirmed",
-          unsupported_diet_status: "none",
-        },
       ],
       isSuccess: true,
       isFetching: false,
@@ -445,65 +612,7 @@ it("対象未選択の下書きでは後から登録した有効な家族だけ�
     }),
   );
   expect(candidateQuery.queryKey).toEqual(expect.arrayContaining([["鶏肉"]]));
-});
-
-it("registeredは許可し、対象外食present/unconfirmedは未選択下書きの対象から除く", async () => {
-  const registeredId = "72000000-0000-4000-8000-000000000020";
-  useQueryMock
-    .mockReturnValueOnce({
-      data: {
-        id: "draft-matrix",
-        userId: "72000000-0000-4000-8000-000000000001",
-        mealType: "dinner",
-        targetMode: null,
-        targetMemberIds: [],
-        pantrySelections: [],
-      },
-      isSuccess: true,
-      isFetching: false,
-      isError: false,
-    })
-    .mockReturnValueOnce({
-      data: [
-        {
-          id: registeredId,
-          status: "complete",
-          allergy_status: "registered",
-          unsupported_diet_status: "none",
-        },
-        {
-          id: "72000000-0000-4000-8000-000000000021",
-          status: "complete",
-          allergy_status: "none",
-          unsupported_diet_status: "present",
-        },
-        {
-          id: "72000000-0000-4000-8000-000000000022",
-          status: "complete",
-          allergy_status: "none",
-          unsupported_diet_status: "unconfirmed",
-        },
-      ],
-      isSuccess: true,
-      isFetching: false,
-      isError: false,
-    })
-    .mockReturnValueOnce({
-      data: undefined,
-      isSuccess: false,
-      isFetching: false,
-      isError: false,
-    });
-
-  renderWithRouter(<EmergencyMenuPage />);
-  const candidateQuery = useQueryMock.mock.calls[2]?.[0] as {
-    queryFn: () => Promise<unknown>;
-  };
-  await candidateQuery.queryFn();
-
-  expect(getEmergencyMenusMock).toHaveBeenCalledWith(
-    expect.objectContaining({ targetMode: "household", targetMemberIds: [registeredId] }),
-  );
+  expect(screen.queryByTestId("emergency-ineligible-selected-notice")).not.toBeInTheDocument();
 });
 
 it("未選択下書きの有効家族は並び順を保って20人までに制限する", async () => {
