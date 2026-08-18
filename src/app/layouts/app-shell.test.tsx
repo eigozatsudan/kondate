@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { createMemoryRouter } from "react-router";
+import { createMemoryRouter, Link } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
@@ -44,6 +44,54 @@ function ensureAppRoot(): HTMLElement {
   root.id = "root";
   document.body.appendChild(root);
   return root;
+}
+
+/** 未 dismiss カードを出すための iPhone Safari UA（L6 / L-R1）。 */
+function stubIosSafariForInstallTip(): void {
+  vi.stubGlobal("navigator", {
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    platform: "iPhone",
+    maxTouchPoints: 5,
+    standalone: undefined,
+  });
+  vi.stubGlobal(
+    "matchMedia",
+    (query: string) =>
+      ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener() {
+          return undefined;
+        },
+        removeListener() {
+          return undefined;
+        },
+        addEventListener() {
+          return undefined;
+        },
+        removeEventListener() {
+          return undefined;
+        },
+        dispatchEvent() {
+          return false;
+        },
+      }) satisfies MediaQueryList,
+  );
+}
+
+/** シェル遷移フォーカス（rAF 1 フレーム）が終わるまで待つ。 */
+async function waitForShellFocusFrame(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
+  });
 }
 
 const authenticated: AuthContextValue = {
@@ -281,37 +329,7 @@ describe("AppShell route focus (L2)", () => {
 
   it("L6: focuses the visible install card heading instead of skipping to page h1", async () => {
     window.localStorage.removeItem(PWA_INSTALL_TIP_DISMISSED_KEY);
-    vi.stubGlobal("navigator", {
-      userAgent:
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-      platform: "iPhone",
-      maxTouchPoints: 5,
-      standalone: undefined,
-    });
-    vi.stubGlobal(
-      "matchMedia",
-      (query: string) =>
-        ({
-          matches: false,
-          media: query,
-          onchange: null,
-          addListener() {
-            return undefined;
-          },
-          removeListener() {
-            return undefined;
-          },
-          addEventListener() {
-            return undefined;
-          },
-          removeEventListener() {
-            return undefined;
-          },
-          dispatchEvent() {
-            return false;
-          },
-        }) satisfies MediaQueryList,
-    );
+    stubIosSafariForInstallTip();
 
     renderAppShellAt(
       "/planner",
@@ -331,17 +349,128 @@ describe("AppShell route focus (L2)", () => {
     const cardHeading = screen.getByRole("heading", { name: "ホーム画面に置く" });
     expect(cardHeading).toBeVisible();
     expect(screen.getByRole("heading", { name: "献立" })).toBeVisible();
-    await act(async () => {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            resolve();
-          });
-        });
-      });
-    });
+    await waitForShellFocusFrame();
     expect(document.activeElement).toBe(cardHeading);
     expect(screen.getByRole("heading", { name: "献立" })).not.toHaveFocus();
+  });
+
+  it("L-R1: already visible install card does not steal pantry heading on re-navigation", async () => {
+    window.localStorage.removeItem(PWA_INSTALL_TIP_DISMISSED_KEY);
+    stubIosSafariForInstallTip();
+    const user = userEvent.setup();
+
+    renderAppShellAt("/planner", undefined, authenticated);
+
+    await waitForShellFocusFrame();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "ホーム画面に置く" }));
+
+    await user.click(screen.getByRole("link", { name: /冷蔵庫/u }));
+    const pantryHeading = await screen.findByRole("heading", { name: "冷蔵庫" });
+    await waitFor(() => {
+      expect(pantryHeading).toHaveFocus();
+    });
+    expect(screen.getByRole("heading", { name: "ホーム画面に置く" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "ホーム画面に置く" })).not.toHaveFocus();
+  });
+
+  it("L-R1: already visible install card does not steal delayed generation heading", async () => {
+    window.localStorage.removeItem(PWA_INSTALL_TIP_DISMISSED_KEY);
+    stubIosSafariForInstallTip();
+
+    function DelayedHeading({ title }: { title: string }) {
+      const [ready, setReady] = useState(false);
+      useEffect(() => {
+        const id = window.setTimeout(() => {
+          setReady(true);
+        }, 30);
+        return () => {
+          window.clearTimeout(id);
+        };
+      }, []);
+      if (!ready) {
+        return <main className="page-frame">読み込み中</main>;
+      }
+      return (
+        <main className="page-frame">
+          <h1>{title}</h1>
+        </main>
+      );
+    }
+
+    const user = userEvent.setup();
+    renderAppShellAt(
+      "/planner",
+      [
+        {
+          path: "/planner",
+          element: (
+            <main className="page-frame">
+              <h1>献立</h1>
+              <Link to="/generation">献立を作る</Link>
+            </main>
+          ),
+        },
+        { path: "/generation", element: <DelayedHeading title="作成状況" /> },
+      ],
+      authenticated,
+    );
+
+    await waitForShellFocusFrame();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "ホーム画面に置く" }));
+
+    await user.click(screen.getByRole("link", { name: "献立を作る" }));
+    expect(screen.queryByRole("heading", { name: "作成状況" })).not.toBeInTheDocument();
+    const generationHeading = await screen.findByRole("heading", { name: "作成状況" });
+    await waitFor(() => {
+      expect(generationHeading).toHaveFocus();
+    });
+    expect(screen.getByRole("heading", { name: "ホーム画面に置く" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "ホーム画面に置く" })).not.toHaveFocus();
+  });
+
+  it("L-R1: card remount after ineligible path focuses card heading again", async () => {
+    window.localStorage.removeItem(PWA_INSTALL_TIP_DISMISSED_KEY);
+    stubIosSafariForInstallTip();
+    const user = userEvent.setup();
+
+    renderAppShellAt("/planner", undefined, authenticated);
+
+    await waitForShellFocusFrame();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "ホーム画面に置く" }));
+
+    await user.click(screen.getByRole("link", { name: /設定/u }));
+    const settingsHeading = await screen.findByRole("heading", { name: "設定" });
+    await waitFor(() => {
+      expect(settingsHeading).toHaveFocus();
+    });
+    expect(screen.queryByRole("heading", { name: "ホーム画面に置く" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: /献立/u }));
+    const remountedCard = await screen.findByRole("heading", { name: "ホーム画面に置く" });
+    await waitFor(() => {
+      expect(remountedCard).toHaveFocus();
+    });
+    expect(screen.getByRole("heading", { name: "献立" })).not.toHaveFocus();
+  });
+
+  it("L-R1: dismissed card leaves subsequent navigation on page h1", async () => {
+    window.localStorage.removeItem(PWA_INSTALL_TIP_DISMISSED_KEY);
+    stubIosSafariForInstallTip();
+    const user = userEvent.setup();
+
+    renderAppShellAt("/planner", undefined, authenticated);
+
+    await waitForShellFocusFrame();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "ホーム画面に置く" }));
+
+    await user.click(screen.getByRole("button", { name: "わかりました" }));
+    expect(screen.queryByRole("heading", { name: "ホーム画面に置く" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: /冷蔵庫/u }));
+    const pantryHeading = await screen.findByRole("heading", { name: "冷蔵庫" });
+    await waitFor(() => {
+      expect(pantryHeading).toHaveFocus();
+    });
   });
 });
 

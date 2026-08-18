@@ -167,10 +167,22 @@ export function AppShell() {
   // （pathname 変更直後に開いたモーダルや、ページ側の意図した trap を壊さない）。
   // L1: lazy / 子 query pending で h1 が遅れて載る面では 1 回 rAF だと逃す。
   // navigation.loading 中は旧面の h1 を最終扱いせず、idle 後に出現を待つ。
+  // L6: カードがこの pathname で新たに出たときだけ h2 をページ h1 より先に見る。
+  // L-R1: 既出カードが残った再遷移では main h1。遅延 h1 は既存 observer を切らない。
+  const installCardSeenRef = useRef(false);
+  const focusedPathRef = useRef<string | null>(null);
+  const focusedNewCardOnPathRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
     let observer: MutationObserver | null = null;
     let frame = 0;
+
+    function focusHeading(heading: HTMLElement): void {
+      if (!heading.hasAttribute("tabindex")) {
+        heading.tabIndex = -1;
+      }
+      heading.focus({ preventScroll: true });
+    }
 
     function tryFocusHeading(): boolean {
       if (cancelled) return true;
@@ -182,16 +194,26 @@ export function AppShell() {
         return true;
       }
       // 静的公開 LP の main h1 は #root の外に残るため、シェルの遷移フォーカスは #root 内だけを見る。
-      // L6: インストールカードは Outlet より前。ページ h1 へ飛ばすとカード操作が Tab 順の後方に残る。
-      const heading =
-        document.querySelector("#root #home-screen-install-card-title") ??
-        document.querySelector("#root main h1") ??
-        document.querySelector("#root h1");
-      if (!(heading instanceof HTMLElement)) return false;
-      if (!heading.hasAttribute("tabindex")) {
-        heading.tabIndex = -1;
+      const cardTitle = document.querySelector("#root #home-screen-install-card-title");
+      const cardPresent = cardTitle instanceof HTMLElement;
+      const pageHeading =
+        document.querySelector("#root main h1") ?? document.querySelector("#root h1");
+
+      // 同一 pathname の再実行（StrictMode remount）。対象種別は変えず、新しい DOM へ付け直す。
+      if (focusedPathRef.current === location.pathname) {
+        const heading = focusedNewCardOnPathRef.current && cardPresent ? cardTitle : pageHeading;
+        if (!(heading instanceof HTMLElement)) return false;
+        focusHeading(heading);
+        return true;
       }
-      heading.focus({ preventScroll: true });
+
+      const preferNewCard = cardPresent && !installCardSeenRef.current;
+      const heading = preferNewCard ? cardTitle : pageHeading;
+      if (!(heading instanceof HTMLElement)) return false;
+      focusHeading(heading);
+      focusedPathRef.current = location.pathname;
+      focusedNewCardOnPathRef.current = preferNewCard;
+      installCardSeenRef.current = cardPresent;
       return true;
     }
 
