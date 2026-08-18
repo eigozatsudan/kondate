@@ -345,6 +345,29 @@ describe("runBillingCheckout", () => {
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
+  // B1: unpaid / paused は未収 invoice・休止 sub が残る。新規 Checkout を許すと二重回収になる。
+  // DB 投影は非 Plus でも Stripe list を live とみなし Portal 誘導する（kill の stale unpaid は list 空で従来どおり通す）。
+  it.each(["unpaid", "paused"] as const)(
+    "returns 409 billing_checkout_use_portal when Stripe list finds %s (B1)",
+    async (status) => {
+      subscriptionsList.mockImplementation((params: { status?: string }) => {
+        if (params.status === status) {
+          return Promise.resolve({
+            data: [{ id: `sub_${status}`, status }],
+          });
+        }
+        return Promise.resolve({ data: [] });
+      });
+      const response = await runBillingCheckout(request(), deps());
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "billing_checkout_use_portal" },
+      });
+      expect(sessionsCreate).not.toHaveBeenCalled();
+      expect(rpc.mock.calls.some(([n]) => n === "release_billing_checkout_lock")).toBe(true);
+    },
+  );
+
   it("rejects yearly checkout without refund acknowledgment (B4)", async () => {
     const response = await runBillingCheckout(request({ interval: "year" }), deps());
     expect(response.status).toBe(400);
@@ -374,8 +397,8 @@ describe("runBillingCheckout", () => {
     // acquire 時は session id を渡さない
     expect(acquire![1]).not.toHaveProperty("p_stripe_checkout_session_id");
 
-    // B16: list は create 前に 2 回（初回 + re-list）。status 4 種 × 2
-    expect(subscriptionsList).toHaveBeenCalledTimes(8);
+    // B16: list は create 前に 2 回（初回 + re-list）。status 6 種（B1 で unpaid/paused 追加）× 2
+    expect(subscriptionsList).toHaveBeenCalledTimes(12);
     expect(sessionsCreate).toHaveBeenCalledTimes(1);
     const createArgs = sessionsCreate.mock.calls[0]![0] as {
       mode: string;
@@ -441,7 +464,7 @@ describe("runBillingCheckout", () => {
   it("B16: re-lists before sessions.create and rejects live injected after first list", async () => {
     let listRound = 0;
     subscriptionsList.mockImplementation((params: { status?: string }) => {
-      // 1 ラウンド = status 4 種。2 ラウンド目の active だけ live を返す
+      // 1 ラウンド = status 6 種（trialing 先頭）。2 ラウンド目の active だけ live を返す
       if (params.status === "trialing") {
         listRound += 1;
       }

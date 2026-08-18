@@ -189,6 +189,26 @@ describe("runBillingPortal", () => {
     expect(subscriptionsList).toHaveBeenCalled();
   });
 
+  // B1: Checkout が unpaid/paused を 409 use_portal にしたあと、Portal 側も同じ母集団を開く。
+  // DB は非 Plus でも Stripe list が当たれば Session を作る（Checkout/Portal 両閉じを避ける）。
+  it.each(["unpaid", "paused"] as const)(
+    "opens portal when DB free but Stripe has %s subscription (B1)",
+    async (status) => {
+      loadEntitlement.mockResolvedValue(freeNone);
+      subscriptionsList.mockImplementation((params: { status?: string }) => {
+        if (params.status === status) {
+          return Promise.resolve({ data: [{ id: `sub_${status}`, status }] });
+        }
+        return Promise.resolve({ data: [] });
+      });
+      const response = await runBillingPortal(request(), deps());
+      expect(response.status).toBe(200);
+      expect(portalCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ customer: CUSTOMER_ID, locale: "ja" }),
+      );
+    },
+  );
+
   // B9: DB free + Stripe live は Portal を開き Checkout/Portal 両閉じを避ける
   it("returns portal url when DB free but Stripe has live subscription (B9)", async () => {
     loadEntitlement.mockResolvedValue(freeNone);

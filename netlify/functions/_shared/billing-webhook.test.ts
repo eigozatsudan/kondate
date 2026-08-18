@@ -1325,6 +1325,50 @@ describe("handleBillingWebhook", () => {
     );
   });
 
+  // B1: unpaid / paused を dual 母集団から外すと、新規 Plus と未収 invoice が共存する。
+  // 新 active を keep し、旧 unpaid/paused だけ Stripe cancel する（Portal 単体経路は触らない）。
+  it.each(["unpaid", "paused"] as const)(
+    "cancels older %s when a newer active Plus arrives (B1)",
+    async (status) => {
+      const olderResidual = makeSubscription({
+        id: `sub_${status}_old`,
+        created: 1000,
+        status,
+      });
+      const newerActive = makeSubscription({
+        id: "sub_active_new_b1",
+        created: 2000,
+        status: "active",
+        metadata: { supabase_user_id: USER_ID },
+      });
+      constructEvent.mockReturnValue(
+        makeEvent("customer.subscription.created", newerActive, {
+          id: `evt_dual_${status}_b1`,
+        }),
+      );
+      retrieve.mockResolvedValue(newerActive);
+      list.mockImplementation((params: { status?: string }) => {
+        const all = [olderResidual, newerActive];
+        const data =
+          params.status === undefined ? all : all.filter((sub) => sub.status === params.status);
+        return Promise.resolve({ object: "list", data, has_more: false, url: "" });
+      });
+      cancel.mockResolvedValue(
+        makeSubscription({ id: `sub_${status}_old`, status: "canceled", created: 1000 }),
+      );
+
+      await handleBillingWebhook(signedRequest(), deps());
+      expect(cancel).toHaveBeenCalledWith(`sub_${status}_old`);
+      expect(cancel).not.toHaveBeenCalledWith("sub_active_new_b1");
+      expect(rpc).toHaveBeenCalledWith(
+        "mark_billing_subscription_dual_cancel_keep",
+        expect.objectContaining({
+          p_keep_stripe_subscription_id: "sub_active_new_b1",
+        }),
+      );
+    },
+  );
+
   // a7 B3: active と past_due を同 rank にすると新しい past_due が古い健全 active を cancel し得る
   it("keeps older active over newer past_due dual-sub (B3 past_due rank)", async () => {
     const olderActive = makeSubscription({

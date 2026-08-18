@@ -108,12 +108,28 @@ function periodUnixFromSubscription(
 }
 
 /**
- * Checkout 進行中の incomplete も live 候補に含む（list / dual 対象の母集団）。
- * residual-intentional (B2): paused / unpaid は意図的に外す。
- * 非 Plus なので Checkout 409 にならず、dual cancel も触らない（pause 解除・回収を Stripe 正とする）。
- * 母集団拡大は Stripe 契約・二重 cancel ポリシー変更のため本パスではしない。
+ * Checkout 進行中の incomplete に加え、未収 unpaid / 休止 paused も live 候補に含む。
+ * B1: 外すと dual-cancel が未収・休止 sub を list せず、新規 Plus と未収 invoice が共存する。
+ * incomplete_expired / canceled は終端のまま（回収不能の残骸を live にしない）。
  */
-const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete"]);
+const LIVE_SUB_STATUSES = new Set([
+  "trialing",
+  "active",
+  "past_due",
+  "incomplete",
+  "unpaid",
+  "paused",
+]);
+
+/** status 別 list の走査順。Checkout / Portal の live 確認と同型。 */
+const LIVE_SUB_STATUS_LIST = [
+  "trialing",
+  "active",
+  "past_due",
+  "incomplete",
+  "unpaid",
+  "paused",
+] as const;
 
 /**
  * dual-sub keep 優先（数値が小さいほど keep）:
@@ -121,7 +137,8 @@ const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete
  * - trialing は active の次
  * - past_due は incomplete より優先するが active/trialing より下位
  *   （新しい past_due が古い健全 sub を cancel しない — a7 B3）
- * - incomplete は最下位
+ * - incomplete は unpaid/paused より上（手続き中を未収より残す）
+ * - unpaid / paused は live だが最下位。新 Plus が来たらこちらを cancel する（B1）
  * 同 rank 内は新しい created を keep（再 Checkout 後の誤ダウングレード残差を減らす）。
  * さらに B3: allowlist Plus price を持つ sub を非 allowlist より常に優先
  * （新しい非 Plus active が古い Plus active を cancel しない）。
@@ -131,7 +148,8 @@ function dualSubKeepRank(status: string): number {
   if (status === "trialing") return 1;
   if (status === "past_due") return 2;
   if (status === "incomplete") return 3;
-  return 4;
+  if (status === "unpaid" || status === "paused") return 4;
+  return 5;
 }
 
 /**
@@ -143,7 +161,7 @@ async function listLiveSubscriptionsForCustomer(
   stripeCustomerId: string,
 ): Promise<Stripe.Subscription[]> {
   const byId = new Map<string, Stripe.Subscription>();
-  for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
+  for (const status of LIVE_SUB_STATUS_LIST) {
     let startingAfter: string | undefined;
     for (;;) {
       const listed = await stripe.subscriptions.list({

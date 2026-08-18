@@ -66,10 +66,28 @@ export type BillingCheckoutDeps = {
 };
 
 /**
- * residual-intentional (B2): paused / unpaid は live 母集団外（webhook dual と同型）。
- * DB free なら Checkout Session 作成可。pause 解除後の dual は webhook rank に委ねる。
+ * Checkout 進行中の incomplete に加え、未収 unpaid / 休止 paused も live 候補に含む。
+ * B1: これらを外すと DB 非 Plus のまま新規 Session が作れ、未収 invoice と新 Plus が共存する。
+ * kill の stale unpaid は Stripe list が空なら従来どおり通す（DB status では 409 しない）。
  */
-const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete"]);
+const LIVE_SUB_STATUSES = new Set([
+  "trialing",
+  "active",
+  "past_due",
+  "incomplete",
+  "unpaid",
+  "paused",
+]);
+
+/** rejectIfLiveStripeSubscription / Portal / webhook dual と同順の status 別 list。 */
+const LIVE_SUB_STATUS_LIST = [
+  "trialing",
+  "active",
+  "past_due",
+  "incomplete",
+  "unpaid",
+  "paused",
+] as const;
 
 /**
  * Stripe Customer を確定する。
@@ -234,7 +252,7 @@ async function rejectIfLiveStripeSubscription(
   customerId: string,
 ): Promise<void> {
   try {
-    for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
+    for (const status of LIVE_SUB_STATUS_LIST) {
       const listed = await deps.stripe.subscriptions.list({
         customer: customerId,
         status,
@@ -250,14 +268,8 @@ async function rejectIfLiveStripeSubscription(
           "お支払い手続きが完了していません。設定からお支払い管理を開いてください",
         );
       }
-      if (status === "past_due") {
-        throw new HttpError(
-          409,
-          "billing_checkout_use_portal",
-          "お支払い管理から手続きしてください",
-        );
-      }
-      // active / trialing（DB free の list 経路）
+      // past_due / unpaid / paused / active / trialing は新規 Checkout を閉じ Portal へ。
+      // unpaid/paused も use_portal（incomplete 専用コピーは手続き未完了向け）。
       throw new HttpError(409, "billing_checkout_use_portal", "お支払い管理から手続きしてください");
     }
   } catch (error: unknown) {

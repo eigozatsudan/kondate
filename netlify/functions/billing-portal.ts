@@ -39,19 +39,37 @@ export type BillingPortalDeps = {
 };
 
 /**
- * residual-intentional と揃えた live 母集団（paused / unpaid は外す）。
- * Checkout list / webhook dual と同型。
+ * Checkout list / webhook dual と同型の live 母集団。
+ * B1: unpaid / paused も含める。Checkout が 409 use_portal にしたあと Portal が 403 に閉じない。
  */
-const LIVE_SUB_STATUSES = new Set(["trialing", "active", "past_due", "incomplete"]);
+const LIVE_SUB_STATUSES = new Set([
+  "trialing",
+  "active",
+  "past_due",
+  "incomplete",
+  "unpaid",
+  "paused",
+]);
+
+/** status 別 list。Checkout rejectIfLive / webhook dual と同順。 */
+const LIVE_SUB_STATUS_LIST = [
+  "trialing",
+  "active",
+  "past_due",
+  "incomplete",
+  "unpaid",
+  "paused",
+] as const;
 
 /**
  * Portal を開いてよい subscription 状態（DB 投影ベース）。
- * Free 終端（none / canceled 期間外 / unpaid 等）は Checkout へ誘導し、
+ * Free 終端（none / canceled 期間外 / Stripe に live が無い unpaid）は Checkout へ誘導し、
  * Portal 経由の price 変更・trial 再付与をアプリ側で塞ぐ。
  * incomplete / past_due / 期間内 canceled は支払い完了・解約管理のため許可。
  *
  * B9: DB free でも Stripe に live sub がある場合は `customerHasLiveStripeSubscription`
  * で許可する（webhook 遅延で Checkout 409 + Portal 403 の両閉じを避ける）。
+ * B1: Stripe unpaid / paused も live。kill の stale unpaid（list 空）は従来どおり 403。
  */
 export function isBillingPortalAllowed(entitlement: Entitlement, now: Date = new Date()): boolean {
   if (entitlement.dbPlusEntitled) return true;
@@ -77,7 +95,7 @@ export async function customerHasLiveStripeSubscription(
   stripe: BillingPortalDeps["stripe"],
   customerId: string,
 ): Promise<boolean> {
-  for (const status of ["trialing", "active", "past_due", "incomplete"] as const) {
+  for (const status of LIVE_SUB_STATUS_LIST) {
     const listed = await stripe.subscriptions.list({
       customer: customerId,
       status,
