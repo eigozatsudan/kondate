@@ -1329,6 +1329,51 @@ describe("useGenerationRecovery", () => {
     expect(mockDispatches.some((event) => event.type === "status")).toBe(false);
   });
 
+  it.each([
+    ["query error", new Error("fetch failed")],
+    ["assert probe timeout", new AuthSessionProbeTimeoutError()],
+  ] as const)(
+    "G-R4: discard during live pin hold after POST draft_not_found stays idle when live pin %s",
+    async (_label, liveError) => {
+      const liveHold = deferred<{ draftId: string; revision: number }>();
+      mockReadLiveDraftPin.mockReturnValueOnce(liveHold.promise);
+      mockPost.mockRejectedValueOnce(new Error("draft_not_found"));
+      const recovery = renderRecoveryAt(idleState, null);
+      const start = recovery.result.current.startGeneration(pendingA);
+      await act(async () => {
+        await flushPromises();
+      });
+      await waitFor(() => {
+        expect(mockReadLiveDraftPin).toHaveBeenCalled();
+      });
+      expect(recovery.result.current.state.phase).toBe("submitting");
+      act(() => {
+        recovery.result.current.clearGeneration();
+      });
+      expect(recovery.result.current.state.phase).toBe("idle");
+      await act(async () => {
+        liveHold.reject(liveError);
+        await start;
+      });
+      expect(recovery.result.current.state.phase).toBe("idle");
+      expect(mockPost).toHaveBeenCalledTimes(1);
+      expect(mockStatus).not.toHaveBeenCalled();
+      expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+      expect(mockDispatches).not.toContainEqual({ type: "network_error" });
+      expect(mockDispatches.some((event) => event.type === "status")).toBe(false);
+      mockPost.mockClear();
+      mockStatus.mockClear();
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+        await recovery.result.current.retryStatus();
+        await flushPromises();
+      });
+      expect(recovery.result.current.state.phase).toBe("idle");
+      expect(mockPost).not.toHaveBeenCalled();
+      expect(mockStatus).not.toHaveBeenCalled();
+    },
+  );
+
   it("G-R3: discard during POST draft_not_found stays idle without adopt", async () => {
     const postHold = deferred<GenerationStatusData>();
     mockPost.mockReturnValueOnce(postHold.promise);

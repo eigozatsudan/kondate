@@ -353,6 +353,8 @@ export function useGenerationRecovery(
               // G-R1: query error は throw し、ここが offline で pending を守る。
               // G-R3: 成功 adopt でも !isCurrent なら合成 draft_not_found へ落とさない。
               // discard の idle を維持し、adopt の書き込みもここではしない。
+              // G-R4: adopt throw も !isCurrent なら network_error しない。
+              // discard 済み idle を offline に戻すと GenerationPage の Navigate が外れる。
               if (classified.code === "draft_not_found") {
                 let adopted: PendingGeneration | null;
                 try {
@@ -366,6 +368,8 @@ export function useGenerationRecovery(
                     void redirectToLoginForExpiredSession({ returnTo: "/planner" });
                     return;
                   }
+                  // G-R4: discard 済みなら idle を維持する。G-R1 の pending 維持は isCurrent のときだけ。
+                  if (!isCurrent(token)) return;
                   token.phase = "offline";
                   dispatch({ type: "network_error" });
                   return;
