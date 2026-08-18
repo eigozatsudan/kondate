@@ -1,7 +1,7 @@
 -- Task 3: 共有プール schema / public definer RPC / 削除 / reaper / success cap
 \ir 000_helpers.sql
 begin;
-select plan(36);
+select plan(38);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -80,6 +80,13 @@ insert into public.menus (
 -- 本ファイルは rollback するので、この削除は永続しない。
 delete from private.share_generalization_jobs
 where status in ('pending', 'running');
+
+-- AP2 race ファイルは commit するため、失敗残留の pool 行が
+-- 「active は 1 件」検証を汚す。本 TX 内で隠す（rollback で戻る）。
+delete from private.shared_emergency_recipe_origins
+where contributor_user_id = 'a1000000-0000-4000-8000-0000000000f2';
+delete from private.shared_emergency_recipes
+where menu_payload ->> 'menuId' = 'c1000000-0000-4000-8000-0000000000f2';
 
 -- ---------------------------------------------------------------------------
 -- Schema presence
@@ -173,6 +180,19 @@ select ok(
     'execute'
   ),
   'service_role-only RPCs are locked to service_role'
+);
+
+-- AP2: 同意再確認は EXISTS だけでは revoke と pool INSERT が交差する。
+-- user_share_consents を FOR UPDATE して直列化する（関数本文で固定）。
+select ok(
+  replace(
+    pg_catalog.pg_get_functiondef(
+      'public.publish_shared_emergency_recipe(uuid,jsonb,text,integer,text[],text[],integer,text,text)'::regprocedure
+    ),
+    E'\n',
+    ' '
+  ) ~* 'from public\.user_share_consents.*for update',
+  'AP2: publish locks user_share_consents with FOR UPDATE before pool insert'
 );
 
 -- ---------------------------------------------------------------------------
@@ -511,6 +531,105 @@ select lives_ok(
     $list$;
   $$,
   'list_my isolates by auth.uid and returns title+date only'
+);
+
+-- AP2: 撤回済みの running job は掲載しない（既存契約。enqueue 拒否とは別経路）
+select lives_ok(
+  $$
+    do $ap2seq$
+    declare
+      v_user uuid := 'a1000000-0000-4000-8000-0000000000f1';
+      v_menu uuid := 'b1000000-0000-4000-8000-0000000000f1';
+      v_job uuid;
+      v_pub jsonb;
+    begin
+      perform tests.create_supabase_user(v_user, 'share-ap2-seq@example.invalid');
+
+      insert into public.menus (
+        id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
+        preference_snapshot, safety_snapshot, safety_fingerprint, target_mode,
+        allergen_dictionary_version, food_safety_rule_version, output_schema_version,
+        derivation_group_id, version
+      ) values (
+        v_menu, v_user, 'dinner', 'japanese', 2, 15,
+        '{}', '{}', repeat('7', 64), 'household',
+        'allergens-v1', 'food-v1', 'menu-v1',
+        'b1000000-0000-4000-8000-0000000000c7', 1
+      );
+
+      insert into public.user_share_consents (
+        user_id, consent_version, accepted_at, revoked_at, created_at, updated_at
+      ) values (
+        v_user, '2026-08-01.v1', clock_timestamp(), null,
+        clock_timestamp(), clock_timestamp()
+      );
+
+      insert into private.share_generalization_jobs (
+        source_menu_id,
+        contributor_user_id,
+        status,
+        claimed_at,
+        heartbeat_at,
+        created_at
+      ) values (
+        v_menu,
+        v_user,
+        'running',
+        clock_timestamp(),
+        clock_timestamp(),
+        clock_timestamp()
+      )
+      returning id into v_job;
+
+      perform tests.authenticate_as(v_user);
+      perform set_config('role', 'authenticated', true);
+      perform public.upsert_my_share_consent('2026-08-01.v1', false);
+      perform set_config('role', 'postgres', true);
+      perform tests.clear_authentication();
+
+      v_pub := public.publish_shared_emergency_recipe(
+        v_job,
+        jsonb_build_object(
+          'menuId', 'c1000000-0000-4000-8000-0000000000f1',
+          'dishes', jsonb_build_array(
+            jsonb_build_object('role', 'main', 'name', 'AP2撤回後', 'position', 1)
+          )
+        ),
+        'dinner',
+        15,
+        array[]::text[],
+        array['adult']::text[],
+        0,
+        null,
+        null
+      );
+
+      if coalesce((v_pub ->> 'published')::boolean, true) is not false then
+        raise exception 'AP2: publish after revoke must not insert pool: %', v_pub;
+      end if;
+      if v_pub ->> 'reason' is distinct from 'consent_revoked' then
+        raise exception 'AP2: expected consent_revoked, got %', v_pub;
+      end if;
+      if exists (
+        select 1
+        from private.shared_emergency_recipes
+        where menu_payload ->> 'menuId' = 'c1000000-0000-4000-8000-0000000000f1'
+      ) then
+        raise exception 'AP2: pool row must not exist after revoke';
+      end if;
+      if not exists (
+        select 1
+        from private.share_generalization_jobs
+        where id = v_job
+          and status = 'skipped'
+          and skip_reason = 'consent_revoked'
+      ) then
+        raise exception 'AP2: job should be skipped with consent_revoked';
+      end if;
+    end;
+    $ap2seq$;
+  $$,
+  'AP2: publish after revoke skips consent_revoked and does not insert pool'
 );
 
 -- ---------------------------------------------------------------------------
