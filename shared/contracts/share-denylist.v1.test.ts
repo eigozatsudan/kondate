@@ -116,6 +116,33 @@ describe("share-denylist.v1", () => {
     expect(textHitsShareDenylist("美咲は好きな味付け")).toBe(true);
   });
 
+  it("AP1: flags listed given-name stems in kana fold and bare form", () => {
+    // 収録済み stem は 太郎/花子 と同型。かな折りと助詞なしでも針に当てる
+    expect(sharePiiGivenNameStems).toContain("健太");
+    expect(sharePiiGivenNameBareStems).toContain("健太");
+    expect(sharePiiGivenNameBareStems).toContain("美咲");
+    expect(sharePiiGivenNameBareStems).toContain("翔太");
+    expect(textHitsShareDenylist("けんたの特製")).toBe(true);
+    expect(textHitsShareDenylist("ケンタの特製")).toBe(true);
+    expect(textHitsShareDenylist("健太ハンバーグ")).toBe(true);
+    expect(textHitsShareDenylist("けんたハンバーグ")).toBe(true);
+    expect(textHitsShareDenylist("ケンタハンバーグ")).toBe(true);
+    expect(textHitsShareDenylist("みさきハンバーグ")).toBe(true);
+    expect(textHitsShareDenylist("ミサキと一緒に")).toBe(true);
+    expect(textHitsShareDenylist("ショウタの特製だれ")).toBe(true);
+    expect(textsHitClosedShareDenylistPhrases(["けん", "タの特製"])).toBe(true);
+    // 既存ヒットは緩めない
+    expect(textHitsShareDenylist("健太の特製だれ")).toBe(true);
+    expect(textHitsShareDenylist("太郎ハンバーグ")).toBe(true);
+    expect(textHitsShareDenylist("花子と一緒に")).toBe(true);
+    // 食品複合はかな表記でも 太郎 読みに落とさない
+    expect(textHitsShareDenylist("桃太郎トマトを切る")).toBe(false);
+    expect(textHitsShareDenylist("ももたろうトマトを切る")).toBe(false);
+    expect(textHitsShareDenylist("モモタロウトマトを切る")).toBe(false);
+    // 未収録名のオープン NER は足さない（敬称なし・未収録）
+    expect(textHitsShareDenylist("りおは好きな味付け")).toBe(false);
+  });
+
   it("AP5: flags honorific person-name residue beyond closed 太郎 list", () => {
     // リスト外の短い和名 + 敬称（stem 未収録でも拾う）
     expect(textHitsShareDenylist("りおちゃんの残り野菜")).toBe(true);

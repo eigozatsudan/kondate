@@ -827,6 +827,40 @@ describe("processShareGeneralizationJob pipeline", () => {
     );
   });
 
+  it("AP1: denylist_precheck blocks kana / bare listed given-name before sendPass", async () => {
+    // 収録済み「健太」のひらがな・カタカナ・助詞なしを OpenRouter 前に落とす
+    const cases = ["けんたの特製ハンバーグ", "ケンタの特製ハンバーグ", "健太ハンバーグ"] as const;
+    for (const dishName of cases) {
+      const base = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+      const source = makeValidatedMenu({
+        menuId: SOURCE_MENU_ID,
+        dishes: base.dishes.map((dish, index) =>
+          index === 0 ? { ...dish, name: dishName } : dish,
+        ),
+      });
+      const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
+      const { admin, finish, publish } = createRpcAdmin();
+
+      await processShareGeneralizationJob(makeClaimedJob(), {
+        admin,
+        loadSourceMenu: () => Promise.resolve(source),
+        sendPass,
+        idFactory: createIdFactory(),
+        allergenCatalog: buildSharePublishAllergenCatalog(),
+      });
+
+      expect(sendPass, dishName).not.toHaveBeenCalled();
+      expect(publish, dishName).not.toHaveBeenCalled();
+      expect(finish, dishName).toHaveBeenCalledWith(
+        expect.objectContaining({
+          p_status: "skipped",
+          p_code: "denylist_precheck",
+          p_ai_call_count: 0,
+        }),
+      );
+    }
+  });
+
   it("AP5: denylist_precheck blocks unlisted given-name dish before sendPass", async () => {
     // 太郎リスト外の「健太の〜」も precheck で OpenRouter に送らない
     const base = makeValidatedMenu({ menuId: SOURCE_MENU_ID });

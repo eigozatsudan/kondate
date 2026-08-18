@@ -6,6 +6,7 @@
  * AP5: 閉じた断片のみだと未収録の人名（例: 健太の〜）が OpenRouter / pool にすり抜け得る。
  * 本版は (1) 高頻度の和名 stem+助詞 (2) 敬称付き呼びかけ (3) 住所・郵便番号ヒューリスティック
  * を fail-closed で追加する。オープン集合の完全人名認識は製品再設計域のため residual。
+ * AP1: 収録済み stem は 太郎/花子 と同型で助詞なし＋閉じたひらがな読み（カタカナ折り）も見る。
  */
 
 export const shareDenylistVersion = "2026-08-16.v8" as const;
@@ -164,12 +165,46 @@ export const sharePiiGivenNameStems = [
 const givenNameParticleSuffixes = ["の", "は", "を", "に", "が"] as const;
 
 /**
- * AP2: suffix 無しの「太郎ハンバーグ」「花子と一緒に」を拾う。
+ * AP2 / AP1: suffix 無し。収録済み stem はすべて 太郎/花子 と同型（健太ハンバーグ等）。
  * 食品複合（桃太郎トマト等）は先に除いてから部分一致する。
  */
-export const sharePiiGivenNameBareStems = ["太郎", "花子"] as const;
+export const sharePiiGivenNameBareStems = sharePiiGivenNameStems;
+
+/**
+ * AP1: 収録済み stem の閉じたひらがな読み。漢字からのオープン読み推定はしない。
+ * カタカナは照合時にひらがなへ折る。複数読みがある名前は代表 1 件のみ。
+ */
+const sharePiiGivenNameKanaReadings = [
+  "たろう",
+  "はなこ",
+  "けんた",
+  "しょうた",
+  "なおき",
+  "だいすけ",
+  "たくや",
+  "たつや",
+  "ゆうた",
+  "りょうた",
+  "ゆうま",
+  "はると",
+  "みさき",
+  "ようこ",
+  "ゆうこ",
+  "まゆ",
+  "けいこ",
+  "ともこ",
+  "ゆい",
+  "ひまり",
+  "さくら",
+  "いちろう",
+  "じろう",
+  "さぶろう",
+] as const;
 
 const givenNameFoodCompounds = ["桃太郎", "金太郎", "浦島太郎"] as const;
+
+/** 食品複合の閉じたひらがな形。読み針「たろう」が ももたろう に誤爆しないように除く。 */
+const givenNameFoodCompoundKana = ["ももたろう", "きんたろう", "うらしまたろう"] as const;
 
 /**
  * 明らかに非食品・有害な指示の断片。
@@ -208,7 +243,7 @@ const japaneseAddressFragmentPattern =
  * 照合前畳み。針の文言は変えず、haystack だけ NFKC + 書式制御除去する。
  * ゼロ幅空白で「太郎の」を分断したり、全角＠で email 針をすり抜ける経路を閉じる。
  * AP2: 空白・読点・中点で「健太 の」「弟・の」「090 1234 5678」を分ける経路を閉じる。
- * カタカナ折りはしない（針は明示フレーズの部分一致のまま）。
+ * カタカナ折りは given-name 読み照合に限る（他の針は明示フレーズの部分一致のまま）。
  */
 function foldShareDenylistHaystack(text: string): string {
   return text
@@ -216,6 +251,11 @@ function foldShareDenylistHaystack(text: string): string {
     .replace(/\p{Cf}/gu, "")
     .replace(/[\s、，・]+/gu, "")
     .trim();
+}
+
+/** カタカナ（ァ-ヶ）を対応するひらがなへ折る。given-name 読み照合専用。 */
+function foldKatakanaToHiragana(value: string): string {
+  return value.replace(/[\u30a1-\u30f6]/gu, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60));
 }
 
 /**
@@ -228,10 +268,16 @@ function listClosedShareDenylistNeedles(): readonly string[] {
     ...sharePiiLiteralPhrases,
     ...shareHarmfulInstructionPhrases,
     ...sharePiiGivenNameBareStems,
+    ...sharePiiGivenNameKanaReadings,
   ];
   for (const stem of sharePiiGivenNameStems) {
     for (const particle of givenNameParticleSuffixes) {
       needles.push(`${stem}${particle}`);
+    }
+  }
+  for (const reading of sharePiiGivenNameKanaReadings) {
+    for (const particle of givenNameParticleSuffixes) {
+      needles.push(`${reading}${particle}`);
     }
   }
   return needles;
@@ -277,6 +323,14 @@ function stripGivenNameFoodCompounds(text: string): string {
   return next;
 }
 
+function stripGivenNameFoodCompoundKana(text: string): string {
+  let next = foldKatakanaToHiragana(text);
+  for (const compound of givenNameFoodCompoundKana) {
+    next = next.split(compound).join("");
+  }
+  return next;
+}
+
 /**
  * AP-R3: 3 フィールド以上に分け、間に別テキストを置いても閉じた針を拾う。
  * 正規表現針は見ない。オープン NER にはしない。
@@ -284,11 +338,24 @@ function stripGivenNameFoodCompounds(text: string): string {
 export function textsHitClosedShareDenylistPhrases(texts: readonly string[]): boolean {
   const folded = texts.map(foldShareDenylistHaystack).filter((text) => text !== "");
   if (folded.length === 0) return false;
-  const bareStemNeedles = new Set<string>(sharePiiGivenNameBareStems);
+  const bareKanjiNeedles = new Set<string>(sharePiiGivenNameBareStems);
+  const bareKanaNeedles = new Set<string>(sharePiiGivenNameKanaReadings);
+  const kanaParticleNeedles = new Set<string>();
+  for (const reading of sharePiiGivenNameKanaReadings) {
+    for (const particle of givenNameParticleSuffixes) {
+      kanaParticleNeedles.add(`${reading}${particle}`);
+    }
+  }
   for (const needle of listClosedShareDenylistNeedles()) {
-    const haystacks = bareStemNeedles.has(needle)
-      ? folded.map(stripGivenNameFoodCompounds).filter((text) => text !== "")
-      : folded;
+    const isBareKanji = bareKanjiNeedles.has(needle);
+    const isBareKana = bareKanaNeedles.has(needle);
+    const isKanaNeedle = isBareKana || kanaParticleNeedles.has(needle);
+    let haystacks = isKanaNeedle ? folded.map(foldKatakanaToHiragana) : folded;
+    if (isBareKanji) {
+      haystacks = haystacks.map(stripGivenNameFoodCompounds).filter((text) => text !== "");
+    } else if (isBareKana) {
+      haystacks = haystacks.map(stripGivenNameFoodCompoundKana).filter((text) => text !== "");
+    }
     if (orderedFieldSubsequenceContains(haystacks, needle)) return true;
   }
   return false;
@@ -314,13 +381,21 @@ export function textHitsShareDenylist(text: string): boolean {
       if (trimmed.includes(`${stem}${particle}`)) return true;
     }
   }
-  // AP2: suffix 無し。食品複合を除いた残りに stem があればヒット
-  let bareHaystack = trimmed;
-  for (const compound of givenNameFoodCompounds) {
-    bareHaystack = bareHaystack.split(compound).join("");
-  }
+  // AP2 / AP1: suffix 無し。収録済みはすべて 太郎/花子 と同型
+  const bareHaystack = stripGivenNameFoodCompounds(trimmed);
   for (const stem of sharePiiGivenNameBareStems) {
     if (bareHaystack.includes(stem)) return true;
+  }
+  // AP1: 閉じた読み。カタカナはひらがなへ折ってから部分一致
+  const kanaHaystack = foldKatakanaToHiragana(trimmed);
+  for (const reading of sharePiiGivenNameKanaReadings) {
+    for (const particle of givenNameParticleSuffixes) {
+      if (kanaHaystack.includes(`${reading}${particle}`)) return true;
+    }
+  }
+  const bareKanaHaystack = stripGivenNameFoodCompoundKana(kanaHaystack);
+  for (const reading of sharePiiGivenNameKanaReadings) {
+    if (bareKanaHaystack.includes(reading)) return true;
   }
   for (const phrase of shareHarmfulInstructionPhrases) {
     if (trimmed.includes(phrase)) return true;

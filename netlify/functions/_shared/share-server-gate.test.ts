@@ -25,6 +25,45 @@ describe("runShareServerGate", () => {
     });
   });
 
+  it("AP1: rejects kana-folded and bare listed given-name residue", () => {
+    const base = makeValidatedMenu();
+    const lock = captureShareIngredientGraphLock(base);
+    const kanaHiragana = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0 ? { ...dish, name: "けんたの特製だれ" } : dish,
+      ),
+    });
+    const kanaKatakana = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0
+          ? {
+              ...dish,
+              ingredients: dish.ingredients.map((ingredient, ingredientIndex) =>
+                ingredientIndex === 0 ? { ...ingredient, name: "ケンタの特製" } : ingredient,
+              ),
+            }
+          : dish,
+      ),
+    });
+    const bareKanji = makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) =>
+        index === 0 ? { ...dish, name: "健太ハンバーグ" } : dish,
+      ),
+    });
+    expect(runShareServerGate(kanaHiragana, lock)).toEqual({
+      ok: false,
+      code: "server_gate_failed",
+    });
+    expect(runShareServerGate(kanaKatakana, lock)).toEqual({
+      ok: false,
+      code: "server_gate_failed",
+    });
+    expect(runShareServerGate(bareKanji, lock)).toEqual({
+      ok: false,
+      code: "server_gate_failed",
+    });
+  });
+
   it("rejects ingredient name containing 太郎の", () => {
     const base = makeValidatedMenu();
     const menu = makeValidatedMenu({
