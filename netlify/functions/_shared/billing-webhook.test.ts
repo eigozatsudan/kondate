@@ -97,6 +97,15 @@ function makeSubscription(overrides: Partial<Stripe.Subscription> = {}): Stripe.
   } as Stripe.Subscription;
 }
 
+/** Stripe retrieve の永続 404（resource_missing）相当。B4 の fail-closed ゲート専用。 */
+function stripeResourceMissingError(message = "No such subscription"): Error {
+  return Object.assign(new Error(message), {
+    type: "StripeInvalidRequestError",
+    code: "resource_missing",
+    statusCode: 404,
+  });
+}
+
 function makeEvent(
   type: Stripe.Event.Type,
   object: Stripe.Event.Data.Object,
@@ -2098,6 +2107,88 @@ describe("handleBillingWebhook", () => {
         alertMetric: 1,
       }),
     );
+  });
+
+  it.each(["active", "canceled", "past_due"] as const)(
+    "fail-closes deleted retrieve 404 without projecting event status %s (B4)",
+    async (eventStatus) => {
+      // deleted + 404 は sub 不在が確定。event.status を権威にすると
+      // active→canceled 残存や行無し canceled の未来 period_end Plus が残る。
+      const eventObject = makeSubscription({
+        id: "sub_deleted_404",
+        status: eventStatus,
+        metadata: { supabase_user_id: USER_ID },
+      });
+      constructEvent.mockReturnValue(
+        makeEvent("customer.subscription.deleted", eventObject, {
+          id: `evt_deleted_retrieve_404_${eventStatus}`,
+          created: 9_400,
+        }),
+      );
+      retrieve.mockRejectedValue(
+        stripeResourceMissingError("No such subscription: sub_deleted_404"),
+      );
+
+      const response = await handleBillingWebhook(signedRequest(), deps());
+      expect(response.status).toBe(200);
+      const processCall = rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event");
+      expect(processCall).toBeDefined();
+      const processPayload = (
+        processCall![1] as {
+          p_payload: Record<string, unknown>;
+        }
+      ).p_payload;
+      expect(processPayload.status).toBe("incomplete_expired");
+      expect(processPayload.stripe_subscription_id).toBe("sub_deleted_404");
+      expect(processPayload.clear_past_due_since).toBe(false);
+      expect(processPayload).not.toHaveProperty("kill_source_status");
+      expect(processPayload).not.toHaveProperty("past_due_since");
+    },
+  );
+
+  it("still returns 500 when deleted retrieve fails without 404 (B4/B10)", async () => {
+    const sub = makeSubscription({ status: "canceled" });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", sub, { id: "evt_deleted_retrieve_500" }),
+    );
+    retrieve.mockRejectedValue(new Error("stripe retrieve down"));
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "billing_subscription_retrieve_failed",
+        alertMetric: 1,
+      }),
+    );
+  });
+
+  it("does not project updated canceled when retrieve is 404 (B4/B10)", async () => {
+    // updated は終端確定ではない。404 でも event.status を投影せず 5xx 再送。
+    const sub = makeSubscription({ status: "canceled" });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", sub, { id: "evt_updated_canceled_404" }),
+    );
+    retrieve.mockRejectedValue(stripeResourceMissingError());
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
+  });
+
+  it("still returns 500 when deleted retrieve 404 lacks resource_missing (B4)", async () => {
+    const sub = makeSubscription({ status: "canceled" });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.deleted", sub, { id: "evt_deleted_404_no_code" }),
+    );
+    retrieve.mockRejectedValue(
+      Object.assign(new Error("not found"), {
+        type: "StripeAPIError",
+        statusCode: 404,
+      }),
+    );
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(500);
+    expect(rpc.mock.calls.some(([n]) => n === "process_billing_stripe_event")).toBe(false);
   });
 });
 

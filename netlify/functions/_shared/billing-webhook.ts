@@ -302,6 +302,34 @@ function unixToIsoZ(seconds: number | null | undefined): string | null {
 }
 
 /**
+ * Stripe retrieve の永続欠落。statusCode と resource_missing の両方を要求する。
+ * 一時 5xx / 429 を 404 扱いして event を claim しない（B10 残差）。
+ */
+function isStripeResourceMissingError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  if (!("statusCode" in error) || !("code" in error)) return false;
+  return error.statusCode === 404 && error.code === "resource_missing";
+}
+
+/**
+ * deleted + retrieve 404 用。event.status は権威にしない（B10）。
+ * price / period は process 行識別と SQL 残存判定だけに使い、status は不明の fail-closed。
+ */
+function failClosedUnknownDeletedProjection(
+  sub: Stripe.Subscription,
+  stripe?: { pricePlusMonthly: string; pricePlusYearly: string },
+): SubscriptionProjection | null {
+  const base = projectionFromSubscription(sub, stripe);
+  if (base === null) return null;
+  return {
+    ...base,
+    status: "incomplete_expired",
+    cancel_at_period_end: false,
+    trial_end: null,
+  };
+}
+
+/**
  * Stripe Subscription オブジェクトから投影用フィールドを取り出す。
  * B4: Plus allowlist price の item を優先（無い場合は先頭 item）。period も同 item から取る。
  */
@@ -731,14 +759,37 @@ async function handleSubscriptionEvent(
     : sub.id;
 
   let retrieved: SubscriptionProjection | null = null;
+  // deleted + retrieve 404 だけ event.status を捨てて不明降格する（B4）。他は 5xx。
+  let deletedRetrieveMissing = false;
   try {
     const liveSub = await deps.stripe.subscriptions.retrieve(projectSubscriptionId);
     // B4: allowlist item 優先で投影
     retrieved = projectionFromSubscription(liveSub, prices);
-  } catch {
+  } catch (error) {
+    const deletedOwnSubMissing =
+      event.type === "customer.subscription.deleted" &&
+      projectSubscriptionId === sub.id &&
+      isStripeResourceMissingError(error);
+    if (deletedOwnSubMissing) {
+      const unknownProjection = failClosedUnknownDeletedProjection(sub, prices);
+      if (unknownProjection !== null) {
+        // B4: 永続 404 は再送しても戻らない。event.status は使わず incomplete_expired。
+        // 行識別の price/period だけ event から取る。権威投影（B10）ではない。
+        retrieved = unknownProjection;
+        deletedRetrieveMissing = true;
+        log({
+          level: "warn",
+          requestId,
+          code: "billing_subscription_deleted_retrieve_missing",
+          durationMs: Date.now() - startedAt,
+          alertMetric: 1,
+        });
+      }
+    }
     // B10: retrieve 失敗を event payload で投影しない（stale active 上書き防止）。
     // invoice 経路と同型: claim せず 5xx 再送。discard→keep の retrieve 失敗も event で上書きしない。
-    if (projectSubscriptionId === sub.id) {
+    // identity が取れない deleted 404 も claim せず再送（投影不能で event_only にしない）。
+    if (retrieved === null && projectSubscriptionId === sub.id) {
       log({
         level: "error",
         requestId,
@@ -779,7 +830,8 @@ async function handleSubscriptionEvent(
   const incompleteLike = (status: string): boolean =>
     status === "incomplete" || status === "incomplete_expired";
   const retrievedStatus = projection.status;
-  const eventFrozenStatus = sub.status;
+  // B4: 404 不明降格では event.status を past_due/支払証拠に使わない。
+  const eventFrozenStatus = deletedRetrieveMissing ? "incomplete_expired" : sub.status;
   const retrievedIncomplete = incompleteLike(retrievedStatus);
   const eventIncomplete = incompleteLike(eventFrozenStatus);
   const keepUnpaidIncomplete =
