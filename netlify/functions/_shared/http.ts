@@ -259,10 +259,11 @@ const closedHttpErrorMessageFallback = "処理を完了できませんでした"
 /**
  * 製品コピーの閉じた「アレルギー○」だけを除き、残った アレルギー は自由文とみなす。
  * 氏名＋品目（小麦アレルギー）やカスタムアレルギーを wire に出さない。
+ * 品目前置（小麦アレルギー食材）へは食い込まない。助詞（と/の）の直後は製品コピーとして削る。
  */
 function hasAllergyFreeText(raw: string): boolean {
   const withoutClosed = raw.replace(
-    /(?:登録されたアレルギー内容|自由登録アレルギー|登録アレルギー|アレルギー確認|アレルギー情報|アレルギー条件|アレルギー内容|アレルギー食材)/gu,
+    /(?:(?<![一-龯ぁ-んァ-ン])|(?<=[とのはがをにでやもへ]))(?:登録されたアレルギー内容|自由登録アレルギー|登録アレルギー|アレルギー確認|アレルギー情報|アレルギー条件|アレルギー内容|アレルギー食材)/gu,
     "",
   );
   return /アレルギー/u.test(withoutClosed);
@@ -290,7 +291,8 @@ function closedHttpErrorMessage(raw: string): string {
   if (/[A-Za-z]/u.test(withoutProductTokens)) return closedHttpErrorMessageFallback;
   if (!/[\u3040-\u30ff\u4e00-\u9fff]/u.test(raw)) return closedHttpErrorMessageFallback;
   // 人名混じり（敬称付き和文）。製品コピーは さん/様/君 を含まない。
-  if (/[一-龯ぁ-んァ-ン]{1,4}(?:ちゃん|くん|さん|様|君)/u.test(raw)) {
+  // 評価テンプレは 「花子」さん のように閉じ引用が敬称直前に来る。
+  if (/(?:[一-龯ぁ-んァ-ン]{1,4}|[」』])(?:ちゃん|くん|さん|様|君)/u.test(raw)) {
     return closedHttpErrorMessageFallback;
   }
   // 氏名なしの品目・自由文アレルギー、および和文に混ざった電話番号。

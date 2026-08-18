@@ -376,6 +376,57 @@ describe("S8 closedHttpErrorDetails / handleError", () => {
     );
     const flyerWeekBody = (await flyerWeek.json()) as { error: { message: string } };
     expect(flyerWeekBody.error.message).toBe("チラシ写真から 1 週間の献立は Plus の機能です。");
+
+    const allergyFood = handleError(
+      new HttpError(422, "allergy_conflict", "アレルギー食材が、使いたい食材に含まれています"),
+    );
+    const allergyFoodBody = (await allergyFood.json()) as { error: { message: string } };
+    expect(allergyFoodBody.error.message).toBe("アレルギー食材が、使いたい食材に含まれています");
+
+    const pantryConflict = handleError(
+      new HttpError(
+        422,
+        "allergen_pantry_conflict",
+        "選択した在庫食材とアレルギー条件が競合しています。",
+      ),
+    );
+    const pantryConflictBody = (await pantryConflict.json()) as { error: { message: string } };
+    expect(pantryConflictBody.error.message).toBe(
+      "選択した在庫食材とアレルギー条件が競合しています。",
+    );
+  });
+
+  it("closes quoted-honorific evaluation copy and item-prefixed allergy phrase (SC-R1)", async () => {
+    const quoted = handleError(
+      new HttpError(
+        400,
+        "invalid_request",
+        "「花子」さんの登録アレルギー「小麦」が「小麦粉」に残っています",
+      ),
+    );
+    const quotedBody = (await quoted.json()) as {
+      ok: false;
+      error: { code: string; message: string };
+    };
+    expect(quotedBody.error.code).toBe("invalid_request");
+    expect(quotedBody.error.message).toBe("処理を完了できませんでした");
+    const quotedText = JSON.stringify(quotedBody);
+    expect(quotedText).not.toContain("花子");
+    expect(quotedText).not.toContain("小麦");
+    expect(quotedText).not.toContain("小麦粉");
+    expect(quotedText).not.toContain("登録アレルギー");
+
+    const prefixed = handleError(
+      new HttpError(400, "invalid_request", "小麦アレルギー食材を除いてください"),
+    );
+    const prefixedBody = (await prefixed.json()) as {
+      ok: false;
+      error: { message: string };
+    };
+    expect(prefixedBody.error.message).toBe("処理を完了できませんでした");
+    const prefixedText = JSON.stringify(prefixedBody);
+    expect(prefixedText).not.toContain("小麦");
+    expect(prefixedText).not.toContain("アレルギー食材を除いてください");
   });
 
   it("omits details entirely when only unknown keys were provided", async () => {
