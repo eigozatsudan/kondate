@@ -71,6 +71,7 @@ vi.mock("./emergency-menu-api", async (importOriginal) => {
   return { ...original, getEmergencyMenus: getEmergencyMenusMock };
 });
 
+import { emergencyMenuKeys } from "./emergency-menu-api";
 import { EmergencyMenuPage } from "./emergency-menu-page";
 
 const eligibleMember: HouseholdMemberRow = {
@@ -733,8 +734,21 @@ it("既存revisionの更新に失敗しても同一家族の安全変更後に�
       queryClient
         .getQueryCache()
         .findAll({ queryKey: ["emergency-menus"] })
-        .some((query) => query.queryKey[query.queryKey.length - 1] === "existing-revision:event:1"),
+        .some((query) => {
+          const last = query.queryKey[query.queryKey.length - 1];
+          return (
+            typeof last === "string" &&
+            last.startsWith("existing-revision:event:reenter:") &&
+            last.endsWith(":event:1")
+          );
+        }),
     ).toBe(true);
+    expect(
+      queryClient
+        .getQueryCache()
+        .findAll({ queryKey: ["emergency-menus"] })
+        .some((query) => query.queryKey[query.queryKey.length - 1] === "existing-revision:event:1"),
+    ).toBe(false);
     expect(localStorage.getItem(householdSafetyRevisionStorageKey)).toBe("existing-revision");
   } finally {
     setItem.mockRestore();
@@ -815,6 +829,126 @@ it("PE1: remount without stored revision change still refetches 30s candidate ca
     expect(getEmergencyMenusMock.mock.calls.length).toBeGreaterThan(callsBeforeRemount);
   });
   expect(await screen.findByRole("heading", { name: "再入場後候補" })).toBeVisible();
+});
+
+it("PE-R3: remount then focus does not revive previous-mount stored:event:1 candidate cache", async () => {
+  const userId = eligibleMember.user_id;
+  const storedRevision = "stored-before-allergy";
+  localStorage.setItem(householdSafetyRevisionKey(userId), storedRevision);
+  listHouseholdMembersMock.mockReset();
+  listHouseholdMembersMock.mockResolvedValue([eligibleMember]);
+  listMemberAllergiesMock.mockResolvedValue([]);
+  getEmergencyMenusMock.mockReset();
+  getEmergencyMenusMock
+    .mockResolvedValueOnce(emergencyResponse("卵あり旧候補"))
+    .mockResolvedValueOnce(emergencyResponse("卵あり旧候補"))
+    .mockResolvedValue(emergencyResponse("卵なし新候補"));
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { staleTime: 30_000, retry: false } },
+  });
+  const first = render(
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  expect(await screen.findByRole("heading", { name: "卵あり旧候補" })).toBeVisible();
+  await waitFor(() => {
+    expect(realtime.handlers.length).toBeGreaterThanOrEqual(2);
+  });
+
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  expect(await screen.findByRole("heading", { name: "卵あり旧候補" })).toBeVisible();
+  act(() => {
+    emitRealtime("member_allergies", userId);
+  });
+  expect(await screen.findByRole("heading", { name: "卵なし新候補" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "卵あり旧候補" })).not.toBeInTheDocument();
+
+  // 旧 refreshRevision が巻き戻る衝突キー。前マウントが :event:2 まで進んでも
+  // remount 後の最初の focus が ${stored}:event:1 に戻るとここに当たる。
+  queryClient.setQueryData(
+    emergencyMenuKeys.candidates({
+      userId,
+      mealType: "dinner",
+      targetMode: "household",
+      mainIngredients: [],
+      targetMemberIds: [eligibleMember.id],
+      pantryItemIds: [],
+      householdSafetyRevision: `${storedRevision}:event:1`,
+    }),
+    emergencyResponse("卵あり旧候補"),
+  );
+
+  const callsAfterFirstStay = getEmergencyMenusMock.mock.calls.length;
+  const handlerCountAfterFirstStay = realtime.handlers.length;
+  expect(localStorage.getItem(householdSafetyRevisionKey(userId))).toBe(storedRevision);
+  first.unmount();
+
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <EmergencyMenuPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  expect(screen.queryByRole("heading", { name: "卵あり旧候補" })).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(getEmergencyMenusMock.mock.calls.length).toBeGreaterThan(callsAfterFirstStay);
+  });
+  expect(await screen.findByRole("heading", { name: "卵なし新候補" })).toBeVisible();
+  expect(
+    screen.getByText("現在の家族・アレルギー・年齢・必須条件で固定候補を絞り込みます", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await waitFor(() => {
+    expect(realtime.handlers.length).toBeGreaterThan(handlerCountAfterFirstStay);
+  });
+
+  const nextHousehold = deferredPromise<HouseholdMemberRow[]>();
+  listHouseholdMembersMock.mockReturnValueOnce(nextHousehold.promise);
+  const nextCandidates = deferredPromise<ReturnType<typeof emergencyResponse>>();
+  getEmergencyMenusMock.mockReturnValueOnce(nextCandidates.promise);
+
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  expect(screen.getByText("候補を確認中…")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "卵あり旧候補" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "卵なし新候補" })).not.toBeInTheDocument();
+
+  await act(async () => {
+    nextHousehold.resolve([eligibleMember]);
+    await Promise.resolve();
+  });
+  expect(screen.getByText("候補を確認中…")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "卵あり旧候補" })).not.toBeInTheDocument();
+
+  await act(async () => {
+    nextCandidates.resolve(emergencyResponse("卵なし新候補"));
+    await Promise.resolve();
+  });
+  expect(await screen.findByRole("heading", { name: "卵なし新候補" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "卵あり旧候補" })).not.toBeInTheDocument();
+  expect(
+    queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ["emergency-menus"] })
+      .some((query) => {
+        const last = query.queryKey[query.queryKey.length - 1];
+        return (
+          typeof last === "string" &&
+          last.startsWith(`${storedRevision}:event:reenter:`) &&
+          last.endsWith(":event:1")
+        );
+      }),
+  ).toBe(true);
+  expect(localStorage.getItem(householdSafetyRevisionKey(userId))).toBe(storedRevision);
+  expect(localStorage.getItem(householdSafetyRevisionStorageKey)).toBeNull();
 });
 
 it("PE-R1: other-tab household-safety storage refreshes without persisting a new UUID", async () => {

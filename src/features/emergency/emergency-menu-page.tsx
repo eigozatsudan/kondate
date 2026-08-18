@@ -156,7 +156,8 @@ export function EmergencyMenuPage() {
     if (userId === undefined) return "initial";
     const stored = readStoredHouseholdSafetyRevision(userId) ?? "initial";
     // PE1: stored キーそのままだと QueryClient に残った 30s cache を再入場で出す。
-    // :event:reenter は当マウント専用。次入場の基点は再入場 UUID であり、stored を進めない。
+    // :event:reenter は当マウント専用。refreshRevision も stored へ巻き戻さずこの current を基点にする（PE-R3）。
+    // stored は進めない（PE-R1 / PE-R2）。
     return `${stored}:event:reenter:${crypto.randomUUID()}`;
   });
 
@@ -199,9 +200,11 @@ export function EmergencyMenuPage() {
     const refreshRevision = () => {
       householdSafetyEventVersion.current += 1;
       setHouseholdSafetyRevision((current) => {
-        // U4-003: user-scoped key を優先し、レガシー固定キーは移行読取のみ
-        const storedRevision = readStoredHouseholdSafetyRevision(userId);
-        return `${storedRevision ?? current}:event:${String(householdSafetyEventVersion.current)}`;
+        // PE-R3: stored を prefix に戻すと eventVersion が 0 始まりのまま
+        // `${stored}:event:1` に巻き戻り、QueryClient に残った変更前候補を
+        // PE9 が世帯 intro のまま出す。当マウントの current（:event:reenter 含む）
+        // を基点に :event:N を足す。本物の persist は書かない（PE-R1 / PE-R2）。
+        return `${current}:event:${String(householdSafetyEventVersion.current)}`;
       });
       // PE-R1 / PE-R2: focus / poll / Realtime / storage 受信では household-safety キーを進めない。
       // 偽 UUID persist は他タブ handleStorage と ping-pong し、history hard / shopping ゲートを誤発火する。
