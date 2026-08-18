@@ -633,6 +633,140 @@ it("AP3: revokeFailed error disables skip so the user must retry revoke", async 
   expect(onSkip).not.toHaveBeenCalled();
 });
 
+it("AP3: skip stays disabled after revokeFailed even if later error is generic", async () => {
+  const user = userEvent.setup();
+  const onSkip = vi.fn();
+  // 同一 Content インスタンスで error だけ差し替える（ラッチが最新文言に依存しないこと）
+  function Harness({ error }: { error: string }) {
+    return (
+      <MemoryRouter>
+        <PrivacyNoticeContent saving={false} error={error} onAccept={vi.fn()} onSkip={onSkip} />
+      </MemoryRouter>
+    );
+  }
+
+  const { rerender } = render(<Harness error={shareConsentSettingsCopy.revokeFailed} />);
+  expect(screen.getByRole("button", { name: "今はAIを使わない" })).toBeDisabled();
+
+  rerender(<Harness error="確認状態を保存できませんでした。通信を確認してください。" />);
+
+  const skip = screen.getByRole("button", { name: "今はAIを使わない" });
+  expect(skip).toBeDisabled();
+  await user.click(skip);
+  expect(onSkip).not.toHaveBeenCalled();
+});
+
+it("AP3: skip stays closed when retry after revokeFailed fails generically", async () => {
+  const user = userEvent.setup();
+  getShare.mockResolvedValue(currentShareState);
+  acceptConsent
+    .mockResolvedValueOnce({
+      user_id: "user-1",
+      notice_version: "2026-07-29.v1",
+      accepted_at: "2026-07-12T00:00:00.000Z",
+      created_at: "2026-07-12T00:00:00.000Z",
+    })
+    .mockRejectedValueOnce(new Error("network"));
+  upsertShare.mockRejectedValue(new Error("共有の同意を保存できませんでした"));
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await waitForShareConsentReady();
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }));
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(shareConsentSettingsCopy.revokeFailed);
+  expect(screen.getByRole("button", { name: "今はAIを使わない" })).toBeDisabled();
+
+  // 再試行は必須 privacy 再読が generic で落ちる。mutation.error は revokeFailed ではない
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "確認状態を保存できませんでした。通信を確認してください。",
+  );
+  const skip = screen.getByRole("button", { name: "今はAIを使わない" });
+  expect(skip).toBeDisabled();
+  await user.click(skip);
+
+  expect(screen.queryByRole("heading", { name: "献立" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "家族情報の取り扱い" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/privacy");
+  // 再試行は accept で落ちたので revoke は初回の1回だけ
+  expect(upsertShare).toHaveBeenCalledTimes(1);
+});
+
+it("AP3: skip stays closed when retry after revokeFailed times out", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    getShare.mockResolvedValue(currentShareState);
+    acceptConsent
+      .mockResolvedValueOnce({
+        user_id: "user-1",
+        notice_version: "2026-07-29.v1",
+        accepted_at: "2026-07-12T00:00:00.000Z",
+        created_at: "2026-07-12T00:00:00.000Z",
+      })
+      .mockReturnValueOnce(new Promise(() => undefined));
+    upsertShare.mockRejectedValue(new Error("共有の同意を保存できませんでした"));
+    const router = createMemoryRouter(
+      [
+        { path: "/privacy", element: <PrivacyNoticePage /> },
+        { path: "/planner", element: <h1>献立</h1> },
+      ],
+      { initialEntries: ["/privacy?returnTo=/planner"] },
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+
+    await waitForShareConsentReady();
+    await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+    await user.click(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }));
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      shareConsentSettingsCopy.revokeFailed,
+    );
+    expect(screen.getByRole("button", { name: "今はAIを使わない" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "確認して進む" }));
+    expect(screen.getByRole("button", { name: "保存中…" })).toBeDisabled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PRIVACY_ACCEPT_TIMEOUT_MS + 50);
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("確認状態を保存できませんでした");
+    const skip = screen.getByRole("button", { name: "今はAIを使わない" });
+    expect(skip).toBeDisabled();
+    await user.click(skip);
+
+    expect(screen.queryByRole("heading", { name: "献立" })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/privacy");
+    expect(upsertShare).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("共有同意 RPC が失敗しても必須 privacy 同意後は returnTo へ進む", async () => {
   const user = userEvent.setup();
   acceptConsent.mockResolvedValue({

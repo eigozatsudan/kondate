@@ -127,6 +127,10 @@ export function PrivacyNoticePage() {
   const shareConsentReady = shareQuery.data !== undefined;
   const shareConsentReadError = shareQuery.isError && shareQuery.data === undefined;
   const initialShareChecked = initialShareCheckedFromConsent(shareQuery.data);
+  // AP3 residual: skip 閉鎖は最新 mutation.error 文言に依存しない。
+  // 共有オフを選んだセッションで revoke が一度でも失敗したら、再試行が pending /
+  // accept 再読・timeout の generic でも returnTo へ出さない（必須 privacy は INSERT 済み）。
+  const shareRevokeFailedOnceRef = useRef(false);
   const mutation = useMutation({
     mutationFn: async (input: PrivacyAcceptInput) => {
       if (userId === undefined) throw new Error("ログインが必要です");
@@ -198,6 +202,8 @@ export function PrivacyNoticePage() {
             queryClient.setQueryData(shareConsentKeys.current(userId), share);
           } catch {
             // AP5: revoke 失敗は無言で進めない。必須 privacy は保存済みでも共有停止未確定。
+            // AP3 residual: ここでラッチする。後続の generic 失敗で error 文言が変わっても残す。
+            shareRevokeFailedOnceRef.current = true;
             throw new Error(shareConsentSettingsCopy.revokeFailed);
           }
         } else if (shouldUpsertAccept) {
@@ -238,7 +244,8 @@ export function PrivacyNoticePage() {
       onSkip={() => {
         // AP3: revoke 失敗中は Content が skip を閉じる。万一呼ばれても returnTo へ出さない。
         // 必須 privacy は INSERT 済み。抜けると生成可能 + サーバ share ON のまま enqueue し得る。
-        if (isShareRevokeFailedError(mutation.error)) {
+        // 再試行が generic でも、一度でも revoke 失敗したセッションでは出さない。
+        if (shareRevokeFailedOnceRef.current || isShareRevokeFailedError(mutation.error)) {
           return;
         }
         void navigate(returnTo, { replace: true });
@@ -282,6 +289,12 @@ export function PrivacyNoticeContent({
   // 未チェックのまま primary を押したときの案内。チェックしたら消す。
   const [consentGateMessage, setConsentGateMessage] = useState<string | undefined>();
   const consentCheckboxRef = useRef<HTMLInputElement>(null);
+  // AP3 residual: 一度 revokeFailed を見たら、再試行の pending / generic でも skip を閉じる。
+  // 最新 error 文言だけを見ると、必須 privacy INSERT 済みのまま抜けられる。
+  const shareRevokeFailedOnceRef = useRef(false);
+  if (error === shareConsentSettingsCopy.revokeFailed) {
+    shareRevokeFailedOnceRef.current = true;
+  }
   // 保存失敗とゲート案内は同じ領域。保存失敗を優先する。
   const displayError = error ?? consentGateMessage;
   return (
@@ -382,7 +395,7 @@ export function PrivacyNoticeContent({
       <button
         className="text-button"
         type="button"
-        disabled={saving || error === shareConsentSettingsCopy.revokeFailed}
+        disabled={saving || shareRevokeFailedOnceRef.current}
         onClick={onSkip}
       >
         今はAIを使わない
