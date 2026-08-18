@@ -9,6 +9,7 @@ import { resetLeftoverPkceProtectionForTests, type AuthGateway } from "./auth-ga
 import {
   EMAIL_OTP_CHANGE_EMAIL,
   EMAIL_OTP_GOOGLE_BUTTON,
+  EMAIL_OTP_GOOGLE_STARTING,
   EMAIL_OTP_LOGIN_LEAD,
   EMAIL_OTP_LOGIN_NOTE,
   EMAIL_OTP_MISMATCH,
@@ -1220,6 +1221,60 @@ it("C-R3: leftover-capable Google start proceeds after 2s when leftover signOut 
 
     expect(signInWithGoogle).toHaveBeenCalled();
     expect(window.localStorage.getItem(pkceVerifierKey)).toBe("verifier-after-google-start");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("C-R4: leftover-wait Google start blocks OTP verify until leftover cleanup settles", async () => {
+  vi.useFakeTimers();
+  leftoverSignOut.mockImplementation(() => new Promise(() => undefined));
+  window.localStorage.setItem(leftoverSessionStorageKey, "leftover-persist");
+  leftoverGetSession.mockResolvedValue({
+    data: { session: leftoverMocks.leftover },
+    error: null,
+  });
+  sessionStorage.setItem(
+    "kondate.auth.magicSentUi",
+    JSON.stringify({
+      email: "user@example.com",
+      resendAvailableAt: readyResendAt(),
+      storedAt: new Date().toISOString(),
+    }),
+  );
+  const verifyEmailOtp = vi.fn().mockResolvedValue({ kind: "complete" });
+  const signInWithGoogle = vi.fn().mockResolvedValue(undefined);
+  try {
+    renderLoginAt(
+      "/login?authError=oauth_cancelled",
+      stubGateway({ verifyEmailOtp, signInWithGoogle }),
+    );
+    expect(screen.getByRole("heading", { name: EMAIL_OTP_WAITING_HEADING })).toBeVisible();
+    await act(async () => {
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    });
+    expect(leftoverSignOut).toHaveBeenCalledWith({ scope: "local" });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: EMAIL_OTP_SWITCH_TO_GOOGLE }));
+    });
+    expect(screen.getByRole("button", { name: EMAIL_OTP_GOOGLE_STARTING })).toBeDisabled();
+    expect(getDigitBox("確認番号の1けた目")).toBeDisabled();
+
+    fireEvent.change(getDigitBox("確認番号の1けた目"), { target: { value: "123456" } });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(verifyEmailOtp).not.toHaveBeenCalled();
+    expect(signInWithGoogle).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    });
+    expect(signInWithGoogle).toHaveBeenCalled();
+    expect(verifyEmailOtp).not.toHaveBeenCalled();
   } finally {
     vi.useRealTimers();
   }

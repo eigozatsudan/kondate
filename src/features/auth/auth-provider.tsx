@@ -14,7 +14,7 @@ import {
   startAuthContinuationCompletionListener,
 } from "./auth-continuation-completion";
 import { withTimeout } from "./async-timeout";
-import { createAuthGateway } from "./auth-gateway";
+import { armLeftoverRefuseSignOutWinnerPersistProtection, createAuthGateway } from "./auth-gateway";
 import {
   clearSoftResidualRecoverySuppressed,
   clearSoftSessionResidualBestEffort,
@@ -508,6 +508,11 @@ export function AuthProvider({
    */
   const expectPinMismatchSignedOutCountRef = useRef(0);
   /**
+   * C-R1: callback の unmarked leftover 拒否 signOut が発火する後着 SIGNED_OUT。
+   * Google B を first-pin したあとに届いても pin を落とさない（mismatch degraded にはしない）。
+   */
+  const expectLeftoverRefuseSignedOutCountRef = useRef(0);
+  /**
    * R1: pin reject の世代。連続 clobber で先発 restore 成功が後発 degraded を消さないようにする。
    */
   const pinRejectGenerationRef = useRef(0);
@@ -591,7 +596,16 @@ export function AuthProvider({
           hasPersistedBrowserSupabaseSession() &&
           !liveAuthSessionMarkProtectsFingerprint(sessionKey) &&
           (!isCallbackPath || refuseCallbackMountLeftover);
-        if (refuseMismatchedLiveMark || refuseUnmarkedLeftoverPersist) {
+        // C-R2: first-pin 前に exchange が B を書くと live 印 A と不一致になる。
+        // switch は pin 済み枝だけ見ていたので B を拒否し、武装を消費しなかった。
+        // leftover そのものは unmarked 拒否のまま（switch でも leftover A は通さない）。
+        const adoptArmedSwitchFirstPin =
+          refuseMismatchedLiveMark &&
+          !refuseUnmarkedLeftoverPersist &&
+          isIntentionalAuthSessionSwitchArmed(pathname);
+        if (adoptArmedSwitchFirstPin) {
+          clearIntentionalAuthSessionSwitch();
+        } else if (refuseMismatchedLiveMark || refuseUnmarkedLeftoverPersist) {
           if (refuseUnmarkedLeftoverPersist) {
             rememberAccessToken(persistHardLeftoverAccessTokensRef.current, nextSession);
           }
@@ -608,9 +622,32 @@ export function AuthProvider({
             }
           }
           if (typeof client.auth.signOut === "function") {
-            void Promise.resolve(client.auth.signOut.call(client.auth, { scope: "local" })).catch(
-              () => undefined,
-            );
+            const leftoverToken = nextSession.access_token;
+            const signOutPromise = Promise.resolve(
+              client.auth.signOut.call(client.auth, { scope: "local" }),
+            ).catch(() => undefined);
+            // C-R1: unmarked leftover 拒否の local signOut は logout 往復中に Google B
+            // persist と並走する。callback では後着 _removeSession から B を戻し、
+            // 後着 SIGNED_OUT で B pin を落とさない。
+            if (refuseUnmarkedLeftoverPersist && isCallbackPath && typeof window !== "undefined") {
+              expectLeftoverRefuseSignedOutCountRef.current += 1;
+              armLeftoverRefuseSignOutWinnerPersistProtection(
+                signOutPromise,
+                leftoverToken,
+                window.localStorage,
+              );
+              void signOutPromise.finally(() => {
+                const pinned = residualSessionGuardRef.current.pinnedSession;
+                if (pinned !== null && pinned.access_token !== leftoverToken) {
+                  return;
+                }
+                if (expectLeftoverRefuseSignedOutCountRef.current > 0) {
+                  expectLeftoverRefuseSignedOutCountRef.current -= 1;
+                }
+              });
+            } else {
+              void signOutPromise;
+            }
           }
           return false;
         }
@@ -643,6 +680,13 @@ export function AuthProvider({
           setAccessTokenPinDataPlaneBlocked(true);
           setSessionProbeDegraded(true);
           return false;
+        }
+        if (expectLeftoverRefuseSignedOutCountRef.current > 0) {
+          expectLeftoverRefuseSignedOutCountRef.current -= 1;
+          if (guard.pinnedUserId !== null) {
+            // C-R1: leftover 拒否 signOut の後着。Google B は勝者のまま degraded にしない
+            return false;
+          }
         }
         if (pinRestoreRetryTimerRef.current !== null) {
           window.clearTimeout(pinRestoreRetryTimerRef.current);

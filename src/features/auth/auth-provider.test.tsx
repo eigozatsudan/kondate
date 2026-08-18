@@ -16,9 +16,10 @@ import {
   defaultAuthContinuationTtlMs,
   writeActiveLoginFlowId,
 } from "./auth-flow";
+import { resetLeftoverPkceProtectionForTests } from "./auth-gateway";
+import { AUTH_SESSION_SWITCH_KEY, armIntentionalAuthSessionSwitch } from "./live-auth-session-mark";
 import { resetAccessTokenPinGateForTests } from "./session";
 import { useAuth } from "./use-auth";
-import { AUTH_SESSION_SWITCH_KEY, armIntentionalAuthSessionSwitch } from "./live-auth-session-mark";
 
 const session = { access_token: "token", user: { id: "user-1" } } as Session;
 type AuthSubscription = ReturnType<
@@ -103,6 +104,12 @@ describe("AuthProvider", () => {
   afterEach(() => {
     // R1: module pin ゲートが他テストへ漏れないようにする
     resetAccessTokenPinGateForTests();
+    resetLeftoverPkceProtectionForTests();
+    try {
+      window.localStorage.removeItem("kondate.auth.supabase");
+    } catch {
+      // ignore
+    }
     // C4/R3: soft residual 共有 suppress が次テストを止めないようにする。
     // clearSoftResidualRecoverySuppressed は R4 re-arm を発火するため、teardown では
     // storage を直接落としてマウント中 Provider への act 外 setState を避ける。
@@ -4515,5 +4522,147 @@ describe("AuthProvider", () => {
     });
     expect(document.title).toBe("user-b");
     expect(screen.queryByText("authenticated:degraded")).not.toBeInTheDocument();
+  });
+
+  it("C-R1: delayed leftover refuse signOut does not wipe first-pinned Google B persist", async () => {
+    window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
+    const leftoverPersist = JSON.stringify({
+      access_token: "leftover-access",
+      refresh_token: "leftover-refresh",
+      user: { id: "leftover-user" },
+    });
+    const googlePersist = JSON.stringify({
+      access_token: "google-access",
+      refresh_token: "google-refresh",
+      user: { id: "google-user" },
+    });
+    window.localStorage.setItem("kondate.auth.supabase", leftoverPersist);
+    const leftover = {
+      access_token: "leftover-access",
+      refresh_token: "leftover-refresh",
+      user: { id: "leftover-user" },
+    } as Session;
+    const googleB = {
+      access_token: "google-access",
+      refresh_token: "google-refresh",
+      user: { id: "google-user" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    let releaseSignOut: (() => void) | undefined;
+    const signOut = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSignOut = () => {
+            window.localStorage.removeItem("kondate.auth.supabase");
+            for (const listener of authListeners) {
+              listener("SIGNED_OUT", null);
+            }
+            resolve({ error: null });
+          };
+        }),
+    );
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: leftover }, error: null }),
+        signOut,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("unauthenticated")).toBeInTheDocument();
+    expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+
+    window.localStorage.setItem("kondate.auth.supabase", googlePersist);
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", googleB);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("google-user");
+
+    await act(async () => {
+      releaseSignOut?.();
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    });
+    expect(window.localStorage.getItem("kondate.auth.supabase")).toBe(googlePersist);
+    expect(screen.getByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("google-user");
+    expect(screen.queryByText("authenticated:degraded")).not.toBeInTheDocument();
+  });
+
+  it("C-R2: first-pin on /auth/callback adopts Google B when live mark A remains and switch is armed", async () => {
+    window.history.replaceState(null, "", "/auth/callback?flow=flow-1");
+    window.localStorage.setItem(
+      "kondate.auth.liveSession",
+      JSON.stringify({ userId: "user-a", storedAt: new Date().toISOString() }),
+    );
+    window.localStorage.setItem(
+      "kondate.auth.supabase",
+      JSON.stringify({
+        access_token: "token-a",
+        refresh_token: "refresh-a",
+        user: { id: "user-a" },
+      }),
+    );
+    const sessionB = {
+      access_token: "token-b",
+      refresh_token: "refresh-b",
+      user: { id: "user-b" },
+    } as Session;
+    const authListeners: AuthStateListener[] = [];
+    const signOut = vi.fn().mockResolvedValue({ error: null });
+    const getSession = vi.fn().mockImplementation(() => new Promise(() => undefined));
+    const client = {
+      auth: {
+        getSession,
+        signOut,
+        onAuthStateChange: (cb: AuthStateListener) => {
+          authListeners.push(cb);
+          return { data: { subscription: createAuthSubscription() } };
+        },
+      },
+    } satisfies AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={vi.fn()}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("loading")).toBeInTheDocument();
+
+    armIntentionalAuthSessionSwitch("google_callback");
+    await act(async () => {
+      for (const listener of authListeners) {
+        listener("SIGNED_IN", sessionB);
+      }
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("authenticated")).toBeInTheDocument();
+    expect(document.title).toBe("user-b");
+    expect(screen.queryByText("authenticated:degraded")).not.toBeInTheDocument();
+    expect(signOut).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem(AUTH_SESSION_SWITCH_KEY)).toBeNull();
   });
 });

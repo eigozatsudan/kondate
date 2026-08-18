@@ -951,7 +951,25 @@ type LeftoverPkceGuard = {
   /** leftover signOut 中に番号が書いた persist。後着 _removeSession のあと戻す（C3） */
   protectedSessionValue: string | null;
   liveMarkAtArm: LiveAuthSessionMark | null;
+  /**
+   * C-R1: callback の unmarked leftover 拒否で武装した leftover token。
+   * 控え persist が別 token（Google B）なら OTP 印なしでも戻す。
+   */
+  leftoverAccessTokenAtArm: string | null;
 };
+
+function readPersistAccessTokenFromRaw(raw: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || !("access_token" in parsed)) {
+      return null;
+    }
+    const token = parsed.access_token;
+    return typeof token === "string" && token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
 
 const leftoverPkceGuards = new Set<LeftoverPkceGuard>();
 
@@ -971,7 +989,14 @@ function restoreLeftoverProtectedPkce(guard: LeftoverPkceGuard): void {
 
 function restoreLeftoverProtectedWinnerSession(guard: LeftoverPkceGuard): void {
   if (guard.protectedSessionValue === null) return;
+  const capturedToken = readPersistAccessTokenFromRaw(guard.protectedSessionValue);
+  // C-R1: leftover 拒否後に書いた Google persist は OTP 印を待たず戻す
+  const leftoverRefuseWinner =
+    guard.leftoverAccessTokenAtArm !== null &&
+    capturedToken !== null &&
+    capturedToken !== guard.leftoverAccessTokenAtArm;
   const shouldRestore =
+    leftoverRefuseWinner ||
     isFreshEmailOtpCompletedMark() ||
     liveAuthSessionMarkAppearedOrUpdated(
       guard.liveMarkAtArm,
@@ -994,6 +1019,12 @@ function rememberPkceVerifierWrite(storage: Storage, key: string, value: string)
       guard.protectedValue = value;
     }
     if (key === browserSupabaseSessionStorageKey) {
+      if (value === "") continue;
+      // leftover 拒否武装中は leftover 自身 / 空書きを控えにしない（winner を上書きしない）
+      if (guard.leftoverAccessTokenAtArm !== null) {
+        const token = readPersistAccessTokenFromRaw(value);
+        if (token === null || token === guard.leftoverAccessTokenAtArm) continue;
+      }
       guard.protectedSessionValue = value;
     }
   }
@@ -1083,12 +1114,14 @@ function armLeftoverSignOutPkceProtection(
   signOutPromise: Promise<unknown>,
   storage: Storage,
   liveMarkAtArm: LiveAuthSessionMark | null = readLiveAuthSessionMark(storage),
+  leftoverAccessTokenAtArm: string | null = null,
 ): void {
   const guard: LeftoverPkceGuard = {
     storage,
     protectedValue: null,
     protectedSessionValue: null,
     liveMarkAtArm,
+    leftoverAccessTokenAtArm,
   };
   leftoverPkceGuards.add(guard);
   // C-R4: protect より前の setItem を控える。後着 _removeSession が書込〜protect に入っても戻せる。
@@ -1102,6 +1135,24 @@ function armLeftoverSignOutPkceProtection(
       restoreLeftoverProtectedWinnerSession(guard);
       unwrapStorageSetItemIfIdle(storage);
     });
+}
+
+/**
+ * C-R1: callback が unmarked leftover を拒否して出した local signOut の後着
+ * `_removeSession` から、途中で書いた Google persist を戻す。
+ * OTP leftover 掃除の PKCE 保護と同じ wrap を使い、戻し条件だけ leftover token 不一致を足す。
+ */
+export function armLeftoverRefuseSignOutWinnerPersistProtection(
+  signOutPromise: Promise<unknown>,
+  leftoverAccessToken: string,
+  storage: Storage = window.localStorage,
+): void {
+  armLeftoverSignOutPkceProtection(
+    signOutPromise,
+    storage,
+    readLiveAuthSessionMark(storage),
+    leftoverAccessToken,
+  );
 }
 
 /**

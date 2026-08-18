@@ -2,6 +2,7 @@ import type { AuthError } from "@supabase/supabase-js";
 import { afterEach, expect, it, vi } from "vitest";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
+  armLeftoverRefuseSignOutWinnerPersistProtection,
   clearLeftoverLoginSessionIfNoSiblingCompletion,
   createAuthGateway,
   dropInflightResumeMapForTests,
@@ -4357,6 +4358,35 @@ it("C3: leftover signOut late settle restores OTP persist written during the in-
     window.localStorage.removeItem(browserSupabaseSessionStorageKey);
     window.localStorage.removeItem("kondate.auth.liveSession");
     window.sessionStorage.removeItem("kondate.auth.emailOtpCompleted");
+  }
+});
+
+it("C-R1: leftover refuse signOut late settle restores Google persist without an OTP mark", async () => {
+  const leftoverPersist = JSON.stringify({
+    access_token: "leftover-access",
+    user: { id: "leftover-user" },
+  });
+  const googlePersist = JSON.stringify({
+    access_token: "google-access",
+    user: { id: "google-user" },
+  });
+  window.localStorage.setItem(browserSupabaseSessionStorageKey, leftoverPersist);
+  let releaseSignOut: (() => void) | undefined;
+  const signOutPromise = new Promise((resolve) => {
+    releaseSignOut = () => {
+      window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+      resolve({ error: null });
+    };
+  });
+  try {
+    armLeftoverRefuseSignOutWinnerPersistProtection(signOutPromise, "leftover-access");
+    window.localStorage.setItem(browserSupabaseSessionStorageKey, googlePersist);
+    releaseSignOut?.();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(window.localStorage.getItem(browserSupabaseSessionStorageKey)).toBe(googlePersist);
+  } finally {
+    window.localStorage.removeItem(browserSupabaseSessionStorageKey);
+    resetLeftoverPkceProtectionForTests();
   }
 });
 

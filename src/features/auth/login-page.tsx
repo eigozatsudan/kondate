@@ -372,6 +372,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const [otpError, setOtpError] = useState<"mismatch" | "unavailable" | null>(null);
   // 同期 in-flight。useState だけだと StrictMode remount で戻り二重 verify する
   const verifyInFlightRef = useRef(false);
+  // C-R4: leftover 待ち中の Google 開始を OTP verify より先に同期で排他する
+  const googleInFlightRef = useRef(false);
   const requestSeqRef = useRef(0);
   // 既定は非表示。クエリ・期限切れ・送信済み復元・「メールアドレスを変更」でフォームを出す。
   const [emailUnlocked, setEmailUnlocked] = useState(() => {
@@ -503,6 +505,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
 
   const verifyDigits = (digits: string, email: string, resendAvailableAt: string): void => {
     if (digits.length !== 6) return;
+    // C-R4: leftover 待ち中の Google 開始と番号確認を並走させない
+    if (googleInFlightRef.current || googlePending) return;
     if (!beginExclusive()) return;
     const seq = ++requestSeqRef.current;
     setState({ status: "verifying", email, resendAvailableAt });
@@ -555,11 +559,12 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
   const leftoverCleanupRef = useRef<Promise<void>>(Promise.resolve());
 
   const startGoogle = async (): Promise<void> => {
-    if (googlePending) return;
+    if (googlePending || googleInFlightRef.current) return;
     // C5: 番号確認中は Google を並走させない。書いた B を leftover / discard と競合させない。
     if (verifyInFlightRef.current) return;
     if (state.status === "verifying" || state.status === "sending") return;
     setGoogleError(false);
+    googleInFlightRef.current = true;
     setGooglePending(true);
     try {
       await leftoverCleanupRef.current.catch(() => undefined);
@@ -571,6 +576,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
       verifyInFlightRef.current = false;
       discardWaiting("email" in state ? state.email : "");
     } catch {
+      googleInFlightRef.current = false;
       setGoogleError(true);
       setGooglePending(false);
     }
@@ -655,7 +661,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
           )}
           <OtpDigitField
             value={otpDigits}
-            disabled={verifying}
+            disabled={verifying || googlePending}
             onChange={(next) => {
               handleOtpChange(next, state.email, state.resendAvailableAt);
             }}
