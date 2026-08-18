@@ -580,6 +580,41 @@ describe("HistoryDetailPage safety gate", () => {
     expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
   });
 
+  it("HR8: generation-time pending labels on valid status keep mutation CTAs open", async () => {
+    getMenuResultMock.mockResolvedValue(
+      makeMenuResultViewModel({
+        targetMode: "household",
+        sourceSubmission: regenerableSubmission,
+      }),
+    );
+    renderHistoryDetail({
+      revalidation: {
+        phase: "checked",
+        result: {
+          ...validRevalidation,
+          status: "valid",
+          currentLabelWarnings: [
+            {
+              confirmationId: "48000000-0000-4000-8000-000000000099",
+              sourceType: "ingredient",
+              sourceId: "53000000-0000-4000-8000-000000000001",
+              sourcePath: "dishes.0.ingredients.1.name",
+              sourceText: "しょうゆ",
+              allergenId: "wheat",
+              allergenName: "小麦",
+              anonymousMemberRef: "member_1",
+              memberLabel: "家族1",
+              dictionaryVersion: "jp-caa-2026-04.v1",
+              confirmationStatus: "pending",
+            },
+          ],
+        },
+      },
+    });
+    expect(await screen.findByRole("button", { name: "この献立にする" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeEnabled();
+  });
+
   it("disables この献立にする while checking and enables when revalidation is actionable", async () => {
     const revalidate = deferredPromise<RevalidationResult>();
     renderHistoryDetail({ revalidate: () => revalidate.promise });

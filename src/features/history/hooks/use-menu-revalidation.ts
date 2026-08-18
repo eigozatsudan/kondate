@@ -92,11 +92,20 @@ export function useMenuRevalidation(menuId: string) {
    * HR1: accept / 再生成 / 買い物の ref を同期的に倒す。
    * isFetching が立つ前の同ターン click は render 値を見ない。
    * closedUntil は「この開始より後の queryFn 完了」まで hold する。
+   *
+   * 連続 arm（goto 直後の focus+visibility、poll と focus の同着）は
+   * 目標世代を積み上げない。invalidate は飛行中 1 refetch しか保証せず、
+   * Math.max で +2 すると checked のまま CTA が 60s poll まで開かない。
    */
   const armActionGateClose = useCallback(() => {
     actionGateClosedRef.current = true;
+    // until は arm 時点で固定する。updater が hard の request++ / queryFn 開始より
+    // 後に走ると live ref を読んで目標が +2 し、1 refetch では開かない。
     const until = requestGenerationRef.current + 1;
-    setClosedUntilGeneration((prev) => Math.max(prev, until));
+    setClosedUntilGeneration((prev) => {
+      if (completedGenerationRef.current < prev) return prev;
+      return until;
+    });
   }, []);
 
   /** offline: 世代を進めて閉じるが再 POST しない。online hard と衝突させない。 */

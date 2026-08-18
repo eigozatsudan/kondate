@@ -265,6 +265,29 @@ describe("useMenuRevalidation", () => {
     });
   });
 
+  it("HR1: repeated soft arm during in-flight does not raise hold past one refetch", async () => {
+    const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
+    await waitFor(() => {
+      expect(result.current.phase).toBe("checked");
+    });
+    const deferred = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValueOnce(deferred.promise);
+    act(() => {
+      // goto 直後の focus + visibilitychange が同着する経路
+      result.current.beginSoftRecheck();
+      result.current.beginSoftRecheck();
+      expect(result.current.actionGateClosedRef.current).toBe(true);
+    });
+    expect(result.current.isActionGateClosed).toBe(true);
+    act(() => {
+      deferred.resolve(valid);
+    });
+    await waitFor(() => {
+      expect(result.current.isActionGateClosed).toBe(false);
+      expect(result.current.actionGateClosedRef.current).toBe(false);
+    });
+  });
+
   it("HR1: beginSoftRecheck closes the action gate before isFetching flips", async () => {
     const { result } = renderHook(() => useMenuRevalidation(MENU_ID), { wrapper });
     await waitFor(() => {

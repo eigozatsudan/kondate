@@ -438,7 +438,12 @@ describe("MenuResultPage", () => {
     revalidateMenuMock.mockImplementation(() => {
       revalidateCalls += 1;
       if (revalidateCalls === 1) {
-        return Promise.resolve({ ...validRevalidation, currentLabelWarnings: [warning] });
+        // HR8: 作成後に増えた pending（changed）だけ CTA を閉じる
+        return Promise.resolve({
+          ...validRevalidation,
+          status: "changed" as const,
+          currentLabelWarnings: [warning],
+        });
       }
       return afterStale.promise;
     });
@@ -448,7 +453,6 @@ describe("MenuResultPage", () => {
     expect(
       await screen.findByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
     ).toBeEnabled();
-    // HR8: pending ラベル中は採用/買い物/再生成/在庫 mutation を閉じ、確認 UI だけ残す
     expect(screen.getByRole("button", { name: "使った食材の在庫を更新" })).toBeDisabled();
 
     await userEvent.click(

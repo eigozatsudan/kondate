@@ -114,28 +114,38 @@ describe("revalidateMenu", () => {
     expect(isRevalidationActionable(changed)).toBe(false);
   });
 
+  const pendingWheatWarning = {
+    confirmationId: "48000000-0000-4000-8000-000000000001",
+    sourceType: "ingredient" as const,
+    sourceId: "53000000-0000-4000-8000-000000000001",
+    sourcePath: "dishes.0.ingredients.1.name",
+    sourceText: "しょうゆ",
+    allergenId: "wheat",
+    allergenName: "小麦",
+    anonymousMemberRef: "member_1",
+    memberLabel: "子ども",
+    dictionaryVersion: "jp-caa-2026-04.v1",
+    confirmationStatus: "pending" as const,
+  };
+
   it("HR8: pending processed label warnings keep body visible but close CTAs", () => {
     const pending: RevalidationResult = {
       ...validResult,
       status: "changed",
-      currentLabelWarnings: [
-        {
-          confirmationId: "48000000-0000-4000-8000-000000000001",
-          sourceType: "ingredient",
-          sourceId: "53000000-0000-4000-8000-000000000001",
-          sourcePath: "dishes.0.ingredients.0.name",
-          sourceText: "しょうゆ",
-          allergenId: "wheat",
-          allergenName: "小麦",
-          anonymousMemberRef: "member_1",
-          memberLabel: "子ども",
-          dictionaryVersion: "jp-caa-2026-04.v1",
-          confirmationStatus: "pending",
-        },
-      ],
+      currentLabelWarnings: [pendingWheatWarning],
     };
     expect(isRevalidationBodyVisible(pending)).toBe(true);
     expect(isRevalidationActionable(pending)).toBe(false);
+  });
+
+  it("HR8: generation-time pending labels on valid status keep CTAs open", () => {
+    const pendingOnValid: RevalidationResult = {
+      ...validResult,
+      status: "valid",
+      currentLabelWarnings: [pendingWheatWarning],
+    };
+    expect(isRevalidationBodyVisible(pendingOnValid)).toBe(true);
+    expect(isRevalidationActionable(pendingOnValid)).toBe(true);
   });
 
   it("accepts all status variants and bounds currentLabelWarnings", async () => {

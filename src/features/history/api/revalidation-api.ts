@@ -146,7 +146,9 @@ export function isRevalidationBodyVisible(result: RevalidationResult): boolean {
 /** 調理・再生成・買い物操作を許可する閉じた判定。manual-success は存在しない。 */
 export function isRevalidationActionable(result: RevalidationResult): boolean {
   if (!isRevalidationBodyVisible(result)) return false;
-  // HR8: 新規 processed ラベルの pending は確認前に採用 / 買い物 / 再生成しない。
-  // 確認 UI は本文側に残す。
+  // HR8: 作成後に増えた pending processed（status=changed）だけ CTA を閉じる。
+  // 生成時から載っている valid+pending は確認 UI を残しつつ採用/再生成/買い物を許す
+  // （確認は推奨。generation が既に label 要件を載せており、E2E は確認しました後に CTA 開を契約する）。
+  if (result.status !== "changed") return true;
   return !result.currentLabelWarnings.some((item) => item.confirmationStatus === "pending");
 }
