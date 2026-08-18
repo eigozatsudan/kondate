@@ -260,7 +260,7 @@ function readPersistedUserIdFromUnknown(value: unknown): string | null {
   return typeof userId === "string" && userId.length > 0 ? userId : null;
 }
 
-/** C-R8: /auth/callback 到着時点の leftover persist user。回転 A2 を token hard だけで取りこぼさない。 */
+/** C-R8 / C-R10: /auth/callback 到着時点の leftover persist user。回転 A2 を token hard だけで取りこぼさない。 */
 function readLeftoverPersistUserIdAtMount(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -532,7 +532,7 @@ export function AuthProvider({
    */
   const persistHardLeftoverAccessTokensRef = useRef<Set<string>>(new Set());
   /**
-   * C-R8: switch first-pin 時の leftover persist user。
+   * C-R8 / C-R10: first-pin B 時の leftover persist user。
    * 回転 A2 は mount leftover token と違うので token hard だけではすり抜ける。
    * leftoverSetsNonEmpty には載せない（C23 / C24）。
    */
@@ -674,13 +674,6 @@ export function AuthProvider({
           if (leftoverToken !== null && leftoverToken !== nextSession.access_token) {
             persistHardLeftoverAccessTokensRef.current.add(leftoverToken);
           }
-          // C-R8: leftover getSession の回転 A2 は mount leftover token と違う。
-          // token hard だけだと pin-mismatch wipe する。leftover user も hard にする
-          // （B 自身の user は載せない。C-R7 同一 user first-pin はこの枝に来ない）。
-          const leftoverUserId = leftoverPersistUserIdAtMountRef.current;
-          if (leftoverUserId !== null && leftoverUserId !== nextSession.user.id) {
-            persistHardLeftoverUserIdsRef.current.add(leftoverUserId);
-          }
         } else if (refuseMismatchedLiveMark || refuseUnmarkedLeftoverPersist) {
           if (refuseUnmarkedLeftoverPersist) {
             rememberAccessToken(persistHardLeftoverAccessTokensRef.current, nextSession);
@@ -727,6 +720,16 @@ export function AuthProvider({
             }
           }
           return false;
+        }
+        // C-R8 / C-R10: leftover getSession の回転 A2 は mount leftover token と違う。
+        // token hard だけだと pin-mismatch wipe / 武装中 switch 付け替えに届く。
+        // leftover user を persist-hard にする（B 自身は載せない。C-R7 同一 user
+        // first-pin は leftover user === B なので来ない）。
+        // adopt 枝（live 印不一致）だけでなく unmarked leftover の B first-pin でも
+        // 足す。switch 消費は adopt 枝だけ（C-R9 unmarked leftover A は消費しない）。
+        const leftoverUserId = leftoverPersistUserIdAtMountRef.current;
+        if (leftoverUserId !== null && leftoverUserId !== nextSession.user.id) {
+          persistHardLeftoverUserIdsRef.current.add(leftoverUserId);
         }
       }
       if (
