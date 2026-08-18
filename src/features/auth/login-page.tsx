@@ -21,7 +21,9 @@ import {
   markAuthFlowUserDismissed,
   readAuthFlow,
   sanitizeLoginReturnPath,
+  writeSessionActiveLoginFlowId,
 } from "./auth-flow";
+import { notifySoftResidualRecoveryRearm } from "./soft-residual-recovery-suppress";
 import {
   EMAIL_OTP_CHANGE_EMAIL,
   EMAIL_OTP_GOOGLE_BUTTON,
@@ -244,6 +246,19 @@ function isFreshEmailOtpCompleted(nowMs: number = Date.now()): boolean {
 }
 
 /**
+ * C4: OTP 送信/待ち中のタブが origin 共有 sibling Google pin を residual claim しない。
+ * sessionStorage だけを別 UUID で上書きし、localStorage の開始タブ pin は残す。
+ * 既に走っている residual は呼び出し側で re-arm して止め直す。
+ */
+function pinThisTabAwayFromSharedLoginFlow(): void {
+  try {
+    writeSessionActiveLoginFlowId(crypto.randomUUID());
+  } catch {
+    // session 失敗時は origin 共有 pin のまま。re-arm しても sibling を claim し得る residual
+  }
+}
+
+/**
  * 番号成功直前に未期限切れの Google / authorization_code と残存 token_hash を捨てる。
  * 完了 id が無いので clearSiblingUnexpiredAuthFlows は呼ばない（空文字で全消しもしない）。
  */
@@ -298,6 +313,8 @@ function initialEmailOtpState(
   // U1-I2: リロード後も番号待ち UI を復元（再送クールダウン中は特に重要）
   const sent = readWaitingUi();
   if (sent !== null) {
+    // C4: 復元時点で session pin を外し、AuthProvider residual が sibling Google を拾わない
+    pinThisTabAwayFromSharedLoginFlow();
     return {
       status: "waiting",
       email: sent.email,
@@ -485,6 +502,9 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
         email: sent.email,
         resendAvailableAt: sent.resendAvailableAt,
       });
+      // C4: 送信成功後に自タブ pin をずらし、既起動 residual を re-arm で止める
+      pinThisTabAwayFromSharedLoginFlow();
+      notifySoftResidualRecoveryRearm();
       setOtpDigits("");
       setState({
         status: "waiting",

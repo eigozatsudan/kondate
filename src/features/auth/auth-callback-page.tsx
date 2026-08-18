@@ -23,6 +23,7 @@ import {
   markAuthFlowUserDismissed,
   readAuthContinuationCallbackStartedAt,
   readAuthFlow,
+  readSessionActiveLoginFlowId,
   isAuthSelfReturnPath,
   sanitizeReturnPath,
 } from "./auth-flow";
@@ -120,9 +121,15 @@ export function AuthCallbackPage({
   /**
    * C3: cancel / 期限切れ terminal UI から抜けるとき secret は焼かず dismiss 印だけ付ける。
    * 遅延 success URL が来ても completeCallback が silent complete しない。
+   * C1: 所有タブ（session pin 一致）以外の error/expired では dismiss しない。
+   * state は redirect 初回 URL に載り得る。別タブの access_denied で正当 ?code= の
+   * deposit/claim を止めない。真のキャンセルは開始タブの session pin で残す。
+   * origin 共有 localStorage pin は見ない（攻撃タブも読める）。
+   * C5: state 一致だけで flow を clear しない（本関数は dismiss 印のみ）。
    */
   const dismissFlowBestEffort = (flowId: string | undefined): void => {
     if (flowId === undefined || flowId === "") return;
+    if (readSessionActiveLoginFlowId() !== flowId) return;
     try {
       markAuthFlowUserDismissed(flowId);
     } catch {

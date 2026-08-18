@@ -141,16 +141,20 @@ function readStoredActiveLoginFlowId(
   }
 }
 
+function activeLoginFlowPinPayload(flowId: string, nowMs: number): string {
+  return JSON.stringify({
+    id: flowId,
+    expiresAtMs: nowMs + defaultAuthContinuationTtlMs,
+  });
+}
+
 /**
  * C2/C13/C36: createAuthFlow 成功後に対象 flow を覚える（best-effort。secret は載せない）。
  * origin 共有 localStorage に書けたときだけ true。失敗時は呼び出し側が共有 suppress を残す。
  * C4: continuation TTL 付きで書き、共有端末の無期限 pin を閉じる。
  */
 export function writeActiveLoginFlowId(flowId: string, nowMs: number = Date.now()): boolean {
-  const payload = JSON.stringify({
-    id: flowId,
-    expiresAtMs: nowMs + defaultAuthContinuationTtlMs,
-  });
+  const payload = activeLoginFlowPinPayload(flowId, nowMs);
   for (const storage of activeLoginFlowStorages()) {
     try {
       storage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, payload);
@@ -164,6 +168,30 @@ export function writeActiveLoginFlowId(flowId: string, nowMs: number = Date.now(
       typeof localStorage !== "undefined" &&
       readStoredActiveLoginFlowId(localStorage, nowMs) === flowId
     );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * C1: error/expired callback の dismiss 判定は session pin だけを見る。
+ * origin 共有 localStorage pin は攻撃タブも読めるので所有の根拠にしない。
+ */
+export function readSessionActiveLoginFlowId(nowMs: number = Date.now()): string | undefined {
+  if (typeof sessionStorage === "undefined") return undefined;
+  return readStoredActiveLoginFlowId(sessionStorage, nowMs);
+}
+
+/**
+ * C4: OTP 待ちタブが origin 共有の sibling Google pin を residual claim しないよう、
+ * このタブの sessionStorage だけを書き換える。localStorage は触らない
+ * （開始タブの Google pin を壊さない）。
+ */
+export function writeSessionActiveLoginFlowId(flowId: string, nowMs: number = Date.now()): boolean {
+  if (typeof sessionStorage === "undefined") return false;
+  try {
+    sessionStorage.setItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY, activeLoginFlowPinPayload(flowId, nowMs));
+    return readStoredActiveLoginFlowId(sessionStorage, nowMs) === flowId;
   } catch {
     return false;
   }

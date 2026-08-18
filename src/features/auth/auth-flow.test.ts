@@ -16,7 +16,9 @@ import {
   createAuthFlow,
   defaultAuthContinuationTtlMs,
   readActiveLoginFlowId,
+  readSessionActiveLoginFlowId,
   writeActiveLoginFlowId,
+  writeSessionActiveLoginFlowId,
   estimateAuthClockSkewMs,
   isAuthContinuationCallbackOwned,
   isAuthFlowUserDismissed,
@@ -480,6 +482,31 @@ describe("auth flow storage", () => {
       expect(window.sessionStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
       expect(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY)).toBeNull();
       expect(readActiveLoginFlowId()).toBeUndefined();
+    } finally {
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    }
+  });
+
+  it("C1/C4: session pin read/write ignores origin-shared localStorage", () => {
+    const localId = "10000000-0000-4000-8000-0000000000c1";
+    const sessionId = "20000000-0000-4000-8000-0000000000c4";
+    try {
+      writeActiveLoginFlowId(localId);
+      window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+      expect(readSessionActiveLoginFlowId()).toBeUndefined();
+      expect(readActiveLoginFlowId()).toBe(localId);
+
+      expect(writeSessionActiveLoginFlowId(sessionId)).toBe(true);
+      expect(readSessionActiveLoginFlowId()).toBe(sessionId);
+      expect(readActiveLoginFlowId()).toBe(sessionId);
+      expect(
+        (
+          JSON.parse(window.localStorage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY) ?? "null") as {
+            id: string;
+          }
+        ).id,
+      ).toBe(localId);
     } finally {
       window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
       window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);

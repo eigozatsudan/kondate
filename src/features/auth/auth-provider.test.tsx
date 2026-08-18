@@ -15,7 +15,9 @@ import {
   createAuthFlow,
   defaultAuthContinuationTtlMs,
   writeActiveLoginFlowId,
+  writeSessionActiveLoginFlowId,
 } from "./auth-flow";
+import { notifySoftResidualRecoveryRearm } from "./soft-residual-recovery-suppress";
 import { resetLeftoverPkceProtectionForTests } from "./auth-gateway";
 import { AUTH_SESSION_SWITCH_KEY, armIntentionalAuthSessionSwitch } from "./live-auth-session-mark";
 import { resetAccessTokenPinGateForTests } from "./session";
@@ -2596,6 +2598,55 @@ describe("AuthProvider", () => {
     // residual 未起動の first session は通常 pin。意図しない first-writer arm ではない。
     expect(startRecovery).not.toHaveBeenCalled();
     expect(setSession).not.toHaveBeenCalled();
+  });
+
+  it("C4: OTP session pin + rearm stops residual from claiming sibling Google pin", async () => {
+    window.history.replaceState(null, "", "/login");
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const googleFlowId = "10000000-0000-4000-8000-0000000000c4";
+    const otpPinId = "20000000-0000-4000-8000-0000000000c4";
+    writeActiveLoginFlowId(googleFlowId);
+    window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+    const stopRecovery = vi.fn();
+    const startRecovery =
+      vi.fn<(input: { restrictToFlowId?: string; targetFlowId?: string }) => () => void>();
+    startRecovery.mockReturnValue(stopRecovery);
+    const client = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: createAuthSubscription() } }),
+      },
+    } as AuthProviderClient;
+
+    render(
+      <AuthProvider
+        client={client}
+        recoveryGateway={{ resumeFlow: vi.fn() }}
+        startRecovery={startRecovery}
+      >
+        <Probe />
+      </AuthProvider>,
+    );
+    await screen.findByText("unauthenticated");
+    await waitFor(() => {
+      expect(startRecovery).toHaveBeenCalled();
+    });
+    expect(startRecovery.mock.calls.at(-1)?.[0]?.restrictToFlowId).toBe(googleFlowId);
+    const startsBeforeOtp = startRecovery.mock.calls.length;
+
+    await act(async () => {
+      writeSessionActiveLoginFlowId(otpPinId);
+      notifySoftResidualRecoveryRearm();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(startRecovery.mock.calls.length).toBeGreaterThan(startsBeforeOtp);
+    });
+    expect(stopRecovery).toHaveBeenCalled();
+    expect(startRecovery.mock.calls.at(-1)?.[0]?.restrictToFlowId).toBe(otpPinId);
+    expect(startRecovery.mock.calls.at(-1)?.[0]?.restrictToFlowId).not.toBe(googleFlowId);
   });
 
   it("C4: expired active-login-flow pin does not start /login residual", async () => {

@@ -18,7 +18,9 @@ import {
   EMAIL_OTP_SWITCH_TO_GOOGLE,
   EMAIL_OTP_WAITING_HEADING,
 } from "./email-otp-copy";
+import { ACTIVE_LOGIN_FLOW_STORAGE_KEY, writeActiveLoginFlowId } from "./auth-flow";
 import { LOGIN_PAGE_NOTE, LoginPage } from "./login-page";
+import { SOFT_RESIDUAL_RECOVERY_REARM_EVENT } from "./soft-residual-recovery-suppress";
 import { useAuth } from "./use-auth";
 
 const leftoverMocks = vi.hoisted(() => {
@@ -169,6 +171,8 @@ afterEach(async () => {
   sessionStorage.removeItem("kondate.auth.sessionSwitch");
   sessionStorage.removeItem("kondate.auth.lastMagicEmail");
   sessionStorage.removeItem("kondate.auth.magicSentUi");
+  sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
   vi.mocked(useAuth).mockReturnValue(unauthenticatedAuth());
 });
 
@@ -584,6 +588,70 @@ it("shows sessionExpired notice and does not rehydrate sent UI", () => {
     "ログインの有効期限が切れたか、別の端末でログアウトされたため、もう一度ログインしてください。",
   );
   expect(screen.queryByText(EMAIL_OTP_WAITING_HEADING)).not.toBeInTheDocument();
+});
+
+function readPinnedFlowId(storage: Storage): string | undefined {
+  const raw = storage.getItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  if (raw === null) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { id?: unknown };
+    return typeof parsed.id === "string" ? parsed.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+it("C4: sendEmailOtp pins this tab away from a sibling Google origin pin and rearms residual", async () => {
+  const googleFlowId = "10000000-0000-4000-8000-0000000000c4";
+  writeActiveLoginFlowId(googleFlowId);
+  window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  const events: Event[] = [];
+  const onRearm = (event: Event): void => {
+    events.push(event);
+  };
+  window.addEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+  const user = userEvent.setup();
+  try {
+    renderLoginAt(
+      "/login",
+      stubGateway({
+        sendEmailOtp: vi.fn().mockResolvedValue({
+          email: "user@example.com",
+          resendAvailableAt: futureResendAt(),
+        }),
+      }),
+    );
+    await sendEmailAndWait(user);
+    const sessionPin = readPinnedFlowId(window.sessionStorage);
+    expect(sessionPin).toBeDefined();
+    expect(sessionPin).not.toBe(googleFlowId);
+    expect(readPinnedFlowId(window.localStorage)).toBe(googleFlowId);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe(SOFT_RESIDUAL_RECOVERY_REARM_EVENT);
+  } finally {
+    window.removeEventListener(SOFT_RESIDUAL_RECOVERY_REARM_EVENT, onRearm);
+  }
+});
+
+it("C4: remounted waiting UI pins this tab away from a sibling Google origin pin", () => {
+  const googleFlowId = "10000000-0000-4000-8000-0000000000c4";
+  writeActiveLoginFlowId(googleFlowId);
+  window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  sessionStorage.setItem(
+    "kondate.auth.magicSentUi",
+    JSON.stringify({
+      email: "user@example.com",
+      resendAvailableAt: futureResendAt(),
+      storedAt: new Date().toISOString(),
+    }),
+  );
+
+  renderLoginAt("/login", stubGateway());
+
+  const sessionPin = readPinnedFlowId(window.sessionStorage);
+  expect(sessionPin).toBeDefined();
+  expect(sessionPin).not.toBe(googleFlowId);
+  expect(readPinnedFlowId(window.localStorage)).toBe(googleFlowId);
 });
 
 it("U1-I2 rehydrates waiting UI from sessionStorage after reload", async () => {

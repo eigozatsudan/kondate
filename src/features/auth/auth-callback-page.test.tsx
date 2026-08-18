@@ -11,10 +11,13 @@ import { publishAuthContinuationCompletion } from "./auth-continuation-completio
 import { startAuthContinuationRecovery } from "./auth-continuation-recovery";
 import { resetAuthCallbackUrlCaptureForTests } from "./auth-callback-url-capture";
 import {
+  ACTIVE_LOGIN_FLOW_STORAGE_KEY,
   clearAuthFlow,
+  isAuthFlowUserDismissed,
   markAuthContinuationCallbackOwner,
   readAuthContinuationCallbackStartedAt,
   resetAuthFlowUserDismissedMemoryForTests,
+  writeActiveLoginFlowId,
 } from "./auth-flow";
 
 const getSessionMock = vi.hoisted(() =>
@@ -76,6 +79,8 @@ afterEach(() => {
     data: { session: { access_token: "live-tok" } },
     error: null,
   });
+  window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  window.localStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
 });
 
 function renderCallback(
@@ -623,6 +628,95 @@ it("maps a targeted recovery expiry to the existing callback terminal flow", asy
   expect(leaveAuthCallback).toHaveBeenCalledWith(
     "/login?authError=magic_link_expired&returnTo=%2Fonboarding",
   );
+});
+
+it("C1: attacker-tab access_denied with matching state does not dismiss the live flow", async () => {
+  // origin 共有 pin だけある別タブが error URL を開いても、開始タブの正当 code を止めない
+  const flowId = "10000000-0000-4000-8000-0000000000c1";
+  writeActiveLoginFlowId(flowId);
+  window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "error",
+      code: "oauth_cancelled",
+      returnTo: "/onboarding",
+      flowId,
+    }),
+    resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
+  };
+  const { leaveAuthCallback } = renderCallback(gateway, {
+    initialEntry: `/auth/callback?flow=${flowId}`,
+  });
+  await waitFor(() => {
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=oauth_cancelled&returnTo=%2Fonboarding",
+    );
+  });
+  expect(isAuthFlowUserDismissed(flowId)).toBe(false);
+  expect(clearAuthFlow).not.toHaveBeenCalled();
+});
+
+it("C1: owning-tab access_denied still dismisses so a real Google cancel stays cancelled", async () => {
+  const flowId = "10000000-0000-4000-8000-0000000000c1";
+  writeActiveLoginFlowId(flowId);
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "error",
+      code: "oauth_cancelled",
+      returnTo: "/onboarding",
+      flowId,
+    }),
+    resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
+  };
+  const { leaveAuthCallback } = renderCallback(gateway, {
+    initialEntry: `/auth/callback?flow=${flowId}`,
+  });
+  await waitFor(() => {
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=oauth_cancelled&returnTo=%2Fonboarding",
+    );
+  });
+  expect(isAuthFlowUserDismissed(flowId)).toBe(true);
+  expect(clearAuthFlow).not.toHaveBeenCalled();
+});
+
+it("C1: attacker-tab otp_expired with matching state does not dismiss the live flow", async () => {
+  const flowId = "10000000-0000-4000-8000-0000000000c1";
+  writeActiveLoginFlowId(flowId);
+  window.sessionStorage.removeItem(ACTIVE_LOGIN_FLOW_STORAGE_KEY);
+  const gateway: AuthGateway = {
+    signInWithGoogle: vi.fn(),
+    sendMagicLink: vi.fn(),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
+    completeCallback: vi.fn().mockResolvedValue({
+      kind: "expired",
+      flowId,
+      returnTo: "/onboarding",
+    }),
+    resumeFlow: vi.fn(),
+    confirmMagicLink: vi.fn(),
+  };
+  const { leaveAuthCallback } = renderCallback(gateway, {
+    initialEntry: `/auth/callback?flow=${flowId}`,
+  });
+  await waitFor(() => {
+    expect(leaveAuthCallback).toHaveBeenCalledWith(
+      "/login?authError=magic_link_expired&returnTo=%2Fonboarding",
+    );
+  });
+  expect(isAuthFlowUserDismissed(flowId)).toBe(false);
+  expect(clearAuthFlow).not.toHaveBeenCalled();
 });
 
 it("C5: code-less oauth_cancelled / expired results do not clear the terminal flow secret", async () => {
