@@ -3730,6 +3730,88 @@ it("H-R2: persists explicit cut_small after emptying age", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
 });
 
+it("H-R3: does not drop last remove_bones when empty age then checks only cut_small", async () => {
+  // 3〜5歳既定の両方から空年齢へすると UI は両方外れる。続けて「小さく切る」だけ入れても
+  // extra group が next ["cut_small"] で置換しない。和集合は last と同じなので PATCH しない。
+  const child: HouseholdMemberRow = {
+    ...member,
+    display_name: "子ども",
+    age_band: "age_3_5",
+    portion_size: "small",
+    spice_level: "none",
+    ease_preferences: ["small_pieces", "boneless", "soft"],
+    required_safety_constraints: ["remove_bones", "cut_small"],
+  };
+  const updateMember = vi.fn();
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([child]),
+    updateMember,
+  });
+
+  fireEvent.change(await screen.findByLabelText("年齢のめやす"), { target: { value: "" } });
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("骨を除く")).not.toBeChecked();
+  expect(screen.getByLabelText("小さく切る")).not.toBeChecked();
+
+  await userEvent.click(screen.getByLabelText("小さく切る"));
+
+  await waitFor(() => {
+    expect(screen.getByLabelText("小さく切る")).toBeChecked();
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("骨を除く")).not.toBeChecked();
+  expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
+});
+
+it("H-R3: unions cut_small onto last age_6_8 remove_bones after emptying age", async () => {
+  const child: HouseholdMemberRow = {
+    ...member,
+    display_name: "子ども",
+    age_band: "age_6_8",
+    portion_size: "regular",
+    spice_level: "mild",
+    ease_preferences: ["boneless"],
+    required_safety_constraints: ["remove_bones"],
+  };
+  const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
+    Promise.resolve({
+      ...child,
+      age_band: patch.age_band ?? child.age_band,
+      required_safety_constraints:
+        patch.required_safety_constraints ?? child.required_safety_constraints,
+    }),
+  );
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([child]),
+    updateMember,
+  });
+
+  fireEvent.change(await screen.findByLabelText("年齢のめやす"), { target: { value: "" } });
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
+  });
+  expect(updateMember).not.toHaveBeenCalled();
+
+  await userEvent.click(screen.getByLabelText("小さく切る"));
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        required_safety_constraints: ["remove_bones", "cut_small"],
+        age_band: "age_6_8",
+      }),
+      expect.any(String),
+    );
+  });
+  expect(screen.getByLabelText("小さく切る")).toBeChecked();
+  expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
+  expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
+});
+
 it("persists a 30-character display name", async () => {
   const { updateMember } = await renderSettings();
   const name = "あ".repeat(30);

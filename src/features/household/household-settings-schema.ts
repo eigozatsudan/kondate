@@ -92,6 +92,18 @@ function sameStringArray(left: readonly string[], right: readonly string[]): boo
 }
 
 /**
+ * 空年齢 extra group 用。last の残差と next の明示追加を和集合にする。
+ * next 配列で置換すると、空年齢の adult [] で外れて見える remove_bones が落ちる（H-R3）。
+ */
+function unionRequiredSafetyConstraints(
+  last: readonly RequiredSafetyConstraint[],
+  next: readonly RequiredSafetyConstraint[],
+): RequiredSafetyConstraint[] {
+  const present = new Set([...last, ...next]);
+  return requiredSafetyConstraints.filter((item) => present.has(item));
+}
+
+/**
  * 空年齢の onChange が adult 既定へ置き換えただけの安全制約か。
  * 幼児既定を空年齢の [] で黙って消さないための判定。明示チェックは false。
  */
@@ -115,6 +127,7 @@ function isEmptyAgeLinkedConstraintDefault(
  * 年齢＋量/辛さ/食べやすさ/安全制約と、対象外 status＋kinds はセットで検証する。
  * 空年齢や present+kinds 0 を部分適用してデフォルトや矛盾 kinds を黙って書かない。
  * 空年齢でもユーザーが明示した安全制約は last の年齢へ載せる（H-R2）。
+ * そのとき last の残差は next で置換せず和集合にする（H-R3）。
  * last も不正なら undefined（呼び出し側は従来どおり全体 parse 失敗へ）。
  */
 export function persistableHouseholdSettings(
@@ -148,8 +161,14 @@ export function persistableHouseholdSettings(
 
   // H-R2: 空年齢で年齢セット全体が落ちても、明示した小さく切る/骨を除くは last の年齢へ載せる。
   // 空年齢の adult 既定へ置き換わっただけの制約は載せない（H3 の黙った既定上書き防止を維持）。
+  // H-R3: next 配列で last を置換せず、外していない last 残差を残す。
   if (next.ageBand === "" && !isEmptyAgeLinkedConstraintDefault(next, last.data)) {
-    groups.push({ requiredSafetyConstraints: next.requiredSafetyConstraints });
+    groups.push({
+      requiredSafetyConstraints: unionRequiredSafetyConstraints(
+        last.data.requiredSafetyConstraints,
+        next.requiredSafetyConstraints,
+      ),
+    });
   }
 
   let candidate: HouseholdSettingsValue = last.data;

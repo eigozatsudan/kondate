@@ -262,6 +262,53 @@ describe("persistableHouseholdSettings (H3)", () => {
     expect(persistableHouseholdSettings(next, lastChild)).toEqual(lastChild);
   });
 
+  it("H-R3: keeps last child constraints when empty age then adds only cut_small", () => {
+    // 空年齢の adult [] のあと「小さく切る」だけ入れると next は ["cut_small"]。
+    // extra group が next で置換すると外していない remove_bones が落ちる。
+    const lastChild: HouseholdSettingsFormValue = {
+      ...last,
+      displayName: "子ども",
+      ageBand: "age_3_5",
+      requiredSafetyConstraints: ["remove_bones", "cut_small"],
+      portionSize: "small",
+      spiceLevel: "none",
+      easePreferences: ["small_pieces", "boneless", "soft"],
+    };
+    const next: HouseholdSettingsFormValue = {
+      ...lastChild,
+      ageBand: "",
+      portionSize: "regular",
+      spiceLevel: "regular",
+      easePreferences: [],
+      requiredSafetyConstraints: ["cut_small"],
+    };
+    expect(persistableHouseholdSettings(next, lastChild)).toEqual(lastChild);
+  });
+
+  it("H-R3: unions explicit cut_small onto last age_6_8 remove_bones when age is empty", () => {
+    const lastChild: HouseholdSettingsFormValue = {
+      ...last,
+      displayName: "子ども",
+      ageBand: "age_6_8",
+      requiredSafetyConstraints: ["remove_bones"],
+      portionSize: "regular",
+      spiceLevel: "mild",
+      easePreferences: ["boneless"],
+    };
+    const next: HouseholdSettingsFormValue = {
+      ...lastChild,
+      ageBand: "",
+      portionSize: "regular",
+      spiceLevel: "regular",
+      easePreferences: [],
+      requiredSafetyConstraints: ["cut_small"],
+    };
+    expect(persistableHouseholdSettings(next, lastChild)).toEqual({
+      ...lastChild,
+      requiredSafetyConstraints: ["remove_bones", "cut_small"],
+    });
+  });
+
   it("persists present+kinds together when the pair is valid", () => {
     const next: HouseholdSettingsFormValue = {
       ...last,
