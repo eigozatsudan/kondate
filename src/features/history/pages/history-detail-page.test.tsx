@@ -1280,6 +1280,128 @@ describe("HistoryDetailPage safety gate", () => {
     expect(shoppingApi.reconcileShoppingListRequest).not.toHaveBeenCalled();
   });
 
+  it("SHOP-R1: same-turn focus does not resume stale create", async () => {
+    // live 再検証。注入だと actionGateClosedRef を見ない。ready 後に sticky を置き、
+    // mount resume を避けて focus 同ターンの stale submitCreate だけを撃つ。
+    // 次の再検証は hang し、即 valid 復帰の正規 resume と stale POST を混ぜない。
+    const pendingCommand = {
+      menuId: MENU_ID,
+      mode: "new" as const,
+      activeListId: null,
+      expectedListVersion: null,
+      idempotencyKey: CREATE_IDEMPOTENCY_KEY,
+    };
+    renderHistoryDetail();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeEnabled();
+    });
+    expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
+    const nextRevalidate = deferredPromise<RevalidationResult>();
+    revalidateMenuMock.mockReturnValue(nextRevalidate.promise);
+    shoppingApi.revalidateActiveShoppingList.mockReturnValue(new Promise(() => {}));
+    sessionStorage.setItem(
+      pendingShoppingCommandStorageKey("create", MENU_ID),
+      JSON.stringify({ createdAtMs: Date.now(), command: pendingCommand }),
+    );
+
+    act(() => {
+      fireSafetySignal("focus");
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
+    expect(
+      sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID)),
+    ).not.toBeNull();
+  });
+
+  it("SHOP-R1: same-turn focus does not resume stale append create via blockedRef", async () => {
+    // 注入は live actionGateClosedRef を見ない。shopping blockedRef だけが同ターンで倒れる。
+    // list 再検証は hang し、即 valid で blockedRef が戻って正規 resume する経路を除外する。
+    const pendingCommand = {
+      menuId: MENU_ID,
+      mode: "append" as const,
+      activeListId: SHOPPING_LIST_ID,
+      expectedListVersion: 4,
+      idempotencyKey: CREATE_IDEMPOTENCY_KEY,
+    };
+    renderHistoryDetail({
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "材料の買い物リストを作る" })).toBeEnabled();
+    });
+    expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
+    shoppingApi.revalidateActiveShoppingList.mockReturnValue(new Promise(() => {}));
+    sessionStorage.setItem(
+      pendingShoppingCommandStorageKey("create", MENU_ID),
+      JSON.stringify({ createdAtMs: Date.now(), command: pendingCommand }),
+    );
+
+    act(() => {
+      fireSafetySignal("focus");
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
+    expect(
+      sessionStorage.getItem(pendingShoppingCommandStorageKey("create", MENU_ID)),
+    ).not.toBeNull();
+  });
+
+  it("SHOP-R1: delayed create claim does not POST after same-turn safety close", async () => {
+    // 他タブ相当で claim lock を遅延させ、待ち中に hard が倒れたら .then が stale POST しない。
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const previousLocks = "locks" in navigator ? navigator.locks : undefined;
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: (_name: string, callback: () => unknown) => held.then(() => callback()),
+      },
+    });
+    const user = userEvent.setup();
+    try {
+      renderHistoryDetail();
+      const createButton = await screen.findByRole("button", {
+        name: "材料の買い物リストを作る",
+      });
+      await waitFor(() => {
+        expect(createButton).toBeEnabled();
+      });
+      await user.click(createButton);
+      expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "作成する" }));
+
+      act(() => {
+        fireSafetySignal("same-tab-event");
+      });
+      release();
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(shoppingApi.createShoppingList).not.toHaveBeenCalled();
+    } finally {
+      if (previousLocks === undefined) {
+        Reflect.deleteProperty(navigator, "locks");
+      } else {
+        Object.defineProperty(navigator, "locks", {
+          configurable: true,
+          value: previousLocks,
+        });
+      }
+    }
+  });
+
   it("auto-opens create sheet from /history/:id?for=shopping when household can create", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
     renderHistoryDetail({

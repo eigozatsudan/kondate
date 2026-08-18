@@ -304,6 +304,10 @@ export function HouseholdMenuDetailBody({
     !actionsEnabledRef.current ||
     shoppingGateBlockedRef.current ||
     (!usingInjectedRevalidation && live.actionGateClosedRef.current);
+  // SHOP-R1: create も render クロージャではなく最新 ref を読む。
+  // mode=new は D-C1 どおり list blocked でも続行するため、献立側だけを見る。
+  const isCreateMenuSafetyClosedNow = (): boolean =>
+    !actionsEnabledRef.current || (!usingInjectedRevalidation && live.actionGateClosedRef.current);
 
   // 安全 fail-closed: create/reconcile シートを閉じる（isPending では閉じない）
   useEffect(() => {
@@ -517,14 +521,16 @@ export function HouseholdMenuDetailBody({
   };
 
   const submitCreate = async (command: CreateShoppingListRequest) => {
-    // HR9: soft/checking 中の resume でも mutate しない（pending は enabled 復帰で再試行）
-    if (!actionsEnabled) return;
+    // HR9 + SHOP-R1: soft/hard 閉じ中の resume / claim 後でも mutate しない。
+    // render の actionsEnabled ではなく ref を再読する（focus/online 同ターンの stale POST）。
+    if (isCreateMenuSafetyClosedNow()) return;
     // SHOP8 + SHOP1 + SHOP-R1: list gate 非 ready 中の append は飛ばさない。
     // 真の invalid/unverifiable（再検証 status!==valid）だけ sticky を捨て
     // forceNew へ誘導する。checking および一時 blocked（offline / 503 /
     // CHANNEL_ERROR）では sticky を保持し ready 復帰後の同一 key 再送を残す。
     // mode=new は D-C1 どおり blocked でも続行可。
-    if (command.mode === "append" && shoppingGate.blocked) {
+    // render の shoppingGate.blocked ではなく blockedRef を再読する（HR10 と同型）。
+    if (command.mode === "append" && shoppingGateBlockedRef.current) {
       if (discardAppendCreateCommandIfPresent(command.menuId, shoppingGate.invalid)) {
         setShoppingError(
           "今のリストは家族設定で確認できないため、追加ではなく新しいリストを作り直してください",
@@ -987,6 +993,14 @@ export function HouseholdMenuDetailBody({
                 // SHOP6: mode 変更だけ sticky を捨てて新 key。SHOP1: version/listId は照合しない。
                 (saved) => isCreateShoppingStickyReusable(saved, { mode: input.mode }),
               ).then((command) => {
+                // claim 待ちのあいだに soft/hard が始まったら stale command を送らない。
+                // 献立ゲートは ref 再読。list blocked の mode=new は D-C1 で続行し submitCreate へ。
+                if (isCreateMenuSafetyClosedNow()) {
+                  setShoppingError(
+                    "家族設定の確認中です。確認が終わってからもう一度お試しください",
+                  );
+                  return;
+                }
                 void submitCreate(command);
               });
             }}
