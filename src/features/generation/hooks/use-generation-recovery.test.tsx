@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AuthSessionProbeTimeoutError } from "@/features/auth/session";
 import type { GenerationCommand, GenerationStatusData } from "@shared/contracts/generation";
 import {
   createPendingGeneration,
@@ -1249,6 +1250,54 @@ describe("useGenerationRecovery", () => {
       mockPost.mockReset();
       vi.useRealTimers();
     }
+  });
+
+  it.each([
+    ["query error", new Error("fetch failed")],
+    ["assert probe timeout", new AuthSessionProbeTimeoutError()],
+  ] as const)(
+    "G-R1: keeps pending offline when live pin %s after POST draft_not_found",
+    async (_label, liveError) => {
+      mockReadLiveDraftPin.mockRejectedValue(liveError);
+      mockPost.mockRejectedValueOnce(new Error("draft_not_found"));
+      const recovery = renderRecoveryAt(idleState, null);
+      await act(() => recovery.result.current.startGeneration(pendingA));
+      expect(mockPost).toHaveBeenCalledTimes(1);
+      expect(recovery.result.current.state.phase).toBe("offline");
+      expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject(pendingA);
+      expect(mockClearPending).not.toHaveBeenCalled();
+      expect(mockDispatches).toContainEqual({ type: "network_error" });
+    },
+  );
+
+  it("G-R2: readopts when live advances again before the second POST", async () => {
+    const draftId = pendingA.kind === "new_menu" ? pendingA.request.draftId : "missing";
+    const firstLive = pendingA.kind === "new_menu" ? pendingA.request.draftRevision + 1 : 4;
+    const secondLive = pendingA.kind === "new_menu" ? pendingA.request.draftRevision + 2 : 5;
+    mockReadLiveDraftPin
+      .mockResolvedValueOnce({ draftId, revision: firstLive })
+      .mockResolvedValueOnce({ draftId, revision: secondLive });
+    mockPost
+      .mockRejectedValueOnce(new Error("draft_not_found"))
+      .mockRejectedValueOnce(new Error("draft_not_found"))
+      .mockResolvedValueOnce(processingA);
+    const recovery = renderRecoveryAt(idleState, null);
+    await act(() => recovery.result.current.startGeneration(pendingA));
+    expect(mockPost).toHaveBeenCalledTimes(3);
+    expect(mockReadLiveDraftPin).toHaveBeenCalledTimes(2);
+    expect(mockPost.mock.calls[1]?.[0]).toMatchObject({
+      kind: "new_menu",
+      request: { idempotencyKey: KEY_A, draftRevision: firstLive },
+    });
+    expect(mockPost.mock.calls[2]?.[0]).toMatchObject({
+      kind: "new_menu",
+      request: { idempotencyKey: KEY_A, draftRevision: secondLive },
+    });
+    expect(recovery.result.current.state.phase).toBe("processing");
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toMatchObject({
+      request: { idempotencyKey: KEY_A, draftRevision: secondLive },
+    });
+    expect(mockClearPending).not.toHaveBeenCalled();
   });
 
   it.each([

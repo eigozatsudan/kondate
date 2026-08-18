@@ -98,6 +98,8 @@ export type LiveGenerationDraftPin = {
  * G1: new_menu pending が pin した draftRevision が live 行と食い違うかを見る。
  * 下書きは in-place 更新なので旧 N は残らない。本文は読まず id+revision だけ返す
  * （名前・メモ等をクライアント recovery に載せない）。
+ * G-R1: PostgREST の error は 0 行（削除）と畳まない。throw して adopt が
+ * pending を offline 維持する。data === null だけが削除済み。
  */
 export async function readLiveGenerationDraftPin(
   userId: string,
@@ -110,7 +112,11 @@ export async function readLiveGenerationDraftPin(
     .eq("user_id", userId)
     .is("deleted_at", null)
     .maybeSingle();
-  if (error !== null || data === null) return null;
+  if (error !== null) {
+    // 回線 / 5xx / JWT / RLS。message は closed generation code にしない。
+    throw new Error("献立条件の下書きを読み込めませんでした");
+  }
+  if (data === null) return null;
   const parsed = liveDraftPinSchema.safeParse(data);
   if (!parsed.success) return null;
   return { draftId: parsed.data.id, revision: parsed.data.revision };

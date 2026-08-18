@@ -316,7 +316,6 @@ export function useGenerationRecovery(
       if (current?.token === token) return current.promise;
       const operation = Promise.resolve().then(async () => {
         let commandPending = pending;
-        let adoptedStaleDraft = false;
         for (;;) {
           try {
             const data = await postGeneration(pendingGenerationCommand(commandPending));
@@ -347,9 +346,11 @@ export function useGenerationRecovery(
             }
             // 業務・品質・閉じたサーバ code は failed。offline「通信確認」に落とさない（本番 422 調査）。
             if (classified.kind === "failed") {
-              // G1: 別端末の live revision 進行で pin N が消えたときは 1 回だけ N+1 を載せて再 POST。
-              // 削除済み・adopt 不能は従来どおり終端。live 読取の一時障害は pending を焼かない。
-              if (classified.code === "draft_not_found" && !adoptedStaleDraft) {
+              // G1: 別端末の live revision 進行で pin N が消えたときは live を載せて再 POST。
+              // G-R2: 読取〜再 POST のあいだに C が N+2 へ進めても同じ submit で再 adopt する。
+              // 削除・別 id・同 revision は従来どおり終端（adopt が null）。
+              // G-R1: query error は throw し、ここが offline で pending を守る。
+              if (classified.code === "draft_not_found") {
                 let adopted: PendingGeneration | null;
                 try {
                   adopted = await adoptStalePinnedDraftRevision(commandPending);
@@ -367,7 +368,6 @@ export function useGenerationRecovery(
                   return;
                 }
                 if (adopted !== null && isCurrent(token)) {
-                  adoptedStaleDraft = true;
                   commandPending = adopted;
                   continue;
                 }

@@ -121,6 +121,25 @@ describe("generation API", () => {
     ).resolves.toBeNull();
   });
 
+  it("G-R1: live draft pin throws on PostgREST query error instead of returning null", async () => {
+    getBrowserSupabaseClientMock.mockReturnValue(
+      liveDraftPinClient({ data: null, error: { message: "fetch failed" } }),
+    );
+    await expect(
+      readLiveGenerationDraftPin("40000000-0000-4000-8000-000000000001"),
+    ).rejects.toThrow("献立条件の下書きを読み込めませんでした");
+  });
+
+  it("G-R1: live draft pin propagates AuthSessionProbeTimeoutError from assert", async () => {
+    const probeTimeout = Object.assign(new Error("auth_session_probe_timeout"), {
+      name: "AuthSessionProbeTimeoutError",
+    });
+    assertBrowserDataPlaneAlignedMock.mockRejectedValue(probeTimeout);
+    await expect(readLiveGenerationDraftPin("40000000-0000-4000-8000-000000000001")).rejects.toBe(
+      probeTimeout,
+    );
+  });
+
   it.each([
     [newMenuCommand, "/api/generations/menu"],
     [regenerateMenuCommand, "/api/generations/menu"],
