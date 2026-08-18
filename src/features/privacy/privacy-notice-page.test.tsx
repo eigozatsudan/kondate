@@ -554,6 +554,85 @@ it("AP5: revoke failure stays on privacy and does not proceed as success", async
   expect(screen.getByRole("heading", { name: "家族情報の取り扱い" })).toBeInTheDocument();
 });
 
+it("AP3: skip after share revoke failure stays on privacy and does not proceed", async () => {
+  const user = userEvent.setup();
+  getShare.mockResolvedValue(currentShareState);
+  acceptConsent.mockResolvedValue({
+    user_id: "user-1",
+    notice_version: "2026-07-29.v1",
+    accepted_at: "2026-07-12T00:00:00.000Z",
+    created_at: "2026-07-12T00:00:00.000Z",
+  });
+  upsertShare.mockRejectedValue(new Error("共有の同意を保存できませんでした"));
+  const router = createMemoryRouter(
+    [
+      { path: "/privacy", element: <PrivacyNoticePage /> },
+      { path: "/planner", element: <h1>献立</h1> },
+    ],
+    { initialEntries: ["/privacy?returnTo=/planner"] },
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  await waitForShareConsentReady();
+  await user.click(screen.getByRole("checkbox", { name: /説明を確認しました/ }));
+  await user.click(screen.getByRole("checkbox", { name: shareConsentSection.checkboxLabel }));
+  await user.click(screen.getByRole("button", { name: "確認して進む" }));
+
+  await waitFor(() => {
+    expect(acceptConsent).toHaveBeenCalledWith({}, "user-1");
+  });
+  expect(upsertShare).toHaveBeenCalledWith({}, false);
+  expect(await screen.findByRole("alert")).toHaveTextContent(shareConsentSettingsCopy.revokeFailed);
+
+  // 必須 privacy は INSERT 済み。skip で returnTo へ抜けると生成可能 + share ON のまま
+  const skip = screen.getByRole("button", { name: "今はAIを使わない" });
+  expect(skip).toBeDisabled();
+  await user.click(skip);
+
+  expect(screen.queryByRole("heading", { name: "献立" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "家族情報の取り扱い" })).toBeInTheDocument();
+  expect(upsertShare).toHaveBeenCalledTimes(1);
+  expect(router.state.location.pathname).toBe("/privacy");
+});
+
+it("AP3: generic accept error still allows skip because privacy was not saved", async () => {
+  const user = userEvent.setup();
+  const onSkip = vi.fn();
+  renderPrivacyContent({
+    saving: false,
+    error: "確認状態を保存できませんでした。通信を確認してください。",
+    onAccept: vi.fn(),
+    onSkip,
+  });
+
+  const skip = screen.getByRole("button", { name: "今はAIを使わない" });
+  expect(skip).toBeEnabled();
+  await user.click(skip);
+  expect(onSkip).toHaveBeenCalledOnce();
+});
+
+it("AP3: revokeFailed error disables skip so the user must retry revoke", async () => {
+  const user = userEvent.setup();
+  const onSkip = vi.fn();
+  renderPrivacyContent({
+    saving: false,
+    error: shareConsentSettingsCopy.revokeFailed,
+    onAccept: vi.fn(),
+    onSkip,
+  });
+
+  const skip = screen.getByRole("button", { name: "今はAIを使わない" });
+  expect(skip).toBeDisabled();
+  await user.click(skip);
+  expect(onSkip).not.toHaveBeenCalled();
+});
+
 it("共有同意 RPC が失敗しても必須 privacy 同意後は returnTo へ進む", async () => {
   const user = userEvent.setup();
   acceptConsent.mockResolvedValue({

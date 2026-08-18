@@ -33,8 +33,13 @@ export const PRIVACY_ACCEPT_TIMEOUT_MS = 10_000;
 export const privacyConsentCheckboxRequiredMessage =
   "「説明を確認しました」にチェックを入れてから進んでください。";
 
+/** AP3: 共有オフの revoke 失敗。必須 privacy は保存済みなので skip で抜けてはいけない。 */
+function isShareRevokeFailedError(error: unknown): boolean {
+  return error instanceof Error && error.message === shareConsentSettingsCopy.revokeFailed;
+}
+
 function privacyAcceptErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message === shareConsentSettingsCopy.revokeFailed) {
+  if (isShareRevokeFailedError(error)) {
     return shareConsentSettingsCopy.revokeFailed;
   }
   return "確認状態を保存できませんでした。通信を確認してください。";
@@ -231,6 +236,11 @@ export function PrivacyNoticePage() {
         mutation.mutate(input);
       }}
       onSkip={() => {
+        // AP3: revoke 失敗中は Content が skip を閉じる。万一呼ばれても returnTo へ出さない。
+        // 必須 privacy は INSERT 済み。抜けると生成可能 + サーバ share ON のまま enqueue し得る。
+        if (isShareRevokeFailedError(mutation.error)) {
+          return;
+        }
         void navigate(returnTo, { replace: true });
       }}
     />
@@ -368,7 +378,13 @@ export function PrivacyNoticeContent({
         {saving ? "保存中…" : "確認して進む"}
       </button>
       {/* APE-I1: 同意保存中は skip を止め、遅延 accept で同意が残る競合を防ぐ */}
-      <button className="text-button" type="button" disabled={saving} onClick={onSkip}>
+      {/* AP3: 共有オフの revoke 失敗後は skip で抜けない。再試行（確認して進む）を要求する。 */}
+      <button
+        className="text-button"
+        type="button"
+        disabled={saving || error === shareConsentSettingsCopy.revokeFailed}
+        onClick={onSkip}
+      >
         今はAIを使わない
       </button>
       {/* B-I10: シェル外のため緊急献立への操作導線を明示。同意は付けない */}
