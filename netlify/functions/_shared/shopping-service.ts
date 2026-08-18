@@ -91,8 +91,11 @@ async function revalidateMenuOrThrow(deps: ShoppingDependencies, menuId: string)
 async function validatedDraft(deps: ShoppingDependencies, menuId: string) {
   // identity で idea を先に拒否し、full aggregate・家族 revalidation へ進まない
   await assertHouseholdMenuIdentity(deps, menuId);
-  const revalidation = await revalidateMenuOrThrow(deps, menuId);
+  // list revalidate / assertActiveListSourcesCurrentlySafe と同じく、検証前に
+  // shopping FP を撮る。検証後だけ撮ると、revalidate 完了〜最初の FP の間に世帯が
+  // 変わったとき before/after が新世帯で自己一致し、stale valid のまま apply できる。
   const fingerprintBefore = await deps.getSafetyFingerprint(menuId);
+  const revalidation = await revalidateMenuOrThrow(deps, menuId);
   const [menu, pantry] = await Promise.all([
     deps.loadMenu(menuId, revalidation.currentLabelWarnings),
     deps.loadPantry(),

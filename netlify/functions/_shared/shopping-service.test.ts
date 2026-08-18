@@ -25,8 +25,9 @@ import {
   revalidateActiveShoppingList,
 } from "./shopping-service.js";
 
-// 設計書 Task3 Step1: current-safety 検証 → fingerprint-before → owner 読み込み →
-// fingerprint-after → RPC 適用、という順序と replay/エラーの各分岐を網羅する。
+// create/preview/reconcile の write 経路: shopping FP（検証前）→ revalidate →
+// owner 読み込み → shopping FP（検証後）→ RPC。検証後だけ撮ると revalidate 完了〜
+// 最初の FP の間の世帯変更で stale valid が自己一致する（S1）。
 // deps は ShoppingDependencies の各メソッドを個別の vi.fn() 変数として保持し、
 // アサーションはその変数へ直接行う（deps.method を later で参照すると
 // @typescript-eslint/unbound-method に抵触するため、既存 revalidation-service.test.ts
@@ -170,6 +171,25 @@ function toDeps(mocks: Mocks): ShoppingDependencies {
   };
 }
 
+/**
+ * S1: revalidate が H1 で valid を返した直後に世帯を H2 へ変える。
+ * 検証後にだけ shopping FP を撮ると before/after がどちらも H2 で自己一致し、
+ * stale valid のまま apply / preview できてしまう。
+ */
+function flipShoppingHouseholdAfterRevalidate(
+  mocks: Pick<Mocks, "getSafetyFingerprint" | "revalidate">,
+): void {
+  let household: "H1" | "H2" = "H1";
+  mocks.getSafetyFingerprint.mockImplementation(() =>
+    Promise.resolve(household === "H1" ? FINGERPRINT_A : FINGERPRINT_B),
+  );
+  mocks.revalidate.mockImplementation(() => {
+    const result = makeRevalidation({ safetyFingerprint: FINGERPRINT_A });
+    household = "H2";
+    return Promise.resolve(result);
+  });
+}
+
 describe("createShoppingListFromMenu", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -302,7 +322,7 @@ describe("createShoppingListFromMenu", () => {
       status: 409,
       code: "current_safety_revalidation_required",
     });
-    expect(mocks.getSafetyFingerprint).not.toHaveBeenCalled();
+    expect(mocks.getSafetyFingerprint).toHaveBeenCalledTimes(1);
     expect(mocks.loadMenu).not.toHaveBeenCalled();
     expect(mocks.applyDraft).not.toHaveBeenCalled();
   });
@@ -314,7 +334,7 @@ describe("createShoppingListFromMenu", () => {
     await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).resolves.toBeDefined();
   });
 
-  it("reads the safety fingerprint only after revalidation completes", async () => {
+  it("reads the shopping safety fingerprint before revalidation and again after the draft window", async () => {
     const order: string[] = [];
     const mocks = makeMocks();
     mocks.revalidate.mockImplementation(() => {
@@ -334,8 +354,8 @@ describe("createShoppingListFromMenu", () => {
       return Promise.resolve([]);
     });
     await createShoppingListFromMenu(toDeps(mocks), makeCommand());
-    expect(order[0]).toBe("revalidate");
-    expect(order[1]).toBe("fingerprint");
+    expect(order[0]).toBe("fingerprint");
+    expect(order[1]).toBe("revalidate");
     expect(order.slice(2, 4).toSorted()).toEqual(["loadMenu", "loadPantry"]);
     expect(order[4]).toBe("fingerprint");
   });
@@ -367,6 +387,16 @@ describe("createShoppingListFromMenu", () => {
     mocks.getSafetyFingerprint
       .mockResolvedValueOnce(FINGERPRINT_A)
       .mockResolvedValueOnce(FINGERPRINT_B);
+    await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).rejects.toMatchObject({
+      status: 409,
+      code: "safety_fingerprint_changed",
+    });
+    expect(mocks.applyDraft).not.toHaveBeenCalled();
+  });
+
+  it("throws safety_fingerprint_changed when household flips after revalidate and later shopping fingerprints would self-match (S1)", async () => {
+    const mocks = makeMocks();
+    flipShoppingHouseholdAfterRevalidate(mocks);
     await expect(createShoppingListFromMenu(toDeps(mocks), makeCommand())).rejects.toMatchObject({
       status: 409,
       code: "safety_fingerprint_changed",
@@ -1525,11 +1555,64 @@ describe("previewShoppingListDiff", () => {
     });
     expect(revalidate).toHaveBeenCalledWith(OTHER_MENU);
   });
+
+  it("throws safety_fingerprint_changed when household flips after revalidate and later shopping fingerprints would self-match (S1)", async () => {
+    const mocks = makeMocks();
+    flipShoppingHouseholdAfterRevalidate(mocks);
+    const deps = makeShoppingDependencies({
+      getSafetyFingerprint: mocks.getSafetyFingerprint,
+      revalidate: mocks.revalidate,
+    });
+    await expect(
+      previewShoppingListDiff(deps, {
+        userId: USER_ID,
+        listId: LIST_ID,
+        sourceMenuId: MENU_ID,
+        sourceMenuVersion: 1,
+        expectedListVersion: 3,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "safety_fingerprint_changed",
+    });
+  });
 });
 
 describe("reconcileShoppingList", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("throws safety_fingerprint_changed when household flips after revalidate and later shopping fingerprints would self-match (S1)", async () => {
+    // 穴があると apply まで進むよう、flip しない deps で preview だけ先に取る
+    const preview = await previewShoppingListDiff(makeShoppingDependencies(), {
+      userId: USER_ID,
+      listId: LIST_ID,
+      sourceMenuId: MENU_ID,
+      sourceMenuVersion: 1,
+      expectedListVersion: 3,
+    });
+    const draftKey = preview.add[0]?.key;
+    expect(draftKey).toBeDefined();
+    const mocks = makeMocks();
+    flipShoppingHouseholdAfterRevalidate(mocks);
+    const applyReconciliation = vi.fn<ShoppingDependencies["applyReconciliation"]>();
+    const deps = makeShoppingDependencies({
+      getSafetyFingerprint: mocks.getSafetyFingerprint,
+      revalidate: mocks.revalidate,
+      applyReconciliation,
+    });
+    await expect(
+      reconcileShoppingList(deps, {
+        ...reconcileCommand,
+        approval: { addKeys: [draftKey!], replaceItemIds: [], removeItemIds: [] },
+        previewedQuantities: snapshotPreviewedQuantities(preview),
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "safety_fingerprint_changed",
+    });
+    expect(applyReconciliation).not.toHaveBeenCalled();
   });
 
   it("rejects a saved reconcile replay with shopping_list_not_found when the active list is gone (SHOP3)", async () => {
