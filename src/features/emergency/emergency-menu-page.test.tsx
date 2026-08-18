@@ -463,10 +463,10 @@ it("PE1: 未選択で適格親と未確認の子がいるときは部分集合 G
   expect(candidateQuery.queryKey[5]).toEqual([]);
   expect(getEmergencyMenusMock).not.toHaveBeenCalled();
   expect(screen.queryByText("卵焼き", { exact: false })).not.toBeInTheDocument();
-  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent("花子");
-  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent(
-    "対象から外して",
-  );
+  // PE-R1: 未選択 fail-closed は部分集合 GET をしていない。PE4 告知は出さない。
+  expect(screen.queryByTestId("emergency-ineligible-selected-notice")).not.toBeInTheDocument();
+  expect(screen.queryByText(/選んだ家族のうち/u)).not.toBeInTheDocument();
+  expect(screen.queryByText(/対象にできた家族の条件だけを見ています/u)).not.toBeInTheDocument();
   expect(
     screen.getByText(
       "アレルギー確認未了・自由登録アレルギー、または対応できない食事条件のため、候補を表示していません。条件は緩めていません",
@@ -537,8 +537,15 @@ it("PE1: 未選択で対象外食の子がいるときは registered 親だけ�
   expect(candidateQuery.enabled).toBe(false);
   expect(getEmergencyMenusMock).not.toHaveBeenCalled();
   expect(screen.queryByText("卵焼き", { exact: false })).not.toBeInTheDocument();
-  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent("次郎");
-  expect(screen.getByTestId("emergency-ineligible-selected-notice")).toHaveTextContent("三郎");
+  // PE-R1: 対象外食でも未選択 fail-closed は PE4 部分集合告知を出さない。
+  expect(screen.queryByTestId("emergency-ineligible-selected-notice")).not.toBeInTheDocument();
+  expect(screen.queryByText(/選んだ家族のうち/u)).not.toBeInTheDocument();
+  expect(screen.queryByText(/対象にできた家族の条件だけを見ています/u)).not.toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "アレルギー確認未了・自由登録アレルギー、または対応できない食事条件のため、候補を表示していません。条件は緩めていません",
+    ),
+  ).toBeVisible();
 });
 
 it("対象未選択で未完了 draft だけが混ざるときは eligible だけを初期対象にする", async () => {

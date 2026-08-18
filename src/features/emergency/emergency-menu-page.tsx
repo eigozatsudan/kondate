@@ -357,18 +357,12 @@ export function EmergencyMenuPage() {
         : [];
   const hasEligibleHouseholdMembers = targetMemberIds.length > 0;
   // PE4: 明示 household 選択のうち適格外を落としたとき、部分集合候補であることを開示する。
-  // PE1: 未選択でも Stage S 空メンバーを黙って外さない。告知は明示 household と同趣旨。
+  // PE-R1: 未選択 fail-closed は GET していない。部分集合前提の PE4 告知は出さない。
+  // empty 本文（条件は緩めていない / 候補を出さない）だけで足りる。
   let ineligibleSelectedNotice: string | null = null;
   if (!isIdea && householdQuery.isSuccess) {
     const roster = householdQuery.data;
-    if (shouldResolveUnselectedTargets && unselectedHouseholdSafetyBlocked) {
-      ineligibleSelectedNotice = buildIneligibleSelectedNotice(
-        roster
-          .filter(wouldEmptyEmergencyStageS)
-          .map((member) => member.display_name?.trim() ?? "")
-          .filter((name) => name.length > 0),
-      );
-    } else if (draft?.targetMode === "household" && hasEligibleHouseholdMembers) {
+    if (draft?.targetMode === "household" && hasEligibleHouseholdMembers) {
       const selectedIds = new Set(draft.targetMemberIds);
       const droppedOnRoster = roster.filter(
         (member) => selectedIds.has(member.id) && !isEmergencyEligibleMember(member),
