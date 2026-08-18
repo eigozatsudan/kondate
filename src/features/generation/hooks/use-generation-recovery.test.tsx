@@ -1300,6 +1300,58 @@ describe("useGenerationRecovery", () => {
     expect(mockClearPending).not.toHaveBeenCalled();
   });
 
+  it("G-R3: discard during live pin hold after POST draft_not_found stays idle", async () => {
+    const draftId = pendingA.kind === "new_menu" ? pendingA.request.draftId : "missing";
+    const liveRevision = pendingA.kind === "new_menu" ? pendingA.request.draftRevision + 1 : 4;
+    const liveHold = deferred<{ draftId: string; revision: number }>();
+    mockReadLiveDraftPin.mockReturnValueOnce(liveHold.promise);
+    mockPost.mockRejectedValueOnce(new Error("draft_not_found"));
+    const recovery = renderRecoveryAt(idleState, null);
+    const start = recovery.result.current.startGeneration(pendingA);
+    await act(async () => {
+      await flushPromises();
+    });
+    await waitFor(() => {
+      expect(mockReadLiveDraftPin).toHaveBeenCalled();
+    });
+    expect(recovery.result.current.state.phase).toBe("submitting");
+    act(() => {
+      recovery.result.current.clearGeneration();
+    });
+    expect(recovery.result.current.state.phase).toBe("idle");
+    await act(async () => {
+      liveHold.resolve({ draftId, revision: liveRevision });
+      await start;
+    });
+    expect(recovery.result.current.state.phase).toBe("idle");
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+    expect(mockDispatches.some((event) => event.type === "status")).toBe(false);
+  });
+
+  it("G-R3: discard during POST draft_not_found stays idle without adopt", async () => {
+    const postHold = deferred<GenerationStatusData>();
+    mockPost.mockReturnValueOnce(postHold.promise);
+    const recovery = renderRecoveryAt(idleState, null);
+    const start = recovery.result.current.startGeneration(pendingA);
+    await act(async () => {
+      await flushPromises();
+    });
+    expect(recovery.result.current.state.phase).toBe("submitting");
+    act(() => {
+      recovery.result.current.clearGeneration();
+    });
+    expect(recovery.result.current.state.phase).toBe("idle");
+    await act(async () => {
+      postHold.reject(new Error("draft_not_found"));
+      await start;
+    });
+    expect(recovery.result.current.state.phase).toBe("idle");
+    expect(mockReadLiveDraftPin).not.toHaveBeenCalled();
+    expect(readPendingGeneration(USER_ID, FIXED_NOW, storage)).toBeNull();
+    expect(mockDispatches.some((event) => event.type === "status")).toBe(false);
+  });
+
   it.each([
     ["consent_required", "AIへ送る情報の説明"],
     ["draft_not_found", "献立条件が見つかりません"],

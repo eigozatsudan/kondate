@@ -180,8 +180,11 @@ function classifyGenerationClientError(
 /**
  * G1: 別端末が live draft を in-place で N+1 に進めると、pin した N は 0 行になり
  * integrity が draft_not_found を返す。下書き本体は残っているので pending を焼かず、
- * 同じ idempotencyKey のまま revision だけ進める。generation_in_progress は台帳行を
- * 増やさないため HMAC 再計算でも payload_mismatch にならない。削除・別 id・同 revision は null。
+ * 同じ idempotencyKey のまま revision だけ進めた next を返す。generation_in_progress は
+ * 台帳行を増やさないため HMAC 再計算でも payload_mismatch にならない。削除・別 id・
+ * 同 revision は null。
+ * G-R3: save はここではしない。呼び出し側が isCurrent のときだけ書く。discard 中の
+ * live 読取が終わっても、捨てた pending を N+1 で書き戻さない。
  */
 async function adoptStalePinnedDraftRevision(
   pending: PendingGeneration,
@@ -191,15 +194,13 @@ async function adoptStalePinnedDraftRevision(
   if (live === null) return null;
   if (live.draftId !== pending.request.draftId) return null;
   if (live.revision <= pending.request.draftRevision) return null;
-  const next = pendingGenerationSchema.parse({
+  return pendingGenerationSchema.parse({
     ...pending,
     request: {
       ...pending.request,
       draftRevision: live.revision,
     },
   });
-  savePendingGeneration(next);
-  return next;
 }
 
 export type GenerationRecoveryController = {
@@ -350,6 +351,8 @@ export function useGenerationRecovery(
               // G-R2: 読取〜再 POST のあいだに C が N+2 へ進めても同じ submit で再 adopt する。
               // 削除・別 id・同 revision は従来どおり終端（adopt が null）。
               // G-R1: query error は throw し、ここが offline で pending を守る。
+              // G-R3: 成功 adopt でも !isCurrent なら合成 draft_not_found へ落とさない。
+              // discard の idle を維持し、adopt の書き込みもここではしない。
               if (classified.code === "draft_not_found") {
                 let adopted: PendingGeneration | null;
                 try {
@@ -367,7 +370,9 @@ export function useGenerationRecovery(
                   dispatch({ type: "network_error" });
                   return;
                 }
-                if (adopted !== null && isCurrent(token)) {
+                if (adopted !== null) {
+                  if (!isCurrent(token)) return;
+                  savePendingGeneration(adopted);
                   commandPending = adopted;
                   continue;
                 }
