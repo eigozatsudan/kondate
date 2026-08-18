@@ -115,10 +115,71 @@ describe("RootGatePage", () => {
       status: "authenticated",
       session: { user: { id: "72000000-0000-4000-8000-000000000001" } },
       refreshSession: vi.fn(),
+      sessionProbeDegraded: false,
     });
     renderGate();
     expect(screen.getByRole("heading", { name: "RootEntry stub" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: FREE_LP_H1 })).not.toBeInTheDocument();
+  });
+
+  it("L1: sessionProbeDegraded closes RootEntry before getProfile (C4 on /)", () => {
+    // PWA start_url は `/`。RequireSession の C4 より先に RootEntry が getProfile する窓を閉じる。
+    useAuthMock.mockReturnValue({
+      status: "authenticated",
+      session: { user: { id: "72000000-0000-4000-8000-000000000001" } },
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: true,
+    });
+    renderGate();
+    expect(screen.queryByRole("heading", { name: "RootEntry stub" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: FREE_LP_H1 })).not.toBeInTheDocument();
+    expect(screen.getByText(/安全のため一部の操作を止めています/)).toBeVisible();
+  });
+
+  it("L1: sessionProbeDegraded reuse C4 recover action and does not open landing", () => {
+    const recoverDegradedSession = vi.fn();
+    useAuthMock.mockReturnValue({
+      status: "authenticated",
+      session: { user: { id: "72000000-0000-4000-8000-000000000001" } },
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: true,
+      recoverDegradedSession,
+    });
+    renderGate();
+    const button = screen.getByRole("button", { name: "ログインし直す" });
+    act(() => {
+      button.click();
+    });
+    expect(recoverDegradedSession).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("heading", { name: "RootEntry stub" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: FREE_LP_H1 })).not.toBeInTheDocument();
+  });
+
+  it("L1: unauthenticated still shows landing even if sessionProbeDegraded", async () => {
+    // 未ログイン分岐は degraded より先。C4 面へ落とさず LP を維持する。
+    useAuthMock.mockReturnValue({
+      status: "unauthenticated",
+      session: null,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: true,
+    });
+    renderGate();
+    expect(await screen.findByRole("heading", { name: FREE_LP_H1 })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "RootEntry stub" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/安全のため一部の操作を止めています/)).not.toBeInTheDocument();
+  });
+
+  it("L1: loading still shows session check even if sessionProbeDegraded", () => {
+    useAuthMock.mockReturnValue({
+      status: "loading",
+      session: null,
+      refreshSession: vi.fn(),
+      sessionProbeDegraded: true,
+    });
+    renderGate();
+    expect(screen.getByText("ログイン状態を確認しています…")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "RootEntry stub" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/安全のため一部の操作を止めています/)).not.toBeInTheDocument();
   });
 
   it("L1: after C5 deadline while still loading, fail-closed to free landing", async () => {

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { COLD_START_SESSION_DEADLINE_MS } from "@/features/auth/auth-provider";
+import { DegradedSessionRecovery } from "@/features/auth/degraded-session-recovery";
 import { RootEntryPage } from "@/features/auth/root-entry-page";
 import { useAuthLoadingDeadline } from "@/features/auth/use-auth-loading-deadline";
 import { useAuth } from "@/features/auth/use-auth";
@@ -122,6 +123,7 @@ function FreeLandingChunkGate() {
  * 公開 `/` のゲート（設計 2026-07-30 L13–L14）。
  * loading → 確認文のみ（C5/L1: 15s 超過は fail-closed で LP）。
  * session なし → FreeLanding（lazy）。authenticated+session → RootEntry。
+ * authenticated+session+sessionProbeDegraded → C4 と同型の回復 UI（RootEntry / getProfile は出さない）。
  */
 export function RootGatePage() {
   const auth = useAuth();
@@ -139,6 +141,12 @@ export function RootGatePage() {
   // L2: Free LP chunk 自体の hang は FreeLandingChunkGate の 15s で打ち切る。
   if (loadingTimedOut || auth.status === "unauthenticated" || auth.session === null) {
     return <FreeLandingChunkGate />;
+  }
+
+  // C4 と同型: pin/probe 乖離中は RootEntry を出さない。
+  // PWA start_url は `/` のため、ここで止めないと getProfile が RequireSession より先に走る。
+  if (auth.sessionProbeDegraded) {
+    return <DegradedSessionRecovery recoverDegradedSession={auth.recoverDegradedSession} />;
   }
 
   return <RootEntryPage />;

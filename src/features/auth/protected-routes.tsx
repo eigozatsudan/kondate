@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useLocation } from "react-router";
 import { LivePendingMain } from "@/shared/ui/feedback";
+import { DegradedSessionRecovery } from "./degraded-session-recovery";
 import { useAuthLoadingDeadline } from "./use-auth-loading-deadline";
 import { useAuth } from "./use-auth";
 import { sanitizeReturnPath } from "./auth-flow";
@@ -20,24 +21,7 @@ export function RequireSession() {
   }
   // C4: pin/probe 乖離中は Outlet を出さない。history / household 等が JWT-B で動く窓を閉じる。
   if (auth.sessionProbeDegraded) {
-    return (
-      <div className="page-frame type-small stack" role="status">
-        <p>
-          ログイン状態の確認に時間がかかっているか、別の状態と食い違っています。安全のため一部の操作を止めています。画面をそのままにするか、再読み込みするか、下のボタンからログインし直してください。
-        </p>
-        {auth.recoverDegradedSession !== undefined ? (
-          <p>
-            <button
-              type="button"
-              className="text-button min-h-11 min-w-11"
-              onClick={auth.recoverDegradedSession}
-            >
-              ログインし直す
-            </button>
-          </p>
-        ) : null}
-      </div>
-    );
+    return <DegradedSessionRecovery recoverDegradedSession={auth.recoverDegradedSession} />;
   }
   return <Outlet />;
 }
