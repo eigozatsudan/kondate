@@ -111,8 +111,17 @@ migration 1 本で次をすべて行う。
 - `snapshotRowSchema` に `novelty_preference: z.enum(["standard","twist"]).nullable()` を追加。
 - `mapSnapshot` に `noveltyPreference: row.novelty_preference` を追加。
 
-`GenerationContext["submission"]` は `PlannerSubmission` そのものなので、§3.1 の
-`submissionCommonShape` 追加がそのまま型として流れる。
+`mapSnapshot` は `plannerSubmissionSchema.parse({ ... })` にオブジェクトリテラルを直渡ししており、
+同 schema は discriminated union の**両枝とも `.strict()`** である。したがって §3.1 の
+`submissionCommonShape` への追加は、`mapSnapshot` にとって任意ではなく**先行必須**である。
+
+契約が未更新のまま `mapSnapshot` に `noveltyPreference` を渡すと `unrecognized_keys` で parse が
+throw し、**ひねりを選んでいない利用者を含む new_menu 経路全体が HTTP 422 になる**。
+`plannerSubmissionSchema.parse` の引数は `unknown` なので、余剰キーは typecheck を素通りする。
+型では守れないため、順序（§8）で守る。
+
+`GenerationContext["submission"]` は `PlannerSubmission` そのものなので、契約さえ更新すれば型は
+そのまま流れる。
 
 ### 3.4 クライアント永続面
 
@@ -220,7 +229,12 @@ readonly { readonly ingredientAliases: readonly string[]; readonly stapleDishes:
     不正値の拒否
   - `reserve_ai_generation` が snapshot へ値を写すこと（下書きに `twist` を入れて予約し、
     `get_ai_generation_submission_snapshot` が `twist` を返す）
-- サーバー: `snapshotRowSchema` が新しい列を含む行を parse できること。
+- サーバー:
+  - `snapshotRowSchema` が新しい列を含む行を parse できること。
+  - **`mapSnapshot` → `PlannerSubmission` の round-trip 1 本。** 新しい列を含む snapshot 行を
+    `mapSnapshot` に通し、throw せず `noveltyPreference` が保持されることを確かめる。
+    `snapshotRowSchema` の単体テストはこれを検知しない（落ちるのは後段の
+    `plannerSubmissionSchema.parse` である）。`standard` / `twist` / `null` の 3 値を通す。
 - E2E: 確認画面で「ひねりたい」を選び、生成が `success` で返る 1 本。
 
 検証コマンドは `CLAUDE.md` の Docker 経路に従う。`db:test` と `e2e` はホストで直接
@@ -228,19 +242,27 @@ readonly { readonly ingredientAliases: readonly string[]; readonly stapleDishes:
 
 ## 8. 実装順序
 
-1. migration（2 テーブル + `save_generation_draft` + `reserve_ai_generation` +
-   `get_ai_generation_submission_snapshot` + grant）と型再生成
-2. 契約（`planner.ts` と契約テスト）
-3. サーバー読み取り面（`snapshotRowSchema` と `mapSnapshot`）— **1 と同じ Task 内で閉じる。**
-   RPC が新しい列を返すのに strict schema が古いままの状態を commit してはならない
-4. クライアント永続面（overlay、`planner-api.ts`、`use-draft-autosave.ts`、`planner-route.tsx`）
-5. 定番辞書と辞書テスト
-6. プロンプト（`novelty-hints.ts`、`buildGenerationMessages` の new_menu 分岐、プロンプトテスト、
-   再生成不変の回帰テスト）
-7. UI（`review-step.tsx`、`planner-labels.ts`、`draft-from-menu.ts`）
-8. E2E
+**Task 1 は契約・migration・サーバー読み取り面を 1 つの commit で閉じる。分割してはならない。**
 
-各段は RED → GREEN → 焦点検証 → 日本語 Conventional Commit で閉じる。
+`mapSnapshot` の `plannerSubmissionSchema.parse` は両枝 `.strict()` であり（§3.3）、契約より先に
+`mapSnapshot` を更新した中間 commit は new_menu 全体を 422 にする。逆に migration より先に
+`mapSnapshot` を更新すれば、RPC が返さない列を読むことになる。この 3 つは同時にしか正しくならない。
+
+1. **Task 1（単一 commit）**
+   - 契約: `shared/contracts/planner.ts` の `draftShape` と `submissionCommonShape`
+   - migration: 2 テーブル + `save_generation_draft` + `reserve_ai_generation` +
+     `get_ai_generation_submission_snapshot` + grant、および型再生成
+   - サーバー読み取り面: `snapshotRowSchema` と `mapSnapshot`
+   - テスト: 契約テスト、pgTAP、`mapSnapshot` round-trip
+2. クライアント永続面（overlay、`planner-api.ts`、`use-draft-autosave.ts`、`planner-route.tsx`）
+3. 定番辞書と辞書テスト
+4. プロンプト（`novelty-hints.ts`、`buildGenerationMessages` の new_menu 分岐、プロンプトテスト、
+   再生成不変の回帰テスト）
+5. UI（`review-step.tsx`、`planner-labels.ts`、`draft-from-menu.ts`）
+6. E2E
+
+Task 1 以外の各段は RED → GREEN → 焦点検証 → 日本語 Conventional Commit で閉じる。Task 1 も同じ
+流れだが、上記 4 要素を分けて commit しない。
 
 ## 9. リスク
 
@@ -268,3 +290,6 @@ readonly { readonly ingredientAliases: readonly string[]; readonly stapleDishes:
 - F-04 PromptPreferences 共有: base builder は再生成と共用。`recentDishHints` と同じ new_menu 分岐で
   注入する。→ §5.1
 - F-05 辞書照合: `normalizeFoodText` は漢字とかなを畳まない。alias 列挙で吸収する。→ §6
+- R-01 契約の Task 分割: `mapSnapshot` は両枝 `.strict()` の `plannerSubmissionSchema.parse` に
+  リテラルを直渡しする。契約を別 Task に切り出すと中間 commit で new_menu が 422 になる。
+  → §3.3、§7、§8（Task 1 を単一 commit に固定）
