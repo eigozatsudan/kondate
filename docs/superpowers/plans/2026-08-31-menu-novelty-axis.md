@@ -54,6 +54,8 @@
 | `src/features/planner/model/draft-from-menu.ts` | 履歴からの条件引き継ぎ |
 | `src/features/planner/components/review-step.tsx` | 2 択 UI |
 | `netlify/functions/_shared/generation-prompt.ts` | new_menu 分岐での段落挿入とキー注入 |
+| `supabase/tests/database/rls_inventory.test.sql` | GRANT 台帳のシグネチャを 14 引数へ |
+| `e2e/specs/full-journey.spec.ts` | 確認画面でひねりを選ぶ 1 手 |
 
 ---
 
@@ -223,27 +225,32 @@ drop function if exists public.get_ai_generation_submission_snapshot(uuid, uuid)
 
 DROP の引数は `(uuid, uuid)` で固定。この関数の引数は `p_request_id uuid, p_user_id uuid` の 2 つのままで、返り値だけが増える。`20260730120000:605` の本体を写し、`returns table (...)` へ `novelty_preference text` を、select 句へ `snapshot.novelty_preference` を、それぞれ `ingredient_preference` の直後に追加する。
 
-最後に、再作成した 3 関数へ `revoke all` / `grant execute` を元ファイルと同じ内容で貼り直す。`reserve_ai_generation` は引数リストが長いので、元ファイルの revoke/grant をそのまま写して引数を 1 つも落とさないこと。
-
-- [ ] **Step 6: 既存 pgTAP の呼び出しを 14 引数へ更新**
-
-`save_generation_draft` は pgTAP から **positional で** 呼ばれている。引数が増えると全滅するので、次の 3 ファイルの全呼び出しへ 14 番目の引数を足す。
-
-```bash
-grep -c "save_generation_draft" \
-  supabase/tests/database/03_pantry_and_planner_drafts.test.sql \
-  supabase/tests/database/03a_pantry_and_planner_drafts_hardening.test.sql \
-  supabase/tests/database/ai_control_and_quota.test.sql
-```
-
-`03_pantry_and_planner_drafts.test.sql:41` の型配列も更新する:
+最後に、再作成した 3 関数へ `revoke all` / `grant execute` を貼り直す。**Postgres の GRANT は引数リストで関数を同定するため、`save_generation_draft` の revoke/grant は 14 引数で書く。** 元ファイルの 13 引数のまま貼ると、存在しない関数への GRANT で migrate が止まる。
 
 ```sql
-select has_function('public','save_generation_draft',
-  array['bigint','text','text[]','text','text','uuid[]','smallint','smallint','text','text','text[]','text','jsonb','text']);
+revoke all on function public.save_generation_draft(
+  bigint, text, text[], text, text, uuid[], smallint, smallint,
+  text, text, text[], text, jsonb, text
+) from public, anon, service_role;
+grant execute on function public.save_generation_draft(
+  bigint, text, text[], text, text, uuid[], smallint, smallint,
+  text, text, text[], text, jsonb, text
+) to authenticated;
 ```
 
-呼び出し側は末尾の `jsonb` 引数の**後ろ**へ `,null` を足す。例（`03_pantry_and_planner_drafts.test.sql:65`）:
+revoke 対象ロールと grant 先は元ファイルの `save_generation_draft` の記述をそのまま踏襲すること（上は形の例であり、ロール一覧は元ファイルを正とする）。`reserve_ai_generation` と `get_ai_generation_submission_snapshot` は引数が変わらないので、元ファイルの revoke/grant をそのまま写す。
+
+- [ ] **Step 6: 既存 pgTAP の 13 引数依存をすべて 14 引数へ更新**
+
+`save_generation_draft` は pgTAP から **positional 呼び出し・型配列・シグネチャ文字列** の 3 通りで参照されている。どれか 1 つでも 13 引数のまま残すと db-test が止まる。次のコマンドで漏れを洗い出す。
+
+```bash
+grep -rn "save_generation_draft" supabase/tests/database/
+```
+
+更新する箇所は 4 種類ある。
+
+**(a) positional 呼び出し（3 ファイル）** — `03_pantry_and_planner_drafts.test.sql`、`03a_pantry_and_planner_drafts_hardening.test.sql`、`ai_control_and_quota.test.sql`。末尾の `jsonb` 引数の**後ろ**へ `,null` を足す。例（`03_pantry_and_planner_drafts.test.sql:65`）:
 
 ```sql
 select public.save_generation_draft(0,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,
@@ -251,38 +258,83 @@ select public.save_generation_draft(0,'dinner',array['鶏肉'],'japanese',null,a
   '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use"}]'::jsonb,null);
 ```
 
-`rls_inventory.test.sql` は grant とポリシー名を列挙するだけで列は見ていないため、変更不要。念のため `grep -n "novelty\|ingredient_preference" supabase/tests/database/rls_inventory.test.sql` が空であることを確認する。
+**(b) `has_function` の型配列**（`03_pantry_and_planner_drafts.test.sql:42`）:
+
+```sql
+select has_function('public','save_generation_draft',
+  array['bigint','text','text[]','text','text','uuid[]','smallint','smallint','text','text','text[]','text','jsonb','text']);
+```
+
+**(c) `03a_pantry_and_planner_drafts_hardening.test.sql:86-88` の `to_regprocedure`** — 3 行とも 13 引数の識別子が埋め込まれている。`jsonb` の後ろへ `,text` を足す。
+
+```sql
+  coalesce(has_function_privilege('authenticated', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text,text[],text,jsonb,text)'), 'EXECUTE'), false)
+  and not coalesce(has_function_privilege('anon', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text,text[],text,jsonb,text)'), 'EXECUTE'), false)
+  and not coalesce(has_function_privilege('service_role', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text,text[],text,jsonb,text)'), 'EXECUTE'), false),
+```
+
+`to_regprocedure` は存在しない関数へ `null` を返し、`has_function_privilege(null)` も `null` になるため、更新を忘れると「権限が無い」ではなく静かに false 側へ倒れる。
+
+**(d) `rls_inventory.test.sql:284` の GRANT 台帳** — 引数名付きのシグネチャ文字列で列挙されている。`p_pantry_selections jsonb` の後ろへ `, p_novelty_preference text` を足す。
+
+```sql
+  ('public.save_generation_draft(p_expected_revision bigint, p_meal_type text, p_main_ingredients text[], p_cuisine_genre text, p_target_mode text, p_target_member_ids uuid[], p_servings smallint, p_time_limit_minutes smallint, p_budget_preference text, p_ingredient_preference text, p_avoid_ingredients text[], p_memo text, p_pantry_selections jsonb, p_novelty_preference text)', 'authenticated', 'EXECUTE'),
+```
+
+この台帳は「認可された GRANT の全集合」であり、実 GRANT との差分を検出する。放置すると 14 引数版が台帳外の GRANT として db-test を落とす。
 
 - [ ] **Step 7: 新しい pgTAP アサートを足す**
 
-`03_pantry_and_planner_drafts.test.sql` の `plan(43)` を `plan(46)` へ増やし、末尾のクリーンアップ前へ 3 件足す。
+**貼る前に、その時点の `revision` と `plan()` 方式を必ず確認すること。** 下のコードは live の現状（`03_pantry` は 194 行目の `finish()` 直前で revision 4、`ai_control_and_quota` は `no_plan()`）に合わせてある。
+
+**(a) `03_pantry_and_planner_drafts.test.sql`** — 162 行目の idea 保存が成功して revision は 4 になっている。したがって新しい保存は `p_expected_revision = 4` から始める。`plan(43)` を `plan(46)` へ増やし、194 行目の `select * from finish();` の直前へ:
 
 ```sql
-select public.save_generation_draft(3,'dinner',array['豚肉'],'japanese',null,array[]::uuid[],null::smallint,
-  30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb,'twist');
+select public.save_generation_draft(4,'dinner',array['豚肉'],'japanese','idea',
+  array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb,'twist');
 select is((select novelty_preference from public.generation_drafts), 'twist',
   'save persists novelty preference');
 
 select throws_ok(
-  $$select public.save_generation_draft(4,'dinner',array['豚肉'],'japanese',null,array[]::uuid[],null::smallint,
-    30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb,'wild')$$,
+  $$select public.save_generation_draft(5,'dinner',array['豚肉'],'japanese','idea',
+    array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb,'wild')$$,
   '22023', 'invalid_draft_save', 'save rejects an unknown novelty value');
 
+-- P-03: has_function(14 型) は 13 引数版の残留を検出しない。overload 数を直接数える
+select is(
+  (select count(*)::integer
+     from pg_catalog.pg_proc p
+     join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'save_generation_draft'),
+  1, 'save_generation_draft has exactly one overload');
+```
+
+targetMode / servings は 162 行目の idea 保存と同じ形へ揃えてある。これは `refineTargetAndServings` 相当の DB CHECK（household は member 非空、idea は servings 必須）を満たすためで、`null` モードへ戻すと別の CHECK に当たる可能性がある。162 行目の実引数を読んで合わせること。
+
+**(b) `private.generation_draft_submission_versions` の列**は `03_pantry` の `plan(46)` に含めた 3 件とは別に、同ファイルの既存の `has_column` 群の並びへ 1 件足す（その場合 `plan(47)` にする）:
+
+```sql
 select has_column('private','generation_draft_submission_versions','novelty_preference',
   'submission snapshot stores novelty preference');
 ```
 
-`ai_control_and_quota.test.sql` の既存の予約 → snapshot 往復シナリオへ 1 件足す（`plan(...)` の数も +1）。下書きへ `'twist'` を保存してから予約し、`get_ai_generation_submission_snapshot` が `twist` を返すことを確かめる。既存の同ファイル内で `get_ai_generation_submission_snapshot` を呼んでいる箇所の直後が置き場所。
+**(c) `ai_control_and_quota.test.sql`** — このファイルは `no_plan()`（3 行目）なので **`plan()` の数を触らない**。
+
+既存の snapshot 往復シナリオへ assert を足してはならない。そこの下書きは `selected_only` を保存した別の文脈で作られており、`novelty_preference` は `null` のままなので、twist を期待する assert は必ず落ちる。新しい下書き保存から予約までを 1 本足す。
 
 ```sql
+-- 既存の予約シナリオの後ろへ、独立した往復を 1 本足す
+select public.save_generation_draft(<現在の revision>,'dinner',array['豚肉'],'japanese','idea',
+  array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb,'twist');
+-- 同ファイルの既存パターンで reserve_ai_generation を呼び、その request_id を使う
 select is(
-  (select novelty_preference from public.get_ai_generation_submission_snapshot(
-    v_request_id, v_user_id)),
+  (select novelty_preference
+     from public.get_ai_generation_submission_snapshot(<request_id>, <user_id>)),
   'twist',
   'reserve copies novelty preference into the submission snapshot');
 ```
 
-変数名は同ファイルの既存シナリオが使っているものへ合わせること（この 2 つの名前は例であり、そのまま貼らない）。
+`<現在の revision>` / `<request_id>` / `<user_id>` は同ファイルの直前のシナリオが使っている実際の値・変数へ置き換える。`reserve_ai_generation` の引数は同ファイルの既存呼び出しをそのまま写すこと（引数が多く、quota 系の必須引数を落とすと別の失敗になる）。
 
 - [ ] **Step 8: migration を適用して pgTAP を走らせる**
 
@@ -297,11 +349,40 @@ docker compose --profile test run --rm db-test
 
 - [ ] **Step 9: 型を再生成**
 
-生成コマンドは `package.json` の scripts を確認して使う（`grep -n "types" package.json`）。`src/shared/types/database.generated.ts` は手編集しない。生成後、`p_novelty_preference` と `novelty_preference` が現れることを確認する。
+```bash
+docker compose run --rm app npm run db:types
+```
+
+`--no-deps` を付けない。この script（`scripts/generate-database-types.sh`）は起動中の Postgres へ接続するため、先に `docker compose up -d --wait` でスタックが上がっていること。`src/shared/types/database.generated.ts` は手編集しない。
 
 ```bash
 grep -n "novelty_preference" src/shared/types/database.generated.ts
 ```
+
+期待: `p_novelty_preference` と `novelty_preference` が現れる。
+
+- [ ] **Step 9b: 契約変更の型波及をリポジトリ全体で潰す**
+
+**`.default(null)` は入力を任意にするだけで、`z.infer` が出す出力型ではキーは必須である。** つまり `PlannerDraftInput` / `PlannerSubmission` として型付けされたオブジェクトリテラルはすべて `noveltyPreference` を持たなければならず、parse 結果を `toEqual` で比較しているテストはすべて新しいキーの分だけ落ちる。これは Task 2 以降ではなく **この Task の範囲**である。ここで潰さないと Task 1 の commit で main が赤くなり、Task 2 の typecheck PASS も成立しない。
+
+```bash
+docker compose run --rm --no-deps app npm run typecheck > /tmp/tc.log 2>&1; grep -nE "error" /tmp/tc.log || tail -n 40 /tmp/tc.log
+```
+
+エラーが出た箇所すべてへ `noveltyPreference: null,` を足す。既知の起点は次のとおりだが、**この一覧を信用せず typecheck の出力を正とすること**（`grep -rln "ingredientPreference" src/ shared/ netlify/ e2e/` は 39 ファイルに当たる）。
+
+- `shared/testing/factories.ts:246`, `:294` — 共有ファクトリ。ここを直すと下流の多くが同時に片付く
+- `shared/contracts/planner.test.ts` — `toMatchObject` は影響しないが `toEqual` は落ちる
+- `src/features/planner/**` の draft フィクスチャ
+- `netlify/functions/_shared/**` の submission フィクスチャ
+
+`toEqual` が落ちた箇所は、期待値へ `noveltyPreference: null` を足す。`toMatchObject` へ書き換えて逃げない（部分一致にすると余剰キーの検出力が落ちる）。
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run > /tmp/vitest.log 2>&1; grep -nE "FAIL|✕" /tmp/vitest.log || tail -n 30 /tmp/vitest.log
+```
+
+期待: typecheck・全 vitest ともに PASS。出力が大きいので上のようにファイルへ落とし、失敗行だけを読むこと。
 
 - [ ] **Step 10: サーバー読み取り面の failing test を書く**
 
@@ -351,7 +432,7 @@ docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run format:check
 ```
 
-期待: すべて PASS。typecheck が `planner-api.ts` などで落ちる場合は Task 2 の範囲なので、**この Task では直さず、落ちている旨を記録して Step 14 へ進む**（契約が先、クライアントが後という順序は意図的である）。
+期待: すべて PASS。**typecheck が赤いまま次へ進まない。** Step 9b で全体を緑にしてあるので、ここで落ちるなら Step 12 の変更が原因である。`planner-api.ts` などクライアント側が落ちる場合も、`noveltyPreference: null` を足して緑にしてから commit する（値を実際に配線するのは Task 2 だが、型の穴を Task 間にまたがせない）。
 
 - [ ] **Step 14: コミット（単一 commit）**
 
@@ -399,7 +480,7 @@ docker compose run --rm --no-deps app npm test -- --run src/shared/types/databas
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-期待: `p_novelty_preference: null` が `string` に代入できず typecheck が FAIL。
+期待: `p_novelty_preference: null` が `string` に代入できず typecheck が FAIL。これは Task 1 Step 9b で緑にした状態からの**新しい** FAIL である（Task 1 から持ち越した赤ではない）。持ち越しの赤が見えるなら Task 1 が未完了なので戻ること。
 
 - [ ] **Step 3: overlay を実装**
 
@@ -417,7 +498,33 @@ docker compose run --rm --no-deps app npm run typecheck
 
 - [ ] **Step 4: planner-api の failing test を書く**
 
-`src/features/planner/planner-api.test.ts:154` 付近の期待引数へ `p_novelty_preference: null,` を足し、`twist` を保存したときに `p_novelty_preference: "twist"` が渡ることを見るケースを 1 件足す。読み取り側は、`novelty_preference: "twist"` を含む行を `mapPlannerDraft` に通して `noveltyPreference: "twist"` になることを見るケースを 1 件足す。
+`src/features/planner/planner-api.test.ts:154` 付近の期待引数へ `p_novelty_preference: null,` を足し、`twist` を保存したときに `p_novelty_preference: "twist"` が渡ることを見るケースを 1 件足す。
+
+読み取り側は **`mapPlannerDraft` へ手組みの行を通すだけでは不十分**である。`mapPlannerDraft` は `getPlannerDraft` の select 列文字列とは独立しており、select へ `novelty_preference` を足し忘れても `mapPlannerDraft` の単体テストは通る。そのとき GET はキーを欠いた行を返し、`.default(null)` が保存済みの `twist` を静かに `null` へ潰す。F-02 と同じ壊れ方がテスト緑のまま再発する。
+
+したがって **select 列そのものをロックする**テストを足す。
+
+```ts
+it("selects the novelty preference column from generation_drafts", async () => {
+  const select = vi.fn().mockReturnValue({
+    eq: () => ({ maybeSingle: async () => ({ data: draftRowFixture, error: null }) }),
+  });
+  const client = makeBrowserClientStub({ from: () => ({ select }) });
+  await getPlannerDraft(client, userId);
+  expect(select).toHaveBeenCalledWith(expect.stringContaining("novelty_preference"));
+});
+
+it("returns the novelty preference from a fetched draft row", async () => {
+  const client = makeBrowserClientStub({
+    row: { ...draftRowFixture, novelty_preference: "twist" },
+  });
+  await expect(getPlannerDraft(client, userId)).resolves.toMatchObject({
+    noveltyPreference: "twist",
+  });
+});
+```
+
+`makeBrowserClientStub` / `draftRowFixture` / `userId` は同ファイルの既存ヘルパー名へ読み替える。1 本目のスタブ形は既存テストの `from().select().eq().maybeSingle()` チェーンに合わせること。
 
 - [ ] **Step 5: テストが落ちることを確認**
 
@@ -954,9 +1061,11 @@ new_menu 分岐で注入する。kill-switch off は段落とキーの両方を�
 
 **Interfaces:**
 - Consumes: Task 1 の `NoveltyPreference`、Task 2 の draft 永続面
-- Produces: `NOVELTY_PREFERENCE_LABELS: Readonly<Record<NoveltyPreference, string>>`
+- Produces: `noveltyPreferenceLabels: Readonly<Record<NoveltyPreference, string>>` と `noveltyPreferenceLabel(value: NoveltyPreference | null): string`（既存 `ingredientPreferenceLabels` / `ingredientPreferenceLabel` と同じ API 形）
 
 - [ ] **Step 1: failing test を書く**
+
+**ウィジェットは `<select>` に固定する。** live の `review-step.tsx:592-625` の「材料の使い方」は radio ではなく `<select>` + `<option>` であり、隣に並べる以上そこへ揃える。`<select>` では空 option が未選択を表すので、「再押下で null に戻さない」という論点自体が発生しない。
 
 `planner-wizard.test.tsx` へ:
 
@@ -964,17 +1073,25 @@ new_menu 分岐で注入する。kill-switch off は段落とキーの両方を�
 it("records the twist novelty preference from the review step", async () => {
   const user = userEvent.setup();
   renderWizardAtReviewStep();
-  await user.click(screen.getByRole("radio", { name: "ひねりたい" }));
+  await user.selectOptions(screen.getByLabelText("献立の雰囲気"), "twist");
   expect(latestDraftValue().noveltyPreference).toBe("twist");
 });
 
 it("defaults the novelty preference to unset", () => {
   renderWizardAtReviewStep();
+  expect(screen.getByLabelText("献立の雰囲気")).toHaveValue("");
+  expect(latestDraftValue().noveltyPreference).toBeNull();
+});
+
+it("clears the novelty preference when the empty option is chosen", async () => {
+  const user = userEvent.setup();
+  renderWizardAtReviewStep({ noveltyPreference: "twist" });
+  await user.selectOptions(screen.getByLabelText("献立の雰囲気"), "");
   expect(latestDraftValue().noveltyPreference).toBeNull();
 });
 ```
 
-`renderWizardAtReviewStep` / `latestDraftValue` は同ファイルの既存ヘルパー名へ読み替える。role は実装するマークアップに合わせる（既存の `ingredientPreference` ブロックが radio なら radio、button なら button）。
+`renderWizardAtReviewStep` / `latestDraftValue` は同ファイルの既存ヘルパー名へ読み替える。既存の「材料の使い方」テストが同じ `<select>` を扱っているので、その取得方法をそのまま真似ること。
 
 `draft-from-menu.test.ts` へ:
 
@@ -1002,22 +1119,55 @@ docker compose run --rm --no-deps app npm test -- --run src/features/planner/com
 
 - [ ] **Step 3: ラベルを実装**
 
-`src/features/planner/model/planner-labels.ts` へ（既存のラベル定数群と同じ形で）:
+`src/features/planner/model/planner-labels.ts` へ、既存の `ingredientPreferenceLabels` / `ingredientPreferenceLabel` と**同じ API 形**で足す（`Record` だけでなく null を扱う関数もある形）。
 
 ```ts
-export const NOVELTY_PREFERENCE_LABELS: Readonly<Record<NoveltyPreference, string>> = {
+/**
+ * 献立の雰囲気 → 利用者向け日本語。確認画面の任意条件で共有する。
+ * twist は主菜の定番回避のソフト目安。定番が出ないことの保証ではない。
+ */
+export const noveltyPreferenceLabels: Readonly<Record<NoveltyPreference, string>> = {
   standard: "いつもの",
-  twist: "ひねりたい",
-};
+  twist: "ひねりたい（主菜を定番から外す）",
+} as const;
+
+export function noveltyPreferenceLabel(value: NoveltyPreference | null): string {
+  if (value === null) return "指定なし";
+  return noveltyPreferenceLabels[value];
+}
 ```
 
-コンポーネント内に日本語を直書きしない。
+`NoveltyPreference` は `shared/contracts/planner.js` から import する。コンポーネント内に日本語を直書きしない。
 
 - [ ] **Step 4: 確認画面を実装**
 
-`review-step.tsx` の「材料の使い方」ブロックの直後へ、同じマークアップ構造の 2 択を足す。見出しは「献立の雰囲気」。既定は未選択（`null`）で、選択済みの項目をもう一度押しても `null` へは戻さない（既存の `ingredientPreference` の挙動へ合わせる。違っていれば既存に合わせること）。
+`review-step.tsx` の「材料の使い方」の `<label className="field">` ブロック（592-625 行目）の**直後**へ、同じ構造で足す。`<select>` の `value` は `value.noveltyPreference ?? ""`、`onChange` は選択値を `"standard"` / `"twist"` / それ以外は `null` へ畳む（既存ブロックの三項の書き方に合わせる）。
 
-タップ対象は 44×44 CSS px 以上、320 CSS px で横スクロールを出さない。既存ブロックの Tailwind クラスをそのまま踏襲すれば満たせる。
+```tsx
+<label className="field">
+  献立の雰囲気
+  <select
+    value={value.noveltyPreference ?? ""}
+    disabled={disabled}
+    onChange={(event) => {
+      const selected = event.target.value;
+      onChange({
+        ...value,
+        noveltyPreference:
+          selected === "standard" ? "standard" : selected === "twist" ? "twist" : null,
+      });
+    }}
+  >
+    <option value="">{noveltyPreferenceLabel(null)}</option>
+    <option value="standard">{noveltyPreferenceLabels.standard}</option>
+    <option value="twist">{noveltyPreferenceLabels.twist}</option>
+  </select>
+</label>
+```
+
+既存ブロックは `aria-invalid` / `aria-describedby` を `fieldErrors` から引いている。新軸は必須項目ではなくバリデーションエラーを持たないので、`fieldErrors` 連動は付けない。90 行目付近の `fieldErrors` のキー union と 322 行目付近のエラー集約にも新軸を足さない。
+
+タップ対象 44×44 CSS px、320 CSS px で横スクロールなしは、既存 `.field` クラスをそのまま使えば満たせる。
 
 - [ ] **Step 5: draft-from-menu を実装**
 
@@ -1046,14 +1196,16 @@ git commit -m "feat(planner): 確認画面へ献立の雰囲気の 2 択を足�
 ### Task 6: E2E
 
 **Files:**
-- Modify: `e2e/specs/menu-domain-pantry.spec.ts`（既存の献立生成シナリオへ追記）
+- Modify: `e2e/specs/full-journey.spec.ts:73-90`
+
+`menu-domain-pantry.spec.ts` は生成 success に到達しないシナリオなので使わない。生成が成功して献立ページまで進む経路は `full-journey.spec.ts` の 73-90 行目である。
 
 - [ ] **Step 1: E2E を書く**
 
-既存の生成成功シナリオの確認画面ステップへ、「ひねりたい」を押す 1 手を差し込む。新しい spec ファイルは作らず、既存シナリオを拡張する（e2e は実行が重く、独立シナリオを増やすと全体時間が伸びる）。
+`full-journey.spec.ts:73` の「5. 確認」見出しアサートの後、77 行目の `const generate = ...` の**前**へ差し込む。
 
 ```ts
-// 確認画面。生成ボタンを押す前に差し込む
+// 確認画面。ひねりを選んだ下書きが保存されたことを同期点にしてから生成へ進む
 const noveltySaved = page.waitForResponse((response) => {
   if (!new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft")) {
     return false;
@@ -1061,13 +1213,15 @@ const noveltySaved = page.waitForResponse((response) => {
   const postData = response.request().postData();
   return postData !== null && postData.includes('"p_novelty_preference":"twist"');
 });
-await page.getByRole("radio", { name: "ひねりたい" }).click();
+await page.getByLabel("献立の雰囲気").selectOption("twist");
 await noveltySaved;
 ```
 
-その後は既存シナリオの生成ステップをそのまま流し、献立が表示されることの既存アサートで閉じる。追加のアサートは要らない（`twist` を選んでも生成が成功することが確かめたいことである）。
+`getByLabel` + `selectOption` は Task 5 で `<select>` に固定した実装に対応する。role で取るなら `getByRole("combobox", { name: "献立の雰囲気" })` だが、同ファイルの既存の取得スタイルへ合わせること。
 
-`waitForResponse` と `postData()` の使い方は同ファイル 118 行目付近の既存パターンをそのまま踏襲している。role は Task 5 で実装したマークアップに合わせる。
+以降は既存シナリオの `generate.click()` 以下をそのまま流す。追加のアサートは要らない。確かめたいのは「`twist` を選んでも生成が success で完了する」ことであり、80-90 行目の既存アサート（URL 遷移、「献立ができました」、主菜見出し）がそれを見ている。
+
+**注意**: 主菜見出しのアサート（88 行目「鶏肉と白菜のやわらか煮」）は success fixture の固定値である。`twist` はモック応答を変えないので、この期待値は変えない。変える必要が出たならモックの実装を疑うこと。
 
 - [ ] **Step 2: E2E を走らせる**
 
@@ -1084,7 +1238,7 @@ await noveltySaved;
 - [ ] **Step 3: コミット**
 
 ```bash
-git add e2e/specs/menu-domain-pantry.spec.ts
+git add e2e/specs/full-journey.spec.ts
 git commit -m "test(e2e): ひねりを選んだ献立生成が成功することを検証する"
 ```
 
