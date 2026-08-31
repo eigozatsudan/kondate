@@ -1,5 +1,5 @@
 import type { CuisineGenre, MealType } from "@shared/contracts/domain";
-import type { IngredientPreference } from "@shared/contracts/planner";
+import type { IngredientPreference, NoveltyPreference } from "@shared/contracts/planner";
 
 /** 食事の英語コード → 利用者向け日本語。確認画面・質問stepで共有する。 */
 export const mealLabels: Readonly<Record<MealType, string>> = {
@@ -27,6 +27,15 @@ export const ingredientPreferenceLabels: Readonly<Record<IngredientPreference, s
   auto: "おまかせ（分量・範囲はモデル判断）",
 } as const;
 
+/**
+ * 献立の雰囲気 → 利用者向け日本語。確認画面の任意条件で共有する。
+ * twist は主菜の定番回避のソフト目安。定番が出ないことの保証ではない。
+ */
+export const noveltyPreferenceLabels: Readonly<Record<NoveltyPreference, string>> = {
+  standard: "いつもの",
+  twist: "ひねりたい（主菜を定番から外す）",
+} as const;
+
 export function mealLabel(value: MealType | null): string {
   if (value === null) return "未選択";
   return mealLabels[value];
@@ -40,4 +49,9 @@ export function cuisineGenreLabel(value: CuisineGenre | null): string {
 export function ingredientPreferenceLabel(value: IngredientPreference | null): string {
   if (value === null) return "指定なし";
   return ingredientPreferenceLabels[value];
+}
+
+export function noveltyPreferenceLabel(value: NoveltyPreference | null): string {
+  if (value === null) return "指定なし";
+  return noveltyPreferenceLabels[value];
 }

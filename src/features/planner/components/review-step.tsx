@@ -33,6 +33,8 @@ import {
   ingredientPreferenceLabel,
   ingredientPreferenceLabels,
   mealLabel,
+  noveltyPreferenceLabel,
+  noveltyPreferenceLabels,
 } from "../model/planner-labels";
 import { PantrySelector, type PantryItemsStatus } from "../pantry-selector";
 import type { PlannerSafetyMember } from "../planner-safety-member";
@@ -633,6 +635,29 @@ export function ReviewStep({
                     {fieldErrors.ingredientPreference}
                   </p>
                 )}
+                <label className="field">
+                  献立の雰囲気
+                  <select
+                    value={value.noveltyPreference ?? ""}
+                    disabled={disabled}
+                    onChange={(event) => {
+                      const selected = event.target.value;
+                      onChange({
+                        ...value,
+                        noveltyPreference:
+                          selected === "standard"
+                            ? "standard"
+                            : selected === "twist"
+                              ? "twist"
+                              : null,
+                      });
+                    }}
+                  >
+                    <option value="">{noveltyPreferenceLabel(null)}</option>
+                    <option value="standard">{noveltyPreferenceLabels.standard}</option>
+                    <option value="twist">{noveltyPreferenceLabels.twist}</option>
+                  </select>
+                </label>
                 <label className="field">
                   今回だけ避ける食材
                   <input

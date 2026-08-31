@@ -74,6 +74,16 @@ describe("createPlannerDraftFromMenu", () => {
     expect(draft.cuisineGenre).toBe("western");
   });
 
+  it("carries the novelty preference over from a past menu", () => {
+    expect(
+      createPlannerDraftFromMenu({ ...ideaSubmission, noveltyPreference: "twist" }),
+    ).toMatchObject({ noveltyPreference: "twist" });
+  });
+
+  it("carries a missing novelty preference over as null", () => {
+    expect(createPlannerDraftFromMenu(ideaSubmission)).toMatchObject({ noveltyPreference: null });
+  });
+
   it("does not mutate the source submission arrays", () => {
     const draft = createPlannerDraftFromMenu(ideaSubmission);
     draft.mainIngredients.push("改変");

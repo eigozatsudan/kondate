@@ -919,6 +919,7 @@ describe("PlannerWizard review step", () => {
     expect(body).toHaveClass("stack", "wizard-details-body");
     expect(body).toContainElement(screen.getByLabelText("予算"));
     expect(body).toContainElement(screen.getByLabelText("材料の使い方"));
+    expect(body).toContainElement(screen.getByLabelText("献立の雰囲気"));
     expect(body).toContainElement(screen.getByLabelText("今回だけ避ける食材"));
     expect(body).toContainElement(screen.getByLabelText("自由メモ"));
   });
@@ -968,6 +969,40 @@ describe("PlannerWizard review step", () => {
     expect(select).toHaveValue("auto");
     // ヒントが accessible description に載る
     expect(select).toHaveAccessibleDescription(/調味料の基本/);
+  });
+
+  it("追加条件の献立の雰囲気を選び draft に反映できる", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: [eligibleMember.id],
+        }}
+      />,
+    );
+
+    const select = screen.getByLabelText("献立の雰囲気");
+    // 未指定が既定。文言は planner-labels と一致させる。
+    expect(select).toHaveValue("");
+    const selectEl = select as HTMLSelectElement;
+    expect(within(selectEl).getByRole("option", { name: "いつもの" })).toBeEnabled();
+    expect(
+      within(selectEl).getByRole("option", { name: "ひねりたい（主菜を定番から外す）" }),
+    ).toBeEnabled();
+
+    await user.selectOptions(select, "twist");
+    expect(select).toHaveValue("twist");
+    await user.selectOptions(select, "standard");
+    expect(select).toHaveValue("standard");
+    // 空 option で未指定へ戻せる
+    await user.selectOptions(select, "");
+    expect(select).toHaveValue("");
   });
 
   it("進行中 pending がある確認画面では新条件破棄の再開注意を出す (P2)", () => {
