@@ -63,6 +63,7 @@ const snapshot = {
   time_limit_minutes: null,
   budget_preference: null,
   ingredient_preference: null,
+  novelty_preference: null,
   avoid_ingredients: [],
   memo: "",
   pantry_selections: [],
@@ -221,6 +222,7 @@ describe("loadGenerationContext", () => {
       timeLimitMinutes: null,
       budgetPreference: null,
       ingredientPreference: null,
+      noveltyPreference: null,
       avoidIngredients: [],
       memo: "",
       pantrySelections: [],
@@ -232,6 +234,19 @@ describe("loadGenerationContext", () => {
       householdMemberId: memberId,
       anonymousMemberRef: "member_1",
     });
+  });
+
+  it("maps every novelty preference value from the snapshot row", async () => {
+    for (const value of ["standard", "twist", null] as const) {
+      arrangeLoader({ snapshotData: [{ ...snapshot, novelty_preference: value }] });
+      const context = await loadGenerationContext(
+        { userId, accessToken: "access-token" },
+        requestId,
+        request,
+        now,
+      );
+      expect(context.submission.noveltyPreference).toBe(value);
+    }
   });
 
   it("keeps free-form memo out of safetySnapshot while preferenceSnapshot retains it (A-I4)", async () => {

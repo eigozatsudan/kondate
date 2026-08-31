@@ -21,6 +21,7 @@ const draft: PlannerDraft = {
   timeLimitMinutes: null,
   budgetPreference: null,
   ingredientPreference: null,
+  noveltyPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],

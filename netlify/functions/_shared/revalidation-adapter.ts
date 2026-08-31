@@ -133,6 +133,7 @@ function makeRevalidationGenerationContext(
       timeLimitMinutes: null,
       budgetPreference: null,
       ingredientPreference: null,
+      noveltyPreference: null,
       avoidIngredients: [],
       memo: "",
       pantrySelections: [],
@@ -750,6 +751,7 @@ export async function buildStoredGenerationContext(input: {
       timeLimitMinutes: null,
       budgetPreference: null,
       ingredientPreference: null,
+      noveltyPreference: null,
       avoidIngredients: [],
       memo: "",
       pantrySelections: pantryItems.map((item) => ({

@@ -28,6 +28,7 @@ function ideaContext(): IdeaGenerationContext {
       timeLimitMinutes: 15,
       budgetPreference: "standard",
       ingredientPreference: null,
+      noveltyPreference: null,
       avoidIngredients: [],
       memo: "",
       pantrySelections: [],

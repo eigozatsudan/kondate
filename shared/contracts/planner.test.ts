@@ -19,6 +19,7 @@ const incompleteDraft = {
   timeLimitMinutes: null,
   budgetPreference: null,
   ingredientPreference: null,
+  noveltyPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],
@@ -31,6 +32,7 @@ const validBase = {
   timeLimitMinutes: null,
   budgetPreference: null,
   ingredientPreference: null,
+  noveltyPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],
@@ -89,6 +91,68 @@ describe("planner contracts", () => {
     };
     expect(plannerSubmissionSchema.parse(submissionWithoutKey)).toMatchObject({
       ingredientPreference: null,
+    });
+  });
+
+  it("accepts declared novelty preference values and rejects unknown ones", () => {
+    for (const noveltyPreference of ["standard", "twist", null] as const) {
+      expect(
+        plannerDraftInputSchema.parse({ ...incompleteDraft, noveltyPreference }),
+      ).toMatchObject({ noveltyPreference });
+      expect(
+        plannerSubmissionSchema.parse({
+          ...validBase,
+          noveltyPreference,
+          targetMode: "household" as const,
+          targetMemberIds: [memberId],
+          servings: null,
+        }),
+      ).toMatchObject({ noveltyPreference });
+    }
+    expect(
+      plannerDraftInputSchema.safeParse({
+        ...incompleteDraft,
+        noveltyPreference: "wild",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("defaults missing noveltyPreference to null on draft and submission (pre-feature snapshots)", () => {
+    // キーごと落とす（null を明示しない導入前 snapshot を模擬）
+    const draftWithoutKey = {
+      mealType: incompleteDraft.mealType,
+      mainIngredients: incompleteDraft.mainIngredients,
+      cuisineGenre: incompleteDraft.cuisineGenre,
+      targetMode: incompleteDraft.targetMode,
+      targetMemberIds: incompleteDraft.targetMemberIds,
+      servings: incompleteDraft.servings,
+      timeLimitMinutes: incompleteDraft.timeLimitMinutes,
+      budgetPreference: incompleteDraft.budgetPreference,
+      ingredientPreference: incompleteDraft.ingredientPreference,
+      avoidIngredients: incompleteDraft.avoidIngredients,
+      memo: incompleteDraft.memo,
+      pantrySelections: incompleteDraft.pantrySelections,
+    };
+    expect(plannerDraftInputSchema.parse(draftWithoutKey)).toMatchObject({
+      noveltyPreference: null,
+    });
+
+    const submissionWithoutKey = {
+      mealType: validBase.mealType,
+      mainIngredients: validBase.mainIngredients,
+      cuisineGenre: validBase.cuisineGenre,
+      timeLimitMinutes: validBase.timeLimitMinutes,
+      budgetPreference: validBase.budgetPreference,
+      ingredientPreference: validBase.ingredientPreference,
+      avoidIngredients: validBase.avoidIngredients,
+      memo: validBase.memo,
+      pantrySelections: validBase.pantrySelections,
+      targetMode: "household" as const,
+      targetMemberIds: [memberId],
+      servings: null,
+    };
+    expect(plannerSubmissionSchema.parse(submissionWithoutKey)).toMatchObject({
+      noveltyPreference: null,
     });
   });
 

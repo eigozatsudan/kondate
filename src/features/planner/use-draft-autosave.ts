@@ -74,6 +74,7 @@ function toDraftInputFields(value: PlannerDraftInput | PlannerDraft): PlannerDra
     timeLimitMinutes: value.timeLimitMinutes,
     budgetPreference: value.budgetPreference,
     ingredientPreference: value.ingredientPreference,
+    noveltyPreference: value.noveltyPreference,
     avoidIngredients: value.avoidIngredients,
     memo: value.memo,
     pantrySelections: value.pantrySelections,

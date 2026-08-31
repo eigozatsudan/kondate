@@ -1991,7 +1991,7 @@ begin
 
   -- 実在 member/allergy/catalog/rule と最終 13 引数で canonical success を成立させる
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['canonical'],'japanese',
-    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections,null);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000080',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
     'generation-command.v3',repeat('e',64), jsonb_build_object(
@@ -2071,7 +2071,7 @@ begin
 
   -- 有効行削除、NULL、再作成後削除でも revision を単調増加させる
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['helper-1'],'japanese',
-    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections,null);
   v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,v_draft.revision);
   if v_deleted.revision is distinct from v_draft.revision+1 then
     raise exception 'helper did not increment an active draft revision';
@@ -2081,7 +2081,7 @@ begin
     raise exception 'helper did not return NULL for an already deleted draft';
   end if;
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['helper-2'],'japanese',
-    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections,null);
   v_deleted := private.soft_delete_generation_draft(v_owner,v_draft.id,null);
   if v_deleted.revision is distinct from v_draft.revision+1 then
     raise exception 'helper did not advance the recreated draft revision';
@@ -2090,7 +2090,7 @@ begin
   -- 手動削除が先でも finalizer は保存して成功する。
   -- 日次成功 3 枠を食い尽くさないよう、独立ケースは翌日 JST へ移す。
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['manual-first'],'japanese',
-    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections,null);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000081',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
     'generation-command.v3',repeat('b',64), jsonb_build_object(
@@ -2119,7 +2119,7 @@ begin
 
   -- finalizer が先なら、以前の public revision は stale になる（翌日 JST）
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['finalizer-first'],'japanese',
-    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections,null);
   v_before_revision := v_draft.revision;
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000082',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
@@ -2156,7 +2156,7 @@ begin
   -- 予約後に別タブ保存された新 revision は finalizer が削除しない
   -- （canonical 080 と同日。成功 2/3 枠）
   v_draft := public.save_generation_draft(0::bigint,'dinner',array['reserved'],'japanese',
-    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections,null);
   perform public.reserve_ai_generation(v_owner,'30000000-0000-4000-8000-000000000083',
     'new_menu',v_draft.id,v_draft.revision,null,null,null,
     'generation-command.v3',repeat('d',64), jsonb_build_object(
@@ -2169,7 +2169,7 @@ begin
   select id into strict v_request_id from private.ai_generation_requests
     where user_id=v_owner and idempotency_key='30000000-0000-4000-8000-000000000083';
   v_draft := public.save_generation_draft(v_draft.revision,'dinner',array['updated'],'japanese',
-    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections);
+    'household',v_target_ids,null::smallint,30::smallint,'standard',null,array[]::text[],'',v_pantry_selections,null);
   v_recreated_revision := v_draft.revision;
   perform public.mark_ai_global_sent(v_request_id,'2026-07-11 00:03:01+00');
   perform pg_temp.finalize_ordering_success(v_request_id,
@@ -3218,7 +3218,7 @@ begin
   v_draft := public.save_generation_draft(
     0::bigint,'dinner',array['idea-finalize'],'japanese',
     'idea',array[]::uuid[],3::smallint,30::smallint,'standard',null,
-    array[]::text[],'','[]'::jsonb
+    array[]::text[],'','[]'::jsonb,null
   );
   perform public.reserve_ai_generation(
     v_owner,'30000000-0000-4000-8000-0000000000f5',
@@ -3351,7 +3351,7 @@ begin
     v_draft := public.save_generation_draft(
       v_expected_revision,'dinner',array['idea-reject-' || v_case],'japanese',
       'idea',array[]::uuid[],3::smallint,30::smallint,'standard',null,
-      array[]::text[],'','[]'::jsonb
+      array[]::text[],'','[]'::jsonb,null
     );
     v_expected_revision := v_draft.revision;
 
@@ -3487,6 +3487,54 @@ begin
 end
 $idea_finalize$;
 
+-- ひねり軸: reserve が submission snapshot へ novelty_preference を写すことの往復
+do $novelty_snapshot$
+declare
+  -- live 未使用の専用 UUID 帯（f5/f6/f7/f8 は使用済み）
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000f9';
+  v_idempotency constant uuid := '30000000-0000-4000-8000-0000000000f9';
+  v_draft public.generation_drafts;
+begin
+  insert into auth.users(
+    id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at
+  ) values(
+    v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','novelty-snapshot@example.invalid','','{}','{}',now(),now()
+  );
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+
+  v_draft := public.save_generation_draft(
+    0::bigint,'dinner',array['豚肉'],'japanese',
+    'idea',array[]::uuid[],2::smallint,30::smallint,'standard',null,
+    array[]::text[],'','[]'::jsonb,'twist'
+  );
+  perform public.reserve_ai_generation(
+    v_owner,v_idempotency,
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v3',repeat('f',64),
+    jsonb_build_object(
+      'kind','new_menu',
+      'target_mode','idea',
+      'servings',2,
+      'target_member_ids','[]'::jsonb,
+      'source_menu_version',null
+    ),
+    tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,'2026-07-11 03:00:00+00'
+  );
+end
+$novelty_snapshot$;
+
+select is(
+  (select snapshot.novelty_preference
+     from private.ai_generation_requests request
+     cross join lateral public.get_ai_generation_submission_snapshot(
+       request.id, request.user_id) snapshot
+    where request.idempotency_key = '30000000-0000-4000-8000-0000000000f9'),
+  'twist',
+  'reserve copies novelty preference into the submission snapshot');
+
+
 select pass('idea finalize success stores null versions, fixed fingerprint, empty family children');
 select pass('idea finalize rejects non-empty targets, non-null versions, servings/fingerprint/snapshot/family rows without terminal menu or quota pollution');
 
@@ -3540,7 +3588,7 @@ begin
   v_draft := public.save_generation_draft(
     0::bigint,'dinner',array['鶏肉'],'japanese',
     'household',array[v_member],null::smallint,30::smallint,'standard',null,
-    array[]::text[],'','[]'::jsonb
+    array[]::text[],'','[]'::jsonb,null
   );
   perform public.reserve_ai_generation(
     v_owner,'30000000-0000-4000-8000-0000000000f6',
@@ -3748,7 +3796,7 @@ begin
       coalesce(v_draft.revision, 0)::bigint,'dinner',array['ソース'],'japanese',
       'household',array[v_member],null::smallint,30::smallint,'standard',null,
       array[]::text[],'',
-      jsonb_build_array(jsonb_build_object('pantryItemId',v_pantry,'priority','must_use'))
+      jsonb_build_array(jsonb_build_object('pantryItemId',v_pantry,'priority','must_use')),null
     );
     perform public.reserve_ai_generation(
       v_owner,

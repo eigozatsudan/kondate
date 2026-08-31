@@ -19,6 +19,7 @@ export function createPlannerDraftFromMenu(submission: PlannerSubmission): Plann
     timeLimitMinutes: submission.timeLimitMinutes,
     budgetPreference: submission.budgetPreference,
     ingredientPreference: submission.ingredientPreference,
+    noveltyPreference: submission.noveltyPreference,
     avoidIngredients: [...submission.avoidIngredients],
     memo: submission.memo,
     pantrySelections: submission.pantrySelections.map((item) => ({ ...item })),

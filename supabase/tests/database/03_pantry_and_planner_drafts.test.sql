@@ -1,5 +1,5 @@
 begin;
-select plan(43);
+select plan(48);
 
 select has_table('public', 'pantry_items', 'pantry item table exists');
 select has_table('public', 'generation_drafts', 'generation draft table exists');
@@ -15,6 +15,10 @@ select has_column('public', 'generation_drafts', 'servings',
   'generation draft has a servings count');
 select has_column('public', 'generation_drafts', 'revision',
   'generation draft has a revision');
+select has_column('public', 'generation_drafts', 'novelty_preference',
+  'generation drafts store the novelty preference');
+select has_column('private', 'generation_draft_submission_versions', 'novelty_preference',
+  'submission snapshot stores novelty preference');
 select has_column('public', 'generation_drafts', 'deleted_at',
   'generation draft has a deletion tombstone');
 select is(
@@ -39,7 +43,7 @@ select ok((select count(*)=1 from pg_publication_tables
       where oid='public.generation_drafts'::regclass),
   'generation drafts publish full-row cross-device target changes');
 select has_function('public','save_generation_draft',
-  array['bigint','text','text[]','text','text','uuid[]','smallint','smallint','text','text','text[]','text','jsonb']);
+  array['bigint','text','text[]','text','text','uuid[]','smallint','smallint','text','text','text[]','text','jsonb','text']);
 
 insert into auth.users (id, instance_id, aud, role, email)
 values
@@ -64,17 +68,17 @@ select throws_ok(
 
 select public.save_generation_draft(0,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,
   30::smallint,'standard',null,array[]::text[],'',
-  '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use"}]'::jsonb);
+  '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use"}]'::jsonb,null);
 
 select is((select count(*)::integer from public.generation_drafts), 1, 'owner reads one draft');
 select is((select revision from public.generation_drafts),1::bigint,
   'first authoritative save creates revision one');
 select public.save_generation_draft(1,'dinner',array['鶏肉','白菜'],'japanese',null,array[]::uuid[],null::smallint,
-  30::smallint,'standard',null,array[]::text[],'更新', '[]'::jsonb);
+  30::smallint,'standard',null,array[]::text[],'更新', '[]'::jsonb,null);
 select is((select revision from public.generation_drafts),2::bigint,
   'each serialized save increments revision exactly once');
 select throws_ok($$select public.save_generation_draft(1,'dinner',array[]::text[],
-  'japanese',null,array[]::uuid[],null::smallint,30::smallint,'standard',null,array[]::text[],'stale','[]'::jsonb)$$,
+  'japanese',null,array[]::uuid[],null::smallint,30::smallint,'standard',null,array[]::text[],'stale','[]'::jsonb,null)$$,
   'P0001','draft_revision_conflict','a stale save cannot overwrite a newer draft');
 select throws_ok($$insert into public.generation_drafts(user_id)
   values('10000000-0000-0000-0000-000000000001')$$,
@@ -82,41 +86,41 @@ select throws_ok($$insert into public.generation_drafts(user_id)
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,
     30::smallint,'standard',null,array[]::text[],'',
-    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use","checkedAt":"2026-07-11T00:00:00Z"}]'::jsonb)$$,
+    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use","checkedAt":"2026-07-11T00:00:00Z"}]'::jsonb,null)$$,
   '23514', null, 'expired confirmation cannot be persisted'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,
     30::smallint,'standard',null,array[]::text[],'',
-    '[{"pantryItemId":"not-a-uuid","priority":"must_use"}]'::jsonb)$$,
+    '[{"pantryItemId":"not-a-uuid","priority":"must_use"}]'::jsonb,null)$$,
   '23514', null, 'pantry item ID must be a UUID'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,
     30::smallint,'standard',null,array[]::text[],'',
-    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"optional"}]'::jsonb)$$,
+    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"optional"}]'::jsonb,null)$$,
   '23514', null, 'pantry priority must be a declared value'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,
-    30::smallint,'standard',null,array[]::text[],'','[{"priority":"must_use"}]'::jsonb)$$,
+    30::smallint,'standard',null,array[]::text[],'','[{"priority":"must_use"}]'::jsonb,null)$$,
   '23514', null, 'pantry selection requires a pantry item ID'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,
     30::smallint,'standard',null,array[]::text[],'',
-    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001"}]'::jsonb)$$,
+    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001"}]'::jsonb,null)$$,
   '23514', null, 'pantry selection requires a priority'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,
     30::smallint,'standard',null,array[]::text[],'',
-    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use","note":"x"}]'::jsonb)$$,
+    '[{"pantryItemId":"20000000-0000-0000-0000-000000000001","priority":"must_use","note":"x"}]'::jsonb,null)$$,
   '23514', null, 'pantry selection rejects undeclared keys'
 );
 select throws_ok(
   $$select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese',null,array[]::uuid[],null::smallint,
-    30::smallint,'standard',null,array[]::text[],'','["invalid"]'::jsonb)$$,
+    30::smallint,'standard',null,array[]::text[],'','["invalid"]'::jsonb,null)$$,
   '23514', null, 'pantry selection must be an object'
 );
 select throws_ok(
@@ -129,7 +133,7 @@ select throws_ok(
         'priority', 'must_use'
       ))
       from generate_series(1, 51)
-    ))$$,
+    ),null)$$,
   '23514', null, 'a draft cannot persist more than 50 pantry selections'
 );
 select throws_ok(
@@ -137,7 +141,7 @@ select throws_ok(
     30::smallint,'standard',null,array[]::text[],'',jsonb_build_array(jsonb_build_object(
       'pantryItemId', '20000000-0000-4000-8000-000000000001',
       'priority', repeat('must_use', 5000)
-    )))$$,
+    )),null)$$,
   '23514', null, 'a draft cannot persist pantry selections larger than 32 KiB'
 );
 
@@ -152,7 +156,7 @@ select is((select servings from public.generation_drafts), null,
 -- household: 家族1〜20人・servings null
 select public.save_generation_draft(2,'dinner',array['鶏肉'],'japanese','household',
   array['20000000-0000-4000-8000-000000000099']::uuid[],null::smallint,
-  30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb);
+  30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb,null);
 select is((select target_mode from public.generation_drafts), 'household',
   'household save persists target_mode');
 select is((select servings from public.generation_drafts), null,
@@ -161,7 +165,7 @@ select is((select servings from public.generation_drafts), null,
 -- idea: 家族0人・servings 1〜20
 select public.save_generation_draft(3,'dinner',array['鶏肉'],'japanese','idea',
   array[]::uuid[],2::smallint,
-  30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb);
+  30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb,null);
 select is((select target_mode from public.generation_drafts), 'idea',
   'idea save persists target_mode');
 select is((select servings from public.generation_drafts), 2::smallint,
@@ -170,26 +174,45 @@ select is((select servings from public.generation_drafts), 2::smallint,
 -- 矛盾する組み合わせはCHECKで拒否する
 select throws_ok(
   $$select public.save_generation_draft(4,'dinner',array['鶏肉'],'japanese','household',
-    array[]::uuid[],null::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb)$$,
+    array[]::uuid[],null::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,null)$$,
   '23514', null, 'household with no target members is rejected'
 );
 select throws_ok(
   $$select public.save_generation_draft(4,'dinner',array['鶏肉'],'japanese','household',
     array['20000000-0000-4000-8000-000000000099']::uuid[],2::smallint,
-    30::smallint,'standard',null,array[]::text[],'','[]'::jsonb)$$,
+    30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,null)$$,
   '23514', null, 'household with servings set is rejected'
 );
 select throws_ok(
   $$select public.save_generation_draft(4,'dinner',array['鶏肉'],'japanese','idea',
     array['20000000-0000-4000-8000-000000000099']::uuid[],2::smallint,
-    30::smallint,'standard',null,array[]::text[],'','[]'::jsonb)$$,
+    30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,null)$$,
   '23514', null, 'idea with target members is rejected'
 );
 select throws_ok(
   $$select public.save_generation_draft(4,'dinner',array['鶏肉'],'japanese','idea',
-    array[]::uuid[],null::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb)$$,
+    array[]::uuid[],null::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,null)$$,
   '23514', null, 'idea without servings is rejected'
 );
+
+-- ひねり軸: 14 引数保存で永続化され、未知値は拒否される
+select public.save_generation_draft(4,'dinner',array['豚肉'],'japanese','idea',
+  array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,'twist');
+select is((select novelty_preference from public.generation_drafts), 'twist',
+  'save persists novelty preference');
+
+select throws_ok(
+  $$select public.save_generation_draft(5,'dinner',array['豚肉'],'japanese','idea',
+    array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,'wild')$$,
+  '22023', 'invalid_draft_save', 'save rejects an unknown novelty value');
+
+-- has_function(14 型) は 13 引数版の残留を検出しないため overload 数を直接数える
+select is(
+  (select count(*)::integer
+     from pg_catalog.pg_proc p
+     join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'save_generation_draft'),
+  1, 'save_generation_draft has exactly one overload');
 
 select * from finish();
 rollback;

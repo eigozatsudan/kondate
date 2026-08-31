@@ -608,6 +608,7 @@ export type Database = {
           main_ingredients: string[]
           meal_type: string
           memo: string
+          novelty_preference: string | null
           pantry_selections: Json
           servings: number | null
           target_member_ids: string[]
@@ -626,6 +627,7 @@ export type Database = {
           main_ingredients: string[]
           meal_type: string
           memo: string
+          novelty_preference?: string | null
           pantry_selections: Json
           servings?: number | null
           target_member_ids: string[]
@@ -644,6 +646,7 @@ export type Database = {
           main_ingredients?: string[]
           meal_type?: string
           memo?: string
+          novelty_preference?: string | null
           pantry_selections?: Json
           servings?: number | null
           target_member_ids?: string[]
@@ -1306,6 +1309,7 @@ export type Database = {
           main_ingredients: string[]
           meal_type: string | null
           memo: string
+          novelty_preference: string | null
           pantry_selections: Json
           revision: number
           servings: number | null
@@ -1326,6 +1330,7 @@ export type Database = {
           main_ingredients?: string[]
           meal_type?: string | null
           memo?: string
+          novelty_preference?: string | null
           pantry_selections?: Json
           revision?: number
           servings?: number | null
@@ -1346,6 +1351,7 @@ export type Database = {
           main_ingredients?: string[]
           meal_type?: string | null
           memo?: string
+          novelty_preference?: string | null
           pantry_selections?: Json
           revision?: number
           servings?: number | null
@@ -2942,6 +2948,7 @@ export type Database = {
           main_ingredients: string[]
           meal_type: string
           memo: string
+          novelty_preference: string
           pantry_selections: Json
           servings: number
           target_member_ids: string[]
@@ -3196,6 +3203,7 @@ export type Database = {
           p_main_ingredients: string[]
           p_meal_type: string
           p_memo: string
+          p_novelty_preference: string
           p_pantry_selections: Json
           p_servings: number
           p_target_member_ids: string[]
@@ -3213,6 +3221,7 @@ export type Database = {
           main_ingredients: string[]
           meal_type: string | null
           memo: string
+          novelty_preference: string | null
           pantry_selections: Json
           revision: number
           servings: number | null

@@ -106,6 +106,7 @@ const emptyDraft: PlannerDraftInput = {
   timeLimitMinutes: null,
   budgetPreference: null,
   ingredientPreference: null,
+  noveltyPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],
