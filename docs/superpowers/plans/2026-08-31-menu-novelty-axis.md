@@ -74,6 +74,10 @@
 - Modify: `supabase/tests/database/03_pantry_and_planner_drafts.test.sql`
 - Modify: `supabase/tests/database/03a_pantry_and_planner_drafts_hardening.test.sql`
 - Modify: `supabase/tests/database/ai_control_and_quota.test.sql`
+- Modify: `supabase/tests/database/rls_inventory.test.sql`
+- Modify: `src/shared/types/database.ts`（overlay）, `src/shared/types/database.test.ts`
+- Modify: `src/features/planner/planner-api.ts`（`buildSaveGenerationDraftArgs` のみ）
+- Modify: `shared/testing/factories.ts`, `src/features/planner/use-draft-autosave.ts`, `src/features/planner/planner-route.tsx`（Step 9b の型波及。値の写経を含む）
 - Regenerate: `src/shared/types/database.generated.ts`
 
 **Interfaces:**
@@ -331,9 +335,9 @@ select has_column('private','generation_draft_submission_versions','novelty_pref
 -- ひねり軸: reserve が submission snapshot へ novelty_preference を写すことの往復
 do $novelty_snapshot$
 declare
-  -- 他 fixture と衝突しない専用 UUID 帯
-  v_owner constant uuid := '10000000-0000-4000-8000-0000000000f7';
-  v_idempotency constant uuid := '30000000-0000-4000-8000-0000000000f7';
+  -- live 未使用の専用 UUID 帯（f5/f6/f7/f8 は使用済み）
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000f9';
+  v_idempotency constant uuid := '30000000-0000-4000-8000-0000000000f9';
   v_draft public.generation_drafts;
 begin
   insert into auth.users(
@@ -368,14 +372,18 @@ select is(
      from private.ai_generation_requests request
      cross join lateral public.get_ai_generation_submission_snapshot(
        request.id, request.user_id) snapshot
-    where request.idempotency_key = '30000000-0000-4000-8000-0000000000f7'),
+    where request.idempotency_key = '30000000-0000-4000-8000-0000000000f9'),
   'twist',
   'reserve copies novelty preference into the submission snapshot');
 ```
 
 `reserve_ai_generation` の引数列は 1997 行目付近の既存呼び出しから写してある。**貼る前にその行を読み、引数の数と順序が今も一致することを確かめること**（quota 系の引数が多く、1 つずれると別の失敗になる）。`tests.quota_identity_key` も同ファイルの既存呼び出しが使っているヘルパーである。
 
-UUID 帯 `...f7` と `repeat('f',64)` は他 fixture と衝突しない前提で選んでいる。衝突したら `grep -n "0000000000f7\|repeat('f'" supabase/tests/database/ai_control_and_quota.test.sql` で確かめ、空いている帯へずらすこと。
+UUID 帯 `...f9` は live で未使用である。`...f5` / `...f6` / `...f7` / `...f8` は既存 fixture が占有しており、とくに `...f7` は `do $pantry_recheck$` が owner を 3663 行目、idempotency を 3756 行目で使っている。ここへ重ねると `auth.users` の主キーか `(user_id, idempotency_key)` の一意制約で Step 8 が止まる。
+
+`repeat('f',64)` は一意制約を持たない列なので、他ブロックと同じ値でも衝突しない。
+
+貼る位置は `do $idea_finalize$` ブロックの**終端の後ろ**である。3185 行目はブロックの開始行なので、対応する `$idea_finalize$;` を探してその後ろへ置くこと。
 
 - [ ] **Step 8: migration を適用して pgTAP を走らせる**
 
@@ -402,32 +410,9 @@ grep -n "novelty_preference" src/shared/types/database.generated.ts
 
 期待: `p_novelty_preference` と `novelty_preference` が現れる。
 
-- [ ] **Step 9b: 契約変更の型波及をリポジトリ全体で潰す**
+- [ ] **Step 9a: 型 overlay と RPC 送信引数を配線**
 
-**`.default(null)` は入力を任意にするだけで、`z.infer` が出す出力型ではキーは必須である。** つまり `PlannerDraftInput` / `PlannerSubmission` として型付けされたオブジェクトリテラルはすべて `noveltyPreference` を持たなければならず、parse 結果を `toEqual` で比較しているテストはすべて新しいキーの分だけ落ちる。これは Task 2 以降ではなく **この Task の範囲**である。ここで潰さないと Task 1 の commit で main が赤くなり、Task 2 の typecheck PASS も成立しない。
-
-```bash
-docker compose run --rm --no-deps app npm run typecheck > /tmp/tc.log 2>&1; grep -nE "error" /tmp/tc.log || tail -n 40 /tmp/tc.log
-```
-
-エラーが出た箇所すべてへ `noveltyPreference: null,` を足す。既知の起点は次のとおりだが、**この一覧を信用せず typecheck の出力を正とすること**（`grep -rln "ingredientPreference" src/ shared/ netlify/ e2e/` は 39 ファイルに当たる）。
-
-- `shared/testing/factories.ts:246`, `:294` — 共有ファクトリ。ここを直すと下流の多くが同時に片付く
-- `shared/contracts/planner.test.ts` — `toMatchObject` は影響しないが `toEqual` は落ちる
-- `src/features/planner/**` の draft フィクスチャ
-- `netlify/functions/_shared/**` の submission フィクスチャ
-
-`toEqual` が落ちた箇所は、期待値へ `noveltyPreference: null` を足す。`toMatchObject` へ書き換えて逃げない（部分一致にすると余剰キーの検出力が落ちる）。
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run > /tmp/vitest.log 2>&1; grep -nE "FAIL|✕" /tmp/vitest.log || tail -n 30 /tmp/vitest.log
-```
-
-期待: typecheck・全 vitest ともに PASS。出力が大きいので上のようにファイルへ落とし、失敗行だけを読むこと。
-
-- [ ] **Step 9c: 型 overlay と RPC 送信引数を配線**
-
-**overlay は Task 2 ではなくこの Task に属する。** 型再生成後の `SaveDraftArgs` は `p_novelty_preference: string`（非 null 必須）になるため、`buildSaveGenerationDraftArgs` の戻り値と `database.test.ts` の `satisfies SaveDraftArgs` が赤くなる。これは `noveltyPreference: null` を足しても直らない。overlay で `| null` へ広げ、同時に引数を渡すところまでやって初めて緑になる。
+**overlay は Task 2 ではなくこの Task に属し、しかも型波及の掃除（Step 9b）より前に来る。** 型再生成後の `SaveDraftArgs` は `p_novelty_preference: string`（非 null 必須）になるため、`buildSaveGenerationDraftArgs` の戻り値と `database.test.ts` の `satisfies SaveDraftArgs` が赤くなる。これは `noveltyPreference: null` を足しても直らない。したがって **overlay を先に入れないと、Step 9b の「typecheck 全 PASS」ゲートは到達不能**である。
 
 `src/shared/types/database.ts`、`NullableDraftArgs` の union へ:
 
@@ -451,12 +436,43 @@ docker compose run --rm --no-deps app npm test -- --run > /tmp/vitest.log 2>&1; 
 
 **この overlay が要る理由**: Postgres Meta は nullable 引数を非 null な `string` として生成する。overlay が無いと「未選択」を型として送れない。
 
+このステップの時点では typecheck はまだ赤くてよい（Step 9b の対象が残っている）。
+
+- [ ] **Step 9b: 契約変更の型波及をリポジトリ全体で潰す**
+
+**`.default(null)` は入力を任意にするだけで、`z.infer` が出す出力型ではキーは必須である。** つまり `PlannerDraftInput` / `PlannerSubmission` として型付けされたオブジェクトリテラルはすべて `noveltyPreference` を持たなければならず、parse 結果を `toEqual` で比較しているテストはすべて新しいキーの分だけ落ちる。これは Task 2 以降ではなく **この Task の範囲**である。ここで潰さないと Task 1 の commit で main が赤くなる。
+
 ```bash
-docker compose run --rm --no-deps app npm test -- --run src/shared/types/database.test.ts src/features/planner/planner-api.test.ts
-docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run typecheck > /tmp/tc.log 2>&1; grep -nE "error" /tmp/tc.log || tail -n 40 /tmp/tc.log
 ```
 
-期待: PASS。`planner-api.test.ts` の期待引数に `p_novelty_preference: null,` を足す必要があればここで足す。
+**エラー箇所へ機械的に `noveltyPreference: null,` を植えてはならない。** 落ちる箇所は 2 種類あり、扱いが逆である。
+
+**(i) 定数 `null` を書く場所** — フィクスチャ、空の初期値。
+
+- `shared/testing/factories.ts:246`, `:294`（共有ファクトリ。ここを直すと下流の多くが同時に片付く）
+- `shared/contracts/planner.test.ts` のフィクスチャ（Step 1 で対応済み）
+- `src/features/planner/planner-route.tsx:104` 付近の空下書き初期値
+- `netlify/functions/_shared/**` の submission フィクスチャ
+
+**(ii) 値を写す場所（コピー関数）** — ここへ定数 `null` を植えると、hydrate / persist / submit のいずれかが `twist` を静かに潰す。`ingredientPreference` が書かれているのと**同じ形**で値を写すこと。
+
+| 場所 | 書く内容 |
+|---|---|
+| `src/features/planner/use-draft-autosave.ts:66` 付近 `toDraftInputFields` | `noveltyPreference: value.noveltyPreference,` |
+| `src/features/planner/planner-route.tsx:135` 付近 `toPlannerDraftInput` | `noveltyPreference: draft.noveltyPreference,` |
+| `src/features/planner/planner-route.tsx:1768` 付近 `submissionCandidate` | `noveltyPreference: value.noveltyPreference,` |
+
+各行の直前に `ingredientPreference` が同じ形で書かれているので、それをそのまま真似れば判別できる。**判断に迷ったら「この関数は値を運んでいるか」を見る。運んでいるなら写す。**
+
+`toEqual` が落ちた箇所は、期待値へ `noveltyPreference: null` を足す。`toMatchObject` へ書き換えて逃げない（部分一致にすると余剰キーの検出力が落ちる）。
+
+```bash
+docker compose run --rm --no-deps app npm run typecheck > /tmp/tc.log 2>&1; grep -nE "error" /tmp/tc.log || tail -n 40 /tmp/tc.log
+docker compose run --rm --no-deps app npm test -- --run > /tmp/vitest.log 2>&1; grep -nE "FAIL|✕" /tmp/vitest.log || tail -n 30 /tmp/vitest.log
+```
+
+期待: typecheck・全 vitest ともに PASS。**typecheck 全 PASS を要求するのはこの 1 回だけ**である（Step 9a の直後には要求しない）。出力が大きいので上のようにファイルへ落とし、失敗行だけを読むこと。
 
 - [ ] **Step 10: サーバー読み取り面の failing test を書く**
 
@@ -506,11 +522,11 @@ docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run format:check
 ```
 
-期待: すべて PASS。**typecheck が赤いまま次へ進まない。** Step 9b で全体を緑にしてあるので、ここで落ちるなら Step 12 の変更が原因である。`planner-api.ts` などクライアント側が落ちる場合も、`noveltyPreference: null` を足して緑にしてから commit する（値を実際に配線するのは Task 2 だが、型の穴を Task 間にまたがせない）。
+期待: すべて PASS。**typecheck が赤いまま次へ進まない。** Step 9a と 9b で全体を緑にしてあるので、ここで落ちるなら Step 12 の変更が原因である。9b の (ii) の判別（定数 null か値の写経か）を誤っていないかも併せて見直すこと。
 
 - [ ] **Step 14: コミット（単一 commit）**
 
-Step 9b と Step 9c が触ったパスを漏れなく含める。`git status --short` で未追加が無いことを確認してからコミットすること（Step 9b の波及先はリポジトリ全体に散るため、`git add` の列挙だけに頼らない）。
+Step 9a と Step 9b が触ったパスを漏れなく含める。`git status --short` で未追加が無いことを確認してからコミットすること（Step 9b の波及先はリポジトリ全体に散るため、`git add` の列挙だけに頼らない）。
 
 ```bash
 git status --short
@@ -536,7 +552,19 @@ plannerSubmissionSchema は両枝 strict で mapSnapshot はリテラルを直�
 
 ### Task 2: クライアント永続面（読み取りと下書き保持）
 
-**overlay と `buildSaveGenerationDraftArgs` は Task 1 Step 9c で済んでいる。** この Task は「保存した値を読み戻して保持し続ける」側だけを扱う。開始時点で typecheck は緑のはずで、緑でないなら Task 1 が未完了である。
+**overlay と `buildSaveGenerationDraftArgs` は Task 1 Step 9a で済んでいる。** この Task は「保存した値を読み戻して保持し続ける」側だけを扱う。開始時点で typecheck は緑のはずで、緑でないなら Task 1 が未完了である。
+
+**着手前に、対象行に `noveltyPreference` が既にあるかを確認すること。** Task 1 Step 9b が型を通すために同じキーへ触れている。判断は 3 通りある。
+
+| 現状 | すること |
+|---|---|
+| キーが無い | この Task の指示どおり足す |
+| キーがあり、値が `value.noveltyPreference` などの写経 | 何もしない。重ねて足すと TS1117（重複プロパティ）になる |
+| キーがあるが、値が定数 `null` | **写経へ置き換える。** Step 9b の (ii) の判別漏れであり、そのまま出荷すると hydrate / persist / submit が `twist` を潰す |
+
+3 行目を見落とすと「キーがあるからスキップ」で wipe がそのまま出荷される。`grep -n "noveltyPreference" src/features/planner/use-draft-autosave.ts src/features/planner/planner-route.tsx` で 3 箇所すべての値を目で確かめること。
+
+この Task の実質的な残作業は **select 列・`mapPlannerDraft`・autosave の空判定**の 3 点である。
 
 **Files:**
 - Modify: `src/features/planner/planner-api.ts:25-45`（`mapPlannerDraft`）, `:56`（select 列）
@@ -575,7 +603,9 @@ it("returns the novelty preference from a fetched draft row", async () => {
 });
 ```
 
-`makeBrowserClientStub` / `draftRowFixture` / `userId` は同ファイルの既存ヘルパー名へ読み替える。**スタブのチェーンを自作しない** — 同ファイルには `from().select().eq().maybeSingle()` を組む既存スタブがあるので、それを再利用し、`select` の呼び出し引数だけを観測できるよう最小限に手を入れること。
+**このファイルには再利用できる読み取りスタブが無い。** live の `planner-api.test.ts` にあるのは `clientWithRpc`（22 行目）だけで、`from()` 系のスタブも `getPlannerDraft` の import も存在しない。したがって `from().select().eq().maybeSingle()` のチェーンと行フィクスチャを**このファイルへ最小限に新設する**（`clientWithRpc` の隣に置き、同じ命名・同じ `vi.fn()` の使い方に揃える）。`getPlannerDraft` の import も足すこと。
+
+新設するのは上の 2 本のテストが必要とする分だけでよい。汎用のクライアントモックを作らない。
 
 - [ ] **Step 2: テストが落ちることを確認**
 
@@ -622,11 +652,7 @@ docker compose run --rm --no-deps app npm test -- --run src/features/planner/use
 
 - [ ] **Step 6: autosave と route を実装**
 
-`use-draft-autosave.ts:76` 付近の保存値コピーへ:
-
-```ts
-    noveltyPreference: value.noveltyPreference,
-```
+**空判定だけがこの Task の新規作業である。** 残りは Task 1 Step 9b の結果を検算する。
 
 `use-draft-autosave.ts:141` 付近の空判定の連鎖へ（`fields.ingredientPreference === null &&` の直後）:
 
@@ -634,7 +660,20 @@ docker compose run --rm --no-deps app npm test -- --run src/features/planner/use
     fields.noveltyPreference === null &&
 ```
 
-`planner-route.tsx` の 3 箇所（104 行目の初期値 `null`、145 行目の draft からの hydrate、1776 行目の送信コピー）へ、それぞれ `ingredientPreference` と同型の 1 行を足す。
+これは Step 9b の型波及では現れない（`&&` の連鎖は型ではなくロジックなので typecheck が要求しない）。**この Task で必ず足す。**
+
+コピー 3 箇所は上の表に従って検算する。値が写経になっていれば触らない。定数 `null` なら次へ置き換える。
+
+```ts
+// use-draft-autosave.ts:66 付近 toDraftInputFields
+    noveltyPreference: value.noveltyPreference,
+// planner-route.tsx:135 付近 toPlannerDraftInput
+    noveltyPreference: draft.noveltyPreference,
+// planner-route.tsx:1768 付近 submissionCandidate
+    noveltyPreference: value.noveltyPreference,
+```
+
+`planner-route.tsx:104` 付近の空下書き初期値は定数 `null` が正しい。ここは置き換えない。
 
 - [ ] **Step 7: テストが通ることを確認**
 
