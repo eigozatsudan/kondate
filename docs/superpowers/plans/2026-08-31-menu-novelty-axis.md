@@ -42,12 +42,13 @@
 | ファイル | 変更内容 |
 |---|---|
 | `shared/contracts/planner.ts` | `noveltyPreferences` 列挙、`draftShape` / `submissionCommonShape` へ追加 |
+| `shared/testing/factories.ts` | 契約変更の型波及（Task 1 Step 9b） |
 | `netlify/functions/_shared/generation-context.ts` | `snapshotRowSchema` と `mapSnapshot` |
 | `supabase/tests/database/03_pantry_and_planner_drafts.test.sql` | `has_function` 型配列と全 positional 呼び出しへ 14 番目の引数 |
 | `supabase/tests/database/03a_pantry_and_planner_drafts_hardening.test.sql` | 同上 |
 | `supabase/tests/database/ai_control_and_quota.test.sql` | 同上 + snapshot 往復アサート |
-| `src/shared/types/database.ts` | overlay `NullableDraftArgs` と `SaveDraftArgs` |
-| `src/features/planner/planner-api.ts` | select 列、`mapPlannerDraft`、`buildSaveGenerationDraftArgs` |
+| `src/shared/types/database.ts` | overlay `NullableDraftArgs` と `SaveDraftArgs`（Task 1） |
+| `src/features/planner/planner-api.ts` | `buildSaveGenerationDraftArgs`（Task 1）、select 列と `mapPlannerDraft`（Task 2） |
 | `src/features/planner/use-draft-autosave.ts` | 保存値のコピーと「空下書き」判定 |
 | `src/features/planner/planner-route.tsx` | 初期値・hydrate・送信コピー |
 | `src/features/planner/model/planner-labels.ts` | 日本語ラベル |
@@ -113,6 +114,8 @@ describe("noveltyPreference", () => {
 ```
 
 `incompleteDraft` は同ファイルの既存フィクスチャ。同ファイルの `ingredientPreference` テスト群（21-91 行目付近）が形の手本なので、submission 側のケースもそこの書き方に合わせて 1 件足す。
+
+**このステップで `incompleteDraft` 自身へ `noveltyPreference: null,` を足しておく。** フィクスチャが `PlannerDraftInput` として型付けされている場合、`z.infer` の出力型ではキーが必須になるため、Step 3 で契約を変えた瞬間にこのフィクスチャが型エラーになる。Step 4 の「契約テスト PASS」を成立させるには、フィクスチャの更新がそこより前にある必要がある。
 
 - [ ] **Step 2: テストが落ちることを確認**
 
@@ -231,14 +234,14 @@ DROP の引数は `(uuid, uuid)` で固定。この関数の引数は `p_request
 revoke all on function public.save_generation_draft(
   bigint, text, text[], text, text, uuid[], smallint, smallint,
   text, text, text[], text, jsonb, text
-) from public, anon, service_role;
+) from public, anon, authenticated, service_role;
 grant execute on function public.save_generation_draft(
   bigint, text, text[], text, text, uuid[], smallint, smallint,
   text, text, text[], text, jsonb, text
 ) to authenticated;
 ```
 
-revoke 対象ロールと grant 先は元ファイルの `save_generation_draft` の記述をそのまま踏襲すること（上は形の例であり、ロール一覧は元ファイルを正とする）。`reserve_ai_generation` と `get_ai_generation_submission_snapshot` は引数が変わらないので、元ファイルの revoke/grant をそのまま写す。
+ロール一覧は `20260730120000_ingredient_preference.sql:120-125` と同一である（`authenticated` を含めて revoke してから `authenticated` へ grant し直す。この順序を崩さない）。`reserve_ai_generation` と `get_ai_generation_submission_snapshot` は引数が変わらないので、元ファイルの revoke/grant をそのまま写す。
 
 - [ ] **Step 6: 既存 pgTAP の 13 引数依存をすべて 14 引数へ更新**
 
@@ -287,7 +290,7 @@ select has_function('public','save_generation_draft',
 
 **貼る前に、その時点の `revision` と `plan()` 方式を必ず確認すること。** 下のコードは live の現状（`03_pantry` は 194 行目の `finish()` 直前で revision 4、`ai_control_and_quota` は `no_plan()`）に合わせてある。
 
-**(a) `03_pantry_and_planner_drafts.test.sql`** — 162 行目の idea 保存が成功して revision は 4 になっている。したがって新しい保存は `p_expected_revision = 4` から始める。`plan(43)` を `plan(46)` へ増やし、194 行目の `select * from finish();` の直前へ:
+**(a) `03_pantry_and_planner_drafts.test.sql`** — 162 行目の idea 保存が成功して revision は 4 になっている。したがって新しい保存は `p_expected_revision = 4` から始める。194 行目の `select * from finish();` の直前へ:
 
 ```sql
 select public.save_generation_draft(4,'dinner',array['豚肉'],'japanese','idea',
@@ -311,7 +314,7 @@ select is(
 
 targetMode / servings は 162 行目の idea 保存と同じ形へ揃えてある。これは `refineTargetAndServings` 相当の DB CHECK（household は member 非空、idea は servings 必須）を満たすためで、`null` モードへ戻すと別の CHECK に当たる可能性がある。162 行目の実引数を読んで合わせること。
 
-**(b) `private.generation_draft_submission_versions` の列**は `03_pantry` の `plan(46)` に含めた 3 件とは別に、同ファイルの既存の `has_column` 群の並びへ 1 件足す（その場合 `plan(47)` にする）:
+**(b)** 上の 3 件に加えて、同ファイルの既存の `has_column` 群の並びへ 1 件足す。したがって `plan(43)` は最終的に **`plan(47)`** になる（新規 4 件）。
 
 ```sql
 select has_column('private','generation_draft_submission_versions','novelty_preference',
@@ -320,21 +323,59 @@ select has_column('private','generation_draft_submission_versions','novelty_pref
 
 **(c) `ai_control_and_quota.test.sql`** — このファイルは `no_plan()`（3 行目）なので **`plan()` の数を触らない**。
 
-既存の snapshot 往復シナリオへ assert を足してはならない。そこの下書きは `selected_only` を保存した別の文脈で作られており、`novelty_preference` は `null` のままなので、twist を期待する assert は必ず落ちる。新しい下書き保存から予約までを 1 本足す。
+**既存シナリオへ assert を足してはならない。** 1158 行目付近の `selected_only` 往復は JWT を張らず `revision` 1 固定で回っており、そこへ保存を差し込むと save 自体が落ちるか、後続が `draft_revision_conflict` になる。1990 行目付近（canonical success）と 3185 行目付近（idea finalize）が採っている **自己完結 DO ブロック**の形に倣い、専用 owner・専用 UUID 帯で 1 本足す。3185 行目の `do $idea_finalize$` ブロックが最も近い手本である。
+
+3185 行目のブロックの後ろへ:
 
 ```sql
--- 既存の予約シナリオの後ろへ、独立した往復を 1 本足す
-select public.save_generation_draft(<現在の revision>,'dinner',array['豚肉'],'japanese','idea',
-  array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'', '[]'::jsonb,'twist');
--- 同ファイルの既存パターンで reserve_ai_generation を呼び、その request_id を使う
+-- ひねり軸: reserve が submission snapshot へ novelty_preference を写すことの往復
+do $novelty_snapshot$
+declare
+  -- 他 fixture と衝突しない専用 UUID 帯
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000f7';
+  v_idempotency constant uuid := '30000000-0000-4000-8000-0000000000f7';
+  v_draft public.generation_drafts;
+begin
+  insert into auth.users(
+    id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at
+  ) values(
+    v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','novelty-snapshot@example.invalid','','{}','{}',now(),now()
+  );
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+
+  -- idea モードで 14 引数保存。expected_revision は新規 owner なので 0
+  v_draft := public.save_generation_draft(0::bigint,'dinner',array['豚肉'],'japanese',
+    'idea',array[]::uuid[],2::smallint,30::smallint,'standard',null,
+    array[]::text[],'','[]'::jsonb,'twist');
+
+  perform public.reserve_ai_generation(v_owner,v_idempotency,
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v3',repeat('f',64), jsonb_build_object(
+      'kind', 'new_menu',
+      'target_mode', 'idea',
+      'servings', to_jsonb(v_draft.servings),
+      'target_member_ids', '[]'::jsonb,
+      'source_menu_version', null
+    ), tests.quota_identity_key(v_owner), 3, 6, 4, 20, false, false, 180,
+    '2026-07-11 00:00:10+00');
+end
+$novelty_snapshot$;
+
 select is(
-  (select novelty_preference
-     from public.get_ai_generation_submission_snapshot(<request_id>, <user_id>)),
+  (select snapshot.novelty_preference
+     from private.ai_generation_requests request
+     cross join lateral public.get_ai_generation_submission_snapshot(
+       request.id, request.user_id) snapshot
+    where request.idempotency_key = '30000000-0000-4000-8000-0000000000f7'),
   'twist',
   'reserve copies novelty preference into the submission snapshot');
 ```
 
-`<現在の revision>` / `<request_id>` / `<user_id>` は同ファイルの直前のシナリオが使っている実際の値・変数へ置き換える。`reserve_ai_generation` の引数は同ファイルの既存呼び出しをそのまま写すこと（引数が多く、quota 系の必須引数を落とすと別の失敗になる）。
+`reserve_ai_generation` の引数列は 1997 行目付近の既存呼び出しから写してある。**貼る前にその行を読み、引数の数と順序が今も一致することを確かめること**（quota 系の引数が多く、1 つずれると別の失敗になる）。`tests.quota_identity_key` も同ファイルの既存呼び出しが使っているヘルパーである。
+
+UUID 帯 `...f7` と `repeat('f',64)` は他 fixture と衝突しない前提で選んでいる。衝突したら `grep -n "0000000000f7\|repeat('f'" supabase/tests/database/ai_control_and_quota.test.sql` で確かめ、空いている帯へずらすこと。
 
 - [ ] **Step 8: migration を適用して pgTAP を走らせる**
 
@@ -383,6 +424,39 @@ docker compose run --rm --no-deps app npm test -- --run > /tmp/vitest.log 2>&1; 
 ```
 
 期待: typecheck・全 vitest ともに PASS。出力が大きいので上のようにファイルへ落とし、失敗行だけを読むこと。
+
+- [ ] **Step 9c: 型 overlay と RPC 送信引数を配線**
+
+**overlay は Task 2 ではなくこの Task に属する。** 型再生成後の `SaveDraftArgs` は `p_novelty_preference: string`（非 null 必須）になるため、`buildSaveGenerationDraftArgs` の戻り値と `database.test.ts` の `satisfies SaveDraftArgs` が赤くなる。これは `noveltyPreference: null` を足しても直らない。overlay で `| null` へ広げ、同時に引数を渡すところまでやって初めて緑になる。
+
+`src/shared/types/database.ts`、`NullableDraftArgs` の union へ:
+
+```ts
+  | "p_novelty_preference";
+```
+
+同ファイルの `SaveDraftArgs` の交差型へ:
+
+```ts
+  p_novelty_preference: GeneratedSaveDraftArgs["p_novelty_preference"] | null;
+```
+
+`src/features/planner/planner-api.ts` の `buildSaveGenerationDraftArgs`、`p_ingredient_preference` の直後へ:
+
+```ts
+    p_novelty_preference: input.noveltyPreference,
+```
+
+`src/shared/types/database.test.ts` の 2 つのフィクスチャ（129 行目・159 行目付近の `p_ingredient_preference: null` を持つオブジェクト）へ `p_novelty_preference: null,` を、177 行目付近の nullable キー union のテストへ `| "p_novelty_preference"` を足す。
+
+**この overlay が要る理由**: Postgres Meta は nullable 引数を非 null な `string` として生成する。overlay が無いと「未選択」を型として送れない。
+
+```bash
+docker compose run --rm --no-deps app npm test -- --run src/shared/types/database.test.ts src/features/planner/planner-api.test.ts
+docker compose run --rm --no-deps app npm run typecheck
+```
+
+期待: PASS。`planner-api.test.ts` の期待引数に `p_novelty_preference: null,` を足す必要があればここで足す。
 
 - [ ] **Step 10: サーバー読み取り面の failing test を書く**
 
@@ -436,13 +510,21 @@ docker compose run --rm --no-deps app npm run format:check
 
 - [ ] **Step 14: コミット（単一 commit）**
 
+Step 9b と Step 9c が触ったパスを漏れなく含める。`git status --short` で未追加が無いことを確認してからコミットすること（Step 9b の波及先はリポジトリ全体に散るため、`git add` の列挙だけに頼らない）。
+
 ```bash
+git status --short
 git add shared/contracts/planner.ts shared/contracts/planner.test.ts \
+  shared/testing/factories.ts \
   supabase/migrations/20260831120000_novelty_preference.sql \
   supabase/tests/database/ \
-  netlify/functions/_shared/generation-context.ts \
-  netlify/functions/_shared/generation-context.test.ts \
-  src/shared/types/database.generated.ts
+  netlify/functions/ \
+  src/shared/types/database.generated.ts \
+  src/shared/types/database.ts \
+  src/shared/types/database.test.ts \
+  src/features/planner/planner-api.ts \
+  src/features/planner/planner-api.test.ts
+git status --short
 git commit -m "feat(generation): 献立のひねり軸を契約と snapshot 経路へ通す
 
 契約・列追加・3 関数の再作成・snapshot 読み取りは同時にしか正しくならない。
@@ -452,55 +534,24 @@ plannerSubmissionSchema は両枝 strict で mapSnapshot はリテラルを直�
 
 ---
 
-### Task 2: クライアント永続面
+### Task 2: クライアント永続面（読み取りと下書き保持）
+
+**overlay と `buildSaveGenerationDraftArgs` は Task 1 Step 9c で済んでいる。** この Task は「保存した値を読み戻して保持し続ける」側だけを扱う。開始時点で typecheck は緑のはずで、緑でないなら Task 1 が未完了である。
 
 **Files:**
-- Modify: `src/shared/types/database.ts:20-38`
-- Modify: `src/shared/types/database.test.ts`
-- Modify: `src/features/planner/planner-api.ts:25-45`（`mapPlannerDraft`）, `:56`（select 列）, `:63-83`（`buildSaveGenerationDraftArgs`）
+- Modify: `src/features/planner/planner-api.ts:25-45`（`mapPlannerDraft`）, `:56`（select 列）
 - Modify: `src/features/planner/planner-api.test.ts`
 - Modify: `src/features/planner/use-draft-autosave.ts:76`, `:141`
 - Modify: `src/features/planner/use-draft-autosave.test.tsx`
 - Modify: `src/features/planner/planner-route.tsx:104`, `:145`, `:1776`
 
 **Interfaces:**
-- Consumes: Task 1 の `PlannerDraftInput["noveltyPreference"]`、RPC 14 引数
-- Produces: `savePlannerDraft` が `p_novelty_preference` を送る。`getPlannerDraft` が `noveltyPreference` を返す。
+- Consumes: Task 1 の `PlannerDraftInput["noveltyPreference"]`、overlay 済み `SaveDraftArgs`、RPC 14 引数
+- Produces: `getPlannerDraft` が `noveltyPreference` を返す。ひねりだけを選んだ下書きが保存される。
 
-- [ ] **Step 1: 型 overlay の failing test を書く**
+- [ ] **Step 1: 読み取り側の failing test を書く**
 
-`src/shared/types/database.test.ts` の既存フィクスチャ（129 行目・159 行目付近の `p_ingredient_preference: null` があるオブジェクト）へ `p_novelty_preference: null,` を足し、177 行目付近の nullable キー union のテストへ `| "p_novelty_preference"` を足す。
-
-**この overlay が要る理由**: Postgres Meta は nullable 引数を非 null な `string` として生成する。overlay が無いと「未選択」を型として送れない。
-
-- [ ] **Step 2: テストが落ちることを確認**
-
-```bash
-docker compose run --rm --no-deps app npm test -- --run src/shared/types/database.test.ts
-docker compose run --rm --no-deps app npm run typecheck
-```
-
-期待: `p_novelty_preference: null` が `string` に代入できず typecheck が FAIL。これは Task 1 Step 9b で緑にした状態からの**新しい** FAIL である（Task 1 から持ち越した赤ではない）。持ち越しの赤が見えるなら Task 1 が未完了なので戻ること。
-
-- [ ] **Step 3: overlay を実装**
-
-`src/shared/types/database.ts`、`NullableDraftArgs` へ:
-
-```ts
-  | "p_novelty_preference";
-```
-
-`SaveDraftArgs` の交差型へ:
-
-```ts
-  p_novelty_preference: GeneratedSaveDraftArgs["p_novelty_preference"] | null;
-```
-
-- [ ] **Step 4: planner-api の failing test を書く**
-
-`src/features/planner/planner-api.test.ts:154` 付近の期待引数へ `p_novelty_preference: null,` を足し、`twist` を保存したときに `p_novelty_preference: "twist"` が渡ることを見るケースを 1 件足す。
-
-読み取り側は **`mapPlannerDraft` へ手組みの行を通すだけでは不十分**である。`mapPlannerDraft` は `getPlannerDraft` の select 列文字列とは独立しており、select へ `novelty_preference` を足し忘れても `mapPlannerDraft` の単体テストは通る。そのとき GET はキーを欠いた行を返し、`.default(null)` が保存済みの `twist` を静かに `null` へ潰す。F-02 と同じ壊れ方がテスト緑のまま再発する。
+`mapPlannerDraft` へ手組みの行を通すだけでは不十分である。`mapPlannerDraft` は `getPlannerDraft` の select 列文字列とは独立しており、select へ `novelty_preference` を足し忘れても `mapPlannerDraft` の単体テストは通る。そのとき GET はキーを欠いた行を返し、`.default(null)` が保存済みの `twist` を静かに `null` へ潰す。F-02 と同じ壊れ方がテスト緑のまま再発する。
 
 したがって **select 列そのものをロックする**テストを足す。
 
@@ -524,19 +575,17 @@ it("returns the novelty preference from a fetched draft row", async () => {
 });
 ```
 
-`makeBrowserClientStub` / `draftRowFixture` / `userId` は同ファイルの既存ヘルパー名へ読み替える。1 本目のスタブ形は既存テストの `from().select().eq().maybeSingle()` チェーンに合わせること。
+`makeBrowserClientStub` / `draftRowFixture` / `userId` は同ファイルの既存ヘルパー名へ読み替える。**スタブのチェーンを自作しない** — 同ファイルには `from().select().eq().maybeSingle()` を組む既存スタブがあるので、それを再利用し、`select` の呼び出し引数だけを観測できるよう最小限に手を入れること。
 
-- [ ] **Step 5: テストが落ちることを確認**
+- [ ] **Step 2: テストが落ちることを確認**
 
 ```bash
 docker compose run --rm --no-deps app npm test -- --run src/features/planner/planner-api.test.ts
 ```
 
-期待: FAIL。
+期待: select 列に `novelty_preference` が無く FAIL。
 
-- [ ] **Step 6: planner-api を実装**
-
-3 箇所すべてを通す。1 つでも落とすと値が消える。
+- [ ] **Step 3: planner-api の読み取りを実装**
 
 `mapPlannerDraft`（`ingredientPreference` の直後）:
 
@@ -550,13 +599,7 @@ docker compose run --rm --no-deps app npm test -- --run src/features/planner/pla
       "id,user_id,meal_type,main_ingredients,cuisine_genre,target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,ingredient_preference,novelty_preference,avoid_ingredients,memo,pantry_selections,revision,created_at,updated_at,deleted_at",
 ```
 
-`buildSaveGenerationDraftArgs`（`p_ingredient_preference` の直後）:
-
-```ts
-    p_novelty_preference: input.noveltyPreference,
-```
-
-- [ ] **Step 7: autosave の failing test を書く**
+- [ ] **Step 4: autosave の failing test を書く**
 
 `src/features/planner/use-draft-autosave.test.tsx` へ、**「ひねりだけを選んだ下書きが保存される」** ケースを足す。他の項目がすべて未入力で `noveltyPreference: "twist"` だけがあるとき、保存が走ることを確かめる。
 
@@ -569,7 +612,7 @@ it("saves a draft whose only filled field is the novelty preference", async () =
 
 **このテストが要る理由**: `use-draft-autosave.ts:141` の「空下書き」判定に新軸を足し忘れると、ひねりだけを選んだ下書きが空扱いで保存されない。気付きにくい壊れ方をする。
 
-- [ ] **Step 8: テストが落ちることを確認**
+- [ ] **Step 5: テストが落ちることを確認**
 
 ```bash
 docker compose run --rm --no-deps app npm test -- --run src/features/planner/use-draft-autosave.test.tsx
@@ -577,7 +620,7 @@ docker compose run --rm --no-deps app npm test -- --run src/features/planner/use
 
 期待: FAIL（保存が走らない）。
 
-- [ ] **Step 9: autosave と route を実装**
+- [ ] **Step 6: autosave と route を実装**
 
 `use-draft-autosave.ts:76` 付近の保存値コピーへ:
 
@@ -593,25 +636,25 @@ docker compose run --rm --no-deps app npm test -- --run src/features/planner/use
 
 `planner-route.tsx` の 3 箇所（104 行目の初期値 `null`、145 行目の draft からの hydrate、1776 行目の送信コピー）へ、それぞれ `ingredientPreference` と同型の 1 行を足す。
 
-- [ ] **Step 10: テストが通ることを確認**
+- [ ] **Step 7: テストが通ることを確認**
 
 ```bash
-docker compose run --rm --no-deps app npm test -- --run src/shared/types/database.test.ts src/features/planner/planner-api.test.ts src/features/planner/use-draft-autosave.test.tsx src/features/planner/planner-route-conflict.test.tsx
+docker compose run --rm --no-deps app npm test -- --run src/features/planner/ src/shared/types/database.test.ts
 docker compose run --rm --no-deps app npm run typecheck
 docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run format:check
 ```
 
-期待: すべて PASS。Task 1 で記録した typecheck エラーもここで解消しているはず。
+期待: すべて PASS。
 
-- [ ] **Step 11: コミット**
+- [ ] **Step 8: コミット**
 
 ```bash
-git add src/shared/types/database.ts src/shared/types/database.test.ts src/features/planner/
-git commit -m "feat(planner): ひねり軸を下書きの永続面へ通す
+git add src/features/planner/
+git commit -m "feat(planner): ひねり軸を下書きの読み戻しと保持へ通す
 
-generated 型は p_* を非 null に出すため overlay で null を復元する。
-select 列・autosave の空判定・route の 3 箇所も明示的に写す。"
+select 列・autosave の空判定・route の 3 箇所を明示的に写す。
+select 列を落とすと GET がキーを欠き default(null) が値を静かに潰す。"
 ```
 
 ---
