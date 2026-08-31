@@ -73,6 +73,16 @@ test(
     await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
     // privacy は fixture 済み。CTA が出ていたら契約退行なので落とし、黙ってスキップしない。
     await expect(page.getByRole("button", { name: "AI情報の説明を見る" })).toHaveCount(0);
+    // 確認画面。ひねりを選んだ下書きが保存されたことを同期点にしてから生成へ進む
+    const noveltySaved = page.waitForResponse((response) => {
+      if (!new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft")) {
+        return false;
+      }
+      const postData = response.request().postData();
+      return postData !== null && postData.includes('"p_novelty_preference":"twist"');
+    });
+    await page.getByLabel("献立の雰囲気").selectOption("twist");
+    await noveltySaved;
     // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で test から truncate 禁止）
     const generate = page.getByRole("button", { name: "献立を作る" });
     await expect(generate).toBeEnabled({ timeout: 15_000 });
