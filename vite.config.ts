@@ -135,8 +135,12 @@ export default defineConfig({
     // middleware は残し、通常 dev の /api/* を Netlify Functions へ載せる。
     // redirects / staticFiles は切る。root を static にすると /src/*.tsx が
     // 空 MIME の生ソースになり、/* → app.html が /@vite/client を HTML にする。
+    // edgeFunctions も切る。既定オンだと @netlify/edge-functions-dev が
+    // コンテナ内 Deno へ --allow-scripts を渡し、Vite ready 直後にプロセスが死ぬ。
+    // 本リポジトリに netlify/edge-functions は無く、local/E2E は Functions のみ。
     netlify({
       functions: { enabled: !isE2eFunctionServer },
+      edgeFunctions: { enabled: false },
       redirects: { enabled: false },
       staticFiles: { enabled: false },
     }),

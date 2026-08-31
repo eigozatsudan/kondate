@@ -358,6 +358,12 @@ test("Vite dev does not let Netlify static/redirects serve the module graph", as
   assert.match(config, /name:\s*"kondate-dev-app-html-fallback"/u);
 });
 
+test("Vite dev does not start Netlify Edge Functions Deno", async () => {
+  const config = await readFile("vite.config.ts", "utf8");
+  // 既定オンだと edge-functions-dev が --allow-scripts で Vite を ready 直後に落とす。
+  assert.match(config, /edgeFunctions:\s*\{\s*enabled:\s*false\s*\}/u);
+});
+
 test("dev document fallback sends app routes to app.html and leaves the LP and modules", () => {
   const html = "text/html,application/xhtml+xml";
   assert.equal(
