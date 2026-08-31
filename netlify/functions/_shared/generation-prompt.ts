@@ -15,8 +15,14 @@ import {
   HOUSEHOLD_KITCHEN_PARAGRAPH,
   HOUSEHOLD_KITCHEN_PROMPT_ENABLED,
 } from "./household-kitchen-prompt.js";
+import {
+  NOVELTY_EXCLUDED_DISHES_MAX,
+  NOVELTY_HINTS_ENABLED,
+  NOVELTY_PARAGRAPH,
+} from "./novelty-hints.js";
 import type { OpenRouterMessage } from "./openrouter.js";
 import { requireRegenerationArtifacts } from "./regeneration-context.js";
+import { lookupStapleDishes } from "./staple-dish-catalog.js";
 
 export type PromptPreferences = {
   mealType: GenerationContext["submission"]["mealType"];
@@ -241,15 +247,17 @@ function buildSystemPrompt(targetMode: GenerationContext["targetMode"]): string 
 function buildNewMenuSystemPrompt(
   targetMode: GenerationContext["targetMode"],
   diversityEnabled: boolean,
+  noveltyEnabled: boolean,
 ): string {
   // 再生成と同じ CORE builder。new_menu 専用スロットにだけキッチンを置くのは禁止（L12）
   const coreBody = buildGenerationSystemPromptCoreBody(readHouseholdKitchenPromptEnabledFlag());
   const diversity = diversityEnabled ? DIVERSITY_PARAGRAPH : "";
+  const novelty = noveltyEnabled ? NOVELTY_PARAGRAPH : "";
   const modeExtra =
     targetMode === "idea"
       ? GENERATION_SYSTEM_PROMPT_IDEA_EXTRA
       : GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA;
-  return `${coreBody}${diversity}${GENERATION_SYSTEM_PROMPT_SEASON}${modeExtra}`;
+  return `${coreBody}${diversity}${novelty}${GENERATION_SYSTEM_PROMPT_SEASON}${modeExtra}`;
 }
 
 /**
@@ -259,6 +267,11 @@ function buildNewMenuSystemPrompt(
  */
 function readDiversityHintsEnabledFlag(): boolean {
   return isEnabledFlag(DIVERSITY_HINTS_ENABLED);
+}
+
+/** ひねり kill-switch を実行時 boolean として読む（diversity と同型） */
+function readNoveltyHintsEnabledFlag(): boolean {
+  return isEnabledFlag(NOVELTY_HINTS_ENABLED);
 }
 
 /**
@@ -502,9 +515,21 @@ export function buildGenerationMessages(
     const recentDishHints = diversityEnabled
       ? sanitizeRecentDishHints(context.recentDishHints)
       : [];
+    // ひねりは new_menu 専用。twist かつ flag on のときだけ段落とキーを載せる。
+    // off・standard・未指定ではキーごと出さない（recentDishHints と違い後方互換の制約が無い）
+    const noveltyEnabled =
+      readNoveltyHintsEnabledFlag() &&
+      context.generationContext.submission.noveltyPreference === "twist";
+    const noveltyExcludedDishes = noveltyEnabled
+      ? lookupStapleDishes(
+          context.generationContext.submission.mainIngredients,
+          NOVELTY_EXCLUDED_DISHES_MAX,
+        )
+      : [];
     const systemContent = buildNewMenuSystemPrompt(
       context.generationContext.targetMode,
       diversityEnabled,
+      noveltyEnabled,
     );
     const userMessage = base.find((message) => message.role === "user");
     const basePayload =
@@ -512,7 +537,9 @@ export function buildGenerationMessages(
         ? parseBaseUserPayload(userMessage.content)
         : {};
     // recentDishHints は new_menu user payload にのみ常時配列で付与
-    const payload = { ...basePayload, recentDishHints };
+    const payload = noveltyEnabled
+      ? { ...basePayload, recentDishHints, noveltyExcludedDishes }
+      : { ...basePayload, recentDishHints };
     const serialized = serializePromptPayload(payload);
     return [
       { role: "system", content: systemContent },

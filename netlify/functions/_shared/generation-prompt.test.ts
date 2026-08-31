@@ -9,6 +9,7 @@ import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerpri
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import { DIVERSITY_SYSTEM_MARKER, type RecentDishHint } from "./diversity-hints.js";
+import { NOVELTY_SYSTEM_MARKER } from "./novelty-hints.js";
 import {
   GENERATION_SYSTEM_PROMPT_CORE,
   GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA,
@@ -752,5 +753,99 @@ describe("buildGenerationMessages", () => {
     expect(constraints.excludedDishSignatures).toHaveLength(200);
     expect(constraints.excludedDishSignatures[0]).toBe("sig-1");
     expect(constraints.excludedDishSignatures[199]).toBe("sig-200");
+  });
+});
+
+describe("novelty hints", () => {
+  function newMenuContextWith(
+    noveltyPreference: GenerationContext["submission"]["noveltyPreference"],
+    mainIngredients: string[],
+  ): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
+    const base = makeGenerationContext();
+    return asNewMenuExecution({
+      ...base,
+      submission: { ...base.submission, noveltyPreference, mainIngredients },
+    });
+  }
+
+  function regenerateMenuExecution(
+    noveltyPreference: GenerationContext["submission"]["noveltyPreference"],
+  ): Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> {
+    const base = makeGenerationContext();
+    const context: GenerationContext = {
+      ...base,
+      submission: { ...base.submission, noveltyPreference, mainIngredients: ["豚肉"] },
+    };
+    const sourceMenu = makeValidatedMenu();
+    return {
+      kind: "regenerate_menu",
+      command: {
+        commandVersion: "generation-command.v3",
+        kind: "regenerate_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: "56000000-0000-4000-8000-000000000001",
+          sourceMenuId: sourceMenu.menuId,
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext: context,
+      expectedSafetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        excludedDishIds: [],
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+  }
+
+  it("adds the novelty paragraph and excluded dishes when twist is selected", () => {
+    const messages = buildGenerationMessages(newMenuContextWith("twist", ["豚肉"]));
+    expect(systemText(messages)).toContain(NOVELTY_SYSTEM_MARKER);
+    expect(userPayload(messages).noveltyExcludedDishes).toContain("豚の生姜焼き");
+  });
+
+  it("omits the paragraph and the key when the axis is standard or unset", () => {
+    for (const noveltyPreference of ["standard", null] as const) {
+      const messages = buildGenerationMessages(newMenuContextWith(noveltyPreference, ["豚肉"]));
+      expect(systemText(messages)).not.toContain(NOVELTY_SYSTEM_MARKER);
+      expect(
+        Object.prototype.hasOwnProperty.call(userPayload(messages), "noveltyExcludedDishes"),
+      ).toBe(false);
+    }
+  });
+
+  it("keeps the twist paragraph even when the catalog has no match", () => {
+    const messages = buildGenerationMessages(newMenuContextWith("twist", ["ドラゴンフルーツ"]));
+    expect(systemText(messages)).toContain(NOVELTY_SYSTEM_MARKER);
+    expect(userPayload(messages).noveltyExcludedDishes).toEqual([]);
+  });
+
+  it("leaves the regeneration user payload unchanged", () => {
+    const messages = buildGenerationMessages(regenerateMenuExecution("twist"));
+    expect(systemText(messages)).not.toContain(NOVELTY_SYSTEM_MARKER);
+    for (const message of messages) {
+      if (message.role !== "user" || typeof message.content !== "string") continue;
+      expect(message.content).not.toContain("noveltyExcludedDishes");
+      expect(message.content).not.toContain("noveltyPreference");
+    }
   });
 });
