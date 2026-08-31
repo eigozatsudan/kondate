@@ -467,6 +467,8 @@ docker compose run --rm --no-deps app npm run typecheck > /tmp/tc.log 2>&1; grep
 
 `toEqual` が落ちた箇所は、期待値へ `noveltyPreference: null` を足す。`toMatchObject` へ書き換えて逃げない（部分一致にすると余剰キーの検出力が落ちる）。
 
+**キー名を取り違えない。** ここで足すのは契約側の camelCase（`noveltyPreference`）だが、`planner-api.test.ts:104` の keepalive テストのように **RPC 引数を `toEqual` している箇所は snake_case（`p_novelty_preference: null`）** である。前者は schema parse の出力、後者は `buildSaveGenerationDraftArgs` の出力なので、落ちた `toEqual` がどちらを比べているかを見て書き分けること。
+
 ```bash
 docker compose run --rm --no-deps app npm run typecheck > /tmp/tc.log 2>&1; grep -nE "error" /tmp/tc.log || tail -n 40 /tmp/tc.log
 docker compose run --rm --no-deps app npm test -- --run > /tmp/vitest.log 2>&1; grep -nE "FAIL|✕" /tmp/vitest.log || tail -n 30 /tmp/vitest.log
@@ -532,6 +534,8 @@ Step 9a と Step 9b が触ったパスを漏れなく含める。`git status --s
 git status --short
 git add shared/contracts/planner.ts shared/contracts/planner.test.ts \
   shared/testing/factories.ts \
+  src/features/planner/planner-route.tsx \
+  src/features/planner/use-draft-autosave.ts \
   supabase/migrations/20260831120000_novelty_preference.sql \
   supabase/tests/database/ \
   netlify/functions/ \
@@ -588,13 +592,13 @@ it("selects the novelty preference column from generation_drafts", async () => {
   const select = vi.fn().mockReturnValue({
     eq: () => ({ maybeSingle: async () => ({ data: draftRowFixture, error: null }) }),
   });
-  const client = makeBrowserClientStub({ from: () => ({ select }) });
+  const client = makeFromStub({ from: () => ({ select }) });
   await getPlannerDraft(client, userId);
   expect(select).toHaveBeenCalledWith(expect.stringContaining("novelty_preference"));
 });
 
 it("returns the novelty preference from a fetched draft row", async () => {
-  const client = makeBrowserClientStub({
+  const client = makeFromStub({
     row: { ...draftRowFixture, novelty_preference: "twist" },
   });
   await expect(getPlannerDraft(client, userId)).resolves.toMatchObject({
@@ -1254,6 +1258,8 @@ export function noveltyPreferenceLabel(value: NoveltyPreference | null): string 
 - [ ] **Step 5: draft-from-menu を実装**
 
 `draft-from-menu.ts` の `ingredientPreference` を写している行の直後へ、`noveltyPreference` の 1 行を足す。
+
+**Task 1 の Step 9b でこの関数が型波及に含まれていた場合、行は既にある。** その場合は何も足さない（重ねると TS1117: 同名プロパティの重複）。先に `grep -n noveltyPreference src/features/planner/model/draft-from-menu.ts` で確認し、値の写経（定数 `null` ではない）になっていれば、この Step の実装作業は無く、テストだけが増える。
 
 - [ ] **Step 6: テストが通ることを確認**
 
