@@ -66,16 +66,70 @@ snapshot の互換読み込みのためだけであり、新しい意味を与�
 
 ### 3.2 migration
 
-`supabase/migrations/20260730120000_ingredient_preference.sql` をなぞる 1 本を追加する。
+**`20260730120000_ingredient_preference.sql` を機械的にコピーしてはならない。** 同ファイル以降に
+`reserve_ai_generation` と `save_generation_draft` が更新されており、当時の DROP 文と当時の関数本体は
+どちらも現行正本ではない。
 
-- `public.generation_drafts` に `novelty_preference text`、
-  check は `null または in ('standard','twist')`。
-- `private.generation_draft_submission_versions` に同じ列と check。
-- `public.save_generation_draft` を DROP → CREATE し、`p_novelty_preference text` を引数へ追加。
-  既存の `p_ingredient_preference` と同型の値検証句（不正値は errcode `22023` の
-  `invalid_draft_save`）を関数先頭へ足し、submission snapshot へ写す。
+migration 1 本で次をすべて行う。
+
+1. `public.generation_drafts` に `novelty_preference text`、check は
+   `null または in ('standard','twist')`。
+2. `private.generation_draft_submission_versions` に同じ列と check。
+3. `public.save_generation_draft` を DROP → CREATE。
+   **DROP するのは現行の 13 引数シグネチャ**である。
+
+   ```
+   (bigint, text, text[], text, text, uuid[], smallint, smallint,
+    text, text, text[], text, jsonb)
+   ```
+
+   `20260730120000` の DROP 文は 12 引数（`p_ingredient_preference` 以前）を落とすものであり、これを
+   コピーすると存在しない関数を落としたうえで 14 引数版を作り、**13 引数版が残って overload 曖昧に
+   なり下書き保存が全面的に失敗する**。CREATE 本体は現行定義（`20260730120000` の CREATE）を正本と
+   して 14 引数へ拡張し、`p_ingredient_preference` と同型の値検証句（不正値は errcode `22023` の
+   `invalid_draft_save`）を足す。
+4. `public.reserve_ai_generation` を再作成する。**正本は
+   `20260808120000_quality_monthly_retry_and_usage_stale_cleanup.sql` の本体**であり、
+   `20260730120000` の本体ではない。`private.generation_draft_submission_versions` への INSERT
+   （`20260730120000` で `ingredient_preference` を足した箇所に相当）へ `novelty_preference` と
+   `v_draft.novelty_preference` を加える。
+   **submission snapshot へ写すのはこの INSERT であって `save_generation_draft` ではない。**
+   `save_generation_draft` だけを直すと、下書きには値が入るのに生成が読む snapshot は常に `null` に
+   なり、機能が一切効かない。
+5. `public.get_ai_generation_submission_snapshot` を DROP → CREATE し、`RETURNS TABLE` と select 句へ
+   `novelty_preference text` を追加する。
+6. 再作成した各関数へ `revoke all` / `grant execute` を現行と同じ内容で貼り直す。
 
 `src/shared/types/database.generated.ts` は再生成のみ。手編集しない。
+
+### 3.3 サーバー読み取り面
+
+`netlify/functions/_shared/generation-context.ts` の `snapshotRowSchema` は `.strict()` である。
+§3.2 の 5 で RPC が新しい列を返すようになった時点で、この schema を更新しなければ `safeParse` が
+落ち、**new_menu 経路全体が 422 になる**。次を同じ Task 内で行う。
+
+- `snapshotRowSchema` に `novelty_preference: z.enum(["standard","twist"]).nullable()` を追加。
+- `mapSnapshot` に `noveltyPreference: row.novelty_preference` を追加。
+
+`GenerationContext["submission"]` は `PlannerSubmission` そのものなので、§3.1 の
+`submissionCommonShape` 追加がそのまま型として流れる。
+
+### 3.4 クライアント永続面
+
+generated 型の再生成だけでは足りない。generated は `p_*` 引数を非 nullable な `string` として出すため、
+**未選択（`null`）を型として送れない**。既存の `ingredientPreference` は次の 4 箇所を手で通しており、
+新軸も同じ 4 箇所を明示的に通す。
+
+- `src/shared/types/database.ts` — 手書き overlay。`SaveDraftNullableArgKeys` に
+  `"p_novelty_preference"` を足し、`p_novelty_preference: GeneratedSaveDraftArgs["p_novelty_preference"] | null`
+  を宣言する。
+- `src/features/planner/planner-api.ts` — `getPlannerDraft` の `select` 列文字列へ
+  `novelty_preference` を追加（列名の明示列挙であり `*` ではない）、`mapPlannerDraft` の写し、
+  `buildSaveGenerationDraftArgs` の `p_novelty_preference`。
+- `src/features/planner/use-draft-autosave.ts` — 保存値の明示コピーと、「下書きが空か」を判定する
+  条件式への追加（`ingredientPreference === null &&` と同型）。ここを落とすと、ひねりだけを選んだ
+  下書きが空扱いで保存されない。
+- `src/features/planner/planner-route.tsx` — 初期値 `null`、draft からの hydrate、送信時のコピー。
 
 ## 4. UI
 
@@ -97,9 +151,20 @@ snapshot の互換読み込みのためだけであり、新しい意味を与�
 - `NOVELTY_PARAGRAPH`（段落本体）
 - 除外リストの 1 リクエストあたり件数上限定数
 
-`generation-prompt.ts` の `buildNewMenuSystemPrompt` で、`noveltyPreference === "twist"` かつ
-kill-switch が on のときだけ `DIVERSITY_PARAGRAPH` の直後へ挿入する。`buildSystemPrompt`（再生成
-経路）は変更しない。`PromptPreferences` に `noveltyPreference` を追加し、user payload にも載せる。
+**`PromptPreferences` にフィールドを追加してはならない。** `buildBaseGenerationMessages` は new_menu と
+再生成の両方が呼ぶため、`PromptPreferences` を広げると再生成の user JSON が黙って変わる。これは §2.2 の
+「再生成経路は対象外」と両立しない。
+
+正しい前例は `recentDishHints` である。`buildGenerationMessages` の `kind === "new_menu"` 分岐が
+base の user payload を parse し直し、new_menu 専用キーを足して再 serialize している。ひねりも同じ
+場所で注入する。
+
+- system: `noveltyPreference === "twist"` かつ kill-switch on のときだけ、
+  `buildNewMenuSystemPrompt` が `DIVERSITY_PARAGRAPH` の直後へ段落を挿入する。
+- user: 同じ条件のときだけ、除外リストを payload のトップレベルキーとして足す。
+- **kill-switch off のときは段落とキーの両方を落とす。** `recentDishHints` は off でも常に `[]` を
+  載せる契約だが、ひねりは新規キーであり後方互換の制約が無いため、キーごと消す方を採る。
+- `buildSystemPrompt`（再生成経路）と再生成の user payload は一切変更しない。
 
 ### 5.2 段落の内容
 
@@ -129,8 +194,11 @@ kill-switch が on のときだけ `DIVERSITY_PARAGRAPH` の直後へ挿入す�
 readonly { readonly ingredientAliases: readonly string[]; readonly stapleDishes: readonly string[] }[]
 ```
 
-- 照合は `shared/safety-pure/normalize-food-text.ts` の `normalizeFoodText` を通し、表記ゆれ
-  （豚肉／ぶた肉／ブタ）を吸収する。新しい正規化関数は作らない。
+- 照合は `shared/safety-pure/normalize-food-text.ts` の `normalizeFoodText` を通した**正規化後の
+  完全一致**とする。新しい正規化関数は作らない。
+- `normalizeFoodText` が畳むのは NFKC、カタカナ → ひらがな、小文字化、区切り文字の除去だけである。
+  **漢字とかなは畳まない。** 実測で `ブタ` と `ぶた` は一致するが、`豚肉` と `ぶた肉` は一致しない。
+  したがって漢字・かな・カタカナの揺れは `ingredientAliases` に列挙して吸収する。正規化に期待しない。
 - 初版は主要食材 20〜30 語（豚肉、鶏肉、牛肉、ひき肉、鮭、鯖、卵、豆腐、なす、キャベツ 等）。
 - 1 リクエストあたりの料理名は上限定数で切り、プロンプト肥大を防ぐ。
 - 未収録の食材はヒット 0 件。このとき段落だけが残り、名指しなしの弱い版へ自動的に縮退する
@@ -139,10 +207,20 @@ readonly { readonly ingredientAliases: readonly string[]; readonly stapleDishes:
 ## 7. テスト
 
 - 契約: `shared/contracts/planner.test.ts` に新軸の parse と、キー欠損が `null` になること。
-- 辞書: 正規化を通した照合、未収録食材で 0 件、件数上限。
-- プロンプト: `twist` on / off のスナップショット 2 本と、kill-switch off で段落が消える 1 本
-  （`generation-prompt-diversity-off.test.ts` と同型）。
-- DB: pgTAP で 2 テーブルの列 check と `save_generation_draft` の引数・不正値拒否。
+- 型 overlay: `src/shared/types/database.test.ts` に `p_novelty_preference: null` が型として通ること。
+- 辞書: 正規化後の完全一致、alias 列挙による漢字・かな・カタカナの吸収、未収録食材で 0 件、件数上限。
+- プロンプト:
+  - `twist` on / off のスナップショット 2 本
+  - kill-switch off で段落とキーの両方が消える 1 本
+    （`generation-prompt-diversity-off.test.ts` と同型）
+  - **再生成の user payload が本変更の前後で不変であることの回帰テスト 1 本**（F-04 の再発防止）
+- DB:
+  - pgTAP で 2 テーブルの列 check
+  - `save_generation_draft` が 14 引数の 1 つだけであること（13 引数版が残っていないこと）と、
+    不正値の拒否
+  - `reserve_ai_generation` が snapshot へ値を写すこと（下書きに `twist` を入れて予約し、
+    `get_ai_generation_submission_snapshot` が `twist` を返す）
+- サーバー: `snapshotRowSchema` が新しい列を含む行を parse できること。
 - E2E: 確認画面で「ひねりたい」を選び、生成が `success` で返る 1 本。
 
 検証コマンドは `CLAUDE.md` の Docker 経路に従う。`db:test` と `e2e` はホストで直接
@@ -150,12 +228,17 @@ readonly { readonly ingredientAliases: readonly string[]; readonly stapleDishes:
 
 ## 8. 実装順序
 
-1. migration（2 テーブル + RPC）と型再生成
+1. migration（2 テーブル + `save_generation_draft` + `reserve_ai_generation` +
+   `get_ai_generation_submission_snapshot` + grant）と型再生成
 2. 契約（`planner.ts` と契約テスト）
-3. 定番辞書と辞書テスト
-4. プロンプト（`novelty-hints.ts`、`generation-prompt.ts`、プロンプトテスト）
-5. UI（`review-step.tsx`、`planner-labels.ts`、`draft-from-menu.ts`）
-6. E2E
+3. サーバー読み取り面（`snapshotRowSchema` と `mapSnapshot`）— **1 と同じ Task 内で閉じる。**
+   RPC が新しい列を返すのに strict schema が古いままの状態を commit してはならない
+4. クライアント永続面（overlay、`planner-api.ts`、`use-draft-autosave.ts`、`planner-route.tsx`）
+5. 定番辞書と辞書テスト
+6. プロンプト（`novelty-hints.ts`、`buildGenerationMessages` の new_menu 分岐、プロンプトテスト、
+   再生成不変の回帰テスト）
+7. UI（`review-step.tsx`、`planner-labels.ts`、`draft-from-menu.ts`）
+8. E2E
 
 各段は RED → GREEN → 焦点検証 → 日本語 Conventional Commit で閉じる。
 
@@ -168,3 +251,20 @@ readonly { readonly ingredientAliases: readonly string[]; readonly stapleDishes:
   OpenRouter attempt 予算を 2 回消費し、`shared/contracts/function-budget.ts` と Netlify の同期
   60 秒の壁の前提を壊す。**本設計では採らない。**
 - **破綻レシピ**: ひねりを優先しすぎて家庭で作れない案が出る懸念。§5.2 の 4 と 5 が抑制する。
+- **migration の再作成漏れ**: 本設計は 3 つの関数を再作成する（§3.2）。いずれも「直近の
+  `ingredient_preference` migration をコピーする」やり方では正本を取り違える。実装時は各関数の
+  最新定義を `grep -rn "create or replace function.*<name>" supabase/migrations/` で確定してから
+  写すこと。
+
+## 10. レビュー反映
+
+2026-08-31 の技術レビューで初版の 5 点を修正した。いずれも初版が誤っていた。
+
+- F-01 生成到達経路: snapshot へ写すのは `reserve_ai_generation` であり `save_generation_draft`
+  ではない。`snapshotRowSchema` は `.strict()`。→ §3.2 の 4・5、§3.3
+- F-02 クライアント永続面: generated 型は `p_*` を非 nullable に出す。overlay・select 列・autosave・
+  route の明示コピーが要る。→ §3.4
+- F-03 DROP シグネチャ: 現行は 13 引数。12 引数の DROP をコピーすると overload が並ぶ。→ §3.2 の 3
+- F-04 PromptPreferences 共有: base builder は再生成と共用。`recentDishHints` と同じ new_menu 分岐で
+  注入する。→ §5.1
+- F-05 辞書照合: `normalizeFoodText` は漢字とかなを畳まない。alias 列挙で吸収する。→ §6
