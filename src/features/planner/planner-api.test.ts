@@ -3,6 +3,7 @@ import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 import type { Tables } from "@/shared/types/database.generated";
 import {
   deletePlannerDraft,
+  getPlannerDraft,
   mapPlannerDraft,
   savePlannerDraft,
   startPlannerDraftKeepaliveSave,
@@ -22,6 +23,15 @@ afterEach(() => {
 function clientWithRpc(result: unknown) {
   const rpc = vi.fn().mockResolvedValue(result);
   return { client: { rpc } as unknown as BrowserSupabaseClient, rpc };
+}
+
+/** getPlannerDraft が使う from().select().eq().maybeSingle() だけを最小限に張る。 */
+function clientWithDraftRow(row: unknown) {
+  const maybeSingle = vi.fn().mockResolvedValue({ data: row, error: null });
+  const eq = vi.fn().mockReturnValue({ maybeSingle });
+  const select = vi.fn().mockReturnValue({ eq });
+  const from = vi.fn().mockReturnValue({ select });
+  return { client: { from } as unknown as BrowserSupabaseClient, select };
 }
 
 const incompleteTargetDraft = {
@@ -54,6 +64,22 @@ describe("planner draft API", () => {
       mealType: "dinner",
       mainIngredients: ["鶏肉"],
       cuisineGenre: "japanese",
+    });
+  });
+
+  it("selects the novelty preference column from generation_drafts", async () => {
+    const { client, select } = clientWithDraftRow(incompleteTargetDraft);
+    await getPlannerDraft(client, incompleteTargetDraft.user_id);
+    expect(select).toHaveBeenCalledWith(expect.stringContaining("novelty_preference"));
+  });
+
+  it("returns the novelty preference from a fetched draft row", async () => {
+    const { client } = clientWithDraftRow({
+      ...incompleteTargetDraft,
+      novelty_preference: "twist",
+    });
+    await expect(getPlannerDraft(client, incompleteTargetDraft.user_id)).resolves.toMatchObject({
+      noveltyPreference: "twist",
     });
   });
 

@@ -140,6 +140,7 @@ function isEmptyPersistableInput(value: PlannerDraftInput): boolean {
     fields.timeLimitMinutes === null &&
     fields.budgetPreference === null &&
     fields.ingredientPreference === null &&
+    fields.noveltyPreference === null &&
     fields.avoidIngredients.length === 0 &&
     fields.memo === "" &&
     fields.pantrySelections.length === 0

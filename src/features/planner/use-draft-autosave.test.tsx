@@ -43,6 +43,24 @@ function saved(value: PlannerDraftInput, revision: number): PlannerDraft {
 
 afterEach(() => vi.useRealTimers());
 
+it("ひねりだけを選んだ下書きも空扱いにせず保存する", async () => {
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
+    { initialProps: { value: base } },
+  );
+
+  rerender({ value: { ...base, noveltyPreference: "twist" as const } });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save.mock.calls[0]?.[0]).toMatchObject({ noveltyPreference: "twist" });
+});
+
 it("600ms debounce の保存を直列化し DB revision を 1→2→3 と引き継ぐ", async () => {
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>
