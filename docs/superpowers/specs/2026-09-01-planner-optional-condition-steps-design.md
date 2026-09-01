@@ -406,9 +406,12 @@ onSkipRest: () => {
   対象外。`generation-recovery-results.spec.ts:866–871` は「人数未選択で遷移しない」ことの
   主張で audience に留まるため対象外。
 - `menu-domain-pantry.spec.ts:263–278`（対象を選び直して確認へ戻るインライン）は
-  **確認の「対象を変更」→ audience で選び直し → 「次へ」** へ書き換える。編集戻りなので
-  `advanceFromEditOr` が `9. 確認` へ直帰し、skip も4ページ歩きも要らない（P-01 の
-  E2E 側の裏取りも兼ねる）。「戻る×5」案は採らない。
+  **確認の「対象を変更」→ audience で選び直し → 「確認に戻る」** へ書き換える。
+  編集戻り中の primary は `editReturnActionLabels` の `nextLabel`＝**「確認に戻る」**で
+  あって「次へ」ではないので、`clickWizardNext`（`次へ` 専用）は使わず
+  `getByRole("button", { name: "確認に戻る" }).click()` を書く。`advanceFromEditOr` が
+  `9. 確認` へ直帰するため skip も4ページ歩きも要らない（P-01 の E2E 側の裏取りを兼ねる）。
+  「戻る×5」案は採らない。
 - **「指定なし」を通過する操作は `.check()` ではなく `.click()`。** 既定で checked の
   radio に対する Playwright の `.check()` は「既に checked」で no-op になり、
   `pointerup` が出ないので前進しない。
@@ -426,23 +429,53 @@ onSkipRest: () => {
 
 - `menu-domain-pantry.spec.ts` `savePlannerMeal`（`:77–80`）の「確認から戻る×4 で
   `1. 食事`」は戻る×8、または確認の「食事を変更」へ置き換える。
-- `menu-domain-pantry.spec.ts:263–264` の「戻る×1 で `4. 作る相手`」は戻る×5、または
-  「対象を変更」へ置き換える。
+- `menu-domain-pantry.spec.ts:263–264` の「戻る×1 で `4. 作る相手`」は確認の
+  「対象を変更」へ置き換える（上記のとおり戻り道は「確認に戻る」）。
 - 確認からの戻る1回は `8. 献立の雰囲気`。
+
+#### 4ページを歩く行の共通ルール
+
+手段列が `4ページ歩き` / `Space` の行（household full-journey、
+`mobile-accessibility` の `answerAudienceAndReview`、44px 走査、キーボード導線）は
+すべて次に従う。
+
+- **各ページで 350ms 待つ。** `blocked()` は**そのページの mount** から数えるので、
+  `heading` が可視／focus になった直後の `.click()` や Space は食われる。
+  ページごとに `await expect(heading).toBeVisible()`（キーボード導線は `toBeFocused()`）
+  のあと `await page.waitForTimeout(350)` を置いてから操作する。
+- **新4ページに「次へ」は無い。** `clickWizardNext` を使わない、`次へ` を
+  `expectMajorActionAtLeast44` で測らない、`tabUntil(focus.name === "次へ")` を書かない
+  （どれも 0 件で赤になる）。前進はカード（`.wizard-option`）の click か radio の Space。
+- 「指定なし」のまま通過する場合も `.check()` ではなく `.click()`（既 checked の
+  `.check()` は no-op）。
 
 #### 個別
 
 - `full-journey.spec.ts` household: 「ひねりたい」は `8. 献立の雰囲気` で選ぶ。ここだけ
   スキップを使わず4ページを歩き、自動遷移が効いていることも同時に主張する。
+  各ページで 350ms 待ってからカードを click する。
 - `full-journey.spec.ts` idea: `skipOptionalPlannerSteps` を使う。
 - キーボード導線テスト（`generation-recovery-results.spec.ts` の
-  「advances four questions to review and privacy using keyboard only」）は新4ページを
-  Space で通過する形にし、各ページで `heading` の `toBeFocused()` のあと **350ms 待って
-  から** Space を押す（D-02）。テスト名も実態へ合わせる。
+  「advances four questions to review and privacy using keyboard only」）。`onKeyUp` は
+  **radio** に載るので、heading にフォーカスしたまま Space を押しても届かない。
+  h2 は `tabIndex={-1}` で Tab 順にも入らない。各ページの手順は
+  `await expect(heading).toBeFocused()` → `await page.waitForTimeout(350)` →
+  `tabUntil(page, (focus) => (focus.role === "radio" || focus.type === "radio") &&
+  focus.name.includes("<選ぶ選択肢>"), …)` → `page.keyboard.press("Space")` の4手。
+  この4ページでは `tabUntil(focus.name === "次へ")` を書かない（存在しない）。
+  programmatic `.focus()` フォールバック禁止の既存ルールはそのまま。テスト名も実態へ
+  合わせる。
 - `mobile-accessibility.spec.ts` `answerAudienceAndReview`: 320/375/430px の走査へ新4ページを
   追加し、4ページを歩いて `9. 確認` まで進める。各ページの `assertStepFits` は
   `5. 調理時間` が `{ 以降は指定なしでスキップ: 1, 戻る: 1 }`、`6.`〜`8.` が
-  `{ 戻る: 1 }`（「次へ」は存在しない）。
+  `{ 戻る: 1 }`（「次へ」は存在しない）。各ページで 350ms 待ってから card を click する。
+- 44px レイアウト走査（`generation-recovery-results.spec.ts:1259–1272` 付近）は現行、
+  各 step で `expectMajorActionAtLeast44(page, "次へ")` を測り、`次へ` を focus して
+  Enter で進める。新4ページではこの形が使えない。各ページで
+  `expectNoHorizontalScroll` → 350ms 待ち → radio を `.focus()` して
+  `activateFocusedWithKeyboard(page, "Space")` で進める形にし、測る対象は
+  `5. 調理時間` が「以降は指定なしでスキップ」と「戻る」、`6.`〜`8.` が「戻る」だけに
+  する（`次へ` は測らない）。
 - `"5. 確認"`（ASCII 引用符）の42件は見出しアサーションの機械置換で、上の導線修正とは
   別作業として扱う。
 
