@@ -10,6 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-01-planner-optional-condition-steps-design.md`
 （第4デルタで APPROVE 済み。レビューは `docs/superpowers/reviews/2026-09-01-planner-optional-condition-steps-*.md`）
+計画レビュー（`34f5e2d3`）の Important 9 系統は本文へ埋め込み済み。
 
 ## Global Constraints
 
@@ -48,7 +49,7 @@
 
 - [ ] **Step 1: 失敗するテストを書く**
 
-`src/features/planner/model/planner-wizard.test.ts` の末尾に追記する（既存 import はそのまま使う。`plannerSteps` が未 import なら import 文へ足す）。
+`src/features/planner/model/planner-wizard.test.ts` の末尾に追記する。既存 import（`:3–9`）には `plannerSteps` も `buildPlannerSubmissionFieldErrors` も無いので、**両方**を import 文へ足す（P-T1-IMPORT）。
 
 ```ts
 test("inserts the four optional condition steps between audience and review", () => {
@@ -567,7 +568,25 @@ git commit -m "feat(planner): 選択で自動遷移する任意条件stepを追�
 
 - [ ] **Step 1: 失敗するテストを書く**
 
-`src/features/planner/components/planner-wizard.test.tsx` に追記する。既存の helper（下書き生成・render ラッパ）はファイル内のものを再利用する。ページ送りは 350ms ガードを超えてから叩く必要があるため、次の helper をファイル先頭付近へ足す。
+`src/features/planner/components/planner-wizard.test.tsx` に追記する。live の `Harness`（`:51–158`）は `useState` の draft を返さない。`renderWizardAtTimeLimit` / `renderWizardAtAudienceForHousehold` / `latestDraft()` はファイルに無いので発明しない（P-T3-API）。到達は `<Harness initialStep=… initialDraft=… />`。draft を読むテストだけ、Harness にテスト専用 `draftBox` を足す。
+
+既存 `afterEach`（`:18–20`、leave flush 解除）へ `vi.useRealTimers()` を足す。fake timer テストが失敗したときに漏れないようにする。
+
+```tsx
+function Harness({
+  // 既存 props はそのまま
+  draftBox,
+}: {
+  // 既存の型はそのまま
+  draftBox?: { current: PlannerDraftInput };
+}) {
+  const [step, setStep] = useState<PlannerStep>(initialStep);
+  const [draft, setDraft] = useState<PlannerDraftInput>(initialDraft);
+  if (draftBox !== undefined) {
+    draftBox.current = draft;
+  }
+  // 以降の return は現行どおり
+```
 
 ```tsx
 /** 自動遷移直後の 350ms ガード（設計 P-03）を抜ける。 */
@@ -583,21 +602,44 @@ function optionLabel(name: string): HTMLElement {
   if (label === null) throw new Error(`.wizard-option が見つからない: ${name}`);
   return label as HTMLElement;
 }
+
+function renderAtTimeLimit(overrides: Partial<PlannerDraftInput> = {}) {
+  const initialDraft = { ...reviewDraft, ...overrides };
+  const draftBox: { current: PlannerDraftInput } = { current: initialDraft };
+  render(
+    <Harness initialStep="timeLimit" initialDraft={initialDraft} draftBox={draftBox} />,
+  );
+  return { latestDraft: () => draftBox.current };
+}
 ```
 
-追加するテスト。
+追加するテスト。`it(...)` でも `test(...)` でもよい（ファイルは `it` が主）。idea 側の `onIdeaAudienceConfirmed` は resolve しないと audience に留まる。
 
 ```tsx
 test("moves from audience to the time limit step for household", async () => {
   const user = userEvent.setup();
-  renderWizardAtAudienceForHousehold(); // 既存の audience 到達 helper に合わせる
+  render(<Harness initialStep="audience" initialDraft={reviewDraft} />);
   await user.click(screen.getByRole("button", { name: "次へ" }));
   expect(screen.getByRole("heading", { name: "5. 調理時間" })).toBeInTheDocument();
 });
 
 test("moves from audience to the time limit step for idea", async () => {
   const user = userEvent.setup();
-  renderWizardAtAudienceForIdea(); // 既存の idea audience 到達 helper に合わせる
+  render(
+    <Harness
+      initialStep="audience"
+      initialDraft={{
+        ...emptyDraft,
+        mealType: "dinner",
+        mainIngredients: ["鶏肉"],
+        cuisineGenre: "japanese",
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 2,
+      }}
+      onIdeaAudienceConfirmed={vi.fn().mockResolvedValue(undefined)}
+    />,
+  );
   await user.click(screen.getByRole("button", { name: "次へ" }));
   expect(await screen.findByRole("heading", { name: "5. 調理時間" })).toBeInTheDocument();
 });
@@ -605,7 +647,7 @@ test("moves from audience to the time limit step for idea", async () => {
 test("walks the four optional steps into the review step and keeps the picks", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  const { latestDraft } = renderWizardAtTimeLimit(); // audience の次へまで進めた状態
+  const { latestDraft } = renderAtTimeLimit();
   await passActivationGuard();
   await user.click(optionLabel("15分以内"));
   expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
@@ -624,23 +666,21 @@ test("walks the four optional steps into the review step and keeps the picks", a
     ingredientPreference: "more",
     noveltyPreference: "twist",
   });
-  vi.useRealTimers();
 });
 
 test("stores null rather than an empty string when 指定なし is picked", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  const { latestDraft } = renderWizardAtTimeLimit();
+  const { latestDraft } = renderAtTimeLimit();
   await passActivationGuard();
   await user.click(optionLabel("指定なし"));
   expect(latestDraft().timeLimitMinutes).toBeNull();
   expect(latestDraft().timeLimitMinutes).not.toBe("");
-  vi.useRealTimers();
 });
 
 test("skips the rest of the optional steps with all four fields null", async () => {
   const user = userEvent.setup();
-  const { latestDraft } = renderWizardAtTimeLimit();
+  const { latestDraft } = renderAtTimeLimit();
   await user.click(screen.getByRole("button", { name: "以降は指定なしでスキップ" }));
   expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
   expect(latestDraft()).toMatchObject({
@@ -654,7 +694,7 @@ test("skips the rest of the optional steps with all four fields null", async () 
 test("ignores the first click on a newly mounted optional step", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  const { latestDraft } = renderWizardAtTimeLimit();
+  const { latestDraft } = renderAtTimeLimit();
   await passActivationGuard();
   await user.click(optionLabel("15分以内"));
   expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
@@ -662,12 +702,11 @@ test("ignores the first click on a newly mounted optional step", async () => {
   await user.click(optionLabel("節約優先"));
   expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
   expect(latestDraft().budgetPreference).toBeNull();
-  vi.useRealTimers();
 });
 
 test("returns to review when the audience is edited from the review screen (household)", async () => {
   const user = userEvent.setup();
-  renderWizardAtReviewForHousehold();
+  render(<Harness initialStep="review" initialDraft={reviewDraft} />);
   await user.click(screen.getByRole("button", { name: "対象を変更" }));
   expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "確認に戻る" }));
@@ -676,35 +715,71 @@ test("returns to review when the audience is edited from the review screen (hous
 
 test("returns to review when the audience is edited from the review screen (idea)", async () => {
   const user = userEvent.setup();
-  renderWizardAtReviewForIdea();
+  render(
+    <Harness
+      initialStep="review"
+      initialDraft={{
+        ...emptyDraft,
+        mealType: "dinner",
+        mainIngredients: ["鶏肉"],
+        cuisineGenre: "japanese",
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 2,
+      }}
+    />,
+  );
   await user.click(screen.getByRole("button", { name: "対象を変更" }));
   await user.click(screen.getByRole("button", { name: "確認に戻る" }));
   expect(await screen.findByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
 });
-
-test("returns to review right after picking on an optional step opened from 変更", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  renderWizardAtReviewForHousehold();
-  await user.click(screen.getByRole("button", { name: "調理時間を変更" }));
-  expect(screen.getByRole("heading", { name: "5. 調理時間" })).toBeInTheDocument();
-  // 編集戻り中はスキップを出さない
-  expect(
-    screen.queryByRole("button", { name: "以降は指定なしでスキップ" }),
-  ).not.toBeInTheDocument();
-  await passActivationGuard();
-  await user.click(optionLabel("30分以内"));
-  expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
-  vi.useRealTimers();
-});
 ```
 
-同ファイルの既存テストを新しい step 数へ更新する。
+「調理時間を変更」からの編集戻りテストは **Task 4** へ移す（P-T3-EDIT）。Task 3 時点では確認の変更ボタンが食事 / メイン食材 / ジャンル / `aria-label="対象を変更"` までしか無い。Task 3 の P-01 回帰は上の「対象を変更 → 確認に戻る」だけ。
 
-- audience の「次へ」で `5. 確認` を期待している sequential テスト（`:301–333` 相当）→ `5. 調理時間` を期待し、そこから4ページを歩いて `9. 確認` へ。戻る回数の主張（確認から戻る×4 で `1. 食事`）は戻る×8 にする。
-- 編集戻りテスト（`:801–804` 相当）→ `9. 確認`。
-- 「戻るで1つ前の質問へ、変更後の次へで確認へ直行できる」（`:746–764` 相当）→ 確認からの戻る1回は `8. 献立の雰囲気`。そこから確認へ帰るのに「次へ」は無いので、`await passActivationGuard()` のあと `optionLabel("いつもの")` を click して `9. 確認` に着く形へ書き換える。この区間で `getByRole("button", { name: "次へ" })` を使わない。
-- 「追加条件」系の4テスト（確認画面のカードを操作していたもの）は Task 4 で確認サマリの検証へ書き換えるため、このタスクでは触らない（Task 4 まで赤のままでよい／`describe.skip` にはしない。Task 3 の検証は下記の scope 実行で行う）。
+同ファイルの既存テストを新しい step 数へ更新する（P-T3-HEADING / P-T3-GUARD）。`"5. 確認"` の **正アサーション** は次の全件。queryByRole 不在（555, 712, 828, 854）は見出し差し替え後も緑なので触らない。
+
+| 行 | テスト | Task 3 での期待 |
+| --- | --- | --- |
+| 323 | sequential `:301–333` | audience の次は `5. 調理時間`。そこから `passActivationGuard` + `optionLabel("指定なし")` で 4 ページ歩き、`9. 確認`。戻るは確認から数えて ×8 で `1. 食事` |
+| 536 | idea confirm resolve 後の着地 | `5. 調理時間`（review ではない） |
+| 576 | household audience 次へ | `5. 調理時間` |
+| 616 | idea 二重送信 resolve 後 | `5. 調理時間` |
+| 647 | P1 reset disabled resolve 後 | `5. 調理時間` |
+| 764 | 「戻るで1つ前の質問へ…」 | 確認からの戻る1回は `8. 献立の雰囲気`。`passActivationGuard` のあと `optionLabel("いつもの")` で `9. 確認`。この区間で `getByRole("button", { name: "次へ" })` を使わない |
+| 773, 794, 799, 804 | 編集戻り着地 | `9. 確認` |
+| 1543 | 保存失敗で step 維持（`initialStep="review"`） | `9. 確認` |
+
+sequential の歩き部分は次を本文とする（P-T3-GUARD。audience 次へ直後の click は 350ms に食われる）。
+
+```tsx
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+
+    expect(screen.getByRole("heading", { name: "5. 調理時間" })).toBeInTheDocument();
+    await passActivationGuard();
+    await user.click(optionLabel("指定なし"));
+    expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
+    await passActivationGuard();
+    await user.click(optionLabel("指定なし"));
+    expect(screen.getByRole("heading", { name: "7. 材料の使い方" })).toBeInTheDocument();
+    await passActivationGuard();
+    await user.click(optionLabel("指定なし"));
+    expect(screen.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeInTheDocument();
+    await passActivationGuard();
+    await user.click(optionLabel("指定なし"));
+
+    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+
+    for (let i = 0; i < 8; i += 1) {
+      await user.click(screen.getByRole("button", { name: "戻る" }));
+    }
+    expect(screen.getByRole("heading", { name: "1. 食事" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "夕食" })).toBeChecked();
+```
+
+sequential 本体は fake timer が必要なので、この `it` の先頭で `vi.useFakeTimers({ shouldAdvanceTime: true })` と `userEvent.setup({ advanceTimers: vi.advanceTimersByTime })` に切り替える。
+
+「追加条件」系4テスト（717「任意条件はデフォルトで開き…」、893、934、983）は Task 3 ではカード UI が残るので**緑のまま**。Task 4 で書き換える。`describe.skip` にしない。
 
 見出し名の更新（同一コミット内）:
 
@@ -769,6 +844,8 @@ household 側（現行 `setReturnToReviewAfterEdit(false);` から末尾まで�
 
 ```tsx
             // household 等: 未完成 audience / 非 eligible のまま先へ進めない（P2/P7）
+            // firstIncomplete へ直指定する。advanceFromEditOr に変えるとフラグが落ち、
+            // 次の「次へ」が timeLimit へ進んで確認へ帰らなくなる。
             if (!isAudienceComplete(draft, eligibleMemberIdSet)) {
               goToStep(firstIncompletePlannerStep(draft, eligibleMemberIdSet));
               return;
@@ -972,7 +1049,7 @@ docker compose run --rm --no-deps app npm test -- --run src/features/planner/com
 docker compose run --rm --no-deps app npm run typecheck
 ```
 
-期待: 「追加条件」系4テスト（Task 4 で書き換える確認画面のカード操作）以外は PASS。typecheck は PASS。
+期待: PASS（「追加条件」系4テストも Task 3 では緑。typecheck も PASS。`ReviewFieldErrors` の余剰キーは代入側を壊さない）。
 
 - [ ] **Step 5: コミットする**
 
@@ -998,7 +1075,75 @@ git commit -m "feat(planner): 追加条件4ページをウィザードへ配線�
 
 - [ ] **Step 1: 失敗するテストを書く**
 
-`planner-wizard.test.tsx` の既存「追加条件」系4テストを、確認サマリの検証へ書き換える。
+`planner-wizard.test.tsx` の既存「追加条件」系4テストを、確認サマリの検証へ書き換える。到達は live の Harness を使う（P-T3-API）。`renderWizardAtReviewWithDraft` はファイルに無いので、次をテストファイルへ足してから使う。
+
+```tsx
+function renderWizardAtReviewWithDraft(overrides: Partial<PlannerDraftInput> = {}) {
+  render(
+    <Harness
+      initialStep="review"
+      initialDraft={{ ...reviewDraft, ...overrides }}
+    />,
+  );
+}
+```
+
+名前で対象にする既存テスト:
+
+- `it("任意条件はデフォルトで開き、閉じたあと再度開いて編集できる")`（`:717`。P-T4-717。名前検索から漏れやすい）
+- `it("追加条件は field 縦積みで狭幅でも崩れない構造を持つ")`（`:893`）
+- `it("追加条件の材料の使い方を選び draft に反映できる")`（`:934`）
+- `it("追加条件の献立の雰囲気を選び draft に反映できる")`（`:983`）
+
+`:717` は details の開閉だけ残し、radio 操作（`radiogroup`「献立全体の調理時間」）を削除する。
+
+```tsx
+  it("任意条件はデフォルトで開き、閉じたあと再度開いて編集できる", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initialStep="review"
+        initialDraft={{
+          ...emptyDraft,
+          mealType: "dinner",
+          mainIngredients: ["鶏肉"],
+          cuisineGenre: "japanese",
+          targetMode: "household",
+          targetMemberIds: [eligibleMember.id],
+        }}
+      />,
+    );
+
+    const summary = screen.getByText("追加条件");
+    const details = summary.closest("details");
+    expect(details).toHaveAttribute("open");
+    await user.click(summary);
+    expect(details).not.toHaveAttribute("open");
+    await user.click(summary);
+    expect(details).toHaveAttribute("open");
+    expect(screen.getByRole("textbox", { name: /今回だけ避ける食材/u })).toBeInTheDocument();
+  });
+```
+
+Task 3 から移した「調理時間を変更」の編集戻り（P-T3-EDIT）。このテストはサマリ行の変更ボタンが生えてからでないと書けない。
+
+```tsx
+test("returns to review right after picking on an optional step opened from 変更", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  render(<Harness initialStep="review" initialDraft={reviewDraft} />);
+  await user.click(screen.getByRole("button", { name: "調理時間を変更" }));
+  expect(screen.getByRole("heading", { name: "5. 調理時間" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "以降は指定なしでスキップ" }),
+  ).not.toBeInTheDocument();
+  await passActivationGuard();
+  await user.click(optionLabel("30分以内"));
+  expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+});
+```
+
+サマリ行の検証。
 
 ```tsx
 test("shows the optional condition answers as review summary rows", () => {
@@ -1177,7 +1322,7 @@ export type ReviewFieldErrors = Partial<
 
 ```tsx
               <p className="type-small">
-                「戻る」で1つ前の質問へ、「変更」でその質問へ直接戻れます。直したあとは、選び直すか「確認に戻る」でこの画面に戻ります。
+                「戻る」で1つ前の質問へ、「変更」でその質問へ直接戻れます。必須の質問を直したあとは「確認に戻る」で、追加条件のページでは選び直すと、この画面に戻ります。
               </p>
 ```
 
@@ -1199,16 +1344,16 @@ function buildReviewFieldErrors(
 }
 ```
 
-**4-h. `src/app/accessibility.test.tsx` の axe 表へ新4ページを足す。** `heading: "9. 確認"` の行の手前に、既存行と同じ形で次を追加する（primary の期待は5ページ目がスキップボタン、6〜8ページ目は「戻る」のみ。「次へ」は存在しない）。
+**4-h. `src/app/accessibility.test.tsx` の axe 表へ新4ページを足す。** `it.each` は `step` が必須（P-T4-AXE）。`renderWizard` は `onStepChange={vi.fn()}` なので歩かない。各行を `step` 付きで直描画する。歩き parenthetical は書かない。primary は5ページ目がスキップ、6〜8ページ目は「戻る」。
 
 ```ts
-      { heading: "5. 調理時間", primary: "以降は指定なしでスキップ" },
-      { heading: "6. 予算", primary: "戻る" },
-      { heading: "7. 材料の使い方", primary: "戻る" },
-      { heading: "8. 献立の雰囲気", primary: "戻る" },
+    { step: "timeLimit" as const, heading: "5. 調理時間", primary: "以降は指定なしでスキップ" },
+    { step: "budget" as const, heading: "6. 予算", primary: "戻る" },
+    { step: "ingredientPreference" as const, heading: "7. 材料の使い方", primary: "戻る" },
+    { step: "novelty" as const, heading: "8. 献立の雰囲気", primary: "戻る" },
 ```
 
-（既存行のプロパティ名・到達方法はファイル内の実際の形に合わせる。新4ページへは audience の「次へ」のあと、各ページで 350ms ガードを跨いでカードを click して到達する。）
+`heading: "9. 確認"` の行の手前に置く。draft は任意 step なので `emptyDraft` でよい。
 
 - [ ] **Step 4: テストを実行して通ることを確認する**
 
@@ -1268,13 +1413,15 @@ export async function skipOptionalPlannerSteps(page: Page): Promise<void> {
 
 下の各所で、audience の `clickWizardNext(page)` の直後にある `await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();` を `await skipOptionalPlannerSteps(page);` に置き換える（この1行がスキップと `9. 確認` 到達の両方を主張する）。呼び出し元ファイルには `skipOptionalPlannerSteps` の import を足す。
 
+**idea ジャーニーは置換ではない（P-T5-IDEA）。** `e2e/specs/full-journey.spec.ts:315` の `clickWizardNext(page)` の**直後**、disclaimer `:317`（「家族の年齢・アレルギーは確認されません」）の**前**へ `await skipOptionalPlannerSteps(page);` を**挿入**する。`:315` の次は現状 `"5. 確認"` ではないので「直後の `5. 確認` を skip に置換」では helper が入らない。`:336` の `"5. 確認"` は privacy 復帰の見出し主張なので **置換のみ**（helper にしない）。
+
 | ファイル | 単位 |
 | --- | --- |
 | `e2e/fixtures/history.ts` | `seedGeneratedMenu`（`:237–238`） |
 | `e2e/fixtures/history.ts` | `seedGeneratedIdeaMenu`（`:453–455`） |
 | `e2e/fixtures/shopping.ts` | `generateShoppingMenu`（`:88–89`） |
 | `e2e/shots/flows.ts` | `advanceToReviewWithHousehold`（`:36–37`） |
-| `e2e/specs/full-journey.spec.ts` | idea ジャーニー（`:315` の次） |
+| `e2e/specs/full-journey.spec.ts` | idea ジャーニー（`:315` の直後へ **挿入**。`:336` は置換のみ） |
 | `e2e/specs/menu-domain-pantry.spec.ts` | `savePlannerMeal`（`:119–120`） |
 | `e2e/specs/menu-domain-pantry.spec.ts` | `advanceToReviewWithHousehold`（`:145–146`） |
 | `e2e/specs/generation-recovery-results.spec.ts` | `completeIdeaPlannerToReview`（`:87–90`） |
@@ -1312,7 +1459,7 @@ export async function skipOptionalPlannerSteps(page: Page): Promise<void> {
 
 ```bash
 docker compose run --rm --no-deps app npx tsc --noEmit -p e2e/tsconfig.json 2>/dev/null || true
-grep -rn '"5\. 確認"' --include=*.ts e2e src
+grep -rn '"5\. 確認"' --include='*.ts' --include='*.tsx' e2e src
 ```
 
 期待: `grep` の出力が空。
@@ -1322,7 +1469,8 @@ grep -rn '"5\. 確認"' --include=*.ts e2e src
 ```bash
 docker compose run --rm --no-deps app npm run typecheck
 docker compose run --rm --no-deps app npm run format:check
-git add e2e src
+git add e2e/fixtures/history.ts e2e/fixtures/shopping.ts e2e/shots/flows.ts e2e/specs/menu-domain-pantry.spec.ts e2e/specs/generation-recovery-results.spec.ts e2e/specs/full-journey.spec.ts e2e/specs/mobile-accessibility.spec.ts
+# Step 4 の grep で src に `"5. 確認"` が残って触ったファイルがあれば、それも add する。e2e src 一式の git add はしない。
 git commit -m "test(e2e): 追加条件stepをスキップするヘルパを足し導線を9ページへ更新する"
 ```
 
@@ -1345,33 +1493,45 @@ git commit -m "test(e2e): 追加条件stepをスキップするヘルパを足�
 
 - **各ページで 350ms 待つ。** `blocked()` は**そのページの mount** から数えるので、heading が可視／focus になった直後の `.click()` や Space は食われる。ページごとに `await expect(heading).toBeVisible()`（キーボード導線は `toBeFocused()`）のあと `await page.waitForTimeout(350)` を置いてから操作する。
 - **新4ページに「次へ」は無い。** `clickWizardNext` を使わない、`次へ` を `expectMajorActionAtLeast44` で測らない、`tabUntil(focus.name === "次へ")` を書かない（どれも 0 件で赤になる）。前進はカード（`.wizard-option`）の click か radio の Space。
-- 「指定なし」のまま通過する場合も `.check()` ではなく `.click()`（既に checked の radio に対する `.check()` は no-op になり `pointerup` が出ない）。
+- 「指定なし」のまま通過する場合も `.check()` ではなく label `.wizard-option` の `.click()`（既に checked の radio に対する `.check()` は no-op になり `pointerup` が出ない）。unit と同じ受け口を通す。
+- クリック対象は `page.getByRole("radio", { name }).click()` ではなく `page.locator("label.wizard-option").filter({ hasText: name })`。
 
 - [ ] **Step 1: `full-journey.spec.ts` household を4ページ歩きにする**
 
 audience の「次へ」直後の `9. 確認` 到達を、4ページを歩く形へ置き換える。「ひねりたい」は `8. 献立の雰囲気` で選ぶ。ここだけスキップを使わず、自動遷移が効いていることも同時に主張する。
 
+live `:77–88` は radiogroup `.check()` の**前に** `waitForResponse`（`"p_novelty_preference":"twist"`）を置いている。確認の `.check()` だけ消して `noveltySaved` を残す／消すと timeout か twist 未保存になる（P-T6-WAIT）。`waitForResponse` を **8 ページ目の「ひねりたい」click の直前**へ移し、`await noveltySaved` のあと `9. 確認` を主張する。確認画面の radiogroup `.check()` は削除する。
+
 ```ts
   await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
   await page.waitForTimeout(350);
-  await page.getByRole("radio", { name: "15分以内" }).click();
+  await page.locator("label.wizard-option").filter({ hasText: "15分以内" }).click();
 
   await expect(page.getByRole("heading", { name: "6. 予算" })).toBeVisible();
   await page.waitForTimeout(350);
-  await page.getByRole("radio", { name: "節約優先" }).click();
+  await page.locator("label.wizard-option").filter({ hasText: "節約優先" }).click();
 
   await expect(page.getByRole("heading", { name: "7. 材料の使い方" })).toBeVisible();
   await page.waitForTimeout(350);
-  await page.getByRole("radio", { name: "多め" }).click();
+  await page.locator("label.wizard-option").filter({ hasText: "多め" }).click();
 
   await expect(page.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeVisible();
   await page.waitForTimeout(350);
-  await page.getByRole("radio", { name: "ひねりたい（主菜を定番から外す）" }).click();
+  const noveltySaved = page.waitForResponse((response) => {
+    if (!new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft")) {
+      return false;
+    }
+    const postData = response.request().postData();
+    return postData !== null && postData.includes('"p_novelty_preference":"twist"');
+  });
+  await page
+    .locator("label.wizard-option")
+    .filter({ hasText: "ひねりたい（主菜を定番から外す）" })
+    .click();
+  await noveltySaved;
 
   await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
 ```
-
-これまで確認画面で「ひねりたい」を選んでいた箇所があれば削除する（同一ジャーニー内で二重に選ばない）。
 
 - [ ] **Step 2: `mobile-accessibility.spec.ts` の走査へ新4ページを足す**
 
@@ -1381,22 +1541,22 @@ audience の「次へ」直後の `9. 確認` 到達を、4ページを歩く形
   await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
   await assertStepFits(page, { "以降は指定なしでスキップ": 1, 戻る: 1 });
   await page.waitForTimeout(350);
-  await page.getByRole("radio", { name: "指定なし" }).click();
+  await page.locator("label.wizard-option").filter({ hasText: "指定なし" }).click();
 
   await expect(page.getByRole("heading", { name: "6. 予算" })).toBeVisible();
   await assertStepFits(page, { 戻る: 1 });
   await page.waitForTimeout(350);
-  await page.getByRole("radio", { name: "指定なし" }).click();
+  await page.locator("label.wizard-option").filter({ hasText: "指定なし" }).click();
 
   await expect(page.getByRole("heading", { name: "7. 材料の使い方" })).toBeVisible();
   await assertStepFits(page, { 戻る: 1 });
   await page.waitForTimeout(350);
-  await page.getByRole("radio", { name: "指定なし" }).click();
+  await page.locator("label.wizard-option").filter({ hasText: "指定なし" }).click();
 
   await expect(page.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeVisible();
   await assertStepFits(page, { 戻る: 1 });
   await page.waitForTimeout(350);
-  await page.getByRole("radio", { name: "指定なし" }).click();
+  await page.locator("label.wizard-option").filter({ hasText: "指定なし" }).click();
 
   await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
 ```
@@ -1494,3 +1654,17 @@ git commit -m "test(e2e): 追加条件4ページを歩く導線とキーボー�
 **Placeholder scan:** TBD / TODO / 「適切に」なし。コード手順はすべて実コードを含む。
 
 **Type consistency:** `OptionalChoiceStepProps` の props 名（`id` / `title` / `options` / `value` / `onSelect` / `onNext` / `onBack` / `disabled` / `errorMessage` / `description` / `onSkipRest` / `backLabel`）は Task 2 の定義と Task 3 の呼び出しで一致。`nextLabel` はどこにも現れない。`ReviewFieldErrors` は Task 4 で3フィールドへ縮め、`buildReviewFieldErrors` を同時に合わせている。step 名（`timeLimit` / `budget` / `ingredientPreference` / `novelty`）は Task 1 の `plannerSteps`、Task 3 の分岐、Task 4 の `onEditStep` で一致。
+
+**Plan review 9 系統（`34f5e2d3` 裁定 → 本本文へ埋め込み済み）:**
+
+| ID | 入れた場所 |
+| --- | --- |
+| P-T1-IMPORT | Task 1 Step 1 の import に `buildPlannerSubmissionFieldErrors` |
+| P-T3-API | Task 3 到達を live `Harness` + `draftBox`。Task 4 の `renderWizardAtReviewWithDraft` も Harness |
+| P-T3-EDIT | 「調理時間を変更」を Task 4 へ。Task 3 の P-01 は「対象を変更 → 確認に戻る」 |
+| P-T3-HEADING | `"5. 確認"` 正アサーション全件。追加条件 4 本は Task 3 では緑 |
+| P-T3-GUARD | sequential に `passActivationGuard`。戻る×8 は確認から数える |
+| P-T4-717 | `:717` を名前で書き、details 開閉だけ残す |
+| P-T4-AXE | axe 行に `step`。直描画。歩き指示なし |
+| P-T5-IDEA | idea は `:315` 直後へ skip 挿入。`:336` は置換のみ |
+| P-T6-WAIT | `noveltySaved` を 8 ページ目 click の直前へ |
