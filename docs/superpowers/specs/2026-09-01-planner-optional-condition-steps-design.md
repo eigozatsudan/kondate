@@ -125,14 +125,89 @@ radio ラベル操作では `change` と `click` の両方が同じ活性化か�
 - したがって「`change` を数える／`click` を数える」ではなく「**活性化を数える**」が
   テストの単位になる。
 
+#### D-03: 擬似コードと順序
+
+`activate` が常に `onSelect` + `onNext` を呼び、`onChange` が独立に `onSelect` を呼ぶと、
+未選択カードの本線で `onSelect` が2回走る。順序（`pointerup` → `click` → `change`、
+Space は `keyup` ハンドラ → 既定動作の `click`/`change`）を使って、**活性化中は
+`onChange` を落とす**。
+
+```tsx
+// 呼び出し側: <OptionalChoiceStep key={step} … />  ← 4ページは同じ component type なので
+// key が無いと instance が再利用され、mutex と mountedAt が持ち越される
+function OptionalChoiceStep({ options, value, disabled, onSelect, onNext, … }) {
+  const mountedAt = useRef(Date.now());
+  const activating = useRef(false); // 活性化 mutex（instance ごと）
+
+  // 350ms ガードと disabled は mutex より前に見る。ここで弾いたときは mutex を立てない
+  // （立てると 6〜8ページ目で以後の操作が全部死に、スキップの無いページに閉じ込める）
+  const blocked = () => disabled || Date.now() - mountedAt.current < 350;
+
+  const activate = (optionValue: string) => {
+    if (blocked() || activating.current) return;
+    activating.current = true; // 同一ジェスチャの後続 click / change をここで吸収
+    onSelect(optionValue);
+    onNext();
+  };
+
+  // 値だけの更新（矢印キー・プログラム的変更）。mutex は立てない
+  const handleChange = (optionValue: string) => {
+    if (blocked() || activating.current) return;
+    onSelect(optionValue);
+  };
+
+  return options.map((option) => (
+    <label
+      key={option.value}
+      className="wizard-option"
+      onPointerUp={(event) => {
+        if (event.button === 0 && event.isPrimary) activate(option.value);
+      }}
+    >
+      <input
+        type="radio"
+        checked={value === option.value}
+        disabled={disabled}
+        onChange={() => handleChange(option.value)}
+        onKeyUp={(event) => {
+          if (event.key === " ") activate(option.value);
+        }}
+      />
+      <span>{option.label}</span>
+    </label>
+  ));
+}
+```
+
+経路ごとの呼ばれ方:
+
+| 操作 | `onSelect` | `onNext` | 機序 |
+| --- | --- | --- | --- |
+| 未選択カードを tap | 1 | 1 | `pointerup` の `activate`。後続の `change` は mutex で落ちる |
+| 既選択（「指定なし」含む）を再 tap | 1（同値） | 1 | `change` は元々出ない。`pointerup` が単独で担う |
+| 未選択 radio で Space | 1 | 1 | `keyup` の `activate` が先。既定動作の `change` は mutex で落ちる |
+| 既選択 radio で Space | 1（同値） | 1 | `change` は出ない |
+| 矢印キーで選択移動 | 1 | 0 | `handleChange` のみ。mutex を立てないので次の tap は生きる |
+| mount 後 350ms 以内 | 0 | 0 | `blocked()`。`onChange` も落とすので、同一ジェスチャの leftover が次ページの値を書かない |
+
+- `mountedAt` / `activating` は instance ローカルなので、**呼び出し側で `key={step}` を渡す**
+  ことが前提になる。4ページは同一 component type で `<main>` の形も同じため、`key` が無いと
+  React が instance を再利用して mutex が立ったまま次ページへ持ち越される。
+- `blocked()` を mutex より先に評価するのが必須。逆順にすると 350ms のガードで弾いた操作が
+  mutex を立て、「戻る」しか無い 6〜8ページ目から出られなくなる。
+- leftover（同一ジェスチャの `click` / `change` が自動遷移後の新ページへ落ちる）は、
+  `onChange` も 350ms ガードの内側に置くことで閉じる。`onNext` を遅延させる案は採らない
+  （体感が鈍る）。
+
 ### P-03: 自動遷移直後のダブルタップ
 
 4ページとも `.wizard-option` が同じ座標に並ぶ。`.wizard-transition`（180ms）は現行 step の
 `<section>` には載っていないため、~300ms 後の2発目は次ページの同位置カードに落ちて
 誤選択になる。E2E のフルウォークは遅いので拾えない。
 
-- step が mount してから **350ms** の間は選択肢の活性化（click / Space）を無視する。
-  `useRef` に mount 時刻を持ち、活性化ハンドラの先頭で判定する。
+- step が mount してから **350ms** の間は、`activate`（label の `pointerup` / radio の
+  Space `keyup`）も `handleChange`（native `change`）も無視する。`useRef` に mount 時刻を
+  持ち、両ハンドラの先頭で判定する（D-03 の `blocked()`）。
 - 「戻る」とスキップボタンはこのガードの対象外にする（同位置の連打リスクが無い）。
 - unit 必須（D-02）。「2発目」という書き方では、次 step の**初回** click を通してしまう
   実装でも緑になる。次の2段で書く。
@@ -265,11 +340,16 @@ onSkipRest: () => {
 
 - `optional-choice-step.test.tsx`
   - 「指定なし」が既定で選択済み
-  - P-02 のイベント表を1行ずつ: ポインタ click で `onSelect` + `onNext` が各1回 /
-    既選択「指定なし」の再 click でも1回 / 既選択の非デフォルト再 click でも1回 /
-    Space で1回 / 矢印キー由来の `change` では `onNext` が走らない
+  - P-02 / D-03 の経路表を1行ずつ。操作は必ず **`.wizard-option`（`<label>`）を
+    `userEvent.click` で叩く**（input を直接 `click` すると pointerup の受け口を
+    通らず、実機と違う経路を測ってしまう）。未選択カードで `onSelect` / `onNext` が
+    各1回 / 既選択「指定なし」の再クリックでも各1回 / 既選択の非デフォルト再クリックでも
+    各1回 / Space で各1回 / 矢印キー由来の `change` では `onSelect` 1回・`onNext` 0回
   - DOM に「次へ」が無い
-  - P-03: mount 直後 350ms 以内の2発目 click では `onSelect` が走らない
+  - D-02: mount 後 350ms 以内の**最初の**活性化で `onSelect` / `onNext` が **0 回**
+    （`vi.useFakeTimers()` で 350ms 進めたあとの活性化で初めて各1回）。同区間の
+    `change` でも `onSelect` が 0 回
+  - 350ms 以内に弾かれたあと、350ms 経過後の操作が生きている（mutex が立っていない）
   - `onSkipRest` 未指定ならスキップボタンを出さない
 - `planner-wizard.test.tsx`
   - audience の「次へ」で `5. 調理時間` に着く（household / idea 両方）
@@ -277,6 +357,8 @@ onSkipRest: () => {
   - P-05: 「指定なし」通過後の draft が `null`（`""` でない）
   - 5ページ目のスキップで4条件が `null` のまま `9. 確認` に着く
   - P-01 回帰: 確認の「対象を変更 → 確認に戻る」が `9. 確認` に戻る（household / idea）
+  - D-02（ウィザード単位）: 5ページ目のカードを click して6ページ目へ自動遷移した直後、
+    6ページ目の**初回** click（350ms 以内）で draft が変わらず `6. 予算` に留まる
   - 確認の「変更」で該当ページへ飛び、選ぶと確認へ戻る
   - 既存の sequential テスト（`:301–333` 相当。audience の次＝確認、戻る×4 で食事）と
     編集戻りテスト（`:801–804` 相当）を新しい step 数へ更新
@@ -298,30 +380,40 @@ onSkipRest: () => {
 #### D-01: audience → review を歩く箇所（helper 名で列挙）
 
 行番号ではなく helper 名で押さえる。「audience の `次へ` を押したあと `5. 確認` を
-期待している」箇所がすべて対象で、**そこへ `skipOptionalPlannerSteps` を挟む**。
+期待している」箇所がすべて対象。**既定はスキップ**（`skipOptionalPlannerSteps` を挟む）で、
+下表の「手段」列が `4ページ歩き` / `Space` になっている行だけは skip を使わず、その節の
+指定どおりに操作する。
 
-| ファイル | 単位 | 現在地 |
-| --- | --- | --- |
-| `e2e/fixtures/history.ts` | `seedGeneratedMenu`（household） | `:237–238` |
-| `e2e/fixtures/history.ts` | `seedGeneratedIdeaMenu`（idea） | `:453–455` |
-| `e2e/fixtures/shopping.ts` | `ensurePlannerReady` | `:88–89` |
-| `e2e/shots/flows.ts` | `advanceToReviewWithHousehold` | `:36–37` |
-| `e2e/specs/full-journey.spec.ts` | household ジャーニー | `:71–73` |
-| `e2e/specs/full-journey.spec.ts` | idea ジャーニー | `:315` の次 |
-| `e2e/specs/menu-domain-pantry.spec.ts` | `savePlannerMeal` | `:119–120` |
-| `e2e/specs/menu-domain-pantry.spec.ts` | `advanceToReviewWithHousehold` | `:145–146` |
-| `e2e/specs/menu-domain-pantry.spec.ts` | インライン（対象を選び直して確認へ戻る） | `:277–278` |
-| `e2e/specs/mobile-accessibility.spec.ts` | 走査本体 | `:147–149` |
-| `e2e/specs/generation-recovery-results.spec.ts` | **`completeIdeaPlannerToReview`** | `:87–90` |
-| `e2e/specs/generation-recovery-results.spec.ts` | **`completeMinimumPlanner`** | `:141–142` |
-| `e2e/specs/generation-recovery-results.spec.ts` | 44px レイアウト走査 | `:1259–1272` |
-| `e2e/specs/generation-recovery-results.spec.ts` | キーボード導線 | `:1358–1385` |
+| ファイル | 単位 | 現在地 | 手段 |
+| --- | --- | --- | --- |
+| `e2e/fixtures/history.ts` | `seedGeneratedMenu`（household） | `:237–238` | skip |
+| `e2e/fixtures/history.ts` | `seedGeneratedIdeaMenu`（idea） | `:453–455` | skip |
+| `e2e/fixtures/shopping.ts` | **`generateShoppingMenu`** | `:88–89` | skip |
+| `e2e/shots/flows.ts` | `advanceToReviewWithHousehold` | `:36–37` | skip |
+| `e2e/specs/full-journey.spec.ts` | household ジャーニー | `:71–73` | **4ページ歩き** |
+| `e2e/specs/full-journey.spec.ts` | idea ジャーニー | `:315` の次 | skip |
+| `e2e/specs/menu-domain-pantry.spec.ts` | `savePlannerMeal` | `:119–120` | skip |
+| `e2e/specs/menu-domain-pantry.spec.ts` | `advanceToReviewWithHousehold` | `:145–146` | skip |
+| `e2e/specs/mobile-accessibility.spec.ts` | **`answerAudienceAndReview`** | `:147–149` | **4ページ歩き** |
+| `e2e/specs/generation-recovery-results.spec.ts` | `completeIdeaPlannerToReview` | `:87–90` | skip |
+| `e2e/specs/generation-recovery-results.spec.ts` | `completeMinimumPlanner` | `:141–142` | skip |
+| `e2e/specs/generation-recovery-results.spec.ts` | 44px レイアウト走査 | `:1259–1272` | **4ページ歩き** |
+| `e2e/specs/generation-recovery-results.spec.ts` | キーボード導線 | `:1358–1385` | **Space** |
 
-`e2e/fixtures/acceptance.ts` は wizard を歩かない（`history.ts` からの re-export）ので
-対象外。`generation-recovery-results.spec.ts:866–871` は「人数未選択で遷移しない」ことの
-主張で audience に留まるため対象外。
+- `e2e/fixtures/shopping.ts` の `ensurePlannerReady`（`:40–67`）は **walker ではない**
+  （`1. 食事` の radio を出すところで止まる）。ここに skip を足しても意味が無い。
+- `e2e/fixtures/acceptance.ts` は wizard を歩かない（`history.ts` からの re-export）ので
+  対象外。`generation-recovery-results.spec.ts:866–871` は「人数未選択で遷移しない」ことの
+  主張で audience に留まるため対象外。
+- `menu-domain-pantry.spec.ts:263–278`（対象を選び直して確認へ戻るインライン）は
+  **確認の「対象を変更」→ audience で選び直し → 「次へ」** へ書き換える。編集戻りなので
+  `advanceFromEditOr` が `9. 確認` へ直帰し、skip も4ページ歩きも要らない（P-01 の
+  E2E 側の裏取りも兼ねる）。「戻る×5」案は採らない。
+- **「指定なし」を通過する操作は `.check()` ではなく `.click()`。** 既定で checked の
+  radio に対する Playwright の `.check()` は「既に checked」で no-op になり、
+  `pointerup` が出ないので前進しない。
 
-**privacy 復帰行は歩かない。** 次の3箇所は `/privacy` から `?resume=review` で戻った先の
+**privacy 復帰行は歩かない。** 次の箇所は `/privacy` から `?resume=review` で戻った先の
 見出し名を主張しているだけで、ウィザードを進む処理ではない。見出し名の
 `5. 確認` → `9. 確認` 置換side（後述の42件）に属する。
 
@@ -347,7 +439,10 @@ onSkipRest: () => {
   「advances four questions to review and privacy using keyboard only」）は新4ページを
   Space で通過する形にし、各ページで `heading` の `toBeFocused()` のあと **350ms 待って
   から** Space を押す（D-02）。テスト名も実態へ合わせる。
-- `mobile-accessibility.spec.ts`: 320/375/430px の走査へ新4ページを追加。
+- `mobile-accessibility.spec.ts` `answerAudienceAndReview`: 320/375/430px の走査へ新4ページを
+  追加し、4ページを歩いて `9. 確認` まで進める。各ページの `assertStepFits` は
+  `5. 調理時間` が `{ 以降は指定なしでスキップ: 1, 戻る: 1 }`、`6.`〜`8.` が
+  `{ 戻る: 1 }`（「次へ」は存在しない）。
 - `"5. 確認"`（ASCII 引用符）の42件は見出しアサーションの機械置換で、上の導線修正とは
   別作業として扱う。
 
