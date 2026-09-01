@@ -3,6 +3,12 @@ import type { PlannerAttempt } from "../expired-pantry-checks";
 import type { PantryItemsStatus } from "../pantry-selector";
 import type { PantryItem } from "@shared/contracts/pantry";
 import {
+  ingredientPreferenceLabel,
+  ingredientPreferenceLabels,
+  noveltyPreferenceLabel,
+  noveltyPreferenceLabels,
+} from "../model/planner-labels";
+import {
   firstIncompletePlannerStep,
   isAudienceComplete,
   plannerSteps,
@@ -12,6 +18,7 @@ import { AudienceStep } from "./audience-step";
 import { CuisineStep } from "./cuisine-step";
 import { IngredientStep } from "./ingredient-step";
 import { MealStep } from "./meal-step";
+import { OptionalChoiceStep } from "./optional-choice-step";
 import type { PlannerWizardProps } from "./planner-wizard-props";
 import { ReviewStep } from "./review-step";
 import type { ReviewFieldErrors } from "./review-step";
@@ -277,6 +284,22 @@ export function PlannerWizard({
     ? { nextLabel: "確認に戻る", backLabel: "やめる" }
     : {};
 
+  // 追加条件 step は「次へ」を持たないので nextLabel は渡さない。
+  // 編集戻りは「選択で advanceFromEditOr」「戻るで returnToReviewIfQuestionsComplete」の両方が確認へ帰る。
+  const optionalStepBackLabel = returnToReviewAfterEdit ? { backLabel: "やめる" } : {};
+
+  /** 5ページ目の「以降は指定なしでスキップ」。4フィールドだけを null にして確認へ直行する。 */
+  const skipRestOfOptionalSteps = (): void => {
+    onDraftChange({
+      ...draft,
+      timeLimitMinutes: null,
+      budgetPreference: null,
+      ingredientPreference: null,
+      noveltyPreference: null,
+    });
+    goToStep("review");
+  };
+
   // exactOptionalPropertyTypes: undefined を明示代入せず、定義済みキーだけ渡す。
   const conflictChrome = hasDraftConflict ? (
     <DraftConflictChrome
@@ -533,19 +556,18 @@ export function PlannerWizard({
                 if (confirmGeneration !== ideaConfirmGenerationRef.current) return;
                 confirmingIdeaAudienceRef.current = false;
                 setConfirmingIdeaAudience(false);
-                // idea の next 先は常に review（編集戻りでも同じ）
-                setReturnToReviewAfterEdit(false);
-                goToStep("review");
+                advanceFromEditOr("timeLimit");
               })();
               return;
             }
-            setReturnToReviewAfterEdit(false);
-            // household 等: 未完成 audience / 非 eligible のまま review へ進めない（P2/P7）
+            // household 等: 未完成 audience / 非 eligible のまま先へ進めない（P2/P7）
+            // firstIncomplete へ直指定する。advanceFromEditOr に変えるとフラグが落ち、
+            // 次の「次へ」が timeLimit へ進んで確認へ帰らなくなる。
             if (!isAudienceComplete(draft, eligibleMemberIdSet)) {
               goToStep(firstIncompletePlannerStep(draft, eligibleMemberIdSet));
               return;
             }
-            goToStep("review");
+            advanceFromEditOr("timeLimit");
           }}
           disabled={isSaving || confirmingIdeaAudience}
           eligibleMembers={eligibleMembers}
@@ -563,56 +585,227 @@ export function PlannerWizard({
       </main>
     );
   }
-  // review
-  return (
-    <main ref={containerRef} className="page-frame stack guided-planner-theme">
-      {conflictChrome}
-      {autosaveChrome}
-      {resetChrome}
-      <ReviewStep
-        value={draft}
-        onChange={(next) => {
-          onDraftChange(next);
-        }}
-        onBack={() => {
-          // 1ページずつ戻る（audience ← cuisine ← … は各 step の onBack が担う）
-          setReturnToReviewAfterEdit(false);
-          goToStep("audience");
-        }}
-        onNext={() => {
-          // review step自体には「次へ」はなく、明示的な献立生成buttonがonSubmitを呼ぶ。
-        }}
-        onEditStep={(target) => {
-          setReturnToReviewAfterEdit(true);
-          goToStep(target);
-        }}
-        disabled={isSaving}
-        pantryItems={pantryItems}
-        pantryItemsStatus={pantryItemsStatus}
-        attempt={attempt}
-        onAttemptChange={onAttemptChange}
-        fieldErrors={buildReviewFieldErrors(fieldErrors)}
-        summaryError={error}
-        hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
-        privacyConsentLoadFailed={privacyConsentLoadFailed}
-        {...(onRetryPrivacyConsent !== undefined ? { onRetryPrivacyConsent } : {})}
-        onOpenPrivacyNotice={onOpenPrivacyNotice}
-        safetyMembers={eligibleMembers}
-        {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
-        {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
-        usageRemaining={usageRemaining}
-        plan={plan}
-        qualityAvailable={qualityAvailable}
-        attemptsRemaining={attemptsRemaining}
-        globalAvailable={globalAvailable}
-        shortWindowRetryAt={shortWindowRetryAt}
-        hasResumablePendingGeneration={hasResumablePendingGeneration}
-        blockGenerationForStaleSafety={blockGenerationForStaleSafety}
-        onSubmit={() => {
-          void onSubmit();
-        }}
-      />
-      {footer}
-    </main>
-  );
+  if (step === "timeLimit") {
+    return (
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
+        {conflictChrome}
+        {autosaveChrome}
+        {resetChrome}
+        <OptionalChoiceStep
+          key={step}
+          id="planner-time-limit"
+          title="5. 調理時間"
+          value={draft.timeLimitMinutes === null ? "" : String(draft.timeLimitMinutes)}
+          options={[
+            { value: "", label: "指定なし" },
+            { value: "15", label: "15分以内" },
+            { value: "30", label: "30分以内" },
+            { value: "45", label: "45分以内" },
+          ]}
+          onSelect={(selected) => {
+            // Number(selected) は禁止（Number("") === 0 が plannerDraftSchema を落とす）。
+            onDraftChange({
+              ...draft,
+              timeLimitMinutes:
+                selected === "15" ? 15 : selected === "30" ? 30 : selected === "45" ? 45 : null,
+            });
+          }}
+          onNext={() => {
+            advanceFromEditOr("budget");
+          }}
+          onBack={() => {
+            backFromEditOr("audience");
+          }}
+          disabled={isSaving}
+          errorMessage={fieldErrors.timeLimitMinutes ?? null}
+          description="選んだ内容はあとから確認画面で変えられます。"
+          {...(returnToReviewAfterEdit ? {} : { onSkipRest: skipRestOfOptionalSteps })}
+          {...optionalStepBackLabel}
+        />
+        {error !== null && <p role="alert">{error}</p>}
+        {footer}
+      </main>
+    );
+  }
+  if (step === "budget") {
+    return (
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
+        {conflictChrome}
+        {autosaveChrome}
+        {resetChrome}
+        <OptionalChoiceStep
+          key={step}
+          id="planner-budget"
+          title="6. 予算"
+          value={draft.budgetPreference ?? ""}
+          options={[
+            { value: "", label: "指定なし" },
+            { value: "economy", label: "節約優先" },
+            { value: "standard", label: "標準" },
+          ]}
+          onSelect={(selected) => {
+            onDraftChange({
+              ...draft,
+              budgetPreference:
+                selected === "economy" ? "economy" : selected === "standard" ? "standard" : null,
+            });
+          }}
+          onNext={() => {
+            advanceFromEditOr("ingredientPreference");
+          }}
+          onBack={() => {
+            backFromEditOr("timeLimit");
+          }}
+          disabled={isSaving}
+          errorMessage={fieldErrors.budgetPreference ?? null}
+          {...optionalStepBackLabel}
+        />
+        {error !== null && <p role="alert">{error}</p>}
+        {footer}
+      </main>
+    );
+  }
+  if (step === "ingredientPreference") {
+    return (
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
+        {conflictChrome}
+        {autosaveChrome}
+        {resetChrome}
+        <OptionalChoiceStep
+          key={step}
+          id="planner-ingredient-preference"
+          title="7. 材料の使い方"
+          value={draft.ingredientPreference ?? ""}
+          options={[
+            { value: "", label: ingredientPreferenceLabel(null) },
+            { value: "more", label: ingredientPreferenceLabels.more },
+            { value: "less", label: ingredientPreferenceLabels.less },
+            { value: "selected_only", label: ingredientPreferenceLabels.selected_only },
+            { value: "auto", label: ingredientPreferenceLabels.auto },
+          ]}
+          onSelect={(selected) => {
+            onDraftChange({
+              ...draft,
+              ingredientPreference:
+                selected === "more"
+                  ? "more"
+                  : selected === "less"
+                    ? "less"
+                    : selected === "selected_only"
+                      ? "selected_only"
+                      : selected === "auto"
+                        ? "auto"
+                        : null,
+            });
+          }}
+          onNext={() => {
+            advanceFromEditOr("novelty");
+          }}
+          onBack={() => {
+            backFromEditOr("budget");
+          }}
+          disabled={isSaving}
+          errorMessage={fieldErrors.ingredientPreference ?? null}
+          description="材料の量や、買い足しの範囲の目安です。調味料の基本（塩・しょうゆ・油など）はどの選択でも使えます。"
+          {...optionalStepBackLabel}
+        />
+        {error !== null && <p role="alert">{error}</p>}
+        {footer}
+      </main>
+    );
+  }
+  if (step === "novelty") {
+    return (
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
+        {conflictChrome}
+        {autosaveChrome}
+        {resetChrome}
+        <OptionalChoiceStep
+          key={step}
+          id="planner-novelty-preference"
+          title="8. 献立の雰囲気"
+          value={draft.noveltyPreference ?? ""}
+          options={[
+            { value: "", label: noveltyPreferenceLabel(null) },
+            { value: "standard", label: noveltyPreferenceLabels.standard },
+            { value: "twist", label: noveltyPreferenceLabels.twist },
+          ]}
+          onSelect={(selected) => {
+            onDraftChange({
+              ...draft,
+              noveltyPreference:
+                selected === "standard" ? "standard" : selected === "twist" ? "twist" : null,
+            });
+          }}
+          onNext={() => {
+            advanceFromEditOr("review");
+          }}
+          onBack={() => {
+            backFromEditOr("ingredientPreference");
+          }}
+          disabled={isSaving}
+          {...optionalStepBackLabel}
+        />
+        {error !== null && <p role="alert">{error}</p>}
+        {footer}
+      </main>
+    );
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- 未知 step の網羅。既存分岐直後は "review" 固定だが、新 step 追加漏れを ReviewStep へ落とさない。
+  if (step === "review") {
+    return (
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
+        {conflictChrome}
+        {autosaveChrome}
+        {resetChrome}
+        <ReviewStep
+          value={draft}
+          onChange={(next) => {
+            onDraftChange(next);
+          }}
+          onBack={() => {
+            // 1ページずつ戻る（novelty ← ingredientPreference ← … は各 step の onBack が担う）
+            setReturnToReviewAfterEdit(false);
+            goToStep("novelty");
+          }}
+          onNext={() => {
+            // review step自体には「次へ」はなく、明示的な献立生成buttonがonSubmitを呼ぶ。
+          }}
+          onEditStep={(target) => {
+            setReturnToReviewAfterEdit(true);
+            goToStep(target);
+          }}
+          disabled={isSaving}
+          pantryItems={pantryItems}
+          pantryItemsStatus={pantryItemsStatus}
+          attempt={attempt}
+          onAttemptChange={onAttemptChange}
+          fieldErrors={buildReviewFieldErrors(fieldErrors)}
+          summaryError={error}
+          hasAcceptedOrDeclinedPrivacy={hasAcceptedOrDeclinedPrivacy}
+          privacyConsentLoadFailed={privacyConsentLoadFailed}
+          {...(onRetryPrivacyConsent !== undefined ? { onRetryPrivacyConsent } : {})}
+          onOpenPrivacyNotice={onOpenPrivacyNotice}
+          safetyMembers={eligibleMembers}
+          {...(onOpenEmergencyMenus !== undefined ? { onOpenEmergencyMenus } : {})}
+          {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
+          usageRemaining={usageRemaining}
+          plan={plan}
+          qualityAvailable={qualityAvailable}
+          attemptsRemaining={attemptsRemaining}
+          globalAvailable={globalAvailable}
+          shortWindowRetryAt={shortWindowRetryAt}
+          hasResumablePendingGeneration={hasResumablePendingGeneration}
+          blockGenerationForStaleSafety={blockGenerationForStaleSafety}
+          onSubmit={() => {
+            void onSubmit();
+          }}
+        />
+        {footer}
+      </main>
+    );
+  }
+  // 新 step の追加漏れを最終 else の ReviewStep が隠さないよう、未知 step で落とす。
+  const unknownStep: never = step;
+  throw new Error(`未知の planner step: ${String(unknownStep)}`);
 }

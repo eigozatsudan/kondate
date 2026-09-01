@@ -484,7 +484,7 @@ describe("wizard step accessibility", () => {
     { step: "audience" as const, heading: "4. 作る相手", primary: "次へ" },
     {
       step: "review" as const,
-      heading: "5. 確認",
+      heading: "9. 確認",
       primary: "献立を作る",
       draft: {
         ...emptyDraft,

@@ -441,7 +441,7 @@ export function ReviewStep({
         <Inset pad={5}>
           <Stack gap={5}>
             <h2 id="review-step-title" tabIndex={-1} ref={headingRef}>
-              5. 確認
+              9. 確認
             </h2>
             {/*
         household では選択 0 人でも補助文を常時出す（サマリー無しでも安全ブロック領域に単独表示）。

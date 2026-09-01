@@ -286,7 +286,7 @@ it("P5: 競合解決で incomplete な最新下書きを読むと firstIncomplet
   await openReviewOptionalDetails();
 
   // review 上にいることを確認
-  expect(screen.getByRole("heading", { name: "5. 確認" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("自由メモ"), { target: { value: "Aの入力" } });
   await act(async () => vi.advanceTimersByTimeAsync(600));
@@ -305,7 +305,7 @@ it("P5: 競合解決で incomplete な最新下書きを読むと firstIncomplet
 
   // incomplete audience → audience step（review に incomplete を残さない）
   expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: "5. 確認" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
 });
 
 it("競合 refetch の失敗後は再取得できないことを alert で示し、入力を保持したまま再試行できる", async () => {
