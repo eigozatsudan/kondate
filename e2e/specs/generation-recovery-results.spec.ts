@@ -1269,6 +1269,24 @@ test.describe("wizard accessibility and layout contracts", () => {
     await page.getByRole("button", { name: "次へ" }).focus();
     await activateFocusedWithKeyboard(page);
 
+    // 任意4ページに「次へ」は無い。44px はスキップ/戻るを測り、指定なし radio を Space で進める。
+    await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
+    await expectNoHorizontalScroll(page);
+    await expectMajorActionAtLeast44(page, "以降は指定なしでスキップ");
+    await expectMajorActionAtLeast44(page, "戻る");
+    await page.waitForTimeout(350);
+    await page.getByRole("radio", { name: "指定なし" }).focus();
+    await activateFocusedWithKeyboard(page, "Space");
+
+    for (const title of ["6. 予算", "7. 材料の使い方", "8. 献立の雰囲気"]) {
+      await expect(page.getByRole("heading", { name: title })).toBeVisible();
+      await expectNoHorizontalScroll(page);
+      await expectMajorActionAtLeast44(page, "戻る");
+      await page.waitForTimeout(350);
+      await page.getByRole("radio", { name: "指定なし" }).focus();
+      await activateFocusedWithKeyboard(page, "Space");
+    }
+
     // --- 9. 確認 ---
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await expectNoHorizontalScroll(page);
@@ -1281,7 +1299,7 @@ test.describe("wizard accessibility and layout contracts", () => {
     }
   });
 
-  test("advances four questions to review and privacy using keyboard only", async ({
+  test("advances eight questions to review and privacy using keyboard only", async ({
     authenticatedPage: page,
   }) => {
     // Tab / Space / Enter のみ。未到達時の programmatic .focus() フォールバックは禁止。
@@ -1381,6 +1399,18 @@ test.describe("wizard accessibility and layout contracts", () => {
       'audience primary "次へ"',
     );
     await page.keyboard.press("Enter");
+    // 任意4ページに「次へ」は無い。heading は tabIndex=-1 で Tab 順外。radio へ Tab して Space。
+    for (const title of ["5. 調理時間", "6. 予算", "7. 材料の使い方", "8. 献立の雰囲気"]) {
+      await expect(page.getByRole("heading", { name: title })).toBeFocused();
+      await page.waitForTimeout(350);
+      await tabUntil(
+        page,
+        (focus) =>
+          (focus.role === "radio" || focus.type === "radio") && focus.name.includes("指定なし"),
+        `${title} の「指定なし」へ Tab で到達できない`,
+      );
+      await page.keyboard.press("Space");
+    }
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeFocused();
 
     // --- 9. 確認: Tab で AI 説明または生成操作へ到達 ---

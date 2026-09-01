@@ -71,10 +71,23 @@ test(
     await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
     await clickWizardNext(page);
 
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
-    // privacy は fixture 済み。CTA が出ていたら契約退行なので落とし、黙ってスキップしない。
-    await expect(page.getByRole("button", { name: "AI情報の説明を見る" })).toHaveCount(0);
-    // 確認画面。ひねりを選んだ下書きが保存されたことを同期点にしてから生成へ進む
+    // 任意4ページに「次へ」は無い。heading 可視直後は 350ms 活性化ガードに食われる。
+    // ここだけスキップせずカード click で歩き、自動遷移が効くことも同時に主張する。
+    await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
+    await page.waitForTimeout(350);
+    await page.locator("label.wizard-option").filter({ hasText: "15分以内" }).click();
+
+    await expect(page.getByRole("heading", { name: "6. 予算" })).toBeVisible();
+    await page.waitForTimeout(350);
+    await page.locator("label.wizard-option").filter({ hasText: "節約優先" }).click();
+
+    await expect(page.getByRole("heading", { name: "7. 材料の使い方" })).toBeVisible();
+    await page.waitForTimeout(350);
+    await page.locator("label.wizard-option").filter({ hasText: "多め" }).click();
+
+    await expect(page.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeVisible();
+    await page.waitForTimeout(350);
+    // P-T6-WAIT: twist 保存の waitForResponse は「ひねりたい」click の直前に置く。
     const noveltySaved = page.waitForResponse((response) => {
       if (!new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft")) {
         return false;
@@ -83,10 +96,14 @@ test(
       return postData !== null && postData.includes('"p_novelty_preference":"twist"');
     });
     await page
-      .getByRole("radiogroup", { name: "献立の雰囲気" })
-      .getByRole("radio", { name: "ひねりたい（主菜を定番から外す）" })
-      .check();
+      .locator("label.wizard-option")
+      .filter({ hasText: "ひねりたい（主菜を定番から外す）" })
+      .click();
     await noveltySaved;
+
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+    // privacy は fixture 済み。CTA が出ていたら契約退行なので落とし、黙ってスキップしない。
+    await expect(page.getByRole("button", { name: "AI情報の説明を見る" })).toHaveCount(0);
     // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で test から truncate 禁止）
     const generate = page.getByRole("button", { name: "献立を作る" });
     await expect(generate).toBeEnabled({ timeout: 15_000 });

@@ -146,6 +146,27 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
   }
   await clickWizardNext(page);
 
+  // 任意4ページに「次へ」は無い。指定なしの通過も label click（radio .check() は no-op）。
+  await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
+  await assertStepFits(page, { 以降は指定なしでスキップ: 1, 戻る: 1 });
+  await page.waitForTimeout(350);
+  await page.locator("label.wizard-option").filter({ hasText: "指定なし" }).click();
+
+  await expect(page.getByRole("heading", { name: "6. 予算" })).toBeVisible();
+  await assertStepFits(page, { 戻る: 1 });
+  await page.waitForTimeout(350);
+  await page.locator("label.wizard-option").filter({ hasText: "指定なし" }).click();
+
+  await expect(page.getByRole("heading", { name: "7. 材料の使い方" })).toBeVisible();
+  await assertStepFits(page, { 戻る: 1 });
+  await page.waitForTimeout(350);
+  await page.locator("label.wizard-option").filter({ hasText: "指定なし" }).click();
+
+  await expect(page.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeVisible();
+  await assertStepFits(page, { 戻る: 1 });
+  await page.waitForTimeout(350);
+  await page.locator("label.wizard-option").filter({ hasText: "指定なし" }).click();
+
   await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
   if (mode === "idea") {
     await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
