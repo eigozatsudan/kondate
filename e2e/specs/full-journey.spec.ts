@@ -100,7 +100,7 @@ test(
     });
     await page
       .locator("label.wizard-option")
-      .filter({ hasText: "ひねりたい（主菜を定番から外す）" })
+      .filter({ hasText: "いつもと違う主菜に（調理法や組み合わせを変える）" })
       .click();
     await noveltySaved;
     await page.waitForTimeout(350);

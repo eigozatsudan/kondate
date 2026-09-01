@@ -33,7 +33,7 @@ export const ingredientPreferenceLabels: Readonly<Record<IngredientPreference, s
  */
 export const noveltyPreferenceLabels: Readonly<Record<NoveltyPreference, string>> = {
   standard: "いつもの",
-  twist: "ひねりたい（主菜を定番から外す）",
+  twist: "いつもと違う主菜に（調理法や組み合わせを変える）",
 } as const;
 
 export function mealLabel(value: MealType | null): string {

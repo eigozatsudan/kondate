@@ -467,7 +467,7 @@ describe("PlannerWizard optional condition steps", () => {
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "次へ" }));
     expect(screen.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeInTheDocument();
-    await user.click(optionLabel("ひねりたい（主菜を定番から外す）"));
+    await user.click(optionLabel("いつもと違う主菜に（調理法や組み合わせを変える）"));
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "次へ" }));
     expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
@@ -937,7 +937,9 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByText("材料の使い方")).toBeInTheDocument();
     expect(screen.getByText("多め")).toBeInTheDocument();
     expect(screen.getByText("献立の雰囲気")).toBeInTheDocument();
-    expect(screen.getByText("ひねりたい（主菜を定番から外す）")).toBeInTheDocument();
+    expect(
+      screen.getByText("いつもと違う主菜に（調理法や組み合わせを変える）"),
+    ).toBeInTheDocument();
   });
 
   test("shows 指定なし for unanswered optional conditions", () => {
@@ -1151,7 +1153,9 @@ describe("PlannerWizard review step", () => {
   it("追加条件の献立の雰囲気を選び draft に反映できる", () => {
     renderWizardAtReviewWithDraft({ noveltyPreference: "twist" });
     expect(screen.getByText("献立の雰囲気")).toBeInTheDocument();
-    expect(screen.getByText("ひねりたい（主菜を定番から外す）")).toBeInTheDocument();
+    expect(
+      screen.getByText("いつもと違う主菜に（調理法や組み合わせを変える）"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "献立の雰囲気を変更" })).toBeInTheDocument();
     expect(screen.queryByRole("radiogroup", { name: "献立の雰囲気" })).not.toBeInTheDocument();
   });

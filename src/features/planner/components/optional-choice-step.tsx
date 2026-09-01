@@ -8,9 +8,9 @@ import { Surface } from "@/shared/ui/surface";
  * 5〜8ページ目は .wizard-actions のボタンが同じ座標に並ぶため、連打の2発目が
  * 次ページの同位置ボタンへ落ちる。mount からこの間のボタン押下は無視する。
  *
- * 6〜8ページ目は「戻る」だけになり :only-child で右端へ寄るので、その座標は
- * 5ページ目の「以降は指定なしでスキップ」と重なる。戻るの2度押しが素通りすると、
- * 任意4項目を null にして確認へ飛ばしてしまう。
+ * 5ページ目だけ「以降は指定なしでスキップ」が .wizard-actions の1行上に出るので、
+ * その座標は6ページ目の戻る/次へ行と重なる。素通りすると任意4項目を null にして
+ * 確認へ飛ばしてしまうため、スキップも同じ猶予の対象にする。
  */
 const activationGuardMs = 350;
 
@@ -124,6 +124,20 @@ export function OptionalChoiceStep({
                 {errorMessage}
               </p>
             )}
+            {onSkipRest !== undefined && (
+              <div className="wizard-skip-row">
+                <Button
+                  variant="secondary"
+                  disabled={disabled}
+                  onClick={() => {
+                    if (blocked()) return;
+                    onSkipRest();
+                  }}
+                >
+                  以降は指定なしでスキップ
+                </Button>
+              </div>
+            )}
             <div className="wizard-actions">
               <Button
                 variant="secondary"
@@ -135,18 +149,6 @@ export function OptionalChoiceStep({
               >
                 {backLabel}
               </Button>
-              {onSkipRest !== undefined && (
-                <Button
-                  variant="secondary"
-                  disabled={disabled}
-                  onClick={() => {
-                    if (blocked()) return;
-                    onSkipRest();
-                  }}
-                >
-                  以降は指定なしでスキップ
-                </Button>
-              )}
               <Button
                 variant="primary"
                 disabled={disabled}

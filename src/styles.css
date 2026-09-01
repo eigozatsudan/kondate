@@ -699,6 +699,19 @@
   margin-inline-start: auto;
 }
 
+/*
+ * 追加条件の「以降は指定なしでスキップ」は補助操作。戻る/次へ を他stepと同じ
+ * 左右の並びに保つため、同じ行に入れず1行上へ独立させる。
+ */
+.wizard-skip-row {
+  display: flex;
+  min-width: 0;
+}
+
+.wizard-skip-row > * {
+  min-width: 0;
+}
+
 .wizard-action {
   min-height: 44px;
 }
