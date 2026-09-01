@@ -150,7 +150,7 @@ test("stays usable after an activation was blocked by the guard", async () => {
   expect(handlers.onNext).toHaveBeenCalledTimes(1);
 });
 
-test("hides the skip button unless onSkipRest is given", async () => {
+test("hides the skip button unless onSkipRest is given", () => {
   setup();
   expect(
     screen.queryByRole("button", { name: "以降は指定なしでスキップ" }),
@@ -158,9 +158,45 @@ test("hides the skip button unless onSkipRest is given", async () => {
 });
 
 test("shows the skip button when onSkipRest is given", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   const onSkipRest = vi.fn();
   setup({ onSkipRest });
-  const user = userEvent.setup();
+  await passActivationGuard();
   await user.click(screen.getByRole("button", { name: "以降は指定なしでスキップ" }));
   expect(onSkipRest).toHaveBeenCalledTimes(1);
+});
+
+test("ignores 戻る inside the 350ms guard", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const handlers = setup();
+  await user.click(screen.getByRole("button", { name: "戻る" }));
+  expect(handlers.onBack).not.toHaveBeenCalled();
+});
+
+test("runs 戻る after the guard", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const handlers = setup();
+  await passActivationGuard();
+  await user.click(screen.getByRole("button", { name: "戻る" }));
+  expect(handlers.onBack).toHaveBeenCalledTimes(1);
+});
+
+test("ignores the skip button inside the 350ms guard", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const onSkipRest = vi.fn();
+  setup({ onSkipRest });
+  await user.click(screen.getByRole("button", { name: "以降は指定なしでスキップ" }));
+  expect(onSkipRest).not.toHaveBeenCalled();
+});
+
+test("keeps the description in aria-describedby while an error is shown", () => {
+  setup({ description: "説明文です。", errorMessage: "選び直してください。" });
+  const group = screen.getByRole("radiogroup");
+  const describedBy = (group.getAttribute("aria-describedby") ?? "").split(" ");
+  expect(describedBy).toContain("planner-time-limit-description");
+  expect(describedBy).toContain("planner-time-limit-error");
 });

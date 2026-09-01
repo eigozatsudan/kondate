@@ -7,6 +7,10 @@ import { Surface } from "@/shared/ui/surface";
  * 自動遷移直後の誤タップを弾く猶予（設計 P-03）。
  * 4ページとも .wizard-option が同じ座標に並ぶため、~300ms 後の2発目が
  * 次ページの同位置カードへ落ちる。mount からこの間の活性化と change は無視する。
+ *
+ * .wizard-actions のボタンも同じ猶予の対象にする。6〜8ページ目は「戻る」だけになり
+ * :only-child で右端へ寄るため、その座標は5ページ目の「以降は指定なしでスキップ」と
+ * 重なる。戻るの2度押しが素通りすると、任意4項目を null にして確認へ飛ばしてしまう。
  */
 const activationGuardMs = 350;
 
@@ -95,8 +99,12 @@ export function OptionalChoiceStep({
     onSelect(optionValue);
   };
 
-  const describedBy =
-    errorMessage != null ? errorId : description !== undefined ? descriptionId : undefined;
+  // エラー時も説明は残す。7ページ目の調味料の注記は、直そうとしている本人にこそ要る。
+  const describedByIds = [
+    ...(description !== undefined ? [descriptionId] : []),
+    ...(errorMessage != null ? [errorId] : []),
+  ];
+  const describedBy = describedByIds.length === 0 ? undefined : describedByIds.join(" ");
 
   return (
     <section aria-labelledby={titleId}>
@@ -154,11 +162,25 @@ export function OptionalChoiceStep({
               </p>
             )}
             <div className="wizard-actions">
-              <Button variant="secondary" disabled={disabled} onClick={onBack}>
+              <Button
+                variant="secondary"
+                disabled={disabled}
+                onClick={() => {
+                  if (blocked()) return;
+                  onBack();
+                }}
+              >
                 {backLabel}
               </Button>
               {onSkipRest !== undefined && (
-                <Button variant="secondary" disabled={disabled} onClick={onSkipRest}>
+                <Button
+                  variant="secondary"
+                  disabled={disabled}
+                  onClick={() => {
+                    if (blocked()) return;
+                    onSkipRest();
+                  }}
+                >
                   以降は指定なしでスキップ
                 </Button>
               )}

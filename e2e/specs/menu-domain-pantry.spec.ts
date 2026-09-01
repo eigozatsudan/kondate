@@ -77,6 +77,8 @@ async function savePlannerMeal(
   await page.goto("/planner");
   await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
   for (let i = 0; i < 8; i += 1) {
+    // 任意4ページの「戻る」は 350ms 活性化ガードの対象。連打相当の速度では弾かれる。
+    await page.waitForTimeout(350);
     await page.getByRole("button", { name: "戻る" }).click();
   }
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();

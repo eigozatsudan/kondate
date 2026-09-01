@@ -271,7 +271,8 @@ describe("PlannerWizard 固定順とnavigation", () => {
   });
 
   it("冷蔵庫の候補をメイン食材へ追加しても冷蔵庫の使用条件は変更しない", async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const pantryItem: PantryItem = {
       id: "60000000-0000-4000-8000-000000000001",
       userId: "70000000-0000-4000-8000-000000000001",
@@ -297,6 +298,7 @@ describe("PlannerWizard 固定順とnavigation", () => {
     await user.click(screen.getByRole("radio", { name: "家族に合わせて作る" }));
     await user.click(screen.getByRole("checkbox", { name: /^子ども/u }));
     await user.click(screen.getByRole("button", { name: "次へ" }));
+    await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "以降は指定なしでスキップ" }));
     expect(screen.getByRole("checkbox", { name: /鶏肉/u })).not.toBeChecked();
   });
@@ -369,6 +371,8 @@ describe("PlannerWizard 固定順とnavigation", () => {
     expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
 
     for (let i = 0; i < 8; i += 1) {
+      // 任意4ページの「戻る」も 350ms ガードの対象。連打で2ページ戻らせない。
+      await passActivationGuard();
       await user.click(screen.getByRole("button", { name: "戻る" }));
     }
     expect(screen.getByRole("heading", { name: "1. 食事" })).toBeInTheDocument();
@@ -485,8 +489,10 @@ describe("PlannerWizard optional condition steps", () => {
   });
 
   it("skips the rest of the optional steps with all four fields null", async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { latestDraft } = renderAtTimeLimit();
+    await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "以降は指定なしでスキップ" }));
     expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
     expect(latestDraft()).toMatchObject({
@@ -2370,7 +2376,8 @@ describe("IngredientStep quick select", () => {
   });
 
   it("does not change pantrySelections when selecting a quick candidate", async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const pantryItem = makePantryItem("玉ねぎ", "60000000-0000-4000-8000-000000000099");
     render(
       <Harness
@@ -2393,6 +2400,7 @@ describe("IngredientStep quick select", () => {
     await user.click(screen.getByRole("radio", { name: "家族に合わせて作る" }));
     await user.click(screen.getByRole("checkbox", { name: /^子ども/u }));
     await user.click(screen.getByRole("button", { name: "次へ" }));
+    await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "以降は指定なしでスキップ" }));
 
     expect(screen.getByRole("checkbox", { name: /玉ねぎ/u })).toBeChecked();

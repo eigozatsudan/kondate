@@ -69,12 +69,13 @@ export async function clickWizardNext(page: Page): Promise<void> {
 /**
  * 5. 調理時間 の「以降は指定なしでスキップ」で追加条件4ページを飛ばし、9. 確認 まで進める。
  * 任意 step に「次へ」は無いので clickWizardNext は使えない。
- * スキップボタンは 350ms の活性化ガードの対象外なので待ちは要らない。
+ * スキップボタンも 350ms の活性化ガードの対象なので、heading 可視後に待ってから押す。
  */
 export async function skipOptionalPlannerSteps(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
   const skip = page.getByRole("button", { name: "以降は指定なしでスキップ" });
   await expect(skip).toBeEnabled({ timeout: 15_000 });
+  await page.waitForTimeout(350);
   await skip.click();
   await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
 }
