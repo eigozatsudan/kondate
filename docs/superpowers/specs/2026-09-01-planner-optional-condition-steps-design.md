@@ -5,6 +5,8 @@
 - 前提コミット: `9cc64886`（追加条件を select からカード選択へ変えた変更）
 - レビュー: `docs/superpowers/reviews/2026-09-01-planner-optional-condition-steps-{primary,adversarial,secondary,adjudication}.md`
   裁定 REVISE の確定 Important 5 系統（P-01〜P-05）と Minor を本文へ反映済み。
+  デルタ再レビューの残 Important 3 系統（D-01: walker 再列挙 / D-02: 350ms ガードの
+  テスト単位 / D-03: 活性化 mutex とポインタ受け口）も本文へ反映済み。
 
 ## 背景と目的
 
@@ -96,21 +98,32 @@ props:
 
 | 操作 | `onSelect`（値） | `onNext`（遷移） |
 | --- | --- | --- |
-| 未選択カードをポインタ click | ○ | ○ |
-| 既に選択済みのカード（「指定なし」含む）をポインタ再 click | ○（同値） | ○ |
+| 未選択カードをポインタ tap/click | ○ | ○ |
+| 既に選択済みのカード（「指定なし」含む）をポインタ再 tap | ○（同値） | ○ |
 | フォーカス済み radio で Space | ○ | ○ |
 | 矢印キーで選択移動 | ○ | ✕（値だけ変える） |
 | その他の `change`（プログラム的変更など） | ○ | ✕ |
 
-実装規則:
+#### D-03: 活性化 mutex とポインタの受け口
 
-- 値は従来どおり `onChange` で受ける（`onSelect` のみ。遷移しない）。
-- 遷移は `onClick` で受け、**`event.detail > 0`（実ポインタ由来）のときだけ** `onNext`。
-  Chromium は矢印キーで click を合成し得るが、合成 click の `detail` は 0 なのでここで
-  落ちる。
-- Space は `onKeyUp` で `event.key === " "` を見て `onSelect` + `onNext`。
-- 「指定なし」が既に選択されている状態の再 click でも `onSelect` と `onNext` が
-  ちょうど1回ずつ走ること（`change` が出ないため `onClick` 側が単独で担う）。
+「`change` と `click` のどちらか一方だけを数えてちょうど1回」にはできない。native の
+radio ラベル操作では `change` と `click` の両方が同じ活性化から出るうえ、`click` の
+`detail > 0` で実ポインタを判別する案は **WebKit で `<label>` が転送する click の
+`detail` が 0 固定**なので、カードタップそのものを落とす。よって次の形にする。
+
+- **活性化の受け口はカードの `<label>`（`.wizard-option`）の `onPointerUp`**。キーボード
+  操作は pointer event を出さないので、矢印キーはここに来ない。`event.button === 0` かつ
+  `event.isPrimary` のみ受ける。`detail` は一切見ない。
+- **キーボードの活性化は input の `onKeyUp`（`event.key === " "`）**。
+- **値だけの更新は input の `onChange`**（`onSelect` のみ、遷移しない）。矢印キーと
+  プログラム的変更はここに落ちる。
+- `activate(value)` は `onSelect(value)` と `onNext()` を呼ぶ単一の関数にし、**活性化単位の
+  mutex**（`useRef<boolean>`）で保護する。同一活性化から `pointerup` と（転送された）
+  `click` / `change` が続けて来ても2回目以降は no-op。mutex は次 step の mount でリセット
+  する（step が変わらない編集戻りのケースは `advanceFromEditOr` が確認へ抜けるので
+  同じく1回で終わる）。
+- したがって「`change` を数える／`click` を数える」ではなく「**活性化を数える**」が
+  テストの単位になる。
 
 ### P-03: 自動遷移直後のダブルタップ
 
@@ -121,7 +134,17 @@ props:
 - step が mount してから **350ms** の間は選択肢の活性化（click / Space）を無視する。
   `useRef` に mount 時刻を持ち、活性化ハンドラの先頭で判定する。
 - 「戻る」とスキップボタンはこのガードの対象外にする（同位置の連打リスクが無い）。
-- unit 必須: 「選択直後に同じ座標を2回目 click しても次 step の `onSelect` が走らない」。
+- unit 必須（D-02）。「2発目」という書き方では、次 step の**初回** click を通してしまう
+  実装でも緑になる。次の2段で書く。
+  - `optional-choice-step.test.tsx`（単体）: mount 後 350ms 以内の**最初の**活性化で
+    `onSelect` / `onNext` が **0 回**。`vi.useFakeTimers()` で 350ms 進めたあとの活性化で
+    初めて1回ずつ。
+  - `planner-wizard.test.tsx`（ウィザード単位）: 5ページ目のカードを click して
+    6ページ目へ自動遷移した直後、6ページ目の**初回** click（350ms 以内）で draft が
+    変わらず `6. 予算` に留まる。
+- E2E のキーボード導線も 350ms を明示的に待つ。`heading` が focus されたことを
+  `toBeFocused()` で確認したうえで `page.waitForTimeout(350)` を挟んでから Space を押す
+  （待ちが無いと実機速度では初回 Space が握り潰されて偽赤になる）。
 
 ## P-05: 値とラベルの正本
 
@@ -257,6 +280,10 @@ onSkipRest: () => {
   - 確認の「変更」で該当ページへ飛び、選ぶと確認へ戻る
   - 既存の sequential テスト（`:301–333` 相当。audience の次＝確認、戻る×4 で食事）と
     編集戻りテスト（`:801–804` 相当）を新しい step 数へ更新
+  - 「戻るで1つ前の質問へ、変更後の次へで確認へ直行できる」（`:746–764` 相当）は
+    2箇所直す（D-01）。確認からの戻る1回は `8. 献立の雰囲気`。そこから確認へ帰るのに
+    **`次へ` は無い**ので、雰囲気のカードを click して `9. 確認` へ着く形にする
+    （`getByRole("button", { name: "次へ" })` をこの区間で使わない）
   - 既存の「追加条件」系4テストは確認サマリの検証へ書き換え
 - `planner-route-conflict.test.tsx` / `app/accessibility.test.tsx`: `5. 確認` の
   見出し名を更新。axe 表に新4ページを足す（5ページ目の primary はスキップボタン、
@@ -264,39 +291,62 @@ onSkipRest: () => {
 
 ### E2E（playwright）
 
-`e2e/fixtures/history.ts` に `skipOptionalPlannerSteps(page)` を追加する（5ページ目の
-「以降は指定なしでスキップ」を押して確認まで飛ばす1関数）。`clickWizardNext` は
+`e2e/fixtures/history.ts` に `skipOptionalPlannerSteps(page)` を追加する（`5. 調理時間`
+の「以降は指定なしでスキップ」を押して `9. 確認` まで飛ばす1関数）。`clickWizardNext` は
 「次へ」専用なので任意 step には**使わない**。
 
-呼び出し先（audience→review を歩く箇所を全列挙）:
+#### D-01: audience → review を歩く箇所（helper 名で列挙）
 
-- `e2e/fixtures/history.ts:227–238`、`:441–455`、`:468`
-- `e2e/fixtures/shopping.ts:85–89`
-- `e2e/shots/flows.ts:26–37`
-- `e2e/specs/full-journey.spec.ts:65–73`（household）、`:336`（idea）
-- `e2e/specs/menu-domain-pantry.spec.ts:77`、`:118–120`、`:141–146`
-- `e2e/specs/mobile-accessibility.spec.ts:96`、`:131–149`
-- `e2e/specs/generation-recovery-results.spec.ts` の44pxレイアウト（`:1268–1272` 付近）と
-  キーボード導線
+行番号ではなく helper 名で押さえる。「audience の `次へ` を押したあと `5. 確認` を
+期待している」箇所がすべて対象で、**そこへ `skipOptionalPlannerSteps` を挟む**。
 
-`acceptance.ts` は wizard を歩かない（`history.ts` からの re-export）ので対象外。
+| ファイル | 単位 | 現在地 |
+| --- | --- | --- |
+| `e2e/fixtures/history.ts` | `seedGeneratedMenu`（household） | `:237–238` |
+| `e2e/fixtures/history.ts` | `seedGeneratedIdeaMenu`（idea） | `:453–455` |
+| `e2e/fixtures/shopping.ts` | `ensurePlannerReady` | `:88–89` |
+| `e2e/shots/flows.ts` | `advanceToReviewWithHousehold` | `:36–37` |
+| `e2e/specs/full-journey.spec.ts` | household ジャーニー | `:71–73` |
+| `e2e/specs/full-journey.spec.ts` | idea ジャーニー | `:315` の次 |
+| `e2e/specs/menu-domain-pantry.spec.ts` | `savePlannerMeal` | `:119–120` |
+| `e2e/specs/menu-domain-pantry.spec.ts` | `advanceToReviewWithHousehold` | `:145–146` |
+| `e2e/specs/menu-domain-pantry.spec.ts` | インライン（対象を選び直して確認へ戻る） | `:277–278` |
+| `e2e/specs/mobile-accessibility.spec.ts` | 走査本体 | `:147–149` |
+| `e2e/specs/generation-recovery-results.spec.ts` | **`completeIdeaPlannerToReview`** | `:87–90` |
+| `e2e/specs/generation-recovery-results.spec.ts` | **`completeMinimumPlanner`** | `:141–142` |
+| `e2e/specs/generation-recovery-results.spec.ts` | 44px レイアウト走査 | `:1259–1272` |
+| `e2e/specs/generation-recovery-results.spec.ts` | キーボード導線 | `:1358–1385` |
 
-戻る回数の更新:
+`e2e/fixtures/acceptance.ts` は wizard を歩かない（`history.ts` からの re-export）ので
+対象外。`generation-recovery-results.spec.ts:866–871` は「人数未選択で遷移しない」ことの
+主張で audience に留まるため対象外。
 
-- `menu-domain-pantry.spec.ts:63–80` の「戻る×4 で `1. 食事`」は戻る×8、または確認の
-  「食事を変更」へ置き換える。
+**privacy 復帰行は歩かない。** 次の3箇所は `/privacy` から `?resume=review` で戻った先の
+見出し名を主張しているだけで、ウィザードを進む処理ではない。見出し名の
+`5. 確認` → `9. 確認` 置換side（後述の42件）に属する。
+
+- `e2e/fixtures/history.ts:468`
+- `e2e/specs/mobile-accessibility.spec.ts:96`
+- `e2e/specs/full-journey.spec.ts:336`
+- `e2e/specs/generation-recovery-results.spec.ts:103`、`:440`
+
+#### 戻る回数の更新
+
+- `menu-domain-pantry.spec.ts` `savePlannerMeal`（`:77–80`）の「確認から戻る×4 で
+  `1. 食事`」は戻る×8、または確認の「食事を変更」へ置き換える。
 - `menu-domain-pantry.spec.ts:263–264` の「戻る×1 で `4. 作る相手`」は戻る×5、または
   「対象を変更」へ置き換える。
 - 確認からの戻る1回は `8. 献立の雰囲気`。
 
-個別:
+#### 個別
 
-- `full-journey.spec.ts` household: 「ひねりたい」は8ページ目で選ぶ。ここだけスキップを
-  使わず4ページを歩き、自動遷移が効いていることも同時に主張する。
-- `full-journey.spec.ts` idea（`:336`）: `skipOptionalPlannerSteps` を使う。
+- `full-journey.spec.ts` household: 「ひねりたい」は `8. 献立の雰囲気` で選ぶ。ここだけ
+  スキップを使わず4ページを歩き、自動遷移が効いていることも同時に主張する。
+- `full-journey.spec.ts` idea: `skipOptionalPlannerSteps` を使う。
 - キーボード導線テスト（`generation-recovery-results.spec.ts` の
   「advances four questions to review and privacy using keyboard only」）は新4ページを
-  Space で通過する形にし、テスト名も実態へ合わせる。
+  Space で通過する形にし、各ページで `heading` の `toBeFocused()` のあと **350ms 待って
+  から** Space を押す（D-02）。テスト名も実態へ合わせる。
 - `mobile-accessibility.spec.ts`: 320/375/430px の走査へ新4ページを追加。
 - `"5. 確認"`（ASCII 引用符）の42件は見出しアサーションの機械置換で、上の導線修正とは
   別作業として扱う。
