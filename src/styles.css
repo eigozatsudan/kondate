@@ -630,6 +630,18 @@
   min-width: 0;
 }
 
+/* 追加条件の単一選択。select ではなくカード選択を縦に並べ、順に選べるようにする */
+.guided-planner-theme .wizard-option-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.guided-planner-theme .wizard-option-field-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .guided-planner-theme .wizard-details-body .field input,
 .guided-planner-theme .wizard-details-body .field select,
 .guided-planner-theme .wizard-details-body .field textarea {

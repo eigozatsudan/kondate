@@ -81,7 +81,10 @@ test(
       const postData = response.request().postData();
       return postData !== null && postData.includes('"p_novelty_preference":"twist"');
     });
-    await page.getByLabel("献立の雰囲気").selectOption("twist");
+    await page
+      .getByRole("radiogroup", { name: "献立の雰囲気" })
+      .getByRole("radio", { name: "ひねりたい（主菜を定番から外す）" })
+      .check();
     await noveltySaved;
     // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で test から truncate 禁止）
     const generate = page.getByRole("button", { name: "献立を作る" });

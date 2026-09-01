@@ -738,8 +738,9 @@ describe("PlannerWizard review step", () => {
     expect(details).not.toHaveAttribute("open");
     await user.click(summary);
     expect(details).toHaveAttribute("open");
-    await user.selectOptions(screen.getByLabelText("献立全体の調理時間"), "30");
-    expect(screen.getByLabelText("献立全体の調理時間")).toHaveValue("30");
+    const timeGroup = screen.getByRole("radiogroup", { name: "献立全体の調理時間" });
+    await user.click(within(timeGroup).getByRole("radio", { name: "30分以内" }));
+    expect(within(timeGroup).getByRole("radio", { name: "30分以内" })).toBeChecked();
   });
 
   it("戻るで1つ前の質問へ、変更後の次へで確認へ直行できる", async () => {
@@ -912,14 +913,20 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByText("（任意）")).toBeInTheDocument();
 
     // デフォルト展開済み。クリックで閉じない前提で構造だけ確認する
-    const timeSelect = screen.getByLabelText("献立全体の調理時間");
-    const timeLabel = timeSelect.closest("label");
-    const body = timeLabel?.parentElement;
-    expect(timeLabel).toHaveClass("field");
+    const timeGroup = screen.getByRole("radiogroup", { name: "献立全体の調理時間" });
+    const timeField = timeGroup.parentElement;
+    const body = timeField?.parentElement;
+    expect(timeGroup).toHaveClass("wizard-option-list");
+    expect(timeField).toHaveClass("wizard-option-field");
     expect(body).toHaveClass("stack", "wizard-details-body");
-    expect(body).toContainElement(screen.getByLabelText("予算"));
-    expect(body).toContainElement(screen.getByLabelText("材料の使い方"));
-    expect(body).toContainElement(screen.getByLabelText("献立の雰囲気"));
+    expect(body).toContainElement(screen.getByRole("radiogroup", { name: "予算" }));
+    expect(body).toContainElement(screen.getByRole("radiogroup", { name: "材料の使い方" }));
+    expect(body).toContainElement(screen.getByRole("radiogroup", { name: "献立の雰囲気" }));
+    // 選択式はすべて「指定なし」が既定
+    for (const name of ["献立全体の調理時間", "予算", "材料の使い方", "献立の雰囲気"]) {
+      const group = screen.getByRole("radiogroup", { name });
+      expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
+    }
     expect(body).toContainElement(screen.getByLabelText("今回だけ避ける食材"));
     expect(body).toContainElement(screen.getByLabelText("自由メモ"));
   });
@@ -941,34 +948,36 @@ describe("PlannerWizard review step", () => {
     );
 
     // デフォルトで開いているので summary クリック不要
-    const select = screen.getByLabelText("材料の使い方");
-    expect(select).toHaveValue("");
+    const group = screen.getByRole("radiogroup", { name: "材料の使い方" });
     // 4 値 + 指定なし。文言は planner-labels と一致させる。
-    const selectEl = select as HTMLSelectElement;
-    expect(within(selectEl).getByRole("option", { name: "指定なし" })).toBeEnabled();
-    expect(within(selectEl).getByRole("option", { name: "多め" })).toBeEnabled();
-    expect(within(selectEl).getByRole("option", { name: "少な目" })).toBeEnabled();
+    expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
+    expect(within(group).getByRole("radio", { name: "多め" })).toBeEnabled();
+    expect(within(group).getByRole("radio", { name: "少な目" })).toBeEnabled();
     expect(
-      within(selectEl).getByRole("option", {
+      within(group).getByRole("radio", {
         name: "メイン食材と冷蔵庫の食材を優先（買い足しを控えめに）",
       }),
     ).toBeEnabled();
     expect(
-      within(selectEl).getByRole("option", {
+      within(group).getByRole("radio", {
         name: "おまかせ（分量・範囲はモデル判断）",
       }),
     ).toBeEnabled();
 
-    await user.selectOptions(select, "more");
-    expect(select).toHaveValue("more");
-    await user.selectOptions(select, "selected_only");
-    expect(select).toHaveValue("selected_only");
-    await user.selectOptions(select, "less");
-    expect(select).toHaveValue("less");
-    await user.selectOptions(select, "auto");
-    expect(select).toHaveValue("auto");
+    for (const name of [
+      "多め",
+      "メイン食材と冷蔵庫の食材を優先（買い足しを控えめに）",
+      "少な目",
+      "おまかせ（分量・範囲はモデル判断）",
+    ]) {
+      await user.click(within(group).getByRole("radio", { name }));
+      expect(within(group).getByRole("radio", { name })).toBeChecked();
+    }
+    // 「指定なし」で未指定へ戻せる
+    await user.click(within(group).getByRole("radio", { name: "指定なし" }));
+    expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
     // ヒントが accessible description に載る
-    expect(select).toHaveAccessibleDescription(/調味料の基本/);
+    expect(group).toHaveAccessibleDescription(/調味料の基本/);
   });
 
   it("追加条件の献立の雰囲気を選び draft に反映できる", async () => {
@@ -987,22 +996,25 @@ describe("PlannerWizard review step", () => {
       />,
     );
 
-    const select = screen.getByLabelText("献立の雰囲気");
+    const group = screen.getByRole("radiogroup", { name: "献立の雰囲気" });
     // 未指定が既定。文言は planner-labels と一致させる。
-    expect(select).toHaveValue("");
-    const selectEl = select as HTMLSelectElement;
-    expect(within(selectEl).getByRole("option", { name: "いつもの" })).toBeEnabled();
+    expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
+    expect(within(group).getByRole("radio", { name: "いつもの" })).toBeEnabled();
     expect(
-      within(selectEl).getByRole("option", { name: "ひねりたい（主菜を定番から外す）" }),
+      within(group).getByRole("radio", { name: "ひねりたい（主菜を定番から外す）" }),
     ).toBeEnabled();
 
-    await user.selectOptions(select, "twist");
-    expect(select).toHaveValue("twist");
-    await user.selectOptions(select, "standard");
-    expect(select).toHaveValue("standard");
-    // 空 option で未指定へ戻せる
-    await user.selectOptions(select, "");
-    expect(select).toHaveValue("");
+    await user.click(
+      within(group).getByRole("radio", { name: "ひねりたい（主菜を定番から外す）" }),
+    );
+    expect(
+      within(group).getByRole("radio", { name: "ひねりたい（主菜を定番から外す）" }),
+    ).toBeChecked();
+    await user.click(within(group).getByRole("radio", { name: "いつもの" }));
+    expect(within(group).getByRole("radio", { name: "いつもの" })).toBeChecked();
+    // 「指定なし」で未指定へ戻せる
+    await user.click(within(group).getByRole("radio", { name: "指定なし" }));
+    expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
   });
 
   it("進行中 pending がある確認画面では新条件破棄の再開注意を出す (P2)", () => {

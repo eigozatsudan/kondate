@@ -85,6 +85,67 @@ function parseAvoidIngredientInput(rawValue: string): {
   };
 }
 
+/** 追加条件の単一選択1件分。空文字が「指定なし」を表す。 */
+type ReviewChoiceOption = {
+  readonly value: string;
+  readonly label: string;
+};
+
+/**
+ * 追加条件の単一選択。select は選ぶまで中身が見えず分かりづらいため、
+ * ジャンルstepと同じカード選択（radiogroup）で選択肢を最初から並べる。
+ * 先頭は必ず「指定なし」（value=""）で、既定はこれが選ばれた状態になる。
+ */
+function ReviewChoiceField({
+  id,
+  label,
+  options,
+  value,
+  disabled,
+  invalid,
+  describedBy,
+  onSelect,
+}: {
+  id: string;
+  label: string;
+  options: readonly ReviewChoiceOption[];
+  value: string;
+  disabled: boolean;
+  invalid: boolean;
+  describedBy: string | undefined;
+  onSelect: (selected: string) => void;
+}) {
+  return (
+    <div className="wizard-option-field">
+      <span className="wizard-option-field-label" id={`${id}-label`}>
+        {label}
+      </span>
+      <div
+        className="wizard-option-list"
+        role="radiogroup"
+        aria-labelledby={`${id}-label`}
+        aria-describedby={describedBy}
+      >
+        {options.map((option) => (
+          <label key={option.value} className="wizard-option">
+            <input
+              type="radio"
+              name={id}
+              disabled={disabled}
+              checked={value === option.value}
+              aria-invalid={invalid ? "true" : undefined}
+              onChange={() => {
+                onSelect(option.value);
+              }}
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export type ReviewFieldErrors = Partial<
   Record<
     | "timeLimitMinutes"
@@ -524,109 +585,105 @@ export function ReviewStep({
               </summary>
               {/* summary 直下に stack を置き、label/input が横に流れないよう縦積みにする */}
               <div className="stack wizard-details-body">
-                <label className="field">
-                  献立全体の調理時間
-                  <select
-                    value={value.timeLimitMinutes ?? ""}
-                    disabled={disabled}
-                    aria-invalid={fieldErrors?.timeLimitMinutes != null ? "true" : undefined}
-                    aria-describedby={
-                      fieldErrors?.timeLimitMinutes != null ? "review-time-limit-error" : undefined
-                    }
-                    onChange={(event) => {
-                      const selected = event.target.value;
-                      onChange({
-                        ...value,
-                        timeLimitMinutes:
-                          selected === ""
-                            ? null
-                            : selected === "15"
-                              ? 15
-                              : selected === "30"
-                                ? 30
-                                : 45,
-                      });
-                    }}
-                  >
-                    <option value="">指定なし</option>
-                    <option value="15">15分以内</option>
-                    <option value="30">30分以内</option>
-                    <option value="45">45分以内</option>
-                  </select>
-                </label>
+                <ReviewChoiceField
+                  id="review-time-limit"
+                  label="献立全体の調理時間"
+                  value={value.timeLimitMinutes === null ? "" : String(value.timeLimitMinutes)}
+                  disabled={disabled}
+                  invalid={fieldErrors?.timeLimitMinutes != null}
+                  describedBy={
+                    fieldErrors?.timeLimitMinutes != null ? "review-time-limit-error" : undefined
+                  }
+                  options={[
+                    { value: "", label: "指定なし" },
+                    { value: "15", label: "15分以内" },
+                    { value: "30", label: "30分以内" },
+                    { value: "45", label: "45分以内" },
+                  ]}
+                  onSelect={(selected) => {
+                    onChange({
+                      ...value,
+                      timeLimitMinutes:
+                        selected === "15"
+                          ? 15
+                          : selected === "30"
+                            ? 30
+                            : selected === "45"
+                              ? 45
+                              : null,
+                    });
+                  }}
+                />
                 {fieldErrors?.timeLimitMinutes != null && (
                   <p id="review-time-limit-error" role="alert">
                     {fieldErrors.timeLimitMinutes}
                   </p>
                 )}
-                <label className="field">
-                  予算
-                  <select
-                    value={value.budgetPreference ?? ""}
-                    disabled={disabled}
-                    aria-invalid={fieldErrors?.budgetPreference != null ? "true" : undefined}
-                    aria-describedby={
-                      fieldErrors?.budgetPreference != null ? "review-budget-error" : undefined
-                    }
-                    onChange={(event) => {
-                      onChange({
-                        ...value,
-                        budgetPreference:
-                          event.target.value === "economy"
-                            ? "economy"
-                            : event.target.value === "standard"
-                              ? "standard"
-                              : null,
-                      });
-                    }}
-                  >
-                    <option value="">指定なし</option>
-                    <option value="economy">節約優先</option>
-                    <option value="standard">標準</option>
-                  </select>
-                </label>
+                <ReviewChoiceField
+                  id="review-budget"
+                  label="予算"
+                  value={value.budgetPreference ?? ""}
+                  disabled={disabled}
+                  invalid={fieldErrors?.budgetPreference != null}
+                  describedBy={
+                    fieldErrors?.budgetPreference != null ? "review-budget-error" : undefined
+                  }
+                  options={[
+                    { value: "", label: "指定なし" },
+                    { value: "economy", label: "節約優先" },
+                    { value: "standard", label: "標準" },
+                  ]}
+                  onSelect={(selected) => {
+                    onChange({
+                      ...value,
+                      budgetPreference:
+                        selected === "economy"
+                          ? "economy"
+                          : selected === "standard"
+                            ? "standard"
+                            : null,
+                    });
+                  }}
+                />
                 {fieldErrors?.budgetPreference != null && (
                   <p id="review-budget-error" role="alert">
                     {fieldErrors.budgetPreference}
                   </p>
                 )}
-                <label className="field">
-                  材料の使い方
-                  <select
-                    value={value.ingredientPreference ?? ""}
-                    disabled={disabled}
-                    aria-invalid={fieldErrors?.ingredientPreference != null ? "true" : undefined}
-                    aria-describedby={
-                      fieldErrors?.ingredientPreference != null
-                        ? "review-ingredient-preference-error"
-                        : "review-ingredient-preference-hint"
-                    }
-                    onChange={(event) => {
-                      const selected = event.target.value;
-                      onChange({
-                        ...value,
-                        ingredientPreference:
-                          selected === "more"
-                            ? "more"
-                            : selected === "less"
-                              ? "less"
-                              : selected === "selected_only"
-                                ? "selected_only"
-                                : selected === "auto"
-                                  ? "auto"
-                                  : null,
-                      });
-                    }}
-                  >
-                    <option value="">{ingredientPreferenceLabel(null)}</option>
-                    <option value="more">{ingredientPreferenceLabels.more}</option>
-                    <option value="less">{ingredientPreferenceLabels.less}</option>
-                    <option value="selected_only">
-                      {ingredientPreferenceLabels.selected_only}
-                    </option>
-                    <option value="auto">{ingredientPreferenceLabels.auto}</option>
-                  </select>
-                </label>
+                <ReviewChoiceField
+                  id="review-ingredient-preference"
+                  label="材料の使い方"
+                  value={value.ingredientPreference ?? ""}
+                  disabled={disabled}
+                  invalid={fieldErrors?.ingredientPreference != null}
+                  describedBy={
+                    fieldErrors?.ingredientPreference != null
+                      ? "review-ingredient-preference-error"
+                      : "review-ingredient-preference-hint"
+                  }
+                  options={[
+                    { value: "", label: ingredientPreferenceLabel(null) },
+                    { value: "more", label: ingredientPreferenceLabels.more },
+                    { value: "less", label: ingredientPreferenceLabels.less },
+                    { value: "selected_only", label: ingredientPreferenceLabels.selected_only },
+                    { value: "auto", label: ingredientPreferenceLabels.auto },
+                  ]}
+                  onSelect={(selected) => {
+                    onChange({
+                      ...value,
+                      ingredientPreference:
+                        selected === "more"
+                          ? "more"
+                          : selected === "less"
+                            ? "less"
+                            : selected === "selected_only"
+                              ? "selected_only"
+                              : selected === "auto"
+                                ? "auto"
+                                : null,
+                    });
+                  }}
+                />
                 <p id="review-ingredient-preference-hint" className="type-small">
                   材料の量や、買い足しの範囲の目安です。調味料の基本（塩・しょうゆ・油など）はどの選択でも使えます。
                 </p>
@@ -635,29 +692,30 @@ export function ReviewStep({
                     {fieldErrors.ingredientPreference}
                   </p>
                 )}
-                <label className="field">
-                  献立の雰囲気
-                  <select
-                    value={value.noveltyPreference ?? ""}
-                    disabled={disabled}
-                    onChange={(event) => {
-                      const selected = event.target.value;
-                      onChange({
-                        ...value,
-                        noveltyPreference:
-                          selected === "standard"
-                            ? "standard"
-                            : selected === "twist"
-                              ? "twist"
-                              : null,
-                      });
-                    }}
-                  >
-                    <option value="">{noveltyPreferenceLabel(null)}</option>
-                    <option value="standard">{noveltyPreferenceLabels.standard}</option>
-                    <option value="twist">{noveltyPreferenceLabels.twist}</option>
-                  </select>
-                </label>
+                <ReviewChoiceField
+                  id="review-novelty-preference"
+                  label="献立の雰囲気"
+                  value={value.noveltyPreference ?? ""}
+                  disabled={disabled}
+                  invalid={false}
+                  describedBy={undefined}
+                  options={[
+                    { value: "", label: noveltyPreferenceLabel(null) },
+                    { value: "standard", label: noveltyPreferenceLabels.standard },
+                    { value: "twist", label: noveltyPreferenceLabels.twist },
+                  ]}
+                  onSelect={(selected) => {
+                    onChange({
+                      ...value,
+                      noveltyPreference:
+                        selected === "standard"
+                          ? "standard"
+                          : selected === "twist"
+                            ? "twist"
+                            : null,
+                    });
+                  }}
+                />
                 <label className="field">
                   今回だけ避ける食材
                   <input
