@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
 import {
+  buildPlannerSubmissionFieldErrors,
   firstIncompletePlannerStep,
   isAudienceComplete,
   mapPlannerIssuePathToField,
   neutralizeAudienceForPersistence,
   normalizeAudienceForModeChange,
+  plannerSteps,
 } from "./planner-wizard";
 
 /**
@@ -232,4 +234,42 @@ describe("normalizeAudienceForModeChange", () => {
       expect(next.servings).toBeNull();
     },
   );
+});
+
+test("inserts the four optional condition steps between audience and review", () => {
+  expect([...plannerSteps]).toEqual([
+    "meal",
+    "ingredients",
+    "cuisine",
+    "audience",
+    "timeLimit",
+    "budget",
+    "ingredientPreference",
+    "novelty",
+    "review",
+  ]);
+});
+
+test("routes optional condition submission errors to their own step", () => {
+  const timeLimit = buildPlannerSubmissionFieldErrors([
+    { path: ["timeLimitMinutes"], message: "調理時間が不正です" },
+  ]);
+  expect(timeLimit.firstInvalidStep).toBe("timeLimit");
+
+  const budget = buildPlannerSubmissionFieldErrors([
+    { path: ["budgetPreference"], message: "予算が不正です" },
+  ]);
+  expect(budget.firstInvalidStep).toBe("budget");
+
+  const ingredient = buildPlannerSubmissionFieldErrors([
+    { path: ["ingredientPreference"], message: "材料の使い方が不正です" },
+  ]);
+  expect(ingredient.firstInvalidStep).toBe("ingredientPreference");
+});
+
+test("keeps avoid / memo / pantry errors on the review step", () => {
+  const result = buildPlannerSubmissionFieldErrors([
+    { path: ["avoidIngredients", 0], message: "避ける食材が不正です" },
+  ]);
+  expect(result.firstInvalidStep).toBe("review");
 });

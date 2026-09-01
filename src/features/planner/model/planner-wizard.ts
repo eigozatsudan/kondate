@@ -1,10 +1,21 @@
 import type { PlannerDraftInput, TargetMode } from "@shared/contracts/planner";
 
 /**
- * ウィザードのstep順序。質問順（meal→ingredients→cuisine→audience）に
+ * ウィザードのstep順序。質問順（meal→ingredients→cuisine→audience）のあとに
+ * 任意の追加条件4問（timeLimit→budget→ingredientPreference→novelty）を挟み、
  * reviewを続けた固定配列。UI・resume判定・focus順の唯一の正とする。
  */
-export const plannerSteps = ["meal", "ingredients", "cuisine", "audience", "review"] as const;
+export const plannerSteps = [
+  "meal",
+  "ingredients",
+  "cuisine",
+  "audience",
+  "timeLimit",
+  "budget",
+  "ingredientPreference",
+  "novelty",
+  "review",
+] as const;
 export type PlannerStep = (typeof plannerSteps)[number];
 
 /**
@@ -137,9 +148,9 @@ const stepByField: Readonly<Record<PlannerFieldName, PlannerStep>> = {
   targetMode: "audience",
   targetMemberIds: "audience",
   servings: "audience",
-  timeLimitMinutes: "review",
-  budgetPreference: "review",
-  ingredientPreference: "review",
+  timeLimitMinutes: "timeLimit",
+  budgetPreference: "budget",
+  ingredientPreference: "ingredientPreference",
   avoidIngredients: "review",
   memo: "review",
   pantrySelections: "review",
