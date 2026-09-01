@@ -2,7 +2,7 @@ import { fireEvent, act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, test, vi } from "vitest";
 import type { PantryItem } from "@shared/contracts/pantry";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
 import { AppToastProvider } from "@/shared/ui/app-toast";
@@ -191,6 +191,10 @@ function renderAtTimeLimit(overrides: Partial<PlannerDraftInput> = {}) {
   const draftBox: { current: PlannerDraftInput } = { current: initialDraft };
   render(<Harness initialStep="timeLimit" initialDraft={initialDraft} draftBox={draftBox} />);
   return { latestDraft: () => draftBox.current };
+}
+
+function renderWizardAtReviewWithDraft(overrides: Partial<PlannerDraftInput> = {}) {
+  render(<Harness initialStep="review" initialDraft={{ ...reviewDraft, ...overrides }} />);
 }
 
 describe("PlannerWizard 固定順とnavigation", () => {
@@ -891,14 +895,73 @@ describe("PlannerWizard review step", () => {
     const summary = screen.getByText("追加条件");
     const details = summary.closest("details");
     expect(details).toHaveAttribute("open");
-    // 開いた状態から閉じ、再度開いても編集できる
     await user.click(summary);
     expect(details).not.toHaveAttribute("open");
     await user.click(summary);
     expect(details).toHaveAttribute("open");
-    const timeGroup = screen.getByRole("radiogroup", { name: "献立全体の調理時間" });
-    await user.click(within(timeGroup).getByRole("radio", { name: "30分以内" }));
-    expect(within(timeGroup).getByRole("radio", { name: "30分以内" })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: /今回だけ避ける食材/u })).toBeInTheDocument();
+  });
+
+  test("returns to review right after picking on an optional step opened from 変更", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<Harness initialStep="review" initialDraft={reviewDraft} />);
+    await user.click(screen.getByRole("button", { name: "調理時間を変更" }));
+    expect(screen.getByRole("heading", { name: "5. 調理時間" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "以降は指定なしでスキップ" }),
+    ).not.toBeInTheDocument();
+    await passActivationGuard();
+    await user.click(optionLabel("30分以内"));
+    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+  });
+
+  test("shows the optional condition answers as review summary rows", () => {
+    renderWizardAtReviewWithDraft({
+      timeLimitMinutes: 30,
+      budgetPreference: "economy",
+      ingredientPreference: "more",
+      noveltyPreference: "twist",
+    });
+    expect(screen.getByText("調理時間")).toBeInTheDocument();
+    expect(screen.getByText("30分以内")).toBeInTheDocument();
+    expect(screen.getByText("予算")).toBeInTheDocument();
+    expect(screen.getByText("節約優先")).toBeInTheDocument();
+    expect(screen.getByText("材料の使い方")).toBeInTheDocument();
+    expect(screen.getByText("多め")).toBeInTheDocument();
+    expect(screen.getByText("献立の雰囲気")).toBeInTheDocument();
+    expect(screen.getByText("ひねりたい（主菜を定番から外す）")).toBeInTheDocument();
+  });
+
+  test("shows 指定なし for unanswered optional conditions", () => {
+    renderWizardAtReviewWithDraft({
+      timeLimitMinutes: null,
+      budgetPreference: null,
+      ingredientPreference: null,
+      noveltyPreference: null,
+    });
+    expect(screen.getAllByText("指定なし")).toHaveLength(4);
+  });
+
+  test("no longer renders the optional condition radios on the review screen", () => {
+    renderWizardAtReviewWithDraft({});
+    expect(
+      screen.queryByRole("radiogroup", { name: "献立全体の調理時間" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "15分以内" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "節約優先" })).not.toBeInTheDocument();
+  });
+
+  test("opens the matching optional step from the review 変更 buttons", async () => {
+    const user = userEvent.setup();
+    renderWizardAtReviewWithDraft({});
+    await user.click(screen.getByRole("button", { name: "予算を変更" }));
+    expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
+  });
+
+  test("keeps avoid / memo / pantry inside the additional conditions details", () => {
+    renderWizardAtReviewWithDraft({});
+    expect(screen.getByRole("textbox", { name: /今回だけ避ける食材/u })).toBeInTheDocument();
   });
 
   it("戻るで1つ前の質問へ、変更後の次へで確認へ直行できる", async () => {
@@ -1050,19 +1113,7 @@ describe("PlannerWizard review step", () => {
   });
 
   it("追加条件は field 縦積みで狭幅でも崩れない構造を持つ", () => {
-    render(
-      <Harness
-        initialStep="review"
-        initialDraft={{
-          ...emptyDraft,
-          mealType: "dinner",
-          mainIngredients: ["鶏肉"],
-          cuisineGenre: "japanese",
-          targetMode: "household",
-          targetMemberIds: [eligibleMember.id],
-        }}
-      />,
-    );
+    renderWizardAtReviewWithDraft({});
 
     const summary = screen.getByText("追加条件");
     const details = summary.closest("details");
@@ -1071,109 +1122,30 @@ describe("PlannerWizard review step", () => {
     expect(summary.closest("summary")).toHaveClass("wizard-details-summary");
     expect(screen.getByText("（任意）")).toBeInTheDocument();
 
-    // デフォルト展開済み。クリックで閉じない前提で構造だけ確認する
-    const timeGroup = screen.getByRole("radiogroup", { name: "献立全体の調理時間" });
-    const timeField = timeGroup.parentElement;
-    const body = timeField?.parentElement;
-    expect(timeGroup).toHaveClass("wizard-option-list");
-    expect(timeField).toHaveClass("wizard-option-field");
+    const avoid = screen.getByRole("textbox", { name: /今回だけ避ける食材/u });
+    const body = avoid.closest(".wizard-details-body");
     expect(body).toHaveClass("stack", "wizard-details-body");
-    expect(body).toContainElement(screen.getByRole("radiogroup", { name: "予算" }));
-    expect(body).toContainElement(screen.getByRole("radiogroup", { name: "材料の使い方" }));
-    expect(body).toContainElement(screen.getByRole("radiogroup", { name: "献立の雰囲気" }));
-    // 選択式はすべて「指定なし」が既定
-    for (const name of ["献立全体の調理時間", "予算", "材料の使い方", "献立の雰囲気"]) {
-      const group = screen.getByRole("radiogroup", { name });
-      expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
-    }
     expect(body).toContainElement(screen.getByLabelText("今回だけ避ける食材"));
     expect(body).toContainElement(screen.getByLabelText("自由メモ"));
+    expect(
+      screen.queryByRole("radiogroup", { name: "献立全体の調理時間" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("追加条件の材料の使い方を選び draft に反映できる", async () => {
-    const user = userEvent.setup();
-    render(
-      <Harness
-        initialStep="review"
-        initialDraft={{
-          ...emptyDraft,
-          mealType: "dinner",
-          mainIngredients: ["鶏肉"],
-          cuisineGenre: "japanese",
-          targetMode: "household",
-          targetMemberIds: [eligibleMember.id],
-        }}
-      />,
-    );
-
-    // デフォルトで開いているので summary クリック不要
-    const group = screen.getByRole("radiogroup", { name: "材料の使い方" });
-    // 4 値 + 指定なし。文言は planner-labels と一致させる。
-    expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
-    expect(within(group).getByRole("radio", { name: "多め" })).toBeEnabled();
-    expect(within(group).getByRole("radio", { name: "少な目" })).toBeEnabled();
-    expect(
-      within(group).getByRole("radio", {
-        name: "メイン食材と冷蔵庫の食材を優先（買い足しを控えめに）",
-      }),
-    ).toBeEnabled();
-    expect(
-      within(group).getByRole("radio", {
-        name: "おまかせ（分量・範囲はモデル判断）",
-      }),
-    ).toBeEnabled();
-
-    for (const name of [
-      "多め",
-      "メイン食材と冷蔵庫の食材を優先（買い足しを控えめに）",
-      "少な目",
-      "おまかせ（分量・範囲はモデル判断）",
-    ]) {
-      await user.click(within(group).getByRole("radio", { name }));
-      expect(within(group).getByRole("radio", { name })).toBeChecked();
-    }
-    // 「指定なし」で未指定へ戻せる
-    await user.click(within(group).getByRole("radio", { name: "指定なし" }));
-    expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
-    // ヒントが accessible description に載る
-    expect(group).toHaveAccessibleDescription(/調味料の基本/);
+  it("追加条件の材料の使い方を選び draft に反映できる", () => {
+    renderWizardAtReviewWithDraft({ ingredientPreference: "more" });
+    expect(screen.getByText("材料の使い方")).toBeInTheDocument();
+    expect(screen.getByText("多め")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "材料の使い方を変更" })).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "材料の使い方" })).not.toBeInTheDocument();
   });
 
-  it("追加条件の献立の雰囲気を選び draft に反映できる", async () => {
-    const user = userEvent.setup();
-    render(
-      <Harness
-        initialStep="review"
-        initialDraft={{
-          ...emptyDraft,
-          mealType: "dinner",
-          mainIngredients: ["鶏肉"],
-          cuisineGenre: "japanese",
-          targetMode: "household",
-          targetMemberIds: [eligibleMember.id],
-        }}
-      />,
-    );
-
-    const group = screen.getByRole("radiogroup", { name: "献立の雰囲気" });
-    // 未指定が既定。文言は planner-labels と一致させる。
-    expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
-    expect(within(group).getByRole("radio", { name: "いつもの" })).toBeEnabled();
-    expect(
-      within(group).getByRole("radio", { name: "ひねりたい（主菜を定番から外す）" }),
-    ).toBeEnabled();
-
-    await user.click(
-      within(group).getByRole("radio", { name: "ひねりたい（主菜を定番から外す）" }),
-    );
-    expect(
-      within(group).getByRole("radio", { name: "ひねりたい（主菜を定番から外す）" }),
-    ).toBeChecked();
-    await user.click(within(group).getByRole("radio", { name: "いつもの" }));
-    expect(within(group).getByRole("radio", { name: "いつもの" })).toBeChecked();
-    // 「指定なし」で未指定へ戻せる
-    await user.click(within(group).getByRole("radio", { name: "指定なし" }));
-    expect(within(group).getByRole("radio", { name: "指定なし" })).toBeChecked();
+  it("追加条件の献立の雰囲気を選び draft に反映できる", () => {
+    renderWizardAtReviewWithDraft({ noveltyPreference: "twist" });
+    expect(screen.getByText("献立の雰囲気")).toBeInTheDocument();
+    expect(screen.getByText("ひねりたい（主菜を定番から外す）")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "献立の雰囲気を変更" })).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "献立の雰囲気" })).not.toBeInTheDocument();
   });
 
   it("進行中 pending がある確認画面では新条件破棄の再開注意を出す (P2)", () => {
