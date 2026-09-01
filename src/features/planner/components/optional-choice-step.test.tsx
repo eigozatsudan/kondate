@@ -36,7 +36,7 @@ function setup(overrides: Partial<Parameters<typeof OptionalChoiceStep>[0]> = {}
   return handlers;
 }
 
-/** 実機と同じ経路（label の pointerup）を通すため、input ではなく .wizard-option を叩く。 */
+/** 実機と同じ経路（label のタップ）を通すため、input ではなく .wizard-option を叩く。 */
 function optionLabel(name: string): HTMLElement {
   const input = screen.getByRole("radio", { name });
   const label = input.closest("label.wizard-option");
@@ -44,7 +44,7 @@ function optionLabel(name: string): HTMLElement {
   return label as HTMLElement;
 }
 
-/** mount 後 350ms のガード（設計 P-03）を抜けるまで進める。 */
+/** mount 後 350ms のボタンガード（設計 P-03）を抜けるまで進める。 */
 async function passActivationGuard(): Promise<void> {
   vi.setSystemTime(Date.now() + 400);
   await Promise.resolve();
@@ -59,95 +59,50 @@ test("selects 指定なし by default", () => {
   expect(screen.getByRole("radio", { name: "指定なし" })).toBeChecked();
 });
 
-test("does not render a 次へ button", () => {
+test("renders a 次へ button", () => {
   setup();
-  expect(screen.queryByRole("button", { name: "次へ" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "次へ" })).toBeInTheDocument();
 });
 
-test("advances once when tapping an unselected card", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+test("selects a card without advancing", async () => {
+  const user = userEvent.setup();
   const handlers = setup();
-  await passActivationGuard();
   await user.click(optionLabel("15分以内"));
   expect(handlers.onSelect).toHaveBeenCalledTimes(1);
   expect(handlers.onSelect).toHaveBeenCalledWith("15");
-  expect(handlers.onNext).toHaveBeenCalledTimes(1);
-});
-
-test("advances once when re-tapping the already selected 指定なし", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  const handlers = setup();
-  await passActivationGuard();
-  await user.click(optionLabel("指定なし"));
-  expect(handlers.onSelect).toHaveBeenCalledTimes(1);
-  expect(handlers.onSelect).toHaveBeenCalledWith("");
-  expect(handlers.onNext).toHaveBeenCalledTimes(1);
-});
-
-test("advances once when re-tapping an already selected non-default card", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  const handlers = setup({ value: "30" });
-  await passActivationGuard();
-  await user.click(optionLabel("30分以内"));
-  expect(handlers.onSelect).toHaveBeenCalledTimes(1);
-  expect(handlers.onNext).toHaveBeenCalledTimes(1);
-});
-
-test("advances once when pressing Space on a focused radio", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  const handlers = setup();
-  await passActivationGuard();
-  screen.getByRole("radio", { name: "15分以内" }).focus();
-  await user.keyboard(" ");
-  expect(handlers.onSelect).toHaveBeenCalledTimes(1);
-  expect(handlers.onSelect).toHaveBeenCalledWith("15");
-  expect(handlers.onNext).toHaveBeenCalledTimes(1);
+  expect(handlers.onNext).not.toHaveBeenCalled();
 });
 
 test("updates the value without advancing on an arrow-key change", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const user = userEvent.setup();
   const handlers = setup();
-  await passActivationGuard();
   screen.getByRole("radio", { name: "指定なし" }).focus();
   await user.keyboard("{ArrowDown}");
   expect(handlers.onSelect).toHaveBeenCalledTimes(1);
   expect(handlers.onNext).not.toHaveBeenCalled();
 });
 
-test("ignores the first activation inside the 350ms guard", async () => {
+test("advances on 次へ even when nothing was chosen", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   const handlers = setup();
-  await user.click(optionLabel("15分以内"));
-  expect(handlers.onSelect).not.toHaveBeenCalled();
-  expect(handlers.onNext).not.toHaveBeenCalled();
-});
-
-test("ignores a change inside the 350ms guard", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  const handlers = setup();
-  screen.getByRole("radio", { name: "指定なし" }).focus();
-  await user.keyboard("{ArrowDown}");
-  expect(handlers.onSelect).not.toHaveBeenCalled();
-});
-
-test("stays usable after an activation was blocked by the guard", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  const handlers = setup();
-  await user.click(optionLabel("15分以内"));
-  expect(handlers.onNext).not.toHaveBeenCalled();
   await passActivationGuard();
-  await user.click(optionLabel("30分以内"));
-  expect(handlers.onSelect).toHaveBeenCalledTimes(1);
-  expect(handlers.onSelect).toHaveBeenCalledWith("30");
+  await user.click(screen.getByRole("button", { name: "次へ" }));
   expect(handlers.onNext).toHaveBeenCalledTimes(1);
+  expect(handlers.onSelect).not.toHaveBeenCalled();
+});
+
+test("ignores 次へ inside the 350ms guard", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const handlers = setup();
+  await user.click(screen.getByRole("button", { name: "次へ" }));
+  expect(handlers.onNext).not.toHaveBeenCalled();
+});
+
+test("uses the given nextLabel", () => {
+  setup({ nextLabel: "確認に戻る" });
+  expect(screen.getByRole("button", { name: "確認に戻る" })).toBeInTheDocument();
 });
 
 test("hides the skip button unless onSkipRest is given", () => {

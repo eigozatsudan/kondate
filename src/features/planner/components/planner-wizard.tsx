@@ -278,10 +278,6 @@ export function PlannerWizard({
     ? { nextLabel: "確認に戻る", backLabel: "やめる" }
     : {};
 
-  // 追加条件 step は「次へ」を持たないので nextLabel は渡さない。
-  // 編集戻りは「選択で advanceFromEditOr」「戻るで returnToReviewIfQuestionsComplete」の両方が確認へ帰る。
-  const optionalStepBackLabel = returnToReviewAfterEdit ? { backLabel: "やめる" } : {};
-
   /** 5ページ目の「以降は指定なしでスキップ」。4フィールドだけを null にして確認へ直行する。 */
   const skipRestOfOptionalSteps = (): void => {
     onDraftChange({
@@ -614,7 +610,7 @@ export function PlannerWizard({
           errorMessage={fieldErrors.timeLimitMinutes ?? null}
           description="選んだ内容はあとから確認画面で変えられます。"
           {...(returnToReviewAfterEdit ? {} : { onSkipRest: skipRestOfOptionalSteps })}
-          {...optionalStepBackLabel}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
         {footer}
@@ -652,7 +648,7 @@ export function PlannerWizard({
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.budgetPreference ?? null}
-          {...optionalStepBackLabel}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
         {footer}
@@ -701,7 +697,7 @@ export function PlannerWizard({
           disabled={isSaving}
           errorMessage={fieldErrors.ingredientPreference ?? null}
           description="材料の量や、買い足しの範囲の目安です。調味料の基本（塩・しょうゆ・油など）はどの選択でも使えます。"
-          {...optionalStepBackLabel}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
         {footer}
@@ -738,7 +734,7 @@ export function PlannerWizard({
             backFromEditOr("ingredientPreference");
           }}
           disabled={isSaving}
-          {...optionalStepBackLabel}
+          {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
         {footer}

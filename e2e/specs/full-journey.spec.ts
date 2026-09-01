@@ -71,22 +71,25 @@ test(
     await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
     await clickWizardNext(page);
 
-    // 任意4ページに「次へ」は無い。heading 可視直後は 350ms 活性化ガードに食われる。
-    // ここだけスキップせずカード click で歩き、自動遷移が効くことも同時に主張する。
+    // 任意4ページはカード選択では進まない。選んでから「次へ」で送る。
+    // heading 可視直後の「次へ」は 350ms 活性化ガードに食われるので待つ。
+    // ここだけスキップせず、選択が保持されたまま送られることも同時に主張する。
     await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
-    await page.waitForTimeout(350);
     await page.locator("label.wizard-option").filter({ hasText: "15分以内" }).click();
+    await page.waitForTimeout(350);
+    await clickWizardNext(page);
 
     await expect(page.getByRole("heading", { name: "6. 予算" })).toBeVisible();
-    await page.waitForTimeout(350);
     await page.locator("label.wizard-option").filter({ hasText: "節約優先" }).click();
+    await page.waitForTimeout(350);
+    await clickWizardNext(page);
 
     await expect(page.getByRole("heading", { name: "7. 材料の使い方" })).toBeVisible();
-    await page.waitForTimeout(350);
     await page.locator("label.wizard-option").filter({ hasText: "多め" }).click();
+    await page.waitForTimeout(350);
+    await clickWizardNext(page);
 
     await expect(page.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeVisible();
-    await page.waitForTimeout(350);
     // P-T6-WAIT: twist 保存の waitForResponse は「ひねりたい」click の直前に置く。
     const noveltySaved = page.waitForResponse((response) => {
       if (!new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft")) {
@@ -100,6 +103,8 @@ test(
       .filter({ hasText: "ひねりたい（主菜を定番から外す）" })
       .click();
     await noveltySaved;
+    await page.waitForTimeout(350);
+    await clickWizardNext(page);
 
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     // privacy は fixture 済み。CTA が出ていたら契約退行なので落とし、黙ってスキップしない。
