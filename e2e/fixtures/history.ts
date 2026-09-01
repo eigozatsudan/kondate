@@ -67,6 +67,19 @@ export async function clickWizardNext(page: Page): Promise<void> {
 }
 
 /**
+ * 5. 調理時間 の「以降は指定なしでスキップ」で追加条件4ページを飛ばし、9. 確認 まで進める。
+ * 任意 step に「次へ」は無いので clickWizardNext は使えない。
+ * スキップボタンは 350ms の活性化ガードの対象外なので待ちは要らない。
+ */
+export async function skipOptionalPlannerSteps(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
+  const skip = page.getByRole("button", { name: "以降は指定なしでスキップ" });
+  await expect(skip).toBeEnabled({ timeout: 15_000 });
+  await skip.click();
+  await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+}
+
+/**
  * generation_drafts の target_member_ids が 1 件以上であることを REST で固定する。
  * audience helper の early-return 経路でも UI checked と server draft の desync を偽 green にしない。
  */
@@ -235,7 +248,7 @@ export async function seedGeneratedMenu(page: Page): Promise<string> {
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await skipOptionalPlannerSteps(page);
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({
     timeout: 15_000,
   });
@@ -452,7 +465,7 @@ export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2
   expect((await ideaSave).ok()).toBe(true);
   await clickWizardNext(page);
 
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await skipOptionalPlannerSteps(page);
   // privacy 未了では説明 CTA が見える（生成ボタンは案内のため有効のまま）。
   // openPrivacyNotice は flushDraft + resume=review で戻る。本番はフル reload しないため
   // SPA 復帰だけで review を維持することを主張する（巻き戻りは製品退行として失敗させる）。
@@ -465,7 +478,7 @@ export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2
     await expect(page).toHaveURL(
       (url) => url.pathname === "/planner" && url.searchParams.get("resume") === "review",
     );
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({
       timeout: 15_000,
     });
   }

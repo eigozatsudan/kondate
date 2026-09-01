@@ -5,6 +5,7 @@ import {
   openFirstMemberEditor,
   openWizardFromHome,
   selectHouseholdAudienceWithMember,
+  skipOptionalPlannerSteps,
 } from "../fixtures/history";
 import { confirmAddScopeNotice } from "../fixtures/household";
 
@@ -60,7 +61,7 @@ async function updatePlannerAndAwaitAutosave(
  * 「/plannerを開いて食事だけradioで切り替える」操作は成立しない。draftは既に
  * 全質問が回答済み（review到達済み）のため、再度/plannerを開くと
  * firstIncompletePlannerStepの判定でreview stepへ直接resumeする。そこから
- * 「戻る」を4回押してmeal stepまで戻り、食事だけを変更してから再びreviewへ進む。
+ * 「戻る」を8回押してmeal stepまで戻り、食事だけを変更してから再びreviewへ進む。
  */
 /**
  * 食事帯を切り替えて review へ戻す。
@@ -74,8 +75,8 @@ async function savePlannerMeal(
   mainIngredient: "鮭" | "ひき肉" | "鶏肉",
 ): Promise<void> {
   await page.goto("/planner");
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
-  for (let step = 0; step < 4; step += 1) {
+  await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+  for (let i = 0; i < 8; i += 1) {
     await page.getByRole("button", { name: "戻る" }).click();
   }
   await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible();
@@ -117,7 +118,7 @@ async function savePlannerMeal(
   await clickWizardNext(page);
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   await clickWizardNext(page);
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await skipOptionalPlannerSteps(page);
 }
 
 /**
@@ -143,7 +144,7 @@ async function advanceToReviewWithHousehold(
   // 下書きが未確定のまま扱われてしまう。C-I4 後はメンバー明示選択 + 成功 autosave を待つ。
   await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await skipOptionalPlannerSteps(page);
 }
 
 /**
@@ -260,7 +261,8 @@ test("waits for the latest draft save before requesting emergency menus", async 
   await advanceToReviewWithHousehold(page, "昼食");
   // C-I4: 全員自動選択はしない。緊急用家族のみを明示し、家族1 は外す。
   // household+0 を一瞬でも確定しないよう、緊急用家族を先にチェックしてから家族1を外す。
-  await page.getByRole("button", { name: "戻る" }).click();
+  // 編集戻り中の primary は「確認に戻る」。clickWizardNext（次へ専用）は使わない。
+  await page.getByRole("button", { name: "対象を変更" }).click();
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   const emergencyCheckbox = page.getByRole("checkbox", { name: "緊急用家族" });
   const family1Checkbox = page.getByRole("checkbox", { name: "家族1" });
@@ -274,8 +276,8 @@ test("waits for the latest draft save before requesting emergency menus", async 
     }
   }
   await expect(emergencyCheckbox).toBeChecked();
-  await clickWizardNext(page);
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await page.getByRole("button", { name: "確認に戻る" }).click();
+  await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
   await openReviewOptionalDetails(page);
   await page.getByRole("checkbox", { name: "緊急用豆腐" }).check();
   const savedBody = await observedSave;
@@ -459,7 +461,7 @@ test(
     );
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     // PLAN-1: 復元後は attempt 確認が空のため、既選択の期限切れで確認ダイアログが開く。
     // dialog 閉鎖後は details が閉じていることがあるため再 open してから checked を見る。
@@ -491,7 +493,7 @@ test(
       (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
     );
     await page.reload();
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
     await expect(page.getByLabel("キャベツの使い方")).toHaveCount(0);
@@ -622,7 +624,7 @@ test(
     });
 
     await page.goto("/planner");
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await page.getByRole("checkbox", { name: "キャベツ" }).click();
     await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
@@ -641,7 +643,7 @@ test(
     await page.getByRole("button", { name: "キャベツを削除" }).click();
     await expect(page.getByRole("heading", { name: "キャベツ", exact: true })).toHaveCount(0);
     await page.goto("/planner");
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await expect(page.getByRole("alert")).toContainText("冷蔵庫から削除された食材");
     await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
@@ -657,7 +659,7 @@ test(
     await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await expect(page.getByText("冷蔵庫から削除された食材")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();

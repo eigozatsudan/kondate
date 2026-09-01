@@ -5,6 +5,7 @@ import {
   openWizardFromHome,
   requestWholeRegeneration,
   selectHouseholdAudienceWithMember,
+  skipOptionalPlannerSteps,
 } from "../fixtures/history";
 import { chooseCreateListModeNew } from "../fixtures/shopping";
 import { z } from "zod";
@@ -70,7 +71,7 @@ test(
     await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
     await clickWizardNext(page);
 
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     // privacy は fixture 済み。CTA が出ていたら契約退行なので落とし、黙ってスキップしない。
     await expect(page.getByRole("button", { name: "AI情報の説明を見る" })).toHaveCount(0);
     // 確認画面。ひねりを選んだ下書きが保存されたことを同期点にしてから生成へ進む
@@ -313,6 +314,7 @@ test(
     // idea-alternate-menu-1 は servings=1 固定のため初回も 1 人で揃える
     await page.getByRole("button", { name: "1人" }).click();
     await clickWizardNext(page);
+    await skipOptionalPlannerSteps(page);
 
     await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
     await setMockScenario(page, "idea-servings-1");
@@ -333,7 +335,7 @@ test(
       (url) => url.pathname === "/planner" && url.searchParams.get("resume") === "review",
     );
     // reload なしで確認 step を維持（draft cache 巻き戻りの製品退行を検出する）
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({
       timeout: 15_000,
     });
     // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で test から truncate 禁止）

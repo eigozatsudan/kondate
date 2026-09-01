@@ -7,6 +7,7 @@ import {
   openWizardFromHome,
   selectHouseholdAudienceWithMember,
   setMockScenario,
+  skipOptionalPlannerSteps,
 } from "./history";
 import { localRestHeaders } from "./local-supabase";
 
@@ -86,7 +87,7 @@ export async function generateShoppingMenu(page: Page): Promise<string> {
   // C-I4: メンバーを明示選択しないと household 下書きが CHECK で失敗する
   await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await skipOptionalPlannerSteps(page);
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({ timeout: 15_000 });
   await page.getByRole("button", { name: "献立を作る" }).click();
   await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });

@@ -714,7 +714,7 @@ describe("PlannerWizard idea audience onIdeaAudienceConfirmed", () => {
       expect(onIdeaAudienceConfirmed).toHaveBeenCalled();
     });
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "5. 確認" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
   });
 
   it("does not call onIdeaAudienceConfirmed for household audience next", async () => {
@@ -871,7 +871,7 @@ describe("PlannerWizard idea audience onIdeaAudienceConfirmed", () => {
 
     // 旧 wizard クロージャの goToStep("review") が発火していない
     expect(steps).not.toContain("review");
-    expect(screen.queryByRole("heading", { name: "5. 確認" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
   });
 });
 
@@ -1047,7 +1047,7 @@ describe("PlannerWizard review step", () => {
 
     await user.click(screen.getByRole("button", { name: "やめる" }));
     // incomplete のまま review へ戻らない（P2）
-    expect(screen.queryByRole("heading", { name: "5. 確認" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
   });
 
@@ -1073,7 +1073,7 @@ describe("PlannerWizard review step", () => {
 
     await user.click(screen.getByRole("button", { name: "やめる" }));
     // 空 ingredients のまま review へ戻らない（P2）
-    expect(screen.queryByRole("heading", { name: "5. 確認" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
   });
 

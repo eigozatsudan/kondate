@@ -5,10 +5,11 @@ import {
   openFirstMemberEditor,
   openWizardFromHome,
   selectHouseholdAudienceWithMember,
+  skipOptionalPlannerSteps,
 } from "../fixtures/history";
 
 /**
- * 家族に合わせた献立の条件をひととおり答えて「5. 確認」まで進める。
+ * 家族に合わせた献立の条件をひととおり答えて「9. 確認」まで進める。
  * fixtures/history.ts の seedGeneratedMenu と同じ手順だが、
  * 「献立を作る」は押さずに止める（生成の成否を呼び出し側で作り分けるため）。
  */
@@ -34,7 +35,7 @@ export async function advanceToReviewWithHousehold(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "4. 作る相手" })).toBeVisible();
   await selectHouseholdAudienceWithMember(page);
   await clickWizardNext(page);
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await skipOptionalPlannerSteps(page);
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled({ timeout: 15_000 });
   // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で shots から truncate 禁止）
 }

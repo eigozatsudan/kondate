@@ -93,7 +93,7 @@ const ensurePrivacyThenGenerate = async (
     await expect(page).toHaveURL(
       (url) => url.pathname === "/planner" && url.searchParams.get("resume") === "review",
     );
-    await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({
       timeout: 15_000,
     });
   }
@@ -146,7 +146,7 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
   }
   await clickWizardNext(page);
 
-  await expect(page.getByRole("heading", { name: "5. 確認" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
   if (mode === "idea") {
     await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
   }
