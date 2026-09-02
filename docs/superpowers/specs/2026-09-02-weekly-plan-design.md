@@ -1,7 +1,9 @@
 # 今週の献立（週献立）設計 — Plus 差別化 Phase 1
 
 作成日: 2026-09-02
-状態: 設計承認済み（実装計画は別途 `docs/superpowers/plans/` に作成）
+改訂: 2026-09-02 rev2（一次 / 敵対的 / 裁定レビュー P-01〜P-11 を反映。
+`docs/superpowers/reviews/2026-09-02-weekly-plan-{primary,adversarial,adjudication}.md`）
+状態: 設計改訂済み（実装計画は別途 `docs/superpowers/plans/` に作成）
 
 ## 1. 目的と範囲
 
@@ -17,7 +19,7 @@
 - 各日をタップすると既存のプランナー下書きに主菜と食材を入れ、日次生成へ展開できる。
 - 結果は public テーブルに保存し、履歴タブから再訪できる。
 - Free にはチラシと同型のロック表示のみ。
-- Plus LP の 3 メリットの 3 枚目を「チラシから 1 週間」から「今週の献立」へ差し替える。
+- Plus LP の「チラシから 1 週間」を「今週の献立」へ全面差し替える（LEAD・カード・比較表・bullet）。
 
 ### スコープ外
 
@@ -25,8 +27,17 @@
 - 週の買い物リスト集約。
 - 骨格出力への食材タグ付与（年齢帯タグ規則の充足）。
 - Free 向けの月次お試し枠。
-- チラシ UI の再表示、日次生成枠・Plus 価格・週次枠の数値変更。
+- チラシ UI の再表示、日次生成枠・Plus 価格・週次枠の数値変更、チラシ SQL 関数の改修。
 - Stripe 契約と申込ゲートの開放。
+
+### ロックした前提（レビューで維持と判定）
+
+- 週次枠はチラシと共有（成功 2 / 試行 6 per JST 週）。
+- 安全検査の集合は「フォームで選んだ対象メンバー」（日次と同基準）。空集合は契約の `min(1)` で拒否。
+- 骨格はタグを持たない。
+- fingerprint 不一致でも「この日の献立を作る」は有効のまま（日次生成が現行条件で再検査する）。
+- `/weekly` にルートガードは置かない。作成はサーバが 403 で止め、予約は発生しない。
+- ブラウザは `@shared/safety-pure/*` と contracts のみ参照。
 
 ## 2. アーキテクチャ
 
@@ -34,45 +45,58 @@
 
 | 層 | 追加 / 変更 | 内容 |
 |---|---|---|
-| 契約 | `shared/contracts/weekly-plan.ts` 新設 | リクエスト / レスポンス / エラーコード / 文言 |
-| Function | `netlify/functions/weekly-plan.ts` 新設 | `POST /api/weekly-plan`（JSON body） |
-| サービス | `netlify/functions/_shared/weekly-plan-service.ts` 新設 | 予約 → 生成 → 検査 → 保存 → 確定 |
-| プロンプト | `netlify/functions/_shared/weekly-plan-prompt.ts` 新設 | 対象メンバー安全条件を載せた週献立専用プロンプト |
-| 共用切り出し | `generation-prompt.ts` の member 整形部を関数化 | 日次と週で同じ整形を使う。日次の挙動は不変 |
-| DB | `supabase/migrations/<ts>_weekly_plans.sql` 新設 | `public.weekly_plans` + RLS |
+| 契約 | `shared/contracts/weekly-plan.ts` 新設 | リクエスト / レスポンス / エラーコード / 文言 / 写像表 |
+| Function | `netlify/functions/weekly-plan.ts` 新設 | `POST /api/weekly-plan`（JSON body）、`GET /api/weekly-plan/:id` |
+| サービス | `netlify/functions/_shared/weekly-plan-service.ts` 新設 | lookup → 予約 → 生成 → 検査 → finalize → public 保存 |
+| プロンプト | `netlify/functions/_shared/weekly-plan-prompt.ts` 新設 | 対象メンバー安全条件を載せた週献立専用プロンプト（テキストのみ） |
+| 共用切り出し | `generation-prompt.ts` の member 整形部を関数化 | 日次と週で同じ整形。日次の挙動は不変 |
+| DB | `supabase/migrations/<ts>_weekly_plans.sql` 新設 | `public.weekly_plans` + RLS + GRANT |
 | ブラウザ | `src/features/weekly-plan/` 新設 | 入口カード、フォーム、結果、履歴カード、ロック表示 |
 | ルート | `src/app/router.tsx` | `/weekly`, `/weekly/:weeklyPlanId` 追加。ボトムナビは 5 タブのまま |
-| プランナー | `planner-route.tsx` | footer 枠に入口カード、下書き引き継ぎの受け口 |
+| プランナー | `planner-route.tsx` | footer 枠に入口カード。下書き引き継ぎは既存 `savePlannerDraft` を使う |
 | 履歴 | `history-page.tsx` | 先頭に「今週の献立」枠 |
-| Plus LP | `plus-landing-page.tsx` | 3 枚目カードの文言とアイコン差し替え |
+| Plus LP / 設定 | `plus-landing-page.tsx` ほか | チラシ文言を「今週の献立」へ全面差し替え |
 
-### 処理順（サービス）
+### 処理順（POST、チラシ PE11 と同順）
 
-チラシ週次と同一順序。SQL 関数は既存の `reserve_flyer_weekly` / `mark_flyer_weekly_sent` / `finalize_flyer_weekly_success` / `finalize_flyer_weekly_failure` をそのまま呼び、SQL 側は改修しない。
+SQL 関数は既存の `reserve_flyer_weekly` / `mark_flyer_weekly_sent` / `finalize_flyer_weekly_success` / `stash_flyer_weekly_result` / `finalize_flyer_weekly_failure` / `lookup_flyer_weekly` をそのまま呼ぶ。SQL 側は改修しない。
 
-1. 現行 privacy notice への同意確認（未同意は 422、予約なし）
-2. entitlement 読取。Plus でなければ 403、予約なし
-3. 対象メンバーの現在安全条件を読取。満たせない制約があれば 422、予約なし
-4. `reserve_flyer_weekly`（週次成功 / 試行、日次試行、短時間窓、全体枠）
-5. モデル政策確認 → `mark_flyer_weekly_sent`
-6. OpenRouter 呼び出し（structured output、既存 allowlist）
-7. Zod 検証 → 保証フレーズ検査 → 対象メンバー安全条件で 7 日全食材を検査
-8. `public.weekly_plans` へ admin クライアントで 1 行 insert
-9. `finalize_flyer_weekly_success`（`result_payload` にも従来どおり保存し、sticky 再表示経路を維持）
+1. entitlement 読取（読取失敗は 503、予約なし）
+2. **lookup を Plus 判定より前に置く**（PE2 と同型）。同一 `idempotencyKey` の `succeeded` 行があれば、現行対象メンバー条件で再 assert → `weekly_plans` に `request_id` 行が無ければ insert（後述の再試行経路）→ 200 で返す。OpenRouter は呼ばない。Plus 失効後もこの経路だけは通る
+3. Plus でなければ 403、予約なし
+4. 現行 privacy notice への同意確認（未同意は 422、予約なし）
+5. 対象メンバーの現在安全条件を読取。**日次と同じ reserve 前 422 集合**（§5）に該当すれば 422、予約なし
+6. `reserve_flyer_weekly`（週次成功 / 試行、日次試行、短時間窓、全体枠）
+7. 残り予算が `REQUIRED_SEND_BUDGET_MS`（OpenRouter timeout + finalize 予約）未満なら失敗で閉じる（試行非消費）
+8. モデル政策確認（`plusModels`）→ `mark_flyer_weekly_sent`
+9. OpenRouter 呼び出し（テキストのみ、structured output）
+10. Zod 検証 → 保証フレーズ検査 → 対象メンバー安全条件で 7 日全食材を検査。失敗は `finalize_flyer_weekly_failure`（試行のみ消費）
+11. `finalize_flyer_weekly_success(p_result = { weekStartJst, days })`。失敗時は `stash_flyer_weekly_result` して 500。**`finalize_failure` は呼ばない**（reserved を解放すると週次成功 2 を踏まずに 200 を繰り返せる）
+12. finalize 成功後に `public.weekly_plans` へ admin クライアントで insert（`request_id` UNIQUE）。insert 失敗は 500 `weekly_plan_persist_failed`。**成功枠は返さない**。同一キー再 POST が手順 2 の再試行経路で insert をやり直す
 
-### 週次枠
+### 順序の根拠（P-01）
 
-`planQuota.flyerWeekly`（成功 2 回 / JST 週、試行 6 回 / JST 週）をチラシと**共有**する。契約側に共有である旨をコメントで固定する。数値は変えない。
+insert → finalize の順にすると、finalize 失敗時に 180 秒 cleanup が reserved を解放し、`weekly_plans` だけが残る。同一 sticky は failed 再生で死に、新キーで再 POST すると週次成功 2 を踏まずに行が増える。finalize を先に確定し、public 行は finalize 済み request からいつでも再生成できる副産物として扱う。
+
+### 週次枠と残数コピー（P-02）
+
+`planQuota.flyerWeekly` をチラシと共有する。数値は変えない。ブラウザの残数表示と契約コメントは「今週の週献立（チラシ献立と共通）: 成功 n / 2、試行 m / 6」と明記する。
+
+### モデルと wire（P-08）
+
+- モデルは `env.openRouter.plusModels`。`flyerModels`（vision 専用）は使わない。
+- メッセージは system + user のテキストのみ。`image_url` は送らない。
+- `response_format` は `json_schema`（name `kondate_weekly_plan`）、`structured_outputs` 必須。モデル政策は既存の allowlist / 価格上限 / `structured_outputs` と `response_format` 両対応チェックをそのまま通す。
 
 ### 境界
 
-- ブラウザは `@shared/contracts/weekly-plan`、`@shared/contracts/planner`、`@shared/safety-pure/*` のみ参照。`@shared/safety/*` は参照しない。
-- 安全検査（`assertFlyerMenuAgainstSafety` の流用と保証フレーズ検査）は Functions 側に閉じる。
+- ブラウザは `@shared/contracts/weekly-plan`、`@shared/contracts/planner`、`@shared/safety-pure/*` のみ参照。`@shared/safety/*`（`node:crypto` 依存の fingerprint を含む）は参照しない。
+- 安全検査、fingerprint 算出と比較、保証フレーズ検査は Functions 側に閉じる。
 - 既存の locked export は再定義しない。`generation-prompt.ts` からの切り出しは新関数 export の追加のみ。
 
 ## 3. データと契約
 
-### リクエスト
+### リクエスト（POST）
 
 ```ts
 weeklyPlanRequestSchema = z.object({
@@ -86,32 +110,59 @@ weeklyPlanRequestSchema = z.object({
 
 household モードのみ。idea モード（人数指定）は持たない。enum と上限は `shared/contracts/planner.ts` / `domain.ts` の既存定数を import する。
 
-### レスポンス
+### AI 出力 / `p_result`（P-03）
+
+`finalize_flyer_weekly_success` の `p_result` と `stash` に渡すのは **`weeklyFlyerMenuResultSchema` 形（`weekStartJst` + `days` のみ）**。週献立固有のキー（`weeklyPlanId`、`targetMemberIds`、`safetyFingerprint`）は載せない。チラシの sticky 再生（`weeklyFlyerMenuResultSchema` strict parse）を壊さないため。
+
+`weeklyPlanId` の正は `public.weekly_plans` 行。再生時は `request_id` で引く。
+
+### レスポンス（POST 成功 / GET）
 
 ```ts
 weeklyPlanResultSchema = z.object({
   weeklyPlanId: z.uuid(),
   weekStartJst: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
-  days: z.array(weeklyFlyerDaySchema).length(7),     // チラシと同一の日型を再利用（dayIndex 1..7 一意）
+  days: z.array(weeklyFlyerDaySchema).length(7),     // チラシと同一の日型を再利用
   targetMemberIds: z.array(z.uuid()),
-  safetyFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  cuisineGenre: z.enum(cuisineGenres),
+  /** true: 対象メンバーが complete 全員より少ない（P-11 開示用） */
+  partialHousehold: z.boolean(),
+  /** サーバ計算。保存時 fingerprint と現行対象メンバー条件の fingerprint が不一致（P-04） */
+  staleSafety: z.boolean(),
 }).strict();
 ```
 
-### エラーコードと文言（日本語固定）
+`safetyFingerprint` はレスポンスに載せない。ブラウザは比較しない。
 
-| コード | 文言 |
-|---|---|
-| weekly_plan_requires_plus | 今週の献立づくりは Plus の機能です。 |
-| weekly_plan_weekly_limit | 今週の週献立の作成上限に達しています。 |
-| weekly_plan_try_limit | しばらくしてから再度お試しください。 |
-| weekly_plan_invalid_ai_response | 週献立を正しく確認できませんでした。作成の試行回数は使われている場合があります。 |
-| weekly_plan_persist_failed | 週献立を保存できませんでした。時間をおいてもう一度お試しください。 |
-| weekly_plan_unsatisfiable_member | この家族向けの週献立は作れません。日ごとの献立作成をご利用ください。 |
+### GET `/api/weekly-plan/:weeklyPlanId`（P-04）
 
-日次・短時間窓・全体枠・同意・モデル不可・タイムアウト・処理中重複は既存 `issueMessages` のコードをそのまま使う。
+- 所有者の `weekly_plans` 行を admin クライアントで `user_id = auth user` 条件付きで読む（IDOR 防止のため id だけで引かない）。
+- `preference_snapshot.targetMemberIds` の現行安全条件から `createCurrentSafetyFingerprint` を再計算し、保存 `safety_fingerprint` と比較して `staleSafety` を返す。
+- 再検査（食材の再 assert）は行わない。AI も呼ばない。枠も消費しない。
+- Plus 失効後も所有者なら読める。
 
-### DB: `public.weekly_plans`
+履歴一覧のカードは Supabase 直読（RLS select）で `id, week_start, created_at, days` を使い、`staleSafety` は結果画面（GET）でのみ表示する。
+
+### エラーコードと SQL 写像（P-02）
+
+| SQL / 内部コード | 週献立 HTTP コード | HTTP | 文言 |
+|---|---|---|---|
+| — | weekly_plan_requires_plus | 403 | 今週の献立づくりは Plus の機能です。 |
+| flyer_weekly_limit | weekly_plan_weekly_limit | 429 | 今週の週献立（チラシ献立と共通）の作成上限に達しています。 |
+| flyer_weekly_try_limit | weekly_plan_try_limit | 429 | しばらくしてから再度お試しください。 |
+| user_attempt_limit / user_short_window_limit / global_daily_limit | 同名（既存） | 429 | 既存 `issueMessages` |
+| generation_in_progress | 同名（既存） | 409 | 既存 |
+| consent_required | 同名（既存） | 422 | 既存 |
+| allergy_unconfirmed / allergen_missing / unsupported_diet_unconfirmed / unsupported_diet / current_target_member_required | 同名（既存） | 422 | 既存 |
+| （cut_small / requires_tag 該当） | weekly_plan_unsatisfiable_member | 422 | この家族向けの週献立は作れません。日ごとの献立作成をご利用ください。 |
+| model_unavailable / generation_timeout | 同名（既存） | 503 | 既存 |
+| Zod 不一致 / 保証フレーズ / 安全ヒット | weekly_plan_invalid_ai_response | 400 | 週献立を正しく確認できませんでした。作成の試行回数は使われている場合があります。 |
+| finalize 失敗（stash 済み） | internal_error | 500 | 既存 |
+| weekly_plans insert 失敗 | weekly_plan_persist_failed | 500 | 週献立を保存できませんでした。同じ条件でもう一度お試しください。 |
+
+`mapFailureHttp` の週献立版は、この表を契約側の `weeklyPlanFailureCodeMap` として持ち、写像に無いコードは既存 `issueMessages` にフォールバックする。
+
+### DB: `public.weekly_plans`（P-10）
 
 | 列 | 型 | 制約 |
 |---|---|---|
@@ -119,25 +170,49 @@ weeklyPlanResultSchema = z.object({
 | user_id | uuid | not null, FK auth.users on delete cascade |
 | week_start | date | not null。JST 月曜（`private.ai_jst_week_start` と同式） |
 | source | text | not null, CHECK in ('household') |
-| request_id | uuid | not null。`private.flyer_weekly_requests.id`。FK は張らない |
+| request_id | uuid | not null, **UNIQUE**。`private.flyer_weekly_requests.id`。FK は張らない |
 | preference_snapshot | jsonb | not null。`{ targetMemberIds, cuisineGenre, budgetPreference, noveltyPreference }` のみ |
 | safety_fingerprint | text | not null, CHECK `~ '^[a-f0-9]{64}$'`。日次 menus と同じ算出 |
 | days | jsonb | not null。Zod 通過後の 7 日分 |
 | created_at | timestamptz | not null default now() |
 
-- インデックス: `(user_id, created_at desc)`。同一週に複数行を許す（unique なし）。
-- RLS: 所有者 select のみ（`(select auth.uid()) = user_id`）。authenticated に insert / update / delete を grant しない。書き込みは Function の admin クライアントのみ。
+- インデックス: `(user_id, created_at desc)`。同一週に複数行を許す。
+- RLS / GRANT は menus と同型で、マイグレーション内で明示する:
+  ```sql
+  alter table public.weekly_plans enable row level security;
+  revoke all on public.weekly_plans from anon, authenticated;
+  grant select on public.weekly_plans to authenticated;
+  create policy weekly_plans_owner_select on public.weekly_plans
+    for select to authenticated using ((select auth.uid()) = user_id);
+  ```
+  service_role は既定の table 権限のまま（Function の admin クライアントが insert する）。authenticated に insert / update / delete は grant しない。
 - 保存しないもの: プロンプト、生の AI 出力、メンバー名・呼び名、アレルギー本文。
 - `src/shared/types/database.generated.ts` は手編集せず、マイグレーション適用後に既存の生成コマンドで更新する。
+- pgTAP で「他人 select 0 行」「authenticated insert が 42501」「service_role insert 可」「request_id 重複が 23505」を固定する。
 
-### 下書きへの引き継ぎ
+### 下書きへの引き継ぎ（P-05）
 
-結果画面の「この日の献立を作る」は既存 `savePlannerDraft` で次を書いて `/planner` へ遷移する。新しい下書き列は足さない。
+結果画面の「この日の献立を作る」は既存 `savePlannerDraft(client, userId, input, revision)` を呼ぶ。`PlannerDraftInput` は strict かつ全キー必須なので、**12 キーすべてを明示して渡す**。新しい下書き列は足さない。
 
-- `targetMode: "household"`, `targetMemberIds`: 週献立の対象メンバー
-- `cuisineGenre`: 週献立の値
-- `mainIngredients`: その日の `ingredients` 先頭 `PLANNER_MAIN_INGREDIENT_LIMIT` 件
-- `memo`: `主菜: {mainName}`（`PLANNER_MEMO_TEXT_MAX` 内に切り詰め）
+| キー | 値 |
+|---|---|
+| mealType | `"dinner"` |
+| mainIngredients | その日の `ingredients` 先頭 `PLANNER_MAIN_INGREDIENT_LIMIT`（8）件。各要素は `PLANNER_INGREDIENT_TEXT_MAX`（80 code point）で切り詰め、trim 後に空なら除外 |
+| cuisineGenre | 週献立の値 |
+| targetMode | `"household"` |
+| targetMemberIds | 週献立の対象メンバー。現行 complete メンバーに存在しない id は除外し、0 人になれば引き継ぎ不可としてエラー表示 |
+| servings | `null` |
+| timeLimitMinutes | `null` |
+| budgetPreference | 週献立の値 |
+| ingredientPreference | `null` |
+| noveltyPreference | 週献立の値 |
+| avoidIngredients | `[]` |
+| memo | `主菜: {mainName}` を `PLANNER_MEMO_TEXT_MAX`（200）で切り詰め |
+| pantrySelections | `[]` |
+
+- `revision` は事前に `getPlannerDraft` で読んだ現在値。`DraftRevisionConflictError` は再読込して 1 回だけ再試行。
+- **上書き確認**: 既存下書きに `mainIngredients` / `memo` / `targetMemberIds` のいずれかが非空なら、週献立側のモーダルで「いまの献立条件を置き換えますか」を出す。これは planner の leave-flush（`registerPlannerLeaveFlush` の `proceed | blocked` ハンドラ）とは別物で、`/weekly/:id` にはハンドラを登録しない。
+- 保存成功後に `/planner` へ遷移。プランナー側は通常どおり下書きを hydrate する。
 
 ## 4. 画面と導線
 
@@ -149,65 +224,91 @@ weeklyPlanResultSchema = z.object({
 - Free: チラシ `flyer-weekly-locked` と同型のロック表示。月〜水のダミー 3 行、「今週の献立づくりは Plus の機能です」、注記「作成できるかは Plus 契約をサーバーで確認します」、CTA「Plus を見る」（`/plus`）。
 - 表示切替は `usage-today` の `plusEntitled`。作成可否はサーバが毎回確認する。
 
-### 4.2 条件フォーム（`/weekly`、Plus のみ）
+### 4.2 条件フォーム（`/weekly`）
 
-- 1 画面 4 項目。作る相手（家族チェックボックス。`audience-step` の部品を流用）、ジャンル、予算、目新しさ。既定値は家族全員 / おまかせ / 標準 / 標準。
-- 上部に「今週の残り: 成功 n / 2、試行 m / 6」を `usage-today` の flyerWeekly 投影から表示。残 0 は送信無効 + 理由表示。
-- 満たせない制約を持つメンバーには警告を出し、チェックを外せる。全員が該当なら送信無効。
-- 送信中は `generation-status-panel` と同じ待機表現。`idempotencyKey` は sticky（sessionStorage）で二重送信を防ぐ。
+- 1 画面 4 項目。作る相手（家族チェックボックス。`audience-step` の部品を流用）、ジャンル、予算、目新しさ。既定値は complete 全員 / おまかせ / 標準 / 標準。
+- 上部に「今週の週献立（チラシ献立と共通）: 成功 n / 2、試行 m / 6」を `usage-today` の flyerWeekly 投影から表示。残 0 は送信無効 + 理由表示。
+- 日次と同じ開示文「献立には今回選んだ家族の条件だけが使われます。」を作る相手の下に置く。
+- 満たせない制約（cut_small / requires_tag）を持つメンバーには警告を出し、チェックを外せる。未確認アレルギー等の日次 422 集合に該当するメンバーは、日次と同じ文言で家族設定への導線を出す。全員が該当なら送信無効。
+- 送信中は `generation-status-panel` と同じ待機表現。`idempotencyKey` は sessionStorage に sticky 保持し二重送信を防ぐ。
 - 今週すでに成功があれば「今週の献立はあります」と最新結果へのリンクを上部に出す。
 
 ### 4.3 結果画面（`/weekly/:weeklyPlanId`）
 
+- データは GET `/api/weekly-plan/:id`。
+- 見出し: `partialHousehold` が false なら「今週の献立」。true なら **主文言を「{n} 人分の今週の献立」とし、直下に「外した家族の条件は見ていません。全員分を作るには作り直してください」を必ず表示**（P-11）。
 - 月〜日の 7 行。主菜名、副菜名、食材チップ、メモ。
-- 各行「この日の献立を作る」→ 下書き保存 → `/planner`。下書きが dirty なら既存の leave-flush と同じ確認。
+- 各行「この日の献立を作る」→ §3 の引き継ぎ → `/planner`。
 - 日次と同じ安全性注記（保証しない旨）を必ず表示。
-- `safetyFingerprint` が現在の家族安全条件と一致しなければ「家族の設定が変わっています。作り直してください」を注記し、「この日の献立を作る」は有効のまま（日次生成側で現在条件により再検査される）。
+- `staleSafety` が true なら「家族の設定が変わっています。作り直してください」を注記。「この日の献立を作る」は有効のまま。
 - 履歴からも同じ画面へ着地。
 
 ### 4.4 履歴タブ
 
-- 一覧先頭に「今週の献立」枠。最新の `weekly_plans` 1 件をカード表示。
+- 一覧先頭に「今週の献立」枠。最新の `weekly_plans` 1 件を RLS 直読でカード表示（`partialHousehold` はスナップショットの人数と現行 complete 人数から表示側で判定）。
 - 過去週は「これまでの週献立」として折りたたみ。
 - 日次の履歴グループ表示は変更しない。
 
-### 4.5 Plus LP と設定
+### 4.5 Plus LP と設定（P-06）
 
-- LP の 3 枚目カードを「今週の献立」に差し替え（タイトル・本文・アイコン）。チラシの文言定数は残すが LP から参照しない。
-- 設定の枠切れ CTA 文言に「今週の献立」の一言を追加。
+「チラシから 1 週間」への言及を LP と設定から **すべて** 「今週の献立」へ差し替える。対象は次のとおり。
+
+- `PLUS_LP_LEAD_BODY`: 「…チラシ写真から 1 週間の献立をつくったり…」→「…家族の条件から 1 週間分の献立の骨組みをつくったり…」
+- 3 枚目カード: `PLUS_LP_FLYER_TITLE` / `PLUS_LP_FLYER_BODY` / bullet 3 行（「チラシの写真をアプリに送ります」等）/ アイコン画像
+- 比較表の行見出し「チラシから 1 週間」と Free / Plus セル
+- 設定の枠切れ CTA 文言
+- チラシの文言定数（`FLYER_LOCKED_PREVIEW_COPY` 等）は削除せず残すが、LP / 設定からは参照しない。既存 LP テストの exact 文言は同時に更新する。
 
 ## 5. エラー処理と安全性
 
-### 対象メンバー基準
+### 対象メンバー基準と reserve 前 422 集合（P-07）
 
-検査対象は「フォームで選んだ対象メンバー」とし、日次生成と同じ基準にそろえる（チラシの「全 complete メンバー」基準とは異なる）。「小さく切る」制約、または年齢帯の `requires_tag` 規則に該当するメンバーが対象に含まれる場合、骨格出力はタグ証拠を持てないため生成しない。ブラウザで事前に警告し、サーバでも試行消費前に 422 で二重に拒否する。
+検査対象は「フォームで選んだ対象メンバー」とし、日次生成と同じ基準にそろえる。reserve 前（予約・試行いずれも非消費）に 422 で止める集合は **日次の `generation-context` と同一**にし、週献立固有の 1 件を足す。
 
-### エラー体系
+| 条件 | コード |
+|---|---|
+| 現行 notice 未同意 | consent_required |
+| 対象メンバーが complete でない / 存在しない | current_target_member_required |
+| allergy_status が unconfirmed | allergy_unconfirmed |
+| アレルギー辞書に無い allergen | allergen_missing |
+| unsupported_diet_status が unconfirmed / present | unsupported_diet_unconfirmed / unsupported_diet |
+| cut_small 必須制約、または年齢帯 requires_tag 規則に該当 | weekly_plan_unsatisfiable_member |
+
+判定は日次の context 読取関数を再利用し、週献立側で条件を削らない。
+
+### エラー体系と枠消費
 
 | 段階 | コード | HTTP | 枠消費 |
 |---|---|---|---|
-| 同意なし | consent_required | 422 | なし |
+| lookup で succeeded 再生 | — | 200 | なし（OpenRouter 0） |
+| entitlement 読取失敗 | entitlement_unavailable（既存） | 503 | なし |
 | Free | weekly_plan_requires_plus | 403 | なし |
-| 週 2 回成功済み | weekly_plan_weekly_limit | 429 | なし |
-| 週 6 回試行済み | weekly_plan_try_limit | 429 | なし |
+| reserve 前 422 集合 | 上表 | 422 | なし |
+| 週 2 回成功済み / 週 6 回試行済み | weekly_plan_weekly_limit / weekly_plan_try_limit | 429 | なし |
 | 日次試行・短時間窓・全体枠 | 既存コード | 429 | なし |
-| 対象に満たせない制約 | weekly_plan_unsatisfiable_member | 422 | なし |
 | 処理中の重複 | generation_in_progress | 409 | なし |
-| モデル不可・タイムアウト | model_unavailable / generation_timeout | 503 | 試行のみ |
+| 残り予算不足（mark 前） | generation_timeout | 503 | なし（`finalize_failure` で reserved 解放） |
+| モデル不可・タイムアウト（mark 後） | model_unavailable / generation_timeout | 503 | 試行のみ |
 | Zod 不一致・保証フレーズ・安全ヒット | weekly_plan_invalid_ai_response | 400 | 試行のみ |
-| 保存失敗 | weekly_plan_persist_failed | 500 | 試行のみ（成功枠は返す） |
+| finalize_success 失敗 | internal_error（stash 済み） | 500 | 成功枠は reserved のまま。同一キー再 POST が finalize を再試行 |
+| weekly_plans insert 失敗 | weekly_plan_persist_failed | 500 | 成功枠は確定済み。同一キー再 POST が insert を再試行 |
 
 - 安全ヒット・Zod 不一致時は本文を返さず、ログにも残さない。
-- 保存失敗は `finalize_flyer_weekly_failure` で閉じる。処理中孤児は既存の 180 秒 stale 解放に任せる。
-- 429 はブラウザで残り枠と週の切替日を表示。503 / 500 は同じ `idempotencyKey` で再試行ボタン。409 は「作成中です」表示後に自動再送。
+- 処理中孤児は既存の 180 秒 stale 解放に任せる（finalize 前の reserved のみが対象。finalize 後は影響しない）。
+
+### ブラウザの再試行（P-09）
+
+- 429: 残り枠と週の切替日（次の JST 月曜）を表示。自動再送しない。
+- 503 / 500: 同じ `idempotencyKey` で「もう一度試す」ボタン。自動再送しない。
+- 409 `generation_in_progress`: 「作成中です」を表示し、**`use-generation-recovery` の他端末 processing 再 POST と同じ間隔定数**で同一キーを再送する。上限は 3 回、超えたら手動ボタンへ落とす。Function 側の `rateLimit`（`{ windowLimit: 20, windowSize: 180, aggregateBy: ["ip"] }`、チラシと同値）と、サービス側の `REQUIRED_SEND_BUDGET_MS` ゲートを両方置く。
 
 ### 安全性の原則
 
 - プロンプトに載せるのは対象メンバーの allergenIds、カスタムアレルギーの正規化名、必須制約、嫌いなもの。氏名・呼び名・非対象メンバーの情報は載せない。
 - 生成後は対象メンバーの現在条件で 7 日全食材を検査。1 件でもヒットすれば全体を捨て、部分成功は返さない。
 - 「安全です」「アレルギー対応済み」等の保証フレーズは既存検査で落とす。
-- Plus 失効後は新規作成不可、保存済み閲覧のみ可。
-- 現在の家族安全条件は常に保存済みスナップショットより優先する。結果画面の fingerprint 不一致注記はそのための表示であり、再検査 API は作らない。
+- Plus 失効後は新規作成不可。lookup 再生と GET 閲覧は可。
+- 現在の家族安全条件は常に保存済みスナップショットより優先する。`staleSafety` はサーバが計算した表示用フラグであり、再検査 API は作らない。
 
 ## 6. テスト
 
@@ -215,36 +316,47 @@ weeklyPlanResultSchema = z.object({
 
 ### 契約 `shared/contracts/weekly-plan.test.ts`
 - strict 拒否、対象 0 人拒否、上限、enum 外拒否。
-- 7 日一意性、`weekStartJst` 形式、保証フレーズ含有本文の拒否。
-- エラーコード ↔ 文言の閉じた対応。
+- レスポンスの 7 日一意性、`weekStartJst` 形式、`safetyFingerprint` キーを含む入力の strict 拒否。
+- `weeklyPlanFailureCodeMap` が SQL コード（`flyer_weekly_limit` 等）を週献立コードへ写し、未知コードは既存 `issueMessages` へ落ちる。
+- エラーコード ↔ 文言の閉じた対応。文言に「チラシ献立と共通」を含む。
 
 ### プロンプト `weekly-plan-prompt.test.ts`
 - 対象メンバーの安全条件がシステムメッセージに載る。呼び名・氏名・非対象メンバー情報が載らない。
+- メッセージに `image_url` が無い。`response_format.json_schema.name === "kondate_weekly_plan"`。
 - 切り出し後も `generation-prompt` の既存テストが緑。
 
 ### サービス `weekly-plan-service.test.ts` / `.pipeline.test.ts`
-- 同意なし → 422 で reserve 未呼出。Free → 403 で reserve 未呼出。満たせない制約 → 422 で mark 未呼出。
-- 429 の各種が正しい retryAt を返し試行を焼かない。
+- **順序**: lookup が Plus 判定より前。succeeded 行があれば Free でも 200、OpenRouter 0、reserve 未呼出。
+- 同意なし → 422 で reserve 未呼出。Free → 403 で reserve 未呼出。reserve 前 422 集合の各コードで mark 未呼出。
+- モデルが `plusModels` で `flyerModels` を参照しない。
+- 429 の各種が SQL コードから正しく写像され、試行を焼かない。
 - mark 後の 400 系は試行のみ消費、本文・ログに AI 出力なし。
-- 保存失敗は failure で閉じ成功枠が戻る。
+- **finalize_success 失敗**: stash が呼ばれ、`finalize_failure` は呼ばれず、500。同一キー再 POST で finalize 再試行。
+- **insert 失敗**: finalize は成功済み、500 `weekly_plan_persist_failed`、`finalize_failure` 未呼出。同一キー再 POST で insert のみ再試行し、OpenRouter 0。
+- `p_result` が `weekStartJst` + `days` のみ。
 - 成功時 `weekly_plans` 1 行、`preference_snapshot` は id と enum のみ、fingerprint は日次と同算出。
-- 同一 `idempotencyKey` 再送で OpenRouter 未呼出、保存済み結果を返す。
+- GET: 他人の id は 404。`staleSafety` が現行条件差分で true になる。
 
 ### Function 境界 `netlify/functions/_tests/weekly-plan-idempotency.test.ts`
-- 冪等キー再送、Plus 失効後の sticky 再表示、不正 JSON は 400。
+- 冪等キー再送、Plus 失効後の sticky 再表示、不正 JSON は 400、`rateLimit` 設定値がチラシと同値。
 
 ### DB pgTAP `supabase/tests/database/weekly_plans.test.sql`
-- 他人の select 0 行。authenticated の insert / update / delete が権限エラー。
-- `source` / `safety_fingerprint` CHECK。ユーザー削除で cascade。
+- 他人の select 0 行。authenticated の insert / update / delete が 42501。service_role の insert 可。
+- `request_id` 重複が 23505。`source` / `safety_fingerprint` CHECK。ユーザー削除で cascade。
 
 ### ブラウザ Vitest
-- 入口カード（Plus / Free）、フォーム（既定値、残 0 無効、警告とチェック外し）、結果（7 行、下書き保存と遷移、dirty 確認、fingerprint 注記）、履歴（先頭枠と折りたたみ）、Plus LP（3 枚目差し替え）。
+- 入口カード（Plus / Free）。
+- フォーム（既定値、残数コピー、開示文、残 0 無効、警告とチェック外し、日次 422 集合の導線）。
+- 結果（7 行、`partialHousehold` の見出しと注記、`staleSafety` 注記、引き継ぎで `savePlannerDraft` に 12 キー全部・80 文字切り詰め・8 件上限、上書き確認モーダル、revision 衝突の 1 回再試行）。
+- 409 自動再送が上限 3 回で止まる。
+- 履歴（先頭枠と折りたたみ）。
+- Plus LP（LEAD・カード・比較表・bullet に「チラシ」が残らない）。
 - 320px レイアウトとタッチターゲットは既存 accessibility テストに追加。
 
 ### E2E `e2e/specs/weekly-plan.spec.ts`
 - Plus モック: 作成 → 結果 → 日タップ → プランナーに条件が入る。
 - Free: ロック表示 → `/plus` 着地。
-- OpenRouter mock に週献立用固定応答を 1 件追加。
+- OpenRouter mock に週献立用固定応答を 1 件追加（テキスト経路、`kondate_weekly_plan`）。
 
 ### 検証コマンド
 - 単体 / 契約 / lint / typecheck / format:check は `docker compose run --rm --no-deps app ...` で focused に実行。
@@ -252,10 +364,10 @@ weeklyPlanResultSchema = z.object({
 
 ## 7. 実装順（plan の章立て目安）
 
-1. 契約 + マイグレーション + pgTAP
+1. 契約（写像表を含む）+ マイグレーション + pgTAP
 2. プロンプト切り出し + 週献立プロンプト
-3. サービス + Function + 境界テスト
+3. サービス（lookup → finalize → insert の順と再試行経路）+ POST / GET Function + 境界テスト
 4. ブラウザ API / hooks + 入口カード + ロック表示
-5. フォーム + 結果画面 + 下書き引き継ぎ
-6. 履歴枠 + Plus LP 差し替え + 設定 CTA
+5. フォーム + 結果画面 + 下書き引き継ぎ（12 キー・上書き確認）
+6. 履歴枠 + Plus LP / 設定の全面差し替え
 7. E2E + accessibility 追加
