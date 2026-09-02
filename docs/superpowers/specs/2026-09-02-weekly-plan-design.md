@@ -4,6 +4,8 @@
 改訂: 2026-09-02 rev2（一次 / 敵対的 / 裁定レビュー P-01〜P-11 を反映。
 `docs/superpowers/reviews/2026-09-02-weekly-plan-{primary,adversarial,adjudication}.md`）
 改訂: 2026-09-02 rev3（再レビュー R-01〜R-10 を反映。P-05 / P-08 / P-09 / P-10 / P-11 の残穴を閉じる）
+改訂: 2026-09-02 rev4（rev3 レビュー N-C-1 / N-C-2 / N-I-3 / R-03 mock / R-05 入口 / R-07 POST / R-10 client / I5 を反映。
+`docs/superpowers/reviews/2026-09-02-weekly-plan-rev3-{primary,adversarial,adjudication}.md`）
 状態: 設計改訂済み（実装計画は別途 `docs/superpowers/plans/` に作成）
 
 ## 1. 目的と範囲
@@ -28,7 +30,8 @@
 - 週の買い物リスト集約。
 - 骨格出力への食材タグ付与（年齢帯タグ規則の充足）。
 - Free 向けの月次お試し枠。
-- チラシ UI の再表示、日次生成枠・Plus 価格・週次枠の数値変更、チラシ SQL 関数の改修。
+- チラシ UI の再表示、日次生成枠・Plus 価格・週次枠の数値変更、チラシ SQL 関数（reserve / mark / finalize / stash / lookup / cleanup_stale）の改修。
+- PostgREST の露出スキーマ（`PGRST_DB_SCHEMAS = public,graphql_public`）の変更。private schema は Data API に出さない。
 - Stripe 契約と申込ゲートの開放。
 
 ### ロックした前提（レビューで維持と判定）
@@ -51,7 +54,7 @@
 | サービス | `netlify/functions/_shared/weekly-plan-service.ts` 新設 | lookup → 予約 → 生成 → 検査 → finalize → public 保存 |
 | プロンプト | `netlify/functions/_shared/weekly-plan-prompt.ts` 新設 | 対象メンバー安全条件を載せた週献立専用プロンプト（テキストのみ） |
 | 共用切り出し | `generation-prompt.ts` の member 整形部を関数化 | 日次と週で同じ整形。日次の挙動は不変 |
-| DB | `supabase/migrations/<ts>_weekly_plans.sql` 新設 | `public.weekly_plans` + RLS + GRANT |
+| DB | `supabase/migrations/<ts>_weekly_plans.sql` 新設 | `public.weekly_plans` + RLS + GRANT、`private.weekly_plan_intents`、intent 用 SECURITY DEFINER RPC 3 本、`run_kondate_maintenance` の再定義（intent 孤児回収） |
 | ブラウザ | `src/features/weekly-plan/` 新設 | 入口カード、フォーム、結果、履歴カード、ロック表示 |
 | ルート | `src/app/router.tsx` | `/weekly`, `/weekly/:weeklyPlanId` 追加。ボトムナビは 5 タブのまま |
 | プランナー | `planner-route.tsx` | footer 枠に入口カード。下書き引き継ぎは既存 `savePlannerDraft` を使う |
@@ -60,7 +63,7 @@
 
 ### 処理順（POST、チラシ PE11 と同順）
 
-SQL 関数は既存の `reserve_flyer_weekly` / `mark_flyer_weekly_sent` / `finalize_flyer_weekly_success` / `stash_flyer_weekly_result` / `finalize_flyer_weekly_failure` / `lookup_flyer_weekly` をそのまま呼ぶ。SQL 側は改修しない。
+チラシの SQL 関数 `reserve_flyer_weekly` / `mark_flyer_weekly_sent` / `finalize_flyer_weekly_success` / `stash_flyer_weekly_result` / `finalize_flyer_weekly_failure` / `lookup_flyer_weekly` はそのまま呼び、改修しない。**週献立固有の SQL は intent 用 RPC 3 本と `run_kondate_maintenance` の再定義に限る**（rev3 の「SQL 関数は増やさない」は撤回。N-C-1）。
 
 1. entitlement 読取（読取失敗は 503、予約なし）
 2. **lookup を Plus 判定より前に置く**（PE2 と同型）。同一 `idempotencyKey` の `succeeded` 行があれば **sticky 再生経路**（§2「同一キー再 POST の 3 経路」）へ。OpenRouter は呼ばない。Plus 失効後もこの経路だけは通る
@@ -68,13 +71,14 @@ SQL 関数は既存の `reserve_flyer_weekly` / `mark_flyer_weekly_sent` / `fina
 4. 現行 privacy notice への同意確認（未同意は 422、予約なし）
 5. 対象メンバーの現在安全条件を読取。**日次と同じ reserve 前 422 集合**（§5）に該当すれば 422、予約なし
 6. `reserve_flyer_weekly`（週次成功 / 試行、日次試行、短時間窓、全体枠）
-6'. 新規予約（`replayed` でない）なら `private.weekly_plan_intents` に `{ request_id, user_id, preference_snapshot, safety_fingerprint }` を admin で insert。失敗は `finalize_failure(p_sent: false)` で reserved を解放して 500（試行非消費）
+6'. 新規予約（`replayed` でない）なら `public.put_weekly_plan_intent(p_request_id, p_user_id, p_snapshot, p_fingerprint)` を admin の `rpc()` で呼ぶ。失敗は `finalize_failure(p_sent: false)` で reserved を解放して 500（試行非消費）
 7. 残り予算が `REQUIRED_SEND_BUDGET_MS`（OpenRouter timeout + finalize 予約）未満なら `finalize_failure(p_sent: false)` で閉じる（試行非消費）
 8. モデル政策確認（`plusModels`）。失敗は `finalize_failure(model_unavailable, p_sent: false)`。成功後に **同じ予算ゲートを再度**かけてから `mark_flyer_weekly_sent`
 9. OpenRouter 呼び出し（テキストのみ、structured output）
 10. Zod 検証 → 保証フレーズ検査 → 対象メンバー安全条件で 7 日全食材を検査。失敗は `finalize_flyer_weekly_failure`（試行のみ消費）
 11. `finalize_flyer_weekly_success(p_result = { weekStartJst, days })`。失敗時は `stash_flyer_weekly_result` して 500。**`finalize_failure` は呼ばない**（reserved を解放すると週次成功 2 を踏まずに 200 を繰り返せる）
-12. finalize 成功後に `public.weekly_plans` へ admin クライアントで insert（`request_id` UNIQUE）。insert 失敗は 500 `weekly_plan_persist_failed`。**成功枠は返さない**。同一キー再 POST が手順 2 の再試行経路で insert をやり直す
+12. finalize 成功後に `public.weekly_plans` へ admin クライアントで insert（`request_id` UNIQUE、public 表なので PostgREST 経由で可）。insert 失敗は 500 `weekly_plan_persist_failed`。**成功枠は返さない**。同一キー再 POST が手順 2 の再試行経路で insert をやり直す
+13. insert 成功後に `public.delete_weekly_plan_intent(p_request_id)` を best-effort で呼ぶ（失敗しても 200）
 
 ### 同一キー再 POST の 3 経路（R-08 / R-09 / R-10）
 
@@ -82,12 +86,15 @@ SQL 関数は既存の `reserve_flyer_weekly` / `mark_flyer_weekly_sent` / `fina
 
 | 台帳の状態 | 経路 | 枠 | HTTP |
 |---|---|---|---|
-| `succeeded`（lookup hit） | 当時の `result_payload`（`weekStartJst` + `days`）と `weekly_plans` 行を正とする。`weekly_plans` に `request_id` 行が無ければ **`result_payload` + `weekly_plan_intents` から** insert。現行対象メンバー条件で再 assert し、保証フレーズ検査も通す | なし | 200 |
-| `succeeded` だが再 assert 失敗 | 本文を返さない。`weekly_plans` 行と GET / 履歴は**残す**（現行条件は日次側で再検査される） | なし | 400 `weekly_plan_invalid_ai_response` |
+| `succeeded`（lookup hit）+ `weekly_plans` 行あり | `weekly_plans` 行を正とする。**intent は参照しない**（成功後に削除済みで正常。N-I-3）。現行対象メンバー条件で再 assert し、保証フレーズ検査も通す | なし | 200 |
+| `succeeded`（lookup hit）+ `weekly_plans` 行なし | `result_payload`（`weekStartJst` + `days`）+ `get_weekly_plan_intent` で復元し、再 assert に通ったら insert → intent delete。**intent が必須なのはこの経路だけ**。intent も無ければ 500 `internal_error`（body から補完しない） | なし | 200 |
+| `succeeded` だが再 assert 失敗（行あり） | 本文を返さない。`weekly_plans` 行と GET / 履歴は**残す**（現行条件は日次側で再検査される） | なし | 400 `weekly_plan_invalid_ai_response` |
+| `succeeded` だが再 assert 失敗（行なし） | 本文を返さず、**insert もしない**。intent は残す（条件が戻れば次回再 POST で復元できる） | なし | 400 `weekly_plan_invalid_ai_response` |
+| `succeeded` で現行安全条件が読めない | チラシと同じ `safety_context_failed`。insert しない、sticky も保持（R-07 POST 側。GET の欠損 200 とは別扱いで、POST は本文を返す前に必ず現行条件で assert する） | なし | 500 `safety_context_failed` |
 | `processing` + `replayed: true` + stash 済み `result` あり（reserve hit） | finalize 失敗後の再入場。**stash から `finalize_flyer_weekly_success` だけ再試行**し、成功したら `weekly_plans` insert → 200。finalize がまた失敗なら 500 のまま | 成功枠は reserved のまま確定 | 200 / 500 |
 | `processing` + `replayed: true` + stash なし | 他端末 / 前回リクエストが処理中 | なし | 409 `generation_in_progress` |
 
-- 再 POST の body に新しい `targetMemberIds` / `cuisineGenre` が来ても**当時の snapshot と days を上書きしない**。当時の条件と fingerprint は `private.weekly_plan_intents`（§3）を `request_id` で引く。body との差分は無視する（チラシの「同一キーは同一画像」と同じ扱い）。intent 行が無い（想定外）場合は 500 `internal_error` で、body から補完しない。
+- 再 POST の body に新しい `targetMemberIds` / `cuisineGenre` が来ても**当時の snapshot と days を上書きしない**。当時の条件は `weekly_plans` 行（あれば）か intent（無ければ）から取り、body との差分は無視する（チラシの「同一キーは同一画像」と同じ扱い）。
 - lookup の `succeeded` だけを見て「insert 再試行」を済ませると、finalize 失敗（stash 済み・status は `processing`）の再入場を取りこぼす。R-08 の経路は reserve の `replayed` で拾う。
 
 ### 順序の根拠（P-01）
@@ -154,7 +161,7 @@ weeklyPlanResultSchema = z.object({
 
 ### GET `/api/weekly-plan/:weeklyPlanId`（P-04）
 
-- 所有者は **`requireUserWithEmail(request)` の JWT から取る `userId` のみ**。body / query / header の user 指定は受け取らず、あれば無視する（R-02）。`weekly_plans` 行は admin クライアントで `id = :id and user_id = :jwtUserId` で引き、無ければ 404（他人の id も 404）。
+- 所有者は **`requireUser(request)` の JWT から取る `userId` のみ**（email 正規化は identity 枠用で GET には不要。POST は `requireUserWithEmail`。I5）。body / query / header の user 指定は受け取らず、あれば無視する（R-02）。`weekly_plans` 行は admin クライアントで `id = :id and user_id = :jwtUserId` で引き、無ければ 404（他人の id も 404）。
 - `preference_snapshot.targetMemberIds` の現行安全条件から `createCurrentSafetyFingerprint` を再計算し、保存 `safety_fingerprint` と比較して `staleSafety` を返す。
 - **対象メンバーの欠損・非 complete・安全条件の読取不能は 500 にしない**（R-07）。fingerprint を計算できない場合は `staleSafety: true` の 200 を返す。本文（days）はそのまま返す。DB 接続エラーなど行自体が読めない場合だけ 503。
 - 再検査（食材の再 assert）は行わない。AI も呼ばない。枠も消費しない。
@@ -214,6 +221,16 @@ weeklyPlanResultSchema = z.object({
 
 sticky 再生と insert 再試行で「当時の条件」を body に頼らず復元するための AI 制御テーブル。private schema に置き、既定の revoke（extensions_and_schemas の default privileges）で anon / authenticated から見えない。
 
+**アクセス経路（N-C-1）**: `getSupabaseAdmin()` は supabase-js → PostgREST で、露出スキーマは `public,graphql_public` のみ。private 表は PostgREST から届かないので、**表 GRANT は付けず、public の SECURITY DEFINER RPC 3 本だけで CRUD する**。`PGRST_DB_SCHEMAS` には private を足さない。
+
+| RPC | 引数 | 動作 |
+|---|---|---|
+| `public.put_weekly_plan_intent` | `(p_request_id uuid, p_user_id uuid, p_snapshot jsonb, p_fingerprint text)` | upsert。`p_fingerprint` の形式を CHECK と同じ regex で検証 |
+| `public.get_weekly_plan_intent` | `(p_request_id uuid, p_user_id uuid)` | `user_id` 一致行を返す。無ければ null |
+| `public.delete_weekly_plan_intent` | `(p_request_id uuid)` | 削除。0 行でもエラーにしない |
+
+3 本とも `security definer`、`set search_path = ''`、`revoke all on function ... from public, anon, authenticated` → `grant execute on function ... to service_role`（`lookup_flyer_weekly` と同じ型）。
+
 | 列 | 型 | 制約 |
 |---|---|---|
 | request_id | uuid | PK。`private.flyer_weekly_requests.id`（FK は張らない） |
@@ -222,11 +239,15 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 | safety_fingerprint | text | not null, CHECK `~ '^[a-f0-9]{64}$'` |
 | created_at | timestamptz | not null default now() |
 
-- `grant all on table private.weekly_plan_intents to service_role;` を明示。
-- 書き込みは reserve 直後（新規予約時のみ）。読み取りは finalize 後の `weekly_plans` insert と sticky 再生。
-- `weekly_plans` insert 成功後に同 `request_id` の intent 行を delete する（best-effort。失敗しても 200）。
-- 孤児（failed / stale 解放された request の intent）は `maintenance-cleanup` に「`flyer_weekly_requests` が `processing` でなく 24 時間経過した intent を削除」を足して回収する。SQL 関数は増やさず、Function 側の既存 cleanup バッチに 1 クエリ追加する。
-- pgTAP で authenticated の select が 42501、service_role の insert / delete 可を固定する。
+- 表 GRANT は付けない（service_role にも付けない）。
+- 書き込みは reserve 直後（新規予約時のみ）。読み取りは「`weekly_plans` 行が無い sticky 再生」のみ。
+- `weekly_plans` insert 成功後に `delete_weekly_plan_intent` を best-effort で呼ぶ（失敗しても 200）。
+- **孤児回収（N-C-2）**: `maintenance-cleanup` Function は `run_kondate_maintenance` しか呼ばず、executor は private を revoke されているので、Function 側にクエリは足さない。`run_kondate_maintenance` を新マイグレーションで再定義し、intent 削除を本体に加える。削除述語は次の 2 つ **だけ**:
+  - 対応する `flyer_weekly_requests` が `failed`、かつ `created_at` から 24 時間経過
+  - 対応する `flyer_weekly_requests` が `succeeded`、かつ `public.weekly_plans` に同 `request_id` 行が **ある**（delete 取りこぼし）
+  - `succeeded` で public 行が無い intent、および `processing` の intent は**残す**（persist 再試行用）。対応する request 行が無い intent は request の retention 削除に合わせて消す。
+- 戻り値 jsonb に `weekly_plan_intents` の件数キーを足し、既存キーは変えない。
+- pgTAP で authenticated の select が 42501、RPC 3 本が authenticated から実行不可、service_role から可、`run_kondate_maintenance` が「succeeded かつ public 行なし」を消さないことを固定する。
 
 ### 下書きへの引き継ぎ（P-05）
 
@@ -258,7 +279,7 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 
 ### 4.1 入口カード（プランナー home の footer 枠）
 
-- Plus: 「今週の献立」カードと「今週の献立をつくる」ボタン（`/weekly`）。
+- Plus: 「今週の献立」カードと「今週の献立をつくる」ボタン。遷移は素の `Link` ではなく **`navigateAfterPlannerLeaveFlush(navigate, "/weekly")`** を使い、dirty な下書きを flush してから移動する（ホーム直近献立・冷蔵庫と同型。R-05）。`blocked` なら留まる。
 - Free: チラシ `flyer-weekly-locked` と同型のロック表示。月〜水のダミー 3 行、「今週の献立づくりは Plus の機能です」、注記「作成できるかは Plus 契約をサーバーで確認します」、CTA「Plus を見る」（`/plus`）。
 - 表示切替は `usage-today` の `plusEntitled`。作成可否はサーバが毎回確認する。
 
@@ -341,6 +362,7 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 
 - 429: 残り枠と週の切替日（次の JST 月曜）を表示。自動再送しない。
 - 503 / 500: 同じ `idempotencyKey` で「もう一度試す」ボタン。自動再送しない。
+- 400 `weekly_plan_invalid_ai_response`（R-10 client）: **sticky キーを破棄**し（同じキーで再送しても同じ 400 になるため）、「家族の条件に合わなくなりました。作り直してください」を出す。作り直しボタンは新しいキーで送る。今週の `weekly_plans` 最新行が RLS 直読で見つかれば「前回の献立を見る」で結果 URL へ行ける（行は残っている。R-10 サーバ側）。
 - 409 `generation_in_progress`: 「作成中です」を表示し、**`use-generation-recovery` の他端末 processing 再 POST と同じ間隔定数**で同一キーを再送する。上限は 3 回、超えたら手動ボタンへ落とす。Function 側の `rateLimit`（`{ windowLimit: 20, windowSize: 180, aggregateBy: ["ip"] }`、チラシと同値）と、サービス側の `REQUIRED_SEND_BUDGET_MS` ゲートを両方置く。
 
 ### 安全性の原則
@@ -379,19 +401,23 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 - **insert 失敗**: finalize は成功済み、500 `weekly_plan_persist_failed`、`finalize_failure` 未呼出。同一キー再 POST で insert のみ再試行し、OpenRouter 0。
 - `p_result` が `weekStartJst` + `days` のみ。
 - 成功時 `weekly_plans` 1 行、`preference_snapshot` は id と enum のみ、fingerprint は日次と同算出。intent 行が delete される。
-- intent insert 失敗で `finalize_failure(p_sent: false)`、mark 未呼出、500。
-- sticky 再生で `weekly_plans` 行欠損なら intent + `result_payload` から insert し、body の条件は使わない。
+- intent は `rpc("put_weekly_plan_intent")` で書く（`.from("weekly_plan_intents")` を呼ばない）。失敗で `finalize_failure(p_sent: false)`、mark 未呼出、500。
+- sticky 再生で `weekly_plans` 行があれば intent RPC を呼ばず 200（N-I-3）。行欠損なら `get_weekly_plan_intent` + `result_payload` から insert し、body の条件は使わない。intent も無ければ 500。
+- sticky 再生で現行安全条件の読取失敗は 500 `safety_context_failed`、insert なし。再 assert 失敗（行なし）は 400 で insert なし、intent 残存。
 - GET: 所有者は JWT のみ（query / body の user 指定は無視）。他人の id は 404。`staleSafety` が現行条件差分で true になる。対象メンバー欠損でも 200 かつ `staleSafety: true`（R-07）。
 
 ### Function 境界 `netlify/functions/_tests/weekly-plan-idempotency.test.ts`
-- 冪等キー再送、Plus 失効後の sticky 再表示、不正 JSON は 400、`rateLimit` 設定値がチラシと同値。
+- 冪等キー再送、Plus 失効後の sticky 再表示、不正 JSON は 400、`rateLimit` 設定値がチラシと同値。GET が `requireUser`、POST が `requireUserWithEmail`。
 
 ### DB pgTAP `supabase/tests/database/weekly_plans.test.sql`
 - 他人の select 0 行。authenticated の insert / update / delete が 42501。service_role の insert / update / delete 可（`grant all` の検証）。
 - `request_id` 重複が 23505。`source` / `safety_fingerprint` CHECK。ユーザー削除で cascade。
+- intent: authenticated から表 select と RPC 3 本の execute が拒否。service_role から RPC 経由で put / get / delete 可。`get` は `user_id` 不一致で null。
+- `run_kondate_maintenance`: failed 24h 超の intent と、succeeded かつ public 行ありの intent は消える。succeeded かつ public 行なし、processing の intent は残る。既存の戻りキーが不変。
 
 ### ブラウザ Vitest
-- 入口カード（Plus / Free）。
+- 入口カード（Plus / Free）。Plus のボタンが `navigateAfterPlannerLeaveFlush` を経由し、`blocked` で留まる。
+- 400 受信で sticky キーが破棄され、作り直しが新キーで送られる。今週の行があれば「前回の献立を見る」が結果 URL を指す。
 - フォーム（既定値、残数コピー、開示文、残 0 無効、警告とチェック外し、日次 422 集合の導線）。
 - 結果（7 行、`partialHousehold` の見出しと注記、`staleSafety` 注記、引き継ぎで `savePlannerDraft` に 12 キー全部・80 文字切り詰め・8 件上限、revision 衝突の 1 回再試行）。
 - 上書き確認: pantry だけ非空 / avoid だけ非空 / idea 下書き のそれぞれでモーダルが出る。空下書き・同値下書きでは出ない（R-05）。
@@ -404,7 +430,7 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 ### E2E `e2e/specs/weekly-plan.spec.ts`
 - Plus モック: 作成 → 結果 → 日タップ → プランナーに条件が入る。
 - Free: ロック表示 → `/plus` 着地。
-- OpenRouter mock に週献立用固定応答を 1 件追加（テキスト経路、`flyer_weekly` mode の既存 fixture 形）。
+- **OpenRouter mock の改修**（R-03）: `tools/openrouter-mock/server.mjs` の `isValidBody` は `menuResponseFormat` と dish 再生成しか受理せず、チラシ形の `response_format` も拒否する。`weeklyFlyerMenuResponseFormat` との deep-equal を受理条件に加え、その形のときは system 文の週献立固有句で判定して 7 日分の固定応答（`kondate_weekly_flyer_menu` schema 準拠、`dayIndex 1..7`）を返す。fixture 追加だけでは E2E が 400 で落ちる。
 
 ### 検証コマンド
 - 単体 / 契約 / lint / typecheck / format:check は `docker compose run --rm --no-deps app ...` で focused に実行。
@@ -412,10 +438,10 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 
 ## 7. 実装順（plan の章立て目安）
 
-1. 契約（写像表を含む）+ マイグレーション（`weekly_plans` / `weekly_plan_intents`）+ pgTAP
+1. 契約（写像表を含む）+ マイグレーション（`weekly_plans` / `weekly_plan_intents` / intent RPC 3 本 / `run_kondate_maintenance` 再定義）+ pgTAP
 2. プロンプト切り出し + 週献立プロンプト
 3. サービス（lookup → finalize → insert の順と再試行経路）+ POST / GET Function + 境界テスト
 4. ブラウザ API / hooks + 入口カード + ロック表示
 5. フォーム + 結果画面 + 下書き引き継ぎ（12 キー・上書き確認）
 6. 履歴枠 + Plus LP / 設定の全面差し替え
-7. E2E + accessibility 追加
+7. OpenRouter mock の週献立受理 + E2E + accessibility 追加
