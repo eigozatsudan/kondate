@@ -6,6 +6,8 @@
 改訂: 2026-09-02 rev3（再レビュー R-01〜R-10 を反映。P-05 / P-08 / P-09 / P-10 / P-11 の残穴を閉じる）
 改訂: 2026-09-02 rev4（rev3 レビュー N-C-1 / N-C-2 / N-I-3 / R-03 mock / R-05 入口 / R-07 POST / R-10 client / I5 を反映。
 `docs/superpowers/reviews/2026-09-02-weekly-plan-rev3-{primary,adversarial,adjudication}.md`）
+改訂: 2026-09-02 rev5（rev4 レビュー N-C-3（`run_kondate_maintenance` の 9 キー契約）/ R-07（sticky 再生から 400 を撤去し GET と同じ `staleSafety` 規則へ統一）/ N-I-4（replayed+stash insert の intent 読取）/ N-I-5（503 timeout は sticky 破棄、500 persist/stash は同一キー）/ N-I-8（maintenance 再定義のクローン元と executor 限定 GRANT）を反映。
+`docs/superpowers/reviews/2026-09-02-weekly-plan-rev4-{primary,adversarial,adjudication}.md`）
 状態: 設計改訂済み（実装計画は別途 `docs/superpowers/plans/` に作成）
 
 ## 1. 目的と範囲
@@ -86,12 +88,10 @@
 
 | 台帳の状態 | 経路 | 枠 | HTTP |
 |---|---|---|---|
-| `succeeded`（lookup hit）+ `weekly_plans` 行あり | `weekly_plans` 行を正とする。**intent は参照しない**（成功後に削除済みで正常。N-I-3）。現行対象メンバー条件で再 assert し、保証フレーズ検査も通す | なし | 200 |
-| `succeeded`（lookup hit）+ `weekly_plans` 行なし | `result_payload`（`weekStartJst` + `days`）+ `get_weekly_plan_intent` で復元し、再 assert に通ったら insert → intent delete。**intent が必須なのはこの経路だけ**。intent も無ければ 500 `internal_error`（body から補完しない） | なし | 200 |
-| `succeeded` だが再 assert 失敗（行あり） | 本文を返さない。`weekly_plans` 行と GET / 履歴は**残す**（現行条件は日次側で再検査される） | なし | 400 `weekly_plan_invalid_ai_response` |
-| `succeeded` だが再 assert 失敗（行なし） | 本文を返さず、**insert もしない**。intent は残す（条件が戻れば次回再 POST で復元できる） | なし | 400 `weekly_plan_invalid_ai_response` |
-| `succeeded` で現行安全条件が読めない | チラシと同じ `safety_context_failed`。insert しない、sticky も保持（R-07 POST 側。GET の欠損 200 とは別扱いで、POST は本文を返す前に必ず現行条件で assert する） | なし | 500 `safety_context_failed` |
-| `processing` + `replayed: true` + stash 済み `result` あり（reserve hit） | finalize 失敗後の再入場。**stash から `finalize_flyer_weekly_success` だけ再試行**し、成功したら `weekly_plans` insert → 200。finalize がまた失敗なら 500 のまま | 成功枠は reserved のまま確定 | 200 / 500 |
+| `succeeded`（lookup hit）+ `weekly_plans` 行あり | `weekly_plans` 行を正とする。**intent は参照しない**（成功後に削除済みで正常。N-I-3）。GET と同じ規則で `staleSafety` を計算するだけで、**再 assert では本文を止めない**（対象メンバー欠損・非 complete・安全条件の読取不能は `staleSafety: true` のまま返す） | なし | 200（+`staleSafety`） |
+| `succeeded`（lookup hit）+ `weekly_plans` 行なし | `result_payload`（`weekStartJst` + `days`）+ `get_weekly_plan_intent` で復元し insert → intent delete。**行あり経路と同じく本文は止めない**。GET と同じ規則で `staleSafety` を計算して返す。**intent が必須な経路の一つ**（もう一つは下の `replayed` + stash 経路）。intent も無ければ 500 `internal_error`（body から補完しない） | なし | 200（+`staleSafety`） |
+| `succeeded` で `weekly_plans` 行自体が読めない（DB 接続エラー等） | 行あり・行なしのどちらの経路かも判定できない。GET の「行自体が読めない場合だけ 503」と同型 | なし | 503 |
+| `processing` + `replayed: true` + stash 済み `result` あり（reserve hit） | finalize 失敗後の再入場。**stash から `finalize_flyer_weekly_success` だけ再試行**し、成功したら `weekly_plans` insert → 200。insert には `preference_snapshot` / `safety_fingerprint` が要るが body は使わない（当時の条件が正）ので `get_weekly_plan_intent` で読む（N-I-4。intent 書き込みは reserve 直後なのでこの経路では必ず存在する）。intent も無ければ 500 `internal_error`。finalize がまた失敗なら 500 のまま | 成功枠は reserved のまま確定 | 200 / 500 |
 | `processing` + `replayed: true` + stash なし | 他端末 / 前回リクエストが処理中 | なし | 409 `generation_in_progress` |
 
 - 再 POST の body に新しい `targetMemberIds` / `cuisineGenre` が来ても**当時の snapshot と days を上書きしない**。当時の条件は `weekly_plans` 行（あれば）か intent（無ければ）から取り、body との差分は無視する（チラシの「同一キーは同一画像」と同じ扱い）。
@@ -240,14 +240,14 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 | created_at | timestamptz | not null default now() |
 
 - 表 GRANT は付けない（service_role にも付けない）。
-- 書き込みは reserve 直後（新規予約時のみ）。読み取りは「`weekly_plans` 行が無い sticky 再生」のみ。
+- 書き込みは reserve 直後（新規予約時のみ）。読み取りは「`weekly_plans` 行が無い sticky 再生」と「`replayed` + stash 済み finalize 再試行後の insert」の 2 経路のみ（N-I-4）。
 - `weekly_plans` insert 成功後に `delete_weekly_plan_intent` を best-effort で呼ぶ（失敗しても 200）。
-- **孤児回収（N-C-2）**: `maintenance-cleanup` Function は `run_kondate_maintenance` しか呼ばず、executor は private を revoke されているので、Function 側にクエリは足さない。`run_kondate_maintenance` を新マイグレーションで再定義し、intent 削除を本体に加える。削除述語は次の 2 つ **だけ**:
+- **孤児回収（N-C-2）**: `maintenance-cleanup` Function は `run_kondate_maintenance` しか呼ばず、executor は private を revoke されているので、Function 側にクエリは足さない。`run_kondate_maintenance` を新マイグレーションで再定義し、intent 削除を本体に加える。**クローン元は最新定義の `supabase/migrations/20260801200000_share_claim_reaper_counts.sql`**（本文をそのままコピーし、intent 削除のロジックだけ差し込む）。GRANT も同ファイルと同型で **`kondate_maintenance_executor` にだけ execute を許可**（`revoke all ... from public, anon, authenticated, service_role` → `grant execute ... to kondate_maintenance_executor`）。intent RPC 3 本の「service_role にだけ許可」パターンをここへ流用しない（N-I-8。誤って `service_role` に grant すると hourly cron の実行ロールが変わり 42501 になる）。削除述語は次の 2 つ **だけ**:
   - 対応する `flyer_weekly_requests` が `failed`、かつ `created_at` から 24 時間経過
   - 対応する `flyer_weekly_requests` が `succeeded`、かつ `public.weekly_plans` に同 `request_id` 行が **ある**（delete 取りこぼし）
   - `succeeded` で public 行が無い intent、および `processing` の intent は**残す**（persist 再試行用）。対応する request 行が無い intent は request の retention 削除に合わせて消す。
-- 戻り値 jsonb に `weekly_plan_intents` の件数キーを足し、既存キーは変えない。
-- pgTAP で authenticated の select が 42501、RPC 3 本が authenticated から実行不可、service_role から可、`run_kondate_maintenance` が「succeeded かつ public 行なし」を消さないことを固定する。
+- **キー数は変えない（N-C-3）**: `maintenance-db.ts` の `parseCounts` は戻り jsonb のキーが `COUNT_KEYS`（9 個）ちょうどでなければ `closedError()` を投げ、`run_kondate_maintenance` トランザクション全体を COMMIT 前に失敗させる。pgTAP `maintenance_cleanup.test.sql:607` も「exactly nine camelCase count keys」を固定している。新しいカウントキーは**足さない**。intent の削除件数は既存の `flyerLedgersDeleted`（flyer 週次台帳 + 終端 flyer request の削除合計）に合算する。
+- pgTAP で authenticated の select が 42501、RPC 3 本が authenticated から実行不可、service_role から可、`run_kondate_maintenance` が「succeeded かつ public 行なし」を消さないこと、戻り jsonb が引き続きちょうど 9 キーであることを固定する。
 
 ### 下書きへの引き継ぎ（P-05）
 
@@ -339,8 +339,8 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 
 | 段階 | コード | HTTP | 枠消費 |
 |---|---|---|---|
-| lookup で succeeded 再生 | — | 200 | なし（OpenRouter 0） |
-| succeeded 再生の再 assert 失敗 | weekly_plan_invalid_ai_response | 400 | なし。`weekly_plans` 行・GET・履歴は残す |
+| lookup で succeeded 再生（行あり／行なし共通） | — | 200（+`staleSafety`） | なし（OpenRouter 0）。R-07: 再 assert では本文を止めない |
+| succeeded 再生で `weekly_plans` 行自体が読めない | — | 503 | なし |
 | replayed + stash 済み（finalize 再試行） | — / internal_error | 200 / 500 | 成功枠は reserved のまま。OpenRouter 0 |
 | entitlement 読取失敗 | entitlement_unavailable（既存） | 503 | なし |
 | Free | weekly_plan_requires_plus | 403 | なし |
@@ -361,8 +361,9 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 ### ブラウザの再試行（P-09）
 
 - 429: 残り枠と週の切替日（次の JST 月曜）を表示。自動再送しない。
-- 503 / 500: 同じ `idempotencyKey` で「もう一度試す」ボタン。自動再送しない。
-- 400 `weekly_plan_invalid_ai_response`（R-10 client）: **sticky キーを破棄**し（同じキーで再送しても同じ 400 になるため）、「家族の条件に合わなくなりました。作り直してください」を出す。作り直しボタンは新しいキーで送る。今週の `weekly_plans` 最新行が RLS 直読で見つかれば「前回の献立を見る」で結果 URL へ行ける（行は残っている。R-10 サーバ側）。
+- 503（`generation_timeout` / `model_unavailable`）: チラシ PE1 と同型で **sticky キーを破棄**し、「もう一度試す」は新しい `idempotencyKey` で送る（N-I-5。共有台帳がこのキーで `failed` 確定済みのため、同一キーの再 reserve はできない）。
+- 500（`internal_error` の finalize stash 済み / `weekly_plan_persist_failed`）: 台帳はまだ `succeeded` へ向かう途中か確定済みなので **同じ `idempotencyKey`** で「もう一度試す」ボタン（PE3 と同型）。いずれも自動再送しない。
+- 400 `weekly_plan_invalid_ai_response`（R-10 client）: 新規生成（sticky 再生ではない。R-07 で再生経路からは 400 を出さなくした）が Zod 不一致・保証フレーズ・安全ヒットで落ちたときだけ発生し、この台帳は `failed` で試行のみ消費済み。**sticky キーを破棄**し、「家族の条件に合わなくなりました。作り直してください」を出す。作り直しボタンは新しいキーで送る。今週の `weekly_plans` 最新行が RLS 直読で見つかれば「前回の献立を見る」で結果 URL へ行ける（行は残っている）。
 - 409 `generation_in_progress`: 「作成中です」を表示し、**`use-generation-recovery` の他端末 processing 再 POST と同じ間隔定数**で同一キーを再送する。上限は 3 回、超えたら手動ボタンへ落とす。Function 側の `rateLimit`（`{ windowLimit: 20, windowSize: 180, aggregateBy: ["ip"] }`、チラシと同値）と、サービス側の `REQUIRED_SEND_BUDGET_MS` ゲートを両方置く。
 
 ### 安全性の原則
@@ -390,7 +391,7 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 
 ### サービス `weekly-plan-service.test.ts` / `.pipeline.test.ts`
 - **順序**: lookup が Plus 判定より前。succeeded 行があれば Free でも 200、OpenRouter 0、reserve 未呼出。
-- **sticky 再生**: body に別の `targetMemberIds` を載せても当時の snapshot / days が返り、`weekly_plans` は更新されない（R-09）。再 assert 失敗は 400 で行は残る（R-10）。
+- **sticky 再生**: body に別の `targetMemberIds` を載せても当時の snapshot / days が返り、`weekly_plans` は更新されない（R-09）。行あり・行なしのどちらでも本文は止めず、GET と同じ規則で `staleSafety` を計算して 200（R-07）。行自体が読めないときだけ 503。
 - **replayed + stash**: reserve が `replayed: true` と stash `result` を返したら OpenRouter 0 で finalize 再試行 → insert → 200。finalize 再失敗は 500（R-08）。
 - **予算 2 段**: ensure 後の再ゲート不足で `finalize_failure(generation_timeout, p_sent: false)` が呼ばれ mark 未呼出（R-04）。
 - 同意なし → 422 で reserve 未呼出。Free → 403 で reserve 未呼出。reserve 前 422 集合の各コードで mark 未呼出。
@@ -403,7 +404,7 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 - 成功時 `weekly_plans` 1 行、`preference_snapshot` は id と enum のみ、fingerprint は日次と同算出。intent 行が delete される。
 - intent は `rpc("put_weekly_plan_intent")` で書く（`.from("weekly_plan_intents")` を呼ばない）。失敗で `finalize_failure(p_sent: false)`、mark 未呼出、500。
 - sticky 再生で `weekly_plans` 行があれば intent RPC を呼ばず 200（N-I-3）。行欠損なら `get_weekly_plan_intent` + `result_payload` から insert し、body の条件は使わない。intent も無ければ 500。
-- sticky 再生で現行安全条件の読取失敗は 500 `safety_context_failed`、insert なし。再 assert 失敗（行なし）は 400 で insert なし、intent 残存。
+- sticky 再生では現行安全条件の読取失敗・対象メンバー欠損のどちらも本文を止めない。`staleSafety: true` の 200 のまま返す（行なし経路も insert まで進める）。500 になるのは `weekly_plans` 行自体（または intent が必須な経路で intent 自体）が読めないときだけ（R-07）。
 - GET: 所有者は JWT のみ（query / body の user 指定は無視）。他人の id は 404。`staleSafety` が現行条件差分で true になる。対象メンバー欠損でも 200 かつ `staleSafety: true`（R-07）。
 
 ### Function 境界 `netlify/functions/_tests/weekly-plan-idempotency.test.ts`
