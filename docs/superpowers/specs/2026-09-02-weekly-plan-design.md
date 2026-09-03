@@ -8,6 +8,8 @@
 `docs/superpowers/reviews/2026-09-02-weekly-plan-rev3-{primary,adversarial,adjudication}.md`）
 改訂: 2026-09-02 rev5（rev4 レビュー N-C-3（`run_kondate_maintenance` の 9 キー契約）/ R-07（sticky 再生から 400 を撤去し GET と同じ `staleSafety` 規則へ統一）/ N-I-4（replayed+stash insert の intent 読取）/ N-I-5（503 timeout は sticky 破棄、500 persist/stash は同一キー）/ N-I-8（maintenance 再定義のクローン元と executor 限定 GRANT）を反映。
 `docs/superpowers/reviews/2026-09-02-weekly-plan-rev4-{primary,adversarial,adjudication}.md`）
+改訂: 2026-09-02 rev6（rev5 レビュー N-I-10 を反映。R-07 の「再 assert では本文を止めない」を replayed+stash 再試行にも適用し、チラシ PE11 の finalize_failure 経路をそのまま流用しない旨を明記。400 写像を新規生成のみに限定し、client sticky 破棄も同コードに限定）。
+`docs/superpowers/reviews/2026-09-02-weekly-plan-rev5-{primary,adversarial,adjudication}.md`）
 状態: 設計改訂済み（実装計画は別途 `docs/superpowers/plans/` に作成）
 
 ## 1. 目的と範囲
@@ -84,14 +86,14 @@
 
 ### 同一キー再 POST の 3 経路（R-08 / R-09 / R-10）
 
-チラシ PE1 / PE11 と同型で、`lookup` / `reserve` の戻りに応じて分岐する。いずれも OpenRouter を呼ばない。
+チラシ PE1 / PE11 と同型で、`lookup` / `reserve` の戻りに応じて分岐する。いずれも OpenRouter を呼ばない。**ただし現行安全条件の再 assert 失敗時の扱いはチラシ本体（`finalize_flyer_weekly_failure` を呼んで 400 terminal failed にする）から意図的に外れる**（R-07 / N-I-10）: 週献立は再生時点で本文を止めず、GET と同じ `staleSafety` 表示フラグに落とす。チラシの `flyer-weekly-service.ts` 自体は変更しない。
 
 | 台帳の状態 | 経路 | 枠 | HTTP |
 |---|---|---|---|
 | `succeeded`（lookup hit）+ `weekly_plans` 行あり | `weekly_plans` 行を正とする。**intent は参照しない**（成功後に削除済みで正常。N-I-3）。GET と同じ規則で `staleSafety` を計算するだけで、**再 assert では本文を止めない**（対象メンバー欠損・非 complete・安全条件の読取不能は `staleSafety: true` のまま返す） | なし | 200（+`staleSafety`） |
 | `succeeded`（lookup hit）+ `weekly_plans` 行なし | `result_payload`（`weekStartJst` + `days`）+ `get_weekly_plan_intent` で復元し insert → intent delete。**行あり経路と同じく本文は止めない**。GET と同じ規則で `staleSafety` を計算して返す。**intent が必須な経路の一つ**（もう一つは下の `replayed` + stash 経路）。intent も無ければ 500 `internal_error`（body から補完しない） | なし | 200（+`staleSafety`） |
 | `succeeded` で `weekly_plans` 行自体が読めない（DB 接続エラー等） | 行あり・行なしのどちらの経路かも判定できない。GET の「行自体が読めない場合だけ 503」と同型 | なし | 503 |
-| `processing` + `replayed: true` + stash 済み `result` あり（reserve hit） | finalize 失敗後の再入場。**stash から `finalize_flyer_weekly_success` だけ再試行**し、成功したら `weekly_plans` insert → 200。insert には `preference_snapshot` / `safety_fingerprint` が要るが body は使わない（当時の条件が正）ので `get_weekly_plan_intent` で読む（N-I-4。intent 書き込みは reserve 直後なのでこの経路では必ず存在する）。intent も無ければ 500 `internal_error`。finalize がまた失敗なら 500 のまま | 成功枠は reserved のまま確定 | 200 / 500 |
+| `processing` + `replayed: true` + stash 済み `result` あり（reserve hit） | finalize 失敗後の再入場。**stash から `finalize_flyer_weekly_success` だけ再試行**し、成功したら `weekly_plans` insert → 200。insert には `preference_snapshot` / `safety_fingerprint` が要るが body は使わない（当時の条件が正）ので `get_weekly_plan_intent` で読む（N-I-4。intent 書き込みは reserve 直後なのでこの経路では必ず存在する）。intent も無ければ 500 `internal_error`。finalize がまた失敗なら 500 のまま。**この経路もチラシ PE11 の再 assert をそのまま流用しない（N-I-10）**: lookup 再生と同じく現行安全条件の再 assert では本文を止めない。現行安全ヒット／保証フレーズ検査失敗でも `finalize_flyer_weekly_failure` は呼ばず、`finalize_flyer_weekly_success` の確定は保ったまま insert → 200 + `staleSafety: true`。400 は出さない（チラシ本体の PE11 実装は変えない。週献立サービス側で再 assert の失敗を「terminal failure」として finalize_failure へ渡さず、GET と同じ表示用フラグとして扱う分岐を追加する）。finalize の RPC 呼び出し自体が失敗した場合（安全性とは無関係）は従来どおり 500 | 成功枠は reserved のまま確定 | 200 / 500 |
 | `processing` + `replayed: true` + stash なし | 他端末 / 前回リクエストが処理中 | なし | 409 `generation_in_progress` |
 
 - 再 POST の body に新しい `targetMemberIds` / `cuisineGenre` が来ても**当時の snapshot と days を上書きしない**。当時の条件は `weekly_plans` 行（あれば）か intent（無ければ）から取り、body との差分は無視する（チラシの「同一キーは同一画像」と同じ扱い）。
@@ -182,7 +184,7 @@ weeklyPlanResultSchema = z.object({
 | allergy_unconfirmed / allergen_missing / unsupported_diet_unconfirmed / unsupported_diet / current_target_member_required | 同名（既存） | 422 | 既存 |
 | （cut_small / requires_tag 該当） | weekly_plan_unsatisfiable_member | 422 | この家族向けの週献立は作れません。日ごとの献立作成をご利用ください。 |
 | model_unavailable / generation_timeout | 同名（既存） | 503 | 既存 |
-| Zod 不一致 / 保証フレーズ / 安全ヒット | weekly_plan_invalid_ai_response | 400 | 週献立を正しく確認できませんでした。作成の試行回数は使われている場合があります。 |
+| Zod 不一致 / 保証フレーズ / 安全ヒット（**新規生成のみ**。手順 10 の初回検査。lookup 再生・`replayed`+stash 再試行の再 assert はここに含めない。N-I-10） | weekly_plan_invalid_ai_response | 400 | 週献立を正しく確認できませんでした。作成の試行回数は使われている場合があります。 |
 | finalize 失敗（stash 済み） | internal_error | 500 | 既存 |
 | weekly_plans insert 失敗 | weekly_plan_persist_failed | 500 | 週献立を保存できませんでした。同じ条件でもう一度お試しください。 |
 
@@ -341,7 +343,7 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 |---|---|---|---|
 | lookup で succeeded 再生（行あり／行なし共通） | — | 200（+`staleSafety`） | なし（OpenRouter 0）。R-07: 再 assert では本文を止めない |
 | succeeded 再生で `weekly_plans` 行自体が読めない | — | 503 | なし |
-| replayed + stash 済み（finalize 再試行） | — / internal_error | 200 / 500 | 成功枠は reserved のまま。OpenRouter 0 |
+| replayed + stash 済み（finalize 再試行） | — / internal_error | 200 / 500 | 成功枠は reserved のまま。OpenRouter 0。N-I-10: 再 assert 失敗も finalize_failure を呼ばず 200+`staleSafety` |
 | entitlement 読取失敗 | entitlement_unavailable（既存） | 503 | なし |
 | Free | weekly_plan_requires_plus | 403 | なし |
 | reserve 前 422 集合 | 上表 | 422 | なし |
@@ -351,7 +353,8 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 | 残り予算不足（reserve 直後 / ensure 直後の 2 段） | generation_timeout | 503 | なし（`finalize_failure(p_sent: false)` で reserved 解放） |
 | ensureModelPolicy 失敗 | model_unavailable | 503 | なし（`finalize_failure(p_sent: false)`） |
 | モデル不可・タイムアウト（mark 後） | model_unavailable / generation_timeout | 503 | 試行のみ |
-| Zod 不一致・保証フレーズ・安全ヒット | weekly_plan_invalid_ai_response | 400 | 試行のみ |
+| Zod 不一致・保証フレーズ・安全ヒット（新規生成のみ） | weekly_plan_invalid_ai_response | 400 | 試行のみ |
+| replayed+stash 再試行の再 assert 失敗（現行安全ヒット／保証フレーズ） | — | 200（+`staleSafety`） | なし。`finalize_flyer_weekly_failure` は呼ばない（N-I-10） |
 | finalize_success 失敗 | internal_error（stash 済み） | 500 | 成功枠は reserved のまま。同一キー再 POST が finalize を再試行 |
 | weekly_plans insert 失敗 | weekly_plan_persist_failed | 500 | 成功枠は確定済み。同一キー再 POST が insert を再試行 |
 
@@ -393,6 +396,7 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 - **順序**: lookup が Plus 判定より前。succeeded 行があれば Free でも 200、OpenRouter 0、reserve 未呼出。
 - **sticky 再生**: body に別の `targetMemberIds` を載せても当時の snapshot / days が返り、`weekly_plans` は更新されない（R-09）。行あり・行なしのどちらでも本文は止めず、GET と同じ規則で `staleSafety` を計算して 200（R-07）。行自体が読めないときだけ 503。
 - **replayed + stash**: reserve が `replayed: true` と stash `result` を返したら OpenRouter 0 で finalize 再試行 → insert → 200。finalize 再失敗は 500（R-08）。
+- **replayed + stash の再 assert 失敗（N-I-10）**: stash 済み結果が現行安全条件の再 assert（`assertFlyerMenuAgainstSafety` / `assertFlyerMenuHasNoGuaranteePhrases`）にヒットしても、`finalize_flyer_weekly_failure` は呼ばれず、`finalize_flyer_weekly_success` → insert → 200 + `staleSafety: true` になることを固定する。400 にならないこと・成功枠が焼かれないことをアサートする。
 - **予算 2 段**: ensure 後の再ゲート不足で `finalize_failure(generation_timeout, p_sent: false)` が呼ばれ mark 未呼出（R-04）。
 - 同意なし → 422 で reserve 未呼出。Free → 403 で reserve 未呼出。reserve 前 422 集合の各コードで mark 未呼出。
 - モデルが `plusModels` で `flyerModels` を参照しない。wire は `mode: "flyer_weekly"`、`response_format.json_schema.name === "kondate_weekly_flyer_menu"`（R-03 案 A）。
@@ -418,7 +422,7 @@ sticky 再生と insert 再試行で「当時の条件」を body に頼らず�
 
 ### ブラウザ Vitest
 - 入口カード（Plus / Free）。Plus のボタンが `navigateAfterPlannerLeaveFlush` を経由し、`blocked` で留まる。
-- 400 受信で sticky キーが破棄され、作り直しが新キーで送られる。今週の行があれば「前回の献立を見る」が結果 URL を指す。
+- 400 `weekly_plan_invalid_ai_response`（新規生成失敗のみ。lookup 再生・replayed+stash の再 assert 失敗はこのコードを返さないので対象外。N-I-10）受信で sticky キーが破棄され、作り直しが新キーで送られる。今週の行があれば「前回の献立を見る」が結果 URL を指す。他の 400（不正 JSON 等）で誤って sticky を破棄しないことも固定する。
 - フォーム（既定値、残数コピー、開示文、残 0 無効、警告とチェック外し、日次 422 集合の導線）。
 - 結果（7 行、`partialHousehold` の見出しと注記、`staleSafety` 注記、引き継ぎで `savePlannerDraft` に 12 キー全部・80 文字切り詰め・8 件上限、revision 衝突の 1 回再試行）。
 - 上書き確認: pantry だけ非空 / avoid だけ非空 / idea 下書き のそれぞれでモーダルが出る。空下書き・同値下書きでは出ない（R-05）。
