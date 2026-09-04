@@ -2615,6 +2615,42 @@ export type Database = {
         }
         Relationships: []
       }
+      weekly_plans: {
+        Row: {
+          created_at: string
+          days: Json
+          id: string
+          preference_snapshot: Json
+          request_id: string
+          safety_fingerprint: string
+          source: string
+          user_id: string
+          week_start: string
+        }
+        Insert: {
+          created_at?: string
+          days: Json
+          id?: string
+          preference_snapshot: Json
+          request_id: string
+          safety_fingerprint: string
+          source: string
+          user_id: string
+          week_start: string
+        }
+        Update: {
+          created_at?: string
+          days?: Json
+          id?: string
+          preference_snapshot?: Json
+          request_id?: string
+          safety_fingerprint?: string
+          source?: string
+          user_id?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

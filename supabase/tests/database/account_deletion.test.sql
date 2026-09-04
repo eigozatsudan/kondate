@@ -11,7 +11,7 @@ select is_empty(
       ('menu_member_adaptations'),('menu_safety_actions'),('menu_label_confirmations'),('menu_revalidations'),
       ('shopping_lists'),('shopping_list_sources'),('shopping_items'),
       ('shopping_item_sources'),('shopping_label_confirmations'),
-      ('shopping_current_label_warnings'),('user_feedback')
+      ('shopping_current_label_warnings'),('user_feedback'),('weekly_plans')
     )
     select expected.table_name
     from expected
@@ -36,7 +36,7 @@ select is_empty(
       ('menu_member_adaptations'),('menu_safety_actions'),('menu_label_confirmations'),('menu_revalidations'),
       ('shopping_lists'),('shopping_list_sources'),('shopping_items'),
       ('shopping_item_sources'),('shopping_label_confirmations'),
-      ('shopping_current_label_warnings'),('user_feedback')
+      ('shopping_current_label_warnings'),('user_feedback'),('weekly_plans')
     )
     select c.relname
     from pg_class c
@@ -150,6 +150,19 @@ begin
     '{}'::uuid[]
   );
 
+  insert into public.weekly_plans (
+    user_id, week_start, source, request_id,
+    preference_snapshot, safety_fingerprint, days
+  ) values (
+    v_user_id,
+    date '2026-09-07',
+    'household',
+    'e4000000-0000-4000-8000-000000000001'::uuid,
+    '{}'::jsonb,
+    repeat('d', 64),
+    '[]'::jsonb
+  );
+
   delete from auth.users where id = v_user_id;
 end;
 $seed$;
@@ -167,6 +180,10 @@ select is_empty(
       union all
       select 'generation_regeneration_snapshots'
       from private.generation_regeneration_snapshots
+      where user_id = 'e1000000-0000-4000-8000-000000000001'
+      union all
+      select 'weekly_plans'
+      from public.weekly_plans
       where user_id = 'e1000000-0000-4000-8000-000000000001'
     ) leftover
   $$,

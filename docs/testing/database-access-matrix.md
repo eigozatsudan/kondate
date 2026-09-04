@@ -59,6 +59,7 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `public.shopping_lists` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.user_feedback` | postgres | none | none | ALL | on + deny-all (authenticated/anon) + `user_feedback_ops_readonly_select` (SELECT to `kondate_ops_readonly`) | Function+service_role write; ops readonly SELECT for local admin; free-form body rate-limited; 30-day retention |
 | `public.user_share_consents` | postgres | none | none | ALL | on + deny-all policy | share consent ledger; browser via SECURITY DEFINER RPC only (`upsert_my_share_consent` / `get_my_share_consent`); CASCADE on auth delete |
+| `public.weekly_plans` | postgres | none | SELECT | ALL | on + policies | 今週の献立（週献立）; チラシ週次 request_id を正としFKなし; owner SELECT only; writes via service_role |
 
 ## Column write grants (browser roles)
 
@@ -285,6 +286,7 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.user_feedback` | `user_feedback_deny_all` | ALL |
 | `public.user_feedback` | `user_feedback_ops_readonly_select` | SELECT |
 | `public.user_share_consents` | `user_share_consents_deny_all` | ALL |
+| `public.weekly_plans` | `weekly_plans_owner_select` | SELECT |
 
 ## Notes
 
