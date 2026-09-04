@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   weeklyPlanRequestSchema,
   weeklyPlanResultSchema,
+  weeklyPlanAiMenuSchema,
+  weeklyPlanAiMenuResultSchema,
   weeklyPlanIssueMessages,
   weeklyPlanFailureCodeMap,
   WEEKLY_PLAN_UI_ENABLED,
+  WEEKLY_PLAN_QUOTA_COPY_LABEL,
 } from "./weekly-plan.js";
 import { issueMessages } from "./generation.js";
 
@@ -80,6 +83,89 @@ describe("weeklyPlanResultSchema", () => {
     expect(
       weeklyPlanResultSchema.safeParse({ ...baseResult, weekStartJst: "2026/09/07" }).success,
     ).toBe(false);
+  });
+});
+
+describe("weeklyPlanAiMenuSchema", () => {
+  function sampleDay(dayIndex: number) {
+    return {
+      dayIndex,
+      label: `day${String(dayIndex)}`,
+      mainName: "主菜",
+      sideName: null,
+      ingredients: ["食材"],
+      notes: null,
+    };
+  }
+
+  const baseMenu = {
+    weekStartJst: "2026-09-07",
+    days: Array.from({ length: 7 }, (_, index) => sampleDay(index + 1)),
+  };
+
+  it("accepts a valid 7-day menu", () => {
+    expect(weeklyPlanAiMenuSchema.safeParse(baseMenu).success).toBe(true);
+  });
+
+  it("accepts weekStartJst being omitted (AI 出力では省略可)", () => {
+    const withoutWeekStart = { days: baseMenu.days };
+    expect(weeklyPlanAiMenuSchema.safeParse(withoutWeekStart).success).toBe(true);
+  });
+
+  it("rejects fewer than 7 days", () => {
+    expect(
+      weeklyPlanAiMenuSchema.safeParse({ ...baseMenu, days: baseMenu.days.slice(0, 6) }).success,
+    ).toBe(false);
+  });
+
+  it("rejects more than 7 days", () => {
+    expect(
+      weeklyPlanAiMenuSchema.safeParse({ ...baseMenu, days: [...baseMenu.days, sampleDay(7)] })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects a duplicate dayIndex set (7 days, but not unique 1..7)", () => {
+    const days = baseMenu.days.map((d, index) => (index === 6 ? { ...d, dayIndex: 1 } : d));
+    expect(weeklyPlanAiMenuSchema.safeParse({ ...baseMenu, days }).success).toBe(false);
+  });
+
+  it("rejects an out-of-range dayIndex (e.g. 8)", () => {
+    const days = baseMenu.days.map((d, index) => (index === 6 ? { ...d, dayIndex: 8 } : d));
+    expect(weeklyPlanAiMenuSchema.safeParse({ ...baseMenu, days }).success).toBe(false);
+  });
+});
+
+describe("weeklyPlanAiMenuResultSchema", () => {
+  function sampleDay(dayIndex: number) {
+    return {
+      dayIndex,
+      label: `day${String(dayIndex)}`,
+      mainName: "主菜",
+      sideName: null,
+      ingredients: ["食材"],
+      notes: null,
+    };
+  }
+
+  const baseMenu = {
+    weekStartJst: "2026-09-07",
+    days: Array.from({ length: 7 }, (_, index) => sampleDay(index + 1)),
+  };
+
+  it("accepts the base shape with weekStartJst present", () => {
+    expect(weeklyPlanAiMenuResultSchema.safeParse(baseMenu).success).toBe(true);
+  });
+
+  it("requires weekStartJst (差分: AI 出力用 schema と異なり必須)", () => {
+    const withoutWeekStart = { days: baseMenu.days };
+    expect(weeklyPlanAiMenuResultSchema.safeParse(withoutWeekStart).success).toBe(false);
+  });
+});
+
+describe("WEEKLY_PLAN_QUOTA_COPY_LABEL", () => {
+  it("locks the exact Japanese copy fragment", () => {
+    expect(WEEKLY_PLAN_QUOTA_COPY_LABEL).toBe("今週の週献立（チラシ献立と共通）");
   });
 });
 
