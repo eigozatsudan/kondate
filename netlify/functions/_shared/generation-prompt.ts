@@ -4,6 +4,7 @@ import {
   wholeRegenerationPromptSchema,
 } from "../../../shared/contracts/regeneration.js";
 import { getJstSeasonContext, type SeasonContext } from "../../../shared/season/jst-season.js";
+import type { CurrentSafetyMember } from "../../../shared/safety/context.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import {
   DIVERSITY_HINTS_ENABLED,
@@ -36,6 +37,31 @@ export type PromptPreferences = {
   /** idea のみ人数をプロンプトへ載せる。household は対象メンバー数で決まる */
   servings?: number;
 };
+
+/** 日次・週献立で共通の member 安全情報 DTO（好み・分量等は含まない）。 */
+export type PromptMemberSafetyDto = {
+  ref: string;
+  ageBand: CurrentSafetyMember["ageBand"];
+  allergenIds: readonly string[];
+  hasUnmappedCustomAllergy: boolean;
+  customAllergies: readonly { name: string; aliases: readonly string[] }[];
+  requiredSafetyConstraints: readonly CurrentSafetyMember["requiredSafetyConstraints"][number][];
+};
+
+/** 週献立プロンプト（weekly-plan-prompt.ts）も同じ抽出を使う。日次の出力順序は呼び出し側で保つ。 */
+export function buildPromptMemberSafetyDto(member: CurrentSafetyMember): PromptMemberSafetyDto {
+  return {
+    ref: member.anonymousRef,
+    ageBand: member.ageBand,
+    allergenIds: [...member.allergenIds],
+    hasUnmappedCustomAllergy: member.hasUnmappedCustomAllergy,
+    customAllergies: member.customAllergies.map((custom) => ({
+      name: custom.name,
+      aliases: [...custom.aliases],
+    })),
+    requiredSafetyConstraints: [...member.requiredSafetyConstraints],
+  };
+}
 
 export type GenerationPromptDto = {
   preferences: PromptPreferences;
@@ -446,21 +472,19 @@ function buildBaseGenerationMessages(
       (candidate) => candidate.householdMemberId === member.householdMemberId,
     );
     if (preferences === undefined) throw new Error("member_preferences_missing");
+    const safetyDto = buildPromptMemberSafetyDto(member);
     return {
-      ref: member.anonymousRef,
-      ageBand: member.ageBand,
+      ref: safetyDto.ref,
+      ageBand: safetyDto.ageBand,
       portionSize: preferences.portionSize,
-      allergenIds: [...member.allergenIds],
-      hasUnmappedCustomAllergy: member.hasUnmappedCustomAllergy,
+      allergenIds: safetyDto.allergenIds,
+      hasUnmappedCustomAllergy: safetyDto.hasUnmappedCustomAllergy,
       // 設計 §4.2 L119: 確認済み自由登録語を allowlist DTO へ載せる（評価 hard は AGS-I2 のまま）
-      customAllergies: member.customAllergies.map((custom) => ({
-        name: custom.name,
-        aliases: [...custom.aliases],
-      })),
+      customAllergies: safetyDto.customAllergies,
       dislikes: [...preferences.dislikes],
       spiceLevel: preferences.spiceLevel,
       eatingEase: [...preferences.easePreferences],
-      requiredSafetyConstraints: [...member.requiredSafetyConstraints],
+      requiredSafetyConstraints: safetyDto.requiredSafetyConstraints,
     };
   });
   const preferences = {

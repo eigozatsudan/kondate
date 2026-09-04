@@ -15,6 +15,7 @@ import {
   GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA,
   GENERATION_SYSTEM_PROMPT_IDEA_EXTRA,
   buildGenerationMessages,
+  buildPromptMemberSafetyDto,
 } from "./generation-prompt.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
 import {
@@ -847,5 +848,30 @@ describe("novelty hints", () => {
       expect(message.content).not.toContain("noveltyExcludedDishes");
       expect(message.content).not.toContain("noveltyPreference");
     }
+  });
+});
+
+describe("buildPromptMemberSafetyDto", () => {
+  it("extracts only the safety-relevant fields from a CurrentSafetyMember", () => {
+    const member = {
+      householdMemberId: "m1",
+      anonymousRef: "member_1",
+      ageBand: "adult" as const,
+      allergyStatus: "none" as const,
+      allergenIds: ["a1"],
+      hasUnmappedCustomAllergy: false,
+      customAllergies: [{ name: "そば", aliases: ["ソバ"] }],
+      requiredSafetyConstraints: ["cut_small"] as const,
+      unsupportedDietStatus: "none" as const,
+      unsupportedDietKinds: [],
+    };
+    expect(buildPromptMemberSafetyDto(member)).toEqual({
+      ref: "member_1",
+      ageBand: "adult",
+      allergenIds: ["a1"],
+      hasUnmappedCustomAllergy: false,
+      customAllergies: [{ name: "そば", aliases: ["ソバ"] }],
+      requiredSafetyConstraints: ["cut_small"],
+    });
   });
 });
