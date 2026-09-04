@@ -879,6 +879,30 @@ export type Database = {
         }
         Relationships: []
       }
+      weekly_plan_intents: {
+        Row: {
+          created_at: string
+          preference_snapshot: Json
+          request_id: string
+          safety_fingerprint: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          preference_snapshot: Json
+          request_id: string
+          safety_fingerprint: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          preference_snapshot?: Json
+          request_id?: string
+          safety_fingerprint?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -2850,6 +2874,10 @@ export type Database = {
         Args: { p_derivation_group_id: string }
         Returns: number
       }
+      delete_weekly_plan_intent: {
+        Args: { p_request_id: string }
+        Returns: undefined
+      }
       deposit_auth_continuation: {
         Args: {
           p_ciphertext: string
@@ -3033,6 +3061,16 @@ export type Database = {
         }
         Returns: Json
       }
+      get_weekly_plan_intent: {
+        Args: { p_request_id: string; p_user_id: string }
+        Returns: {
+          created_at: string
+          preference_snapshot: Json
+          request_id: string
+          safety_fingerprint: string
+          user_id: string
+        }[]
+      }
       has_billing_trial_history: {
         Args: { p_identity_key: string }
         Returns: boolean
@@ -3107,6 +3145,15 @@ export type Database = {
           p_total_elapsed: number
         }
         Returns: Json
+      }
+      put_weekly_plan_intent: {
+        Args: {
+          p_fingerprint: string
+          p_request_id: string
+          p_snapshot: Json
+          p_user_id: string
+        }
+        Returns: undefined
       }
       reap_stale_share_jobs: {
         Args: { p_limit?: number; p_now?: string }
