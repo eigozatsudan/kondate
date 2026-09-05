@@ -310,12 +310,11 @@ function snapshotFromRequest(request: WeeklyPlanRequest): WeeklyPlanSnapshot {
  * household_members 読取自体が失敗したときも同様に「わからない」を stale 扱いにする
  * （false-negative で「変更なし」を偽って主張しない）。
  */
-async function computeStaleSafetyAndPartial(
+async function computePartialHousehold(
   admin: AdminSupabaseClient,
   userId: string,
-  snapshot: WeeklyPlanSnapshot,
-  storedFingerprint: string,
-): Promise<{ staleSafety: boolean; partialHousehold: boolean }> {
+  targetMemberIds: readonly string[],
+): Promise<boolean> {
   const { data: completeRows, error: completeError } = await admin
     .from("household_members")
     .select("id")
@@ -326,11 +325,21 @@ async function computeStaleSafetyAndPartial(
       ? []
       : (Array.isArray(completeRows) ? completeRows : []).map((row: { id: string }) => row.id),
   );
-  const snapshotIds = new Set(snapshot.targetMemberIds);
-  const partialHousehold =
+  const snapshotIds = new Set(targetMemberIds);
+  return (
     completeError !== null ||
     completeIds.size !== snapshotIds.size ||
-    [...snapshotIds].some((id) => !completeIds.has(id));
+    [...snapshotIds].some((id) => !completeIds.has(id))
+  );
+}
+
+async function computeStaleSafetyAndPartial(
+  admin: AdminSupabaseClient,
+  userId: string,
+  snapshot: WeeklyPlanSnapshot,
+  storedFingerprint: string,
+): Promise<{ staleSafety: boolean; partialHousehold: boolean }> {
+  const partialHousehold = await computePartialHousehold(admin, userId, snapshot.targetMemberIds);
   try {
     const safety = await loadWeeklyPlanInspectionSafety(admin, userId, snapshot.targetMemberIds);
     const currentFingerprint = createCurrentSafetyFingerprint(safety);
@@ -586,13 +595,19 @@ async function replayStashedWeeklyPlan(
   );
   await rpcUntyped(admin, "delete_weekly_plan_intent", { p_request_id: requestId });
 
+  const partialHousehold = await computePartialHousehold(
+    admin,
+    userId,
+    intent.data.preference_snapshot.targetMemberIds,
+  );
+
   return weeklyPlanResultSchema.parse({
     weeklyPlanId: inserted.id,
     weekStartJst: weekStart,
     days: resultMenu.days,
     targetMemberIds: intent.data.preference_snapshot.targetMemberIds,
     cuisineGenre: intent.data.preference_snapshot.cuisineGenre,
-    partialHousehold: false,
+    partialHousehold,
     staleSafety,
   });
 }
@@ -636,6 +651,7 @@ export async function runWeeklyPlan(
   if (lookupError !== null) {
     throw new HttpError(500, "internal_error", issueMessages.internal_error);
   }
+  let lookedUpPayload: z.infer<typeof reservePayloadSchema> | undefined;
   if (!flyerLookupMissSchema.safeParse(lookupRaw).success) {
     const lookedUp = reservePayloadSchema.safeParse(lookupRaw);
     if (!lookedUp.success) {
@@ -644,6 +660,7 @@ export async function runWeeklyPlan(
     if (lookedUp.data.status === "succeeded") {
       return replaySucceededWeeklyPlan(admin, deps.user.userId, lookedUp.data);
     }
+    lookedUpPayload = lookedUp.data;
   }
 
   // 手順3: Plus でなければ 403
@@ -654,6 +671,22 @@ export async function runWeeklyPlan(
   // 手順4: 現行 privacy notice への同意確認
   const assertConsent = deps.assertPrivacyConsent ?? assertFlyerPrivacyConsent;
   await assertConsent(deps.user);
+
+  // P2修正2: finalize 失敗で stash された結果は、手順5（対象メンバー現在安全条件の
+  // reserve 前 422 集合）より先に復旧する。手順5は reserve 前の新規生成向けゲートであり、
+  // stash 復旧待ちのリクエストが対象メンバー変更（削除・未確認化）で 422 に落ちると、
+  // reserve 後の stash 分岐（手順6 replayed 判定）へ二度と到達できなくなる
+  // （N-I-10「保存済み結果は 200 + staleSafety: true で復旧する」契約に反する）。
+  // status === "processing" && result が有効な weeklyPlanAiMenuSchema であることが
+  // 「stash 済みで finalize 再試行待ち」の一意な識別（進行中の並行リクエストは result が null）。
+  if (
+    lookedUpPayload !== undefined &&
+    lookedUpPayload.status === "processing" &&
+    lookedUpPayload.result != null &&
+    weeklyPlanAiMenuSchema.safeParse(lookedUpPayload.result).success
+  ) {
+    return replayStashedWeeklyPlan(admin, deps.user.userId, lookedUpPayload);
+  }
 
   // 手順5: 対象メンバーの現在安全条件（reserve 前 422 集合）
   await loadWeeklyPlanInspectionSafety(admin, deps.user.userId, request.targetMemberIds);
@@ -700,11 +733,26 @@ export async function runWeeklyPlan(
 
   // 手順6': 新規予約なら intent を書く
   const snapshot = snapshotFromRequest(request);
-  const preReserveSafety = await loadWeeklyPlanInspectionSafety(
-    admin,
-    deps.user.userId,
-    request.targetMemberIds,
-  );
+  // P2修正3: ここは reserve 成功後。try/catch なしで throw すると
+  // finalize_flyer_weekly_failure を通らずに関数を抜け、予約が processing のまま
+  // staleAfterSeconds まで残ってしまう（774-790行の mark 前ゲートと同一パターンを適用）。
+  let preReserveSafety: CurrentSafetyContext;
+  try {
+    preReserveSafety = await loadWeeklyPlanInspectionSafety(
+      admin,
+      deps.user.userId,
+      request.targetMemberIds,
+    );
+  } catch (error: unknown) {
+    const code = error instanceof HttpError ? error.code : "internal_error";
+    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+      p_request_id: requestId,
+      p_failure_code: code,
+      p_sent: false,
+    });
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(500, "internal_error", issueMessages.internal_error);
+  }
   const preReserveFingerprint = createCurrentSafetyFingerprint(preReserveSafety);
   const { error: putIntentError } = await rpcUntyped(admin, "put_weekly_plan_intent", {
     p_request_id: requestId,
@@ -915,13 +963,19 @@ export async function runWeeklyPlan(
   // 手順13: intent を best-effort で削除
   await rpcUntyped(admin, "delete_weekly_plan_intent", { p_request_id: requestId });
 
+  const partialHousehold = await computePartialHousehold(
+    admin,
+    deps.user.userId,
+    snapshot.targetMemberIds,
+  );
+
   return weeklyPlanResultSchema.parse({
     weeklyPlanId: inserted.id,
     weekStartJst: weekStart,
     days: resultMenu.days,
     targetMemberIds: snapshot.targetMemberIds,
     cuisineGenre: snapshot.cuisineGenre,
-    partialHousehold: false,
+    partialHousehold,
     staleSafety: false,
   });
 }

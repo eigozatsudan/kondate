@@ -212,6 +212,116 @@ describe("runWeeklyPlan — fresh generation happy path", () => {
   });
 });
 
+describe("runWeeklyPlan — partialHousehold parity between POST and GET (P2 fix1)", () => {
+  it("returns partialHousehold: true on fresh generation success when only some complete members are targeted", async () => {
+    const otherMemberId = "12121212-1212-4121-8121-121212121212";
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    fromMock.mockImplementation((table: string) => {
+      // household_members: complete なメンバーが sampleMemberId と otherMemberId の2名いる世帯で、
+      // 対象は sampleMemberId 1名だけ → partialHousehold は true になるべき（修正1本体）。
+      if (table === "household_members") {
+        return thenableQuery({
+          data: [{ id: sampleMemberId }, { id: otherMemberId }],
+          error: null,
+        });
+      }
+      if (table === "weekly_plans") {
+        return thenableQuery({ data: { id: "ffffffff-ffff-4fff-8fff-ffffffffffff" }, error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: sampleAiMenu(),
+      modelId: "m1",
+    });
+
+    const result = await runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest());
+
+    expect(result.partialHousehold).toBe(true);
+  });
+});
+
+describe("runWeeklyPlan — stash recovery via lookup before reserve (P2 fix2)", () => {
+  it("recovers a stashed result from the lookup hit before reserve, even when target members are no longer complete", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "12121212-1212-4121-8121-121212121213",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "12121212-1212-4121-8121-121212121213",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    fromMock.mockImplementation((table: string) => {
+      // 対象メンバーが complete でない（削除済み・未確認に戻された）状況を再現するため空にする。
+      if (table === "household_members") {
+        return thenableQuery({ data: [], error: null });
+      }
+      if (table === "weekly_plans") {
+        return thenableQuery({ data: { id: "13131313-1313-4131-8131-131313131313" }, error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(rpcNames()).not.toContain("reserve_flyer_weekly");
+    expect(rpcNames()).toContain("finalize_flyer_weekly_success");
+    expect(result.staleSafety).toBe(true);
+  });
+});
+
 describe("runWeeklyPlan — ordering and quota", () => {
   it("checks lookup before the Plus gate (succeeded lookup hit needs no reserve call)", async () => {
     rpcMock.mockImplementation((name: string) => {
@@ -352,6 +462,66 @@ describe("runWeeklyPlan — replayed + stash re-assert (N-I-10)", () => {
     expect(rpcNames()).not.toContain("finalize_flyer_weekly_failure");
     expect(rpcNames()).toContain("finalize_flyer_weekly_success");
     expect(result.staleSafety).toBe(true);
+  });
+
+  it("returns partialHousehold: true when the intent's target members are only a subset of the complete household (P2 fix1)", async () => {
+    const otherMemberId = "12121212-1212-4121-8121-121212121214";
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "66666666-6666-4666-8666-666666666667",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "66666666-6666-4666-8666-666666666667",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    fromMock.mockImplementation((table: string) => {
+      // complete なメンバーが2名いる世帯で intent の対象は sampleMemberId 1名のみ → partial true。
+      if (table === "household_members") {
+        return thenableQuery({
+          data: [{ id: sampleMemberId }, { id: otherMemberId }],
+          error: null,
+        });
+      }
+      if (table === "weekly_plans") {
+        return thenableQuery({ data: { id: "77777777-7777-4777-8777-777777777778" }, error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(result.partialHousehold).toBe(true);
   });
 });
 
@@ -529,6 +699,60 @@ describe("runWeeklyPlan — finalize / persist failure branches", () => {
       runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest()),
     ).rejects.toMatchObject({ status: 500, code: "weekly_plan_persist_failed" });
     expect(rpcNames()).not.toContain("finalize_flyer_weekly_failure");
+  });
+});
+
+describe("runWeeklyPlan — reserve leak on pre-generation safety re-read failure (P2 fix3)", () => {
+  it("calls finalize_flyer_weekly_failure with p_sent: false when the post-reserve safety re-read fails", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "14141414-1414-4141-8141-141414141414",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_failure")
+        return Promise.resolve({ data: { sent: false }, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    let householdCallCount = 0;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        householdCallCount += 1;
+        // 1回目（手順5: reserve 前 422 集合）は成功させ reserve へ進ませる。
+        // 2回目（手順6': reserve 後の preReserveSafety 再読取）を失敗させ、
+        // 予約が処理中のまま残らないことを確認する。
+        if (householdCallCount === 1) {
+          return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+        }
+        return thenableQuery({ data: null, error: { message: "boom" } });
+      }
+      if (table === "weekly_plans") {
+        return thenableQuery({ data: null, error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    await expect(runWeeklyPlan(baseDeps(), sampleRequest())).rejects.toMatchObject({
+      status: 500,
+      code: "safety_context_failed",
+    });
+
+    expect(rpcNames()).toContain("reserve_flyer_weekly");
+    expect(rpcArgsFor("finalize_flyer_weekly_failure")).toMatchObject({
+      p_request_id: "14141414-1414-4141-8141-141414141414",
+      p_failure_code: "safety_context_failed",
+      p_sent: false,
+    });
+    expect(rpcNames()).not.toContain("mark_flyer_weekly_sent");
   });
 });
 
