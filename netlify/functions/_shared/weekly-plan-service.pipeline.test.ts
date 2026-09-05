@@ -8,6 +8,7 @@ const getServerEnvMock = vi.fn();
 const loadEntitlementMock = vi.fn();
 const rpcMock = vi.fn();
 const fromMock = vi.fn();
+const safeLogMock = vi.fn();
 
 vi.mock("./env.js", () => ({ getServerEnv: getServerEnvMock }));
 vi.mock("./billing-entitlement.js", async (importOriginal) => {
@@ -17,6 +18,9 @@ vi.mock("./billing-entitlement.js", async (importOriginal) => {
 vi.mock("./supabase-admin.js", () => ({
   getSupabaseAdmin: () => ({ rpc: rpcMock, from: fromMock }),
 }));
+// IMP-A: put_weekly_plan_intent の best-effort 失敗を safeLog 呼び出しで検証するためのモック。
+// logger.js からはこのモジュールは safeLog しか import していない。
+vi.mock("./logger.js", () => ({ safeLog: safeLogMock }));
 
 function rpcCallName(call: unknown[]): string {
   return call[0] as string;
@@ -493,6 +497,17 @@ describe("runWeeklyPlan — intent fingerprint is refreshed to the validated con
     expect(result.days).toHaveLength(7);
     expect(rpcNames()).not.toContain("finalize_flyer_weekly_failure");
     expect(rpcNames()).toContain("finalize_flyer_weekly_success");
+    // IMP-A: 握りつぶす代わりに safeLog で可観測にする。新しいログフィールドは足さず、
+    // 既存の共有台帳系イベントのフラグ（flyer / plan）を流用する。PII・指紋は載せない。
+    expect(safeLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "error",
+        code: "weekly_plan_intent_refresh_failed",
+        durationMs: 0,
+        flyer: true,
+        plan: "plus",
+      }),
+    );
   });
 });
 
@@ -733,7 +748,7 @@ describe("runWeeklyPlan → getWeeklyPlan — staleSafety agrees between POST an
         return thenableQuery({
           data: {
             id: insertedId,
-            week_start: "2026-09-07",
+            week_start: capturedInsertPayload?.week_start,
             preference_snapshot: capturedInsertPayload?.preference_snapshot,
             safety_fingerprint: capturedInsertPayload?.safety_fingerprint,
             days: capturedInsertPayload?.days,

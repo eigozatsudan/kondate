@@ -1040,14 +1040,30 @@ export async function runWeeklyPlan(
   // 同一 idempotencyKey が恒久的に 500 になり得た（誤り、前回の指示を撤回）。
   // 手順13の delete_weekly_plan_intent と同じ書き方で best-effort にする：
   // 失敗しても throw せず、finalize_flyer_weekly_failure も呼ばず、続行する。
-  // 失敗時は intent が古い指紋のまま残り、復元経路では staleSafety が保守側（true）に
-  // 倒れるだけ＝安全側に落ちる。
-  await rpcUntyped(admin, "put_weekly_plan_intent", {
+  // IMP-A: 「安全側に落ちるだけ」という前回の断言は撤回する。この put が失敗すると intent は
+  // 旧指紋（preReserveFingerprint）のまま残る。その後の手順12 insert が別要因で失敗し、
+  // 同一キー再送で replaySucceededWeeklyPlan（result + intent から復元）に入った場合に限り、
+  // その旧指紋が weekly_plans.safety_fingerprint にそのまま永続化されうる（検査した条件は
+  // validatedFingerprint なのに、行には古い preReserveFingerprint が残る）。つまり必ず安全側に
+  // 倒れるとは言えない残存窓がある。この窓自体は insert 失敗＋再送という複合条件が必要で
+  // 発生頻度は低いと見て、失敗を握りつぶす判断（best-effort）は変えず、可観測にするに留める。
+  const { error: refreshIntentError } = await rpcUntyped(admin, "put_weekly_plan_intent", {
     p_request_id: requestId,
     p_user_id: deps.user.userId,
     p_snapshot: snapshot,
     p_fingerprint: validatedFingerprint,
   });
+  if (refreshIntentError !== null) {
+    safeLog({
+      level: "error",
+      requestId,
+      code: "weekly_plan_intent_refresh_failed",
+      durationMs: 0,
+      // 新しいログフィールドは足さない。共有台帳系イベントの既存フラグを流用する。
+      flyer: true,
+      plan: "plus",
+    });
+  }
 
   // 手順11: finalize_flyer_weekly_success
   await commitWeeklyPlanFinalize(admin, requestId, resultMenu);
