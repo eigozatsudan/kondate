@@ -322,6 +322,92 @@ describe("runWeeklyPlan — stash recovery via lookup before reserve (P2 fix2)",
   });
 });
 
+describe("runWeeklyPlan — lookup hit without a valid stashed result must not replay (P2 fix2 負側)", () => {
+  it("does not enter replayStashedWeeklyPlan when the lookup hit's result is null (concurrent in-progress request)", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "15151515-1515-4151-8151-151515151515",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: null,
+          },
+          error: null,
+        });
+      }
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "15151515-1515-4151-8151-151515151515",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: null,
+          },
+          error: null,
+        });
+      }
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    await expect(runWeeklyPlan(baseDeps(), sampleRequest())).rejects.toMatchObject({
+      status: 409,
+      code: "generation_in_progress",
+    });
+
+    expect(rpcNames()).toContain("reserve_flyer_weekly");
+    expect(rpcNames()).not.toContain("get_weekly_plan_intent");
+    expect(rpcNames()).not.toContain("finalize_flyer_weekly_success");
+  });
+
+  it("does not enter replayStashedWeeklyPlan when the lookup hit's result fails weeklyPlanAiMenuSchema", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "16161616-1616-4161-8161-161616161616",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            // days が7件必須（weeklyPlanResultSchema/weeklyPlanAiObjectSchema, shared/contracts/weekly-plan.ts）
+            // のスキーマ違反値。safeParse が false になることを狙った不正 result。
+            result: { days: [] },
+          },
+          error: null,
+        });
+      }
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "16161616-1616-4161-8161-161616161616",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: { days: [] },
+          },
+          error: null,
+        });
+      }
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    await expect(runWeeklyPlan(baseDeps(), sampleRequest())).rejects.toMatchObject({
+      status: 409,
+      code: "generation_in_progress",
+    });
+
+    expect(rpcNames()).toContain("reserve_flyer_weekly");
+    expect(rpcNames()).not.toContain("get_weekly_plan_intent");
+    expect(rpcNames()).not.toContain("finalize_flyer_weekly_success");
+  });
+});
+
 describe("runWeeklyPlan — ordering and quota", () => {
   it("checks lookup before the Plus gate (succeeded lookup hit needs no reserve call)", async () => {
     rpcMock.mockImplementation((name: string) => {

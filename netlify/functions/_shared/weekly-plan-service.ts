@@ -306,9 +306,8 @@ function snapshotFromRequest(request: WeeklyPlanRequest): WeeklyPlanSnapshot {
 }
 
 /**
- * R-07: 現行安全条件の読取失敗・対象メンバー欠損は本文を止めない。staleSafety: true に落とす。
- * household_members 読取自体が失敗したときも同様に「わからない」を stale 扱いにする
- * （false-negative で「変更なし」を偽って主張しない）。
+ * household_members 読取自体が失敗したときも「わからない」を partial 扱いにする
+ * （false-negative で「対象は全員 complete」を偽って主張しない）。
  */
 async function computePartialHousehold(
   admin: AdminSupabaseClient,
@@ -333,6 +332,9 @@ async function computePartialHousehold(
   );
 }
 
+/**
+ * R-07: 現行安全条件の読取失敗・対象メンバー欠損は本文を止めない。staleSafety: true に落とす。
+ */
 async function computeStaleSafetyAndPartial(
   admin: AdminSupabaseClient,
   userId: string,
