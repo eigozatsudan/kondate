@@ -544,13 +544,13 @@ async function replaySucceededWeeklyPlan(
     // P3修正C: 同時実行の勝者が既に保存した行があればそれを返す。
     // こちらは assert を持たない経路（R-07）なので、buildResultFromRow の指紋比較だけの
     // staleSafety 再計算で問題ない（I-1 は replayStashedWeeklyPlan 側のみ対象）。
+    // MIN-4: この早期 return では delete_weekly_plan_intent を呼ばない。勝者側が
+    // 既に削除しているはずで、取りこぼしても孤児 intent は run_kondate_maintenance の
+    // 孤児回収が拾う（挙動は変えない、コメントのみ）。
     const recovered = await recoverExistingWeeklyPlanRow(admin, userId, reserve.request_id);
     if (recovered !== null) return recovered;
     throw error;
   }
-  // M-4: 早期 return（insert 競合復元）では delete_weekly_plan_intent を呼ばない。
-  // 勝者側が既に削除しているはずで、取りこぼしても孤児 intent は
-  // run_kondate_maintenance の孤児回収が拾う（挙動は変えない、コメントのみ）。
   await rpcUntyped(admin, "delete_weekly_plan_intent", { p_request_id: reserve.request_id });
   const { staleSafety, partialHousehold } = await computeStaleSafetyAndPartial(
     admin,
@@ -611,9 +611,13 @@ async function replayStashedWeeklyPlan(
 
   // 現行安全条件の再 assert。失敗しても本文は止めない（N-I-10）。
   let staleSafety = false;
-  // I-2: assert が成功したときに限り検査済み条件の指紋を保存する。
-  // 失敗時（null のまま）は従来どおり intent 指紋を使う
+  // I-2 / IMP-2: assert が成功したときは検査済み条件の指紋を保存し、staleSafety も false にする
+  // （「保存する指紋＝その献立を実際に検査した条件」という不変条件を全経路で成立させる）。
+  // 失敗時（null のまま）は従来どおり intent 指紋を使い staleSafety: true のまま
   // （N-I-10 の契約: 再 assert 失敗でも本文を止めず staleSafety: true で返すのは変えない）。
+  // IMP-2 の根拠: 利用者が条件を元に戻したケースで、成功時も intent 指紋を保存し続ける案だと
+  // 保存指紋と現行条件が一致してしまい GET が「変更なし」と誤って主張する。ここで false にすれば
+  // 保存指紋（検査済み条件）と現行条件が食い違ったときだけ GET 側で正しく true に倒れる。
   let validatedFingerprint: string | null = null;
   try {
     const inspectionSafety = await loadWeeklyPlanInspectionSafety(
@@ -623,9 +627,8 @@ async function replayStashedWeeklyPlan(
     );
     assertFlyerMenuAgainstSafety(resultMenu, inspectionSafety);
     assertFlyerMenuHasNoGuaranteePhrases(resultMenu);
-    const currentFingerprint = createCurrentSafetyFingerprint(inspectionSafety);
-    staleSafety = currentFingerprint !== intent.data.safety_fingerprint;
-    validatedFingerprint = currentFingerprint;
+    validatedFingerprint = createCurrentSafetyFingerprint(inspectionSafety);
+    staleSafety = false;
   } catch {
     staleSafety = true;
   }
@@ -648,15 +651,19 @@ async function replayStashedWeeklyPlan(
     // I-1: buildResultFromRow は指紋比較だけで staleSafety を再計算するため、
     // ここで確定済みの再 assert 失敗（staleSafety: true）を OR で必ず残す
     // （assert 失敗と指紋不一致は同値ではなく、後者だけを見ると true → false に落ちうる）。
+    // MIN-1: OR 合成後も本モジュールの他の return と同じく weeklyPlanResultSchema.parse を通す。
+    // MIN-4: この早期 return では delete_weekly_plan_intent を呼ばない。勝者側が既に削除して
+    // いるはずで、取りこぼしても孤児 intent は run_kondate_maintenance の孤児回収が拾う
+    // （挙動は変えない、コメントのみ）。
     const recovered = await recoverExistingWeeklyPlanRow(admin, userId, requestId);
     if (recovered !== null) {
-      return { ...recovered, staleSafety: recovered.staleSafety || staleSafety };
+      return weeklyPlanResultSchema.parse({
+        ...recovered,
+        staleSafety: recovered.staleSafety || staleSafety,
+      });
     }
     throw error;
   }
-  // M-4: 早期 return（succeeded/stash 双方の insert 競合復元）では delete_weekly_plan_intent を
-  // 呼ばない。勝者側が既に削除しているはずで、取りこぼしても孤児 intent は
-  // run_kondate_maintenance の孤児回収が拾う（挙動は変えない、コメントのみ）。
   await rpcUntyped(admin, "delete_weekly_plan_intent", { p_request_id: requestId });
 
   const partialHousehold = await computePartialHousehold(
@@ -1025,24 +1032,22 @@ export async function runWeeklyPlan(
   // replaySucceededWeeklyPlan の「result + intent から復元」経路に回った場合、
   // 復元される行の safety_fingerprint が古い preReserveFingerprint のままになり、
   // 修正Aで直したはずの不一致が別経路で再発する。
-  // commitWeeklyPlanFinalize（成功確定）の前に置き、失敗時は最初の put_weekly_plan_intent
-  // 失敗と同じ扱い（finalize_flyer_weekly_failure + 500）にする。ここではまだ
-  // finalize_flyer_weekly_success を呼んでいないため reserve は再試行可能なまま残せる一方、
-  // best-effort にすると指紋不一致が別経路で再発する余地を残すため、成功保証を優先した。
-  const { error: refreshIntentError } = await rpcUntyped(admin, "put_weekly_plan_intent", {
+  // IMP-1: この時点で mark_flyer_weekly_sent 済み・AI 応答取得済み・Zod 検証済み・
+  // assertFlyerMenuAgainstSafety 通過済み、つまりもう返せる本文が確定している。
+  // ここを失敗即 500（finalize_flyer_weekly_failure 呼び出し）にすると、簿記用 upsert の
+  // 一過性失敗のために finalize_flyer_weekly_success も stash_flyer_weekly_result も呼ばれず
+  // 本文が完全に失われ、しかも reserve_flyer_weekly は failed 行も replay するため
+  // 同一 idempotencyKey が恒久的に 500 になり得た（誤り、前回の指示を撤回）。
+  // 手順13の delete_weekly_plan_intent と同じ書き方で best-effort にする：
+  // 失敗しても throw せず、finalize_flyer_weekly_failure も呼ばず、続行する。
+  // 失敗時は intent が古い指紋のまま残り、復元経路では staleSafety が保守側（true）に
+  // 倒れるだけ＝安全側に落ちる。
+  await rpcUntyped(admin, "put_weekly_plan_intent", {
     p_request_id: requestId,
     p_user_id: deps.user.userId,
     p_snapshot: snapshot,
     p_fingerprint: validatedFingerprint,
   });
-  if (refreshIntentError !== null) {
-    await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
-      p_request_id: requestId,
-      p_failure_code: "internal_error",
-      p_sent: true,
-    });
-    throw new HttpError(500, "internal_error", issueMessages.internal_error);
-  }
 
   // 手順11: finalize_flyer_weekly_success
   await commitWeeklyPlanFinalize(admin, requestId, resultMenu);

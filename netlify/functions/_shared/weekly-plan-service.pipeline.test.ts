@@ -428,6 +428,71 @@ describe("runWeeklyPlan — intent fingerprint is refreshed to the validated con
       p_request_id: "23232323-2323-4232-8232-232323232323",
       p_fingerprint: conditionCFingerprint,
     });
+
+    // MIN-2(b): 2本目の put_weekly_plan_intent は commitWeeklyPlanFinalize
+    // （finalize_flyer_weekly_success の呼び出し）より前でなければならない。
+    // 引数の値だけでなく呼び出し順序そのものを固定する。
+    const names = rpcNames();
+    const secondPutIndex = names.lastIndexOf("put_weekly_plan_intent");
+    const finalizeSuccessIndex = names.indexOf("finalize_flyer_weekly_success");
+    expect(secondPutIndex).toBeGreaterThan(-1);
+    expect(finalizeSuccessIndex).toBeGreaterThan(-1);
+    expect(secondPutIndex).toBeLessThan(finalizeSuccessIndex);
+  });
+
+  it("continues (200, no finalize_flyer_weekly_failure) when the intent refresh put fails (IMP-1 best-effort)", async () => {
+    let putIntentCallCount = 0;
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "30303030-3030-4303-8303-303030303030",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      // 1本目（手順6'）は成功、2本目（手順10後の指紋更新）だけ失敗させる。
+      if (name === "put_weekly_plan_intent") {
+        putIntentCallCount += 1;
+        return Promise.resolve(
+          putIntentCallCount <= 1
+            ? { data: null, error: null }
+            : { data: null, error: { message: "transient" } },
+        );
+      }
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        return thenableQuery({ data: { id: "31313131-3131-4313-8313-313131313131" }, error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: sampleAiMenu(),
+      modelId: "m1",
+    });
+
+    const result = await runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest());
+
+    expect(result.days).toHaveLength(7);
+    expect(rpcNames()).not.toContain("finalize_flyer_weekly_failure");
+    expect(rpcNames()).toContain("finalize_flyer_weekly_success");
   });
 });
 
@@ -492,7 +557,7 @@ describe("replayStashedWeeklyPlan — persists the validated fingerprint when re
       throw new Error(`unexpected table: ${table}`);
     });
 
-    await runWeeklyPlan(baseDeps(), sampleRequest());
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
 
     // beforeEach のデフォルト loadCurrentSafetyContext フィクスチャ（dictionaryVersion v1 など）
     // から計算される現行条件の指紋。intent の safety_fingerprint（"a".repeat(64)）とは別物。
@@ -520,6 +585,82 @@ describe("replayStashedWeeklyPlan — persists the validated fingerprint when re
 
     expect(capturedInsertPayload?.safety_fingerprint).toBe(currentFingerprint);
     expect(capturedInsertPayload?.safety_fingerprint).not.toBe("a".repeat(64));
+    // IMP-2: 再 assert が成功し保存指紋を現行条件に更新した以上、返却 staleSafety も false。
+    // true のままだと同一リソースについて POST は true・直後の GET は false（buildResultFromRow
+    // が保存指紋 == 現行指紋で false を返す）という反転が起きる。
+    expect(result.staleSafety).toBe(false);
+  });
+
+  it("keeps staleSafety: true and persists the intent's fingerprint when the stash re-assert fails (N-I-10 契約は変えない)", async () => {
+    const stashedMenuWithGuaranteePhrase = {
+      ...sampleAiMenu(),
+      days: sampleAiMenu().days.map((day, index) =>
+        index === 0 ? { ...day, notes: "小麦アレルギーでも安全です" } : day,
+      ),
+    };
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "28282828-2828-4282-8282-282828282828",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: stashedMenuWithGuaranteePhrase,
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "28282828-2828-4282-8282-282828282828",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    let capturedInsertPayload: Record<string, unknown> | undefined;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        const query = thenableQuery({
+          data: { id: "29292929-2929-4292-8292-292929292929" },
+          error: null,
+        });
+        query.insert = vi.fn((payload: Record<string, unknown>) => {
+          capturedInsertPayload = payload;
+          return query;
+        });
+        return query;
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(capturedInsertPayload?.safety_fingerprint).toBe("a".repeat(64));
+    expect(result.staleSafety).toBe(true);
   });
 });
 
