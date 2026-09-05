@@ -174,7 +174,13 @@ test("planner Free flyer entry respects FLYER_WEEKLY_UI_ENABLED", async ({
     });
   } else {
     await expect(page.getByTestId("flyer-weekly-locked")).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Plus を見る" })).toHaveCount(0);
+    // A-I-12: 週献立ロックカード（weekly-plan-locked）は FLYER_WEEKLY_UI_ENABLED とは無関係に
+    // 常に「Plus を見る」リンクを1件出す。ここではチラシ入口に紐づく Plus リンクが
+    // 追加で増えていないことだけを確認する（週献立側のリンクはスコープ外）。
+    await expect(
+      page.getByTestId("weekly-plan-locked").getByRole("link", { name: "Plus を見る" }),
+    ).toHaveCount(1);
+    await expect(page.getByRole("link", { name: "Plus を見る" })).toHaveCount(1);
   }
 });
 

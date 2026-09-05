@@ -40,7 +40,9 @@ import { historyKeys, listHistoryGroups } from "@/features/history/api/history-a
 import { getCurrentPrivacyConsent, hasCurrentPrivacyConsent } from "@/features/privacy/privacy-api";
 import { privacyKeys } from "@/features/privacy/privacy-queries";
 import { FLYER_WEEKLY_UI_ENABLED } from "@shared/contracts/flyer-weekly";
+import { WEEKLY_PLAN_UI_ENABLED } from "@shared/contracts/weekly-plan";
 import { FlyerWeeklyPanel } from "@/features/flyer/flyer-weekly-panel";
+import { WeeklyPlanEntryCard } from "@/features/weekly-plan/components/weekly-plan-entry-card";
 import { PlannerWizard } from "./components/planner-wizard";
 import { medicalRequestBlockedMessage } from "./components/review-step";
 import type { HomeExpiringPantryItem } from "./home/home-expiring-pantry";
@@ -1547,6 +1549,15 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       onOpenPrivacyNotice={openPrivacyNotice}
     />
   ) : null;
+  const weeklyPlanFooter = WEEKLY_PLAN_UI_ENABLED ? (
+    <WeeklyPlanEntryCard plusEntitled={usage.isSuccess ? usage.data.plusEntitled : false} />
+  ) : null;
+  const combinedFooter = (
+    <>
+      {weeklyPlanFooter}
+      {flyerFooter}
+    </>
+  );
   // history 未取得・失敗時は空。mock が非配列を返しても壊さない。
   const historyGroups = Array.isArray(historyQuery.data) ? historyQuery.data : [];
   const recentMenus = historyGroups.slice(0, HOME_RECENT_MENU_LIMIT).map((group) => ({
@@ -1594,7 +1605,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           void historyQuery.refetch();
         }}
         expiringItems={expiringItems}
-        footer={flyerFooter}
+        footer={combinedFooter}
         // P1: leave-flush / strip / 明示保存失敗を home でも role=alert で可視化（wizard と同型）
         error={submissionError}
         disabled={
@@ -1732,7 +1743,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         onOpenEmergencyMenus={openEmergencyMenus}
         onReset={resetPlannerDraft}
         // L10-3: チラシ入口。page-frame 内に置き幅・下余白をウィザードと揃える
-        footer={flyerFooter}
+        footer={combinedFooter}
         onSubmit={async () => {
           // P8: React 再描画前の二重 click を同期 ref で抑止（idea audience の confirmingRef と同型）
           // P1: 緊急 open / leave-flush 中は generate を受け付けない

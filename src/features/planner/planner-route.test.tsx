@@ -61,6 +61,8 @@ const queryState = vi.hoisted(() => ({
   privacyIsError: false,
   /** useSearchParams の mock 用。例: "resume=review" */
   search: "",
+  /** A-I-12: 週献立入口カード（footer 配線）の Plus/Free 切り替え検証用 */
+  usagePlusEntitled: false,
 }));
 
 const ownerBId = "72000000-0000-4000-8000-000000000002";
@@ -241,7 +243,7 @@ vi.mock("@tanstack/react-query", () => ({
       return {
         data: {
           plan: "free" as const,
-          plusEntitled: false,
+          plusEntitled: queryState.usagePlusEntitled,
           success: { consumed: 0, limit: 3, remaining: 3 },
           attempts: { sent: 0, limit: 6, remaining: 6 },
           shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
@@ -436,6 +438,8 @@ type WizardMockProps = {
   /** P4: soft safety/pantry 失敗中は主 CTA を止める */
   blockGenerationForStaleSafety?: boolean;
   onOpenSettings?: () => void;
+  /** A-I-12: combinedFooter（週献立入口カード + チラシ footer）の配線確認用 */
+  footer?: React.ReactNode;
 };
 const wizardPropsSpy = vi.hoisted(() => vi.fn());
 vi.mock("./components/planner-wizard", () => ({
@@ -467,6 +471,7 @@ vi.mock("./components/planner-wizard", () => ({
           {String(props.privacyConsentLoadFailed ?? false)}
         </output>
         <output aria-label="has draft conflict">{String(props.hasDraftConflict ?? false)}</output>
+        <div data-testid="wizard-footer-slot">{props.footer}</div>
         <button
           type="button"
           onClick={() => {
@@ -713,6 +718,7 @@ beforeEach(() => {
   queryState.privacyConsent = { user_id: draft.userId, notice_version: "2026-07-29.v1" };
   queryState.privacyIsError = false;
   queryState.search = "";
+  queryState.usagePlusEntitled = false;
   // flush 後の saved にクライアント入力（pantrySelections 等）を残す（P1 exact-set 検証用）
   savePlannerDraftMock.mockImplementation(
     (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
@@ -1088,6 +1094,8 @@ it("owner の冷蔵庫一覧を loaded 状態で planner wizard へ渡す", () =
 
   expect(screen.getByLabelText("pantry status")).toHaveTextContent("loaded");
   expect(screen.getByLabelText("pantry names")).toHaveTextContent("キャベツ");
+  // A-I-12: ウィザード footer にも combinedFooter（週献立入口カード）が渡る（Free 既定値）
+  expect(screen.getByTestId("weekly-plan-locked")).toBeInTheDocument();
 });
 
 it("冷蔵庫一覧の取得中は planner wizard を確定表示しない", () => {
@@ -1447,6 +1455,24 @@ it("C5: leave flush 中はホームの冷蔵庫リンクも disabled にする",
     "aria-disabled",
     "true",
   );
+});
+
+it("A-I-12: Free ユーザーのホームには週献立の入口ロックカードを出す", () => {
+  queryState.draft = null;
+  queryState.usagePlusEntitled = false;
+
+  render(<PlannerRoutePage />);
+
+  expect(screen.getByTestId("weekly-plan-locked")).toBeInTheDocument();
+});
+
+it("A-I-12: Plus ユーザーのホームには週献立の作成 CTA を出す", () => {
+  queryState.draft = null;
+  queryState.usagePlusEntitled = true;
+
+  render(<PlannerRoutePage />);
+
+  expect(screen.getByRole("link", { name: "今週の献立をつくる" })).toBeInTheDocument();
 });
 
 it("P1: home 面でも leave flush 通信失敗を role=alert で表示する", async () => {
