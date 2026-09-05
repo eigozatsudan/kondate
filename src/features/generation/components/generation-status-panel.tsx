@@ -312,7 +312,7 @@ function TerminalQuotaBlock({
  * 体感段階の視覚メーター。data-progress-stage（0 始まり）とは別ノードで、
  * aria-valuenow は人間向けに 1 始まり（index + 1）。
  */
-function GenerationProgressMeter({ stageIndex }: { stageIndex: number }) {
+export function GenerationProgressMeter({ stageIndex }: { stageIndex: number }) {
   return (
     <div
       className="gen-progress-meter"

@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { Link, useNavigate } from "react-router";
+import { z } from "zod";
 import { cuisineGenres } from "@shared/contracts/domain";
 import { budgetPreferences, noveltyPreferences } from "@shared/contracts/planner";
 import {
   WEEKLY_PLAN_QUOTA_COPY_LABEL,
+  weeklyPlanRequestSchema,
   weeklyPlanIssueMessages,
+  type WeeklyPlanRequest,
 } from "@shared/contracts/weekly-plan";
+import { GenerationProgressMeter } from "@/features/generation/components/generation-status-panel";
+import { useGenerationProgressMessage } from "@/features/generation/hooks/use-generation-progress-message";
+import { GENERATION_IN_PROGRESS_RETRY_MS } from "@/features/generation/hooks/use-generation-recovery";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import { AudienceStep, type AudienceValue } from "@/features/planner/components/audience-step";
 import {
@@ -19,18 +25,69 @@ import { WeeklyPlanApiError } from "../weekly-plan-api";
 import { useLatestWeeklyPlan } from "../weekly-plan-latest";
 
 const STICKY_KEY_STORAGE = "weekly-plan-idempotency-key";
+const REQUEST_METADATA_STORAGE = "weekly-plan-request-metadata";
 const discardStickyKeyCodes = new Set([
   "weekly_plan_invalid_ai_response",
   "generation_timeout",
   "model_unavailable",
 ]);
 
-function readOrCreateStickyKey(): string {
-  const existing = sessionStorage.getItem(STICKY_KEY_STORAGE);
-  if (existing !== null && existing !== "") return existing;
-  const created = crypto.randomUUID();
-  sessionStorage.setItem(STICKY_KEY_STORAGE, created);
-  return created;
+const requestMetadataSchema = z
+  .object({
+    version: z.literal(1),
+    ownerId: z.string().min(1),
+    status: z.enum(["pending", "succeeded"]),
+    request: weeklyPlanRequestSchema,
+    resultId: z.uuid().nullable(),
+  })
+  .strict();
+type RequestMetadata = z.infer<typeof requestMetadataSchema>;
+
+function readMetadata(ownerId: string): { metadata: RequestMetadata | null; failed: boolean } {
+  let raw: string | null;
+  try {
+    raw = sessionStorage.getItem(REQUEST_METADATA_STORAGE);
+  } catch {
+    return { metadata: null, failed: true };
+  }
+  if (raw === null) return { metadata: null, failed: false };
+  try {
+    const parsed = requestMetadataSchema.safeParse(JSON.parse(raw) as unknown);
+    if (parsed.success && parsed.data.ownerId === ownerId) {
+      return { metadata: parsed.data, failed: false };
+    }
+    try {
+      sessionStorage.removeItem(REQUEST_METADATA_STORAGE);
+      sessionStorage.removeItem(STICKY_KEY_STORAGE);
+    } catch {
+      return { metadata: null, failed: true };
+    }
+    return { metadata: null, failed: false };
+  } catch {
+    try {
+      clearMetadata();
+      return { metadata: null, failed: false };
+    } catch {
+      return { metadata: null, failed: true };
+    }
+  }
+}
+
+function writeMetadata(metadata: RequestMetadata): void {
+  sessionStorage.setItem(STICKY_KEY_STORAGE, metadata.request.idempotencyKey);
+  sessionStorage.setItem(REQUEST_METADATA_STORAGE, JSON.stringify(metadata));
+}
+
+function clearMetadata(): void {
+  sessionStorage.removeItem(STICKY_KEY_STORAGE);
+  sessionStorage.removeItem(REQUEST_METADATA_STORAGE);
+}
+
+function nextJstMonday(weekStartJst: string): string | null {
+  const parsed = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/u.exec(weekStartJst);
+  if (parsed === null) return null;
+  const date = new Date(Date.UTC(Number(parsed[1]), Number(parsed[2]) - 1, Number(parsed[3]) + 7));
+  return `${String(date.getUTCFullYear())}年${String(date.getUTCMonth() + 1)}月${String(date.getUTCDate())}日（月）`;
 }
 
 export type WeeklyPlanFormPageProps = {
@@ -53,6 +110,7 @@ export function WeeklyPlanFormPage({
   const usage = useUsageToday(userId);
   const weekStartJst = usage.data?.flyerWeekly.weekStartJst ?? "";
   const latest = useLatestWeeklyPlan(userId, weekStartJst);
+  const [initialStored] = useState(() => readMetadata(userId));
   const selectableMemberIds = eligibleMembers
     .filter((member) => member.blockedReason === null)
     .map((member) => member.id);
@@ -69,7 +127,42 @@ export function WeeklyPlanFormPage({
     (typeof noveltyPreferences)[number] | null
   >(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [storedRequest, setStoredRequest] = useState<RequestMetadata | null>(
+    initialStored.metadata,
+  );
+  const [storageFailed, setStorageFailed] = useState(initialStored.failed);
+  const [requestActive, setRequestActive] = useState(false);
   const submittingRef = useRef(false);
+  const lifecycleRef = useRef(0);
+  const retryTimerRef = useRef<number | null>(null);
+  const { message: progressMessage, stageIndex: progressStageIndex } = useGenerationProgressMessage(
+    { active: requestActive, anchorMs: null },
+  );
+
+  useEffect(() => {
+    lifecycleRef.current += 1;
+    const restored = readMetadata(userId);
+    setStoredRequest(restored.metadata);
+    setStorageFailed(restored.failed);
+    setSubmitError(
+      restored.failed
+        ? "この端末で前回の依頼を確認できません。ブラウザの保存設定を確認してください。"
+        : null,
+    );
+    setErrorCode(null);
+    submittingRef.current = false;
+    setRequestActive(false);
+    if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+  }, [userId]);
+
+  useEffect(
+    () => () => {
+      lifecycleRef.current += 1;
+      if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     const currentSelectableIds = new Set(
@@ -87,49 +180,120 @@ export function WeeklyPlanFormPage({
   const quota = usage.data?.flyerWeekly;
   const quotaExhausted =
     quota !== undefined && (quota.successRemaining === 0 || quota.triesRemaining === 0);
-  const cannotSubmit =
+  const cannotStartNew =
+    storageFailed ||
     usage.data === undefined ||
     quotaExhausted ||
     audience.targetMemberIds.length === 0 ||
     selectedUnsatisfiable.length > 0 ||
-    create.isPending;
+    requestActive ||
+    storedRequest !== null;
 
-  const onSubmit = async (): Promise<void> => {
-    if (cannotSubmit || submittingRef.current) return;
+  const executeRequest = async (request: WeeklyPlanRequest): Promise<void> => {
+    if (submittingRef.current) return;
     submittingRef.current = true;
+    setRequestActive(true);
     setSubmitError(null);
-    let idempotencyKey: string;
+    setErrorCode(null);
+    const lifecycle = ++lifecycleRef.current;
+    let automaticRetries = 0;
     try {
-      idempotencyKey = readOrCreateStickyKey();
+      while (lifecycleRef.current === lifecycle) {
+        try {
+          const result = await create.mutateAsync(request);
+          if (lifecycleRef.current !== lifecycle) return;
+          const succeeded: RequestMetadata = {
+            version: 1,
+            ownerId: userId,
+            status: "succeeded",
+            request,
+            resultId: result.weeklyPlanId,
+          };
+          try {
+            writeMetadata(succeeded);
+            setStoredRequest(succeeded);
+          } catch {
+            // 成功結果への遷移を優先し、保存領域の障害で結果を見失わせない。
+          }
+          void navigate(`/weekly/${result.weeklyPlanId}`);
+          return;
+        } catch (error) {
+          if (lifecycleRef.current !== lifecycle) return;
+          if (
+            error instanceof WeeklyPlanApiError &&
+            error.status === 409 &&
+            error.code === "generation_in_progress" &&
+            automaticRetries < 3
+          ) {
+            automaticRetries += 1;
+            await new Promise<void>((resolve) => {
+              retryTimerRef.current = window.setTimeout(resolve, GENERATION_IN_PROGRESS_RETRY_MS);
+            });
+            continue;
+          }
+          if (error instanceof WeeklyPlanApiError) {
+            if (discardStickyKeyCodes.has(error.code)) {
+              try {
+                clearMetadata();
+              } catch {
+                // 元のAPIエラーを表示する。保存領域の障害で原因を置き換えない。
+              }
+              setStoredRequest(null);
+            }
+            setErrorCode(error.code);
+            setSubmitError(error.message);
+          } else {
+            setSubmitError("週献立を作成できませんでした。同じ条件でもう一度お試しください。");
+          }
+          return;
+        }
+      }
+    } finally {
+      if (lifecycleRef.current === lifecycle) {
+        submittingRef.current = false;
+        setRequestActive(false);
+      }
+    }
+  };
+
+  const onStartNew = (): void => {
+    if (cannotStartNew) return;
+    const request: WeeklyPlanRequest = {
+      idempotencyKey: crypto.randomUUID(),
+      targetMemberIds: [...audience.targetMemberIds],
+      cuisineGenre,
+      budgetPreference,
+      noveltyPreference,
+    };
+    const pending: RequestMetadata = {
+      version: 1,
+      ownerId: userId,
+      status: "pending",
+      request,
+      resultId: null,
+    };
+    try {
+      writeMetadata(pending);
+      setStoredRequest(pending);
     } catch {
-      submittingRef.current = false;
+      setStorageFailed(true);
       setSubmitError("この端末で作成を開始できません。ブラウザの保存設定を確認してください。");
       return;
     }
+    void executeRequest(request);
+  };
+
+  const resetForNewRequest = (): void => {
     try {
-      const result = await create.mutateAsync({
-        idempotencyKey,
-        targetMemberIds: [...audience.targetMemberIds],
-        cuisineGenre,
-        budgetPreference,
-        noveltyPreference,
-      });
-      void navigate(`/weekly/${result.weeklyPlanId}`);
-    } catch (error) {
-      if (error instanceof WeeklyPlanApiError) {
-        if (discardStickyKeyCodes.has(error.code)) {
-          try {
-            sessionStorage.removeItem(STICKY_KEY_STORAGE);
-          } catch {
-            // エラー表示を優先し、保存領域の追加失敗で再送制御を不明瞭にしない。
-          }
-        }
-        setSubmitError(error.message);
-      } else {
-        setSubmitError("週献立を作成できませんでした。同じ条件でもう一度お試しください。");
-      }
-    } finally {
-      submittingRef.current = false;
+      clearMetadata();
+      setStoredRequest(null);
+      setSubmitError(null);
+      setErrorCode(null);
+    } catch {
+      setStorageFailed(true);
+      setSubmitError(
+        "この端末で新しい依頼を開始できません。ブラウザの保存設定を確認してください。",
+      );
     }
   };
 
@@ -169,7 +333,7 @@ export function WeeklyPlanFormPage({
         onChange={setAudience}
         onNext={() => undefined}
         eligibleMembers={eligibleMembers}
-        disabled={create.isPending}
+        disabled={requestActive}
         householdOnly
         hideActions
         heading="作る相手"
@@ -190,7 +354,7 @@ export function WeeklyPlanFormPage({
               type="radio"
               name="weekly-cuisine"
               checked={cuisineGenre === genre}
-              disabled={create.isPending}
+              disabled={requestActive}
               onChange={() => {
                 setCuisineGenre(genre);
               }}
@@ -201,35 +365,41 @@ export function WeeklyPlanFormPage({
       </fieldset>
       <fieldset className="stack">
         <legend>予算</legend>
-        {([null, ...budgetPreferences] as const).map((preference) => (
+        {([null, "economy"] as const).map((preference) => (
           <label key={preference ?? "default"} className="wizard-option min-h-11">
             <input
               type="radio"
               name="weekly-budget"
-              checked={budgetPreference === preference}
-              disabled={create.isPending}
+              checked={
+                preference === null
+                  ? budgetPreference !== "economy"
+                  : budgetPreference === "economy"
+              }
+              disabled={requestActive}
               onChange={() => {
                 setBudgetPreference(preference);
               }}
             />
-            {preference === null ? "標準" : preference === "economy" ? "節約優先" : "標準を指定"}
+            {preference === null ? "標準" : "節約優先"}
           </label>
         ))}
       </fieldset>
       <fieldset className="stack">
         <legend>目新しさ</legend>
-        {([null, ...noveltyPreferences] as const).map((preference) => (
+        {([null, "twist"] as const).map((preference) => (
           <label key={preference ?? "default"} className="wizard-option min-h-11">
             <input
               type="radio"
               name="weekly-novelty"
-              checked={noveltyPreference === preference}
-              disabled={create.isPending}
+              checked={
+                preference === null ? noveltyPreference !== "twist" : noveltyPreference === "twist"
+              }
+              disabled={requestActive}
               onChange={() => {
                 setNoveltyPreference(preference);
               }}
             />
-            {preference === null ? "標準" : noveltyPreferenceLabels[preference]}
+            {preference === null ? "標準" : noveltyPreferenceLabels.twist}
           </label>
         ))}
       </fieldset>
@@ -248,11 +418,57 @@ export function WeeklyPlanFormPage({
           {submitError}
         </p>
       ) : null}
-      <Button variant="primary" disabled={cannotSubmit} onClick={() => void onSubmit()}>
-        {create.isPending ? "今週の献立をつくっています" : "今週の献立をつくる"}
-      </Button>
-      {create.isPending ? (
-        <p role="status">作成には少し時間がかかります。このままお待ちください。</p>
+      {errorCode === "weekly_plan_weekly_limit" || errorCode === "weekly_plan_try_limit" ? (
+        <p>次は{nextJstMonday(weekStartJst) ?? "次の月曜日"}から、新しい週の枠を利用できます。</p>
+      ) : null}
+      {errorCode === "weekly_plan_invalid_ai_response" ? (
+        <p>前回の依頼は確認できなかったため、新しい依頼として作り直してください。</p>
+      ) : null}
+      {(storedRequest?.resultId ?? latest.data) !== null &&
+      (storedRequest?.resultId ?? latest.data) !== undefined ? (
+        <Link
+          className="secondary-button min-h-11"
+          to={`/weekly/${String(storedRequest?.resultId ?? latest.data)}`}
+        >
+          前回の献立を見る
+        </Link>
+      ) : null}
+      {storedRequest?.status === "pending" ? (
+        <>
+          <Button
+            variant="primary"
+            disabled={requestActive}
+            onClick={() => void executeRequest(storedRequest.request)}
+          >
+            {requestActive ? "今週の献立をつくっています" : "前回の依頼を再試行"}
+          </Button>
+          {!requestActive ? (
+            <Button variant="secondary" onClick={resetForNewRequest}>
+              新しい依頼を始める
+            </Button>
+          ) : null}
+        </>
+      ) : storedRequest?.status === "succeeded" ? (
+        <Button variant="secondary" disabled={requestActive} onClick={resetForNewRequest}>
+          新しい依頼を始める
+        </Button>
+      ) : (
+        <Button variant="primary" disabled={cannotStartNew} onClick={onStartNew}>
+          {requestActive
+            ? "今週の献立をつくっています"
+            : errorCode === "weekly_plan_invalid_ai_response"
+              ? "新しい依頼として作り直す"
+              : "今週の献立をつくる"}
+        </Button>
+      )}
+      {requestActive ? (
+        <div className="gen-status-panel" data-phase="submitting">
+          <div className="gen-status-indicator" aria-hidden="true" />
+          <p role="status" aria-live="polite" data-progress-stage={String(progressStageIndex)}>
+            {progressMessage}
+          </p>
+          <GenerationProgressMeter stageIndex={progressStageIndex} />
+        </div>
       ) : null}
     </main>
   );
