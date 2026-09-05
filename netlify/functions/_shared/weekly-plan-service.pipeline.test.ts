@@ -329,6 +329,374 @@ describe("runWeeklyPlan — persisted safety_fingerprint must match the conditio
   });
 });
 
+describe("runWeeklyPlan — intent fingerprint is refreshed to the validated condition before finalize (I-2 fresh path)", () => {
+  it("re-issues put_weekly_plan_intent with freshSafety's fingerprint before commitWeeklyPlanFinalize", async () => {
+    // 前段のテストと同じ4回呼び出しの数え方。2回目まで v1、3回目以降 v2 に変える。
+    let safetyCallCount = 0;
+    vi.mocked(loadCurrentSafetyContext).mockImplementation(() => {
+      safetyCallCount += 1;
+      return Promise.resolve({
+        dictionaryVersion: safetyCallCount <= 2 ? "v1" : "v2",
+        foodRuleVersion: "v1",
+        requestText: "",
+        members: [
+          {
+            householdMemberId: sampleMemberId,
+            anonymousRef: "member_1",
+            ageBand: "adult" as const,
+            allergyStatus: "none" as const,
+            allergenIds: [],
+            hasUnmappedCustomAllergy: false,
+            customAllergies: [],
+            requiredSafetyConstraints: [],
+            unsupportedDietStatus: "none" as const,
+            unsupportedDietKinds: [],
+          },
+        ],
+        allergenDictionary: { version: "test", catalog: [], aliases: [] },
+        foodSafetyRules: [],
+      });
+    });
+
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "23232323-2323-4232-8232-232323232323",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        return thenableQuery({ data: { id: "24242424-2424-4242-8242-242424242424" }, error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: sampleAiMenu(),
+      modelId: "m1",
+    });
+
+    await runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest());
+
+    const conditionCFingerprint = createCurrentSafetyFingerprint({
+      dictionaryVersion: "v2",
+      foodRuleVersion: "v1",
+      requestText: "",
+      members: [
+        {
+          householdMemberId: sampleMemberId,
+          anonymousRef: "member_1",
+          ageBand: "adult",
+          allergyStatus: "none",
+          allergenIds: [],
+          hasUnmappedCustomAllergy: false,
+          customAllergies: [],
+          requiredSafetyConstraints: [],
+          unsupportedDietStatus: "none",
+          unsupportedDietKinds: [],
+        },
+      ],
+      allergenDictionary: { version: "test", catalog: [], aliases: [] },
+      foodSafetyRules: [],
+    });
+
+    const putIntentCalls = rpcMock.mock.calls.filter(
+      (call) => rpcCallName(call) === "put_weekly_plan_intent",
+    );
+    expect(putIntentCalls).toHaveLength(2);
+    expect(rpcCallArgs(putIntentCalls[1] as unknown[])).toMatchObject({
+      p_request_id: "23232323-2323-4232-8232-232323232323",
+      p_fingerprint: conditionCFingerprint,
+    });
+  });
+});
+
+describe("replayStashedWeeklyPlan — persists the validated fingerprint when re-assert succeeds (I-2 stash path)", () => {
+  it("stores currentFingerprint (not the intent's) when the stash re-assert succeeds", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "25252525-2525-4252-8252-252525252525",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "25252525-2525-4252-8252-252525252525",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    let capturedInsertPayload: Record<string, unknown> | undefined;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        const query = thenableQuery({
+          data: { id: "26262626-2626-4262-8262-262626262626" },
+          error: null,
+        });
+        query.insert = vi.fn((payload: Record<string, unknown>) => {
+          capturedInsertPayload = payload;
+          return query;
+        });
+        return query;
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    // beforeEach のデフォルト loadCurrentSafetyContext フィクスチャ（dictionaryVersion v1 など）
+    // から計算される現行条件の指紋。intent の safety_fingerprint（"a".repeat(64)）とは別物。
+    const currentFingerprint = createCurrentSafetyFingerprint({
+      dictionaryVersion: "v1",
+      foodRuleVersion: "v1",
+      requestText: "",
+      members: [
+        {
+          householdMemberId: sampleMemberId,
+          anonymousRef: "member_1",
+          ageBand: "adult",
+          allergyStatus: "none",
+          allergenIds: [],
+          hasUnmappedCustomAllergy: false,
+          customAllergies: [],
+          requiredSafetyConstraints: [],
+          unsupportedDietStatus: "none",
+          unsupportedDietKinds: [],
+        },
+      ],
+      allergenDictionary: { version: "test", catalog: [], aliases: [] },
+      foodSafetyRules: [],
+    });
+
+    expect(capturedInsertPayload?.safety_fingerprint).toBe(currentFingerprint);
+    expect(capturedInsertPayload?.safety_fingerprint).not.toBe("a".repeat(64));
+  });
+});
+
+describe("replayStashedWeeklyPlan — insert conflict recovery preserves reassert staleSafety (I-1)", () => {
+  it("keeps staleSafety: true after insert-conflict recovery when the stash re-assert had failed", async () => {
+    // 保証フレーズ検査で再 assert を失敗させる（staleSafety = true, validatedFingerprint = null）。
+    const stashedMenuWithGuaranteePhrase = {
+      ...sampleAiMenu(),
+      days: sampleAiMenu().days.map((day, index) =>
+        index === 0 ? { ...day, notes: "小麦アレルギーでも安全です" } : day,
+      ),
+    };
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "21212121-2121-4212-8212-212121212121",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: stashedMenuWithGuaranteePhrase,
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "21212121-2121-4212-8212-212121212121",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    // 再取得で見つかる「勝者の行」の指紋を、現行条件の指紋と一致させる。
+    // buildResultFromRow は指紋比較だけで staleSafety を再計算するため、これだけだと
+    // false になってしまう（= I-1 の主眼: 再 assert 失敗の true が握りつぶされていないか）。
+    const currentSafetyFingerprint = createCurrentSafetyFingerprint({
+      dictionaryVersion: "v1",
+      foodRuleVersion: "v1",
+      requestText: "",
+      members: [
+        {
+          householdMemberId: sampleMemberId,
+          anonymousRef: "member_1",
+          ageBand: "adult",
+          allergyStatus: "none",
+          allergenIds: [],
+          hasUnmappedCustomAllergy: false,
+          customAllergies: [],
+          requiredSafetyConstraints: [],
+          unsupportedDietStatus: "none",
+          unsupportedDietKinds: [],
+        },
+      ],
+      allergenDictionary: { version: "test", catalog: [], aliases: [] },
+      foodSafetyRules: [],
+    });
+
+    let weeklyPlansCallCount = 0;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        weeklyPlansCallCount += 1;
+        if (weeklyPlansCallCount === 1) {
+          // insert → unique 制約違反を模した失敗。
+          return thenableQuery({ data: null, error: { message: "duplicate key" } });
+        }
+        // 再取得 → 同時実行の勝者が既に保存した行（指紋は現行条件と一致させておく）。
+        return thenableQuery({
+          data: {
+            id: "22222222-2222-4222-8222-222222222299",
+            week_start: "2026-09-07",
+            preference_snapshot: {
+              targetMemberIds: [sampleMemberId],
+              cuisineGenre: "japanese",
+              budgetPreference: null,
+              noveltyPreference: null,
+            },
+            safety_fingerprint: currentSafetyFingerprint,
+            days: sampleAiMenu().days,
+          },
+          error: null,
+        });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(result.staleSafety).toBe(true);
+  });
+});
+
+describe("replayStashedWeeklyPlan — insert conflict recovery finds no row rethrows the original error (M-3)", () => {
+  it("rethrows weekly_plan_persist_failed (500) when the recovery re-select also finds nothing", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "27272727-2727-4272-8272-272727272727",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "27272727-2727-4272-8272-272727272727",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    let weeklyPlansCallCount = 0;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        weeklyPlansCallCount += 1;
+        if (weeklyPlansCallCount === 1) {
+          return thenableQuery({ data: null, error: { message: "duplicate key" } });
+        }
+        // 復元用の再取得も見つからない（勝者が別要因で失敗した等）→ 元の insert エラーを再送出。
+        return thenableQuery({ data: null, error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    await expect(runWeeklyPlan(baseDeps(), sampleRequest())).rejects.toMatchObject({
+      status: 500,
+      code: "weekly_plan_persist_failed",
+    });
+  });
+});
+
 describe("replaySucceededWeeklyPlan — concurrent insert conflict recovers the winner's row (P3 advレビュー修正C)", () => {
   it("returns 200 with the existing row's weeklyPlanId when insert fails and a concurrent winner already saved it", async () => {
     rpcMock.mockImplementation((name: string) => {
