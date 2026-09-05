@@ -664,6 +664,100 @@ describe("replayStashedWeeklyPlan — persists the validated fingerprint when re
   });
 });
 
+describe("runWeeklyPlan → getWeeklyPlan — staleSafety agrees between POST and GET (IMP-2 契約)", () => {
+  it("returns the same staleSafety (false) from POST and a follow-up GET when the stash re-assert succeeded despite a stale intent fingerprint", async () => {
+    // stash 経路: intent の safety_fingerprint はわざと現行条件と食い違わせておく（"a".repeat(64)）。
+    // 再 assert 自体は現行の household_members / loadCurrentSafetyContext（beforeEach の v1
+    // フィクスチャ）に対して成功するので、IMP-2 により POST の staleSafety は false になり、
+    // 保存指紋も currentFingerprint（intent 指紋ではない）になるはず。
+    // GET はその保存済み行を再度同じ v1 フィクスチャで検査するので、一致していれば false のまま。
+    let phase: "post" | "get" = "post";
+    let capturedInsertPayload: Record<string, unknown> | undefined;
+    const insertedId = "34343434-3434-4343-8343-343434343434";
+
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "35353535-3535-4353-8353-353535353535",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "35353535-3535-4353-8353-353535353535",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        if (phase === "post") {
+          const query = thenableQuery({ data: { id: insertedId }, error: null });
+          query.insert = vi.fn((payload: Record<string, unknown>) => {
+            capturedInsertPayload = payload;
+            return query;
+          });
+          return query;
+        }
+        // phase === "get": POST が insert した行をそのまま select で返す
+        // （getWeeklyPlan は select().eq("id", …).eq("user_id", …).maybeSingle() を使う）。
+        return thenableQuery({
+          data: {
+            id: insertedId,
+            week_start: "2026-09-07",
+            preference_snapshot: capturedInsertPayload?.preference_snapshot,
+            safety_fingerprint: capturedInsertPayload?.safety_fingerprint,
+            days: capturedInsertPayload?.days,
+          },
+          error: null,
+        });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    const postResult = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    phase = "get";
+    const admin = { rpc: rpcMock, from: fromMock } as unknown as AdminSupabaseClient;
+    const getResult = await getWeeklyPlan(admin, "u1", postResult.weeklyPlanId);
+
+    expect(getResult.weeklyPlanId).toBe(postResult.weeklyPlanId);
+    // 期待値をハードコードせず、POST と GET の返り値そのものを直接比較する。
+    expect(getResult.staleSafety).toBe(postResult.staleSafety);
+    // sanity: IMP-2 が意図した分岐（再 assert 成功→false）を実際に通っていることの確認。
+    expect(postResult.staleSafety).toBe(false);
+  });
+});
+
 describe("replayStashedWeeklyPlan — insert conflict recovery preserves reassert staleSafety (I-1)", () => {
   it("keeps staleSafety: true after insert-conflict recovery when the stash re-assert had failed", async () => {
     // 保証フレーズ検査で再 assert を失敗させる（staleSafety = true, validatedFingerprint = null）。
