@@ -560,6 +560,156 @@ describe("runWeeklyPlan — replayed without stash", () => {
   });
 });
 
+describe("runWeeklyPlan — fresh generation guarantee-phrase / safety gate (weekly-plan-service.ts:872-893)", () => {
+  it("rejects with weekly_plan_invalid_ai_response (400) when the AI menu contains a guarantee phrase, finalizing failure with p_sent: true", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_failure")
+        return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    const menuWithGuaranteePhrase = {
+      ...sampleAiMenu(),
+      days: sampleAiMenu().days.map((day, index) =>
+        index === 0 ? { ...day, notes: "小麦アレルギーでも安全です" } : day,
+      ),
+    };
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: menuWithGuaranteePhrase,
+      modelId: "m1",
+    });
+
+    await expect(
+      runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest()),
+    ).rejects.toMatchObject({ status: 400, code: "weekly_plan_invalid_ai_response" });
+
+    expect(rpcArgsFor("finalize_flyer_weekly_failure")).toMatchObject({
+      p_request_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      p_failure_code: "weekly_plan_invalid_ai_response",
+      p_sent: true,
+    });
+    expect(rpcNames()).not.toContain("finalize_flyer_weekly_success");
+    expect(fromMock.mock.calls.map((call) => call[0] as string)).not.toContain("weekly_plans");
+  });
+
+  it("rejects with weekly_plan_invalid_ai_response (400) when the AI menu names a target member's allergen, finalizing failure with p_sent: true", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_failure")
+        return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue({
+      dictionaryVersion: "v1",
+      foodRuleVersion: "v1",
+      requestText: "",
+      members: [
+        {
+          householdMemberId: sampleMemberId,
+          anonymousRef: "member_1",
+          ageBand: "adult",
+          allergyStatus: "registered",
+          allergenIds: ["egg"],
+          hasUnmappedCustomAllergy: false,
+          customAllergies: [],
+          requiredSafetyConstraints: [],
+          unsupportedDietStatus: "none",
+          unsupportedDietKinds: [],
+        },
+      ],
+      allergenDictionary: {
+        version: "test",
+        catalog: [],
+        aliases: [
+          {
+            allergenId: "egg",
+            alias: "卵",
+            normalizedAlias: "卵",
+            aliasKind: "direct",
+            requiresLabelConfirmation: false,
+            dictionaryVersion: "v1",
+          },
+        ],
+      },
+      foodSafetyRules: [],
+    });
+    const menuWithAllergen = {
+      ...sampleAiMenu(),
+      days: sampleAiMenu().days.map((day, index) =>
+        index === 0 ? { ...day, ingredients: ["卵"] } : day,
+      ),
+    };
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: menuWithAllergen,
+      modelId: "m1",
+    });
+
+    await expect(
+      runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest()),
+    ).rejects.toMatchObject({ status: 400, code: "weekly_plan_invalid_ai_response" });
+
+    expect(rpcArgsFor("finalize_flyer_weekly_failure")).toMatchObject({
+      p_request_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      p_failure_code: "weekly_plan_invalid_ai_response",
+      p_sent: true,
+    });
+    expect(rpcNames()).not.toContain("finalize_flyer_weekly_success");
+    expect(fromMock.mock.calls.map((call) => call[0] as string)).not.toContain("weekly_plans");
+  });
+});
+
+describe("runWeeklyPlan — Plus 403 gate on the real pipeline (weekly-plan-service.ts:649-652)", () => {
+  it("rejects with weekly_plan_requires_plus (403) for a free entitlement on a lookup miss, without reserving or marking sent", async () => {
+    loadEntitlementMock.mockResolvedValue({ plan: "free", plusEntitled: false, killSource: null });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    await expect(runWeeklyPlan(baseDeps(), sampleRequest())).rejects.toMatchObject({
+      status: 403,
+      code: "weekly_plan_requires_plus",
+    });
+    expect(rpcNames()).not.toContain("reserve_flyer_weekly");
+    expect(rpcNames()).not.toContain("mark_flyer_weekly_sent");
+  });
+});
+
 describe("getWeeklyPlan", () => {
   it("returns 404 for another user's id", async () => {
     const admin = {
