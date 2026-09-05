@@ -31,6 +31,8 @@ export const functionModulePaths = [
   "/netlify/functions/flyer-weekly.ts",
   // フィードバック送信（E2E / ローカル Function server と Netlify 経路の差を無くす）
   "/netlify/functions/submit-feedback.ts",
+  // weekly-plan Task8: 週献立（POST 集合 + GET by id）
+  "/netlify/functions/weekly-plan.ts",
 ];
 
 function escapeRegex(value) {
@@ -56,6 +58,12 @@ function createMatcher(path) {
     })
     .join("/");
   return new RegExp(`^${pattern}$`, "u");
+}
+
+function createMatchers(path) {
+  // Netlify Config.path は string | string[]。配列を .split すると起動時 TypeError で
+  // 週献立だけでなく既存 E2E 全体が死ぬため、複数 matcher へ展開する。
+  return (Array.isArray(path) ? path : [path]).map(createMatcher);
 }
 
 function requestHeaders(rawHeaders) {
@@ -85,7 +93,7 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
   const routes = modules.map((module) => ({
     handler: module.default,
     method: module.config.method,
-    matcher: createMatcher(module.config.path),
+    matchers: createMatchers(module.config.path),
   }));
   return createServer(async (nodeRequest, nodeResponse) => {
     const url = new URL(
@@ -96,8 +104,9 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
       // Netlify の Config.method は任意項目で、省略時は全メソッドを受ける。
       // Plan 5 の一部 Function は method を宣言しないため、undefined を
       // 「メソッド制限なし」として扱わないと E2E だけ 404 になる。
-      ({ method, matcher }) =>
-        methodAllowed(method, nodeRequest.method) && matcher.test(url.pathname),
+      ({ method, matchers }) =>
+        methodAllowed(method, nodeRequest.method) &&
+        matchers.some((matcher) => matcher.test(url.pathname)),
     );
     if (route === undefined) {
       nodeResponse.statusCode = 404;
@@ -105,7 +114,9 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
       return;
     }
 
-    const params = route.matcher.exec(url.pathname)?.groups ?? {};
+    const params =
+      route.matchers.map((matcher) => matcher.exec(url.pathname)).find((match) => match !== null)
+        ?.groups ?? {};
     const request = new Request(url, {
       method: nodeRequest.method,
       headers: requestHeaders(nodeRequest.rawHeaders),

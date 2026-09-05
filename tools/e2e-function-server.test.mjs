@@ -176,6 +176,17 @@ const routes = new Map([
       default: async () => Response.json({ ok: true, route: "feedback" }),
     },
   ],
+  [
+    "/netlify/functions/weekly-plan.ts",
+    {
+      config: {
+        path: ["/api/weekly-plan", "/api/weekly-plan/:weeklyPlanId"],
+        method: ["GET", "POST"],
+      },
+      default: async (request, context) =>
+        Response.json({ ok: true, route: "weekly-plan", method: request.method, ...context }),
+    },
+  ],
 ]);
 
 async function withServer(loadModule, run) {
@@ -324,6 +335,13 @@ test("registers flyer-weekly function module", () => {
   assert.ok(
     functionModulePaths.includes("/netlify/functions/flyer-weekly.ts"),
     "expected functionModulePaths to include /netlify/functions/flyer-weekly.ts",
+  );
+});
+
+test("registers weekly-plan function module", () => {
+  assert.ok(
+    functionModulePaths.includes("/netlify/functions/weekly-plan.ts"),
+    "expected functionModulePaths to include /netlify/functions/weekly-plan.ts",
   );
 });
 
