@@ -52,6 +52,12 @@ export type AudienceStepProps = Omit<PlannerStepProps<AudienceValue>, "disabled"
    * 未指定時は Link 直遷移。
    */
   onOpenSettings?: () => void;
+  /** household 専用画面ではモード選択を省き、家族一覧だけを表示する。 */
+  householdOnly?: boolean;
+  /** 単一画面フォームなど、親が操作ボタンを持つ場合に wizard actions を省く。 */
+  hideActions?: boolean;
+  /** 別画面で再利用するときの見出し。既定値は既存 wizard の文言を維持する。 */
+  heading?: string;
 };
 
 /**
@@ -72,6 +78,9 @@ export function AudienceStep({
   onOpenSettings,
   nextLabel = "次へ",
   backLabel = "戻る",
+  householdOnly = false,
+  hideActions = false,
+  heading = "4. 作る相手",
 }: AudienceStepProps) {
   const { show: showToast, dismiss: dismissToast } = useAppToast();
   const [incompleteField, setIncompleteField] = useState<IncompleteField | null>(null);
@@ -252,7 +261,7 @@ export function AudienceStep({
         <Inset pad={5}>
           <Stack gap={5}>
             <h2 id="audience-step-title" tabIndex={-1} ref={headingRef}>
-              4. 作る相手
+              {heading}
             </h2>
             {/* idea では家族安全条件を見せない（安全確認済みと誤認させない・C-I3 / §3.1）
           未選択で全員 blocked のときだけ理由一覧を出す（household 選択前の説明）。 */}
@@ -266,47 +275,49 @@ export function AudienceStep({
                   </p>
                 ) : null,
               )}
-            <div
-              ref={targetModeGroupRef}
-              className="wizard-option-list"
-              role="radiogroup"
-              aria-describedby={modeError != null ? targetModeErrorId : undefined}
-            >
-              {/* 設計 L9: idea を上、household を下 */}
-              <label className="wizard-option">
-                <input
-                  type="radio"
-                  name="audience-mode"
-                  disabled={disabled}
-                  checked={value.targetMode === "idea"}
-                  aria-invalid={modeError != null ? "true" : undefined}
-                  onChange={() => {
-                    setMode("idea");
-                  }}
-                />
-                <span>人数だけ指定してアイデアを見る</span>
-              </label>
-              <label className="wizard-option">
-                <input
-                  type="radio"
-                  name="audience-mode"
-                  disabled={disabled || !hasEligibleMembers}
-                  checked={value.targetMode === "household"}
-                  aria-invalid={modeError != null ? "true" : undefined}
-                  aria-describedby={
-                    !hasEligibleMembers
-                      ? "audience-household-disabled-reason"
-                      : modeError != null
-                        ? targetModeErrorId
-                        : undefined
-                  }
-                  onChange={() => {
-                    setMode("household");
-                  }}
-                />
-                <span>家族に合わせて作る</span>
-              </label>
-            </div>
+            {!householdOnly ? (
+              <div
+                ref={targetModeGroupRef}
+                className="wizard-option-list"
+                role="radiogroup"
+                aria-describedby={modeError != null ? targetModeErrorId : undefined}
+              >
+                {/* 設計 L9: idea を上、household を下 */}
+                <label className="wizard-option">
+                  <input
+                    type="radio"
+                    name="audience-mode"
+                    disabled={disabled}
+                    checked={value.targetMode === "idea"}
+                    aria-invalid={modeError != null ? "true" : undefined}
+                    onChange={() => {
+                      setMode("idea");
+                    }}
+                  />
+                  <span>人数だけ指定してアイデアを見る</span>
+                </label>
+                <label className="wizard-option">
+                  <input
+                    type="radio"
+                    name="audience-mode"
+                    disabled={disabled || !hasEligibleMembers}
+                    checked={value.targetMode === "household"}
+                    aria-invalid={modeError != null ? "true" : undefined}
+                    aria-describedby={
+                      !hasEligibleMembers
+                        ? "audience-household-disabled-reason"
+                        : modeError != null
+                          ? targetModeErrorId
+                          : undefined
+                    }
+                    onChange={() => {
+                      setMode("household");
+                    }}
+                  />
+                  <span>家族に合わせて作る</span>
+                </label>
+              </div>
+            ) : null}
             {modeError != null && (
               <p id={targetModeErrorId} role="alert">
                 {modeError}
@@ -483,21 +494,23 @@ export function AudienceStep({
                 )}
               </div>
             )}
-            <div className="wizard-actions">
-              {onBack !== undefined && (
-                <Button variant="secondary" disabled={disabled} onClick={onBack}>
-                  {backLabel}
+            {!hideActions ? (
+              <div className="wizard-actions">
+                {onBack !== undefined && (
+                  <Button variant="secondary" disabled={disabled} onClick={onBack}>
+                    {backLabel}
+                  </Button>
+                )}
+                <Button
+                  variant="primary"
+                  // incomplete では止めない。親の isSaving / idea 確定中だけ disabled。
+                  disabled={disabled}
+                  onClick={handleNext}
+                >
+                  {nextLabel}
                 </Button>
-              )}
-              <Button
-                variant="primary"
-                // incomplete では止めない。親の isSaving / idea 確定中だけ disabled。
-                disabled={disabled}
-                onClick={handleNext}
-              >
-                {nextLabel}
-              </Button>
-            </div>
+              </div>
+            ) : null}
           </Stack>
         </Inset>
       </Surface>

@@ -35,6 +35,25 @@ function renderAudience(ui: ReactElement): ReturnType<typeof render> {
 }
 
 describe("AudienceStep layout and selected safety summary", () => {
+  it("supports a household-only form without wizard actions", () => {
+    renderAudience(
+      <AudienceStep
+        value={{ targetMode: "household", targetMemberIds: [memberA.id], servings: null }}
+        eligibleMembers={[memberA]}
+        onChange={vi.fn()}
+        onNext={vi.fn()}
+        householdOnly
+        hideActions
+        heading="作る相手"
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "作る相手" })).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "次へ" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /はな/ })).toBeInTheDocument();
+  });
+
   it("orders idea radio before household", () => {
     renderAudience(
       <AudienceStep
