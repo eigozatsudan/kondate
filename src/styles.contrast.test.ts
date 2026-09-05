@@ -326,6 +326,8 @@ const allowedProtectedSelectors = new Set([
   ".wizard-description, .choice-card-description, .inline-notice-body",
   ".wizard-actions",
   ".wizard-actions > :only-child",
+  ".wizard-skip-row",
+  ".wizard-skip-row > *",
   ".wizard-action",
   ".choice-card",
   ".choice-card:disabled",
@@ -594,6 +596,9 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
   },
   // 戻る先が無い「1. 食事」で次へが左端に落ちないよう、単独の操作は右へ送る。
   ".wizard-actions > :only-child": { "margin-inline-start": "auto" },
+  // 既存のスキップ操作行は子要素の縮小を許す配置だけを認め、宣言の追加も完全一致で検出する。
+  ".wizard-skip-row": { display: "flex", "min-width": "0" },
+  ".wizard-skip-row > *": { "min-width": "0" },
   ".wizard-action": { "min-height": "44px" },
   ".guided-planner-theme .wizard-reset-button": {
     display: "inline-flex",
@@ -1572,11 +1577,16 @@ describe("guided planner theme", () => {
     const fixture = `
       .choice-card { background: var(--surface); }
       .choice-card { background-color: transparent; }
+      .wizard-skip-row { display: flex; min-width: 0; gap: 1px; }
       .wizard-transition { animation: wizard-enter 180ms ease-out; }
       .wizard-transition { transition: transform 180ms ease-out; }
     `;
 
-    expect(unexpectedProtectedSelectors(fixture)).toEqual([".choice-card", ".wizard-transition"]);
+    expect(unexpectedProtectedSelectors(fixture)).toEqual([
+      ".choice-card",
+      ".wizard-skip-row",
+      ".wizard-transition",
+    ]);
     expect(unexpectedMotionRules(fixture)).toEqual([".wizard-transition"]);
   });
 
