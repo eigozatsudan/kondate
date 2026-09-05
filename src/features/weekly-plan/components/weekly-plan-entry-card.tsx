@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router";
 import {
   navigateAfterPlannerLeaveFlush,
   shouldInterceptPlannerLeaveClick,
-} from "../../planner/planner-leave-flush.js";
+} from "@/features/planner/planner-leave-flush";
 
 export type WeeklyPlanEntryCardProps = {
   plusEntitled: boolean;

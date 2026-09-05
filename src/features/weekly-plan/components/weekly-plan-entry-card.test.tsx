@@ -4,14 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { WeeklyPlanEntryCard } from "./weekly-plan-entry-card.js";
 
-vi.mock("../../planner/planner-leave-flush.js", () => ({
+vi.mock("@/features/planner/planner-leave-flush", () => ({
   navigateAfterPlannerLeaveFlush: vi.fn(),
   shouldInterceptPlannerLeaveClick: () => true,
 }));
 
 describe("WeeklyPlanEntryCard", () => {
   it("shows the create CTA for Plus users and routes through leave-flush", async () => {
-    const { navigateAfterPlannerLeaveFlush } = await import("../../planner/planner-leave-flush.js");
+    const { navigateAfterPlannerLeaveFlush } =
+      await import("@/features/planner/planner-leave-flush");
     render(
       <MemoryRouter>
         <WeeklyPlanEntryCard plusEntitled={true} />
