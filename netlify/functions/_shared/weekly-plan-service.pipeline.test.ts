@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import { HttpError } from "./http.js";
 import type { AdminSupabaseClient } from "./supabase-admin.js";
 import type { WeeklyPlanDeps } from "./weekly-plan-service.js";
@@ -209,6 +210,200 @@ describe("runWeeklyPlan — fresh generation happy path", () => {
     expect(rpcNames()).toContain("delete_weekly_plan_intent");
     expect(result.days).toHaveLength(7);
     expect(result.staleSafety).toBe(false);
+  });
+});
+
+describe("runWeeklyPlan — persisted safety_fingerprint must match the condition that validated the menu (P2 advレビュー修正A)", () => {
+  it("stores freshSafety's fingerprint (post-generation re-check), not preReserveSafety's", async () => {
+    // loadWeeklyPlanInspectionSafety は新規生成パスで4回呼ばれる:
+    // 1回目 手順5（reserve 前 422 集合、結果は破棄）、2回目 preReserveSafety（条件A）、
+    // 3回目 markGateSafety、4回目 freshSafety（条件C）。
+    // dictionaryVersion を2回目まで固定し3回目以降で変えて、A と C の fingerprint を分ける。
+    let safetyCallCount = 0;
+    vi.mocked(loadCurrentSafetyContext).mockImplementation(() => {
+      safetyCallCount += 1;
+      return Promise.resolve({
+        dictionaryVersion: safetyCallCount <= 2 ? "v1" : "v2",
+        foodRuleVersion: "v1",
+        requestText: "",
+        members: [
+          {
+            householdMemberId: sampleMemberId,
+            anonymousRef: "member_1",
+            ageBand: "adult" as const,
+            allergyStatus: "none" as const,
+            allergenIds: [],
+            hasUnmappedCustomAllergy: false,
+            customAllergies: [],
+            requiredSafetyConstraints: [],
+            unsupportedDietStatus: "none" as const,
+            unsupportedDietKinds: [],
+          },
+        ],
+        allergenDictionary: { version: "test", catalog: [], aliases: [] },
+        foodSafetyRules: [],
+      });
+    });
+
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "17171717-1717-4171-8171-171717171717",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    let capturedInsertPayload: Record<string, unknown> | undefined;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        const query = thenableQuery({
+          data: { id: "18181818-1818-4181-8181-181818181818" },
+          error: null,
+        });
+        query.insert = vi.fn((payload: Record<string, unknown>) => {
+          capturedInsertPayload = payload;
+          return query;
+        });
+        return query;
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: sampleAiMenu(),
+      modelId: "m1",
+    });
+
+    await runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest());
+
+    const baseSafetyContext = {
+      foodRuleVersion: "v1",
+      requestText: "",
+      members: [
+        {
+          householdMemberId: sampleMemberId,
+          anonymousRef: "member_1",
+          ageBand: "adult" as const,
+          allergyStatus: "none" as const,
+          allergenIds: [],
+          hasUnmappedCustomAllergy: false,
+          customAllergies: [],
+          requiredSafetyConstraints: [],
+          unsupportedDietStatus: "none" as const,
+          unsupportedDietKinds: [],
+        },
+      ],
+      allergenDictionary: { version: "test", catalog: [], aliases: [] },
+      foodSafetyRules: [],
+    };
+    const conditionAFingerprint = createCurrentSafetyFingerprint({
+      ...baseSafetyContext,
+      dictionaryVersion: "v1",
+    });
+    const conditionCFingerprint = createCurrentSafetyFingerprint({
+      ...baseSafetyContext,
+      dictionaryVersion: "v2",
+    });
+
+    expect(conditionAFingerprint).not.toBe(conditionCFingerprint);
+    expect(capturedInsertPayload?.safety_fingerprint).toBe(conditionCFingerprint);
+  });
+});
+
+describe("replaySucceededWeeklyPlan — concurrent insert conflict recovers the winner's row (P3 advレビュー修正C)", () => {
+  it("returns 200 with the existing row's weeklyPlanId when insert fails and a concurrent winner already saved it", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "19191919-1919-4191-8191-191919191919",
+            idempotency_key: "k1",
+            status: "succeeded",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "19191919-1919-4191-8191-191919191919",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    let weeklyPlansCallCount = 0;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        weeklyPlansCallCount += 1;
+        if (weeklyPlansCallCount === 1) {
+          // 1回目: request_id で既存行チェック → まだ無い。
+          return thenableQuery({ data: null, error: null });
+        }
+        if (weeklyPlansCallCount === 2) {
+          // 2回目: insert → unique 制約違反を模した失敗（エラーコードには依存しない実装）。
+          return thenableQuery({ data: null, error: { message: "duplicate key" } });
+        }
+        // 3回目: 再取得 → 同時実行の勝者が既に保存した行が見つかる。
+        return thenableQuery({
+          data: {
+            id: "20202020-2020-4202-8202-202020202020",
+            week_start: "2026-09-07",
+            preference_snapshot: {
+              targetMemberIds: [sampleMemberId],
+              cuisineGenre: "japanese",
+              budgetPreference: null,
+              noveltyPreference: null,
+            },
+            safety_fingerprint: "a".repeat(64),
+            days: sampleAiMenu().days,
+          },
+          error: null,
+        });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(result.weeklyPlanId).toBe("20202020-2020-4202-8202-202020202020");
+    expect(rpcNames()).not.toContain("reserve_flyer_weekly");
   });
 });
 

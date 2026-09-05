@@ -375,6 +375,30 @@ async function buildResultFromRow(
 }
 
 /**
+ * P3修正C: weekly_plans.request_id の unique 制約により、同一キーの同時復元で
+ * 片方の insert が一意制約違反になり得る（二重枠消費は finalize_flyer_weekly_success の
+ * status='succeeded' 早期 return で既に閉じているので、insert の失敗は「もう片方が
+ * 先に保存した」ことを示すだけ）。エラーコード（23505 等）には依存せず、insert 失敗を
+ * 捕まえたら request_id で引き直し、見つかればそれを buildResultFromRow で返す。
+ * 見つからなければ null を返し、呼び出し元が元のエラーを rethrow する。
+ */
+async function recoverExistingWeeklyPlanRow(
+  admin: AdminSupabaseClient,
+  userId: string,
+  requestId: string,
+): Promise<WeeklyPlanResult | null> {
+  const { data: rowRaw, error: rowError } = await admin
+    .from("weekly_plans")
+    .select("id, week_start, preference_snapshot, safety_fingerprint, days")
+    .eq("request_id", requestId)
+    .maybeSingle();
+  if (rowError !== null || rowRaw === null) return null;
+  const row = weeklyPlanRowSchema.safeParse(rowRaw);
+  if (!row.success) return null;
+  return buildResultFromRow(admin, userId, row.data);
+}
+
+/**
  * finalize_flyer_weekly_success を確定するまで 200 にしない。失敗時は stash して 500。
  * finalize_flyer_weekly_failure は呼ばない（reserved を解放すると成功枠を踏まず 200 を繰り返せる）。
  */
@@ -502,15 +526,23 @@ async function replaySucceededWeeklyPlan(
       ? reserve.week_start
       : (parsedResult.data.weekStartJst ?? jstWeekStartMonday(new Date()));
   const resultMenu: WeeklyPlanAiMenuResult = { ...parsedResult.data, weekStartJst: weekStart };
-  const inserted = await insertWeeklyPlanRow(
-    admin,
-    userId,
-    reserve.request_id,
-    weekStart,
-    intent.data.preference_snapshot,
-    intent.data.safety_fingerprint,
-    resultMenu,
-  );
+  let inserted: { id: string };
+  try {
+    inserted = await insertWeeklyPlanRow(
+      admin,
+      userId,
+      reserve.request_id,
+      weekStart,
+      intent.data.preference_snapshot,
+      intent.data.safety_fingerprint,
+      resultMenu,
+    );
+  } catch (error: unknown) {
+    // P3修正C: 同時実行の勝者が既に保存した行があればそれを返す。
+    const recovered = await recoverExistingWeeklyPlanRow(admin, userId, reserve.request_id);
+    if (recovered !== null) return recovered;
+    throw error;
+  }
   await rpcUntyped(admin, "delete_weekly_plan_intent", { p_request_id: reserve.request_id });
   const { staleSafety, partialHousehold } = await computeStaleSafetyAndPartial(
     admin,
@@ -586,15 +618,23 @@ async function replayStashedWeeklyPlan(
   }
 
   await commitWeeklyPlanFinalize(admin, requestId, resultMenu);
-  const inserted = await insertWeeklyPlanRow(
-    admin,
-    userId,
-    requestId,
-    weekStart,
-    intent.data.preference_snapshot,
-    intent.data.safety_fingerprint,
-    resultMenu,
-  );
+  let inserted: { id: string };
+  try {
+    inserted = await insertWeeklyPlanRow(
+      admin,
+      userId,
+      requestId,
+      weekStart,
+      intent.data.preference_snapshot,
+      intent.data.safety_fingerprint,
+      resultMenu,
+    );
+  } catch (error: unknown) {
+    // P3修正C: 同時実行の勝者が既に保存した行があればそれを返す。
+    const recovered = await recoverExistingWeeklyPlanRow(admin, userId, requestId);
+    if (recovered !== null) return recovered;
+    throw error;
+  }
   await rpcUntyped(admin, "delete_weekly_plan_intent", { p_request_id: requestId });
 
   const partialHousehold = await computePartialHousehold(
@@ -919,9 +959,12 @@ export async function runWeeklyPlan(
     });
     mapWeeklyPlanFailureHttp("weekly_plan_invalid_ai_response");
   }
+  // P2修正A: 保存する safety_fingerprint は「実際に献立を検査した条件」（freshSafety）の
+  // ものでなければならない。try の外へ持ち出し、catch の挙動・写像（WP-P-1）は変えない。
+  let freshSafety: CurrentSafetyContext;
   try {
     assertFlyerMenuHasNoGuaranteePhrases(parsedMenu.data);
-    const freshSafety = await loadWeeklyPlanInspectionSafety(
+    freshSafety = await loadWeeklyPlanInspectionSafety(
       admin,
       deps.user.userId,
       request.targetMemberIds,
@@ -951,6 +994,11 @@ export async function runWeeklyPlan(
   // 手順11: finalize_flyer_weekly_success
   await commitWeeklyPlanFinalize(admin, requestId, resultMenu);
 
+  // P2修正A: 保存する指紋は preReserveFingerprint（intent 用）ではなく、
+  // 実際に assertFlyerMenuAgainstSafety に使った freshSafety の指紋にする
+  // （GET 経路の staleSafety 比較が「検査した条件」と一致している必要がある）。
+  const validatedFingerprint = createCurrentSafetyFingerprint(freshSafety);
+
   // 手順12: weekly_plans へ insert
   const inserted = await insertWeeklyPlanRow(
     admin,
@@ -958,7 +1006,7 @@ export async function runWeeklyPlan(
     requestId,
     weekStart,
     snapshot,
-    preReserveFingerprint,
+    validatedFingerprint,
     resultMenu,
   );
 

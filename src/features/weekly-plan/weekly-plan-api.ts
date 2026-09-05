@@ -1,3 +1,4 @@
+import { GENERATION_POST_CLIENT_TIMEOUT_MS } from "@shared/contracts/function-budget";
 import {
   weeklyPlanResultSchema,
   type WeeklyPlanRequest,
@@ -5,8 +6,11 @@ import {
 } from "@shared/contracts/weekly-plan";
 
 /**
- * 週献立API呼び出しのクライアント abort 上限（ms）。
- * usage-today と同様、hung proxy で永久 pending にならないよう 30s。
+ * 週献立 GET のクライアント abort 上限（ms）。GET は読取のみでサーバ側の生成予算とは
+ * 無関係なので、usage-today と同様 hung proxy で永久 pending にならないよう 30s のまま。
+ * POST（サーバの生成予算に縛られる）には使わない。POST は GENERATION_POST_CLIENT_TIMEOUT_MS を使う
+ * （下記 postWeeklyPlan 参照。P2修正B: サーバ予算 55s より短い 30s で abort すると、
+ * サーバが finalize/insert を完了しているのにクライアント側では失敗になり得た）。
  */
 export const WEEKLY_PLAN_CLIENT_TIMEOUT_MS = 30_000;
 
@@ -50,7 +54,7 @@ export async function postWeeklyPlan(
       authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(WEEKLY_PLAN_CLIENT_TIMEOUT_MS),
+    signal: AbortSignal.timeout(GENERATION_POST_CLIENT_TIMEOUT_MS),
   });
   return parseWeeklyPlanResponse(response);
 }

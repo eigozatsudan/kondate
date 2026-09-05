@@ -1,5 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { postWeeklyPlan, getWeeklyPlanById, WeeklyPlanApiError } from "./weekly-plan-api.js";
+import {
+  FUNCTION_TOTAL_BUDGET_MS,
+  GENERATION_POST_CLIENT_TIMEOUT_MS,
+} from "@shared/contracts/function-budget";
+import {
+  postWeeklyPlan,
+  getWeeklyPlanById,
+  WeeklyPlanApiError,
+  WEEKLY_PLAN_CLIENT_TIMEOUT_MS,
+} from "./weekly-plan-api.js";
 
 // weeklyPlanResultSchema.days は .length(7)。postWeeklyPlan / getWeeklyPlanById が
 // 内部で parse するため、fixture は必ず 7 日ぶん埋める（.length(7) は緩めない）。
@@ -67,6 +76,18 @@ describe("postWeeklyPlan", () => {
     });
     await expect(promise).rejects.toBeInstanceOf(WeeklyPlanApiError);
     await expect(promise).rejects.toMatchObject({ code: "weekly_plan_requires_plus", status: 403 });
+  });
+});
+
+describe("POST abort timeout must stay outside the server budget (P2 fix B)", () => {
+  it("uses a POST abort ceiling larger than the GET ceiling and the server's total budget", () => {
+    // 数値リテラルでは書かない。POST は GENERATION_POST_CLIENT_TIMEOUT_MS
+    // （FUNCTION_TOTAL_BUDGET_MS + headroom, shared/contracts/function-budget.ts 由来）を
+    // 使うべきで、GET 用の WEEKLY_PLAN_CLIENT_TIMEOUT_MS（30s 固定）より短くなってはいけない。
+    // これが崩れると、サーバが finalize/insert を完了しているのに POST が先に abort し、
+    // クライアント側だけ失敗扱いになる（Plus の週次成功枠は限られているため実害が出る）。
+    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeGreaterThan(WEEKLY_PLAN_CLIENT_TIMEOUT_MS);
+    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeGreaterThan(FUNCTION_TOTAL_BUDGET_MS);
   });
 });
 
