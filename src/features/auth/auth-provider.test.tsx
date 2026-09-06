@@ -1101,7 +1101,9 @@ describe("AuthProvider", () => {
       </AuthProvider>,
     );
     await screen.findByText("unauthenticated");
-    expect(recovery.mock.calls.length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => {
+      expect(recovery.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
 
     // 別経路（magic/OAuth A）が先に complete
     await act(async () => {
