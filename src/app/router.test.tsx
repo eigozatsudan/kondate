@@ -114,6 +114,19 @@ describe("app router", () => {
     },
   );
 
+  it.each(["/weekly", "/weekly/:weeklyPlanId"])(
+    "%s の画面コードをルート解決時まで読み込まず、RequireSession 配下にあり追加ガードを持たない",
+    (path) => {
+      const router = createAppRouter();
+      const route = findRoute(router.routes, path);
+      const ancestors = findAncestorElementTypes(router.routes, path);
+      expect(route?.lazy).toEqual(expect.any(Function));
+      expect(route?.element).toBeUndefined();
+      expect(ancestors).toContain(RequireSession);
+      router.dispose();
+    },
+  );
+
   it("/welcome と /onboarding は RequireSession 配下に置かれる", () => {
     const router = createAppRouter();
     for (const path of ["/welcome", "/onboarding"]) {

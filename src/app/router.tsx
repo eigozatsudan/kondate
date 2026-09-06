@@ -150,6 +150,26 @@ export function createAppRouter(): AppRouter {
                     return { Component: PlusLandingPage };
                   },
                 },
+                {
+                  path: "/weekly",
+                  lazy: async () => {
+                    const { WeeklyPlanFormRoute } = await withTimeout(
+                      import("@/features/weekly-plan/pages/weekly-plan-form-route"),
+                      COLD_START_SESSION_DEADLINE_MS,
+                    );
+                    return { Component: WeeklyPlanFormRoute };
+                  },
+                },
+                {
+                  path: "/weekly/:weeklyPlanId",
+                  lazy: async () => {
+                    const { WeeklyPlanResultRoute } = await withTimeout(
+                      import("@/features/weekly-plan/pages/weekly-plan-result-route"),
+                      COLD_START_SESSION_DEADLINE_MS,
+                    );
+                    return { Component: WeeklyPlanResultRoute };
+                  },
+                },
               ],
             },
           ],
