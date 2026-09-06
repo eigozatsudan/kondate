@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
@@ -8,6 +8,7 @@ import { WeeklyPlanResultPage } from "./weekly-plan-result-page";
 const getWeeklyPlanByIdMock = vi.hoisted(() => vi.fn());
 const getPlannerDraftMock = vi.hoisted(() => vi.fn());
 const saveMock = vi.hoisted(() => vi.fn());
+const navigateMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../weekly-plan-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../weekly-plan-api")>();
@@ -26,6 +27,11 @@ vi.mock("../../planner/planner-api", async (importOriginal) => {
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({}),
 }));
+
+vi.mock("react-router", async (importOriginal) => {
+  const original = await importOriginal<typeof import("react-router")>();
+  return { ...original, useNavigate: () => navigateMock };
+});
 
 type SampleDay = {
   dayIndex: number;
@@ -49,23 +55,38 @@ function makeDay(overrides: Partial<SampleDay> = {}): SampleDay {
 }
 
 const dayLabels = ["月", "火", "水", "木", "金", "土", "日"];
+const dayMains = [
+  "鶏の照り焼き",
+  "豚肉の生姜焼き",
+  "鮭の塩焼き",
+  "麻婆豆腐",
+  "カレーライス",
+  "餃子",
+  "おでん",
+];
+
+function makeSampleDays(): SampleDay[] {
+  return [1, 2, 3, 4, 5, 6, 7].map((dayIndex) =>
+    makeDay({
+      dayIndex,
+      label: dayLabels[dayIndex - 1]!,
+      mainName: dayMains[dayIndex - 1]!,
+      ingredients: [`具材${String(dayIndex)}`],
+    }),
+  );
+}
 
 const samplePlan = {
   weeklyPlanId: "33333333-3333-4333-8333-333333333333",
   weekStartJst: "2026-09-07",
-  days: [1, 2, 3, 4, 5, 6, 7].map((dayIndex) =>
-    makeDay({
-      dayIndex,
-      label: dayLabels[dayIndex - 1]!,
-    }),
-  ),
+  days: makeSampleDays(),
   targetMemberIds: ["m1"],
   cuisineGenre: "japanese" as const,
   partialHousehold: false,
   staleSafety: false,
 };
 
-function renderPage() {
+function renderPage(options?: { currentCompleteMemberIds?: readonly string[] }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
@@ -74,7 +95,7 @@ function renderPage() {
           accessToken="tok"
           weeklyPlanId={samplePlan.weeklyPlanId}
           userId="u1"
-          currentCompleteMemberIds={["m1"]}
+          currentCompleteMemberIds={options?.currentCompleteMemberIds ?? ["m1"]}
         />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -82,6 +103,10 @@ function renderPage() {
 }
 
 describe("WeeklyPlanResultPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders 7 days and hands off a day to the planner draft", async () => {
     getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
     getPlannerDraftMock.mockResolvedValue(null);
@@ -89,7 +114,7 @@ describe("WeeklyPlanResultPage", () => {
 
     renderPage();
     await waitFor(() => {
-      expect(screen.getAllByText("鶏の照り焼き")).toHaveLength(7);
+      expect(screen.getAllByText("鶏の照り焼き")).toHaveLength(1);
     });
     const buttons = screen.getAllByRole("button", { name: "この日の献立を作る" });
     expect(buttons).toHaveLength(7);
@@ -136,5 +161,61 @@ describe("WeeklyPlanResultPage", () => {
     });
     // 他の6日は notes が null なので描画されない
     expect(screen.queryAllByText("冷凍保存できます")).toHaveLength(1);
+  });
+
+  it("renders day headings sorted by dayIndex even when the API returns days out of order, and navigates to /planner after handoff", async () => {
+    const shuffledPlan = { ...samplePlan, days: [...samplePlan.days].reverse() };
+    getWeeklyPlanByIdMock.mockResolvedValue(shuffledPlan);
+    getPlannerDraftMock.mockResolvedValue(null);
+    saveMock.mockResolvedValue({ revision: 1 });
+
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(7);
+    });
+    const headings = screen.getAllByRole("heading", { level: 2 });
+    expect(headings.map((heading) => heading.textContent)).toEqual(dayLabels);
+
+    const buttons = screen.getAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/planner");
+    });
+  });
+
+  it("hands off the confirmed day's data after an overwrite confirmation, not a stale one", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    // targetMode: "idea" は draftNeedsOverwriteConfirmation を無条件に true にする既存下書き
+    getPlannerDraftMock.mockResolvedValue({ targetMode: "idea", revision: 5 });
+    saveMock.mockResolvedValue({ revision: 6 });
+
+    renderPage();
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    expect(buttons).toHaveLength(7);
+    await userEvent.click(buttons[6]!); // 7日目（日）
+
+    const confirmButton = await screen.findByRole("button", { name: "置き換える" });
+    await userEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(saveMock).toHaveBeenCalledTimes(1);
+    });
+    const [, , input] = saveMock.mock.calls[0] as [unknown, string, { memo: string }];
+    expect(input.memo).toBe(`主菜: ${dayMains[6]!}`);
+  });
+
+  it("shows an error when no household member is eligible for handoff", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    renderPage({ currentCompleteMemberIds: [] });
+
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("引き継ぎできる家族がいません。作り直してください。"),
+      ).toBeInTheDocument();
+    });
+    expect(saveMock).not.toHaveBeenCalled();
   });
 });
