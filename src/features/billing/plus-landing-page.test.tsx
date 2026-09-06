@@ -245,4 +245,22 @@ describe("PlusLandingPage", () => {
       expect(onPortal).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("no longer mentions チラシ anywhere in the LEAD, card, or comparison table", () => {
+    renderLp({ entitlement: freeOpen });
+    expect(screen.queryByText(/チラシ/)).not.toBeInTheDocument();
+  });
+
+  it("describes 今週の献立 in the third benefit card", () => {
+    renderLp({ entitlement: freeOpen });
+    expect(screen.getByRole("heading", { level: 3, name: PLUS_LP_FLYER_TITLE })).toBeVisible();
+    expect(
+      screen.getByText("家族の条件から1週間分の献立の骨組みをつくれます（Plus だけの機能です）。"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows '今週の献立' as the comparison table row heading", () => {
+    renderLp({ entitlement: freeOpen });
+    expect(screen.getByRole("rowheader", { name: "今週の献立" })).toBeInTheDocument();
+  });
 });

@@ -23,7 +23,7 @@ import "./plus-landing-page.css";
 export const PLUS_LP_H1 = "こんだて日和 Plus" as const;
 export const PLUS_LP_LEAD = "献立づくりに、余裕を。" as const;
 export const PLUS_LP_LEAD_BODY =
-  "無料プランでも毎日の一食は十分使えます。Plus は、作成回数に余裕を持たせたり、より丁寧な献立を試したり、チラシ写真から 1 週間の献立をつくったりしたい方向けです。" as const;
+  "無料プランでも毎日の一食は十分使えます。Plus は、作成回数に余裕を持たせたり、より丁寧な献立を試したり、家族の条件から1週間分の献立の骨組みをつくったりしたい方向けです。" as const;
 export const PLUS_LP_LEAD_SUB =
   "月額・年額のどちらかを選び、画面の案内に沿ってお支払いへ進めます。難しい設定は不要です。" as const;
 export const PLUS_LP_TRIAL = "はじめての方は 7 日間お試し（カード登録あり）" as const;
@@ -43,9 +43,9 @@ export const PLUS_LP_QUOTA_BODY =
 export const PLUS_LP_QUALITY_TITLE = "くわしく作る" as const;
 export const PLUS_LP_QUALITY_BODY =
   "献立作成時に「くわしく作る」を選ぶと、より丁寧な献立を目指せます。使える回数には上限があります。" as const;
-export const PLUS_LP_FLYER_TITLE = "チラシから 1 週間" as const;
+export const PLUS_LP_FLYER_TITLE = "今週の献立" as const;
 export const PLUS_LP_FLYER_BODY =
-  "スーパーのチラシ写真を送ると、その特売を踏まえた 1 週間分の献立づくりに進めます（Plus だけの機能です）。" as const;
+  "家族の条件から1週間分の献立の骨組みをつくれます（Plus だけの機能です）。" as const;
 
 // BILL-1: ゲート定数は Settings と共有（LP 専用モジュールに閉じない）
 import {
@@ -60,7 +60,6 @@ const CHECKOUT_GENERIC_ERROR =
 const PORTAL_GENERIC_ERROR =
   "お支払い管理画面を開けませんでした。時間をおいてもう一度お試しください" as const;
 const ENTITLED_KILL_NOTE = "一部機能は現在ご利用いただけません" as const;
-const FLYER_PRIVACY_NOTE = "写真は長期保存しません" as const;
 
 export type PlusLandingPageProps = {
   userId?: string;
@@ -376,9 +375,9 @@ export function PlusLandingPage({
                 </div>
                 <p>{PLUS_LP_FLYER_BODY}</p>
                 <ul className="plus-landing__points">
-                  <li>チラシの写真をアプリに送ります</li>
-                  <li>1 週間分の献立づくりの入口になります</li>
-                  <li>{FLYER_PRIVACY_NOTE}</li>
+                  <li>家族の条件を選ぶだけで7日分の主菜候補が出ます</li>
+                  <li>気になる日をタップして日次の献立づくりへ進めます</li>
+                  <li>週あたりの作成回数には上限があります</li>
                 </ul>
               </li>
             </ul>
@@ -412,7 +411,7 @@ export function PlusLandingPage({
                   <td>あり（回数に限りあり）</td>
                 </tr>
                 <tr>
-                  <th scope="row">チラシから 1 週間</th>
+                  <th scope="row">今週の献立</th>
                   <td>なし</td>
                   <td>あり</td>
                 </tr>
