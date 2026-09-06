@@ -1,5 +1,6 @@
 import type { AiGenerationResponse } from "../../../shared/contracts/generation.js";
 import type { DishRegenerationAiOutput } from "../../../shared/contracts/regeneration.js";
+import type { WeeklyPlanAiMenu } from "../../../shared/contracts/weekly-plan.js";
 
 type ScenarioName =
   | "success"
@@ -29,7 +30,8 @@ type ScenarioName =
   | "must-use-pantry-omission"
   | "unavailable-pantry-quantity"
   | "duplicate-dish-regeneration"
-  | "fallback-model-success";
+  | "fallback-model-success"
+  | "weekly-plan-success";
 
 type DishScenarioName =
   | "dish-replacement"
@@ -37,10 +39,14 @@ type DishScenarioName =
   | "duplicate-dish-regeneration";
 
 export declare const scenarios: Readonly<
-  Record<Exclude<ScenarioName, "malformed-json" | DishScenarioName>, AiGenerationResponse> & {
+  Record<
+    Exclude<ScenarioName, "malformed-json" | DishScenarioName | "weekly-plan-success">,
+    AiGenerationResponse
+  > & {
     readonly "malformed-json": string;
     readonly "dish-replacement": DishRegenerationAiOutput;
     readonly "idea-dish-replacement-1": DishRegenerationAiOutput;
     readonly "duplicate-dish-regeneration": DishRegenerationAiOutput;
+    readonly "weekly-plan-success": WeeklyPlanAiMenu;
   }
 >;

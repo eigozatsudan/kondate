@@ -135,6 +135,19 @@ const success = {
   },
 };
 
+// 週献立（チラシ由来）専用の固定7日分。weeklyPlanAiMenuSchema（Task 1）の形に合わせる。
+const weeklyPlanSuccess = {
+  weekStartJst: "2026-09-07",
+  days: Array.from({ length: 7 }, (_, index) => ({
+    dayIndex: index + 1,
+    label: ["月", "火", "水", "木", "金", "土", "日"][index],
+    mainName: `固定主菜${String(index + 1)}`,
+    sideName: null,
+    ingredients: ["食材A", "食材B"],
+    notes: null,
+  })),
+};
+
 const clone = () => structuredClone(success);
 const ideaServings1 = clone();
 ideaServings1.menu.servings = 1;
@@ -404,4 +417,5 @@ export const scenarios = recursivelyFreeze({
   "over-time-limit": overTime,
   "duplicate-dish-regeneration": duplicateDish,
   "fallback-model-success": fallbackModelSuccess,
+  "weekly-plan-success": weeklyPlanSuccess,
 });

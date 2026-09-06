@@ -16,6 +16,21 @@ services:
       # 製品 max（GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX=500）一杯。
       # 1 suite 送信見積 × safety factor を超えないこと。
       GLOBAL_DAILY_AI_LIMIT: "500"
+      # 週献立/チラシの Plus ゲートは applyQuotaPlan が BILLING_ENABLED に短絡するため、
+      # E2E だけサーバ側課金を有効化する。.env と compose.yaml の既定 false は変更しない。
+      BILLING_ENABLED: "true"
+      # BILLING_ENABLED=true 時、parseStripeConfig（netlify/functions/_shared/env.ts）は
+      # secret / webhook / price×2 を「非空」で必須にする。リポジトリの .env はこれらを
+      # 空文字で持っているため（値は入っていない）、E2E 用のダミー値をここで与えないと
+      # getServerEnv() が server_configuration_invalid を throw し、全 Function が 500 に
+      # なって E2E スイート全体が落ちる。Stripe API は実際には呼ばれない
+      # （週献立は Stripe を触らず、billing 系 spec は page.route でブラウザ側から差し替える）。
+      STRIPE_SECRET_KEY: sk_test_e2e_dummy
+      STRIPE_WEBHOOK_SECRET: whsec_e2e_dummy
+      STRIPE_PRICE_PLUS_MONTHLY: price_e2e_dummy_monthly
+      STRIPE_PRICE_PLUS_YEARLY: price_e2e_dummy_yearly
+      # 値は shared/contracts/billing.ts の STRIPE_API_VERSION と完全一致必須（不一致は throw）。
+      STRIPE_API_VERSION: "2026-06-24.dahlia"
     command: ["node", "tools/run-e2e-app.mjs"]
   auth:
     environment:

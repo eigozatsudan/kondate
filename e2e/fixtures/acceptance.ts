@@ -83,6 +83,50 @@ export async function queryOwnedCounts(
   }
 }
 
+/**
+ * ephemeral ユーザーを Plus（active）として seed する。
+ * 週献立の Plus ゲート（applyQuotaPlan/isFlyerPlusAllowed）は BILLING_ENABLED=true 時、
+ * サーバが private.billing_subscriptions を実際に読んで判定する（page.route では越えられない）。
+ * createServiceAdmin() は public スキーマしか露出しないため private テーブルには届かず、
+ * postgres 所有者の直接 pg 接続（connectOwnedPg）で挿入する。
+ *
+ * stripe_subscription_id は not null unique のため、並列実行や retry での 23505 衝突を避け、
+ * ユーザー ID 由来の値にする（Stripe には実際には送らない、ダミー ID）。
+ * 対象は必ず ephemeral ユーザーに限定すること — 共有 storageState ユーザーを Plus にしない
+ * （Free ケース・billing-plus.spec.ts の weekly-plan-locked 前提が壊れる）。
+ */
+export async function seedPlusSubscription(userId: string): Promise<void> {
+  const parsedUserId = userIdSchema.parse(userId);
+  const client = await connectOwnedPg();
+  try {
+    await client.query(
+      `insert into private.billing_subscriptions (
+         user_id, stripe_subscription_id, stripe_price_id, status,
+         cancel_at_period_end, current_period_start, current_period_end,
+         trial_end, past_due_since
+       )
+       values ($1::uuid, $2, $3, 'active', false, now(), $4::timestamptz, null, null)
+       on conflict (user_id) do update set
+         stripe_subscription_id = excluded.stripe_subscription_id,
+         stripe_price_id = excluded.stripe_price_id,
+         status = excluded.status,
+         cancel_at_period_end = excluded.cancel_at_period_end,
+         current_period_start = excluded.current_period_start,
+         current_period_end = excluded.current_period_end,
+         trial_end = excluded.trial_end,
+         past_due_since = excluded.past_due_since`,
+      [
+        parsedUserId,
+        `sub_e2e_${parsedUserId}`,
+        `price_e2e_${parsedUserId}`,
+        "2099-01-01T00:00:00Z",
+      ],
+    );
+  } finally {
+    await client.end();
+  }
+}
+
 export const requiredNonEmptyFamilies = new Set([
   "public.profiles",
   "public.household_members",

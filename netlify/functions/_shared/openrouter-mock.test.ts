@@ -6,6 +6,7 @@ import {
   menuResponseFormat,
   toAiGenerationResponse,
 } from "../../../shared/contracts/generation.js";
+import { weeklyFlyerMenuResponseFormat } from "../../../shared/contracts/flyer-weekly.js";
 import { scenarios } from "../../../tools/openrouter-mock/fixtures/scenarios.mjs";
 
 function toProviderWireFixture(value: unknown): unknown {
@@ -50,6 +51,7 @@ it("keeps every required adversarial scenario fixed in source control", () => {
     "unsafe-age-shape",
     "unsafe-child-shape",
     "unsupported-medical",
+    "weekly-plan-success",
   ]);
 });
 
@@ -119,4 +121,17 @@ it("keeps the standalone mock response format equal to the checked contract", as
     ),
   ) as unknown;
   expect(artifact).toEqual(menuResponseFormat);
+});
+
+it("keeps the weekly flyer menu mock response format equal to the checked contract", async () => {
+  const artifact = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../tools/openrouter-mock/fixtures/weekly-flyer-menu-response-format.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as unknown;
+  expect(artifact).toEqual(weeklyFlyerMenuResponseFormat);
 });

@@ -1,0 +1,79 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "kondate_weekly_flyer_menu",
+    "strict": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "weekStartJst": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "days": {
+          "minItems": 7,
+          "maxItems": 7,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dayIndex": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 7
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20
+              },
+              "mainName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "sideName": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ingredients": {
+                "minItems": 1,
+                "maxItems": 30,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                }
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": ["dayIndex", "label", "mainName", "ingredients"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["days"],
+      "additionalProperties": false
+    }
+  }
+}

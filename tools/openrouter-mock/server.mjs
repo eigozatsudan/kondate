@@ -11,6 +11,14 @@ const expectedBodyKeys = ["messages", "models", "provider", "response_format", "
 const menuResponseFormat = JSON.parse(
   await readFile(new URL("./fixtures/menu-response-format.json", import.meta.url), "utf8"),
 );
+// 既存の menuResponseFormat と同じ形。shared/contracts からは import しない
+// （コンテナには server.mjs と fixtures/ しかマウントされない。compose.yaml 参照）。
+const weeklyFlyerMenuResponseFormat = JSON.parse(
+  await readFile(
+    new URL("./fixtures/weekly-flyer-menu-response-format.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 const isPlainObject = (value) =>
   value !== null &&
@@ -36,6 +44,10 @@ const isDishRegenerationFormat = (responseFormat) =>
   isPlainObject(responseFormat.json_schema) &&
   responseFormat.json_schema.name === "kondate_dish_regeneration";
 
+// isDishRegenerationFormat と同じ並びに追加。Step 3 の resolvedScenario 分岐からも参照する。
+const isWeeklyFlyerShapedResponseFormat = (responseFormat) =>
+  isDeepStrictEqual(responseFormat, weeklyFlyerMenuResponseFormat);
+
 const isValidBody = (body) => {
   if (!isPlainObject(body) || !hasExactKeys(body, expectedBodyKeys)) return false;
   const { models, messages, provider, response_format: responseFormat, stream } = body;
@@ -45,7 +57,8 @@ const isValidBody = (body) => {
       (models.length === 1 && models[0] === repairModel));
   const responseFormatValid =
     isDeepStrictEqual(responseFormat, menuResponseFormat) ||
-    isDishRegenerationFormat(responseFormat);
+    isDishRegenerationFormat(responseFormat) ||
+    isWeeklyFlyerShapedResponseFormat(responseFormat);
   return (
     modelSequenceValid &&
     models.every((model) => typeof model === "string" && model.endsWith(":free")) &&
@@ -369,6 +382,8 @@ async function handleRequest(request, response) {
   const scenario = Array.isArray(header) ? header[0] : header;
   const repairRequest = body.models.length === 1 && body.models[0] === repairModel;
   const dishMode = isDishRegenerationFormat(body.response_format);
+  // dishMode の直後に追加
+  const weeklyPlanMode = isWeeklyFlyerShapedResponseFormat(body.response_format);
   // 料理単位再生成は default で dish-replacement を返す（success の full_menu 形は拒否される）
   const resolvedScenario =
     scenario === "invalid-then-success"
@@ -377,7 +392,9 @@ async function handleRequest(request, response) {
         : "malformed-json"
       : dishMode && (scenario === "success" || scenario === undefined)
         ? "dish-replacement"
-        : scenario;
+        : weeklyPlanMode && (scenario === "success" || scenario === undefined)
+          ? "weekly-plan-success"
+          : scenario;
   const key = resolvedScenario;
   // idea-servings-N（1..20）は静的 scenarios に無い人数でも合成する。
   // ブラウザ手動操作は X-Kondate-Mock-Scenario を付けないため、default success も
@@ -413,7 +430,7 @@ async function handleRequest(request, response) {
       fixture = applyIdeaMenuShape(fixture, ideaServingsFromKey);
     }
   }
-  if (!dishMode) {
+  if (!dishMode && !weeklyPlanMode) {
     fixture = toMenuGenerationWireResponse(fixture);
   }
   const content = typeof fixture === "string" ? fixture : JSON.stringify(fixture);

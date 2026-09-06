@@ -25,9 +25,20 @@ import type { PlannerSafetyMember } from "@/features/planner/planner-safety-memb
 import type { PlannerStep } from "@/features/planner/model/planner-wizard";
 import { ShoppingListPage } from "@/features/shopping/pages/shopping-list-page";
 import { FreeLandingPage } from "@/features/landing/free-landing-page";
+import { WeeklyPlanFormPage } from "@/features/weekly-plan/pages/weekly-plan-form-page";
+import { WeeklyPlanResultPage } from "@/features/weekly-plan/pages/weekly-plan-result-page";
 import { runAxe } from "@/test/axe";
 import { AppToastProvider } from "@/shared/ui/app-toast";
 import { AppShell } from "./layouts/app-shell";
+
+// Task 17: /weekly, /weekly/:weeklyPlanId のアクセシビリティ回帰。
+// 実 API は呼ばず、weekly-plan-result-page.test.tsx と同型の hoisted mock で結果を固定する。
+const getWeeklyPlanByIdMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/features/weekly-plan/weekly-plan-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/weekly-plan/weekly-plan-api")>();
+  return { ...original, getWeeklyPlanById: getWeeklyPlanByIdMock };
+});
 
 const USER_ID = "10000000-0000-4000-8000-000000000001";
 const MENU_ID = "30000000-0000-4000-8000-000000000001";
@@ -93,6 +104,18 @@ vi.mock("@/shared/lib/supabase", () => ({
       return api;
     },
     removeChannel: vi.fn(),
+    // useLatestWeeklyPlan（WeeklyPlanFormPage）が呼ぶ最小限のチェーンだけ用意する。
+    // 常に「今週の献立はまだ無い」相当（null）を返し、axe 検証をエラー状態にしない。
+    from: () => {
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        order: () => chain,
+        limit: () => chain,
+        maybeSingle: () => Promise.resolve({ data: null, error: null }),
+      };
+      return chain;
+    },
   }),
 }));
 
@@ -473,6 +496,63 @@ describe("route accessibility", () => {
     expect(heading).toBeVisible();
     expect(heading).toHaveAttribute("tabindex", "-1");
     expect(screen.getByRole("button", { name: "次へ" })).toBeVisible();
+  });
+
+  it("shell weekly form page has main menu navigation and a touch-target-sized primary CTA", async () => {
+    const { container } = renderShellRoute(
+      "/weekly",
+      <WeeklyPlanFormPage
+        accessToken="test-token"
+        userId={USER_ID}
+        eligibleMembers={[eligibleMember]}
+        unsatisfiableMemberIds={[]}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "今週の献立をつくる" })).toBeVisible();
+    await expectAccessible(container);
+    expect(screen.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1, name: "今週の献立" })).toBeVisible();
+    // 44×44 CSS px タッチターゲット規約（AGENTS.md）: 共有 Button は .ui-btn で min-height/width 44px。
+    expect(screen.getByRole("button", { name: "今週の献立をつくる" }).className).toContain(
+      "ui-btn",
+    );
+  });
+
+  it("shell weekly result page has main menu navigation and a touch-target-sized day action", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue({
+      weeklyPlanId: "33333333-3333-4333-8333-333333333333",
+      weekStartJst: "2026-09-07",
+      days: Array.from({ length: 7 }, (_, index) => ({
+        dayIndex: index + 1,
+        label: ["月", "火", "水", "木", "金", "土", "日"][index],
+        mainName: `固定主菜${String(index + 1)}`,
+        sideName: null,
+        ingredients: ["食材A"],
+        notes: null,
+      })),
+      targetMemberIds: [eligibleMember.id],
+      cuisineGenre: "japanese" as const,
+      partialHousehold: false,
+      staleSafety: false,
+    });
+    const { container } = renderShellRoute(
+      "/weekly/33333333-3333-4333-8333-333333333333",
+      <WeeklyPlanResultPage
+        accessToken="test-token"
+        weeklyPlanId="33333333-3333-4333-8333-333333333333"
+        userId={USER_ID}
+        currentCompleteMemberIds={[eligibleMember.id]}
+      />,
+    );
+
+    expect(await screen.findAllByRole("button", { name: "この日の献立を作る" })).toHaveLength(7);
+    await expectAccessible(container);
+    expect(screen.getByRole("navigation", { name: "メインメニュー" })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1, name: "今週の献立" })).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "この日の献立を作る" })[0]?.className).toContain(
+      "min-h-11",
+    );
   });
 });
 
