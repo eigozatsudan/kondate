@@ -128,6 +128,7 @@ export function WeeklyPlanFormPage({
   >(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [storedRequest, setStoredRequest] = useState<RequestMetadata | null>(
     initialStored.metadata,
   );
@@ -151,6 +152,7 @@ export function WeeklyPlanFormPage({
         : null,
     );
     setErrorCode(null);
+    setErrorStatus(null);
     submittingRef.current = false;
     setRequestActive(false);
     if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
@@ -195,6 +197,7 @@ export function WeeklyPlanFormPage({
     setRequestActive(true);
     setSubmitError(null);
     setErrorCode(null);
+    setErrorStatus(null);
     const lifecycle = ++lifecycleRef.current;
     let automaticRetries = 0;
     try {
@@ -241,6 +244,7 @@ export function WeeklyPlanFormPage({
               setStoredRequest(null);
             }
             setErrorCode(error.code);
+            setErrorStatus(error.status);
             setSubmitError(error.message);
           } else {
             setSubmitError("週献立を作成できませんでした。同じ条件でもう一度お試しください。");
@@ -289,6 +293,7 @@ export function WeeklyPlanFormPage({
       setStoredRequest(null);
       setSubmitError(null);
       setErrorCode(null);
+      setErrorStatus(null);
     } catch {
       setStorageFailed(true);
       setSubmitError(
@@ -418,11 +423,14 @@ export function WeeklyPlanFormPage({
           {submitError}
         </p>
       ) : null}
-      {errorCode === "weekly_plan_weekly_limit" || errorCode === "weekly_plan_try_limit" ? (
-        <p>次は{nextJstMonday(weekStartJst) ?? "次の月曜日"}から、新しい週の枠を利用できます。</p>
+      {quotaExhausted || errorStatus === 429 ? (
+        <p>
+          週次枠は{nextJstMonday(weekStartJst) ?? "次の月曜日"}から新しい週になります。ほかの
+          利用制限がこの日に解除されるとは限りません。
+        </p>
       ) : null}
       {errorCode === "weekly_plan_invalid_ai_response" ? (
-        <p>前回の依頼は確認できなかったため、新しい依頼として作り直してください。</p>
+        <p>家族の条件に合わなくなりました。作り直してください</p>
       ) : null}
       {(storedRequest?.resultId ?? latest.data) !== null &&
       (storedRequest?.resultId ?? latest.data) !== undefined ? (

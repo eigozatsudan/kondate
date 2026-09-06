@@ -162,6 +162,9 @@ describe("WeeklyPlanFormPage", () => {
     renderPage();
     expect(screen.getByRole("button", { name: "今週の献立をつくる" })).toBeDisabled();
     expect(screen.getByText(/作成上限に達しています/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/週次枠は2026年8月3日（月）から新しい週になります/),
+    ).toBeInTheDocument();
   });
 
   it("blocks while usage is loading and offers retry after a read failure", async () => {
@@ -238,6 +241,64 @@ describe("WeeklyPlanFormPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("この端末で");
     expect(postWeeklyPlanMock).not.toHaveBeenCalled();
     getItem.mockRestore();
+  });
+
+  it("does not POST when storing new request metadata fails", async () => {
+    const originalSetItem = window.sessionStorage.setItem.bind(window.sessionStorage);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((key, value) => {
+      if (key === "weekly-plan-request-metadata") throw new DOMException("blocked");
+      originalSetItem(key, value);
+    });
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
+    expect(postWeeklyPlanMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("この端末で作成を開始できません");
+  });
+
+  it("navigates after success even when storing success metadata fails", async () => {
+    const originalSetItem = window.sessionStorage.setItem.bind(window.sessionStorage);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((key, value) => {
+      if (key === "weekly-plan-request-metadata" && value.includes('"status":"succeeded"')) {
+        throw new DOMException("blocked");
+      }
+      originalSetItem(key, value);
+    });
+    postWeeklyPlanMock.mockResolvedValue({
+      weeklyPlanId: "33333333-3333-4333-8333-333333333333",
+    });
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
+    expect(await screen.findByText("週献立結果")).toBeInTheDocument();
+  });
+
+  it("keeps the API error actionable when metadata removal fails", async () => {
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new DOMException("blocked");
+    });
+    postWeeklyPlanMock.mockRejectedValue(
+      new WeeklyPlanApiError(400, "weekly_plan_invalid_ai_response", "確認できませんでした"),
+    );
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("確認できませんでした");
+    expect(screen.getByRole("button", { name: "新しい依頼として作り直す" })).toBeEnabled();
+  });
+
+  it("ignores a delayed success after unmount without updating storage", async () => {
+    let resolveRequest: ((value: { weeklyPlanId: string }) => void) | undefined;
+    postWeeklyPlanMock.mockImplementation(
+      () => new Promise((resolve) => (resolveRequest = resolve)),
+    );
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const { unmount } = renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
+    const writesBeforeUnmount = setItem.mock.calls.length;
+    unmount();
+    await act(async () => {
+      resolveRequest?.({ weeklyPlanId: "33333333-3333-4333-8333-333333333333" });
+      await Promise.resolve();
+    });
+    expect(setItem).toHaveBeenCalledTimes(writesBeforeUnmount);
   });
 
   it("retries a retained request with its original payload after quota and members change", async () => {
@@ -403,13 +464,36 @@ describe("WeeklyPlanFormPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("失敗しました");
   });
 
-  it("shows the next JST Monday for a 429 response", async () => {
+  it("shows the weekly reset date for any 429 response", async () => {
     postWeeklyPlanMock.mockRejectedValue(
-      new WeeklyPlanApiError(429, "weekly_plan_weekly_limit", "上限です"),
+      new WeeklyPlanApiError(429, "some_other_limit", "上限です"),
     );
     renderPage();
     await userEvent.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
-    expect(await screen.findByText(/次は2026年8月3日（月）/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/週次枠は2026年8月3日（月）から新しい週になります/),
+    ).toBeInTheDocument();
+  });
+
+  it("formats the next weekly boundary across a JST month boundary", () => {
+    useUsageTodayMock.mockReturnValue({
+      data: {
+        ...availableUsageTodayFixture,
+        flyerWeekly: {
+          ...availableUsageTodayFixture.flyerWeekly,
+          successConsumed: 2,
+          successRemaining: 0,
+          weekStartJst: "2026-09-28",
+        },
+      },
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    expect(
+      screen.getByText(/週次枠は2026年10月5日（月）から新しい週になります/),
+    ).toBeInTheDocument();
   });
 
   it("shows recovery actions for a consumed 400 response", async () => {
@@ -424,7 +508,9 @@ describe("WeeklyPlanFormPage", () => {
     );
     renderPage();
     await userEvent.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
-    expect(await screen.findByText(/新しい依頼として作り直してください/)).toBeInTheDocument();
+    expect(
+      await screen.findByText("家族の条件に合わなくなりました。作り直してください"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "前回の献立を見る" })).toBeInTheDocument();
   });
 
