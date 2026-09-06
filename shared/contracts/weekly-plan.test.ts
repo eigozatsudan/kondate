@@ -57,12 +57,27 @@ describe("weeklyPlanResultSchema", () => {
     days: Array.from({ length: 7 }, (_, index) => sampleDay(index + 1)),
     targetMemberIds: ["22222222-2222-4222-8222-222222222222"],
     cuisineGenre: "japanese" as const,
+    budgetPreference: null,
+    noveltyPreference: null,
     partialHousehold: false,
     staleSafety: false,
   };
 
   it("accepts the base shape", () => {
     expect(weeklyPlanResultSchema.safeParse(baseResult).success).toBe(true);
+  });
+
+  it("carries budgetPreference/noveltyPreference through when non-null", () => {
+    const result = weeklyPlanResultSchema.safeParse({
+      ...baseResult,
+      budgetPreference: "economy",
+      noveltyPreference: "twist",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.budgetPreference).toBe("economy");
+      expect(result.data.noveltyPreference).toBe("twist");
+    }
   });
 
   it("requires exactly 7 unique days", () => {

@@ -20,7 +20,10 @@ export type WeeklyPlanDraftHandoffOutcome =
  */
 export function buildPlannerDraftInputFromWeeklyPlanDay(
   day: WeeklyFlyerDay,
-  plan: Pick<WeeklyPlanResult, "targetMemberIds" | "cuisineGenre">,
+  plan: Pick<
+    WeeklyPlanResult,
+    "targetMemberIds" | "cuisineGenre" | "budgetPreference" | "noveltyPreference"
+  >,
   currentCompleteMemberIds: readonly string[],
 ): WeeklyPlanDraftHandoffOutcome {
   const currentCompleteMemberIdSet = new Set(currentCompleteMemberIds);
@@ -46,9 +49,10 @@ export function buildPlannerDraftInputFromWeeklyPlanDay(
       targetMemberIds,
       servings: null,
       timeLimitMinutes: null,
-      budgetPreference: null,
+      budgetPreference: plan.budgetPreference,
+      // ingredientPreference: 週献立の入力に対応する項目が無いため今回のスコープ外。null のまま。
       ingredientPreference: null,
-      noveltyPreference: null,
+      noveltyPreference: plan.noveltyPreference,
       avoidIngredients: [],
       memo: truncateCodePoints(`主菜: ${day.mainName}`, PLANNER_MEMO_TEXT_MAX),
       pantrySelections: [],

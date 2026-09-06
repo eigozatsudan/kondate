@@ -51,6 +51,11 @@ export const weeklyPlanResultSchema = z
     days: z.array(weeklyFlyerDaySchema).length(7),
     targetMemberIds: z.array(z.uuid()),
     cuisineGenre: z.enum(cuisineGenres),
+    // 追加修正: spec §3 の下書き引き継ぎ要件を満たすため、weeklyPlanRequestSchema と
+    // 同じ2フィールドをレスポンスにも持たせる（サーバは既に保存・保持しているが、
+    // 従来この strict スキーマに宣言が無く黙って捨てられていた）。
+    budgetPreference: z.enum(budgetPreferences).nullable(),
+    noveltyPreference: z.enum(noveltyPreferences).nullable(),
     /** true: snapshot の targetMemberIds 集合が現行 complete メンバー集合と一致しない */
     partialHousehold: z.boolean(),
     /** サーバ計算。保存時 fingerprint と現行対象メンバー条件の fingerprint が不一致 */

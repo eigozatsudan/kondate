@@ -84,6 +84,8 @@ const samplePlan = {
   days: makeSampleDays(),
   targetMemberIds: ["m1"],
   cuisineGenre: "japanese" as const,
+  budgetPreference: null,
+  noveltyPreference: null,
   partialHousehold: false,
   staleSafety: false,
 };

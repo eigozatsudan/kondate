@@ -369,6 +369,8 @@ async function buildResultFromRow(
     days: row.days,
     targetMemberIds: snapshot.targetMemberIds,
     cuisineGenre: snapshot.cuisineGenre,
+    budgetPreference: snapshot.budgetPreference,
+    noveltyPreference: snapshot.noveltyPreference,
     partialHousehold,
     staleSafety,
   });
@@ -564,6 +566,8 @@ async function replaySucceededWeeklyPlan(
     days: resultMenu.days,
     targetMemberIds: intent.data.preference_snapshot.targetMemberIds,
     cuisineGenre: intent.data.preference_snapshot.cuisineGenre,
+    budgetPreference: intent.data.preference_snapshot.budgetPreference,
+    noveltyPreference: intent.data.preference_snapshot.noveltyPreference,
     partialHousehold,
     staleSafety,
   });
@@ -678,6 +682,8 @@ async function replayStashedWeeklyPlan(
     days: resultMenu.days,
     targetMemberIds: intent.data.preference_snapshot.targetMemberIds,
     cuisineGenre: intent.data.preference_snapshot.cuisineGenre,
+    budgetPreference: intent.data.preference_snapshot.budgetPreference,
+    noveltyPreference: intent.data.preference_snapshot.noveltyPreference,
     partialHousehold,
     staleSafety,
   });
@@ -1094,6 +1100,8 @@ export async function runWeeklyPlan(
     days: resultMenu.days,
     targetMemberIds: snapshot.targetMemberIds,
     cuisineGenre: snapshot.cuisineGenre,
+    budgetPreference: snapshot.budgetPreference,
+    noveltyPreference: snapshot.noveltyPreference,
     partialHousehold,
     staleSafety: false,
   });

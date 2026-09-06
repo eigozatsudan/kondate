@@ -533,6 +533,8 @@ describe("route accessibility", () => {
       })),
       targetMemberIds: [eligibleMember.id],
       cuisineGenre: "japanese" as const,
+      budgetPreference: null,
+      noveltyPreference: null,
       partialHousehold: false,
       staleSafety: false,
     });

@@ -24,6 +24,8 @@ const sampleDay = {
 const samplePlan = {
   targetMemberIds: [MEMBER_ONE_ID, MEMBER_TWO_ID],
   cuisineGenre: "japanese" as const,
+  budgetPreference: null,
+  noveltyPreference: null,
 };
 
 describe("buildPlannerDraftInputFromWeeklyPlanDay", () => {
@@ -50,6 +52,22 @@ describe("buildPlannerDraftInputFromWeeklyPlanDay", () => {
       pantrySelections: [],
     });
     expect(plannerDraftInputSchema.safeParse(outcome.input).success).toBe(true);
+  });
+
+  it("carries budgetPreference/noveltyPreference through when non-null", () => {
+    const plan = {
+      ...samplePlan,
+      budgetPreference: "economy" as const,
+      noveltyPreference: "twist" as const,
+    };
+    const outcome = buildPlannerDraftInputFromWeeklyPlanDay(sampleDay, plan, [
+      MEMBER_ONE_ID,
+      MEMBER_TWO_ID,
+    ]);
+    if ("error" in outcome) throw new Error("expected success");
+
+    expect(outcome.input.budgetPreference).toBe("economy");
+    expect(outcome.input.noveltyPreference).toBe("twist");
   });
 
   it("keeps only target members in the current complete household", () => {

@@ -25,6 +25,8 @@ const sampleResult = {
   days: sampleDays,
   targetMemberIds: [],
   cuisineGenre: "japanese",
+  budgetPreference: null,
+  noveltyPreference: null,
   partialHousehold: false,
   staleSafety: false,
 };
