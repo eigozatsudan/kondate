@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { PlannerDraft } from "@shared/contracts/planner";
+import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { useWeeklyPlan } from "../hooks/use-weekly-plan";
 import {
   buildPlannerDraftInputFromWeeklyPlanDay,
@@ -30,6 +31,8 @@ export type WeeklyPlanResultPageProps = {
 
 const OVERWRITE_CONFIRM_TITLE_ID = "weekly-plan-overwrite-confirm-title";
 
+type HandoffError = { dayIndex: number; message: string };
+
 /** spec §4.3「結果画面」。 */
 export function WeeklyPlanResultPage({
   accessToken,
@@ -40,7 +43,9 @@ export function WeeklyPlanResultPage({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const query = useWeeklyPlan(accessToken, weeklyPlanId);
-  const [handoffError, setHandoffError] = useState<string | null>(null);
+  // レビュー指摘 F-6: 7枚のカードの後ろにまとめて出すと320pxで後半の日が
+  // 画面外に流れるため、エラーは対象日のカードだけに紐づける。
+  const [handoffError, setHandoffError] = useState<HandoffError | null>(null);
   // レビュー指摘 M-6: 二重送信ガード。保存・遷移の完了まで CTA を無効化する。
   const [handoffPending, setHandoffPending] = useState(false);
   // WP-P-5: 上書き確認は dayIndex だけを保持する（build 済みの outcome を保持すると
@@ -48,14 +53,30 @@ export function WeeklyPlanResultPage({
   // 常に元の dayIndex=0 相当に固定される不具合を招く）。
   const [pendingConfirm, setPendingConfirm] = useState<{ dayIndex: number } | null>(null);
   const overwriteContinueRef = useRef<HTMLButtonElement>(null);
+  const overwriteCancelRef = useRef<HTMLButtonElement>(null);
+  // レビュー指摘 F-2: ダイアログを開いた元の CTA を覚えておき、閉じたときに戻す。
+  const pendingConfirmTriggerRef = useRef<HTMLButtonElement | null>(null);
 
-  // レビュー指摘 I-3(b): household-settings-page.tsx の確認ダイアログ前例と同様、
-  // 表示時に継続ボタンへ初期フォーカスする。
+  // レビュー指摘 I-3(b)/F-2: household-settings-page.tsx の確認ダイアログ前例
+  // （追加前確認: 主ボタンへ focus / 閉じたあと trigger へ戻す）と同じ挙動にする。
+  // Escape とフォーカストラップは dialog 本体の onKeyDown で処理する（下記 JSX）。
   useEffect(() => {
-    if (pendingConfirm !== null) overwriteContinueRef.current?.focus();
+    if (pendingConfirm === null) return;
+    const trigger = pendingConfirmTriggerRef.current;
+    overwriteContinueRef.current?.focus();
+    return () => {
+      trigger?.focus();
+    };
   }, [pendingConfirm]);
 
-  if (query.isPending) return <p>読み込み中…</p>;
+  if (query.isPending) {
+    // レビュー指摘 F-5: 読み込み中も他の分岐と同じ page-frame に揃える。
+    return (
+      <main className="page-frame guided-planner-theme">
+        <p>読み込み中…</p>
+      </main>
+    );
+  }
   if (query.isError) {
     // レビュー指摘 M-8: エラー表示に再読み込み手段を足す。
     return (
@@ -91,7 +112,7 @@ export function WeeklyPlanResultPage({
     if (day === undefined) return;
     const outcome = buildPlannerDraftInputFromWeeklyPlanDay(day, plan, currentCompleteMemberIds);
     if ("error" in outcome) {
-      setHandoffError("引き継ぎできる家族がいません。作り直してください。");
+      setHandoffError({ dayIndex, message: "引き継ぎできる家族がいません。作り直してください。" });
       return;
     }
     const client = getBrowserSupabaseClient();
@@ -101,7 +122,10 @@ export function WeeklyPlanResultPage({
     try {
       existing = await getPlannerDraft(client, userId);
     } catch {
-      setHandoffError("献立条件を引き継げませんでした。もう一度お試しください");
+      setHandoffError({
+        dayIndex,
+        message: "献立条件を引き継げませんでした。もう一度お試しください",
+      });
       return;
     }
     if (
@@ -125,7 +149,7 @@ export function WeeklyPlanResultPage({
         await handoffDay(dayIndex, { skipConfirm: options?.skipConfirm, attempt: attempt + 1 });
         return;
       }
-      setHandoffError("献立条件を保存できませんでした。");
+      setHandoffError({ dayIndex, message: "献立条件を保存できませんでした。" });
     }
   }
 
@@ -150,7 +174,9 @@ export function WeeklyPlanResultPage({
         <p role="note">外した家族の条件は見ていません。全員分を作るには作り直してください</p>
       ) : null}
       {plan.staleSafety ? <p role="note">家族の設定が変わっています。作り直してください</p> : null}
-      <p className="muted">安全性を保証するものではありません。必ずご自身でご確認ください。</p>
+      {/* レビュー指摘 F-1: spec §4.3「日次と同じ安全性注記」。日次/履歴/チラシ週献立と
+          同じ共有定数を表示する（flyer-weekly-panel.tsx と同型）。 */}
+      <p className="muted">{MENU_LABEL_DISCLAIMER}</p>
       <ul className="stack">
         {sortedDays.map((day) => {
           const labelId = `weekly-plan-day-${String(day.dayIndex)}-label`;
@@ -174,21 +200,22 @@ export function WeeklyPlanResultPage({
                 className="secondary-button min-h-11"
                 aria-describedby={labelId}
                 disabled={handoffPending}
-                onClick={() => {
+                onClick={(event) => {
+                  pendingConfirmTriggerRef.current = event.currentTarget;
                   runHandoff(day.dayIndex);
                 }}
               >
                 この日の献立を作る
               </button>
+              {handoffError !== null && handoffError.dayIndex === day.dayIndex ? (
+                <p role="alert" className="error">
+                  {handoffError.message}
+                </p>
+              ) : null}
             </li>
           );
         })}
       </ul>
-      {handoffError !== null ? (
-        <p role="alert" className="error">
-          {handoffError}
-        </p>
-      ) : null}
       {pendingConfirm !== null && pendingConfirmDay !== null ? (
         <div className="pantry-expired-dialog-backdrop">
           <div
@@ -196,6 +223,28 @@ export function WeeklyPlanResultPage({
             aria-modal="true"
             aria-labelledby={OVERWRITE_CONFIRM_TITLE_ID}
             className="card stack pantry-expired-dialog-panel"
+            onKeyDown={(event) => {
+              // レビュー指摘 F-2: emergency-menu-page.tsx の alertdialog 前例と同型の
+              // Escape ハンドラ・Tab フォーカストラップ。
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setPendingConfirm(null);
+                return;
+              }
+              if (event.key !== "Tab") return;
+              event.preventDefault();
+              if (event.shiftKey) {
+                if (document.activeElement === overwriteContinueRef.current) {
+                  overwriteCancelRef.current?.focus();
+                } else {
+                  overwriteContinueRef.current?.focus();
+                }
+              } else if (document.activeElement === overwriteContinueRef.current) {
+                overwriteCancelRef.current?.focus();
+              } else {
+                overwriteContinueRef.current?.focus();
+              }
+            }}
           >
             <h2 id={OVERWRITE_CONFIRM_TITLE_ID}>いまの献立条件を置き換えますか</h2>
             {/* レビュー指摘 N-1: 対象曜日を別行で明示する（本文は一字も変えない） */}
@@ -212,6 +261,7 @@ export function WeeklyPlanResultPage({
               置き換える
             </button>
             <button
+              ref={overwriteCancelRef}
               type="button"
               className="secondary-button min-h-11"
               onClick={() => {

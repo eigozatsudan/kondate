@@ -3,7 +3,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
+import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
 import { WeeklyPlanResultPage } from "./weekly-plan-result-page";
+import { DraftRevisionConflictError, plannerKeys } from "../../planner/planner-api";
 
 const getWeeklyPlanByIdMock = vi.hoisted(() => vi.fn());
 const getPlannerDraftMock = vi.hoisted(() => vi.fn());
@@ -86,8 +88,12 @@ const samplePlan = {
   staleSafety: false,
 };
 
-function renderPage(options?: { currentCompleteMemberIds?: readonly string[] }) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderPage(options?: {
+  currentCompleteMemberIds?: readonly string[];
+  client?: QueryClient;
+}) {
+  const client =
+    options?.client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/weekly/33333333-3333-4333-8333-333333333333"]}>
@@ -217,5 +223,80 @@ describe("WeeklyPlanResultPage", () => {
       ).toBeInTheDocument();
     });
     expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  // F-1: spec §4.3「日次と同じ安全性注記」。文言のハードコピーではなく共有定数で検証する。
+  it("shows the shared safety disclaimer used by the daily/flyer menus", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText(MENU_LABEL_DISCLAIMER)).toBeInTheDocument();
+    });
+  });
+
+  // F-3: P-11 の主見出しが対象人数を表示すること
+  it("shows the partial-household member count in the h1 when partialHousehold is true", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue({
+      ...samplePlan,
+      partialHousehold: true,
+      targetMemberIds: ["m1", "m2"],
+    });
+    renderPage();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { level: 1, name: "2 人分の今週の献立" }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  // F-4: I-1 で追加した invalidateQueries が実際に呼ばれること
+  it("invalidates the planner draft query after a successful handoff", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue(null);
+    saveMock.mockResolvedValue({ revision: 1 });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+
+    renderPage({ client });
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: plannerKeys.draft("u1") });
+    });
+  });
+
+  // F-4: DraftRevisionConflictError 時の1回リトライ
+  it("retries the save once after a DraftRevisionConflictError, using the refreshed revision", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      targetMode: "household",
+      mealType: "",
+      mainIngredients: [],
+      cuisineGenre: "",
+      targetMemberIds: [],
+      servings: null,
+      timeLimitMinutes: null,
+      budgetPreference: null,
+      ingredientPreference: null,
+      noveltyPreference: null,
+      avoidIngredients: [],
+      memo: "",
+      pantrySelections: [],
+      revision: 9,
+    });
+    saveMock
+      .mockRejectedValueOnce(new DraftRevisionConflictError())
+      .mockResolvedValueOnce({ revision: 10 });
+
+    renderPage();
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    await waitFor(() => {
+      expect(saveMock).toHaveBeenCalledTimes(2);
+    });
+    const secondCall = saveMock.mock.calls[1] as [unknown, string, unknown, number];
+    expect(secondCall[3]).toBe(9);
   });
 });
