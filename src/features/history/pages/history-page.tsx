@@ -1,6 +1,15 @@
+import type { JSX } from "react";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { useQuery } from "@tanstack/react-query";
 import { hasShoppingIntent } from "@/features/shopping/shopping-intent";
+import { useAuth } from "@/features/auth/use-auth";
+import { householdKeys } from "@/features/household/household-queries";
+import { loadCurrentCompleteMemberIds } from "@/features/weekly-plan/weekly-plan-eligibility.js";
+import { useWeeklyPlanHistory } from "@/features/weekly-plan/weekly-plan-history.js";
+import { WeeklyPlanHistoryCard } from "@/features/weekly-plan/components/weekly-plan-history-card";
+import type { WeeklyPlanHistoryRow } from "@/features/weekly-plan/components/weekly-plan-history-card";
+import { WEEKLY_PLAN_UI_ENABLED } from "@shared/contracts/weekly-plan";
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/feedback";
 import { PageHeader } from "@/shared/ui/page-header";
@@ -10,11 +19,37 @@ import type { HistoryGroup } from "../model/group-history";
 import { HistoryCard } from "../components/history-card";
 import { useHistoryGroups } from "../hooks/use-history";
 
+function WeeklyPlanHistorySlot({
+  weeklyPlans,
+  currentCompleteMemberIds,
+}: {
+  weeklyPlans: readonly WeeklyPlanHistoryRow[];
+  currentCompleteMemberIds: readonly string[];
+}): JSX.Element | null {
+  if (!WEEKLY_PLAN_UI_ENABLED) return null;
+  return (
+    <WeeklyPlanHistoryCard
+      plans={weeklyPlans}
+      currentCompleteMemberIds={currentCompleteMemberIds}
+    />
+  );
+}
+
 /** 履歴一覧ルート。取得状態に応じて loading / empty / list を切り替える。 */
 export function HistoryPage() {
   const [params] = useSearchParams();
   const shoppingIntent = hasShoppingIntent(params);
   const { data = [], isPending, isError, refetch, isFetching } = useHistoryGroups();
+  const { session } = useAuth();
+  const userId = session?.user.id;
+  const weeklyPlansQuery = useWeeklyPlanHistory(WEEKLY_PLAN_UI_ENABLED ? userId : undefined);
+  const completeIdsQuery = useQuery({
+    queryKey: [...householdKeys.members(userId ?? "missing"), "weekly-plan-history-complete-ids"],
+    queryFn: () => loadCurrentCompleteMemberIds(userId ?? ""),
+    enabled: userId !== undefined && WEEKLY_PLAN_UI_ENABLED,
+  });
+  const weeklyPlans = weeklyPlansQuery.data ?? [];
+  const currentCompleteMemberIds = completeIdsQuery.data ?? [];
 
   if (isPending) {
     return (
@@ -50,7 +85,14 @@ export function HistoryPage() {
     );
   }
 
-  return <HistoryPageContent groups={data} shoppingIntent={shoppingIntent} />;
+  return (
+    <HistoryPageContent
+      groups={data}
+      shoppingIntent={shoppingIntent}
+      weeklyPlans={weeklyPlans}
+      currentCompleteMemberIds={currentCompleteMemberIds}
+    />
+  );
 }
 
 function ShoppingIntentBanner() {
@@ -75,9 +117,13 @@ function ShoppingIntentBanner() {
 export function HistoryPageContent({
   groups,
   shoppingIntent = false,
+  weeklyPlans = [],
+  currentCompleteMemberIds = [],
 }: {
   groups: readonly HistoryGroup[];
   shoppingIntent?: boolean;
+  weeklyPlans?: readonly WeeklyPlanHistoryRow[];
+  currentCompleteMemberIds?: readonly string[];
 }) {
   // セッション内のみ。URL / localStorage は使わない（お気に入りフィルタ。設計 L4）。
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -91,6 +137,10 @@ export function HistoryPageContent({
             lead="これまでに作った献立を見返す場所です。下のメニューでは「履歴」と表示されます。"
           />
           {shoppingIntent ? <ShoppingIntentBanner /> : null}
+          <WeeklyPlanHistorySlot
+            weeklyPlans={weeklyPlans}
+            currentCompleteMemberIds={currentCompleteMemberIds}
+          />
           {/*
             EmptyState は h3 固定のため、PageHeader(h1) 直下だと heading-order 違反になる。
             空状態は h2 見出し + 本文 + CTA で組む（axe / accessibility 契約）。
@@ -130,6 +180,10 @@ export function HistoryPageContent({
           lead="過去に作った献立です。タップすると内容を見返せます。お気に入りだけに絞ることもできます。"
         />
         {shoppingIntent ? <ShoppingIntentBanner /> : null}
+        <WeeklyPlanHistorySlot
+          weeklyPlans={weeklyPlans}
+          currentCompleteMemberIds={currentCompleteMemberIds}
+        />
         <label className="history-filter-label">
           <input
             type="checkbox"

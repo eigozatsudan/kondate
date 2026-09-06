@@ -5,6 +5,7 @@ import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
+import type { WeeklyPlanHistoryRow } from "@/features/weekly-plan/components/weekly-plan-history-card";
 import type { HistoryGroup } from "../model/group-history";
 import { HistoryPage, HistoryPageContent } from "./history-page";
 
@@ -15,8 +16,26 @@ const api = vi.hoisted(() => ({
   acceptMenuVersion: vi.fn(),
 }));
 
+// household-api.ts の listHouseholdMembers は
+// .from(table).select("*").eq(...).order(...).order(...) と PostgREST builder を
+// メソッドチェーンした上で await する。チェーンの各メソッドが自分自身を返し、
+// 最終的に thenable（then を持つ）になるビルダーをモックする。
+function emptyQueryBuilder(): Record<string, unknown> {
+  const builder: Record<string, unknown> = {
+    select: () => builder,
+    eq: () => builder,
+    order: () => builder,
+    maybeSingle: () => Promise.resolve({ data: null, error: null }),
+    then: (resolve: (value: { data: unknown[]; error: null }) => void) => {
+      resolve({ data: [], error: null });
+    },
+  };
+  return builder;
+}
+
 vi.mock("@/shared/lib/supabase", () => ({
-  getBrowserSupabaseClient: () => ({}),
+  // このモックはどのテーブルでも空配列を返す（テーブル名では分岐しない）。
+  getBrowserSupabaseClient: () => ({ from: () => emptyQueryBuilder() }),
 }));
 
 vi.mock("../api/history-api", async (importOriginal) => {
@@ -58,6 +77,8 @@ function renderHistoryPage(props: {
   groups: readonly HistoryGroup[];
   shoppingIntent?: boolean;
   initialPath?: string;
+  weeklyPlans?: readonly WeeklyPlanHistoryRow[];
+  currentCompleteMemberIds?: readonly string[];
 }) {
   const router = createMemoryRouter(
     [
@@ -67,12 +88,15 @@ function renderHistoryPage(props: {
           <HistoryPageContent
             groups={props.groups}
             shoppingIntent={props.shoppingIntent ?? false}
+            weeklyPlans={props.weeklyPlans ?? []}
+            currentCompleteMemberIds={props.currentCompleteMemberIds ?? []}
           />
         ),
       },
       { path: "/menus/:menuId", element: <h1>献立結果</h1> },
       { path: "/planner", element: <h1>プランナー</h1> },
       { path: "/shopping", element: <h1>買い物</h1> },
+      { path: "/weekly/:weeklyPlanId", element: <h1>今週の献立</h1> },
     ],
     { initialEntries: [props.initialPath ?? "/history"] },
   );
@@ -243,6 +267,44 @@ describe("HistoryPage", () => {
       "aria-checked",
       "false",
     );
+  });
+
+  it("shows the weekly plan card in the empty-history state", () => {
+    const memberId = "51000000-0000-4000-8000-0000000000a1";
+    renderHistoryPage({
+      groups: [],
+      weeklyPlans: [
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          week_start: "2026-09-07",
+          created_at: "2026-09-01T00:00:00Z",
+          preference_snapshot: { targetMemberIds: [memberId] },
+        },
+      ],
+      currentCompleteMemberIds: [memberId],
+    });
+    expect(screen.getByText("まだ献立がありません")).toBeVisible();
+    expect(screen.getByText("今週の献立")).toBeVisible();
+    expect(screen.getByText("2026-09-07")).toBeVisible();
+  });
+
+  it("shows the weekly plan card alongside the daily history list", () => {
+    const memberId = "51000000-0000-4000-8000-0000000000a1";
+    renderHistoryPage({
+      groups: [sampleGroup],
+      weeklyPlans: [
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          week_start: "2026-09-07",
+          created_at: "2026-09-01T00:00:00Z",
+          preference_snapshot: { targetMemberIds: [memberId] },
+        },
+      ],
+      currentCompleteMemberIds: [memberId],
+    });
+    expect(screen.getByText("採用した献立")).toBeVisible();
+    expect(screen.getByText("今週の献立")).toBeVisible();
+    expect(screen.getByText("2026-09-07")).toBeVisible();
   });
 
   it("hides the favorites switch when there are no groups", () => {
