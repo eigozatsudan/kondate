@@ -48,6 +48,24 @@ describe("resolveFlyerIdempotencyKey", () => {
       expect(error).toMatchObject({ status: 400, code: "invalid_request" });
     }
   });
+
+  it("rejects weekly-plan namespaced keys before they can hit the shared ledger", () => {
+    const namespaced = "wp:11111111-1111-4111-8111-111111111111";
+    const request = new Request("http://127.0.0.1/api/flyer-weekly", {
+      method: "POST",
+      headers: { "Idempotency-Key": namespaced },
+    });
+    expect(() => resolveFlyerIdempotencyKey(request, formWith({}))).toThrow(HttpError);
+    try {
+      resolveFlyerIdempotencyKey(request, formWith({}));
+    } catch (error) {
+      expect(error).toMatchObject({ status: 400, code: "invalid_request" });
+    }
+    const formRequest = new Request("http://127.0.0.1/api/flyer-weekly", { method: "POST" });
+    expect(() =>
+      resolveFlyerIdempotencyKey(formRequest, formWith({ idempotencyKey: namespaced })),
+    ).toThrow(HttpError);
+  });
 });
 
 describe("readFlyerRequestBodyWithLimit (PE10)", () => {

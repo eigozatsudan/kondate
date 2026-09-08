@@ -50,5 +50,6 @@ test.describe("weekly plan", () => {
     });
     await page.getByRole("button", { name: "この日の献立を作る" }).first().click();
     await expect(page).toHaveURL(/\/planner/u, { timeout: 15_000 });
+    await expect(page.getByRole("textbox", { name: "自由メモ" })).toHaveValue("主菜: 固定主菜1");
   });
 });

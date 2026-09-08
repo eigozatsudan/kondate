@@ -40,7 +40,7 @@ export function WeeklyPlanHistoryCard({
       </Link>
       {rest.length > 0 ? (
         <details>
-          <summary>これまでの週献立</summary>
+          <summary className="min-h-11">これまでの週献立</summary>
           <ul>
             {rest.map((plan) => (
               <li key={plan.id}>

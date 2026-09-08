@@ -31,6 +31,25 @@ describe("WeeklyPlanHistoryCard", () => {
     expect(screen.queryByText("外した家族の条件は見ていません")).not.toBeInTheDocument();
   });
 
+  it("gives the past-weeks summary a 44px touch target", () => {
+    render(
+      <MemoryRouter>
+        <WeeklyPlanHistoryCard
+          plans={[
+            basePlan,
+            {
+              ...basePlan,
+              id: "44444444-4444-4444-8444-444444444444",
+              week_start: "2026-08-31",
+            },
+          ]}
+          currentCompleteMemberIds={["m1", "m2"]}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("これまでの週献立")).toHaveClass("min-h-11");
+  });
+
   it("shows nothing when there are no plans", () => {
     const { container } = render(
       <MemoryRouter>

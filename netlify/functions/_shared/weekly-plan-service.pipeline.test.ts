@@ -1889,6 +1889,91 @@ describe("runWeeklyPlan — idempotency key namespace is separated from flyer (F
   });
 });
 
+describe("runWeeklyPlan — post-generation inspection failure (A-M1)", () => {
+  it("keeps safety_context_failed as 500 after mark instead of mapping it to invalid_ai_response", async () => {
+    let safetyCallCount = 0;
+    vi.mocked(loadCurrentSafetyContext).mockImplementation(() => {
+      safetyCallCount += 1;
+      if (safetyCallCount >= 4) {
+        return Promise.reject(
+          new HttpError(500, "safety_context_failed", "現在の安全条件を読み込めませんでした"),
+        );
+      }
+      return Promise.resolve({
+        dictionaryVersion: "v1",
+        foodRuleVersion: "v1",
+        requestText: "",
+        members: [
+          {
+            householdMemberId: sampleMemberId,
+            anonymousRef: "member_1",
+            ageBand: "adult",
+            allergyStatus: "none",
+            allergenIds: [],
+            hasUnmappedCustomAllergy: false,
+            customAllergies: [],
+            requiredSafetyConstraints: [],
+            unsupportedDietStatus: "none",
+            unsupportedDietKinds: [],
+          },
+        ],
+        allergenDictionary: { version: "test", catalog: [], aliases: [] },
+        foodSafetyRules: [],
+      });
+    });
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "55555555-5555-4555-8555-555555555555",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_failure")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        return thenableQuery({ data: null, error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: sampleAiMenu(),
+      modelId: "m1",
+    });
+
+    await expect(
+      runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest()),
+    ).rejects.toMatchObject({
+      status: 500,
+      code: "safety_context_failed",
+    });
+
+    expect(sender).toHaveBeenCalledTimes(1);
+    expect(rpcArgsFor("finalize_flyer_weekly_failure")).toMatchObject({
+      p_request_id: "55555555-5555-4555-8555-555555555555",
+      p_failure_code: "safety_context_failed",
+      p_sent: true,
+    });
+  });
+});
+
 describe("getWeeklyPlan", () => {
   it("returns 404 for another user's id", async () => {
     const admin = {

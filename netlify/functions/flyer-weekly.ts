@@ -26,6 +26,11 @@ export function resolveFlyerIdempotencyKey(request: Request, form: FormData): st
   const fromFormRaw = form.get("idempotencyKey");
   const fromForm = typeof fromFormRaw === "string" ? fromFormRaw.trim() : "";
   const candidate = header.length > 0 ? header : fromForm;
+  // 週献立は共有台帳キーに wp: を付ける。チラシがそれを受理すると PE11 の
+  // finalize_failure が週献立の stash を壊せるので、台帳に触る前に拒否する。
+  if (candidate.startsWith("wp:")) {
+    throw new HttpError(400, "invalid_request", "操作を確認してもう一度お試しください。");
+  }
   if (
     candidate.length >= 1 &&
     candidate.length <= IDEMPOTENCY_KEY_MAX &&

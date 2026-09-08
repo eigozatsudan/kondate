@@ -10,6 +10,10 @@ export type MemberAllergyRow = Tables<"member_allergies">;
 export type MemberDislikeRow = Tables<"member_dislikes">;
 export type AllergenCatalogRow = Tables<"allergen_catalog">;
 export type AllergenAliasRow = Tables<"allergen_aliases">;
+export type FoodSafetyRuleRow = Pick<
+  Tables<"food_safety_rules">,
+  "rule_kind" | "applies_to_age_bands"
+>;
 
 export type HouseholdMemberPatch = Pick<
   TablesUpdate<"household_members">,
@@ -187,6 +191,21 @@ export async function listAllergenCatalog(
 ): Promise<AllergenCatalogRow[]> {
   const { data, error } = await client.from("allergen_catalog").select("*").order("display_name");
   if (error !== null) throw dataError("アレルゲン一覧を読み込めませんでした");
+  return data;
+}
+
+/**
+ * 共有カタログ。allergen_catalog と同じ authenticated SELECT。
+ * ブラウザは @shared/safety を import できないため、週献立フォームの
+ * requires_tag 警告だけこの経路で読む。
+ */
+export async function listFoodSafetyRules(
+  client: BrowserSupabaseClient,
+): Promise<FoodSafetyRuleRow[]> {
+  const { data, error } = await client
+    .from("food_safety_rules")
+    .select("rule_kind, applies_to_age_bands");
+  if (error !== null) throw dataError("食の安全ルールを読み込めませんでした");
   return data;
 }
 

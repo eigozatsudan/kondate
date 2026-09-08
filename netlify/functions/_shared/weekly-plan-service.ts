@@ -1009,7 +1009,8 @@ export async function runWeeklyPlan(
     mapWeeklyPlanFailureHttp("weekly_plan_invalid_ai_response");
   }
   // P2修正A: 保存する safety_fingerprint は「実際に献立を検査した条件」（freshSafety）の
-  // ものでなければならない。try の外へ持ち出し、catch の挙動・写像（WP-P-1）は変えない。
+  // ものでなければならない。try の外へ持ち出す。catch は flyer_invalid_ai_response だけを
+  // weekly_plan_invalid_ai_response へ写し、検査不能 500 は潰さない。
   let freshSafety: CurrentSafetyContext;
   try {
     assertFlyerMenuHasNoGuaranteePhrases(parsedMenu.data);
@@ -1019,13 +1020,20 @@ export async function runWeeklyPlan(
       request.targetMemberIds,
     );
     assertFlyerMenuAgainstSafety(parsedMenu.data, freshSafety);
-  } catch {
-    // WP-P-1: assertFlyerMenuHasNoGuaranteePhrases / assertFlyerMenuAgainstSafety は
-    // flyer 側の固定コード "flyer_invalid_ai_response" を投げる。それをそのまま re-throw すると
-    // クライアントは weekly_plan_invalid_ai_response しか sticky key を破棄しないため、
-    // 同じキーで 400 が固定され作り直せなくなる（ブラウザ側は Task 12 参照）。
-    // ここでは error の中身に関わらず常に weekly_plan_invalid_ai_response へ写す
-    // （replayStashedWeeklyPlan の catch — N-I-10 — はこの写像をしない。別経路なので触らない）。
+  } catch (error: unknown) {
+    // WP-P-1: assertFlyerMenu* の flyer_invalid_ai_response だけを
+    // weekly_plan_invalid_ai_response へ写す。検査不能（safety_context_failed 等）まで
+    // 400 に潰すと sticky を捨てて「条件不一致」と誤認させる。
+    // mark 済みなので試行は返さない（p_sent: true）。replayStashedWeeklyPlan の
+    // catch（N-I-10）はこの写像をしない。
+    if (error instanceof HttpError && error.code !== "flyer_invalid_ai_response") {
+      await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
+        p_request_id: requestId,
+        p_failure_code: error.code,
+        p_sent: true,
+      });
+      throw error;
+    }
     await rpcUntyped(admin, "finalize_flyer_weekly_failure", {
       p_request_id: requestId,
       p_failure_code: "weekly_plan_invalid_ai_response",
