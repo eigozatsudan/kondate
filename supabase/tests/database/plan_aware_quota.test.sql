@@ -2,7 +2,7 @@
 -- Plan-aware quota: CHECK 10/20/8, plan RPC args, short snapshot mark-time (A1)
 
 begin;
-select plan(13);
+select plan(14);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -75,12 +75,12 @@ select lives_ok(
     'generation-command.v3', repeat('c', 64),
     '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
     tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-    10, 20, 8, 20, false, false, 180, now()
+    5, 20, 8, 20, false, false, 180, now()
   )$$,
-  'reserve_ai_generation accepts Plus limits 10/20/8'
+  'reserve_ai_generation accepts Plus limits 5/20/8'
 );
 
--- 4. invalid user limit 拒否
+-- 4. 旧 Free 3 / 旧 Plus 10 は mismatch（5 は Plus 正規値）
 select throws_ok(
   $$select public.reserve_ai_generation(
     'f1000000-0000-4000-8000-000000000001'::uuid,
@@ -90,11 +90,27 @@ select throws_ok(
     'generation-command.v3', repeat('d', 64),
     '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
     tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-    5, 6, 4, 20, false, false, 180, now()
+    3, 6, 4, 20, false, false, 180, now()
   )$$,
   '22023',
   'release_quota_mismatch',
-  'reserve rejects p_user_limit outside 3|10'
+  'reserve rejects p_user_limit outside 1|5'
+);
+
+select throws_ok(
+  $$select public.reserve_ai_generation(
+    'f1000000-0000-4000-8000-000000000001'::uuid,
+    'f3000000-0000-4000-8000-000000000098'::uuid,
+    'regenerate_menu', null, null,
+    'f2000000-0000-4000-8000-000000000001'::uuid, null, 'simpler',
+    'generation-command.v3', repeat('f', 64),
+    '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
+    tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
+    10, 20, 8, 20, false, false, 180, now()
+  )$$,
+  '22023',
+  'release_quota_mismatch',
+  'reserve rejects p_user_limit outside 1|5'
 );
 
 -- 5. reserve 後 short window 行が「reserve 専用に」増えない（A1）
@@ -111,7 +127,7 @@ select is(
 
 select ok(
   (
-    select quota_success_limit = 10
+    select quota_success_limit = 5
        and quota_attempt_limit = 20
        and quota_short_limit = 8
     from private.ai_generation_requests
@@ -158,7 +174,7 @@ select public.reserve_ai_generation(
   'generation-command.v3', repeat('e', 64),
   '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
   tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-  10, 20, 8, 20, false, false, 180, now()
+  5, 20, 8, 20, false, false, 180, now()
 );
 
 select is(
@@ -189,7 +205,7 @@ select lives_ok(
   $$select public.get_ai_usage_today(
     'f1000000-0000-4000-8000-000000000001'::uuid,
     tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-    10, 20, 8, 500, '2001-01-01 00:00:00+00'::timestamptz
+    5, 20, 8, 500, '2001-01-01 00:00:00+00'::timestamptz
   )$$,
   'get_ai_usage_today accepts p_global_limit=500'
 );
@@ -198,7 +214,7 @@ select lives_ok(
   $$select public.get_ai_usage_today(
     'f1000000-0000-4000-8000-000000000001'::uuid,
     tests.quota_identity_key('f1000000-0000-4000-8000-000000000001'::uuid),
-    10, 20, 8, 501, '2001-01-01 00:00:00+00'::timestamptz
+    5, 20, 8, 501, '2001-01-01 00:00:00+00'::timestamptz
   )$$,
   'get_ai_usage_today accepts p_global_limit=501 (SQL has no max; ENV enforces 500)'
 );

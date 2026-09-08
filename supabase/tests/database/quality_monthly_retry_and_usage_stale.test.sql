@@ -50,7 +50,7 @@ select is(
       'generation-command.v3', repeat('a', 64),
       '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
       tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid),
-      10, 20, 8, 20, false, true, 180,
+      5, 20, 8, 20, false, true, 180,
       '2026-07-15 03:00:00+00'::timestamptz
     ) ->> 'failure_code'
   ),
@@ -131,7 +131,7 @@ insert into private.ai_generation_requests (
   null, null,
   'b2000000-0000-4000-8000-000000000001'::uuid, null, 'simpler',
   'generation-command.v3', repeat('c', 64),
-  10, 20, 8, false,
+  5, 20, 8, false,
   private.ai_jst_day('2026-07-15 12:00:00+00'::timestamptz),
   true, true,
   private.ai_jst_day('2026-07-15 12:00:00+00'::timestamptz),
@@ -140,17 +140,17 @@ insert into private.ai_generation_requests (
   '2026-07-15 10:57:00+00'::timestamptz
 );
 
--- usage 呼び出し前は reserved で success remaining が 1 減っている前提（Plus 10）
+-- usage 呼び出し前は reserved で success remaining が 1 減っている前提（Plus 5）
 select is(
   (
     select (public.get_ai_usage_today(
       'b1000000-0000-4000-8000-000000000001'::uuid,
       tests.quota_identity_key('b1000000-0000-4000-8000-000000000001'::uuid),
-      10, 20, 8, 20,
+      5, 20, 8, 20,
       '2026-07-15 12:00:00+00'::timestamptz
     )->'success'->>'remaining')::integer
   ),
-  10,
+  5,
   'G4: get_ai_usage_today restores success remaining after stale cleanup'
 );
 

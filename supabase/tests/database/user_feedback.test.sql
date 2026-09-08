@@ -146,14 +146,14 @@ begin
 
   -- p_global_limit が usage today に効く。
   -- 共有 DB の当日 global 台帳に依存しないよう、行の無い固定日を p_now で指定する。
-  v_result := public.get_ai_usage_today(v_owner, tests.quota_identity_key(v_owner), 3, 6, 4, 1, '2000-01-01 00:00:00+00'::timestamptz);
+  v_result := public.get_ai_usage_today(v_owner, tests.quota_identity_key(v_owner), 1, 6, 4, 1, '2000-01-01 00:00:00+00'::timestamptz);
   if (v_result ->> 'globalAvailable') is distinct from 'true' then
     raise exception 'empty ledger should be globalAvailable with limit 1: %', v_result;
   end if;
 
   -- global 上限は ENV のみ。SQL は p_global_limit=0 でも raise せず globalAvailable=false。
   v_result := public.get_ai_usage_today(
-    v_owner, tests.quota_identity_key(v_owner), 3, 6, 4, 0, '2000-01-01 00:00:00+00'::timestamptz
+    v_owner, tests.quota_identity_key(v_owner), 1, 6, 4, 0, '2000-01-01 00:00:00+00'::timestamptz
   );
   if (v_result ->> 'globalAvailable') is distinct from 'false' then
     raise exception 'p_global_limit=0 should report globalAvailable false without raise: %', v_result;

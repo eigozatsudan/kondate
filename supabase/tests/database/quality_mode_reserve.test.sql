@@ -39,7 +39,7 @@ select lives_ok(
     'generation-command.v3', repeat('c', 64),
     '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
     tests.quota_identity_key('a1000000-0000-4000-8000-000000000001'::uuid),
-    10, 20, 8, 20, false, false, 180, now()
+    5, 20, 8, 20, false, false, 180, now()
   )$$,
   'reserve accepts generation-command.v3'
 );
@@ -82,7 +82,7 @@ select throws_ok(
       %L, repeat('d', 64),
       '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
       tests.quota_identity_key('a1000000-0000-4000-8000-000000000001'::uuid),
-      10, 20, 8, 20, false, false, 180, now()
+      5, 20, 8, 20, false, false, 180, now()
     )$q$,
     'generation-command.' || 'v2'
   ),
@@ -141,7 +141,7 @@ select public.reserve_ai_generation(
   'generation-command.v3', repeat('f', 64),
   '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
   tests.quota_identity_key('a1000000-0000-4000-8000-000000000001'::uuid),
-  10, 20, 8, 20, false, true, 180, now()
+  5, 20, 8, 20, false, true, 180, now()
 );
 
 select ok(
@@ -226,7 +226,7 @@ select is(
       'generation-command.v3', repeat('1', 64),
       '{"kind":"regenerate_menu","target_mode":"idea","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
       tests.quota_identity_key('a1000000-0000-4000-8000-000000000001'::uuid),
-      10, 20, 8, 20, false, true, 180, now()
+      5, 20, 8, 20, false, true, 180, now()
     ) ->> 'failure_code'
   ),
   'quality_daily_limit',

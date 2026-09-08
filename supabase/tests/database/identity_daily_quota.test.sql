@@ -24,7 +24,7 @@ select throws_ok(
     'e1000000-0000-4000-8000-000000000001'::uuid, null, 'simpler',
     'generation-command.v3', repeat('a', 64),
     '{"kind":"regenerate_menu","target_mode":"household","servings":2,"target_member_ids":[],"source_menu_version":1}'::jsonb,
-    'NOT-HEX', 3, 6, 4, 20, false, false, 180, now()
+    'NOT-HEX', 1, 6, 4, 20, false, false, 180, now()
   )$$,
   '22023',
   'invalid_identity_key',
