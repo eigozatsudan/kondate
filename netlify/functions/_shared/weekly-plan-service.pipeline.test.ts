@@ -1833,6 +1833,62 @@ describe("runWeeklyPlan — Plus 403 gate on the real pipeline (weekly-plan-serv
   });
 });
 
+describe("runWeeklyPlan — idempotency key namespace is separated from flyer (F11)", () => {
+  it("prefixes p_idempotency_key with wp: for both lookup_flyer_weekly and reserve_flyer_weekly", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "33333333-3333-4333-8333-333333333333",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        return thenableQuery({ data: { id: "44444444-4444-4444-8444-444444444444" }, error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: sampleAiMenu(),
+      modelId: "m1",
+    });
+
+    const request = sampleRequest();
+    await runWeeklyPlan(baseDeps({ openRouterSender: sender }), request);
+
+    const namespaced = `wp:${request.idempotencyKey}`;
+    expect(rpcArgsFor("lookup_flyer_weekly")).toMatchObject({
+      p_idempotency_key: namespaced,
+    });
+    expect(rpcArgsFor("reserve_flyer_weekly")).toMatchObject({
+      p_idempotency_key: namespaced,
+    });
+    // 生値がそのまま渡っていないこと（チラシ側の名前空間と構造的に一致しない）
+    expect(rpcArgsFor("lookup_flyer_weekly")?.p_idempotency_key).not.toBe(request.idempotencyKey);
+    expect(rpcArgsFor("reserve_flyer_weekly")?.p_idempotency_key).not.toBe(request.idempotencyKey);
+  });
+});
+
 describe("getWeeklyPlan", () => {
   it("returns 404 for another user's id", async () => {
     const admin = {

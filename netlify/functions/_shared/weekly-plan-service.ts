@@ -68,6 +68,20 @@ async function rpcUntyped(
   return { data: record.data ?? null, error: record.error ?? null };
 }
 
+const WEEKLY_PLAN_IDEMPOTENCY_KEY_PREFIX = "wp:";
+
+/**
+ * private.flyer_weekly_requests の (user_id, idempotency_key) はチラシと週献立で
+ * 機能識別子なしに共有されている。クライアント指定の同一キーを両エンドポイントへ
+ * うっかり使い回すと片方の台帳行をもう片方が操作できてしまうため、週献立側だけ
+ * 内部的にプレフィックスを付けて名前空間を分離する（RPC 自体のシグネチャは変えない）。
+ * クライアントの idempotencyKey は z.uuid()＝36 文字固定で、接頭辞 3 文字を足しても
+ * 39 文字であり SQL 側の char_length 1..128 制約に収まる。
+ */
+function namespacedIdempotencyKey(idempotencyKey: string): string {
+  return `${WEEKLY_PLAN_IDEMPOTENCY_KEY_PREFIX}${idempotencyKey}`;
+}
+
 const reservePayloadSchema = z.looseObject({
   request_id: z.uuid().nullable(),
   idempotency_key: z.string(),
@@ -723,7 +737,7 @@ export async function runWeeklyPlan(
   // 手順2: lookup を Plus 判定より前に置く（PE2 と同型）
   const { data: lookupRaw, error: lookupError } = await rpcUntyped(admin, "lookup_flyer_weekly", {
     p_user_id: deps.user.userId,
-    p_idempotency_key: request.idempotencyKey,
+    p_idempotency_key: namespacedIdempotencyKey(request.idempotencyKey),
   });
   if (lookupError !== null) {
     throw new HttpError(500, "internal_error", issueMessages.internal_error);
@@ -777,7 +791,7 @@ export async function runWeeklyPlan(
     {
       p_user_id: deps.user.userId,
       p_identity_key: identityKey,
-      p_idempotency_key: request.idempotencyKey,
+      p_idempotency_key: namespacedIdempotencyKey(request.idempotencyKey),
       p_attempt_limit: limits.attemptsPerDay,
       p_short_window_limit: limits.shortWindowLimit,
       p_global_limit: env.openRouter.globalDailyLimit,
