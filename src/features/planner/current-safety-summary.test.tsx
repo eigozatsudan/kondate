@@ -15,6 +15,7 @@ describe("CurrentSafetySummary", () => {
               ageBandLabel: "大人",
               allergyLabel: "卵",
               safetyLabels: [],
+              requiredSafetyConstraints: [],
               blockedReason: null,
             },
             {
@@ -23,6 +24,7 @@ describe("CurrentSafetySummary", () => {
               ageBandLabel: "幼児",
               allergyLabel: "アレルギーなし",
               safetyLabels: ["要確認"],
+              requiredSafetyConstraints: [],
               blockedReason: "年齢情報を確認してください",
             },
           ]}
@@ -53,6 +55,7 @@ describe("CurrentSafetySummary", () => {
               ageBandLabel: "大人",
               allergyLabel: "卵",
               safetyLabels: [],
+              requiredSafetyConstraints: [],
               blockedReason: null,
             },
           ]}

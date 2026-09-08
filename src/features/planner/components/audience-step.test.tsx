@@ -14,6 +14,7 @@ const memberA: PlannerSafetyMember = {
   ageBandLabel: "大人",
   allergyLabel: "卵",
   safetyLabels: [],
+  requiredSafetyConstraints: [],
   blockedReason: null,
 };
 
@@ -23,6 +24,7 @@ const memberB: PlannerSafetyMember = {
   ageBandLabel: "幼児",
   allergyLabel: "アレルギーなし",
   safetyLabels: [],
+  requiredSafetyConstraints: [],
   blockedReason: null,
 };
 
@@ -126,6 +128,7 @@ describe("AudienceStep layout and selected safety summary", () => {
         ageBandLabel: "大人",
         allergyLabel: "アレルギーなし",
         safetyLabels: [],
+        requiredSafetyConstraints: [],
         blockedReason: null,
       }),
     );

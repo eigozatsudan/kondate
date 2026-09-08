@@ -141,6 +141,7 @@ const eligibleMember: PlannerSafetyMember = {
   ageBandLabel: "大人",
   allergyLabel: "アレルギーなし",
   safetyLabels: [],
+  requiredSafetyConstraints: [],
   blockedReason: null,
 };
 

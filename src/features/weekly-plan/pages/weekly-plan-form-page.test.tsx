@@ -32,6 +32,7 @@ const members = [
     ageBandLabel: "大人",
     allergyLabel: "なし",
     safetyLabels: [],
+    requiredSafetyConstraints: [],
     blockedReason: null,
   },
   {
@@ -40,6 +41,7 @@ const members = [
     ageBandLabel: "幼児",
     allergyLabel: "なし",
     safetyLabels: [],
+    requiredSafetyConstraints: [],
     blockedReason: null,
   },
 ] as const;

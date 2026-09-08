@@ -42,6 +42,7 @@ const eligibleMember: PlannerSafetyMember = {
   ageBandLabel: "3〜5歳",
   allergyLabel: "アレルギーなし",
   safetyLabels: [],
+  requiredSafetyConstraints: [],
   blockedReason: null,
 };
 
@@ -1617,6 +1618,7 @@ describe("PlannerWizard review step", () => {
       ageBandLabel: "大人",
       allergyLabel: "卵アレルギー",
       safetyLabels: [],
+      requiredSafetyConstraints: [],
       blockedReason: null,
     };
     render(
