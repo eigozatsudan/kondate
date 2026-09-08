@@ -203,7 +203,7 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 | 項目                           | Free               | Plus（trialing / active 等）                        |
 | ------------------------------ | ------------------ | --------------------------------------------------- |
-| 成功生成 / 利用者 / JST 日     | 3                  | **10**                                              |
+| 成功生成 / 利用者 / JST 日     | 1                  | **5**                                               |
 | 外部 AI 送信 / 利用者 / JST 日 | 6                  | **20**                                              |
 | 外部送信 / 600 秒窓            | 4                  | **8**                                               |
 | 品質モード（上位モデル）       | 不可               | 3 / JST 日 **かつ** 20 / JST 暦月                   |
@@ -415,7 +415,7 @@ docker compose up -d --wait --force-recreate app
 
    1. ログイン → **設定** の「プラン」節、または `/plus`
    2. 「Plus をはじめる」→ Stripe Checkout（test カード `4242…` 等）
-   3. Webhook が届けば entitlement が Plus に変わり、枠 10 / 品質 / チラシが開く
+   3. Webhook が届けば entitlement が Plus に変わり、枠 5 / 品質 / チラシが開く
    4. 「お支払い・解約の管理」→ Customer Portal
 
 反映が Free のままなら数十秒待ち、Dashboard の Webhook 配信と `billing_user_unmapped` 等のサーバログを確認してください（カード番号やメールをログに残さない）。COMING_SOON が `true` のままだと Checkout 自体が出ません。
@@ -481,7 +481,7 @@ npm run preflight:production
 手動スモーク例:
 
 1. Free ユーザ: 設定 / `/plus` に価格・トライアル文面。**COMING_SOON 中は Checkout ではなく開発中案内**
-2. COMING_SOON を開けたうえで Checkout 完了 → Webhook 後に Plus 表示・成功枠 10
+2. COMING_SOON を開けたうえで Checkout 完了 → Webhook 後に Plus 表示・成功枠 5
 3. Portal から解約予約 → `cancel_at_period_end` が UI に出る
 4. `BILLING_ENABLED=false` にしたとき Checkout/品質/チラシが閉じ、枠が Free に戻ること（kill 試験はメンテ窓で）
 5. `maintenance-cleanup` が secret 付きで 204 になること（GitHub Actions 起動。Netlify schedule は使わない — [docs/deployment/netlify.md](docs/deployment/netlify.md)）

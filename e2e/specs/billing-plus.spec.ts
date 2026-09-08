@@ -75,7 +75,7 @@ async function mockEntitlement(
   });
 }
 
-/** usage/today を Plus 枠（success limit 10）に見せる mock（webhook 投影後の UI 相当）。 */
+/** usage/today を Plus 枠（success limit 5）に見せる mock（webhook 投影後の UI 相当）。 */
 async function mockUsageTodayPlus(page: Page): Promise<void> {
   await page.route("**/api/usage/today", async (route) => {
     await route.fulfill({
@@ -86,7 +86,7 @@ async function mockUsageTodayPlus(page: Page): Promise<void> {
         data: {
           plan: "plus",
           plusEntitled: true,
-          success: { consumed: 0, limit: 10, remaining: 10 },
+          success: { consumed: 0, limit: 5, remaining: 5 },
           attempts: { sent: 0, limit: 20, remaining: 20 },
           shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
           quality: {
@@ -199,23 +199,23 @@ test("Free hard-limit CTA copy is available from settings Plus section", async (
   reusedCompletedPage: page,
 }) => {
   // 生成を 3 回回して hard limit にするのは flaky なため、
-  // Free 向け Plus CTA 文面（Plus なら 1 日最大 10 回）が設定のプラン節に出ることを固定する。
+  // Free 向け Plus CTA 文面（Plus なら 1 日最大 5 回）が設定のプラン節に出ることを固定する。
   // L10-1 review 面 CTA は planner-wizard unit（shows Plus hard-limit CTA…）が正本。
   // BILL-1: COMING_SOON 中は Checkout ボタンの代わりに開発中案内を出す。
   await mockEntitlement(page, freeOpenEntitlement);
   await page.goto("/settings");
   // 他の settings billing ケースと同様、プラン節の hydrate を先に待つ（白紙タイムアウト回避）
   await expect(page.getByRole("heading", { name: "プラン" })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/1 日最大 10 回まで/u)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/1 日最大 5 回まで/u)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("ただいま開発中")).toBeVisible();
   await expect(page.getByRole("button", { name: "Plus をはじめる" })).toHaveCount(0);
 });
 
-test("Plus usage mock projects success limit 10 on settings plan section", async ({
+test("Plus usage mock projects success limit 5 on settings plan section", async ({
   reusedCompletedPage: page,
 }) => {
   // webhook 実注入の E2E 代替: entitlement + usage mock 後に Plus 契約 UI が載ることを固定。
-  // Free CTA の「1 日最大 10 回」は !entitled 時のみ。Plus ではポータル導線が正。
+  // Free CTA の「1 日最大 5 回」は !entitled 時のみ。Plus ではポータル導線が正。
   // 実 webhook 投影と success limit 数値は Function unit / pgTAP が正本。
   await mockEntitlement(page, plusActiveEntitlement);
   await mockUsageTodayPlus(page);

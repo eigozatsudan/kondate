@@ -273,7 +273,7 @@ docker compose --profile deploy run --rm netlify-cli link --id "$NETLIFY_SITE_ID
 | `GENERATION_REQUEST_HMAC_KEY` | canonical base64・32 バイト。ローカル/サンプル禁止（Functions のみ） |
 | `QUOTA_IDENTITY_HMAC_KEY` | 同上。**生成 HMAC と別鍵**（Functions のみ） |
 | `SUPABASE_MAINTENANCE_DB_URL` | least-privilege LOGIN の TLS URL（Functions のみ。[supabase.md](./supabase.md)） |
-| 枠・予算系 | `USER_DAILY_AI_LIMIT=3`、`USER_DAILY_EXTERNAL_CALL_LIMIT=6`、`USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT=4`、`USER_SHORT_WINDOW_SECONDS=600`、`GLOBAL_DAILY_AI_LIMIT`（本番推奨 80）、`OPENROUTER_TIMEOUT_MS=24000`、`FUNCTION_TOTAL_BUDGET_MS=55000`、`AI_PROCESSING_STALE_SECONDS=180` |
+| 枠・予算系 | `USER_DAILY_AI_LIMIT=1`、`USER_DAILY_EXTERNAL_CALL_LIMIT=6`、`USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT=4`、`USER_SHORT_WINDOW_SECONDS=600`、`GLOBAL_DAILY_AI_LIMIT`（本番推奨 80）、`OPENROUTER_TIMEOUT_MS=24000`、`FUNCTION_TOTAL_BUDGET_MS=55000`、`AI_PROCESSING_STALE_SECONDS=180` |
 | OpenRouter | 有料 allowlist + `OPENROUTER_API_KEY` + `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1` |
 | Stripe（Plus 時） | [netlify.md](./netlify.md) の Billing 行。Webhook: `https://<origin>/api/billing/webhook` |
 
@@ -397,6 +397,7 @@ docker compose --profile deploy run --rm netlify-cli deploy --build --prod
 ```
 
 env だけ変えた場合も、Functions が新しい値を読むには **再デプロイまたは env 反映後の deploy** が必要です（特に `GLOBAL_DAILY_AI_LIMIT` 等）。
+`USER_DAILY_AI_LIMIT` は稼働中の旧デプロイへ先に `env:set` しない。新コードと `USER_DAILY_AI_LIMIT=1` を同時にする（詳細は [netlify.md](./netlify.md)）。
 
 ### 5.2 DB マイグレーションを含む更新
 
@@ -422,7 +423,7 @@ docker compose --profile deploy run --rm supabase-cli db push --include-all
 2. ローカル / CI ゲート（format・lint・typecheck・vitest・pgTAP・e2e・build）
 3. Supabase: 未適用 migration を db push（必要時のみ）
 4. 保護 runner: preflight:production（サーバ秘密はビルドに載せない。両 HMAC 必須）
-5. Netlify: production デプロイ
+5. Netlify: production デプロイ（`USER_DAILY_AI_LIMIT=1` は新コードと同時。ENV 先行禁止）
 6. verify:production-deploy → smoke:production → verify:production-deploy
 7. マジックリンク到達・maintenance-cleanup・（Plus 時）Webhook を確認
 8. 証跡は保護システムのみ（git に origin / secret / 生ログを書かない）

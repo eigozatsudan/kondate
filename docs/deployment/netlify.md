@@ -42,7 +42,7 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 | `OPENROUTER_MODELS` | 順序付き一意の有料 allowlist ID。`:free`・`openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` 禁止。各 ID は `structured_outputs` AND `response_format` と prompt+completion ≤ $4.00/1M を満たすこと |
 | `OPENROUTER_PLUS_MODELS` | Plus 品質モード用 allowlist。同じ有料・構造化・$4 ルール。`BILLING_ENABLED=true` 時は 1 本以上必須 |
 | `OPENROUTER_FLYER_MODELS` | **任意**。チラシ vision 専用。未設定・空なら `OPENROUTER_PLUS_MODELS`。vision + 上記同じゲート |
-| `USER_DAILY_AI_LIMIT` | `3` |
+| `USER_DAILY_AI_LIMIT` | `1` |
 | `USER_DAILY_EXTERNAL_CALL_LIMIT` | `6` |
 | `USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT` | `4` |
 | `USER_SHORT_WINDOW_SECONDS` | `600` |
@@ -66,6 +66,13 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 
 課金 reconcile と Portal Dashboard チェックリストは `docs/runbooks/billing-reconcile.md`。
 ルート README の「本番デプロイ（Stripe まわり）」も参照。
+
+日次成功枠（`USER_DAILY_AI_LIMIT`）のリリース順:
+
+- 新コードと `USER_DAILY_AI_LIMIT=1` を同時にする。稼働中の旧デプロイへ先に `env:set` しない。
+- ゲートは保護 runner の preflight とランタイム `parseServerEnv` の二段。`netlify.toml` の `build` は preflight を呼ばない。
+- SQL `(1, 5)` と Functions の 1|5 送信は同一メンテ窓。片側だけだと reserve / status は 500 `release_quota_mismatch`、usage-today は 500 `request_failed`。
+- ローカル正本は `compose.yaml` の `"1"`。`.env` だけでは app に入らない。
 
 ### Stripe Webhook（初回）
 
