@@ -240,7 +240,7 @@ describe("applyQuotaPlan", () => {
 describe("limitsForPlan", () => {
   it("returns Free product limits", () => {
     expect(limitsForPlan("free")).toMatchObject({
-      successPerDay: 3,
+      successPerDay: 1,
       attemptsPerDay: 6,
       shortWindowLimit: 4,
     });
@@ -248,7 +248,7 @@ describe("limitsForPlan", () => {
 
   it("returns Plus product limits", () => {
     expect(limitsForPlan("plus")).toMatchObject({
-      successPerDay: 10,
+      successPerDay: 5,
       attemptsPerDay: 20,
       shortWindowLimit: 8,
     });

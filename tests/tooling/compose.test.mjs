@@ -333,7 +333,7 @@ test("provides the complete locked generation environment to the app service", a
     "OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-local-mock-key}",
     "OPENROUTER_MODELS: ${OPENROUTER_MODELS:-mock/kondate-primary:free,mock/kondate-repair:free}",
     "OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-http://openrouter-mock:8787/api/v1}",
-    'USER_DAILY_AI_LIMIT: "3"',
+    'USER_DAILY_AI_LIMIT: "1"',
     'USER_DAILY_EXTERNAL_CALL_LIMIT: "6"',
     'USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4"',
     'USER_SHORT_WINDOW_SECONDS: "600"',

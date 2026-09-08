@@ -30,7 +30,7 @@ const STARTED_AT = "2026-07-11T00:00:00.000Z";
 const quota = {
   consumed: false,
   remaining: 2,
-  userDailyLimit: 3,
+  userDailyLimit: 1,
   limitKind: null,
   retryAt: null,
 } as const;

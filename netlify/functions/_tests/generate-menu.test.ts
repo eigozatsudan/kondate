@@ -80,8 +80,8 @@ const terminalResult: GenerationStatusData = {
   requestId: "81000000-0000-4000-8000-000000000001",
   quota: {
     consumed: true,
-    remaining: 2,
-    userDailyLimit: 3,
+    remaining: 0,
+    userDailyLimit: 1,
     limitKind: null,
     retryAt: null,
   },
@@ -90,8 +90,8 @@ const terminalResult: GenerationStatusData = {
 };
 const quota = {
   consumed: false,
-  remaining: 3,
-  userDailyLimit: 3 as const,
+  remaining: 1,
+  userDailyLimit: 1 as const,
   limitKind: null,
   retryAt: null,
 };
@@ -341,8 +341,8 @@ describe("POST /api/generations/menu", () => {
       failure_code: null,
       retry_at: null,
       completed_menu_id: null,
-      remaining: 3,
-      user_daily_limit: 3,
+      remaining: 1,
+      user_daily_limit: 1,
       consumed: false,
       terminal_details: null,
       started_at: "2026-07-11T00:00:00.000Z",
@@ -386,7 +386,7 @@ describe("POST /api/generations/menu", () => {
           status: "succeeded",
           completed_menu_id: terminalResult.menuId,
           completed_at: terminalResult.completedAt,
-          remaining: 2,
+          remaining: 0,
           consumed: true,
         };
         return Promise.resolve(current);

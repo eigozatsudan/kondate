@@ -23,7 +23,7 @@ describe("useUsageToday", () => {
     getUsageTodayMock.mockResolvedValue({
       plan: "free" as const,
       plusEntitled: false,
-      success: { consumed: 0, limit: 3, remaining: 3 },
+      success: { consumed: 0, limit: 1, remaining: 1 },
       attempts: { sent: 0, limit: 6, remaining: 6 },
       shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
       quality: {
@@ -57,7 +57,7 @@ describe("useUsageToday", () => {
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
     });
-    expect(result.current.data?.success.remaining).toBe(3);
+    expect(result.current.data?.success.remaining).toBe(1);
     expect(usageTodayQueryKey(userId)).toEqual(["usage-today", userId, jstDayKey()]);
   });
 
@@ -65,7 +65,7 @@ describe("useUsageToday", () => {
     getUsageTodayMock.mockResolvedValue({
       plan: "plus" as const,
       plusEntitled: true,
-      success: { consumed: 0, limit: 10, remaining: 10 },
+      success: { consumed: 0, limit: 5, remaining: 5 },
       attempts: { sent: 0, limit: 20, remaining: 20 },
       shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
       quality: {

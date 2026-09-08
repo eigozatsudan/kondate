@@ -36,7 +36,7 @@ function baseEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
       apiKey: "k",
       baseUrl: "http://openrouter-mock:8787/api/v1",
       models: ["mock/a:free"],
-      userDailyLimit: 3,
+      userDailyLimit: 1,
       userDailyAttemptLimit: 6,
       userShortWindowLimit: 4,
       userShortWindowSeconds: 600,

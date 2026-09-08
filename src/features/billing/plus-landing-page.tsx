@@ -390,7 +390,7 @@ export function PlusLandingPage({
             <p className="type-small">
               無料のまま使える機能はそのまま残ります。Plus で増えるのは、次の 3 点です。
             </p>
-            {/* 数字 assert は testid 配下で絞る（R-C3）。裸の 3/10 は planQuota から組み立て */}
+            {/* 数字 assert は testid 配下で絞る（R-C3）。裸の 1/5 は planQuota から組み立て */}
             <table className="plus-landing__compare" data-testid="plus-compare">
               <thead>
                 <tr>

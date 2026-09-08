@@ -33,8 +33,8 @@ const REQUEST_ID = "50000000-0000-4000-8000-000000000001";
 const serverRetryAt = getNextJstMidnight(NOW).toISOString().replace(".000Z", "+00:00");
 const quota = {
   consumed: false,
-  remaining: 2,
-  userDailyLimit: 3,
+  remaining: 1,
+  userDailyLimit: 1,
   limitKind: "user",
   retryAt: serverRetryAt,
 } as const;
@@ -58,7 +58,7 @@ beforeEach(() => {
   getUsageTodayMock.mockResolvedValue({
     plan: "free" as const,
     plusEntitled: false,
-    success: { consumed: 1, limit: 3, remaining: 2 },
+    success: { consumed: 0, limit: 1, remaining: 1 },
     attempts: { sent: 0, limit: 6, remaining: 6 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
     quality: {
@@ -155,7 +155,7 @@ describe("GenerationStatusPanel", () => {
         quota: {
           consumed: true,
           remaining: 1,
-          userDailyLimit: 3,
+          userDailyLimit: 1,
           limitKind: "user",
           retryAt: null,
         },
@@ -249,7 +249,7 @@ describe("GenerationStatusPanel", () => {
     render(<GenerationStatusPanel state={failedState} />);
     expect(screen.getByText("献立は完成していないので、作成回数は減っていません")).toBeVisible();
     expect(screen.queryByText("成功回数には含まれません")).not.toBeInTheDocument();
-    expect(screen.getByText("無料版は本日あと2回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.getByText("無料版は本日あと1回まで献立の作成を受け付けます")).toBeVisible();
     // 日次枠の retryAt（翌 JST 0:00）は「明日H:MM」
     expect(screen.getByText(/^再開: 明日/u)).toBeVisible();
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(
@@ -300,7 +300,7 @@ describe("GenerationStatusPanel", () => {
       effect: "none",
     };
     render(<GenerationStatusPanel state={zeroFailed} />);
-    expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
+    expect(screen.getByText(/Plus なら 1 日最大 5 回まで作成できます/)).toBeVisible();
     expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/plus");
   });
 
@@ -329,7 +329,7 @@ describe("GenerationStatusPanel", () => {
     getUsageTodayMock.mockResolvedValue({
       plan: "plus" as const,
       plusEntitled: true,
-      success: { consumed: 10, limit: 10, remaining: 0 },
+      success: { consumed: 5, limit: 5, remaining: 0 },
       attempts: { sent: 0, limit: 20, remaining: 20 },
       shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
       quality: {
@@ -372,7 +372,7 @@ describe("GenerationStatusPanel", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
-    expect(screen.getByText("無料版は本日あと2回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.getByText("無料版は本日あと1回まで献立の作成を受け付けます")).toBeVisible();
     expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/10分間の通信試行/u)).not.toBeInTheDocument();
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
@@ -385,7 +385,7 @@ describe("GenerationStatusPanel", () => {
     getUsageTodayMock.mockResolvedValue({
       plan: "free" as const,
       plusEntitled: false,
-      success: { consumed: 1, limit: 3, remaining: 2 },
+      success: { consumed: 0, limit: 1, remaining: 1 },
       attempts: { sent: 5, limit: 6, remaining: 1 },
       shortWindow: {
         sent: 3,
@@ -418,7 +418,7 @@ describe("GenerationStatusPanel", () => {
     );
     const region = await screen.findByRole("region", { name: "今日あと何回作れるか" });
     expect(region).toBeVisible();
-    expect(screen.getByText("無料版は本日あと2回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.getByText("無料版は本日あと1回まで献立の作成を受け付けます")).toBeVisible();
     expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
     expect(screen.getByText("アプリ全体：今日はここまで")).toBeVisible();
   });
@@ -428,7 +428,7 @@ describe("GenerationStatusPanel", () => {
     getUsageTodayMock.mockResolvedValue({
       plan: "free" as const,
       plusEntitled: false,
-      success: { consumed: 1, limit: 3, remaining: 2 },
+      success: { consumed: 0, limit: 1, remaining: 1 },
       attempts: { sent: 6, limit: 6, remaining: 0 },
       shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
       quality: {
@@ -455,7 +455,7 @@ describe("GenerationStatusPanel", () => {
       </QueryClientProvider>,
     );
     expect(
-      await screen.findByText("無料版は本日あと2回まで献立の作成を受け付けます"),
+      await screen.findByText("無料版は本日あと1回まで献立の作成を受け付けます"),
     ).toBeVisible();
     expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
@@ -466,7 +466,7 @@ describe("GenerationStatusPanel", () => {
     getUsageTodayMock.mockResolvedValue({
       plan: "free" as const,
       plusEntitled: false,
-      success: { consumed: 1, limit: 3, remaining: 2 },
+      success: { consumed: 0, limit: 1, remaining: 1 },
       attempts: { sent: 2, limit: 6, remaining: 4 },
       shortWindow: {
         sent: 4,
@@ -498,7 +498,7 @@ describe("GenerationStatusPanel", () => {
       </QueryClientProvider>,
     );
     expect(
-      await screen.findByText("無料版は本日あと2回まで献立の作成を受け付けます"),
+      await screen.findByText("無料版は本日あと1回まで献立の作成を受け付けます"),
     ).toBeVisible();
     expect(screen.getByText(/短い時間に何度も作成を試したため/u)).toBeVisible();
     expect(screen.queryByText(/10分間の通信試行/u)).not.toBeInTheDocument();
@@ -749,7 +749,7 @@ describe("GenerationStatusPanel", () => {
         quota: {
           consumed: true,
           remaining: 1,
-          userDailyLimit: 3,
+          userDailyLimit: 1,
           limitKind: "user",
           retryAt: null,
         },
@@ -781,7 +781,7 @@ describe("GenerationStatusPanel", () => {
         quota: {
           consumed: true,
           remaining: 1,
-          userDailyLimit: 3,
+          userDailyLimit: 1,
           limitKind: "user",
           retryAt: null,
         },

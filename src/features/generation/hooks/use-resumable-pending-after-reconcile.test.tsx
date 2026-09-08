@@ -16,7 +16,7 @@ const REQUEST_ID = "50000000-0000-4000-8000-000000000001";
 const quota = {
   consumed: false,
   remaining: 2,
-  userDailyLimit: 3 as const,
+  userDailyLimit: 1 as const,
   limitKind: "user" as const,
   retryAt: null,
 };

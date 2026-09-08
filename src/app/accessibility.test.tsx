@@ -193,7 +193,7 @@ beforeEach(() => {
   getUsageTodayMock.mockResolvedValue({
     plan: "free" as const,
     plusEntitled: false,
-    success: { consumed: 1, limit: 3, remaining: 2 },
+    success: { consumed: 0, limit: 1, remaining: 1 },
     attempts: { sent: 0, limit: 6, remaining: 6 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
     quality: {
@@ -706,7 +706,7 @@ describe("generation and result accessibility", () => {
               quota: {
                 consumed: false,
                 remaining: 3,
-                userDailyLimit: 3,
+                userDailyLimit: 1,
                 limitKind: "user",
                 retryAt: null,
               },

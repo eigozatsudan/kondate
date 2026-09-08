@@ -25,7 +25,7 @@ describe("getUsageToday", () => {
           data: {
             plan: "free" as const,
             plusEntitled: false,
-            success: { consumed: 1, limit: 3, remaining: 2 },
+            success: { consumed: 0, limit: 1, remaining: 1 },
             attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 1, limit: 4, remaining: 3, retryAt: null },
             quality: {
@@ -49,7 +49,7 @@ describe("getUsageToday", () => {
       ),
     );
     await expect(getUsageToday({ fetchImpl })).resolves.toMatchObject({
-      success: { remaining: 2, limit: 3 },
+      success: { remaining: 1, limit: 1 },
       attempts: { limit: 6 },
       shortWindow: { limit: 4 },
     });
@@ -95,7 +95,7 @@ describe("getUsageToday", () => {
   });
 
   // F5: 旧 5/12・残数不整合・余剰 field・error envelope をクライアントで拒否
-  it("rejects retired 5/12 limits in a success envelope", async () => {
+  it("rejects retired 10/12 limits in a success envelope", async () => {
     const fetchImpl = vi.fn(() =>
       Promise.resolve(
         Response.json({
@@ -103,7 +103,7 @@ describe("getUsageToday", () => {
           data: {
             plan: "free" as const,
             plusEntitled: false,
-            success: { consumed: 1, limit: 5, remaining: 4 },
+            success: { consumed: 1, limit: 10, remaining: 9 },
             attempts: { sent: 2, limit: 12, remaining: 10 },
             shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
             quality: {
@@ -137,7 +137,7 @@ describe("getUsageToday", () => {
           data: {
             plan: "free" as const,
             plusEntitled: false,
-            success: { consumed: 1, limit: 3, remaining: 0 },
+            success: { consumed: 1, limit: 1, remaining: 1 },
             attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
             quality: {
@@ -171,7 +171,7 @@ describe("getUsageToday", () => {
           data: {
             plan: "free" as const,
             plusEntitled: false,
-            success: { consumed: 1, limit: 3, remaining: 2 },
+            success: { consumed: 0, limit: 1, remaining: 1 },
             attempts: { sent: 2, limit: 6, remaining: 4 },
             shortWindow: { sent: 1, limit: 4, remaining: 3, retryAt: null },
             quality: {

@@ -42,7 +42,7 @@ function baseEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
       apiKey: "mock-key",
       baseUrl: "http://openrouter-mock:8787/api/v1",
       models: ["mock/kondate-primary:free", "mock/kondate-repair:free"],
-      userDailyLimit: 3,
+      userDailyLimit: 1,
       userDailyAttemptLimit: 6,
       userShortWindowLimit: 4,
       userShortWindowSeconds: 600,

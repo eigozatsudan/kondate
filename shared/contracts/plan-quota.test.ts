@@ -9,13 +9,13 @@ import {
 describe("planQuota", () => {
   it("locks Free and Plus product limits and defense ceilings", () => {
     expect(planQuota.free).toEqual({
-      successPerDay: 3,
+      successPerDay: 1,
       attemptsPerDay: 6,
       shortWindowLimit: 4,
       shortWindowSeconds: 600,
     });
     expect(planQuota.plus).toEqual({
-      successPerDay: 10,
+      successPerDay: 5,
       attemptsPerDay: 20,
       shortWindowLimit: 8,
       shortWindowSeconds: 600,
@@ -26,7 +26,7 @@ describe("planQuota", () => {
       triesPerJstWeek: 6,
     });
     expect(planQuota.defense).toEqual({
-      maxSuccessPerDay: 10,
+      maxSuccessPerDay: 5,
       maxAttemptsPerDay: 20,
       maxShortWindow: 8,
       maxFlyerSuccessPerWeek: 2,
@@ -52,7 +52,7 @@ describe("planQuota", () => {
 
   it("keeps releaseQuota as Free alias for legacy imports", () => {
     expect(releaseQuota).toEqual({
-      userDailySuccessLimit: 3,
+      userDailySuccessLimit: 1,
       userDailyExternalCallLimit: 6,
       userShortWindowExternalCallLimit: 4,
       userShortWindowSeconds: 600,

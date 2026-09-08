@@ -16,7 +16,7 @@ import {
 
 /** Plus 製品上限。defense 天井はここから導出し、独立リテラルにしない（SC3）。 */
 const plusQuota = {
-  successPerDay: 10,
+  successPerDay: 5,
   attemptsPerDay: 20,
   shortWindowLimit: 8,
   shortWindowSeconds: FREE_SHORT_WINDOW_SECONDS,

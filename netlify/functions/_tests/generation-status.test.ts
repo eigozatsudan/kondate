@@ -55,9 +55,9 @@ function record(
     failure_code: state === "failed" ? "internal_error" : null,
     retry_at: null,
     completed_menu_id: state === "succeeded" ? menuId : null,
-    // 成功 3 回上限: 未消費時 remaining=3、成功 1 回後 remaining=2（表示契約の整合）
-    remaining: state === "succeeded" ? 2 : 3,
-    user_daily_limit: 3 as const,
+    // 成功 1 回上限: 未消費時 remaining=1、成功 1 回後 remaining=0（表示契約の整合）
+    remaining: state === "succeeded" ? 0 : 1,
+    user_daily_limit: 1 as const,
     consumed: state === "succeeded",
     terminal_details:
       state === "constraint_conflict" ? { conflictCodes: ["must_use_conflict"] } : null,

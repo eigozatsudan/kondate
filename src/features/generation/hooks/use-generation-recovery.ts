@@ -84,7 +84,7 @@ export const GENERATION_IN_PROGRESS_RETRY_MS = 5_000;
 
 /**
  * ok:false 端末失敗を GenerationStatusData failed に載せ替え（issueMessages 正本）。
- * G17: userDailyLimit を Free 3 固定にしない。usage キャッシュがあれば success.limit を採用し、
+ * G17: userDailyLimit を Free 1 固定にしない。usage キャッシュがあれば success.limit を採用し、
  * 無ければ planQuota.free をスキーマ充足用フォールバックにする（パネルは userId ありで usage を正とする）。
  */
 function syntheticFailedStatus(

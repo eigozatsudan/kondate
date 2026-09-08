@@ -13,8 +13,8 @@ describe("formatPlanQuotaCopy", () => {
     expect(formatPlanQuotaCopy("本日の作成上限に達しています。", "plus")).toBe(
       "本日の作成上限に達しています。",
     );
-    expect(formatPlanQuotaCopy("Plusでは1日最大10回まで作成できます。", "plus")).toBe(
-      "Plusでは1日最大10回まで作成できます。",
+    expect(formatPlanQuotaCopy("Plusでは1日最大5回まで作成できます。", "plus")).toBe(
+      "Plusでは1日最大5回まで作成できます。",
     );
   });
 

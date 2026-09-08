@@ -1865,7 +1865,7 @@ describe("PlannerWizard review step", () => {
         plan="free"
       />,
     );
-    expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
+    expect(screen.getByText(/Plus なら 1 日最大 5 回まで作成できます/)).toBeVisible();
     // Free では品質リンクも出るため同名が 2 本。硬上限は data-testid で限定する（R-B2）
     const hard = screen.getByTestId("plus-hard-limit-cta");
     expect(within(hard).getByRole("link", { name: "Plus を見る" })).toHaveAttribute(
@@ -1933,7 +1933,7 @@ describe("PlannerWizard review step", () => {
       />,
     );
     expect(screen.getByText("本日の無料回数が残り 1 回です")).toBeVisible();
-    expect(screen.queryByText(/Plus なら 1 日最大 10 回/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Plus なら 1 日最大 5 回/)).not.toBeInTheDocument();
   });
 
   it("does not prefix Plus remaining copy with 無料版は", () => {

@@ -14,7 +14,7 @@ import {
 } from "./env.js";
 import { ATTEMPT_TIMEOUT_MS } from "./generation-service.js";
 
-// compose 現実に近い: exact mock base + mock/*:free（quota は release 固定 3/6/20）
+// compose 現実に近い: exact mock base + mock/*:free（quota は release 固定 1/6/20）
 const validServerEnv = {
   VITE_SUPABASE_URL: "http://127.0.0.1:8000",
   SUPABASE_URL: "http://kong:8000",
@@ -29,7 +29,7 @@ const validServerEnv = {
   GENERATION_REQUEST_HMAC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   // GENERATION と別鍵（同長でも別値）であることをローカル fixture で示す
   QUOTA_IDENTITY_HMAC_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
-  USER_DAILY_AI_LIMIT: "3",
+  USER_DAILY_AI_LIMIT: "1",
   USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
   USER_SHORT_WINDOW_SECONDS: "600",
@@ -136,6 +136,7 @@ describe("parseOpenRouterModels", () => {
 
   it.each([
     ["USER_DAILY_AI_LIMIT", undefined],
+    ["USER_DAILY_AI_LIMIT", "3"],
     ["USER_DAILY_AI_LIMIT", "5"],
     ["USER_DAILY_AI_LIMIT", "6"],
     ["USER_DAILY_AI_LIMIT", "03"],

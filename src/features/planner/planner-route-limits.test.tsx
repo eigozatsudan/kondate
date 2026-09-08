@@ -23,7 +23,7 @@ vi.mock("@tanstack/react-query", () => ({
         data: {
           plan: "free" as const,
           plusEntitled: false,
-          success: { consumed: 0, limit: 3, remaining: 3 },
+          success: { consumed: 0, limit: 1, remaining: 1 },
           attempts: { sent: 0, limit: 6, remaining: 6 },
           shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
           quality: {

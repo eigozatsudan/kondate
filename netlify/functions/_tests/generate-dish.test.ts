@@ -48,8 +48,8 @@ const terminalResult: GenerationStatusData = {
   requestId: "81000000-0000-4000-8000-000000000001",
   quota: {
     consumed: true,
-    remaining: 2,
-    userDailyLimit: 3,
+    remaining: 0,
+    userDailyLimit: 1,
     limitKind: null,
     retryAt: null,
   },

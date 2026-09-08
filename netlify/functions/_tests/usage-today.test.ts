@@ -59,7 +59,7 @@ const freeQualityProjected = {
 };
 
 const rpcUsagePayload = {
-  success: { consumed: 0, limit: 3, remaining: 3 },
+  success: { consumed: 0, limit: 1, remaining: 1 },
   attempts: { sent: 0, limit: 6, remaining: 6 },
   shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
   quality: {
@@ -133,7 +133,7 @@ describe("usage-today", () => {
       data: {
         plan: "free",
         plusEntitled: false,
-        success: { consumed: 0, limit: 3, remaining: 3 },
+        success: { consumed: 0, limit: 1, remaining: 1 },
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQualityProjected,
@@ -145,7 +145,7 @@ describe("usage-today", () => {
     expect(rpcMock).toHaveBeenCalledWith("get_ai_usage_today", {
       p_user_id: "10000000-0000-4000-8000-000000000001",
       p_identity_key: identityKey,
-      p_user_limit: 3,
+      p_user_limit: 1,
       p_attempt_limit: 6,
       p_short_window_limit: 4,
       p_global_limit: 20,
@@ -170,7 +170,7 @@ describe("usage-today", () => {
     });
     rpcMock.mockResolvedValue({
       data: {
-        success: { consumed: 2, limit: 3, remaining: 1 },
+        success: { consumed: 0, limit: 1, remaining: 1 },
         attempts: { sent: 4, limit: 6, remaining: 2 },
         shortWindow: {
           sent: 4,
@@ -191,7 +191,7 @@ describe("usage-today", () => {
     expect(body.data).toMatchObject({
       plan: "free",
       plusEntitled: false,
-      success: { consumed: 0, limit: 3, remaining: 3 },
+      success: { consumed: 0, limit: 1, remaining: 1 },
       attempts: { sent: 0, limit: 6, remaining: 6 },
       shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
       quality: freeQualityProjected,
@@ -222,7 +222,7 @@ describe("usage-today", () => {
     expect(rpcMock).toHaveBeenCalledWith("get_ai_usage_today", {
       p_user_id: "10000000-0000-4000-8000-000000000001",
       p_identity_key: identityKey,
-      p_user_limit: 3,
+      p_user_limit: 1,
       p_attempt_limit: 6,
       p_short_window_limit: 4,
       p_global_limit: 30,
@@ -257,8 +257,8 @@ describe("usage-today", () => {
     });
     rpcMock.mockResolvedValue({
       data: {
-        // Plus 日次 limit は 10/20（success/attempts）。quality は 3/20 固定
-        success: { consumed: 1, limit: 10, remaining: 9 },
+        // Plus 日次 limit は 5/20（success/attempts）。quality は 3/20 固定
+        success: { consumed: 1, limit: 5, remaining: 4 },
         attempts: { sent: 1, limit: 20, remaining: 19 },
         shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
         quality: {
@@ -307,7 +307,7 @@ describe("usage-today", () => {
     });
     rpcMock.mockResolvedValue({
       data: {
-        success: { consumed: 1, limit: 10, remaining: 9 },
+        success: { consumed: 1, limit: 5, remaining: 4 },
         attempts: { sent: 1, limit: 20, remaining: 19 },
         shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
         quality: {
@@ -363,7 +363,7 @@ describe("usage-today", () => {
     });
     rpcMock.mockResolvedValue({
       data: {
-        success: { consumed: 1, limit: 10, remaining: 9 },
+        success: { consumed: 1, limit: 5, remaining: 4 },
         attempts: { sent: 1, limit: 20, remaining: 19 },
         shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
         quality: {
@@ -419,7 +419,7 @@ describe("usage-today", () => {
     });
     rpcMock.mockResolvedValue({
       data: {
-        success: { consumed: 1, limit: 10, remaining: 9 },
+        success: { consumed: 1, limit: 5, remaining: 4 },
         attempts: { sent: 1, limit: 20, remaining: 19 },
         shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
         flyerWeekly: rpcUsagePayload.flyerWeekly,
@@ -454,7 +454,7 @@ describe("usage-today", () => {
   it("returns 200 when RPC projects over-limit raw counters to the new ceilings", async () => {
     rpcMock.mockResolvedValue({
       data: {
-        success: { consumed: 3, limit: 3, remaining: 0 },
+        success: { consumed: 1, limit: 1, remaining: 0 },
         attempts: { sent: 6, limit: 6, remaining: 0 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         globalAvailable: true,
@@ -471,7 +471,7 @@ describe("usage-today", () => {
       data: { success: { consumed: number }; attempts: { sent: number }; plan: string };
     };
     expect(body.ok).toBe(true);
-    expect(body.data.success.consumed).toBe(3);
+    expect(body.data.success.consumed).toBe(1);
     expect(body.data.attempts.sent).toBe(6);
     expect(body.data.plan).toBe("free");
   });
@@ -480,7 +480,7 @@ describe("usage-today", () => {
   it("returns 500 when RPC leaks raw over-limit counters without projection", async () => {
     rpcMock.mockResolvedValue({
       data: {
-        success: { consumed: 4, limit: 3, remaining: 0 },
+        success: { consumed: 2, limit: 1, remaining: 0 },
         attempts: { sent: 7, limit: 6, remaining: 0 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         globalAvailable: true,
@@ -494,11 +494,11 @@ describe("usage-today", () => {
     expect(response.status).toBe(500);
   });
 
-  // F5: 旧 5/12 上限を RPC が返しても schema で 500（fail-closed）
-  it("returns 500 when RPC still uses the retired 5/12 limits", async () => {
+  // F5: 旧 10/12 上限を RPC が返しても schema で 500（fail-closed）
+  it("returns 500 when RPC still uses the retired 10/12 limits", async () => {
     rpcMock.mockResolvedValue({
       data: {
-        success: { consumed: 1, limit: 5, remaining: 4 },
+        success: { consumed: 1, limit: 10, remaining: 9 },
         attempts: { sent: 2, limit: 12, remaining: 10 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         globalAvailable: true,
@@ -515,7 +515,7 @@ describe("usage-today", () => {
   it("returns 500 when used + remaining do not balance the limit", async () => {
     rpcMock.mockResolvedValue({
       data: {
-        success: { consumed: 1, limit: 3, remaining: 1 },
+        success: { consumed: 1, limit: 1, remaining: 1 },
         attempts: { sent: 2, limit: 6, remaining: 4 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         globalAvailable: true,

@@ -56,7 +56,7 @@ const DISH_ID = "70000000-0000-4000-8000-000000000001";
 const quota = {
   consumed: false,
   remaining: 2,
-  userDailyLimit: 3,
+  userDailyLimit: 1,
   limitKind: null,
   retryAt: null,
 } as const;
@@ -147,7 +147,7 @@ beforeEach(() => {
   mockGetUsageToday.mockResolvedValue({
     plan: "free" as const,
     plusEntitled: false,
-    success: { consumed: 1, limit: 3, remaining: 2 },
+    success: { consumed: 0, limit: 1, remaining: 1 },
     attempts: { sent: 2, limit: 6, remaining: 4 },
     shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
     quality: {
@@ -216,7 +216,7 @@ describe("GenerationPage", () => {
     });
     expect(await screen.findByRole("region", { name: "今日あと何回作れるか" })).toBeVisible();
     // 設計 2026-07-29: success 残1行のみ。AI通信試行 dual は出さない
-    expect(screen.getByText("無料版は本日あと2回まで献立の作成を受け付けます")).toBeVisible();
+    expect(screen.getByText("無料版は本日あと1回まで献立の作成を受け付けます")).toBeVisible();
     expect(screen.queryByText(/AI通信試行/u)).not.toBeInTheDocument();
     expect(screen.getByText("アプリ全体：作成できます")).toBeVisible();
     // request-local のフォールバック経路ではないこと

@@ -42,7 +42,7 @@ function completeEnv(overrides = {}) {
     OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
     OPENROUTER_MODELS: "mistralai/mistral-small-3.2-24b-instruct,openai/gpt-oss-120b",
     GLOBAL_DAILY_AI_LIMIT: "20",
-    USER_DAILY_AI_LIMIT: "3",
+    USER_DAILY_AI_LIMIT: "1",
     USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
     USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
     USER_SHORT_WINDOW_SECONDS: "600",

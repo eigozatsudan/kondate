@@ -19,7 +19,7 @@ const { createUserScopedSupabaseMock, getServerEnvMock, loadEntitlementMock, rpc
       createUserScopedSupabaseMock: vi.fn(() => client),
       getServerEnvMock: vi.fn(() => ({
         openRouter: {
-          userDailyLimit: 3,
+          userDailyLimit: 1,
           globalDailyLimit: 20,
           staleAfterSeconds: 180,
         },
@@ -125,7 +125,7 @@ const publicRecord = {
   processing_expires_at: "2026-07-19T12:03:00+09:00",
   completed_menu_id: null,
   remaining: 2,
-  user_daily_limit: 3,
+  user_daily_limit: 1,
   consumed: false,
   terminal_details: null,
   actual_model_ids: ["model:free"],
@@ -162,7 +162,7 @@ const reserveArgs = {
     source_menu_version: null,
   },
   p_identity_key: expectedIdentityKey,
-  p_user_limit: 3,
+  p_user_limit: 1,
   p_attempt_limit: 6,
   p_short_window_limit: 4,
   p_global_limit: 20,
@@ -242,7 +242,7 @@ const succeedArgs = {
 const statusArgs = {
   p_user_id: user.userId,
   p_idempotency_key: idempotencyKey,
-  p_user_limit: 3,
+  p_user_limit: 1,
   p_attempt_limit: 6,
   p_short_window_limit: 4,
   p_identity_key: expectedIdentityKey,
@@ -340,7 +340,7 @@ beforeEach(() => {
   loadEntitlementMock.mockResolvedValue(freeEntitlement);
   getServerEnvMock.mockReturnValue({
     openRouter: {
-      userDailyLimit: 3,
+      userDailyLimit: 1,
       globalDailyLimit: 20,
       staleAfterSeconds: 180,
     },
@@ -720,7 +720,7 @@ describe("createGenerationRepository regeneration reserve", () => {
         source_menu_version: 1,
       },
       p_identity_key: expectedIdentityKey,
-      p_user_limit: 3,
+      p_user_limit: 1,
       p_attempt_limit: 6,
       p_short_window_limit: 4,
       p_global_limit: 20,
@@ -747,7 +747,7 @@ describe("createGenerationRepository regeneration reserve", () => {
         source_menu_version: 1,
       },
       p_identity_key: expectedIdentityKey,
-      p_user_limit: 3,
+      p_user_limit: 1,
       p_attempt_limit: 6,
       p_short_window_limit: 4,
       p_global_limit: 20,
@@ -819,7 +819,7 @@ describe("createGenerationRepository regeneration reserve", () => {
     loadEntitlementMock.mockResolvedValue(plusEntitlement);
     getServerEnvMock.mockReturnValue({
       openRouter: {
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         globalDailyLimit: 20,
         staleAfterSeconds: 180,
       },
@@ -836,18 +836,18 @@ describe("createGenerationRepository regeneration reserve", () => {
     expect(rpcMock).toHaveBeenCalledWith("get_ai_generation_status", {
       p_user_id: user.userId,
       p_idempotency_key: idempotencyKey,
-      p_user_limit: 10,
+      p_user_limit: 5,
       p_attempt_limit: 20,
       p_short_window_limit: 8,
       p_identity_key: expectedIdentityKey,
     });
   });
 
-  it("parses reserve response with user_daily_limit 10", async () => {
+  it("parses reserve response with user_daily_limit 5", async () => {
     loadEntitlementMock.mockResolvedValue(plusEntitlement);
     getServerEnvMock.mockReturnValue({
       openRouter: {
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         globalDailyLimit: 20,
         staleAfterSeconds: 180,
       },
@@ -859,18 +859,18 @@ describe("createGenerationRepository regeneration reserve", () => {
       billingEnabled: true,
     });
     rpcMock.mockResolvedValueOnce({
-      data: { ...publicRecord, user_daily_limit: 10, remaining: 9 },
+      data: { ...publicRecord, user_daily_limit: 5, remaining: 4 },
       error: null,
     });
     const repository = createGenerationRepository(user);
     await expect(repository.reserveNew(newMenuCommand, householdIntegrity)).resolves.toMatchObject({
-      user_daily_limit: 10,
-      remaining: 9,
+      user_daily_limit: 5,
+      remaining: 4,
     });
     expect(rpcMock).toHaveBeenCalledWith(
       "reserve_ai_generation",
       expect.objectContaining({
-        p_user_limit: 10,
+        p_user_limit: 5,
         p_attempt_limit: 20,
         p_short_window_limit: 8,
       }),
@@ -881,7 +881,7 @@ describe("createGenerationRepository regeneration reserve", () => {
     loadEntitlementMock.mockResolvedValue(plusEntitlement);
     getServerEnvMock.mockReturnValue({
       openRouter: {
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         globalDailyLimit: 20,
         staleAfterSeconds: 180,
       },
@@ -899,7 +899,7 @@ describe("createGenerationRepository regeneration reserve", () => {
       error: null,
     });
     const repository = createGenerationRepository(user);
-    // Free 3 へ fail-open せず schema で拒否（Plus 誤表示を防ぐ）
+    // Free 1 へ fail-open せず schema で拒否（Plus 誤表示を防ぐ）
     await expect(repository.status(idempotencyKey)).rejects.toThrow();
   });
 
@@ -992,7 +992,7 @@ describe("createGenerationRepository regeneration reserve", () => {
       .mockResolvedValueOnce(freeEntitlement);
     getServerEnvMock.mockReturnValue({
       openRouter: {
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         globalDailyLimit: 20,
         staleAfterSeconds: 180,
       },
@@ -1017,7 +1017,7 @@ describe("createGenerationRepository regeneration reserve", () => {
     expect(loadEntitlementMock).toHaveBeenCalledTimes(1);
     expect(rpcMock).toHaveBeenCalledWith(
       "reserve_ai_generation",
-      expect.objectContaining({ p_quality_mode: true, p_user_limit: 10 }),
+      expect.objectContaining({ p_quality_mode: true, p_user_limit: 5 }),
     );
     expect(rpcMock).not.toHaveBeenCalledWith("finalize_ai_generation_failure", expect.anything());
   });
@@ -1026,7 +1026,7 @@ describe("createGenerationRepository regeneration reserve", () => {
     loadEntitlementMock.mockResolvedValue(plusEntitlement);
     getServerEnvMock.mockReturnValue({
       openRouter: {
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         globalDailyLimit: 20,
         staleAfterSeconds: 180,
       },
@@ -1043,7 +1043,7 @@ describe("createGenerationRepository regeneration reserve", () => {
     await repository.reserveNew(qualityCommand, householdIntegrity);
     expect(rpcMock).toHaveBeenCalledWith(
       "reserve_ai_generation",
-      expect.objectContaining({ p_quality_mode: true, p_user_limit: 10 }),
+      expect.objectContaining({ p_quality_mode: true, p_user_limit: 5 }),
     );
   });
 });

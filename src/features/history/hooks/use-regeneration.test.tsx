@@ -62,7 +62,7 @@ const validRevalidation: RevalidationResult = {
 const quota = {
   consumed: false,
   remaining: 3,
-  userDailyLimit: 3,
+  userDailyLimit: 1,
   limitKind: null,
   retryAt: null,
 } as const;
@@ -487,7 +487,7 @@ describe("useRegeneration", () => {
       quota: {
         consumed: false,
         remaining: 2,
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         limitKind: null,
         retryAt: null,
       },
@@ -545,7 +545,7 @@ describe("useRegeneration", () => {
       quota: {
         consumed: false,
         remaining: 2,
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         limitKind: null,
         retryAt: null,
       },
@@ -605,7 +605,7 @@ describe("useRegeneration", () => {
       quota: {
         consumed: false,
         remaining: 2,
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         limitKind: null,
         retryAt: null,
       },

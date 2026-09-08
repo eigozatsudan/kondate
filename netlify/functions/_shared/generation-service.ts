@@ -327,7 +327,7 @@ export function toGenerationStatus(
   const quota = {
     consumed: record.consumed ?? record.status === "succeeded",
     remaining: record.remaining ?? 0,
-    // RPC 契約上必須。欠落時の Free 3 既定は Plus を誤表示するため置かない（S11）
+    // RPC 契約上必須。欠落時の Free 1 既定は Plus を誤表示するため置かない（S11）
     userDailyLimit: record.user_daily_limit,
     limitKind:
       record.failure_code === "user_daily_limit"

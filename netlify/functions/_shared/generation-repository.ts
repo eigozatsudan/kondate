@@ -331,7 +331,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
    * G8: reserve 後の終端化・status 投影用 limits。
    * live entitlement 障害で finalize / status RPC を止めない（枠の権威は reserve のみ）。
    * 障害時は Free 投影へフォールバックする（残枠表示が保守側にズレうる。G18 residual と同型）。
-   * quota ロック値（3|10 / 6|20 / 4|8）自体は変えない。
+   * quota ロック値（1|5 / 6|20 / 4|8）自体は変えない。
    */
   const resolveProjectionLimits = async (): Promise<ReturnType<typeof limitsForPlan>> => {
     try {
@@ -441,7 +441,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
                 p_retry_at: null,
               }),
               // 降格後は Free 投影。欠落時のみ埋める（S11: 未知 plan への fail-open ではない）
-              3,
+              planQuota.free.successPerDay,
             );
             // processing→failed（または既に同 code failed）: 初回 Free quality と同 UX の 403
             if (
@@ -458,7 +458,7 @@ export function createGenerationRepository(user: AuthenticatedUserWithEmail) {
             return terminal;
           }
           // plus 継続: 同じ planLimits を reserve に渡し、assert / limits の再読取を避ける
-          // successPerDay は planQuota の 3|10 リテラル（limitsForPlan）で型保証済み
+          // successPerDay は planQuota の 1|5 リテラル（limitsForPlan）で型保証済み
           {
             const limit = planLimits.limits.successPerDay;
             return parseRequestPayload(

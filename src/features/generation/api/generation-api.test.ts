@@ -27,7 +27,7 @@ const OTHER_KEY = "10000000-0000-4000-8000-000000000002";
 const quota = {
   consumed: false,
   remaining: 2,
-  userDailyLimit: 3,
+  userDailyLimit: 1,
   limitKind: null,
   retryAt: null,
 } as const;

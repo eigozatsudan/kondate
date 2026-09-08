@@ -244,7 +244,7 @@ vi.mock("@tanstack/react-query", () => ({
         data: {
           plan: "free" as const,
           plusEntitled: queryState.usagePlusEntitled,
-          success: { consumed: 0, limit: 3, remaining: 3 },
+          success: { consumed: 0, limit: 1, remaining: 1 },
           attempts: { sent: 0, limit: 6, remaining: 6 },
           shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
           quality: {
@@ -2489,7 +2489,7 @@ describe("PlannerRoutePage", () => {
       quota: {
         consumed: false,
         remaining: 2,
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         limitKind: "user",
         retryAt: null,
       },
@@ -3541,7 +3541,7 @@ describe("PlannerRoutePage", () => {
       quota: {
         consumed: true,
         remaining: 1,
-        userDailyLimit: 3,
+        userDailyLimit: 1,
         limitKind: "user",
         retryAt: null,
       },

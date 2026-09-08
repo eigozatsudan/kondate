@@ -10,8 +10,8 @@
 export const GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX = 500;
 
 /** Free 日次成功枠（USER_DAILY_AI_LIMIT）。 */
-export const FREE_SUCCESS_PER_DAY = 3;
-export const FREE_SUCCESS_PER_DAY_ENV = "3";
+export const FREE_SUCCESS_PER_DAY = 1;
+export const FREE_SUCCESS_PER_DAY_ENV = "1";
 
 /** Free 日次外部試行枠（USER_DAILY_EXTERNAL_CALL_LIMIT）。 */
 export const FREE_ATTEMPTS_PER_DAY = 6;

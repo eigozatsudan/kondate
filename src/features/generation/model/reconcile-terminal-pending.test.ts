@@ -19,7 +19,7 @@ const NOW = new Date("2026-07-20T05:00:00.000Z");
 const quota = {
   consumed: false,
   remaining: 2,
-  userDailyLimit: 3 as const,
+  userDailyLimit: 1 as const,
   limitKind: "user" as const,
   retryAt: null,
 };

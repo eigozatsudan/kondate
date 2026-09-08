@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { EntitlementData } from "@shared/contracts/billing";
+import { planQuota } from "@shared/contracts/plan-quota";
 import { createCheckoutSession, createPortalSession } from "./billing-api";
 import {
   CHECKOUT_POLL_UNCONFIRMED_COPY,
@@ -222,7 +223,10 @@ export function PlanSettingsSection({
           {/* B-R4: fetch error 時は stale 申込枝（COMING_SOON / Checkout）も出さない */}
           {!error && !entitled && surfacesOpen && !isIncomplete && !isPastDue ? (
             <div className="stack gap-3">
-              <p>こんだて日和 Plus なら、1 日最大 10 回まで献立を作れます。</p>
+              <p>
+                こんだて日和 Plus なら、1 日最大 {planQuota.plus.successPerDay}{" "}
+                回まで献立を作れます。
+              </p>
               {/* BILL-1: LP の COMING_SOON と設定の Checkout を揃える（申込不可なのに Settings だけ課金可にしない） */}
               {PLUS_LP_UPGRADE_COMING_SOON ? (
                 <div className="stack gap-2" role="status">

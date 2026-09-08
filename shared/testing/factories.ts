@@ -43,7 +43,7 @@ const freeFlyerWeeklyFull = {
 export const availableUsageTodayFixture = {
   plan: "free" as const,
   plusEntitled: false,
-  success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 2 },
+  success: { consumed: 0, limit: releaseQuota.userDailySuccessLimit, remaining: 1 },
   attempts: { sent: 2, limit: releaseQuota.userDailyExternalCallLimit, remaining: 4 },
   shortWindow: {
     sent: 2,
@@ -60,7 +60,7 @@ export const availableUsageTodayFixture = {
 export const shortWindowBlockedUsageTodayFixture = {
   plan: "free" as const,
   plusEntitled: false,
-  success: { consumed: 1, limit: releaseQuota.userDailySuccessLimit, remaining: 2 },
+  success: { consumed: 0, limit: releaseQuota.userDailySuccessLimit, remaining: 1 },
   attempts: { sent: 4, limit: releaseQuota.userDailyExternalCallLimit, remaining: 2 },
   shortWindow: {
     sent: 4,

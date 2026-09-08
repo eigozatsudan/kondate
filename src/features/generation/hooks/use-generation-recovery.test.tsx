@@ -146,7 +146,7 @@ function makePending(idempotencyKey: string, ownerUserId: string = USER_ID): Pen
 const quota = {
   consumed: false,
   remaining: 2,
-  userDailyLimit: 3,
+  userDailyLimit: 1,
   limitKind: null,
   retryAt: null,
 } as const;
@@ -1415,7 +1415,7 @@ describe("useGenerationRecovery", () => {
     expect(mockDispatches).not.toContainEqual({ type: "network_error" });
   });
 
-  // G17: synthetic failed の userDailyLimit は Free 3 固定にせず、usage キャッシュの Plus 上限を写す
+  // G17: synthetic failed の userDailyLimit は Free 1 固定にせず、usage キャッシュの Plus 上限を写す
   it("G17: synthetic failed embeds Plus userDailyLimit from usage cache", async () => {
     const { planQuota } = await import("@shared/contracts/plan-quota");
     const { usageTodayQueryKey } = await import("./use-usage-today");
@@ -1428,7 +1428,7 @@ describe("useGenerationRecovery", () => {
       success: {
         consumed: 1,
         limit: planQuota.plus.successPerDay,
-        remaining: 9,
+        remaining: 4,
       },
       attempts: { sent: 0, limit: 20, remaining: 20 },
       shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
@@ -1463,13 +1463,13 @@ describe("useGenerationRecovery", () => {
     expect(recovery.result.current.state.data.quota.userDailyLimit).toBe(
       planQuota.plus.successPerDay,
     );
-    expect(recovery.result.current.state.data.quota.remaining).toBe(9);
+    expect(recovery.result.current.state.data.quota.remaining).toBe(4);
     expect(recovery.result.current.state.data.quota.userDailyLimit).not.toBe(
       planQuota.free.successPerDay,
     );
   });
 
-  // G17: usage 未取得時は planQuota.free をスキーマ充足用フォールバック（マジック 3 リテラルではない）
+  // G17: usage 未取得時は planQuota.free をスキーマ充足用フォールバック（マジック 1 リテラルではない）
   it("G17: synthetic failed falls back to planQuota.free when usage cache is empty", async () => {
     const { planQuota } = await import("@shared/contracts/plan-quota");
     mockPost.mockRejectedValueOnce(new Error("draft_not_found"));

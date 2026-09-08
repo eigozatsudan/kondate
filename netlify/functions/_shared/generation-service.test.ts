@@ -188,8 +188,8 @@ function record(
     request_id: requestId,
     idempotency_key: key,
     status,
-    remaining: status === "succeeded" ? 2 : 3,
-    user_daily_limit: 3 as const,
+    remaining: status === "succeeded" ? 0 : 1,
+    user_daily_limit: 1 as const,
     consumed: status === "succeeded",
     started_at: "2026-07-11T00:00:00.000Z",
     completed_at: status === "processing" ? null : "2026-07-11T00:00:01.000Z",
@@ -1750,16 +1750,16 @@ describe("runGeneration", () => {
       completed_menu_id: null,
       started_at: "2026-07-11T00:00:00.000Z",
       completed_at: "2026-07-11T00:00:01.000Z",
-      remaining: 2,
-      user_daily_limit: 3 as const,
+      remaining: 1,
+      user_daily_limit: 1 as const,
       consumed: false,
       replayed: false,
     });
     repository.status.mockResolvedValue({
       idempotency_key: key,
       status: "not_started",
-      remaining: 3,
-      user_daily_limit: 3 as const,
+      remaining: 1,
+      user_daily_limit: 1 as const,
       consumed: false,
     });
     const loadExecutionContext = vi.fn<GenerationDependencies["loadExecutionContext"]>();
@@ -1771,8 +1771,8 @@ describe("runGeneration", () => {
       requestId: "00000000-0000-4000-8000-000000000098",
       quota: {
         consumed: false,
-        remaining: 2,
-        userDailyLimit: 3,
+        remaining: 1,
+        userDailyLimit: 1,
         limitKind: null,
         retryAt: "2026-07-11T00:03:00.000Z",
       },
@@ -2246,8 +2246,8 @@ describe("toGenerationStatus", () => {
       requestId,
       quota: {
         consumed: false,
-        remaining: 3,
-        userDailyLimit: 3,
+        remaining: 1,
+        userDailyLimit: 1,
         limitKind: null,
         retryAt: null,
       },
@@ -2260,17 +2260,17 @@ describe("toGenerationStatus", () => {
     });
   });
 
-  it("projects Plus user_daily_limit 10 without Free 3 default (S11)", () => {
+  it("projects Plus user_daily_limit 5 without Free 1 default (S11)", () => {
     expect(
       toGenerationStatus(
-        { ...record("processing"), user_daily_limit: 10 as const, remaining: 7 },
+        { ...record("processing"), user_daily_limit: 5 as const, remaining: 3 },
         key,
       ),
     ).toMatchObject({
       status: "processing",
       quota: {
-        remaining: 7,
-        userDailyLimit: 10,
+        remaining: 3,
+        userDailyLimit: 5,
       },
     });
   });
@@ -2290,8 +2290,8 @@ describe("toGenerationStatus", () => {
       requestId,
       quota: {
         consumed: false,
-        remaining: 3,
-        userDailyLimit: 3,
+        remaining: 1,
+        userDailyLimit: 1,
         limitKind: null,
         retryAt: null,
       },
@@ -2315,8 +2315,8 @@ describe("toGenerationStatus", () => {
 describe("generationResponse", () => {
   const quota = {
     consumed: false,
-    remaining: 3,
-    userDailyLimit: 3 as const,
+    remaining: 1,
+    userDailyLimit: 1 as const,
     limitKind: null,
     retryAt: null,
   };

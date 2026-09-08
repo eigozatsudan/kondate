@@ -125,7 +125,7 @@ const menu = {
 
 it("locks the MVP quota tuple into the shared contract", () => {
   expect(releaseQuota).toEqual({
-    userDailySuccessLimit: 3,
+    userDailySuccessLimit: 1,
     userDailyExternalCallLimit: 6,
     userShortWindowExternalCallLimit: 4,
     userShortWindowSeconds: 600,
@@ -317,7 +317,7 @@ describe("usageTodayDataSchema", () => {
     const plus = {
       plan: "plus" as const,
       plusEntitled: true,
-      success: { consumed: 0, limit: 10 as const, remaining: 10 },
+      success: { consumed: 0, limit: 5 as const, remaining: 5 },
       attempts: { sent: 0, limit: 20 as const, remaining: 20 },
       shortWindow: { sent: 0, limit: 8 as const, remaining: 8, retryAt: null },
       quality: {
@@ -336,7 +336,7 @@ describe("usageTodayDataSchema", () => {
     const free = {
       plan: "free" as const,
       plusEntitled: false,
-      success: { consumed: 0, limit: 3 as const, remaining: 3 },
+      success: { consumed: 0, limit: 1 as const, remaining: 1 },
       attempts: { sent: 0, limit: 6 as const, remaining: 6 },
       shortWindow: { sent: 0, limit: 4 as const, remaining: 4, retryAt: null },
       quality: freeQuality,
@@ -347,12 +347,12 @@ describe("usageTodayDataSchema", () => {
     expect(usageTodayDataSchema.parse(free)).toEqual(free);
   });
 
-  it("rejects success limit outside 3|10", () => {
+  it("rejects success limit outside 1|5", () => {
     expect(
       usageTodayDataSchema.safeParse({
         plan: "free",
         plusEntitled: false,
-        success: { consumed: 0, limit: 5, remaining: 5 },
+        success: { consumed: 0, limit: 10, remaining: 10 },
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
@@ -363,13 +363,13 @@ describe("usageTodayDataSchema", () => {
     ).toBe(false);
   });
 
-  // F5: 旧 5/12 上限・残数不整合・余剰 field を fail-closed で拒否
-  it("rejects the retired 5/12 daily limits", () => {
+  // F5: 旧 10/12 上限・残数不整合・余剰 field を fail-closed で拒否
+  it("rejects the retired 10/12 daily limits", () => {
     expect(
       usageTodayDataSchema.safeParse({
         plan: "free",
         plusEntitled: false,
-        success: { consumed: 1, limit: 5, remaining: 4 },
+        success: { consumed: 1, limit: 10, remaining: 9 },
         attempts: { sent: 2, limit: 12, remaining: 10 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
@@ -385,7 +385,7 @@ describe("usageTodayDataSchema", () => {
       usageTodayDataSchema.safeParse({
         plan: "free",
         plusEntitled: false,
-        success: { consumed: 1, limit: 3, remaining: 1 },
+        success: { consumed: 1, limit: 1, remaining: 1 },
         attempts: { sent: 2, limit: 6, remaining: 4 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
@@ -398,7 +398,7 @@ describe("usageTodayDataSchema", () => {
       usageTodayDataSchema.safeParse({
         plan: "free",
         plusEntitled: false,
-        success: { consumed: 1, limit: 3, remaining: 2 },
+        success: { consumed: 0, limit: 1, remaining: 1 },
         attempts: { sent: 2, limit: 6, remaining: 5 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
@@ -423,7 +423,7 @@ describe("usageTodayDataSchema", () => {
       usageTodayDataSchema.parse({
         plan: "free",
         plusEntitled: false,
-        success: { consumed: 3, limit: 3, remaining: 0 },
+        success: { consumed: 1, limit: 1, remaining: 0 },
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
@@ -431,12 +431,12 @@ describe("usageTodayDataSchema", () => {
         globalAvailable: true,
         retryAt: "2026-07-11T15:00:00.000Z",
       }),
-    ).toMatchObject({ success: { remaining: 0, limit: 3 } });
+    ).toMatchObject({ success: { remaining: 0, limit: 1 } });
     expect(
       usageTodayDataSchema.parse({
         plan: "free",
         plusEntitled: false,
-        success: { consumed: 0, limit: 3, remaining: 3 },
+        success: { consumed: 0, limit: 1, remaining: 1 },
         attempts: { sent: 6, limit: 6, remaining: 0 },
         shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
         quality: freeQuality,
@@ -449,7 +449,7 @@ describe("usageTodayDataSchema", () => {
       usageTodayDataSchema.parse({
         plan: "free",
         plusEntitled: false,
-        success: { consumed: 0, limit: 3, remaining: 3 },
+        success: { consumed: 0, limit: 1, remaining: 1 },
         attempts: { sent: 0, limit: 6, remaining: 6 },
         shortWindow: {
           sent: 4,
@@ -492,24 +492,24 @@ describe("usageTodayDataSchema", () => {
     ).toBe(false);
   });
 
-  it("accepts Plus generationQuotaSchema with userDailyLimit 10 and remaining up to 10", () => {
+  it("accepts Plus generationQuotaSchema with userDailyLimit 5 and remaining up to 5", () => {
     expect(
       generationQuotaSchema.parse({
         consumed: false,
-        remaining: 7,
-        userDailyLimit: 10,
+        remaining: 3,
+        userDailyLimit: 5,
         limitKind: null,
         retryAt: null,
       }),
-    ).toMatchObject({ remaining: 7, userDailyLimit: 10 });
+    ).toMatchObject({ remaining: 3, userDailyLimit: 5 });
   });
 
-  it("rejects generationQuota remaining above 10", () => {
+  it("rejects generationQuota remaining above 5", () => {
     expect(
       generationQuotaSchema.safeParse({
         consumed: false,
-        remaining: 11,
-        userDailyLimit: 10,
+        remaining: 6,
+        userDailyLimit: 5,
         limitKind: null,
         retryAt: null,
       }).success,
@@ -533,12 +533,21 @@ describe("usageTodayDataSchema", () => {
       retryAt: null,
     });
     expect(plusLimit.userDailyLimit).toBe(planQuota.plus.successPerDay);
-    // 非製品 limit（例: 5）は wire で拒否（planQuota に無い）
+    // 非製品 limit（退役 10 および旧 Free 3）は wire で拒否（planQuota に無い）
     expect(
       generationQuotaSchema.safeParse({
         consumed: false,
         remaining: 0,
-        userDailyLimit: 5,
+        userDailyLimit: 10,
+        limitKind: null,
+        retryAt: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      generationQuotaSchema.safeParse({
+        consumed: false,
+        remaining: 0,
+        userDailyLimit: 3,
         limitKind: null,
         retryAt: null,
       }).success,
@@ -674,8 +683,8 @@ describe("regeneration request privacyNoticeVersion", () => {
 describe("generationStatusDataSchema", () => {
   const quota = {
     consumed: false,
-    remaining: 2,
-    userDailyLimit: 3,
+    remaining: 1,
+    userDailyLimit: planQuota.free.successPerDay,
     limitKind: null,
     retryAt: null,
   };
@@ -698,7 +707,7 @@ describe("generationStatusDataSchema", () => {
         idempotencyKey: "10000000-0000-4000-8000-000000000001",
         quota,
       }),
-    ).toMatchObject({ status: "not_started", quota: { remaining: 2 } });
+    ).toMatchObject({ status: "not_started", quota: { remaining: 1 } });
   });
 
   it("accepts terminal failed duplicate_output without menuId and without quota consumption", () => {

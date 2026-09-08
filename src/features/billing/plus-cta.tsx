@@ -1,5 +1,7 @@
+import { planQuota } from "@shared/contracts/plan-quota";
+
 /** Free 硬上限時の固定コピー（L10-1）。テスト exact 一致。 */
-export const PLUS_HARD_LIMIT_COPY = "Plus なら 1 日最大 10 回まで作成できます" as const;
+export const PLUS_HARD_LIMIT_COPY = `Plus なら 1 日最大 ${String(planQuota.plus.successPerDay)} 回まで作成できます`;
 export const PLUS_HARD_LIMIT_BUTTON = "Plus を見る" as const;
 
 /**

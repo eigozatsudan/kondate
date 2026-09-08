@@ -65,7 +65,7 @@ describe("RegenerationSheet", () => {
         onCancel={vi.fn()}
       />,
     );
-    expect(screen.getByText(/Plus なら 1 日最大 10 回まで作成できます/)).toBeVisible();
+    expect(screen.getByText(/Plus なら 1 日最大 5 回まで作成できます/)).toBeVisible();
     expect(screen.getByRole("link", { name: "Plus を見る" })).toHaveAttribute("href", "/plus");
   });
 
