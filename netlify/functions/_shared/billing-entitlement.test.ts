@@ -213,6 +213,27 @@ describe("computePlusEntitled", () => {
 });
 
 describe("applyQuotaPlan", () => {
+  it.each([false, true])("grants developer Plus without a subscription (billing=%s)", (enabled) => {
+    const developer = {
+      ...baseEntitlement,
+      plan: "free" as const,
+      status: "none" as const,
+      plusEntitled: false,
+      dbPlusEntitled: false,
+      currentPeriodEnd: null,
+      developerPlus: true,
+    };
+    expect(applyQuotaPlan(developer, enabled)).toBe("plus");
+    expect(toEntitlementData(developer, enabled)).toMatchObject({
+      status: "none",
+      dbPlusEntitled: false,
+      plusEntitled: true,
+      quotaPlan: "plus",
+      developerPlus: true,
+      productSurfacesOpen: enabled,
+    });
+  });
+
   it("forces free when billingEnabled is false even if dbPlusEntitled", () => {
     expect(applyQuotaPlan(baseEntitlement, false)).toBe("free");
   });

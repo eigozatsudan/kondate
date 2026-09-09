@@ -42,6 +42,53 @@ const validServerEnv = {
 const productionPaidModels = "mistralai/mistral-small-3.2-24b-instruct,openai/gpt-oss-120b";
 
 describe("parseOpenRouterModels", () => {
+  it("accepts developer Plus while billing is disabled without Stripe configuration", () => {
+    const developerId = "11111111-1111-4111-8111-111111111111";
+    expect(
+      parseServerEnv({
+        ...validServerEnv,
+        BILLING_ENABLED: "false",
+        DEVELOPER_PLUS_USER_IDS: developerId,
+        OPENROUTER_PLUS_MODELS: validServerEnv.OPENROUTER_MODELS,
+      }),
+    ).toMatchObject({
+      billingEnabled: false,
+      developerPlusUserIds: [developerId],
+    });
+  });
+
+  it("requires Plus models for developers even when billing is disabled", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validServerEnv,
+        BILLING_ENABLED: "false",
+        DEVELOPER_PLUS_USER_IDS: "11111111-1111-4111-8111-111111111111",
+      }),
+    ).toThrow("server_configuration_invalid");
+  });
+
+  it.each(["not-a-user-id", "11111111-1111-4111-8111-111111111111,invalid"])(
+    "rejects malformed developer allowlists without exposing their contents (%s)",
+    (allowlist) => {
+      expect(() =>
+        parseServerEnv({
+          ...validServerEnv,
+          DEVELOPER_PLUS_USER_IDS: allowlist,
+          OPENROUTER_PLUS_MODELS: validServerEnv.OPENROUTER_MODELS,
+        }),
+      ).toThrow("server_configuration_invalid");
+    },
+  );
+
+  it.each(["", "11111111-1111-4111-8111-111111111111"])(
+    "rejects browser-prefixed developer allowlists (%s)",
+    (allowlist) => {
+      expect(() =>
+        parseServerEnv({ ...validServerEnv, VITE_DEVELOPER_PLUS_USER_IDS: allowlist }),
+      ).toThrow("server_configuration_invalid");
+    },
+  );
+
   it.each(acceptedModelLists)("accepts contract model list %#", ({ raw, models, baseUrl }) => {
     expect(parseOpenRouterModels(raw, { openRouterBaseUrl: baseUrl })).toEqual(models);
   });
