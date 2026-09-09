@@ -123,7 +123,9 @@ describe("PlusLandingPage", () => {
       screen.getByRole("heading", { name: "こんだて日和 Plus（開発者・無料）" }),
     ).toBeVisible();
     if (enabled) {
-      expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL, hidden: true })).not.toBeVisible();
+      expect(
+        screen.getByRole("button", { name: PORTAL_BUTTON_LABEL, hidden: true }),
+      ).not.toBeVisible();
     } else {
       expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
     }
@@ -163,7 +165,9 @@ describe("PlusLandingPage", () => {
       const details = summary.closest("details");
       expect(details?.open).toBe(false);
       if (enabled) {
-        expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL, hidden: true })).not.toBeVisible();
+        expect(
+          screen.getByRole("button", { name: PORTAL_BUTTON_LABEL, hidden: true }),
+        ).not.toBeVisible();
       } else {
         expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
       }
