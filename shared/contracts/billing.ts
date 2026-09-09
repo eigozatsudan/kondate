@@ -78,6 +78,7 @@ export const entitlementDataSchema = z
       "paused",
     ]),
     plusEntitled: z.boolean(),
+    developerPlus: z.boolean().optional(),
     pastDueGrace: z.boolean(),
     // 日時 wire を ISO-8601（offset 必須）に閉じる（S18）。URL は runtime DiD 維持。
     currentPeriodEnd: z.iso.datetime({ offset: true }).nullable(),

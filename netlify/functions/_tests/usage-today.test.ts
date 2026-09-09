@@ -241,17 +241,18 @@ describe("usage-today", () => {
   });
 
   // G8: remaining 欠落時は limit 固定フル残ではなく limit-consumed で balance を保つ
-  it("G8: missing quality remaining derives from consumed not full dayLimit alone", async () => {
+  it.each([false, true])("G8: paid and developer Plus return quality counters (billing=%s)", async (enabled) => {
     getServerEnvMock.mockReturnValue({
       openRouter: { globalDailyLimit: 20 },
       quotaIdentityHmacKey: Buffer.alloc(32, 1),
       aiQuotaDisabled: false,
-      billingEnabled: true,
+      billingEnabled: enabled,
     });
     loadEntitlementMock.mockResolvedValue({
       ...freeEntitlement,
       plan: "plus" as const,
-      plusEntitled: true,
+      plusEntitled: enabled,
+      developerPlus: !enabled,
       status: "active" as const,
       dbPlusEntitled: true,
     });

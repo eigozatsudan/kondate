@@ -164,7 +164,11 @@ beforeEach(() => {
 });
 
 describe("runWeeklyPlan — fresh generation happy path", () => {
-  it("reserves, marks, sends once, finalizes, and inserts", async () => {
+  it.each([false, true])("reserves, sends, finalizes and inserts for Plus (billing=%s)", async (enabled) => {
+    getServerEnvMock.mockReturnValue({ ...getServerEnvMock(), billingEnabled: enabled });
+    if (!enabled) {
+      loadEntitlementMock.mockResolvedValue({ plan: "free", plusEntitled: false, developerPlus: true });
+    }
     rpcMock.mockImplementation((name: string) => {
       if (name === "lookup_flyer_weekly")
         return Promise.resolve({ data: { kind: "miss" }, error: null });

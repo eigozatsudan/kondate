@@ -31,7 +31,6 @@ import {
   BillingEntitlementUnavailableError,
   limitsForPlan,
   loadEntitlement,
-  productSurfacesOpen,
   type Entitlement,
 } from "./billing-entitlement.js";
 import {
@@ -180,9 +179,7 @@ export async function assertFlyerPrivacyConsent(user: FlyerWeeklyAuthUser): Prom
  * B2: kill_source では elevation しない。生 plusEntitled（kill unpaid）で短絡しない。
  */
 export function isFlyerPlusAllowed(entitlement: Entitlement, billingEnabled: boolean): boolean {
-  return (
-    productSurfacesOpen(billingEnabled) && applyQuotaPlan(entitlement, billingEnabled) === "plus"
-  );
+  return applyQuotaPlan(entitlement, billingEnabled) === "plus";
 }
 
 function entitlementUnavailableHttpError(): HttpError {
@@ -994,11 +991,12 @@ export async function runFlyerWeeklyWithReserveStub(options: {
   ) => Promise<OpenRouterGenerationResult>;
   plusEntitled: boolean;
   billingEnabled: boolean;
+  developerPlus?: boolean;
   /** 未指定は同意済み扱い。false で consent_required を再現する。 */
   hasPrivacyConsent?: boolean;
 }): Promise<{ openRouterCalls: number; errorCode?: string }> {
   let openRouterCalls = 0;
-  if (!options.billingEnabled || !options.plusEntitled) {
+  if (!options.developerPlus && (!options.billingEnabled || !options.plusEntitled)) {
     // PE2: 新規は 403。既 terminal succeeded だけ台帳本文を再生する（OpenRouter 0）。
     const deniedReserve = reservePayloadSchema.safeParse(options.reserveResult);
     if (

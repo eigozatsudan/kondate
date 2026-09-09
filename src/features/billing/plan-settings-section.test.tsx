@@ -96,6 +96,29 @@ function renderPlan(props: Partial<ComponentProps<typeof PlanSettingsSection>> =
 }
 
 describe("PlanSettingsSection", () => {
+  it.each([false, true])("shows developer Plus without billing controls (billing=%s)", (enabled) => {
+    renderPlan({
+      entitlement: {
+        ...freeEntitlement,
+        developerPlus: true,
+        plusEntitled: true,
+        quotaPlan: "plus",
+        productSurfacesOpen: enabled,
+      },
+    });
+    expect(screen.getByText("こんだて日和 Plus（開発者・無料）")).toBeVisible();
+    expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByText(STRIPE_REDIRECT_NOTICE)).not.toBeInTheDocument();
+    expect(screen.queryByText(PLUS_LP_COMING_SOON_BODY)).not.toBeInTheDocument();
+  });
+
+  it("keeps existing subscription management for developers", () => {
+    renderPlan({ entitlement: { ...trialingEntitlement, developerPlus: true } });
+    expect(screen.getByText("こんだて日和 Plus（開発者・無料）")).toBeVisible();
+    expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL })).toBeVisible();
+    expect(screen.getByText(/既存の有料契約は自動では解約されません/)).toBeVisible();
+  });
+
   it("shows Free plan copy and aligns checkout gate with Plus LP coming-soon", () => {
     renderPlan();
     expect(screen.getByText(/こんだて日和 Plus なら/)).toBeVisible();

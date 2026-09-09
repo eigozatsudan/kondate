@@ -109,6 +109,25 @@ function renderLp(
 }
 
 describe("PlusLandingPage", () => {
+  it.each([false, true])("shows developer Plus without payment prompts (billing=%s)", (enabled) => {
+    renderLp({ entitlement: {
+      ...freeOpen,
+      developerPlus: true,
+      plusEntitled: true,
+      quotaPlan: "plus",
+      productSurfacesOpen: enabled,
+    } });
+    expect(screen.getByRole("heading", { name: "こんだて日和 Plus（開発者・無料）" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByText("一部機能は現在ご利用いただけません")).not.toBeInTheDocument();
+  });
+
+  it("keeps payment management for developers with an existing subscription", () => {
+    renderLp({ entitlement: { ...freeOpen, status: "active", developerPlus: true, plusEntitled: true, quotaPlan: "plus" } });
+    expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL })).toBeVisible();
+    expect(screen.getByText(/既存の有料契約は自動では解約されません/)).toBeVisible();
+  });
+
   it("shows full LP benefits and checkout when free and open", () => {
     renderLp({ entitlement: freeOpen });
     expect(screen.getByRole("heading", { level: 1, name: PLUS_LP_H1 })).toBeVisible();

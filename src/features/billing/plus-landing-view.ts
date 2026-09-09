@@ -11,6 +11,7 @@ export type CheckoutBlockedStatus = (typeof CHECKOUT_BLOCKED_STATUSES)[number];
 export type PlusLandingView =
   | { kind: "loading" }
   | { kind: "error" }
+  | { kind: "developer"; surfacesOpen: boolean; hasStripeSubscription: boolean }
   | { kind: "past_due"; surfacesOpen: boolean }
   | {
       kind: "entitled";
@@ -46,6 +47,15 @@ export function resolvePlusLandingView(input: {
   // 2. error または data なし: Plus 表示を信頼しない（stale plusEntitled を出さない）
   if (error || data == null) {
     return { kind: "error" };
+  }
+
+  // 無料付与は契約の支払状態から独立。既存契約の管理可否だけを別に伝える。
+  if (data.developerPlus && data.plusEntitled) {
+    return {
+      kind: "developer",
+      surfacesOpen: data.productSurfacesOpen,
+      hasStripeSubscription: data.status !== "none",
+    };
   }
 
   // 3. past_due または pastDueGrace → 支払い短形（entitled より先）

@@ -12,7 +12,7 @@ import { handleError, HttpError, json, methodNotAllowed } from "./_shared/http.j
 /**
  * GET /api/billing/entitlement
  * DB 投影 + productSurfacesOpen + quotaPlan。
- * BILLING_ENABLED=false でも 200（surfaces closed / quota free）。
+ * BILLING_ENABLED=false でも 200（課金面は停止、開発者無料付与だけ Plus を維持）。
  */
 export default async function billingEntitlement(request: Request): Promise<Response> {
   if (request.method !== "GET") return methodNotAllowed(["GET"]);

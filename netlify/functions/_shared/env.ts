@@ -96,7 +96,7 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   OPENROUTER_API_KEY: z.string().min(1),
   OPENROUTER_MODELS: z.string(),
-  // 品質モード専用 allowlist。BILLING_ENABLED=false 時は空/未設定可
+  // 品質モード専用。課金停止中で開発者無料付与もない場合だけ空/未設定可。
   OPENROUTER_PLUS_MODELS: z.string().optional(),
   // チラシ vision 専用（任意。未設定時は Plus list を流用 — Q1）
   OPENROUTER_FLYER_MODELS: z.string().optional(),
@@ -161,7 +161,7 @@ export type ServerEnv = Omit<
     apiKey: string;
     baseUrl: string;
     models: readonly string[];
-    /** 品質モード専用。BILLING_ENABLED=false 時は空配列可 */
+    /** 品質モード専用。課金停止中で開発者無料付与もない場合だけ空配列可。 */
     plusModels: readonly string[];
     /** チラシ vision 専用。未設定時は空（ランタイムは plusModels へフォールバック） */
     flyerModels: readonly string[];
@@ -180,10 +180,12 @@ export type ServerEnv = Omit<
   /** identity 日次枠 HMAC 鍵（メールは保存しない） */
   quotaIdentityHmacKey: Uint8Array;
   /**
-   * Stripe 課金面の有効化（Checkout/Portal/品質・チラシ製品面）。
-   * false でも Webhook は鍵があれば稼働継続し、枠は Free 強制（A3）。
+   * Stripe 課金面の有効化。false でも Webhook は鍵があれば稼働継続する。
+   * 通常契約の枠・Plus 機能は停止し、明示した開発者の無料付与だけ維持する。
    */
   billingEnabled: boolean;
+  /** サーバーで明示した開発者だけに、Stripe 契約とは独立した Plus 権益を付与する。 */
+  developerPlusUserIds?: readonly string[];
   /**
    * Stripe 鍵一式。BILLING_ENABLED=true 時は必須。
    * false でも鍵があれば設定（Webhook 用 A3）。鍵なしは undefined。
@@ -381,7 +383,11 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   }
   // Stripe / Billing の VITE_ は存在自体を拒否
   for (const key of Object.keys(source)) {
-    if (key.startsWith("VITE_STRIPE_") || key.startsWith("VITE_BILLING_")) {
+    if (
+      key.startsWith("VITE_STRIPE_") ||
+      key.startsWith("VITE_BILLING_") ||
+      key === "VITE_DEVELOPER_PLUS_USER_IDS"
+    ) {
       throw new Error("server_configuration_invalid");
     }
   }
@@ -398,6 +404,7 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
     }
   }
   const billingEnabled = parseBillingEnabledFlag(source);
+  const developerPlusUserIds = parseDeveloperPlusUserIds(source.DEVELOPER_PLUS_USER_IDS);
   const result = rawServerEnvSchema.safeParse(source);
   if (!result.success) throw new Error("server_configuration_invalid");
 
@@ -442,7 +449,7 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
   const models = parseOpenRouterModels(result.data.OPENROUTER_MODELS, {
     openRouterBaseUrl,
   });
-  // 品質リスト: 未設定/空は billing 無効時のみ許可。有効時は同一ゲートで 1 件以上必須
+  // 品質リストは通常契約または開発者無料付与で利用できる場合に必須。
   const rawPlus = result.data.OPENROUTER_PLUS_MODELS;
   let plusModels: readonly string[] = [];
   if (rawPlus !== undefined && rawPlus.trim().length > 0) {
@@ -453,6 +460,9 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
       const message = error instanceof Error ? error.message : "invalid";
       throw new Error(message.replaceAll("OPENROUTER_MODELS", "OPENROUTER_PLUS_MODELS"));
     }
+  }
+  if (developerPlusUserIds.length > 0 && plusModels.length === 0) {
+    throw new Error("server_configuration_invalid");
   }
   if (billingEnabled && plusModels.length === 0) {
     throw new Error(
@@ -505,12 +515,25 @@ export function parseServerEnv(source: Record<string, unknown>): ServerEnv {
     },
     quotaIdentityHmacKey: QUOTA_IDENTITY_HMAC_KEY,
     billingEnabled,
+    developerPlusUserIds,
     ...(stripe === undefined ? {} : { stripe }),
   };
 }
 
 export function getServerEnv(): ServerEnv {
   return parseServerEnv(process.env);
+}
+
+/** 不正な項目が一つでもあれば全体を拒否し、診断にユーザー ID を含めない。 */
+export function parseDeveloperPlusUserIds(value: unknown): readonly string[] {
+  if (value === undefined || value === null || value === "") return [];
+  if (typeof value !== "string") throw new Error("server_configuration_invalid");
+  if (value.trim() === "") return [];
+  const ids = value.split(",").map((id) => id.trim().toLowerCase());
+  if (ids.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id))) {
+    throw new Error("server_configuration_invalid");
+  }
+  return [...new Set(ids)];
 }
 
 export const supabaseServerEnvSchema = continuationServerEnvSchema.pick({

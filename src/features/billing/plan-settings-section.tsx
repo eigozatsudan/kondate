@@ -47,6 +47,7 @@ function planLabel(data: EntitlementData, options: { trustPlus: boolean }): stri
   // B25: plan 文字列だけでは Plus ラベルにしない（plusEntitled のみ。LP と同型の表示 DiD）
   // trustPlus=false（error）時は Plus ラベルを出さない
   if (options.trustPlus && data.plusEntitled) {
+    if (data.developerPlus) return "こんだて日和 Plus（開発者・無料）";
     if (data.status === "trialing") return "こんだて日和 Plus（無料期間中）";
     if (data.pastDueGrace || data.status === "past_due")
       return "こんだて日和 Plus（お支払い確認中）";
@@ -109,6 +110,8 @@ export function PlanSettingsSection({
   const surfacesOpen = data?.productSurfacesOpen === true;
   // B6: error 時は stale Plus を出さない（サーバ再検証までの fail-closed 表示）
   const entitled = !error && data?.plusEntitled === true;
+  const developerPlus = entitled && data?.developerPlus === true;
+  const hasStripeSubscription = data?.status !== "none";
   // B11: fetch error 時は stale status の trial / past_due / incomplete ブロックを出さない
   const isTrialing = !error && data?.status === "trialing";
   const isPastDue = !error && (data?.status === "past_due" || data?.pastDueGrace === true);
@@ -173,7 +176,11 @@ export function PlanSettingsSection({
             いまのプラン: <strong>{planLabel(data, { trustPlus: !error })}</strong>
           </p>
 
-          {!surfacesOpen ? <p role="status">{SURFACES_CLOSED_COPY}</p> : null}
+          {developerPlus ? <p>開発者向けに Plus を無料で利用できます。</p> : null}
+          {developerPlus && hasStripeSubscription ? (
+            <p>既存の有料契約は自動では解約されません。契約内容はお支払い管理で確認できます。</p>
+          ) : null}
+          {!surfacesOpen && !developerPlus ? <p role="status">{SURFACES_CLOSED_COPY}</p> : null}
 
           {isTrialing ? (
             <div className="stack gap-1">
@@ -300,7 +307,7 @@ export function PlanSettingsSection({
             </div>
           ) : null}
 
-          {entitled && surfacesOpen && !isPastDue ? (
+          {entitled && surfacesOpen && !isPastDue && (!developerPlus || hasStripeSubscription) ? (
             <div className="stack gap-2">
               <p className="type-small">{STRIPE_REDIRECT_NOTICE}</p>
               <button

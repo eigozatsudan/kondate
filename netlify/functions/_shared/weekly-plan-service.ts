@@ -260,8 +260,9 @@ export async function runWeeklyPlanWithReserveStub(options: {
   ) => Promise<OpenRouterGenerationResult>;
   plusEntitled: boolean;
   billingEnabled: boolean;
+  developerPlus?: boolean;
 }): Promise<{ openRouterCalls: number; errorCode?: string }> {
-  if (!options.billingEnabled || !options.plusEntitled) {
+  if (!options.developerPlus && (!options.billingEnabled || !options.plusEntitled)) {
     const denied = reservePayloadSchema.safeParse(options.reserveResult);
     if (
       denied.success &&

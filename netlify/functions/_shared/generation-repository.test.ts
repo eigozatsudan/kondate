@@ -1022,8 +1022,11 @@ describe("createGenerationRepository regeneration reserve", () => {
     expect(rpcMock).not.toHaveBeenCalledWith("finalize_ai_generation_failure", expect.anything());
   });
 
-  it("passes p_quality_mode true when Plus and qualityMode", async () => {
-    loadEntitlementMock.mockResolvedValue(plusEntitlement);
+  it.each([false, true])("passes quality mode for paid or developer Plus (billing=%s)", async (enabled) => {
+    loadEntitlementMock.mockResolvedValue(enabled ? plusEntitlement : {
+      ...freeEntitlement,
+      developerPlus: true,
+    });
     getServerEnvMock.mockReturnValue({
       openRouter: {
         userDailyLimit: 1,
@@ -1035,7 +1038,7 @@ describe("createGenerationRepository regeneration reserve", () => {
       },
       quotaIdentityHmacKey: identityHmacKey,
       aiQuotaDisabled: false,
-      billingEnabled: true,
+      billingEnabled: enabled,
     });
     rpcMock.mockResolvedValueOnce({ data: publicRecord, error: null });
     const repository = createGenerationRepository(user);

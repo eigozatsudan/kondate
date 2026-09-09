@@ -42,6 +42,19 @@ const validServerEnv = {
 const productionPaidModels = "mistralai/mistral-small-3.2-24b-instruct,openai/gpt-oss-120b";
 
 describe("parseOpenRouterModels", () => {
+  it.each([undefined, "", "  "])("does not grant developers for an empty allowlist (%s)", (value) => {
+    expect(parseServerEnv({ ...validServerEnv, DEVELOPER_PLUS_USER_IDS: value })).toMatchObject({ developerPlusUserIds: [] });
+  });
+
+  it("normalizes UUID case and whitespace and removes duplicates", () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    expect(parseServerEnv({
+      ...validServerEnv,
+      DEVELOPER_PLUS_USER_IDS: ` ${id.toUpperCase()}, ${id} `,
+      OPENROUTER_PLUS_MODELS: validServerEnv.OPENROUTER_MODELS,
+    })).toMatchObject({ developerPlusUserIds: [id] });
+  });
+
   it("accepts developer Plus while billing is disabled without Stripe configuration", () => {
     const developerId = "11111111-1111-4111-8111-111111111111";
     expect(

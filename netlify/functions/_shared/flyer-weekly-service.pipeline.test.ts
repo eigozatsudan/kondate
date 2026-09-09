@@ -627,7 +627,11 @@ describe("runFlyerWeekly pipeline (PE1/PE2/PE4/PE5/PE6/PE11)", () => {
     expect(openRouterSender).not.toHaveBeenCalled();
   });
 
-  it("PE11: does not return 200 when finalize success RPC fails after stash", async () => {
+  it.each([false, true])("PE11: Plus reaches finalize and preserves errors (billing=%s)", async (enabled) => {
+    getServerEnvMock.mockReturnValue({ ...getServerEnvMock(), billingEnabled: enabled });
+    if (!enabled) {
+      loadEntitlementMock.mockResolvedValue({ plan: "free", plusEntitled: false, developerPlus: true });
+    }
     // PE6: 検証済み本文は stash して残す。PE11: success 未計上の 200 は禁止。
     rpcMock.mockImplementation((name: string) => {
       if (name === "reserve_flyer_weekly") {

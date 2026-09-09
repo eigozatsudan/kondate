@@ -223,6 +223,31 @@ export function PlusLandingPage({
         <p role="alert">プラン情報を確認できませんでした。再読み込みしてください。</p>
       ) : null}
 
+      {view.kind === "developer" ? (
+        <div className="stack gap-3">
+          <h1>こんだて日和 Plus（開発者・無料）</h1>
+          <p>開発者向けに Plus を無料で利用できます。</p>
+          {view.hasStripeSubscription ? (
+            <p>既存の有料契約は自動では解約されません。契約内容はお支払い管理で確認できます。</p>
+          ) : null}
+          {view.surfacesOpen && view.hasStripeSubscription ? (
+            <button
+              type="button"
+              className="secondary-button min-h-11"
+              disabled={pending}
+              onClick={() => {
+                void runPortal();
+              }}
+            >
+              {PORTAL_BUTTON_LABEL}
+            </button>
+          ) : null}
+          <Link className="secondary-button min-h-11" to="/settings">
+            {PLUS_LP_SETTINGS_LINK}
+          </Link>
+        </div>
+      ) : null}
+
       {view.kind === "past_due" ? (
         <div className="stack gap-3">
           <p role="alert">{PAST_DUE_COPY}</p>

@@ -16,6 +16,27 @@ function withTree(build) {
   }
 }
 
+test("detects individual developer IDs and forbidden names without logging IDs", () => {
+  const first = "11111111-1111-4111-8111-111111111111";
+  const second = "22222222-2222-4222-8222-222222222222";
+  const root = withTree((dir) => {
+    mkdirSync(join(dir, "dist"));
+    writeFileSync(join(dir, "dist", "id.js"), `const id = "${second}";`);
+    writeFileSync(join(dir, "dist", "name.js"), "VITE_DEVELOPER_PLUS_USER_IDS");
+  });
+  try {
+    const env = { DEVELOPER_PLUS_USER_IDS: `${first}, ${second}` };
+    const findings = verifyBrowserSecrets({ root, env });
+    assert.ok(findings.some((finding) => finding.file === "dist/id.js"));
+    assert.ok(findings.some((finding) => finding.file === "dist/name.js"));
+    const lines = [];
+    assert.equal(main({ root, env, write: (line) => lines.push(line) }), 1);
+    assert.ok(lines.every((line) => !line.includes(first) && !line.includes(second)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("clean fixtures pass and absent dist is accepted before build", () => {
   const root = withTree((dir) => {
     mkdirSync(join(dir, "src"), { recursive: true });

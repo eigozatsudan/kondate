@@ -40,7 +40,7 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 | `OPENROUTER_API_KEY` | プロバイダ鍵 |
 | `OPENROUTER_BASE_URL` | 正確に `https://openrouter.ai/api/v1` |
 | `OPENROUTER_MODELS` | 順序付き一意の有料 allowlist ID。`:free`・`openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` 禁止。各 ID は `structured_outputs` AND `response_format` と prompt+completion ≤ $4.00/1M を満たすこと |
-| `OPENROUTER_PLUS_MODELS` | Plus 品質モード用 allowlist。同じ有料・構造化・$4 ルール。`BILLING_ENABLED=true` 時は 1 本以上必須 |
+| `OPENROUTER_PLUS_MODELS` | Plus 品質モード用 allowlist。同じ有料・構造化・$4 ルール。`BILLING_ENABLED=true` または開発者無料付与設定時は 1 本以上必須 |
 | `OPENROUTER_FLYER_MODELS` | **任意**。チラシ vision 専用。未設定・空なら `OPENROUTER_PLUS_MODELS`。vision + 上記同じゲート |
 | `USER_DAILY_AI_LIMIT` | `1` |
 | `USER_DAILY_EXTERNAL_CALL_LIMIT` | `6` |
@@ -51,7 +51,8 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 | `OPENROUTER_TIMEOUT_MS` | `24000`（primary+repair が 55s 総予算内に収まる試行上限） |
 | `FUNCTION_TOTAL_BUDGET_MS` | `55000`（プラットフォーム 60s 硬上限の内側。headroom 5s） |
 | `AI_PROCESSING_STALE_SECONDS` | `180` |
-| `BILLING_ENABLED` | `"true"` / `"false"` のみ。未設定は false。Checkout/Portal と品質・チラシ製品面の kill |
+| `BILLING_ENABLED` | `"true"` / `"false"` のみ。未設定は false。Checkout/Portal と通常契約の Plus 機能を停止。開発者の無料 Plus は停止しない |
+| `DEVELOPER_PLUS_USER_IDS` | server only。開発者の Supabase ユーザー UUID をカンマ区切りで指定。未設定・空は付与なし。不正項目がある設定は起動拒否 |
 | `STRIPE_SECRET_KEY` | server only。`sk_test_` / `sk_live_`。`BILLING_ENABLED=true` 時必須。Webhook は false でも鍵があれば稼働 |
 | `STRIPE_WEBHOOK_SECRET` | server only。`whsec_...` |
 | `STRIPE_PRICE_PLUS_MONTHLY` | server only。Price ID |
@@ -256,3 +257,14 @@ secret なしのプローブは **env の有無に関わらず 401** になる�
 3. スケジュール実行を 1 回検証する。
 4. 旧パスワードを無効化する。
 どちらも値を露出させない。
+
+## 開発者の無料 Plus
+
+1. 対象環境の Supabase Dashboard の Authentication → Users で、開発者本人のアカウントの User UID を確認する。メールアドレスやプロフィールの属性は指定しない。
+2. Netlify の対象コンテキストのサーバー環境変数 `DEVELOPER_PLUS_USER_IDS` にその UUID を設定する。複数人はカンマ区切り。`VITE_` 接頭辞を付けず、値をソース・ログ・ブラウザへコピーしない。本番とローカルはユーザー ID が異なるため別々に設定する。
+3. `OPENROUTER_PLUS_MODELS` を既存のモデル許可ルールに従って設定する。`BILLING_ENABLED=false` のまま利用でき、開発者への付与だけなら Stripe 設定は不要。
+4. 通常の本番 preflight とブラウザ漏洩検査を実行し、再デプロイして Functions に反映する。開発者本人でログインし、設定の「Plus（開発者・無料）」表示、利用枠、品質モード、チラシ・週間献立を確認する。非対象アカウントにも従来の制限が適用されていることを確認する。
+
+解除は対象 UUID を削除して再デプロイする。空・未設定なら誰にも付与しない。不正な項目が混ざると全体を拒否する。反映後の次のサーバー権益確認から適用され、画面のプラン情報は再読み込みで更新できる。
+
+無料付与は Stripe 契約の作成・解約・返金を行わない。既存の有料契約があれば請求は継続するため、必要な解約は通常の契約管理手順で行う。`BILLING_ENABLED=false` 中は Checkout/Portal は停止するが、開発者の Plus 利用は継続する。Plus の利用枠・安全検査・アプリ全体の AI 上限は通常の Plus と同じ。アプリの利用料が無料でも、運営側の AI API 利用費は発生する。DB 障害時は無料付与でも従来どおり利用を停止する。

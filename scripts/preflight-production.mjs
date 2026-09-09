@@ -401,7 +401,11 @@ export function validateProductionEnv(env) {
  */
 export function validateBillingStripeEnv(env) {
   for (const key of Object.keys(env)) {
-    if (key.startsWith("VITE_STRIPE_") || key.startsWith("VITE_BILLING_")) {
+    if (
+      key.startsWith("VITE_STRIPE_") ||
+      key.startsWith("VITE_BILLING_") ||
+      key === "VITE_DEVELOPER_PLUS_USER_IDS"
+    ) {
       throw new Error(key);
     }
   }
@@ -415,6 +419,31 @@ export function validateBillingStripeEnv(env) {
       billingEnabled = false;
     } else {
       throw new Error("BILLING_ENABLED_invalid");
+    }
+  }
+
+  // env.ts と同じ UUID 制約。誤設定は一部採用せず、値を診断へ出さない。
+  const rawDevelopers = env.DEVELOPER_PLUS_USER_IDS;
+  let hasDevelopers = false;
+  if (rawDevelopers !== undefined && rawDevelopers !== null && rawDevelopers !== "") {
+    if (typeof rawDevelopers !== "string") throw new Error("DEVELOPER_PLUS_USER_IDS_invalid");
+    if (rawDevelopers.trim() !== "") {
+      const ids = rawDevelopers.split(",").map((id) => id.trim().toLowerCase());
+      if (ids.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id))) {
+        throw new Error("DEVELOPER_PLUS_USER_IDS_invalid");
+      }
+      hasDevelopers = true;
+    }
+  }
+  // Stripe 未設定の早期 return より前に検証し、開発者だけの本番運用にも適用する。
+  if (billingEnabled || hasDevelopers) {
+    const plus = env.OPENROUTER_PLUS_MODELS;
+    if (typeof plus !== "string" || plus.trim().length === 0) {
+      throw new Error("OPENROUTER_PLUS_MODELS");
+    }
+    const models = plus.split(",").map((item) => item.trim());
+    if (models.some((m) => m.length === 0) || models.length === 0) {
+      throw new Error("OPENROUTER_PLUS_MODELS");
     }
   }
 
@@ -462,17 +491,6 @@ export function validateBillingStripeEnv(env) {
     throw new Error("STRIPE_API_VERSION_invalid");
   }
 
-  // OPENROUTER_PLUS_MODELS: BILLING_ENABLED=true のとき 1 件以上（env.ts と同型）
-  if (billingEnabled) {
-    const plus = env.OPENROUTER_PLUS_MODELS;
-    if (typeof plus !== "string" || plus.trim().length === 0) {
-      throw new Error("OPENROUTER_PLUS_MODELS");
-    }
-    const models = plus.split(",").map((item) => item.trim());
-    if (models.some((m) => m.length === 0) || models.length === 0) {
-      throw new Error("OPENROUTER_PLUS_MODELS");
-    }
-  }
 }
 
 export function main(env = process.env, write = console.error) {

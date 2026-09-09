@@ -2,6 +2,7 @@ import { z } from "zod";
 import { entitlementDataSchema, type EntitlementData } from "../../../shared/contracts/billing.js";
 import { planQuota, type PlanCode } from "../../../shared/contracts/plan-quota.js";
 import { getSupabaseAdmin } from "./supabase-admin.js";
+import { getServerEnv } from "./env.js";
 
 export type BillingSubscriptionStatus =
   | "trialing"
@@ -22,6 +23,8 @@ export type Entitlement = {
   cancelAtPeriodEnd: boolean;
   trialEnd: string | null;
   dbPlusEntitled: boolean;
+  /** 認証済み ID とサーバー allowlist の照合結果。Stripe 投影や metadata は使わない。 */
+  developerPlus?: boolean;
   /** RPC の past_due_since。kill 復元で past_due grace を再計算する */
   pastDueSince?: string | null;
   /**
@@ -108,12 +111,13 @@ export function restoreKillMaskedEntitlement(
   return entitlement;
 }
 
-/** BILLING_ENABLED=false → 常に free limits（A3 枠面） */
+/** 課金停止中も開発者への明示付与を維持し、通常契約には従来の停止を適用する。 */
 export function applyQuotaPlan(
   entitlement: Entitlement,
   billingEnabled: boolean,
   now: Date = new Date(),
 ): PlanCode {
+  if (entitlement.developerPlus === true) return "plus";
   if (!billingEnabled) return "free";
   // B15: toEntitlementData / Checkout と同じ now を渡せる。別時計で plan と quota が割れない。
   const restored = restoreKillMaskedEntitlement(entitlement, billingEnabled, now);
@@ -121,7 +125,7 @@ export function applyQuotaPlan(
 }
 
 /**
- * Checkout/Portal/品質/チラシの製品面が開いているか。
+ * Checkout/Portal の課金面が開いているか。Plus 機能は applyQuotaPlan で判定する。
  * A3: BILLING_ENABLED のみで判定（DB の plus 投影とは独立）。
  */
 export function productSurfacesOpen(billingEnabled: boolean): boolean {
@@ -146,7 +150,7 @@ function closeEntitlementIsoDate(value: string | null): string | null {
 
 /**
  * GET /api/billing/entitlement 用: DB 投影 + kill 分割面を合成する。
- * productSurfacesOpen / quotaPlan は env.billingEnabled 由来。
+ * productSurfacesOpen は課金設定、quotaPlan は開発者無料付与も含む実効権益。
  * B5: plusEntitled は usage.plusEntitled と同義（quotaPlan === "plus"）。
  * dbPlusEntitled だけが BILLING_ENABLED 非依存の DB 生値。
  */
@@ -170,6 +174,7 @@ export function toEntitlementData(
     dbPlusEntitled: entitlement.dbPlusEntitled,
     productSurfacesOpen: productSurfacesOpen(billingEnabled),
     quotaPlan,
+    ...(entitlement.developerPlus === true ? { developerPlus: true } : {}),
   });
 }
 
@@ -245,6 +250,10 @@ export async function loadEntitlement(userId: string): Promise<Entitlement> {
       dbPlusEntitled: parsed.data.db_plus_entitled,
       pastDueSince: parsed.data.past_due_since ?? null,
       killSourceStatus: parsed.data.kill_source_status ?? null,
+      // DB 障害時は付与で迂回せず従来どおり 503。対象 ID 一覧は wire に出さない。
+      ...(getServerEnv().developerPlusUserIds?.includes(userId.toLowerCase())
+        ? { developerPlus: true }
+        : {}),
     };
   } catch (error: unknown) {
     if (error instanceof BillingEntitlementUnavailableError) throw error;

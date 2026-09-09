@@ -7,6 +7,7 @@ import { join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const FORBIDDEN_NAMES = [
+  "DEVELOPER_PLUS_USER_IDS",
   "OPENROUTER_API_KEY",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SERVICE_ROLE_KEY",
@@ -79,6 +80,16 @@ export function verifyBrowserSecrets({ root, env, requireDist = false }) {
     const value = env[key];
     if (typeof value === "string" && value.length > 0) {
       valueMatchers.push({ key, value });
+    }
+  }
+  // カンマ区切り全体だけでなく、個別 ID が埋め込まれた漏洩も検知する。
+  const developerIds = env.DEVELOPER_PLUS_USER_IDS;
+  if (typeof developerIds === "string") {
+    for (const value of developerIds.split(",").map((id) => id.trim())) {
+      if (value.length > 0) {
+        valueMatchers.push({ key: "DEVELOPER_PLUS_USER_IDS", value });
+        valueMatchers.push({ key: "DEVELOPER_PLUS_USER_IDS", value: value.toLowerCase() });
+      }
     }
   }
 
