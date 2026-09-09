@@ -320,7 +320,11 @@ export function PlanSettingsSection({
             </div>
           ) : null}
 
-          {entitled && surfacesOpen && !isPastDue && !isIncomplete && (!developerPlus || hasStripeSubscription) ? (
+          {entitled &&
+          surfacesOpen &&
+          !isPastDue &&
+          !isIncomplete &&
+          (!developerPlus || hasStripeSubscription) ? (
             <div className="stack gap-2">
               <p className="type-small">{STRIPE_REDIRECT_NOTICE}</p>
               <button
