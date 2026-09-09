@@ -39,7 +39,7 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 | `SUPABASE_MAINTENANCE_DB_URL` | 同一 project ref に束縛した TLS DB URL。Functions スコープのみ |
 | `OPENROUTER_API_KEY` | プロバイダ鍵 |
 | `OPENROUTER_BASE_URL` | 正確に `https://openrouter.ai/api/v1` |
-| `OPENROUTER_MODELS` | 順序付き一意の有料 allowlist ID。`:free`・`openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` 禁止。各 ID は `structured_outputs` AND `response_format` と prompt+completion ≤ $4.00/1M を満たすこと |
+| `OPENROUTER_MODELS` | 順序付き一意の有料 allowlist ID。`:free`・`openrouter/auto` / `openrouter/free` / `openrouter/auto-beta` 禁止。各 ID は `structured_outputs` AND `response_format` と prompt+completion ≤ $6.00/1M を満たすこと |
 | `OPENROUTER_PLUS_MODELS` | Plus 品質モード用 allowlist。同じ有料・構造化・$4 ルール。`BILLING_ENABLED=true` または開発者無料付与設定時は 1 本以上必須 |
 | `OPENROUTER_FLYER_MODELS` | **任意**。チラシ vision 専用。未設定・空なら `OPENROUTER_PLUS_MODELS`。vision + 上記同じゲート |
 | `USER_DAILY_AI_LIMIT` | `1` |

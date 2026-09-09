@@ -1043,7 +1043,7 @@ describe("assertModelsMeetRuntimePolicy", () => {
     }).toThrow(/missing usable pricing/u);
   });
 
-  it("rejects prompt+completion above 4 USD per 1M tokens", () => {
+  it("rejects prompt+completion above 6 USD per 1M tokens", () => {
     expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
@@ -1051,14 +1051,14 @@ describe("assertModelsMeetRuntimePolicy", () => {
           {
             id: "vendor/a",
             supported_parameters: ["structured_outputs", "response_format"],
-            pricing: { prompt: "0.0000021", completion: "0.0000021" },
+            pricing: { prompt: "0.0000031", completion: "0.0000031" },
           },
         ],
       );
     }).toThrow(/exceeds max prompt\+completion/u);
   });
 
-  it("accepts prompt+completion exactly 4 USD per 1M tokens", () => {
+  it("accepts prompt+completion exactly 6 USD per 1M tokens", () => {
     expect(() => {
       assertModelsMeetRuntimePolicy(
         ["vendor/a"],
@@ -1066,7 +1066,22 @@ describe("assertModelsMeetRuntimePolicy", () => {
           {
             id: "vendor/a",
             supported_parameters: ["structured_outputs", "response_format"],
-            pricing: { prompt: "0.000002", completion: "0.000002" },
+            pricing: { prompt: "0.000003", completion: "0.000003" },
+          },
+        ],
+      );
+    }).not.toThrow();
+  });
+
+  it("accepts prompt+completion above the old cap at 5 USD per 1M tokens", () => {
+    expect(() => {
+      assertModelsMeetRuntimePolicy(
+        ["vendor/a"],
+        [
+          {
+            id: "vendor/a",
+            supported_parameters: ["structured_outputs", "response_format"],
+            pricing: { prompt: "0.0000025", completion: "0.0000025" },
           },
         ],
       );

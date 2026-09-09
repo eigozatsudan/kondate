@@ -253,7 +253,7 @@ test("main forwards CLI trialCount and configurations to runPaidBenchmark", asyn
 
 test("gate constants lock N=10 and the price ceiling", () => {
   assert.equal(benchTrialCount, 10);
-  assert.equal(maxPromptPlusCompletionUsdPerMillion, 4);
+  assert.equal(maxPromptPlusCompletionUsdPerMillion, 6);
 });
 
 test("mechanical filter applies the structured-output AND and price rules", () => {
@@ -276,14 +276,31 @@ test("mechanical filter applies the structured-output AND and price rules", () =
       [
         "vendor/a",
         remoteEntry("vendor/a", {
-          // $2.10 + $2.10 = $4.20 / 1M > P*=4
-          pricing: { prompt: "0.0000021", completion: "0.0000021" },
+          // $3.10 + $3.10 = $6.20 / 1M > P*=6
+          pricing: { prompt: "0.0000031", completion: "0.0000031" },
         }),
       ],
     ]),
   );
   assert.equal(overPrice.ok, false);
   assert.match(overPrice.reason, /exceeds/u);
+});
+
+test("mechanical filter accepts the new ceiling and prices above the old ceiling", () => {
+  for (const price of ["0.0000025", "0.000003"]) {
+    const result = evaluateMechanicalFilter(
+      "vendor/a",
+      new Map([
+        [
+          "vendor/a",
+          remoteEntry("vendor/a", {
+            pricing: { prompt: price, completion: price },
+          }),
+        ],
+      ]),
+    );
+    assert.equal(result.ok, true);
+  }
 });
 
 test("mechanical filter rejects coercible prices, :free IDs, routers, and missing IDs", () => {

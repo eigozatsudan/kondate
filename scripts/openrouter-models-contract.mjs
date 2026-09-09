@@ -21,14 +21,14 @@
  * Remote verification (verifyRemoteModels / --remote のみ、公式 base 経路):
  * - OpenRouter Models API に各設定 ID が存在する。
  * - 各モデルの supported_parameters に structured_outputs と response_format の両方が含まれる（AND）。
- * - pricing.prompt / pricing.completion が usable で、prompt+completion ≤ $4.00 / 1M tokens。
+ * - pricing.prompt / pricing.completion が usable で、prompt+completion ≤ $6.00 / 1M tokens。
  */
 export const modelListRules = `
 - comma-split + trim; empty elements rejected (no filter(Boolean)); empty list rejected; duplicates rejected; order preserved
 - reject openrouter/auto, openrouter/free, openrouter/auto-beta always (case-insensitive)
 - exact mock base only: accept mock/*:free (mock/ prefix and :free suffix case-insensitive); non-mock base rejects any :free/:Free/:FREE and any mock/Mock/ prefix
 - mock exception uses OPENROUTER_BASE_URL exact match only (not isLocal / SERVER_SITE_ORIGIN)
-- remote: id exists; structured_outputs AND response_format; usable pricing; prompt+completion ≤ 4.00 USD/1M
+- remote: id exists; structured_outputs AND response_format; usable pricing; prompt+completion ≤ 6.00 USD/1M
 `.trim();
 
 /** 後方互換の別名（free 必須ではない — 有料 allowlist + mock 例外） */

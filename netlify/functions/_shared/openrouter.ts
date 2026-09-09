@@ -125,7 +125,7 @@ export const OFFICIAL_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export const OFFICIAL_OPENROUTER_MODELS_URL =
   "https://openrouter.ai/api/v1/models?output_modalities=text";
 /** prompt+completion 上限 USD/1M（inclusive）。verify の maxPromptPlusCompletionUsdPerMillion と同一。 */
-export const MAX_PROMPT_PLUS_COMPLETION_USD_PER_MILLION = 4;
+export const MAX_PROMPT_PLUS_COMPLETION_USD_PER_MILLION = 6;
 /** Models API 1 回あたりの締切（5 秒）。verify の modelsApiTimeoutMs と同一。 */
 export const OPENROUTER_MODELS_API_TIMEOUT_MS = 5_000;
 

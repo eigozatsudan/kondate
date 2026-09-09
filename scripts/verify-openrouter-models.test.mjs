@@ -106,7 +106,7 @@ for (const [label, pricing] of [
   });
 }
 
-test("rejects prompt+completion above 4 USD per 1M tokens", () => {
+test("rejects prompt+completion above 6 USD per 1M tokens", () => {
   assert.throws(
     () =>
       verifyRemoteModels(
@@ -115,8 +115,8 @@ test("rejects prompt+completion above 4 USD per 1M tokens", () => {
           {
             id: "vendor/a",
             supported_parameters: ["structured_outputs", "response_format"],
-            // $2.10 + $2.10 = $4.20 / 1M > 4
-            pricing: { prompt: "0.0000021", completion: "0.0000021" },
+            // $3.10 + $3.10 = $6.20 / 1M > 6
+            pricing: { prompt: "0.0000031", completion: "0.0000031" },
           },
         ],
       ),
@@ -124,8 +124,8 @@ test("rejects prompt+completion above 4 USD per 1M tokens", () => {
   );
 });
 
-// F3: 合計上限ちょうど $4.00 / 1M は受理（> のみ拒否）
-test("accepts prompt+completion exactly 4 USD per 1M tokens", () => {
+// F3: 合計上限ちょうど $6.00 / 1M は受理（> のみ拒否）
+test("accepts prompt+completion exactly 6 USD per 1M tokens", () => {
   assert.doesNotThrow(() =>
     verifyRemoteModels(
       ["vendor/a"],
@@ -133,8 +133,24 @@ test("accepts prompt+completion exactly 4 USD per 1M tokens", () => {
         {
           id: "vendor/a",
           supported_parameters: ["structured_outputs", "response_format"],
-          // $2.00 + $2.00 = $4.00 / 1M（上限ちょうど）
-          pricing: { prompt: "0.000002", completion: "0.000002" },
+          // $3.00 + $3.00 = $6.00 / 1M（上限ちょうど）
+          pricing: { prompt: "0.000003", completion: "0.000003" },
+        },
+      ],
+    ),
+  );
+});
+
+test("accepts prompt+completion above the old cap at 5 USD per 1M tokens", () => {
+  assert.doesNotThrow(() =>
+    verifyRemoteModels(
+      ["vendor/a"],
+      [
+        {
+          id: "vendor/a",
+          supported_parameters: ["structured_outputs", "response_format"],
+          // $2.50 + $2.50 = $5.00 / 1M（旧上限超、新上限以内）
+          pricing: { prompt: "0.0000025", completion: "0.0000025" },
         },
       ],
     ),
