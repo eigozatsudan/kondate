@@ -46,7 +46,7 @@ export async function listHistoryGroups(): Promise<HistoryGroup[]> {
     )
     .order("created_at", { ascending: false });
   if (error !== null) throw historyError("履歴を読み込めませんでした");
-  const rows: HistoryMenuRow[] = data.map((row) => {
+  const rows: HistoryMenuRow[] = rowsOrEmpty(data).map((row) => {
     // target_mode はDB制約で household|idea のいずれかしか入らないが、履歴一覧
     // badge・詳細分岐の権威ある判定元として使う値のため受信側でも zod で確定させる。
     // 未知の値が来た場合は household 側の安全表示を誤って外さないよう idea 側へ

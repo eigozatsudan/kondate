@@ -45,7 +45,13 @@ async function post<T>(path: string, body: unknown, schema: z.ZodType<T>): Promi
     },
     body: JSON.stringify(body),
   });
-  const parsed = envelopeSchema(schema).safeParse(await response.json());
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch {
+    throw new Error("買い物リストの応答を確認できませんでした");
+  }
+  const parsed = envelopeSchema(schema).safeParse(raw);
   if (!parsed.success) throw new Error("買い物リストの応答を確認できませんでした");
   if (!parsed.data.ok)
     throw Object.assign(new Error(parsed.data.error.message), {

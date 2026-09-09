@@ -249,6 +249,25 @@ it("rejects when response path does not match request targetMode", async () => {
   ).rejects.toThrow(/応答経路/u);
 });
 
+it("maps a non-JSON Function body to a Japanese envelope error", async () => {
+  vi.mocked(fetch).mockResolvedValue(
+    new Response("<html>bad gateway</html>", {
+      status: 502,
+      headers: { "content-type": "text/html" },
+    }),
+  );
+
+  await expect(
+    getEmergencyMenus({
+      mealType: "dinner",
+      mainIngredients: [],
+      targetMode: "household",
+      targetMemberIds: ["70000000-0000-4000-8000-000000000001"],
+      pantryItemIds: [],
+    }),
+  ).rejects.toThrow("緊急献立の応答を確認できませんでした");
+});
+
 it("rejects idea requests with non-empty targetMemberIds at the client schema", async () => {
   await expect(
     getEmergencyMenus({

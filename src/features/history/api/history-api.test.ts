@@ -85,6 +85,13 @@ describe("listHistoryGroups", () => {
 
     await expect(listHistoryGroups()).rejects.toThrow("履歴を読み込めませんでした");
   });
+
+  it("treats error-less null rows as an empty history instead of throwing", async () => {
+    const { from } = mockClient({ data: null });
+    getBrowserSupabaseClientMock.mockReturnValue({ from });
+
+    await expect(listHistoryGroups()).resolves.toEqual([]);
+  });
 });
 
 describe("listDerivationVersions", () => {

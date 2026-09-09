@@ -545,17 +545,14 @@ export function createShoppingDependencies(user: AuthenticatedUser): ShoppingDep
       return data;
     },
     async applyDraft(input) {
-      // 補正: 生成済み Database 型は SQL 側の NULL 許容パラメータ（DEFAULT 未指定の
-      // uuid/integer 引数）でも非 null 型を生成する既知の制限がある。マイグレーション
-      // (apply_shopping_draft) は p_active_list_id / p_expected_list_version を
-      // "is distinct from" で NULL-safe に比較しており、NULL 呼び出しは正当な入力。
-      // 実引用の意味は変えず、型だけを SQL 契約に合わせて明示キャストする。
+      // Database overlay が p_active_list_id / p_expected_list_version の null を
+      // SQL 契約（IS DISTINCT FROM）どおり復元している。生成型へのキャストは使わない。
       const args: Database["public"]["Functions"]["apply_shopping_draft"]["Args"] = {
         p_user_id: input.userId,
         p_menu_id: input.menuId,
         p_mode: input.mode,
-        p_active_list_id: input.activeListId as unknown as string,
-        p_expected_list_version: input.expectedListVersion as unknown as number,
+        p_active_list_id: input.activeListId,
+        p_expected_list_version: input.expectedListVersion,
         p_safety_fingerprint: input.safetyFingerprint,
         p_idempotency_key: input.idempotencyKey,
         p_request_hash: input.requestHash,

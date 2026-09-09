@@ -78,6 +78,26 @@ it("L7: Escape dismisses toast so keyboard can stop the 6s limit", async () => {
   expect(screen.queryByRole("status")).toBeNull();
 });
 
+it("keeps the toast api identity across provider rerenders", () => {
+  const seen: ReturnType<typeof useAppToast>[] = [];
+  function IdentityProbe() {
+    seen.push(useAppToast());
+    return null;
+  }
+  const { rerender } = render(
+    <AppToastProvider>
+      <IdentityProbe />
+    </AppToastProvider>,
+  );
+  rerender(
+    <AppToastProvider>
+      <IdentityProbe />
+    </AppToastProvider>,
+  );
+  expect(seen).toHaveLength(2);
+  expect(seen[0]).toBe(seen[1]);
+});
+
 it("L7: focusing the close button pauses auto-dismiss", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });

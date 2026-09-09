@@ -79,7 +79,12 @@ export async function getEmergencyMenus(input: {
     body: JSON.stringify(validatedInput),
     cache: "no-store",
   });
-  const body: unknown = await response.json();
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error("緊急献立の応答を確認できませんでした");
+  }
   // path 相関は parse 側に寄せる（household chrome の誤表示を防ぐ防御）。
   return parseEmergencyMenusResponse(body, validatedInput.targetMode);
 }

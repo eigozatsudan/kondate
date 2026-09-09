@@ -5,6 +5,7 @@ import {
   setAccessTokenPinnedUserId,
 } from "@/features/auth/session";
 import {
+  createShoppingList,
   fetchReconcilableMenuSource,
   isReconcileShoppingStickyReusable,
   mutateShoppingItem,
@@ -70,6 +71,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetAccessTokenPinGateForTests();
+  vi.unstubAllGlobals();
 });
 
 describe("fetchReconcilableMenuSource", () => {
@@ -115,6 +117,45 @@ describe("fetchReconcilableMenuSource", () => {
       AuthSessionPinMismatchError,
     );
     expect(from).not.toHaveBeenCalled();
+  });
+});
+
+describe("createShoppingList", () => {
+  it("maps a non-JSON Function body to the shopping envelope error", async () => {
+    setAccessTokenPinnedUserId("user-a");
+    getBrowserSupabaseClientMock.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: {
+            session: {
+              access_token: "token",
+              user: { id: "user-a" },
+              expires_at: Math.floor(Date.now() / 1000) + 3600,
+            },
+          },
+          error: null,
+        }),
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("<html>bad gateway</html>", {
+          status: 502,
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+
+    await expect(
+      createShoppingList({
+        menuId: MENU_ID,
+        mode: "new",
+        activeListId: null,
+        expectedListVersion: null,
+        idempotencyKey: "43000000-0000-4000-8000-000000000001",
+      }),
+    ).rejects.toThrow("買い物リストの応答を確認できませんでした");
   });
 });
 

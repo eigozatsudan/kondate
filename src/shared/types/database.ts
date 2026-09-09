@@ -129,10 +129,24 @@ type FinalizeGenerationSuccessDeadlineBoundedArgs = FinalizeGenerationSuccessArg
 type GeneratedSetOnboardingStatus = GeneratedFunctions["set_onboarding_status"];
 type GeneratedInsertUserFeedback = GeneratedFunctions["insert_user_feedback_rate_limited"];
 type GeneratedInsertUserFeedbackArgs = GeneratedInsertUserFeedback["Args"];
+type GeneratedApplyShoppingDraft = GeneratedFunctions["apply_shopping_draft"];
+type GeneratedApplyShoppingDraftArgs = GeneratedApplyShoppingDraft["Args"];
 
 // Postgres Meta は nullable 引数を非 null として生成するため、overlay で復元する
 type InsertUserFeedbackArgs = Omit<GeneratedInsertUserFeedbackArgs, "p_client_path"> & {
   p_client_path: GeneratedInsertUserFeedbackArgs["p_client_path"] | null;
+};
+
+// apply_shopping_draft の p_active_list_id / p_expected_list_version は SQL 側で
+// IS DISTINCT FROM により NULL を正当入力として扱う。生成型は uuid/integer を非 null
+// に畳むため、overlay で SQL 契約へ戻す。
+type NullableApplyShoppingDraftArgs = "p_active_list_id" | "p_expected_list_version";
+type ApplyShoppingDraftArgs = Omit<
+  GeneratedApplyShoppingDraftArgs,
+  NullableApplyShoppingDraftArgs
+> & {
+  p_active_list_id: GeneratedApplyShoppingDraftArgs["p_active_list_id"] | null;
+  p_expected_list_version: GeneratedApplyShoppingDraftArgs["p_expected_list_version"] | null;
 };
 
 // Postgres Meta は household 凍結の null servings を非 null number として生成するため復元する
@@ -177,6 +191,7 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       | "get_ai_generation_submission_snapshot"
       | "set_onboarding_status"
       | "insert_user_feedback_rate_limited"
+      | "apply_shopping_draft"
     > & {
       save_generation_draft: Omit<GeneratedSaveDraft, "Args"> & {
         Args: SaveDraftArgs;
@@ -227,6 +242,9 @@ export type Database = Omit<GeneratedDatabase, "public"> & {
       };
       insert_user_feedback_rate_limited: Omit<GeneratedInsertUserFeedback, "Args"> & {
         Args: InsertUserFeedbackArgs;
+      };
+      apply_shopping_draft: Omit<GeneratedApplyShoppingDraft, "Args"> & {
+        Args: ApplyShoppingDraftArgs;
       };
       /** 共有 worker: 当日 AI 呼び出し残り枠（service_role） */
       share_app_ai_budget_remaining: {

@@ -287,3 +287,50 @@ const invalidOnboardingStatus = {
 } satisfies ProfileRow;
 
 void invalidOnboardingStatus;
+
+type GeneratedApplyShoppingDraft = GeneratedDatabase["public"]["Functions"]["apply_shopping_draft"];
+type ApplyShoppingDraftArgs = Database["public"]["Functions"]["apply_shopping_draft"]["Args"];
+type NullableApplyShoppingDraftArg = "p_active_list_id" | "p_expected_list_version";
+
+it("apply_shopping_draft は active list の null を RPC 引数として表現できる", () => {
+  const args = {
+    p_user_id: "10000000-0000-4000-8000-000000000001",
+    p_menu_id: "40000000-0000-4000-8000-000000000001",
+    p_mode: "new",
+    p_active_list_id: null,
+    p_expected_list_version: null,
+    p_safety_fingerprint: "a".repeat(64),
+    p_idempotency_key: "20000000-0000-4000-8000-000000000001",
+    p_request_hash: "b".repeat(64),
+    p_draft: {},
+  } satisfies ApplyShoppingDraftArgs;
+
+  expectTypeOf(args).toExtend<ApplyShoppingDraftArgs>();
+  expect(args.p_active_list_id).toBeNull();
+  expect(args.p_expected_list_version).toBeNull();
+});
+
+it("apply_shopping_draft の nullable 2項目以外のRPC契約を変更しない", () => {
+  type AppApplyShoppingDraft = Database["public"]["Functions"]["apply_shopping_draft"];
+  expectTypeOf<Omit<AppApplyShoppingDraft["Args"], NullableApplyShoppingDraftArg>>().toEqualTypeOf<
+    Omit<GeneratedApplyShoppingDraft["Args"], NullableApplyShoppingDraftArg>
+  >();
+  expectTypeOf<AppApplyShoppingDraft["Returns"]>().toEqualTypeOf<
+    GeneratedApplyShoppingDraft["Returns"]
+  >();
+});
+
+const invalidApplyShoppingDraftUserId = {
+  // @ts-expect-error user_id は nullable へ拡張しない
+  p_user_id: null,
+  p_menu_id: "40000000-0000-4000-8000-000000000001",
+  p_mode: "new",
+  p_active_list_id: null,
+  p_expected_list_version: null,
+  p_safety_fingerprint: "a".repeat(64),
+  p_idempotency_key: "20000000-0000-4000-8000-000000000001",
+  p_request_hash: "b".repeat(64),
+  p_draft: {},
+} satisfies ApplyShoppingDraftArgs;
+
+void invalidApplyShoppingDraftUserId;

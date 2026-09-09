@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PropsWithChildren,
@@ -127,10 +128,13 @@ export function AppToastProvider({ children }: PropsWithChildren): React.JSX.Ele
     };
   }, [toast, dismiss]);
 
-  const api: AppToastApi = {
-    show,
-    dismiss,
-  };
+  const api = useMemo<AppToastApi>(
+    () => ({
+      show,
+      dismiss,
+    }),
+    [show, dismiss],
+  );
 
   const handlePause = useCallback(() => {
     if (toast === null) {
