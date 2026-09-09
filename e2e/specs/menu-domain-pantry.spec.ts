@@ -7,7 +7,10 @@ import {
   selectHouseholdAudienceWithMember,
   skipOptionalPlannerSteps,
 } from "../fixtures/history";
-import { confirmAddScopeNotice } from "../fixtures/household";
+import {
+  completeHouseholdMemberWhenAllergiesReady,
+  confirmAddScopeNotice,
+} from "../fixtures/household";
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -192,13 +195,7 @@ test("waits for the latest draft save before requesting emergency menus", async 
   await page.getByLabel("年齢のめやす").selectOption("adult");
   await page.getByLabel("アレルギーの確認").selectOption("none");
   await page.getByLabel(/このアプリで献立を作れない事情はありますか/).selectOption("none");
-  const memberCompleted = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname.endsWith("/rest/v1/rpc/complete_household_member"),
-  );
-  await page.getByRole("button", { name: "この家族の設定を完了" }).click();
-  expect((await memberCompleted).ok()).toBe(true);
+  await completeHouseholdMemberWhenAllergiesReady(page);
 
   await page.goto("/pantry");
   const pantryItemCreated = page.waitForResponse(

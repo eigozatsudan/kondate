@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { Client } from "pg";
 import { z } from "zod";
 import { expect, test, type Route } from "@playwright/test";
+import { expectOAuthMockAuthorizePage } from "../fixtures/oauth";
 
 test.setTimeout(120_000);
 
@@ -28,7 +29,7 @@ test(
   async ({ page }) => {
     await page.goto("/login?returnTo=%2Fplanner");
     await page.getByRole("button", { name: "Googleで続ける" }).click();
-    await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+    await expectOAuthMockAuthorizePage(page);
     const providerUrl = new URL(page.url());
     const flow = providerUrl.searchParams.get("flow");
     const state = providerUrl.searchParams.get("state");
@@ -69,7 +70,7 @@ test(
   async ({ page }) => {
     await page.goto("/login?returnTo=%2Fplanner");
     await page.getByRole("button", { name: "Googleで続ける" }).click();
-    await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+    await expectOAuthMockAuthorizePage(page);
     const providerUrl = new URL(page.url());
     const flowId = z.uuid().parse(providerUrl.searchParams.get("flow"));
     const state = z
@@ -128,7 +129,7 @@ test("matching state reaches callback once; unknown and mismatched state fail sa
   // 成功経路: 一致 state が元ブラウザで一度だけ交換される
   await page.goto("/login?returnTo=%2F%3Fsource%3Doauth");
   await page.getByRole("button", { name: "Googleで続ける" }).click();
-  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+  await expectOAuthMockAuthorizePage(page);
   const providerUrl = new URL(page.url());
   const flow = providerUrl.searchParams.get("flow");
   const state = providerUrl.searchParams.get("state");
@@ -175,7 +176,7 @@ test("matching state reaches callback once; unknown and mismatched state fail sa
   // mismatch 専用の未使用 continuation と、oauth-mock が発行する有効 code を使う。
   await page.goto("/login");
   await page.getByRole("button", { name: "Googleで続ける" }).click();
-  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+  await expectOAuthMockAuthorizePage(page);
   const mismatchProviderUrl = new URL(page.url());
   const mismatchFlow = mismatchProviderUrl.searchParams.get("flow");
   const originalMismatchState = mismatchProviderUrl.searchParams.get("state");
@@ -260,7 +261,7 @@ test("reused continuation code and state are rejected after a successful exchang
   // returnTo は planner（sanitize 後の既定）。not_started は welcome ではなく / 経由で振り分け得る。
   await page.goto("/login?returnTo=%2Fplanner");
   await page.getByRole("button", { name: "Googleで続ける" }).click();
-  await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+  await expectOAuthMockAuthorizePage(page);
 
   const callbackRequest = page.waitForRequest((request) => {
     const url = new URL(request.url());

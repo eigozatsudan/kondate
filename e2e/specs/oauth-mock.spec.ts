@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectOAuthMockAuthorizePage } from "../fixtures/oauth";
 import { seedPwaInstallTipDismissed } from "../fixtures/pwa-install-tip";
 
 test(
@@ -12,7 +13,7 @@ test(
     // query付きrootを渡す。callback後にRootEntryPageがnot_startedを/welcomeへ導く。
     await page.goto("/login?returnTo=%2F%3Fsource%3Doauth");
     await page.getByRole("button", { name: "Googleで続ける" }).click();
-    await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+    await expectOAuthMockAuthorizePage(page);
     const providerUrl = new URL(page.url());
     expect(providerUrl.searchParams.get("redirect_uri")).toBe(
       "http://127.0.0.1:5173/auth/callback",
@@ -48,7 +49,7 @@ test(
     await seedPwaInstallTipDismissed(page.context());
     await page.goto("/login?returnTo=%2Fplanner");
     await page.getByRole("button", { name: "Googleで続ける" }).click();
-    await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:8788\/authorize\?/u);
+    await expectOAuthMockAuthorizePage(page);
     const providerUrl = new URL(page.url());
     const callbackRequest = page.waitForRequest(
       (request) => new URL(request.url()).pathname === "/auth/callback",
