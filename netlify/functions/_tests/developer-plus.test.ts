@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { entitlementDataSchema } from "../../../shared/contracts/billing.js";
 import billingEntitlement from "../billing-entitlement.js";
 import { loadEntitlement } from "../_shared/billing-entitlement.js";
 
@@ -71,7 +73,7 @@ describe("developer Plus authenticated entitlement", () => {
     });
     const response = await billingEntitlement(request());
     expect(response.status).toBe(200);
-    const body = await response.json();
+    const body = z.object({ ok: z.literal(true), data: entitlementDataSchema }).parse(await response.json());
     expect(body.data).toMatchObject({ plusEntitled: false, quotaPlan: "free" });
     expect(body.data.developerPlus).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain(developerId);

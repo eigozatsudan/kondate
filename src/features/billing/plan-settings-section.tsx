@@ -12,6 +12,7 @@ import {
   TRIAL_END_WARNING,
 } from "./billing-ui-copy";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
+import { DeveloperBillingHistory } from "./developer-billing-history";
 import {
   PLUS_LP_COMING_SOON_BADGE,
   PLUS_LP_COMING_SOON_BODY,
@@ -110,7 +111,7 @@ export function PlanSettingsSection({
   const surfacesOpen = data?.productSurfacesOpen === true;
   // B6: error 時は stale Plus を出さない（サーバ再検証までの fail-closed 表示）
   const entitled = !error && data?.plusEntitled === true;
-  const developerPlus = entitled && data?.developerPlus === true;
+  const developerPlus = entitled && data.developerPlus === true;
   const hasStripeSubscription = data?.status !== "none";
   // B11: fetch error 時は stale status の trial / past_due / incomplete ブロックを出さない
   const isTrialing = !error && data?.status === "trialing";
@@ -179,6 +180,18 @@ export function PlanSettingsSection({
           {developerPlus ? <p>開発者向けに Plus を無料で利用できます。</p> : null}
           {developerPlus && hasStripeSubscription ? (
             <p>既存の有料契約は自動では解約されません。契約内容はお支払い管理で確認できます。</p>
+          ) : null}
+          {developerPlus && hasStripeSubscription && !surfacesOpen ? (
+            <p>お支払い管理は現在停止しています。開発者向けの Plus は引き続き利用できます。</p>
+          ) : null}
+          {developerPlus && !hasStripeSubscription ? (
+            <DeveloperBillingHistory
+              surfacesOpen={surfacesOpen}
+              pending={pending}
+              onPortal={() => {
+                void runPortal();
+              }}
+            />
           ) : null}
           {!surfacesOpen && !developerPlus ? <p role="status">{SURFACES_CLOSED_COPY}</p> : null}
 
@@ -307,7 +320,7 @@ export function PlanSettingsSection({
             </div>
           ) : null}
 
-          {entitled && surfacesOpen && !isPastDue && (!developerPlus || hasStripeSubscription) ? (
+          {entitled && surfacesOpen && !isPastDue && !isIncomplete && (!developerPlus || hasStripeSubscription) ? (
             <div className="stack gap-2">
               <p className="type-small">{STRIPE_REDIRECT_NOTICE}</p>
               <button

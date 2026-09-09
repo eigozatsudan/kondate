@@ -140,6 +140,30 @@ describe("PlusLandingPage", () => {
     expect(screen.getByText(/既存の有料契約は自動では解約されません/)).toBeVisible();
   });
 
+  it.each([false, true])("keeps optional past-contract management for developers (billing=%s)", async (enabled) => {
+    const onPortal = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    renderLp({ entitlement: {
+      ...freeOpen,
+      developerPlus: true,
+      plusEntitled: true,
+      quotaPlan: "plus",
+      productSurfacesOpen: enabled,
+    }, onPortal });
+    expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
+    await user.click(screen.getByText("以前に有料プランを契約した方"));
+    expect(screen.getByText(/有料契約が残っている場合/)).toBeVisible();
+    if (enabled) {
+      await user.click(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL }));
+      expect(onPortal).toHaveBeenCalledOnce();
+    } else {
+      expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+      expect(screen.getByText(/お支払い管理は現在停止しています/)).toBeVisible();
+      expect(onPortal).not.toHaveBeenCalled();
+    }
+  });
+
   it("shows full LP benefits and checkout when free and open", () => {
     renderLp({ entitlement: freeOpen });
     expect(screen.getByRole("heading", { level: 1, name: PLUS_LP_H1 })).toBeVisible();

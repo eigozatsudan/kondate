@@ -122,6 +122,39 @@ describe("PlanSettingsSection", () => {
     expect(screen.getByText(/既存の有料契約は自動では解約されません/)).toBeVisible();
   });
 
+  it.each([false, true])("keeps optional past-contract management for developers (billing=%s)", async (enabled) => {
+    const onPortal = vi.fn(() => Promise.resolve());
+    const user = userEvent.setup();
+    renderPlan({ entitlement: {
+      ...freeEntitlement,
+      developerPlus: true,
+      plusEntitled: true,
+      quotaPlan: "plus",
+      productSurfacesOpen: enabled,
+    }, onPortal });
+    expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
+    await user.click(screen.getByText("以前に有料プランを契約した方"));
+    expect(screen.getByText(/有料契約が残っている場合/)).toBeVisible();
+    if (enabled) {
+      await user.click(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL }));
+      expect(onPortal).toHaveBeenCalledOnce();
+    } else {
+      expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+      expect(screen.getByText(/お支払い管理は現在停止しています/)).toBeVisible();
+      expect(onPortal).not.toHaveBeenCalled();
+    }
+  });
+
+  it("shows only one portal control for a developer with an incomplete subscription", () => {
+    renderPlan({ entitlement: {
+      ...trialingEntitlement,
+      developerPlus: true,
+      status: "incomplete",
+    } });
+    expect(screen.getAllByRole("button", { name: PORTAL_BUTTON_LABEL })).toHaveLength(1);
+  });
+
   it("shows Free plan copy and aligns checkout gate with Plus LP coming-soon", () => {
     renderPlan();
     expect(screen.getByText(/こんだて日和 Plus なら/)).toBeVisible();

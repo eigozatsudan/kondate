@@ -13,6 +13,7 @@ import {
 import heroUrl from "./assets/plus-hero.webp";
 import quotaUrl from "./assets/plus-benefit-quota.webp";
 import qualityUrl from "./assets/plus-benefit-quality.webp";
+import { DeveloperBillingHistory } from "./developer-billing-history";
 import flyerUrl from "./assets/plus-benefit-flyer.webp";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
 import { resolvePlusLandingView } from "./plus-landing-view";
@@ -229,6 +230,18 @@ export function PlusLandingPage({
           <p>開発者向けに Plus を無料で利用できます。</p>
           {view.hasStripeSubscription ? (
             <p>既存の有料契約は自動では解約されません。契約内容はお支払い管理で確認できます。</p>
+          ) : null}
+          {view.hasStripeSubscription && !view.surfacesOpen ? (
+            <p>お支払い管理は現在停止しています。開発者向けの Plus は引き続き利用できます。</p>
+          ) : null}
+          {!view.hasStripeSubscription ? (
+            <DeveloperBillingHistory
+              surfacesOpen={view.surfacesOpen}
+              pending={pending}
+              onPortal={() => {
+                void runPortal();
+              }}
+            />
           ) : null}
           {view.surfacesOpen && view.hasStripeSubscription ? (
             <button
