@@ -162,7 +162,7 @@ export function usdPerMillion(tokenPrice: unknown): number | null {
 
 /**
  * リモート Models メタに対し、allowlist の structured_outputs ∧ response_format と
- * prompt+completion ≤ $4/1M を検証する（純粋・throw）。verifyRemoteModels の鏡像。
+ * prompt+completion ≤ $6/1M を検証する（純粋・throw）。verifyRemoteModels の鏡像。
  */
 export function assertModelsMeetRuntimePolicy(
   allowlist: readonly string[],
