@@ -122,7 +122,11 @@ describe("PlusLandingPage", () => {
     expect(
       screen.getByRole("heading", { name: "こんだて日和 Plus（開発者・無料）" }),
     ).toBeVisible();
-    expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+    if (enabled) {
+      expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL, hidden: true })).not.toBeVisible();
+    } else {
+      expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+    }
     expect(screen.queryByText("一部機能は現在ご利用いただけません")).not.toBeInTheDocument();
   });
 
@@ -155,11 +159,20 @@ describe("PlusLandingPage", () => {
         },
         onPortal,
       });
-      expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+      const summary = screen.getByText("以前に有料プランを契約した方");
+      const details = summary.closest("details");
+      expect(details?.open).toBe(false);
+      if (enabled) {
+        expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL, hidden: true })).not.toBeVisible();
+      } else {
+        expect(screen.queryByRole("button", { name: PORTAL_BUTTON_LABEL })).not.toBeInTheDocument();
+      }
       expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
-      await user.click(screen.getByText("以前に有料プランを契約した方"));
+      await user.click(summary);
+      expect(details?.open).toBe(true);
       expect(screen.getByText(/有料契約が残っている場合/)).toBeVisible();
       if (enabled) {
+        expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL })).toBeVisible();
         await user.click(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL }));
         expect(onPortal).toHaveBeenCalledOnce();
       } else {
