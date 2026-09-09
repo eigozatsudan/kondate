@@ -69,7 +69,7 @@ tests; use `format:check` not `format`) → review → Conventional Commit in Ja
   is a **paid allowlist** (no `:free` on real-API paths; never `openrouter/auto` or
   equivalent routers). Mock `mock/*:free` is allowed only when
   `OPENROUTER_BASE_URL` is the exact local mock URL. Models must support both
-  `structured_outputs` and `response_format`, with prompt+completion ≤ $4.00/1M.
+  `structured_outputs` and `response_format`, with prompt+completion ≤ $6.00/1M.
   Free-only production models were abolished (paid allowlist only on real API).
 - Never log or persist names, emails, allergies, free-form conditions, prompts, or
   raw AI output. Only Zod-validated structures are stored.
