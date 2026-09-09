@@ -1022,31 +1022,38 @@ describe("createGenerationRepository regeneration reserve", () => {
     expect(rpcMock).not.toHaveBeenCalledWith("finalize_ai_generation_failure", expect.anything());
   });
 
-  it.each([false, true])("passes quality mode for paid or developer Plus (billing=%s)", async (enabled) => {
-    loadEntitlementMock.mockResolvedValue(enabled ? plusEntitlement : {
-      ...freeEntitlement,
-      developerPlus: true,
-    });
-    getServerEnvMock.mockReturnValue({
-      openRouter: {
-        userDailyLimit: 1,
-        globalDailyLimit: 20,
-        staleAfterSeconds: 180,
-      },
-      generationIntegrity: {
-        requestHmacKey: hmacKey,
-      },
-      quotaIdentityHmacKey: identityHmacKey,
-      aiQuotaDisabled: false,
-      billingEnabled: enabled,
-    });
-    rpcMock.mockResolvedValueOnce({ data: publicRecord, error: null });
-    const repository = createGenerationRepository(user);
-    const qualityCommand = { ...newMenuCommand, qualityMode: true };
-    await repository.reserveNew(qualityCommand, householdIntegrity);
-    expect(rpcMock).toHaveBeenCalledWith(
-      "reserve_ai_generation",
-      expect.objectContaining({ p_quality_mode: true, p_user_limit: 5 }),
-    );
-  });
+  it.each([false, true])(
+    "passes quality mode for paid or developer Plus (billing=%s)",
+    async (enabled) => {
+      loadEntitlementMock.mockResolvedValue(
+        enabled
+          ? plusEntitlement
+          : {
+              ...freeEntitlement,
+              developerPlus: true,
+            },
+      );
+      getServerEnvMock.mockReturnValue({
+        openRouter: {
+          userDailyLimit: 1,
+          globalDailyLimit: 20,
+          staleAfterSeconds: 180,
+        },
+        generationIntegrity: {
+          requestHmacKey: hmacKey,
+        },
+        quotaIdentityHmacKey: identityHmacKey,
+        aiQuotaDisabled: false,
+        billingEnabled: enabled,
+      });
+      rpcMock.mockResolvedValueOnce({ data: publicRecord, error: null });
+      const repository = createGenerationRepository(user);
+      const qualityCommand = { ...newMenuCommand, qualityMode: true };
+      await repository.reserveNew(qualityCommand, householdIntegrity);
+      expect(rpcMock).toHaveBeenCalledWith(
+        "reserve_ai_generation",
+        expect.objectContaining({ p_quality_mode: true, p_user_limit: 5 }),
+      );
+    },
+  );
 });

@@ -429,7 +429,12 @@ export function validateBillingStripeEnv(env) {
     if (typeof rawDevelopers !== "string") throw new Error("DEVELOPER_PLUS_USER_IDS_invalid");
     if (rawDevelopers.trim() !== "") {
       const ids = rawDevelopers.split(",").map((id) => id.trim().toLowerCase());
-      if (ids.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id))) {
+      if (
+        ids.some(
+          (id) =>
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id),
+        )
+      ) {
         throw new Error("DEVELOPER_PLUS_USER_IDS_invalid");
       }
       hasDevelopers = true;
@@ -490,7 +495,6 @@ export function validateBillingStripeEnv(env) {
   if (String(env.STRIPE_API_VERSION) !== "2026-06-24.dahlia") {
     throw new Error("STRIPE_API_VERSION_invalid");
   }
-
 }
 
 export function main(env = process.env, write = console.error) {

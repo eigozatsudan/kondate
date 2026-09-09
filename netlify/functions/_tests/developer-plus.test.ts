@@ -90,10 +90,19 @@ describe("developer Plus authenticated entitlement", () => {
   it("preserves Stripe projection without granting unconfigured identities", async () => {
     getServerEnv.mockReturnValue({ billingEnabled: false, developerPlusUserIds: [] });
     rpc.mockResolvedValue({
-      data: { ...freeProjection, plan: "plus", status: "active", plus_entitled: true, db_plus_entitled: true },
+      data: {
+        ...freeProjection,
+        plan: "plus",
+        status: "active",
+        plus_entitled: true,
+        db_plus_entitled: true,
+      },
       error: null,
     });
-    expect(await loadEntitlement(developerId)).toMatchObject({ status: "active", plusEntitled: true });
+    expect(await loadEntitlement(developerId)).toMatchObject({
+      status: "active",
+      plusEntitled: true,
+    });
     const response = await billingEntitlement(request());
     expect(await response.json()).toMatchObject({
       data: { status: "active", plusEntitled: false, dbPlusEntitled: true, quotaPlan: "free" },

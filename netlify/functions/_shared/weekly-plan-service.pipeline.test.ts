@@ -164,61 +164,72 @@ beforeEach(() => {
 });
 
 describe("runWeeklyPlan — fresh generation happy path", () => {
-  it.each([false, true])("reserves, sends, finalizes and inserts for Plus (billing=%s)", async (enabled) => {
-    getServerEnvMock.mockReturnValue({ ...getServerEnvMock(), billingEnabled: enabled });
-    if (!enabled) {
-      loadEntitlementMock.mockResolvedValue({ plan: "free", plusEntitled: false, developerPlus: true });
-    }
-    rpcMock.mockImplementation((name: string) => {
-      if (name === "lookup_flyer_weekly")
-        return Promise.resolve({ data: { kind: "miss" }, error: null });
-      if (name === "reserve_flyer_weekly") {
-        return Promise.resolve({
-          data: {
-            request_id: "33333333-3333-4333-8333-333333333333",
-            idempotency_key: "k1",
-            status: "processing",
-            replayed: false,
-            week_start: "2026-09-07",
-          },
-          error: null,
+  it.each([false, true])(
+    "reserves, sends, finalizes and inserts for Plus (billing=%s)",
+    async (enabled) => {
+      getServerEnvMock.mockReturnValue({ ...getServerEnvMock(), billingEnabled: enabled });
+      if (!enabled) {
+        loadEntitlementMock.mockResolvedValue({
+          plan: "free",
+          plusEntitled: false,
+          developerPlus: true,
         });
       }
-      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
-      if (name === "mark_flyer_weekly_sent")
-        return Promise.resolve({ data: { sent: true }, error: null });
-      if (name === "finalize_flyer_weekly_success")
-        return Promise.resolve({ data: {}, error: null });
-      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
-      throw new Error(`unexpected rpc: ${name}`);
-    });
-    fromMock.mockImplementation((table: string) => {
-      if (table === "household_members") {
-        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
-      }
-      if (table === "weekly_plans") {
-        return thenableQuery({ data: { id: "44444444-4444-4444-8444-444444444444" }, error: null });
-      }
-      throw new Error(`unexpected table: ${table}`);
-    });
-    const sender = vi.fn().mockResolvedValue({
-      mode: "flyer_weekly",
-      output: sampleAiMenu(),
-      modelId: "m1",
-    });
+      rpcMock.mockImplementation((name: string) => {
+        if (name === "lookup_flyer_weekly")
+          return Promise.resolve({ data: { kind: "miss" }, error: null });
+        if (name === "reserve_flyer_weekly") {
+          return Promise.resolve({
+            data: {
+              request_id: "33333333-3333-4333-8333-333333333333",
+              idempotency_key: "k1",
+              status: "processing",
+              replayed: false,
+              week_start: "2026-09-07",
+            },
+            error: null,
+          });
+        }
+        if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+        if (name === "mark_flyer_weekly_sent")
+          return Promise.resolve({ data: { sent: true }, error: null });
+        if (name === "finalize_flyer_weekly_success")
+          return Promise.resolve({ data: {}, error: null });
+        if (name === "delete_weekly_plan_intent")
+          return Promise.resolve({ data: null, error: null });
+        throw new Error(`unexpected rpc: ${name}`);
+      });
+      fromMock.mockImplementation((table: string) => {
+        if (table === "household_members") {
+          return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+        }
+        if (table === "weekly_plans") {
+          return thenableQuery({
+            data: { id: "44444444-4444-4444-8444-444444444444" },
+            error: null,
+          });
+        }
+        throw new Error(`unexpected table: ${table}`);
+      });
+      const sender = vi.fn().mockResolvedValue({
+        mode: "flyer_weekly",
+        output: sampleAiMenu(),
+        modelId: "m1",
+      });
 
-    const result = await runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest());
+      const result = await runWeeklyPlan(baseDeps({ openRouterSender: sender }), sampleRequest());
 
-    expect(sender).toHaveBeenCalledTimes(1);
-    expect(rpcNames()).toContain("put_weekly_plan_intent");
-    expect(rpcArgsFor("put_weekly_plan_intent")).toMatchObject({
-      p_request_id: "33333333-3333-4333-8333-333333333333",
-    });
-    expect(rpcNames()).toContain("finalize_flyer_weekly_success");
-    expect(rpcNames()).toContain("delete_weekly_plan_intent");
-    expect(result.days).toHaveLength(7);
-    expect(result.staleSafety).toBe(false);
-  });
+      expect(sender).toHaveBeenCalledTimes(1);
+      expect(rpcNames()).toContain("put_weekly_plan_intent");
+      expect(rpcArgsFor("put_weekly_plan_intent")).toMatchObject({
+        p_request_id: "33333333-3333-4333-8333-333333333333",
+      });
+      expect(rpcNames()).toContain("finalize_flyer_weekly_success");
+      expect(rpcNames()).toContain("delete_weekly_plan_intent");
+      expect(result.days).toHaveLength(7);
+      expect(result.staleSafety).toBe(false);
+    },
+  );
 });
 
 describe("runWeeklyPlan — persisted safety_fingerprint must match the condition that validated the menu (P2 advレビュー修正A)", () => {

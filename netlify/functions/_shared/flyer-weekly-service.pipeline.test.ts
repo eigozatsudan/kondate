@@ -627,75 +627,82 @@ describe("runFlyerWeekly pipeline (PE1/PE2/PE4/PE5/PE6/PE11)", () => {
     expect(openRouterSender).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])("PE11: Plus reaches finalize and preserves errors (billing=%s)", async (enabled) => {
-    getServerEnvMock.mockReturnValue({ ...getServerEnvMock(), billingEnabled: enabled });
-    if (!enabled) {
-      loadEntitlementMock.mockResolvedValue({ plan: "free", plusEntitled: false, developerPlus: true });
-    }
-    // PE6: 検証済み本文は stash して残す。PE11: success 未計上の 200 は禁止。
-    rpcMock.mockImplementation((name: string) => {
-      if (name === "reserve_flyer_weekly") {
-        return Promise.resolve({
-          data: {
-            request_id: "00000000-0000-4000-8000-000000000003",
-            idempotency_key: "idem-pe11",
-            status: "processing",
-            replayed: false,
-            week_start: "2026-07-27",
-          },
-          error: null,
+  it.each([false, true])(
+    "PE11: Plus reaches finalize and preserves errors (billing=%s)",
+    async (enabled) => {
+      getServerEnvMock.mockReturnValue({ ...getServerEnvMock(), billingEnabled: enabled });
+      if (!enabled) {
+        loadEntitlementMock.mockResolvedValue({
+          plan: "free",
+          plusEntitled: false,
+          developerPlus: true,
         });
       }
-      if (name === "mark_flyer_weekly_sent") {
-        return Promise.resolve({ data: { sent: true }, error: null });
-      }
-      if (name === "finalize_flyer_weekly_success") {
-        return Promise.resolve({
-          data: null,
-          error: { message: "flyer_success_reservation_corrupt" },
-        });
-      }
-      if (name === "stash_flyer_weekly_result") {
+      // PE6: 検証済み本文は stash して残す。PE11: success 未計上の 200 は禁止。
+      rpcMock.mockImplementation((name: string) => {
+        if (name === "reserve_flyer_weekly") {
+          return Promise.resolve({
+            data: {
+              request_id: "00000000-0000-4000-8000-000000000003",
+              idempotency_key: "idem-pe11",
+              status: "processing",
+              replayed: false,
+              week_start: "2026-07-27",
+            },
+            error: null,
+          });
+        }
+        if (name === "mark_flyer_weekly_sent") {
+          return Promise.resolve({ data: { sent: true }, error: null });
+        }
+        if (name === "finalize_flyer_weekly_success") {
+          return Promise.resolve({
+            data: null,
+            error: { message: "flyer_success_reservation_corrupt" },
+          });
+        }
+        if (name === "stash_flyer_weekly_result") {
+          return Promise.resolve({ data: { ok: true }, error: null });
+        }
         return Promise.resolve({ data: { ok: true }, error: null });
-      }
-      return Promise.resolve({ data: { ok: true }, error: null });
-    });
+      });
 
-    await expect(
-      runFlyerWeekly(
-        {
-          user,
-          openRouterSender: () =>
-            Promise.resolve({
-              mode: "flyer_weekly",
-              output: sampleMenu(),
-              modelId: "mock/flyer:free",
-            } satisfies OpenRouterGenerationResult),
-          assertPrivacyConsent: acceptConsent,
-          ensureOpenRouterModelPolicy: acceptModelPolicy,
-        },
-        new Uint8Array([1, 2, 3]),
-        "idem-pe11",
-      ),
-    ).rejects.toMatchObject({ status: 500, code: "internal_error" });
+      await expect(
+        runFlyerWeekly(
+          {
+            user,
+            openRouterSender: () =>
+              Promise.resolve({
+                mode: "flyer_weekly",
+                output: sampleMenu(),
+                modelId: "mock/flyer:free",
+              } satisfies OpenRouterGenerationResult),
+            assertPrivacyConsent: acceptConsent,
+            ensureOpenRouterModelPolicy: acceptModelPolicy,
+          },
+          new Uint8Array([1, 2, 3]),
+          "idem-pe11",
+        ),
+      ).rejects.toMatchObject({ status: 500, code: "internal_error" });
 
-    expect(rpcNames()).toContain("stash_flyer_weekly_result");
-    expect(rpcNames()).toContain("finalize_flyer_weekly_success");
-    expect(rpcNames()).not.toContain("finalize_flyer_weekly_failure");
-    const stashArgs = rpcArgsFor("stash_flyer_weekly_result");
-    expect(stashArgs).toMatchObject({
-      p_request_id: "00000000-0000-4000-8000-000000000003",
-    });
-    expect(
-      typeof stashArgs === "object" &&
-        stashArgs !== null &&
-        "p_result" in stashArgs &&
-        typeof stashArgs.p_result === "object" &&
-        stashArgs.p_result !== null &&
-        "weekStartJst" in stashArgs.p_result &&
-        stashArgs.p_result.weekStartJst === "2026-07-27",
-    ).toBe(true);
-  });
+      expect(rpcNames()).toContain("stash_flyer_weekly_result");
+      expect(rpcNames()).toContain("finalize_flyer_weekly_success");
+      expect(rpcNames()).not.toContain("finalize_flyer_weekly_failure");
+      const stashArgs = rpcArgsFor("stash_flyer_weekly_result");
+      expect(stashArgs).toMatchObject({
+        p_request_id: "00000000-0000-4000-8000-000000000003",
+      });
+      expect(
+        typeof stashArgs === "object" &&
+          stashArgs !== null &&
+          "p_result" in stashArgs &&
+          typeof stashArgs.p_result === "object" &&
+          stashArgs.p_result !== null &&
+          "weekStartJst" in stashArgs.p_result &&
+          stashArgs.p_result.weekStartJst === "2026-07-27",
+      ).toBe(true);
+    },
+  );
 
   it("PE11: same-key processing replay with stashed result retries finalize only", async () => {
     const openRouterSender = vi.fn(() => Promise.reject(new Error("should not be called")));

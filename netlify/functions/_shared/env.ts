@@ -530,7 +530,11 @@ export function parseDeveloperPlusUserIds(value: unknown): readonly string[] {
   if (typeof value !== "string") throw new Error("server_configuration_invalid");
   if (value.trim() === "") return [];
   const ids = value.split(",").map((id) => id.trim().toLowerCase());
-  if (ids.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id))) {
+  if (
+    ids.some(
+      (id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id),
+    )
+  ) {
     throw new Error("server_configuration_invalid");
   }
   return [...new Set(ids)];

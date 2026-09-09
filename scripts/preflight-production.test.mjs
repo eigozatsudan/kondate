@@ -59,30 +59,44 @@ test("accepts a complete synthetic production environment", () => {
 });
 
 test("accepts developer Plus with billing disabled and no Stripe keys", () => {
-  assert.deepEqual(validateProductionEnv(completeEnv({
-    BILLING_ENABLED: "false",
-    DEVELOPER_PLUS_USER_IDS: "11111111-1111-4111-8111-111111111111",
-    OPENROUTER_PLUS_MODELS: "openai/gpt-5.6-luna",
-  })), { projectRef });
+  assert.deepEqual(
+    validateProductionEnv(
+      completeEnv({
+        BILLING_ENABLED: "false",
+        DEVELOPER_PLUS_USER_IDS: "11111111-1111-4111-8111-111111111111",
+        OPENROUTER_PLUS_MODELS: "openai/gpt-5.6-luna",
+      }),
+    ),
+    { projectRef },
+  );
 });
 
 test("requires Plus models for developer-only deployment before Stripe early return", () => {
-  assert.throws(() => validateProductionEnv(completeEnv({
-    BILLING_ENABLED: "false",
-    DEVELOPER_PLUS_USER_IDS: "11111111-1111-4111-8111-111111111111",
-  })), /OPENROUTER_PLUS_MODELS/);
+  assert.throws(
+    () =>
+      validateProductionEnv(
+        completeEnv({
+          BILLING_ENABLED: "false",
+          DEVELOPER_PLUS_USER_IDS: "11111111-1111-4111-8111-111111111111",
+        }),
+      ),
+    /OPENROUTER_PLUS_MODELS/,
+  );
 });
 
 for (const value of ["invalid", "11111111-1111-4111-8111-111111111111,", ",", 1]) {
   test(`rejects invalid developer allowlist ${String(value)}`, () => {
-    assert.throws(() => validateBillingStripeEnv({ DEVELOPER_PLUS_USER_IDS: value }),
-      { message: "DEVELOPER_PLUS_USER_IDS_invalid" });
+    assert.throws(() => validateBillingStripeEnv({ DEVELOPER_PLUS_USER_IDS: value }), {
+      message: "DEVELOPER_PLUS_USER_IDS_invalid",
+    });
   });
 }
 
 test("rejects browser-prefixed developer configuration even when empty", () => {
-  assert.throws(() => validateBillingStripeEnv({ VITE_DEVELOPER_PLUS_USER_IDS: "" }),
-    /VITE_DEVELOPER_PLUS_USER_IDS/);
+  assert.throws(
+    () => validateBillingStripeEnv({ VITE_DEVELOPER_PLUS_USER_IDS: "" }),
+    /VITE_DEVELOPER_PLUS_USER_IDS/,
+  );
 });
 
 // 3 鏡像の第3: preflight も contract の空要素・危険 ID を拒否する

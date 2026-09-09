@@ -241,55 +241,58 @@ describe("usage-today", () => {
   });
 
   // G8: remaining 欠落時は limit 固定フル残ではなく limit-consumed で balance を保つ
-  it.each([false, true])("G8: paid and developer Plus return quality counters (billing=%s)", async (enabled) => {
-    getServerEnvMock.mockReturnValue({
-      openRouter: { globalDailyLimit: 20 },
-      quotaIdentityHmacKey: Buffer.alloc(32, 1),
-      aiQuotaDisabled: false,
-      billingEnabled: enabled,
-    });
-    loadEntitlementMock.mockResolvedValue({
-      ...freeEntitlement,
-      plan: "plus" as const,
-      plusEntitled: enabled,
-      developerPlus: !enabled,
-      status: "active" as const,
-      dbPlusEntitled: true,
-    });
-    rpcMock.mockResolvedValue({
-      data: {
-        // Plus 日次 limit は 5/20（success/attempts）。quality は 3/20 固定
-        success: { consumed: 1, limit: 5, remaining: 4 },
-        attempts: { sent: 1, limit: 20, remaining: 19 },
-        shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
-        quality: {
-          day: { consumed: 2, limit: 3 },
-          month: { consumed: 5, limit: 20 },
+  it.each([false, true])(
+    "G8: paid and developer Plus return quality counters (billing=%s)",
+    async (enabled) => {
+      getServerEnvMock.mockReturnValue({
+        openRouter: { globalDailyLimit: 20 },
+        quotaIdentityHmacKey: Buffer.alloc(32, 1),
+        aiQuotaDisabled: false,
+        billingEnabled: enabled,
+      });
+      loadEntitlementMock.mockResolvedValue({
+        ...freeEntitlement,
+        plan: "plus" as const,
+        plusEntitled: enabled,
+        developerPlus: !enabled,
+        status: "active" as const,
+        dbPlusEntitled: true,
+      });
+      rpcMock.mockResolvedValue({
+        data: {
+          // Plus 日次 limit は 5/20（success/attempts）。quality は 3/20 固定
+          success: { consumed: 1, limit: 5, remaining: 4 },
+          attempts: { sent: 1, limit: 20, remaining: 19 },
+          shortWindow: { sent: 0, limit: 8, remaining: 8, retryAt: null },
+          quality: {
+            day: { consumed: 2, limit: 3 },
+            month: { consumed: 5, limit: 20 },
+          },
+          flyerWeekly: rpcUsagePayload.flyerWeekly,
+          globalAvailable: true,
+          retryAt: null,
         },
-        flyerWeekly: rpcUsagePayload.flyerWeekly,
-        globalAvailable: true,
-        retryAt: null,
-      },
-      error: null,
-    });
-    const response = await usageToday(
-      new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
-    );
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      ok: true;
-      data: {
-        quality: {
-          day: { consumed: number; remaining: number; limit: number };
-          month: { consumed: number; remaining: number; limit: number };
-          available: boolean;
+        error: null,
+      });
+      const response = await usageToday(
+        new Request("http://127.0.0.1/api/usage/today", { method: "GET" }),
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        ok: true;
+        data: {
+          quality: {
+            day: { consumed: number; remaining: number; limit: number };
+            month: { consumed: number; remaining: number; limit: number };
+            available: boolean;
+          };
         };
       };
-    };
-    expect(body.data.quality.day).toEqual({ consumed: 2, limit: 3, remaining: 1 });
-    expect(body.data.quality.month).toEqual({ consumed: 5, limit: 20, remaining: 15 });
-    expect(body.data.quality.available).toBe(true);
-  });
+      expect(body.data.quality.day).toEqual({ consumed: 2, limit: 3, remaining: 1 });
+      expect(body.data.quality.month).toEqual({ consumed: 5, limit: 20, remaining: 15 });
+      expect(body.data.quality.available).toBe(true);
+    },
+  );
 
   // G-R3: flyer remaining 欠落はフル残ではなく balance / 使い切り（G8 quality 同型）
   it("G-R3: missing flyerWeekly object projects exhausted counters not full remaining", async () => {
