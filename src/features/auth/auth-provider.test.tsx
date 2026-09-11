@@ -1234,8 +1234,11 @@ describe("AuthProvider", () => {
       </AuthProvider>,
     );
     await screen.findByText("unauthenticated");
+    // path sync effect が history を包むまで待つ（並列/順序汚染で初回 effect が遅れることがある）
+    await vi.waitFor(() => {
+      expect(recovery.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
     const startsAfterLoad = recovery.mock.calls.length;
-    expect(startsAfterLoad).toBeGreaterThanOrEqual(1);
 
     await act(async () => {
       window.history.pushState(null, "", "/settings");
