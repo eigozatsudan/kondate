@@ -1,15 +1,11 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { getJstDateKey } from "@shared/time/jst";
 import { getUsageToday } from "../api/usage-today-api";
 
 /** JST 暦日キー（Asia/Tokyo）。queryKey の日次境界に使う。 */
 export function jstDayKey(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
+  return getJstDateKey(now);
 }
 
 /**

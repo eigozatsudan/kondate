@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import type { PantryItem, PantryItemInput } from "@shared/contracts/pantry";
+import { getJstDateKey } from "@shared/time/jst";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { Button } from "@/shared/ui/button";
@@ -30,25 +31,15 @@ const openedLabels = {
   unknown: "開けたかは未登録",
 } as const;
 
-/** JST の YYYY-MM-DD（期限注意表示用）。 */
-function jstDateKey(date: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-}
-
 export type ExpiryNotice = { tone: BadgeTone | null; suffix: string };
 
 /** D-I6: 期限切れは danger・7日以内は warning（注意表示）。色は Badge のトーンで表す。 */
 export function expiryNotice(expiresOn: string, now: Date = new Date()): ExpiryNotice {
-  const todayKey = jstDateKey(now);
+  const todayKey = getJstDateKey(now);
   if (expiresOn < todayKey) {
     return { tone: "danger", suffix: "（期限切れ）" };
   }
-  const soonKey = jstDateKey(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
+  const soonKey = getJstDateKey(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
   if (expiresOn <= soonKey) {
     return { tone: "warning", suffix: "（まもなく）" };
   }
