@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getPublicEnv } from "@/shared/config/public-env";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { createAuthGateway, type AuthCallbackResult, type AuthGateway } from "./auth-gateway";
@@ -104,19 +104,28 @@ export function AuthCallbackPage({
   // hangWatchdog は storage に flow が無いケースでも returnTo を落とさない（テスト・strip 後）
   const hangWatchReturnToRef = useRef<string | undefined>(undefined);
 
-  const leaveOnce = (href: string): void => {
-    if (leftRef.current) return;
-    leftRef.current = true;
-    leaveAuthCallback(href);
-  };
+  const leaveOnce = useCallback(
+    (href: string): void => {
+      if (leftRef.current) return;
+      leftRef.current = true;
+      leaveAuthCallback(href);
+    },
+    [leaveAuthCallback],
+  );
 
-  const leaveSuccess = (returnTo: string): void => {
-    leaveOnce(sanitizeReturnPath(returnTo));
-  };
+  const leaveSuccess = useCallback(
+    (returnTo: string): void => {
+      leaveOnce(sanitizeReturnPath(returnTo));
+    },
+    [leaveOnce],
+  );
 
-  const leaveLoginError = (code: AuthCallbackErrorCode, returnTo?: string): void => {
-    leaveOnce(loginErrorHref(code, returnTo));
-  };
+  const leaveLoginError = useCallback(
+    (code: AuthCallbackErrorCode, returnTo?: string): void => {
+      leaveOnce(loginErrorHref(code, returnTo));
+    },
+    [leaveOnce],
+  );
 
   /**
    * C3: cancel / 期限切れ terminal UI から抜けるとき secret は焼かず dismiss 印だけ付ける。
@@ -424,7 +433,7 @@ export function AuthCallbackPage({
       stopWaiting?.();
       window.clearTimeout(hangWatchdog);
     };
-  }, [activeGateway, ttlMs, leaveAuthCallback]);
+  }, [activeGateway, leaveLoginError, leaveSuccess, ttlMs]);
 
   if (result?.kind === "deposited") {
     return (

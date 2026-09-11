@@ -1443,11 +1443,11 @@ export function AuthProvider({
     });
     return () => {
       stopRecovery();
-      const g = residualSessionGuardRef.current;
       // arm のみ解除。pin 済み（authenticated）なら C2 でそのまま別 user を拒否し続ける。
-      g.armed = false;
-      if (g.pinnedUserId === null) {
-        clearResidualSessionGuard(g);
+      // cleanup では effect 開始時に掴んだ同一 guard を必ず解除する（ref 再読みしない）。
+      guard.armed = false;
+      if (guard.pinnedUserId === null) {
+        clearResidualSessionGuard(guard);
       }
     };
   }, [

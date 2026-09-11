@@ -77,8 +77,10 @@ export function useRegeneration(input: UseRegenerationInput) {
   canRegenerateRef.current = canRegenerate;
   const actionGateClosedRef = targetMode === "household" ? input.actionGateClosedRef : undefined;
   // ref 再読を関数経由にし、await 前後の CFA が「常に true」と誤判定しないようにする
-  const readCanRegenerate = (): boolean =>
-    canRegenerateRef.current && !(actionGateClosedRef?.current ?? false);
+  const readCanRegenerate = useCallback(
+    (): boolean => canRegenerateRef.current && !(actionGateClosedRef?.current ?? false),
+    [actionGateClosedRef],
+  );
 
   const startWhole = useCallback(
     async (reason: RegenerationReasonInput): Promise<RegenerationStartResult> => {
@@ -124,7 +126,7 @@ export function useRegeneration(input: UseRegenerationInput) {
       void navigate("/generation");
       return { kind: "started" };
     },
-    [menuId, navigate, userId],
+    [menuId, navigate, readCanRegenerate, userId],
   );
 
   const startDish = useCallback(
@@ -168,7 +170,7 @@ export function useRegeneration(input: UseRegenerationInput) {
       void navigate("/generation");
       return Promise.resolve({ kind: "started" });
     },
-    [menuId, navigate, userId],
+    [menuId, navigate, readCanRegenerate, userId],
   );
 
   return { canRegenerate, startWhole, startDish };
