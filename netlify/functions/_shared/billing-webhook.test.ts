@@ -294,6 +294,21 @@ describe("handleBillingWebhook", () => {
     ).toBe(false);
   });
 
+  it("logs an unexpected dispatch failure before returning 500", async () => {
+    constructEvent.mockReturnValue(makeEvent("test.unhandled", {}));
+    rpc.mockRejectedValue(new Error("database unavailable"));
+
+    const response = await handleBillingWebhook(signedRequest(), deps());
+
+    expect(response.status).toBe(500);
+    expect(logSink).toHaveBeenCalledWith({
+      level: "error",
+      requestId: "req-billing-1",
+      code: "billing_webhook_failed",
+      durationMs: expect.any(Number),
+    });
+  });
+
   it("after claim-then-crash before project, Stripe retry eventually projects (crash-safe)", async () => {
     const sub = makeSubscription();
     constructEvent.mockReturnValue(makeEvent("customer.subscription.updated", sub));

@@ -2,7 +2,6 @@ import { z } from "zod";
 import { cuisineGenres, mealTypes } from "./domain.js";
 import { pantrySelectionDraftSchema } from "./pantry.js";
 
-export const plannerTimeLimits = [15, 30, 45] as const;
 export const budgetPreferences = ["economy", "standard"] as const;
 /**
  * 材料の使い方（量・範囲）。確認画面の任意条件。

@@ -49,7 +49,6 @@ export const revalidationResultSchema = z
   .strict();
 
 export type RevalidationResult = z.infer<typeof revalidationResultSchema>;
-export type CurrentMenuLabelWarning = z.infer<typeof currentLabelWarningSchema>;
 
 const revalidationEnvelopeSchema = z.discriminatedUnion("ok", [
   z

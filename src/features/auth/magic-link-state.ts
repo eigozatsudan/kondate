@@ -9,6 +9,3 @@ export type EmailOtpLoginState =
   | { status: "verifying"; email: string; resendAvailableAt: string }
   | { status: "complete" }
   | { status: "send_failed"; email: string; message: string };
-
-/** 互換 alias。login 以外からは参照しない */
-export type MagicLinkState = EmailOtpLoginState;

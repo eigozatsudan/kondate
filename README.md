@@ -358,13 +358,13 @@ Stripe ──Webhook──► process_billing_stripe_event（単一 SECURITY DEF
 
 ローカルの既定は **課金オフ**です。通常の献立生成・E2E は Stripe なしで進められます。
 
-| 目的                           | やること                                                                                           |
-| ------------------------------ | -------------------------------------------------------------------------------------------------- |
-| 日常開発・E2E（決定論）        | `BILLING_ENABLED=false` のまま。Checkout/Portal/品質/チラシ UI は閉じる。枠は Free                 |
-| 設定・LP の COMING_SOON 文面   | 定数 `true` のまま。Checkout ボタンの代わりに開発中案内（E2E: `billing-plus.spec.ts`）             |
-| 設定画面の Plus 文面（枠など） | UI は entitlement API を見る。E2E は `page.route` で mock                                          |
-| unit / Function テスト         | `tools/stripe-mock/` の固定 Session URL・webhook secret をテストが注入。**本番 Stripe は呼ばない** |
-| 実 Stripe（test mode）で手確認 | COMING_SOON を一時 `false` にしたうえで、下の「ローカルで Stripe test mode を有効にする」          |
+| 目的                           | やること                                                                                  |
+| ------------------------------ | ----------------------------------------------------------------------------------------- |
+| 日常開発・E2E（決定論）        | `BILLING_ENABLED=false` のまま。Checkout/Portal/品質/チラシ UI は閉じる。枠は Free        |
+| 設定・LP の COMING_SOON 文面   | 定数 `true` のまま。Checkout ボタンの代わりに開発中案内（E2E: `billing-plus.spec.ts`）    |
+| 設定画面の Plus 文面（枠など） | UI は entitlement API を見る。E2E は `page.route` で mock                                 |
+| unit / Function テスト         | Vitest の依存注入で Stripe client を直接 mock。**本番 Stripe は呼ばない**                 |
+| 実 Stripe（test mode）で手確認 | COMING_SOON を一時 `false` にしたうえで、下の「ローカルで Stripe test mode を有効にする」 |
 
 DB 側の課金表・枠拡張はマイグレーションに含まれます（`20260729130000` 以降）。初回や schema 更新後:
 

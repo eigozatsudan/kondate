@@ -8,18 +8,9 @@ import {
   subscribeHouseholdSafetyBroadcast,
 } from "@/features/household/household-queries";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
-import {
-  revalidateMenu,
-  RevalidationApiError,
-  type RevalidationResult,
-} from "../api/revalidation-api";
+import { revalidateMenu, RevalidationApiError } from "../api/revalidation-api";
 
 export type RevalidationPhaseName = "checking" | "checked" | "error";
-
-export type RevalidationPhase =
-  | { phase: "checking" }
-  | { phase: "checked"; result: RevalidationResult }
-  | { phase: "error"; message: string };
 
 /** RQ キー。prefix は householdSafetyQueryPrefixes.historyRevalidation と一致させる（HR3）。 */
 export function menuRevalidationQueryKey(menuId: string) {

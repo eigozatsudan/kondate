@@ -21,6 +21,11 @@ step entirely.
 Netlify Functions (Plus billing via Stripe). MVP delivery and many follow-on
 increments are **already implemented**.
 
+`admin/` is a **separate nested package** (`kondate-admin`, Hono + node-server)
+with its own eslint/vitest/tsconfig/vite config and `compose.admin.yaml`. It is
+excluded from root lint/format/test globs — run its toolchain from inside
+`admin/`, not the root.
+
 ### Authority (read this first)
 
 1. **Implementation is the source of truth** for behavior and locked values:
@@ -50,6 +55,9 @@ if it disagrees with `git log`, trust `git log`.
 Typical Task loop when doing plan-driven work: read Task → RED tests → GREEN
 minimum implementation → focused verify (`format:check`, lint, typecheck, focused
 tests; use `format:check` not `format`) → review → Conventional Commit in Japanese.
+
+The working branch is `production` (CI runs on `main`). Commit there; do not
+switch to `main` or assume it is the base.
 
 ## Global constraints (condensed — verify exact numbers in code/contracts)
 
@@ -124,7 +132,7 @@ Docker instead, using the `app` service defined in `compose.yaml`, so results
 don't depend on whatever happens to be installed on the host:
 
 ```bash
-docker compose run --rm --no-deps app npm test -- --run <files>
+docker compose run --rm --no-deps app npx vitest run <files>
 docker compose run --rm --no-deps app npm run typecheck
 docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run format:check

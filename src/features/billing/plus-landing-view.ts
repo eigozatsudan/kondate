@@ -6,8 +6,6 @@ import type { EntitlementData } from "@shared/contracts/billing";
  */
 export const CHECKOUT_BLOCKED_STATUSES = ["trialing", "active", "past_due", "incomplete"] as const;
 
-export type CheckoutBlockedStatus = (typeof CHECKOUT_BLOCKED_STATUSES)[number];
-
 export type PlusLandingView =
   | { kind: "loading" }
   | { kind: "error" }

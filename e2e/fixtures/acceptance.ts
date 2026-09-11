@@ -13,7 +13,7 @@ import {
 } from "./history";
 import { accessTokenFromPage } from "./local-supabase";
 
-export { expect, clickWizardNext, seedGeneratedMenu, seedGeneratedIdeaMenu, setMockScenario };
+export { expect, clickWizardNext, setMockScenario };
 
 const userIdSchema = z.uuid();
 

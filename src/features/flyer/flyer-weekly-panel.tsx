@@ -8,7 +8,6 @@ import {
 import { z } from "zod";
 import { useAuth } from "@/features/auth/use-auth";
 import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
-import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 
 export type FlyerWeeklyPanelProps = {
   /**
@@ -546,8 +545,6 @@ export function FlyerWeeklyPanel({
       // PE4: fingerprint null 早期 return もここに合流して in-flight / busy を必ず解除
       uploadInFlightRef.current = false;
       setBusy(false);
-      // access_token 以外を触らない。クライアントは破棄。
-      void getBrowserSupabaseClient;
     }
   };
 

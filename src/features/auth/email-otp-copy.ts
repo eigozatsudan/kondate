@@ -11,7 +11,6 @@ export const EMAIL_OTP_LOGIN_LEAD =
 export const EMAIL_OTP_LOGIN_NOTE =
   "新規登録の別画面はありません。番号を受け取るか Google で進むと、はじめての方はアカウントができます。パスワードの設定は不要です。" as const;
 
-export const EMAIL_OTP_EMAIL_LABEL = "メールアドレス" as const;
 export const EMAIL_OTP_SEND_BUTTON = "番号をメールで受け取る" as const;
 export const EMAIL_OTP_SENDING = "送信中…" as const;
 export const EMAIL_OTP_GOOGLE_BUTTON = "Googleで続ける" as const;

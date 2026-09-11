@@ -72,6 +72,41 @@ beforeEach(() => {
 });
 
 describe("createRegenerationLoaderDeps", () => {
+  it("fails closed when a group query returns null data without an error", async () => {
+    const secondEq = vi.fn().mockResolvedValue({ data: null, error: null });
+    const from = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({ eq: secondEq }),
+      }),
+    });
+    vi.mocked(createUserScopedSupabase).mockReturnValue({ from } as never);
+    const deps = createRegenerationLoaderDeps(user, { requestStartedAtMonotonicMs: 100 });
+
+    await expect(
+      deps.loadGroup(user, "a1000000-0000-4000-8000-000000000001"),
+    ).rejects.toMatchObject({ code: "menu_load_failed", status: 503 });
+    expect(loadStoredMenu).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a recent-menu query returns null data without an error", async () => {
+    const limit = vi.fn().mockResolvedValue({ data: null, error: null });
+    const from = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          order: vi.fn().mockReturnValue({ limit }),
+        }),
+      }),
+    });
+    vi.mocked(createUserScopedSupabase).mockReturnValue({ from } as never);
+    const deps = createRegenerationLoaderDeps(user, { requestStartedAtMonotonicMs: 100 });
+
+    await expect(deps.loadRecent(user, 10)).rejects.toMatchObject({
+      code: "menu_load_failed",
+      status: 503,
+    });
+    expect(loadStoredMenu).not.toHaveBeenCalled();
+  });
+
   it("maps foreign source to source_menu_not_found before any admin call", async () => {
     vi.mocked(loadStoredMenu).mockRejectedValue(
       new HttpError(404, "menu_not_found", "献立が見つかりません"),

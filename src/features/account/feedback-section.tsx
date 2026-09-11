@@ -33,12 +33,6 @@ export const FEEDBACK_POST_CLIENT_TIMEOUT_MS = 30_000;
 export const FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX =
   "kondate:feedback:ambiguous-fingerprint";
 
-/**
- * @deprecated AP17: user 非束縛の旧キー。cleanup 互換とテスト移行用。新規 read/write 禁止。
- */
-export const FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY =
-  FEEDBACK_AMBIGUOUS_FINGERPRINT_STORAGE_KEY_PREFIX;
-
 /** AP17: user 束縛 sticky キー。userId 欠落時は null（sticky 無効・抑止しない）。 */
 export function feedbackAmbiguousFingerprintStorageKey(
   userId: string | null | undefined,
