@@ -567,6 +567,20 @@ describe("runBillingCheckout", () => {
     expect(response.status).toBe(401);
   });
 
+  // S8 回帰: HttpError の code/message は handleError と同じ closed filter を通す。
+  // free-text（email 混入）が直エコーされないことを固定する。
+  it("scrubs non-closed HttpError code/message instead of echoing them", async () => {
+    authenticate.mockRejectedValue(
+      new HttpError(401, "Auth Failed <user@example.com>", "user user@example.com failed"),
+    );
+    const response = await runBillingCheckout(request(), deps());
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: { code: "request_failed", message: "処理を完了できませんでした" },
+    });
+  });
+
   it("acquires checkout lock before Stripe Customer ensure (A1)", async () => {
     rpc.mockImplementation((name: string) => {
       if (name === "get_billing_customer_by_user") {

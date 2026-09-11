@@ -8,7 +8,7 @@ import {
   type CheckoutRequest,
 } from "../../../shared/contracts/billing.js";
 import type { ServerEnv } from "./env.js";
-import { closedHttpErrorDetails, HttpError, json, methodNotAllowed, parseJson } from "./http.js";
+import { handleError, HttpError, json, methodNotAllowed, parseJson } from "./http.js";
 import type { SafeLogEvent } from "./logger.js";
 import { createSafeLogger } from "./logger.js";
 import { computeQuotaIdentityKey } from "./quota-identity.js";
@@ -546,19 +546,12 @@ export async function runBillingCheckout(
     }
 
     if (error instanceof HttpError) {
-      // S8: details は closed schema のみ（fields / release_failed）。free-text は落とす。
-      const details = closedHttpErrorDetails({
-        ...(error.details === undefined ? {} : error.details),
-        ...(releaseFailed ? { release_failed: true } : {}),
-      });
-      return json(error.status, {
-        ok: false,
-        error: {
-          code: error.code,
-          message: error.message,
-          ...(details === undefined ? {} : { details }),
-        },
-      });
+      // S8: details の release_failed 併合だけをここで行い、code / message / details の
+      // 閉じ方は handleError に一元化する。直エコーだと将来の動的文言混入を潰せない。
+      const mergedDetails = releaseFailed
+        ? { ...(error.details ?? {}), release_failed: true }
+        : error.details;
+      return handleError(new HttpError(error.status, error.code, error.message, mergedDetails));
     }
     return json(500, {
       ok: false,
