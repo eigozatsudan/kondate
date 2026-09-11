@@ -58,6 +58,7 @@ export function applyRegenerationPantryExpiryPolicy(
 const preferenceSnapshotEnvelopeSchema = z.looseObject({
   submission: plannerSubmissionSchema,
 });
+const menuIdRowsSchema = z.array(z.object({ id: z.uuid() }));
 
 /**
  * JWT 所有者クライアントで source / group / recent を読み、
@@ -95,11 +96,12 @@ export function createRegenerationLoaderDeps(
       .select("id")
       .eq("user_id", authenticated.userId)
       .eq("derivation_group_id", groupId);
-    if (error !== null) {
+    const rows = menuIdRowsSchema.safeParse(data);
+    if (error !== null || !rows.success) {
       throw new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
     }
     return Promise.all(
-      data.map((row) => loadStoredMenu(ownerClient, authenticated.userId, row.id)),
+      rows.data.map((row) => loadStoredMenu(ownerClient, authenticated.userId, row.id)),
     );
   };
 
@@ -113,11 +115,12 @@ export function createRegenerationLoaderDeps(
       .eq("user_id", authenticated.userId)
       .order("created_at", { ascending: false })
       .limit(limit);
-    if (error !== null) {
+    const rows = menuIdRowsSchema.safeParse(data);
+    if (error !== null || !rows.success) {
       throw new HttpError(503, "menu_load_failed", "献立を読み込めませんでした");
     }
     return Promise.all(
-      data.map((row) => loadStoredMenu(ownerClient, authenticated.userId, row.id)),
+      rows.data.map((row) => loadStoredMenu(ownerClient, authenticated.userId, row.id)),
     );
   };
 

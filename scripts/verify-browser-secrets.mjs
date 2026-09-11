@@ -48,6 +48,10 @@ const SECRET_VALUE_KEYS = [
   "STRIPE_WEBHOOK_SECRET",
   "STRIPE_PRICE_PLUS_MONTHLY",
   "STRIPE_PRICE_PLUS_YEARLY",
+  "VITE_STRIPE_SECRET_KEY",
+  "VITE_STRIPE_WEBHOOK_SECRET",
+  "VITE_STRIPE_PRICE_PLUS_MONTHLY",
+  "VITE_STRIPE_PRICE_PLUS_YEARLY",
 ];
 
 const SCAN_ROOTS = ["src", "shared", "dist"];
@@ -79,6 +83,11 @@ export function verifyBrowserSecrets({ root, env, requireDist = false }) {
   for (const key of SECRET_VALUE_KEYS) {
     const value = env[key];
     if (typeof value === "string" && value.length > 0) {
+      valueMatchers.push({ key, value });
+    }
+  }
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith("VITE_BILLING_") && typeof value === "string" && value.length > 0) {
       valueMatchers.push({ key, value });
     }
   }

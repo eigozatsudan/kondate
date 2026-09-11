@@ -435,7 +435,8 @@ test("netlify.toml emits context CSP via _headers and keeps global headers CSP-f
   for (const pattern of [
     /command = "npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
     /command = "npm run verify:openrouter:models && npm run verify:sharp:netlify && npm run build && node scripts\/emit-deploy-headers\.mjs --context production && npm run verify:browser-secrets -- --require-dist"/u,
-    /command = "npm run verify:sharp:netlify && npm run build && node scripts\/emit-deploy-headers\.mjs"/u,
+    /\[context\.deploy-preview\]\s+command = "npm run verify:sharp:netlify && npm run build && node scripts\/emit-deploy-headers\.mjs && npm run verify:browser-secrets -- --require-dist"/u,
+    /\[context\.branch-deploy\]\s+command = "npm run verify:sharp:netlify && npm run build && node scripts\/emit-deploy-headers\.mjs && npm run verify:browser-secrets -- --require-dist"/u,
   ]) {
     assert.match(toml, pattern);
   }

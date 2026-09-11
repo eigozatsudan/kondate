@@ -21,10 +21,10 @@
   command = "npm run verify:openrouter:models && npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs --context production && npm run verify:browser-secrets -- --require-dist"
 
 [context.deploy-preview]
-  command = "npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs"
+  command = "npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs && npm run verify:browser-secrets -- --require-dist"
 
 [context.branch-deploy]
-  command = "npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs"
+  command = "npm run verify:sharp:netlify && npm run build && node scripts/emit-deploy-headers.mjs && npm run verify:browser-secrets -- --require-dist"
 
 [[redirects]]
   from = "/api/emergency-menus"

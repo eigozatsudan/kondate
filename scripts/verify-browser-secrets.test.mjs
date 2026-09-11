@@ -88,6 +88,32 @@ test("detects forbidden variable name and secret value with redacted diagnostics
   }
 });
 
+test("detects Vite billing secret values after variable names are removed", () => {
+  const stripeSecret = "vite-stripe-secret-value";
+  const billingSecret = "vite-billing-secret-value";
+  const root = withTree((dir) => {
+    mkdirSync(join(dir, "dist"));
+    writeFileSync(
+      join(dir, "dist", "billing.js"),
+      `const a="${stripeSecret}";const b="${billingSecret}";`,
+    );
+  });
+  try {
+    const env = {
+      VITE_STRIPE_SECRET_KEY: stripeSecret,
+      VITE_BILLING_INTERNAL_TOKEN: billingSecret,
+    };
+    const findings = verifyBrowserSecrets({ root, env, requireDist: true });
+    assert.ok(findings.some((finding) => finding.variable === "VITE_STRIPE_SECRET_KEY"));
+    assert.ok(findings.some((finding) => finding.variable === "VITE_BILLING_INTERNAL_TOKEN"));
+    const lines = [];
+    assert.equal(main({ root, env, requireDist: true, write: (line) => lines.push(line) }), 1);
+    assert.ok(lines.every((line) => !line.includes(stripeSecret) && !line.includes(billingSecret)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("requireDist fails closed when dist is absent after expected build", () => {
   const root = withTree((dir) => {
     mkdirSync(join(dir, "src"), { recursive: true });

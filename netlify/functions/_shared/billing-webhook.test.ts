@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
 import { STRIPE_API_VERSION } from "../../../shared/contracts/billing.js";
 import type { ServerEnv } from "./env.js";
+import type { SafeLogEvent } from "./logger.js";
 import {
+  BILLING_WEBHOOK_MAX_BODY_BYTES,
   guardSubscriptionProjection,
   handleBillingWebhook,
   isAllowlistedPlusPrice,
@@ -211,7 +213,7 @@ describe("handleBillingWebhook", () => {
   const list = vi.fn();
   const rpc = vi.fn();
   const getUserById = vi.fn();
-  const logSink = vi.fn();
+  const logSink = vi.fn<(event: SafeLogEvent) => void>();
 
   function deps(envOverrides: Partial<ServerEnv> = {}): BillingWebhookDeps {
     return {
@@ -295,18 +297,105 @@ describe("handleBillingWebhook", () => {
   });
 
   it("logs an unexpected dispatch failure before returning 500", async () => {
-    constructEvent.mockReturnValue(makeEvent("test.unhandled", {}));
+    constructEvent.mockReturnValue(makeEvent("payment_intent.created", {}));
     rpc.mockRejectedValue(new Error("database unavailable"));
 
     const response = await handleBillingWebhook(signedRequest(), deps());
 
     expect(response.status).toBe(500);
-    expect(logSink).toHaveBeenCalledWith({
+    expect(logSink).toHaveBeenCalledTimes(1);
+    const logged = logSink.mock.calls[0]?.[0];
+    expect(logged).toMatchObject({
       level: "error",
       requestId: "req-billing-1",
       code: "billing_webhook_failed",
-      durationMs: expect.any(Number),
     });
+    expect(logged?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("rejects a declared oversized body before signature verification", async () => {
+    const request = new Request("http://127.0.0.1/api/billing/webhook", {
+      method: "POST",
+      headers: {
+        "stripe-signature": "t=1,v1=test",
+        "content-type": "application/json",
+        "content-length": String(BILLING_WEBHOOK_MAX_BODY_BYTES + 1),
+      },
+      body: "{}",
+    });
+
+    const response = await handleBillingWebhook(request, deps());
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: { code: "request_too_large", message: "リクエストが大きすぎます" },
+    });
+    expect(constructEvent).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("cancels an understated oversized stream before reading further chunks", async () => {
+    const chunk = new Uint8Array(16_384);
+    let pullCount = 0;
+    let canceled = false;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pullCount += 1;
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          canceled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const request = new Request("http://127.0.0.1/api/billing/webhook", {
+      method: "POST",
+      headers: {
+        "stripe-signature": "t=1,v1=test",
+        "content-type": "application/json",
+        "content-length": "1",
+      },
+      body,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+
+    const response = await handleBillingWebhook(request, deps());
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: { code: "request_too_large", message: "リクエストが大きすぎます" },
+    });
+    expect(pullCount).toBe(5);
+    expect(canceled).toBe(true);
+    expect(constructEvent).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("logs and returns 500 when the request body stream fails", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error("stream failed"));
+      },
+    });
+    const request = new Request("http://127.0.0.1/api/billing/webhook", {
+      method: "POST",
+      headers: { "stripe-signature": "t=1,v1=test" },
+      body,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+
+    const response = await handleBillingWebhook(request, deps());
+
+    expect(response.status).toBe(500);
+    expect(logSink).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "billing_webhook_failed", level: "error" }),
+    );
+    expect(constructEvent).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("after claim-then-crash before project, Stripe retry eventually projects (crash-safe)", async () => {

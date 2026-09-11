@@ -7,6 +7,8 @@ import type { SafeLogEvent } from "./logger.js";
 import { createSafeLogger } from "./logger.js";
 import { computeQuotaIdentityKey } from "./quota-identity.js";
 
+export const BILLING_WEBHOOK_MAX_BODY_BYTES = 65_536;
+
 const processOutcomeSchema = z
   .object({
     ok: z.literal(true),
@@ -1310,6 +1312,34 @@ async function handleCustomerOnlyEvent(
   return json(200, { ok: true, data: { outcome } });
 }
 
+async function readBillingWebhookBody(request: Request): Promise<Buffer | null> {
+  const declaredLength = request.headers.get("content-length");
+  if (
+    declaredLength !== null &&
+    /^\d+$/u.test(declaredLength) &&
+    Number(declaredLength) > BILLING_WEBHOOK_MAX_BODY_BYTES
+  ) {
+    return null;
+  }
+  if (request.body === null) {
+    return Buffer.alloc(0);
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > BILLING_WEBHOOK_MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, total);
+}
+
 /**
  * Stripe Webhook の本体。
  * - 署名検証は body parse 前（constructEvent が raw body を要求）
@@ -1347,7 +1377,27 @@ export async function handleBillingWebhook(
   }
 
   // 署名検証は raw body。JSON parse 前に constructEvent。
-  const rawBody = Buffer.from(await request.arrayBuffer());
+  let rawBody: Buffer | null;
+  try {
+    rawBody = await readBillingWebhookBody(request);
+  } catch {
+    log({
+      level: "error",
+      requestId,
+      code: "billing_webhook_failed",
+      durationMs: Date.now() - startedAt,
+    });
+    return json(500, {
+      ok: false,
+      error: { code: "request_failed", message: "処理を完了できませんでした" },
+    });
+  }
+  if (rawBody === null) {
+    return json(413, {
+      ok: false,
+      error: { code: "request_too_large", message: "リクエストが大きすぎます" },
+    });
+  }
   let event: Stripe.Event;
   try {
     event = deps.stripe.webhooks.constructEvent(rawBody, signature, stripeConfig.webhookSecret);
@@ -1391,6 +1441,12 @@ export async function handleBillingWebhook(
       }
     }
   } catch {
+    log({
+      level: "error",
+      requestId,
+      code: "billing_webhook_failed",
+      durationMs: Date.now() - startedAt,
+    });
     return json(500, {
       ok: false,
       error: { code: "request_failed", message: "処理を完了できませんでした" },
