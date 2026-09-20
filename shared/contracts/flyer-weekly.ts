@@ -115,14 +115,51 @@ export const flyerWeeklyUsageSchema = z
 
 export type FlyerWeeklyUsage = z.infer<typeof flyerWeeklyUsageSchema>;
 
+/**
+ * strict json_schema 検証では「required が properties の全キーを含む」ことが必須
+ * （省略可能キーが残ると provider が 400 invalid_json_schema を返し、
+ * openrouter.ts の非 200 正規化で model_unavailable 化する。menuResponseFormat が
+ * 同じ制約を満たすよう root object 化済みなのと同型の対策）。
+ * 生成後 schema の各 object ノードで required を properties 全キーへ揃える。
+ * sideName / notes など省略許容のキーは anyOf null union 経由で必須キー化される
+ * （AI は null を返せる）。weekStartJst は必ずサーバが reserve.week_start で上書きし
+ * プロンプトも要求しないため、必須化すると AI に不要値を捏造させるだけになるので
+ * wire スキーマからは omit する（パース側スキーマは optional のまま）。
+ */
+function requireAllProperties(node: unknown): void {
+  if (node === null || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) requireAllProperties(item);
+    return;
+  }
+  const record = node as Record<string, unknown>;
+  if (
+    record.type === "object" &&
+    record.properties !== null &&
+    typeof record.properties === "object" &&
+    !Array.isArray(record.properties)
+  ) {
+    record.required = Object.keys(record.properties);
+  }
+  for (const value of Object.values(record)) requireAllProperties(value);
+}
+
+const weeklyFlyerMenuJsonSchema = z.toJSONSchema(
+  weeklyFlyerMenuObjectSchema.omit({ weekStartJst: true }),
+  {
+    target: "draft-2020-12",
+  },
+);
+// menuResponseFormat と同じく $schema を落とす
+delete weeklyFlyerMenuJsonSchema.$schema;
+requireAllProperties(weeklyFlyerMenuJsonSchema);
+
 /** AI structured_outputs 用 JSON Schema 断片（response_format） */
 export const weeklyFlyerMenuResponseFormat = {
   type: "json_schema",
   json_schema: {
     name: "kondate_weekly_flyer_menu",
     strict: true,
-    schema: z.toJSONSchema(weeklyFlyerMenuObjectSchema, {
-      target: "draft-2020-12",
-    }),
+    schema: weeklyFlyerMenuJsonSchema,
   },
 } as const;

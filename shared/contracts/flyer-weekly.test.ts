@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   flyerWeeklyIssueMessages,
   FLYER_LOCKED_PREVIEW_COPY,
+  weeklyFlyerMenuResponseFormat,
   weeklyFlyerMenuSchema,
   flyerWeeklyUsageSchema,
 } from "./flyer-weekly.js";
@@ -25,6 +26,42 @@ describe("weeklyFlyerMenuSchema", () => {
   it("rejects non-unique dayIndex", () => {
     const bad = sampleDays.map((d, i) => (i === 6 ? { ...d, dayIndex: 1 } : d));
     expect(weeklyFlyerMenuSchema.safeParse({ days: bad }).success).toBe(false);
+  });
+});
+
+describe("weeklyFlyerMenuResponseFormat", () => {
+  // strict json_schema 検証は required = properties 全件を要求する。
+  // optional キーが残ると provider が 400 invalid_json_schema を返し
+  // model_unavailable へ潰れるため、再発を構造テストで防ぐ。
+  const walk = (node: unknown, missing: string[]): void => {
+    if (node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, missing);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (
+      record.type === "object" &&
+      record.properties !== null &&
+      typeof record.properties === "object" &&
+      !Array.isArray(record.properties)
+    ) {
+      const required = Array.isArray(record.required) ? record.required : [];
+      for (const key of Object.keys(record.properties)) {
+        if (!required.includes(key)) missing.push(key);
+      }
+    }
+    for (const value of Object.values(record)) walk(value, missing);
+  };
+
+  it("requires every property key at every object node", () => {
+    const missing: string[] = [];
+    walk(weeklyFlyerMenuResponseFormat.json_schema.schema, missing);
+    expect(missing).toEqual([]);
+  });
+
+  it("omits the $schema keyword like menuResponseFormat", () => {
+    expect(weeklyFlyerMenuResponseFormat.json_schema.schema).not.toHaveProperty("$schema");
   });
 });
 
