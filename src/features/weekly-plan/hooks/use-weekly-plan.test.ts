@@ -34,6 +34,7 @@ const sampleResult = {
   cuisineGenre: "japanese" as const,
   budgetPreference: null,
   noveltyPreference: null,
+  priorityIngredients: [],
   partialHousehold: false,
   staleSafety: false,
 };
@@ -67,6 +68,7 @@ describe("useCreateWeeklyPlan", () => {
       cuisineGenre: "japanese",
       budgetPreference: null,
       noveltyPreference: null,
+      priorityIngredients: [],
     });
     expect(created.weeklyPlanId).toBe(sampleResult.weeklyPlanId);
   });

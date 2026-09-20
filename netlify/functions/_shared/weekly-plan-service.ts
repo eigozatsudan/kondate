@@ -7,6 +7,7 @@ import {
   weeklyPlanAiMenuSchema,
   weeklyPlanFailureCodeMap,
   weeklyPlanIssueMessages,
+  weeklyPlanPriorityIngredientsSchema,
   weeklyPlanResultSchema,
   type WeeklyPlanAiMenuResult,
   type WeeklyPlanRequest,
@@ -18,7 +19,9 @@ import {
   OPENROUTER_TIMEOUT_MS,
 } from "../../../shared/contracts/function-budget.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
+import { foodTextContainsAlias } from "../../../shared/safety/allergens.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
+import { detectUnsupportedMedicalRequest } from "../../../shared/safety-pure/medical-scope.js";
 import {
   applyQuotaPlan,
   BillingEntitlementUnavailableError,
@@ -110,6 +113,10 @@ const weeklyPlanRowSchema = z.object({
     cuisineGenre: z.string(),
     budgetPreference: z.string().nullable(),
     noveltyPreference: z.string().nullable(),
+    // catch([]): 導入前に保存された行/intent の snapshot はこのキーを持たない。
+    // また snapshot は表示用エコーのみに使うため、万一範囲外の値が混入しても
+    // [] に落として結果全体の parse を失敗させない（GET の恒久的 500 を防ぐ）。
+    priorityIngredients: weeklyPlanPriorityIngredientsSchema.catch([]),
   }),
   safety_fingerprint: z.string(),
   days: z.array(z.unknown()),
@@ -121,6 +128,7 @@ const intentRowSchema = z.object({
     cuisineGenre: z.string(),
     budgetPreference: z.string().nullable(),
     noveltyPreference: z.string().nullable(),
+    priorityIngredients: weeklyPlanPriorityIngredientsSchema.catch([]),
   }),
   safety_fingerprint: z.string(),
 });
@@ -210,6 +218,42 @@ export async function loadWeeklyPlanInspectionSafety(
     }
   }
   return safety;
+}
+
+/**
+ * 優先食材（自由入力）の reserve 前ゲート。週献立の自由入力は priorityIngredients
+ * のみなので、日次 generation の validateGenerationPreflight のうち次の2種だけを
+ * 同じ照合で検査する:
+ * - 対象メンバーのアレルゲン辞書 alias / 確認済みカスタムアレルギーとの一致 → allergy_conflict
+ * - 医療・治療食スコープの文言 → unsupported_diet
+ * reserve 前に置くため失敗しても週次枠・試行枠を消費しない。生成後は
+ * assertFlyerMenuAgainstSafety が本文の最終防御として残る（defense in depth）。
+ * replay 経路（succeeded / stash 復旧）では呼ばない — 当時の条件で既に生成済みの本文を
+ * 新規検査で止めない（R-07 / N-I-10 と同じ思想）。
+ */
+function assertWeeklyPlanPriorityIngredients(
+  safety: CurrentSafetyContext,
+  priorityIngredients: readonly string[],
+): void {
+  if (priorityIngredients.length === 0) return;
+  for (const member of safety.members) {
+    const aliases = safety.allergenDictionary.aliases.filter((alias) =>
+      member.allergenIds.includes(alias.allergenId),
+    );
+    const hitsDictionary = priorityIngredients.some((ingredient) =>
+      aliases.some((alias) => foodTextContainsAlias(ingredient, alias.normalizedAlias)),
+    );
+    const customNeedles = member.customAllergies.flatMap((entry) => [entry.name, ...entry.aliases]);
+    const hitsCustom = customNeedles.some((needle) =>
+      priorityIngredients.some((ingredient) => foodTextContainsAlias(ingredient, needle)),
+    );
+    if (hitsDictionary || hitsCustom) {
+      throw new HttpError(422, "allergy_conflict", issueMessages.allergy_conflict);
+    }
+  }
+  if (detectUnsupportedMedicalRequest(priorityIngredients.join("\n")).length > 0) {
+    throw new HttpError(422, "unsupported_diet", issueMessages.unsupported_diet);
+  }
 }
 
 function mapWeeklyPlanFailureHttp(code: string, retryAt: string | null = null): never {
@@ -309,6 +353,7 @@ type WeeklyPlanSnapshot = {
   cuisineGenre: string;
   budgetPreference: string | null;
   noveltyPreference: string | null;
+  priorityIngredients: readonly string[];
 };
 
 function snapshotFromRequest(request: WeeklyPlanRequest): WeeklyPlanSnapshot {
@@ -317,6 +362,7 @@ function snapshotFromRequest(request: WeeklyPlanRequest): WeeklyPlanSnapshot {
     cuisineGenre: request.cuisineGenre,
     budgetPreference: request.budgetPreference,
     noveltyPreference: request.noveltyPreference,
+    priorityIngredients: [...request.priorityIngredients],
   };
 }
 
@@ -386,6 +432,7 @@ async function buildResultFromRow(
     cuisineGenre: snapshot.cuisineGenre,
     budgetPreference: snapshot.budgetPreference,
     noveltyPreference: snapshot.noveltyPreference,
+    priorityIngredients: snapshot.priorityIngredients,
     partialHousehold,
     staleSafety,
   });
@@ -474,6 +521,7 @@ async function insertWeeklyPlanRow(
         cuisineGenre: snapshot.cuisineGenre,
         budgetPreference: snapshot.budgetPreference,
         noveltyPreference: snapshot.noveltyPreference,
+        priorityIngredients: [...snapshot.priorityIngredients],
       },
       safety_fingerprint: fingerprint,
       days: menu.days,
@@ -583,6 +631,7 @@ async function replaySucceededWeeklyPlan(
     cuisineGenre: intent.data.preference_snapshot.cuisineGenre,
     budgetPreference: intent.data.preference_snapshot.budgetPreference,
     noveltyPreference: intent.data.preference_snapshot.noveltyPreference,
+    priorityIngredients: intent.data.preference_snapshot.priorityIngredients,
     partialHousehold,
     staleSafety,
   });
@@ -699,6 +748,7 @@ async function replayStashedWeeklyPlan(
     cuisineGenre: intent.data.preference_snapshot.cuisineGenre,
     budgetPreference: intent.data.preference_snapshot.budgetPreference,
     noveltyPreference: intent.data.preference_snapshot.noveltyPreference,
+    priorityIngredients: intent.data.preference_snapshot.priorityIngredients,
     partialHousehold,
     staleSafety,
   });
@@ -781,7 +831,14 @@ export async function runWeeklyPlan(
   }
 
   // 手順5: 対象メンバーの現在安全条件（reserve 前 422 集合）
-  await loadWeeklyPlanInspectionSafety(admin, deps.user.userId, request.targetMemberIds);
+  const inspectionSafety = await loadWeeklyPlanInspectionSafety(
+    admin,
+    deps.user.userId,
+    request.targetMemberIds,
+  );
+  // 優先食材の reserve 前ゲート（allergy_conflict / unsupported_diet）。
+  // 枠消費前に止めるため assertFlyerMenu* と同じく 422 HttpError を直接投げる。
+  assertWeeklyPlanPriorityIngredients(inspectionSafety, request.priorityIngredients);
 
   // 手順6: reserve_flyer_weekly（週次成功/試行、日次試行、短時間窓、全体枠）
   const limits = limitsForPlan("plus");
@@ -1125,6 +1182,7 @@ export async function runWeeklyPlan(
     cuisineGenre: snapshot.cuisineGenre,
     budgetPreference: snapshot.budgetPreference,
     noveltyPreference: snapshot.noveltyPreference,
+    priorityIngredients: snapshot.priorityIngredients,
     partialHousehold,
     staleSafety: false,
   });

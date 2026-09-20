@@ -29,7 +29,7 @@ test.setTimeout(180_000);
 
 test.describe("weekly plan", () => {
   // ephemeral ユーザー（このテスト専用）。このユーザーだけを Plus に seed する。
-  test("Plus: create → result → tap a day → planner draft is filled", async ({
+  test("Plus: create → result → tap a day → generation → recipe steps visible", async ({
     completedOnboardingPage,
   }) => {
     const page = completedOnboardingPage;
@@ -41,15 +41,24 @@ test.describe("weekly plan", () => {
     await expect(page.getByRole("heading", { level: 1, name: "今週の献立" })).toBeVisible({
       timeout: 15_000,
     });
+    // 優先食材の任意入力（作成時オプション）
+    await page.getByRole("textbox", { name: "食材名" }).fill("キャベツ");
+    await page.getByRole("button", { name: "追加" }).click();
+    await expect(page.getByRole("button", { name: "キャベツを外す" })).toBeVisible();
+
     await page.getByRole("button", { name: "今週の献立をつくる" }).click();
     // フォーム画面自身にも <h1>今週の献立</h1> があるため、heading だけでは
     // 遷移していなくても緑になる。URL で結果画面到達を固定する。
     await expect(page).toHaveURL(/\/weekly\/[0-9a-f-]{36}/u, { timeout: 60_000 });
-    await expect(page.getByRole("button", { name: "この日の献立を作る" }).first()).toBeVisible({
+    await expect(page.getByText(/優先的に使う食材: キャベツ/)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "この日の献立を作る" }).first()).toBeVisible();
+
+    // 日カードの主 CTA は確認画面を通さず即生成 → /generation → /menus/:id（作り方つき）
+    await page.getByRole("button", { name: "この日の献立を作る" }).first().click();
+    await expect(page).toHaveURL(/\/generation/u, { timeout: 15_000 });
+    await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });
+    await expect(page.getByRole("heading", { name: "作り方", exact: true })).toBeVisible({
       timeout: 15_000,
     });
-    await page.getByRole("button", { name: "この日の献立を作る" }).first().click();
-    await expect(page).toHaveURL(/\/planner/u, { timeout: 15_000 });
-    await expect(page.getByRole("textbox", { name: "自由メモ" })).toHaveValue("主菜: 固定主菜1");
   });
 });

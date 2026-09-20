@@ -37,6 +37,47 @@ describe("weeklyPlanRequestSchema", () => {
   it("accepts the base shape", () => {
     expect(weeklyPlanRequestSchema.safeParse(base).success).toBe(true);
   });
+
+  it("defaults priorityIngredients to [] when the key is absent (保持メタデータ再送の互換)", () => {
+    const result = weeklyPlanRequestSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.priorityIngredients).toEqual([]);
+    }
+  });
+
+  it("accepts priorityIngredients and trims each entry", () => {
+    const result = weeklyPlanRequestSchema.safeParse({
+      ...base,
+      priorityIngredients: [" 鶏むね肉 ", "キャベツ"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.priorityIngredients).toEqual(["鶏むね肉", "キャベツ"]);
+    }
+  });
+
+  it("rejects more than PLANNER_MAIN_INGREDIENT_LIMIT priority ingredients", () => {
+    const result = weeklyPlanRequestSchema.safeParse({
+      ...base,
+      priorityIngredients: Array.from({ length: 9 }, (_, index) => `食材${String(index)}`),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a priority ingredient over PLANNER_INGREDIENT_TEXT_MAX", () => {
+    const result = weeklyPlanRequestSchema.safeParse({
+      ...base,
+      priorityIngredients: ["あ".repeat(81)],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a blank-only priority ingredient", () => {
+    expect(
+      weeklyPlanRequestSchema.safeParse({ ...base, priorityIngredients: ["   "] }).success,
+    ).toBe(false);
+  });
 });
 
 describe("weeklyPlanResultSchema", () => {
@@ -59,12 +100,34 @@ describe("weeklyPlanResultSchema", () => {
     cuisineGenre: "japanese" as const,
     budgetPreference: null,
     noveltyPreference: null,
+    priorityIngredients: [],
     partialHousehold: false,
     staleSafety: false,
   };
 
   it("accepts the base shape", () => {
     expect(weeklyPlanResultSchema.safeParse(baseResult).success).toBe(true);
+  });
+
+  it("echoes priorityIngredients through the result", () => {
+    const result = weeklyPlanResultSchema.safeParse({
+      ...baseResult,
+      priorityIngredients: ["鶏むね肉", "キャベツ"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.priorityIngredients).toEqual(["鶏むね肉", "キャベツ"]);
+    }
+  });
+
+  it("defaults priorityIngredients to [] when the result key is absent (旧 Function 互換)", () => {
+    const withoutKey = { ...baseResult } as Record<string, unknown>;
+    delete withoutKey["priorityIngredients"];
+    const result = weeklyPlanResultSchema.safeParse(withoutKey);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.priorityIngredients).toEqual([]);
+    }
   });
 
   it("carries budgetPreference/noveltyPreference through when non-null", () => {

@@ -2,18 +2,30 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { Link, useNavigate } from "react-router";
 import { z } from "zod";
 import { cuisineGenres } from "@shared/contracts/domain";
-import { budgetPreferences, noveltyPreferences } from "@shared/contracts/planner";
+import {
+  budgetPreferences,
+  noveltyPreferences,
+  PLANNER_INGREDIENT_TEXT_MAX,
+  PLANNER_MAIN_INGREDIENT_LIMIT,
+} from "@shared/contracts/planner";
 import {
   WEEKLY_PLAN_QUOTA_COPY_LABEL,
   weeklyPlanRequestSchema,
   weeklyPlanIssueMessages,
   type WeeklyPlanRequest,
 } from "@shared/contracts/weekly-plan";
+import { detectUnsupportedMedicalRequest } from "@shared/safety-pure/medical-scope";
 import { GenerationProgressMeter } from "@/features/generation/components/generation-status-panel";
 import { useGenerationProgressMessage } from "@/features/generation/hooks/use-generation-progress-message";
 import { GENERATION_IN_PROGRESS_RETRY_MS } from "@/features/generation/hooks/use-generation-recovery";
 import { useUsageToday } from "@/features/generation/hooks/use-usage-today";
 import { AudienceStep, type AudienceValue } from "@/features/planner/components/audience-step";
+import { medicalRequestBlockedMessage } from "@/features/planner/components/review-step";
+import {
+  excludeCanonicalMainIngredient,
+  includesCanonicalMainIngredient,
+  normalizeMainIngredient,
+} from "@/features/planner/model/main-ingredient-options";
 import {
   cuisineGenreLabels,
   noveltyPreferenceLabels,
@@ -26,11 +38,19 @@ import { useLatestWeeklyPlan } from "../weekly-plan-latest";
 
 const STICKY_KEY_STORAGE = "weekly-plan-idempotency-key";
 const REQUEST_METADATA_STORAGE = "weekly-plan-request-metadata";
+// 同一リクエストの再送が実質的に失敗するコードは sticky を捨てて再試行導線を出さない。
+// unsupported_diet: 主に医療・治療食スコープ文言の事前検査で投げられ、同一テキストでは
+// 必ず同じ 422 になる。メンバーの unsupportedDietStatus: "present" 由来でも同コードが
+// 返り得るが、そのメンバーは UI 上 selectableMemberIds から除外されるため到達は
+// 稀（設定変更との TOCTOU のみ）で、再試行 UI を残す価値はないと判断した。
+// allergy_conflict は家族側のアレルギー設定を変えれば成功し得るため対象外。
 const discardStickyKeyCodes = new Set([
   "weekly_plan_invalid_ai_response",
   "generation_timeout",
   "model_unavailable",
+  "unsupported_diet",
 ]);
+const PRIORITY_INGREDIENT_ERROR_ID = "weekly-priority-ingredient-error";
 
 const requestMetadataSchema = z
   .object({
@@ -126,6 +146,9 @@ export function WeeklyPlanFormPage({
   const [noveltyPreference, setNoveltyPreference] = useState<
     (typeof noveltyPreferences)[number] | null
   >(null);
+  const [priorityIngredients, setPriorityIngredients] = useState<readonly string[]>([]);
+  const [priorityIngredientInput, setPriorityIngredientInput] = useState("");
+  const [priorityIngredientError, setPriorityIngredientError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
@@ -260,14 +283,46 @@ export function WeeklyPlanFormPage({
     }
   };
 
+  // 日次プランナーの ingredient-step と同じ正規化・重複・件数・文字数ガードを
+  // 週献立の優先食材にも適用する（件数・文字上限は contracts の単一点定義）。
+  const addPriorityIngredient = (): void => {
+    const next = normalizeMainIngredient(priorityIngredientInput);
+    if (next === "") {
+      setPriorityIngredientError("食材名を入力してから追加してください。");
+      return;
+    }
+    if (Array.from(next).length > PLANNER_INGREDIENT_TEXT_MAX) {
+      setPriorityIngredientError(`食材は1件${String(PLANNER_INGREDIENT_TEXT_MAX)}文字までです。`);
+      return;
+    }
+    if (includesCanonicalMainIngredient(priorityIngredients, next)) {
+      setPriorityIngredientError("同じ食材はすでに追加されています。");
+      return;
+    }
+    if (priorityIngredients.length >= PLANNER_MAIN_INGREDIENT_LIMIT) {
+      setPriorityIngredientError(`食材は${String(PLANNER_MAIN_INGREDIENT_LIMIT)}件までです。`);
+      return;
+    }
+    setPriorityIngredients([...priorityIngredients, next]);
+    setPriorityIngredientInput("");
+    setPriorityIngredientError(null);
+  };
+
   const onStartNew = (): void => {
     if (cannotStartNew) return;
+    // 医療・治療食スコープの文言は日次献立の review CTA と同じく送信前に止める。
+    // ここで止めると pending メタデータも残らず、サーバ側でも reserve 前 422 になる。
+    if (detectUnsupportedMedicalRequest(priorityIngredients.join("\n")).length > 0) {
+      setSubmitError(medicalRequestBlockedMessage);
+      return;
+    }
     const request: WeeklyPlanRequest = {
       idempotencyKey: crypto.randomUUID(),
       targetMemberIds: [...audience.targetMemberIds],
       cuisineGenre,
       budgetPreference,
       noveltyPreference,
+      priorityIngredients: [...priorityIngredients],
     };
     const pending: RequestMetadata = {
       version: 1,
@@ -407,6 +462,76 @@ export function WeeklyPlanFormPage({
             {preference === null ? "標準" : noveltyPreferenceLabels.twist}
           </label>
         ))}
+      </fieldset>
+      <fieldset className="stack">
+        <legend>優先的に使う食材（任意）</legend>
+        <p className="muted">
+          1週間の献立で優先して使いたい食材を{String(PLANNER_MAIN_INGREDIENT_LIMIT)}
+          件まで登録できます。登録した食材が選んだ家族の条件に合わない場合は使われません。
+        </p>
+        <div className="ingredient-entry-row">
+          <label className="field ingredient-entry-field">
+            食材名
+            <input
+              value={priorityIngredientInput}
+              disabled={requestActive}
+              aria-invalid={priorityIngredientError !== null ? "true" : undefined}
+              aria-describedby={
+                priorityIngredientError !== null ? PRIORITY_INGREDIENT_ERROR_ID : undefined
+              }
+              onChange={(event) => {
+                // ingredient-step と同型: 編集中は文字数をライブ検証し、
+                // 上限内に戻った時点でエラー（重複・空含む）を解除する。
+                const rawValue = event.target.value;
+                setPriorityIngredientInput(rawValue);
+                if (
+                  Array.from(normalizeMainIngredient(rawValue)).length <=
+                  PLANNER_INGREDIENT_TEXT_MAX
+                ) {
+                  setPriorityIngredientError(null);
+                } else {
+                  setPriorityIngredientError(
+                    `食材は1件${String(PLANNER_INGREDIENT_TEXT_MAX)}文字までです。`,
+                  );
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                if (requestActive) return;
+                addPriorityIngredient();
+              }}
+            />
+          </label>
+          <Button variant="secondary" disabled={requestActive} onClick={addPriorityIngredient}>
+            追加
+          </Button>
+        </div>
+        {priorityIngredients.length > 0 ? (
+          <div className="wizard-chip-row">
+            {priorityIngredients.map((ingredient) => (
+              <button
+                key={ingredient}
+                type="button"
+                className="wizard-chip"
+                disabled={requestActive}
+                onClick={() => {
+                  setPriorityIngredients(
+                    excludeCanonicalMainIngredient(priorityIngredients, ingredient),
+                  );
+                  setPriorityIngredientError(null);
+                }}
+              >
+                {ingredient}を外す
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {priorityIngredientError !== null ? (
+          <p id={PRIORITY_INGREDIENT_ERROR_ID} role="alert" className="error">
+            {priorityIngredientError}
+          </p>
+        ) : null}
       </fieldset>
       {quotaExhausted ? (
         <p role="note" className="error">

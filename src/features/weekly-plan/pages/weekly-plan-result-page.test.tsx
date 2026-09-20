@@ -4,6 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { MENU_LABEL_DISCLAIMER } from "@/features/generation/components/idea-menu-safety-notice";
+import {
+  createPendingGeneration,
+  readPendingGeneration,
+  savePendingGeneration,
+} from "@/features/generation/model/pending-generation";
+import { privacyNoticeVersion } from "@shared/contracts/domain";
 import { WeeklyPlanResultPage } from "./weekly-plan-result-page";
 import { DraftRevisionConflictError, plannerKeys } from "../../planner/planner-api";
 
@@ -11,6 +17,8 @@ const getWeeklyPlanByIdMock = vi.hoisted(() => vi.fn());
 const getPlannerDraftMock = vi.hoisted(() => vi.fn());
 const saveMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
+const getGenerationStatusMock = vi.hoisted(() => vi.fn());
+const savePendingGenerationMetaMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../weekly-plan-api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../weekly-plan-api")>();
@@ -24,6 +32,19 @@ vi.mock("../../planner/planner-api", async (importOriginal) => {
     getPlannerDraft: getPlannerDraftMock,
     savePlannerDraft: saveMock,
   };
+});
+
+// 即生成経路の既存 pending reconcile でだけ呼ばれる。実 fetch はさせない。
+vi.mock("../../generation/api/generation-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../generation/api/generation-api")>();
+  return { ...original, getGenerationStatus: getGenerationStatusMock };
+});
+
+// meta 保存失敗経路を作るため save のみ差し替える（read/clear は実装のまま）。
+vi.mock("../../generation/model/pending-generation-meta", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("../../generation/model/pending-generation-meta")>();
+  return { ...original, savePendingGenerationMeta: savePendingGenerationMetaMock };
 });
 
 vi.mock("@/shared/lib/supabase", () => ({
@@ -86,14 +107,31 @@ const samplePlan = {
   cuisineGenre: "japanese" as const,
   budgetPreference: null,
   noveltyPreference: null,
+  priorityIngredients: [] as string[],
   partialHousehold: false,
   staleSafety: false,
 };
 
+// createPendingGeneration は ownerUserId に uuid を要求するため、
+// 即生成パスを通るテストでは実 uuid の userId を使う。
+const uuidUserId = "11111111-1111-4111-8111-111111111111";
+
+// savePlannerDraft の解決値。startDayGeneration は id（uuid）・revision・targetMode を使う。
+function savedDraft(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "44444444-4444-4444-8444-444444444444",
+    revision: 1,
+    targetMode: "household",
+    ...overrides,
+  };
+}
+
 function renderPage(options?: {
   currentCompleteMemberIds?: readonly string[];
   client?: QueryClient;
+  userId?: string;
 }) {
+  const userId = options?.userId ?? "u1";
   const client =
     options?.client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -102,7 +140,7 @@ function renderPage(options?: {
         <WeeklyPlanResultPage
           accessToken="tok"
           weeklyPlanId={samplePlan.weeklyPlanId}
-          userId="u1"
+          userId={userId}
           currentCompleteMemberIds={options?.currentCompleteMemberIds ?? ["m1"]}
         />
       </MemoryRouter>
@@ -113,12 +151,20 @@ function renderPage(options?: {
 describe("WeeklyPlanResultPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // mockClear は実装を消さないため、throw/未解決にさせた実装が後続テストへ
+    // 漏れないよう明示 reset。
+    savePendingGenerationMetaMock.mockReset();
+    saveMock.mockReset();
+    // 即生成経路は localStorage に sticky pending を書く。テスト間で持ち越さない。
+    localStorage.clear();
+    sessionStorage.clear();
+    getGenerationStatusMock.mockResolvedValue({ status: "processing" });
   });
 
   it("renders 7 days and hands off a day to the planner draft", async () => {
     getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
     getPlannerDraftMock.mockResolvedValue(null);
-    saveMock.mockResolvedValue({ revision: 1 });
+    saveMock.mockResolvedValue(savedDraft());
 
     renderPage();
     await waitFor(() => {
@@ -171,13 +217,13 @@ describe("WeeklyPlanResultPage", () => {
     expect(screen.queryAllByText("冷凍保存できます")).toHaveLength(1);
   });
 
-  it("renders day headings sorted by dayIndex even when the API returns days out of order, and navigates to /planner after handoff", async () => {
+  it("renders day headings sorted by dayIndex even when the API returns days out of order, and navigates to /generation after handoff", async () => {
     const shuffledPlan = { ...samplePlan, days: [...samplePlan.days].reverse() };
     getWeeklyPlanByIdMock.mockResolvedValue(shuffledPlan);
     getPlannerDraftMock.mockResolvedValue(null);
-    saveMock.mockResolvedValue({ revision: 1 });
+    saveMock.mockResolvedValue(savedDraft());
 
-    renderPage();
+    renderPage({ userId: uuidUserId });
     await waitFor(() => {
       expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(7);
     });
@@ -187,7 +233,152 @@ describe("WeeklyPlanResultPage", () => {
     const buttons = screen.getAllByRole("button", { name: "この日の献立を作る" });
     await userEvent.click(buttons[0]!);
     await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/planner");
+      expect(navigateMock).toHaveBeenCalledWith("/generation");
+    });
+  });
+
+  it("mints a new_menu pending generation for the clicked day and navigates to /generation", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue(null);
+    saveMock.mockResolvedValue(savedDraft());
+
+    renderPage({ userId: uuidUserId });
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation");
+    });
+    const pending = readPendingGeneration(uuidUserId, new Date());
+    // request は kind 別の union。narrow しないと draftId へアクセスできない。
+    expect(pending?.kind).toBe("new_menu");
+    if (pending?.kind === "new_menu") {
+      expect(pending.request.draftId).toBe(savedDraft().id);
+      // 引き継ぎ下書きは pantry 非連携なので当日確認は空固定
+      expect(pending.request.expiredPantryConfirmations).toEqual([]);
+    }
+  });
+
+  it("navigates to the planner review screen via 条件を変えて作る", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue(null);
+    saveMock.mockResolvedValue(savedDraft());
+
+    renderPage();
+    const buttons = await screen.findAllByRole("button", { name: "条件を変えて作る" });
+    expect(buttons).toHaveLength(7);
+    await userEvent.click(buttons[1]!);
+
+    await waitFor(() => {
+      expect(saveMock).toHaveBeenCalledTimes(1);
+    });
+    expect(navigateMock).toHaveBeenCalledWith("/planner?resume=review");
+  });
+
+  it("resumes an in-flight pending generation instead of overwriting it", async () => {
+    // 先に別の生成 pending を sticky に残す（C2: 上書きしない）
+    const existing = createPendingGeneration(
+      {
+        commandVersion: "generation-command.v3",
+        kind: "new_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: "99999999-9999-4999-8999-999999999999",
+          draftId: "44444444-4444-4444-8444-444444444444",
+          draftRevision: 1,
+          privacyNoticeVersion,
+          expiredPantryConfirmations: [],
+        },
+      },
+      uuidUserId,
+    );
+    savePendingGeneration(existing);
+    // reconcile: processing → kept → 既存 pending の再開画面へ
+    getGenerationStatusMock.mockResolvedValue({ status: "processing" });
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue(null);
+    saveMock.mockResolvedValue(savedDraft());
+
+    renderPage({ userId: uuidUserId });
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    });
+    // 下書きは保存されるが、sticky pending は既存のまま（idempotencyKey が変わらない）
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(readPendingGeneration(uuidUserId, new Date())?.request.idempotencyKey).toBe(
+      "99999999-9999-4999-8999-999999999999",
+    );
+  });
+
+  it("clears a terminal pending and mints a fresh one for the clicked day", async () => {
+    // terminal 済みの stale pending を残す（前回生成の残骸。reconcile が cleared にする）
+    const stale = createPendingGeneration(
+      {
+        commandVersion: "generation-command.v3",
+        kind: "new_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: "99999999-9999-4999-8999-999999999999",
+          draftId: "55555555-5555-4555-8555-555555555555",
+          draftRevision: 3,
+          privacyNoticeVersion,
+          expiredPantryConfirmations: [],
+        },
+      },
+      uuidUserId,
+    );
+    savePendingGeneration(stale);
+    getGenerationStatusMock.mockResolvedValue({ status: "succeeded" });
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue(null);
+    saveMock.mockResolvedValue(savedDraft());
+
+    renderPage({ userId: uuidUserId });
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation");
+    });
+    const pending = readPendingGeneration(uuidUserId, new Date());
+    expect(pending?.kind).toBe("new_menu");
+    if (pending?.kind === "new_menu") {
+      // stale key ではなく、今回保存した下書き pin + 新規 idempotencyKey で mint される
+      expect(pending.request.draftId).toBe(savedDraft().id);
+      expect(pending.request.idempotencyKey).not.toBe("99999999-9999-4999-8999-999999999999");
+    }
+  });
+
+  it("clears the minted pending and falls back to /planner?resume=review when meta save fails", async () => {
+    savePendingGenerationMetaMock.mockImplementation(() => {
+      throw new Error("QuotaExceeded");
+    });
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue(null);
+    saveMock.mockResolvedValue(savedDraft());
+
+    renderPage({ userId: uuidUserId });
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/planner?resume=review");
+    });
+    // body→meta 非アトミック: meta 失敗時は sticky ごと消す（planner-route と同型）
+    expect(readPendingGeneration(uuidUserId, new Date())).toBeNull();
+  });
+
+  it("shows the priority ingredients chosen at creation time", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue({
+      ...samplePlan,
+      priorityIngredients: ["鶏むね肉", "キャベツ"],
+    });
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("優先的に使う食材: 鶏むね肉・キャベツ")).toBeInTheDocument();
     });
   });
 
@@ -195,7 +386,7 @@ describe("WeeklyPlanResultPage", () => {
     getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
     // targetMode: "idea" は draftNeedsOverwriteConfirmation を無条件に true にする既存下書き
     getPlannerDraftMock.mockResolvedValue({ targetMode: "idea", revision: 5 });
-    saveMock.mockResolvedValue({ revision: 6 });
+    saveMock.mockResolvedValue(savedDraft({ revision: 6 }));
 
     renderPage();
     const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
@@ -210,6 +401,123 @@ describe("WeeklyPlanResultPage", () => {
     });
     const [, , input] = saveMock.mock.calls[0] as [unknown, string, { memo: string }];
     expect(input.memo).toBe(`主菜: ${dayMains[6]!}`);
+  });
+
+  // pendingConfirm は { dayIndex, target } を保持する。「条件を変えて作る」起点の
+  // 確認確定が即生成へ流れる退行（target 落ち）を防ぐため、遷移先まで検証する。
+  it("keeps the planner-review target through the overwrite confirmation", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    // targetMode: "idea" の既存下書きは draftNeedsOverwriteConfirmation を無条件に true にする
+    getPlannerDraftMock.mockResolvedValue({ targetMode: "idea", revision: 5 });
+    saveMock.mockResolvedValue(savedDraft({ revision: 6 }));
+
+    renderPage({ userId: uuidUserId });
+    const buttons = await screen.findAllByRole("button", { name: "条件を変えて作る" });
+    await userEvent.click(buttons[0]!);
+
+    const confirmButton = await screen.findByRole("button", { name: "置き換える" });
+    await userEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/planner?resume=review");
+    });
+    // 確認経路では生成 pending を mint しない（uuid ユーザーで /generation 未遷移も担保）
+    expect(readPendingGeneration(uuidUserId, new Date())).toBeNull();
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+  });
+
+  // 確認経由の即生成側も同じく target 維持を検証する。確認無し経路の mint テストは
+  // 上にあるため、ここでは「置き換える」確定後に pending mint → /generation までを通す。
+  it("keeps the generate target through the overwrite confirmation", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue({ targetMode: "idea", revision: 5 });
+    saveMock.mockResolvedValue(savedDraft({ revision: 6 }));
+
+    renderPage({ userId: uuidUserId });
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    const confirmButton = await screen.findByRole("button", { name: "置き換える" });
+    await userEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/generation");
+    });
+    const pending = readPendingGeneration(uuidUserId, new Date());
+    expect(pending?.kind).toBe("new_menu");
+    if (pending?.kind === "new_menu") {
+      expect(pending.request.draftId).toBe(savedDraft().id);
+      expect(pending.request.draftRevision).toBe(6);
+    }
+    // meta は targetMode: household で保存される（引き継ぎ下書きは household 固定）
+    expect(savePendingGenerationMetaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "new_menu", targetMode: "household" }),
+    );
+  });
+
+  // 追加前確認ダイアログと同型のフォーカス管理: 開いたら主ボタンへ、
+  // キャンセルで閉じたら元の CTA へ戻す。
+  it("restores focus to the clicked CTA when the overwrite dialog is cancelled", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue({ targetMode: "idea", revision: 5 });
+
+    renderPage();
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    const trigger = buttons[2]!;
+    await userEvent.click(trigger);
+
+    await screen.findByRole("dialog");
+    expect(screen.getByRole("button", { name: "置き換える" })).toHaveFocus();
+
+    await userEvent.click(screen.getByRole("button", { name: "やめる" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    expect(trigger).toHaveFocus();
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it("closes the overwrite dialog on Escape without saving", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue({ targetMode: "idea", revision: 5 });
+
+    renderPage();
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    await screen.findByRole("dialog");
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  // handoff 中は全 CTA が disabled になるだけでなく status を出す
+  // （既存 pending の reconcile が状態確認 GET を伴い、待ちが長くなり得るため）。
+  it("shows a busy status while the handoff is in progress", async () => {
+    getWeeklyPlanByIdMock.mockResolvedValue(samplePlan);
+    getPlannerDraftMock.mockResolvedValue(null);
+    let resolveSave: ((value: unknown) => void) | undefined;
+    saveMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    renderPage({ userId: uuidUserId });
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[0]!);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("献立の作成準備をしています…");
+
+    resolveSave?.(savedDraft());
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalled();
+    });
   });
 
   it("shows an error when no household member is eligible for handoff", async () => {

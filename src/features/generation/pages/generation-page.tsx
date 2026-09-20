@@ -58,7 +58,7 @@ export function GenerationPage() {
           <section className="generation-resume-notice" role="status" aria-live="polite">
             <strong className="generation-resume-notice-title">進行中の作成を再開しています</strong>
             <p className="generation-resume-notice-body">
-              すでに作成中の献立があるため、いま入力した条件では新しく作り直していません。途中の作成状況をそのまま続けます。
+              すでに作成中の献立があるため、いま選んだ条件では新しく作り直していません。途中の作成状況をそのまま続けます。
             </p>
           </section>
         ) : null}

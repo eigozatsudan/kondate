@@ -9,6 +9,7 @@ import { availableUsageTodayFixture } from "@shared/testing/factories";
 import type { WeeklyPlanRequest } from "@shared/contracts/weekly-plan";
 import { WeeklyPlanApiError } from "../weekly-plan-api";
 import { WeeklyPlanFormPage } from "./weekly-plan-form-page";
+import { medicalRequestBlockedMessage } from "@/features/planner/components/review-step";
 
 const postWeeklyPlanMock = vi.hoisted(() => vi.fn());
 const useUsageTodayMock = vi.hoisted(() => vi.fn());
@@ -530,5 +531,113 @@ describe("WeeklyPlanFormPage", () => {
     expect(screen.getByRole("status")).toHaveAttribute("data-progress-stage", "0");
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
     expect(document.querySelector(".gen-status-indicator")).toBeInTheDocument();
+  });
+
+  it("submits priorityIngredients added via the free-text input", async () => {
+    postWeeklyPlanMock.mockResolvedValue({
+      weeklyPlanId: "33333333-3333-4333-8333-333333333333",
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    const input = screen.getByLabelText("食材名");
+    await user.type(input, "鶏むね肉");
+    await user.click(screen.getByRole("button", { name: "追加" }));
+    await user.type(input, " キャベツ ");
+    await user.keyboard("{Enter}");
+
+    // 追加済みチップが見え、先後どちらの追加経路でも登録されている
+    expect(screen.getByRole("button", { name: "鶏むね肉を外す" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "キャベツを外す" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
+    await waitFor(() => {
+      expect(postWeeklyPlanMock).toHaveBeenCalledTimes(1);
+    });
+    const body = (postWeeklyPlanMock.mock.calls[0] as [string, WeeklyPlanRequest])[1];
+    // NFKC+trim はモデル側で済んでいる（空白は送信しない）
+    expect(body.priorityIngredients).toEqual(["鶏むね肉", "キャベツ"]);
+  });
+
+  it("rejects a duplicate priority ingredient without posting", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const input = screen.getByLabelText("食材名");
+    await user.type(input, "豆腐");
+    await user.click(screen.getByRole("button", { name: "追加" }));
+    await user.type(input, " 豆腐 ");
+    await user.click(screen.getByRole("button", { name: "追加" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "同じ食材はすでに追加されています。",
+    );
+    expect(screen.getAllByRole("button", { name: "豆腐を外す" })).toHaveLength(1);
+  });
+
+  it("rejects an empty priority ingredient", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "追加" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "食材名を入力してから追加してください。",
+    );
+    expect(postWeeklyPlanMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a priority ingredient over the per-item character limit", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const input = screen.getByLabelText("食材名");
+    await user.type(input, "あ".repeat(81));
+    await user.click(screen.getByRole("button", { name: "追加" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("食材は1件80文字までです。");
+    expect(screen.queryByRole("button", { name: /を外す/u })).not.toBeInTheDocument();
+  });
+
+  it("rejects a ninth priority ingredient", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const input = screen.getByLabelText("食材名");
+    for (const name of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
+      await user.type(input, name);
+      await user.click(screen.getByRole("button", { name: "追加" }));
+    }
+    await user.type(input, "i");
+    await user.click(screen.getByRole("button", { name: "追加" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("食材は8件までです。");
+    expect(screen.getAllByRole("button", { name: /を外す/u })).toHaveLength(8);
+  });
+
+  it("removes a priority ingredient chip", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText("食材名"), "豆腐");
+    await user.click(screen.getByRole("button", { name: "追加" }));
+    await user.click(screen.getByRole("button", { name: "豆腐を外す" }));
+
+    expect(screen.queryByRole("button", { name: "豆腐を外す" })).not.toBeInTheDocument();
+  });
+
+  it("blocks submission when a priority ingredient is a medical-scope request", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText("食材名"), "離乳食");
+    await user.click(screen.getByRole("button", { name: "追加" }));
+    await user.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
+
+    // 表示文言は日次 review と同じ共有定数（部分一致ではなく全文一致で文言変更を捕捉する）
+    expect(await screen.findByRole("alert")).toHaveTextContent(medicalRequestBlockedMessage);
+    // 送信も pending メタデータの保存も起きない
+    expect(postWeeklyPlanMock).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("weekly-plan-request-metadata")).toBeNull();
   });
 });

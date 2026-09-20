@@ -89,6 +89,7 @@ function sampleRequest() {
     cuisineGenre: "japanese" as const,
     budgetPreference: null,
     noveltyPreference: null,
+    priorityIngredients: [] as string[],
   };
 }
 
@@ -2042,5 +2043,199 @@ describe("getWeeklyPlan", () => {
     const result = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
 
     expect(result.staleSafety).toBe(true);
+  });
+
+  // snapshot の priorityIngredients は表示用エコーのみに使うため、万一範囲外の値が
+  // 混入していても [] に落として結果全体の parse を失敗させない（GET の恒久的 500 防止）。
+  it("degrades out-of-bounds priorityIngredients in the snapshot to [] instead of failing", async () => {
+    const admin = {
+      from: vi.fn((table: string) => {
+        if (table === "weekly_plans") {
+          return thenableQuery({
+            data: {
+              id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              week_start: "2026-09-07",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+                // 80文字超の要素（現行契約では書き込めない値）
+                priorityIngredients: ["x".repeat(200)],
+              },
+              safety_fingerprint: "a".repeat(64),
+              days: sampleAiMenu().days,
+            },
+            error: null,
+          });
+        }
+        if (table === "household_members") {
+          return thenableQuery({ data: [], error: null });
+        }
+        throw new Error(`unexpected table: ${table}`);
+      }),
+    } as unknown as AdminSupabaseClient;
+
+    const result = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+
+    expect(result.priorityIngredients).toEqual([]);
+  });
+});
+
+describe("runWeeklyPlan — priorityIngredients（優先食材）", () => {
+  /**
+   * lookup miss だけを許可する rpc スタブ。reserve 前ゲートの検証では
+   * reserve_flyer_weekly が「呼ばれないこと」を rpcNames で確認する
+   * （呼ばれても unexpected rpc 例外になるため、検証は二重に働く）。
+   */
+  function mockLookupMissOnly() {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+  }
+
+  function safetyWithAllergenMember() {
+    return {
+      dictionaryVersion: "v1",
+      foodRuleVersion: "v1",
+      requestText: "",
+      members: [
+        {
+          householdMemberId: sampleMemberId,
+          anonymousRef: "member_1",
+          ageBand: "adult" as const,
+          allergyStatus: "registered" as const,
+          allergenIds: ["egg-allergen"],
+          hasUnmappedCustomAllergy: false,
+          customAllergies: [],
+          requiredSafetyConstraints: [],
+          unsupportedDietStatus: "none" as const,
+          unsupportedDietKinds: [],
+        },
+      ],
+      allergenDictionary: {
+        version: "test",
+        catalog: [],
+        aliases: [
+          {
+            allergenId: "egg-allergen",
+            alias: "卵",
+            normalizedAlias: "卵",
+            aliasKind: "direct" as const,
+            requiresLabelConfirmation: false,
+            dictionaryVersion: "test",
+          },
+        ],
+      },
+      foodSafetyRules: [],
+    };
+  }
+
+  it("rejects a priority ingredient matching a member's registered allergen before reserve", async () => {
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue(safetyWithAllergenMember());
+    mockLookupMissOnly();
+
+    await expect(
+      runWeeklyPlan(baseDeps(), { ...sampleRequest(), priorityIngredients: ["卵"] }),
+    ).rejects.toMatchObject({ status: 422, code: "allergy_conflict" });
+    // reserve 前に落ちるため週次枠・試行枠を消費しない
+    expect(rpcNames()).not.toContain("reserve_flyer_weekly");
+  });
+
+  it("rejects a priority ingredient matching a member's custom allergy", async () => {
+    const safety = safetyWithAllergenMember();
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue({
+      ...safety,
+      allergenDictionary: { version: "test", catalog: [], aliases: [] },
+      members: [
+        {
+          ...safety.members[0]!,
+          allergenIds: [],
+          customAllergies: [{ name: "そば", aliases: ["蕎麦"] }],
+        },
+      ],
+    });
+    mockLookupMissOnly();
+
+    await expect(
+      runWeeklyPlan(baseDeps(), { ...sampleRequest(), priorityIngredients: ["蕎麦"] }),
+    ).rejects.toMatchObject({ status: 422, code: "allergy_conflict" });
+    expect(rpcNames()).not.toContain("reserve_flyer_weekly");
+  });
+
+  it("rejects medical-scope priority ingredients before reserve (unsupported_diet)", async () => {
+    mockLookupMissOnly();
+
+    await expect(
+      runWeeklyPlan(baseDeps(), { ...sampleRequest(), priorityIngredients: ["治療食"] }),
+    ).rejects.toMatchObject({ status: 422, code: "unsupported_diet" });
+    expect(rpcNames()).not.toContain("reserve_flyer_weekly");
+  });
+
+  it("persists priorityIngredients into the intent snapshot and echoes them in the result", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "33333333-3333-4333-8333-333333333333",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    let capturedInsertPayload: Record<string, unknown> | undefined;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        const query = thenableQuery({
+          data: { id: "44444444-4444-4444-8444-444444444444" },
+          error: null,
+        });
+        query.insert = vi.fn((payload: Record<string, unknown>) => {
+          capturedInsertPayload = payload;
+          return query;
+        });
+        return query;
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: sampleAiMenu(),
+      modelId: "m1",
+    });
+
+    const result = await runWeeklyPlan(baseDeps({ openRouterSender: sender }), {
+      ...sampleRequest(),
+      priorityIngredients: ["鶏むね肉", "キャベツ"],
+    });
+
+    // reserve 前ゲートを通過して通常経路が完走する
+    expect(sender).toHaveBeenCalledTimes(1);
+    // intent snapshot（リプレイ時の正）と weekly_plans 行の両方に残る
+    expect(rpcArgsFor("put_weekly_plan_intent")).toMatchObject({
+      p_snapshot: { priorityIngredients: ["鶏むね肉", "キャベツ"] },
+    });
+    expect(capturedInsertPayload).toMatchObject({
+      preference_snapshot: { priorityIngredients: ["鶏むね肉", "キャベツ"] },
+    });
+    expect(result.priorityIngredients).toEqual(["鶏むね肉", "キャベツ"]);
   });
 });

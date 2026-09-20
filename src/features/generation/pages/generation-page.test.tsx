@@ -236,7 +236,7 @@ describe("GenerationPage", () => {
     const notice = screen.getByText("進行中の作成を再開しています");
     expect(notice).toBeVisible();
     expect(notice.closest(".generation-resume-notice")).not.toBeNull();
-    expect(screen.getByText(/いま入力した条件では新しく作り直していません/u)).toBeVisible();
+    expect(screen.getByText(/いま選んだ条件では新しく作り直していません/u)).toBeVisible();
   });
 
   // menus からの一品再生成が失敗したあと「条件を直してやり直す」で planner に落ちると

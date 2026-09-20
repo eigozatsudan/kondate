@@ -19,6 +19,8 @@ function serializeWeeklyPlanPayload(request: WeeklyPlanRequest, safety: CurrentS
       cuisineGenre: request.cuisineGenre,
       budgetPreference: request.budgetPreference,
       noveltyPreference: request.noveltyPreference,
+      // 利用者が優先して使いたい食材（自由入力）。安全条件が常に優先。
+      priorityIngredients: request.priorityIngredients,
     },
     members,
     validationVersions: {
@@ -39,6 +41,8 @@ export function buildWeeklyPlanMessages(
         "あなたは家庭の週間献立アシスタントです。渡された家族の安全条件（アレルギー・年齢帯の制約）" +
         "から、主菜中心の7日分献立を JSON で返してください。" +
         "days は dayIndex 1..7 を一意に含み、各日 mainName と ingredients（食材名の配列）を必ず入れてください。" +
+        "preferences.priorityIngredients に挙げた食材は、安全条件に抵触しない範囲で" +
+        "7日の献立に優先的に取り入れてください。" +
         "membersのallergenIds・customAllergies（name/aliases）・requiredSafetyConstraintsに" +
         "抵触する食材は一切使わないでください。氏名・呼び名は入力にありません。" +
         "「安全です」「アレルギー対応済み」等の保証表現は一切使わないでください。" +

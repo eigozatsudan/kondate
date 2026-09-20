@@ -536,6 +536,7 @@ describe("route accessibility", () => {
       cuisineGenre: "japanese" as const,
       budgetPreference: null,
       noveltyPreference: null,
+      priorityIngredients: [],
       partialHousehold: false,
       staleSafety: false,
     });

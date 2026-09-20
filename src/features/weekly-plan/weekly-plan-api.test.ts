@@ -27,6 +27,7 @@ const sampleResult = {
   cuisineGenre: "japanese",
   budgetPreference: null,
   noveltyPreference: null,
+  priorityIngredients: [],
   partialHousehold: false,
   staleSafety: false,
 };
@@ -50,6 +51,7 @@ describe("postWeeklyPlan", () => {
       cuisineGenre: "japanese",
       budgetPreference: null,
       noveltyPreference: null,
+      priorityIngredients: [],
     });
     const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
     expect(init.method).toBe("POST");
@@ -75,6 +77,7 @@ describe("postWeeklyPlan", () => {
       cuisineGenre: "japanese",
       budgetPreference: null,
       noveltyPreference: null,
+      priorityIngredients: [],
     });
     await expect(promise).rejects.toBeInstanceOf(WeeklyPlanApiError);
     await expect(promise).rejects.toMatchObject({ code: "weekly_plan_requires_plus", status: 403 });
@@ -120,6 +123,7 @@ describe("POST/GET actually wire AbortSignal.timeout to the intended ceiling (I-
       cuisineGenre: "japanese",
       budgetPreference: null,
       noveltyPreference: null,
+      priorityIngredients: [],
     });
 
     expect(timeoutSpy).toHaveBeenCalledWith(GENERATION_POST_CLIENT_TIMEOUT_MS);

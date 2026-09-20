@@ -1,8 +1,37 @@
 import { z } from "zod";
 import { weeklyFlyerDaySchema } from "./flyer-weekly.js";
 import { cuisineGenres } from "./domain.js";
-import { budgetPreferences, noveltyPreferences, PLANNER_TARGET_MEMBER_LIMIT } from "./planner.js";
+import {
+  budgetPreferences,
+  noveltyPreferences,
+  PLANNER_INGREDIENT_TEXT_MAX,
+  PLANNER_MAIN_INGREDIENT_LIMIT,
+  PLANNER_TARGET_MEMBER_LIMIT,
+} from "./planner.js";
 import { planQuota } from "./plan-quota.js";
+
+/** planner.ts / pantry.ts と同じ canonical テキスト境界。優先食材は同一上限で統一する。 */
+function boundedCanonicalText(min: number, max: number) {
+  return z
+    .string()
+    .trim()
+    .refine(
+      (value) => {
+        const length = Array.from(value).length;
+        return length >= min && length <= max;
+      },
+      { message: `${String(min)}〜${String(max)}文字で入力してください` },
+    );
+}
+
+/**
+ * 優先して使いたい食材（自由入力）。件数・文字上限は日次献立の
+ * メイン食材（plannerDraftInputSchema.mainIngredients）と同じ単一点定義を使う。
+ * サーバ側の snapshot 読取でも再利用するため export する。
+ */
+export const weeklyPlanPriorityIngredientsSchema = z
+  .array(boundedCanonicalText(1, PLANNER_INGREDIENT_TEXT_MAX))
+  .max(PLANNER_MAIN_INGREDIENT_LIMIT);
 
 /** household モードのみ。idea モード（人数指定）は持たない。 */
 export const weeklyPlanRequestSchema = z
@@ -12,6 +41,9 @@ export const weeklyPlanRequestSchema = z
     cuisineGenre: z.enum(cuisineGenres),
     budgetPreference: z.enum(budgetPreferences).nullable(),
     noveltyPreference: z.enum(noveltyPreferences).nullable(),
+    // default([]): 導入前に保持された試行メタデータ（sessionStorage 再送）が
+    // このキーを持たなくても、欠損を「未指定」として読み再送を失敗させない。
+    priorityIngredients: weeklyPlanPriorityIngredientsSchema.default([]),
   })
   .strict();
 export type WeeklyPlanRequest = z.infer<typeof weeklyPlanRequestSchema>;
@@ -56,6 +88,12 @@ export const weeklyPlanResultSchema = z
     // 従来この strict スキーマに宣言が無く黙って捨てられていた）。
     budgetPreference: z.enum(budgetPreferences).nullable(),
     noveltyPreference: z.enum(noveltyPreferences).nullable(),
+    // 作成時に選んだ優先食材を snapshot 由来でエコーする（結果画面での表示・確認用）。
+    // 導入前に保存された行は snapshot 側の default([]) で空配列として読まれる。
+    // default([]): additive field。デプロイ/rollback またぎでこのキーを返さない
+    // 旧 Function のレスポンスを新クライアントが strict parse で落とさないようにする
+    // （generation.ts の safetyActions と同じ寛容読みの慣習）。
+    priorityIngredients: weeklyPlanPriorityIngredientsSchema.default([]),
     /** true: snapshot の targetMemberIds 集合が現行 complete メンバー集合と一致しない */
     partialHousehold: z.boolean(),
     /** サーバ計算。保存時 fingerprint と現行対象メンバー条件の fingerprint が不一致 */

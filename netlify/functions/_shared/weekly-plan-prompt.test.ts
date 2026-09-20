@@ -35,6 +35,7 @@ const sampleRequest: WeeklyPlanRequest = {
   cuisineGenre: "japanese",
   budgetPreference: null,
   noveltyPreference: null,
+  priorityIngredients: [],
 };
 
 describe("buildWeeklyPlanMessages", () => {
@@ -56,6 +57,28 @@ describe("buildWeeklyPlanMessages", () => {
     for (const message of messages) {
       expect(JSON.stringify(message)).not.toContain("image_url");
     }
+  });
+
+  it("serializes priorityIngredients into the preferences payload", () => {
+    const messages = buildWeeklyPlanMessages(
+      { ...sampleRequest, priorityIngredients: ["鶏むね肉", "キャベツ"] },
+      sampleSafety(),
+    );
+    const userMessage = messages[1];
+    expect(userMessage?.role).toBe("user");
+    const content = typeof userMessage?.content === "string" ? userMessage.content : "";
+    const payload = JSON.parse(content.replace(/<\/?kondate_weekly_plan_input>/gu, "")) as {
+      preferences: { priorityIngredients: string[] };
+    };
+    expect(payload.preferences.priorityIngredients).toEqual(["鶏むね肉", "キャベツ"]);
+  });
+
+  it("instructs the model to prioritize priorityIngredients within safety limits", () => {
+    const messages = buildWeeklyPlanMessages(sampleRequest, sampleSafety());
+    const system = messages[0]?.content ?? "";
+    expect(system).toContain("priorityIngredients");
+    expect(system).toContain("優先的に取り入れてください");
+    expect(system).toContain("安全条件に抵触しない範囲で");
   });
 
   it("shares the exact response_format reference with the flyer weekly menu", () => {

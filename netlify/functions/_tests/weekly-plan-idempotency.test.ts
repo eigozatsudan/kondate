@@ -38,6 +38,28 @@ const validBody = {
   noveltyPreference: null,
 };
 
+// handler はサービス返値を再 parse せずそのまま json 化するため、モック返値は
+// weeklyPlanResultSchema を満たす形に揃えて契約との乖離を残さない。
+const validDays = Array.from({ length: 7 }, (_, index) => ({
+  dayIndex: index + 1,
+  label: `day${String(index + 1)}`,
+  mainName: "主菜",
+  ingredients: ["米"],
+}));
+
+const validResult = {
+  weeklyPlanId: "33333333-3333-4333-8333-333333333333",
+  weekStartJst: "2026-09-07",
+  days: validDays,
+  targetMemberIds: validBody.targetMemberIds,
+  cuisineGenre: "japanese",
+  budgetPreference: null,
+  noveltyPreference: null,
+  priorityIngredients: [],
+  partialHousehold: false,
+  staleSafety: false,
+};
+
 describe("POST /api/weekly-plan", () => {
   it("uses requireUserWithEmail (identity-quota path)", async () => {
     requireUserWithEmailMock.mockResolvedValue({
@@ -45,15 +67,7 @@ describe("POST /api/weekly-plan", () => {
       accessToken: "tok",
       email: "u1@example.com",
     });
-    runWeeklyPlanMock.mockResolvedValue({
-      weeklyPlanId: "33333333-3333-4333-8333-333333333333",
-      weekStartJst: "2026-09-07",
-      days: [],
-      targetMemberIds: validBody.targetMemberIds,
-      cuisineGenre: "japanese",
-      partialHousehold: false,
-      staleSafety: false,
-    });
+    runWeeklyPlanMock.mockResolvedValue(validResult);
     const response = await handler(postRequest(validBody));
     expect(response.status).toBe(200);
     expect(requireUserWithEmailMock).toHaveBeenCalledTimes(1);
@@ -82,15 +96,7 @@ describe("POST /api/weekly-plan", () => {
       accessToken: "tok",
       email: "u1@example.com",
     });
-    runWeeklyPlanMock.mockResolvedValue({
-      weeklyPlanId: "33333333-3333-4333-8333-333333333333",
-      weekStartJst: "2026-09-07",
-      days: [],
-      targetMemberIds: validBody.targetMemberIds,
-      cuisineGenre: "japanese",
-      partialHousehold: false,
-      staleSafety: true,
-    });
+    runWeeklyPlanMock.mockResolvedValue({ ...validResult, staleSafety: true });
     const response = await handler(postRequest(validBody));
     expect(response.status).toBe(200);
     // live 慣習（auth-continuation-create.test.ts）に合わせて unknown で受け、
@@ -108,15 +114,7 @@ describe("POST /api/weekly-plan", () => {
 describe("GET /api/weekly-plan/:weeklyPlanId", () => {
   it("uses requireUser (JWT only, no email normalization needed)", async () => {
     requireUserMock.mockResolvedValue({ userId: "u1", accessToken: "tok" });
-    getWeeklyPlanMock.mockResolvedValue({
-      weeklyPlanId: "33333333-3333-4333-8333-333333333333",
-      weekStartJst: "2026-09-07",
-      days: [],
-      targetMemberIds: [],
-      cuisineGenre: "japanese",
-      partialHousehold: false,
-      staleSafety: false,
-    });
+    getWeeklyPlanMock.mockResolvedValue({ ...validResult, targetMemberIds: [] });
     const request = new Request(
       "http://localhost/api/weekly-plan/33333333-3333-4333-8333-333333333333",
       { method: "GET" },
