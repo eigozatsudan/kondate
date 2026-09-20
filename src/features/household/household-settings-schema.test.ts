@@ -3,6 +3,7 @@ import {
   householdSettingsSchema,
   householdSettingsValueFromDbRow,
   persistableHouseholdSettings,
+  sanitizeRequiredSafetyConstraintsForAgeBand,
   toHouseholdFieldErrors,
   type HouseholdMemberSettingsRow,
   type HouseholdSettingsFormValue,
@@ -95,7 +96,8 @@ describe("householdSettingsValueFromDbRow (H12)", () => {
       unsupported_diet_status: "present",
     });
     expect(value.easePreferences).toEqual(["soft", "boneless", "small_pieces"]);
-    expect(value.requiredSafetyConstraints).toEqual(["remove_bones", "cut_small"]);
+    // validRow は adult（規則対象外）のため remove_bones は落ち、有効な cut_small だけ残る
+    expect(value.requiredSafetyConstraints).toEqual(["cut_small"]);
     // max 3: weaning + therapeutic + swallowing の順で採用し bogus は捨てる
     expect(value.unsupportedDietKinds).toEqual([
       "weaning_food",
@@ -116,6 +118,32 @@ describe("householdSettingsValueFromDbRow (H12)", () => {
     expect(value.portionSize).toBe("large");
     expect(value.spiceLevel).toBe("mild");
   });
+
+  it.each([["post_weaning_to_2"], ["age_3_5"], ["senior"]] as const)(
+    "keeps stored remove_bones for rule-applicable band %s",
+    (ageBand) => {
+      const value = householdSettingsValueFromDbRow({
+        ...validRow,
+        age_band: ageBand,
+        required_safety_constraints: ["remove_bones", "cut_small"],
+      });
+      expect(value.requiredSafetyConstraints).toEqual(["remove_bones", "cut_small"]);
+    },
+  );
+
+  it.each([["adult"], ["age_6_8"], ["age_9_12"]] as const)(
+    "drops stored remove_bones for non-applicable band %s",
+    (ageBand) => {
+      // 規則対象外の帯では validator が remove_bones を評価しない。非表示 UI と
+      // 保存値が乖離しないようフォーム初期値から落とす（cut_small は残す）。
+      const value = householdSettingsValueFromDbRow({
+        ...validRow,
+        age_band: ageBand,
+        required_safety_constraints: ["remove_bones", "cut_small"],
+      });
+      expect(value.requiredSafetyConstraints).toEqual(["cut_small"]);
+    },
+  );
 
   it("H1: maps whitespace-only display_name from DB to null so the form is schema-valid", () => {
     // onboarding が空白のみを書いた行は CHECK を通る。raw のまま残すと trim().min(1) で
@@ -285,7 +313,9 @@ describe("persistableHouseholdSettings (H3)", () => {
     expect(persistableHouseholdSettings(next, lastChild)).toEqual(lastChild);
   });
 
-  it("H-R3: unions explicit cut_small onto last age_6_8 remove_bones when age is empty", () => {
+  it("H-R3: drops legacy age_6_8 remove_bones while unioning explicit cut_small when age is empty", () => {
+    // age_6_8 は規則対象外。旧既定で残った remove_bones は和集合で復活しても
+    // 出力サニタイズで落とし、全年齢帯で有効な cut_small だけを返す。
     const lastChild: HouseholdSettingsFormValue = {
       ...last,
       displayName: "子ども",
@@ -305,8 +335,30 @@ describe("persistableHouseholdSettings (H3)", () => {
     };
     expect(persistableHouseholdSettings(next, lastChild)).toEqual({
       ...lastChild,
-      requiredSafetyConstraints: ["remove_bones", "cut_small"],
+      requiredSafetyConstraints: ["cut_small"],
     });
+  });
+
+  it("drops remove_bones from a schema-valid next when its band is not rule-applicable", () => {
+    // 対象外帯へ年齢を変えた直後の full parse 成功経路でも、非表示になった
+    // remove_bones が保存値に残らないよう返却値をサニタイズする。
+    const next: HouseholdSettingsFormValue = {
+      ...last,
+      requiredSafetyConstraints: ["remove_bones", "cut_small"],
+    };
+    expect(persistableHouseholdSettings(next, last)).toEqual({
+      ...next,
+      requiredSafetyConstraints: ["cut_small"],
+    });
+  });
+
+  it("keeps remove_bones from a schema-valid next when its band is rule-applicable", () => {
+    const next: HouseholdSettingsFormValue = {
+      ...last,
+      ageBand: "senior",
+      requiredSafetyConstraints: ["remove_bones", "cut_small"],
+    };
+    expect(persistableHouseholdSettings(next, last)).toEqual(next);
   });
 
   it("persists present+kinds together when the pair is valid", () => {
@@ -322,5 +374,22 @@ describe("persistableHouseholdSettings (H3)", () => {
     const invalidLast: HouseholdSettingsFormValue = { ...last, ageBand: "" };
     const next: HouseholdSettingsFormValue = { ...invalidLast, allergyStatus: "unconfirmed" };
     expect(persistableHouseholdSettings(next, invalidLast)).toBeUndefined();
+  });
+});
+
+describe("sanitizeRequiredSafetyConstraintsForAgeBand", () => {
+  it("returns constraints unchanged for rule-applicable bands", () => {
+    // bones_for_young_and_senior の対象帯では remove_bones が実効を持つのでそのまま返す
+    expect(
+      sanitizeRequiredSafetyConstraintsForAgeBand("age_3_5", ["remove_bones", "cut_small"]),
+    ).toEqual(["remove_bones", "cut_small"]);
+  });
+
+  it("drops only remove_bones for non-applicable or empty bands", () => {
+    // cut_small は全年齢帯で有効。未選択 "" も対象外として扱い remove_bones は残さない。
+    expect(
+      sanitizeRequiredSafetyConstraintsForAgeBand("age_9_12", ["remove_bones", "cut_small"]),
+    ).toEqual(["cut_small"]);
+    expect(sanitizeRequiredSafetyConstraintsForAgeBand("", ["remove_bones"])).toEqual([]);
   });
 });

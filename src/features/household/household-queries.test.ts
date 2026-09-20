@@ -90,6 +90,31 @@ it("HR3: historyRevalidation prefix matches menu-revalidation query keys", async
   queryClient.clear();
 });
 
+it("weeklyPlan prefix invalidates weekly-plan history and result queries", async () => {
+  // 週献立の結果画面はサーバ計算の staleSafety / partialHousehold を描画するため、
+  // 家族安全条件の変更で ["weekly-plan", ...] 系をすべて stale にする。
+  expect(householdSafetyQueryPrefixes.weeklyPlan).toEqual(["weekly-plan"]);
+
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const userId = "user-a";
+  const historyKey = ["weekly-plan", "history", userId] as const;
+  const resultKey = ["weekly-plan", "plan-1"] as const;
+  const unrelatedKey = ["weekly-plan-other", "plan-1"] as const;
+
+  queryClient.setQueryData(historyKey, []);
+  queryClient.setQueryData(resultKey, { id: "plan-1" });
+  queryClient.setQueryData(unrelatedKey, { id: "plan-1" });
+
+  await invalidateHouseholdSafetyQueries(queryClient, userId);
+
+  expect(queryClient.getQueryState(historyKey)?.isInvalidated).toBe(true);
+  expect(queryClient.getQueryState(resultKey)?.isInvalidated).toBe(true);
+  // 前方一致は ["weekly-plan"] 起点のみ（接頭辞が文字列として似ている別キーは触れない）
+  expect(queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
+
+  queryClient.clear();
+});
+
 it("H6: does not include dead current-safety prefix", () => {
   // 死んだ DiD キーを再導入しない（消費者は menu-revalidation / emergency-menus 等）
   expect(householdSafetyQueryPrefixes).not.toHaveProperty("currentSafety");

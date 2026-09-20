@@ -3,6 +3,7 @@ import {
   ageBands,
   allergyStatuses,
   easePreferences,
+  isRemoveBonesApplicableAgeBand,
   portionSizes,
   requiredSafetyConstraints,
   spiceLevels,
@@ -92,6 +93,22 @@ function sameStringArray(left: readonly string[], right: readonly string[]): boo
 }
 
 /**
+ * 「骨を除く」は bones_for_young_and_senior 規則の対象年齢帯でのみ validator が評価する。
+ * 対象外の年齢帯（未選択 "" を含む）で残っていても実効が無く、非表示の UI と
+ * 保存値が黙って乖離するため、年齢帯に応じて取り除く。
+ * cut_small は全年齢帯で有効なので触らない。
+ */
+export function sanitizeRequiredSafetyConstraintsForAgeBand(
+  ageBand: string,
+  constraints: readonly RequiredSafetyConstraint[],
+): RequiredSafetyConstraint[] {
+  if (isRemoveBonesApplicableAgeBand(ageBand)) {
+    return [...constraints];
+  }
+  return constraints.filter((constraint) => constraint !== "remove_bones");
+}
+
+/**
  * 空年齢 extra group 用。last の残差と next の明示追加を和集合にする。
  * next 配列で置換すると、空年齢の adult [] で外れて見える remove_bones が落ちる（H-R3）。
  */
@@ -136,7 +153,14 @@ export function persistableHouseholdSettings(
 ): HouseholdSettingsValue | undefined {
   const full = householdSettingsSchema.safeParse(next);
   if (full.success) {
-    return full.data;
+    // 対象外年齢帯の remove_bones を載せて返さない（UI 非表示との乖離防止）
+    return {
+      ...full.data,
+      requiredSafetyConstraints: sanitizeRequiredSafetyConstraintsForAgeBand(
+        full.data.ageBand,
+        full.data.requiredSafetyConstraints,
+      ),
+    };
   }
   const last = householdSettingsSchema.safeParse(lastPersisted);
   if (!last.success) {
@@ -178,7 +202,15 @@ export function persistableHouseholdSettings(
       candidate = parsed.data;
     }
   }
-  return candidate;
+  // 救済結果の年齢帯が対象外なら remove_bones は返さない（last の古い残差や
+  // 空年齢 union が対象外帯へ持ち込むのを防ぐ）。
+  return {
+    ...candidate,
+    requiredSafetyConstraints: sanitizeRequiredSafetyConstraintsForAgeBand(
+      candidate.ageBand,
+      candidate.requiredSafetyConstraints,
+    ),
+  };
 }
 
 /**
@@ -276,10 +308,11 @@ export function householdSettingsValueFromDbRow(
       row.unsupported_diet_kinds,
       3,
     ),
-    requiredSafetyConstraints: parseEnumArrayField(
-      z.enum(requiredSafetyConstraints),
-      row.required_safety_constraints,
-      2,
+    // 対象外年齢帯の remove_bones は validator が評価しないため、フォーム初期値から落とす。
+    // 次の保存で保存値も同じ形に収束する（非表示 UI と DB の乖離を残さない）。
+    requiredSafetyConstraints: sanitizeRequiredSafetyConstraintsForAgeBand(
+      ageBand ?? "",
+      parseEnumArrayField(z.enum(requiredSafetyConstraints), row.required_safety_constraints, 2),
     ),
     portionSize: parseEnumField(z.enum(portionSizes), row.portion_size) ?? defaults.portion_size,
     spiceLevel: parseEnumField(z.enum(spiceLevels), row.spice_level) ?? defaults.spice_level,

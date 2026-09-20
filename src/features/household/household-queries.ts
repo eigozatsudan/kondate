@@ -115,6 +115,10 @@ export const householdSafetyQueryPrefixes = {
   historyRevalidation: ["menu-revalidation"],
   generation: ["generation"],
   shopping: ["shopping"],
+  // 週献立の結果画面はサーバ計算の staleSafety / partialHousehold を描画する。
+  // 家族安全条件の保存後に ["weekly-plan","history",userId]（履歴カード）と
+  // ["weekly-plan",weeklyPlanId]（結果画面）の両方が prefix で無効化されるよう登録する。
+  weeklyPlan: ["weekly-plan"],
   // 緊急献立候補は家族安全条件に依存するため、settings/onboarding 更新時に必ず無効化する。
   emergencyMenus: ["emergency-menus"],
 } as const;

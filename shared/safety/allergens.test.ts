@@ -174,6 +174,39 @@ describe("foodTextContainsAlias", () => {
     expect(foodTextContainsAlias("もちもち食感のうどん", "もち")).toBe(false);
   });
 
+  // 除外コンテキスト拡張: アレルゲンを指さないことが確認できる文脈だけを追加する。
+  // 実アレルゲン＋助詞と衝突し得る形（いかが/いかにも/のそばで 等）は意図的に除外しない。
+  it.each([
+    ["乳化剤を加える", "乳"],
+    ["乳状になるまで混ぜる", "乳"],
+    ["とうにゅうスープ", "乳"],
+    ["豚もも肉のソテー", "もも"],
+    ["牛ももブロック", "もも"],
+    ["ぶたももを下茹でする", "もも"],
+    ["もも肉を使う", "もも"],
+    ["すももジャム", "もも"],
+    ["たしかに柔らかい", "かに"],
+    ["確かに火が通った", "かに"],
+    ["賑やかに盛り付ける", "かに"],
+    ["なめらかになるまで混ぜる", "かに"],
+    ["やわらかいかどうか確認する", "いか"],
+    ["火のそばに置かない", "そば"],
+    ["そのそばへ移す", "そば"],
+  ])("does not match %s inside harmless context for alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(false);
+  });
+
+  it.each([
+    // 「イカが」「イカにも」は実際のいか＋助詞と衝突し得るため検出を維持する
+    ["やわらかいイカが主役の煮物", "いか"],
+    ["イカにも火を通す", "いか"],
+    // 「のそばで」は「十割のそばです」「そばで打つ」と衝突し得るため検出を維持する
+    ["十割のそばで打つ", "そば"],
+    ["そのそばで打つ", "そば"],
+  ])("still detects real allergen-bearing phrase %s for alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
   it("I4: does not match alias that only appears by mid-token separator crossing", () => {
     // compact 後に「いかにんじん」となりトークン途中で「かに」が合成されるのを拒否する
     expect(foodTextContainsAlias("いか、にんじんを炒める", "かに")).toBe(false);

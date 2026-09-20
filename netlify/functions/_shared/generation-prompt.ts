@@ -240,13 +240,25 @@ export const GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA =
   "当該メンバーのportionSize・spiceLevel・eatingEase・requiredSafetyConstraintsを反映する。" +
   "量smallは少なめ・小さめ・小盛り・少量・半分など、largeは多め・大盛り・たっぷり・増量など、" +
   "辛さnoneは辛みなし・香辛料なし・辛くしないなど、mildは薄味・あっさり・控えめ・甘口・辛くしないなどをportionText等に含める。" +
-  // eatingEase は validate が safetyActions.kind を hard 照合する。文言だけでは足りない。
-  "eatingEaseがあるメンバーは、そのメンバーのadaptation.safetyActionsに対応kindを含めることを最優先する:" +
-  "soft→kind=soften（やわらかく煮る・煮崩す等の手順をinstructionに書く）、" +
-  "small_pieces→kind=cut_small（細かく切る・一口大にする）、" +
-  "boneless→kind=remove_bones（骨を除く）。" +
-  "kindを付けられない場合のみ、cutting/heating/servingCheckに" +
-  "soft=やわらか/箸で切れ、small_pieces=細かく切/一口大、boneless=骨を除く 等の明示語を書く。" +
+  // eatingEase・年齢帯ルールの requires_tag は validate が safetyActions.kind を hard 照合し、
+  // instruction と adaptation 側テキストの両方に「対象食材名+受理語幹」の結合証拠を要求する。
+  // prompt が受理外の語彙（例:「細かく切る」「一口大にする」「4等分に切る」）を提案すると
+  // 初回生成が必ず弾かれるため、語幹は validator の受理集合と揃える。
+  "eatingEaseや年齢帯の安全ルールに該当するメンバーは、そのメンバーのadaptation.safetyActionsに対応kindを含めることを最優先する:" +
+  "soft→kind=soften、small_pieces→kind=cut_small、boneless→kind=remove_bones。" +
+  "年齢帯ルールが要求する食材（ぶどう・ミニトマト→quarter_round_food、骨付き・小骨のある魚→remove_bones、" +
+  "硬い食材・根菜→soften）にも同じkindを付ける。" +
+  "safetyActionsのinstructionは「対象食材名+動作」を結合した文で書く" +
+  "（例:「ぶどうは4等分する」「さけは骨を取り除く」。食材名を省略した文は受理されない）。" +
+  "kindごとに受理される動作の書き方:" +
+  "soften=「やわらかくなるまで煮る」「十分に煮る」「舌でつぶせる」、" +
+  "cut_small=「小さく切る」「一口大以下にする」「細かく刻む」、" +
+  "remove_bones=「骨を除く」「骨を取り除く」「骨がないことを確認する」、" +
+  "quarter_round_food=「4等分する」「縦に4つに切る」、" +
+  "heat_thoroughly=「中心まで加熱する」「中心温度を確認する」。" +
+  "safetyActionsのinstructionに加えて、同じadaptationのadditionalCutting・additionalHeating・" +
+  "servingCheckのいずれかにも、同じ食材名+同じ動作を結合した文を書く" +
+  "（例:instructionとadditionalCuttingの両方に「ぶどうは4等分する」）。" +
   "量の「小さめに盛り」や通常の「煮込む」だけではeatingEaseを満たしたことにならない。" +
   "labelConfirmationsは、登録アレルゲンや加工品の確認が必要な材料があるときだけ付ける。" +
   "preferences.servingsは家族人数の目安であり、adaptationsを省略する理由にしない。";

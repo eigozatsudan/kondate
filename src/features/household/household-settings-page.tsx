@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   easePreferences,
+  isRemoveBonesApplicableAgeBand,
   unsupportedDietKinds,
   type AgeBand,
   type AllergyStatus,
@@ -51,6 +52,7 @@ import {
   householdSettingsValuesEqual,
   normalizeOptionalDisplayName,
   persistableHouseholdSettings,
+  sanitizeRequiredSafetyConstraintsForAgeBand,
   toHouseholdFieldErrors,
   type HouseholdFieldErrors,
   type HouseholdSettingsFormValue,
@@ -609,6 +611,13 @@ export function HouseholdSettingsForm({
     const current = valuesByMemberRef.current.get(selected.id);
     if (current === undefined) return undefined;
     const next = { ...current, ...patch };
+    // 「骨を除く」は規則対象年齢帯でしか評価されない。対象外へ年齢を変えたとき
+    // チェックを非表示にするだけだと、見えないままの remove_bones が保存値に残るため
+    // フォーム値からも落とす（表示状態と保存値を一致させる）。
+    next.requiredSafetyConstraints = sanitizeRequiredSafetyConstraintsForAgeBand(
+      next.ageBand,
+      next.requiredSafetyConstraints,
+    );
     editRevisionsByMemberRef.current.set(
       selected.id,
       (editRevisionsByMemberRef.current.get(selected.id) ?? 0) + 1,
@@ -2260,17 +2269,22 @@ export function HouseholdSettingsForm({
             <fieldset className="control-group">
               {/* 「安全のための制約」は保証語に寄るため、設定項目としての配慮に言い換える（H10） */}
               <legend>調理時の配慮</legend>
-              <label className="control-label">
-                <input
-                  type="checkbox"
-                  aria-label="骨を除く"
-                  checked={values.requiredSafetyConstraints.includes("remove_bones")}
-                  onChange={(event) => {
-                    setArray("requiredSafetyConstraints", "remove_bones", event.target.checked);
-                  }}
-                />
-                骨を除く
-              </label>
+              {/* 「骨を除く」は bones_for_young_and_senior 規則の対象年齢帯だけに出す。
+                  対象外では validator が評価しないため、選べても実効が無く、
+                  非表示にした帯では update 側がフォーム値からも落とす。 */}
+              {isRemoveBonesApplicableAgeBand(values.ageBand) && (
+                <label className="control-label">
+                  <input
+                    type="checkbox"
+                    aria-label="骨を除く"
+                    checked={values.requiredSafetyConstraints.includes("remove_bones")}
+                    onChange={(event) => {
+                      setArray("requiredSafetyConstraints", "remove_bones", event.target.checked);
+                    }}
+                  />
+                  骨を除く
+                </label>
+              )}
               <label className="control-label">
                 <input
                   type="checkbox"

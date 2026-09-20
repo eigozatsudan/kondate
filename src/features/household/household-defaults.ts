@@ -27,7 +27,10 @@ export function defaultsForAgeBand(ageBand: AgeBand): HouseholdDefaults {
       portion_size: "regular",
       spice_level: "mild",
       ease_preferences: ["boneless"],
-      required_safety_constraints: ["remove_bones"],
+      // remove_bones は bones_for_young_and_senior 規則の対象外年齢帯では評価されない
+      // （REMOVE_BONES_APPLICABLE_AGE_BANDS 外）ため既定に含めない。
+      // ease_preferences の boneless は別系統の嗜好として引き続き有効。
+      required_safety_constraints: [],
     };
   }
   if (ageBand === "senior") {

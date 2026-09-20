@@ -342,10 +342,11 @@ it.each(["complete", "draft"] as const)(
 
     expect(screen.getByLabelText("呼び名")).toBeDisabled();
     expect(screen.getByLabelText("年齢のめやす")).toBeDisabled();
-    expect(screen.getByLabelText("骨を除く")).toBeDisabled();
+    // 「骨を除く」は規則対象年齢帯のみ表示のため、全年齢帯で出る「小さく切る」で確認する
+    expect(screen.getByLabelText("小さく切る")).toBeDisabled();
     fireEvent.change(screen.getByLabelText("呼び名"), { target: { value: "変更後" } });
     fireEvent.change(screen.getByLabelText("年齢のめやす"), { target: { value: "senior" } });
-    fireEvent.click(screen.getByLabelText("骨を除く"));
+    fireEvent.click(screen.getByLabelText("小さく切る"));
     fireEvent.click(screen.getByRole("button", { name: "2人目の子どもを編集" }));
     // 編集中は「家族を追加」非表示（完了ロック中の誤追加経路を塞ぐ）
     expect(screen.queryByRole("button", { name: "家族を追加" })).not.toBeInTheDocument();
@@ -1363,7 +1364,8 @@ it("keeps every new draft field through consecutive autosaves and completes with
   await userEvent.selectOptions(await screen.findByLabelText("年齢のめやす"), "adult");
   await userEvent.selectOptions(screen.getByLabelText("アレルギーの確認"), "none");
   await userEvent.selectOptions(screen.getByLabelText(unsupportedDietStatusLabel), "none");
-  await userEvent.click(screen.getByLabelText("骨を除く"));
+  // 大人は「骨を除く」の規則対象外でチェック自体が出ないため、全年齢帯の「小さく切る」を使う
+  await userEvent.click(screen.getByLabelText("小さく切る"));
 
   for (let index = 0; index < 2; index += 1) {
     await waitFor(() => {
@@ -1381,14 +1383,14 @@ it("keeps every new draft field through consecutive autosaves and completes with
     expect(screen.getByLabelText("年齢のめやす")).toHaveValue("adult");
     expect(screen.getByLabelText("アレルギーの確認")).toHaveValue("none");
     expect(screen.getByLabelText(unsupportedDietStatusLabel)).toHaveValue("none");
-    expect(screen.getByLabelText("骨を除く")).toBeChecked();
+    expect(screen.getByLabelText("小さく切る")).toBeChecked();
   });
   expect(updateDraft.mock.calls[1]?.[1]).toEqual(
     expect.objectContaining({
       age_band: "adult",
       allergy_status: "none",
       unsupported_diet_status: "none",
-      required_safety_constraints: ["remove_bones"],
+      required_safety_constraints: ["cut_small"],
     }),
   );
 
@@ -1412,7 +1414,7 @@ it("keeps every new draft field through consecutive autosaves and completes with
       age_band: "adult",
       allergy_status: "none",
       unsupported_diet_status: "none",
-      required_safety_constraints: ["remove_bones"],
+      required_safety_constraints: ["cut_small"],
     }),
   );
 });
@@ -1687,7 +1689,7 @@ it("initializes form from corrupt DB enums as empty selects and age defaults", a
     portion_size: "huge",
     spice_level: "extra_hot",
     ease_preferences: ["soft", "not_an_ease"],
-    required_safety_constraints: ["remove_bones", "bogus"],
+    required_safety_constraints: ["remove_bones", "bogus", "cut_small"],
   };
   await renderSettings({ listMembers: vi.fn().mockResolvedValue([corrupt]) });
 
@@ -1699,8 +1701,10 @@ it("initializes form from corrupt DB enums as empty selects and age defaults", a
   expect(screen.getByLabelText("辛さ")).toHaveValue("regular");
   // 不正配列要素は落とす（soft の aria-label は enum キーのまま）
   expect(screen.getByLabelText("soft")).toBeChecked();
-  expect(screen.getByLabelText("骨を除く")).toBeChecked();
-  expect(screen.getByLabelText("小さく切る")).not.toBeChecked();
+  // 年齢未設定（規則対象外）では remove_bones がフォーム初期値から落ち、チェック自体も出さない。
+  // cut_small は全年齢帯で有効なので有効要素として残る。
+  expect(screen.queryByLabelText("骨を除く")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("小さく切る")).toBeChecked();
 });
 
 // RR1: 空年齢 + 保持した非デフォルト portion は、初回年齢選択で next 既定に潰さない
@@ -3473,6 +3477,63 @@ it("applies age defaults when the user selects an age band", async () => {
   });
 });
 
+it.each([
+  ["post_weaning_to_2", true],
+  ["age_3_5", true],
+  ["senior", true],
+  ["adult", false],
+  ["age_6_8", false],
+  ["age_9_12", false],
+  ["age_13_17", false],
+] as const)(
+  "shows 骨を除く for band %s only when the safety rule applies",
+  async (ageBand, shows) => {
+    // 「骨を除く」は bones_for_young_and_senior 規則の対象帯だけで validator が評価する。
+    // 対象外では選べても効かないため、チェック自体を出さない（「小さく切る」は全年齢帯で有効）。
+    const target: HouseholdMemberRow = { ...member, age_band: ageBand };
+    await renderSettings({ listMembers: vi.fn().mockResolvedValue([target]) });
+
+    await screen.findByLabelText("年齢のめやす");
+    if (shows) {
+      expect(screen.getByLabelText("骨を除く")).toBeInTheDocument();
+    } else {
+      expect(screen.queryByLabelText("骨を除く")).not.toBeInTheDocument();
+    }
+    expect(screen.getByLabelText("小さく切る")).toBeInTheDocument();
+  },
+);
+
+it("drops a stored remove_bones for a non-applicable band when saving another field", async () => {
+  // 旧既定で保存された adult の remove_bones は読み込み時にフォーム値から落ち、
+  // 別項目の保存で PATCH にも載らない（非表示 UI と DB 値の乖離を残さない）。
+  const legacy: HouseholdMemberRow = {
+    ...member,
+    required_safety_constraints: ["remove_bones", "cut_small"],
+  };
+  const updateMember = vi.fn().mockResolvedValue(legacy);
+  await renderSettings({
+    listMembers: vi.fn().mockResolvedValue([legacy]),
+    updateMember,
+  });
+
+  await screen.findByLabelText("年齢のめやす");
+  expect(screen.queryByLabelText("骨を除く")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("小さく切る")).toBeChecked();
+
+  fireEvent.change(screen.getByLabelText("呼び名"), { target: { value: "改名" } });
+
+  await waitFor(() => {
+    expect(updateMember).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({
+        display_name: "改名",
+        required_safety_constraints: ["cut_small"],
+      }),
+      expect.any(String),
+    );
+  });
+});
+
 it("caps the display name at 30 characters and shows a Japanese alert for 31", async () => {
   // H10: onboarding は maxLength=30。settings は未設定だと 31 文字が schema 失敗し
   // Zod 既定の英語が role=alert に出る。HTML 上限と日本語メッセージの両方を固定する。
@@ -3751,7 +3812,7 @@ it("H-R2: persists explicit cut_small after emptying age", async () => {
 });
 
 it("H-R3: does not drop last remove_bones when empty age then checks only cut_small", async () => {
-  // 3〜5歳既定の両方から空年齢へすると UI は両方外れる。続けて「小さく切る」だけ入れても
+  // 3〜5歳既定の両方から空年齢へするとフォーム値は両方外れる。続けて「小さく切る」だけ入れても
   // extra group が next ["cut_small"] で置換しない。和集合は last と同じなので PATCH しない。
   const child: HouseholdMemberRow = {
     ...member,
@@ -3773,7 +3834,8 @@ it("H-R3: does not drop last remove_bones when empty age then checks only cut_sm
     expect(screen.getByRole("alert")).toHaveTextContent("年齢のめやすを選んでください");
   });
   expect(updateMember).not.toHaveBeenCalled();
-  expect(screen.getByLabelText("骨を除く")).not.toBeChecked();
+  // 空年齢は規則対象外なので「骨を除く」チェック自体が出ない（union 側は last の残差を保持）
+  expect(screen.queryByLabelText("骨を除く")).not.toBeInTheDocument();
   expect(screen.getByLabelText("小さく切る")).not.toBeChecked();
 
   await userEvent.click(screen.getByLabelText("小さく切る"));
@@ -3782,11 +3844,13 @@ it("H-R3: does not drop last remove_bones when empty age then checks only cut_sm
     expect(screen.getByLabelText("小さく切る")).toBeChecked();
   });
   expect(updateMember).not.toHaveBeenCalled();
-  expect(screen.getByLabelText("骨を除く")).not.toBeChecked();
+  expect(screen.queryByLabelText("骨を除く")).not.toBeInTheDocument();
   expect(screen.getByLabelText("年齢のめやす")).toHaveValue("");
 });
 
-it("H-R3: unions cut_small onto last age_6_8 remove_bones after emptying age", async () => {
+it("H-R3: drops legacy age_6_8 remove_bones and keeps explicit cut_small after emptying age", async () => {
+  // age_6_8 は規則対象外のため、旧既定で残った remove_bones はフォーム初期値から落ちる。
+  // 空年齢で「小さく切る」だけ足すと union は last [] と next ["cut_small"] で ["cut_small"]。
   const child: HouseholdMemberRow = {
     ...member,
     display_name: "子ども",
@@ -3794,6 +3858,7 @@ it("H-R3: unions cut_small onto last age_6_8 remove_bones after emptying age", a
     portion_size: "regular",
     spice_level: "mild",
     ease_preferences: ["boneless"],
+    // 旧既定（規則対象外の age_6_8 に remove_bones が残っていた頃）を再現
     required_safety_constraints: ["remove_bones"],
   };
   const updateMember = vi.fn((_memberId: string, patch: HouseholdMemberPatch) =>
@@ -3821,7 +3886,9 @@ it("H-R3: unions cut_small onto last age_6_8 remove_bones after emptying age", a
     expect(updateMember).toHaveBeenCalledWith(
       "member-1",
       expect.objectContaining({
-        required_safety_constraints: ["remove_bones", "cut_small"],
+        // age_6_8 は規則対象外なので保存値から remove_bones は落ちる。
+        // cut_small は全年齢帯で有効なので保持される。
+        required_safety_constraints: ["cut_small"],
         age_band: "age_6_8",
       }),
       expect.any(String),

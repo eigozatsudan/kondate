@@ -14,7 +14,26 @@ const api = vi.hoisted(() => ({
   setMenuFavorite: vi.fn(),
   deleteMenuGroup: vi.fn(),
   acceptMenuVersion: vi.fn(),
+  loadCurrentCompleteMemberIds: vi.fn(),
 }));
+
+// 週献立履歴の useQuery 結果を直接制御する（isPending/isError/refetch の分岐を検証するため）
+const weeklyPlanHistoryQuery = vi.hoisted(() => ({
+  useWeeklyPlanHistory: vi.fn(),
+}));
+
+vi.mock("@/features/weekly-plan/weekly-plan-history.js", () => ({
+  useWeeklyPlanHistory: weeklyPlanHistoryQuery.useWeeklyPlanHistory,
+}));
+
+vi.mock("@/features/weekly-plan/weekly-plan-eligibility.js", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/weekly-plan/weekly-plan-eligibility.js")>();
+  return {
+    ...original,
+    loadCurrentCompleteMemberIds: api.loadCurrentCompleteMemberIds,
+  };
+});
 
 // household-api.ts の listHouseholdMembers は
 // .from(table).select("*").eq(...).order(...).order(...) と PostgREST builder を
@@ -78,7 +97,7 @@ function renderHistoryPage(props: {
   shoppingIntent?: boolean;
   initialPath?: string;
   weeklyPlans?: readonly WeeklyPlanHistoryRow[];
-  currentCompleteMemberIds?: readonly string[];
+  currentCompleteMemberIds?: readonly string[] | null;
 }) {
   const router = createMemoryRouter(
     [
@@ -89,7 +108,7 @@ function renderHistoryPage(props: {
             groups={props.groups}
             shoppingIntent={props.shoppingIntent ?? false}
             weeklyPlans={props.weeklyPlans ?? []}
-            currentCompleteMemberIds={props.currentCompleteMemberIds ?? []}
+            currentCompleteMemberIds={props.currentCompleteMemberIds ?? null}
           />
         ),
       },
@@ -147,6 +166,15 @@ function renderConnectedHistoryPage(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 週献立系クエリの既定は「空で成功」。各テストで必要な分だけ上書きする。
+  api.loadCurrentCompleteMemberIds.mockResolvedValue([]);
+  weeklyPlanHistoryQuery.useWeeklyPlanHistory.mockReturnValue({
+    data: [],
+    isPending: false,
+    isError: false,
+    isFetching: false,
+    refetch: vi.fn(),
+  });
   // jsdom 向け native dialog ポリフィル
   if (typeof HTMLDialogElement !== "undefined") {
     HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
@@ -310,6 +338,96 @@ describe("HistoryPage", () => {
   it("hides the favorites switch when there are no groups", () => {
     renderHistoryPage({ groups: [] });
     expect(screen.queryByRole("switch", { name: "お気に入りだけを表示" })).not.toBeInTheDocument();
+  });
+
+  it("does not flash the partial warning while complete member ids are still loading", async () => {
+    const memberId = "51000000-0000-4000-8000-0000000000a1";
+    api.listHistoryGroups.mockResolvedValue([]);
+    // 現行メンバー集合が未確定の間は「外した家族の条件は見ていません」を出さない
+    api.loadCurrentCompleteMemberIds.mockReturnValue(new Promise(() => undefined));
+    weeklyPlanHistoryQuery.useWeeklyPlanHistory.mockReturnValue({
+      data: [
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          week_start: "2026-09-07",
+          created_at: "2026-09-01T00:00:00Z",
+          preference_snapshot: { targetMemberIds: [memberId] },
+        },
+      ],
+      isPending: false,
+      isError: false,
+      isFetching: false,
+      refetch: vi.fn(),
+    });
+    renderConnectedHistoryPage();
+
+    expect(await screen.findByText("今週の献立")).toBeVisible();
+    expect(screen.getByText("2026-09-07")).toBeVisible();
+    expect(screen.queryByText("外した家族の条件は見ていません")).not.toBeInTheDocument();
+    expect(screen.queryByText(/人分/u)).not.toBeInTheDocument();
+  });
+
+  it("lists weekly plans without the warning when complete member ids fail to load", async () => {
+    const memberId = "51000000-0000-4000-8000-0000000000a1";
+    api.listHistoryGroups.mockResolvedValue([]);
+    api.loadCurrentCompleteMemberIds.mockRejectedValue(new Error("boom"));
+    weeklyPlanHistoryQuery.useWeeklyPlanHistory.mockReturnValue({
+      data: [
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          week_start: "2026-09-07",
+          created_at: "2026-09-01T00:00:00Z",
+          preference_snapshot: { targetMemberIds: [memberId] },
+        },
+      ],
+      isPending: false,
+      isError: false,
+      isFetching: false,
+      refetch: vi.fn(),
+    });
+    renderConnectedHistoryPage();
+
+    expect(await screen.findByText("今週の献立")).toBeVisible();
+    // 取得失敗は 0 人確定と区別し、partial 警告を出さない
+    expect(screen.queryByText("外した家族の条件は見ていません")).not.toBeInTheDocument();
+  });
+
+  it("omits the weekly plan section while the weekly plan history is loading", async () => {
+    api.listHistoryGroups.mockResolvedValue([sampleGroup]);
+    weeklyPlanHistoryQuery.useWeeklyPlanHistory.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isError: false,
+      isFetching: true,
+      refetch: vi.fn(),
+    });
+    renderConnectedHistoryPage();
+
+    expect(await screen.findByText("採用した献立")).toBeVisible();
+    // 読込中は補助セクション自体を出さない（履歴本体は通常どおり表示する）
+    expect(screen.queryByText("今週の献立")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows an inline notice and retries when the weekly plan history fails", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    api.listHistoryGroups.mockResolvedValue([sampleGroup]);
+    weeklyPlanHistoryQuery.useWeeklyPlanHistory.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      isFetching: false,
+      refetch,
+    });
+    renderConnectedHistoryPage();
+
+    // 週献立の失敗で履歴一覧を落とさない
+    expect(await screen.findByText("採用した献立")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("今週の献立を読み込めませんでした");
+
+    await user.click(screen.getByRole("button", { name: "もう一度読み込む" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the delete confirmation closed on initial render", async () => {

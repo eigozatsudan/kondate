@@ -76,6 +76,31 @@ export type EasePreference = (typeof easePreferences)[number];
 export const requiredSafetyConstraints = ["remove_bones", "cut_small"] as const;
 export type RequiredSafetyConstraint = (typeof requiredSafetyConstraints)[number];
 
+/**
+ * remove_bones（「骨を除く」）が実効を持つ年齢帯。
+ * evaluateFoodSafetyRules は catalog 規則 bones_for_young_and_senior
+ * （shared/safety/current-food-safety-rules.v1.ts）の appliesToAgeBands に
+ * 含まれる年齢帯でのみ remove_bones を評価する。対象外の年齢帯で保持しても
+ * 黙って無効になるだけなので、UI の提示・既定値・保存値をこの集合で揃える。
+ * （cut_small は validator が年齢帯を問わず特別扱いするため制限しない）
+ * ブラウザ側は @shared/safety を import できないため、写しをここに置く。
+ * 一致は domain.test.ts がカタログの実値と照合して固定する。
+ */
+export const REMOVE_BONES_APPLICABLE_AGE_BANDS: readonly AgeBand[] = [
+  "post_weaning_to_2",
+  "age_3_5",
+  "senior",
+];
+
+const removeBonesApplicableAgeBandSet: ReadonlySet<string> = new Set(
+  REMOVE_BONES_APPLICABLE_AGE_BANDS,
+);
+
+/** remove_bones が評価される年齢帯か。未選択（""）や範囲外の値は false。 */
+export function isRemoveBonesApplicableAgeBand(ageBand: string): boolean {
+  return removeBonesApplicableAgeBandSet.has(ageBand);
+}
+
 export const unsupportedDietKinds = [
   "weaning_food",
   "swallowing_concern",

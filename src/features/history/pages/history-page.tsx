@@ -19,14 +19,47 @@ import type { HistoryGroup } from "../model/group-history";
 import { HistoryCard } from "../components/history-card";
 import { useHistoryGroups } from "../hooks/use-history";
 
+/** 週献立履歴クエリの表示状態。pending 中はセクション自体を出さず、error は一覧とは独立して通知する。 */
+type WeeklyPlanHistorySlotStatus = "pending" | "error" | "ready";
+
 function WeeklyPlanHistorySlot({
   weeklyPlans,
   currentCompleteMemberIds,
+  status,
+  retrying = false,
+  onRetry,
 }: {
   weeklyPlans: readonly WeeklyPlanHistoryRow[];
-  currentCompleteMemberIds: readonly string[];
+  currentCompleteMemberIds: readonly string[] | null;
+  status: WeeklyPlanHistorySlotStatus;
+  retrying?: boolean;
+  // HistoryPage は再試行なし（undefined）でも描画できるため明示的な undefined を許容する
+  onRetry?: (() => void) | undefined;
 }): JSX.Element | null {
   if (!WEEKLY_PLAN_UI_ENABLED) return null;
+  // 読込中は補助セクションを出さない（履歴本体の読込表示とは別系統で、確定後に現れる）。
+  if (status === "pending") return null;
+  // 週献立の取得失敗で履歴ページ全体を落とさない。セクション内に留めて再試行を提供する。
+  if (status === "error") {
+    return (
+      <Surface as="section" tone="notice">
+        <Inset pad={5}>
+          <Stack gap={3}>
+            <p role="alert">今週の献立を読み込めませんでした</p>
+            <Button
+              variant="secondary"
+              disabled={retrying}
+              onClick={() => {
+                onRetry?.();
+              }}
+            >
+              もう一度読み込む
+            </Button>
+          </Stack>
+        </Inset>
+      </Surface>
+    );
+  }
   return (
     <WeeklyPlanHistoryCard
       plans={weeklyPlans}
@@ -49,7 +82,9 @@ export function HistoryPage() {
     enabled: userId !== undefined && WEEKLY_PLAN_UI_ENABLED,
   });
   const weeklyPlans = weeklyPlansQuery.data ?? [];
-  const currentCompleteMemberIds = completeIdsQuery.data ?? [];
+  // 未確定は null（≠ 0 人確定の []）。pending / error の [] フォールバックだと
+  // WeeklyPlanHistoryCard の partial 判定が常に真になり誤警告が出る。
+  const currentCompleteMemberIds = completeIdsQuery.data ?? null;
 
   if (isPending) {
     return (
@@ -91,6 +126,13 @@ export function HistoryPage() {
       shoppingIntent={shoppingIntent}
       weeklyPlans={weeklyPlans}
       currentCompleteMemberIds={currentCompleteMemberIds}
+      weeklyPlanStatus={
+        weeklyPlansQuery.isPending ? "pending" : weeklyPlansQuery.isError ? "error" : "ready"
+      }
+      weeklyPlanRetrying={weeklyPlansQuery.isFetching}
+      onWeeklyPlanRetry={() => {
+        void weeklyPlansQuery.refetch();
+      }}
     />
   );
 }
@@ -118,12 +160,19 @@ export function HistoryPageContent({
   groups,
   shoppingIntent = false,
   weeklyPlans = [],
-  currentCompleteMemberIds = [],
+  currentCompleteMemberIds = null,
+  weeklyPlanStatus = "ready",
+  weeklyPlanRetrying = false,
+  onWeeklyPlanRetry,
 }: {
   groups: readonly HistoryGroup[];
   shoppingIntent?: boolean;
   weeklyPlans?: readonly WeeklyPlanHistoryRow[];
-  currentCompleteMemberIds?: readonly string[];
+  /** null = 現行メンバー集合が未確定（partial 警告を出さない） */
+  currentCompleteMemberIds?: readonly string[] | null;
+  weeklyPlanStatus?: WeeklyPlanHistorySlotStatus;
+  weeklyPlanRetrying?: boolean;
+  onWeeklyPlanRetry?: () => void;
 }) {
   // セッション内のみ。URL / localStorage は使わない（お気に入りフィルタ。設計 L4）。
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -140,6 +189,9 @@ export function HistoryPageContent({
           <WeeklyPlanHistorySlot
             weeklyPlans={weeklyPlans}
             currentCompleteMemberIds={currentCompleteMemberIds}
+            status={weeklyPlanStatus}
+            retrying={weeklyPlanRetrying}
+            onRetry={onWeeklyPlanRetry}
           />
           {/*
             EmptyState は h3 固定のため、PageHeader(h1) 直下だと heading-order 違反になる。
@@ -183,6 +235,9 @@ export function HistoryPageContent({
         <WeeklyPlanHistorySlot
           weeklyPlans={weeklyPlans}
           currentCompleteMemberIds={currentCompleteMemberIds}
+          status={weeklyPlanStatus}
+          retrying={weeklyPlanRetrying}
+          onRetry={onWeeklyPlanRetry}
         />
         <label className="history-filter-label">
           <input

@@ -372,6 +372,39 @@ describe("buildGenerationMessages", () => {
     expect(system).not.toContain(GENERATION_SYSTEM_PROMPT_IDEA_EXTRA);
   });
 
+  it("pins safety-action vocabulary to the validator's accepted stems", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext()));
+    const system = messages.find((message) => message.role === "system")?.content ?? "";
+    // food-rules.ts の actionEvidence と揃える。受理外の語彙を prompt が提案すると
+    // required_safety_action / age_shape_rule で初回生成が弾かれる。
+    const acceptedPhrases = [
+      // soften
+      "やわらかくなるまで煮る",
+      "十分に煮る",
+      "舌でつぶせる",
+      // cut_small
+      "小さく切る",
+      "一口大以下にする",
+      "細かく刻む",
+      // remove_bones
+      "骨を除く",
+      "骨を取り除く",
+      // quarter_round_food（食材名と結合した形で要求）
+      "4等分する",
+      // heat_thoroughly
+      "中心まで加熱する",
+      "中心温度を確認する",
+    ];
+    for (const phrase of acceptedPhrases) {
+      expect(system).toContain(phrase);
+    }
+    // 食材結合の証拠文を必須化（instruction と adaptation 側テキストの双方）
+    expect(system).toContain("ぶどうは4等分する");
+    expect(system).toContain("additionalCutting");
+    expect(system).toContain("additionalHeating");
+    expect(system).toContain("servingCheck");
+  });
+
   it("includes JST seasonContext from server clock in payload and system", () => {
     const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext()), {
       // 2026-07-15 12:00 JST

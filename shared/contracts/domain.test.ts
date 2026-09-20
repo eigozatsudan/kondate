@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { currentFoodSafetyRulesV1 } from "../safety/current-food-safety-rules.v1.js";
 import {
   ageBands,
   allergyStatuses,
@@ -8,6 +9,7 @@ import {
   generationStatuses,
   householdMemberStatuses,
   isAllowedMenuDishCount,
+  isRemoveBonesApplicableAgeBand,
   mealTypes,
   menuDishCountMax,
   minDishCountForMealType,
@@ -15,6 +17,7 @@ import {
   pantryPriorities,
   portionSizes,
   privacyNoticeVersion,
+  REMOVE_BONES_APPLICABLE_AGE_BANDS,
   requiredSafetyConstraints,
   spiceLevels,
   unsupportedDietKinds,
@@ -55,5 +58,25 @@ describe("domain contracts", () => {
       "therapeutic_diet",
     ]);
     expect(privacyNoticeVersion).toBe("2026-07-29.v1");
+  });
+
+  it("keeps REMOVE_BONES_APPLICABLE_AGE_BANDS aligned with the safety rules catalog", () => {
+    // UI 側の写しが bones_for_young_and_senior 系規則の appliesToAgeBands 和集合と
+    // 一致することを固定する（対象外の年齢帯では remove_bones は評価されない）。
+    const catalogBands = [
+      ...new Set(
+        currentFoodSafetyRulesV1.flatMap((rule) =>
+          rule.requiredSafetyTag === "remove_bones" ? rule.appliesToAgeBands : [],
+        ),
+      ),
+    ].sort();
+    expect([...REMOVE_BONES_APPLICABLE_AGE_BANDS].sort()).toEqual(catalogBands);
+    expect(REMOVE_BONES_APPLICABLE_AGE_BANDS).toEqual(["post_weaning_to_2", "age_3_5", "senior"]);
+    // 対象帯だけ true。未選択・対象外は false（「骨を除く」を出さない判定に使う）
+    expect(isRemoveBonesApplicableAgeBand("age_3_5")).toBe(true);
+    expect(isRemoveBonesApplicableAgeBand("senior")).toBe(true);
+    expect(isRemoveBonesApplicableAgeBand("age_6_8")).toBe(false);
+    expect(isRemoveBonesApplicableAgeBand("adult")).toBe(false);
+    expect(isRemoveBonesApplicableAgeBand("")).toBe(false);
   });
 });

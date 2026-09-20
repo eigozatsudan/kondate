@@ -128,4 +128,58 @@ describe("material duplicate helpers", () => {
     expect(isMateriallySameMenu(left, right)).toBe(false);
     expect(isMateriallySameMenu(right, left)).toBe(false);
   });
+
+  it("finds a complete matching when greedy order would consume the only partner", () => {
+    // left[0] は right 両方と実質同一（同名/0.8 重複）だが、
+    // left[1] は right[0] にしか対応しない。貪欲で left[0]→right[0] を先に消費すると
+    // 完全マッチング（left[0]→right[1], left[1]→right[0]）が存在するのに false になる。
+    const left = {
+      dishes: [
+        {
+          role: "main",
+          name: "鶏の照り焼き",
+          primaryIngredients: ["鶏もも肉", "しょうゆ", "みりん", "砂糖", "酒"],
+        },
+        {
+          role: "main",
+          name: "別の鶏料理",
+          primaryIngredients: ["鶏もも肉", "しょうゆ", "みりん", "砂糖"],
+        },
+      ],
+    };
+    const right = {
+      dishes: [
+        {
+          role: "main",
+          name: "鶏の照り焼き",
+          primaryIngredients: ["鶏もも肉", "しょうゆ", "みりん", "砂糖", "酒"],
+        },
+        {
+          role: "main",
+          name: "照り焼き風",
+          primaryIngredients: ["鶏もも肉", "しょうゆ", "みりん", "酒"],
+        },
+      ],
+    };
+    // left[1] vs right[1]: intersection 3 / union 5 = 0.6 で非同一。
+    // 完全マッチングは left[0]→right[1], left[1]→right[0]。
+    expect(isMateriallySameMenu(left, right)).toBe(true);
+  });
+
+  it("rejects menus whose shared-role candidates cannot cover every dish", () => {
+    // 左の2品がどちらも右の1品にしか対応しない（Hall 条件違反）→ 完全マッチングなし
+    const left = {
+      dishes: [
+        { role: "main", name: "A", primaryIngredients: ["にんじん"] },
+        { role: "main", name: "A", primaryIngredients: ["にんじん"] },
+      ],
+    };
+    const right = {
+      dishes: [
+        { role: "main", name: "A", primaryIngredients: ["にんじん"] },
+        { role: "main", name: "B", primaryIngredients: ["大根", "白菜", "きゅうり", "豆腐", "卵"] },
+      ],
+    };
+    expect(isMateriallySameMenu(left, right)).toBe(false);
+  });
 });

@@ -50,15 +50,33 @@ export function isMateriallySameDish(left: DishSignatureInput, right: DishSignat
 
 export function isMateriallySameMenu(left: MenuSignatureInput, right: MenuSignatureInput): boolean {
   if (left.dishes.length !== right.dishes.length) return false;
-  // 同一 role が複数あるとき、最初の候補だけに全部マッチさせない（1 対 1 で消費する）。
-  const remaining = right.dishes.map((dish, index) => ({ dish, index }));
-  for (const dish of left.dishes) {
-    const matchAt = remaining.findIndex(
-      (candidate) =>
-        candidate.dish.role === dish.role && isMateriallySameDish(dish, candidate.dish),
-    );
-    if (matchAt === -1) return false;
-    remaining.splice(matchAt, 1);
+  // 同一 role が複数あるとき貪欲マッチは誤判定し得る（先に取った候補が別のペアの
+  // 唯一の相手を食い潰す）。完全な 1 対 1 対応が存在するかを Kuhn の
+  // augmenting path（二部マッチング）で判定する。
+  const candidates = left.dishes.map((dish) =>
+    right.dishes
+      .map((candidate, index) => ({ candidate, index }))
+      .filter(
+        ({ candidate }) => candidate.role === dish.role && isMateriallySameDish(dish, candidate),
+      )
+      .map(({ index }) => index),
+  );
+  const assignedTo = new Array<number>(right.dishes.length).fill(-1);
+  // 自己再帰するため、循環推論を避ける目的で関数型を明示する
+  const tryAssign: (leftIndex: number, seen: Set<number>) => boolean = (leftIndex, seen) => {
+    for (const rightIndex of candidates[leftIndex] ?? []) {
+      if (seen.has(rightIndex)) continue;
+      seen.add(rightIndex);
+      const previous = assignedTo[rightIndex] ?? -1;
+      if (previous === -1 || tryAssign(previous, seen)) {
+        assignedTo[rightIndex] = leftIndex;
+        return true;
+      }
+    }
+    return false;
+  };
+  for (let leftIndex = 0; leftIndex < left.dishes.length; leftIndex += 1) {
+    if (!tryAssign(leftIndex, new Set())) return false;
   }
   return true;
 }

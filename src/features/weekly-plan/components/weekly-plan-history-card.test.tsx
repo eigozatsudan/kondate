@@ -31,6 +31,18 @@ describe("WeeklyPlanHistoryCard", () => {
     expect(screen.queryByText("外した家族の条件は見ていません")).not.toBeInTheDocument();
   });
 
+  it("suppresses the partial notice while the current member set is unknown (null)", () => {
+    // null = 読込中/取得失敗。0 人確定の [] と区別し、未確定の間は警告を出さない。
+    render(
+      <MemoryRouter>
+        <WeeklyPlanHistoryCard plans={[basePlan]} currentCompleteMemberIds={null} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("2026-09-07")).toBeInTheDocument();
+    expect(screen.queryByText("外した家族の条件は見ていません")).not.toBeInTheDocument();
+    expect(screen.queryByText(/人分/u)).not.toBeInTheDocument();
+  });
+
   it("gives the past-weeks summary a 44px touch target", () => {
     render(
       <MemoryRouter>
