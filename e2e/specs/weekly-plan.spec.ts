@@ -29,7 +29,9 @@ async function currentUserId(page: Parameters<typeof accessTokenFromPage>[0]): P
 test.setTimeout(180_000);
 
 test.describe("weekly plan", () => {
-  // ephemeral ユーザー（このテスト専用）。このユーザーだけを Plus に seed する。
+  // ephemeral ユーザー（このテスト専用）。authenticatedPage fixture が既に Plus を
+  // seed するが、週献立は Plus ゲートそのものが前提なのでここでも明示的に固定する
+  // （seedPlusSubscription は upsert で冪等）。
   test("Plus: create → result → tap a day → generation → recipe steps visible", async ({
     completedOnboardingPage,
   }) => {

@@ -74,7 +74,18 @@ export const test = base.extend<AuthFixtures>({
     async ({ page, authEmail }, provide) => {
       // 製品外 bootstrap（generateLink + ページ外 verifyOtp）。Mailpit / 6 マスは踏まない。
       // 製品経路（UI 送信 + Mailpit 6 桁）は auth.setup が担う。
-      await loginAsNewUser(page, authEmail);
+      const userId = await loginAsNewUser(page, authEmail);
+      // 製品 Free の日次成功枠は 1（FREE_SUCCESS_PER_DAY）。acceptance / history /
+      // shopping の fixture は 1 ユーザーで「生成 → 別案」「household → idea」など
+      // 複数回の成功を要求するため、2 回目以降が successRemaining=0 で CTA disabled
+      // になり生成系 spec が軒並みタイムアウトする。ephemeral ユーザーだけを Plus
+      // （成功 5/日）に seed して賄い、個人枠そのものは無効化しない
+      // （AI_QUOTA_DISABLED を使うと重複出力が枠を消費しない主張が空振りになる）。
+      // 共有 storageState ユーザー（session-auth の reusedCompletedPage）は Free の
+      // まま残す — weekly-plan-locked / billing-plus の Free 前提がそこにある。
+      // acceptance.ts は auth.ts を import するため、循環を避けて動的 import する。
+      const { seedPlusSubscription } = await import("./acceptance");
+      await seedPlusSubscription(userId);
       // sanitizeReturnPath は継続 API が拒否する裸の "/" を "/planner" へ正規化するため、
       // 製品外 bootstrap の着地は常に /planner（既存仕様・変更なし）。
       // RootEntryPage の新規振分け（not_started|in_progress→/welcome）を検証するには、
@@ -169,12 +180,13 @@ async function gotoWelcomeAfterLogin(page: Page): Promise<void> {
  * storage へ載せて /planner を開く。
  * action_link を page.goto / request.get しない（製品の番号入力経路ではない）。
  * email_otp は schema に足さない。hashed_token だけを正本にする。
+ * 戻り値は確立した session の user id（呼び出し側の seed 用）。
  */
 export async function loginAsNewUser(
   page: Page,
   email: string,
   options?: { seedPwaInstallTipDismissed?: boolean },
-): Promise<void> {
+): Promise<string> {
   const admin = await createServiceAdmin();
   const { data, error } = await admin.auth.admin.generateLink({
     type: "magiclink",
@@ -265,6 +277,7 @@ export async function loginAsNewUser(
   // callback→session 確立はモバイル・負荷下で 5s 既定を超え得る（oauth-mock と同様 30s）。
   await page.goto(`${APP_ORIGIN}/planner`);
   await expect(page).toHaveURL((url) => url.pathname === "/planner", { timeout: 30_000 });
+  return user.id;
 }
 
 /**
