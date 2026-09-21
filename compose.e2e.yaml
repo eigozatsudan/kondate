@@ -16,6 +16,17 @@ services:
       # 製品 max（GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX=500）一杯。
       # 1 suite 送信見積 × safety factor を超えないこと。
       GLOBAL_DAILY_AI_LIMIT: "500"
+      # 個人（identity）日次枠だけを無効化する。製品 Free は 1 日 1 成功
+      # （FREE_SUCCESS_PER_DAY=1）だが、E2E の ephemeral ユーザーは 1 人で
+      # 「生成 → 別案 → idea 生成」など複数回の成功を必要とする（acceptance /
+      # history / shopping fixture）。個人枠を残すと 2 回目以降が
+      # successRemaining=0 で CTA disabled になり、生成を伴う spec が軒並み
+      # タイムアウトする。アプリ全体枠（GLOBAL_DAILY_AI_LIMIT）は
+      # reserve_ai_generation 側で v_quota_disabled に関係なく効き続けるため、
+      # 500 の天井は維持される。個人枠そのものの証明は unit / pgTAP が持つ。
+      # isLocal（SITE_URL=http://127.0.0.1:5173）でのみ有効。本番 preflight は
+      # AI_QUOTA_DISABLED=true を拒否する。
+      AI_QUOTA_DISABLED: "true"
       # 週献立/チラシの Plus ゲートは applyQuotaPlan が BILLING_ENABLED に短絡するため、
       # E2E だけサーバ側課金を有効化する。.env と compose.yaml の既定 false は変更しない。
       BILLING_ENABLED: "true"

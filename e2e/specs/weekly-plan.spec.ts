@@ -10,6 +10,7 @@
 import { z } from "zod";
 import { expect, test } from "../fixtures/auth";
 import { seedPlusSubscription } from "../fixtures/acceptance";
+import { setMockScenario } from "../fixtures/history";
 import { accessTokenFromPage } from "../fixtures/local-supabase";
 
 const jwtPayloadSchema = z.object({ sub: z.uuid() });
@@ -53,7 +54,11 @@ test.describe("weekly plan", () => {
     await expect(page.getByText(/優先的に使う食材: キャベツ/)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "この日の献立を作る" }).first()).toBeVisible();
 
-    // 日カードの主 CTA は確認画面を通さず即生成 → /generation → /menus/:id（作り方つき）
+    // 日カードの主 CTA は確認画面を通さず即生成 → /generation → /menus/:id（作り方つき）。
+    // 引き継ぎ下書きは mealType=dinner・mainIngredients=当日の食材で固定されるため、
+    // 既定の success fixture（breakfast・小麦ラベル確認つき）では validate が必ず落ちる。
+    // 週献立の日次生成専用 fixture を明示的に選ぶ。
+    await setMockScenario(page, "weekly-plan-day-success");
     await page.getByRole("button", { name: "この日の献立を作る" }).first().click();
     await expect(page).toHaveURL(/\/generation/u, { timeout: 15_000 });
     await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 90_000 });

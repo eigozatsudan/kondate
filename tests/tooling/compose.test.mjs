@@ -430,6 +430,10 @@ test("uses the isolated E2E Function server without changing the public origin",
   assert.match(compose, /^\s{6}GLOBAL_DAILY_AI_LIMIT: "20"$/mu);
   assert.doesNotMatch(composeE2e, /GLOBAL_DAILY_AI_LIMIT: "20"/u);
   assert.match(composeE2e, /^\s{6}GLOBAL_DAILY_AI_LIMIT: "500"$/mu);
+  // 個人日次枠のみ E2E で無効化する（Free 1 成功/日 では複数生成 fixture が回らない）。
+  // 通常 compose は .env 既定 false のまま。
+  assert.match(composeE2e, /^\s{6}AI_QUOTA_DISABLED: "true"$/mu);
+  assert.doesNotMatch(compose, /AI_QUOTA_DISABLED: "true"/u);
   // environment 直下に意図コメントがあっても SMTP 頻度は固定
   assert.match(
     composeE2e,

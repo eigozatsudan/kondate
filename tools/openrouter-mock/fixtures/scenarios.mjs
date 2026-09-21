@@ -143,10 +143,67 @@ const weeklyPlanSuccess = {
     label: ["月", "火", "水", "木", "金", "土", "日"][index],
     mainName: `固定主菜${String(index + 1)}`,
     sideName: null,
-    ingredients: ["食材A", "食材B"],
+    // 結果画面の「この日の献立を作る」は、この ingredients をそのまま
+    // PlannerDraft.mainIngredients へ引き継いで日次生成を投げる。
+    // validate-generated-menu の main_ingredient_missing は hard gate なので、
+    // 日次生成モックの献立に実在する食材名でなければならない
+    // （weekly-plan-day-success 参照）。
+    ingredients: ["鶏もも肉", "にんじん"],
     notes: null,
   })),
 };
+
+/**
+ * 週献立の結果画面から「この日の献立を作る」で走る日次生成用。
+ * 引き継ぎ下書きは mealType=dinner 固定・mainIngredients=当日の ingredients・
+ * 対象は completedOnboardingPage の家族1名（成人・アレルギー none）。
+ * 既定の success fixture は breakfast・小麦ラベル確認つきで、そのままだと
+ * meal_type_mismatch / unexpected_label_confirmation / main_ingredient_missing
+ * で必ず失敗するため、この条件専用の献立を持つ。
+ */
+const weeklyPlanDaySuccess = structuredClone(success);
+weeklyPlanDaySuccess.menu.mealType = "dinner";
+// dinner の最低品数は 3（minDishCountForMealType）。汁物を足して main/side/soup を揃える。
+weeklyPlanDaySuccess.menu.dishes.push({
+  dishRef: "dish_3",
+  role: "soup",
+  position: 3,
+  name: "豆腐のすまし汁",
+  description: "やさしい味の汁物",
+  cookingTimeMinutes: 5,
+  ingredients: [
+    {
+      ingredientRef: "ingredient_4",
+      position: 1,
+      name: "豆腐",
+      quantityValue: 150,
+      quantityText: "150g",
+      unit: "g",
+      storeSection: "other",
+      pantryRef: null,
+      labelConfirmationRequired: false,
+    },
+  ],
+  steps: [
+    {
+      stepRef: "step_3",
+      position: 1,
+      instruction: "豆腐を切り、だしで温める",
+    },
+  ],
+});
+weeklyPlanDaySuccess.menu.timeline.push({
+  timelineRef: "timeline_3",
+  position: 3,
+  startMinute: 0,
+  durationMinutes: 5,
+  instruction: "汁物のだしを温める",
+  dishRef: "dish_3",
+  stepRef: "step_3",
+});
+// アレルギー none の家族に小麦ラベル確認は不要（unexpected_label_confirmation）。
+weeklyPlanDaySuccess.menu.dishes[0].ingredients[1].labelConfirmationRequired = false;
+weeklyPlanDaySuccess.menu.labelConfirmations = [];
 
 const clone = () => structuredClone(success);
 const ideaServings1 = clone();
@@ -418,4 +475,5 @@ export const scenarios = recursivelyFreeze({
   "duplicate-dish-regeneration": duplicateDish,
   "fallback-model-success": fallbackModelSuccess,
   "weekly-plan-success": weeklyPlanSuccess,
+  "weekly-plan-day-success": weeklyPlanDaySuccess,
 });
