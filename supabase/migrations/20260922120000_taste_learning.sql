@@ -8,15 +8,34 @@ alter table public.profiles
 -- 復活させると onboarding_status まで書き換え可能に戻るため、関数経由だけを足す。
 create or replace function public.set_taste_learning_enabled(p_enabled boolean)
 returns boolean
-language sql
+language plpgsql
 security definer
 set search_path = ''
 as $function$
-  update public.profiles
-  set taste_learning_enabled = p_enabled,
-      updated_at = pg_catalog.now()
-  where user_id = (select auth.uid())
-  returning taste_learning_enabled;
+declare
+  v_result boolean;
+begin
+  -- set_onboarding_status と同じ規約。未認証・行欠落を null で黙らせない。
+  -- updated_at は profiles_set_updated_at トリガが入れる
+  if auth.uid() is null then
+    raise exception using errcode = '42501', message = 'authentication_required';
+  end if;
+
+  if p_enabled is null then
+    raise exception using errcode = '22023', message = 'invalid_taste_learning_enabled';
+  end if;
+
+  update public.profiles as profile
+  set taste_learning_enabled = p_enabled
+  where profile.user_id = auth.uid()
+  returning profile.taste_learning_enabled into v_result;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'profile_not_found';
+  end if;
+
+  return v_result;
+end;
 $function$;
 
 revoke all on function public.set_taste_learning_enabled(boolean) from public, anon;
@@ -24,14 +43,24 @@ grant execute on function public.set_taste_learning_enabled(boolean) to authenti
 
 -- 集計。security invoker なので所有者 select ポリシーがそのまま効く。
 -- 窓 90 日・50 件、半減期 30 日。回数はすべて derivation_group_id 単位で数える。
+-- 未認証（service クライアント経由の誤用を含む）は no_history に紛れさせず 42501 で落とす。
+-- 呼び出し側は fail-open なので生成は止まらず、誤配線だけがエラーとして見える。
 create or replace function public.get_taste_signals(
   p_now timestamptz default pg_catalog.now()
 ) returns jsonb
-language sql
+language plpgsql
 stable
 security invoker
 set search_path = ''
 as $function$
+declare
+  v_now timestamptz := coalesce(p_now, pg_catalog.now());
+begin
+  if auth.uid() is null then
+    raise exception using errcode = '42501', message = 'authentication_required';
+  end if;
+
+  return (
 with settings as (
   select p.taste_learning_enabled as enabled
   from public.profiles p
@@ -47,19 +76,21 @@ recent as (
     m.preference_snapshot,
     pg_catalog.power(
       0.5::double precision,
-      pg_catalog.date_part('epoch', p_now - m.created_at)::double precision / 86400.0 / 30.0
+      pg_catalog.date_part('epoch', v_now - m.created_at)::double precision / 86400.0 / 30.0
     ) as decay,
     pg_catalog.power(
       0.5::double precision,
-      pg_catalog.date_part('epoch', p_now - m.created_at)::double precision / 86400.0 / 30.0
+      pg_catalog.date_part('epoch', v_now - m.created_at)::double precision / 86400.0 / 30.0
     ) * (
       (case when m.is_favorite then 1.0 else 0.0 end)
       + (case when m.is_selected then 0.3 else 0.0 end)
     )::double precision as score
   from public.menus m
   where m.user_id = (select auth.uid())
-    and m.created_at >= p_now - interval '90 days'
-  order by m.created_at desc
+    -- 上端も切る。基準時刻より後の行は経過が負になり重みが 1 を超える
+    and m.created_at >= v_now - interval '90 days'
+    and m.created_at <= v_now
+  order by m.created_at desc, m.id desc
   limit 50
 ),
 liked as (select * from recent where score > 0),
@@ -75,9 +106,10 @@ liked_dish_rows as (
   order by pg_catalog.sum(l.score) desc, d.name
   limit 12
 ),
--- 食材: 献立内の重複を潰してから派生グループ単位で数える
+-- 食材: 献立内の重複を潰してから派生グループ単位で数える。
+-- l.id を含めないと、同じグループ・同じ score の別献立が 1 行に潰れて重みが減る
 liked_ingredient_rows_raw as (
-  select distinct l.derivation_group_id, l.score, di.name
+  select distinct l.id, l.derivation_group_id, l.score, di.name
   from liked l
   join public.dishes d on d.menu_id = l.id
   join public.dish_ingredients di on di.dish_id = d.id
@@ -102,15 +134,24 @@ dish_index_rows as (
   join public.dish_ingredients di on di.dish_id = d.id
   group by d.name
 ),
--- 時間帯: 加重平均は小数になるため <=20 / <=40 / それ以外で連続させる
+-- 時間帯: 加重平均は小数になるため <=20 / <=40 / それ以外で連続させる。
+-- 全件 20 分でも減衰の違いで 20.000000000000004 になり得るので、比較前に丸める
 time_band as (
   select case
-    when pg_catalog.sum(score) is null or pg_catalog.sum(score) = 0 then null
-    when pg_catalog.sum(score * total_elapsed_minutes) / pg_catalog.sum(score) <= 20 then 'short'
-    when pg_catalog.sum(score * total_elapsed_minutes) / pg_catalog.sum(score) <= 40 then 'standard'
+    when w.total is null or w.total = 0 then null
+    when w.avg_minutes <= 20 then 'short'
+    when w.avg_minutes <= 40 then 'standard'
     else 'slow'
   end as band
-  from liked
+  from (
+    select
+      pg_catalog.sum(score) as total,
+      pg_catalog.round(
+        (pg_catalog.sum(score * total_elapsed_minutes) / nullif(pg_catalog.sum(score), 0))::numeric,
+        6
+      ) as avg_minutes
+    from liked
+  ) w
 ),
 -- ジャンル: 母集団はおまかせ依頼のみ。比率は生成結果の cuisine_genre で取る
 genre_pool as (
@@ -128,14 +169,21 @@ genre_rows as (
   order by pg_catalog.sum(g.score) desc, g.cuisine_genre
   limit 2
 ),
--- 使いすぎ: 窓内全献立のメイン食材。派生グループ単位で 3 回以上
+-- 使いすぎ: 窓内全献立のメイン食材。派生グループ単位で 3 回以上。
+-- 配列でない値や文字列でない要素は読み飛ばす。1 行の崩れで関数全体を落とさない
 main_ingredient_groups as (
-  select r.derivation_group_id, ing as name, pg_catalog.max(r.decay) as decay
+  select r.derivation_group_id, e.value #>> '{}' as name, pg_catalog.max(r.decay) as decay
   from recent r,
-    lateral pg_catalog.jsonb_array_elements_text(
-      coalesce(r.preference_snapshot #> '{submission,mainIngredients}', '[]'::jsonb)
-    ) as ing
-  group by r.derivation_group_id, ing
+    lateral pg_catalog.jsonb_array_elements(
+      case
+        when pg_catalog.jsonb_typeof(r.preference_snapshot #> '{submission,mainIngredients}') = 'array'
+          then r.preference_snapshot #> '{submission,mainIngredients}'
+        else '[]'::jsonb
+      end
+    ) as e(value)
+  where pg_catalog.jsonb_typeof(e.value) = 'string'
+    and pg_catalog.btrim(e.value #>> '{}') <> ''
+  group by r.derivation_group_id, e.value #>> '{}'
 ),
 overused_rows as (
   select name, pg_catalog.sum(decay) as weight
@@ -199,6 +247,8 @@ select case
         order by dish_name)
        from dish_index_rows), '[]'::jsonb)
   )
+end
+  );
 end;
 $function$;
 

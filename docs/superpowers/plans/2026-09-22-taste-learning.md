@@ -43,8 +43,12 @@
 - Consumes: なし
 - Produces:
   - `public.profiles.taste_learning_enabled boolean not null default true`
-  - `public.set_taste_learning_enabled(p_enabled boolean) returns boolean`（`authenticated` に execute）
-  - `public.get_taste_signals(p_now timestamptz default now()) returns jsonb`（`authenticated` に execute）
+  - `public.set_taste_learning_enabled(p_enabled boolean) returns boolean`（`authenticated` に execute）。
+    未認証は `42501 authentication_required`、null は `22023 invalid_taste_learning_enabled`、
+    行欠落は `P0002 profile_not_found`（`set_onboarding_status` と同じ規約）
+  - `public.get_taste_signals(p_now timestamptz default now()) returns jsonb`（`authenticated` に execute）。
+    未認証は `42501 authentication_required`。service クライアントで呼ぶと no_history ではなくこの
+    エラーになるので、Task 6 の配線は **owner-scoped client 必須**。`p_now` は Function から渡さない
   - 戻り jsonb は 3 形のいずれか:
     `{"reason":"disabled"}` / `{"reason":"no_history"}` /
     `{"reason":null,"likedDishes":[{"dishName":string,"role":string}],"likedGenres":[string],"likedIngredients":[string],"likedTimeBand":"short"|"standard"|"slow"|null,"overusedIngredients":[string],"avoidAxes":["child_unfriendly"],"signalStrength":"weak"|"medium"|"strong","dishIngredientIndex":[{"dishName":string,"ingredients":[string]}]}`
@@ -72,7 +76,7 @@
 
 ```sql
 begin;
-select plan(27);
+select plan(52);
 
 select tests.create_supabase_user('11111111-1111-4111-8111-111111111111', 'owner@example.invalid');
 select tests.create_supabase_user('22222222-2222-4222-8222-222222222222', 'other@example.invalid');
@@ -185,7 +189,7 @@ begin
 end;
 $$;
 
--- ============ 1-6: 構造と権限 ============
+-- ============ 構造と権限 ============
 select has_column('public', 'profiles', 'taste_learning_enabled',
   'profiles has taste_learning_enabled');
 select col_not_null('public', 'profiles', 'taste_learning_enabled',
@@ -202,7 +206,7 @@ select ok(
   'profiles table-level UPDATE stays revoked for authenticated'
 );
 
--- ============ 7-10: 履歴ゼロとトグル ============
+-- ============ 履歴ゼロとトグル ============
 select is(pg_temp.signals() ->> 'reason', 'no_history', 'empty history reports no_history');
 
 select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
@@ -213,20 +217,52 @@ reset role;
 
 -- 分岐順は disabled -> no_history。OFF の利用者は窓が空でも disabled になる
 select is(pg_temp.signals() ->> 'reason', 'disabled', 'disabled wins over an empty window');
+-- security definer でも自分の行しか書かない
+select is(
+  (select taste_learning_enabled from public.profiles
+   where user_id = '22222222-2222-4222-8222-222222222222'),
+  true,
+  'the setter leaves another user profile untouched'
+);
+
+-- 未認証（authenticated ロールで sub なし）は null で黙らせず 42501
+select set_config('request.jwt.claim.sub', '', true);
+select set_config('request.jwt.claims', '', true);
+set local role authenticated;
+select throws_ok(
+  'select public.set_taste_learning_enabled(true)',
+  '42501', 'authentication_required',
+  'the setter rejects an unauthenticated caller'
+);
+select throws_ok(
+  $$select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz)$$,
+  '42501', 'authentication_required',
+  'signals reject an unauthenticated caller instead of reporting no_history'
+);
+reset role;
+
+select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
+set local role authenticated;
+select throws_ok(
+  'select public.set_taste_learning_enabled(null)',
+  '22023', 'invalid_taste_learning_enabled',
+  'the setter rejects null'
+);
+reset role;
 
 select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
 set local role authenticated;
 select is(public.set_taste_learning_enabled(true), true, 'toggle back on');
 reset role;
 
--- ============ 11: 派生行は強さを膨らませない ============
+-- ============ 派生行は強さを膨らませない ============
 truncate public.menus cascade;
 select pg_temp.seed_menu(
   '11111111-1111-4111-8111-111111111111', '33333333-3333-4333-8333-333333333331', 1,
   '2026-09-21T00:00:00Z', true, false, 'japanese', 'japanese', 30::smallint,
   null, null, '[]'::jsonb, '子1', array['にんじん']
 );
--- 同じグループの 2-4 版。parent は上で作った親を引く
+-- 同じグループの 2-5 版。行数だけなら medium の 5 に届くが、グループは 1 つ
 with parent as (
   select id from public.menus where derivation_group_id = '33333333-3333-4333-8333-333333333331'
 )
@@ -235,11 +271,16 @@ select pg_temp.seed_menu(
   '2026-09-21T00:00:00Z', true, false, 'japanese', 'japanese', 30::smallint,
   (select id from parent), 'simpler', '[]'::jsonb, '子' || v::text, array['にんじん']
 )
-from generate_series(2, 4) as v;
+from generate_series(2, 5) as v;
 select is(pg_temp.signals() ->> 'signalStrength', 'weak',
-  'four rows in one derivation group stay weak');
+  'five rows in one derivation group stay weak');
+-- 本体の分岐でも reason キーは JSON null として必ず出る（契約の strict schema 向け）
+select ok(
+  pg_temp.signals() ? 'reason' and pg_temp.signals() -> 'reason' = 'null'::jsonb,
+  'a populated result carries reason as JSON null'
+);
 
--- ============ 12-15: 強さの境界（4/5 と 14/15 グループ） ============
+-- ============ 強さの境界（4/5 と 14/15 グループ） ============
 truncate public.menus cascade;
 select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '料理' || g::text)
 from generate_series(1, 4) as g;
@@ -255,7 +296,7 @@ select is(pg_temp.signals() ->> 'signalStrength', 'medium', 'fourteen groups are
 select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '料理15');
 select is(pg_temp.signals() ->> 'signalStrength', 'strong', 'fifteen groups reach strong');
 
--- ============ 16-17: 重みの加算と半減期 ============
+-- ============ 重みの加算と半減期 ============
 truncate public.menus cascade;
 -- ★のみ = 1.0、★＋採用 = 1.3（乗算ではなく加算）
 select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '★だけ');
@@ -274,7 +315,39 @@ select is(
   'the 30-day half-life outweighs the selected bonus'
 );
 
--- ============ 18: 窓の境界（89 日と 91 日） ============
+-- 半減期の値そのものを固定する。基準時刻の★のみ (1.0) と k 日前の★＋採用 1.3·0.5^(k/30)
+-- の交点は k = 30·log2(1.3) ≈ 11.36。半減期が 20 日なら ≈ 7.6、40 日なら ≈ 15.1 にずれる
+truncate public.menus cascade;
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, '基準★');
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-11T00:00:00Z', true, true, '11日前★採用');
+select is(
+  pg_temp.signals() #>> '{likedDishes,0,dishName}', '11日前★採用',
+  'eleven days of decay still leaves 1.3 above 1.0'
+);
+
+truncate public.menus cascade;
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, '基準★');
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-10T00:00:00Z', true, true, '12日前★採用');
+select is(
+  pg_temp.signals() #>> '{likedDishes,0,dishName}', '基準★',
+  'twelve days of decay drops 1.3 below 1.0'
+);
+
+-- 採用だけ（0.3）でも好みに入る
+truncate public.menus cascade;
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', false, true, '採用だけ');
+select is(pg_temp.signals() -> 'likedDishes', '[{"dishName": "採用だけ", "role": "main"}]'::jsonb,
+  'a selected menu without a star still counts as liked');
+
+-- 対応表は score 0 の料理を持たない
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', false, false, '無反応');
+select is(
+  (select jsonb_agg(d ->> 'dishName') from jsonb_array_elements(pg_temp.signals() -> 'dishIngredientIndex') as d),
+  '["採用だけ"]'::jsonb,
+  'dishIngredientIndex leaves out dishes with no score'
+);
+
+-- ============ 窓の境界（89 日と 91 日） ============
 truncate public.menus cascade;
 select pg_temp.seed_simple(gen_random_uuid(), '2026-06-25T00:00:00Z', true, false, '窓内89日');
 select pg_temp.seed_simple(gen_random_uuid(), '2026-06-23T00:00:00Z', true, false, '窓外91日');
@@ -285,7 +358,58 @@ select is(
   'the 90-day window excludes day 91 and keeps day 89'
 );
 
--- ============ 19-20: 使いすぎは派生グループ単位 ============
+truncate public.menus cascade;
+select pg_temp.seed_simple(gen_random_uuid(), '2026-06-24T00:00:00Z', true, false, 'ちょうど90日');
+select is(pg_temp.signals() #>> '{likedDishes,0,dishName}', 'ちょうど90日',
+  'a menu exactly 90 days old is inside the window');
+
+-- 基準時刻より後の行は窓に入れない（経過が負だと重みが 1 を超える）
+truncate public.menus cascade;
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-23T00:00:00Z', true, false, '未来');
+select is(pg_temp.signals() ->> 'reason', 'no_history',
+  'menus created after p_now are outside the window');
+
+-- 50 件の上限: 51 グループの★から最も古い 1 件が落ちる
+truncate public.menus cascade;
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z'::timestamptz - g * interval '1 hour', true, false, '古' || g::text
+) from generate_series(1, 51) as g;
+select is(jsonb_array_length(pg_temp.signals() -> 'dishIngredientIndex'), 50,
+  'the window stops at 50 menus');
+select ok(
+  not exists (
+    select 1 from jsonb_array_elements(pg_temp.signals() -> 'dishIngredientIndex') as d
+    where d ->> 'dishName' = '古51'
+  ),
+  'the oldest menu is the one past the 50 cap'
+);
+
+-- ============ 食材は派生グループ単位で 2 回以上 ============
+truncate public.menus cascade;
+-- A 版 1・2: 「ん」「しょうが」。B: 「ん」「あ」。C: 「あ」。全件 score 1.0。
+-- しょうがは 1 グループだけなので出ない。ん は A の 2 行ぶん重く (3.0)、あ (2.0) より前
+with a1 as (
+  select pg_temp.seed_menu(
+    '11111111-1111-4111-8111-111111111111', '55555555-5555-4555-8555-555555555551', 1,
+    '2026-09-22T00:00:00Z', true, false, 'japanese', 'japanese', 30::smallint,
+    null, null, '[]'::jsonb, 'A1', array['ん', 'しょうが']
+  ) as id
+)
+select pg_temp.seed_menu(
+  '11111111-1111-4111-8111-111111111111', '55555555-5555-4555-8555-555555555551', 2,
+  '2026-09-22T00:00:00Z', true, false, 'japanese', 'japanese', 30::smallint,
+  (select id from a1), 'simpler', '[]'::jsonb, 'A2', array['ん', 'しょうが']
+);
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, 'B', array['ん', 'あ']);
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, 'C', array['あ']);
+select ok(
+  not (pg_temp.signals() -> 'likedIngredients' @> '["しょうが"]'::jsonb),
+  'an ingredient repeated inside one derivation group is not liked'
+);
+select is(pg_temp.signals() -> 'likedIngredients', '["ん", "あ"]'::jsonb,
+  'liked ingredients need two groups and sum every menu of equal score');
+
+-- ============ 使いすぎは派生グループ単位 ============
 truncate public.menus cascade;
 -- 2 グループでは出ない（★の有無は問わない。母集団は窓内の全献立）
 select pg_temp.seed_simple(
@@ -302,7 +426,37 @@ select pg_temp.seed_simple(
 select is(pg_temp.signals() -> 'overusedIngredients', '["豚肉"]'::jsonb,
   'a main ingredient in three derivation groups is overused');
 
--- ============ 21: 時間帯の境界は連続している ============
+truncate public.menus cascade;
+-- 同じグループで 3 回作り直しても 1 回
+with v1 as (
+  select pg_temp.seed_menu(
+    '11111111-1111-4111-8111-111111111111', '66666666-6666-4666-8666-666666666661', 1,
+    '2026-09-21T00:00:00Z', false, false, 'japanese', 'japanese', 30::smallint,
+    null, null, '["鶏肉"]'::jsonb, '再1', array['たまねぎ']
+  ) as id
+)
+select pg_temp.seed_menu(
+  '11111111-1111-4111-8111-111111111111', '66666666-6666-4666-8666-666666666661', v,
+  '2026-09-21T00:00:00Z', false, false, 'japanese', 'japanese', 30::smallint,
+  (select id from v1), 'simpler', '["鶏肉"]'::jsonb, '再' || v::text, array['たまねぎ']
+) from generate_series(2, 3) as v;
+select is(pg_temp.signals() -> 'overusedIngredients', '[]'::jsonb,
+  'three regenerations in one derivation group are not overuse');
+
+truncate public.menus cascade;
+-- 配列でない値・文字列でない要素は読み飛ばし、関数全体を落とさない
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', false, false, '崩れ' || g::text,
+  array['たまねぎ'], 30::smallint, 'japanese', 'japanese', '[1, null, "豚肉", {"a": 1}, " "]'::jsonb
+) from generate_series(1, 3) as g;
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', false, false, 'スカラー',
+  array['たまねぎ'], 30::smallint, 'japanese', 'japanese', '"豚肉"'::jsonb
+);
+select is(pg_temp.signals() -> 'overusedIngredients', '["豚肉"]'::jsonb,
+  'malformed mainIngredients are skipped without failing the whole call');
+
+-- ============ 時間帯の境界は連続している ============
 truncate public.menus cascade;
 -- 20 分と 21 分の等重み平均 = 20.5。`21-40` と刻むとどの帯にも入らない値
 select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '20分', array['にんじん'], 20::smallint);
@@ -310,7 +464,25 @@ select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, fals
 select is(pg_temp.signals() ->> 'likedTimeBand', 'standard',
   'a weighted average of 20.5 falls into standard, not a gap');
 
--- ============ 22-23: ジャンルはおまかせ依頼だけを母集団にし、生成 any を分子から外す ============
+truncate public.menus cascade;
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '20分', array['にんじん'], 20::smallint);
+select is(pg_temp.signals() ->> 'likedTimeBand', 'short', 'exactly 20 minutes is short');
+
+truncate public.menus cascade;
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '40分', array['にんじん'], 40::smallint);
+select is(pg_temp.signals() ->> 'likedTimeBand', 'standard', 'exactly 40 minutes is standard');
+
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '41分', array['にんじん'], 41::smallint);
+select is(pg_temp.signals() ->> 'likedTimeBand', 'slow', 'a weighted average of 40.5 is slow');
+
+truncate public.menus cascade;
+-- 全件 20 分でも重みが違うと浮動小数の平均が 20 をわずかに超える。丸めて short に留める
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '20分a', array['にんじん'], 20::smallint);
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-05T00:00:00Z', true, false, '20分b', array['にんじん'], 20::smallint);
+select is(pg_temp.signals() ->> 'likedTimeBand', 'short',
+  'twenty-minute favourites of different ages stay short despite float error');
+
+-- ============ ジャンルはおまかせ依頼だけを母集団にし、生成 any を分子から外す ============
 truncate public.menus cascade;
 select pg_temp.seed_simple(
   gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '和' || g::text,
@@ -327,7 +499,53 @@ select ok(
   'a generated any is never reported as a liked genre'
 );
 
--- ============ 24-25: child_friendly は 2 グループ以上で軸になる ============
+truncate public.menus cascade;
+-- ジャンルを指定した依頼は母集団に入らない
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '和',
+  array['にんじん'], 30::smallint, 'japanese', 'any'
+);
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '洋' || g::text,
+  array['にんじん'], 30::smallint, 'western', 'western'
+) from generate_series(1, 3) as g;
+select is(pg_temp.signals() -> 'likedGenres', '["japanese"]'::jsonb,
+  'favourites from genre-specified requests stay out of the population');
+
+truncate public.menus cascade;
+-- 生成 any は分子から外れるが分母には残る: 和 1 / 全 3 = 0.33 < 0.35
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '和',
+  array['にんじん'], 30::smallint, 'japanese', 'any'
+);
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, 'any' || g::text,
+  array['にんじん'], 30::smallint, 'any', 'any'
+) from generate_series(1, 2) as g;
+select is(pg_temp.signals() -> 'likedGenres', '[]'::jsonb,
+  'generated any stays in the denominator');
+
+truncate public.menus cascade;
+-- 閾値 0.35 ちょうどは含む。score 1.0 に揃えて 7/20 を正確に作る
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, '和' || g::text,
+  array['にんじん'], 30::smallint, 'japanese', 'any'
+) from generate_series(1, 7) as g;
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, '中' || g::text,
+  array['にんじん'], 30::smallint, 'chinese', 'any'
+) from generate_series(1, 13) as g;
+select is(pg_temp.signals() -> 'likedGenres', '["chinese", "japanese"]'::jsonb,
+  'a genre share of exactly 0.35 is liked');
+
+-- 6/19 ≈ 0.316 は外れる
+delete from public.menus where id = (
+  select id from public.menus where cuisine_genre = 'japanese' order by id limit 1
+);
+select is(pg_temp.signals() -> 'likedGenres', '["chinese"]'::jsonb,
+  'a genre share below 0.35 is not liked');
+
+-- ============ child_friendly は 2 グループ以上で軸になる ============
 truncate public.menus cascade;
 select pg_temp.seed_menu(
   '11111111-1111-4111-8111-111111111111', '44444444-4444-4444-8444-444444444441', 1,
@@ -338,12 +556,12 @@ with parent as (
   select id from public.menus where derivation_group_id = '44444444-4444-4444-8444-444444444441'
 )
 select pg_temp.seed_menu(
-  '11111111-1111-4111-8111-111111111111', '44444444-4444-4444-8444-444444444441', 2,
+  '11111111-1111-4111-8111-111111111111', '44444444-4444-4444-8444-444444444441', v,
   '2026-09-21T00:00:00Z', false, false, 'japanese', 'japanese', 30::smallint,
-  (select id from parent), 'child_friendly', '[]'::jsonb, '子1', array['にんじん']
-);
+  (select id from parent), 'child_friendly', '[]'::jsonb, '子1-' || v::text, array['にんじん']
+) from generate_series(2, 3) as v;
 select is(pg_temp.signals() -> 'avoidAxes', '[]'::jsonb,
-  'child_friendly in one derivation group is not a standing axis');
+  'two child_friendly rows in one derivation group are not a standing axis');
 
 select pg_temp.seed_menu(
   '11111111-1111-4111-8111-111111111111', '44444444-4444-4444-8444-444444444442', 1,
@@ -362,7 +580,7 @@ select pg_temp.seed_menu(
 select is(pg_temp.signals() -> 'avoidAxes', '["child_unfriendly"]'::jsonb,
   'child_friendly in two derivation groups becomes a standing axis');
 
--- ============ 26: 対応表に上限が無い ============
+-- ============ 対応表に上限が無い ============
 truncate public.menus cascade;
 -- likedDishes は 12 件で切れるが、対応表は 13 件すべてを持つ。
 -- ここを切ると §5.3 の差集合が両方向に壊れる
@@ -373,7 +591,7 @@ select is(
   'dishIngredientIndex covers every liked dish, past the likedDishes cap'
 );
 
--- ============ 27: 他人の献立は入らない ============
+-- ============ 他人の献立は入らない ============
 select is(
   pg_temp.signals('22222222-2222-4222-8222-222222222222') ->> 'reason', 'no_history',
   'another user sees none of the owner history'
@@ -408,15 +626,34 @@ alter table public.profiles
 -- 復活させると onboarding_status まで書き換え可能に戻るため、関数経由だけを足す。
 create or replace function public.set_taste_learning_enabled(p_enabled boolean)
 returns boolean
-language sql
+language plpgsql
 security definer
 set search_path = ''
 as $function$
-  update public.profiles
-  set taste_learning_enabled = p_enabled,
-      updated_at = pg_catalog.now()
-  where user_id = (select auth.uid())
-  returning taste_learning_enabled;
+declare
+  v_result boolean;
+begin
+  -- set_onboarding_status と同じ規約。未認証・行欠落を null で黙らせない。
+  -- updated_at は profiles_set_updated_at トリガが入れる
+  if auth.uid() is null then
+    raise exception using errcode = '42501', message = 'authentication_required';
+  end if;
+
+  if p_enabled is null then
+    raise exception using errcode = '22023', message = 'invalid_taste_learning_enabled';
+  end if;
+
+  update public.profiles as profile
+  set taste_learning_enabled = p_enabled
+  where profile.user_id = auth.uid()
+  returning profile.taste_learning_enabled into v_result;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'profile_not_found';
+  end if;
+
+  return v_result;
+end;
 $function$;
 
 revoke all on function public.set_taste_learning_enabled(boolean) from public, anon;
@@ -424,14 +661,24 @@ grant execute on function public.set_taste_learning_enabled(boolean) to authenti
 
 -- 集計。security invoker なので所有者 select ポリシーがそのまま効く。
 -- 窓 90 日・50 件、半減期 30 日。回数はすべて derivation_group_id 単位で数える。
+-- 未認証（service クライアント経由の誤用を含む）は no_history に紛れさせず 42501 で落とす。
+-- 呼び出し側は fail-open なので生成は止まらず、誤配線だけがエラーとして見える。
 create or replace function public.get_taste_signals(
   p_now timestamptz default pg_catalog.now()
 ) returns jsonb
-language sql
+language plpgsql
 stable
 security invoker
 set search_path = ''
 as $function$
+declare
+  v_now timestamptz := coalesce(p_now, pg_catalog.now());
+begin
+  if auth.uid() is null then
+    raise exception using errcode = '42501', message = 'authentication_required';
+  end if;
+
+  return (
 with settings as (
   select p.taste_learning_enabled as enabled
   from public.profiles p
@@ -447,19 +694,21 @@ recent as (
     m.preference_snapshot,
     pg_catalog.power(
       0.5::double precision,
-      pg_catalog.date_part('epoch', p_now - m.created_at)::double precision / 86400.0 / 30.0
+      pg_catalog.date_part('epoch', v_now - m.created_at)::double precision / 86400.0 / 30.0
     ) as decay,
     pg_catalog.power(
       0.5::double precision,
-      pg_catalog.date_part('epoch', p_now - m.created_at)::double precision / 86400.0 / 30.0
+      pg_catalog.date_part('epoch', v_now - m.created_at)::double precision / 86400.0 / 30.0
     ) * (
       (case when m.is_favorite then 1.0 else 0.0 end)
       + (case when m.is_selected then 0.3 else 0.0 end)
     )::double precision as score
   from public.menus m
   where m.user_id = (select auth.uid())
-    and m.created_at >= p_now - interval '90 days'
-  order by m.created_at desc
+    -- 上端も切る。基準時刻より後の行は経過が負になり重みが 1 を超える
+    and m.created_at >= v_now - interval '90 days'
+    and m.created_at <= v_now
+  order by m.created_at desc, m.id desc
   limit 50
 ),
 liked as (select * from recent where score > 0),
@@ -475,9 +724,10 @@ liked_dish_rows as (
   order by pg_catalog.sum(l.score) desc, d.name
   limit 12
 ),
--- 食材: 献立内の重複を潰してから派生グループ単位で数える
+-- 食材: 献立内の重複を潰してから派生グループ単位で数える。
+-- l.id を含めないと、同じグループ・同じ score の別献立が 1 行に潰れて重みが減る
 liked_ingredient_rows_raw as (
-  select distinct l.derivation_group_id, l.score, di.name
+  select distinct l.id, l.derivation_group_id, l.score, di.name
   from liked l
   join public.dishes d on d.menu_id = l.id
   join public.dish_ingredients di on di.dish_id = d.id
@@ -502,15 +752,24 @@ dish_index_rows as (
   join public.dish_ingredients di on di.dish_id = d.id
   group by d.name
 ),
--- 時間帯: 加重平均は小数になるため <=20 / <=40 / それ以外で連続させる
+-- 時間帯: 加重平均は小数になるため <=20 / <=40 / それ以外で連続させる。
+-- 全件 20 分でも減衰の違いで 20.000000000000004 になり得るので、比較前に丸める
 time_band as (
   select case
-    when pg_catalog.sum(score) is null or pg_catalog.sum(score) = 0 then null
-    when pg_catalog.sum(score * total_elapsed_minutes) / pg_catalog.sum(score) <= 20 then 'short'
-    when pg_catalog.sum(score * total_elapsed_minutes) / pg_catalog.sum(score) <= 40 then 'standard'
+    when w.total is null or w.total = 0 then null
+    when w.avg_minutes <= 20 then 'short'
+    when w.avg_minutes <= 40 then 'standard'
     else 'slow'
   end as band
-  from liked
+  from (
+    select
+      pg_catalog.sum(score) as total,
+      pg_catalog.round(
+        (pg_catalog.sum(score * total_elapsed_minutes) / nullif(pg_catalog.sum(score), 0))::numeric,
+        6
+      ) as avg_minutes
+    from liked
+  ) w
 ),
 -- ジャンル: 母集団はおまかせ依頼のみ。比率は生成結果の cuisine_genre で取る
 genre_pool as (
@@ -528,14 +787,21 @@ genre_rows as (
   order by pg_catalog.sum(g.score) desc, g.cuisine_genre
   limit 2
 ),
--- 使いすぎ: 窓内全献立のメイン食材。派生グループ単位で 3 回以上
+-- 使いすぎ: 窓内全献立のメイン食材。派生グループ単位で 3 回以上。
+-- 配列でない値や文字列でない要素は読み飛ばす。1 行の崩れで関数全体を落とさない
 main_ingredient_groups as (
-  select r.derivation_group_id, ing as name, pg_catalog.max(r.decay) as decay
+  select r.derivation_group_id, e.value #>> '{}' as name, pg_catalog.max(r.decay) as decay
   from recent r,
-    lateral pg_catalog.jsonb_array_elements_text(
-      coalesce(r.preference_snapshot #> '{submission,mainIngredients}', '[]'::jsonb)
-    ) as ing
-  group by r.derivation_group_id, ing
+    lateral pg_catalog.jsonb_array_elements(
+      case
+        when pg_catalog.jsonb_typeof(r.preference_snapshot #> '{submission,mainIngredients}') = 'array'
+          then r.preference_snapshot #> '{submission,mainIngredients}'
+        else '[]'::jsonb
+      end
+    ) as e(value)
+  where pg_catalog.jsonb_typeof(e.value) = 'string'
+    and pg_catalog.btrim(e.value #>> '{}') <> ''
+  group by r.derivation_group_id, e.value #>> '{}'
 ),
 overused_rows as (
   select name, pg_catalog.sum(decay) as weight
@@ -599,6 +865,8 @@ select case
         order by dish_name)
        from dish_index_rows), '[]'::jsonb)
   )
+end
+  );
 end;
 $function$;
 
@@ -2292,11 +2560,18 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **残る注意点**
 
-- Task 1 の pgTAP は `plan(27)` とアサーション数を一致させる。ケースのあいだで
+- Task 1 の pgTAP は `plan(52)` とアサーション数を一致させる。ケースのあいだで
   `truncate public.menus cascade` を挟むこと（行を足し続けると強さ・時間帯・ジャンル比率が
   前のケースを巻き込む）。行を作る間はスーパーユーザーのままにし、RPC 直前だけ
   `tests.authenticate_as()` ＋ `set local role authenticated` に切り替える。
 - Task 3 の `filterTasteHintsForSafety` は安全ゲートではない。実判定は `validate-generated-menu` と生成ハードゲートのままで、ここを通ったことを「安全」と読まない。
+- Task 3 の sanitize は、改行・制御文字（`/[\p{Cc}]/u`）を含む語を捨てる。`overusedIngredients` は
+  利用者が入力したメイン食材の文字列がそのまま載るため、【学習】段落への持ち越しを断つ
+  （Task 1 敵対的レビュー M3）。料理名・食材名は AI 出力で Zod 済みだが同じ規則を掛ける。
+- `memo` の語が AI 経由で料理名に写り、★で `likedDishes` として再送される経路は許容している
+  （spec 不変条件 6 の字義には触れない。Task 1 敵対的レビュー M4）。
+- Task 6 の配線は `get_taste_signals` を **owner-scoped client** で呼び、`p_now` は渡さない。
+  service / admin クライアントでは `42501 authentication_required` になる（fail-open で生成は続く）。
 - Task 6 の `makeDeps` / `runNewMenu` / `failWith` は `generation-service.test.ts` の既存ヘルパ名と
   オーバーライド形に置き換える。`mockClient` / `rawMenuRow` / `getBrowserSupabaseClientMock`
   （Task 7）も同様に、`menu-result-api.test.ts` の既存定義をそのまま使う。
