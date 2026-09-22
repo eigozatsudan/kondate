@@ -49,67 +49,338 @@
     `{"reason":"disabled"}` / `{"reason":"no_history"}` /
     `{"reason":null,"likedDishes":[{"dishName":string,"role":string}],"likedGenres":[string],"likedIngredients":[string],"likedTimeBand":"short"|"standard"|"slow"|null,"overusedIngredients":[string],"avoidAxes":["child_unfriendly"],"signalStrength":"weak"|"medium"|"strong","dishIngredientIndex":[{"dishName":string,"ingredients":[string]}]}`
 
-- [ ] **Step 1: pgTAP テストを書く（RED）**
+- [ ] **Step 1: pgTAP テストを 1 ファイルで書き切る（RED）**
 
-`supabase/tests/database/taste_signals.test.sql` を新規作成する。既存テストと同じく `begin;` / `select plan(N);` / `select * from finish();` / `rollback;` で囲む。
+`supabase/tests/database/taste_signals.test.sql` を新規作成する。
+
+**このファイルの決まりごと。**
+
+- `plan(N)` の N は下のアサーション数と一致させる。pgTAP は計画数と実行数がずれると、
+  列と関数を足したあとでも落ちる。アサーションを増やしたら N も直す。
+- **行を作る間はスーパーユーザーのまま**にし、RPC を呼ぶ直前だけ `set local role authenticated`
+  ＋ `tests.authenticate_as()` に切り替える。`authenticated` に `public.menus` の INSERT 権限は無い。
+- 認証は `tests.authenticate_as()` を使う。このヘルパは `request.jwt.claim.sub` と
+  `request.jwt.claims` の両方を立てる。`request.jwt.claims` だけを手で `set_config` しても
+  このリポジトリの `auth.uid()` には効かない。
+- `auth.users` への挿入は `tests.create_supabase_user()` を使う。素の INSERT では
+  `instance_id` / `aud` / `role` / `encrypted_password` などが欠ける。
+- ケースごとに `truncate public.menus cascade` で入れ替える。同じトランザクションに行を足し
+  続けると、強さ・時間帯の加重平均・ジャンル比率が前のケースの行を巻き込んで壊れる。
 
 ```sql
 begin;
-select plan(24);
+select plan(27);
 
--- 構造
+select tests.create_supabase_user('11111111-1111-4111-8111-111111111111', 'owner@example.invalid');
+select tests.create_supabase_user('22222222-2222-4222-8222-222222222222', 'other@example.invalid');
+
+-- profiles 行を作るトリガは無いため明示的に入れる
+insert into public.profiles (user_id) values
+  ('11111111-1111-4111-8111-111111111111'),
+  ('22222222-2222-4222-8222-222222222222');
+
+-- 献立 1 件＋料理 1 品＋食材を作る。menus の現行制約をすべて満たす:
+--   target_mode は NOT NULL・既定値なし。household は allergen/food_rule version が NOT NULL。
+--   is_selected = (selected_at is not null)。version は (user_id, group) で一意。
+--   parent_menu_id は (parent_menu_id, user_id) -> (id, user_id) の自己 FK なので、
+--   派生行は先に作った親の id を渡す（自分の id を入れた 1 文の INSERT は通らない）。
+create or replace function pg_temp.seed_menu(
+  p_user uuid,
+  p_group uuid,
+  p_version integer,
+  p_created timestamptz,
+  p_favorite boolean,
+  p_selected boolean,
+  p_genre text,
+  p_submission_genre text,
+  p_minutes smallint,
+  p_parent uuid,
+  p_change_reason text,
+  p_main_ingredients jsonb,
+  p_dish_name text,
+  p_ingredients text[]
+) returns uuid
+language plpgsql
+as $$
+declare
+  v_menu uuid := gen_random_uuid();
+  v_dish uuid := gen_random_uuid();
+  v_position smallint := 0;
+  v_ingredient text;
+begin
+  insert into public.menus (
+    id, user_id, target_mode, meal_type, cuisine_genre, servings,
+    total_elapsed_minutes, preference_snapshot, safety_snapshot, safety_fingerprint,
+    allergen_dictionary_version, food_safety_rule_version, output_schema_version,
+    derivation_group_id, version, parent_menu_id, change_reason,
+    is_selected, selected_at, is_favorite, created_at
+  ) values (
+    v_menu, p_user, 'household', 'dinner', p_genre, 2,
+    p_minutes,
+    jsonb_build_object(
+      'submission',
+      jsonb_build_object('cuisineGenre', p_submission_genre, 'mainIngredients', p_main_ingredients)
+    ),
+    '{}'::jsonb, repeat('a', 64),
+    'v1', 'v1', 'v1',
+    p_group, p_version, p_parent, p_change_reason,
+    p_selected, case when p_selected then p_created else null end,
+    p_favorite, p_created
+  );
+
+  insert into public.dishes (
+    id, menu_id, user_id, role, position, name, description, cooking_time_minutes, created_at
+  ) values (
+    v_dish, v_menu, p_user, 'main', 1, p_dish_name, '説明', 20, p_created
+  );
+
+  foreach v_ingredient in array p_ingredients loop
+    v_position := v_position + 1;
+    insert into public.dish_ingredients (
+      menu_id, dish_id, user_id, position, name, quantity_text, store_section, created_at
+    ) values (
+      v_menu, v_dish, p_user, v_position, v_ingredient, '適量', 'other', p_created
+    );
+  end loop;
+
+  return v_menu;
+end;
+$$;
+
+-- 既定の引数を埋めた薄いラッパ。各ケースは必要な軸だけを指定する
+create or replace function pg_temp.seed_simple(
+  p_group uuid,
+  p_created timestamptz,
+  p_favorite boolean,
+  p_selected boolean,
+  p_dish_name text,
+  p_ingredients text[] default array['たまねぎ'],
+  p_minutes smallint default 30,
+  p_genre text default 'japanese',
+  p_submission_genre text default 'japanese',
+  p_main_ingredients jsonb default '[]'::jsonb
+) returns uuid
+language sql
+as $$
+  select pg_temp.seed_menu(
+    '11111111-1111-4111-8111-111111111111', p_group, 1, p_created,
+    p_favorite, p_selected, p_genre, p_submission_genre, p_minutes,
+    null, null, p_main_ingredients, p_dish_name, p_ingredients
+  );
+$$;
+
+-- 認証済みで RPC を 1 回呼ぶ。行を作る権限は残したいので、毎回 role を戻す
+create or replace function pg_temp.signals(p_user uuid default '11111111-1111-4111-8111-111111111111')
+returns jsonb
+language plpgsql
+as $$
+declare v_result jsonb;
+begin
+  perform tests.authenticate_as(p_user);
+  set local role authenticated;
+  select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) into v_result;
+  reset role;
+  return v_result;
+end;
+$$;
+
+-- ============ 1-6: 構造と権限 ============
 select has_column('public', 'profiles', 'taste_learning_enabled',
   'profiles has taste_learning_enabled');
 select col_not_null('public', 'profiles', 'taste_learning_enabled',
   'taste_learning_enabled is not null');
 select col_default_is('public', 'profiles', 'taste_learning_enabled', 'true',
   'taste_learning_enabled defaults to true');
-select has_function('public', 'get_taste_signals', array['timestamptz']);
-select has_function('public', 'set_taste_learning_enabled', array['boolean']);
-
+select has_function('public', 'get_taste_signals', array['timestamptz'],
+  'get_taste_signals exists');
+select has_function('public', 'set_taste_learning_enabled', array['boolean'],
+  'set_taste_learning_enabled exists');
 -- 20260712000100 で外したテーブル単位 UPDATE を復活させていない
 select ok(
   not has_table_privilege('authenticated', 'public.profiles', 'UPDATE'),
   'profiles table-level UPDATE stays revoked for authenticated'
 );
 
--- 固定データ
-insert into auth.users (id, email) values
-  ('11111111-1111-4111-8111-111111111111', 'owner@example.test'),
-  ('22222222-2222-4222-8222-222222222222', 'other@example.test');
+-- ============ 7-10: 履歴ゼロとトグル ============
+select is(pg_temp.signals() ->> 'reason', 'no_history', 'empty history reports no_history');
 
--- profiles 行は auth.users トリガで作られる前提。無い環境では明示 insert する。
-insert into public.profiles (user_id)
-  select '11111111-1111-4111-8111-111111111111'
-  where not exists (select 1 from public.profiles
-    where user_id = '11111111-1111-4111-8111-111111111111');
-
+select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
 set local role authenticated;
-select set_config('request.jwt.claims',
-  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
-
--- 履歴ゼロ
-select is(
-  (select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) ->> 'reason'),
-  'no_history',
-  'empty history reports no_history'
-);
-
--- OFF
 select is(public.set_taste_learning_enabled(false), false,
   'set_taste_learning_enabled returns the stored value');
-select is(
-  (select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) ->> 'reason'),
-  'disabled',
-  'disabled wins over an empty window'
-);
+reset role;
+
+-- 分岐順は disabled -> no_history。OFF の利用者は窓が空でも disabled になる
+select is(pg_temp.signals() ->> 'reason', 'disabled', 'disabled wins over an empty window');
+
+select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
+set local role authenticated;
 select is(public.set_taste_learning_enabled(true), true, 'toggle back on');
+reset role;
+
+-- ============ 11: 派生行は強さを膨らませない ============
+truncate public.menus cascade;
+select pg_temp.seed_menu(
+  '11111111-1111-4111-8111-111111111111', '33333333-3333-4333-8333-333333333331', 1,
+  '2026-09-21T00:00:00Z', true, false, 'japanese', 'japanese', 30::smallint,
+  null, null, '[]'::jsonb, '子1', array['にんじん']
+);
+-- 同じグループの 2-4 版。parent は上で作った親を引く
+with parent as (
+  select id from public.menus where derivation_group_id = '33333333-3333-4333-8333-333333333331'
+)
+select pg_temp.seed_menu(
+  '11111111-1111-4111-8111-111111111111', '33333333-3333-4333-8333-333333333331', v,
+  '2026-09-21T00:00:00Z', true, false, 'japanese', 'japanese', 30::smallint,
+  (select id from parent), 'simpler', '[]'::jsonb, '子' || v::text, array['にんじん']
+)
+from generate_series(2, 4) as v;
+select is(pg_temp.signals() ->> 'signalStrength', 'weak',
+  'four rows in one derivation group stay weak');
+
+-- ============ 12-15: 強さの境界（4/5 と 14/15 グループ） ============
+truncate public.menus cascade;
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '料理' || g::text)
+from generate_series(1, 4) as g;
+select is(pg_temp.signals() ->> 'signalStrength', 'weak', 'four groups are weak');
+
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '料理5');
+select is(pg_temp.signals() ->> 'signalStrength', 'medium', 'five groups reach medium');
+
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '料理' || g::text)
+from generate_series(6, 14) as g;
+select is(pg_temp.signals() ->> 'signalStrength', 'medium', 'fourteen groups are still medium');
+
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '料理15');
+select is(pg_temp.signals() ->> 'signalStrength', 'strong', 'fifteen groups reach strong');
+
+-- ============ 16-17: 重みの加算と半減期 ============
+truncate public.menus cascade;
+-- ★のみ = 1.0、★＋採用 = 1.3（乗算ではなく加算）
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '★だけ');
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, true, '★と採用');
+select is(
+  pg_temp.signals() #>> '{likedDishes,0,dishName}', '★と採用',
+  'favourite and selected add up above favourite alone'
+);
+
+truncate public.menus cascade;
+-- 半減期 30 日: 30 日前の 1.3 (=0.65) は当日の 1.0 に負ける。減衰が無ければ逆順になる
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '当日★');
+select pg_temp.seed_simple(gen_random_uuid(), '2026-08-22T00:00:00Z', true, true, '30日前★採用');
+select is(
+  pg_temp.signals() #>> '{likedDishes,0,dishName}', '当日★',
+  'the 30-day half-life outweighs the selected bonus'
+);
+
+-- ============ 18: 窓の境界（89 日と 91 日） ============
+truncate public.menus cascade;
+select pg_temp.seed_simple(gen_random_uuid(), '2026-06-25T00:00:00Z', true, false, '窓内89日');
+select pg_temp.seed_simple(gen_random_uuid(), '2026-06-23T00:00:00Z', true, false, '窓外91日');
+select is(
+  (select jsonb_agg(d ->> 'dishName' order by d ->> 'dishName')
+   from jsonb_array_elements(pg_temp.signals() -> 'likedDishes') as d),
+  '["窓内89日"]'::jsonb,
+  'the 90-day window excludes day 91 and keeps day 89'
+);
+
+-- ============ 19-20: 使いすぎは派生グループ単位 ============
+truncate public.menus cascade;
+-- 2 グループでは出ない（★の有無は問わない。母集団は窓内の全献立）
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', false, false, '料理' || g::text,
+  array['たまねぎ'], 30::smallint, 'japanese', 'japanese', '["豚肉"]'::jsonb
+) from generate_series(1, 2) as g;
+select is(pg_temp.signals() -> 'overusedIngredients', '[]'::jsonb,
+  'a main ingredient in two derivation groups is not overused');
+
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', false, false, '料理3',
+  array['たまねぎ'], 30::smallint, 'japanese', 'japanese', '["豚肉"]'::jsonb
+);
+select is(pg_temp.signals() -> 'overusedIngredients', '["豚肉"]'::jsonb,
+  'a main ingredient in three derivation groups is overused');
+
+-- ============ 21: 時間帯の境界は連続している ============
+truncate public.menus cascade;
+-- 20 分と 21 分の等重み平均 = 20.5。`21-40` と刻むとどの帯にも入らない値
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '20分', array['にんじん'], 20::smallint);
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '21分', array['にんじん'], 21::smallint);
+select is(pg_temp.signals() ->> 'likedTimeBand', 'standard',
+  'a weighted average of 20.5 falls into standard, not a gap');
+
+-- ============ 22-23: ジャンルはおまかせ依頼だけを母集団にし、生成 any を分子から外す ============
+truncate public.menus cascade;
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '和' || g::text,
+  array['にんじん'], 30::smallint, 'japanese', 'any'
+) from generate_series(1, 3) as g;
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, 'any1',
+  array['にんじん'], 30::smallint, 'any', 'any'
+);
+select is(pg_temp.signals() -> 'likedGenres', '["japanese"]'::jsonb,
+  'genre share comes from menus.cuisine_genre over any-request favourites');
+select ok(
+  not (pg_temp.signals() -> 'likedGenres' @> '["any"]'::jsonb),
+  'a generated any is never reported as a liked genre'
+);
+
+-- ============ 24-25: child_friendly は 2 グループ以上で軸になる ============
+truncate public.menus cascade;
+select pg_temp.seed_menu(
+  '11111111-1111-4111-8111-111111111111', '44444444-4444-4444-8444-444444444441', 1,
+  '2026-09-21T00:00:00Z', false, false, 'japanese', 'japanese', 30::smallint,
+  null, null, '[]'::jsonb, '親1', array['にんじん']
+);
+with parent as (
+  select id from public.menus where derivation_group_id = '44444444-4444-4444-8444-444444444441'
+)
+select pg_temp.seed_menu(
+  '11111111-1111-4111-8111-111111111111', '44444444-4444-4444-8444-444444444441', 2,
+  '2026-09-21T00:00:00Z', false, false, 'japanese', 'japanese', 30::smallint,
+  (select id from parent), 'child_friendly', '[]'::jsonb, '子1', array['にんじん']
+);
+select is(pg_temp.signals() -> 'avoidAxes', '[]'::jsonb,
+  'child_friendly in one derivation group is not a standing axis');
+
+select pg_temp.seed_menu(
+  '11111111-1111-4111-8111-111111111111', '44444444-4444-4444-8444-444444444442', 1,
+  '2026-09-21T00:00:00Z', false, false, 'japanese', 'japanese', 30::smallint,
+  null, null, '[]'::jsonb, '親2', array['にんじん']
+);
+with parent as (
+  select id from public.menus
+  where derivation_group_id = '44444444-4444-4444-8444-444444444442' and version = 1
+)
+select pg_temp.seed_menu(
+  '11111111-1111-4111-8111-111111111111', '44444444-4444-4444-8444-444444444442', 2,
+  '2026-09-21T00:00:00Z', false, false, 'japanese', 'japanese', 30::smallint,
+  (select id from parent), 'child_friendly', '[]'::jsonb, '子2', array['にんじん']
+);
+select is(pg_temp.signals() -> 'avoidAxes', '["child_unfriendly"]'::jsonb,
+  'child_friendly in two derivation groups becomes a standing axis');
+
+-- ============ 26: 対応表に上限が無い ============
+truncate public.menus cascade;
+-- likedDishes は 12 件で切れるが、対応表は 13 件すべてを持つ。
+-- ここを切ると §5.3 の差集合が両方向に壊れる
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '好き' || g::text)
+from generate_series(1, 13) as g;
+select is(
+  jsonb_array_length(pg_temp.signals() -> 'dishIngredientIndex'), 13,
+  'dishIngredientIndex covers every liked dish, past the likedDishes cap'
+);
+
+-- ============ 27: 他人の献立は入らない ============
+select is(
+  pg_temp.signals('22222222-2222-4222-8222-222222222222') ->> 'reason', 'no_history',
+  'another user sees none of the owner history'
+);
 
 select * from finish();
 rollback;
 ```
-
-このファイルには続く Step で本体アサーションを足す。まずここまでで落ちることを確認する。
 
 - [ ] **Step 2: テストが落ちることを確認する**
 
@@ -118,7 +389,8 @@ Run:
 docker compose --profile test run --rm db-test > /tmp/dbtest.log 2>&1; \
   grep -nE "not ok|Failed|ERROR" /tmp/dbtest.log | head -20 || tail -n 40 /tmp/dbtest.log
 ```
-Expected: FAIL。`column "taste_learning_enabled" does not exist` と `function public.get_taste_signals(...) does not exist`。
+Expected: FAIL。`column "taste_learning_enabled" does not exist` と
+`function public.get_taste_signals(...) does not exist`。
 
 - [ ] **Step 3: マイグレーションを書く**
 
@@ -210,7 +482,7 @@ liked_ingredient_rows_raw as (
   join public.dish_ingredients di on di.dish_id = d.id
 ),
 liked_ingredient_rows as (
-  select name
+  select name, pg_catalog.sum(score) as weight
   from liked_ingredient_rows_raw
   group by name
   having pg_catalog.count(distinct derivation_group_id) >= 2
@@ -247,7 +519,7 @@ genre_pool as (
 ),
 genre_total as (select pg_catalog.sum(score) as total from genre_pool),
 genre_rows as (
-  select g.cuisine_genre
+  select g.cuisine_genre, pg_catalog.sum(g.score) as weight
   from genre_pool g, genre_total t
   where g.cuisine_genre <> 'any' and t.total > 0
   group by g.cuisine_genre, t.total
@@ -265,7 +537,7 @@ main_ingredient_groups as (
   group by r.derivation_group_id, ing
 ),
 overused_rows as (
-  select name
+  select name, pg_catalog.sum(decay) as weight
   from main_ingredient_groups
   group by name
   having pg_catalog.count(*) >= 3
@@ -283,23 +555,30 @@ group_count as (
 )
 -- 分岐順は disabled -> no_history -> 本体。OFF の利用者は窓が空でも disabled を返す
 select case
-  when coalesce((select enabled from settings), false) is not true
+  -- profiles 行を作るトリガは無い。行が無い利用者は列の既定値と同じ ON として扱う
+  when coalesce((select enabled from settings), true) is not true
     then pg_catalog.jsonb_build_object('reason', 'disabled')
   when (select total from group_count) = 0
     then pg_catalog.jsonb_build_object('reason', 'no_history')
+  -- jsonb_agg には明示の order by が要る。CTE 側の order by は集約の順序にならず、
+  -- LIMIT で中身は守られてもプロンプトへ出る並びが重み順にならない
   else pg_catalog.jsonb_build_object(
     'reason', null,
     'likedDishes', coalesce(
       (select pg_catalog.jsonb_agg(
-        pg_catalog.jsonb_build_object('dishName', dish_name, 'role', role))
+        pg_catalog.jsonb_build_object('dishName', dish_name, 'role', role)
+        order by weight desc, dish_name)
        from liked_dish_rows), '[]'::jsonb),
     'likedGenres', coalesce(
-      (select pg_catalog.jsonb_agg(cuisine_genre) from genre_rows), '[]'::jsonb),
+      (select pg_catalog.jsonb_agg(cuisine_genre order by weight desc, cuisine_genre)
+       from genre_rows), '[]'::jsonb),
     'likedIngredients', coalesce(
-      (select pg_catalog.jsonb_agg(name) from liked_ingredient_rows), '[]'::jsonb),
+      (select pg_catalog.jsonb_agg(name order by weight desc, name)
+       from liked_ingredient_rows), '[]'::jsonb),
     'likedTimeBand', (select band from time_band),
     'overusedIngredients', coalesce(
-      (select pg_catalog.jsonb_agg(name) from overused_rows), '[]'::jsonb),
+      (select pg_catalog.jsonb_agg(name order by weight desc, name)
+       from overused_rows), '[]'::jsonb),
     'avoidAxes', case
       when (select group_count from child_groups) >= 2
         then pg_catalog.jsonb_build_array('child_unfriendly')
@@ -314,7 +593,8 @@ select case
       (select pg_catalog.jsonb_agg(
         pg_catalog.jsonb_build_object(
           'dishName', dish_name,
-          'ingredients', pg_catalog.to_jsonb(ingredients)))
+          'ingredients', pg_catalog.to_jsonb(ingredients))
+        order by dish_name)
        from dish_index_rows), '[]'::jsonb)
   )
 end;
@@ -324,7 +604,7 @@ revoke all on function public.get_taste_signals(timestamptz) from public, anon;
 grant execute on function public.get_taste_signals(timestamptz) to authenticated;
 ```
 
-- [ ] **Step 4: マイグレーションを適用し、Step 1 のテストが通ることを確認する**
+- [ ] **Step 4: マイグレーションを適用し、テストが通ることを確認する**
 
 Run:
 ```bash
@@ -334,120 +614,7 @@ docker compose --profile test run --rm db-test > /tmp/dbtest.log 2>&1; \
 ```
 Expected: PASS（`not ok` が 0 件）。
 
-- [ ] **Step 5: 本体アサーションを pgTAP へ足す（RED）**
-
-`select plan(24);` を `select plan(40);` に変え、`select * from finish();` の直前へ次を挿入する。ヘルパで献立を作る。
-
-```sql
--- 献立を 1 件作るヘルパ（同一 tx 内のみ）
-create or replace function pg_temp.seed_menu(
-  p_user uuid, p_group uuid, p_created timestamptz,
-  p_favorite boolean, p_selected boolean,
-  p_genre text, p_minutes smallint,
-  p_change_reason text, p_main_ingredients jsonb,
-  p_submission_genre text
-) returns uuid language plpgsql as $$
-declare v_id uuid := pg_catalog.gen_random_uuid();
-begin
-  insert into public.menus (
-    id, user_id, meal_type, cuisine_genre, servings, total_elapsed_minutes,
-    preference_snapshot, safety_snapshot, safety_fingerprint,
-    allergen_dictionary_version, food_safety_rule_version, output_schema_version,
-    derivation_group_id, parent_menu_id, change_reason,
-    is_selected, is_favorite, created_at
-  ) values (
-    v_id, p_user, 'dinner', p_genre, 2, p_minutes,
-    pg_catalog.jsonb_build_object('submission', pg_catalog.jsonb_build_object(
-      'cuisineGenre', p_submission_genre, 'mainIngredients', p_main_ingredients)),
-    '{}'::jsonb, pg_catalog.repeat('a', 64),
-    'v1', 'v1', 'v1',
-    p_group,
-    case when p_change_reason is null then null else v_id end,
-    p_change_reason,
-    p_selected, p_favorite, p_created
-  );
-  return v_id;
-end;
-$$;
-```
-
-> 注: `parent_menu_id` は自己参照になるため、`change_reason` を伴う行は先に親を作ってからその id を渡す形に置き換える。上の簡略形は `menus` の check（parent と reason の同時性）だけを満たすための最小形であり、外部キー制約が自己参照を拒む場合は親行を別途 insert してその id を渡す。
-
-続けてアサーションを書く。
-
-```sql
--- 強さは派生グループで数える: 同じ 1 食を 4 回作り直しても weak のまま
-select is(
-  (select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) ->> 'signalStrength'),
-  'weak',
-  'regeneration children do not inflate signalStrength'
-);
-
--- 使いすぎは派生グループ単位: 同じ食材を 3 グループで使って初めて載る
-select is(
-  (select pg_catalog.jsonb_array_length(
-    public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) -> 'overusedIngredients')),
-  1,
-  'main ingredient used in 3 derivation groups is overused'
-);
-
--- 時間帯の境界: 20 は short、20.5 は standard、40 は standard、40.5 は slow
-select is(
-  (select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) ->> 'likedTimeBand'),
-  'standard',
-  'weighted average above 20 falls into standard, not a gap'
-);
-
--- ジャンルは生成結果側で比率を取る。おまかせ依頼のみが母集団
-select is(
-  (select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) -> 'likedGenres'),
-  '["japanese"]'::jsonb,
-  'genre ratio comes from menus.cuisine_genre over any-request favourites'
-);
-
--- 結果が any の行は分子に入らない
-select ok(
-  not (public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) -> 'likedGenres'
-       @> '["any"]'::jsonb),
-  'generated any is never reported as a liked genre'
-);
-
--- child_friendly は 2 グループ以上で初めて軸になる
-select is(
-  (select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) -> 'avoidAxes'),
-  '["child_unfriendly"]'::jsonb,
-  'child_friendly in two derivation groups becomes a standing axis'
-);
-
--- 対応表は score > 0 の料理だけを含む
-select ok(
-  (select pg_catalog.jsonb_array_length(
-    public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) -> 'dishIngredientIndex')) > 0,
-  'dishIngredientIndex covers liked dishes'
-);
-
--- 他人の献立は入らない
-select set_config('request.jwt.claims',
-  '{"sub":"22222222-2222-4222-8222-222222222222","role":"authenticated"}', true);
-select is(
-  (select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) ->> 'reason'),
-  'no_history',
-  'another user sees none of the owner history'
-);
-```
-
-各アサーションの直前に、そのケースを満たす `pg_temp.seed_menu(...)` 呼び出しを置く。件数と日付は上のアサーションが期待する値に合わせる（例: 強さのケースは同一 `derivation_group_id` で 4 行、使いすぎのケースは異なる 3 グループで同じ食材）。
-
-- [ ] **Step 6: RED を確認してから合わせる**
-
-Run:
-```bash
-docker compose --profile test run --rm db-test > /tmp/dbtest.log 2>&1; \
-  grep -nE "not ok|Failed|ERROR" /tmp/dbtest.log | head -20 || tail -n 20 /tmp/dbtest.log
-```
-落ちたアサーションがあれば、**テストではなく SQL 関数を直す**。ただし seed の作り方（件数・グループ・日付）の誤りはテスト側を直す。
-
-- [ ] **Step 7: 生成型を更新する**
+- [ ] **Step 5: 生成型を更新する**
 
 スタックを起動したうえで（`docker compose up -d --wait`）:
 ```bash
@@ -456,7 +623,7 @@ git diff --stat src/shared/types/database.generated.ts
 ```
 Expected: `taste_learning_enabled` と 2 つの関数が差分に現れる。**このファイルは手編集しない。**
 
-- [ ] **Step 8: コミット**
+- [ ] **Step 6: コミット**
 
 ```bash
 git add supabase/migrations/20260922120000_taste_learning.sql \
@@ -1376,31 +1543,65 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `netlify/functions/_shared/diversity-hints.ts`（`DIVERSITY_PARAGRAPH_WITH_TASTE` を追加）
 - Modify: `netlify/functions/_shared/taste-hints.ts`（`TASTE_PARAGRAPH` を追加）
 - Modify: `netlify/functions/_shared/generation-prompt.ts:287-298`（`buildNewMenuSystemPrompt`）と `:549-590`（`buildGenerationMessages`）
+- Modify: `netlify/functions/_shared/generation-service.ts:129-136`（`GenerationExecutionContext` の `new_menu` へフィールド追加）
 - Modify: `netlify/functions/_shared/generation-prompt.test.ts`
 - Create: `netlify/functions/_shared/generation-prompt-taste-off.test.ts`
+- Modify（`tasteHints: null` を足すだけ）: `GenerationExecutionContext` の `new_menu` を構築している **9 箇所**
+  - `netlify/functions/_shared/generation-prompt.test.ts:29`（`asNewMenuExecution`）
+  - `netlify/functions/_shared/generation-prompt-diversity-off.test.ts:53`
+  - `netlify/functions/_shared/generation-prompt-novelty-off.test.ts:50`
+  - `netlify/functions/_shared/generation-prompt-kitchen-off.test.ts:55`
+  - `netlify/functions/_shared/generation-context.test.ts:664`
+  - `netlify/functions/_shared/generation-service.test.ts:180` と `:2083`
+  - `netlify/functions/_shared/generation-adversarial.integration.test.ts:535` と `:798`
+  - `netlify/functions/_shared/generation-quality-review-entry.ts:273`
+  - `netlify/functions/_shared/paid-openrouter-benchmark-harness.ts:406`
+  - `netlify/functions/_tests/generate-menu.test.ts:417`
 
 **Interfaces:**
 - Consumes: Task 2 の `TasteHints`、Task 3 の `TASTE_SYSTEM_MARKER` / `isTasteHintsEnabled` / `TASTE_HINTS_ENABLED`
-- Produces: `buildGenerationMessages` が `GenerationExecutionContext` の `tasteHints: TasteHints | null`（new_menu のみ）を読み、user payload の `tasteHints` キーと system の【学習】段落を出す
+- Produces: `buildGenerationMessages` が `GenerationExecutionContext` の `tasteHints: TasteHints | null`（new_menu のみ、**必須フィールド**）を読み、user payload の `tasteHints` キーと system の【学習】段落を出す
+
+**フィールドは必須にし、構築箇所は同じ Task で埋める。** 省略可能にすると Task 6 の配線を
+忘れても型が通り、「載せたつもりで載っていない」状態が検出できない。代わりに、この Task の
+検証は `npm run typecheck` なので、上の 9 箇所へ `tasteHints: null` を**同時に**足す。
+`recentDishHints` の隣に 1 行足すだけで、`generation-service.ts` が実際の値を入れるのは Task 6。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
 `netlify/functions/_shared/generation-prompt.test.ts` へ追記:
 
 ```ts
+現行の `asNewMenuExecution(context, recentDishHints)` は第 2 引数が配列である。第 3 引数を足す。
+
+```ts
+function asNewMenuExecution(
+  context: GenerationContext,
+  recentDishHints: readonly RecentDishHint[] = [],
+  tasteHints: TasteHints | null = null,
+): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
+  return {
+    // ...既存フィールドはそのまま
+    recentDishHints,
+    tasteHints,
+  };
+}
+
+const someTasteHints: TasteHints = {
+  likedDishes: [{ dishName: "ぶり大根", role: "main" }],
+  likedGenres: ["japanese"],
+  likedIngredients: ["大根"],
+  likedTimeBand: "standard",
+  overusedIngredients: ["豚肉"],
+  avoidAxes: [],
+  signalStrength: "medium",
+};
+```
+
+```ts
 it("adds the taste paragraph and payload key only for new_menu", () => {
   const messages = buildGenerationMessages(
-    asNewMenuExecution(makeGenerationContext(), {
-      tasteHints: {
-        likedDishes: [{ dishName: "ぶり大根", role: "main" }],
-        likedGenres: ["japanese"],
-        likedIngredients: ["大根"],
-        likedTimeBand: "standard",
-        overusedIngredients: ["豚肉"],
-        avoidAxes: [],
-        signalStrength: "medium",
-      },
-    }),
+    asNewMenuExecution(makeGenerationContext(), [], someTasteHints),
   );
   const system = messages.find((message) => message.role === "system");
   const user = messages.find((message) => message.role === "user");
@@ -1412,7 +1613,7 @@ it("adds the taste paragraph and payload key only for new_menu", () => {
 
 it("states the priority order exactly once", () => {
   const messages = buildGenerationMessages(
-    asNewMenuExecution(makeGenerationContext(), { tasteHints: someTasteHints }),
+    asNewMenuExecution(makeGenerationContext(), [], someTasteHints),
   );
   const system = messages.find((message) => message.role === "system")?.content ?? "";
   expect(system.split("優先順位は次のとおりです。").length - 1).toBe(1);
@@ -1420,7 +1621,7 @@ it("states the priority order exactly once", () => {
 
 it("omits the key entirely when there are no hints", () => {
   const messages = buildGenerationMessages(
-    asNewMenuExecution(makeGenerationContext(), { tasteHints: null }),
+    asNewMenuExecution(makeGenerationContext(), [], null),
   );
   const user = messages.find((message) => message.role === "user");
   expect(user?.content).not.toContain("tasteHints");
@@ -1526,9 +1727,36 @@ const payload = {
 };
 ```
 
-`readTasteHintsEnabledFlag()` は `readDiversityHintsEnabledFlag` と同型で `isTasteHintsEnabled(TASTE_HINTS_ENABLED)` を返す。`GenerationExecutionContext` の `new_menu` 分岐へ `tasteHints: TasteHints | null` を足す（Task 6 で埋める。この Task ではフィールド追加とテストのみ）。
+`readTasteHintsEnabledFlag()` は `readDiversityHintsEnabledFlag` と同型で `isTasteHintsEnabled(TASTE_HINTS_ENABLED)` を返す。
 
-- [ ] **Step 5: 通ることを確認する**
+`generation-service.ts:129-136` の `new_menu` 分岐へ必須フィールドを足す。
+
+```ts
+  | (ExecutionBase & {
+      kind: "new_menu";
+      command: Extract<GenerationCommand, { kind: "new_menu" }>;
+      regeneration: null;
+      /** soft diversity 用。空配列可。fingerprint / quota に含めない */
+      recentDishHints: readonly RecentDishHint[];
+      /** 学習ヒント。安全フィルタと sanitize 済みの確定形。同じく fingerprint / quota に含めない */
+      tasteHints: TasteHints | null;
+    })
+```
+
+- [ ] **Step 5: 構築箇所 9 つへ `tasteHints: null` を足す**
+
+必須フィールドなので、Task 6 で実値を入れるまでのあいだ全構築箇所が欠落で落ちる。
+`recentDishHints:` を書いている行の隣へ 1 行足す。
+
+```bash
+grep -rn "recentDishHints:" --include=*.ts netlify/ | grep -v generation-prompt.ts
+```
+
+対象（Files 節と同じ 9 ファイル・11 箇所）。`generation-prompt.test.ts` だけは Step 1 の
+第 3 引数で入るため、残りへ `tasteHints: null,` を足す。`generation-service.test.ts:180` は
+オーバーライド形なので `tasteHints: overrides.tasteHints ?? null,` にしておくと Task 6 が楽になる。
+
+- [ ] **Step 6: 通ることを確認する**
 
 Run:
 ```bash
@@ -1539,13 +1767,23 @@ docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/g
   netlify/functions/_shared/generation-prompt-kitchen-off.test.ts
 docker compose run --rm --no-deps app npm run typecheck
 ```
-Expected: PASS（既存 3 本の off テストも通ること）
+Expected: PASS（既存 3 本の off テストも通ること）。`typecheck` は全構築箇所を見るため、
+Step 5 の追記漏れはここで落ちる。
 
-- [ ] **Step 6: コミット**
+- [ ] **Step 7: コミット**
 
 ```bash
 git add netlify/functions/_shared/taste-hints.ts netlify/functions/_shared/diversity-hints.ts \
-  netlify/functions/_shared/generation-prompt.ts \
+  netlify/functions/_shared/generation-prompt.ts netlify/functions/_shared/generation-service.ts \
+  netlify/functions/_shared/generation-context.test.ts \
+  netlify/functions/_shared/generation-service.test.ts \
+  netlify/functions/_shared/generation-adversarial.integration.test.ts \
+  netlify/functions/_shared/generation-quality-review-entry.ts \
+  netlify/functions/_shared/paid-openrouter-benchmark-harness.ts \
+  netlify/functions/_tests/generate-menu.test.ts \
+  netlify/functions/_shared/generation-prompt-diversity-off.test.ts \
+  netlify/functions/_shared/generation-prompt-novelty-off.test.ts \
+  netlify/functions/_shared/generation-prompt-kitchen-off.test.ts \
   netlify/functions/_shared/generation-prompt.test.ts \
   netlify/functions/_shared/generation-prompt-taste-off.test.ts
 git commit -m "feat(prompt): new_menu へ学習段落と tasteHints を載せる
@@ -1562,7 +1800,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ### Task 6: 配線・記録・観測ログ
 
 **Files:**
-- Modify: `netlify/functions/_shared/generation-service.ts:450-480`（`loadExecutionContext`）と `:675-700`（`buildSuccessInput`）
+- Modify: `netlify/functions/_shared/generation-service.ts:450-480`（`loadExecutionContext`）、`:675-700`（`buildSuccessInput`）、`:815-827`（`emitTerminalLog`）
 - Modify: `netlify/functions/_shared/logger.ts` — `SafeGenerationLogEvent`（`:85-90`）、`logGenerationEvent`（`:470-485`）、`SafeLogEvent`（`:14`）、`createSafeLogger`（`:271-`）、`SAFE_LOG_SERIALIZED_KEYS`（`:207`）の 5 箇所
 - Modify: `scripts/assert-privacy-logs.mjs:31`（`allowedLogKeys`）
 - Modify: `netlify/functions/_shared/generation-service.test.ts`
@@ -1601,10 +1839,16 @@ it("never feeds tasteHints into the safety fingerprint", async () => {
   expect(withHints.safetyFingerprint).toBe(withoutHints.safetyFingerprint);
 });
 
-it("logs a closed outcome enum", async () => {
+it("logs a closed outcome enum on the terminal log, not only on success", async () => {
+  // 学習ヒントがタイムアウトしても生成自体は成功する。succeeded ログに結末が残ること
   const deps = makeDeps({ tasteSignals: null, tasteOutcome: "timeout" });
   await runNewMenu(deps);
   expect(deps.loggedEvents.at(-1)).toMatchObject({ tasteHintsOutcome: "timeout" });
+
+  // 失敗経路（fail / constraint_conflict）も同じ emitTerminalLog を通る
+  const failing = makeDeps({ tasteSignals: null, tasteOutcome: "query_failed", failWith: "generation_timeout" });
+  await runNewMenu(failing);
+  expect(failing.loggedEvents.at(-1)).toMatchObject({ tasteHintsOutcome: "query_failed" });
 });
 ```
 
@@ -1773,7 +2017,34 @@ preferenceSnapshot:
     : context.preferenceSnapshot,
 ```
 
-`logGenerationEvent` の呼び出しへ `tasteHintsOutcome` を渡す。
+**結末は `emitTerminalLog` へ渡す。** `logGenerationEvent` を呼んでいるのは
+`generation-service.ts:815` の `emitTerminalLog` クロージャ 1 箇所だけで、成功・失敗・
+`constraint_conflict` のすべてがここを通る。**成功ログにだけ足すと足りない**: 学習ヒントが
+タイムアウトしても生成自体は成功するため、最後のログが `succeeded` でも結末が残る必要がある。
+
+`loggedModelId` と同じ形で、実行文脈が確定した時点で代入する可変クロージャ変数にする。
+
+```ts
+  // loggedModelId と同じ扱い。実行文脈が確定した時点で入り、終端ログ全種が読む
+  let loggedTasteHintsOutcome: TasteHintsOutcome | undefined;
+
+  const emitTerminalLog = (level: "info" | "warn" | "error", code: string): void => {
+    const durationMs = Math.max(
+      0,
+      Math.trunc(deps.monotonicNow() - deps.requestStartedAtMonotonicMs),
+    );
+    const log = deps.logTerminalEvent ?? logGenerationEvent;
+    log(level, {
+      requestId,
+      errorCode: code,
+      durationMs,
+      modelId: loggedModelId,
+      ...(loggedTasteHintsOutcome === undefined
+        ? {}
+        : { tasteHintsOutcome: loggedTasteHintsOutcome }),
+    });
+  };
+```
 
 - [ ] **Step 5: 通ることを確認する**
 
@@ -1810,11 +2081,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `shared/contracts/menu-result.ts:50-95`（`MenuResultViewModel`）
+- Modify: `shared/testing/factories.ts`（`makeMenuResultViewModel` に新しい必須項目を足す。**これを忘れると全体の typecheck が落ちる**）
 - Modify: `src/features/generation/api/menu-result-api.ts:330-405`
 - Modify: `src/features/menu-detail/menu-hero.tsx`
-- Modify: `src/features/menu-detail/household-menu-detail-body.tsx` と `src/features/menu-detail/idea-menu-detail-body.tsx`（`MenuHero` へ prop を渡す）
+- Modify: `src/features/generation/components/menu-result.tsx:338`（**`MenuHero` を描いているのはここだけ**。`household-menu-detail-body.tsx` と `idea-menu-detail-body.tsx` は `MenuResult` を呼んでおり、`MenuHero` を直接は呼ばない）
 - Modify: `src/features/generation/api/menu-result-api.test.ts`
-- Modify: `src/features/menu-detail/menu-hero.test.tsx`
+- Modify: `src/features/menu-detail/menu-hero.test.tsx`（既存 2 つの `render` にも prop が要る）
 
 **Interfaces:**
 - Consumes: Task 2 の `tasteHintsRecordSchema`、Task 6 が書く `preference_snapshot.tasteHints`
@@ -1824,25 +2096,34 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 `menu-result-api.test.ts` へ追記:
 
+`toMenuResultViewModel` / `makeRow` は存在しない。既存の「`submission` が欠落している」テスト
+（`:573` 付近）と同じ `rawMenuRow()` ＋ `getMenuResult(MENU_ID)` の形で書く。
+
 ```ts
-it("projects tasteHintsApplied only for medium or stronger records", () => {
-  expect(
-    toMenuResultViewModel(makeRow({ preference_snapshot: { tasteHints: { applied: true, strength: "medium" } } })),
-  ).toMatchObject({ tasteHintsApplied: true });
-  expect(
-    toMenuResultViewModel(makeRow({ preference_snapshot: { tasteHints: { applied: true, strength: "weak" } } })),
-  ).toMatchObject({ tasteHintsApplied: false });
+async function resultWithSnapshot(snapshot: unknown) {
+  const row = rawMenuRow();
+  row.preference_snapshot = snapshot;
+  getBrowserSupabaseClientMock.mockReturnValue(
+    mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+  );
+  return await getMenuResult(MENU_ID);
+}
+
+it("medium 以上の記録のときだけ tasteHintsApplied を立てる", async () => {
+  expect((await resultWithSnapshot({ tasteHints: { applied: true, strength: "medium" } })).tasteHintsApplied).toBe(true);
+  expect((await resultWithSnapshot({ tasteHints: { applied: true, strength: "strong" } })).tasteHintsApplied).toBe(true);
+  // 履歴の浅い利用者に「いつもの好み」と言わない
+  expect((await resultWithSnapshot({ tasteHints: { applied: true, strength: "weak" } })).tasteHintsApplied).toBe(false);
 });
 
-it("falls back to false for missing or broken records", () => {
-  expect(toMenuResultViewModel(makeRow({ preference_snapshot: {} }))).toMatchObject({ tasteHintsApplied: false });
-  expect(
-    toMenuResultViewModel(makeRow({ preference_snapshot: { tasteHints: { applied: "yes" } } })),
-  ).toMatchObject({ tasteHintsApplied: false });
+it("記録が無い・壊れているときは false に倒す", async () => {
+  expect((await resultWithSnapshot({})).tasteHintsApplied).toBe(false);
+  expect((await resultWithSnapshot({ tasteHints: { applied: "yes" } })).tasteHintsApplied).toBe(false);
 });
 ```
 
-`menu-hero.test.tsx` へ追記:
+`menu-hero.test.tsx` は既存 2 つの `render` にも `tasteHintsApplied={false}` を足したうえで、
+次を追記する。
 
 ```tsx
 it("shows the taste line alongside the model label without replacing it", () => {
@@ -1932,7 +2213,13 @@ export function MenuHero({
 }
 ```
 
-`household-menu-detail-body.tsx` と `idea-menu-detail-body.tsx` の `MenuHero` 呼び出しへ `tasteHintsApplied={result.tasteHintsApplied}` を渡す。
+`src/features/generation/components/menu-result.tsx:338` の `MenuHero` 呼び出しへ
+`tasteHintsApplied={result.tasteHintsApplied}` を渡す（`MenuHero` を描いているのはここだけ）。
+
+`shared/testing/factories.ts` の `makeMenuResultViewModel` の既定値へ `tasteHintsApplied: false` を
+足す。`MenuResultViewModel` へ必須項目を足しているため、これが無いと
+`menu-dishes.test.tsx` / `menu-ingredients-summary.test.tsx` / `history-detail-page.test.tsx` が
+欠落で落ち、全体の typecheck も通らない。
 
 - [ ] **Step 5: 通ることを確認する**
 
@@ -1962,11 +2249,11 @@ E2E（`./scripts/run-e2e.sh`）は出力が大きいため、人間の端末で�
 - [ ] **Step 7: コミット**
 
 ```bash
-git add shared/contracts/menu-result.ts src/features/generation/api/menu-result-api.ts \
+git add shared/contracts/menu-result.ts shared/testing/factories.ts \
+  src/features/generation/api/menu-result-api.ts \
   src/features/generation/api/menu-result-api.test.ts \
-  src/features/menu-detail/menu-hero.tsx src/features/menu-detail/menu-hero.test.tsx \
-  src/features/menu-detail/household-menu-detail-body.tsx \
-  src/features/menu-detail/idea-menu-detail-body.tsx
+  src/features/generation/components/menu-result.tsx \
+  src/features/menu-detail/menu-hero.tsx src/features/menu-detail/menu-hero.test.tsx
 git commit -m "feat(menu): 好みを反映した献立に 1 行を出す
 
 preference_snapshot.tasteHints を再検証して投影する。weak では出さず、
@@ -2003,6 +2290,13 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **残る注意点**
 
-- Task 1 Step 5 の pgTAP seed は `menus` の `parent_menu_id` 自己参照制約に注意する。`change_reason` を持つ行は親行を先に作り、その id を渡す。
+- Task 1 の pgTAP は `plan(27)` とアサーション数を一致させる。ケースのあいだで
+  `truncate public.menus cascade` を挟むこと（行を足し続けると強さ・時間帯・ジャンル比率が
+  前のケースを巻き込む）。行を作る間はスーパーユーザーのままにし、RPC 直前だけ
+  `tests.authenticate_as()` ＋ `set local role authenticated` に切り替える。
 - Task 3 の `filterTasteHintsForSafety` は安全ゲートではない。実判定は `validate-generated-menu` と生成ハードゲートのままで、ここを通ったことを「安全」と読まない。
-- Task 6 の `makeDeps` / `runNewMenu` は `generation-service.test.ts` の既存ヘルパ名に置き換える。
+- Task 6 の `makeDeps` / `runNewMenu` / `failWith` は `generation-service.test.ts` の既存ヘルパ名と
+  オーバーライド形に置き換える。`mockClient` / `rawMenuRow` / `getBrowserSupabaseClientMock`
+  （Task 7）も同様に、`menu-result-api.test.ts` の既存定義をそのまま使う。
+- Task 5 は必須フィールドを足すため、9 ファイル 11 箇所の `tasteHints: null` を同じ Task で
+  入れ切る。`npm run typecheck` が漏れを検出する。
