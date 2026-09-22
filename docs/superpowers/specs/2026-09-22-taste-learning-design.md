@@ -66,7 +66,11 @@
 export const tasteSignalStrengths = ["weak", "medium", "strong"] as const;
 export type TasteSignalStrength = (typeof tasteSignalStrengths)[number];
 
-/** 所要時間帯。menus.total_elapsed_minutes から導出する */
+/**
+ * 所要時間帯。menus.total_elapsed_minutes の加重平均から導出する。
+ * 加重平均は小数になるため、境界は `<= 20` / `<= 40` / それ以外で連続させる
+ * （`21-40` と書くと 20.5 分がどの帯にも入らない）。
+ */
 export const tasteTimeBands = ["short", "standard", "slow"] as const;
 
 /** 恒常シグナルとして扱える避ける軸は現状これだけ（§4.3） */
@@ -96,6 +100,8 @@ export const TASTE_LIKED_DISHES_MAX = 12 as const;
 export const TASTE_LIKED_GENRES_MAX = 2 as const;
 export const TASTE_LIKED_INGREDIENTS_MAX = 8 as const;
 export const TASTE_OVERUSED_INGREDIENTS_MAX = 3 as const;
+/** 対応表（prompt 非出力）の 1 料理あたり食材上限 */
+export const TASTE_INDEX_INGREDIENTS_PER_DISH_MAX = 12 as const;
 
 export const tasteHintsSchema = z
   .object({
@@ -113,7 +119,30 @@ export const tasteHintsSchema = z
 
 export type TasteHints = z.infer<typeof tasteHintsSchema>;
 
-/** 中身が空なら prompt にも記録にも出さない（§5.6） */
+/**
+ * 集計関数の戻り。dishIngredientIndex は §5.3 の食材連鎖削除の対応表であり、
+ * prompt にも preference_snapshot にも出さない（sanitize で捨てる）。
+ */
+export const tasteSignalsSchema = z
+  .object({
+    ...tasteHintsSchema.shape,
+    dishIngredientIndex: z
+      .array(
+        z.object({
+          dishName: z.string().min(1).max(100),
+          ingredients: z.array(z.string().min(1).max(100)).max(TASTE_INDEX_INGREDIENTS_PER_DISH_MAX),
+        }),
+      )
+      .max(TASTE_LIKED_DISHES_MAX),
+  })
+  .strict();
+
+/**
+ * 中身が空なら prompt にも記録にも出さない（§5.6）。
+ * likedDishes / likedIngredients / likedGenres / overusedIngredients / avoidAxes の
+ * いずれかが 1 件以上、または likedTimeBand が null でないこと。
+ * signalStrength だけでは載せない（強さは中身ではない）。
+ */
 export function hasTasteContent(hints: TasteHints): boolean;
 
 /** preference_snapshot へ記録する形。ブラウザはこれだけを読む */
@@ -187,7 +216,6 @@ SELECT 権限は `20260712000100` 以降も残っているため、トグルの�
 
 ```sql
 create or replace function public.get_taste_signals(
-  p_target_mode text,
   p_now timestamptz default pg_catalog.now()
 ) returns jsonb
 language sql
@@ -200,9 +228,13 @@ set search_path = ''
   他人の行は RLS が落とす。`SECURITY DEFINER` は使わない（権限を広げる理由がない）。
 - `grant execute ... to authenticated`、`revoke ... from public, anon`。
 - 引数に `user_id` を取らない。`(select auth.uid())` のみを使う。
-- `p_target_mode` は `'household'` / `'idea'`。`avoidAxes` のモード制限（§4.3）に使う。
-- `profiles.taste_learning_enabled = false` のとき、および窓内の献立が 0 件のときは `null` を返す。
-  トグルの評価をデータ境界に置き、呼び出し側の分岐漏れで有効化されない形にする。
+- **モードは引数に取らない。** 新規生成の request（`newMenuGenerationRequestSchema`）は
+  `idempotencyKey` / `draftId` / `draftRevision` / `privacyNoticeVersion` /
+  `expiredPantryConfirmations` だけで `targetMode` を持たない。モードは下書き側にあり、
+  `loadGenerationContext` が返す `generationContext.targetMode` で初めて分かる。
+  `Promise.all` の開始時点では渡せる値がないため、idea の `avoidAxes` 除去は
+  取得後（§5.2）で行う。
+- 戻りは常に**判別可能オブジェクト**（§4.5）。`null` は返さない。
 
 ### 4.1 窓と重み（式を確定する）
 
@@ -226,14 +258,18 @@ score(m)  = decay(m) * (
 | --- | --- | --- |
 | `likedDishes` | `score > 0` | `dishes(name, role)` を score 合計降順。同名は 1 つに畳む。最大 12 |
 | `likedIngredients` | `score > 0` | `dish_ingredients.name` を score 合計降順。**素の出現 2 回以上**。最大 8 |
-| `likedTimeBand` | `score > 0` | `menus.total_elapsed_minutes` の score 加重平均 → `short` ≤20 / `standard` 21–40 / `slow` ≥41。1 値 |
-| `likedGenres` | `score > 0` **かつ `submission.cuisineGenre = 'any'`** | score 合計の比率が 0.35 以上のジャンルのみ、最大 2 |
+| `likedTimeBand` | `score > 0` | `menus.total_elapsed_minutes` の score 加重平均 → `<= 20` は `short`、`<= 40` は `standard`、それ以外は `slow`。1 値 |
+| `likedGenres` | `score > 0` **かつ `submission.cuisineGenre = 'any'`** | **`menus.cuisine_genre`**（生成結果のジャンル）別の score 合計 ÷ 母集団の score 合計 が 0.35 以上のジャンルのみ、最大 2 |
 
 **`likedGenres` の母集団をおまかせ（`any`）に限る理由。** `validate-generated-menu.ts` は
 `submission.cuisineGenre !== "any"` のとき生成結果のジャンル不一致を弾く。したがってジャンルを
 指定した回のお気に入りは「利用者が自分で選んだジャンル」の写しでしかなく、学習として循環する。
 おまかせで生成された献立をお気に入りにしたときだけ、ジャンルは利用者の自由な選好を表す。
 加えて 3 値中 2 値が常に入るとヒントにならないため、比率 0.35 の下限を置く。
+
+**比率を足す列は `menus.cuisine_genre`（生成結果）である。** 母集団の条件に使う
+`submission.cuisineGenre` を分子にも使うと、母集団は定義上すべて `any` なので結果は常に空になる。
+生成結果側の `cuisine_genre` が `'any'` の行は分子に入れない（分母には残す）。
 
 **`likedTimeBand` は `menus.total_elapsed_minutes` から導出する**（列は存在する）。味の方向と
 調理法と違い、これは構造として持っている値であり、モデルの推測に委ねない。
@@ -254,19 +290,44 @@ score(m)  = decay(m) * (
 `child_friendly` → `child_unfriendly` のみとし、**窓内で 2 回以上**現れたときだけ載せる
 （1 回きりを恒常の好みと扱わない）。`change_reason_custom` と `memo` の自由記述は読まない。
 
-**`p_target_mode = 'idea'` のとき `avoidAxes` は常に空にする。** `regeneration-sheet.tsx` は
-idea で `child_friendly` を選択肢から外し、サーバーも拒否する（年齢適合を保証しないため）。
-家族モードで押した履歴を idea 生成のプロンプトへ持ち込むと、この約束と衝突する。
+`child_friendly` の回数も**派生グループごとに 1 回**と数える（§4.4 と同じ理由）。同じ 1 食に
+「子どもが食べやすく」を 2 回押しただけで恒常の軸にしない。
+
+**idea 生成では `avoidAxes` を空にする。** `regeneration-sheet.tsx` は idea で `child_friendly` を
+選択肢から外し、サーバーも拒否する（年齢適合を保証しないため）。家族モードで押した履歴を idea
+生成のプロンプトへ持ち込むと、この約束と衝突する。集計関数はモードを知らないので、
+除去は `filterTasteHintsForSafety`（§5.2）で `generationContext.targetMode === "idea"` を見て行う。
 
 ### 4.4 使いすぎの検出と強さ
 
 | 出力 | 集計 |
 | --- | --- |
-| `overusedIngredients` | 窓内**全**献立の `submission.mainIngredients`。**素の出現 3 回以上**かつ score 非依存の decay 合計降順、最大 3 |
+| `overusedIngredients` | 窓内**全**献立の `submission.mainIngredients`。**派生グループ単位で 3 回以上**かつ decay 合計降順、最大 3 |
 | `signalStrength` | 窓内の **`derivation_group_id` の個数**。1–4 = `weak` / 5–14 = `medium` / 15 以上 = `strong` |
 
 `signalStrength` は献立の行数ではなく派生グループで数える。`parent_menu_id is not null` の再生成
 子行を数えると、同じ 1 食を作り直しただけで 15 行にすぐ届き、`strong` を名乗ってしまう。
+
+**回数を数えるものはすべて `derivation_group_id` 単位で 1 回**とする。再生成は元の依頼をやり直す
+操作であり、子献立は親と同じ条件由来の `submission` を持って別行で保存される。行で数えると、
+同じ 1 食を 3 回作り直しただけでメイン食材が「使いすぎ」になる。同一献立の配列内に同じ食材が
+二度現れた場合も 1 回と数える。`likedIngredients` の最低出現回数、`overusedIngredients` の
+最低出現回数、`avoidAxes` の最低出現回数のすべてに適用する。
+
+### 4.5 戻り値（判別可能オブジェクトに統一する）
+
+`null` は返さない。空の理由をローダが区別できる必要があり（§5.7 の観測性）、
+かつ `tasteHintsSchema` は理由オブジェクトを通さないため、**`safeParse` の前に `reason` を見る**。
+
+```jsonc
+{ "reason": "disabled" }     // taste_learning_enabled = false
+{ "reason": "no_history" }   // 窓内 0 件
+{ "reason": null, "likedDishes": [...], "likedGenres": [...], "likedIngredients": [...],
+  "likedTimeBand": "standard", "overusedIngredients": [...], "avoidAxes": [...],
+  "signalStrength": "medium", "dishIngredientIndex": [...] }
+```
+
+ローダは `reason` を先に分岐し、`null` のときだけ `tasteSignalsSchema.safeParse` にかける。
 
 ## 5. Function 側
 
@@ -281,7 +342,7 @@ export const TASTE_HINTS_TIMEOUT_MS = 200 as const;
 
 export type TasteHintsOutcome =
   | "disabled_flag"      // kill-switch off
-  | "disabled_user"      // taste_learning_enabled = false（関数が null を返す）
+  | "disabled_user"      // taste_learning_enabled = false（reason: "disabled"）
   | "no_history"         // 窓内 0 件
   | "timeout"
   | "query_failed"
@@ -291,17 +352,17 @@ export type TasteHintsOutcome =
 
 export async function loadTasteHints(input: {
   ownerClient: unknown;
-  targetMode: TargetMode;
   timeoutMs?: number;
-}): Promise<{ hints: TasteHints | null; outcome: TasteHintsOutcome }>;
+}): Promise<{ signals: TasteSignals | null; outcome: TasteHintsOutcome }>;
 ```
 
 - owner-scoped client（`createUserScopedSupabase(user.accessToken)`）で `get_taste_signals` を RPC する。
-- 戻り値を `tasteHintsSchema.safeParse`。失敗・タイムアウト・`null`・例外はすべて `hints: null`。
-  **決して throw しない**。
+- 失敗・タイムアウト・例外はすべて `signals: null`。**決して throw しない**。
 - 200ms の race は `loadRecentDishHints` と同じ実装形（遅延 resolve は採用しない、late reject を握り潰す）。
-- `disabled_user` と `no_history` は RPC の `null` からは区別できないため、SQL 側の戻り値を
-  `null` ではなく `{"reason":"disabled"}` / `{"reason":"no_history"}` の判別可能形にする。
+- `reason` を先に見て `disabled_user` / `no_history` を確定し、`reason === null` のときだけ
+  `tasteSignalsSchema.safeParse` にかける（§4.5）。理由オブジェクトを schema に通すと
+  両方とも `invalid_shape` に潰れる。
+- 戻すのは `TasteSignals`（対応表を含む）。対応表は §5.3 で使い切り、prompt へは出さない。
 
 ### 5.2 安全フィルタ `filterTasteHintsForSafety()`
 
@@ -320,6 +381,13 @@ export async function loadTasteHints(input: {
 照合は `normalizeFoodText` + `foodTextContainsAlias`（`shared/safety/allergens.ts`）を再利用する。
 idea モード（`safety: null`）ではアレルゲン由来の語が無く、`avoidIngredients` のみで落とす。
 
+**この関数が `avoidAxes` のモード制限も行う。** `generationContext.targetMode === "idea"` のとき
+`avoidAxes` を空にする（§4.3）。集計関数はモードを知らず、配線の `Promise.all` 開始時点でも
+モードは未確定であり、`generationContext` が揃うこの位置が最初の適用点である。
+
+食材を落とすときは、対応表（`dishIngredientIndex`）側の食材も同じ判定で落としておく。
+§5.3 の差集合が、既に安全上落とした食材を「残っている」と誤判定しないようにする。
+
 > **これは安全ゲートではない。** 過去の好みを現在の制約に持ち込まないための prompt 衛生であり、
 > 実際の安全判定は従来どおり `validate-generated-menu` と生成ハードゲートが担う。
 > 本フィルタが素通りしても安全性は下がらない。
@@ -332,9 +400,16 @@ idea モード（`safety: null`）ではアレルゲン由来の語が無く、`
 1. `recentDishHints` に出ている料理名を `likedDishes` から落とす。
    — 好きだが最近出した料理は、スタイルだけ汲んで料理は変える。軸分けの実装本体である。
 2. **1 で落とした料理にしか現れない食材を `likedIngredients` からも落とす。**
-   名前だけ消しても食材が残れば同じ皿に戻る。落ちた料理と残った料理の食材集合の差を取る。
+   名前だけ消しても食材が残れば同じ皿に戻る。
 3. 契約の各上限で切り詰める。
-4. `hasTasteContent()` が false なら全体を `null` にする（`outcome = "filtered_empty"`）。
+4. **対応表 `dishIngredientIndex` を捨てる。** 戻り値は `TasteHints`（対応表なし）。
+5. `hasTasteContent()` が false なら全体を `null` にする（`outcome = "filtered_empty"`）。
+
+**手順 2 は対応表なしでは計算できない。** `recentDishHints` は `{ dishName, role? }` だけで食材を
+持たず、`likedIngredients` も料理名と紐づいていない。この 2 つだけを受け取った関数に差集合は
+作れない。そのため集計関数が `score > 0` の料理ごとの食材名（`dishIngredientIndex`）を一緒に返し、
+sanitize がそれを使って差を取り、user ペイロードと `preference_snapshot` へ渡す前に対応表自体を
+捨てる。対応表は**プロンプトにも記録にも出ない**。
 
 ### 5.4 プロンプト合成 `generation-prompt.ts`
 
@@ -378,8 +453,8 @@ CORE_BODY + DIVERSITY? + TASTE? + NOVELTY? + SEASON + mode extra
 ```ts
 const tasteEnabled = isTasteHintsEnabled(TASTE_HINTS_ENABLED);
 const tastePromise = tasteEnabled
-  ? loadTasteHints({ ownerClient, targetMode: command.request.targetMode })
-  : Promise.resolve({ hints: null, outcome: "disabled_flag" as const });
+  ? loadTasteHints({ ownerClient })
+  : Promise.resolve({ signals: null, outcome: "disabled_flag" as const });
 
 const [generationContext, recentDishHints, taste] = await Promise.all([
   loadGenerationContext(user, requestId, command.request),
@@ -387,10 +462,14 @@ const [generationContext, recentDishHints, taste] = await Promise.all([
   tastePromise,
 ]);
 
+// targetMode は generationContext が揃って初めて分かる（request は持たない）
 const finalTasteHints =
-  taste.hints === null
+  taste.signals === null
     ? null
-    : sanitizeTasteHints(filterTasteHintsForSafety(taste.hints, generationContext), recentDishHints);
+    : sanitizeTasteHints(
+        filterTasteHintsForSafety(taste.signals, generationContext),
+        recentDishHints,
+      );
 ```
 
 - kill-switch off のときは **load 自体を呼ばない**（内部 early-return に頼らない。L13 と同じ規約）。
@@ -418,18 +497,32 @@ finalTasteHints !== null        -> { applied: true, strength: finalTasteHints.si
 **閉じた列挙 1 フィールドだけ**を足す。
 
 ```
-tasteHintsOutcome: TasteHintsOutcome   // §5.1 の 8 値のみ
+taste_hints_outcome: TasteHintsOutcome   // §5.1 の 8 値のみ
 ```
 
-`logger.ts` は自由文を受け付けない閉じた snake_case 設計であり、この形はその規約に合う。
+**フィールドを型に足すだけでは出力されない。** `createSafeLogger` は許可一覧にあるキーだけを書き、
+それ以外を捨てる。次の 3 箇所へ**同時に**足す。
+
+| 追加先 | 内容 |
+| --- | --- |
+| `logger.ts` の `SafeLogEvent` | 型に `tasteHintsOutcome` を足す |
+| `logger.ts` の `SAFE_LOG_SERIALIZED_KEYS` | `"taste_hints_outcome"` を足す |
+| `scripts/assert-privacy-logs.mjs` の `allowedLogKeys` | 同じキーを足す（無いと `privacy_log_unexpected_field`） |
+
+値は `closedErrorCode` / `closedModelId` と同型の**閉じた列挙**で通し、未知の文字列は落とす。
+`logger.ts` は自由文を受け付けない設計であり、この形はその規約に合う。
 **料理名・食材名・件数の内訳は出さない。** `preference_snapshot` へ自由文を足す必要もない。
 
 ## 6. UI
 
 ### 6.1 設定トグル
 
-`src/features/account/account-settings-section.tsx` に 1 項目追加する。読み取りは既存の
-`profiles` select、書き込みは `set_taste_learning_enabled` RPC（§3.3）。
+`src/features/account/account-settings-section.tsx` に 1 項目追加する。
+
+**アカウント設定は現在 `profiles` を読んでいない。** `profiles` を読んでいるのは
+`src/features/household/household-api.ts` の `select("*")`（初回設定の状態用）だけである。
+設定画面用の読み取りを新設する。SELECT 権限は `20260712000100` 以降も残っているため、
+読み取りに新しい関数は要らない。書き込みだけが `set_taste_learning_enabled` RPC（§3.3）。
 
 ```
 好みの学習                                              [ ON ]
@@ -486,26 +579,28 @@ OFF にすると読み取りをやめます。設定と反映の記録は保存�
    `validate-generated-menu` の入力に**現れない**。
 2. `regenerate_menu` / `regenerate_dish` の messages に `tasteHints` キーと【学習】マーカーは現れない。
 3. `TASTE_HINTS_ENABLED` が false のとき、段落・キー・RPC のすべてが出ない。
-4. `taste_learning_enabled = false` の利用者では `get_taste_signals` がヒントを返さない。
+4. `taste_learning_enabled = false` の利用者では `get_taste_signals` が `{ reason: "disabled" }` を返す。
 5. 他人の `menus` は RLS により集計に入らない。
 6. `change_reason_custom` と `memo` の自由記述は集計にも prompt にも入らない。
-7. `p_target_mode = 'idea'` で `avoidAxes` は常に空。
+7. idea 生成のプロンプトに `avoidAxes` は現れない。
 8. 料理名・食材名は system 文に連結されず、user JSON 経由でのみ送られる。
 9. `public.profiles` のテーブル単位 UPDATE 権限は復活しない。
 10. 優先順位の文は 1 つの system 文に 1 回しか現れない。
+11. `dishIngredientIndex` は user ペイロードにも `preference_snapshot` にもログにも現れない。
 
 ## 9. テスト
 
 | 層 | ファイル | 見るもの |
 | --- | --- | --- |
-| pgTAP | `supabase/tests/database/taste_signals.test.sql` | 他人の menus を読まない／窓の境界 89・90 日と 49・50 件／半減期／`score` の加算と乗算／`derivation_group_id` で数えた強さの 4・5・14・15／最低出現回数の境界／ジャンル比率 0.35 と `any` 限定／idea で `avoidAxes` 空／OFF と 0 件の判別／`set_taste_learning_enabled` が他人の行を更新しない／テーブル単位 UPDATE が依然として拒否される |
-| Function | `taste-hints.test.ts` | Zod 検証／タイムアウト・失敗・不正形で null と `outcome`／OFF で RPC を呼ばない／安全フィルタ（アレルゲン別名・カスタム・苦手・avoid）／idea モード／`sanitizeTasteHints` の食材連鎖削除 |
+| pgTAP | `supabase/tests/database/taste_signals.test.sql` | 他人の menus を読まない／窓の境界 89・90 日と 49・50 件／半減期／`score` の加算と乗算／`derivation_group_id` で数えた強さの 4・5・14・15／**回数はすべて派生グループ単位**（同じ 1 食を 3 回再生成しても使いすぎにならない、`child_friendly` 2 回でも 1 グループなら軸にならない）／同一献立内の重複食材は 1 回／ジャンルは `menus.cuisine_genre` で比率を取り、結果 `any` は分子に入らない／`submission.cuisineGenre = 'any'` 限定／時間帯の境界 20・20.5・40・40.5／`{"reason":...}` と `reason: null` の判別／`dishIngredientIndex` が `score > 0` の料理だけを含む／`set_taste_learning_enabled` が他人の行を更新しない／テーブル単位 UPDATE が依然として拒否される |
+| Function | `taste-hints.test.ts` | `reason` 分岐が safeParse より先（`disabled` / `no_history` が `invalid_shape` に潰れない）／タイムアウト・失敗・不正形で null と `outcome`／OFF で RPC を呼ばない／安全フィルタ（アレルゲン別名・カスタム・苦手・avoid）／**idea で `avoidAxes` が空**／`sanitizeTasteHints` が対応表で食材を落とし、対応表を戻り値から捨てる |
 | Function | `generation-prompt.test.ts` 追記 | 段落とキーの有無／優先順位の文が 1 回だけ／料理名が system 文に現れない／空ヒントでキーごと消える |
 | Function | `generation-prompt-taste-off.test.ts`（新規） | kill-switch off で段落もキーも出ない（既存 2 本と同型） |
 | Function | `generation-service.test.ts` 追記 | `Promise.all` 並列／**fingerprint に載らない**／`preference_snapshot` の記録が確定オブジェクトと一致（切り詰めで空→キーなし）／再生成経路に出ない／`tasteHintsOutcome` |
 | src | `menu-result-api.test.ts` | `tasteHintsApplied` の投影、キー欠落・壊れた形で `false` |
 | src | `menu-hero.test.tsx` | `weak` 非表示、`medium`/`strong` 表示、**作成モデル行と共存**する |
-| src | `account-settings-section.test.tsx` | トグル往復（RPC 経由）と失敗時の復帰 |
+| src | `account-settings-section.test.tsx` | 初期表示の `profiles` 読み取り、トグル往復（RPC 経由）と失敗時の復帰 |
+| script | `scripts/assert-privacy-logs.mjs` | `taste_hints_outcome` が許可一覧にあり、料理名・食材名がログに出ない |
 
 **最重要は不変条件 1 の否定テスト**である。ここが漏れて fingerprint が揺れると、既存の
 再検証・買い物リスト整合が壊れる。
@@ -554,14 +649,19 @@ docker compose --profile test run --rm db-test
 | 提供範囲 | 全員・デフォルト ON |
 | トグルの保存 | `set_taste_learning_enabled` RPC。テーブル単位 UPDATE は復活させない |
 | 重みの式 | 減衰は乗算、★ 1.0 と採用 0.3 は加算 |
-| 避ける軸 | `child_unfriendly` のみ。家族モード限定・2 回以上 |
-| ジャンル | おまかせ生成のお気に入りに限る + 比率 0.35 |
+| 避ける軸 | `child_unfriendly` のみ。家族モード限定・2 派生グループ以上 |
+| 回数の数え方 | 強さも最低出現回数も `derivation_group_id` 単位 |
+| 空の戻り | `null` ではなく `{ reason }` の判別可能オブジェクト |
+| ジャンル | 母集団は `submission.cuisineGenre = 'any'`、比率は `menus.cuisine_genre` で取る + 下限 0.35 |
 | 反映表示 | プロンプトへ実際に載せた確定オブジェクトで判定 |
 
 ### 11.2 未決（人間の判断が要る）
 
 - **`privacy_consents.notice_version` を上げるか。** 保存は増えないが、お気に入り由来の料理名・
   食材名が最長 90 日ぶん OpenRouter へ追加で渡る（§7）。現行 `2026-07-29.v1`。
+  実装の障害にはならず、決めないまま進めば据え置きになる。
+  ただし**この 90 日ぶんの送信をどこに書くか**（設定トグルの説明文か、プライバシーページの
+  「AI へ送る情報」か、両方か）は、**Task 4 の文言を確定する前に決める**必要がある。
 - 初期値の微調整: 窓 90 日 / 50 件、半減期 30 日、採用係数 0.3、強さ境界 5・15、
   最低出現回数 2・3・2、ジャンル比率 0.35、時間帯の区切り 20 / 40 分、上限 12・2・8・3。
   重みの式と最低出現回数が決まったので初期値として使えるが、運用で調整する前提。
