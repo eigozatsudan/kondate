@@ -51,6 +51,7 @@ it("keeps every required adversarial scenario fixed in source control", () => {
     "unsafe-age-shape",
     "unsafe-child-shape",
     "unsupported-medical",
+    "weekly-plan-day-success",
     "weekly-plan-success",
   ]);
 });
