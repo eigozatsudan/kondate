@@ -101,7 +101,7 @@ select is(public.set_taste_learning_enabled(false), false,
 select is(
   (select public.get_taste_signals('2026-09-22T00:00:00Z'::timestamptz) ->> 'reason'),
   'disabled',
-  'disabled user reports disabled'
+  'disabled wins over an empty window'
 );
 select is(public.set_taste_learning_enabled(true), true, 'toggle back on');
 
@@ -217,16 +217,17 @@ liked_ingredient_rows as (
   order by pg_catalog.sum(score) desc, name
   limit 8
 ),
--- 対応表: prompt へは出さない。落とした料理の食材を消すためだけに使う
+-- 対応表: prompt へは出さない。落とした料理の食材を消すためだけに使う。
+-- likedDishes の 12 件上限も 1 料理あたりの食材上限も掛けない。切ると差集合が
+-- 両方向に壊れる（残した料理の食材が表から漏れて誤って消える／落とした料理の
+-- 食材が表から漏れて likedIngredients に残り同じ皿へ戻す）。
+-- 名前の畳み方は liked_dish_rows と同じ group by d.name に揃える。
 dish_index_rows as (
-  select
-    ld.dish_name,
-    (pg_catalog.array_agg(distinct di.name))[1:12] as ingredients
-  from liked_dish_rows ld
-  join public.dishes d on d.name = ld.dish_name
-  join liked l on l.id = d.menu_id
+  select d.name as dish_name, pg_catalog.array_agg(distinct di.name) as ingredients
+  from liked l
+  join public.dishes d on d.menu_id = l.id
   join public.dish_ingredients di on di.dish_id = d.id
-  group by ld.dish_name
+  group by d.name
 ),
 -- 時間帯: 加重平均は小数になるため <=20 / <=40 / それ以外で連続させる
 time_band as (
@@ -280,6 +281,7 @@ child_groups as (
 group_count as (
   select pg_catalog.count(distinct derivation_group_id) as total from recent
 )
+-- 分岐順は disabled -> no_history -> 本体。OFF の利用者は窓が空でも disabled を返す
 select case
   when coalesce((select enabled from settings), false) is not true
     then pg_catalog.jsonb_build_object('reason', 'disabled')
@@ -604,7 +606,6 @@ export const TASTE_LIKED_DISHES_MAX = 12 as const;
 export const TASTE_LIKED_GENRES_MAX = 2 as const;
 export const TASTE_LIKED_INGREDIENTS_MAX = 8 as const;
 export const TASTE_OVERUSED_INGREDIENTS_MAX = 3 as const;
-export const TASTE_INDEX_INGREDIENTS_PER_DISH_MAX = 12 as const;
 
 const foodNameSchema = z.string().min(1).max(100);
 
@@ -628,18 +629,18 @@ export type TasteHints = z.infer<typeof tasteHintsSchema>;
 /**
  * 集計関数の戻り。dishIngredientIndex は落とした料理の食材を消すための対応表で、
  * prompt にも preference_snapshot にもログにも出さない（sanitize で捨てる）。
+ *
+ * 対応表には上限を掛けない。prompt へ出ないので肥大を防ぐ理由が無く、切ると差集合が
+ * 両方向に壊れる: お気に入りが 13 件あると、残した料理の食材が表から漏れて誤って消え、
+ * 落とした料理の食材も表から漏れて likedIngredients に残る。
+ * 窓（90 日・50 献立）が実質の上限になる。
  */
 export const tasteSignalsSchema = z
   .object({
     ...tasteHintsSchema.shape,
-    dishIngredientIndex: z
-      .array(
-        z.object({
-          dishName: foodNameSchema,
-          ingredients: z.array(foodNameSchema).max(TASTE_INDEX_INGREDIENTS_PER_DISH_MAX),
-        }),
-      )
-      .max(TASTE_LIKED_DISHES_MAX),
+    dishIngredientIndex: z.array(
+      z.object({ dishName: foodNameSchema, ingredients: z.array(foodNameSchema) }),
+    ),
   })
   .strict();
 
@@ -772,6 +773,14 @@ describe("loadTasteHints", () => {
   it("maps no_history without parsing", async () => {
     const result = await loadTasteHints({ ownerClient: makeOwnerClient({ data: { reason: "no_history" }, error: null }) });
     expect(result.outcome).toBe("no_history");
+  });
+
+  it("strips reason before parsing so the success object clears the strict schema", async () => {
+    const result = await loadTasteHints({
+      ownerClient: makeOwnerClient({ data: { reason: null, ...signals }, error: null }),
+    });
+    expect(result.outcome).toBe("applied");
+    expect(result.signals).toEqual(signals);
   });
 
   it("reports invalid_shape for a broken payload", async () => {
@@ -1182,6 +1191,9 @@ it("discloses that liked dish and ingredient names are sent for up to 90 days", 
   const section = privacySections.find((entry) => entry.title === "AIへ送る情報");
   expect(section).toBeDefined();
   expect(section?.body).toMatch(/料理名と食材名/u);
+  // overusedIngredients は ★ の付いていない献立も母集団に含むため、
+  // 「お気に入り由来」だけの記述では実際に送る範囲より狭い
+  expect(section?.body).toMatch(/繰り返し指定したメイン食材名/u);
   expect(section?.body).toMatch(/90日/u);
   expect(section?.body).toMatch(/設定/u);
 });
@@ -1316,7 +1328,7 @@ export function TasteLearningSection({ enabled, onToggle }: TasteLearningSection
 `src/features/privacy/privacy-copy.ts` の `privacySections`「AIへ送る情報」の `body` 末尾へ次を連結する（既存文はそのまま残す）。
 
 ```ts
-"また、好みの学習をONにしている場合は、★を付けた献立や選んだ献立から読み取った料理名と食材名（最長90日・最大50献立）も送ります。設定でいつでも止められます。"
+"また、好みの学習をONにしている場合は、★を付けた献立や選んだ献立から読み取った料理名と食材名、および直近で繰り返し指定したメイン食材名（最長90日・最大50献立）も送ります。設定でいつでも止められます。"
 ```
 
 - [ ] **Step 6: 設定ページへ差し込む**
@@ -1551,7 +1563,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `netlify/functions/_shared/generation-service.ts:450-480`（`loadExecutionContext`）と `:675-700`（`buildSuccessInput`）
-- Modify: `netlify/functions/_shared/logger.ts:85-90`（`SafeGenerationLogEvent`）と `:207`（`SAFE_LOG_SERIALIZED_KEYS`）
+- Modify: `netlify/functions/_shared/logger.ts` — `SafeGenerationLogEvent`（`:85-90`）、`logGenerationEvent`（`:470-485`）、`SafeLogEvent`（`:14`）、`createSafeLogger`（`:271-`）、`SAFE_LOG_SERIALIZED_KEYS`（`:207`）の 5 箇所
 - Modify: `scripts/assert-privacy-logs.mjs:31`（`allowedLogKeys`）
 - Modify: `netlify/functions/_shared/generation-service.test.ts`
 
@@ -1596,6 +1608,36 @@ it("logs a closed outcome enum", async () => {
 });
 ```
 
+`netlify/functions/_shared/logger.test.ts` へも追記する。イベント型に足すだけでは
+出力へ届かないため、**シリアライズ結果**を見る。
+
+```ts
+it("serializes tasteHintsOutcome and drops unknown values", () => {
+  const lines: string[] = [];
+  const sink = { info: (line: string) => lines.push(line), warn: () => {}, error: () => {} };
+
+  logGenerationEvent(
+    "info",
+    { requestId: "req_1", errorCode: "ok", durationMs: 1, modelId: null, tasteHintsOutcome: "applied" },
+    sink,
+  );
+  expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({ taste_hints_outcome: "applied" });
+
+  logGenerationEvent(
+    "info",
+    {
+      requestId: "req_2",
+      errorCode: "ok",
+      durationMs: 1,
+      modelId: null,
+      tasteHintsOutcome: "肉じゃが" as never,
+    },
+    sink,
+  );
+  expect(JSON.parse(lines[1] ?? "{}")).not.toHaveProperty("taste_hints_outcome");
+});
+```
+
 `makeDeps` / `runNewMenu` は同ファイルの既存ヘルパに合わせる。存在しない場合は既存テストの組み立て方をそのまま複製する（「Task N と同様」で済ませない）。
 
 - [ ] **Step 2: 落ちることを確認する**
@@ -1603,9 +1645,13 @@ it("logs a closed outcome enum", async () => {
 Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-service.test.ts`
 Expected: FAIL
 
-- [ ] **Step 3: ログのキーを 3 箇所へ足す**
+- [ ] **Step 3: ログのキーを 5 箇所へ足す**
 
-`logger.ts`:
+型に足すだけでも許可一覧に足すだけでも出力されない。`logGenerationEvent` は
+`createSafeLogger` へ渡すフィールドを手で写しており、`createSafeLogger` は自分が知っている
+キーだけを `record` へ入れる。次の 5 箇所を**同時に**直す。
+
+**(1) `SafeGenerationLogEvent`（`logger.ts:85`）**
 
 ```ts
 export type SafeGenerationLogEvent = {
@@ -1613,14 +1659,68 @@ export type SafeGenerationLogEvent = {
   errorCode: string;
   durationMs: number;
   modelId: string | null;
-  /** 学習ヒントの結末。閉じた列挙のみ。料理名・食材名は出さない */
+  /** 学習ヒントの結末。閉じた列挙のみ。料理名・食材名・件数の内訳は出さない */
   tasteHintsOutcome?: TasteHintsOutcome;
 };
 ```
 
-`SAFE_LOG_SERIALIZED_KEYS` へ `"taste_hints_outcome"` を足す。値は `closedErrorCode` と同型の閉じた列挙チェックを通し、未知の文字列は落とす。
+**(2) `logGenerationEvent`（`logger.ts:470`）— 写し先**
 
-`scripts/assert-privacy-logs.mjs` の `allowedLogKeys` へ同じキーを足す（無いと `privacy_log_unexpected_field` で落ちる）。
+```ts
+  createSafeLogger(write)({
+    level,
+    requestId: event.requestId,
+    code: event.errorCode,
+    durationMs: event.durationMs,
+    ...(event.modelId === null ? {} : { modelId: event.modelId }),
+    // ここへ写さないと createSafeLogger まで届かない
+    ...(event.tasteHintsOutcome === undefined
+      ? {}
+      : { tasteHintsOutcome: event.tasteHintsOutcome }),
+  });
+```
+
+**(3) `SafeLogEvent`（`logger.ts:14`）**
+
+`modelId` と同じ並びへ `tasteHintsOutcome?: string;` を足す。
+
+**(4) 閉じた列挙ヘルパと `createSafeLogger` の分岐（`logger.ts:271-`）**
+
+`closedMatchMode` と同型。`record` へ入れる分岐が無いキーは捨てられる。
+
+```ts
+/** 学習ヒントの結末の閉じた列挙。未知・free-text は省略。 */
+const CLOSED_TASTE_HINTS_OUTCOMES = new Set([
+  "disabled_flag",
+  "disabled_user",
+  "no_history",
+  "timeout",
+  "query_failed",
+  "invalid_shape",
+  "filtered_empty",
+  "applied",
+]);
+
+function closedTasteHintsOutcome(raw: string): string | undefined {
+  if (CLOSED_TASTE_HINTS_OUTCOMES.has(raw)) return raw;
+  return undefined;
+}
+```
+
+`createSafeLogger` の `record` 組み立てへ、`modelId` の分岐と同じ形で足す。
+
+```ts
+    if (event.tasteHintsOutcome !== undefined) {
+      const outcome = closedTasteHintsOutcome(event.tasteHintsOutcome);
+      if (outcome !== undefined) record.taste_hints_outcome = outcome;
+    }
+```
+
+**(5) 許可一覧 2 つ**
+
+`SAFE_LOG_SERIALIZED_KEYS`（`logger.ts:207`）と `scripts/assert-privacy-logs.mjs` の
+`allowedLogKeys`（`:31`）へ `"taste_hints_outcome"` を足す。後者が無いと
+`privacy_log_unexpected_field` で落ちる。
 
 - [ ] **Step 4: 配線する**
 
@@ -1697,8 +1797,9 @@ Promise.all の 3 本目として並列に取り、generationContext が揃っ�
 安全フィルタと sanitize を通す。preference_snapshot へ書くのは確定
 オブジェクトの強度で、切り詰めで空になったらキーごと載せない。
 
-結末は閉じた列挙 1 フィールドとして SafeLogEvent・許可キー一覧・
-assert-privacy-logs の 3 箇所へ同時に足す。
+結末は閉じた列挙 1 フィールドとして、型・logGenerationEvent の写し先・
+createSafeLogger の分岐・許可キー一覧・assert-privacy-logs の 5 箇所へ同時に足す。
+分岐が無いと許可一覧に足しても出力に現れない。
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
@@ -1894,7 +1995,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 | §5.4 段落と優先順位 | Task 5 |
 | §5.5 配線 | Task 6 |
 | §5.6 記録の確定タイミング | Task 6 |
-| §5.7 観測性 3 箇所 | Task 6 |
+| §5.7 観測性 5 箇所 | Task 6 |
 | §6.1 トグルと告知 | Task 4 |
 | §6.2 結果の 1 行 | Task 7 |
 | §7 保存と送信 | Task 4（文言）・Task 6（記録） |

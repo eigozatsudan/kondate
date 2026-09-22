@@ -95,13 +95,11 @@ export const TASTE_AVOID_AXIS_MIN_COUNT = 2 as const;
 /** likedGenres を出す最低比率（§4.3）。和洋中 3 値のうち 2 つが常に入るのを防ぐ */
 export const TASTE_GENRE_MIN_SHARE = 0.35 as const;
 
-/** prompt 肥大を防ぐ各上限 */
+/** prompt 肥大を防ぐ各上限。対応表は prompt へ出ないため上限を持たない（下記） */
 export const TASTE_LIKED_DISHES_MAX = 12 as const;
 export const TASTE_LIKED_GENRES_MAX = 2 as const;
 export const TASTE_LIKED_INGREDIENTS_MAX = 8 as const;
 export const TASTE_OVERUSED_INGREDIENTS_MAX = 3 as const;
-/** 対応表（prompt 非出力）の 1 料理あたり食材上限 */
-export const TASTE_INDEX_INGREDIENTS_PER_DISH_MAX = 12 as const;
 
 export const tasteHintsSchema = z
   .object({
@@ -122,18 +120,22 @@ export type TasteHints = z.infer<typeof tasteHintsSchema>;
 /**
  * 集計関数の戻り。dishIngredientIndex は §5.3 の食材連鎖削除の対応表であり、
  * prompt にも preference_snapshot にも出さない（sanitize で捨てる）。
+ *
+ * 対応表には上限を掛けない。prompt へ出ないので肥大を防ぐ理由が無く、逆に切ると
+ * 差集合が壊れる: likedDishes の 12 件上限を対応表にも掛けると、お気に入りが 13 件
+ * ある利用者では (a) 残した料理の食材が表に無く、落とした料理にしか無いと誤判定して
+ * 消える、(b) 落とした料理の 13 個目の食材が表に無く、likedIngredients に残って
+ * 同じ皿へ戻す、の両方が起きる。窓（90 日・50 献立）が実質の上限になる。
  */
 export const tasteSignalsSchema = z
   .object({
     ...tasteHintsSchema.shape,
-    dishIngredientIndex: z
-      .array(
-        z.object({
-          dishName: z.string().min(1).max(100),
-          ingredients: z.array(z.string().min(1).max(100)).max(TASTE_INDEX_INGREDIENTS_PER_DISH_MAX),
-        }),
-      )
-      .max(TASTE_LIKED_DISHES_MAX),
+    dishIngredientIndex: z.array(
+      z.object({
+        dishName: z.string().min(1).max(100),
+        ingredients: z.array(z.string().min(1).max(100)),
+      }),
+    ),
   })
   .strict();
 
@@ -200,8 +202,10 @@ revoke all on function public.set_taste_learning_enabled(boolean) from public, a
 grant execute on function public.set_taste_learning_enabled(boolean) to authenticated;
 ```
 
-SELECT 権限は `20260712000100` 以降も残っているため、トグルの初期表示用の読み取りは
-既存の `profiles` select にそのまま相乗りできる。
+SELECT 権限は `20260712000100` 以降も残っているため、**読み取りに新しい関数は要らない**。
+ただしアカウント設定は現在 `profiles` を読んでおらず（`profiles` を読むのは
+`household-api.ts` の `select("*")` だけ）、既存 select への相乗り先が無い。トグルの初期表示用の
+読み取りは設定画面側に新設する（§6.1）。
 
 ### 3.4 生成型と SQL 定数の扱い
 
@@ -257,7 +261,7 @@ score(m)  = decay(m) * (
 | 出力 | 母集団 | 集計 |
 | --- | --- | --- |
 | `likedDishes` | `score > 0` | `dishes(name, role)` を score 合計降順。同名は 1 つに畳む。最大 12 |
-| `likedIngredients` | `score > 0` | `dish_ingredients.name` を score 合計降順。**素の出現 2 回以上**。最大 8 |
+| `likedIngredients` | `score > 0` | `dish_ingredients.name` を score 合計降順。**派生グループ 2 つ以上**（同一献立内の重複は 1 回。§4.4 と同じ数え方）。最大 8 |
 | `likedTimeBand` | `score > 0` | `menus.total_elapsed_minutes` の score 加重平均 → `<= 20` は `short`、`<= 40` は `standard`、それ以外は `slow`。1 値 |
 | `likedGenres` | `score > 0` **かつ `submission.cuisineGenre = 'any'`** | **`menus.cuisine_genre`**（生成結果のジャンル）別の score 合計 ÷ 母集団の score 合計 が 0.35 以上のジャンルのみ、最大 2 |
 
@@ -329,6 +333,14 @@ score(m)  = decay(m) * (
 
 ローダは `reason` を先に分岐し、`null` のときだけ `tasteSignalsSchema.safeParse` にかける。
 
+**`reason` キー自体は `safeParse` の前に取り除く。** `tasteSignalsSchema` は `.strict()` であり
+`reason` を知らないため、成功応答をそのまま通すと未知キーで落ち、履歴のある利用者が全員
+`invalid_shape` になる。ローダは `const { reason: _ignored, ...rest } = data` の形で外してから
+`rest` を検証する。
+
+**`taste_learning_enabled = false` は窓が空でも `disabled` が優先する。** 関数の分岐順は
+`disabled` → `no_history` → 本体であり、OFF の利用者が `no_history` として観測されることはない。
+
 ## 5. Function 側
 
 ### 5.1 `netlify/functions/_shared/taste-hints.ts`（新規）
@@ -362,6 +374,8 @@ export async function loadTasteHints(input: {
 - `reason` を先に見て `disabled_user` / `no_history` を確定し、`reason === null` のときだけ
   `tasteSignalsSchema.safeParse` にかける（§4.5）。理由オブジェクトを schema に通すと
   両方とも `invalid_shape` に潰れる。
+- **`reason` キーを外してから `safeParse` する。** `tasteSignalsSchema` は `.strict()` なので、
+  `reason: null` を含んだまま渡すと成功応答が未知キーで落ちる（§4.5）。
 - 戻すのは `TasteSignals`（対応表を含む）。対応表は §5.3 で使い切り、prompt へは出さない。
 
 ### 5.2 安全フィルタ `filterTasteHintsForSafety()`
@@ -410,6 +424,10 @@ idea モード（`safety: null`）ではアレルゲン由来の語が無く、`
 作れない。そのため集計関数が `score > 0` の料理ごとの食材名（`dishIngredientIndex`）を一緒に返し、
 sanitize がそれを使って差を取り、user ペイロードと `preference_snapshot` へ渡す前に対応表自体を
 捨てる。対応表は**プロンプトにも記録にも出ない**。
+
+**対応表は窓内の `score > 0` の料理をすべて、食材名もすべて含む（上限なし）。** `likedDishes` と
+同じ名前の畳み方（`group by dishes.name`）で 1 料理 1 行にまとめ、`recentDishHints` との突き合わせは
+その畳んだ名前で行う。件数を切ると差集合が両方向に壊れる（§3.1 の注記）。
 
 ### 5.4 プロンプト合成 `generation-prompt.ts`
 
@@ -500,12 +518,17 @@ finalTasteHints !== null        -> { applied: true, strength: finalTasteHints.si
 taste_hints_outcome: TasteHintsOutcome   // §5.1 の 8 値のみ
 ```
 
-**フィールドを型に足すだけでは出力されない。** `createSafeLogger` は許可一覧にあるキーだけを書き、
-それ以外を捨てる。次の 3 箇所へ**同時に**足す。
+**フィールドを型に足すだけでは出力されない。** `logGenerationEvent` は受け取った
+`SafeGenerationLogEvent` から `createSafeLogger` へ渡すフィールドを**手で写しており**、
+`createSafeLogger` は自分が知っているキーだけを `record` へ入れる。許可一覧に足すだけでは
+分岐が無いキーは出力に現れない。次の 5 箇所へ**同時に**足す。
 
 | 追加先 | 内容 |
 | --- | --- |
+| `logger.ts` の `SafeGenerationLogEvent` | 型に `tasteHintsOutcome?: TasteHintsOutcome` を足す |
+| `logger.ts` の `logGenerationEvent` | `createSafeLogger(write)({ ... })` の呼び出しへ写す（`modelId` と同じ省略形） |
 | `logger.ts` の `SafeLogEvent` | 型に `tasteHintsOutcome` を足す |
+| `logger.ts` の `createSafeLogger` | `record.taste_hints_outcome` へ入れる分岐を足す（**これが無いと出力されない**） |
 | `logger.ts` の `SAFE_LOG_SERIALIZED_KEYS` | `"taste_hints_outcome"` を足す |
 | `scripts/assert-privacy-logs.mjs` の `allowedLogKeys` | 同じキーを足す（無いと `privacy_log_unexpected_field`） |
 
@@ -582,6 +605,8 @@ OFF にすると読み取りをやめます。設定と反映の記録は保存�
 送信に触れていない。追記する内容は次の 3 点に限る。
 
 - ★ を付けた・「この献立にする」で選んだ献立の**料理名と食材名**を送ること
+- 直近の窓で**繰り返し指定したメイン食材名**を送ること（`overusedIngredients` は ★ の付いていない
+  献立も母集団に含むため、上の 1 点目だけでは実際に送る範囲より狭い）
 - 範囲は**最長 90 日・最大 50 献立**であること
 - **設定で止められる**こと
 
