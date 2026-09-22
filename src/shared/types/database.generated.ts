@@ -2138,6 +2138,7 @@ export type Database = {
           created_at: string
           onboarding_completed_at: string | null
           onboarding_status: string
+          taste_learning_enabled: boolean
           updated_at: string
           user_id: string
         }
@@ -2145,6 +2146,7 @@ export type Database = {
           created_at?: string
           onboarding_completed_at?: string | null
           onboarding_status?: string
+          taste_learning_enabled?: boolean
           updated_at?: string
           user_id: string
         }
@@ -2152,6 +2154,7 @@ export type Database = {
           created_at?: string
           onboarding_completed_at?: string | null
           onboarding_status?: string
+          taste_learning_enabled?: boolean
           updated_at?: string
           user_id?: string
         }
@@ -3061,6 +3064,7 @@ export type Database = {
         }
         Returns: Json
       }
+      get_taste_signals: { Args: { p_now?: string }; Returns: Json }
       get_weekly_plan_intent: {
         Args: { p_request_id: string; p_user_id: string }
         Returns: {
@@ -3327,6 +3331,7 @@ export type Database = {
           created_at: string
           onboarding_completed_at: string | null
           onboarding_status: string
+          taste_learning_enabled: boolean
           updated_at: string
           user_id: string
         }
@@ -3336,6 +3341,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      set_taste_learning_enabled: {
+        Args: { p_enabled: boolean }
+        Returns: boolean
       }
       share_app_ai_budget_remaining: { Args: never; Returns: number }
       shopping_list_safety_fingerprint: {

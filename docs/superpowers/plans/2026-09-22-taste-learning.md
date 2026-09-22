@@ -64,6 +64,9 @@
   このリポジトリの `auth.uid()` には効かない。
 - `auth.users` への挿入は `tests.create_supabase_user()` を使う。素の INSERT では
   `instance_id` / `aud` / `role` / `encrypted_password` などが欠ける。
+- `public.profiles` の行は自分で入れない。`auth.users` の `on_auth_user_created` トリガ
+  （`private.handle_new_auth_user`）が既定値つきで作るため、明示 INSERT は
+  `profiles_pkey` の重複で落ちる。
 - ケースごとに `truncate public.menus cascade` で入れ替える。同じトランザクションに行を足し
   続けると、強さ・時間帯の加重平均・ジャンル比率が前のケースの行を巻き込んで壊れる。
 
@@ -74,10 +77,8 @@ select plan(27);
 select tests.create_supabase_user('11111111-1111-4111-8111-111111111111', 'owner@example.invalid');
 select tests.create_supabase_user('22222222-2222-4222-8222-222222222222', 'other@example.invalid');
 
--- profiles 行を作るトリガは無いため明示的に入れる
-insert into public.profiles (user_id) values
-  ('11111111-1111-4111-8111-111111111111'),
-  ('22222222-2222-4222-8222-222222222222');
+-- profiles 行は auth.users の on_auth_user_created トリガ
+-- （private.handle_new_auth_user）が既定値つきで作る
 
 -- 献立 1 件＋料理 1 品＋食材を作る。menus の現行制約をすべて満たす:
 --   target_mode は NOT NULL・既定値なし。household は allergen/food_rule version が NOT NULL。
@@ -446,11 +447,11 @@ recent as (
     m.preference_snapshot,
     pg_catalog.power(
       0.5::double precision,
-      pg_catalog.extract(epoch from (p_now - m.created_at))::double precision / 86400.0 / 30.0
+      pg_catalog.date_part('epoch', p_now - m.created_at)::double precision / 86400.0 / 30.0
     ) as decay,
     pg_catalog.power(
       0.5::double precision,
-      pg_catalog.extract(epoch from (p_now - m.created_at))::double precision / 86400.0 / 30.0
+      pg_catalog.date_part('epoch', p_now - m.created_at)::double precision / 86400.0 / 30.0
     ) * (
       (case when m.is_favorite then 1.0 else 0.0 end)
       + (case when m.is_selected then 0.3 else 0.0 end)
@@ -555,7 +556,8 @@ group_count as (
 )
 -- 分岐順は disabled -> no_history -> 本体。OFF の利用者は窓が空でも disabled を返す
 select case
-  -- profiles 行を作るトリガは無い。行が無い利用者は列の既定値と同じ ON として扱う
+  -- profiles 行は on_auth_user_created トリガが作るため通常は存在する。
+  -- 万一無い場合も列の既定値と同じ ON として扱う（false に倒すと既定 ON と食い違う）
   when coalesce((select enabled from settings), true) is not true
     then pg_catalog.jsonb_build_object('reason', 'disabled')
   when (select total from group_count) = 0

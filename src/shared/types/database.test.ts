@@ -271,6 +271,7 @@ it("profiles.onboarding_status はskippedへ代入できる", () => {
     onboarding_completed_at: "2026-07-22T00:00:00.000Z",
     created_at: "2026-07-22T00:00:00.000Z",
     updated_at: "2026-07-22T00:00:00.000Z",
+    taste_learning_enabled: true,
   } satisfies ProfileRow;
 
   expectTypeOf(skippedProfile).toExtend<ProfileRow>();

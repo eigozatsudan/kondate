@@ -49,7 +49,7 @@ Columns: `object`, `owner`, `anon`, `authenticated`, `service_role`, `RLS/policy
 | `public.menus` | postgres | none | SELECT | ALL | on + policies | owner SELECT; favorite column UPDATE only |
 | `public.pantry_items` | postgres | none | DELETE, INSERT, SELECT, UPDATE | ALL | on + policies | user-owned browser CRUD via RLS |
 | `public.privacy_consents` | postgres | none | INSERT, SELECT | ALL | on + policies | consent ledger; owner SELECT+INSERT |
-| `public.profiles` | postgres | none | SELECT | ALL | on + policies | auth profile; owner SELECT; writes via trigger/RPC |
+| `public.profiles` | postgres | none | SELECT | ALL | on + policies | auth profile; owner SELECT; writes via trigger/RPC（`set_onboarding_status` / `set_taste_learning_enabled`） |
 | `public.recipe_steps` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.shopping_current_label_warnings` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
 | `public.shopping_item_sources` | postgres | none | SELECT | ALL | on + policies | AI/derived rows; browser SELECT only; writes via service SECURITY DEFINER |
@@ -229,6 +229,8 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 | `public.delete_weekly_plan_intent(p_request_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; drop weekly plan intent snapshot after terminal use |
 | `public.cleanup_stale_flyer_weekly_batch(p_now timestamp with time zone, p_limit integer)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC; stale flyer processing cleanup |
 | `public.save_generation_draft(p_expected_revision bigint, p_meal_type text, p_main_ingredients text[], p_cuisine_genre text, p_target_mode text, p_target_member_ids uuid[], p_servings smallint, p_time_limit_minutes smallint, p_budget_preference text, p_avoid_ingredients text[], p_memo text, p_pantry_selections jsonb)` | postgres | none | EXECUTE | none | n/a (function) | authenticated-only SECURITY DEFINER RPC |
+| `public.get_taste_signals(p_now timestamp with time zone)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser/service-callable SECURITY INVOKER 集計; 所有者の menus/dishes/dish_ingredients を RLS 準拠で読む |
+| `public.set_taste_learning_enabled(p_enabled boolean)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC; profiles のテーブル単位 UPDATE を戻さずトグル 1 列だけを書く |
 | `public.set_onboarding_status(p_status text)` | postgres | none | EXECUTE | EXECUTE | n/a (function) | browser-callable SECURITY DEFINER RPC |
 | `public.shopping_list_safety_fingerprint(p_user_id uuid, p_list_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
 | `public.shopping_safety_fingerprint(p_user_id uuid, p_menu_id uuid)` | postgres | none | none | EXECUTE | n/a (function) | service_role-only SECURITY DEFINER RPC |
