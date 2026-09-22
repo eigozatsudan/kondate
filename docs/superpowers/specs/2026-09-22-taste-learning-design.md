@@ -569,9 +569,21 @@ OFF にすると読み取りをやめます。設定と反映の記録は保存�
 **お気に入り・採用された献立の料理名と食材名（最長 90 日・最大 50 献立の範囲）**、
 所要時間帯、ジャンル、メイン食材の使いすぎ傾向が追加で渡る。
 
-`privacy_consents.notice_version`（現行 `2026-07-29.v1`）を上げるかは**未決（§10.2）**とする。
+**`privacy_consents.notice_version` は `2026-07-29.v1` のまま据え置く（決定）。**
+代わりに、この送信の増加を**設定トグルの説明文とプライバシーページの両方**に書く。
+既に直近 10 献立の料理名は送っており、OFF にする手段（トグル）が同じリリースで同時に届くため、
+全利用者へ同意画面を再表示する負荷に見合わないと判断した。
+
 改訂前の「新しい個人データを保存しないから据え置く」という理由は、この**送信の増加**を
-説明できていなかったため撤回する。
+説明できていなかったため撤回する。据え置きの理由は上記のとおり差し替える。
+
+プライバシーページは `src/features/privacy/privacy-copy.ts` の `privacySections`「AIへ送る情報」に
+追記する。現行の本文は「献立の希望や人数など」と家族設定の扱いだけを述べており、履歴由来の
+送信に触れていない。追記する内容は次の 3 点に限る。
+
+- ★ を付けた・「この献立にする」で選んだ献立の**料理名と食材名**を送ること
+- 範囲は**最長 90 日・最大 50 献立**であること
+- **設定で止められる**こと
 
 ## 8. 不変条件
 
@@ -600,6 +612,7 @@ OFF にすると読み取りをやめます。設定と反映の記録は保存�
 | src | `menu-result-api.test.ts` | `tasteHintsApplied` の投影、キー欠落・壊れた形で `false` |
 | src | `menu-hero.test.tsx` | `weak` 非表示、`medium`/`strong` 表示、**作成モデル行と共存**する |
 | src | `account-settings-section.test.tsx` | 初期表示の `profiles` 読み取り、トグル往復（RPC 経由）と失敗時の復帰 |
+| src | `privacy-copy.test.ts` | 「AIへ送る情報」に 90 日・50 献立・停止手段が含まれる |
 | script | `scripts/assert-privacy-logs.mjs` | `taste_hints_outcome` が許可一覧にあり、料理名・食材名がログに出ない |
 
 **最重要は不変条件 1 の否定テスト**である。ここが漏れて fingerprint が揺れると、既存の
@@ -614,14 +627,16 @@ Task 1  migration: 列 + set_taste_learning_enabled + get_taste_signals + pgTAP
         ＋ npm run db:types の成果物（database.generated.ts）を同 Task に含める
 Task 2  shared/contracts/taste-hints.ts（Zod 契約・定数・hasTasteContent）
 Task 3  netlify/.../taste-hints.ts（ローダ + 安全フィルタ + sanitize）
-Task 4  UI: アカウント設定トグル        <- 配線より前に置く
+Task 4  UI: アカウント設定トグル + privacy-copy.ts の「AIへ送る情報」追記
+        <- 配線（Task 6）より前に置く
 Task 5  generation-prompt: 【学習】段落 + 多様性段落の番号更新 + kill-switch
 Task 6  generation-service: 配線 + 記録 + tasteHintsOutcome
 Task 7  UI: menu-result 投影 + MenuHero の 1 行
 ```
 
-**Task 4 を Task 6 より前に置く。** 初期値が ON であるため、トグル（切る手段）と説明文が
-利用者に届く前に学習が有効になってはならない。Task 1〜7 は同一リリースにまとめる。
+**Task 4 を Task 6 より前に置く。** 初期値が ON であるため、トグル（切る手段）と説明文
+（設定・プライバシーページの両方）が利用者に届く前に学習が有効になってはならない。
+Task 1〜7 は同一リリースにまとめる。
 
 検証は毎 Task スコープを絞って Docker 経由で回す。
 
@@ -647,6 +662,7 @@ docker compose --profile test run --rm db-test
 | 好み と ひねり の両立 | 軸を分ける |
 | 透明性 | 結果に 1 行 + アカウント設定に ON/OFF |
 | 提供範囲 | 全員・デフォルト ON |
+| 同意版 | `2026-07-29.v1` 据え置き。送信の増加は設定とプライバシーページの両方に明記 |
 | トグルの保存 | `set_taste_learning_enabled` RPC。テーブル単位 UPDATE は復活させない |
 | 重みの式 | 減衰は乗算、★ 1.0 と採用 0.3 は加算 |
 | 避ける軸 | `child_unfriendly` のみ。家族モード限定・2 派生グループ以上 |
@@ -657,11 +673,8 @@ docker compose --profile test run --rm db-test
 
 ### 11.2 未決（人間の判断が要る）
 
-- **`privacy_consents.notice_version` を上げるか。** 保存は増えないが、お気に入り由来の料理名・
-  食材名が最長 90 日ぶん OpenRouter へ追加で渡る（§7）。現行 `2026-07-29.v1`。
-  実装の障害にはならず、決めないまま進めば据え置きになる。
-  ただし**この 90 日ぶんの送信をどこに書くか**（設定トグルの説明文か、プライバシーページの
-  「AI へ送る情報」か、両方か）は、**Task 4 の文言を確定する前に決める**必要がある。
+- （解決済み）`notice_version` は据え置き、送信の増加は設定トグルとプライバシーページの
+  両方に書く。§7 を参照。
 - 初期値の微調整: 窓 90 日 / 50 件、半減期 30 日、採用係数 0.3、強さ境界 5・15、
   最低出現回数 2・3・2、ジャンル比率 0.35、時間帯の区切り 20 / 40 分、上限 12・2・8・3。
   重みの式と最低出現回数が決まったので初期値として使えるが、運用で調整する前提。
