@@ -5,8 +5,6 @@ export type TasteLearningSectionProps = {
   /** サーバー側の現在値。楽観表示中でなければこの値がそのまま表示される。 */
   enabled: boolean;
   onToggle: (nextEnabled: boolean) => Promise<void>;
-  /** 読み込み中・読み取り失敗時に外側から強制的に操作不能にする。 */
-  disabled?: boolean;
   describedById?: string;
 };
 
@@ -20,7 +18,6 @@ export type TasteLearningSectionProps = {
 export function TasteLearningSection({
   enabled,
   onToggle,
-  disabled = false,
   describedById,
 }: TasteLearningSectionProps) {
   const [pending, setPending] = useState(false);
@@ -41,7 +38,7 @@ export function TasteLearningSection({
           checked={displayed}
           aria-checked={displayed}
           aria-describedby={describedById}
-          disabled={pending || disabled}
+          disabled={pending}
           onChange={(event) => {
             const next = event.target.checked;
             setPending(true);

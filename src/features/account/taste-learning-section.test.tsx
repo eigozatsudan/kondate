@@ -53,9 +53,4 @@ describe("TasteLearningSection", () => {
     rerender(<TasteLearningSection enabled={false} onToggle={vi.fn()} />);
     expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
   });
-
-  it("disables the switch when the wrapper marks it unverified", () => {
-    render(<TasteLearningSection enabled={true} onToggle={vi.fn()} disabled />);
-    expect(screen.getByRole("switch", { name: "好みの学習" })).toBeDisabled();
-  });
 });

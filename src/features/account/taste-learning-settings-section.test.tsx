@@ -3,7 +3,11 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SHARE_CONSENT_TOGGLE_TIMEOUT_MS } from "@/features/privacy/share-consent-settings-section";
+import {
+  SHARE_CONSENT_RECONCILE_ATTEMPTS,
+  SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS,
+  SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
+} from "@/features/privacy/share-consent-settings-section";
 import { tasteLearningCopy } from "./taste-learning-copy";
 import { tasteLearningKeys } from "./taste-learning-api";
 import { TasteLearningSettingsSection } from "./taste-learning-settings-section";
@@ -80,7 +84,7 @@ describe("TasteLearningSettingsSection", () => {
     });
   });
 
-  it("shows retrying feedback and hides the retry button while a retry is in flight (N-4)", async () => {
+  it("keeps the retry button rendered but disabled with loading text while a retry is in flight (R-4)", async () => {
     getTasteLearningEnabledMock.mockRejectedValueOnce(new Error("boom"));
     renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
     await waitFor(() => {
@@ -93,13 +97,15 @@ describe("TasteLearningSettingsSection", () => {
         resolveRetry = resolve;
       }),
     );
-    await userEvent.click(screen.getByRole("button", { name: tasteLearningCopy.retry }));
+    const retryButton = screen.getByRole("button", { name: tasteLearningCopy.retry });
+    retryButton.focus();
+    await userEvent.click(retryButton);
 
     await waitFor(() => {
-      expect(
-        screen.queryByRole("button", { name: tasteLearningCopy.retry }),
-      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: tasteLearningCopy.loading })).toBeDisabled();
     });
+    // R-4: フォーカス中のボタンを unmount しない
+    expect(screen.getByRole("button", { name: tasteLearningCopy.loading })).toHaveFocus();
     expect(screen.getByRole("status")).toHaveTextContent(tasteLearningCopy.loading);
 
     resolveRetry(true);
@@ -170,56 +176,75 @@ describe("TasteLearningSettingsSection", () => {
   });
 
   it("restores the previous value on the switch after observing the optimistic value mid-flight (N-7)", async () => {
-    getTasteLearningEnabledMock.mockResolvedValue(true);
-    let rejectWrite: (error: Error) => void = () => undefined;
-    setTasteLearningEnabledMock.mockReturnValue(
-      new Promise<boolean>((_resolve, reject) => {
-        rejectWrite = reject;
-      }),
-    );
-    renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
-    const toggle = await screen.findByRole("switch", { name: "好みの学習" });
-    await waitFor(() => {
-      expect(toggle).toBeChecked();
-    });
-
-    await userEvent.click(toggle);
-
-    // 書き込み中は楽観値（OFF）を見せている — ここで戻り値がまだ true 固定でないことを確認する
-    await waitFor(() => {
-      expect(toggle).not.toBeChecked();
-    });
-
-    rejectWrite(new Error("boom"));
-
-    await waitFor(() => {
-      expect(screen.getByRole("switch", { name: "好みの学習" })).toBeChecked();
-    });
-    expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
-  });
-
-  it("aborts a write that times out and applies the late server commit to the cache and switch (N-1)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      // 書き込み失敗後の裏取り再読も、変更前のサーバー値 true を返し続ける（未 commit）。
       getTasteLearningEnabledMock.mockResolvedValue(true);
-      const abortSignals: AbortSignal[] = [];
-      let resolveWrite: (value: boolean) => void = () => undefined;
-      setTasteLearningEnabledMock.mockImplementation(
-        (_client: unknown, _enabled: boolean, options?: { signal?: AbortSignal }) => {
-          if (options?.signal !== undefined) {
-            abortSignals.push(options.signal);
-          }
-          return new Promise<boolean>((resolve) => {
-            resolveWrite = resolve;
-          });
-        },
+      let rejectWrite: (error: Error) => void = () => undefined;
+      setTasteLearningEnabledMock.mockReturnValue(
+        new Promise<boolean>((_resolve, reject) => {
+          rejectWrite = reject;
+        }),
       );
       renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
       const toggle = await screen.findByRole("switch", { name: "好みの学習" });
       await waitFor(() => {
         expect(toggle).toBeChecked();
       });
+
+      await user.click(toggle);
+
+      // 書き込み中は楽観値（OFF）を見せている — ここで戻り値がまだ true 固定でないことを確認する
+      await waitFor(() => {
+        expect(toggle).not.toBeChecked();
+      });
+
+      rejectWrite(new Error("boom"));
+
+      for (let attempt = 0; attempt < SHARE_CONSENT_RECONCILE_ATTEMPTS; attempt += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS + 50);
+        });
+      }
+
+      await waitFor(() => {
+        expect(screen.getByRole("switch", { name: "好みの学習" })).toBeChecked();
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects on abort like the real client, then reconciles from a later re-read with no failure alert (R-1)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      getTasteLearningEnabledMock.mockResolvedValueOnce(true);
+      const abortSignals: AbortSignal[] = [];
+      // 実の postgrest-js と同じく、abort されたら reject する（resolve はしない）。
+      setTasteLearningEnabledMock.mockImplementation(
+        (_client: unknown, _enabled: boolean, options?: { signal?: AbortSignal }) =>
+          new Promise<boolean>((_resolve, reject) => {
+            const signal = options?.signal;
+            if (signal !== undefined) {
+              abortSignals.push(signal);
+              signal.addEventListener("abort", () => {
+                reject(new Error("AbortError"));
+              });
+            }
+          }),
+      );
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
+      const toggle = await screen.findByRole("switch", { name: "好みの学習" });
+      await waitFor(() => {
+        expect(toggle).toBeChecked();
+      });
+
+      // 裏取りの再読: 1回目は commit 前の古い値 (true) を返し、2回目でサーバーの
+      // commit 済みの値 (false) が見える。
+      getTasteLearningEnabledMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
       await user.click(toggle);
       await waitFor(() => {
@@ -229,74 +254,63 @@ describe("TasteLearningSettingsSection", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(SHARE_CONSENT_TOGGLE_TIMEOUT_MS + 50);
       });
-
       expect(abortSignals[0]?.aborted).toBe(true);
-      await waitFor(() => {
-        expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
+
+      // 1回目の再読はまだ commit 前の値なので一致せず、再読間隔を空けて再試行する。
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS + 50);
       });
 
-      // サーバーは実際には commit していた。orphan な書き込みの遅延成功を cache/表示へ反映する。
-      resolveWrite(false);
+      // 2回目の再読でサーバーが実際に commit していた false が確認でき、成功扱いになる。
       await waitFor(() => {
         expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
       });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("does not let a stale orphaned write overwrite the result of a second toggle (N-1)", async () => {
+  it("shows the failure alert and the server value when every reconciliation re-read fails (R-1)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      let serverValue = true;
-      getTasteLearningEnabledMock.mockImplementation(() => Promise.resolve(serverValue));
-      let resolveFirstWrite: (value: boolean) => void = () => undefined;
-      let callCount = 0;
-      setTasteLearningEnabledMock.mockImplementation(() => {
-        callCount += 1;
-        if (callCount === 1) {
-          // 1回目 (OFF) は timeout する。abort 後もサーバー処理が続いた想定で、
-          // このモックは resolve するだけで、その結果を serverValue には反映しない
-          // （generation ガードで無視されるべき値であることをテストする）。
-          return new Promise<boolean>((resolve) => {
-            resolveFirstWrite = resolve;
-          });
-        }
-        // 2回目 (OFF) は成功する。こちらがサーバーの真値になる。
-        serverValue = false;
-        return Promise.resolve(false);
-      });
+      getTasteLearningEnabledMock.mockResolvedValueOnce(true);
+      setTasteLearningEnabledMock.mockImplementation(
+        (_client: unknown, _enabled: boolean, options?: { signal?: AbortSignal }) =>
+          new Promise<boolean>((_resolve, reject) => {
+            options?.signal?.addEventListener("abort", () => {
+              reject(new Error("AbortError"));
+            });
+          }),
+      );
       renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
       const toggle = await screen.findByRole("switch", { name: "好みの学習" });
       await waitFor(() => {
         expect(toggle).toBeChecked();
       });
 
-      // 1回目の OFF 操作は timeout する。裏取り再読は変更前のサーバー値 true を返す。
+      // 全ての裏取り再読が、変更前のサーバー値 true を返し続ける（未 commit）。
+      getTasteLearningEnabledMock.mockResolvedValue(true);
+
       await user.click(toggle);
+      await waitFor(() => {
+        expect(setTasteLearningEnabledMock).toHaveBeenCalledTimes(1);
+      });
+
       await act(async () => {
         await vi.advanceTimersByTimeAsync(SHARE_CONSENT_TOGGLE_TIMEOUT_MS + 50);
       });
+      for (let attempt = 0; attempt < SHARE_CONSENT_RECONCILE_ATTEMPTS; attempt += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS + 50);
+        });
+      }
+
       await waitFor(() => {
-        expect(screen.getByRole("alert")).toBeInTheDocument();
+        expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
       });
       expect(screen.getByRole("switch", { name: "好みの学習" })).toBeChecked();
-
-      // 2回目も OFF 操作。今度は成功し、false を返す。こちらが正である。
-      await user.click(screen.getByRole("switch", { name: "好みの学習" }));
-      await waitFor(() => {
-        expect(setTasteLearningEnabledMock).toHaveBeenCalledTimes(2);
-      });
-      await waitFor(() => {
-        expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
-      });
-
-      // 1回目の orphan な書き込みが遅れて true で解決しても、2回目の OFF 確定を上書きしない
-      resolveFirstWrite(true);
-      await waitFor(() => {
-        expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
-      });
     } finally {
       vi.useRealTimers();
     }

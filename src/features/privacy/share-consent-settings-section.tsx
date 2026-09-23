@@ -33,7 +33,8 @@ export const SHARE_CONSENT_RECONCILE_ATTEMPTS = 3;
 /** AP-R1: 再読間隔。即時再読だけだとまだ revoked の窓を閉じられない。 */
 export const SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS = 1_000;
 
-function waitMs(ms: number): Promise<void> {
+/** R-1 (taste-learning): 好みの学習の設定セクションも同じ再読ポーリングへ再利用する。 */
+export function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });

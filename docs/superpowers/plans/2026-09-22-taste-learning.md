@@ -2033,6 +2033,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `src/features/privacy/privacy-copy.test.ts`
 - Modify: `src/features/household/household-settings-page.tsx:1777` と `:2539`（`<ShareConsentSettingsSection userId={userId} />` の直後、2 箇所とも）
 - Modify: `src/features/household/household-settings-page.test.tsx`（`TasteLearningSettingsSection` を `ShareConsentSettingsSection` と同様にモックし、家族 CRUD テストを taste-learning RPC に依存させない）
+- Modify: `src/features/privacy/share-consent-settings-section.tsx`（R-1: `waitMs` を export し、`TasteLearningSettingsSection` の再読ポーリングへ再利用する。`SHARE_CONSENT_RECONCILE_ATTEMPTS`/`SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS` はすでに export 済みのものを再利用する）
 
 **Interfaces:**
 - Consumes: Task 1 の `set_taste_learning_enabled` と `profiles.taste_learning_enabled`
@@ -2042,9 +2043,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 `src/features/account/taste-learning-api.test.ts`: `getTasteLearningEnabled` / `setTasteLearningEnabled` の成功・エラー・Zod 検証失敗（不正な形の応答）を確認する。
 
-`src/features/account/taste-learning-section.test.tsx`: 値が enabled prop にそのまま追従すること（`useState` で最初の値へ固定しないこと）、トグル操作で `onToggle` が呼ばれること、失敗時に `role="alert"` で `tasteLearningCopy.failed` を表示し値が戻ること、マウント後の prop 変化にスイッチが追従すること、`disabled` prop でスイッチを無効化できること。
+`src/features/account/taste-learning-section.test.tsx`: 値が enabled prop にそのまま追従すること（`useState` で最初の値へ固定しないこと）、トグル操作で `onToggle` が呼ばれること、失敗時に `role="alert"` で `tasteLearningCopy.failed` を表示し値が戻ること、マウント後の prop 変化にスイッチが追従すること。
 
-`src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチ自体が出ないこと（N-2）、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出てスイッチは出ず告知文は消えないこと（N-2）、再読み込み中はボタンがローディング行に差し替わること（N-4）、初回読み込みで値がスイッチに反映されること、一度読み込めた後の裏取り再読の失敗ではスイッチを無効化せず読み込みエラーも出さないこと（N-3）、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること（詰まった裏取り再読に依存しないことを含む、N-6）、ユーザー操作なしのキャッシュ変化にもスイッチが追従すること（N-6）、書き込み失敗時に楽観値を経由してから元の値へ戻ることが観測できること（N-7）、書き込みが timeout した後にサーバーが実際に commit していれば遅延成功をキャッシュへ反映すること、かつ timeout 後に打った次のトグルの結果を古い応答が上書きしないこと（N-1）。
+`src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチ自体が出ないこと（N-2）、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出てスイッチは出ず告知文は消えないこと（N-2）、再読み込み中はボタンを unmount せず disabled とローディング文言へ差し替えること（N-4/R-4）、初回読み込みで値がスイッチに反映されること、一度読み込めた後の裏取り再読の失敗ではスイッチを無効化せず読み込みエラーも出さないこと（N-3）、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること（詰まった裏取り再読に依存しないことを含む、N-6）、ユーザー操作なしのキャッシュ変化にもスイッチが追従すること（N-6）、書き込み失敗時に楽観値を経由してから元の値へ戻ることが観測できること（N-7）、書き込みが abort されると実クライアントと同じく reject すること、その後の再読ポーリングでサーバーの遅延 commit が確認できれば成功扱いにしキャッシュへ反映すること（失敗アラートを出さない、R-1）、再読ポーリングが全て変更前の値を返し続けた場合は失敗アラートを出しスイッチをサーバー値へ戻すこと（R-1）。
 
 `src/features/privacy/privacy-copy.test.ts` の既存アサーションを `/設定/u`（既存の「家族設定」でも通ってしまい実質何も検証しない）から `/止められ/u`（「設定でいつでも止められます」の追記そのものを検証する）へ差し替える。
 
@@ -2128,6 +2129,11 @@ export const tasteLearningKeys = {
 `src/features/account/taste-learning-copy.ts`（`react-refresh/only-export-components` を避けるため、`tasteLearningCopy` はコンポーネントファイルへ置かない。share-consent の copy が `privacy-copy.ts` にあるのと同じ理由）:
 
 ```ts
+/**
+ * 好みの学習セクションの文言。react-refresh/only-export-components を避けるため
+ * コンポーネントファイルから分離する（share-consent の copy が privacy-copy.ts に
+ * あるのと同じ理由）。
+ */
 export const tasteLearningCopy = {
   title: "好みの学習",
   toggleLabel: "好みの学習",
@@ -2144,7 +2150,7 @@ export const tasteLearningCopy = {
 
 - [x] **Step 5: スイッチ本体を書く**
 
-`src/features/account/taste-learning-section.tsx`（見出し・告知文・読み込み/エラー表示は持たない。値が確定してから使う想定）:
+`src/features/account/taste-learning-section.tsx`（見出し・告知文・読み込み/エラー表示は持たない。値が確定してから使う想定。R-5: `disabled` prop は本番の呼び出し元が使わないため置かない）:
 
 ```tsx
 import { useId, useState } from "react";
@@ -2154,8 +2160,6 @@ export type TasteLearningSectionProps = {
   /** サーバー側の現在値。楽観表示中でなければこの値がそのまま表示される。 */
   enabled: boolean;
   onToggle: (nextEnabled: boolean) => Promise<void>;
-  /** 読み込み中・読み取り失敗時に外側から強制的に操作不能にする。 */
-  disabled?: boolean;
   describedById?: string;
 };
 
@@ -2169,7 +2173,6 @@ export type TasteLearningSectionProps = {
 export function TasteLearningSection({
   enabled,
   onToggle,
-  disabled = false,
   describedById,
 }: TasteLearningSectionProps) {
   const [pending, setPending] = useState(false);
@@ -2190,7 +2193,7 @@ export function TasteLearningSection({
           checked={displayed}
           aria-checked={displayed}
           aria-describedby={describedById}
-          disabled={pending || disabled}
+          disabled={pending}
           onChange={(event) => {
             const next = event.target.checked;
             setPending(true);
@@ -2228,13 +2231,18 @@ export function TasteLearningSection({
 
 - [x] **Step 7: データ配線セクションを書く**
 
-`src/features/account/taste-learning-settings-section.tsx`（`useQuery`/`useMutation` に加え、見出し・告知文・読み込み中/エラー表示を常時持つ。household 側はこれを直接使い、薄いラッパーを household-settings-page.tsx 内に作らない）:
+`src/features/account/taste-learning-settings-section.tsx`（`useQuery`/`useMutation` に加え、見出し・告知文・読み込み中/エラー表示を常時持つ。household 側はこれを直接使い、薄いラッパーを household-settings-page.tsx 内に作らない。R-1: 書き込み失敗時は `ShareConsentSettingsSection` と同じ再読ポーリングで裏取りする。R-4: 再読み込みボタンは unmount せず disabled にする）:
 
 ```tsx
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { withTimeout } from "@/features/auth/async-timeout";
-import { SHARE_CONSENT_TOGGLE_TIMEOUT_MS } from "@/features/privacy/share-consent-settings-section";
+import {
+  SHARE_CONSENT_RECONCILE_ATTEMPTS,
+  SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS,
+  SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
+  waitMs,
+} from "@/features/privacy/share-consent-settings-section";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
   getTasteLearningEnabled,
@@ -2258,9 +2266,13 @@ export type TasteLearningSettingsSectionProps = {
  * または一度も読み込めていない失敗時）はスイッチ自体を出さない — ON がデフォルトのため
  * `?? false` で偽の OFF を見せると誤操作を招く。一度読み込めた後の裏取り再読が失敗しても
  * （N-3）値は保持済みなので、スイッチは有効なまま・読み込みエラーは出さない。
- * N-1: timeout 後は abort を試み、元の書き込みの遅延成功を cache に反映し、エラー時は
- * invalidate してサーバー値へ裏取りする。世代ガードで、timeout 後に打たれた次の
- * トグルの結果を古い応答が上書きしないようにする。
+ * N-1/R-1: timeout・書き込み失敗時は abort を試みたうえで、getTasteLearningEnabled を
+ * 最大 SHARE_CONSENT_RECONCILE_ATTEMPTS 回、SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS 間隔で
+ * 再読する（ShareConsentSettingsSection と同じ再読ポーリング）。abort は fetch を打ち切る
+ * だけでサーバー側の commit は止まらないため、直後の 1 回だけの再読では commit 前の値を
+ * 正と誤認しうる。再読値が要求値と一致すれば成功扱いにして書き込み失敗を出さず、
+ * 全て失敗すれば invalidate してサーバー値へ裏取りする。世代ガードで、timeout 後に
+ * 打たれた次のトグルの結果を古い応答が上書きしないようにする。
  */
 export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSectionProps) {
   const queryClient = useQueryClient();
@@ -2284,32 +2296,51 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
           abortController.abort();
         }
       };
-      const writePromise = setTasteLearningEnabled(getBrowserSupabaseClient(), nextEnabled, {
+      const client = getBrowserSupabaseClient();
+      const writePromise = setTasteLearningEnabled(client, nextEnabled, {
         signal: abortController.signal,
       });
-      // N-1: abort が効かない経路や、応答が commit 後に届いた場合の保険として、
-      // 元の書き込みが遅延成功したら（自分より新しい世代に上書きされていなければ）cache へ反映する。
-      void writePromise
-        .then((result) => {
-          if (generation === mutationGenerationRef.current) {
-            queryClient.setQueryData(tasteLearningKeys.current(userId), result);
-          }
-        })
-        .catch(() => undefined);
       try {
-        const result = await withTimeout(
-          writePromise,
-          SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
-          abortWrite,
-        );
+        const result = await withTimeout(writePromise, SHARE_CONSENT_TOGGLE_TIMEOUT_MS, abortWrite);
         if (generation === mutationGenerationRef.current) {
           queryClient.setQueryData(tasteLearningKeys.current(userId), result);
           void queryClient.invalidateQueries({ queryKey: tasteLearningKeys.current(userId) });
         }
         return result;
       } catch (error) {
-        // N-1: timeout/失敗時もサーバーが処理済みの可能性があるため、裏取りの再読を必ずかける。
-        if (generation === mutationGenerationRef.current) {
+        // R-1: abort は fetch を打ち切るだけでサーバーの commit は止まらないため、
+        // 直後の 1 回だけの再読では commit 前の値を正と誤認しうる。世代ガード付きで
+        // 複数回・間隔を空けて再読し、要求値と一致した時点で成功扱いにする。
+        if (generation !== mutationGenerationRef.current) {
+          throw error;
+        }
+        let sawSuccessfulRead = false;
+        for (let attempt = 0; attempt < SHARE_CONSENT_RECONCILE_ATTEMPTS; attempt += 1) {
+          if (generation !== mutationGenerationRef.current) {
+            throw error;
+          }
+          try {
+            const fresh = await withTimeout(
+              getTasteLearningEnabled(client, userId),
+              SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
+            );
+            sawSuccessfulRead = true;
+            if (generation === mutationGenerationRef.current) {
+              queryClient.setQueryData(tasteLearningKeys.current(userId), fresh);
+            }
+            if (fresh === nextEnabled) {
+              // サーバーは実際には commit していた。再読で確定した値なので成功扱いにする。
+              return fresh;
+            }
+          } catch {
+            // この回の再読失敗。残回数でサーバーを再確認する。
+          }
+          if (attempt < SHARE_CONSENT_RECONCILE_ATTEMPTS - 1) {
+            await waitMs(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS);
+          }
+        }
+        if (!sawSuccessfulRead && generation === mutationGenerationRef.current) {
+          // 再読が全部失敗: 保持中のキャッシュ値をそのまま正とはせず、裏取りをやり直す。
           void queryClient.invalidateQueries({ queryKey: tasteLearningKeys.current(userId) });
         }
         throw error;
@@ -2319,10 +2350,23 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
 
   const data = tasteLearningQuery.data;
   const hasData = data !== undefined;
+  // R-4: 一度読み取りに失敗した後の再読み込みでは、TanStack Query が isPending/isError を
+  // 一時的に「初回読み込み中」相当へ戻すことがある。それに引きずられてエラー表示とボタンを
+  // 丸ごと隠すと、再読み込み中のフォーカスされたボタンが unmount されてしまう（R-4）。
+  // 値が読めるまでは一度出たエラー状態を保持し、読み込み中/エラーの表示を切り替えるだけにする。
+  const [hasLoadErrored, setHasLoadErrored] = useState(false);
+  useEffect(() => {
+    if (tasteLearningQuery.isError) {
+      setHasLoadErrored(true);
+    } else if (hasData) {
+      setHasLoadErrored(false);
+    }
+  }, [tasteLearningQuery.isError, hasData]);
+  const showLoading = !hasData && !hasLoadErrored && tasteLearningQuery.isPending;
   // N-3: 一度読み込めていれば、その後の裏取り再読の失敗はスイッチを止めず読み込みエラーも出さない。
-  const showLoading = !hasData && tasteLearningQuery.isPending;
-  const showLoadError = !hasData && tasteLearningQuery.isError;
-  // N-4: 再読み込み中はボタンをローディング行に差し替えてフィードバックを出す。
+  const showLoadError = !hasData && hasLoadErrored;
+  // N-4/R-4: 再読み込み中はボタンを消さずに disabled + ローディング文言へ差し替える
+  // （フォーカス中のボタンを unmount するとフォーカスが body に落ちるため）。
   const showRetrying = showLoadError && tasteLearningQuery.isFetching;
 
   return (
@@ -2339,19 +2383,17 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
       {showLoadError ? (
         <div className="stack gap-2">
           <p role="alert">{tasteLearningCopy.loadError}</p>
-          {showRetrying ? (
-            <p role="status">{tasteLearningCopy.loading}</p>
-          ) : (
-            <button
-              type="button"
-              className="secondary-button min-h-11"
-              onClick={() => {
-                void tasteLearningQuery.refetch();
-              }}
-            >
-              {tasteLearningCopy.retry}
-            </button>
-          )}
+          <button
+            type="button"
+            className="secondary-button min-h-11"
+            disabled={showRetrying}
+            onClick={() => {
+              void tasteLearningQuery.refetch();
+            }}
+          >
+            {showRetrying ? tasteLearningCopy.loading : tasteLearningCopy.retry}
+          </button>
+          {showRetrying ? <p role="status">{tasteLearningCopy.loading}</p> : null}
         </div>
       ) : null}
       {hasData ? (
