@@ -386,6 +386,8 @@ export async function loadTasteHints(input: {
 - **`reason` キーを外してから `safeParse` する。** `tasteSignalsSchema` は `.strict()` なので、
   `reason: null` を含んだまま渡すと成功応答が未知キーで落ちる（§4.5）。
 - 戻すのは `TasteSignals`（対応表を含む）。対応表は §5.3 で使い切り、prompt へは出さない。
+- `reason` を外すコピーは `Object.fromEntries` で作る。代入でコピーすると `"__proto__"` キーが
+  プロトタイプを差し替え、strict schema の未知キー検査をすり抜ける。
 
 ### 5.2 安全フィルタ `filterTasteHintsForSafety()`
 
@@ -407,6 +409,8 @@ export async function loadTasteHints(input: {
 | 自由登録アレルギー | `context.safety.members[].customAllergies[].name / aliases` |
 
 照合は `normalizeFoodText` + `foodTextContainsAlias`（`shared/safety/allergens.ts`）を再利用する。
+語は正規化後の形で重複を畳み、名前ごとに 1 回だけ `normalizeFoodTextForMatching` した compact に
+語が部分文字列で含まれるものだけを `foodTextContainsAlias` に回す（判定結果は同一、200ms 予算内に収める）。
 idea モード（`safety: null`）ではアレルゲン由来の語が無く、`avoidIngredients` のみで落とす。
 
 **この関数が `avoidAxes` のモード制限も行う。** `generationContext.targetMode === "idea"` のとき
@@ -430,7 +434,8 @@ idea モード（`safety: null`）ではアレルゲン由来の語が無く、`
 2. **1 で落とした料理にしか現れない食材を `likedIngredients` からも落とす。**
    名前だけ消しても食材が残れば同じ皿に戻る。生き残りは 12 件で切れた `likedDishes` ではなく、
    上限の無い対応表の「最近でない料理」から数える（13 位以下の料理の食材を誤って消さない）。
-   あわせて改行・制御文字（`\p{Cc}` / U+2028 / U+2029）を含む語を語ごとに落とす。
+   あわせて改行・制御文字・不可視の書式文字（`\p{Cc}` / `\p{Cf}` / `\p{Co}` / `\p{Cn}` / U+2028 / U+2029）を
+   含む語を語ごとに落とす。ゼロ幅空白や双方向制御で見た目を偽装した語をプロンプトへ渡さない。
 3. 契約の各上限で切り詰める。
 4. **対応表 `dishIngredientIndex` を捨てる。** 戻り値は `TasteHints`（対応表なし）。
 5. `hasTasteContent()` が false なら全体を `null` にする（`outcome = "filtered_empty"`）。
@@ -646,7 +651,7 @@ OFF にすると読み取りをやめます。設定と反映の記録は保存�
 | 層 | ファイル | 見るもの |
 | --- | --- | --- |
 | pgTAP | `supabase/tests/database/taste_signals.test.sql` | 他人の menus を読まない／窓の境界 89・90 日と 49・50 件／半減期／`score` の加算と乗算／`derivation_group_id` で数えた強さの 4・5・14・15／**回数はすべて派生グループ単位**（同じ 1 食を 3 回再生成しても使いすぎにならない、`child_friendly` 2 回でも 1 グループなら軸にならない）／同一献立内の重複食材は 1 回／ジャンルは `menus.cuisine_genre` で比率を取り、結果 `any` は分子に入らない／`submission.cuisineGenre = 'any'` 限定／時間帯の境界 20・20.5・40・40.5／`{"reason":...}` と `reason: null` の判別／`dishIngredientIndex` が `score > 0` の料理だけを含む／`set_taste_learning_enabled` が他人の行を更新しない／テーブル単位 UPDATE が依然として拒否される |
-| Function | `taste-hints.test.ts` | `reason` 分岐が safeParse より先（`disabled` / `no_history` が `invalid_shape` に潰れない）／タイムアウト・失敗・不正形で null と `outcome`／OFF で RPC を呼ばない／安全フィルタ（アレルゲン別名・カスタム・苦手・avoid）／**idea で `avoidAxes` が空**／`sanitizeTasteHints` が対応表で食材を落とし、対応表を戻り値から捨てる |
+| Function | `taste-hints.test.ts` | `reason` 分岐が safeParse より先（`disabled` / `no_history` が `invalid_shape` に潰れない）／タイムアウト・失敗・不正形で null と `outcome`／OFF で RPC を呼ばない／安全フィルタ（アレルゲン別名・カスタム・苦手・avoid）／**idea で `avoidAxes` が空**／表示確認の別名・苦手では料理ごと落とさない／`__proto__` キーで strict 検査をすり抜けない／辞書全件でも予算内に収まる／`sanitizeTasteHints` が対応表で食材を落とし（13 位以下の料理の食材は残す）、制御文字・不可視文字を含む語を落とし、対応表を戻り値から捨てる |
 | Function | `generation-prompt.test.ts` 追記 | 段落とキーの有無／優先順位の文が 1 回だけ／料理名が system 文に現れない／空ヒントでキーごと消える |
 | Function | `generation-prompt-taste-off.test.ts`（新規） | kill-switch off で段落もキーも出ない（既存 2 本と同型） |
 | Function | `generation-service.test.ts` 追記 | `Promise.all` 並列／**fingerprint に載らない**／`preference_snapshot` の記録が確定オブジェクトと一致（切り詰めで空→キーなし）／再生成経路に出ない／`tasteHintsOutcome` |

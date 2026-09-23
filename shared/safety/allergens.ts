@@ -146,7 +146,7 @@ type FoodTextForMatching = {
   separatorOffsets: ReadonlySet<number>;
 };
 
-function normalizeFoodTextForMatching(value: string): FoodTextForMatching {
+export function normalizeFoodTextForMatching(value: string): FoodTextForMatching {
   let compact = "";
   let sawSeparator = false;
   const separatorOffsets = new Set<number>();

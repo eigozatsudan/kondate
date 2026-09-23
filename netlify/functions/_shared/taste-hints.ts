@@ -12,7 +12,10 @@ import {
   type TasteHints,
   type TasteSignals,
 } from "../../../shared/contracts/taste-hints.js";
-import { foodTextContainsAlias } from "../../../shared/safety/allergens.js";
+import {
+  foodTextContainsAlias,
+  normalizeFoodTextForMatching,
+} from "../../../shared/safety/allergens.js";
 import { expandAvoidNeedles } from "../../../shared/safety/validate-generated-menu.js";
 import { normalizeFoodText } from "../../../shared/safety-pure/normalize-food-text.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
@@ -65,14 +68,11 @@ function readReason(data: unknown): string | null | undefined {
  * reason だけを剥がした残りを渡す。値の narrowing は safeParse に任せる。
  * `data as Record<string, unknown>` のような unchecked cast を避けるため
  * Object.entries(object) の組み込みオーバーロードだけで組み立てる。
+ * 代入でコピーすると "__proto__" キーがプロトタイプを差し替え、strict schema の
+ * 未知キー検査をすり抜ける。fromEntries は自前のプロパティとして作るので検査に掛かる。
  */
 function omitReason(data: object): Record<string, unknown> {
-  const rest: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (key === "reason") continue;
-    rest[key] = value;
-  }
-  return rest;
+  return Object.fromEntries(Object.entries(data).filter(([key]) => key !== "reason"));
 }
 
 async function querySignals(client: OwnerClientForTaste): Promise<TasteHintsLoadResult> {
@@ -85,6 +85,7 @@ async function querySignals(client: OwnerClientForTaste): Promise<TasteHintsLoad
   if (reason === "disabled") return { signals: null, outcome: "disabled_user" };
   if (reason === "no_history") return { signals: null, outcome: "no_history" };
   if (reason !== null) return { signals: null, outcome: "invalid_shape" };
+  // 実行時は readReason が既に弾くため到達しない。omitReason へ object として渡す型の絞り込み
   if (typeof data !== "object" || data === null) return { signals: null, outcome: "invalid_shape" };
 
   const rest = omitReason(data);
@@ -181,13 +182,38 @@ function collectBlockedTerms(context: GenerationContext): BlockedTerms {
       bucket.push(alias.alias, alias.normalizedAlias);
     }
   }
-  const usable = (term: string) => normalizeFoodText(term) !== "";
-  const hardTerms = hard.filter(usable);
-  return { all: [...hardTerms, ...soft.filter(usable)], hard: hardTerms };
+  // alias と normalizedAlias はほぼ同じ形に正規化されるので、正規化後の形で 1 つに畳む
+  const dedupe = (terms: readonly string[], seen: Set<string>): string[] =>
+    terms.filter((term) => {
+      const key = normalizeFoodText(term);
+      if (key === "" || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  const seen = new Set<string>();
+  const hardTerms = dedupe(hard, seen);
+  return { all: [...hardTerms, ...dedupe(soft, seen)], hard: hardTerms };
 }
 
-function hitsBlocked(text: string, blocked: readonly string[]): boolean {
-  return blocked.some((term) => foodTextContainsAlias(text, term));
+/**
+ * 1 つの名前が語に当たるかを判定する。foodTextContainsAlias は一致の必要条件として
+ * 正規化済み compact に語が部分文字列で含まれることを要求するため、名前ごとに 1 回だけ
+ * 正規化して部分文字列で絞り、候補だけを本判定に回す（判定結果は foodTextContainsAlias と同一）。
+ * 同じ名前は対応表に何度も出るので、結果も名前ごとに覚える。
+ */
+function makeBlockedMatcher(terms: readonly string[]): (text: string) => boolean {
+  const needles = terms.map((term) => ({ term, needle: normalizeFoodText(term) }));
+  const cache = new Map<string, boolean>();
+  return (text) => {
+    const cached = cache.get(text);
+    if (cached !== undefined) return cached;
+    const compact = normalizeFoodTextForMatching(text).compact;
+    const hit = needles.some(
+      ({ term, needle }) => compact.includes(needle) && foodTextContainsAlias(text, term),
+    );
+    cache.set(text, hit);
+    return hit;
+  };
 }
 
 /**
@@ -200,24 +226,25 @@ export function filterTasteHintsForSafety(
   signals: TasteSignals,
   context: GenerationContext,
 ): TasteSignals {
-  const { all: blocked, hard } = collectBlockedTerms(context);
+  const terms = collectBlockedTerms(context);
+  const hitsHard = makeBlockedMatcher(terms.hard);
+  const hitsSoft = makeBlockedMatcher(terms.all.slice(terms.hard.length));
+  const hitsAny = (text: string) => hitsHard(text) || hitsSoft(text);
   // 料理名に出ない食材（親子丼の卵など）でも、対応表の食材がハードな語に当たれば料理ごと落とす
   const blockedDishNames = new Set(
     signals.dishIngredientIndex
-      .filter((entry) => entry.ingredients.some((name) => hitsBlocked(name, hard)))
+      .filter((entry) => entry.ingredients.some(hitsHard))
       .map((entry) => normalizeFoodText(entry.dishName)),
   );
   return {
     ...signals,
     likedDishes: signals.likedDishes.filter(
-      (dish) =>
-        !hitsBlocked(dish.dishName, blocked) &&
-        !blockedDishNames.has(normalizeFoodText(dish.dishName)),
+      (dish) => !hitsAny(dish.dishName) && !blockedDishNames.has(normalizeFoodText(dish.dishName)),
     ),
-    likedIngredients: signals.likedIngredients.filter((name) => !hitsBlocked(name, blocked)),
+    likedIngredients: signals.likedIngredients.filter((name) => !hitsAny(name)),
     dishIngredientIndex: signals.dishIngredientIndex.map((entry) => ({
       dishName: entry.dishName,
-      ingredients: entry.ingredients.filter((name) => !hitsBlocked(name, blocked)),
+      ingredients: entry.ingredients.filter((name) => !hitsAny(name)),
     })),
     // overusedIngredients は「使いすぎを避けて」という向きの語なので落とさない（spec §5.2 の対象外）
     avoidAxes: context.targetMode === "idea" ? [] : signals.avoidAxes,
@@ -225,12 +252,13 @@ export function filterTasteHintsForSafety(
 }
 
 /**
- * 制御文字・行区切り（U+2028）・段落区切り（U+2029）を含む語かどうか。
+ * 制御文字・行区切り（U+2028）・段落区切り（U+2029）と、ゼロ幅・双方向制御などの
+ * 不可視文字（Cf）、私用領域（Co）、未割り当て（Cn）を含む語かどうか。
  * Task 1 敵対的レビュー M3 の申し送り: overusedIngredients は利用者が入力した
  * メイン食材の文字列がそのまま DB から返るため、【学習】段落へ改行混じりの
  * 指示文などを持ち越さないよう、語ごとに落とす（ヒント全体は落とさない）。
  */
-const CONTROL_OR_LINE_BREAK = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+const CONTROL_OR_LINE_BREAK = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}]/u;
 
 function hasControlOrLineBreak(value: string): boolean {
   return CONTROL_OR_LINE_BREAK.test(value);
