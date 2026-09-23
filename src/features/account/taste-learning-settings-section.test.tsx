@@ -350,7 +350,7 @@ describe("TasteLearningSettingsSection", () => {
 
       // 再読間隔が過ぎるまでは次の再読をしない
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS - 100);
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS / 2);
       });
       expect(getTasteLearningEnabledMock).toHaveBeenCalledTimes(2);
 

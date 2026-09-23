@@ -2441,9 +2441,11 @@ git add src/features/account/taste-learning-copy.ts \
   src/features/account/taste-learning-settings-section.tsx \
   src/features/account/taste-learning-settings-section.test.tsx \
   src/features/privacy/privacy-copy.ts src/features/privacy/privacy-copy.test.ts \
+  src/features/privacy/share-consent-settings-section.tsx \
+  src/features/auth/async-timeout.ts \
   src/features/household/household-settings-page.tsx \
   src/features/household/household-settings-page.test.tsx
-git commit -m "fix(settings): 好みの学習のトグルをサーバー値に追従させ読み取り失敗時も表示する"
+git commit -m "feat(settings): 好みの学習のトグルと送信の告知を追加する"
 ```
 
 ---
