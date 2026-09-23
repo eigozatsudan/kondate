@@ -930,7 +930,7 @@ describe("taste hints", () => {
     expect(system.split("優先順位は次のとおりです。").length - 1).toBe(1);
   });
 
-  it("uses DIVERSITY_PARAGRAPH_WITH_TASTE and orders diversity < taste < novelty when learning is on", () => {
+  it("uses DIVERSITY_PARAGRAPH_WITH_TASTE and orders diversity < taste when learning is on", () => {
     const messages = buildGenerationMessages(
       asNewMenuExecution(makeGenerationContext(), [], someTasteHints),
     );
@@ -943,6 +943,29 @@ describe("taste hints", () => {
     const tasteIndex = system.indexOf(TASTE_SYSTEM_MARKER);
     expect(diversityIndex).toBeGreaterThanOrEqual(0);
     expect(tasteIndex).toBeGreaterThan(diversityIndex);
+  });
+
+  it("places the learning paragraph before the novelty paragraph when both are on", () => {
+    const base = makeGenerationContext();
+    const messages = buildGenerationMessages(
+      asNewMenuExecution(
+        {
+          ...base,
+          submission: { ...base.submission, noveltyPreference: "twist", mainIngredients: ["豚肉"] },
+        },
+        [],
+        someTasteHints,
+      ),
+    );
+    const system = systemText(messages);
+    const diversityIndex = system.indexOf(DIVERSITY_SYSTEM_MARKER);
+    const tasteIndex = system.indexOf(TASTE_SYSTEM_MARKER);
+    const noveltyIndex = system.indexOf(NOVELTY_SYSTEM_MARKER);
+    // 3 段落とも載っていることを先に確かめる（-1 同士の比較で通らないように）
+    expect(diversityIndex).toBeGreaterThanOrEqual(0);
+    expect(tasteIndex).toBeGreaterThan(diversityIndex);
+    // 学習段落はひねり段落より前（優先順位の文と同じ並び）
+    expect(noveltyIndex).toBeGreaterThan(tasteIndex);
   });
 
   it("adds the learning paragraph and key for idea mode too", () => {
