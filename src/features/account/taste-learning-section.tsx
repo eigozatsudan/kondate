@@ -6,6 +6,11 @@ export type TasteLearningSectionProps = {
   enabled: boolean;
   onToggle: (nextEnabled: boolean) => Promise<void>;
   describedById?: string;
+  /**
+   * 親が外から止めたいとき true。未確定の再試行（柵）が走っている間にトグルを書くと、
+   * 柵が先に連番を進めてトグルの書き込みが applied:false になり、偽の失敗表示が出る。
+   */
+  disabled?: boolean;
 };
 
 /**
@@ -19,6 +24,7 @@ export function TasteLearningSection({
   enabled,
   onToggle,
   describedById,
+  disabled = false,
 }: TasteLearningSectionProps) {
   const [pending, setPending] = useState(false);
   const [optimisticValue, setOptimisticValue] = useState<boolean | null>(null);
@@ -41,7 +47,7 @@ export function TasteLearningSection({
           className="min-h-11 min-w-11"
           checked={displayed}
           aria-describedby={describedById}
-          disabled={pending}
+          disabled={pending || disabled}
           onChange={(event) => {
             const next = event.target.checked;
             setPending(true);
@@ -60,6 +66,13 @@ export function TasteLearningSection({
         />
         {tasteLearningCopy.toggleLabel}
       </label>
+      {/* 確定処理は最悪 1 分強かかる（書き込みの timeout 後に読み取りと柵を再試行する）。
+          その間スイッチが無言で止まって見えないよう、短い状態文言を読み上げる */}
+      {pending ? (
+        <p className="type-small" role="status">
+          {tasteLearningCopy.saving}
+        </p>
+      ) : null}
       {showFailed ? (
         <p className="type-small" role="alert">
           {tasteLearningCopy.failed}

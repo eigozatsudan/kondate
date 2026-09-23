@@ -65,6 +65,42 @@ describe("TasteLearningSection", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("disables the switch when the parent disables it", async () => {
+    const onToggle = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <TasteLearningSection enabled={true} onToggle={onToggle} disabled={true} />,
+    );
+    const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+    expect(toggle).toBeDisabled();
+    await userEvent.click(toggle);
+    expect(onToggle).not.toHaveBeenCalled();
+
+    rerender(<TasteLearningSection enabled={true} onToggle={onToggle} disabled={false} />);
+    expect(screen.getByRole("switch", { name: tasteLearningCopy.toggleLabel })).toBeEnabled();
+  });
+
+  it("announces a short status line only while the change is being confirmed", async () => {
+    let resolveToggle: () => void = () => undefined;
+    const onToggle = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveToggle = resolve;
+        }),
+    );
+    render(<TasteLearningSection enabled={true} onToggle={onToggle} />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    await userEvent.click(
+      await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(tasteLearningCopy.saving);
+
+    resolveToggle();
+    await waitFor(() => {
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+  });
+
   it("follows the enabled prop after mount instead of freezing at the initial value", async () => {
     const { rerender } = render(<TasteLearningSection enabled={true} onToggle={vi.fn()} />);
     const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });

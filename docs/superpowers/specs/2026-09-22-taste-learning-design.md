@@ -680,6 +680,8 @@ taste_hints_outcome: TasteHintsOutcome   // §5.1 の 9 値のみ
      記録は残る。スイッチは直近に観測したサーバー値のままにし、楽観値には戻さない。
      ボタンは記録の `expectedSeq` で確定を 1 回試み、その間は disabled で読み込み中の文言にする。
      トグルの書き込み中もボタンは押せない（柵がその書き込みの連番を奪い、偽の失敗表示を出すため）。
+     逆にボタンの確定処理の間はスイッチも押せない（`TasteLearningSection` の `disabled`）。同じ理由で、
+     柵が先に連番を進めるとトグルが `applied: false` になり偽の失敗表示が出る。
      確定処理は数十秒かかりうるので、画面を開き直した後の別の書き込みと並行しうる。記録を置くときは、
      既により新しいか同じ連番の記録があれば残し、cache が既に `expectedSeq` を超えた連番を観測して
      いれば置かない（`nextTasteLearningUnconfirmed`）。古い記録が新しい記録を上書きすると、新しい
@@ -690,6 +692,8 @@ taste_hints_outcome: TasteHintsOutcome   // §5.1 の 9 値のみ
 - taste-learning の cache への書き込みは、`useQuery` の `queryFn` 自身が fetch 成功時に行う置き換え
   も含めてすべて連番ガード（`mergeTasteLearningState`。cache の連番より古ければ捨てる）を通す。
   遅れて届いた読み取り・柵の応答や、remount 前のインスタンスからの応答が新しい値を巻き戻さない。
+- 書き込みと確定処理の間（最悪 1 分強）は、スイッチの下に `role="status"` の短い文言
+  （`tasteLearningCopy.saving`）を出す。スイッチが無言で止まって見えないようにする。
 - 共有同意（`share-consent-settings-section.tsx`）は連番を持たないため、従来どおり複数回の
   再読ポーリングで同じ問題を扱っている。挙動は変えない。
 

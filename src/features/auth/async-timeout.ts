@@ -39,7 +39,10 @@ export async function withTimeout<T>(
   }
 }
 
-/** 再読ポーリングの間隔待ち（共有同意の設定セクション）。 */
+/**
+ * 設定画面の再読・確定処理の間隔待ち。共有同意の設定セクション（再読ポーリング）と、
+ * 好みの学習の設定セクション（柵の再試行の間隔）が使う。
+ */
 export function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);

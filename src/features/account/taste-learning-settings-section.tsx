@@ -243,6 +243,9 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
         <TasteLearningSection
           enabled={data.enabled}
           describedById={descriptionId}
+          // 未確定の再試行（柵）の間はトグルを止める。同時に書くと柵が連番を奪い、
+          // トグルが偽の失敗表示になる（逆方向は再試行ボタン側の disabled で止めている）
+          disabled={unconfirmedRetryMutation.isPending}
           onToggle={async (nextEnabled) => {
             await tasteLearningMutation.mutateAsync({ nextEnabled, expectedSeq: data.seq });
           }}

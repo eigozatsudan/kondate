@@ -876,6 +876,45 @@ describe("TasteLearningSettingsSection", () => {
       });
     });
 
+    it("disables the switch while an unconfirmed retry is in flight", async () => {
+      // 再試行の柵と同時にトグルを書くと、柵が連番を奪って偽の失敗表示を出す（逆方向の A4）
+      const client = makeClient();
+      client.setQueryData(tasteLearningKeys.unconfirmed("user-1"), {
+        requestedEnabled: false,
+        expectedSeq: 0,
+      });
+      const server = createFakeServer({ enabled: true, seq: 0 });
+      wireServer(server);
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+      await waitFor(() => {
+        expect(toggle).toBeChecked();
+      });
+      expect(toggle).toBeEnabled();
+
+      let releaseRead: () => void = () => undefined;
+      getTasteLearningStateMock.mockImplementationOnce(
+        () =>
+          new Promise<TasteLearningState>((resolve) => {
+            releaseRead = () => {
+              resolve(server.read());
+            };
+          }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
+      );
+      await waitFor(() => {
+        expect(getSwitch()).toBeDisabled();
+      });
+
+      releaseRead();
+      await waitFor(() => {
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      });
+      expect(getSwitch()).toBeEnabled();
+    });
+
     it("does not let an older write's unconfirmed record overwrite a newer one", async () => {
       // 画面を開き直した後の別の書き込み（連番 1）が先に未確定になっている。
       // この画面の cache はまだ連番 0 のままで、連番 0 の書き込みも未確定に終わる
