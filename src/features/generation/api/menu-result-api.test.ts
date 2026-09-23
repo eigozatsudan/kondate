@@ -711,6 +711,63 @@ describe("getMenuResult", () => {
     expect(result.sourceSubmission).toBeNull();
   });
 
+  describe("tasteHintsApplied", () => {
+    async function resultWithSnapshot(snapshot: unknown) {
+      const row = rawMenuRow();
+      row.preference_snapshot = snapshot;
+      getBrowserSupabaseClientMock.mockReturnValue(
+        mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+      );
+      return await getMenuResult(MENU_ID);
+    }
+
+    it("medium 以上の記録のときだけ tasteHintsApplied を立てる", async () => {
+      expect(
+        (await resultWithSnapshot({ tasteHints: { applied: true, strength: "medium" } }))
+          .tasteHintsApplied,
+      ).toBe(true);
+      expect(
+        (await resultWithSnapshot({ tasteHints: { applied: true, strength: "strong" } }))
+          .tasteHintsApplied,
+      ).toBe(true);
+      // 履歴の浅い利用者に「いつもの好み」と言わない
+      expect(
+        (await resultWithSnapshot({ tasteHints: { applied: true, strength: "weak" } }))
+          .tasteHintsApplied,
+      ).toBe(false);
+    });
+
+    it("記録が無い・壊れているときは false に倒す", async () => {
+      expect((await resultWithSnapshot({})).tasteHintsApplied).toBe(false);
+      expect((await resultWithSnapshot(null)).tasteHintsApplied).toBe(false);
+      expect((await resultWithSnapshot([])).tasteHintsApplied).toBe(false);
+      expect((await resultWithSnapshot({ tasteHints: { applied: "yes" } })).tasteHintsApplied).toBe(
+        false,
+      );
+      expect(
+        (await resultWithSnapshot({ tasteHints: { applied: false, strength: "strong" } }))
+          .tasteHintsApplied,
+      ).toBe(false);
+      expect(
+        (
+          await resultWithSnapshot({
+            tasteHints: { applied: true, strength: "strong", likedDishes: ["肉じゃが"] },
+          })
+        ).tasteHintsApplied,
+      ).toBe(false);
+    });
+
+    it("既存の household スナップショット（導入前の形）では false のまま", async () => {
+      const row = rawMenuRow();
+      getBrowserSupabaseClientMock.mockReturnValue(
+        mockClient({ menu: { data: row, error: null }, pantryRows: [] }),
+      );
+      const result = await getMenuResult(MENU_ID);
+      expect(result.tasteHintsApplied).toBe(false);
+      expect(result.sourceSubmission).not.toBeNull();
+    });
+  });
+
   it("idea献立はtarget_modeをideaのまま透過する", async () => {
     const row = rawMenuRow();
     row.target_mode = "idea";

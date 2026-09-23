@@ -339,6 +339,7 @@ export function MenuResult({
         totalElapsedMinutes={menu.totalElapsedMinutes}
         servings={menu.servings}
         generationModelId={result.generationModelId}
+        tasteHintsApplied={result.tasteHintsApplied}
       />
       {mode !== "idea" ? (
         <p className="menu-result-ai-notice">

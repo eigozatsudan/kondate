@@ -82,6 +82,16 @@ it("shows a muted short model label under the summary when generationModelId is 
   expect(screen.getByText("作成モデル: Mercury 2")).toBeInTheDocument();
 });
 
+it("passes tasteHintsApplied through to the hero line", () => {
+  const { unmount } = render(
+    <MenuResult result={makeMenuResultViewModel({ tasteHintsApplied: true })} />,
+  );
+  expect(screen.getByText("✨ いつもの好みを反映しました")).toBeInTheDocument();
+  unmount();
+  render(<MenuResult result={makeMenuResultViewModel()} />);
+  expect(screen.queryByText(/いつもの好み/u)).not.toBeInTheDocument();
+});
+
 it("shows dislike preference soft gaps when present", () => {
   render(
     <MenuResult

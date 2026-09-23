@@ -87,4 +87,10 @@ export type MenuResultViewModel = {
    * UI は formatGenerationModelLabel で短い表示名へ落とす。
    */
   generationModelId: string | null;
+  /**
+   * preference_snapshot.tasteHints を tasteHintsRecordSchema で再検証した結果。
+   * strength が weak のときは false（履歴の浅い利用者に「いつもの好み」と言わない）。
+   * 欠落・壊れた形も false（安全側）。導入前の献立はキーが無いので false のまま。
+   */
+  tasteHintsApplied: boolean;
 };

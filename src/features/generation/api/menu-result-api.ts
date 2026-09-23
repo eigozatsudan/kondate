@@ -2,6 +2,7 @@ import { pantryItemSchema } from "@shared/contracts/pantry";
 import { validatedMenuSchema } from "@shared/contracts/generation";
 import type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
 import { plannerSubmissionSchema, targetModeSchema } from "@shared/contracts/planner";
+import { tasteHintsRecordSchema } from "@shared/contracts/taste-hints";
 import { collectDislikePreferenceGaps } from "@shared/safety-pure/preference-gaps";
 import { z } from "zod";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -17,6 +18,14 @@ const preferenceSnapshotMembersSchema = z.looseObject({
       }),
     )
     .optional(),
+});
+
+// 好みの学習の反映記録（Task 6 が new_menu 成功時だけ書く { applied: true, strength }）。
+// 未検査キャストを避けるため、snapshot 全体を looseObject で受けて tasteHints だけを
+// tasteHintsRecordSchema で厳密に検証する。欠落・余剰キー・applied 以外の形はすべて
+// 解析失敗として「未適用」に倒す（存在しない反映を利用者へ告げないため）。
+const preferenceSnapshotTasteSchema = z.looseObject({
+  tasteHints: tasteHintsRecordSchema,
 });
 
 export type { MenuResultViewModel, PantryPostCookTarget } from "@shared/contracts/menu-result";
@@ -351,6 +360,11 @@ export async function getMenuResult(
     preferenceGaps = collectDislikePreferenceGaps(menu, prefs);
   }
 
+  // 好みの 1 行は medium 以上のときだけ出す。weak は履歴が浅く「いつもの好み」と
+  // 言える根拠が薄いため出さない（spec §6.2）。strength の語自体は UI へ渡さない。
+  const tasteParsed = preferenceSnapshotTasteSchema.safeParse(data.preference_snapshot);
+  const tasteHintsApplied = tasteParsed.success && tasteParsed.data.tasteHints.strength !== "weak";
+
   // 生成モデルは private 台帳投影。欠落・RPC 失敗は献立本体の表示を落とさない。
   let generationModelId: string | null = null;
   const { data: modelData, error: modelError } = await client.rpc("get_menu_generation_model", {
@@ -402,5 +416,6 @@ export async function getMenuResult(
     pantryPostCookTargets,
     preferenceGaps,
     generationModelId,
+    tasteHintsApplied,
   };
 }

@@ -345,6 +345,7 @@ export function makeMenuResultViewModel(
       | "isSelected"
       | "preferenceGaps"
       | "generationModelId"
+      | "tasteHintsApplied"
     >
   > = {},
 ): MenuResultViewModel {
@@ -477,6 +478,8 @@ export function makeMenuResultViewModel(
     preferenceGaps: [],
     // モデル表示テスト以外は null（非表示）既定。
     generationModelId: null,
+    // 好みの 1 行は反映記録がある献立だけ。既定は未適用（導入前の献立と同じ）。
+    tasteHintsApplied: false,
     menu,
     memberLabels: { member_1: "子ども", member_2: "大人" },
     labelConfirmations: [
