@@ -795,8 +795,6 @@ export function HouseholdMenuDetailBody({
           <>
             <MenuSafetyNotice
               section="gate"
-              phase={revalidation.phase}
-              isOfflineHold={isOfflineHold}
               statusCopy={statusCopy}
               showGateStatus
               changedDetailLines={changedDetailLines}

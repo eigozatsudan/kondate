@@ -15,44 +15,49 @@ export type MenuSafetyNoticeIssue = {
   message: string;
 };
 
-export type MenuSafetyNoticeProps = {
-  /**
-   * 再検証フェーズ（checking/error/invalid の出し分け）。
-   * section="disclaimers" では参照しないため省略可（UX U1: 見出し直後の単独カード呼び出し用）。
-   */
-  phase?: RevalidationPhaseName;
-  /**
-   * offline hold 中は shopping と同型の接続誘導 copy を出す（HR1）。
-   * checking オーバーレイ内の文言だけを切り替える。section="disclaimers" では未使用。
-   */
-  isOfflineHold?: boolean;
-  /**
-   * error 帯・gate sticky に出す状態文。
-   * phase=error のとき role=alert、gate 通過時は role=status。section="disclaimers" では未使用。
-   */
-  statusCopy?: string | null;
-  /**
-   * phase=checked かつ status=invalid のときだけ渡す。
-   * 省略または空なら invalid 帯を出さない。
-   */
-  invalidIssues?: readonly MenuSafetyNoticeIssue[] | undefined;
-  /** phase=error の「もう一度確認」 */
-  onRetry?: (() => void) | undefined;
-  /**
-   * gate 通過後の sticky 状態帯を出すか。
-   * MenuResult 直前に置く提示順を維持するため、親が gateOpen 時に true にする。
-   */
-  showGateStatus?: boolean;
-  /** changed 時の日本語詳細行（HR-I2）。showGateStatus 時のみ使う */
-  changedDetailLines?: readonly string[];
-  /**
-   * レンダー範囲。提示順を崩さないために親が 3 箇所から呼ぶ。
-   * - `disclaimers`: ページ最上部の固定免責
-   * - `revalidation`: flyer の後・案切替の前の checking/error/invalid
-   * - `gate`: MenuResult 直前の sticky 状態帯
-   */
-  section?: "disclaimers" | "revalidation" | "gate";
-};
+/**
+ * レビュー指摘 M-4: 3 セクションは互いに無関係な props を要求するため、
+ * オプショナルの寄せ集めではなく section で判別する union にして、
+ * 「revalidation なのに phase を渡し忘れる」を型で防ぐ。
+ * - `disclaimers`: MenuHero 直後（gateOpen 前はページ枠が単独で出す、UX U1）の固定免責カード
+ * - `revalidation`: flyer の後・案切替の前の checking/error/invalid
+ * - `gate`: MenuResult 直前の sticky 状態帯
+ */
+export type MenuSafetyNoticeProps =
+  | {
+      section: "disclaimers";
+    }
+  | {
+      section: "revalidation";
+      /** 再検証フェーズ（checking/error/invalid の出し分け） */
+      phase: RevalidationPhaseName;
+      /**
+       * offline hold 中は shopping と同型の接続誘導 copy を出す（HR1）。
+       * checking オーバーレイ内の文言だけを切り替える。
+       */
+      isOfflineHold: boolean;
+      /** error 帯に出す状態文。phase=error のとき role=alert。 */
+      statusCopy: string | null;
+      /**
+       * phase=checked かつ status=invalid のときだけ渡す。
+       * 省略または空なら invalid 帯を出さない。
+       */
+      invalidIssues?: readonly MenuSafetyNoticeIssue[] | undefined;
+      /** phase=error の「もう一度確認」 */
+      onRetry?: (() => void) | undefined;
+    }
+  | {
+      section: "gate";
+      /** gate sticky に出す状態文。gate 通過時は role=status。 */
+      statusCopy: string | null;
+      /**
+       * gate 通過後の sticky 状態帯を出すか。
+       * MenuResult 直前に置く提示順を維持するため、親が gateOpen 時に true にする。
+       */
+      showGateStatus?: boolean;
+      /** changed 時の日本語詳細行（HR-I2）。showGateStatus 時のみ使う */
+      changedDetailLines?: readonly string[];
+    };
 
 /**
  * household 献立詳細の安全・アレルギー表示。
@@ -60,17 +65,9 @@ export type MenuSafetyNoticeProps = {
  * role=alert / role=status の使い分けも維持する。
  * sticky は .menu-result-gate-status 意味クラスへ退避（生 utility 禁止）。
  */
-export function MenuSafetyNotice({
-  phase,
-  isOfflineHold,
-  statusCopy,
-  invalidIssues,
-  onRetry,
-  showGateStatus = false,
-  changedDetailLines = [],
-  section = "disclaimers",
-}: MenuSafetyNoticeProps) {
-  if (section === "gate") {
+export function MenuSafetyNotice(props: MenuSafetyNoticeProps) {
+  if (props.section === "gate") {
+    const { statusCopy, showGateStatus = false, changedDetailLines = [] } = props;
     if (!showGateStatus) return null;
     return (
       <div className="menu-result-gate-status" role="status">
@@ -86,7 +83,7 @@ export function MenuSafetyNotice({
     );
   }
 
-  if (section === "disclaimers") {
+  if (props.section === "disclaimers") {
     // UX U1: 加工品表示確認・やわらかめ文・AI作成文の3枚を1枚のカードにまとめる（人間の決定）。
     // 文の意味は変えず、不安を煽らず目立たせる notice 面 1 つに収める。
     return (
@@ -104,7 +101,8 @@ export function MenuSafetyNotice({
     );
   }
 
-  // section === "revalidation"
+  // props.section === "revalidation"
+  const { phase, isOfflineHold, statusCopy, invalidIssues, onRetry } = props;
   return (
     <>
       {phase === "checking" && (

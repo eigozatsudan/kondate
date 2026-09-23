@@ -64,7 +64,7 @@ export function MenuResult({
   regenerateSelectedDishDisabled = false,
   postCookOpen = false,
   onPostCookClose,
-  heading = "献立ができました",
+  heading,
 }: {
   result: MenuResultViewModel;
   actions?: MenuResultActions;
@@ -99,10 +99,11 @@ export function MenuResult({
   postCookOpen?: boolean;
   onPostCookClose?: () => void;
   /**
-   * MenuHero に渡す見出し文言。省略時は生成直後の既定「献立ができました」
-   * （呼び出し側の menu-detail-types.ts の MenuDetailSurface.resultHeading を正とする、UX U1）。
+   * MenuHero に渡す見出し文言。呼び出し側の menu-detail-types.ts の
+   * MenuDetailSurface.resultHeading を正とする（UX U1）。
+   * レビュー I-2: 既定値へ黙って戻ると配線漏れがテストに出ないため、必須にする。
    */
-  heading?: string;
+  heading: string;
 }) {
   // 省略時は result.targetMode を正とする（既定 "household" による idea 誤表示を防ぐ）。
   const mode = modeProp ?? result.targetMode;

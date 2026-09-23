@@ -5,6 +5,10 @@ import { makeMenuResultViewModel } from "@shared/testing/factories";
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
 import { MenuResult, type MenuResultActions } from "./menu-result";
 
+// レビュー I-2: heading は必須 prop にしたので、呼び出し側すべてで明示する。
+// generation 面のテストはこの既定文言（サーフェスの見出し）を使う。
+const DEFAULT_HEADING = "献立ができました";
+
 beforeAll(() => {
   // jsdom は HTMLDialogElement の showModal/close を持たないため polyfill する
   if (typeof HTMLDialogElement !== "undefined") {
@@ -38,6 +42,7 @@ function renderPostCookOpen(
 ) {
   return render(
     <MenuResult
+      heading={DEFAULT_HEADING}
       result={result}
       actions={actions}
       {...(mode !== undefined ? { mode } : {})}
@@ -63,7 +68,9 @@ function selectedDishPanel() {
 }
 
 it("shows the overall timeline before persistent dish tabs", () => {
-  const { container } = render(<MenuResult result={makeMenuResultViewModel()} />);
+  const { container } = render(
+    <MenuResult heading={DEFAULT_HEADING} result={makeMenuResultViewModel()} />,
+  );
   const timeline = screen.getByRole("heading", { name: "全体の段取り" });
   const tabs = screen.getByRole("tablist", { name: "料理" });
   expect(timeline.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -77,13 +84,16 @@ it("shows the overall timeline before persistent dish tabs", () => {
 
 it("never shows the dev-facing model note regardless of generationModelId (UX U1)", () => {
   render(
-    <MenuResult result={makeMenuResultViewModel({ generationModelId: "inception/mercury-2" })} />,
+    <MenuResult
+      heading={DEFAULT_HEADING}
+      result={makeMenuResultViewModel({ generationModelId: "inception/mercury-2" })}
+    />,
   );
   expect(screen.queryByText(/作成モデル/u)).not.toBeInTheDocument();
 });
 
 it("renders the heading before the merged disclaimer card, in DOM order (UX U1)", () => {
-  render(<MenuResult result={makeMenuResultViewModel()} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={makeMenuResultViewModel()} />);
   const heading = screen.getByRole("heading", { level: 1, name: "献立ができました" });
   const disclaimer = screen.getByText(/AIが作成した献立です/u);
   expect(
@@ -98,17 +108,21 @@ it("uses the heading passed by the caller (surface heading, UX U1)", () => {
 
 it("passes tasteHintsApplied through to the hero line", () => {
   const { unmount } = render(
-    <MenuResult result={makeMenuResultViewModel({ tasteHintsApplied: true })} />,
+    <MenuResult
+      heading={DEFAULT_HEADING}
+      result={makeMenuResultViewModel({ tasteHintsApplied: true })}
+    />,
   );
   expect(screen.getByText("✨ いつもの好みを反映しました")).toBeInTheDocument();
   unmount();
-  render(<MenuResult result={makeMenuResultViewModel()} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={makeMenuResultViewModel()} />);
   expect(screen.queryByText(/いつもの好み/u)).not.toBeInTheDocument();
 });
 
 it("shows dislike preference soft gaps when present", () => {
   render(
     <MenuResult
+      heading={DEFAULT_HEADING}
       result={makeMenuResultViewModel({
         preferenceGaps: [
           {
@@ -129,7 +143,7 @@ it("switches dishes and exposes structured preparation and label checks", async 
   const menu = result.menu;
   const secondDish = menu.dishes[1];
   if (secondDish === undefined) throw new Error("fixture must contain a second dish");
-  render(<MenuResult result={result} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={result} />);
   // タブの実際のアクセシブルネームは「区分・料理名」（例: 副菜・温野菜）で、
   // getByRoleのname照合は常に完全一致のため、料理名だけの完全一致にはならない。
   // 正規表現で部分一致させて該当タブを選択する。料理 tablist にスコープする。
@@ -145,7 +159,7 @@ it("switches dishes and exposes structured preparation and label checks", async 
 
 it("moves focus and selection with roving tab keyboard controls", async () => {
   const result = makeMenuResultViewModel();
-  render(<MenuResult result={result} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={result} />);
   // 段取りタブが DOM 上先に来るため、料理 tablist 内に限定する
   const tabs = within(dishTablist()).getAllByRole("tab");
   const firstTab = tabs[0];
@@ -170,7 +184,7 @@ it("moves focus and selection with roving tab keyboard controls", async () => {
 });
 
 it("shows used amounts, shortages, and persisted unused reasons", () => {
-  render(<MenuResult result={makeMenuResultViewModel()} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={makeMenuResultViewModel()} />);
   expect(screen.getByRole("heading", { name: "冷蔵庫食材の使い方" })).toBeVisible();
   expect(screen.getByText(/不足/)).toBeVisible();
   expect(screen.getByText(/使わなかった理由/)).toBeVisible();
@@ -182,7 +196,7 @@ it("renders normalized structured safety actions returned by the aggregate loade
   const action = menu.adaptations.flatMap((item) => item.safetyActions).at(0);
   expect(action).toBeDefined();
   if (action === undefined) throw new Error("fixture must contain a safety action");
-  render(<MenuResult result={result} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={result} />);
   expect(screen.getByText("取り分け時の注意")).toBeVisible();
   expect(screen.getByText(action.instruction)).toBeVisible();
 });
@@ -191,7 +205,7 @@ it("renders confirmation ids through human source, allergen, and member labels",
   const result = makeMenuResultViewModel();
   const confirmation = result.labelConfirmations.at(0);
   if (confirmation === undefined) throw new Error("fixture must contain a label confirmation");
-  render(<MenuResult result={result} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={result} />);
   const confirmationSection = screen.getByRole("region", { name: "原材料表示の確認" });
   expect(confirmation.confirmationId).toMatch(/^[0-9a-f-]{36}$/u);
   expect(
@@ -232,6 +246,7 @@ it("shows recorded badge without bare 確認済み when label confirmation is co
   };
   render(
     <MenuResult
+      heading={DEFAULT_HEADING}
       result={result}
       currentLabelWarnings={[
         {
@@ -254,7 +269,7 @@ it("shows recorded badge without bare 確認済み when label confirmation is co
 
 it("renders numbered steps and every persisted adaptation field", () => {
   const result = makeMenuResultViewModel();
-  render(<MenuResult result={result} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={result} />);
   const panel = selectedDishPanel();
   const recipeHeading = within(panel).getByRole("heading", { name: "作り方" });
   const recipeList = recipeHeading.nextElementSibling;
@@ -275,7 +290,7 @@ it("shows a plain empty state when the selected dish has no adaptation", async (
   const result = makeMenuResultViewModel();
   const secondDish = result.menu.dishes[1];
   if (secondDish === undefined) throw new Error("fixture must contain a second dish");
-  render(<MenuResult result={result} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={result} />);
 
   await userEvent.click(
     within(dishTablist()).getByRole("tab", { name: new RegExp(secondDish.name, "u") }),
@@ -289,7 +304,13 @@ it("places dish-only regeneration inside the selected dish tabpanel", async () =
   const result = makeMenuResultViewModel();
   const firstDish = result.menu.dishes[0];
   if (firstDish === undefined) throw new Error("fixture must contain a dish");
-  render(<MenuResult result={result} onRegenerateSelectedDish={onRegenerateSelectedDish} />);
+  render(
+    <MenuResult
+      heading={DEFAULT_HEADING}
+      result={result}
+      onRegenerateSelectedDish={onRegenerateSelectedDish}
+    />,
+  );
 
   const panel = selectedDishPanel();
   const button = within(panel).getByRole("button", { name: "この一品だけ別案にする" });
@@ -301,7 +322,9 @@ it("places dish-only regeneration inside the selected dish tabpanel", async () =
 });
 
 it("keeps a 320px no-overflow class contract", () => {
-  const { container } = render(<MenuResult result={makeMenuResultViewModel()} />);
+  const { container } = render(
+    <MenuResult heading={DEFAULT_HEADING} result={makeMenuResultViewModel()} />,
+  );
   // UX U1: 本文ゲートが閉じている間（確認中・invalid）はページ枠側が免責文を出し続け、
   // 本文（MenuResult）は gateOpen 後に見出し直後の統合カードとしてまとめて出す。
   // jsdomは実レイアウトを計測しないため、320px幅で子要素を収める全体契約を
@@ -327,7 +350,7 @@ it("wraps unbroken ingredient names and amounts inside a 320px material row", ()
     unit: null,
   };
 
-  render(<MenuResult result={result} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={result} />);
 
   const name = screen.getByText(maximumName);
   const amount = screen.getByText(maximumAmount);
@@ -347,7 +370,12 @@ it("shows the label-confirm action and calls the confirm handler", async () => {
   if (confirmation === undefined) throw new Error("fixture must contain a confirmation");
   const liveFingerprint = "live-safety-fingerprint-from-revalidation";
   render(
-    <MenuResult result={result} actions={actions} currentSafetyFingerprint={liveFingerprint} />,
+    <MenuResult
+      heading={DEFAULT_HEADING}
+      result={result}
+      actions={actions}
+      currentSafetyFingerprint={liveFingerprint}
+    />,
   );
   await userEvent.click(
     screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
@@ -359,7 +387,9 @@ it("shows the label-confirm action and calls the confirm handler", async () => {
 it("G14: label confirm without live fingerprint does not POST stored requirement FP", async () => {
   const onConfirmLabel = vi.fn(() => Promise.resolve());
   const actions = makeActions({ onConfirmLabel });
-  render(<MenuResult result={makeMenuResultViewModel()} actions={actions} />);
+  render(
+    <MenuResult heading={DEFAULT_HEADING} result={makeMenuResultViewModel()} actions={actions} />,
+  );
   await userEvent.click(
     screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
   );
@@ -377,6 +407,7 @@ it("G9: label confirm failure live message prompts reopen on condition change", 
   const actions = makeActions({ onConfirmLabel });
   render(
     <MenuResult
+      heading={DEFAULT_HEADING}
       result={makeMenuResultViewModel()}
       actions={actions}
       currentSafetyFingerprint="live-fp"
@@ -393,7 +424,13 @@ it("G9: label confirm failure live message prompts reopen on condition change", 
 });
 
 it("keeps post-cook controls closed until the dialog is opened", () => {
-  render(<MenuResult result={makeMenuResultViewModel()} actions={makeActions()} />);
+  render(
+    <MenuResult
+      heading={DEFAULT_HEADING}
+      result={makeMenuResultViewModel()}
+      actions={makeActions()}
+    />,
+  );
   expect(screen.queryByRole("dialog", { name: "使った食材の在庫を更新" })).toBeNull();
   expect(screen.queryByRole("button", { name: "使い切った" })).toBeNull();
 });
@@ -493,13 +530,13 @@ it("returns an alert when the menu has no dishes", () => {
   const result = makeMenuResultViewModel();
   // 空配列は validated では本来到達しないが、表示境界の防御を固定する
   (result.menu as { dishes: unknown }).dishes = [];
-  render(<MenuResult result={result} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={result} />);
   expect(screen.getByRole("alert")).toHaveTextContent("献立の料理を表示できません");
 });
 
 it("hides adaptation and label confirmation for idea mode without actions", () => {
   const result = makeMenuResultViewModel({ targetMode: "idea" });
-  render(<MenuResult result={result} mode="idea" />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={result} mode="idea" />);
   // idea は家族向け取り分け・原材料表示確認を表示しない
   expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
   expect(screen.queryByText("加工品は原材料表示を確認してください")).toBeNull();
@@ -539,13 +576,13 @@ it("keeps household mode sections visible when mode is household", () => {
 
 it("defaults mode from result.targetMode when the prop is omitted", () => {
   const household = makeMenuResultViewModel({ targetMode: "household" });
-  const { unmount } = render(<MenuResult result={household} />);
+  const { unmount } = render(<MenuResult heading={DEFAULT_HEADING} result={household} />);
   expect(screen.getByRole("heading", { name: "家族向けの取り分け" })).toBeVisible();
   unmount();
 
   // idea で prop 省略しても household chrome を出さない（既定 household の footgun を閉じる）
   const idea = makeMenuResultViewModel({ targetMode: "idea" });
-  render(<MenuResult result={idea} />);
+  render(<MenuResult heading={DEFAULT_HEADING} result={idea} />);
   expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
   expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
 });

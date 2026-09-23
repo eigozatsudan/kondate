@@ -17,9 +17,17 @@ it("always shows locked safety disclaimers and never a safety guarantee", () => 
 });
 
 it("bundles the three disclaimers into a single Surface card (UX U1)", () => {
-  const { container } = render(<MenuSafetyNotice section="disclaimers" />);
-  // 1 枚のカード（Surface）にまとまっていることを DOM 構造で確かめる
-  expect(container.querySelectorAll(".ui-surface")).toHaveLength(1);
+  render(<MenuSafetyNotice section="disclaimers" />);
+  // レビュー M-5: Surface の個数だけでなく、3 文それぞれが「同じ」Surface の
+  // 子孫であることを closest で確かめる（外に漏れていても Surface が 1 枚なら
+  // green になってしまう抜け道を塞ぐ）。
+  const label = screen.getByText(MENU_LABEL_DISCLAIMER);
+  const ease = screen.getByText(EASE_SOFT_NOT_SWALLOW_DISCLAIMER);
+  const aiCreated = screen.getByText(/AIが作成した献立です/u);
+  const surface = label.closest(".ui-surface");
+  expect(surface).not.toBeNull();
+  expect(ease.closest(".ui-surface")).toBe(surface);
+  expect(aiCreated.closest(".ui-surface")).toBe(surface);
 });
 
 it("exposes checking as role=status with busy", () => {
@@ -72,8 +80,6 @@ it("exposes gate status as role=status when open", () => {
   render(
     <MenuSafetyNotice
       section="gate"
-      phase="checked"
-      isOfflineHold={false}
       statusCopy="この献立の対象家族の設定で確認しました"
       showGateStatus
       changedDetailLines={["好みの設定が変わっています"]}

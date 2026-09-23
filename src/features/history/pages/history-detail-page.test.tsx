@@ -470,6 +470,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("HistoryDetailPage heading (UX U1)", () => {
+  it("uses 献立の詳細 as the heading for a household history detail (I-2)", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+    renderHistoryDetail({ revalidate: () => Promise.resolve(validRevalidation) });
+    expect(await screen.findByRole("heading", { level: 1, name: "献立の詳細" })).toBeVisible();
+    expect(screen.queryByRole("heading", { level: 1, name: "献立ができました" })).toBeNull();
+  });
+
+  it("uses 献立の詳細 as the heading for an idea history detail (I-2)", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+    renderHistoryDetail();
+    expect(await screen.findByRole("heading", { level: 1, name: "献立の詳細" })).toBeVisible();
+    expect(screen.queryByRole("heading", { level: 1, name: "献立ができました" })).toBeNull();
+  });
+});
+
 describe("HistoryDetailPage safety gate", () => {
   it("revalidates on mount and blocks actions while current safety is loading", async () => {
     const revalidate = deferredPromise<RevalidationResult>();
@@ -847,6 +863,11 @@ describe("HistoryDetailPage safety gate", () => {
     });
     expect(await screen.findByRole("button", { name: "この献立にする" })).toBeDisabled();
     expect(acceptMenuVersionMock).not.toHaveBeenCalled();
+    // レビュー I-3: gateOpen が閉じている（invalid）間は
+    // household-menu-detail-body.tsx の
+    // {!gateOpen ? <MenuSafetyNotice section="disclaimers" /> : null} により
+    // ページ枠側の固定免責カードが単独で出ることを固定する。
+    expect(screen.getByText(/AIが作成した献立です/u)).toBeVisible();
   });
 
   it("disables retarget while revalidation is checking (HR4)", async () => {
@@ -1616,6 +1637,14 @@ describe("HistoryDetailPage idea permitted actions boundary", () => {
     expect(screen.queryByText(/安全です/u)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "この献立にする" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "この案を元に別の献立を作り直す" })).toBeDisabled();
+    // レビュー I-3: idea の保証句ブロック時も
+    // ideaGuaranteeBlocked ? <IdeaMenuSafetyNotice /> : null の分岐で
+    // 必須2文とダイアログ入口ボタンが常時表示されることを固定する。
+    // 「家族条件を使用していません」はダイアログ内にも同文があるため、
+    // dialog 外（常時表示側）の要素だけを対象にする。
+    const mandatoryTexts = screen.getAllByText("家族条件を使用していません");
+    expect(mandatoryTexts.some((node) => node.closest("dialog") === null)).toBe(true);
+    expect(screen.getByRole("button", { name: "注意事項を見る" })).toBeVisible();
   });
 
   it("HR4: closes idea regenerate sheet when live pantry selection disappears", async () => {

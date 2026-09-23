@@ -84,7 +84,8 @@ export type MenuResultViewModel = {
   /**
    * 生成に使われた最終 OpenRouter model ID。
    * private 台帳から所有者 RPC で投影する。台帳欠落・権限外・未記録は null。
-   * UI は formatGenerationModelLabel で短い表示名へ落とす。
+   * UX U1 で開発用の「作成モデル」表示は撤去済み。src/ からは表示に使わない
+   * （generation-model-label.ts の formatGenerationModelLabel も同様に未使用）。
    */
   generationModelId: string | null;
   /**
