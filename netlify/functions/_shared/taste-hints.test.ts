@@ -397,6 +397,40 @@ describe("filterTasteHintsForSafety", () => {
       "ぶり大根",
     ]);
     expect(adultsOnly.likedIngredients).toEqual(["切り餅", "くるみ", "ぶり"]);
+
+    // 高齢者だけの家庭では mochi_senior（senior）が効いて餅系が落ち、
+    // ナッツのルールは 5 歳以下だけなのでくるみ和えは残る
+    const seniorsOnly = filterTasteHintsForSafety(
+      withMochi,
+      makeGenerationContext({
+        safety: makeCurrentSafetyContext({ members: [{ ...member, ageBand: "senior" }] }),
+      }),
+    );
+    expect(seniorsOnly.likedDishes.map((dish) => dish.dishName)).toEqual([
+      "くるみ和え",
+      "ほうれん草のおひたし",
+      "ぶり大根",
+    ]);
+    expect(seniorsOnly.likedIngredients).toEqual(["くるみ", "ぶり"]);
+  });
+
+  it("drops a liked dish whose index ingredient contains an invisible character", () => {
+    const filtered = filterTasteHintsForSafety(
+      {
+        ...signals,
+        likedDishes: [
+          { dishName: "海鮮かき揚げ", role: "main" },
+          { dishName: "ぶり大根", role: "main" },
+        ],
+        dishIngredientIndex: [
+          { dishName: "海鮮かき揚げ", ingredients: ["え\u{FE0E}び", "たまねぎ"] },
+          { dishName: "ぶり大根", ingredients: ["ぶり", "大根"] },
+        ],
+      },
+      makeGenerationContext(),
+    );
+    // 不可視文字を挟んだ食材は照合器で当否を判定できないので、アレルギーの有無に関わらず料理ごと落とす
+    expect(filtered.likedDishes.map((dish) => dish.dishName)).toEqual(["ぶり大根"]);
   });
 
   it("does not add requires_tag rule terms to the blocked words", () => {
@@ -588,6 +622,9 @@ describe("sanitizeTasteHints", () => {
       "え\u{1160}び",
       "え\u{FFA0}び",
       "え\u{2800}び",
+      "え\u{034F}び",
+      "え\u{180B}び",
+      "え\u{17B4}び",
     ];
     const withInvisible: TasteSignals = {
       likedDishes: [

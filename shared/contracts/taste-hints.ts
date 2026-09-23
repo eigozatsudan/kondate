@@ -81,7 +81,8 @@ export type TasteHints = z.infer<typeof tasteHintsSchema>;
  * prompt にも preference_snapshot にもログにも出さない（sanitize で捨てる）。
  *
  * 対応表には上限を掛けない。prompt へ出ないので肥大を防ぐ理由が無く、切ると差集合が
- * 両方向に壊れる: お気に入りが 13 件あると、残した料理の食材が表から漏れて誤って消え、
+ * 両方向に壊れる: likedDishes の上限（TASTE_LIKED_DISHES_QUERY_MAX = 24 件）より下位の
+ * お気に入りがあると、残した料理の食材が表から漏れて誤って消え、
  * 落とした料理の食材も表から漏れて likedIngredients に残る。
  * 窓（90 日・50 献立）が実質の上限になる。
  */
@@ -90,7 +91,7 @@ export const tasteSignalsSchema = z
     ...tasteHintsSchema.shape,
     // 最近の料理を落とす前の候補なので prompt の上限より広い。切り詰めは sanitize が行う
     likedDishes: z
-      .array(z.object({ dishName: foodNameSchema, role: z.enum(dishRoles).optional() }))
+      .array(tasteHintsSchema.shape.likedDishes.element)
       .max(TASTE_LIKED_DISHES_QUERY_MAX),
     dishIngredientIndex: z.array(
       z.object({ dishName: foodNameSchema, ingredients: z.array(foodNameSchema) }),

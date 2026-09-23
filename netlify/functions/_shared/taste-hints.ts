@@ -293,10 +293,14 @@ export function filterTasteHintsForSafety(
   const hitsHard = makeBlockedMatcher(terms.hard);
   const hitsSoft = makeBlockedMatcher(terms.all.slice(terms.hard.length));
   const hitsAny = (text: string) => hitsHard(text) || hitsSoft(text);
-  // 料理名に出ない食材（親子丼の卵など）でも、対応表の食材がハードな語に当たれば料理ごと落とす
+  // 料理名に出ない食材（親子丼の卵など）でも、対応表の食材がハードな語に当たれば料理ごと落とす。
+  // 対応表の食材が不可視文字を含むと照合器をすり抜けて当否を判定できないので、
+  // その料理も保守側に倒して料理ごと落とす（最終修正ラウンド Q-1 / adv A1）
   const blockedDishNames = new Set(
     signals.dishIngredientIndex
-      .filter((entry) => entry.ingredients.some(hitsHard))
+      .filter((entry) =>
+        entry.ingredients.some((name) => hasControlOrLineBreak(name) || hitsHard(name)),
+      )
       .map((entry) => normalizeFoodText(entry.dishName)),
   );
   return {
@@ -321,14 +325,17 @@ export function filterTasteHintsForSafety(
  * メイン食材の文字列がそのまま DB から返るため、【学習】段落へ改行混じりの
  * 指示文などを持ち越さないよう、語ごとに落とす（ヒント全体は落とさない）。
  *
- * 上の一般カテゴリに入らない見えない文字も足す（最終レビュー A3）:
- * 異体字セレクタ（U+FE00–FE0F、U+E0100–E01EF。Mn）と、ハングル・点字の空白字
- * （U+3164、U+115F、U+1160、U+FFA0 は Lo、U+2800 は So）。照合器の正規化は
- * NFKC と Cf の除去だけなので、「え︎び」のように挟むと現行アレルギーの語を
+ * 上の一般カテゴリに入らない見えない文字は、個別に列挙せず Default_Ignorable_Code_Point
+ * でまとめて覆う（最終レビュー A3、最終修正ラウンド Q-1 / adv A1）。異体字セレクタ
+ * （U+FE00–FE0F、U+E0100–E01EF、モンゴル文字の U+180B–180F）、結合書記素結合子（U+034F）、
+ * クメール文字の U+17B4/17B5、ハングルの空白字（U+3164、U+115F、U+1160、U+FFA0）を含む。
+ * 点字の空白（U+2800、So）は Default_Ignorable に入らないので個別に足す。
+ * 結合記号（\p{M}）の全体は、合成できない濁点など正当な日本語を落としうるので入れない。
+ * 照合器の正規化は NFKC と Cf の除去だけなので、「え︎び」のように挟むと現行アレルギーの語を
  * すり抜ける。照合器側を変えると安全 fingerprint に波及するため、ここで語ごと落とす。
  */
 const CONTROL_OR_LINE_BREAK =
-  /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{3164}\u{115F}\u{1160}\u{FFA0}\u{2800}]/u;
+  /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u{2800}]/u;
 
 function hasControlOrLineBreak(value: string): boolean {
   return CONTROL_OR_LINE_BREAK.test(value);

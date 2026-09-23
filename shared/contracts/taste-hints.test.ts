@@ -69,6 +69,13 @@ describe("taste-hints contract", () => {
     expect(tasteHintsSchema.safeParse({ ...empty, likedDishes: dishes(13) }).success).toBe(false);
   });
 
+  it("shares the liked dish element schema between signals and hints", () => {
+    // 要素の形を複製すると、hints 側だけ変えたときに signals が古い形のまま parse を通してしまう
+    expect(tasteSignalsSchema.shape.likedDishes.element).toBe(
+      tasteHintsSchema.shape.likedDishes.element,
+    );
+  });
+
   it("accepts the signals shape with the index but not the hints shape", () => {
     const signals = {
       ...empty,
