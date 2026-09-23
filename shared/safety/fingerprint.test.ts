@@ -1,10 +1,11 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   compareFingerprintText,
   createCurrentSafetyFingerprint,
   createFinalizeSafetyFingerprint,
   withSqlOrdinalAnonymousRefs,
 } from "./fingerprint.js";
+import type { CurrentSafetyContext } from "./context.js";
 import { makeCurrentSafetyContext } from "../testing/factories.js";
 
 it("sorts arrays and members and changes when current safety changes", () => {
@@ -134,5 +135,64 @@ it("H4/S6: multi-custom JP allergies sort by code-point order independent of inp
   expect(createCurrentSafetyFingerprint(reverse)).toBe(digest);
   expect(createCurrentSafetyFingerprint(shuffled)).toBe(digest);
   // factory 既定 member + 上記 multi-custom の固定 digest（SQL COLLATE "C" 同型の回帰錨）
-  expect(digest).toBe("21ec091b88e20fb655c0186b65b8a149ea15837822c476b29088b8d3c86da4a3");
+  expect(digest).toBe("67bc81f6f525fb527a80f21354af87cb48d26cd18b9642f2464119e6338f3052");
+});
+
+// 辞書の版の文字列を据え置いたまま alias 行だけが変わっても、fingerprint が変わること。
+// SQL private.current_safety_fingerprint / public.shopping_safety_fingerprint と同じく
+// (allergenId, normalizedAlias, aliasKind, requiresLabelConfirmation) の集合のハッシュを含める。
+describe("dictionary content digest", () => {
+  const baseAlias = {
+    allergenId: "egg",
+    alias: "卵",
+    normalizedAlias: "卵",
+    aliasKind: "direct" as const,
+    requiresLabelConfirmation: false,
+    dictionaryVersion: "jp-caa-2026-04.v1",
+  };
+  const otherAlias = {
+    allergenId: "wheat",
+    alias: "小麦",
+    normalizedAlias: "小麦",
+    aliasKind: "direct" as const,
+    requiresLabelConfirmation: false,
+    dictionaryVersion: "jp-caa-2026-04.v1",
+  };
+  const withAliases = (aliases: CurrentSafetyContext["allergenDictionary"]["aliases"]) => {
+    const base = makeCurrentSafetyContext();
+    return makeCurrentSafetyContext({
+      allergenDictionary: { ...base.allergenDictionary, aliases },
+    });
+  };
+  const baseline = createCurrentSafetyFingerprint(withAliases([baseAlias, otherAlias]));
+
+  it("changes when an alias row is added", () => {
+    const added = withAliases([
+      baseAlias,
+      otherAlias,
+      { ...baseAlias, alias: "たまご", normalizedAlias: "たまご" },
+    ]);
+    expect(createCurrentSafetyFingerprint(added)).not.toBe(baseline);
+  });
+
+  it("changes when an alias row is removed", () => {
+    expect(createCurrentSafetyFingerprint(withAliases([baseAlias]))).not.toBe(baseline);
+  });
+
+  it("changes when alias_kind changes", () => {
+    const changed = withAliases([{ ...baseAlias, aliasKind: "derived" }, otherAlias]);
+    expect(createCurrentSafetyFingerprint(changed)).not.toBe(baseline);
+  });
+
+  it("changes when requires_label_confirmation changes", () => {
+    const changed = withAliases([{ ...baseAlias, requiresLabelConfirmation: true }, otherAlias]);
+    expect(createCurrentSafetyFingerprint(changed)).not.toBe(baseline);
+  });
+
+  it("does not change when alias rows are reordered", () => {
+    const sameAllergen = { ...baseAlias, alias: "たまご", normalizedAlias: "たまご" };
+    const forward = withAliases([baseAlias, sameAllergen, otherAlias]);
+    const reversed = withAliases([otherAlias, sameAllergen, baseAlias]);
+    expect(createCurrentSafetyFingerprint(reversed)).toBe(createCurrentSafetyFingerprint(forward));
+  });
 });

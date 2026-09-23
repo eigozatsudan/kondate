@@ -33,6 +33,40 @@ export function compareFingerprintText(left: string, right: string): number {
 }
 
 /**
+ * 辞書の中身（alias 集合）の sha256 hex。
+ * 辞書の版の文字列を据え置いたまま alias 行だけを足す・消す・変えるマイグレーションでも、
+ * 保存済み献立の stale 判定や生成中の TOCTOU 検出が働くよう、fingerprint に含める。
+ *
+ * SQL private.current_safety_fingerprint / public.shopping_safety_fingerprint と byte 一致させる:
+ * - 行は (allergenId, normalizedAlias, aliasKind, requiresLabelConfirmation) の 4 項目だけ。
+ *   表示用の alias 原文と版は含めない（版は payload の dictionaryVersion が担う）。
+ * - 並びは allergenId → normalizedAlias の COLLATE "C" 昇順（compareFingerprintText）。
+ *   (allergen_id, normalized_alias, dictionary_version) は DB 上一意なので全順序になる。
+ * - SQL は jsonb を使わず to_json のスカラー連結で直列化する（jsonb はキーを長さ→バイト順に
+ *   並べ替え、区切りに空白を入れるため）。ここでも JSON.stringify の空白無し出力を使い、
+ *   キーは下の宣言順（SQL の連結順と同じ）になる。
+ * context の aliases は get_current_safety_snapshot が現行版だけに絞り、validateSnapshot が
+ * 全行の版一致を検査済みなので、ここでは版で絞り直さない。
+ */
+export function createAllergenDictionaryDigest(
+  aliases: CurrentSafetyContext["allergenDictionary"]["aliases"],
+): string {
+  const rows = [...aliases]
+    .sort(
+      (left, right) =>
+        compareFingerprintText(left.allergenId, right.allergenId) ||
+        compareFingerprintText(left.normalizedAlias, right.normalizedAlias),
+    )
+    .map((row) => ({
+      allergenId: row.allergenId,
+      normalizedAlias: row.normalizedAlias,
+      aliasKind: row.aliasKind,
+      requiresLabelConfirmation: row.requiresLabelConfirmation,
+    }));
+  return createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+}
+
+/**
  * 現行安全 fingerprint。
  * SQL private.current_safety_fingerprint と **同一の JSON 形状** で sha256 する。
  * F-SAF-002: custom アレルギーの name/aliases を載せ、生成中の差し替え TOCTOU を検出する。
@@ -42,6 +76,8 @@ export function compareFingerprintText(left: string, right: string): number {
 export function createCurrentSafetyFingerprint(context: CurrentSafetyContext): string {
   const payload = {
     dictionaryVersion: context.dictionaryVersion,
+    // 版の文字列だけでは alias 行の追補を検出できないため、辞書の中身のハッシュも含める。
+    dictionaryDigest: createAllergenDictionaryDigest(context.allergenDictionary.aliases),
     foodRuleVersion: context.foodRuleVersion,
     members: [...context.members]
       .map((member) => ({

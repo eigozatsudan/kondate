@@ -282,8 +282,9 @@ select is(
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[]
   ),
-  -- F-SAF-002: customAllergies を payload に含めた後の固定 digest（TS createCurrentSafetyFingerprint 同型）
-  'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48',
+  -- F-SAF-002 + dictionaryDigest を payload に含めた後の固定 digest。
+  -- netlify/functions/_shared/current-safety-fingerprint-parity.test.ts が TS 側で同じ値を固定する。
+  'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535',
   'fingerprint matches the canonical TypeScript-compatible SHA-256'
 );
 select is(
@@ -294,7 +295,7 @@ select is(
       '15100000-0000-4000-8000-000000000001'
     ]::uuid[]
   ),
-  '01d64b58225b249030b109da68ebf62fb0895ce9fb543c3d1a99b3ea01729d6a',
+  '3ab3ed551af3efdcfab13f7e112a3e4d06b036b59fd797aaaae9204935e689e1',
   'anonymous references follow input ordinality before UUID encoding order'
 );
 
@@ -391,7 +392,7 @@ select is(
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[]
   ),
-  'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48',
+  'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535',
   'member and allergy insertion order does not change the fingerprint'
 );
 
@@ -402,7 +403,7 @@ select lives_ok($$
       '15100000-0000-4000-8000-000000000001',
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[],
-    'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48'
+    'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535'
   )
 $$, 'the locking helper accepts the exact current fingerprint');
 select throws_ok($$
@@ -427,7 +428,7 @@ select isnt(
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[]
   ),
-  'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48',
+  'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535',
   'an allergy mutation changes the fingerprint'
 );
 select throws_ok($$
@@ -437,7 +438,7 @@ select throws_ok($$
       '15100000-0000-4000-8000-000000000001',
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[],
-    'e9468035751462837b77091da504795e58fe2e7b280b44626a679a9ea6824e48'
+    'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535'
   )
 $$, 'P0001', 'current_safety_changed',
   'the locking helper rejects a stale expected fingerprint');
@@ -3907,6 +3908,28 @@ begin
 end
 $pantry_recheck$;
 select pass('finalize pantry rename/delete terminals as constraint_conflict without menu or success consumption');
+
+-- 辞書の版の文字列を据え置いたまま alias 行を 1 行足すと fingerprint が変わる
+-- （payload の dictionaryDigest）。行はファイル末尾の rollback で残らない。
+create temporary table fingerprint_dictionary_probe on commit drop as
+select private.current_safety_fingerprint(
+  '15000000-0000-4000-8000-000000000001',
+  array['15100000-0000-4000-8000-000000000002']::uuid[]
+) as before_fingerprint;
+insert into public.allergen_aliases (
+  allergen_id, alias, normalized_alias, alias_kind,
+  requires_label_confirmation, dictionary_version
+) values (
+  'egg', '指紋検証用別名', '指紋検証用別名', 'derived', false, 'jp-caa-2026-04.v1'
+);
+select isnt(
+  private.current_safety_fingerprint(
+    '15000000-0000-4000-8000-000000000001',
+    array['15100000-0000-4000-8000-000000000002']::uuid[]
+  ),
+  (select before_fingerprint from fingerprint_dictionary_probe),
+  'adding an alias row under the same dictionary version changes the current fingerprint'
+);
 
 select * from finish();
 rollback;

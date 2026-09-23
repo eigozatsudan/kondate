@@ -1,6 +1,6 @@
 \ir 000_helpers.sql
 begin;
-select plan(63);
+select plan(64);
 select has_table('public','shopping_lists','shopping_lists exists');
 select has_table('public','shopping_items','shopping_items exists');
 select has_table('public','shopping_list_sources','shopping_list_sources exists');
@@ -1296,6 +1296,26 @@ $test$;
 select pass('owner mutation matrix: unknown item is shopping_item_not_found; '
   || 'add_manual/set_checked/edit/mark_at_home/undo/remove each advance version once; '
   || 'reconcile remove of a checked item raises protected_item_conflict');
+
+-- 辞書の版の文字列を据え置いたまま alias 行を 1 行足すと買い物 fingerprint が変わる
+-- （payload の dictionaryDigest）。行はファイル末尾の rollback で残らない。
+create temporary table shopping_dictionary_probe on commit drop as
+select public.shopping_safety_fingerprint(
+  'f1000000-0000-4000-8000-000000000001', 'f4000000-0000-4000-8000-000000000001'
+) as before_fingerprint;
+insert into public.allergen_aliases (
+  allergen_id, alias, normalized_alias, alias_kind,
+  requires_label_confirmation, dictionary_version
+) values (
+  'egg', '指紋検証用別名', '指紋検証用別名', 'derived', false, 'jp-caa-2026-04.v1'
+);
+select isnt(
+  public.shopping_safety_fingerprint(
+    'f1000000-0000-4000-8000-000000000001', 'f4000000-0000-4000-8000-000000000001'
+  ),
+  (select before_fingerprint from shopping_dictionary_probe),
+  'adding an alias row under the same dictionary version changes the shopping fingerprint'
+);
 
 select * from finish();
 rollback;

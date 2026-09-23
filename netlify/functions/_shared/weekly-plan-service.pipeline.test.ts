@@ -2239,3 +2239,67 @@ describe("runWeeklyPlan — priorityIngredients（優先食材）", () => {
     expect(result.priorityIngredients).toEqual(["鶏むね肉", "キャベツ"]);
   });
 });
+
+describe("getWeeklyPlan — dictionary content changes mark staleSafety", () => {
+  // 辞書の版の文字列は据え置きのまま alias 行だけが増えた場合でも、保存済みの週間献立は
+  // staleSafety: true になる（fingerprint が辞書の中身のハッシュを含むため）。
+  it("returns staleSafety: true when an alias row is added under the same dictionary version", async () => {
+    const baseSafety = await loadCurrentSafetyContext({} as unknown as AdminSupabaseClient, "u1", [
+      sampleMemberId,
+    ]);
+    const alias = {
+      allergenId: "egg",
+      alias: "卵",
+      normalizedAlias: "卵",
+      aliasKind: "direct" as const,
+      requiresLabelConfirmation: false,
+      dictionaryVersion: baseSafety.dictionaryVersion,
+    };
+    const storedSafety = {
+      ...baseSafety,
+      allergenDictionary: { ...baseSafety.allergenDictionary, aliases: [alias] },
+    };
+    const currentSafety = {
+      ...baseSafety,
+      allergenDictionary: {
+        ...baseSafety.allergenDictionary,
+        aliases: [alias, { ...alias, alias: "たまご", normalizedAlias: "たまご" }],
+      },
+    };
+    const storedFingerprint = createCurrentSafetyFingerprint(storedSafety);
+    const admin = {
+      from: vi.fn((table: string) => {
+        if (table === "weekly_plans") {
+          return thenableQuery({
+            data: {
+              id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              week_start: "2026-09-07",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+              },
+              safety_fingerprint: storedFingerprint,
+              days: sampleAiMenu().days,
+            },
+            error: null,
+          });
+        }
+        if (table === "household_members") {
+          return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+        }
+        throw new Error(`unexpected table: ${table}`);
+      }),
+    } as unknown as AdminSupabaseClient;
+
+    // 対照: 保存時と同じ辞書なら stale ではない
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue(storedSafety);
+    const unchanged = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(unchanged.staleSafety).toBe(false);
+
+    vi.mocked(loadCurrentSafetyContext).mockResolvedValue(currentSafety);
+    const result = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(result.staleSafety).toBe(true);
+  });
+});
