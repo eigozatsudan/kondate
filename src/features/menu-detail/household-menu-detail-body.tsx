@@ -738,12 +738,13 @@ export function HouseholdMenuDetailBody({
   return (
     <main className="page-frame guided-planner-theme menu-detail-page">
       <Stack gap={4}>
-        <MenuSafetyNotice
-          section="disclaimers"
-          phase={revalidation.phase}
-          isOfflineHold={isOfflineHold}
-          statusCopy={statusCopy}
-        />
+        {/*
+          UX U1: 加工品表示確認・やわらかめ文・AI作成文の統合カードは MenuHero の
+          直後（gateOpen 後は MenuResult 内部）に置く。gateOpen 前（確認中・invalid）は
+          MenuHero 自体がまだ出ないため、ここで免責文の常時表示を維持する
+          （二重表示は避けるため gateOpen 中はここでは出さない）。
+        */}
+        {!gateOpen ? <MenuSafetyNotice section="disclaimers" /> : null}
         {surface.showFlyerUpsell && usage.isSuccess && !usage.data.plusEntitled ? (
           <FlyerUpsellBanner plusEntitled={false} />
         ) : null}
@@ -804,6 +805,7 @@ export function HouseholdMenuDetailBody({
               <MenuResult
                 result={result}
                 mode="household"
+                heading={surface.resultHeading}
                 currentLabelWarnings={revalidation.result.currentLabelWarnings}
                 currentSafetyFingerprint={revalidation.result.safetyFingerprint}
                 postCookOpen={postCookOpen}
@@ -824,6 +826,7 @@ export function HouseholdMenuDetailBody({
               <MenuResult
                 result={result}
                 mode="household"
+                heading={surface.resultHeading}
                 actions={actions}
                 currentLabelWarnings={revalidation.result.currentLabelWarnings}
                 currentSafetyFingerprint={revalidation.result.safetyFingerprint}

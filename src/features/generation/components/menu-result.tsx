@@ -8,9 +8,11 @@ import type { MenuResultViewModel, PantryPostCookTarget } from "../api/menu-resu
 import { PantryVersionConflictError } from "@/features/pantry/pantry-api";
 import { MenuDishes } from "@/features/menu-detail/menu-dishes";
 import { MenuHero } from "@/features/menu-detail/menu-hero";
+import { MenuSafetyNotice } from "@/features/menu-detail/menu-safety-notice";
 import { MenuSteps } from "@/features/menu-detail/menu-steps";
 import { Button } from "@/shared/ui/button";
 import { Stack } from "@/shared/ui/stack";
+import { IdeaMenuSafetyNotice } from "./idea-menu-safety-notice";
 
 const amount = (value: number | null, unit: string | null, text: string) =>
   value === null ? text : `${String(value)}${unit ?? ""}`;
@@ -62,6 +64,7 @@ export function MenuResult({
   regenerateSelectedDishDisabled = false,
   postCookOpen = false,
   onPostCookClose,
+  heading = "献立ができました",
 }: {
   result: MenuResultViewModel;
   actions?: MenuResultActions;
@@ -95,6 +98,11 @@ export function MenuResult({
    */
   postCookOpen?: boolean;
   onPostCookClose?: () => void;
+  /**
+   * MenuHero に渡す見出し文言。省略時は生成直後の既定「献立ができました」
+   * （呼び出し側の menu-detail-types.ts の MenuDetailSurface.resultHeading を正とする、UX U1）。
+   */
+  heading?: string;
 }) {
   // 省略時は result.targetMode を正とする（既定 "household" による idea 誤表示を防ぐ）。
   const mode = modeProp ?? result.targetMode;
@@ -329,24 +337,19 @@ export function MenuResult({
   // ここに main を置くと操作バー等を包めず、ネスト landmark 違反にもなる。
   // 横 padding はページ枠が持つ。本文で再付与すると狭い幅で二重余白になり、
   // 子の min-content がはみ出しやすくなるため付けない。
-  // idea の AI/免責注意はページ枠の IdeaMenuSafetyNotice に集約するため、
-  // 本文側では household だけ AI 作成バナーを出す（二重表示防止）。
-  // 見出しを先に置き、注意枠が成功タイトルに密着しないよう縦リズムを分ける。
+  // UX U1: 加工品表示確認・やわらかめ文・AI作成文（household）／必須注意（idea）は
+  // 見出しの直後に 1 枚のカードでまとめて置く（人間の決定）。ページ最上部に別々の
+  // 枠を積まないことで見出し・料理名が画面上部にすぐ出るようにする。
   // sticky タブ列と材料 grid は Surface では表現できないため .menu-result-* へ退避。
   return (
     <div className="menu-result">
       <MenuHero
         totalElapsedMinutes={menu.totalElapsedMinutes}
         servings={menu.servings}
-        generationModelId={result.generationModelId}
+        heading={heading}
         tasteHintsApplied={result.tasteHintsApplied}
       />
-      {mode !== "idea" ? (
-        <p className="menu-result-ai-notice">
-          <strong>AIが作成した献立です。</strong>{" "}
-          内容、加熱状態、家庭内での混入を調理前に確認してください。
-        </p>
-      ) : null}
+      {mode === "idea" ? <IdeaMenuSafetyNotice /> : <MenuSafetyNotice section="disclaimers" />}
       {/* A-I7: 苦手 soft gap — 生成結果画面のみ（view model が空なら履歴側） */}
       {result.preferenceGaps.length > 0 && (
         <section className="menu-result-soft-gap" role="status" aria-label="希望条件の注意">

@@ -29,6 +29,15 @@ export const EASE_SOFT_NOT_SWALLOW_DISCLAIMER =
 export const IDEA_SAFETY_DETAILS_BUTTON_LABEL = "注意事項を見る";
 
 /**
+ * 「AIが作成した献立です」の固定文言。household 結果画面の統合カード（UX U1）と
+ * idea 詳細ダイアログの両方で同じ文言を使うため、ここで一元管理して重複定義をなくす。
+ * 文の意味・区切りは変えない（強調部分と本文を分けて呼び出し側で組む）。
+ */
+export const AI_CREATED_MENU_DISCLAIMER_LEAD = "AIが作成した献立です。";
+export const AI_CREATED_MENU_DISCLAIMER_BODY =
+  "内容、加熱状態、家庭内での混入を調理前に確認してください。";
+
+/**
  * idea 結果・履歴詳細の上部注意。
  * 設計 §5.4 / Plan 7 Step 11: 固定必須文言は常時表示。
  * AI 詳細とラベル免責の長文はダイアログで追加確認できる。
@@ -117,8 +126,7 @@ export function IdeaMenuSafetyNotice() {
             <p>家族条件を使用していません</p>
             <p>年齢・アレルギーへの適合は確認されていません</p>
             <p>
-              <strong>AIが作成した献立です。</strong>{" "}
-              内容、加熱状態、家庭内での混入を調理前に確認してください。
+              <strong>{AI_CREATED_MENU_DISCLAIMER_LEAD}</strong> {AI_CREATED_MENU_DISCLAIMER_BODY}
             </p>
             <p className="idea-safety-dialog-emphasis">{MENU_LABEL_DISCLAIMER}</p>
             <p className="type-small">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>

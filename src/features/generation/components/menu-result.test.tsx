@@ -69,17 +69,31 @@ it("shows the overall timeline before persistent dish tabs", () => {
   expect(timeline.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   // 段取り側にも tablist がある（材料まとめタブ）
   expect(screen.getByRole("tablist", { name: "献立の段取りと材料" })).toBeVisible();
-  // household 既定では成功見出しの下に AI 作成バナーを出す（密着回避のため見出し優先）
+  // household 既定では成功見出しの下に統合注意カードを出す（密着回避のため見出し優先、UX U1）
   expect(container).toHaveTextContent("AIが作成した献立です");
-  // モデル未記録時はメタ行を出さない
+  // 開発用の表記は出さない（UX U1）
   expect(container).not.toHaveTextContent("作成モデル");
 });
 
-it("shows a muted short model label under the summary when generationModelId is set", () => {
+it("never shows the dev-facing model note regardless of generationModelId (UX U1)", () => {
   render(
     <MenuResult result={makeMenuResultViewModel({ generationModelId: "inception/mercury-2" })} />,
   );
-  expect(screen.getByText("作成モデル: Mercury 2")).toBeInTheDocument();
+  expect(screen.queryByText(/作成モデル/u)).not.toBeInTheDocument();
+});
+
+it("renders the heading before the merged disclaimer card, in DOM order (UX U1)", () => {
+  render(<MenuResult result={makeMenuResultViewModel()} />);
+  const heading = screen.getByRole("heading", { level: 1, name: "献立ができました" });
+  const disclaimer = screen.getByText(/AIが作成した献立です/u);
+  expect(
+    heading.compareDocumentPosition(disclaimer) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});
+
+it("uses the heading passed by the caller (surface heading, UX U1)", () => {
+  render(<MenuResult result={makeMenuResultViewModel()} heading="献立の詳細" />);
+  expect(screen.getByRole("heading", { level: 1, name: "献立の詳細" })).toBeVisible();
 });
 
 it("passes tasteHintsApplied through to the hero line", () => {
@@ -189,7 +203,8 @@ it("renders confirmation ids through human source, allergen, and member labels",
   expect(
     within(confirmationSection).getByText(new RegExp(confirmation.memberLabel, "u")),
   ).toBeVisible();
-  expect(within(confirmationSection).getByText(/辞書版 jp-caa-2026-04\.v1/u)).toBeVisible();
+  // UX U1: 辞書版は判定・記録には使うが、開発用表記のため利用者には見せない
+  expect(within(confirmationSection).queryByText(/辞書版/u)).not.toBeInTheDocument();
   // H1: 確認セクション直近に「確認＝安全」ではない旨を明示する
   expect(
     within(confirmationSection).getByText(
@@ -285,15 +300,10 @@ it("places dish-only regeneration inside the selected dish tabpanel", async () =
   expect(onRegenerateSelectedDish).toHaveBeenCalledTimes(1);
 });
 
-it("leaves the label disclaimer to the page shell and keeps a 320px no-overflow class contract", () => {
+it("keeps a 320px no-overflow class contract", () => {
   const { container } = render(<MenuResult result={makeMenuResultViewModel()} />);
-  // ラベル確認の免責文はゲートで本文が閉じている間も出し続ける必要があるため、
-  // 本文コンポーネントではなくページ枠（MenuResultPage/HistoryDetailPage）が持つ。
-  expect(
-    screen.queryByText(
-      "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
-    ),
-  ).toBeNull();
+  // UX U1: 本文ゲートが閉じている間（確認中・invalid）はページ枠側が免責文を出し続け、
+  // 本文（MenuResult）は gateOpen 後に見出し直後の統合カードとしてまとめて出す。
   // jsdomは実レイアウトを計測しないため、320px幅で子要素を収める全体契約を
   // 意味クラス .menu-result（width/min/max/overflow/word-break を CSS 側に持つ）で固定する。
   // main はページ枠が所有する。横 padding はページ枠側（二重余白を避ける）。
@@ -494,8 +504,13 @@ it("hides adaptation and label confirmation for idea mode without actions", () =
   expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
   expect(screen.queryByText("加工品は原材料表示を確認してください")).toBeNull();
   expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
-  // AI/免責注意はページ枠の IdeaMenuSafetyNotice に集約するため、本文では出さない
-  expect(screen.queryByText("AIが作成した献立です。")).toBeNull();
+  // UX U1: idea の必須注意（IdeaMenuSafetyNotice）は見出しの直後にまとめて出す。
+  // 長文の免責・AI 作成文はダイアログ内にあり、開くまでは非表示のまま。
+  const alwaysVisibleFamily = screen
+    .getAllByText("家族条件を使用していません")
+    .find((node) => !node.closest("dialog"));
+  expect(alwaysVisibleFamily).toBeVisible();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   // actions なしの idea は在庫更新ダイアログも出さない（read-only 境界）
   expect(screen.queryByRole("dialog", { name: "使った食材の在庫を更新" })).toBeNull();
   expect(screen.queryByRole("button", { name: "使い切った" })).toBeNull();

@@ -7,37 +7,42 @@ it("exposes the success heading as an accessible name", () => {
     <MenuHero
       totalElapsedMinutes={30}
       servings={2}
-      generationModelId={null}
+      heading="献立ができました"
       tasteHintsApplied={false}
     />,
   );
   expect(screen.getByRole("heading", { level: 1, name: "献立ができました" })).toBeVisible();
   expect(screen.getByText("食卓まで約30分・2人分")).toBeVisible();
-  expect(screen.queryByText(/作成モデル/u)).not.toBeInTheDocument();
 });
 
-it("shows a muted model label when generationModelId is set", () => {
-  render(
-    <MenuHero
-      totalElapsedMinutes={45}
-      servings={4}
-      generationModelId="inception/mercury-2"
-      tasteHintsApplied={false}
-    />,
-  );
-  expect(screen.getByText("作成モデル: Mercury 2")).toBeVisible();
-});
-
-it("shows the taste line alongside the model label without replacing it", () => {
+it("shows the history heading when the caller passes it (UX U1)", () => {
   render(
     <MenuHero
       totalElapsedMinutes={30}
       servings={2}
-      generationModelId="inception/mercury-2"
-      tasteHintsApplied
+      heading="献立の詳細"
+      tasteHintsApplied={false}
     />,
   );
-  expect(screen.getByText(/作成モデル/u)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1, name: "献立の詳細" })).toBeVisible();
+});
+
+it("never shows the dev-facing model note (UX U1)", () => {
+  render(
+    <MenuHero
+      totalElapsedMinutes={45}
+      servings={4}
+      heading="献立ができました"
+      tasteHintsApplied={false}
+    />,
+  );
+  expect(screen.queryByText(/作成モデル/u)).not.toBeInTheDocument();
+});
+
+it("shows the taste line when applied", () => {
+  render(
+    <MenuHero totalElapsedMinutes={30} servings={2} heading="献立ができました" tasteHintsApplied />,
+  );
   expect(screen.getByText("✨ いつもの好みを反映しました")).toBeInTheDocument();
 });
 
@@ -46,7 +51,7 @@ it("omits the taste line when not applied", () => {
     <MenuHero
       totalElapsedMinutes={30}
       servings={2}
-      generationModelId={null}
+      heading="献立ができました"
       tasteHintsApplied={false}
     />,
   );

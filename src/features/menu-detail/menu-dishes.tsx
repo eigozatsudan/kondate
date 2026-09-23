@@ -199,9 +199,7 @@ export function MenuDishes({
                     {labels.map((item) => (
                       <li key={item.confirmationId} className="menu-result-label-item">
                         {item.sourceText}：{item.allergenName}（{item.memberLabel}）
-                        <span className="menu-result-label-meta">
-                          辞書版 {item.dictionaryVersion}
-                        </span>
+                        {/* UX U1: 辞書版は判定・記録には使うが、利用者向け開発用表記のため出さない */}
                         {item.confirmationStatus === "confirmed" ? (
                           <span className="menu-result-label-confirmed">表示確認を記録済み</span>
                         ) : !canConfirmLabel ? null : (

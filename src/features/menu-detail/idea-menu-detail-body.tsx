@@ -216,12 +216,14 @@ export function IdeaMenuDetailBody({
     }
   };
 
-  // idea の必須注意は 1 枠に集約（免責・家族未使用・AI 作成を別枠で重ねない）。
+  // UX U1: idea の必須注意（IdeaMenuSafetyNotice）は MenuHero のすぐ後に置くため、
+  // 通常は MenuResult 内部（mode="idea"）でまとめて描く。保証句ブロックで
+  // MenuResult 自体を描かない場合だけ、ここで代わりに出して必須注意を欠かさない。
   // 横はみ出し抑止は .menu-detail-page 意味クラスへ退避。
   return (
     <main className="page-frame guided-planner-theme menu-detail-page">
       <Stack gap={4}>
-        <IdeaMenuSafetyNotice />
+        {ideaGuaranteeBlocked ? <IdeaMenuSafetyNotice /> : null}
         {surface.showFlyerUpsell && usage.isSuccess && !usage.data.plusEntitled ? (
           <FlyerUpsellBanner plusEntitled={false} />
         ) : null}
@@ -268,6 +270,7 @@ export function IdeaMenuDetailBody({
           <MenuResult
             result={result}
             mode="idea"
+            heading={surface.resultHeading}
             postCookOpen={postCookOpen}
             onPostCookClose={() => {
               setPostCookOpen(false);
@@ -283,6 +286,7 @@ export function IdeaMenuDetailBody({
           <MenuResult
             result={result}
             mode="idea"
+            heading={surface.resultHeading}
             actions={actions}
             postCookOpen={postCookOpen}
             onPostCookClose={() => {

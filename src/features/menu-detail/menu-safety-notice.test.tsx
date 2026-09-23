@@ -7,18 +7,19 @@ import {
 import { MenuSafetyNotice } from "./menu-safety-notice";
 
 it("always shows locked safety disclaimers and never a safety guarantee", () => {
-  render(
-    <MenuSafetyNotice
-      section="disclaimers"
-      phase="checked"
-      isOfflineHold={false}
-      statusCopy={null}
-    />,
-  );
+  render(<MenuSafetyNotice section="disclaimers" />);
   expect(screen.getByText(MENU_LABEL_DISCLAIMER)).toBeVisible();
   expect(screen.getByText(EASE_SOFT_NOT_SWALLOW_DISCLAIMER)).toBeVisible();
+  expect(screen.getByText(/AIが作成した献立です/u)).toBeVisible();
+  expect(screen.getByText(/調理前に確認してください/u)).toBeVisible();
   expect(screen.queryByText(/安全です/u)).not.toBeInTheDocument();
   expect(screen.queryByText(/対応済み/u)).not.toBeInTheDocument();
+});
+
+it("bundles the three disclaimers into a single Surface card (UX U1)", () => {
+  const { container } = render(<MenuSafetyNotice section="disclaimers" />);
+  // 1 枚のカード（Surface）にまとまっていることを DOM 構造で確かめる
+  expect(container.querySelectorAll(".ui-surface")).toHaveLength(1);
 });
 
 it("exposes checking as role=status with busy", () => {

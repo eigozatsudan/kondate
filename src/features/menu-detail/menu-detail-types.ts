@@ -38,6 +38,11 @@ export type MenuDetailSurface = {
   showFlyerUpsell: boolean;
   /** idea 採用後の主操作ラベル */
   ideaAcceptedPrimaryLabel: string;
+  /**
+   * MenuHero の見出し文言。生成直後は「献立ができました」、履歴詳細は「献立の詳細」
+   * （人間の決定、UX U1）。安全表示ではないため不変契約1の対象外。
+   */
+  resultHeading: string;
 };
 
 /** 生成直後結果画面（/menus/:menuId） */
@@ -46,6 +51,7 @@ export const generationMenuDetailSurface: MenuDetailSurface = {
   // チラシ UI 全体オフに合わせて成功後 upsell も止める
   showFlyerUpsell: FLYER_WEEKLY_UI_ENABLED,
   ideaAcceptedPrimaryLabel: "作った献立を見る",
+  resultHeading: "献立ができました",
 };
 
 /** 履歴詳細画面（/history/:menuId） */
@@ -53,6 +59,7 @@ export const historyMenuDetailSurface: MenuDetailSurface = {
   pathForMenuId: (menuId) => `/history/${menuId}`,
   showFlyerUpsell: false,
   ideaAcceptedPrimaryLabel: "履歴一覧に戻る",
+  resultHeading: "献立の詳細",
 };
 
 /** 後方互換エイリアス（既存テストの type import 用） */

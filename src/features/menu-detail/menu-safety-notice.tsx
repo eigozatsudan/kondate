@@ -1,4 +1,6 @@
 import {
+  AI_CREATED_MENU_DISCLAIMER_BODY,
+  AI_CREATED_MENU_DISCLAIMER_LEAD,
   EASE_SOFT_NOT_SWALLOW_DISCLAIMER,
   MENU_LABEL_DISCLAIMER,
 } from "@/features/generation/components/idea-menu-safety-notice";
@@ -14,18 +16,21 @@ export type MenuSafetyNoticeIssue = {
 };
 
 export type MenuSafetyNoticeProps = {
-  /** 再検証フェーズ（checking/error/invalid の出し分け） */
-  phase: RevalidationPhaseName;
+  /**
+   * 再検証フェーズ（checking/error/invalid の出し分け）。
+   * section="disclaimers" では参照しないため省略可（UX U1: 見出し直後の単独カード呼び出し用）。
+   */
+  phase?: RevalidationPhaseName;
   /**
    * offline hold 中は shopping と同型の接続誘導 copy を出す（HR1）。
-   * checking オーバーレイ内の文言だけを切り替える。
+   * checking オーバーレイ内の文言だけを切り替える。section="disclaimers" では未使用。
    */
-  isOfflineHold: boolean;
+  isOfflineHold?: boolean;
   /**
    * error 帯・gate sticky に出す状態文。
-   * phase=error のとき role=alert、gate 通過時は role=status。
+   * phase=error のとき role=alert、gate 通過時は role=status。section="disclaimers" では未使用。
    */
-  statusCopy: string | null;
+  statusCopy?: string | null;
   /**
    * phase=checked かつ status=invalid のときだけ渡す。
    * 省略または空なら invalid 帯を出さない。
@@ -82,16 +87,20 @@ export function MenuSafetyNotice({
   }
 
   if (section === "disclaimers") {
+    // UX U1: 加工品表示確認・やわらかめ文・AI作成文の3枚を1枚のカードにまとめる（人間の決定）。
+    // 文の意味は変えず、不安を煽らず目立たせる notice 面 1 つに収める。
     return (
-      <Stack gap={3}>
-        {/* 不安を煽らず目立たせる: notice 面。文言は固定契約。 */}
-        <Surface tone="notice">
-          <Inset pad={5}>
+      <Surface tone="notice">
+        <Inset pad={5}>
+          <Stack gap={2}>
             <p className="menu-detail-disclaimer-strong">{MENU_LABEL_DISCLAIMER}</p>
-          </Inset>
-        </Surface>
-        <p className="type-small">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
-      </Stack>
+            <p className="type-small">{EASE_SOFT_NOT_SWALLOW_DISCLAIMER}</p>
+            <p>
+              <strong>{AI_CREATED_MENU_DISCLAIMER_LEAD}</strong> {AI_CREATED_MENU_DISCLAIMER_BODY}
+            </p>
+          </Stack>
+        </Inset>
+      </Surface>
     );
   }
 
