@@ -647,6 +647,13 @@ describe("buildGenerationMessages", () => {
       .replace("\n</kondate_input_data>", "");
     const payload = JSON.parse(serialized) as Record<string, unknown>;
     expect(Object.prototype.hasOwnProperty.call(payload, "recentDishHints")).toBe(false);
+    // 学習ヒントは new_menu だけ。再生成のどの message にも段落も tasteHints キーも出ない（S6）
+    expect(Object.prototype.hasOwnProperty.call(payload, "tasteHints")).toBe(false);
+    for (const message of messages) {
+      const text = typeof message.content === "string" ? message.content : "";
+      expect(text).not.toContain(TASTE_SYSTEM_MARKER);
+      expect(text).not.toContain("tasteHints");
+    }
   });
 
   it("§12.5 validateGeneratedMenu still ok with similar dish names when hints present", () => {
@@ -754,6 +761,8 @@ describe("buildGenerationMessages", () => {
     expect(system).toContain(HOUSEHOLD_KITCHEN_PARAGRAPH);
     expect(system).toContain("材料の都合・機材・器具の都合・好みの曖昧さ");
     expect(system).not.toContain(DIVERSITY_SYSTEM_MARKER);
+    expect(system).not.toContain(TASTE_SYSTEM_MARKER);
+    expect(JSON.stringify(buildGenerationMessages(execution))).not.toContain("tasteHints");
   });
 
   it("caps whole regeneration excludedDishSignatures at 200 so buildMessages does not throw", () => {
@@ -1005,12 +1014,21 @@ describe("taste hints", () => {
     expect(systemText(messages)).toBe(expectedSystem);
   });
 
-  it("keeps output byte-identical to the pre-taste prompt when hints are null", () => {
-    const withoutTasteFlow = buildGenerationMessages(asNewMenuExecution(makeGenerationContext()));
-    const explicitNull = buildGenerationMessages(
-      asNewMenuExecution(makeGenerationContext(), [], null),
+  it("adds nothing but the tasteHints key to the user payload, and leaves it out when null", () => {
+    // 旧テストは既定引数が null のため同じ入力を 2 回比べる tautology だった（最終レビュー Q5）。
+    // ヒントの有無で user payload が tasteHints キーの有無しか変わらないことを固定する
+    const context = makeGenerationContext();
+    const withHints = userPayload(
+      buildGenerationMessages(asNewMenuExecution(context, [], someTasteHints)),
     );
-    expect(explicitNull).toEqual(withoutTasteFlow);
+    const withoutHints = userPayload(
+      buildGenerationMessages(asNewMenuExecution(context, [], null)),
+    );
+    expect(withoutHints).not.toHaveProperty("tasteHints");
+    expect(withHints).toHaveProperty("tasteHints");
+    expect(withoutHints).toEqual(
+      Object.fromEntries(Object.entries(withHints).filter(([key]) => key !== "tasteHints")),
+    );
   });
 });
 

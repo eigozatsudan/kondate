@@ -451,6 +451,7 @@ export async function loadTasteHints(input: {
 - owner-scoped client（`createUserScopedSupabase(user.accessToken)`）で `get_taste_signals` を RPC する。
 - 失敗・タイムアウト・例外はすべて `signals: null`。**決して throw しない**。
 - 200ms の race は `loadRecentDishHints` と同じ実装形（遅延 resolve は採用しない、late reject を握り潰す）。
+  加えて timeout で負けたときは `rpc(...).abortSignal()` で fetch を中断する（結末は `timeout` のまま fail-open。PostgREST 側の SQL が止まる保証は無い）。
 - `reason` を先に見て `disabled_user` / `no_history` を確定し、`reason === null` のときだけ
   `tasteSignalsSchema.safeParse` にかける（§4.5）。理由オブジェクトを schema に通すと
   両方とも `invalid_shape` に潰れる。
@@ -586,6 +587,8 @@ const finalTasteHints =
 ```
 
 - kill-switch off のときは **load 自体を呼ばない**（内部 early-return に頼らない。L13 と同じ規約）。
+- **フラグの組み合わせ:** 多様性の kill-switch（`DIVERSITY_HINTS_ENABLED`）が off のときは `recentDishHints` が空配列になるため、
+  §5.3 の「直近の料理を落とす」処理は働かず、最近出した料理も `likedDishes` に残る（学習だけ on の組み合わせ。運用の kill-switch 時に限られ、コードは変えない）。
 - 直列化しない。`Promise.all` の 3 本目として足すだけで、Function 総予算への追加は 0ms が期待値、
   最悪でも 200ms のタイムアウトで頭打ちになる。
 
@@ -779,7 +782,7 @@ OFFにすると読み取りをやめます。設定と反映の記録は保存�
 4. `taste_learning_enabled = false` の利用者では `get_taste_signals` が `{ reason: "disabled" }` を返す。
 5. 他人の `menus` は RLS により集計に入らない。
 6. `change_reason_custom` と `memo` の自由記述は集計にも prompt にも入らない。
-7. idea 生成のプロンプトに `avoidAxes` は現れない。
+7. idea 生成では `avoidAxes` に値が入らない（空配列）。`tasteHints` を載せるときは `"avoidAxes":[]` のキーと段落の説明文は残るが、`child_unfriendly` は出ない。
 8. 料理名・食材名は system 文に連結されず、user JSON 経由でのみ送られる。
 9. `public.profiles` のテーブル単位 UPDATE 権限は復活しない。
 10. 優先順位の文は 1 つの system 文に 1 回しか現れない。

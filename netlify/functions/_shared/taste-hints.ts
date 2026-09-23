@@ -73,11 +73,19 @@ export function isTasteHintsEnabled(flag: boolean): boolean {
   return flag;
 }
 
+type TasteRpcResult = { data: unknown; error: { message?: string } | null };
+
+/**
+ * postgrest-js の rpc(...) が返すビルダーのうち、ここで使う分だけ。
+ * abortSignal は timeout 時に fetch を中断するために使う。持たないクライアント
+ * （テストの偽物など）では中断はせず、従来どおり遅れた結果を捨てるだけにする。
+ */
+type TasteRpcBuilder = PromiseLike<TasteRpcResult> & {
+  abortSignal?: (signal: AbortSignal) => PromiseLike<TasteRpcResult>;
+};
+
 type OwnerClientForTaste = {
-  rpc: (
-    name: "get_taste_signals",
-    args: Record<string, never>,
-  ) => PromiseLike<{ data: unknown; error: { message?: string } | null }>;
+  rpc: (name: "get_taste_signals", args: Record<string, never>) => TasteRpcBuilder;
 };
 
 function isOwnerClientForTaste(client: unknown): client is OwnerClientForTaste {
@@ -103,8 +111,14 @@ function omitReason(data: object): Record<string, unknown> {
   return Object.fromEntries(Object.entries(data).filter(([key]) => key !== "reason"));
 }
 
-async function querySignals(client: OwnerClientForTaste): Promise<TasteHintsLoadResult> {
-  const { data, error } = await client.rpc("get_taste_signals", {});
+async function querySignals(
+  client: OwnerClientForTaste,
+  signal: AbortSignal,
+): Promise<TasteHintsLoadResult> {
+  const builder = client.rpc("get_taste_signals", {});
+  const { data, error } = await (typeof builder.abortSignal === "function"
+    ? builder.abortSignal(signal)
+    : builder);
   if (error !== null) return { signals: null, outcome: "query_failed" };
 
   // reason は safeParse より先に見る。理由オブジェクトを schema に通すと
@@ -136,10 +150,16 @@ export async function loadTasteHints(input: {
     }
     const timeoutMs = input.timeoutMs ?? TASTE_HINTS_TIMEOUT_MS;
     const ownerClient = input.ownerClient;
-    const queryPromise = querySignals(ownerClient).catch((): TasteHintsLoadResult => ({
-      signals: null,
-      outcome: "query_failed",
-    }));
+    // timeout で負けた問い合わせの fetch を中断し、Function の残り予算の間に接続を抱え続けない。
+    // PostgREST 側で実行中の SQL まで止まる保証は無い（集計は 50 献立の範囲で index を使える）。
+    // 中断による reject / error は下の catch と race で捨て、結末は timeout のまま（fail-open）
+    const abortController = new AbortController();
+    const queryPromise = querySignals(ownerClient, abortController.signal).catch(
+      (): TasteHintsLoadResult => ({
+        signals: null,
+        outcome: "query_failed",
+      }),
+    );
 
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<"timeout">((resolve) => {
@@ -156,7 +176,10 @@ export async function loadTasteHints(input: {
     if (timeoutId !== undefined) clearTimeout(timeoutId);
 
     // 遅れて届いた結果は採用しない（race 勝者のみ）。queryPromise は catch 済みで reject しない
-    if (raced.kind === "timeout") return { signals: null, outcome: "timeout" };
+    if (raced.kind === "timeout") {
+      abortController.abort();
+      return { signals: null, outcome: "timeout" };
+    }
     return raced.result;
   } catch {
     return { signals: null, outcome: "query_failed" };

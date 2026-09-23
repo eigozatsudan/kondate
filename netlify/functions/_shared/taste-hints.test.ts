@@ -148,6 +148,49 @@ describe("loadTasteHints", () => {
     expect(result).toEqual({ signals: null, outcome: "invalid_shape" });
   });
 
+  it("aborts the in-flight rpc fetch when the budget runs out and still fails open", async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    // postgrest-js と同じく rpc(...) はビルダーを返し、abortSignal(signal) で fetch を中断できる
+    const ownerClient = {
+      rpc: () => {
+        const pending = new Promise<{ data: unknown; error: null }>(() => undefined);
+        return Object.assign(pending, {
+          abortSignal: (signal: AbortSignal) => {
+            signals.push(signal);
+            return new Promise<{ data: unknown; error: { message: string } }>((resolve) => {
+              signal.addEventListener("abort", () => {
+                resolve({ data: null, error: { message: "AbortError" } });
+              });
+            });
+          },
+        });
+      },
+    };
+    const promise = loadTasteHints({ ownerClient, timeoutMs: 200 });
+    await vi.advanceTimersByTimeAsync(250);
+    await expect(promise).resolves.toEqual({ signals: null, outcome: "timeout" });
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(true);
+  });
+
+  it("does not abort the rpc when it answers within the budget", async () => {
+    const signals: AbortSignal[] = [];
+    const ownerClient = {
+      rpc: () =>
+        Object.assign(Promise.resolve({ data: { reason: "no_history" }, error: null }), {
+          abortSignal: (signal: AbortSignal) => {
+            signals.push(signal);
+            return Promise.resolve({ data: { reason: "no_history" }, error: null });
+          },
+        }),
+    };
+    const result = await loadTasteHints({ ownerClient });
+    expect(result.outcome).toBe("no_history");
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(false);
+  });
+
   it("times out at the budget", async () => {
     vi.useFakeTimers();
     const promise = loadTasteHints({
@@ -405,11 +448,36 @@ describe("filterTasteHintsForSafety", () => {
     });
     const index = Array.from({ length: 150 }, (_, dish) => ({
       dishName: `料理${String(dish)}`,
-      ingredients: Array.from({ length: 10 }, (_, item) => `食材${String(dish)}の${String(item)}`),
+      // 料理0 だけ、表示確認が不要な別名（奇数番）を食材に持つ
+      ingredients: Array.from({ length: 10 }, (_, item) =>
+        dish === 0 && item === 0 ? "別名1" : `食材${String(dish)}の${String(item)}`,
+      ),
     }));
     const started = performance.now();
-    filterTasteHintsForSafety({ ...signals, dishIngredientIndex: index }, context);
-    expect(performance.now() - started).toBeLessThan(250);
+    const filtered = filterTasteHintsForSafety(
+      {
+        ...signals,
+        likedDishes: [
+          { dishName: "料理0", role: "main" },
+          { dishName: "料理1", role: "main" },
+          { dishName: "卵焼き", role: "side" },
+        ],
+        likedIngredients: ["別名3", "食材1の0", "別名0"],
+        dishIngredientIndex: index,
+      },
+      context,
+    );
+    const elapsed = performance.now() - started;
+    // 結果の正しさ: 当たる語は落ち、無関係の語は残る（速さだけ見て中身を壊していないこと）
+    // 料理0 は対応表の hard 語で料理ごと、卵焼き は表示名 卵 で落ちる
+    expect(filtered.likedDishes.map((dish) => dish.dishName)).toEqual(["料理1"]);
+    // 別名3（hard）も別名0（表示確認の soft）も食材としては落ちる
+    expect(filtered.likedIngredients).toEqual(["食材1の0"]);
+    expect(filtered.dishIngredientIndex[0]?.ingredients).not.toContain("別名1");
+    expect(filtered.dishIngredientIndex[0]?.ingredients).toHaveLength(9);
+    expect(filtered.dishIngredientIndex[1]?.ingredients).toHaveLength(10);
+    // 閾値は CI の揺れで落ちないよう緩める。総当たりの重い照合に戻ると桁で超える
+    expect(elapsed).toBeLessThan(1000);
   });
 
   it("keeps avoidAxes for household mode", () => {
