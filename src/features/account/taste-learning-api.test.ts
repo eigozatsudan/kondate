@@ -104,6 +104,24 @@ it.each([
   await expect(setTasteLearningEnabled(client, true, 0)).rejects.toThrow();
 });
 
+it("throws when the rpc resolves with an error after the signal aborts (postgrest-js does not reject on abort)", async () => {
+  // supabase-js/postgrest-js は abort されても reject せず、
+  // { data: null, error } で resolve する。呼び出し側の signal ハンドラより先に
+  // 応答が来ても throw できることを確かめる（旧 M-7）。
+  const controller = new AbortController();
+  const abortSignal = vi.fn().mockImplementation(() => {
+    controller.abort();
+    return Promise.resolve({ data: null, error: { name: "AbortError", message: "FetchError" } });
+  });
+  const rpc = vi.fn().mockReturnValue({ abortSignal });
+  const client = { rpc } as never;
+
+  await expect(
+    setTasteLearningEnabled(client, true, 0, { signal: controller.signal }),
+  ).rejects.toThrow("taste_learning_write_failed");
+  expect(controller.signal.aborted).toBe(true);
+});
+
 it("forwards an AbortSignal to rpc().abortSignal() without changing the RPC arguments", async () => {
   const signal = new AbortController().signal;
   const abortSignal = vi.fn().mockResolvedValue({

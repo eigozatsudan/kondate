@@ -483,12 +483,45 @@ describe("TasteLearningSettingsSection", () => {
     });
   });
 
-  it("invalidates and shows the failure alert when the fence write fails", async () => {
+  it("shows the failure alert when a retried fence eventually answers with a different value", async () => {
+    // 柵は最大 TASTE_LEARNING_FENCE_ATTEMPTS 回まで再試行する。1 回目が失敗しても、
+    // 2 回目で答え（要求とは食い違う値）が得られれば、そこで再試行をやめて失敗表示にする。
     const server = createFakeServer({ enabled: true, seq: 0 });
     wireServer(server);
     setTasteLearningEnabledMock
       .mockRejectedValueOnce(new Error("boom"))
-      .mockRejectedValueOnce(new Error("fence failed"));
+      .mockRejectedValueOnce(new Error("fence 1 failed"));
+    renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
+    const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+    await waitFor(() => {
+      expect(toggle).toBeChecked();
+    });
+
+    await userEvent.click(toggle);
+
+    await waitFor(
+      () => {
+        expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.failed);
+      },
+      { timeout: 10_000 },
+    );
+    // 元の書き込み + 柵 1 回目（失敗）+ 柵 2 回目（答えは得られたが要求と食い違う）
+    expect(setTasteLearningEnabledMock).toHaveBeenCalledTimes(3);
+    // 初回読み取り + 裏取りの読み + 柵 2 回目の前の読み直し
+    expect(getTasteLearningStateMock).toHaveBeenCalledTimes(3);
+    expect(getSwitch()).toBeChecked();
+    expect(getSwitch()).toBeEnabled();
+  }, 15_000);
+
+  it("treats a fence that answers applied:false with the requested value as success, not failure (M-2)", async () => {
+    // このテストは、fence.enabled === nextEnabled のときに早期 return する分岐が
+    // 削除されると、代わりに元の書き込みエラーが投げられて失敗表示になり、失敗する。
+    getTasteLearningStateMock
+      .mockResolvedValueOnce({ enabled: true, seq: 0 })
+      .mockResolvedValueOnce({ enabled: true, seq: 0 });
+    setTasteLearningEnabledMock
+      .mockRejectedValueOnce(new Error("write failed"))
+      .mockResolvedValueOnce({ enabled: false, seq: 5, applied: false });
     renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
     const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
     await waitFor(() => {
@@ -498,15 +531,180 @@ describe("TasteLearningSettingsSection", () => {
     await userEvent.click(toggle);
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.failed);
+      expect(getSwitch()).not.toBeChecked();
     });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(setTasteLearningEnabledMock).toHaveBeenCalledTimes(2);
-    // 初回読み取り + 裏取りの 1 回 + invalidate による再読
+  });
+
+  it("retries the fence after failures and stops once an attempt gets an answer, without a persistent alert", async () => {
+    getTasteLearningStateMock
+      .mockResolvedValueOnce({ enabled: true, seq: 0 }) // 初期読み込み
+      .mockResolvedValueOnce({ enabled: true, seq: 0 }) // 書き込み失敗後の裏取り読み
+      .mockResolvedValueOnce({ enabled: true, seq: 0 }) // 柵 1 失敗後の再読
+      .mockResolvedValueOnce({ enabled: true, seq: 0 }); // 柵 2 失敗後の再読
+    setTasteLearningEnabledMock
+      .mockRejectedValueOnce(new Error("write failed"))
+      .mockRejectedValueOnce(new Error("fence 1 failed"))
+      .mockRejectedValueOnce(new Error("fence 2 failed"))
+      .mockResolvedValueOnce({ enabled: true, seq: 1, applied: true }); // 柵 3 で答えが得られる
+
+    renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
+    const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
     await waitFor(() => {
-      expect(getTasteLearningStateMock).toHaveBeenCalledTimes(3);
+      expect(toggle).toBeChecked();
     });
+
+    await userEvent.click(toggle);
+
+    await waitFor(
+      () => {
+        expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.failed);
+      },
+      { timeout: 10_000 },
+    );
+    expect(screen.queryByText(tasteLearningCopy.unconfirmed)).not.toBeInTheDocument();
+    // 本来の書き込み 1 回 + 柵 3 回
+    expect(setTasteLearningEnabledMock).toHaveBeenCalledTimes(4);
+  }, 15_000);
+
+  it("shows a persistent unconfirmed alert when every fence attempt fails, and the retry button clears it once it resolves", async () => {
+    getTasteLearningStateMock
+      .mockResolvedValueOnce({ enabled: true, seq: 0 }) // 初期読み込み
+      .mockResolvedValueOnce({ enabled: true, seq: 0 }) // 書き込み失敗後の裏取り読み
+      .mockResolvedValueOnce({ enabled: true, seq: 0 }) // 柵 1 失敗後の再読
+      .mockResolvedValueOnce({ enabled: true, seq: 0 }); // 柵 2 失敗後の再読
+    setTasteLearningEnabledMock
+      .mockRejectedValueOnce(new Error("write failed"))
+      .mockRejectedValueOnce(new Error("fence 1 failed"))
+      .mockRejectedValueOnce(new Error("fence 2 failed"))
+      .mockRejectedValueOnce(new Error("fence 3 failed"));
+
+    const { client } = renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
+    const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+    await waitFor(() => {
+      expect(toggle).toBeChecked();
+    });
+
+    await userEvent.click(toggle);
+
+    await waitFor(
+      () => {
+        expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.unconfirmed);
+      },
+      { timeout: 10_000 },
+    );
+    expect(screen.queryByText(tasteLearningCopy.failed)).not.toBeInTheDocument();
+    // スイッチは直前に読んだサーバー値（ON）のまま。楽観の OFF には戻さない
     expect(getSwitch()).toBeChecked();
     expect(getSwitch()).toBeEnabled();
+    expect(client.getQueryData(tasteLearningKeys.current("user-1"))).toEqual({
+      enabled: true,
+      seq: 0,
+    });
+    const retryButton = screen.getByRole("button", { name: tasteLearningCopy.unconfirmedRetry });
+    expect(retryButton).toBeEnabled();
+
+    // 再読では要求（OFF）とまだ食い違う。柵を 1 回送り、それが答えを返せば警告を下げる
+    getTasteLearningStateMock.mockResolvedValueOnce({ enabled: true, seq: 0 });
+    setTasteLearningEnabledMock.mockResolvedValueOnce({ enabled: true, seq: 1, applied: true });
+
+    await userEvent.click(retryButton);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+    expect(getSwitch()).toBeChecked();
+    expect(client.getQueryData(tasteLearningKeys.current("user-1"))).toEqual({
+      enabled: true,
+      seq: 1,
+    });
+  }, 15_000);
+
+  it("keeps a remounted instance's cache from being regressed by a late reconcile read from a stale instance (M-1)", async () => {
+    let resolveOldRead: (value: { enabled: boolean; seq: number }) => void = () => undefined;
+    getTasteLearningStateMock
+      .mockResolvedValueOnce({ enabled: true, seq: 0 }) // 旧インスタンスの初期読み込み
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ enabled: boolean; seq: number }>((resolve) => {
+            resolveOldRead = resolve;
+          }),
+      ); // 旧インスタンスの裏取り読み。remount しても保留のまま
+    // 上の 2 回の意図した呼び出しは Once キューが優先されるため乱れない。
+    // それ以外の偶発的な背景 fetch（新インスタンスの mount 時 refetch など）が
+    // 古い値を返しても、queryFn 側の連番ガード（本体側の修正）が上書きを防ぐ。
+    getTasteLearningStateMock.mockResolvedValue({ enabled: true, seq: 0 });
+
+    setTasteLearningEnabledMock.mockRejectedValueOnce(new Error("write failed"));
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+          // remount 後の useQuery が、まだ新鮮な cache を無視してもう一度 queryFn を
+          // 呼ぶと、旧インスタンスの裏取り読みと呼び出し順序を数えているこのテストの
+          // 前提が崩れる。ここでは remount 時の裏取り再読そのものを検証したいのでは
+          // ないため、はっきり止めておく。
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    const { unmount } = render(
+      <QueryClientProvider client={client}>
+        <TasteLearningSettingsSection userId="user-1" />
+      </QueryClientProvider>,
+    );
+    const oldToggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+    await waitFor(() => {
+      expect(oldToggle).toBeChecked();
+    });
+    await userEvent.click(oldToggle); // OFF へ、seq 0 を期待
+    await waitFor(() => {
+      expect(setTasteLearningEnabledMock).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(getTasteLearningStateMock).toHaveBeenCalledTimes(2);
+    });
+
+    unmount();
+
+    setTasteLearningEnabledMock
+      .mockResolvedValueOnce({ enabled: false, seq: 1, applied: true })
+      .mockResolvedValueOnce({ enabled: true, seq: 2, applied: true });
+    render(
+      <QueryClientProvider client={client}>
+        <TasteLearningSettingsSection userId="user-1" />
+      </QueryClientProvider>,
+    );
+    const newToggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+    await waitFor(() => {
+      expect(newToggle).toBeChecked(); // 旧キャッシュ（ON, seq 0）のまま
+    });
+
+    await userEvent.click(newToggle); // OFF へ、seq 0 で通る
+    await waitFor(() => {
+      expect(newToggle).not.toBeChecked();
+    });
+    await userEvent.click(newToggle); // ON へ、seq 1 で通る
+    await waitFor(() => {
+      expect(newToggle).toBeChecked();
+    });
+
+    // 旧インスタンスの裏取り読みがようやく届く。要求どおりの値（OFF）だが連番は古い（1 < 2）
+    resolveOldRead({ enabled: false, seq: 1 });
+
+    await waitFor(() => {
+      expect(client.getQueryData(tasteLearningKeys.current("user-1"))).toEqual({
+        enabled: true,
+        seq: 2,
+      });
+    });
+    expect(newToggle).toBeChecked();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("invalidates and shows the failure alert when the reconcile read fails", async () => {

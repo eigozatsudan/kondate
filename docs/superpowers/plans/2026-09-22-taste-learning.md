@@ -997,11 +997,17 @@ Expected: `taste_learning_enabled` と 2 つの関数が差分に現れる。**�
 ```bash
 git add supabase/migrations/20260922120000_taste_learning.sql \
   supabase/tests/database/taste_signals.test.sql \
-  src/shared/types/database.generated.ts
+  src/shared/types/database.generated.ts \
+  supabase/tests/database/rls_inventory.test.sql \
+  docs/testing/database-access-matrix.md \
+  src/shared/types/database.test.ts \
+  src/features/household/household-onboarding-page.test.tsx
 git commit -m "feat(db): 好みの学習の集計関数とトグル列を追加する
 
-profiles へ taste_learning_enabled を足し、更新は set_taste_learning_enabled
-経由だけにする。20260712000100 で外したテーブル単位 UPDATE は復活させない。
+profiles へ taste_learning_enabled と連番 taste_learning_seq を足し、更新は
+set_taste_learning_enabled(p_enabled, p_expected_seq) 経由だけにする。連番が
+一致したときだけ書く比較更新（CAS）で、1 引数版は残さない。20260712000100 で
+外したテーブル単位 UPDATE は復活させない。
 
 get_taste_signals は security invoker で所有者の menus/dishes/dish_ingredients を
 読み、窓 90 日・50 件・半減期 30 日で集計する。強さも最低出現回数も
@@ -2126,9 +2132,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Test: `src/features/account/taste-learning-api.test.ts`
 - Create: `src/features/account/taste-learning-section.tsx`（スイッチ本体。値の確定を前提にし、見出し・告知文・読み込み/エラー表示は持たない）
 - Test: `src/features/account/taste-learning-section.test.tsx`
-- Create: `src/features/account/taste-learning-settings-section.tsx`（データ配線。`useQuery`/`useMutation` と見出し・告知文・読み込み中/エラー表示を持つ。household 側は薄いラッパーを持たずこれを直接使う。値が未確認の間はスイッチ自体を出さず、一度読めた後の裏取り再読の失敗ではエラー表示・無効化をせず、再読み込み中はボタンをローディング行に差し替え、見出し id は `useId()`、書き込みは世代ガード付きで abort・裏取り invalidate を行う。timeout・失敗時は現在値を 1 回読み、要求値でなければ現在値のまま連番だけを進める柵の書き込みを送り、滞留中の古い書き込みをサーバーで捨てさせる。share-consent-settings-section.tsx の再読ポーリングとは cross-reference コメントで対にする）
+- Create: `src/features/account/taste-learning-settings-section.tsx`（データ配線。`useQuery`/`useMutation` と見出し・告知文・読み込み中/エラー表示を持つ。household 側は薄いラッパーを持たずこれを直接使う。値が未確認の間はスイッチ自体を出さず、一度読めた後の裏取り再読の失敗ではエラー表示・無効化をせず、再読み込み中はボタンをローディング行に差し替え、見出し id は `useId()`、書き込みは世代ガード付きで abort・裏取り invalidate を行う。timeout・失敗時は現在値を 1 回読み、要求値でなければ現在値のまま連番だけを進める柵の書き込みを送る。柵自体も timeout・失敗しうるため `TASTE_LEARNING_FENCE_ATTEMPTS` 回まで間隔をおいて再試行し、それでも答えが得られなければ「確定できなかった」持続的な警告と再読み込みボタンを別に出す（I-1）。すべての `setQueryData`（`useQuery` の `queryFn` 自身の成功時の置き換えも含む）は連番が cache より古ければ捨てる `mergeBySeq` を経由し、remount をまたいだ巻き戻りを防ぐ（M-1）。share-consent-settings-section.tsx の再読ポーリングとは cross-reference コメントで対にする）
 - Test: `src/features/account/taste-learning-settings-section.test.tsx`
-- Create: `src/features/account/taste-learning-timing.ts`（`TASTE_LEARNING_TOGGLE_TIMEOUT_MS`。share-consent 側の同名の値とわざと同じにし、account 側が privacy のコンポーネントファイルへ依存しないようにする）
+- Create: `src/features/account/taste-learning-timing.ts`（`TASTE_LEARNING_TOGGLE_TIMEOUT_MS`。share-consent 側の同名の値とわざと同じにし、account 側が privacy のコンポーネントファイルへ依存しないようにする。加えて柵の再試行回数 `TASTE_LEARNING_FENCE_ATTEMPTS` と再試行間隔 `TASTE_LEARNING_FENCE_RETRY_DELAY_MS`）
 - Modify: `src/features/privacy/privacy-copy.ts:41`（`privacySections` の「AIへ送る情報」。好みの学習の告知と、直近の献立（最大 10 献立）の料理名の告知）
 - Modify: `src/features/privacy/privacy-copy.test.ts`
 - Modify: `src/features/household/household-settings-page.tsx:1777` と `:2539`（`<ShareConsentSettingsSection userId={userId} />` の直後、2 箇所とも）
@@ -2142,11 +2148,11 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 - [x] **Step 1: 失敗するテストを書く**
 
-`src/features/account/taste-learning-api.test.ts`: `getTasteLearningState` / `setTasteLearningEnabled` の成功・エラー・Zod 検証失敗（不正な形の応答。連番の負数・小数・文字列・安全な整数の範囲外・余分なキーを含む）、`p_expected_seq` の送信、`applied: false` の現在値の受け取り、signal の転送を確認する。
+`src/features/account/taste-learning-api.test.ts`: `getTasteLearningState` / `setTasteLearningEnabled` の成功・エラー・Zod 検証失敗（不正な形の応答。連番の負数・小数・文字列・安全な整数の範囲外・余分なキーを含む）、`p_expected_seq` の送信、`applied: false` の現在値の受け取り、signal の転送を確認する。postgrest-js は abort されても reject せず `{ data: null, error }` で resolve するため、abort 後にその形で応答しても throw することも確かめる（M-2）。
 
 `src/features/account/taste-learning-section.test.tsx`: 値が enabled prop にそのまま追従すること（`useState` で最初の値へ固定しないこと）、トグル操作で `onToggle` が呼ばれること、失敗時に `role="alert"` で `tasteLearningCopy.failed` を表示し値が戻ること、失敗後にサーバー値が要求値へ追いついたら失敗表示を下げること、マウント後の prop 変化にスイッチが追従すること。
 
-`src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチ自体が出ないこと（N-2）、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出てスイッチは出ず告知文は消えないこと（N-2）、再読み込み中はボタンを unmount せず disabled とローディング文言へ差し替えること（N-4/R-4）、初回読み込みで値がスイッチに反映されること、一度読み込めた後の裏取り再読の失敗ではスイッチを無効化せず読み込みエラーも出さないこと（N-3）、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること（詰まった裏取り再読に依存しないことを含む、N-6）、ユーザー操作なしのキャッシュ変化にもスイッチが追従すること（N-6）、書き込み失敗時に楽観値を経由してから元の値へ戻ることが観測できること（N-7）、書き込みが abort されると実クライアントと同じく reject すること。以下は CAS を持つテスト内の偽サーバー（`{ enabled, seq }`）で順序まで確かめる: 連番を運ぶ OFF→ON→OFF 往復、滞留した書き込みが再読より先に commit していれば成功扱いで柵を送らないこと、未 commit なら柵が通って失敗アラートとサーバー値を出し、後から届いた滞留書き込みが `applied: false` で捨てられ画面とキャッシュが変わらないこと、別端末による `applied: false` で値が違えば失敗アラートと真の値・同じなら成功扱い、柵または再読が失敗したら invalidate して失敗アラートを出すこと。
+`src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチ自体が出ないこと（N-2）、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出てスイッチは出ず告知文は消えないこと（N-2）、再読み込み中はボタンを unmount せず disabled とローディング文言へ差し替えること（N-4/R-4）、初回読み込みで値がスイッチに反映されること、一度読み込めた後の裏取り再読の失敗ではスイッチを無効化せず読み込みエラーも出さないこと（N-3）、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること（詰まった裏取り再読に依存しないことを含む、N-6）、ユーザー操作なしのキャッシュ変化にもスイッチが追従すること（N-6）、書き込み失敗時に楽観値を経由してから元の値へ戻ることが観測できること（N-7）、書き込みが abort されると実クライアントと同じく reject すること。以下は CAS を持つテスト内の偽サーバー（`{ enabled, seq }`）で順序まで確かめる: 連番を運ぶ OFF→ON→OFF 往復、滞留した書き込みが再読より先に commit していれば成功扱いで柵を送らないこと、未 commit なら柵が通って失敗アラートとサーバー値を出し、後から届いた滞留書き込みが `applied: false` で捨てられ画面とキャッシュが変わらないこと、別端末による `applied: false` で値が違えば失敗アラートと真の値・同じなら成功扱い、柵または再読が失敗したら invalidate して失敗アラートを出すこと。加えて次の CAS follow-up 分を確かめる: 柵の `applied: false` が要求値と一致すれば成功扱いになり、その早期 return 分岐を削れば失敗する（M-2）、柵が数回失敗しても間隔をおいて再試行しどこかで答えが得られれば成功・失敗いずれかに確定し持続的な警告は出ないこと、`TASTE_LEARNING_FENCE_ATTEMPTS` 回すべて失敗すれば消えない未確定警告と再読み込みボタンを出し、ボタンで読み直し・必要なら柵を 1 回送って解決すれば警告が消えること（I-1）、remount した新インスタンスの cache を、旧インスタンスの遅れた裏取り読み（連番が古い）が巻き戻さないこと。`useQuery` 自身のバックグラウンド fetch が古い値を返す経路も同じ連番ガードで守られていることを含む（M-1）。
 
 `src/features/privacy/privacy-copy.test.ts` の既存アサーションを `/設定/u`（既存の「家族設定」でも通ってしまい実質何も検証しない）から `/好みの学習は設定でいつでも止められます/u`（停止手段の追記そのものを、止められる対象まで含めて検証する）へ差し替える。加えて、直近の献立の料理名を送ること（`/直近の献立（最大10献立）の料理名/u`）を別のテストで固定する。
 
@@ -2290,6 +2296,11 @@ export const tasteLearningCopy = {
   loadError: "設定を読み込めませんでした。時間をおいてもう一度お試しください。",
   retry: "もう一度読み込む",
   failed: "設定を変更できませんでした。時間をおいてもう一度お試しください。",
+  // 柵を最大回数試みても答えが得られず、サーバー側の状態が確定できないときの持続的な警告。
+  // 「変更できませんでした」と違い、成功・失敗のどちらとも確定していないことを明示する。
+  unconfirmed:
+    "変更が確定したか確認できませんでした。通信状況を確認して、もう一度読み込んでください。",
+  unconfirmedRetry: "もう一度読み込む",
 } as const;
 ```
 
@@ -2392,9 +2403,9 @@ export function TasteLearningSection({
 
 ```tsx
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useRef } from "react";
-import { withTimeout } from "@/features/auth/async-timeout";
-import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { useId, useRef, useState } from "react";
+import { waitMs, withTimeout } from "@/features/auth/async-timeout";
+import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
   getTasteLearningState,
   setTasteLearningEnabled,
@@ -2404,7 +2415,11 @@ import {
 } from "./taste-learning-api";
 import { tasteLearningCopy } from "./taste-learning-copy";
 import { TasteLearningSection } from "./taste-learning-section";
-import { TASTE_LEARNING_TOGGLE_TIMEOUT_MS } from "./taste-learning-timing";
+import {
+  TASTE_LEARNING_FENCE_ATTEMPTS,
+  TASTE_LEARNING_FENCE_RETRY_DELAY_MS,
+  TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
+} from "./taste-learning-timing";
 
 export type TasteLearningSettingsSectionProps = {
   userId: string;
@@ -2415,6 +2430,45 @@ type TasteLearningToggleRequest = {
   /** 画面が最後に読んだ連番。サーバーはこれと一致したときだけ書く。 */
   expectedSeq: number;
 };
+
+/** 柵を打ち尽くしても答えが得られず、未確定のまま持続的な警告を出す対象になった要求。 */
+type PendingUnconfirmed = {
+  requestedEnabled: boolean;
+};
+
+/**
+ * サーバーから受け取った状態を cache へ書く。ただし連番が cache より古ければ捨てる。
+ * 遅れて届いた再読・柵の応答が、後から届いた新しい書き込みの結果を巻き戻さないための
+ * 順序ガード（M-1）。世代ガード（mutationGenerationRef）はコンポーネントの
+ * 1 インスタンス内でしか効かないため、remount をまたぐ巻き戻りはこちらで防ぐ。
+ */
+function mergeBySeq(
+  prev: TasteLearningState | undefined,
+  next: TasteLearningState,
+): TasteLearningState {
+  if (prev !== undefined && prev.seq > next.seq) {
+    return prev;
+  }
+  return next;
+}
+
+/** 書き込み 1 回分。abort 付き timeout でラップする（柵の書き込みも同じ形）。 */
+function writeTasteLearningOnce(
+  client: BrowserSupabaseClient,
+  enabled: boolean,
+  seq: number,
+): Promise<TasteLearningSetResult> {
+  const abortController = new AbortController();
+  return withTimeout(
+    setTasteLearningEnabled(client, enabled, seq, { signal: abortController.signal }),
+    TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
+    () => {
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+      }
+    },
+  );
+}
 
 /**
  * 好みの学習トグルの読み書きを設定ページへ配線する。
@@ -2434,6 +2488,15 @@ type TasteLearningToggleRequest = {
  * 一致しなければ現在値のまま連番だけを進める「柵」の書き込みを送る。柵が通れば、
  * 滞留中の古い書き込みは連番が合わずサーバーで捨てられる。期限（時刻）で捨てる方式は
  * 端末の時計ずれで壊れるため採らない。
+ *
+ * 柵自体も timeout・失敗しうる（元の書き込みを止めたのと同じ相関障害が柵も止めうる）。
+ * 1 回で諦めると、柵より後に古い書き込みが commit する I-1 の抜け道が残るため、
+ * 柵は間隔をおいて TASTE_LEARNING_FENCE_ATTEMPTS 回まで再試行する。再試行のたびに
+ * 現在値を読み直し、その連番・値で次の柵を送る（読み直しにも失敗したら直前に分かって
+ * いる値のまま次を試みる）。何度試みても答え（applied の true/false どちらか）が
+ * 得られなければ、サーバー側の状態は本当に未確定のため、確定するまで消えない警告を
+ * 別に出し、スイッチは直近に読んだサーバー値のまま・楽観値には戻さない。
+ *
  * share-consent-settings-section.tsx は同じ問題を複数回の再読ポーリングで扱っている
  * （連番を持たないため）。片方の失敗時の扱いを直したら、もう片方も確認すること。
  * 世代ガードは、pending 中はスイッチが disabled のため実際には到達しない防御であり、
@@ -2443,27 +2506,40 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
   const queryClient = useQueryClient();
   const headingId = useId();
   const descriptionId = useId();
+  const queryKey = tasteLearningKeys.current(userId);
   // 直近の書き込みの世代。timeout 後の遅延応答や、timeout 後に打たれた
   // 次のトグルの結果が古い応答で cache を上書きしないようにする（防御的なガードで、
   // 現状の UI では pending 中はスイッチが disabled のため実際にはこの経路を通らない）。
   const mutationGenerationRef = useRef(0);
+  // 柵を打ち尽くしても答えが得られなかった直近の要求。確定するまで消えない警告に使う。
+  const [unconfirmed, setUnconfirmed] = useState<PendingUnconfirmed | null>(null);
+
+  const applyState = (state: TasteLearningState): void => {
+    // state は TasteLearningSetResult（applied 付き）で渡ってくることもあるが、
+    // cache に持たせるのは enabled/seq のみ。余分なキーを持ち込まないよう正規化する。
+    const normalized: TasteLearningState = { enabled: state.enabled, seq: state.seq };
+    queryClient.setQueryData<TasteLearningState>(queryKey, (prev) => mergeBySeq(prev, normalized));
+  };
 
   const tasteLearningQuery = useQuery({
-    queryKey: tasteLearningKeys.current(userId),
-    queryFn: () => getTasteLearningState(getBrowserSupabaseClient(), userId),
+    queryKey,
+    queryFn: async () => {
+      const fetched = await getTasteLearningState(getBrowserSupabaseClient(), userId);
+      // TanStack Query は fetch が成功すると setQueryData を経由せず data をそのまま
+      // 置き換えるため、applyState の連番ガードをすり抜けてしまう。バックグラウンド
+      // refetch（focus 復帰など）の応答が、直近の書き込みの反映より後に届いた場合の
+      // 巻き戻りを防ぐため、ここでも cache の連番と突き合わせてから返す（M-1）。
+      return mergeBySeq(queryClient.getQueryData<TasteLearningState>(queryKey), fetched);
+    },
   });
 
   const tasteLearningMutation = useMutation({
     mutationFn: async ({ nextEnabled, expectedSeq }: TasteLearningToggleRequest) => {
       const generation = ++mutationGenerationRef.current;
       const isCurrentGeneration = (): boolean => generation === mutationGenerationRef.current;
-      const queryKey = tasteLearningKeys.current(userId);
-      const applyServerState = (state: TasteLearningState): void => {
+      const applyIfCurrent = (state: TasteLearningState): void => {
         if (isCurrentGeneration()) {
-          queryClient.setQueryData<TasteLearningState>(queryKey, {
-            enabled: state.enabled,
-            seq: state.seq,
-          });
+          applyState(state);
         }
       };
       const invalidateIfCurrent = (): void => {
@@ -2471,24 +2547,13 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
           void queryClient.invalidateQueries({ queryKey });
         }
       };
+      // 新しい利用者操作が始まったので、前回の未確定警告は持ち越さない。
+      setUnconfirmed(null);
       const client = getBrowserSupabaseClient();
-      // 書き込みは abort を試みたうえで timeout で打ち切る（柵の書き込みも同じ扱い）
-      const writeWithTimeout = (enabled: boolean, seq: number): Promise<TasteLearningSetResult> => {
-        const abortController = new AbortController();
-        return withTimeout(
-          setTasteLearningEnabled(client, enabled, seq, { signal: abortController.signal }),
-          TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
-          () => {
-            if (!abortController.signal.aborted) {
-              abortController.abort();
-            }
-          },
-        );
-      };
 
       let result: TasteLearningSetResult;
       try {
-        result = await writeWithTimeout(nextEnabled, expectedSeq);
+        result = await writeTasteLearningOnce(client, nextEnabled, expectedSeq);
       } catch (error) {
         if (!isCurrentGeneration()) {
           throw error;
@@ -2507,30 +2572,64 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
         if (!isCurrentGeneration()) {
           throw error;
         }
-        applyServerState(current);
+        applyIfCurrent(current);
         if (current.enabled === nextEnabled) {
           // 応答は失ったが、サーバーは要求どおり commit していた
           return;
         }
+
         // 未 commit の書き込みがまだどこかに滞留しているかもしれない。現在値のまま
-        // 連番だけを進め、それが後から届いても連番が合わず捨てられるようにする。
-        let fence: TasteLearningSetResult;
-        try {
-          fence = await writeWithTimeout(current.enabled, current.seq);
-        } catch {
-          invalidateIfCurrent();
-          throw error;
+        // 連番だけを進める柵を送り、それが後から届いても連番が合わず捨てられるように
+        // する。柵自体も止まりうるので、間隔をおいて複数回試みる（I-1）。
+        let fenceEnabled = current.enabled;
+        let fenceSeq = current.seq;
+        let fence: TasteLearningSetResult | undefined;
+        for (let attempt = 1; attempt <= TASTE_LEARNING_FENCE_ATTEMPTS; attempt += 1) {
+          try {
+            fence = await writeTasteLearningOnce(client, fenceEnabled, fenceSeq);
+            break;
+          } catch {
+            if (attempt === TASTE_LEARNING_FENCE_ATTEMPTS) {
+              break;
+            }
+            await waitMs(TASTE_LEARNING_FENCE_RETRY_DELAY_MS);
+            if (!isCurrentGeneration()) {
+              throw error;
+            }
+            try {
+              const latest = await withTimeout(
+                getTasteLearningState(client, userId),
+                TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
+              );
+              fenceEnabled = latest.enabled;
+              fenceSeq = latest.seq;
+            } catch {
+              // 再読も失敗。直前に分かっている値のまま次の柵を試みる。
+            }
+          }
         }
-        applyServerState(fence);
-        if (!fence.applied && fence.enabled === nextEnabled) {
-          // 柵より先に、滞留していた書き込み（または別端末の同じ変更）が通っていた
+
+        if (fence === undefined) {
+          // 何度試みても柵の答え（true/false どちらの applied も）が得られない。
+          // サーバー側は本当に未確定なので、確定するまで消えない警告を別に出す。
+          // スイッチは直前に読んだサーバー値（current）のままにし、楽観値には戻さない。
+          if (isCurrentGeneration()) {
+            setUnconfirmed({ requestedEnabled: nextEnabled });
+          }
           return;
         }
-        // 柵が通った（要求は通らないことが確定）か、別端末が別の値へ変えていた
+
+        applyIfCurrent(fence);
+        if (fence.enabled === nextEnabled) {
+          // 柵の答えの時点で、要求どおりの値になっていることが確定した
+          // （柵より先に滞留していた書き込みが通っていた、または別端末が同じ値へ変えていた）
+          return;
+        }
+        // 柵の答えで、要求は通らないことが確定した（別端末が別の値へ変えていた場合を含む）
         throw error;
       }
 
-      applyServerState(result);
+      applyIfCurrent(result);
       if (result.applied) {
         invalidateIfCurrent();
         return;
@@ -2539,6 +2638,41 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
       // 要求値なら結果として望みどおりなので成功扱い、違えば失敗表示を出す。
       if (result.enabled !== nextEnabled) {
         throw new Error("taste_learning_conflict");
+      }
+    },
+  });
+
+  /**
+   * 未確定警告の「もう一度読み込む」ボタン。現在値を読み直し、要求値と一致すれば
+   * それで確定として警告を下げる。一致しなければ柵を 1 回送り、その答え（true/false
+   * どちらでも）が得られれば確定として警告を下げる。読みにも柵にも失敗した場合は
+   * 警告を出したままにする（自動では消さない）。
+   */
+  const unconfirmedRetryMutation = useMutation({
+    mutationFn: async () => {
+      if (unconfirmed === null) {
+        return;
+      }
+      const { requestedEnabled } = unconfirmed;
+      const client = getBrowserSupabaseClient();
+
+      const readResult = await tasteLearningQuery.refetch();
+      if (readResult.isError || readResult.data === undefined) {
+        return;
+      }
+      const latest = readResult.data;
+      applyState(latest);
+      if (latest.enabled === requestedEnabled) {
+        setUnconfirmed(null);
+        return;
+      }
+
+      try {
+        const fence = await writeTasteLearningOnce(client, latest.enabled, latest.seq);
+        applyState(fence);
+        setUnconfirmed(null);
+      } catch {
+        // まだ確定しない。警告は出したままにする。
       }
     },
   });
@@ -2591,6 +2725,21 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
           }}
         />
       ) : null}
+      {unconfirmed !== null ? (
+        <div className="stack gap-2">
+          <p role="alert">{tasteLearningCopy.unconfirmed}</p>
+          <button
+            type="button"
+            className="secondary-button min-h-11"
+            disabled={unconfirmedRetryMutation.isPending}
+            onClick={() => {
+              unconfirmedRetryMutation.mutate();
+            }}
+          >
+            {tasteLearningCopy.unconfirmedRetry}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -2602,7 +2751,7 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
 
 `src/features/household/household-settings-page.test.tsx` では `ShareConsentSettingsSection` と同様に `TasteLearningSettingsSection` をモックし、家族 CRUD のテストが taste-learning の RPC/読み取りに依存しないようにする（モック無しだとテスト用クライアント `{ auth: {} }` で読み取りが必ず失敗し、`role="alert"` が複数出て `findByRole("alert")` が衝突する）。
 
-N-5: どちらか片方の挿入だけが消えてもテストが落ちるよう、モックのラベル `好みの学習` が「登録済みの家族あり」分岐と「家族ゼロ」分岐の両方で見えることを別々のテストで固定する。
+どちらか片方の挿入だけが消えてもテストが落ちるよう、モックのラベル `好みの学習` が「登録済みの家族あり」分岐と「家族ゼロ」分岐の両方で見えることを別々のテストで固定する。
 
 - [x] **Step 9: 通ることを確認する**
 
