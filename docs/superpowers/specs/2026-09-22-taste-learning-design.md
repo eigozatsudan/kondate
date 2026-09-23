@@ -393,12 +393,14 @@ export async function loadTasteHints(input: {
 **両方が揃った後**、`generation-service.ts` の配線箇所で適用する。
 
 現行の制約に一致する語を `likedDishes[].dishName` と `likedIngredients` から落とす。
+料理名に出ない食材（親子丼の卵など）でも、対応表でその料理の食材が制約に当たれば料理ごと落とす。
+`overusedIngredients` は「使いすぎを避けて」という向きの語なので対象外とする。
 
 | 出典 | 取り方 |
 | --- | --- |
-| 当日の避けたい食材 | `context.submission.avoidIngredients` |
+| 当日の避けたい食材 | `context.submission.avoidIngredients` を検証側と同じ `expandAvoidNeedles`（`validate-generated-menu.ts`）で展開 |
 | 家族の苦手 | `context.memberPreferences[].dislikes` |
-| 登録アレルゲン | `context.safety.members[].allergenIds` を `allergenDictionary` で別名展開 |
+| 登録アレルゲン | `context.safety.members[].allergenIds` を `allergenDictionary` の表示名と別名で展開 |
 | 自由登録アレルギー | `context.safety.members[].customAllergies[].name / aliases` |
 
 照合は `normalizeFoodText` + `foodTextContainsAlias`（`shared/safety/allergens.ts`）を再利用する。
@@ -423,7 +425,9 @@ idea モード（`safety: null`）ではアレルゲン由来の語が無く、`
 1. `recentDishHints` に出ている料理名を `likedDishes` から落とす。
    — 好きだが最近出した料理は、スタイルだけ汲んで料理は変える。軸分けの実装本体である。
 2. **1 で落とした料理にしか現れない食材を `likedIngredients` からも落とす。**
-   名前だけ消しても食材が残れば同じ皿に戻る。
+   名前だけ消しても食材が残れば同じ皿に戻る。生き残りは 12 件で切れた `likedDishes` ではなく、
+   上限の無い対応表の「最近でない料理」から数える（13 位以下の料理の食材を誤って消さない）。
+   あわせて改行・制御文字（`\p{Cc}` / U+2028 / U+2029）を含む語を語ごとに落とす。
 3. 契約の各上限で切り詰める。
 4. **対応表 `dishIngredientIndex` を捨てる。** 戻り値は `TasteHints`（対応表なし）。
 5. `hasTasteContent()` が false なら全体を `null` にする（`outcome = "filtered_empty"`）。

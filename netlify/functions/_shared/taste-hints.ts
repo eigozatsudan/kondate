@@ -13,6 +13,7 @@ import {
   type TasteSignals,
 } from "../../../shared/contracts/taste-hints.js";
 import { foodTextContainsAlias } from "../../../shared/safety/allergens.js";
+import { expandAvoidNeedles } from "../../../shared/safety/validate-generated-menu.js";
 import { normalizeFoodText } from "../../../shared/safety-pure/normalize-food-text.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import type { RecentDishHint } from "./diversity-hints.js";
@@ -125,22 +126,23 @@ export async function loadTasteHints(input: {
 
     if (timeoutId !== undefined) clearTimeout(timeoutId);
 
-    if (raced.kind === "timeout") {
-      // 遅延 resolve した結果は採用しない（race 勝者のみ）。未処理 reject を避ける
-      void queryPromise.catch(() => {
-        /* ignore late failure */
-      });
-      return { signals: null, outcome: "timeout" };
-    }
+    // 遅れて届いた結果は採用しない（race 勝者のみ）。queryPromise は catch 済みで reject しない
+    if (raced.kind === "timeout") return { signals: null, outcome: "timeout" };
     return raced.result;
   } catch {
     return { signals: null, outcome: "query_failed" };
   }
 }
 
-/** 現行制約の語を集める。household は安全文脈も見る */
+/**
+ * 現行制約の語を集める。household は安全文脈も見る。
+ * 避けたい食材は検証側（validate-generated-menu）と同じ expandAvoidNeedles で広げ、
+ * 「卵」を避けるのに「たまご焼き」が好みとして残る食い違いを作らない。
+ */
 function collectBlockedTerms(context: GenerationContext): readonly string[] {
-  const terms: string[] = [...context.submission.avoidIngredients];
+  const terms: string[] = context.submission.avoidIngredients.flatMap((avoided) => [
+    ...expandAvoidNeedles(avoided, context),
+  ]);
   for (const preference of context.memberPreferences) {
     terms.push(...preference.dislikes);
   }
@@ -154,11 +156,15 @@ function collectBlockedTerms(context: GenerationContext): readonly string[] {
         allergenIds.add(allergenId);
       }
     }
-    // AllergenDictionary は id キーの辞書ではなく { version, catalog, aliases } なので
-    // aliases を allergenId で絞り込む
+    // AllergenDictionary は { version, catalog, aliases }。表示名と alias の両方を語にする
+    for (const entry of context.safety.allergenDictionary.catalog) {
+      if (allergenIds.has(entry.id)) {
+        terms.push(entry.displayName);
+      }
+    }
     for (const alias of context.safety.allergenDictionary.aliases) {
       if (allergenIds.has(alias.allergenId)) {
-        terms.push(alias.alias);
+        terms.push(alias.alias, alias.normalizedAlias);
       }
     }
   }
@@ -180,14 +186,25 @@ export function filterTasteHintsForSafety(
   context: GenerationContext,
 ): TasteSignals {
   const blocked = collectBlockedTerms(context);
+  // 料理名に出ない食材（親子丼の卵など）でも、対応表の食材が当たれば料理ごと落とす
+  const blockedDishNames = new Set(
+    signals.dishIngredientIndex
+      .filter((entry) => entry.ingredients.some((name) => hitsBlocked(name, blocked)))
+      .map((entry) => normalizeFoodText(entry.dishName)),
+  );
   return {
     ...signals,
-    likedDishes: signals.likedDishes.filter((dish) => !hitsBlocked(dish.dishName, blocked)),
+    likedDishes: signals.likedDishes.filter(
+      (dish) =>
+        !hitsBlocked(dish.dishName, blocked) &&
+        !blockedDishNames.has(normalizeFoodText(dish.dishName)),
+    ),
     likedIngredients: signals.likedIngredients.filter((name) => !hitsBlocked(name, blocked)),
     dishIngredientIndex: signals.dishIngredientIndex.map((entry) => ({
       dishName: entry.dishName,
       ingredients: entry.ingredients.filter((name) => !hitsBlocked(name, blocked)),
     })),
+    // overusedIngredients は「使いすぎを避けて」という向きの語なので落とさない（spec §5.2 の対象外）
     avoidAxes: context.targetMode === "idea" ? [] : signals.avoidAxes,
   };
 }
@@ -217,16 +234,17 @@ export function sanitizeTasteHints(
     (dish) =>
       !recentNames.has(normalizeFoodText(dish.dishName)) && !hasControlOrLineBreak(dish.dishName),
   );
-  const keptNames = new Set(keptDishes.map((dish) => normalizeFoodText(dish.dishName)));
 
-  // 残った料理に現れる食材だけを「まだ好き」と扱う。
+  // 最近の料理以外に現れる食材だけを「まだ好き」と扱う。likedDishes は 12 件で
+  // 切れているため、生き残りは上限の無い対応表から直接数える（13 位以下の料理の食材を消さない）。
   // 対応表に載っていない食材は由来が辿れないため保守的に残す。
   const survivingIngredients = new Set<string>();
   const indexedIngredients = new Set<string>();
   for (const entry of signals.dishIngredientIndex) {
+    const isRecent = recentNames.has(normalizeFoodText(entry.dishName));
     for (const name of entry.ingredients) {
       indexedIngredients.add(normalizeFoodText(name));
-      if (keptNames.has(normalizeFoodText(entry.dishName))) {
+      if (!isRecent) {
         survivingIngredients.add(normalizeFoodText(name));
       }
     }

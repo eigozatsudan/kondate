@@ -67,7 +67,7 @@ const reviewedAvoidSynonymGroups: readonly ReadonlySet<string>[] = [
  * 同一 allergenId の全 alias・表示名を needle に加える（U2-I2）。
  * idea は safety null のため辞書は使えないが、確認済みシノニム群で表記ゆれを閉じる。
  */
-function expandAvoidNeedles(avoided: string, context: GenerationContext): readonly string[] {
+export function expandAvoidNeedles(avoided: string, context: GenerationContext): readonly string[] {
   const normalizedAvoided = normalizeFoodText(avoided);
   if (normalizedAvoided.length === 0) return [];
   const needles = new Set<string>([normalizedAvoided]);
