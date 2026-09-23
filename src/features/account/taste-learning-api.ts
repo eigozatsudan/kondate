@@ -3,7 +3,7 @@ import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 
 const profileRowSchema = z.object({ taste_learning_enabled: z.boolean() }).strict();
 
-/** N-1: timeout 時に in-flight RPC を abort するための任意 signal。 */
+/** timeout 時に in-flight RPC を abort するための任意 signal。 */
 export type TasteLearningRpcOptions = {
   signal?: AbortSignal;
 };

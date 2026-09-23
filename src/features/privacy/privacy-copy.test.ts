@@ -103,5 +103,6 @@ it("discloses that liked dish and ingredient names are sent for up to 90 days", 
   // 「お気に入り由来」だけの記述では実際に送る範囲より狭い
   expect(section?.body).toMatch(/繰り返し指定したメイン食材名/u);
   expect(section?.body).toMatch(/90日/u);
+  expect(section?.body).toMatch(/50献立/u);
   expect(section?.body).toMatch(/止められ/u);
 });

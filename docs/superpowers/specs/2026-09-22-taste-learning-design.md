@@ -197,14 +197,34 @@ alter table public.profiles
 ```sql
 create or replace function public.set_taste_learning_enabled(p_enabled boolean)
 returns boolean
-language sql
+language plpgsql
 security definer
 set search_path = ''
 as $function$
-  update public.profiles
+declare
+  v_result boolean;
+begin
+  -- set_onboarding_status と同じ規約。未認証・行欠落を null で黙らせない。
+  -- updated_at は profiles_set_updated_at トリガが入れる
+  if auth.uid() is null then
+    raise exception using errcode = '42501', message = 'authentication_required';
+  end if;
+
+  if p_enabled is null then
+    raise exception using errcode = '22023', message = 'invalid_taste_learning_enabled';
+  end if;
+
+  update public.profiles as profile
   set taste_learning_enabled = p_enabled
-  where user_id = (select auth.uid())
-  returning taste_learning_enabled;
+  where profile.user_id = auth.uid()
+  returning profile.taste_learning_enabled into v_result;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'profile_not_found';
+  end if;
+
+  return v_result;
+end;
 $function$;
 
 revoke all on function public.set_taste_learning_enabled(boolean) from public, anon;
@@ -561,7 +581,11 @@ taste_hints_outcome: TasteHintsOutcome   // §5.1 の 8 値のみ
 
 ### 6.1 設定トグル
 
-`src/features/account/account-settings-section.tsx` に 1 項目追加する。
+`account-settings-section.tsx` へは追加しない。独立した
+`src/features/account/taste-learning-settings-section.tsx`（`TasteLearningSettingsSection`）
+として作り、`src/features/household/household-settings-page.tsx` の
+`<ShareConsentSettingsSection userId={userId} />` の直後（家族ゼロ分岐・家族あり分岐の
+2 箇所とも）に差し込む。
 
 **アカウント設定は現在 `profiles` を読んでいない。** `profiles` を読んでいるのは
 `src/features/household/household-api.ts` の `select("*")`（初回設定の状態用）だけである。
@@ -572,8 +596,8 @@ taste_hints_outcome: TasteHintsOutcome   // §5.1 の 8 値のみ
 好みの学習                                              [ ON ]
 ★を付けた献立、「この献立にする」で選んだ献立、再生成の理由、入力したメイン食材から
 傾向を読み取り、次の提案に反映します。
-献立を作るときに、料理名と食材名が AI へ送られます。
-OFF にすると読み取りをやめます。設定と反映の記録は保存されます。
+献立を作るときに、そこから読み取った料理名と食材名（最長90日・最大50献立）がAIへ送られます。
+OFFにすると読み取りをやめます。設定と反映の記録は保存されます。
 ```
 
 改訂前の「新しく保存される情報はありません」は §7 と矛盾していたため削除した。実際に増えるのは
@@ -623,7 +647,7 @@ OFF にすると読み取りをやめます。設定と反映の記録は保存�
 
 プライバシーページは `src/features/privacy/privacy-copy.ts` の `privacySections`「AIへ送る情報」に
 追記する。現行の本文は「献立の希望や人数など」と家族設定の扱いだけを述べており、履歴由来の
-送信に触れていない。追記する内容は次の 3 点に限る。
+送信に触れていない。追記する内容は次の 4 点に限る。
 
 - ★ を付けた・「この献立にする」で選んだ献立の**料理名と食材名**を送ること
 - 直近の窓で**繰り返し指定したメイン食材名**を送ること（`overusedIngredients` は ★ の付いていない
@@ -657,7 +681,7 @@ OFF にすると読み取りをやめます。設定と反映の記録は保存�
 | Function | `generation-service.test.ts` 追記 | `Promise.all` 並列／**fingerprint に載らない**／`preference_snapshot` の記録が確定オブジェクトと一致（切り詰めで空→キーなし）／再生成経路に出ない／`tasteHintsOutcome` |
 | src | `menu-result-api.test.ts` | `tasteHintsApplied` の投影、キー欠落・壊れた形で `false` |
 | src | `menu-hero.test.tsx` | `weak` 非表示、`medium`/`strong` 表示、**作成モデル行と共存**する |
-| src | `account-settings-section.test.tsx` | 初期表示の `profiles` 読み取り、トグル往復（RPC 経由）と失敗時の復帰 |
+| src | `taste-learning-api.test.ts` / `taste-learning-settings-section.test.tsx` | 初期表示の `profiles` 読み取り、トグル往復（RPC 経由）と失敗時の復帰 |
 | src | `privacy-copy.test.ts` | 「AIへ送る情報」に 90 日・50 献立・停止手段が含まれる |
 | script | `scripts/assert-privacy-logs.mjs` | `taste_hints_outcome` が許可一覧にあり、料理名・食材名がログに出ない |
 

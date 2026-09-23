@@ -1,25 +1,28 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { tasteLearningCopy } from "./taste-learning-copy";
 import { TasteLearningSection } from "./taste-learning-section";
 
 describe("TasteLearningSection", () => {
   it("shows the stored value", async () => {
     render(<TasteLearningSection enabled={true} onToggle={vi.fn()} />);
-    const toggle = await screen.findByRole("switch", { name: "好みの学習" });
+    const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
     expect(toggle).toBeChecked();
   });
 
   it("sends the next value on toggle", async () => {
     const onToggle = vi.fn().mockResolvedValue(undefined);
     render(<TasteLearningSection enabled={true} onToggle={onToggle} />);
-    await userEvent.click(await screen.findByRole("switch", { name: "好みの学習" }));
+    await userEvent.click(
+      await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel }),
+    );
     await waitFor(() => {
       expect(onToggle).toHaveBeenCalledWith(false);
     });
   });
 
-  it("restores the previous state after observing the optimistic value mid-flight (N-7)", async () => {
+  it("restores the previous state after observing the optimistic value mid-flight", async () => {
     let rejectToggle: (error: Error) => void = () => undefined;
     const onToggle = vi.fn(
       () =>
@@ -28,7 +31,7 @@ describe("TasteLearningSection", () => {
         }),
     );
     render(<TasteLearningSection enabled={true} onToggle={onToggle} />);
-    const toggle = await screen.findByRole("switch", { name: "好みの学習" });
+    const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
 
     await userEvent.click(toggle);
 
@@ -40,7 +43,7 @@ describe("TasteLearningSection", () => {
     rejectToggle(new Error("boom"));
 
     await waitFor(() => {
-      expect(screen.getByRole("switch", { name: "好みの学習" })).toBeChecked();
+      expect(screen.getByRole("switch", { name: tasteLearningCopy.toggleLabel })).toBeChecked();
     });
     expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
   });
@@ -48,7 +51,9 @@ describe("TasteLearningSection", () => {
   it("hides the failure alert once the server value catches up with the requested value", async () => {
     const onToggle = vi.fn().mockRejectedValue(new Error("boom"));
     const { rerender } = render(<TasteLearningSection enabled={true} onToggle={onToggle} />);
-    await userEvent.click(await screen.findByRole("switch", { name: "好みの学習" }));
+    await userEvent.click(
+      await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel }),
+    );
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
     });
@@ -56,16 +61,16 @@ describe("TasteLearningSection", () => {
     // 失敗後の再読み込みで、実はサーバーが要求どおり OFF を確定していたと分かった
     rerender(<TasteLearningSection enabled={false} onToggle={onToggle} />);
 
-    expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: tasteLearningCopy.toggleLabel })).not.toBeChecked();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("follows the enabled prop after mount instead of freezing at the initial value", async () => {
     const { rerender } = render(<TasteLearningSection enabled={true} onToggle={vi.fn()} />);
-    const toggle = await screen.findByRole("switch", { name: "好みの学習" });
+    const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
     expect(toggle).toBeChecked();
 
     rerender(<TasteLearningSection enabled={false} onToggle={vi.fn()} />);
-    expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: tasteLearningCopy.toggleLabel })).not.toBeChecked();
   });
 });

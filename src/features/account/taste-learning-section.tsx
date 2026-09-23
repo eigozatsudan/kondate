@@ -40,7 +40,6 @@ export function TasteLearningSection({
           role="switch"
           className="min-h-11 min-w-11"
           checked={displayed}
-          aria-checked={displayed}
           aria-describedby={describedById}
           disabled={pending}
           onChange={(event) => {
