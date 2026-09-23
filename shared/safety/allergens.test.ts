@@ -135,6 +135,57 @@ describe("foodTextContainsAlias", () => {
     expect(foodTextContainsAlias("牛乳プリン", "牛こま")).toBe(false);
   });
 
+  // 2026-09-23: 裸の「鶏」「豚」「牛」は鶏卵・牛乳等との衝突を理由に見送っていたが、
+  // 「鶏の照り焼き」「豚の生姜焼き」「牛丼」等が hard gate をすり抜けていたため、
+  // 除外文脈（EXCLUDED_ALIAS_CONTEXTS）で衝突語だけ弾く方式に改めた。
+  it.each([
+    ["鶏の照り焼き", "鶏"],
+    ["鶏ガラスープ", "鶏"],
+    ["豚の生姜焼き", "豚"],
+    ["豚汁", "豚"],
+    ["豚骨ラーメン", "豚"],
+    ["牛丼", "牛"],
+    ["牛すじ煮込み", "牛"],
+    ["牛タンの塩焼き", "牛"],
+    ["牛脂で炒める", "牛"],
+    ["手羽先の唐揚げ", "手羽"],
+    ["手羽元の煮込み", "手羽"],
+    ["砂肝のガーリック炒め", "砂肝"],
+    ["せせり串", "せせり"],
+    ["ぼんじり塩焼き", "ぼんじり"],
+    ["とんかつ定食", "とんかつ"],
+    ["チャーシュー麺", "チャーシュー"],
+    ["叉焼チャーハン", "叉焼"],
+    ["豚肩ロースの塊", "肩ロース"],
+    ["牛肩ロースステーキ", "肩ロース"],
+    ["サーロインステーキ", "サーロイン"],
+    ["カルビ焼肉", "カルビ"],
+    ["ハラミ塩焼き", "ハラミ"],
+  ])("detects bare/cut/dish meat form %s via alias %s", (sourceText, alias) => {
+    expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
+  });
+
+  it.each([
+    ["鶏卵を溶く", "鶏"],
+    ["牛乳を注ぐ", "牛"],
+    ["牛乳寒天を作る", "牛"],
+    ["牛蒡のきんぴら", "牛"],
+    ["きんぴら牛蒡", "牛"],
+    ["河豚のから揚げ", "豚"],
+    ["水牛のモッツァレラ", "牛"],
+    ["蝸牛の歩みで進める", "牛"],
+  ])(
+    "does not match %s as a meat mention via alias %s (exclusion context)",
+    (sourceText, alias) => {
+      expect(foodTextContainsAlias(sourceText, alias)).toBe(false);
+    },
+  );
+
+  it("still matches bare alias when real meat co-occurs with an excluded context in the same text", () => {
+    expect(foodTextContainsAlias("牛乳と牛肉の煮込み", "牛")).toBe(true);
+    expect(foodTextContainsAlias("鶏卵と鶏もも", "鶏")).toBe(true);
+  });
+
   // U2-I4: 推奨表示の高頻度残差
   it.each([
     ["長芋の磯辺揚げ", "長芋"],

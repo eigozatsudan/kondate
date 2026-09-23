@@ -198,6 +198,24 @@ const additionalAliasValues: readonly (readonly [
   ["beef", "牛ひき", "derived", false],
   ["beef", "牛バラ", "derived", false],
   ["beef", "牛もも", "derived", false],
+  // 2026-09-23: 裸の「鶏」「豚」「牛」は鶏卵・牛乳等と衝突するため見送っていたが、
+  // 「鶏の照り焼き」「豚の生姜焼き」「牛丼」等が fail-open していた。
+  // EXCLUDED_ALIAS_CONTEXTS（shared/safety/allergens.ts）で衝突語だけ除外する方式に改める。
+  ["chicken", "鶏", "direct", false],
+  ["chicken", "手羽", "derived", false],
+  ["chicken", "砂肝", "derived", false],
+  ["chicken", "せせり", "derived", false],
+  ["chicken", "ぼんじり", "derived", false],
+  ["pork", "豚", "direct", false],
+  ["pork", "とんかつ", "derived", false],
+  ["pork", "チャーシュー", "derived", false],
+  ["pork", "叉焼", "derived", false],
+  ["pork", "肩ロース", "derived", false],
+  ["beef", "牛", "direct", false],
+  ["beef", "肩ロース", "derived", false],
+  ["beef", "サーロイン", "derived", false],
+  ["beef", "カルビ", "derived", false],
+  ["beef", "ハラミ", "derived", false],
   // U2-I4: 推奨表示の高頻度残差（衝突レビュー済みの具体形のみ）
   ["yam", "長芋", "direct", false],
   ["yam", "ながいも", "direct", false],
