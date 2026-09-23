@@ -40,8 +40,9 @@ export function filterAllergenCatalog(
   );
 
   // 「鶏」⊂ 鶏卵 / 「牛」⊂ 牛乳 の部分一致は、鶏肉・牛肉の display_name と衝突する。
-  // evaluate は裸の鶏/牛を肉 alias に載せない（鶏卵・牛乳回避）。検索だけ逆方向に拾うと
-  // catalog 順（卵 < 鶏肉、乳 < 牛肉）で別アレルゲンが先頭チップになる。
+  // evaluate 側は裸の鶏/牛/豚も肉 alias に持つが、鶏卵・牛乳は EXCLUDED_ALIAS_CONTEXTS で
+  // 除外文脈として別管理している（本検索の substring 判定はそこを見ない）。検索だけ逆方向に
+  // 拾うと catalog 順（卵 < 鶏肉、乳 < 牛肉）で別アレルゲンが先頭チップになる。
   // クエリがより長い display_name の接頭辞のときは、alias 真部分一致だけの ID を落とす。
   // exact alias（鶏卵・牛乳・たまご）と display_name 一致は残す。
   const queryIsPrefixOfLongerDisplayName = catalog.some((item) => {

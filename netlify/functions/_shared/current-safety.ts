@@ -172,7 +172,8 @@ const additionalAliasValues: readonly (readonly [
   // えび: サーモン同型の外来語
   ["shrimp", "シュリンプ", "direct", false],
   // U2-C1: 推奨表示肉類は displayName のみだと AI の部位名・外来語が fail-open する。
-  // 裸の「鶏」「牛」「豚」は 鶏卵・牛乳 等と衝突するため載せない（複数文字の具体形のみ）。
+  // 裸の「鶏」「牛」「豚」は下の 2026-09-23 ブロックで EXCLUDED_ALIAS_CONTEXTS と
+  // セットで足す（鶏卵・牛乳等の除外文脈を先に定義してから）。ここでは複数文字の具体形のみ。
   ["chicken", "チキン", "direct", false],
   ["chicken", "とり肉", "direct", false],
   ["chicken", "鳥肉", "direct", false],
@@ -216,6 +217,43 @@ const additionalAliasValues: readonly (readonly [
   ["beef", "サーロイン", "derived", false],
   ["beef", "カルビ", "derived", false],
   ["beef", "ハラミ", "derived", false],
+  // 2026-09-23 追補: 鶏の「鳥」表記・ひらがな表記。EXCLUDED_ALIAS_CONTEXTS の
+  // 「もも」に「鳥もも」「とりもも」が既に除外登録済みのため、桃とは衝突しない。
+  ["chicken", "鳥もも", "derived", false],
+  ["chicken", "鳥むね", "derived", false],
+  ["chicken", "とりもも", "derived", false],
+  ["chicken", "とりむね", "derived", false],
+  ["chicken", "焼き鳥", "derived", false],
+  ["chicken", "焼鳥", "derived", false],
+  ["chicken", "やきとり", "derived", false],
+  ["chicken", "とりにく", "derived", false],
+  ["chicken", "鳥ガラ", "derived", false],
+  ["chicken", "とりがら", "derived", false],
+  // 2026-09-23 追補: 合いびき肉は表記ゆれで豚・牛の両方を指すことが多い
+  ["pork", "合いびき", "derived", false],
+  ["pork", "合挽", "derived", false],
+  ["pork", "あいびき", "derived", false],
+  ["beef", "合いびき", "derived", false],
+  ["beef", "合挽", "derived", false],
+  ["beef", "あいびき", "derived", false],
+  // 2026-09-23 追補: 種を断定できない加工品・料理名。hard match ではなく label 確認を促す。
+  ["pork", "ハム", "processed", true],
+  ["chicken", "レバー", "processed", true],
+  ["pork", "レバー", "processed", true],
+  ["beef", "レバー", "processed", true],
+  ["pork", "もつ", "processed", true],
+  ["beef", "もつ", "processed", true],
+  ["pork", "ホルモン", "processed", true],
+  ["beef", "ホルモン", "processed", true],
+  ["chicken", "コンソメ", "processed", true],
+  ["pork", "コンソメ", "processed", true],
+  ["beef", "コンソメ", "processed", true],
+  ["chicken", "ブイヨン", "processed", true],
+  ["pork", "ブイヨン", "processed", true],
+  ["beef", "ブイヨン", "processed", true],
+  // とんかつソースは pork の hard 一致（「とんかつ」「豚」）から除外したうえで、
+  // ここで label 確認つきの加工品として別に一致させる（B1: 誤検知防止と対）。
+  ["pork", "とんかつソース", "processed", true],
   // U2-I4: 推奨表示の高頻度残差（衝突レビュー済みの具体形のみ）
   ["yam", "長芋", "direct", false],
   ["yam", "ながいも", "direct", false],

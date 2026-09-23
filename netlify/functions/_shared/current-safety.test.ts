@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { currentAllergenCatalogV1 } from "../../../shared/safety/current-allergen-catalog.v1.js";
+import { evaluateAllergens } from "../../../shared/safety/allergens.js";
 import {
   currentFoodRuleVersion,
   currentFoodSafetyRulesV1,
 } from "../../../shared/safety/current-food-safety-rules.v1.js";
+import { makeCurrentSafetyContext, makeValidatedMenu } from "../../../shared/testing/factories.js";
 import type { AdminSupabaseClient } from "./supabase-admin.js";
 import {
   currentAllergenAliasManifest,
@@ -592,5 +594,116 @@ describe("loadEmergencyInspectionSafety", () => {
     });
 
     await expectClosedFailure(loadEmergencyInspectionSafety(admin, userId, [secondMemberId]));
+  });
+});
+
+describe("meat aliases bound to currentAllergenAliasManifest (fef0e004 / 2026-09-23 追補)", () => {
+  // Q2: 個別 alias 文字列ではなく、実際に配線される currentAllergenAliasManifest から
+  // 組み立てた辞書で evaluateAllergens を回す。手動確認: この describe を書く前に
+  // マニフェストから「鶏」の行を一時的に消すと、下の "detects" テストが落ちることを確かめた。
+  function contextForAllergenIds(allergenIds: readonly string[]): CurrentSafetyContext {
+    const base = makeCurrentSafetyContext();
+    const member = base.members[0];
+    if (member === undefined) throw new Error("member fixture is empty");
+    return {
+      ...base,
+      members: [{ ...member, allergyStatus: "registered", allergenIds }],
+      allergenDictionary: {
+        version: dictionaryVersion,
+        catalog: currentAllergenCatalogV1.map((entry) => ({
+          id: entry.id,
+          displayName: entry.displayName,
+          catalogVersion: entry.catalogVersion,
+        })),
+        aliases: currentAllergenAliasManifest.map((entry) => ({
+          allergenId: entry.allergenId,
+          alias: entry.alias,
+          normalizedAlias: entry.normalizedAlias,
+          aliasKind: entry.aliasKind,
+          requiresLabelConfirmation: entry.requiresLabelConfirmation,
+          dictionaryVersion,
+        })),
+      },
+    };
+  }
+
+  function menuWithDishName(name: string) {
+    const base = makeValidatedMenu();
+    return makeValidatedMenu({
+      dishes: base.dishes.map((dish, index) => (index === 0 ? { ...dish, name } : dish)),
+    });
+  }
+
+  it.each([
+    ["鶏の照り焼き", ["chicken"]],
+    ["手羽先の唐揚げ", ["chicken"]],
+    ["鳥もも肉のグリル", ["chicken"]],
+    ["とりむね肉のソテー", ["chicken"]],
+    ["豚の生姜焼き", ["pork"]],
+    ["肩ロースの豚しゃぶ", ["pork"]],
+    ["牛丼", ["beef"]],
+    ["牛肩ロースステーキ", ["beef"]],
+    ["合いびき肉のハンバーグ", ["pork", "beef"]],
+  ])("detects %s via the real manifest for %s", (dishName, allergenIds) => {
+    const context = contextForAllergenIds(allergenIds);
+    const menu = menuWithDishName(dishName);
+    expect(evaluateAllergens(menu, context).issues).not.toEqual([]);
+  });
+
+  it.each([
+    ["鶏卵を溶く", ["chicken"]],
+    ["牛乳を注ぐ", ["beef"]],
+  ])("does not hard-flag exclusion context %s for %s via the real manifest", (dishName, allergenIds) => {
+    const context = contextForAllergenIds(allergenIds);
+    const menu = menuWithDishName(dishName);
+    expect(evaluateAllergens(menu, context).issues).toEqual([]);
+  });
+
+  it("does not hard-block とんかつソース for pork, but still flags a label confirmation", () => {
+    const context = contextForAllergenIds(["pork"]);
+    const menu = menuWithDishName("とんかつソースをかけたキャベツ");
+    const result = evaluateAllergens(menu, context);
+    expect(result.issues).toEqual([]);
+    expect(result.labelConfirmations).not.toEqual([]);
+  });
+
+  it("still hard-matches real pork when とんかつソース co-occurs with it in the same text", () => {
+    const context = contextForAllergenIds(["pork"]);
+    const menu = menuWithDishName("とんかつソースをかけた豚のしょうが焼き");
+    expect(evaluateAllergens(menu, context).issues).not.toEqual([]);
+  });
+
+  it("does not flag beef for salmon ハラミ", () => {
+    const context = contextForAllergenIds(["beef"]);
+    const menu = menuWithDishName("サーモンハラミの塩焼き");
+    expect(evaluateAllergens(menu, context).issues).toEqual([]);
+  });
+
+  it("fails to detect chicken when 鶏 is removed from the manifest (regression guard sanity)", () => {
+    const withoutChicken = currentAllergenAliasManifest.filter(
+      (entry) => !(entry.allergenId === "chicken" && entry.alias === "鶏"),
+    );
+    expect(withoutChicken.length).toBe(currentAllergenAliasManifest.length - 1);
+    const context: CurrentSafetyContext = {
+      ...contextForAllergenIds(["chicken"]),
+      allergenDictionary: {
+        version: dictionaryVersion,
+        catalog: currentAllergenCatalogV1.map((entry) => ({
+          id: entry.id,
+          displayName: entry.displayName,
+          catalogVersion: entry.catalogVersion,
+        })),
+        aliases: withoutChicken.map((entry) => ({
+          allergenId: entry.allergenId,
+          alias: entry.alias,
+          normalizedAlias: entry.normalizedAlias,
+          aliasKind: entry.aliasKind,
+          requiresLabelConfirmation: entry.requiresLabelConfirmation,
+          dictionaryVersion,
+        })),
+      },
+    };
+    const menu = menuWithDishName("鶏の照り焼き");
+    expect(evaluateAllergens(menu, context).issues).toEqual([]);
   });
 });

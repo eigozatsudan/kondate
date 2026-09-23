@@ -129,8 +129,9 @@ describe("foodTextContainsAlias", () => {
     expect(foodTextContainsAlias(sourceText, alias)).toBe(true);
   });
 
-  it("U2-C1 does not use bare 牛 (would hit 牛乳)", () => {
-    // 肉 alias は複数文字のみ。牛乳テキストが牛肉 hard match にならないことを固定
+  it("牛乳 does not hit multi-char beef aliases", () => {
+    // 牛乳は EXCLUDED_ALIAS_CONTEXTS で裸の「牛」から除外されるが、
+    // 複数文字の具体形 alias（牛肉・牛こま等）はそもそも部分一致しないことを固定
     expect(foodTextContainsAlias("牛乳プリン", "牛肉")).toBe(false);
     expect(foodTextContainsAlias("牛乳プリン", "牛こま")).toBe(false);
   });
