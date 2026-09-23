@@ -97,6 +97,11 @@ export const TASTE_GENRE_MIN_SHARE = 0.35 as const;
 
 /** prompt 肥大を防ぐ各上限。対応表は prompt へ出ないため上限を持たない（下記） */
 export const TASTE_LIKED_DISHES_MAX = 12 as const;
+/**
+ * 集計関数が返す likedDishes の上限。最近出した料理を落とす前の候補なので prompt の上限より広く取り、
+ * sanitize が最近の料理を落とした後に TASTE_LIKED_DISHES_MAX へ切る（§4.2、§5.3）。
+ */
+export const TASTE_LIKED_DISHES_QUERY_MAX = 24 as const;
 export const TASTE_LIKED_GENRES_MAX = 2 as const;
 export const TASTE_LIKED_INGREDIENTS_MAX = 8 as const;
 export const TASTE_OVERUSED_INGREDIENTS_MAX = 3 as const;
@@ -131,14 +136,18 @@ export type TasteHints = z.infer<typeof tasteHintsSchema>;
  * prompt にも preference_snapshot にも出さない（sanitize で捨てる）。
  *
  * 対応表には上限を掛けない。prompt へ出ないので肥大を防ぐ理由が無く、逆に切ると
- * 差集合が壊れる: likedDishes の 12 件上限を対応表にも掛けると、お気に入りが 13 件
- * ある利用者では (a) 残した料理の食材が表に無く、落とした料理にしか無いと誤判定して
- * 消える、(b) 落とした料理の 13 個目の食材が表に無く、likedIngredients に残って
- * 同じ皿へ戻す、の両方が起きる。窓（90 日・50 献立）が実質の上限になる。
+ * 差集合が壊れる: likedDishes の上限（TASTE_LIKED_DISHES_QUERY_MAX = 24 件）を対応表にも
+ * 掛けると、上限より下位のお気に入りがある利用者では (a) 残した料理の食材が表に無く、
+ * 落とした料理にしか無いと誤判定して消える、(b) 上限の外の料理の食材が表に無く、
+ * likedIngredients に残って同じ皿へ戻す、の両方が起きる。窓（90 日・50 献立）が実質の上限になる。
  */
 export const tasteSignalsSchema = z
   .object({
     ...tasteHintsSchema.shape,
+    // 最近の料理を落とす前の候補なので prompt の上限より広い。要素は tasteHintsSchema と共有する
+    likedDishes: z
+      .array(tasteHintsSchema.shape.likedDishes.element)
+      .max(TASTE_LIKED_DISHES_QUERY_MAX),
     dishIngredientIndex: z.array(
       z.object({
         dishName: foodNameSchema,
@@ -174,7 +183,9 @@ export const tasteHintsRecordSchema = z
 tasteHints: { applied: true; strength: TasteSignalStrength } | undefined
 ```
 
-未適用はキーを載せないことで表し、`applied: false` は書かない。読み側は
+未適用はキーを載せないことで表し、`applied: false` は書かない。`applied: true` は
+`likedDishes` か `likedIngredients` を 1 件以上載せたときだけ記録し、それ以外（使いすぎの食材・ジャンル・
+時間帯・`avoidAxes` だけを prompt に載せたときを含む）はキーを載せない（§5.6）。読み側は
 `tasteHintsRecordSchema.safeParse` で再検証し、失敗・欠落は「未適用」に倒す（`sourceSubmission` と
 同じ安全側の扱い）。導入前の `preference_snapshot` にキーが無いことが正常系である。
 
@@ -468,6 +479,7 @@ export async function loadTasteHints(input: {
 
 現行の制約に一致する語を `likedDishes[].dishName` と `likedIngredients` から落とす。
 料理名に出ない食材（親子丼の卵など）でも、対応表でその料理の食材が制約に当たれば料理ごと落とす。
+対応表の食材が不可視文字（§5.3 手順 2 の集合）を含む料理も、照合器で当否を判定できないので料理ごと落とす（保守側）。
 ただし料理ごと落とす判定に使うのは、ハードゲートが実際に弾く語（避けたい食材の展開、自由登録
 アレルギー、表示確認が不要な辞書の別名と表示名、対象年齢帯の家族がいる forbidden の食品安全ルールの語）だけにする。醤油・みそのような表示確認の別名や
 家族の苦手まで使うと、小麦・大豆アレルギーの家庭で和食の好みがほぼ全部消える。
@@ -506,10 +518,11 @@ idea モード（`safety: null`）ではアレルゲン由来の語が無く、`
    — 好きだが最近出した料理は、スタイルだけ汲んで料理は変える。軸分けの実装本体である。
 2. **1 で落とした料理にしか現れない食材を `likedIngredients` からも落とす。**
    名前だけ消しても食材が残れば同じ皿に戻る。生き残りは上限で切れた `likedDishes` ではなく、
-   上限の無い対応表の「最近でない料理」から数える（13 位以下の料理の食材を誤って消さない）。
+   上限の無い対応表の「最近でない料理」から数える（上限 24 件の外の料理の食材を誤って消さない）。
    あわせて改行・制御文字・不可視の書式文字（`\p{Cc}` / `\p{Cf}` / `\p{Co}` / `\p{Cn}` / U+2028 / U+2029）と、
-   異体字セレクタ（U+FE00–FE0F / U+E0100–E01EF）、ハングル・点字の空白字（U+3164 / U+115F / U+1160 / U+FFA0 / U+2800）を
-   含む語を語ごとに落とす。後者は照合器の正規化（NFKC と Cf の除去）を抜けるため、ここで落とす（照合器を変えると安全 fingerprint に波及する）。ゼロ幅空白や双方向制御で見た目を偽装した語をプロンプトへ渡さない。
+   既定で無視される文字（`\p{Default_Ignorable_Code_Point}`。異体字セレクタ U+FE00–FE0F / U+E0100–E01EF / U+180B–180F、
+   U+034F、U+17B4–17B5、ハングルの空白字 U+3164 / U+115F / U+1160 / U+FFA0 などを含む）、点字の空白 U+2800 を
+   含む語を語ごとに落とす（結合記号 `\p{M}` の全体は正当な日本語を落としうるので入れない）。後者は照合器の正規化（NFKC と Cf の除去）を抜けるため、ここで落とす（照合器を変えると安全 fingerprint に波及する）。ゼロ幅空白や双方向制御で見た目を偽装した語をプロンプトへ渡さない。
 3. 契約の各上限で切り詰める。
 4. **対応表 `dishIngredientIndex` を捨てる。** 戻り値は `TasteHints`（対応表なし）。
 5. `hasTasteContent()` が false なら全体を `null` にする（`outcome = "filtered_empty"`）。
@@ -685,6 +698,9 @@ taste_hints_outcome: TasteHintsOutcome   // §5.1 の 9 値のみ
      トグルの書き込み中もボタンは押せない（柵がその書き込みの連番を奪い、偽の失敗表示を出すため）。
      逆にボタンの確定処理の間はスイッチも押せない（`TasteLearningSection` の `disabled`）。同じ理由で、
      柵が先に連番を進めるとトグルが `applied: false` になり偽の失敗表示が出る。
+     この相互の disabled は、両方の mutation に付けた `mutationKey`（`tasteLearningKeys.toggleWrite(userId)` /
+     `tasteLearningKeys.unconfirmedRetry(userId)`）を `useIsMutating` で数えて導く。インスタンスごとの
+     `isPending` と違い mutation cache 単位なので、画面を離れて戻っても（再マウント）走っている方を見失わない。
      確定処理は数十秒かかりうるので、画面を開き直した後の別の書き込みと並行しうる。記録を置くときは、
      既により新しいか同じ連番の記録があれば残し、cache が既に `expectedSeq` を超えた連番を観測して
      いれば置かない（`nextTasteLearningUnconfirmed`）。古い記録が新しい記録を上書きすると、新しい
@@ -697,6 +713,8 @@ taste_hints_outcome: TasteHintsOutcome   // §5.1 の 9 値のみ
   遅れて届いた読み取り・柵の応答や、remount 前のインスタンスからの応答が新しい値を巻き戻さない。
 - 書き込みと確定処理の間（最悪 1 分強）は、スイッチの下に `role="status"` の短い文言
   （`tasteLearningCopy.saving`）を出す。スイッチが無言で止まって見えないようにする。
+  文言と同時に挿入した live region は支援技術によって読み上げられないため、`role="status"` の領域は
+  常に置いて中身だけを切り替える（空の間は `empty:sr-only` で余白を作らない）。
 - 共有同意（`share-consent-settings-section.tsx`）は連番を持たないため、従来どおり複数回の
   再読ポーリングで同じ問題を扱っている。挙動は変えない。
 
@@ -792,14 +810,15 @@ OFFにすると読み取りをやめます。設定と反映の記録は保存�
 
 | 層 | ファイル | 見るもの |
 | --- | --- | --- |
-| pgTAP | `supabase/tests/database/taste_signals.test.sql` | 他人の menus を読まない／窓の境界 89・90 日と 49・50 件／半減期／`score` の加算と乗算／`derivation_group_id` で数えた強さの 4・5・14・15／**回数はすべて派生グループ単位**（同じ 1 食を 3 回再生成しても使いすぎにならない、`child_friendly` 2 回でも 1 グループなら軸にならない）／同一献立内の重複食材は 1 回／ジャンルは `menus.cuisine_genre` で比率を取り、結果 `any` は分子に入らない／`submission.cuisineGenre = 'any'` 限定／時間帯の境界 20・20.5・40・40.5／`{"reason":...}` と `reason: null` の判別／`dishIngredientIndex` が `score > 0` の料理だけを含む／`set_taste_learning_enabled` が他人の行を更新しない（他人の連番と一致しても自分の行だけを照合する）／テーブル単位 UPDATE が依然として拒否される（`taste_learning_seq` も直接書けない）／**CAS**: 連番一致で `applied: true` と連番 +1、古い連番は `applied: false` で値も連番も変えず現在値を返す、`p_expected_seq` の null は `22023`、1 引数版が無い |
-| Function | `taste-hints.test.ts` | `reason` 分岐が safeParse より先（`disabled` / `no_history` が `invalid_shape` に潰れない）／タイムアウト・失敗・不正形で null と `outcome`／OFF で RPC を呼ばない／安全フィルタ（アレルゲン別名・カスタム・苦手・avoid）／**idea で `avoidAxes` が空**／表示確認の別名・苦手では料理ごと落とさない／`__proto__` キーで strict 検査をすり抜けない／辞書全件でも予算内に収まる／`sanitizeTasteHints` が対応表で食材を落とし（13 位以下の料理の食材は残す）、制御文字・不可視文字を含む語を落とし、対応表を戻り値から捨てる |
+| pgTAP | `supabase/tests/database/taste_signals.test.sql` | 他人の menus を読まない／窓の境界 89・90 日と 49・50 件／半減期／`score` の加算と乗算／`derivation_group_id` で数えた強さの 4・5・14・15／**回数はすべて派生グループ単位**（同じ 1 食を 3 回再生成しても使いすぎにならない、`child_friendly` 2 回でも 1 グループなら軸にならない）／同一献立内の重複食材は 1 回／ジャンルは `menus.cuisine_genre` で比率を取り、結果 `any` は分子に入らない／`submission.cuisineGenre = 'any'` 限定／時間帯の境界 20・20.5・40・40.5／`{"reason":...}` と `reason: null` の判別／`dishIngredientIndex` が `score > 0` の料理だけを含む／`set_taste_learning_enabled` が他人の行を更新しない（他人の連番と一致しても自分の行だけを照合する）／テーブル単位 UPDATE が依然として拒否される（`taste_learning_seq` も直接書けない）／**CAS**: 連番一致で `applied: true` と連番 +1、古い連番は `applied: false` で値も連番も変えず現在値を返す、`p_expected_seq` の null は `22023`、1 引数版が無い／**各上限**: likedDishes は 25 件の候補で 24 件、likedIngredients は 9 件で 8 件、overusedIngredients は 4 件で 3 件に止まる、同じ献立内の重複食材は 1 回と数える、3 ジャンル等分では likedGenres が `[]` |
+| Function | `taste-hints.test.ts` | `reason` 分岐が safeParse より先（`disabled` / `no_history` が `invalid_shape` に潰れない）／タイムアウト・失敗・不正形で null と `outcome`／OFF で RPC を呼ばない／安全フィルタ（アレルゲン別名・カスタム・苦手・avoid）／**idea で `avoidAxes` が空**／表示確認の別名・苦手では料理ごと落とさない／`__proto__` キーで strict 検査をすり抜けない／辞書全件でも予算内に収まる／`sanitizeTasteHints` が対応表で食材を落とし（上限 24 件の外の料理の食材は残す）、制御文字・不可視文字を含む語を落とし、対応表を戻り値から捨てる／**年齢帯の forbidden**: 3〜5 歳の家族がいると餅・ナッツ系が対応表経由も含めて料理ごと落ち、高齢者だけなら餅系だけが落ちてナッツ系は残り、大人だけなら残る。requires_tag（ぶどう）は落とさない／**不可視文字**: 異体字セレクタ（U+FE0E ほか）・ハングルと点字の空白字・U+034F・U+180B・U+17B4 を挟んだ語を落とし、対応表の食材に不可視文字がある料理は料理ごと落とす／**24 件上限**: 集計の戻りは 24 件を受け、最近の料理を落とした後に 12 件へ切る／RPC の中断（予算切れで fetch を abort、予算内なら abort しない） |
 | Function | `generation-prompt.test.ts` 追記 | 段落とキーの有無／優先順位の文が 1 回だけ／料理名が system 文に現れない／空ヒントでキーごと消える |
 | Function | `generation-prompt-taste-off.test.ts`（新規） | kill-switch off で段落もキーも出ない（既存 2 本と同型） |
-| Function | `generation-service.test.ts` 追記 | `Promise.all` 並列／**fingerprint に載らない**／`preference_snapshot` の記録が確定オブジェクトと一致（切り詰めで空→キーなし）／再生成経路に出ない／`tasteHintsOutcome` |
+| Function | `generation-service.test.ts` 追記 | `Promise.all` 並列／**fingerprint に載らない**／`preference_snapshot` の記録が確定オブジェクトと一致（切り詰めで空→キーなし）／再生成経路に出ない／`tasteHintsOutcome`／安全フィルタの例外は `filter_failed` で fail-open／**記録条件**: 使いすぎの食材だけ、またはジャンル・時間帯・`avoidAxes` だけのヒントは prompt に載せるが記録しない、sanitize 後に likedDishes か likedIngredients が残れば記録する |
+| contract | `shared/contracts/taste-hints.test.ts` | signals は likedDishes を 24 件まで受け 25 件を拒み、hints は 12 件のまま／signals と hints の likedDishes の要素スキーマが同じオブジェクト |
 | src | `menu-result-api.test.ts` | `tasteHintsApplied` の投影、キー欠落・壊れた形で `false` |
 | src | `menu-hero.test.tsx` | `weak` 非表示、`medium`/`strong` 表示、**作成モデル行と共存**する |
-| src | `taste-learning-api.test.ts` / `taste-learning-settings-section.test.tsx` | 初期表示の `profiles` 読み取り（値と連番、strict Zod）、`p_expected_seq` の送信と `{ enabled, seq, applied }` の strict 検査、signal の転送／postgrest-js が abort 後も `{data: null, error}` で resolve するケースで `setTasteLearningEnabled` が throw する／CAS を持つテスト内の偽サーバーで: 通常成功、連番を運ぶ OFF→ON→OFF 往復、滞留書き込みが柵より先に commit（成功・柵なし）、未 commit の滞留書き込みを柵で捨てる（失敗表示とサーバー値、後着の書き込みが `applied: false`）、別端末による `applied: false`（違う値は失敗表示、同じ値は成功）、柵が `applied: false` で要求値と一致し成功扱いになる、書き込み失敗後の読み取りが失敗しても読み直して柵を送る、柵の再試行が途中の attempt で答えを得て止まる、全 attempt 失敗で消えない unconfirmed 警告が出て remount をまたいでも残り「もう一度読み込む」ボタン（確かめている間は disabled・読み込み中の文言）で解決する、連番が進んだ読み取りで警告が自動で消え同じ連番では消えない、古い書き込みの未確定が新しい記録を上書きしない、トグルの書き込み中は再読み込みボタンが押せない、remount をまたいで古い読み取りが新しい連番の値を上書きしない（`mergeTasteLearningState` が `queryFn` 自身の fetch にも効く）。`taste-learning-settle.test.ts` で確定処理を注入した偽サーバーで単体に確かめる |
+| src | `taste-learning-api.test.ts` / `taste-learning-settings-section.test.tsx` | 初期表示の `profiles` 読み取り（値と連番、strict Zod）、`p_expected_seq` の送信と `{ enabled, seq, applied }` の strict 検査、signal の転送／postgrest-js が abort 後も `{data: null, error}` で resolve するケースで `setTasteLearningEnabled` が throw する／CAS を持つテスト内の偽サーバーで: 通常成功、連番を運ぶ OFF→ON→OFF 往復、滞留書き込みが柵より先に commit（成功・柵なし）、未 commit の滞留書き込みを柵で捨てる（失敗表示とサーバー値、後着の書き込みが `applied: false`）、別端末による `applied: false`（違う値は失敗表示、同じ値は成功）、柵が `applied: false` で要求値と一致し成功扱いになる、書き込み失敗後の読み取りが失敗しても読み直して柵を送る、柵の再試行が途中の attempt で答えを得て止まる、全 attempt 失敗で消えない unconfirmed 警告が出て remount をまたいでも残り「もう一度読み込む」ボタン（確かめている間は disabled・読み込み中の文言）で解決する、連番が進んだ読み取りで警告が自動で消え同じ連番では消えない、古い書き込みの未確定が新しい記録を上書きしない、トグルの書き込み中は再読み込みボタンが押せず再試行の間はスイッチが押せない（remount をまたいでも両方向とも disabled のまま）、remount をまたいで古い読み取りが新しい連番の値を上書きしない（`mergeTasteLearningState` が `queryFn` 自身の fetch にも効く）。`taste-learning-settle.test.ts` で確定処理を注入した偽サーバーで単体に確かめる。`taste-learning-section.test.tsx` で `role="status"` の領域が最初から置かれ、書き込みの間だけ中身が入る |
 | src | `privacy-copy.test.ts` | 「AIへ送る情報」に 90 日・50 献立・「好みの学習は設定でいつでも止められます」・直近の献立（最大 10 献立）の料理名が含まれる |
 | script | `scripts/assert-privacy-logs.mjs` | `taste_hints_outcome` が許可一覧にあり、料理名・食材名がログに出ない |
 

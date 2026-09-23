@@ -823,7 +823,7 @@ liked_dish_rows as (
   join public.dishes d on d.menu_id = l.id
   group by d.name
   order by pg_catalog.sum(l.score) desc, d.name
-  limit 24  -- 最終レビュー Q3 で 12 から 24 へ（20260923190000 で置き換え。prompt の 12 件は Function が切る）
+  limit 12  -- 注: 最終レビュー Q3 で 20260923190000 が 24 に置き換え（このマイグレーションは 12 のまま編集しない）
 ),
 -- 食材: 献立内の重複を潰してから派生グループ単位で数える。
 -- l.id を含めないと、同じグループ・同じ score の別献立が 1 行に潰れて重みが減る
