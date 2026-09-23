@@ -456,6 +456,7 @@ describe("logGenerationEvent", () => {
     "query_failed",
     "invalid_shape",
     "filtered_empty",
+    "filter_failed",
     "applied",
   ] as const satisfies readonly TasteHintsOutcome[])(
     "passes the closed taste outcome %s through createSafeLogger",

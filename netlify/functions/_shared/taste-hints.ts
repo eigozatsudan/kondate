@@ -55,8 +55,14 @@ export type TasteHintsOutcome =
   | "query_failed"
   | "invalid_shape"
   | "filtered_empty"
+  | "filter_failed"
   | "applied";
 
+/**
+ * ローダの戻り。ここでの outcome "applied" は「集計結果の parse に成功した」という意味にすぎない。
+ * 安全フィルタと sanitize はまだ掛かっていないので、配線側（generation-service）が必ず
+ * applied / filtered_empty / filter_failed のいずれかへ上書きする。この値をそのまま記録しないこと。
+ */
 export type TasteHintsLoadResult = {
   signals: TasteSignals | null;
   outcome: TasteHintsOutcome;
@@ -303,6 +309,17 @@ const CONTROL_OR_LINE_BREAK =
 
 function hasControlOrLineBreak(value: string): boolean {
   return CONTROL_OR_LINE_BREAK.test(value);
+}
+
+/**
+ * 確定した tasteHints を preference_snapshot へ「反映した」と記録してよいか。
+ * 結果画面の「✨ いつもの好みを反映しました」はこの記録を読むので、★や採用に由来する
+ * 好み（likedDishes / likedIngredients）が 1 件以上残ったときだけ記録する。
+ * 使いすぎの食材・ジャンル・時間帯・avoidAxes だけのときは prompt には載せるが（hasTasteContent）、
+ * 「好みを反映した」とは言えないので記録しない（最終レビュー A2 の人間の決定）。
+ */
+export function shouldRecordTasteHints(hints: TasteHints): boolean {
+  return hints.likedDishes.length > 0 || hints.likedIngredients.length > 0;
 }
 
 /**

@@ -153,6 +153,7 @@ export const tasteSignalsSchema = z
  * likedDishes / likedIngredients / likedGenres / overusedIngredients / avoidAxes の
  * いずれかが 1 件以上、または likedTimeBand が null でないこと。
  * signalStrength だけでは載せない（強さは中身ではない）。
+ * これは prompt へ載せる条件。preference_snapshot へ記録する条件はさらに狭い（§5.6）。
  */
 export function hasTasteContent(hints: TasteHints): boolean;
 
@@ -432,6 +433,7 @@ export type TasteHintsOutcome =
   | "query_failed"
   | "invalid_shape"      // Zod 失敗
   | "filtered_empty"     // 安全フィルタ・重複落としで空になった
+  | "filter_failed"      // 安全フィルタ・sanitize が例外を投げた（fail-open で null に倒す）
   | "applied";
 
 export async function loadTasteHints(input: {
@@ -587,9 +589,15 @@ const finalTasteHints =
 確定オブジェクトに基づく。**
 
 ```
-finalTasteHints === null        -> キーを載せない
-finalTasteHints !== null        -> { applied: true, strength: finalTasteHints.signalStrength }
+finalTasteHints === null                                   -> キーを載せない
+finalTasteHints !== null かつ likedDishes・likedIngredients が両方空 -> キーを載せない（prompt には載せる）
+finalTasteHints !== null かつ likedDishes か likedIngredients が 1 件以上
+                                                           -> { applied: true, strength: finalTasteHints.signalStrength }
 ```
+
+記録は「★や採用に由来する好みを載せた」ときだけにする（`shouldRecordTasteHints`）。使いすぎの食材・
+ジャンル・時間帯・`avoidAxes` だけのときは prompt へは載せるが、結果画面の「いつもの好みを反映しました」
+が中身より強く聞こえるので記録しない（最終レビュー A2 の決定）。
 
 安全フィルタ直後の非 null 判定で記録すると、その後の切り詰めで中身が空になっても
 「反映しました」が残る。確定は 1 か所（`finalTasteHints`）に集約し、prompt と記録が同じ
@@ -602,7 +610,7 @@ finalTasteHints !== null        -> { applied: true, strength: finalTasteHints.si
 **閉じた列挙 1 フィールドだけ**を足す。
 
 ```
-taste_hints_outcome: TasteHintsOutcome   // §5.1 の 8 値のみ
+taste_hints_outcome: TasteHintsOutcome   // §5.1 の 9 値のみ
 ```
 
 **フィールドを型に足すだけでは出力されない。** `logGenerationEvent` は受け取った
@@ -707,6 +715,8 @@ OFFにすると読み取りをやめます。設定と反映の記録は保存�
 
 - 出す条件は「実際に空でない `tasteHints` をプロンプトへ載せた（`applied: true`）」**かつ**
   `strength` が `medium` 以上のときだけ。`weak` では出さない。
+- `applied: true` は `likedDishes` か `likedIngredients` が 1 件以上残ったときだけ記録される（§5.6）。
+  使いすぎの食材・ジャンル・時間帯・`avoidAxes` だけを載せた献立では、記録が無いので 1 行も出ない。
 - `signalStrength` の語そのものは利用者に見せない。
 - 導入前の献立はキーが無く `false`。既存履歴の表示は変わらない。
 

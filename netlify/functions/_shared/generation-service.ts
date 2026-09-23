@@ -82,6 +82,7 @@ import {
   isTasteHintsEnabled,
   loadTasteHints,
   sanitizeTasteHints,
+  shouldRecordTasteHints,
   TASTE_HINTS_ENABLED,
   type TasteHintsLoadResult,
   type TasteHintsOutcome,
@@ -510,10 +511,10 @@ function createBaseGenerationDeps(
           tasteHintsOutcome = tasteHints === null ? "filtered_empty" : "applied";
         } catch {
           // 学習段落は prompt 専用で fail-open（spec §1）。フィルタや sanitize の例外で生成を止めない。
-          // 未フィルタの signals は決して使わず null に倒す。結末は既存の列挙から invalid_shape
-          // （集計結果をヒントの形にできなかった）を使い、例外の内容はどこにも出さない
+          // 未フィルタの signals は決して使わず null に倒す。結末は Zod 失敗（invalid_shape）と
+          // 区別できるよう filter_failed で残し、例外の内容はどこにも出さない
           tasteHints = null;
-          tasteHintsOutcome = "invalid_shape";
+          tasteHintsOutcome = "filter_failed";
         }
       }
       return {
@@ -738,9 +739,12 @@ function buildSuccessInput(
     requestId,
     menu,
     // 反映の記録は、実際に user ペイロードへ載せた確定オブジェクト（sanitize 後）から導く。
-    // 未適用はキーごと載せない。料理名・食材名は記録せず強さだけを残す（spec §3.2 / §5.6）
+    // 未適用はキーごと載せない。料理名・食材名は記録せず強さだけを残す（spec §3.2 / §5.6）。
+    // prompt に載せても、★・採用由来の好み（likedDishes / likedIngredients）が無ければ記録しない（spec §6.2）
     preferenceSnapshot:
-      execution.kind === "new_menu" && execution.tasteHints !== null
+      execution.kind === "new_menu" &&
+      execution.tasteHints !== null &&
+      shouldRecordTasteHints(execution.tasteHints)
         ? {
             ...context.preferenceSnapshot,
             tasteHints: { applied: true, strength: execution.tasteHints.signalStrength },

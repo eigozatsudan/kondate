@@ -771,6 +771,34 @@ describe("runGeneration", () => {
       expect(snapshot).not.toHaveProperty("tasteHints");
     });
 
+    it("omits the tasteHints key when the final object has no liked dishes or ingredients", async () => {
+      const repository = makeRepository();
+      const generationContext = makeGenerationContext({
+        preferenceSnapshot: { mealType: "dinner" },
+      });
+      await runGeneration(
+        makeDeps({
+          repository,
+          loadExecutionContext: vi.fn(() =>
+            Promise.resolve(
+              makeNewMenuExecutionContext({
+                generationContext,
+                tasteHints: {
+                  ...appliedHints,
+                  likedDishes: [],
+                  likedIngredients: [],
+                  overusedIngredients: ["豚肉"],
+                },
+                tasteHintsOutcome: "applied",
+              }),
+            ),
+          ),
+        }),
+        command,
+      );
+      expect(succeedInput(repository).preferenceSnapshot).toEqual({ mealType: "dinner" });
+    });
+
     it("never feeds tasteHints into the finalize safety fingerprint", async () => {
       const generationContext = makeGenerationContext();
       const runWith = async (tasteHints: TasteHints | null) => {
@@ -2478,7 +2506,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     return { result, prompted, snapshot: succeedInput.preferenceSnapshot, logTerminalEvent };
   }
 
-  it("fails open as invalid_shape when the taste safety filter throws", async () => {
+  it("fails open as filter_failed when the taste safety filter throws", async () => {
     // 未フィルタの signals を prompt へ渡さず null に倒し、生成は続ける
     loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
     loadTasteHintsMock.mockResolvedValue({
@@ -2496,12 +2524,12 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
 
     expect(result.status).toBe("succeeded");
     expect(prompted.tasteHints).toBeNull();
-    expect(prompted.tasteHintsOutcome).toBe("invalid_shape");
+    expect(prompted.tasteHintsOutcome).toBe("filter_failed");
     expect(snapshot).not.toHaveProperty("tasteHints");
     expect(logTerminalEvent).toHaveBeenCalledTimes(1);
     expect(logTerminalEvent.mock.calls[0]?.[1]).toMatchObject({
       errorCode: "succeeded",
-      tasteHintsOutcome: "invalid_shape",
+      tasteHintsOutcome: "filter_failed",
     });
     // 例外の内容はログへ出さない
     expect(JSON.stringify(logTerminalEvent.mock.calls)).not.toContain("canary-filter");
@@ -2523,6 +2551,58 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
       applied: true,
       strength: prompted.tasteHints?.signalStrength,
     });
+  });
+
+  it("sends overused-only hints in the prompt without recording them in the snapshot", async () => {
+    // ★や採用の好みが無く、使いすぎの食材だけのときは「好みを反映しました」と言えないので記録しない。
+    // prompt に載せる条件（hasTasteContent）は変えない
+    loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
+    loadTasteHintsMock.mockResolvedValue({
+      signals: tasteSignals({ overusedIngredients: ["豚肉"], signalStrength: "strong" }),
+      outcome: "applied",
+    });
+
+    const { result, prompted, snapshot } = await runNewMenuThroughProductionLoader();
+
+    expect(result.status).toBe("succeeded");
+    expect(prompted.tasteHintsOutcome).toBe("applied");
+    expect(prompted.tasteHints?.overusedIngredients).toEqual(["豚肉"]);
+    expect(snapshot).not.toHaveProperty("tasteHints");
+  });
+
+  it("does not record genres, time band, or avoid axes alone as applied taste", async () => {
+    loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
+    loadTasteHintsMock.mockResolvedValue({
+      signals: tasteSignals({
+        likedGenres: ["japanese"],
+        likedTimeBand: "short",
+        avoidAxes: ["child_unfriendly"],
+        overusedIngredients: ["豚肉"],
+        signalStrength: "strong",
+      }),
+      outcome: "applied",
+    });
+
+    const { prompted, snapshot } = await runNewMenuThroughProductionLoader();
+
+    expect(prompted.tasteHints).not.toBeNull();
+    expect(snapshot).not.toHaveProperty("tasteHints");
+  });
+
+  it("records the snapshot when liked dishes remain after sanitize", async () => {
+    loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
+    loadTasteHintsMock.mockResolvedValue({
+      signals: tasteSignals({
+        likedDishes: [{ dishName: "生姜焼き", role: "main" }],
+        overusedIngredients: ["豚肉"],
+        signalStrength: "medium",
+      }),
+      outcome: "applied",
+    });
+
+    const { snapshot } = await runNewMenuThroughProductionLoader();
+
+    expect(snapshot).toHaveProperty("tasteHints", { applied: true, strength: "medium" });
   });
 
   it("applies the sanitized hints and drops the dish-ingredient index", async () => {

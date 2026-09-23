@@ -160,7 +160,7 @@ const CLOSED_PLANS = new Set(["free", "plus"]);
 const CLOSED_PRICE_INTERVALS = new Set(["month", "year"]);
 const CLOSED_GENERATION_ROUTES = new Set(["menu", "dish", "status"]);
 /**
- * 学習ヒントの結末の閉じた列挙（taste-hints.ts の TasteHintsOutcome 8 値）。
+ * 学習ヒントの結末の閉じた列挙（taste-hints.ts の TasteHintsOutcome 9 値）。
  * 型だけでは cast/miswire の自由文（料理名など）が JSON に載るため実行時にも閉じる。
  */
 const CLOSED_TASTE_HINTS_OUTCOMES = new Set(
@@ -173,6 +173,7 @@ const CLOSED_TASTE_HINTS_OUTCOMES = new Set(
     query_failed: true,
     invalid_shape: true,
     filtered_empty: true,
+    filter_failed: true,
     applied: true,
   } satisfies Record<TasteHintsOutcome, true>),
 );
