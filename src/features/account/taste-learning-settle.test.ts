@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TasteLearningSetResult, TasteLearningState } from "./taste-learning-api";
 import {
   mergeTasteLearningState,
+  nextTasteLearningUnconfirmed,
   settleTasteLearningWrite,
   type TasteLearningSettleDeps,
 } from "./taste-learning-settle";
@@ -77,6 +78,9 @@ describe("settleTasteLearningWrite", () => {
     // 柵は現在値（OFF）のまま、読んだ連番で書く
     expect(deps.write).toHaveBeenCalledWith(false, 0);
     expect(result).toEqual({ kind: "settled", state: { enabled: false, seq: 1 } });
+    // 柵の答えそのもので確定し、次の試行へ進まない
+    expect(deps.read).toHaveBeenCalledTimes(1);
+    expect(deps.wait).not.toHaveBeenCalled();
     // 滞留していた ON の書き込みが今ごろ届いても、連番が合わず捨てられる
     expect(server.cas(true, 0).applied).toBe(false);
     expect(server.state).toEqual({ enabled: false, seq: 1 });
@@ -97,6 +101,16 @@ describe("settleTasteLearningWrite", () => {
     expect(deps.write).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ kind: "settled", state: { enabled: true, seq: 1 } });
     expect(server.state).toEqual({ enabled: true, seq: 1 });
+  });
+
+  it("settles on the fence answer even with a single attempt", async () => {
+    // 再読み込みボタンは 1 回だけ試みる。柵が通ったのに unconfirmed を返してはならない
+    const server = createServer({ enabled: false, seq: 0 });
+    const { deps } = makeDeps(server);
+
+    const result = await settleTasteLearningWrite(0, 1, deps);
+
+    expect(result).toEqual({ kind: "settled", state: { enabled: false, seq: 1 } });
   });
 
   it("keeps trying after a failed read instead of giving up", async () => {
@@ -181,5 +195,35 @@ describe("mergeTasteLearningState", () => {
   it("drops extra keys such as applied", () => {
     const withApplied: TasteLearningSetResult = { enabled: true, seq: 1, applied: true };
     expect(mergeTasteLearningState(undefined, withApplied)).toEqual({ enabled: true, seq: 1 });
+  });
+});
+
+describe("nextTasteLearningUnconfirmed", () => {
+  const record = { requestedEnabled: true, expectedSeq: 5 };
+
+  it("sets the record when nothing is recorded and the cache has not moved past it", () => {
+    expect(nextTasteLearningUnconfirmed(undefined, { enabled: false, seq: 5 }, record)).toEqual(
+      record,
+    );
+    expect(nextTasteLearningUnconfirmed(null, undefined, record)).toEqual(record);
+  });
+
+  it("does not overwrite a record of a newer or equal seq from a concurrent write", () => {
+    const newer = { requestedEnabled: false, expectedSeq: 6 };
+    expect(nextTasteLearningUnconfirmed(newer, { enabled: false, seq: 6 }, record)).toBe(newer);
+    const same = { requestedEnabled: false, expectedSeq: 5 };
+    expect(nextTasteLearningUnconfirmed(same, { enabled: false, seq: 5 }, record)).toBe(same);
+  });
+
+  it("replaces an older record", () => {
+    const older = { requestedEnabled: false, expectedSeq: 4 };
+    expect(nextTasteLearningUnconfirmed(older, { enabled: false, seq: 5 }, record)).toEqual(record);
+  });
+
+  it("does not set a record the cache has already seen settled, keeping what is there", () => {
+    expect(nextTasteLearningUnconfirmed(null, { enabled: true, seq: 6 }, record)).toBeNull();
+    expect(nextTasteLearningUnconfirmed(undefined, { enabled: true, seq: 6 }, record)).toBeNull();
+    const newer = { requestedEnabled: false, expectedSeq: 7 };
+    expect(nextTasteLearningUnconfirmed(newer, { enabled: true, seq: 7 }, record)).toBe(newer);
   });
 });

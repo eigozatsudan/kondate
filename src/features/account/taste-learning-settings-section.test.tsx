@@ -7,6 +7,7 @@ import { tasteLearningCopy } from "./taste-learning-copy";
 import { tasteLearningKeys } from "./taste-learning-api";
 import { TasteLearningSettingsSection } from "./taste-learning-settings-section";
 import {
+  TASTE_LEARNING_FENCE_ATTEMPTS,
   TASTE_LEARNING_FENCE_RETRY_DELAY_MS,
   TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
 } from "./taste-learning-timing";
@@ -786,7 +787,9 @@ describe("TasteLearningSettingsSection", () => {
     }
 
     it("keeps the unconfirmed alert across a remount and clears it through the retry button", async () => {
-      const client = makeClient();
+      // 既定の gcTime（5 分）ではテスト中に掃除が走らないので、既定を 0 にして
+      // 記録側の gcTime: Infinity が効いていることを確かめる
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
       const server = createFakeServer({ enabled: true, seq: 0 });
       const { link, view } = await renderAndGoUnconfirmed(client, server);
 
@@ -795,12 +798,14 @@ describe("TasteLearningSettingsSection", () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
       });
-      renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
-      // 画面を開き直しても、確定していない以上は警告を出し続ける
-      expect(await screen.findByRole("alert")).toHaveTextContent(tasteLearningCopy.unconfirmed);
-      expect(getSwitch()).toBeChecked();
-
+      // 設定値の cache は掃除されているので、開き直すと読み直す（通信は戻っている）
       link.down = false;
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      expect(
+        await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel }),
+      ).toBeChecked();
+      // 連番が進んでいない読み取りなので、確定していない以上は警告を出し続ける
+      expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.unconfirmed);
       let releaseRead: () => void = () => undefined;
       getTasteLearningStateMock.mockImplementationOnce(
         () =>
@@ -841,6 +846,65 @@ describe("TasteLearningSettingsSection", () => {
         await screen.findByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
       ).toBeEnabled();
       expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.unconfirmed);
+    }, 15_000);
+
+    it("disables the retry button while a toggle write is in flight", async () => {
+      // 書き込み中に柵を送ると、その書き込みの連番を奪って偽の失敗表示を出す
+      const client = makeClient();
+      client.setQueryData(tasteLearningKeys.unconfirmed("user-1"), {
+        requestedEnabled: false,
+        expectedSeq: 0,
+      });
+      const server = createFakeServer({ enabled: true, seq: 0 });
+      wireServer(server);
+      setTasteLearningEnabledMock.mockReturnValueOnce(new Promise(() => undefined));
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+      await waitFor(() => {
+        expect(toggle).toBeChecked();
+      });
+      expect(
+        screen.getByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
+      ).toBeEnabled();
+
+      await userEvent.click(toggle);
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
+        ).toBeDisabled();
+      });
+    });
+
+    it("does not let an older write's unconfirmed record overwrite a newer one", async () => {
+      // 画面を開き直した後の別の書き込み（連番 1）が先に未確定になっている。
+      // この画面の cache はまだ連番 0 のままで、連番 0 の書き込みも未確定に終わる
+      const client = makeClient();
+      const newer = { requestedEnabled: true, expectedSeq: 1 };
+      client.setQueryData(tasteLearningKeys.unconfirmed("user-1"), newer);
+      const server = createFakeServer({ enabled: true, seq: 0 });
+      const link = wireFlakyServer(server);
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+      await waitFor(() => {
+        expect(toggle).toBeChecked();
+      });
+
+      link.down = true;
+      const readsBefore = getTasteLearningStateMock.mock.calls.length;
+      await userEvent.click(toggle);
+      // 確定処理の読み取りが TASTE_LEARNING_FENCE_ATTEMPTS 回すべて失敗し、書き込みが終わるまで待つ
+      await waitFor(
+        () => {
+          expect(getTasteLearningStateMock.mock.calls.length).toBe(
+            readsBefore + TASTE_LEARNING_FENCE_ATTEMPTS,
+          );
+          expect(toggle).toBeEnabled();
+        },
+        { timeout: 10_000 },
+      );
+      // 新しい記録が残るので、連番 1 を超えるまで警告は消えない
+      expect(client.getQueryData(tasteLearningKeys.unconfirmed("user-1"))).toEqual(newer);
     }, 15_000);
 
     it("clears the alert on its own once any read shows the seq moved past the unconfirmed write", async () => {

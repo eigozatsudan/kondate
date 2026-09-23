@@ -662,6 +662,11 @@ taste_hints_outcome: TasteHintsOutcome   // §5.1 の 8 値のみ
      （`tasteLearningCopy.unconfirmed`）と「もう一度読み込む」ボタンを出す。画面を離れて戻っても
      記録は残る。スイッチは直近に観測したサーバー値のままにし、楽観値には戻さない。
      ボタンは記録の `expectedSeq` で確定を 1 回試み、その間は disabled で読み込み中の文言にする。
+     トグルの書き込み中もボタンは押せない（柵がその書き込みの連番を奪い、偽の失敗表示を出すため）。
+     確定処理は数十秒かかりうるので、画面を開き直した後の別の書き込みと並行しうる。記録を置くときは、
+     既により新しいか同じ連番の記録があれば残し、cache が既に `expectedSeq` を超えた連番を観測して
+     いれば置かない（`nextTasteLearningUnconfirmed`）。古い記録が新しい記録を上書きすると、新しい
+     書き込みが後から通っても警告が出なくなるため。
   6. 記録は、どの経路であれ（書き込み・柵の応答、確定処理の読み取り、`queryFn` の fetch）観測した
      連番が記録の `expectedSeq` を超えた時点で消す。記録の中身と比べて消すので、後から置かれた
      別の記録を誤って消すことはない。
@@ -768,7 +773,7 @@ OFFにすると読み取りをやめます。設定と反映の記録は保存�
 | Function | `generation-service.test.ts` 追記 | `Promise.all` 並列／**fingerprint に載らない**／`preference_snapshot` の記録が確定オブジェクトと一致（切り詰めで空→キーなし）／再生成経路に出ない／`tasteHintsOutcome` |
 | src | `menu-result-api.test.ts` | `tasteHintsApplied` の投影、キー欠落・壊れた形で `false` |
 | src | `menu-hero.test.tsx` | `weak` 非表示、`medium`/`strong` 表示、**作成モデル行と共存**する |
-| src | `taste-learning-api.test.ts` / `taste-learning-settings-section.test.tsx` | 初期表示の `profiles` 読み取り（値と連番、strict Zod）、`p_expected_seq` の送信と `{ enabled, seq, applied }` の strict 検査、signal の転送／postgrest-js が abort 後も `{data: null, error}` で resolve するケースで `setTasteLearningEnabled` が throw する／CAS を持つテスト内の偽サーバーで: 通常成功、連番を運ぶ OFF→ON→OFF 往復、滞留書き込みが柵より先に commit（成功・柵なし）、未 commit の滞留書き込みを柵で捨てる（失敗表示とサーバー値、後着の書き込みが `applied: false`）、別端末による `applied: false`（違う値は失敗表示、同じ値は成功）、柵が `applied: false` で要求値と一致し成功扱いになる、書き込み失敗後の読み取りが失敗しても読み直して柵を送る、柵の再試行が途中の attempt で答えを得て止まる、全 attempt 失敗で消えない unconfirmed 警告が出て remount をまたいでも残り「もう一度読み込む」ボタン（確かめている間は disabled・読み込み中の文言）で解決する、連番が進んだ読み取りで警告が自動で消え同じ連番では消えない、remount をまたいで古い読み取りが新しい連番の値を上書きしない（`mergeTasteLearningState` が `queryFn` 自身の fetch にも効く）。`taste-learning-settle.test.ts` で確定処理を注入した偽サーバーで単体に確かめる |
+| src | `taste-learning-api.test.ts` / `taste-learning-settings-section.test.tsx` | 初期表示の `profiles` 読み取り（値と連番、strict Zod）、`p_expected_seq` の送信と `{ enabled, seq, applied }` の strict 検査、signal の転送／postgrest-js が abort 後も `{data: null, error}` で resolve するケースで `setTasteLearningEnabled` が throw する／CAS を持つテスト内の偽サーバーで: 通常成功、連番を運ぶ OFF→ON→OFF 往復、滞留書き込みが柵より先に commit（成功・柵なし）、未 commit の滞留書き込みを柵で捨てる（失敗表示とサーバー値、後着の書き込みが `applied: false`）、別端末による `applied: false`（違う値は失敗表示、同じ値は成功）、柵が `applied: false` で要求値と一致し成功扱いになる、書き込み失敗後の読み取りが失敗しても読み直して柵を送る、柵の再試行が途中の attempt で答えを得て止まる、全 attempt 失敗で消えない unconfirmed 警告が出て remount をまたいでも残り「もう一度読み込む」ボタン（確かめている間は disabled・読み込み中の文言）で解決する、連番が進んだ読み取りで警告が自動で消え同じ連番では消えない、古い書き込みの未確定が新しい記録を上書きしない、トグルの書き込み中は再読み込みボタンが押せない、remount をまたいで古い読み取りが新しい連番の値を上書きしない（`mergeTasteLearningState` が `queryFn` 自身の fetch にも効く）。`taste-learning-settle.test.ts` で確定処理を注入した偽サーバーで単体に確かめる |
 | src | `privacy-copy.test.ts` | 「AIへ送る情報」に 90 日・50 献立・「好みの学習は設定でいつでも止められます」・直近の献立（最大 10 献立）の料理名が含まれる |
 | script | `scripts/assert-privacy-logs.mjs` | `taste_hints_outcome` が許可一覧にあり、料理名・食材名がログに出ない |
 

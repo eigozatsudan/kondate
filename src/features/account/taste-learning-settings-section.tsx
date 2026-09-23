@@ -13,8 +13,10 @@ import { tasteLearningCopy } from "./taste-learning-copy";
 import { TasteLearningSection } from "./taste-learning-section";
 import {
   mergeTasteLearningState,
+  nextTasteLearningUnconfirmed,
   settleTasteLearningWrite,
   type TasteLearningSettleResult,
+  type TasteLearningUnconfirmed,
 } from "./taste-learning-settle";
 import {
   TASTE_LEARNING_FENCE_ATTEMPTS,
@@ -29,16 +31,6 @@ export type TasteLearningSettingsSectionProps = {
 type TasteLearningToggleRequest = {
   nextEnabled: boolean;
   /** 画面が最後に読んだ連番。サーバーはこれと一致したときだけ書く。 */
-  expectedSeq: number;
-};
-
-/**
- * 確定できなかった書き込みの記録。query cache に利用者ごとに置くので、画面を
- * 離れて戻っても警告は消えない。サーバー値の連番が expectedSeq を超えたのを
- * 観測した時点で（その書き込みはもう適用されえないので）消す。
- */
-type TasteLearningUnconfirmed = {
-  requestedEnabled: boolean;
   expectedSeq: number;
 };
 
@@ -130,6 +122,8 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
       // 置き換えるため、applyState の連番ガードをすり抜けてしまう。バックグラウンド
       // refetch（focus 復帰など）の応答が、直近の書き込みの反映より後に届いた場合の
       // 巻き戻りを防ぐため、ここでも cache の連番と突き合わせてから返す。
+      // 突き合わせてから TanStack Query が data を置き換えるまでの間に届いた applyState は
+      // 上書きされうるが、幅はごく狭く、次の読み取りで正しい値へ戻る。
       clearSettledUnconfirmed(fetched);
       return mergeTasteLearningState(
         queryClient.getQueryData<TasteLearningState>(queryKey),
@@ -162,8 +156,16 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
         if (outcome.kind === "unconfirmed") {
           // サーバー側は本当に未確定。確定するまで消えない警告を出し、スイッチは
           // 直近に観測したサーバー値のまま・楽観値には戻さない。
+          // 記録は query cache に利用者ごとに置くので、画面を離れて戻っても警告は消えない。
+          // 並行する別の書き込みの、より新しい記録は上書きしない。
           const record: TasteLearningUnconfirmed = { requestedEnabled: nextEnabled, expectedSeq };
-          queryClient.setQueryData<TasteLearningUnconfirmed | null>(unconfirmedKey, () => record);
+          queryClient.setQueryData<TasteLearningUnconfirmed | null>(unconfirmedKey, (prev) =>
+            nextTasteLearningUnconfirmed(
+              prev,
+              queryClient.getQueryData<TasteLearningState>(queryKey),
+              record,
+            ),
+          );
           return;
         }
         if (outcome.state.enabled === nextEnabled) {
@@ -252,7 +254,8 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
           <button
             type="button"
             className="secondary-button min-h-11"
-            disabled={unconfirmedRetryMutation.isPending}
+            // トグルの書き込み中に柵を送ると、その書き込みの連番を奪って偽の失敗表示を出すので止める
+            disabled={unconfirmedRetryMutation.isPending || tasteLearningMutation.isPending}
             onClick={() => {
               unconfirmedRetryMutation.mutate(unconfirmed);
             }}

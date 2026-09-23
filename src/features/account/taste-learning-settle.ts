@@ -25,6 +25,34 @@ export function mergeTasteLearningState(
   return { enabled: next.enabled, seq: next.seq };
 }
 
+/** 確定できなかった書き込みの記録。 */
+export type TasteLearningUnconfirmed = {
+  requestedEnabled: boolean;
+  expectedSeq: number;
+};
+
+/**
+ * 未確定の記録を置くときの判定。確定処理は数十秒かかりうるので、画面を開き直した後の
+ * 別の書き込みと並行しうる。古い書き込みの記録が新しい記録を上書きすると、新しい記録の
+ * 連番を超えた時点で古い記録ごと消え、新しい書き込みが後から通っても警告が出ない。
+ * そこで、既により新しい（または同じ）連番の記録があれば残す。また、cache が既に
+ * expectedSeq を超えた連番を観測していれば、その書き込みはもう適用されえないので置かない。
+ */
+export function nextTasteLearningUnconfirmed(
+  prev: TasteLearningUnconfirmed | null | undefined,
+  current: TasteLearningState | undefined,
+  record: TasteLearningUnconfirmed,
+): TasteLearningUnconfirmed | null {
+  const kept = prev ?? null;
+  if (current !== undefined && current.seq > record.expectedSeq) {
+    return kept;
+  }
+  if (kept !== null && kept.expectedSeq >= record.expectedSeq) {
+    return kept;
+  }
+  return record;
+}
+
 export type TasteLearningSettleDeps = {
   /** 現在値の読み取り（timeout 込み）。失敗は reject。 */
   read: () => Promise<TasteLearningState>;

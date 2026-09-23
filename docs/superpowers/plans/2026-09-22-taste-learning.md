@@ -2132,7 +2132,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Test: `src/features/account/taste-learning-api.test.ts`
 - Create: `src/features/account/taste-learning-section.tsx`（スイッチ本体。値の確定を前提にし、見出し・告知文・読み込み/エラー表示は持たない）
 - Test: `src/features/account/taste-learning-section.test.tsx`
-- Create: `src/features/account/taste-learning-settings-section.tsx`（データ配線。`useQuery`/`useMutation` と見出し・告知文・読み込み中/エラー表示を持つ。household 側は薄いラッパーを持たずこれを直接使う。値が未確認の間はスイッチ自体を出さず、一度読めた後の裏取り再読の失敗ではエラー表示・無効化をせず、再読み込み中はボタンをローディング行に差し替え、見出し id は `useId()`、書き込みは abort・裏取り invalidate を行う。timeout・失敗時は `settleTasteLearningWrite` で確定させる（読み取りの失敗も柵の失敗も「まだ分からない」として `TASTE_LEARNING_FENCE_ATTEMPTS` 回まで間隔をおいて試みる。I-1）。確定できなければ、未確定の記録 `{ requestedEnabled, expectedSeq }` を query cache（`tasteLearningKeys.unconfirmed(userId)`、`gcTime: Infinity`）に置き、画面を開き直しても消えない警告と再読み込みボタンを出す。記録は、観測したサーバー値の連番が `expectedSeq` を超えた時点で消す。すべての cache 反映（`useQuery` の `queryFn` 自身の成功時の置き換えも含む）は連番が cache より古ければ捨てる `mergeTasteLearningState` を経由し、remount をまたいだ巻き戻りを防ぐ（M-1）。share-consent-settings-section.tsx の再読ポーリングとは cross-reference コメントで対にする）
+- Create: `src/features/account/taste-learning-settings-section.tsx`（データ配線。`useQuery`/`useMutation` と見出し・告知文・読み込み中/エラー表示を持つ。household 側は薄いラッパーを持たずこれを直接使う。値が未確認の間はスイッチ自体を出さず、一度読めた後の裏取り再読の失敗ではエラー表示・無効化をせず、再読み込み中はボタンをローディング行に差し替え、見出し id は `useId()`、書き込みは abort・裏取り invalidate を行う。timeout・失敗時は `settleTasteLearningWrite` で確定させる（読み取りの失敗も柵の失敗も「まだ分からない」として `TASTE_LEARNING_FENCE_ATTEMPTS` 回まで間隔をおいて試みる。I-1）。確定できなければ、未確定の記録 `{ requestedEnabled, expectedSeq }` を query cache（`tasteLearningKeys.unconfirmed(userId)`、`gcTime: Infinity`）に置き、画面を開き直しても消えない警告と再読み込みボタンを出す。記録は、観測したサーバー値の連番が `expectedSeq` を超えた時点で消す。並行する別の書き込みの、より新しい連番の記録は上書きせず、cache が既に `expectedSeq` を超えた連番を観測していれば記録を置かない（`nextTasteLearningUnconfirmed`）。再読み込みボタンはトグルの書き込み中は押せない。すべての cache 反映（`useQuery` の `queryFn` 自身の成功時の置き換えも含む）は連番が cache より古ければ捨てる `mergeTasteLearningState` を経由し、remount をまたいだ巻き戻りを防ぐ（M-1）。share-consent-settings-section.tsx の再読ポーリングとは cross-reference コメントで対にする）
 - Test: `src/features/account/taste-learning-settings-section.test.tsx`
 - Create: `src/features/account/taste-learning-settle.ts`（成否の分からない書き込みを確定させる純粋関数 `settleTasteLearningWrite` と、連番の順序ガード `mergeTasteLearningState`。読み取り・書き込み・待機・cache 反映を注入する）
 - Test: `src/features/account/taste-learning-settle.test.ts`
@@ -2154,9 +2154,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 `src/features/account/taste-learning-section.test.tsx`: 値が enabled prop にそのまま追従すること（`useState` で最初の値へ固定しないこと）、トグル操作で `onToggle` が呼ばれること、失敗時に `role="alert"` で `tasteLearningCopy.failed` を表示し値が戻ること、失敗後にサーバー値が要求値へ追いついたら失敗表示を下げること、マウント後の prop 変化にスイッチが追従すること。
 
-`src/features/account/taste-learning-settle.test.ts`: タイマーを使わず、CAS を持つ偽サーバーと注入した依存で確かめる。滞留書き込みが commit 済みなら柵を送らず確定、未 commit なら現在値のまま読んだ連番で柵を送り後着の書き込みが捨てられること、読み取りと柵の間に滞留書き込みが commit して柵が `applied: false` でも確定すること、読み取りの失敗でも諦めず次の試行で確定すること、柵の失敗後は読み直して連番が進んでいれば柵を送らないこと、すべての試行が失敗すれば unconfirmed で待機は試行の間だけ（回数−1）であること、連番が同じ読み取りは要求値と一致していても確定扱いしないこと、`mergeTasteLearningState` が古い連番を捨て、同じか新しい連番とキャッシュ無しでは新しい値を採り、`applied` などの余分なキーを落とすこと。
+`src/features/account/taste-learning-settle.test.ts`: タイマーを使わず、CAS を持つ偽サーバーと注入した依存で確かめる。滞留書き込みが commit 済みなら柵を送らず確定、未 commit なら現在値のまま読んだ連番で柵を送り後着の書き込みが捨てられること、読み取りと柵の間に滞留書き込みが commit して柵が `applied: false` でも確定すること、読み取りの失敗でも諦めず次の試行で確定すること、柵の失敗後は読み直して連番が進んでいれば柵を送らないこと、すべての試行が失敗すれば unconfirmed で待機は試行の間だけ（回数−1）であること、連番が同じ読み取りは要求値と一致していても確定扱いしないこと、`mergeTasteLearningState` が古い連番を捨て、同じか新しい連番とキャッシュ無しでは新しい値を採り、`applied` などの余分なキーを落とすこと、柵の答えで確定したら次の試行へ進まず、試行 1 回でも確定を返すこと、`nextTasteLearningUnconfirmed` がより新しいか同じ連番の記録を残し、古い記録は置き換え、cache が既に超えた連番を見ていれば置かないこと。
 
-`src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチ自体が出ないこと（N-2）、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出てスイッチは出ず告知文は消えないこと（N-2）、再読み込み中はボタンを unmount せず disabled とローディング文言へ差し替えること（N-4/R-4）、初回読み込みで値がスイッチに反映されること、一度読み込めた後の裏取り再読の失敗ではスイッチを無効化せず読み込みエラーも出さないこと（N-3）、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること（詰まった裏取り再読に依存しないことを含む、N-6）、ユーザー操作なしのキャッシュ変化にもスイッチが追従すること（N-6）、書き込み失敗時に楽観値を経由してから元の値へ戻ることが観測できること（N-7）、書き込みが abort されると実クライアントと同じく reject すること。以下は CAS を持つテスト内の偽サーバー（`{ enabled, seq }`）で順序まで確かめる: 連番を運ぶ OFF→ON→OFF 往復、滞留した書き込みが再読より先に commit していれば成功扱いで柵を送らないこと、未 commit なら柵が通って失敗アラートとサーバー値を出し、後から届いた滞留書き込みが `applied: false` で捨てられ画面とキャッシュが変わらないこと、別端末による `applied: false` で値が違えば失敗アラートと真の値・同じなら成功扱い、書き込み失敗後の読み取りが失敗しても読み直してから柵を送り、滞留書き込みを捨てること（I-1）。加えて次の CAS follow-up 分を確かめる: 柵の `applied: false` が要求値と一致すれば成功扱いになること（M-2）、柵が数回失敗しても間隔をおいて再試行しどこかで答えが得られれば成功・失敗いずれかに確定し持続的な警告は出ないこと、`TASTE_LEARNING_FENCE_ATTEMPTS` 回すべて失敗すれば消えない未確定警告と再読み込みボタンを出すこと、その警告は unmount・再 mount（cache の掃除が走る時間をおいて）をまたいでも残り、ボタンは確かめている間 disabled で読み込み中の文言になり、確定すれば消え、まだ届かなければ残ること、連番が同じ読み取りでは記録を消さず、連番が進んだ読み取りでは画面操作なしに消えること、remount した新インスタンスの cache を、旧インスタンスの遅れた裏取り読み（連番が古い）が巻き戻さないこと。`useQuery` 自身のバックグラウンド fetch が古い値を返す経路も同じ連番ガードで守られていることを含む（M-1）。
+`src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチ自体が出ないこと（N-2）、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出てスイッチは出ず告知文は消えないこと（N-2）、再読み込み中はボタンを unmount せず disabled とローディング文言へ差し替えること（N-4/R-4）、初回読み込みで値がスイッチに反映されること、一度読み込めた後の裏取り再読の失敗ではスイッチを無効化せず読み込みエラーも出さないこと（N-3）、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること（詰まった裏取り再読に依存しないことを含む、N-6）、ユーザー操作なしのキャッシュ変化にもスイッチが追従すること（N-6）、書き込み失敗時に楽観値を経由してから元の値へ戻ることが観測できること（N-7）、書き込みが abort されると実クライアントと同じく reject すること。以下は CAS を持つテスト内の偽サーバー（`{ enabled, seq }`）で順序まで確かめる: 連番を運ぶ OFF→ON→OFF 往復、滞留した書き込みが再読より先に commit していれば成功扱いで柵を送らないこと、未 commit なら柵が通って失敗アラートとサーバー値を出し、後から届いた滞留書き込みが `applied: false` で捨てられ画面とキャッシュが変わらないこと、別端末による `applied: false` で値が違えば失敗アラートと真の値・同じなら成功扱い、書き込み失敗後の読み取りが失敗しても読み直してから柵を送り、滞留書き込みを捨てること（I-1）。加えて次の CAS follow-up 分を確かめる: 柵の `applied: false` が要求値と一致すれば成功扱いになること（M-2）、柵が数回失敗しても間隔をおいて再試行しどこかで答えが得られれば成功・失敗いずれかに確定し持続的な警告は出ないこと、`TASTE_LEARNING_FENCE_ATTEMPTS` 回すべて失敗すれば消えない未確定警告と再読み込みボタンを出すこと、その警告は unmount・再 mount（cache の掃除が走る時間をおいて）をまたいでも残り、ボタンは確かめている間 disabled で読み込み中の文言になり、確定すれば消え、まだ届かなければ残ること、連番が同じ読み取りでは記録を消さず、連番が進んだ読み取りでは画面操作なしに消えること、古い書き込みの未確定がより新しい記録を上書きしないこと、トグルの書き込み中は再読み込みボタンが押せないこと、remount した新インスタンスの cache を、旧インスタンスの遅れた裏取り読み（連番が古い）が巻き戻さないこと。`useQuery` 自身のバックグラウンド fetch が古い値を返す経路も同じ連番ガードで守られていることを含む（M-1）。
 
 `src/features/privacy/privacy-copy.test.ts` の既存アサーションを `/設定/u`（既存の「家族設定」でも通ってしまい実質何も検証しない）から `/好みの学習は設定でいつでも止められます/u`（停止手段の追記そのものを、止められる対象まで含めて検証する）へ差し替える。加えて、直近の献立の料理名を送ること（`/直近の献立（最大10献立）の料理名/u`）を別のテストで固定する。
 
@@ -2435,6 +2435,34 @@ export function mergeTasteLearningState(
   return { enabled: next.enabled, seq: next.seq };
 }
 
+/** 確定できなかった書き込みの記録。 */
+export type TasteLearningUnconfirmed = {
+  requestedEnabled: boolean;
+  expectedSeq: number;
+};
+
+/**
+ * 未確定の記録を置くときの判定。確定処理は数十秒かかりうるので、画面を開き直した後の
+ * 別の書き込みと並行しうる。古い書き込みの記録が新しい記録を上書きすると、新しい記録の
+ * 連番を超えた時点で古い記録ごと消え、新しい書き込みが後から通っても警告が出ない。
+ * そこで、既により新しい（または同じ）連番の記録があれば残す。また、cache が既に
+ * expectedSeq を超えた連番を観測していれば、その書き込みはもう適用されえないので置かない。
+ */
+export function nextTasteLearningUnconfirmed(
+  prev: TasteLearningUnconfirmed | null | undefined,
+  current: TasteLearningState | undefined,
+  record: TasteLearningUnconfirmed,
+): TasteLearningUnconfirmed | null {
+  const kept = prev ?? null;
+  if (current !== undefined && current.seq > record.expectedSeq) {
+    return kept;
+  }
+  if (kept !== null && kept.expectedSeq >= record.expectedSeq) {
+    return kept;
+  }
+  return record;
+}
+
 export type TasteLearningSettleDeps = {
   /** 現在値の読み取り（timeout 込み）。失敗は reject。 */
   read: () => Promise<TasteLearningState>;
@@ -2508,8 +2536,10 @@ import { tasteLearningCopy } from "./taste-learning-copy";
 import { TasteLearningSection } from "./taste-learning-section";
 import {
   mergeTasteLearningState,
+  nextTasteLearningUnconfirmed,
   settleTasteLearningWrite,
   type TasteLearningSettleResult,
+  type TasteLearningUnconfirmed,
 } from "./taste-learning-settle";
 import {
   TASTE_LEARNING_FENCE_ATTEMPTS,
@@ -2524,16 +2554,6 @@ export type TasteLearningSettingsSectionProps = {
 type TasteLearningToggleRequest = {
   nextEnabled: boolean;
   /** 画面が最後に読んだ連番。サーバーはこれと一致したときだけ書く。 */
-  expectedSeq: number;
-};
-
-/**
- * 確定できなかった書き込みの記録。query cache に利用者ごとに置くので、画面を
- * 離れて戻っても警告は消えない。サーバー値の連番が expectedSeq を超えたのを
- * 観測した時点で（その書き込みはもう適用されえないので）消す。
- */
-type TasteLearningUnconfirmed = {
-  requestedEnabled: boolean;
   expectedSeq: number;
 };
 
@@ -2625,6 +2645,8 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
       // 置き換えるため、applyState の連番ガードをすり抜けてしまう。バックグラウンド
       // refetch（focus 復帰など）の応答が、直近の書き込みの反映より後に届いた場合の
       // 巻き戻りを防ぐため、ここでも cache の連番と突き合わせてから返す。
+      // 突き合わせてから TanStack Query が data を置き換えるまでの間に届いた applyState は
+      // 上書きされうるが、幅はごく狭く、次の読み取りで正しい値へ戻る。
       clearSettledUnconfirmed(fetched);
       return mergeTasteLearningState(
         queryClient.getQueryData<TasteLearningState>(queryKey),
@@ -2657,8 +2679,16 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
         if (outcome.kind === "unconfirmed") {
           // サーバー側は本当に未確定。確定するまで消えない警告を出し、スイッチは
           // 直近に観測したサーバー値のまま・楽観値には戻さない。
+          // 記録は query cache に利用者ごとに置くので、画面を離れて戻っても警告は消えない。
+          // 並行する別の書き込みの、より新しい記録は上書きしない。
           const record: TasteLearningUnconfirmed = { requestedEnabled: nextEnabled, expectedSeq };
-          queryClient.setQueryData<TasteLearningUnconfirmed | null>(unconfirmedKey, () => record);
+          queryClient.setQueryData<TasteLearningUnconfirmed | null>(unconfirmedKey, (prev) =>
+            nextTasteLearningUnconfirmed(
+              prev,
+              queryClient.getQueryData<TasteLearningState>(queryKey),
+              record,
+            ),
+          );
           return;
         }
         if (outcome.state.enabled === nextEnabled) {
@@ -2747,7 +2777,8 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
           <button
             type="button"
             className="secondary-button min-h-11"
-            disabled={unconfirmedRetryMutation.isPending}
+            // トグルの書き込み中に柵を送ると、その書き込みの連番を奪って偽の失敗表示を出すので止める
+            disabled={unconfirmedRetryMutation.isPending || tasteLearningMutation.isPending}
             onClick={() => {
               unconfirmedRetryMutation.mutate(unconfirmed);
             }}
