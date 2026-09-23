@@ -83,6 +83,21 @@ describe("loadTasteHints", () => {
     expect(result.signals).toEqual(signals);
   });
 
+  it("accepts a 24-dish query result so recent dishes can be dropped before the 12 cap", async () => {
+    const likedDishes = Array.from({ length: 24 }, (_, index) => ({
+      dishName: `料理${String(index + 1)}`,
+      role: "main" as const,
+    }));
+    const result = await loadTasteHints({
+      ownerClient: makeOwnerClient({
+        data: { reason: null, ...signals, likedDishes },
+        error: null,
+      }),
+    });
+    expect(result.outcome).toBe("applied");
+    expect(result.signals?.likedDishes).toHaveLength(24);
+  });
+
   it("reports invalid_shape for a broken payload", async () => {
     const result = await loadTasteHints({
       ownerClient: makeOwnerClient({ data: { reason: null, likedDishes: "no" }, error: null }),
@@ -417,11 +432,25 @@ describe("sanitizeTasteHints", () => {
     expect(hints?.likedIngredients).toEqual(["ぶり", "大根"]);
   });
 
+  it("cuts liked dishes to 12 only after dropping recent dishes from a 24-dish query", () => {
+    const names = Array.from({ length: 24 }, (_, index) => `料理${String(index + 1)}`);
+    const wide: TasteSignals = {
+      ...signals,
+      likedDishes: names.map((dishName) => ({ dishName, role: "main" as const })),
+      dishIngredientIndex: [],
+    };
+    // 上位 10 件が最近の料理。落とした後の 11〜22 位が prompt に出る 12 件になる
+    const recent = names.slice(0, 10).map((dishName) => ({ dishName, role: "main" as const }));
+    expect(sanitizeTasteHints(wide, recent)?.likedDishes.map((dish) => dish.dishName)).toEqual(
+      names.slice(10, 22),
+    );
+  });
+
   it("keeps ingredients from liked dishes ranked past the likedDishes cap", () => {
     const many = Array.from({ length: 13 }, (_, index) => `料理${String(index + 1)}`);
     const wide: TasteSignals = {
       ...signals,
-      // SQL は likedDishes を 12 件で切るが、対応表は 13 件すべてを持つ
+      // likedDishes は上限で切れて届くが、対応表は上限の外の料理も持つ
       likedDishes: many.slice(0, 12).map((dishName) => ({ dishName, role: "main" as const })),
       likedIngredients: ["牛肉"],
       dishIngredientIndex: many.map((dishName, index) => ({

@@ -82,7 +82,9 @@
 
 ```sql
 begin;
-select plan(63);
+select plan(69);
+-- 最終レビュー修正で 6 件足した（各上限と同一献立内の重複）。以下の列挙は修正前のもので、
+-- 実体は supabase/tests/database/taste_signals.test.sql を正とする
 
 select tests.create_supabase_user('11111111-1111-4111-8111-111111111111', 'owner@example.invalid');
 select tests.create_supabase_user('22222222-2222-4222-8222-222222222222', 'other@example.invalid');
@@ -821,7 +823,7 @@ liked_dish_rows as (
   join public.dishes d on d.menu_id = l.id
   group by d.name
   order by pg_catalog.sum(l.score) desc, d.name
-  limit 12
+  limit 24  -- 最終レビュー Q3 で 12 から 24 へ（20260923190000 で置き換え。prompt の 12 件は Function が切る）
 ),
 -- 食材: 献立内の重複を潰してから派生グループ単位で数える。
 -- l.id を含めないと、同じグループ・同じ score の別献立が 1 行に潰れて重みが減る
@@ -3594,7 +3596,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **残る注意点**
 
-- Task 1 の pgTAP は `plan(52)` とアサーション数を一致させる。ケースのあいだで
+- Task 1 の pgTAP は `plan(69)` とアサーション数を一致させる（最終レビュー修正後の値）。ケースのあいだで
   `truncate public.menus cascade` を挟むこと（行を足し続けると強さ・時間帯・ジャンル比率が
   前のケースを巻き込む）。行を作る間はスーパーユーザーのままにし、RPC 直前だけ
   `tests.authenticate_as()` ＋ `set local role authenticated` に切り替える。

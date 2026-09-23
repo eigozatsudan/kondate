@@ -35,6 +35,12 @@ export const TASTE_GENRE_MIN_SHARE = 0.35 as const;
 
 /** prompt 肥大を防ぐ各上限 */
 export const TASTE_LIKED_DISHES_MAX = 12 as const;
+/**
+ * 集計関数（get_taste_signals）が返す likedDishes の上限。prompt へ出す 12 件より広く取り、
+ * Function 側が最近の料理を落とした後に TASTE_LIKED_DISHES_MAX へ切る。SQL 側はリテラル 24 を持ち、
+ * 境界は pgTAP が担保する。上位が最近の料理で埋まっても学習が空にならないようにする。
+ */
+export const TASTE_LIKED_DISHES_QUERY_MAX = 24 as const;
 export const TASTE_LIKED_GENRES_MAX = 2 as const;
 export const TASTE_LIKED_INGREDIENTS_MAX = 8 as const;
 export const TASTE_OVERUSED_INGREDIENTS_MAX = 3 as const;
@@ -82,6 +88,10 @@ export type TasteHints = z.infer<typeof tasteHintsSchema>;
 export const tasteSignalsSchema = z
   .object({
     ...tasteHintsSchema.shape,
+    // 最近の料理を落とす前の候補なので prompt の上限より広い。切り詰めは sanitize が行う
+    likedDishes: z
+      .array(z.object({ dishName: foodNameSchema, role: z.enum(dishRoles).optional() }))
+      .max(TASTE_LIKED_DISHES_QUERY_MAX),
     dishIngredientIndex: z.array(
       z.object({ dishName: foodNameSchema, ingredients: z.array(foodNameSchema) }),
     ),

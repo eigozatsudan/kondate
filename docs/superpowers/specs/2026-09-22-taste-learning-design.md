@@ -333,7 +333,7 @@ score(m)  = decay(m) * (
 
 | 出力 | 母集団 | 集計 |
 | --- | --- | --- |
-| `likedDishes` | `score > 0` | `dishes(name, role)` を score 合計降順。同名は 1 つに畳む。最大 12 |
+| `likedDishes` | `score > 0` | `dishes(name, role)` を score 合計降順。同名は 1 つに畳む。SQL は最大 24（`TASTE_LIKED_DISHES_QUERY_MAX`）。prompt へ出す 12 件（`TASTE_LIKED_DISHES_MAX`）への切り詰めは、§5.3 で最近の料理を落とした後に行う |
 | `likedIngredients` | `score > 0` | `dish_ingredients.name` を score 合計降順。**派生グループ 2 つ以上**（同一献立内の重複は 1 回。§4.4 と同じ数え方）。最大 8 |
 | `likedTimeBand` | `score > 0` | `menus.total_elapsed_minutes` の score 加重平均 → `<= 20` は `short`、`<= 40` は `standard`、それ以外は `slow`。1 値 |
 | `likedGenres` | `score > 0` **かつ `submission.cuisineGenre = 'any'`** | **`menus.cuisine_genre`**（生成結果のジャンル）別の score 合計 ÷ 母集団の score 合計 が 0.35 以上のジャンルのみ、最大 2 |
@@ -343,6 +343,12 @@ score(m)  = decay(m) * (
 指定した回のお気に入りは「利用者が自分で選んだジャンル」の写しでしかなく、学習として循環する。
 おまかせで生成された献立をお気に入りにしたときだけ、ジャンルは利用者の自由な選好を表す。
 加えて 3 値中 2 値が常に入るとヒントにならないため、比率 0.35 の下限を置く。
+
+**`likedDishes` を SQL で 24 件まで返す理由（最終レビュー Q3）。** SQL で 12 件に切ってから最近の料理を
+落とすと、上位が最近の料理で埋まる利用者ほど `likedDishes` が空になり、学習が効かない。
+SQL は候補を広めに返し、Function の `sanitizeTasteHints` が最近の料理を落とした後に 12 件へ切る。
+集計の戻り（`tasteSignalsSchema`）だけが 24 件まで受け、prompt と記録の形（`tasteHintsSchema`）は 12 件のままである。
+`20260923190000_taste_signals_liked_dishes_window.sql` で関数を置き換えた（あわせて減衰式を 1 回だけ計算する形にした。値は変わらない）。
 
 **比率を足す列は `menus.cuisine_genre`（生成結果）である。** 母集団の条件に使う
 `submission.cuisineGenre` を分子にも使うと、母集団は定義上すべて `any` なので結果は常に空になる。
@@ -498,7 +504,7 @@ idea モード（`safety: null`）ではアレルゲン由来の語が無く、`
 1. `recentDishHints` に出ている料理名を `likedDishes` から落とす。
    — 好きだが最近出した料理は、スタイルだけ汲んで料理は変える。軸分けの実装本体である。
 2. **1 で落とした料理にしか現れない食材を `likedIngredients` からも落とす。**
-   名前だけ消しても食材が残れば同じ皿に戻る。生き残りは 12 件で切れた `likedDishes` ではなく、
+   名前だけ消しても食材が残れば同じ皿に戻る。生き残りは上限で切れた `likedDishes` ではなく、
    上限の無い対応表の「最近でない料理」から数える（13 位以下の料理の食材を誤って消さない）。
    あわせて改行・制御文字・不可視の書式文字（`\p{Cc}` / `\p{Cf}` / `\p{Co}` / `\p{Cn}` / U+2028 / U+2029）と、
    異体字セレクタ（U+FE00–FE0F / U+E0100–E01EF）、ハングル・点字の空白字（U+3164 / U+115F / U+1160 / U+FFA0 / U+2800）を

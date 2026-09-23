@@ -1,5 +1,5 @@
 begin;
-select plan(63);
+select plan(69);
 
 select tests.create_supabase_user('11111111-1111-4111-8111-111111111111', 'owner@example.invalid');
 select tests.create_supabase_user('22222222-2222-4222-8222-222222222222', 'other@example.invalid');
@@ -72,6 +72,40 @@ begin
   end loop;
 
   return v_menu;
+end;
+$$;
+
+-- 既存の献立へ 2 品目以降を足す。同一献立内の重複食材のケース用
+create or replace function pg_temp.add_dish(
+  p_menu uuid,
+  p_position smallint,
+  p_dish_name text,
+  p_ingredients text[]
+) returns void
+language plpgsql
+as $$
+declare
+  v_dish uuid := gen_random_uuid();
+  v_position smallint := 0;
+  v_ingredient text;
+  v_created timestamptz;
+begin
+  select created_at into v_created from public.menus where id = p_menu;
+  insert into public.dishes (
+    id, menu_id, user_id, role, position, name, description, cooking_time_minutes, created_at
+  ) values (
+    v_dish, p_menu, '11111111-1111-4111-8111-111111111111', 'side', p_position, p_dish_name,
+    '説明', 10, v_created
+  );
+  foreach v_ingredient in array p_ingredients loop
+    v_position := v_position + 1;
+    insert into public.dish_ingredients (
+      menu_id, dish_id, user_id, position, name, quantity_text, store_section, created_at
+    ) values (
+      p_menu, v_dish, '11111111-1111-4111-8111-111111111111', v_position, v_ingredient,
+      '適量', 'other', v_created
+    );
+  end loop;
 end;
 $$;
 
@@ -394,6 +428,29 @@ select ok(
 select is(pg_temp.signals() -> 'likedIngredients', '["ん", "あ"]'::jsonb,
   'liked ingredients need two groups and sum every menu of equal score');
 
+-- 同一献立の 2 品に同じ食材があっても 1 回と数える（重みを倍にしない）。
+-- X: 2 品に X を持つ★の献立 (1.0) ＋ 別グループの★ (1.0) = 2.0。二重に数えると 3.0。
+-- Y: ★＋採用 (1.3) ＋ ★ (1.0) = 2.3。正しければ Y が X より前に来る
+truncate public.menus cascade;
+select pg_temp.add_dish(
+  pg_temp.seed_simple(gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, 'X主菜', array['X']),
+  2::smallint, 'X副菜', array['X']
+);
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, 'X2', array['X']);
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-22T00:00:00Z', true, true, 'Y1', array['Y']);
+select pg_temp.seed_simple(gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, 'Y2', array['Y']);
+select is(pg_temp.signals() -> 'likedIngredients', '["Y", "X"]'::jsonb,
+  'an ingredient shared by two dishes of one menu is weighted once');
+
+-- likedIngredients の上限 8: 2 グループに現れる食材 9 種のうち 8 種だけが出る
+truncate public.menus cascade;
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, '九種' || g::text,
+  array['食1', '食2', '食3', '食4', '食5', '食6', '食7', '食8', '食9']
+) from generate_series(1, 2) as g;
+select is(jsonb_array_length(pg_temp.signals() -> 'likedIngredients'), 8,
+  'likedIngredients stops at 8 when 9 qualify');
+
 -- ============ 使いすぎは派生グループ単位 ============
 truncate public.menus cascade;
 -- 2 グループでは出ない（★の有無は問わない。母集団は窓内の全献立）
@@ -440,6 +497,24 @@ select pg_temp.seed_simple(
 );
 select is(pg_temp.signals() -> 'overusedIngredients', '["豚肉"]'::jsonb,
   'malformed mainIngredients are skipped without failing the whole call');
+
+-- 同一献立の mainIngredients 内の重複は 1 回。2 グループ × 各 3 重複でも 2 回にしかならない
+truncate public.menus cascade;
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', false, false, '重複' || g::text,
+  array['たまねぎ'], 30::smallint, 'japanese', 'japanese', '["豚肉", "豚肉", "豚肉"]'::jsonb
+) from generate_series(1, 2) as g;
+select is(pg_temp.signals() -> 'overusedIngredients', '[]'::jsonb,
+  'a main ingredient repeated inside one menu counts once');
+
+-- overusedIngredients の上限 3: 3 グループに現れるメイン食材 4 種のうち 3 種だけが出る
+truncate public.menus cascade;
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-21T00:00:00Z', false, false, '四種' || g::text,
+  array['たまねぎ'], 30::smallint, 'japanese', 'japanese', '["豚肉", "鶏肉", "牛肉", "鮭"]'::jsonb
+) from generate_series(1, 3) as g;
+select is(jsonb_array_length(pg_temp.signals() -> 'overusedIngredients'), 3,
+  'overusedIngredients stops at 3 when 4 qualify');
 
 -- ============ 時間帯の境界は連続している ============
 truncate public.menus cascade;
@@ -565,16 +640,30 @@ select pg_temp.seed_menu(
 select is(pg_temp.signals() -> 'avoidAxes', '["child_unfriendly"]'::jsonb,
   'child_friendly in two derivation groups becomes a standing axis');
 
--- ============ 対応表に上限が無い ============
+-- ============ likedDishes の上限 24 と、対応表に上限が無いこと ============
 truncate public.menus cascade;
--- likedDishes は 12 件で切れるが、対応表は 13 件すべてを持つ。
--- ここを切ると §5.3 の差集合が両方向に壊れる
+-- likedDishes は 24 件で切れる（prompt の 12 件への切り詰めは Function が最近の料理を
+-- 落とした後に行う）。対応表は 25 件すべてを持つ。ここを切ると §5.3 の差集合が両方向に壊れる
 select pg_temp.seed_simple(gen_random_uuid(), '2026-09-21T00:00:00Z', true, false, '好き' || g::text)
-from generate_series(1, 13) as g;
+from generate_series(1, 25) as g;
 select is(
-  jsonb_array_length(pg_temp.signals() -> 'dishIngredientIndex'), 13,
+  jsonb_array_length(pg_temp.signals() -> 'likedDishes'), 24,
+  'likedDishes stops at 24 when 25 qualify'
+);
+select is(
+  jsonb_array_length(pg_temp.signals() -> 'dishIngredientIndex'), 25,
   'dishIngredientIndex covers every liked dish, past the likedDishes cap'
 );
+
+-- likedGenres の上限 2 は閾値 0.35 と和洋中 3 値の組み合わせで超えられない（3 × 0.35 > 1）。
+-- 3 値が等分なら 1 つも出ないことで、上限ではなく閾値が効いていることを固定する
+truncate public.menus cascade;
+select pg_temp.seed_simple(
+  gen_random_uuid(), '2026-09-22T00:00:00Z', true, false, genre || '料理',
+  array['にんじん'], 30::smallint, genre, 'any'
+) from unnest(array['japanese', 'western', 'chinese']) as genre;
+select is(pg_temp.signals() -> 'likedGenres', '[]'::jsonb,
+  'three equal genres stay below the share threshold');
 
 -- ============ 他人の献立は入らない ============
 select is(

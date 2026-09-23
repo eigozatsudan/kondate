@@ -5,6 +5,7 @@ import {
   TASTE_GENRE_MIN_SHARE,
   TASTE_HALF_LIFE_DAYS,
   TASTE_LIKED_DISHES_MAX,
+  TASTE_LIKED_DISHES_QUERY_MAX,
   TASTE_LIKED_GENRES_MAX,
   TASTE_LIKED_INGREDIENTS_MAX,
   TASTE_LIKED_INGREDIENT_MIN_COUNT,
@@ -50,6 +51,22 @@ describe("taste-hints contract", () => {
         likedDishes: Array.from({ length: 13 }, (_, index) => ({ dishName: `d${String(index)}` })),
       }).success,
     ).toBe(false);
+  });
+
+  it("lets the signals shape carry up to 24 liked dishes while hints stay at 12", () => {
+    // SQL は最近の料理を落とす前の候補として 24 件返し、Function が落とした後に 12 件へ切る
+    expect(TASTE_LIKED_DISHES_QUERY_MAX).toBe(24);
+    const dishes = (length: number) =>
+      Array.from({ length }, (_, index) => ({ dishName: `d${String(index)}` }));
+    const signalsWith = (length: number) => ({
+      ...empty,
+      likedDishes: dishes(length),
+      dishIngredientIndex: [],
+    });
+    expect(tasteSignalsSchema.safeParse(signalsWith(24)).success).toBe(true);
+    expect(tasteSignalsSchema.safeParse(signalsWith(25)).success).toBe(false);
+    expect(tasteHintsSchema.safeParse({ ...empty, likedDishes: dishes(12) }).success).toBe(true);
+    expect(tasteHintsSchema.safeParse({ ...empty, likedDishes: dishes(13) }).success).toBe(false);
   });
 
   it("accepts the signals shape with the index but not the hints shape", () => {
