@@ -404,6 +404,7 @@ export async function runPaidBenchmarkUnit(input: {
     deadlineAtMonotonicMs: requestStartedAtMonotonicMs + benchmarkTotalBudgetMs,
     regeneration: null,
     recentDishHints: [],
+    tasteHints: null,
   };
   const sender = createOpenRouterGenerationSender({
     apiKey: input.apiKey,

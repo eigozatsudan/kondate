@@ -9,6 +9,7 @@ import type { GenerationContext } from "../../../shared/safety/generation-contex
 import {
   DIVERSITY_HINTS_ENABLED,
   DIVERSITY_PARAGRAPH,
+  DIVERSITY_PARAGRAPH_WITH_TASTE,
   type RecentDishHint,
 } from "./diversity-hints.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
@@ -24,6 +25,7 @@ import {
 import type { OpenRouterMessage } from "./openrouter.js";
 import { requireRegenerationArtifacts } from "./regeneration-context.js";
 import { lookupStapleDishes } from "./staple-dish-catalog.js";
+import { TASTE_HINTS_ENABLED, TASTE_PARAGRAPH, isTasteHintsEnabled } from "./taste-hints.js";
 
 export type PromptPreferences = {
   mealType: GenerationContext["submission"]["mealType"];
@@ -280,22 +282,29 @@ function buildSystemPrompt(targetMode: GenerationContext["targetMode"]): string 
 
 /**
  * new_menu 用 system 合成:
- * CORE_BODY(キッチン flag) + (flag on なら DIVERSITY) + SEASON + mode extra
+ * CORE_BODY(キッチン flag) + (flag on なら DIVERSITY) + (flag on なら TASTE) + SEASON + mode extra
  */
 function buildNewMenuSystemPrompt(
   targetMode: GenerationContext["targetMode"],
   diversityEnabled: boolean,
   noveltyEnabled: boolean,
+  tasteEnabled: boolean,
 ): string {
   // 再生成と同じ CORE builder。new_menu 専用スロットにだけキッチンを置くのは禁止（L12）
   const coreBody = buildGenerationSystemPromptCoreBody(readHouseholdKitchenPromptEnabledFlag());
-  const diversity = diversityEnabled ? DIVERSITY_PARAGRAPH : "";
+  // 優先順位の文は 1 つの system 文に 1 回だけ。学習が載る版では多様性側から外す
+  const diversity = diversityEnabled
+    ? tasteEnabled
+      ? DIVERSITY_PARAGRAPH_WITH_TASTE
+      : DIVERSITY_PARAGRAPH
+    : "";
+  const taste = tasteEnabled ? TASTE_PARAGRAPH : "";
   const novelty = noveltyEnabled ? NOVELTY_PARAGRAPH : "";
   const modeExtra =
     targetMode === "idea"
       ? GENERATION_SYSTEM_PROMPT_IDEA_EXTRA
       : GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA;
-  return `${coreBody}${diversity}${novelty}${GENERATION_SYSTEM_PROMPT_SEASON}${modeExtra}`;
+  return `${coreBody}${diversity}${taste}${novelty}${GENERATION_SYSTEM_PROMPT_SEASON}${modeExtra}`;
 }
 
 /**
@@ -310,6 +319,11 @@ function readDiversityHintsEnabledFlag(): boolean {
 /** ひねり kill-switch を実行時 boolean として読む（diversity と同型） */
 function readNoveltyHintsEnabledFlag(): boolean {
   return isEnabledFlag(NOVELTY_HINTS_ENABLED);
+}
+
+/** 学習 kill-switch を実行時 boolean として読む（diversity と同型） */
+function readTasteHintsEnabledFlag(): boolean {
+  return isTasteHintsEnabled(TASTE_HINTS_ENABLED);
 }
 
 /**
@@ -562,10 +576,14 @@ export function buildGenerationMessages(
           NOVELTY_EXCLUDED_DISHES_MAX,
         )
       : [];
+    // 学習ヒントは配線側で sanitize 済み。ここでは載せるかどうかだけを決める
+    const tasteHints = readTasteHintsEnabledFlag() ? (context.tasteHints ?? null) : null;
+    const tasteEnabled = tasteHints !== null;
     const systemContent = buildNewMenuSystemPrompt(
       context.generationContext.targetMode,
       diversityEnabled,
       noveltyEnabled,
+      tasteEnabled,
     );
     const userMessage = base.find((message) => message.role === "user");
     const basePayload =
@@ -573,9 +591,12 @@ export function buildGenerationMessages(
         ? parseBaseUserPayload(userMessage.content)
         : {};
     // recentDishHints は new_menu user payload にのみ常時配列で付与
-    const payload = noveltyEnabled
-      ? { ...basePayload, recentDishHints, noveltyExcludedDishes }
-      : { ...basePayload, recentDishHints };
+    const payload = {
+      ...basePayload,
+      recentDishHints,
+      ...(noveltyEnabled ? { noveltyExcludedDishes } : {}),
+      ...(tasteEnabled ? { tasteHints } : {}),
+    };
     const serialized = serializePromptPayload(payload);
     return [
       { role: "system", content: systemContent },

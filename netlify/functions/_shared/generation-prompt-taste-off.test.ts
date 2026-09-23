@@ -1,5 +1,5 @@
 /**
- * L13 off 時の prompt 合成。DIVERSITY_HINTS_ENABLED を mock するため専用ファイルにする。
+ * 学習 kill-switch off 時の prompt 合成。TASTE_HINTS_ENABLED を mock するため専用ファイルにする。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -8,22 +8,33 @@ import {
 } from "../../../shared/testing/factories.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import type { TasteHints } from "../../../shared/contracts/taste-hints.js";
 
-const diversityState = vi.hoisted(() => ({ enabled: false }));
+const tasteState = vi.hoisted(() => ({ enabled: false }));
 
-vi.mock("./diversity-hints.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./diversity-hints.js")>();
+vi.mock("./taste-hints.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./taste-hints.js")>();
   return {
     ...actual,
-    get DIVERSITY_HINTS_ENABLED() {
-      return diversityState.enabled;
+    get TASTE_HINTS_ENABLED() {
+      return tasteState.enabled;
     },
   };
 });
 
-import { DIVERSITY_SYSTEM_MARKER } from "./diversity-hints.js";
+import { TASTE_SYSTEM_MARKER } from "./taste-hints.js";
 import { buildGenerationMessages } from "./generation-prompt.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
+
+const someTasteHints: TasteHints = {
+  likedDishes: [{ dishName: "ぶり大根", role: "main" }],
+  likedGenres: ["japanese"],
+  likedIngredients: ["大根"],
+  likedTimeBand: "standard",
+  overusedIngredients: ["豚肉"],
+  avoidAxes: [],
+  signalStrength: "medium",
+};
 
 function asNewMenuExecution(
   context: GenerationContext,
@@ -49,31 +60,27 @@ function asNewMenuExecution(
     startedAtMonotonicMs: 0,
     deadlineAtMonotonicMs: 50_000,
     regeneration: null,
-    // flag off でも execution に載っていても payload は [] にする
-    recentDishHints: [{ dishName: "無視される料理", role: "main" }],
-    tasteHints: null,
+    recentDishHints: [],
+    // flag off でも execution に載っていても段落・キーは出さない
+    tasteHints: someTasteHints,
   };
 }
 
-describe("buildGenerationMessages L13 off", () => {
+describe("buildGenerationMessages taste off", () => {
   beforeEach(() => {
-    diversityState.enabled = false;
+    tasteState.enabled = false;
   });
 
-  it("L13 off: payload []; no DIVERSITY_SYSTEM_MARKER", () => {
+  it("taste off: no TASTE_SYSTEM_MARKER; no tasteHints key", () => {
     const contexts: GenerationContext[] = [makeGenerationContext(), makeIdeaGenerationContext()];
     for (const context of contexts) {
       const messages = buildGenerationMessages(asNewMenuExecution(context));
       const systemMessage = messages.find((message) => message.role === "system");
       const system = typeof systemMessage?.content === "string" ? systemMessage.content : "";
-      expect(system).not.toContain(DIVERSITY_SYSTEM_MARKER);
+      expect(system).not.toContain(TASTE_SYSTEM_MARKER);
       const userMessage = messages.find((message) => message.role === "user");
       const userContent = typeof userMessage?.content === "string" ? userMessage.content : "";
-      const serialized = userContent
-        .replace("<kondate_input_data>\n", "")
-        .replace("\n</kondate_input_data>", "");
-      const payload = JSON.parse(serialized) as { recentDishHints?: unknown };
-      expect(payload.recentDishHints).toEqual([]);
+      expect(userContent).not.toContain("tasteHints");
     }
   });
 });

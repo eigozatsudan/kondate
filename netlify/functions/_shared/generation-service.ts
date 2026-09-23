@@ -17,6 +17,7 @@ import {
   type MenuValidationResult,
   type ValidatedMenu,
 } from "../../../shared/contracts/generation.js";
+import type { TasteHints } from "../../../shared/contracts/taste-hints.js";
 import {
   createCurrentSafetyFingerprint,
   createFinalizeSafetyFingerprint,
@@ -133,6 +134,8 @@ export type GenerationExecutionContext =
       regeneration: null;
       /** soft diversity 用。空配列可。fingerprint / quota に含めない */
       recentDishHints: readonly RecentDishHint[];
+      /** 学習ヒント。安全フィルタと sanitize 済みの確定形。同じく fingerprint / quota に含めない */
+      tasteHints: TasteHints | null;
     })
   | (ExecutionBase & {
       kind: "regenerate_menu";
@@ -479,6 +482,8 @@ function createBaseGenerationDeps(
         startedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
         deadlineAtMonotonicMs,
         regeneration: null,
+        // 実値の配線は Task 6。ここでは必須フィールドを型どおり埋めるだけ
+        tasteHints: null,
       };
     },
     validatePreflight: validateGenerationPreflight,

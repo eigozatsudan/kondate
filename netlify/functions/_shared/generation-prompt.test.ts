@@ -8,8 +8,10 @@ import {
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
+import type { TasteHints } from "../../../shared/contracts/taste-hints.js";
 import { DIVERSITY_SYSTEM_MARKER, type RecentDishHint } from "./diversity-hints.js";
 import { NOVELTY_SYSTEM_MARKER } from "./novelty-hints.js";
+import { TASTE_SYSTEM_MARKER } from "./taste-hints.js";
 import {
   GENERATION_SYSTEM_PROMPT_CORE,
   GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA,
@@ -23,10 +25,21 @@ import {
   HOUSEHOLD_KITCHEN_PARAGRAPH,
 } from "./household-kitchen-prompt.js";
 
+const someTasteHints: TasteHints = {
+  likedDishes: [{ dishName: "ぶり大根", role: "main" }],
+  likedGenres: ["japanese"],
+  likedIngredients: ["大根"],
+  likedTimeBand: "standard",
+  overusedIngredients: ["豚肉"],
+  avoidAxes: [],
+  signalStrength: "medium",
+};
+
 /** 既存テストが GenerationContext を渡していた互換ラッパ（new_menu 実行文脈） */
 function asNewMenuExecution(
   context: GenerationContext,
   recentDishHints: readonly RecentDishHint[] = [],
+  tasteHints: TasteHints | null = null,
 ): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
   return {
     kind: "new_menu",
@@ -50,6 +63,7 @@ function asNewMenuExecution(
     deadlineAtMonotonicMs: 50_000,
     regeneration: null,
     recentDishHints,
+    tasteHints,
   };
 }
 
@@ -881,6 +895,45 @@ describe("novelty hints", () => {
       expect(message.content).not.toContain("noveltyExcludedDishes");
       expect(message.content).not.toContain("noveltyPreference");
     }
+  });
+});
+
+describe("taste hints", () => {
+  it("adds the taste paragraph and payload key only for new_menu", () => {
+    const messages = buildGenerationMessages(
+      asNewMenuExecution(makeGenerationContext(), [], someTasteHints),
+    );
+    const system = messages.find((message) => message.role === "system");
+    const user = messages.find((message) => message.role === "user");
+    expect(system?.content).toContain(TASTE_SYSTEM_MARKER);
+    expect(user?.content).toContain("tasteHints");
+    // 料理名は system 文へ連結しない（user JSON のエスケープ経由だけ）
+    expect(system?.content).not.toContain("ぶり大根");
+  });
+
+  it("states the priority order exactly once", () => {
+    const messages = buildGenerationMessages(
+      asNewMenuExecution(makeGenerationContext(), [], someTasteHints),
+    );
+    const system = systemText(messages);
+    expect(system.split("優先順位は次のとおりです。").length - 1).toBe(1);
+  });
+
+  it("omits the key entirely when there are no hints", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext(), [], null));
+    const user = messages.find((message) => message.role === "user");
+    expect(user?.content).not.toContain("tasteHints");
+    expect(messages.find((message) => message.role === "system")?.content).not.toContain(
+      TASTE_SYSTEM_MARKER,
+    );
+  });
+
+  it("keeps output byte-identical to the pre-taste prompt when hints are null", () => {
+    const withoutTasteFlow = buildGenerationMessages(asNewMenuExecution(makeGenerationContext()));
+    const explicitNull = buildGenerationMessages(
+      asNewMenuExecution(makeGenerationContext(), [], null),
+    );
+    expect(explicitNull).toEqual(withoutTasteFlow);
   });
 });
 

@@ -415,6 +415,7 @@ describe("POST /api/generations/menu", () => {
       deadlineAtMonotonicMs: 50_000,
       regeneration: null,
       recentDishHints: [],
+      tasteHints: null,
     };
     const loadExecutionContext = vi.fn(() => Promise.resolve(executionContext));
     const validatePreflight = vi.fn(() => ({ ok: true as const }));

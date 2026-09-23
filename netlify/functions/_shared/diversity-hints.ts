@@ -26,6 +26,16 @@ export const DIVERSITY_PARAGRAPH =
   "避けられない場合、履歴が空の場合、他の制約と両立できない場合は通常どおりoutcome=successで返してください。" +
   "多様性だけを理由にconstraint_conflictにしないでください。";
 
+/**
+ * 学習段落が同じ system 文に載るときの多様性段落。
+ * 優先順位の文は学習段落側が持つため、ここでは番号を繰り返さない。
+ */
+export const DIVERSITY_PARAGRAPH_WITH_TASTE =
+  DIVERSITY_SYSTEM_MARKER +
+  "可能ならrecentDishHintsの料理名・役割が近い案は避けてください。" +
+  "避けられない場合、履歴が空の場合、他の制約と両立できない場合は通常どおりoutcome=successで返してください。" +
+  "多様性だけを理由にconstraint_conflictにしないでください。";
+
 type DishEmbedRow = {
   id: string;
   name: string | null;

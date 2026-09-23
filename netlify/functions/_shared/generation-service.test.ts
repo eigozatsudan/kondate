@@ -161,6 +161,7 @@ function makeNewMenuExecutionContext(
     startedAtMonotonicMs?: number;
     deadlineAtMonotonicMs?: number;
     recentDishHints?: Extract<GenerationExecutionContext, { kind: "new_menu" }>["recentDishHints"];
+    tasteHints?: Extract<GenerationExecutionContext, { kind: "new_menu" }>["tasteHints"];
   } = {},
 ): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
   const generationContext = overrides.generationContext ?? makeGenerationContext();
@@ -178,6 +179,7 @@ function makeNewMenuExecutionContext(
     deadlineAtMonotonicMs: overrides.deadlineAtMonotonicMs ?? 55_000,
     regeneration: null,
     recentDishHints: overrides.recentDishHints ?? [],
+    tasteHints: overrides.tasteHints ?? null,
   };
 }
 
@@ -2081,6 +2083,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
       deadlineAtMonotonicMs,
       regeneration: null,
       recentDishHints: [...hints],
+      tasteHints: null,
     });
     expect(loadGenerationContextMock).toHaveBeenCalledWith(user, loadRequestId, command.request);
     expect(createUserScopedSupabaseMock).toHaveBeenCalledWith(user.accessToken);

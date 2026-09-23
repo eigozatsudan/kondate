@@ -662,6 +662,7 @@ function asNewMenuExecution(
     deadlineAtMonotonicMs: 50_000,
     regeneration: null,
     recentDishHints: [],
+    tasteHints: null,
   };
 }
 

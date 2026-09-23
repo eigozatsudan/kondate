@@ -25,6 +25,27 @@ export const TASTE_HINTS_ENABLED = true as const;
 export const TASTE_SYSTEM_MARKER = "【学習】" as const;
 export const TASTE_HINTS_TIMEOUT_MS = 200 as const;
 
+/**
+ * system 文の学習段落。先頭マーカーでテスト・運用識別する。
+ * 値は載せない（料理名・食材名は user JSON の tasteHints にだけ出す）。
+ */
+export const TASTE_PARAGRAPH =
+  TASTE_SYSTEM_MARKER +
+  "優先順位は次のとおりです。" +
+  "1)アレルギー・必須安全・must_use・品数・時間、" +
+  "2)当日のpreferences（メイン食材・避けたい等）、" +
+  "3)tasteHintsが示す好みのスタイル、" +
+  "4)最近の料理に近くないこと（recentDishHints）、" +
+  "5)季節。" +
+  "tasteHints.likedDishesは、味の方向と調理法の傾向を汲むための材料です。" +
+  "そこに挙げた料理名をそのまま出すためのリストとして使わないでください。" +
+  "tasteHints.likedTimeBandとlikedGenresは、当日のpreferencesに指定があるときは無視してください。" +
+  "tasteHints.signalStrengthがweakのときは参考程度に留めてください。" +
+  "tasteHints.overusedIngredientsは連続を避ける対象であり、禁止食材ではありません。" +
+  "tasteHints.avoidAxesは献立全体の寄せ方であり、constraint_conflictの理由にしないでください。" +
+  "学習と他の制約が両立しないときは、通常どおりoutcome=successで返してください。" +
+  "学習だけを理由にconstraint_conflictにしないでください。";
+
 export type TasteHintsOutcome =
   | "disabled_flag"
   | "disabled_user"
