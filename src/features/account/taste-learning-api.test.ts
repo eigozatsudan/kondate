@@ -61,3 +61,14 @@ it("rejects a malformed write payload instead of trusting raw data", async () =>
 
   await expect(setTasteLearningEnabled(client, true)).rejects.toThrow();
 });
+
+it("N-1: forwards an AbortSignal to rpc().abortSignal() without changing the no-signal call shape", async () => {
+  const signal = new AbortController().signal;
+  const abortSignal = vi.fn().mockResolvedValue({ data: false, error: null });
+  const rpc = vi.fn().mockReturnValue({ abortSignal });
+  const client = { rpc } as never;
+
+  await expect(setTasteLearningEnabled(client, false, { signal })).resolves.toBe(false);
+  expect(rpc).toHaveBeenCalledWith("set_taste_learning_enabled", { p_enabled: false });
+  expect(abortSignal).toHaveBeenCalledWith(signal);
+});

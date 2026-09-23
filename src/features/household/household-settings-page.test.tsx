@@ -4634,6 +4634,20 @@ it("H9: keeps account surfaces when allergen catalog fails and closes the allerg
   expect(screen.getByText("アレルギー候補を読み込めませんでした。")).toBeVisible();
 });
 
+// N-5: 好みの学習セクションが登録済み家族ありの分岐にも差し込まれていることを固定する
+it("renders the taste-learning section in the with-members branch", async () => {
+  await renderSettings();
+
+  expect(await screen.findByLabelText("好みの学習")).toBeVisible();
+});
+
+// N-5: 好みの学習セクションが未登録（家族ゼロ）の分岐にも差し込まれていることを固定する
+it("renders the taste-learning section in the no-members branch", async () => {
+  await renderSettings({ listMembers: vi.fn().mockResolvedValue([]) });
+
+  expect(await screen.findByLabelText("好みの学習")).toBeVisible();
+});
+
 // H15: catalog / aliases 未確定では「下の一覧から削除できます」を出さず、残針のまま complete しない
 // （onboarding H15 相当。Editor が無いのに削除できると書くのを防ぐ）
 it.each(["catalog", "aliases"] as const)(

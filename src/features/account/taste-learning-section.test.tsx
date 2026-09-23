@@ -19,10 +19,26 @@ describe("TasteLearningSection", () => {
     });
   });
 
-  it("restores the previous state when the update fails", async () => {
-    const onToggle = vi.fn().mockRejectedValue(new Error("boom"));
+  it("restores the previous state after observing the optimistic value mid-flight (N-7)", async () => {
+    let rejectToggle: (error: Error) => void = () => undefined;
+    const onToggle = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectToggle = reject;
+        }),
+    );
     render(<TasteLearningSection enabled={true} onToggle={onToggle} />);
-    await userEvent.click(await screen.findByRole("switch", { name: "好みの学習" }));
+    const toggle = await screen.findByRole("switch", { name: "好みの学習" });
+
+    await userEvent.click(toggle);
+
+    // 書き込み中は楽観値（OFF）を見せている
+    await waitFor(() => {
+      expect(toggle).not.toBeChecked();
+    });
+
+    rejectToggle(new Error("boom"));
+
     await waitFor(() => {
       expect(screen.getByRole("switch", { name: "好みの学習" })).toBeChecked();
     });
