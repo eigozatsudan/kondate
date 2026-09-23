@@ -6,7 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { tasteLearningCopy } from "./taste-learning-copy";
 import { tasteLearningKeys } from "./taste-learning-api";
 import { TasteLearningSettingsSection } from "./taste-learning-settings-section";
-import { TASTE_LEARNING_TOGGLE_TIMEOUT_MS } from "./taste-learning-timing";
+import {
+  TASTE_LEARNING_FENCE_RETRY_DELAY_MS,
+  TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
+} from "./taste-learning-timing";
 
 const getTasteLearningStateMock = vi.hoisted(() => vi.fn());
 const setTasteLearningEnabledMock = vi.hoisted(() => vi.fn());
@@ -707,29 +710,168 @@ describe("TasteLearningSettingsSection", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("invalidates and shows the failure alert when the reconcile read fails", async () => {
-    getTasteLearningStateMock
-      .mockResolvedValueOnce({ enabled: true, seq: 0 })
-      .mockRejectedValueOnce(new Error("read failed"))
-      .mockResolvedValue({ enabled: true, seq: 0 });
-    setTasteLearningEnabledMock.mockRejectedValue(new Error("boom"));
-    renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
-    const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
-    await waitFor(() => {
-      expect(toggle).toBeChecked();
-    });
+  it("still fences the stalled write when the first reconcile read fails (I-1)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const server = createFakeServer({ enabled: false, seq: 0 });
+      wireServer(server);
+      getTasteLearningStateMock
+        .mockImplementationOnce(() => Promise.resolve(server.read())) // 初期読み込み
+        .mockRejectedValueOnce(new Error("read failed")); // 書き込み失敗後の 1 回目の読み
+      const stalled = stallNextWrite(server);
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
+      const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+      await waitFor(() => {
+        expect(toggle).not.toBeChecked();
+      });
 
-    await userEvent.click(toggle);
+      await user.click(toggle);
+      await waitFor(() => {
+        expect(setTasteLearningEnabledMock).toHaveBeenCalledTimes(1);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TASTE_LEARNING_TOGGLE_TIMEOUT_MS + 50);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TASTE_LEARNING_FENCE_RETRY_DELAY_MS + 50);
+      });
 
-    await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.failed);
-    });
-    // 読めなかったので柵は送らない
-    expect(setTasteLearningEnabledMock).toHaveBeenCalledTimes(1);
-    await waitFor(() => {
-      expect(getTasteLearningStateMock).toHaveBeenCalledTimes(3);
-    });
-    expect(getSwitch()).toBeChecked();
-    expect(getSwitch()).toBeEnabled();
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.failed);
+      });
+      // 読み取りに失敗しても諦めず、読み直してから柵を送っている
+      expect(setTasteLearningEnabledMock).toHaveBeenCalledTimes(2);
+      expect(server.state).toEqual({ enabled: false, seq: 1 });
+      // 滞留していた ON は今ごろ届いても捨てられる
+      expect(stalled.arrive().applied).toBe(false);
+      expect(getSwitch()).not.toBeChecked();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe("unconfirmed writes", () => {
+    /** down の間は読み書きがすべて失敗する偽サーバーをつなぐ。 */
+    function wireFlakyServer(server: FakeServer) {
+      const link = { down: false };
+      getTasteLearningStateMock.mockImplementation(() =>
+        link.down ? Promise.reject(new Error("offline")) : Promise.resolve(server.read()),
+      );
+      setTasteLearningEnabledMock.mockImplementation(
+        (_client: unknown, enabled: boolean, expectedSeq: number) =>
+          link.down
+            ? Promise.reject(new Error("offline"))
+            : Promise.resolve(server.cas(enabled, expectedSeq)),
+      );
+      return link;
+    }
+
+    async function renderAndGoUnconfirmed(client: QueryClient, server: FakeServer) {
+      const link = wireFlakyServer(server);
+      const view = renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+      await waitFor(() => {
+        expect(toggle).toBeChecked();
+      });
+      link.down = true;
+      await userEvent.click(toggle);
+      await waitFor(
+        () => {
+          expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.unconfirmed);
+        },
+        { timeout: 10_000 },
+      );
+      return { link, view };
+    }
+
+    it("keeps the unconfirmed alert across a remount and clears it through the retry button", async () => {
+      const client = makeClient();
+      const server = createFakeServer({ enabled: true, seq: 0 });
+      const { link, view } = await renderAndGoUnconfirmed(client, server);
+
+      view.unmount();
+      // 画面を離れている間に、使われていない cache の掃除が走るだけの時間をおく
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      // 画面を開き直しても、確定していない以上は警告を出し続ける
+      expect(await screen.findByRole("alert")).toHaveTextContent(tasteLearningCopy.unconfirmed);
+      expect(getSwitch()).toBeChecked();
+
+      link.down = false;
+      let releaseRead: () => void = () => undefined;
+      getTasteLearningStateMock.mockImplementationOnce(
+        () =>
+          new Promise<TasteLearningState>((resolve) => {
+            releaseRead = () => {
+              resolve(server.read());
+            };
+          }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
+      );
+      // 確かめている間はボタンを残したまま disabled + 読み込み中の文言にする
+      expect(await screen.findByRole("button", { name: tasteLearningCopy.loading })).toBeDisabled();
+
+      releaseRead();
+      await waitFor(() => {
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      });
+      // 連番が進んでいなかったので柵で閉じた
+      expect(server.state).toEqual({ enabled: true, seq: 1 });
+      expect(getSwitch()).toBeChecked();
+    }, 15_000);
+
+    it("keeps the alert while the retry still cannot reach the server", async () => {
+      const client = makeClient();
+      const server = createFakeServer({ enabled: true, seq: 0 });
+      await renderAndGoUnconfirmed(client, server);
+
+      const readsBefore = getTasteLearningStateMock.mock.calls.length;
+      await userEvent.click(
+        screen.getByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
+      );
+      await waitFor(() => {
+        expect(getTasteLearningStateMock.mock.calls.length).toBe(readsBefore + 1);
+      });
+      expect(
+        await screen.findByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
+      ).toBeEnabled();
+      expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.unconfirmed);
+    }, 15_000);
+
+    it("clears the alert on its own once any read shows the seq moved past the unconfirmed write", async () => {
+      const client = makeClient();
+      const server = createFakeServer({ enabled: true, seq: 0 });
+      const { link } = await renderAndGoUnconfirmed(client, server);
+      link.down = false;
+
+      // 連番が同じ読み取りでは、滞留中の書き込みがまだ通りうるので消さない
+      const readsBefore = getTasteLearningStateMock.mock.calls.length;
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: tasteLearningKeys.current("user-1") });
+      });
+      expect(getTasteLearningStateMock.mock.calls.length).toBe(readsBefore + 1);
+      // 画面への通知は非同期なので、記録そのものが残っていることを直接確かめる
+      expect(client.getQueryData(tasteLearningKeys.unconfirmed("user-1"))).toEqual({
+        requestedEnabled: false,
+        expectedSeq: 0,
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent(tasteLearningCopy.unconfirmed);
+
+      // 滞留していた OFF が届いた（または別端末が書いた）後の読み取りで消える
+      server.cas(false, 0);
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: tasteLearningKeys.current("user-1") });
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      });
+      expect(getSwitch()).not.toBeChecked();
+      expect(client.getQueryData(tasteLearningKeys.unconfirmed("user-1"))).toBeNull();
+    }, 15_000);
   });
 });

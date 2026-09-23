@@ -97,4 +97,6 @@ export async function setTasteLearningEnabled(
 /** 好みの学習設定の React Query キー。share-consent-queries と同じ命名規則。 */
 export const tasteLearningKeys = {
   current: (userId: string) => ["taste-learning", "current", userId] as const,
+  /** 確定できなかった書き込みの記録（サーバーへは問い合わせない、画面側だけの状態）。 */
+  unconfirmed: (userId: string) => ["taste-learning", "unconfirmed", userId] as const,
 };

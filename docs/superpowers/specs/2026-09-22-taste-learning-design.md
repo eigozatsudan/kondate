@@ -644,27 +644,30 @@ taste_hints_outcome: TasteHintsOutcome   // §5.1 の 8 値のみ
 - `applied: false`（別端末などが先に変えた）なら戻り値のサーバー値を cache へ書く。要求値と
   同じなら成功扱い、違えば失敗表示を出す。
 - timeout・abort・その他の書き込み失敗では、応答が無くても commit 済みかもしれない。
-  1. 現在値を 1 回読む（同じ timeout）。要求値と一致すれば commit 済みなので成功扱い。
-  2. 一致しなければ、現在値のまま読んだ連番で**柵**の書き込みを送る。値は変えず連番だけを進めるので、
-     滞留中の古い書き込みが後から届いても連番が合わずサーバーで捨てられる。
-     柵が `applied: true` なら結果を cache へ書き、失敗表示（スイッチはサーバー値）。
-     `applied: false` なら滞留していた書き込みか別端末が先に通っている。返ったサーバー値を cache へ書き、
-     要求値と同じなら成功扱い、違えば失敗表示。
-  3. 柵自体も timeout・失敗しうる（元の書き込みを止めたのと同じ相関障害が柵も止めうる）。1 回で
-     諦めると、柵より後に古い書き込みが commit する抜け道が残るため、`TASTE_LEARNING_FENCE_ATTEMPTS`
-     回まで `TASTE_LEARNING_FENCE_RETRY_DELAY_MS` の間隔をおいて再試行する。再試行のたびに現在値を
-     読み直し、その連番・値で次の柵を送る（読み直しにも失敗したら直前に分かっている値のまま試みる）。
-  4. 何度試みても柵の答え（`applied` の true/false どちらか）が得られなければ、サーバー側の状態は
-     本当に未確定である。この場合は invalidate も失敗表示もせず、代わりに消えない警告
-     （`tasteLearningCopy.unconfirmed`）と「もう一度読み込む」ボタンを別に出す。スイッチは直近に
-     読んだサーバー値のままにし、楽観値には戻さない。ボタンは現在値を読み直し、要求値と一致すれば
-     それで解決、一致しなければ柵を 1 回送りその答え（true/false どちらでも）が得られれば解決する。
-     読みにも柵にも失敗すれば警告を出したままにする（自動では消さない）。
-  5. 読み取り自体（柵より前の 1 回目）が失敗したら invalidate して裏取りし、失敗表示を出す。
+  純粋関数 `settleTasteLearningWrite`（`taste-learning-settle.ts`）で確定させる。サーバーの連番は
+  書き込みのたびに 1 進むだけなので、観測した連番が送った `expectedSeq` を超えていれば、その書き込みは
+  既に適用されたか、今後届いても捨てられる。どちらでも観測した値が最終値になる。
+  1. 現在値を読む（同じ timeout）。連番が `expectedSeq` を超えていれば確定。値が要求値と同じでも、
+     連番が進んでいなければ確定とはみなさない（滞留中の書き込みはまだ通りうる）。
+  2. 超えていなければ、現在値のまま読んだ連番で**柵**の書き込みを送る。値は変えず連番だけを進めるので、
+     滞留中の古い書き込みが後から届いても連番が合わずサーバーで捨てられる。柵の答えは `applied` の
+     true/false どちらでも連番が進んでいることを示すので、そこで確定する。
+  3. 読み取りの失敗も柵の失敗も「まだ分からない」として同じに扱う（元の書き込みを止めた相関障害が
+     両方を止めうる）。`TASTE_LEARNING_FENCE_ATTEMPTS` 回まで `TASTE_LEARNING_FENCE_RETRY_DELAY_MS`
+     の間隔をおいて、毎回読み取りからやり直す。
+  4. 確定したら、そのサーバー値が要求値なら成功扱い、違えば失敗表示（スイッチはサーバー値）。
+  5. 何度試みても確かめられなければ、サーバー側の状態は本当に未確定である。失敗表示はせず、
+     未確定の記録 `{ requestedEnabled, expectedSeq }` を query cache
+     （`tasteLearningKeys.unconfirmed(userId)`、`gcTime: Infinity`）に置き、消えない警告
+     （`tasteLearningCopy.unconfirmed`）と「もう一度読み込む」ボタンを出す。画面を離れて戻っても
+     記録は残る。スイッチは直近に観測したサーバー値のままにし、楽観値には戻さない。
+     ボタンは記録の `expectedSeq` で確定を 1 回試み、その間は disabled で読み込み中の文言にする。
+  6. 記録は、どの経路であれ（書き込み・柵の応答、確定処理の読み取り、`queryFn` の fetch）観測した
+     連番が記録の `expectedSeq` を超えた時点で消す。記録の中身と比べて消すので、後から置かれた
+     別の記録を誤って消すことはない。
 - taste-learning の cache への書き込みは、`useQuery` の `queryFn` 自身が fetch 成功時に行う置き換え
-  も含めてすべて連番ガード（cache の連番より古ければ捨てる）を通す。世代ガード
-  （`mutationGenerationRef`）はコンポーネントの 1 インスタンス内でしか効かず、remount をまたぐと
-  無力になるため、連番ガードはそれとは別に効く。
+  も含めてすべて連番ガード（`mergeTasteLearningState`。cache の連番より古ければ捨てる）を通す。
+  遅れて届いた読み取り・柵の応答や、remount 前のインスタンスからの応答が新しい値を巻き戻さない。
 - 共有同意（`share-consent-settings-section.tsx`）は連番を持たないため、従来どおり複数回の
   再読ポーリングで同じ問題を扱っている。挙動は変えない。
 
@@ -765,7 +768,7 @@ OFFにすると読み取りをやめます。設定と反映の記録は保存�
 | Function | `generation-service.test.ts` 追記 | `Promise.all` 並列／**fingerprint に載らない**／`preference_snapshot` の記録が確定オブジェクトと一致（切り詰めで空→キーなし）／再生成経路に出ない／`tasteHintsOutcome` |
 | src | `menu-result-api.test.ts` | `tasteHintsApplied` の投影、キー欠落・壊れた形で `false` |
 | src | `menu-hero.test.tsx` | `weak` 非表示、`medium`/`strong` 表示、**作成モデル行と共存**する |
-| src | `taste-learning-api.test.ts` / `taste-learning-settings-section.test.tsx` | 初期表示の `profiles` 読み取り（値と連番、strict Zod）、`p_expected_seq` の送信と `{ enabled, seq, applied }` の strict 検査、signal の転送／postgrest-js が abort 後も `{data: null, error}` で resolve するケースで `setTasteLearningEnabled` が throw する／CAS を持つテスト内の偽サーバーで: 通常成功、連番を運ぶ OFF→ON→OFF 往復、滞留書き込みが柵より先に commit（成功・柵なし）、未 commit の滞留書き込みを柵で捨てる（失敗表示とサーバー値、後着の書き込みが `applied: false`）、別端末による `applied: false`（違う値は失敗表示、同じ値は成功）、柵が読み直しの後に `applied: false` で要求値と一致し成功扱いになる分岐（削除すると落ちることを確認）、柵の再試行が途中の attempt で答えを得て止まる、全 attempt 失敗で消えない unconfirmed 警告が出て「もう一度読み込む」ボタンが読み直し→柵で解決する、remount をまたいで古い読み取りが新しい連番の値を上書きしない（`mergeBySeq` が `queryFn` 自身の fetch にも効く） |
+| src | `taste-learning-api.test.ts` / `taste-learning-settings-section.test.tsx` | 初期表示の `profiles` 読み取り（値と連番、strict Zod）、`p_expected_seq` の送信と `{ enabled, seq, applied }` の strict 検査、signal の転送／postgrest-js が abort 後も `{data: null, error}` で resolve するケースで `setTasteLearningEnabled` が throw する／CAS を持つテスト内の偽サーバーで: 通常成功、連番を運ぶ OFF→ON→OFF 往復、滞留書き込みが柵より先に commit（成功・柵なし）、未 commit の滞留書き込みを柵で捨てる（失敗表示とサーバー値、後着の書き込みが `applied: false`）、別端末による `applied: false`（違う値は失敗表示、同じ値は成功）、柵が `applied: false` で要求値と一致し成功扱いになる、書き込み失敗後の読み取りが失敗しても読み直して柵を送る、柵の再試行が途中の attempt で答えを得て止まる、全 attempt 失敗で消えない unconfirmed 警告が出て remount をまたいでも残り「もう一度読み込む」ボタン（確かめている間は disabled・読み込み中の文言）で解決する、連番が進んだ読み取りで警告が自動で消え同じ連番では消えない、remount をまたいで古い読み取りが新しい連番の値を上書きしない（`mergeTasteLearningState` が `queryFn` 自身の fetch にも効く）。`taste-learning-settle.test.ts` で確定処理を注入した偽サーバーで単体に確かめる |
 | src | `privacy-copy.test.ts` | 「AIへ送る情報」に 90 日・50 献立・「好みの学習は設定でいつでも止められます」・直近の献立（最大 10 献立）の料理名が含まれる |
 | script | `scripts/assert-privacy-logs.mjs` | `taste_hints_outcome` が許可一覧にあり、料理名・食材名がログに出ない |
 
