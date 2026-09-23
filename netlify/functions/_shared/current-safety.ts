@@ -237,7 +237,7 @@ const additionalAliasValues: readonly (readonly [
   ["beef", "合挽", "derived", false],
   ["beef", "あいびき", "derived", false],
   // 2026-09-23 追補: 種を断定できない加工品・料理名。hard match ではなく label 確認を促す。
-  // 裸の「もつ」は 20260923150000 で削除し、下の具体形（もつ煮・もつ鍋 等）へ置き換えた。
+  // 裸の「もつ」は 20260923150000 で削除し、20260923160000 で除外文脈つきで戻した（下）。
   ["pork", "ハム", "processed", true],
   ["chicken", "レバー", "processed", true],
   ["pork", "レバー", "processed", true],
@@ -261,7 +261,7 @@ const additionalAliasValues: readonly (readonly [
   ["beef", "合い挽き", "derived", false],
   ["beef", "合びき", "derived", false],
   ["beef", "あい挽き", "derived", false],
-  // 「鳥」表記の鶏の複合語（m2）。一字の「鳥」は鳥取・千鳥・白鳥等と衝突するため足さない。
+  // 「鳥」表記の鶏の複合語（m2）。一字の「鳥」は 20260923160000 で除外文脈つきで足した。
   // 鳥肉は既存行、鳥手羽は「手羽」で一致するため足さない。
   ["chicken", "鳥ひき", "derived", false],
   ["chicken", "鳥挽", "derived", false],
@@ -273,8 +273,8 @@ const additionalAliasValues: readonly (readonly [
   ["chicken", "焼きとり", "derived", false],
   ["chicken", "やき鳥", "derived", false],
   ["chicken", "鳥そぼろ", "derived", false],
-  // 裸の「もつ」は「日もちする」意の動詞（3日ほどもつ・形をたもつ等）に一致したため削除し（I3）、
-  // 具体形だけを label 確認つきで持つ。牛もつ・豚もつは一字の「牛」「豚」で hard 一致が
+  // 裸の「もつ」は「日もちする」意の動詞（3日ほどもつ・形をたもつ等）に一致したため一度削除し（I3）、
+  // 具体形を label 確認つきで足した（裸の「もつ」は 20260923160000 で除外文脈つきで戻した）。牛もつ・豚もつは一字の「牛」「豚」で hard 一致が
   // 先に立つが、一字行を将来見直しても取りこぼさないよう具体形として残す。
   ["pork", "もつ煮", "processed", true],
   ["beef", "もつ煮", "processed", true],
@@ -287,6 +287,21 @@ const additionalAliasValues: readonly (readonly [
   // 豚カツソースも とんかつソースと同じ扱い（m3）: 「豚」の hard 一致からは
   // EXCLUDED_ALIAS_CONTEXTS で外し、ここで label 確認だけを出す。
   ["pork", "豚カツソース", "processed", true],
+  // 2026-09-23 追補（20260923160000）: fix-round-2 レビュー（C1'・I-B・I-C）と人間の決定。
+  // C1': 送り仮名「き」のない 合い挽肉・あい挽肉・合い挽ミンチ が一致していなかった。
+  // 上の 合い挽き・あい挽き 行は冗長になるが残す。
+  ["pork", "合い挽", "derived", false],
+  ["pork", "あい挽", "derived", false],
+  ["beef", "合い挽", "derived", false],
+  ["beef", "あい挽", "derived", false],
+  // I-C: 一字の「鳥」。鳥取・千鳥・白鳥 等は EXCLUDED_ALIAS_CONTEXTS で外す。
+  // 上の 鳥 の複合語行は冗長になるが残す。「焼とり」は送り仮名なしのひらがな表記の抜け。
+  ["chicken", "鳥", "derived", false],
+  ["chicken", "焼とり", "derived", false],
+  // I-B: 裸の「もつ」を label 確認行で戻す。「3日ほどもつ」「形をたもつ」「もつれないように」
+  // 等の動詞は EXCLUDED_ALIAS_CONTEXTS で外す。上の もつ煮 等の具体形行は残す。
+  ["pork", "もつ", "processed", true],
+  ["beef", "もつ", "processed", true],
   // U2-I4: 推奨表示の高頻度残差（衝突レビュー済みの具体形のみ）
   ["yam", "長芋", "direct", false],
   ["yam", "ながいも", "direct", false],

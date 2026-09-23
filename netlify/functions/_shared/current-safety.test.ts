@@ -690,16 +690,11 @@ describe("meat aliases bound to currentAllergenAliasManifest (2026-09-23)", () =
     ["beef", "サーロイン", "hard", "サーロインステーキ"],
     ["beef", "カルビ", "hard", "カルビ焼肉"],
     ["beef", "ハラミ", "hard", "ハラミの塩焼き"],
-    // 20260923140000
-    ["chicken", "鳥もも", "hard", "鳥もも肉のグリル"],
-    ["chicken", "鳥むね", "hard", "鳥むね肉のソテー"],
+    // 20260923140000（鳥もも・鳥むね・焼き鳥・焼鳥・鳥ガラ は一字の「鳥」に隠れるため shadowedRows へ）
     ["chicken", "とりもも", "hard", "とりもも肉の照り焼き"],
     ["chicken", "とりむね", "hard", "とりむね肉のソテー"],
-    ["chicken", "焼き鳥", "hard", "焼き鳥の盛り合わせ"],
-    ["chicken", "焼鳥", "hard", "焼鳥丼"],
     ["chicken", "やきとり", "hard", "やきとり丼"],
     ["chicken", "とりにく", "hard", "とりにくの甘辛煮"],
-    ["chicken", "鳥ガラ", "hard", "鳥ガラスープ"],
     ["chicken", "とりがら", "hard", "とりがらスープ"],
     ["pork", "合いびき", "hard", "合いびき肉のハンバーグ"],
     ["pork", "合挽", "hard", "合挽き肉のハンバーグ"],
@@ -720,31 +715,71 @@ describe("meat aliases bound to currentAllergenAliasManifest (2026-09-23)", () =
     ["pork", "ブイヨン", "label", "ブイヨンで煮る"],
     ["beef", "ブイヨン", "label", "ブイヨンで煮る"],
     ["pork", "とんかつソース", "label", "とんかつソースをかけたキャベツ"],
-    // 20260923150000
-    ["pork", "合い挽き", "hard", "合い挽き肉のハンバーグ"],
+    // 20260923150000（合い挽き・あい挽き・鳥の複合語・もつの具体形は shadowedRows へ）
     ["pork", "合びき", "hard", "合びき肉のメンチカツ"],
-    ["pork", "あい挽き", "hard", "あい挽き肉のそぼろ"],
-    ["beef", "合い挽き", "hard", "合い挽き肉のハンバーグ"],
     ["beef", "合びき", "hard", "合びき肉のメンチカツ"],
-    ["beef", "あい挽き", "hard", "あい挽き肉のそぼろ"],
-    ["chicken", "鳥ひき", "hard", "鳥ひき肉のそぼろ"],
-    ["chicken", "鳥挽", "hard", "鳥挽き肉の団子"],
-    ["chicken", "鳥皮", "hard", "鳥皮ポン酢"],
     ["chicken", "とりかわ", "hard", "とりかわ串"],
-    ["chicken", "鳥つくね", "hard", "鳥つくね串"],
-    ["chicken", "鳥の唐揚げ", "hard", "鳥の唐揚げ定食"],
-    ["chicken", "鳥から", "hard", "鳥から弁当"],
     ["chicken", "焼きとり", "hard", "焼きとり丼"],
-    ["chicken", "やき鳥", "hard", "やき鳥丼"],
-    ["chicken", "鳥そぼろ", "hard", "鳥そぼろ丼"],
-    ["pork", "もつ煮", "label", "もつ煮込み"],
-    ["beef", "もつ煮", "label", "もつ煮込み"],
-    ["pork", "もつ鍋", "label", "もつ鍋"],
-    ["beef", "もつ鍋", "label", "もつ鍋"],
-    ["pork", "もつ焼き", "label", "もつ焼き"],
-    ["beef", "もつ焼き", "label", "もつ焼き"],
     ["pork", "豚カツソース", "label", "豚カツソースをかけたキャベツ"],
+    // 20260923160000
+    ["pork", "合い挽", "hard", "合い挽肉のハンバーグ"],
+    ["pork", "あい挽", "hard", "あい挽肉のそぼろ"],
+    ["beef", "合い挽", "hard", "合い挽肉のハンバーグ"],
+    ["beef", "あい挽", "hard", "あい挽肉のそぼろ"],
+    ["chicken", "鳥", "hard", "鳥南蛮"],
+    ["chicken", "焼とり", "hard", "焼とり丼"],
+    ["pork", "もつ", "label", "白もつ"],
+    ["beef", "もつ", "label", "白もつ"],
   ];
+
+  // 後から足した広い行（鳥・合い挽・もつ）に部分一致で隠れる行。その行を消しても kind が
+  // 変わらないため、「その allergenId で一致する alias 行の集合」（マニフェスト順）を
+  // 完全一致で固定する（m-b）。行を消すと集合から抜けて落ちる。
+  // [allergenId, alias, 行が label 確認行か, 期待する kind, テキスト, 一致する alias 行の集合]
+  const shadowedRows: readonly (readonly [
+    string,
+    string,
+    boolean,
+    "hard" | "label",
+    string,
+    readonly string[],
+  ])[] = [
+    ["chicken", "鳥もも", false, "hard", "鳥もも肉のグリル", ["鳥もも", "鳥"]],
+    ["chicken", "鳥むね", false, "hard", "鳥むね肉のソテー", ["鳥むね", "鳥"]],
+    ["chicken", "焼き鳥", false, "hard", "焼き鳥の盛り合わせ", ["焼き鳥", "鳥"]],
+    ["chicken", "焼鳥", false, "hard", "焼鳥丼", ["焼鳥", "鳥"]],
+    ["chicken", "鳥ガラ", false, "hard", "鳥ガラスープ", ["鳥ガラ", "鳥"]],
+    ["pork", "合い挽き", false, "hard", "合い挽き肉のハンバーグ", ["合い挽き", "合い挽"]],
+    ["pork", "あい挽き", false, "hard", "あい挽き肉のそぼろ", ["あい挽き", "あい挽"]],
+    ["beef", "合い挽き", false, "hard", "合い挽き肉のハンバーグ", ["合い挽き", "合い挽"]],
+    ["beef", "あい挽き", false, "hard", "あい挽き肉のそぼろ", ["あい挽き", "あい挽"]],
+    ["chicken", "鳥ひき", false, "hard", "鳥ひき肉のそぼろ", ["鳥ひき", "鳥"]],
+    ["chicken", "鳥挽", false, "hard", "鳥挽き肉の団子", ["鳥挽", "鳥"]],
+    ["chicken", "鳥皮", false, "hard", "鳥皮ポン酢", ["鳥皮", "鳥"]],
+    ["chicken", "鳥つくね", false, "hard", "鳥つくね串", ["鳥つくね", "鳥"]],
+    ["chicken", "鳥の唐揚げ", false, "hard", "鳥の唐揚げ定食", ["鳥の唐揚げ", "鳥"]],
+    ["chicken", "鳥から", false, "hard", "鳥から弁当", ["鳥から", "鳥"]],
+    ["chicken", "やき鳥", false, "hard", "やき鳥丼", ["やき鳥", "鳥"]],
+    ["chicken", "鳥そぼろ", false, "hard", "鳥そぼろ丼", ["鳥そぼろ", "鳥"]],
+    ["pork", "もつ煮", true, "label", "もつ煮込み", ["もつ煮", "もつ"]],
+    ["beef", "もつ煮", true, "label", "もつ煮込み", ["もつ煮", "もつ"]],
+    ["pork", "もつ鍋", true, "label", "もつ鍋", ["もつ鍋", "もつ"]],
+    ["beef", "もつ鍋", true, "label", "もつ鍋", ["もつ鍋", "もつ"]],
+    ["pork", "もつ焼き", true, "label", "もつ焼き", ["もつ焼き", "もつ"]],
+    ["beef", "もつ焼き", true, "label", "もつ焼き", ["もつ焼き", "もつ"]],
+    // 牛もつ・豚もつは一字の「牛」「豚」で hard 一致が先に立つ（m-b）
+    ["beef", "牛もつ", true, "hard", "牛もつ煮込み", ["牛", "もつ煮", "牛もつ", "もつ"]],
+    ["pork", "豚もつ", true, "hard", "豚もつ炒め", ["豚", "豚もつ", "もつ"]],
+  ];
+
+  function matchedAliases(text: string, allergenId: string): readonly string[] {
+    return currentAllergenAliasManifest
+      .filter(
+        (entry) =>
+          entry.allergenId === allergenId && foodTextContainsAlias(text, entry.normalizedAlias),
+      )
+      .map((entry) => entry.alias);
+  }
 
   it.each(addedRows)("binds %s row %s as %s via %s", (allergenId, alias, expectedKind, text) => {
     const row = currentAllergenAliasManifest.find(
@@ -758,27 +793,31 @@ describe("meat aliases bound to currentAllergenAliasManifest (2026-09-23)", () =
     expect(classify(text, allergenId, withoutRow(allergenId, alias))).not.toBe(expectedKind);
   });
 
-  // 牛もつ・豚もつは一字の「牛」「豚」で hard 一致が先に立つため、label 行としては表に出ない。
-  // 行が存在し label 確認として登録されていることと、実テキストが hard で止まることだけを固定する。
-  it.each([
-    ["beef", "牛もつ", "牛もつ煮込み"],
-    ["pork", "豚もつ", "豚もつ炒め"],
-  ])("keeps %s label row %s and still hard-matches %s", (allergenId, alias, text) => {
-    const row = currentAllergenAliasManifest.find(
-      (entry) => entry.allergenId === allergenId && entry.alias === alias,
-    );
-    expect(row?.requiresLabelConfirmation).toBe(true);
-    expect(classify(text, allergenId)).toBe("hard");
-  });
+  it.each(shadowedRows)(
+    "binds shadowed %s row %s (label row: %s) as %s via %s",
+    (allergenId, alias, isLabelRow, expectedKind, text, expectedMatches) => {
+      const row = currentAllergenAliasManifest.find(
+        (entry) => entry.allergenId === allergenId && entry.alias === alias,
+      );
+      expect(row).toBeDefined();
+      expect(row?.requiresLabelConfirmation).toBe(isLabelRow);
+      expect(classify(text, allergenId)).toBe(expectedKind);
+      expect(matchedAliases(text, allergenId)).toEqual(expectedMatches);
+    },
+  );
 
   it.each([
+    ["合い挽肉のハンバーグ"],
+    ["合い挽肉"],
+    ["あい挽肉"],
+    ["合い挽ミンチ"],
     ["合い挽き肉のハンバーグ"],
     ["合い挽きミンチ"],
     ["合びき肉"],
     ["あい挽き肉"],
     ["合挽き肉"],
     ["あいびき肉"],
-  ])("hard-matches ground mixed meat %s for pork alone and beef alone (C1)", (text) => {
+  ])("hard-matches ground mixed meat %s for pork alone and beef alone (C1')", (text) => {
     expect(classify(text, "pork")).toBe("hard");
     expect(classify(text, "beef")).toBe("hard");
   });
@@ -794,8 +833,38 @@ describe("meat aliases bound to currentAllergenAliasManifest (2026-09-23)", () =
     ["鮭ハラミの塩焼き", "beef"],
     ["さけハラミの塩焼き", "beef"],
     ["サーモンハラミの塩焼き", "beef"],
+    ["鳥取県産の梨", "chicken"],
+    ["千鳥酢で和える", "chicken"],
+    ["千鳥足", "chicken"],
+    ["白鳥の形の和菓子", "chicken"],
+    ["鳥獣の被害", "chicken"],
+    ["鳥居の前で", "chicken"],
+    ["野鳥の観察", "chicken"],
+    ["小鳥のさえずり", "chicken"],
+    ["一石二鳥の作り置き", "chicken"],
+    ["鳥貝の酢の物", "chicken"],
   ])("does not match exclusion context %s for %s", (text, allergenId) => {
     expect(classify(text, allergenId)).toBe("none");
+  });
+
+  // m-c: 除外文脈は出現ごとに判定する。同じ語を含む本物の料理文は一致したままであること。
+  it.each([
+    ["牛刀で牛すじを切る", "beef", "hard"],
+    ["鮭ハラミとハラミステーキ", "beef", "hard"],
+    ["豚カツ、ソース添え", "pork", "hard"],
+    ["豚カツソースと豚バラ", "pork", "hard"],
+    ["鳥取県産の鳥もも", "chicken", "hard"],
+    ["千鳥酢で鳥を和える", "chicken", "hard"],
+    ["レバーを引き上げる", "pork", "label"],
+    ["レバー式のコンロでレバーを焼く", "pork", "label"],
+    ["ホルモンを下茹でする", "pork", "label"],
+    ["女性ホルモンとホルモン焼き", "beef", "label"],
+    ["茹でたもつを炒める", "pork", "label"],
+    ["10分ほどもつを煮る", "beef", "label"],
+    ["しょうががもつの臭みを消す", "pork", "label"],
+    ["3日ほどもつ煮込みを寝かせる", "beef", "label"],
+  ])("still matches the real dish in %s for %s as %s (m-c)", (text, allergenId, expected) => {
+    expect(classify(text, allergenId)).toBe(expected);
   });
 
   it("keeps とんかつソース out of the pork hard match (豚・とんかつ) but asks for a label check", () => {
@@ -820,41 +889,86 @@ describe("meat aliases bound to currentAllergenAliasManifest (2026-09-23)", () =
 
   it.each([
     ["3日ほどもつ"],
+    ["2日もつ"],
+    ["２日もつ"],
+    ["数日もつ"],
+    ["十日もつ"],
+    ["3日ほどモツ"],
     ["形をたもつ"],
-    ["味がもつように保存する"],
+    ["温度をたもつ"],
     ["もつれないように混ぜる"],
+    ["モツれないように混ぜる"],
     ["レバーを引く"],
-    ["レバーをひいて火を止める"],
+    ["レバーを引いて火を止める"],
     ["レバー式のコンロ"],
     ["女性ホルモン"],
     ["成長ホルモン"],
     ["ホルモンバランスを整える"],
-  ])("does not treat %s as meat for pork, beef or chicken (I3)", (text) => {
+  ])("does not treat %s as meat for pork, beef or chicken (I3・I-A・I-B)", (text) => {
     expect(classify(text, "pork")).toBe("none");
     expect(classify(text, "beef")).toBe("none");
     expect(classify(text, "chicken")).toBe("none");
   });
 
-  it.each([["もつ煮込み"], ["もつ鍋"], ["レバー炒め"], ["ホルモン焼き"]])(
-    "asks for a label check (not a hard block) on %s for pork and beef (I3)",
-    (text) => {
-      expect(classify(text, "pork")).toBe("label");
-      expect(classify(text, "beef")).toBe("label");
-    },
-  );
+  it.each([
+    ["もつ"],
+    ["白もつ"],
+    ["もつ炒め"],
+    ["もつの煮込み"],
+    ["もつなべ"],
+    ["もつにこみ"],
+    ["もつ焼"],
+    ["もつを下茹でする"],
+    ["モツ煮"],
+    ["もつ煮込み"],
+    ["もつ鍋"],
+    ["ホルモン焼き"],
+    // 「味がもつ」は「しょうがの味がもつに染みる」のような本物のもつの文と区別できないため
+    // 除外せず、安全側（label 確認）に倒す。
+    ["味がもつ"],
+  ])("asks for a label check (not a hard block) on %s for pork and beef (I-B)", (text) => {
+    expect(classify(text, "pork")).toBe("label");
+    expect(classify(text, "beef")).toBe("label");
+  });
 
-  it("removes the bare もつ rows (I3)", () => {
-    expect(currentAllergenAliasManifest.filter((entry) => entry.alias === "もつ")).toEqual([]);
+  it.each([
+    ["レバー炒め"],
+    ["レバーをひと口大に切る"],
+    ["レバーをひと晩牛乳に漬ける"],
+    ["レバーをひき肉と合わせる"],
+    ["レバーを引き上げる"],
+    ["レバーをひいて火を止める"],
+  ])("asks for a label check on %s for chicken, pork and beef (I-A)", (text) => {
+    expect(classify(text, "chicken")).toBe("label");
+    expect(classify(text, "pork")).toBe("label");
+    expect(classify(text, "beef")).toBe("label");
+  });
+
+  it.each([
+    ["焼とり"],
+    ["鳥のから揚げ"],
+    ["鳥唐揚げ"],
+    ["鳥ミンチ"],
+    ["鳥団子"],
+    ["鳥南蛮"],
+    ["鳥の照り焼き"],
+    ["鳥ハム"],
+  ])("hard-matches %s for chicken (I-C)", (text) => {
+    expect(classify(text, "chicken")).toBe("hard");
+  });
+
+  it("keeps the bare もつ rows as label-confirmed processed rows for pork and beef (I-B)", () => {
+    expect(
+      currentAllergenAliasManifest
+        .filter((entry) => entry.alias === "もつ")
+        .map((entry) => [entry.allergenId, entry.aliasKind, entry.requiresLabelConfirmation]),
+    ).toEqual([
+      ["pork", "processed", true],
+      ["beef", "processed", true],
+    ]);
   });
 
   it("matches 鶏の照り焼き for chicken only through the 鶏 row (m5)", () => {
-    const matched = currentAllergenAliasManifest
-      .filter(
-        (entry) =>
-          entry.allergenId === "chicken" &&
-          foodTextContainsAlias("鶏の照り焼き", entry.normalizedAlias),
-      )
-      .map((entry) => entry.alias);
-    expect(matched).toEqual(["鶏"]);
+    expect(matchedAliases("鶏の照り焼き", "chicken")).toEqual(["鶏"]);
   });
 });
