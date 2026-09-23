@@ -460,7 +460,7 @@ export async function loadTasteHints(input: {
 現行の制約に一致する語を `likedDishes[].dishName` と `likedIngredients` から落とす。
 料理名に出ない食材（親子丼の卵など）でも、対応表でその料理の食材が制約に当たれば料理ごと落とす。
 ただし料理ごと落とす判定に使うのは、ハードゲートが実際に弾く語（避けたい食材の展開、自由登録
-アレルギー、表示確認が不要な辞書の別名と表示名）だけにする。醤油・みそのような表示確認の別名や
+アレルギー、表示確認が不要な辞書の別名と表示名、対象年齢帯の家族がいる forbidden の食品安全ルールの語）だけにする。醤油・みそのような表示確認の別名や
 家族の苦手まで使うと、小麦・大豆アレルギーの家庭で和食の好みがほぼ全部消える。
 `overusedIngredients` は「使いすぎを避けて」という向きの語なので対象外とする。
 
@@ -470,6 +470,7 @@ export async function loadTasteHints(input: {
 | 家族の苦手 | `context.memberPreferences[].dislikes` |
 | 登録アレルゲン | `context.safety.members[].allergenIds` を `allergenDictionary` の表示名と別名で展開 |
 | 自由登録アレルギー | `context.safety.members[].customAllergies[].name / aliases` |
+| 年齢帯の禁止ルール | `context.safety.foodSafetyRules` のうち `ruleKind === "forbidden"` かつ `appliesToAgeBands` が家族の `ageBand` と交わるものの `matchTerms`（餅・ナッツなど）。`requires_tag`（ぶどうの 4 等分など）は下処理で許されるので含めない |
 
 照合は `normalizeFoodText` + `foodTextContainsAlias`（`shared/safety/allergens.ts`）を再利用する。
 語は正規化後の形で重複を畳み、名前ごとに 1 回だけ `normalizeFoodTextForMatching` した compact に
@@ -497,8 +498,9 @@ idea モード（`safety: null`）ではアレルゲン由来の語が無く、`
 2. **1 で落とした料理にしか現れない食材を `likedIngredients` からも落とす。**
    名前だけ消しても食材が残れば同じ皿に戻る。生き残りは 12 件で切れた `likedDishes` ではなく、
    上限の無い対応表の「最近でない料理」から数える（13 位以下の料理の食材を誤って消さない）。
-   あわせて改行・制御文字・不可視の書式文字（`\p{Cc}` / `\p{Cf}` / `\p{Co}` / `\p{Cn}` / U+2028 / U+2029）を
-   含む語を語ごとに落とす。ゼロ幅空白や双方向制御で見た目を偽装した語をプロンプトへ渡さない。
+   あわせて改行・制御文字・不可視の書式文字（`\p{Cc}` / `\p{Cf}` / `\p{Co}` / `\p{Cn}` / U+2028 / U+2029）と、
+   異体字セレクタ（U+FE00–FE0F / U+E0100–E01EF）、ハングル・点字の空白字（U+3164 / U+115F / U+1160 / U+FFA0 / U+2800）を
+   含む語を語ごとに落とす。後者は照合器の正規化（NFKC と Cf の除去）を抜けるため、ここで落とす（照合器を変えると安全 fingerprint に波及する）。ゼロ幅空白や双方向制御で見た目を偽装した語をプロンプトへ渡さない。
 3. 契約の各上限で切り詰める。
 4. **対応表 `dishIngredientIndex` を捨てる。** 戻り値は `TasteHints`（対応表なし）。
 5. `hasTasteContent()` が false なら全体を `null` にする（`outcome = "filtered_empty"`）。

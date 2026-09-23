@@ -162,7 +162,8 @@ type BlockedTerms = {
   all: readonly string[];
   /**
    * 対応表経由で料理ごと落とす判定に使う語。ハードゲートが実際に弾く種類だけに絞る:
-   * 避けたい食材（展開後）、自由登録アレルギー、表示確認が不要な辞書の別名と表示名。
+   * 避けたい食材（展開後）、自由登録アレルギー、表示確認が不要な辞書の別名と表示名、
+   * 対象年齢帯の家族がいる forbidden の食品安全ルールの語。
    * 醤油・みそのような表示確認の別名や苦手まで使うと、小麦・大豆アレルギーの家庭で
    * 和食の好みがほぼ全部消える。
    */
@@ -202,6 +203,17 @@ function collectBlockedTerms(context: GenerationContext): BlockedTerms {
       if (!allergenIds.has(alias.allergenId)) continue;
       const bucket = alias.requiresLabelConfirmation ? soft : hard;
       bucket.push(alias.alias, alias.normalizedAlias);
+    }
+    // 年齢帯の禁止ルール（5 歳以下の餅・ナッツ、高齢者の餅など）。ハードゲート
+    // （food-rules の evaluateFoodSafetyRules）は forbidden を foodTextContainsAlias で
+    // 無条件に弾くので、同じ照合器で料理ごと落とさないと prompt が弾かれる料理へ寄り、
+    // repair も「安全工程を足せ」の方向しか指さず生成失敗が増える。
+    // requires_tag（ぶどうの 4 等分、骨を取るなど）は下処理で許されるので足さない。
+    const ageBands = new Set(context.safety.members.map((member) => member.ageBand));
+    for (const rule of context.safety.foodSafetyRules) {
+      if (rule.ruleKind !== "forbidden") continue;
+      if (!rule.appliesToAgeBands.some((band) => ageBands.has(band))) continue;
+      hard.push(...rule.matchTerms);
     }
   }
   // alias と normalizedAlias はほぼ同じ形に正規化されるので、正規化後の形で 1 つに畳む
@@ -279,8 +291,15 @@ export function filterTasteHintsForSafety(
  * Task 1 敵対的レビュー M3 の申し送り: overusedIngredients は利用者が入力した
  * メイン食材の文字列がそのまま DB から返るため、【学習】段落へ改行混じりの
  * 指示文などを持ち越さないよう、語ごとに落とす（ヒント全体は落とさない）。
+ *
+ * 上の一般カテゴリに入らない見えない文字も足す（最終レビュー A3）:
+ * 異体字セレクタ（U+FE00–FE0F、U+E0100–E01EF。Mn）と、ハングル・点字の空白字
+ * （U+3164、U+115F、U+1160、U+FFA0 は Lo、U+2800 は So）。照合器の正規化は
+ * NFKC と Cf の除去だけなので、「え︎び」のように挟むと現行アレルギーの語を
+ * すり抜ける。照合器側を変えると安全 fingerprint に波及するため、ここで語ごと落とす。
  */
-const CONTROL_OR_LINE_BREAK = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}]/u;
+const CONTROL_OR_LINE_BREAK =
+  /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{3164}\u{115F}\u{1160}\u{FFA0}\u{2800}]/u;
 
 function hasControlOrLineBreak(value: string): boolean {
   return CONTROL_OR_LINE_BREAK.test(value);

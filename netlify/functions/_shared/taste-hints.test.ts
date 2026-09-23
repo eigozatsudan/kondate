@@ -300,6 +300,70 @@ describe("filterTasteHintsForSafety", () => {
     expect(filtered.likedDishes.map((dish) => dish.dishName)).toEqual(["肉じゃが", "ぶり大根"]);
   });
 
+  it("drops mochi and nut foods when a member is in a forbidden-rule age band", () => {
+    const base = makeCurrentSafetyContext();
+    const member = base.members[0];
+    if (member === undefined) throw new Error("factory member missing");
+    const withMochi: TasteSignals = {
+      ...signals,
+      likedDishes: [
+        { dishName: "磯辺餅", role: "main" },
+        { dishName: "くるみ和え", role: "side" },
+        { dishName: "ほうれん草のおひたし", role: "side" },
+        { dishName: "ぶり大根", role: "main" },
+      ],
+      likedIngredients: ["切り餅", "くるみ", "ぶり"],
+      dishIngredientIndex: [
+        { dishName: "磯辺餅", ingredients: ["切り餅", "のり"] },
+        { dishName: "くるみ和え", ingredients: ["くるみ", "いんげん"] },
+        { dishName: "ほうれん草のおひたし", ingredients: ["ほうれん草", "くるみ"] },
+        { dishName: "ぶり大根", ingredients: ["ぶり", "大根"] },
+      ],
+    };
+    const withChild = makeGenerationContext({
+      safety: makeCurrentSafetyContext({
+        members: [member, { ...member, anonymousRef: "member_2", ageBand: "age_3_5" }],
+      }),
+    });
+    const filtered = filterTasteHintsForSafety(withMochi, withChild);
+    // 名前に出ないくるみ（おひたしの対応表）も、forbidden はハードゲートが弾くので料理ごと落とす
+    expect(filtered.likedDishes.map((dish) => dish.dishName)).toEqual(["ぶり大根"]);
+    expect(filtered.likedIngredients).toEqual(["ぶり"]);
+
+    // 大人だけの家庭では年齢帯の禁止ルールが効かないので、そのまま残る
+    const adultsOnly = filterTasteHintsForSafety(withMochi, makeGenerationContext());
+    expect(adultsOnly.likedDishes.map((dish) => dish.dishName)).toEqual([
+      "磯辺餅",
+      "くるみ和え",
+      "ほうれん草のおひたし",
+      "ぶり大根",
+    ]);
+    expect(adultsOnly.likedIngredients).toEqual(["切り餅", "くるみ", "ぶり"]);
+  });
+
+  it("does not add requires_tag rule terms to the blocked words", () => {
+    const base = makeCurrentSafetyContext();
+    const member = base.members[0];
+    if (member === undefined) throw new Error("factory member missing");
+    const withChild = makeGenerationContext({
+      safety: makeCurrentSafetyContext({
+        members: [{ ...member, ageBand: "age_3_5" }],
+      }),
+    });
+    const filtered = filterTasteHintsForSafety(
+      {
+        ...signals,
+        likedDishes: [{ dishName: "ぶどうゼリー", role: "other" }],
+        likedIngredients: ["ぶどう"],
+        dishIngredientIndex: [{ dishName: "ぶどうゼリー", ingredients: ["ぶどう"] }],
+      },
+      withChild,
+    );
+    // ぶどうは 4 等分の下処理で許されるので落とさない
+    expect(filtered.likedDishes.map((dish) => dish.dishName)).toEqual(["ぶどうゼリー"]);
+    expect(filtered.likedIngredients).toEqual(["ぶどう"]);
+  });
+
   // 配線では OpenRouter 呼び出し前に同期で走り、200ms のローダ予算の外にある。
   // 対応表は上限なし（最大 50 献立）なので、語 × 名前の総当たりを重い照合で回さない
   it("filters a large index against a large dictionary within the prompt budget", () => {
@@ -414,5 +478,36 @@ describe("sanitizeTasteHints", () => {
     expect(hints?.likedDishes.map((dish) => dish.dishName)).toEqual(["ぶり大根"]);
     expect(hints?.overusedIngredients).toEqual(["鶏肉"]);
     expect(hints?.likedIngredients).toEqual(["トマト"]);
+  });
+
+  it("drops words containing variation selectors or hangul and braille blank fillers", () => {
+    const invisible = [
+      "え\u{FE0E}び",
+      "え\u{FE00}び",
+      "え\u{E0100}び",
+      "え\u{E01EF}び",
+      "え\u{3164}び",
+      "え\u{115F}び",
+      "え\u{1160}び",
+      "え\u{FFA0}び",
+      "え\u{2800}び",
+    ];
+    const withInvisible: TasteSignals = {
+      likedDishes: [
+        ...invisible.map((name) => ({ dishName: `${name}フライ`, role: "main" as const })),
+        { dishName: "ぶり大根", role: "main" },
+      ],
+      likedGenres: [],
+      likedIngredients: [...invisible, "大根"],
+      likedTimeBand: null,
+      overusedIngredients: [...invisible.slice(0, 3), "鶏肉"],
+      avoidAxes: [],
+      signalStrength: "weak",
+      dishIngredientIndex: [],
+    };
+    const hints = sanitizeTasteHints(withInvisible, []);
+    expect(hints?.likedDishes.map((dish) => dish.dishName)).toEqual(["ぶり大根"]);
+    expect(hints?.likedIngredients).toEqual(["大根"]);
+    expect(hints?.overusedIngredients).toEqual(["鶏肉"]);
   });
 });
