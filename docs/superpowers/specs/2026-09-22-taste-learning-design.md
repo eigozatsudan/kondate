@@ -101,15 +101,24 @@ export const TASTE_LIKED_GENRES_MAX = 2 as const;
 export const TASTE_LIKED_INGREDIENTS_MAX = 8 as const;
 export const TASTE_OVERUSED_INGREDIENTS_MAX = 3 as const;
 
+/**
+ * 名前は DB の CHECK（char_length(btrim(name)) 1〜100）と同じく code point で数える。
+ * UTF-16 の .max(100) だと絵文字の多い 1 語で parse 全体が落ち、学習が黙って止まる。
+ */
+const foodNameSchema = z.string().refine((value) => {
+  const length = Array.from(value.replace(/^ +| +$/g, "")).length;
+  return length >= 1 && length <= 100;
+});
+
 export const tasteHintsSchema = z
   .object({
     likedDishes: z
-      .array(z.object({ dishName: z.string().min(1).max(100), role: z.enum(dishRoles).optional() }))
+      .array(z.object({ dishName: foodNameSchema, role: z.enum(dishRoles).optional() }))
       .max(TASTE_LIKED_DISHES_MAX),
     likedGenres: z.array(z.enum(["japanese", "western", "chinese"])).max(TASTE_LIKED_GENRES_MAX),
-    likedIngredients: z.array(z.string().min(1).max(100)).max(TASTE_LIKED_INGREDIENTS_MAX),
+    likedIngredients: z.array(foodNameSchema).max(TASTE_LIKED_INGREDIENTS_MAX),
     likedTimeBand: z.enum(tasteTimeBands).nullable(),
-    overusedIngredients: z.array(z.string().min(1).max(100)).max(TASTE_OVERUSED_INGREDIENTS_MAX),
+    overusedIngredients: z.array(foodNameSchema).max(TASTE_OVERUSED_INGREDIENTS_MAX),
     avoidAxes: z.array(z.enum(tasteAvoidAxes)).max(1),
     signalStrength: z.enum(tasteSignalStrengths),
   })
@@ -132,8 +141,8 @@ export const tasteSignalsSchema = z
     ...tasteHintsSchema.shape,
     dishIngredientIndex: z.array(
       z.object({
-        dishName: z.string().min(1).max(100),
-        ingredients: z.array(z.string().min(1).max(100)),
+        dishName: foodNameSchema,
+        ingredients: z.array(foodNameSchema),
       }),
     ),
   })

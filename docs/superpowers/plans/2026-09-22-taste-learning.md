@@ -930,8 +930,17 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```ts
 import { describe, expect, it } from "vitest";
 import {
+  TASTE_AVOID_AXIS_MIN_COUNT,
+  TASTE_FAVORITE_WEIGHT,
+  TASTE_GENRE_MIN_SHARE,
   TASTE_HALF_LIFE_DAYS,
   TASTE_LIKED_DISHES_MAX,
+  TASTE_LIKED_GENRES_MAX,
+  TASTE_LIKED_INGREDIENTS_MAX,
+  TASTE_LIKED_INGREDIENT_MIN_COUNT,
+  TASTE_OVERUSED_INGREDIENTS_MAX,
+  TASTE_OVERUSED_INGREDIENT_MIN_COUNT,
+  TASTE_SELECTED_WEIGHT,
   TASTE_STRENGTH_MEDIUM_MIN,
   TASTE_STRENGTH_STRONG_MIN,
   TASTE_WINDOW_DAYS,
@@ -974,7 +983,10 @@ describe("taste-hints contract", () => {
   });
 
   it("accepts the signals shape with the index but not the hints shape", () => {
-    const signals = { ...empty, dishIngredientIndex: [{ dishName: "肉じゃが", ingredients: ["牛肉"] }] };
+    const signals = {
+      ...empty,
+      dishIngredientIndex: [{ dishName: "肉じゃが", ingredients: ["牛肉"] }],
+    };
     expect(tasteSignalsSchema.safeParse(signals).success).toBe(true);
     expect(tasteHintsSchema.safeParse(signals).success).toBe(false);
   });
@@ -986,9 +998,73 @@ describe("taste-hints contract", () => {
     expect(hasTasteContent({ ...empty, avoidAxes: ["child_unfriendly"] })).toBe(true);
   });
 
+  // SQL 側はリテラルで持つ。ここで値を固定しないと片側だけの変更に気づけない
+  it("locks the weights, minimum counts, share, and caps mirrored in SQL", () => {
+    expect(TASTE_FAVORITE_WEIGHT).toBe(1.0);
+    expect(TASTE_SELECTED_WEIGHT).toBe(0.3);
+    expect(TASTE_LIKED_INGREDIENT_MIN_COUNT).toBe(2);
+    expect(TASTE_OVERUSED_INGREDIENT_MIN_COUNT).toBe(3);
+    expect(TASTE_AVOID_AXIS_MIN_COUNT).toBe(2);
+    expect(TASTE_GENRE_MIN_SHARE).toBe(0.35);
+    expect(TASTE_LIKED_GENRES_MAX).toBe(2);
+    expect(TASTE_LIKED_INGREDIENTS_MAX).toBe(8);
+    expect(TASTE_OVERUSED_INGREDIENTS_MAX).toBe(3);
+  });
+
+  it("rejects each array one past its cap", () => {
+    const names = (count: number) =>
+      Array.from({ length: count }, (_, index) => `n${String(index)}`);
+    expect(tasteHintsSchema.safeParse({ ...empty, likedIngredients: names(8) }).success).toBe(true);
+    expect(tasteHintsSchema.safeParse({ ...empty, likedIngredients: names(9) }).success).toBe(
+      false,
+    );
+    expect(tasteHintsSchema.safeParse({ ...empty, overusedIngredients: names(3) }).success).toBe(
+      true,
+    );
+    expect(tasteHintsSchema.safeParse({ ...empty, overusedIngredients: names(4) }).success).toBe(
+      false,
+    );
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, likedGenres: ["japanese", "western", "chinese"] })
+        .success,
+    ).toBe(false);
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, avoidAxes: ["child_unfriendly", "child_unfriendly"] })
+        .success,
+    ).toBe(false);
+  });
+
+  it("never reports a generated any as a liked genre", () => {
+    expect(tasteHintsSchema.safeParse({ ...empty, likedGenres: ["any"] }).success).toBe(false);
+  });
+
+  // DB は char_length(btrim(name)) で 1〜100、planner も code point で数える。
+  // UTF-16 で数えると絵文字の多い 1 語で parse 全体が落ち、学習が黙って止まる
+  it("counts food names in code points like the database", () => {
+    const tomatoes = (count: number) => "🍅".repeat(count);
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, overusedIngredients: [tomatoes(100)] }).success,
+    ).toBe(true);
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, overusedIngredients: [tomatoes(101)] }).success,
+    ).toBe(false);
+    expect(tasteHintsSchema.safeParse({ ...empty, likedIngredients: ["   "] }).success).toBe(false);
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, likedIngredients: [` ${"あ".repeat(100)} `] }).success,
+    ).toBe(true);
+  });
+
   it("records only applied:true with a strength", () => {
-    expect(tasteHintsRecordSchema.safeParse({ applied: true, strength: "medium" }).success).toBe(true);
-    expect(tasteHintsRecordSchema.safeParse({ applied: false, strength: "medium" }).success).toBe(false);
+    expect(tasteHintsRecordSchema.safeParse({ applied: true, strength: "medium" }).success).toBe(
+      true,
+    );
+    expect(tasteHintsRecordSchema.safeParse({ applied: false, strength: "medium" }).success).toBe(
+      false,
+    );
+    expect(
+      tasteHintsRecordSchema.safeParse({ applied: true, strength: "medium", likedDishes: [] })
+        .success,
+    ).toBe(false);
   });
 });
 ```
@@ -1044,7 +1120,19 @@ export const TASTE_LIKED_GENRES_MAX = 2 as const;
 export const TASTE_LIKED_INGREDIENTS_MAX = 8 as const;
 export const TASTE_OVERUSED_INGREDIENTS_MAX = 3 as const;
 
-const foodNameSchema = z.string().min(1).max(100);
+/** dishes.name / dish_ingredients.name の CHECK と同じ上限（char_length(btrim(name)) <= 100） */
+const TASTE_FOOD_NAME_MAX = 100;
+
+/**
+ * DB が返し得る名前はすべて通す。長さは DB と planner に揃えて code point で数え、
+ * 前後は btrim の既定と同じ半角スペースだけを削る。UTF-16 で数えると絵文字の多い
+ * 1 語で parse 全体が invalid_shape になり、その利用者の学習が窓を抜けるまで止まる。
+ * 改行・制御文字はここでは拒否しない（全体を落とさず sanitize で語ごとに捨てる）。
+ */
+const foodNameSchema = z.string().refine((value) => {
+  const length = Array.from(value.replace(/^ +| +$/g, "")).length;
+  return length >= 1 && length <= TASTE_FOOD_NAME_MAX;
+});
 
 /** prompt と preference_snapshot に出る形。対応表は含まない */
 export const tasteHintsSchema = z

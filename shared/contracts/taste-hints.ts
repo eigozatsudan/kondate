@@ -39,7 +39,19 @@ export const TASTE_LIKED_GENRES_MAX = 2 as const;
 export const TASTE_LIKED_INGREDIENTS_MAX = 8 as const;
 export const TASTE_OVERUSED_INGREDIENTS_MAX = 3 as const;
 
-const foodNameSchema = z.string().min(1).max(100);
+/** dishes.name / dish_ingredients.name の CHECK と同じ上限（char_length(btrim(name)) <= 100） */
+const TASTE_FOOD_NAME_MAX = 100;
+
+/**
+ * DB が返し得る名前はすべて通す。長さは DB と planner に揃えて code point で数え、
+ * 前後は btrim の既定と同じ半角スペースだけを削る。UTF-16 で数えると絵文字の多い
+ * 1 語で parse 全体が invalid_shape になり、その利用者の学習が窓を抜けるまで止まる。
+ * 改行・制御文字はここでは拒否しない（全体を落とさず sanitize で語ごとに捨てる）。
+ */
+const foodNameSchema = z.string().refine((value) => {
+  const length = Array.from(value.replace(/^ +| +$/g, "")).length;
+  return length >= 1 && length <= TASTE_FOOD_NAME_MAX;
+});
 
 /** prompt と preference_snapshot に出る形。対応表は含まない */
 export const tasteHintsSchema = z

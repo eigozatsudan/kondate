@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  TASTE_AVOID_AXIS_MIN_COUNT,
+  TASTE_FAVORITE_WEIGHT,
+  TASTE_GENRE_MIN_SHARE,
   TASTE_HALF_LIFE_DAYS,
   TASTE_LIKED_DISHES_MAX,
+  TASTE_LIKED_GENRES_MAX,
+  TASTE_LIKED_INGREDIENTS_MAX,
+  TASTE_LIKED_INGREDIENT_MIN_COUNT,
+  TASTE_OVERUSED_INGREDIENTS_MAX,
+  TASTE_OVERUSED_INGREDIENT_MIN_COUNT,
+  TASTE_SELECTED_WEIGHT,
   TASTE_STRENGTH_MEDIUM_MIN,
   TASTE_STRENGTH_STRONG_MIN,
   TASTE_WINDOW_DAYS,
@@ -59,6 +68,62 @@ describe("taste-hints contract", () => {
     expect(hasTasteContent({ ...empty, avoidAxes: ["child_unfriendly"] })).toBe(true);
   });
 
+  // SQL 側はリテラルで持つ。ここで値を固定しないと片側だけの変更に気づけない
+  it("locks the weights, minimum counts, share, and caps mirrored in SQL", () => {
+    expect(TASTE_FAVORITE_WEIGHT).toBe(1.0);
+    expect(TASTE_SELECTED_WEIGHT).toBe(0.3);
+    expect(TASTE_LIKED_INGREDIENT_MIN_COUNT).toBe(2);
+    expect(TASTE_OVERUSED_INGREDIENT_MIN_COUNT).toBe(3);
+    expect(TASTE_AVOID_AXIS_MIN_COUNT).toBe(2);
+    expect(TASTE_GENRE_MIN_SHARE).toBe(0.35);
+    expect(TASTE_LIKED_GENRES_MAX).toBe(2);
+    expect(TASTE_LIKED_INGREDIENTS_MAX).toBe(8);
+    expect(TASTE_OVERUSED_INGREDIENTS_MAX).toBe(3);
+  });
+
+  it("rejects each array one past its cap", () => {
+    const names = (count: number) =>
+      Array.from({ length: count }, (_, index) => `n${String(index)}`);
+    expect(tasteHintsSchema.safeParse({ ...empty, likedIngredients: names(8) }).success).toBe(true);
+    expect(tasteHintsSchema.safeParse({ ...empty, likedIngredients: names(9) }).success).toBe(
+      false,
+    );
+    expect(tasteHintsSchema.safeParse({ ...empty, overusedIngredients: names(3) }).success).toBe(
+      true,
+    );
+    expect(tasteHintsSchema.safeParse({ ...empty, overusedIngredients: names(4) }).success).toBe(
+      false,
+    );
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, likedGenres: ["japanese", "western", "chinese"] })
+        .success,
+    ).toBe(false);
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, avoidAxes: ["child_unfriendly", "child_unfriendly"] })
+        .success,
+    ).toBe(false);
+  });
+
+  it("never reports a generated any as a liked genre", () => {
+    expect(tasteHintsSchema.safeParse({ ...empty, likedGenres: ["any"] }).success).toBe(false);
+  });
+
+  // DB は char_length(btrim(name)) で 1〜100、planner も code point で数える。
+  // UTF-16 で数えると絵文字の多い 1 語で parse 全体が落ち、学習が黙って止まる
+  it("counts food names in code points like the database", () => {
+    const tomatoes = (count: number) => "🍅".repeat(count);
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, overusedIngredients: [tomatoes(100)] }).success,
+    ).toBe(true);
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, overusedIngredients: [tomatoes(101)] }).success,
+    ).toBe(false);
+    expect(tasteHintsSchema.safeParse({ ...empty, likedIngredients: ["   "] }).success).toBe(false);
+    expect(
+      tasteHintsSchema.safeParse({ ...empty, likedIngredients: [` ${"あ".repeat(100)} `] }).success,
+    ).toBe(true);
+  });
+
   it("records only applied:true with a strength", () => {
     expect(tasteHintsRecordSchema.safeParse({ applied: true, strength: "medium" }).success).toBe(
       true,
@@ -66,5 +131,9 @@ describe("taste-hints contract", () => {
     expect(tasteHintsRecordSchema.safeParse({ applied: false, strength: "medium" }).success).toBe(
       false,
     );
+    expect(
+      tasteHintsRecordSchema.safeParse({ applied: true, strength: "medium", likedDishes: [] })
+        .success,
+    ).toBe(false);
   });
 });
