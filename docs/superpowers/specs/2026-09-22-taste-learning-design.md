@@ -410,7 +410,7 @@ export async function loadTasteHints(input: {
 
 照合は `normalizeFoodText` + `foodTextContainsAlias`（`shared/safety/allergens.ts`）を再利用する。
 語は正規化後の形で重複を畳み、名前ごとに 1 回だけ `normalizeFoodTextForMatching` した compact に
-語が部分文字列で含まれるものだけを `foodTextContainsAlias` に回す（判定結果は同一、200ms 予算内に収める）。
+語が部分文字列で含まれるものだけを `foodTextContainsAlias` に回す（判定結果は同一）。フィルタはローダの 200ms 予算の外で走るため、辞書全件でも数十 ms 以内に収める。
 idea モード（`safety: null`）ではアレルゲン由来の語が無く、`avoidIngredients` のみで落とす。
 
 **この関数が `avoidAxes` のモード制限も行う。** `generationContext.targetMode === "idea"` のとき
