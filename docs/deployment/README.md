@@ -411,6 +411,22 @@ docker compose --profile deploy run --rm supabase-cli db push --include-all
 3. 続けて Netlify をデプロイする（古いフロントが新スキーマ前提 API を叩かない順を守る）。
 4. メンテナンス LOGIN や `SUPABASE_MAINTENANCE_DB_URL` を変えた場合は [supabase.md](./supabase.md) / [netlify.md](./netlify.md) のローテーション手順。
 
+#### 安全 fingerprint と辞書の追補（`20260923180000_safety_fingerprint_dictionary_digest.sql`）
+
+このマイグレーションから、安全 fingerprint に辞書の alias 集合のハッシュが入る。SQL（マイグレーション）と TS（Netlify Functions）が同じ値を計算するので、**マイグレーションと Functions は間をあけずに続けてデプロイする**。時間が空くなら、利用の少ない時間帯を選ぶ。
+
+ずれている間に起きること:
+
+- 家庭向けの生成と再生成が 409（`current_safety_changed`）になる。AI を呼んだ後の確定で落ちるので、**送信枠は戻らない**。
+- 原材料表示の確認（ラベル確認）と再検証も失敗する。
+- 辞書の行データは変わらないので、`validateSnapshot` の 500 は出ない。エラーが目立たず、気づきにくい。
+
+今後 `allergen_aliases` の行を足したり変えたりするマイグレーションでも、fingerprint が変わる。次の影響は了承済み（2026-09-23）:
+
+- 既存の単品献立と週間献立は、作り直すまで stale のままになる。
+- 原材料表示の確認は、確認済みのものも未確認に戻る（再検証で新しい fingerprint の行が作られる）。
+- 再検証が走るまでの間、既存の献立の確認ボタンは 404 になる。
+
 ロールバック:
 
 - **フロント/Functions**: Netlify の直前デプロイへ publish を戻す。

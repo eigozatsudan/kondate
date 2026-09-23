@@ -274,6 +274,41 @@ select ok(
   'PUBLIC and every external role cannot execute the locking helper'
 );
 
+-- ここから下の fingerprint 固定値テストは、辞書（public.allergen_aliases）を小さな固定集合に
+-- 差し替えてから行う。実辞書に alias 行を足しても、この固定値は変わらない。
+-- 固定集合と期待値は、netlify/functions/_shared/current-safety-fingerprint-parity.test.ts が
+-- このファイルから直接読み取り、TS の createCurrentSafetyFingerprint と一致することを確かめる。
+-- 【注意】期待値や固定集合を直すときは、このファイルだけを直す（TS 側に値の写しはない）。
+-- pgTAP が落ちたからといって、ここの期待値だけを貼り直すと vitest が落ちる。
+-- vitest が落ちたからといって TS 側で値を合わせようとしても、ここと一致しない限り落ちる。
+-- 両方が同じ値で通ることが、TS と SQL の digest が一致している証拠になる。
+-- 差し替えた辞書は、下の「実辞書へ戻す」でこのファイル内で元に戻す（ファイル末尾の rollback でも残らない）。
+create temporary table fingerprint_parity_saved_aliases on commit drop as
+select * from public.allergen_aliases;
+delete from public.allergen_aliases;
+-- fingerprint-parity-dictionary:begin
+insert into public.allergen_aliases (
+  allergen_id, alias, normalized_alias, alias_kind,
+  requires_label_confirmation, dictionary_version
+) values
+  ('wheat', 'パン粉', 'パン粉', 'processed', true, 'jp-caa-2026-04.v1'),
+  ('egg', '卵', '卵', 'direct', false, 'jp-caa-2026-04.v1'),
+  ('wheat', '小麦', '小麦', 'direct', false, 'jp-caa-2026-04.v1'),
+  ('egg', 'たまご', 'たまご', 'direct', false, 'jp-caa-2026-04.v1'),
+  ('egg', 'マヨネーズ', 'マヨネーズ', 'derived', false, 'jp-caa-2026-04.v1');
+-- fingerprint-parity-dictionary:end
+
+-- 期待値の正本。下の is/lives_ok/throws_ok はすべてこの表から読む。
+-- fingerprint-parity-expected:begin
+create temporary table fingerprint_parity_expected (
+  case_name text primary key,
+  expected_value text not null
+) on commit drop;
+insert into fingerprint_parity_expected (case_name, expected_value) values
+  ('child_then_adult', 'b99b2d58e01c80002b264dcc52fe5ec5fef97369a691a1e7144b8c715e4113d0'),
+  ('adult_then_child', 'f6635b26e7c4835bb14f9766bac2f40d323be34b1fc17bd9ad6adbb953f461c5');
+-- fingerprint-parity-expected:end
+
 select is(
   private.current_safety_fingerprint(
     '15000000-0000-4000-8000-000000000001',
@@ -282,9 +317,7 @@ select is(
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[]
   ),
-  -- F-SAF-002 + dictionaryDigest を payload に含めた後の固定 digest。
-  -- netlify/functions/_shared/current-safety-fingerprint-parity.test.ts が TS 側で同じ値を固定する。
-  'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535',
+  (select expected_value from fingerprint_parity_expected where case_name = 'child_then_adult'),
   'fingerprint matches the canonical TypeScript-compatible SHA-256'
 );
 select is(
@@ -295,7 +328,7 @@ select is(
       '15100000-0000-4000-8000-000000000001'
     ]::uuid[]
   ),
-  '3ab3ed551af3efdcfab13f7e112a3e4d06b036b59fd797aaaae9204935e689e1',
+  (select expected_value from fingerprint_parity_expected where case_name = 'adult_then_child'),
   'anonymous references follow input ordinality before UUID encoding order'
 );
 
@@ -392,7 +425,7 @@ select is(
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[]
   ),
-  'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535',
+  (select expected_value from fingerprint_parity_expected where case_name = 'child_then_adult'),
   'member and allergy insertion order does not change the fingerprint'
 );
 
@@ -403,7 +436,7 @@ select lives_ok($$
       '15100000-0000-4000-8000-000000000001',
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[],
-    'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535'
+    (select expected_value from fingerprint_parity_expected where case_name = 'child_then_adult')
   )
 $$, 'the locking helper accepts the exact current fingerprint');
 select throws_ok($$
@@ -428,7 +461,7 @@ select isnt(
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[]
   ),
-  'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535',
+  (select expected_value from fingerprint_parity_expected where case_name = 'child_then_adult'),
   'an allergy mutation changes the fingerprint'
 );
 select throws_ok($$
@@ -438,10 +471,15 @@ select throws_ok($$
       '15100000-0000-4000-8000-000000000001',
       '15100000-0000-4000-8000-000000000002'
     ]::uuid[],
-    'd6fd851cc243f1cc8ebce012a24006a98455795ca4e368b553b2fd58c074a535'
+    (select expected_value from fingerprint_parity_expected where case_name = 'child_then_adult')
   )
 $$, 'P0001', 'current_safety_changed',
   'the locking helper rejects a stale expected fingerprint');
+
+-- 実辞書へ戻す（固定集合を使うのは上の fingerprint 固定値テストだけ）。
+delete from public.allergen_aliases;
+insert into public.allergen_aliases
+select * from fingerprint_parity_saved_aliases;
 
 select ok(
   (
