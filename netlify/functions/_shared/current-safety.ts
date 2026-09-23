@@ -237,12 +237,11 @@ const additionalAliasValues: readonly (readonly [
   ["beef", "合挽", "derived", false],
   ["beef", "あいびき", "derived", false],
   // 2026-09-23 追補: 種を断定できない加工品・料理名。hard match ではなく label 確認を促す。
+  // 裸の「もつ」は 20260923150000 で削除し、下の具体形（もつ煮・もつ鍋 等）へ置き換えた。
   ["pork", "ハム", "processed", true],
   ["chicken", "レバー", "processed", true],
   ["pork", "レバー", "processed", true],
   ["beef", "レバー", "processed", true],
-  ["pork", "もつ", "processed", true],
-  ["beef", "もつ", "processed", true],
   ["pork", "ホルモン", "processed", true],
   ["beef", "ホルモン", "processed", true],
   ["chicken", "コンソメ", "processed", true],
@@ -254,6 +253,40 @@ const additionalAliasValues: readonly (readonly [
   // とんかつソースは pork の hard 一致（「とんかつ」「豚」）から除外したうえで、
   // ここで label 確認つきの加工品として別に一致させる（B1: 誤検知防止と対）。
   ["pork", "とんかつソース", "processed", true],
+  // 2026-09-23 追補（20260923150000）: 合い挽き肉の表記ゆれ（C1）。合挽き肉・あいびき肉は
+  // 既存の 合挽・あいびき で一致するため足さない。
+  ["pork", "合い挽き", "derived", false],
+  ["pork", "合びき", "derived", false],
+  ["pork", "あい挽き", "derived", false],
+  ["beef", "合い挽き", "derived", false],
+  ["beef", "合びき", "derived", false],
+  ["beef", "あい挽き", "derived", false],
+  // 「鳥」表記の鶏の複合語（m2）。一字の「鳥」は鳥取・千鳥・白鳥等と衝突するため足さない。
+  // 鳥肉は既存行、鳥手羽は「手羽」で一致するため足さない。
+  ["chicken", "鳥ひき", "derived", false],
+  ["chicken", "鳥挽", "derived", false],
+  ["chicken", "鳥皮", "derived", false],
+  ["chicken", "とりかわ", "derived", false],
+  ["chicken", "鳥つくね", "derived", false],
+  ["chicken", "鳥の唐揚げ", "derived", false],
+  ["chicken", "鳥から", "derived", false],
+  ["chicken", "焼きとり", "derived", false],
+  ["chicken", "やき鳥", "derived", false],
+  ["chicken", "鳥そぼろ", "derived", false],
+  // 裸の「もつ」は「日もちする」意の動詞（3日ほどもつ・形をたもつ等）に一致したため削除し（I3）、
+  // 具体形だけを label 確認つきで持つ。牛もつ・豚もつは一字の「牛」「豚」で hard 一致が
+  // 先に立つが、一字行を将来見直しても取りこぼさないよう具体形として残す。
+  ["pork", "もつ煮", "processed", true],
+  ["beef", "もつ煮", "processed", true],
+  ["pork", "もつ鍋", "processed", true],
+  ["beef", "もつ鍋", "processed", true],
+  ["pork", "もつ焼き", "processed", true],
+  ["beef", "もつ焼き", "processed", true],
+  ["beef", "牛もつ", "processed", true],
+  ["pork", "豚もつ", "processed", true],
+  // 豚カツソースも とんかつソースと同じ扱い（m3）: 「豚」の hard 一致からは
+  // EXCLUDED_ALIAS_CONTEXTS で外し、ここで label 確認だけを出す。
+  ["pork", "豚カツソース", "processed", true],
   // U2-I4: 推奨表示の高頻度残差（衝突レビュー済みの具体形のみ）
   ["yam", "長芋", "direct", false],
   ["yam", "ながいも", "direct", false],

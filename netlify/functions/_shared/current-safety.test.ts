@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import { currentAllergenCatalogV1 } from "../../../shared/safety/current-allergen-catalog.v1.js";
-import { evaluateAllergens } from "../../../shared/safety/allergens.js";
+import { evaluateAllergens, foodTextContainsAlias } from "../../../shared/safety/allergens.js";
 import {
   currentFoodRuleVersion,
   currentFoodSafetyRulesV1,
@@ -597,11 +597,19 @@ describe("loadEmergencyInspectionSafety", () => {
   });
 });
 
-describe("meat aliases bound to currentAllergenAliasManifest (fef0e004 / 2026-09-23 追補)", () => {
-  // Q2: 個別 alias 文字列ではなく、実際に配線される currentAllergenAliasManifest から
-  // 組み立てた辞書で evaluateAllergens を回す。手動確認: この describe を書く前に
-  // マニフェストから「鶏」の行を一時的に消すと、下の "detects" テストが落ちることを確かめた。
-  function contextForAllergenIds(allergenIds: readonly string[]): CurrentSafetyContext {
+describe("meat aliases bound to currentAllergenAliasManifest (2026-09-23)", () => {
+  // 個別 alias 文字列ではなく、実際に配線される currentAllergenAliasManifest から
+  // 組み立てた辞書で evaluateAllergens を回す。各行は「その行を消すと一致が消える」
+  // ことまで確かめ、行の削除・kind の取り違えがテストで落ちるようにする（I1）。
+  type ManifestEntry = (typeof currentAllergenAliasManifest)[number];
+  type MatchKind = "hard" | "label" | "none";
+
+  const targetPath = "dishes.0.name";
+
+  function contextFor(
+    allergenIds: readonly string[],
+    manifest: readonly ManifestEntry[] = currentAllergenAliasManifest,
+  ): CurrentSafetyContext {
     const base = makeCurrentSafetyContext();
     const member = base.members[0];
     if (member === undefined) throw new Error("member fixture is empty");
@@ -615,7 +623,7 @@ describe("meat aliases bound to currentAllergenAliasManifest (fef0e004 / 2026-09
           displayName: entry.displayName,
           catalogVersion: entry.catalogVersion,
         })),
-        aliases: currentAllergenAliasManifest.map((entry) => ({
+        aliases: manifest.map((entry) => ({
           allergenId: entry.allergenId,
           alias: entry.alias,
           normalizedAlias: entry.normalizedAlias,
@@ -634,76 +642,219 @@ describe("meat aliases bound to currentAllergenAliasManifest (fef0e004 / 2026-09
     });
   }
 
-  it.each([
-    ["鶏の照り焼き", ["chicken"]],
-    ["手羽先の唐揚げ", ["chicken"]],
-    ["鳥もも肉のグリル", ["chicken"]],
-    ["とりむね肉のソテー", ["chicken"]],
-    ["豚の生姜焼き", ["pork"]],
-    ["肩ロースの豚しゃぶ", ["pork"]],
-    ["牛丼", ["beef"]],
-    ["牛肩ロースステーキ", ["beef"]],
-    ["合いびき肉のハンバーグ", ["pork", "beef"]],
-  ])("detects %s via the real manifest for %s", (dishName, allergenIds) => {
-    const context = contextForAllergenIds(allergenIds);
-    const menu = menuWithDishName(dishName);
-    expect(evaluateAllergens(menu, context).issues).not.toEqual([]);
-  });
+  // 1 品目の料理名（dishes.0.name）だけを見て、その allergenId 単独で hard / label / none を返す。
+  // fixture の他の料理テキストの影響を受けないよう path で絞る。
+  function classify(
+    text: string,
+    allergenId: string,
+    manifest: readonly ManifestEntry[] = currentAllergenAliasManifest,
+  ): MatchKind {
+    const result = evaluateAllergens(menuWithDishName(text), contextFor([allergenId], manifest));
+    if (result.issues.some((issue) => issue.path === targetPath)) return "hard";
+    if (
+      result.labelConfirmations.some(
+        (confirmation) =>
+          confirmation.sourcePath === targetPath && confirmation.allergenId === allergenId,
+      )
+    ) {
+      return "label";
+    }
+    return "none";
+  }
 
-  it.each([
-    ["鶏卵を溶く", ["chicken"]],
-    ["牛乳を注ぐ", ["beef"]],
-  ])("does not hard-flag exclusion context %s for %s via the real manifest", (dishName, allergenIds) => {
-    const context = contextForAllergenIds(allergenIds);
-    const menu = menuWithDishName(dishName);
-    expect(evaluateAllergens(menu, context).issues).toEqual([]);
-  });
-
-  it("does not hard-block とんかつソース for pork, but still flags a label confirmation", () => {
-    const context = contextForAllergenIds(["pork"]);
-    const menu = menuWithDishName("とんかつソースをかけたキャベツ");
-    const result = evaluateAllergens(menu, context);
-    expect(result.issues).toEqual([]);
-    expect(result.labelConfirmations).not.toEqual([]);
-  });
-
-  it("still hard-matches real pork when とんかつソース co-occurs with it in the same text", () => {
-    const context = contextForAllergenIds(["pork"]);
-    const menu = menuWithDishName("とんかつソースをかけた豚のしょうが焼き");
-    expect(evaluateAllergens(menu, context).issues).not.toEqual([]);
-  });
-
-  it("does not flag beef for salmon ハラミ", () => {
-    const context = contextForAllergenIds(["beef"]);
-    const menu = menuWithDishName("サーモンハラミの塩焼き");
-    expect(evaluateAllergens(menu, context).issues).toEqual([]);
-  });
-
-  it("fails to detect chicken when 鶏 is removed from the manifest (regression guard sanity)", () => {
-    const withoutChicken = currentAllergenAliasManifest.filter(
-      (entry) => !(entry.allergenId === "chicken" && entry.alias === "鶏"),
+  function withoutRow(allergenId: string, alias: string): readonly ManifestEntry[] {
+    const filtered = currentAllergenAliasManifest.filter(
+      (entry) => !(entry.allergenId === allergenId && entry.alias === alias),
     );
-    expect(withoutChicken.length).toBe(currentAllergenAliasManifest.length - 1);
-    const context: CurrentSafetyContext = {
-      ...contextForAllergenIds(["chicken"]),
-      allergenDictionary: {
-        version: dictionaryVersion,
-        catalog: currentAllergenCatalogV1.map((entry) => ({
-          id: entry.id,
-          displayName: entry.displayName,
-          catalogVersion: entry.catalogVersion,
-        })),
-        aliases: withoutChicken.map((entry) => ({
-          allergenId: entry.allergenId,
-          alias: entry.alias,
-          normalizedAlias: entry.normalizedAlias,
-          aliasKind: entry.aliasKind,
-          requiresLabelConfirmation: entry.requiresLabelConfirmation,
-          dictionaryVersion,
-        })),
-      },
-    };
-    const menu = menuWithDishName("鶏の照り焼き");
-    expect(evaluateAllergens(menu, context).issues).toEqual([]);
+    expect(filtered.length).toBe(currentAllergenAliasManifest.length - 1);
+    return filtered;
+  }
+
+  // 20260923130000・20260923140000・20260923150000 で足した行（削除した行を除く）。
+  // テキストには、その行自身が一字の漢字でない限り 豚・牛・鶏 の一字を含めない。
+  // [allergenId, alias, 期待する kind, 実在の料理・食材テキスト]
+  const addedRows: readonly (readonly [string, string, "hard" | "label", string])[] = [
+    // 20260923130000
+    ["chicken", "鶏", "hard", "鶏の照り焼き"],
+    ["chicken", "手羽", "hard", "手羽先の塩焼き"],
+    ["chicken", "砂肝", "hard", "砂肝のガーリック炒め"],
+    ["chicken", "せせり", "hard", "せせり串"],
+    ["chicken", "ぼんじり", "hard", "ぼんじりの塩焼き"],
+    ["pork", "豚", "hard", "豚の生姜焼き"],
+    ["pork", "とんかつ", "hard", "とんかつ定食"],
+    ["pork", "チャーシュー", "hard", "チャーシュー麺"],
+    ["pork", "叉焼", "hard", "叉焼チャーハン"],
+    ["pork", "肩ロース", "hard", "肩ロースの塩焼き"],
+    ["beef", "牛", "hard", "牛丼"],
+    ["beef", "肩ロース", "hard", "肩ロースの塩焼き"],
+    ["beef", "サーロイン", "hard", "サーロインステーキ"],
+    ["beef", "カルビ", "hard", "カルビ焼肉"],
+    ["beef", "ハラミ", "hard", "ハラミの塩焼き"],
+    // 20260923140000
+    ["chicken", "鳥もも", "hard", "鳥もも肉のグリル"],
+    ["chicken", "鳥むね", "hard", "鳥むね肉のソテー"],
+    ["chicken", "とりもも", "hard", "とりもも肉の照り焼き"],
+    ["chicken", "とりむね", "hard", "とりむね肉のソテー"],
+    ["chicken", "焼き鳥", "hard", "焼き鳥の盛り合わせ"],
+    ["chicken", "焼鳥", "hard", "焼鳥丼"],
+    ["chicken", "やきとり", "hard", "やきとり丼"],
+    ["chicken", "とりにく", "hard", "とりにくの甘辛煮"],
+    ["chicken", "鳥ガラ", "hard", "鳥ガラスープ"],
+    ["chicken", "とりがら", "hard", "とりがらスープ"],
+    ["pork", "合いびき", "hard", "合いびき肉のハンバーグ"],
+    ["pork", "合挽", "hard", "合挽き肉のハンバーグ"],
+    ["pork", "あいびき", "hard", "あいびき肉のそぼろ"],
+    ["beef", "合いびき", "hard", "合いびき肉のハンバーグ"],
+    ["beef", "合挽", "hard", "合挽き肉のハンバーグ"],
+    ["beef", "あいびき", "hard", "あいびき肉のそぼろ"],
+    ["pork", "ハム", "label", "ハムサンド"],
+    ["chicken", "レバー", "label", "レバー炒め"],
+    ["pork", "レバー", "label", "レバー炒め"],
+    ["beef", "レバー", "label", "レバー炒め"],
+    ["pork", "ホルモン", "label", "ホルモン焼き"],
+    ["beef", "ホルモン", "label", "ホルモン焼き"],
+    ["chicken", "コンソメ", "label", "コンソメスープ"],
+    ["pork", "コンソメ", "label", "コンソメスープ"],
+    ["beef", "コンソメ", "label", "コンソメスープ"],
+    ["chicken", "ブイヨン", "label", "ブイヨンで煮る"],
+    ["pork", "ブイヨン", "label", "ブイヨンで煮る"],
+    ["beef", "ブイヨン", "label", "ブイヨンで煮る"],
+    ["pork", "とんかつソース", "label", "とんかつソースをかけたキャベツ"],
+    // 20260923150000
+    ["pork", "合い挽き", "hard", "合い挽き肉のハンバーグ"],
+    ["pork", "合びき", "hard", "合びき肉のメンチカツ"],
+    ["pork", "あい挽き", "hard", "あい挽き肉のそぼろ"],
+    ["beef", "合い挽き", "hard", "合い挽き肉のハンバーグ"],
+    ["beef", "合びき", "hard", "合びき肉のメンチカツ"],
+    ["beef", "あい挽き", "hard", "あい挽き肉のそぼろ"],
+    ["chicken", "鳥ひき", "hard", "鳥ひき肉のそぼろ"],
+    ["chicken", "鳥挽", "hard", "鳥挽き肉の団子"],
+    ["chicken", "鳥皮", "hard", "鳥皮ポン酢"],
+    ["chicken", "とりかわ", "hard", "とりかわ串"],
+    ["chicken", "鳥つくね", "hard", "鳥つくね串"],
+    ["chicken", "鳥の唐揚げ", "hard", "鳥の唐揚げ定食"],
+    ["chicken", "鳥から", "hard", "鳥から弁当"],
+    ["chicken", "焼きとり", "hard", "焼きとり丼"],
+    ["chicken", "やき鳥", "hard", "やき鳥丼"],
+    ["chicken", "鳥そぼろ", "hard", "鳥そぼろ丼"],
+    ["pork", "もつ煮", "label", "もつ煮込み"],
+    ["beef", "もつ煮", "label", "もつ煮込み"],
+    ["pork", "もつ鍋", "label", "もつ鍋"],
+    ["beef", "もつ鍋", "label", "もつ鍋"],
+    ["pork", "もつ焼き", "label", "もつ焼き"],
+    ["beef", "もつ焼き", "label", "もつ焼き"],
+    ["pork", "豚カツソース", "label", "豚カツソースをかけたキャベツ"],
+  ];
+
+  it.each(addedRows)("binds %s row %s as %s via %s", (allergenId, alias, expectedKind, text) => {
+    const row = currentAllergenAliasManifest.find(
+      (entry) => entry.allergenId === allergenId && entry.alias === alias,
+    );
+    expect(row).toBeDefined();
+    // label 確認行は processed + requiresLabelConfirmation、hard 行はその逆
+    expect(row?.requiresLabelConfirmation).toBe(expectedKind === "label");
+    expect(classify(text, allergenId)).toBe(expectedKind);
+    // その行を消すと同じ kind では一致しなくなる（他の行の部分一致に隠れていない）
+    expect(classify(text, allergenId, withoutRow(allergenId, alias))).not.toBe(expectedKind);
+  });
+
+  // 牛もつ・豚もつは一字の「牛」「豚」で hard 一致が先に立つため、label 行としては表に出ない。
+  // 行が存在し label 確認として登録されていることと、実テキストが hard で止まることだけを固定する。
+  it.each([
+    ["beef", "牛もつ", "牛もつ煮込み"],
+    ["pork", "豚もつ", "豚もつ炒め"],
+  ])("keeps %s label row %s and still hard-matches %s", (allergenId, alias, text) => {
+    const row = currentAllergenAliasManifest.find(
+      (entry) => entry.allergenId === allergenId && entry.alias === alias,
+    );
+    expect(row?.requiresLabelConfirmation).toBe(true);
+    expect(classify(text, allergenId)).toBe("hard");
+  });
+
+  it.each([
+    ["合い挽き肉のハンバーグ"],
+    ["合い挽きミンチ"],
+    ["合びき肉"],
+    ["あい挽き肉"],
+    ["合挽き肉"],
+    ["あいびき肉"],
+  ])("hard-matches ground mixed meat %s for pork alone and beef alone (C1)", (text) => {
+    expect(classify(text, "pork")).toBe("hard");
+    expect(classify(text, "beef")).toBe("hard");
+  });
+
+  it.each([
+    ["牛刀で切る", "beef"],
+    ["鶏卵を溶く", "chicken"],
+    ["牛乳を注ぐ", "beef"],
+    ["牛蒡のきんぴら", "beef"],
+    ["蝸牛の歩みで進める", "beef"],
+    ["水牛のモッツァレラ", "beef"],
+    ["河豚のから揚げ", "pork"],
+    ["鮭ハラミの塩焼き", "beef"],
+    ["さけハラミの塩焼き", "beef"],
+    ["サーモンハラミの塩焼き", "beef"],
+  ])("does not match exclusion context %s for %s", (text, allergenId) => {
+    expect(classify(text, allergenId)).toBe("none");
+  });
+
+  it("keeps とんかつソース out of the pork hard match (豚・とんかつ) but asks for a label check", () => {
+    expect(classify("とんかつソースをかけたキャベツ", "pork")).toBe("label");
+    // 実際の豚が同じ文にあれば hard 一致する
+    expect(classify("とんかつソースをかけた豚のしょうが焼き", "pork")).toBe("hard");
+  });
+
+  it("keeps 豚カツソース out of the pork hard match but hard-matches when real pork co-occurs (m3)", () => {
+    expect(classify("豚カツソースをかけたキャベツ", "pork")).toBe("label");
+    expect(classify("豚かつソースをかけたキャベツ", "pork")).toBe("label");
+    expect(classify("豚カツソースと豚バラ", "pork")).toBe("hard");
+  });
+
+  it.each([["鳥ももの照り焼き"], ["とりももの照り焼き"]])(
+    "matches %s for chicken but not for peach (もも)",
+    (text) => {
+      expect(classify(text, "chicken")).toBe("hard");
+      expect(classify(text, "peach")).toBe("none");
+    },
+  );
+
+  it.each([
+    ["3日ほどもつ"],
+    ["形をたもつ"],
+    ["味がもつように保存する"],
+    ["もつれないように混ぜる"],
+    ["レバーを引く"],
+    ["レバーをひいて火を止める"],
+    ["レバー式のコンロ"],
+    ["女性ホルモン"],
+    ["成長ホルモン"],
+    ["ホルモンバランスを整える"],
+  ])("does not treat %s as meat for pork, beef or chicken (I3)", (text) => {
+    expect(classify(text, "pork")).toBe("none");
+    expect(classify(text, "beef")).toBe("none");
+    expect(classify(text, "chicken")).toBe("none");
+  });
+
+  it.each([["もつ煮込み"], ["もつ鍋"], ["レバー炒め"], ["ホルモン焼き"]])(
+    "asks for a label check (not a hard block) on %s for pork and beef (I3)",
+    (text) => {
+      expect(classify(text, "pork")).toBe("label");
+      expect(classify(text, "beef")).toBe("label");
+    },
+  );
+
+  it("removes the bare もつ rows (I3)", () => {
+    expect(currentAllergenAliasManifest.filter((entry) => entry.alias === "もつ")).toEqual([]);
+  });
+
+  it("matches 鶏の照り焼き for chicken only through the 鶏 row (m5)", () => {
+    const matched = currentAllergenAliasManifest
+      .filter(
+        (entry) =>
+          entry.allergenId === "chicken" &&
+          foodTextContainsAlias("鶏の照り焼き", entry.normalizedAlias),
+      )
+      .map((entry) => entry.alias);
+    expect(matched).toEqual(["鶏"]);
   });
 });
