@@ -9,13 +9,20 @@ import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerpri
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import type { TasteHints } from "../../../shared/contracts/taste-hints.js";
-import { DIVERSITY_SYSTEM_MARKER, type RecentDishHint } from "./diversity-hints.js";
+import {
+  DIVERSITY_PARAGRAPH,
+  DIVERSITY_PARAGRAPH_WITH_TASTE,
+  DIVERSITY_SYSTEM_MARKER,
+  type RecentDishHint,
+} from "./diversity-hints.js";
 import { NOVELTY_SYSTEM_MARKER } from "./novelty-hints.js";
-import { TASTE_SYSTEM_MARKER } from "./taste-hints.js";
+import { TASTE_PARAGRAPH, TASTE_SYSTEM_MARKER } from "./taste-hints.js";
 import {
   GENERATION_SYSTEM_PROMPT_CORE,
+  GENERATION_SYSTEM_PROMPT_CORE_BODY,
   GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA,
   GENERATION_SYSTEM_PROMPT_IDEA_EXTRA,
+  GENERATION_SYSTEM_PROMPT_SEASON,
   buildGenerationMessages,
   buildPromptMemberSafetyDto,
 } from "./generation-prompt.js";
@@ -907,8 +914,12 @@ describe("taste hints", () => {
     const user = messages.find((message) => message.role === "user");
     expect(system?.content).toContain(TASTE_SYSTEM_MARKER);
     expect(user?.content).toContain("tasteHints");
-    // 料理名は system 文へ連結しない（user JSON のエスケープ経由だけ）
+    // user JSON の tasteHints キーの値そのものを確かめる（部分一致では別の値でも通ってしまう）
+    expect(userPayload(messages).tasteHints).toEqual(someTasteHints);
+    // 料理名・食材名は system 文へ連結しない（user JSON のエスケープ経由だけ）
     expect(system?.content).not.toContain("ぶり大根");
+    expect(system?.content).not.toContain("大根");
+    expect(system?.content).not.toContain("豚肉");
   });
 
   it("states the priority order exactly once", () => {
@@ -919,6 +930,31 @@ describe("taste hints", () => {
     expect(system.split("優先順位は次のとおりです。").length - 1).toBe(1);
   });
 
+  it("uses DIVERSITY_PARAGRAPH_WITH_TASTE and orders diversity < taste < novelty when learning is on", () => {
+    const messages = buildGenerationMessages(
+      asNewMenuExecution(makeGenerationContext(), [], someTasteHints),
+    );
+    const system = systemText(messages);
+    expect(system).toContain(DIVERSITY_PARAGRAPH_WITH_TASTE);
+    // 優先順位の文は学習段落側にだけ残す（多様性側の番号付き文は含めない）
+    expect(system).not.toContain(DIVERSITY_PARAGRAPH);
+    expect(system).toContain(TASTE_PARAGRAPH);
+    const diversityIndex = system.indexOf(DIVERSITY_SYSTEM_MARKER);
+    const tasteIndex = system.indexOf(TASTE_SYSTEM_MARKER);
+    expect(diversityIndex).toBeGreaterThanOrEqual(0);
+    expect(tasteIndex).toBeGreaterThan(diversityIndex);
+  });
+
+  it("adds the learning paragraph and key for idea mode too", () => {
+    const messages = buildGenerationMessages(
+      asNewMenuExecution(makeIdeaGenerationContext(), [], someTasteHints),
+    );
+    const system = systemText(messages);
+    expect(system).toContain(TASTE_SYSTEM_MARKER);
+    expect(system).toContain(GENERATION_SYSTEM_PROMPT_IDEA_EXTRA);
+    expect(userPayload(messages).tasteHints).toEqual(someTasteHints);
+  });
+
   it("omits the key entirely when there are no hints", () => {
     const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext(), [], null));
     const user = messages.find((message) => message.role === "user");
@@ -926,6 +962,24 @@ describe("taste hints", () => {
     expect(messages.find((message) => message.role === "system")?.content).not.toContain(
       TASTE_SYSTEM_MARKER,
     );
+  });
+
+  it("uses DIVERSITY_PARAGRAPH (with the priority sentence, exactly once) when learning is off or null", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext(), [], null));
+    const system = systemText(messages);
+    expect(system).toContain(DIVERSITY_PARAGRAPH);
+    expect(system).not.toContain(TASTE_SYSTEM_MARKER);
+    expect(system.split("優先順位は次のとおりです。").length - 1).toBe(1);
+  });
+
+  it("matches the exact core + diversity + season + mode-extra composition when hints are null", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(makeGenerationContext(), [], null));
+    const expectedSystem =
+      GENERATION_SYSTEM_PROMPT_CORE_BODY +
+      DIVERSITY_PARAGRAPH +
+      GENERATION_SYSTEM_PROMPT_SEASON +
+      GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA;
+    expect(systemText(messages)).toBe(expectedSystem);
   });
 
   it("keeps output byte-identical to the pre-taste prompt when hints are null", () => {

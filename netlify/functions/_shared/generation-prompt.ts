@@ -548,7 +548,8 @@ function buildBaseGenerationMessages(
 
 /**
  * 実行コンテキスト全体からメッセージを構築する。
- * new_menu: CORE_BODY + 多様性? + SEASON + idea? と user に recentDishHints を常時配列で載せる。
+ * new_menu: CORE_BODY + 多様性?(学習onなら差し替え) + 学習? + ひねり? + SEASON + idea? と
+ * user に recentDishHints を常時配列で載せる。
  * 再生成: base + regeneration_constraints。多様性マーカーも recentDishHints キーも付けない。
  * seasonContext はサーバー時計のみ（クライアント注入不可）。
  * buildBaseGenerationMessages は hints 引数を取らない（locked）。
@@ -577,7 +578,7 @@ export function buildGenerationMessages(
         )
       : [];
     // 学習ヒントは配線側で sanitize 済み。ここでは載せるかどうかだけを決める
-    const tasteHints = readTasteHintsEnabledFlag() ? (context.tasteHints ?? null) : null;
+    const tasteHints = readTasteHintsEnabledFlag() ? context.tasteHints : null;
     const tasteEnabled = tasteHints !== null;
     const systemContent = buildNewMenuSystemPrompt(
       context.generationContext.targetMode,

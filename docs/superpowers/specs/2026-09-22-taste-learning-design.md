@@ -548,6 +548,7 @@ CORE_BODY + DIVERSITY? + TASTE? + NOVELTY? + SEASON + mode extra
 - `signalStrength` が `weak` のときは参考程度に留めること。
 - `avoidAxes` は献立全体の寄せ方であり、`constraint_conflict` の理由にしないこと。
 - `overusedIngredients` は連続を避ける対象であり、禁止食材ではないこと。
+  当日の preferences のメイン食材に含まれるときは無視すること。
 - 学習ヒントと他の制約が両立しないときは通常どおり `outcome=success` を返すこと。
 
 ### 5.5 配線 `generation-service.ts`

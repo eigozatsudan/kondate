@@ -2963,6 +2963,7 @@ export const TASTE_PARAGRAPH =
   "tasteHints.likedTimeBandとlikedGenresは、当日のpreferencesに指定があるときは無視してください。" +
   "tasteHints.signalStrengthがweakのときは参考程度に留めてください。" +
   "tasteHints.overusedIngredientsは連続を避ける対象であり、禁止食材ではありません。" +
+  "tasteHints.overusedIngredientsは、当日のpreferencesのメイン食材に含まれるときは無視してください。" +
   "tasteHints.avoidAxesは献立全体の寄せ方であり、constraint_conflictの理由にしないでください。" +
   "学習と他の制約が両立しないときは、通常どおりoutcome=successで返してください。" +
   "学習だけを理由にconstraint_conflictにしないでください。";
