@@ -236,8 +236,9 @@ export function ShareConsentSettingsSection({
       } catch (error) {
         // AP5: abort 後もサーバ処理済みになり得る。再読で cache を正にし、一致なら成功扱い。
         // AP-R1: 1 回目 OFF / throw でも遅延 commit を取りこぼさないよう再読する。
-        // 同形の再読ループが taste-learning-settings-section.tsx の
-        // tasteLearningMutation catch にもある。片方を直したらもう片方も確認すること。
+        // taste-learning-settings-section.tsx の tasteLearningMutation は同じ問題
+        // （abort 後の遅延 commit）を、再読ポーリングではなく連番つきの比較更新（CAS）の
+        // 「柵」書き込みで扱っている。片方の失敗時の扱いを直したらもう片方も確認すること。
         if (generation !== mutationGenerationRef.current) {
           throw error;
         }

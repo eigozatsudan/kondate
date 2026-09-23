@@ -1,27 +1,31 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useRef } from "react";
-import { waitMs, withTimeout } from "@/features/auth/async-timeout";
+import { withTimeout } from "@/features/auth/async-timeout";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
-  getTasteLearningEnabled,
+  getTasteLearningState,
   setTasteLearningEnabled,
   tasteLearningKeys,
+  type TasteLearningSetResult,
+  type TasteLearningState,
 } from "./taste-learning-api";
 import { tasteLearningCopy } from "./taste-learning-copy";
 import { TasteLearningSection } from "./taste-learning-section";
-import {
-  TASTE_LEARNING_RECONCILE_ATTEMPTS,
-  TASTE_LEARNING_RECONCILE_RETRY_DELAY_MS,
-  TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
-} from "./taste-learning-timing";
+import { TASTE_LEARNING_TOGGLE_TIMEOUT_MS } from "./taste-learning-timing";
 
 export type TasteLearningSettingsSectionProps = {
   userId: string;
 };
 
+type TasteLearningToggleRequest = {
+  nextEnabled: boolean;
+  /** 画面が最後に読んだ連番。サーバーはこれと一致したときだけ書く。 */
+  expectedSeq: number;
+};
+
 /**
  * 好みの学習トグルの読み書きを設定ページへ配線する。
- * 読み取りは設定画面専用の getTasteLearningEnabled（household の select("*") とは
+ * 読み取りは設定画面専用の getTasteLearningState（household の select("*") とは
  * 別系統）、書き込みは set_taste_learning_enabled RPC のみ。
  * ShareConsentSettingsSection と同様、getBrowserSupabaseClient() を都度取得し、
  * RPC の戻り値をそのまま query cache へ書いてから invalidate して裏取りする。
@@ -29,16 +33,18 @@ export type TasteLearningSettingsSectionProps = {
  * または一度も読み込めていない失敗時）はスイッチ自体を出さない — ON がデフォルトのため
  * `?? false` で偽の OFF を見せると誤操作を招く。一度読み込めた後の裏取り再読が失敗しても
  * 値は保持済みなので、スイッチは有効なまま・読み込みエラーは出さない。
- * timeout・書き込み失敗時は abort を試みたうえで、getTasteLearningEnabled を
- * 最大 TASTE_LEARNING_RECONCILE_ATTEMPTS 回、TASTE_LEARNING_RECONCILE_RETRY_DELAY_MS 間隔で
- * 再読する（ShareConsentSettingsSection と同じ再読ポーリング。同形のロジックが
- * share-consent-settings-section.tsx の再読ループにもあるので、片方を直したら
- * もう片方も確認すること）。abort は fetch を打ち切る
- * だけでサーバー側の commit は止まらないため、直後の 1 回だけの再読では commit 前の値を
- * 正と誤認しうる。再読値が要求値と一致すれば成功扱いにして書き込み失敗を出さず、
- * 全て失敗すれば invalidate してサーバー値へ裏取りする。世代ガードは、pending 中は
- * スイッチが disabled のため実際には到達しない防御であり、timeout 後に打たれた次の
- * トグルの結果を古い応答が上書きしないための保険として置いている。
+ *
+ * 書き込みは連番つきの比較更新（CAS）。abort は fetch を打ち切るだけでサーバー側の
+ * commit は止まらず、proxy に滞留した書き込みが画面の再読より後に commit しうる
+ * （OFF と表示したまま、サーバーは ON に戻って料理名が AI へ送られる）。
+ * そこで timeout・書き込み失敗時は、現在値を 1 回読み、要求値と一致すれば成功扱い、
+ * 一致しなければ現在値のまま連番だけを進める「柵」の書き込みを送る。柵が通れば、
+ * 滞留中の古い書き込みは連番が合わずサーバーで捨てられる。期限（時刻）で捨てる方式は
+ * 端末の時計ずれで壊れるため採らない。
+ * share-consent-settings-section.tsx は同じ問題を複数回の再読ポーリングで扱っている
+ * （連番を持たないため）。片方の失敗時の扱いを直したら、もう片方も確認すること。
+ * 世代ガードは、pending 中はスイッチが disabled のため実際には到達しない防御であり、
+ * timeout 後に打たれた次のトグルの結果を古い応答が上書きしないための保険として置いている。
  */
 export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSectionProps) {
   const queryClient = useQueryClient();
@@ -51,72 +57,95 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
 
   const tasteLearningQuery = useQuery({
     queryKey: tasteLearningKeys.current(userId),
-    queryFn: () => getTasteLearningEnabled(getBrowserSupabaseClient(), userId),
+    queryFn: () => getTasteLearningState(getBrowserSupabaseClient(), userId),
   });
 
   const tasteLearningMutation = useMutation({
-    mutationFn: async (nextEnabled: boolean) => {
+    mutationFn: async ({ nextEnabled, expectedSeq }: TasteLearningToggleRequest) => {
       const generation = ++mutationGenerationRef.current;
-      const abortController = new AbortController();
-      const abortWrite = (): void => {
-        if (!abortController.signal.aborted) {
-          abortController.abort();
+      const isCurrentGeneration = (): boolean => generation === mutationGenerationRef.current;
+      const queryKey = tasteLearningKeys.current(userId);
+      const applyServerState = (state: TasteLearningState): void => {
+        if (isCurrentGeneration()) {
+          queryClient.setQueryData<TasteLearningState>(queryKey, {
+            enabled: state.enabled,
+            seq: state.seq,
+          });
+        }
+      };
+      const invalidateIfCurrent = (): void => {
+        if (isCurrentGeneration()) {
+          void queryClient.invalidateQueries({ queryKey });
         }
       };
       const client = getBrowserSupabaseClient();
-      const writePromise = setTasteLearningEnabled(client, nextEnabled, {
-        signal: abortController.signal,
-      });
-      try {
-        const result = await withTimeout(
-          writePromise,
+      // 書き込みは abort を試みたうえで timeout で打ち切る（柵の書き込みも同じ扱い）
+      const writeWithTimeout = (enabled: boolean, seq: number): Promise<TasteLearningSetResult> => {
+        const abortController = new AbortController();
+        return withTimeout(
+          setTasteLearningEnabled(client, enabled, seq, { signal: abortController.signal }),
           TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
-          abortWrite,
+          () => {
+            if (!abortController.signal.aborted) {
+              abortController.abort();
+            }
+          },
         );
-        if (generation === mutationGenerationRef.current) {
-          queryClient.setQueryData(tasteLearningKeys.current(userId), result);
-          void queryClient.invalidateQueries({ queryKey: tasteLearningKeys.current(userId) });
-        }
-        return result;
+      };
+
+      let result: TasteLearningSetResult;
+      try {
+        result = await writeWithTimeout(nextEnabled, expectedSeq);
       } catch (error) {
-        // abort は fetch を打ち切るだけでサーバーの commit は止まらないため、
-        // 直後の 1 回だけの再読では commit 前の値を正と誤認しうる。世代ガード付きで
-        // 複数回・間隔を空けて再読し、要求値と一致した時点で成功扱いにする。
-        // 同形の再読ループが share-consent-settings-section.tsx の toggleMutation
-        // catch にもある。片方を直したらもう片方も確認すること。
-        if (generation !== mutationGenerationRef.current) {
+        if (!isCurrentGeneration()) {
           throw error;
         }
-        let sawSuccessfulRead = false;
-        for (let attempt = 0; attempt < TASTE_LEARNING_RECONCILE_ATTEMPTS; attempt += 1) {
-          if (generation !== mutationGenerationRef.current) {
-            throw error;
-          }
-          try {
-            const fresh = await withTimeout(
-              getTasteLearningEnabled(client, userId),
-              TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
-            );
-            sawSuccessfulRead = true;
-            if (generation === mutationGenerationRef.current) {
-              queryClient.setQueryData(tasteLearningKeys.current(userId), fresh);
-            }
-            if (fresh === nextEnabled) {
-              // サーバーは実際には commit していた。再読で確定した値なので成功扱いにする。
-              return fresh;
-            }
-          } catch {
-            // この回の再読失敗。残回数でサーバーを再確認する。
-          }
-          if (attempt < TASTE_LEARNING_RECONCILE_ATTEMPTS - 1) {
-            await waitMs(TASTE_LEARNING_RECONCILE_RETRY_DELAY_MS);
-          }
+        // 書き込みの成否が分からない。現在値を 1 回だけ読む。
+        let current: TasteLearningState;
+        try {
+          current = await withTimeout(
+            getTasteLearningState(client, userId),
+            TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
+          );
+        } catch {
+          invalidateIfCurrent();
+          throw error;
         }
-        if (!sawSuccessfulRead && generation === mutationGenerationRef.current) {
-          // 再読が全部失敗: 保持中のキャッシュ値をそのまま正とはせず、裏取りをやり直す。
-          void queryClient.invalidateQueries({ queryKey: tasteLearningKeys.current(userId) });
+        if (!isCurrentGeneration()) {
+          throw error;
         }
+        applyServerState(current);
+        if (current.enabled === nextEnabled) {
+          // 応答は失ったが、サーバーは要求どおり commit していた
+          return;
+        }
+        // 未 commit の書き込みがまだどこかに滞留しているかもしれない。現在値のまま
+        // 連番だけを進め、それが後から届いても連番が合わず捨てられるようにする。
+        let fence: TasteLearningSetResult;
+        try {
+          fence = await writeWithTimeout(current.enabled, current.seq);
+        } catch {
+          invalidateIfCurrent();
+          throw error;
+        }
+        applyServerState(fence);
+        if (!fence.applied && fence.enabled === nextEnabled) {
+          // 柵より先に、滞留していた書き込み（または別端末の同じ変更）が通っていた
+          return;
+        }
+        // 柵が通った（要求は通らないことが確定）か、別端末が別の値へ変えていた
         throw error;
+      }
+
+      applyServerState(result);
+      if (result.applied) {
+        invalidateIfCurrent();
+        return;
+      }
+      // 連番が合わず書かれなかった: 別端末などが先に変えている。サーバーが既に
+      // 要求値なら結果として望みどおりなので成功扱い、違えば失敗表示を出す。
+      if (result.enabled !== nextEnabled) {
+        throw new Error("taste_learning_conflict");
       }
     },
   });
@@ -162,10 +191,10 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
       ) : null}
       {hasData ? (
         <TasteLearningSection
-          enabled={data}
+          enabled={data.enabled}
           describedById={descriptionId}
           onToggle={async (nextEnabled) => {
-            await tasteLearningMutation.mutateAsync(nextEnabled);
+            await tasteLearningMutation.mutateAsync({ nextEnabled, expectedSeq: data.seq });
           }}
         />
       ) : null}

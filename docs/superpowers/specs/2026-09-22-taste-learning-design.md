@@ -181,8 +181,20 @@ tasteHints: { applied: true; strength: TasteSignalStrength } | undefined
 
 ```sql
 alter table public.profiles
-  add column taste_learning_enabled boolean not null default true;
+  add column taste_learning_enabled boolean not null default true,
+  -- 比較更新（CAS）用の連番。書き込みが通るたびに 1 進む。
+  -- abort してもサーバー側の commit は止まらないため、遅れて届いた古い書き込みが
+  -- 利用者の OFF を ON で上書きしうる。連番を照合して古い書き込みを捨てる。
+  -- 期限（時刻）ではなく連番にしたのは、端末の時計ずれで判定が壊れないようにするため。
+  add column taste_learning_seq bigint not null default 0;
 ```
+
+`taste_learning_seq` は比較更新（CAS）用の連番で、書き込みが通るたびに 1 進む。
+導入済みの supabase-js / postgrest-js（2.110.2）は abort してもサーバー側の処理を止めないため、
+proxy に滞留した書き込みが、画面が timeout して再読を終えた**後に** commit しうる。
+その場合、画面は OFF なのにサーバーは ON に戻り、料理名・食材名が AI へ送られてしまう。
+連番を照合して、遅れて届いた古い書き込みをサーバー側で捨てる。期限（時刻）で捨てる方式は
+端末の時計ずれで壊れるため採らない（決定）。
 
 **`public.profiles` へのテーブル単位 UPDATE 権限は復活させない。**
 `20260712000100_onboarding_completion_boundary.sql` が `profiles_update_own` を drop し
@@ -195,14 +207,18 @@ alter table public.profiles
 そちらへ揃える。
 
 ```sql
-create or replace function public.set_taste_learning_enabled(p_enabled boolean)
-returns boolean
+create or replace function public.set_taste_learning_enabled(
+  p_enabled boolean,
+  p_expected_seq bigint
+)
+returns jsonb
 language plpgsql
 security definer
 set search_path = ''
 as $function$
 declare
-  v_result boolean;
+  v_enabled boolean;
+  v_seq bigint;
 begin
   -- set_onboarding_status と同じ規約。未認証・行欠落を null で黙らせない。
   -- updated_at は profiles_set_updated_at トリガが入れる
@@ -214,24 +230,51 @@ begin
     raise exception using errcode = '22023', message = 'invalid_taste_learning_enabled';
   end if;
 
+  if p_expected_seq is null then
+    raise exception using errcode = '22023', message = 'invalid_taste_learning_seq';
+  end if;
+
+  -- 呼び出し側が最後に読んだ連番と一致するときだけ書く。timeout 後の画面は
+  -- 同じ値の「柵」書き込みで連番を進めるので、proxy に滞留していた古い書き込みが
+  -- 後から届いても一致せず捨てられる（UI が OFF なのにサーバーが ON に戻る事故を防ぐ）。
   update public.profiles as profile
-  set taste_learning_enabled = p_enabled
+  set taste_learning_enabled = p_enabled,
+    taste_learning_seq = profile.taste_learning_seq + 1
   where profile.user_id = auth.uid()
-  returning profile.taste_learning_enabled into v_result;
+    and profile.taste_learning_seq = p_expected_seq
+  returning profile.taste_learning_enabled, profile.taste_learning_seq
+  into v_enabled, v_seq;
+
+  if found then
+    return pg_catalog.jsonb_build_object('enabled', v_enabled, 'seq', v_seq, 'applied', true);
+  end if;
+
+  -- 連番が合わない: 書かずに現在値を返し、呼び出し側が表示をサーバー値へ合わせる。
+  -- 行そのものが無い場合は従来どおり黙らせず P0002
+  select profile.taste_learning_enabled, profile.taste_learning_seq
+  into v_enabled, v_seq
+  from public.profiles as profile
+  where profile.user_id = auth.uid();
 
   if not found then
     raise exception using errcode = 'P0002', message = 'profile_not_found';
   end if;
 
-  return v_result;
+  return pg_catalog.jsonb_build_object('enabled', v_enabled, 'seq', v_seq, 'applied', false);
 end;
 $function$;
 
-revoke all on function public.set_taste_learning_enabled(boolean) from public, anon;
-grant execute on function public.set_taste_learning_enabled(boolean) to authenticated;
+revoke all on function public.set_taste_learning_enabled(boolean, bigint) from public, anon;
+grant execute on function public.set_taste_learning_enabled(boolean, bigint) to authenticated;
 ```
 
-SELECT 権限は `20260712000100` 以降も残っているため、**読み取りに新しい関数は要らない**。
+戻り値は `{ enabled, seq, applied }`。連番が一致したときだけ書いて `applied: true`、一致しなければ
+書かずに現在値を `applied: false` で返す（行が無ければ従来どおり `P0002`）。`p_expected_seq` の null は
+`22023 invalid_taste_learning_seq`。連番を照合しない 1 引数版は残さない。
+連番もテーブル単位 UPDATE の revoke により利用者が直接は書けず、この関数だけが進める。
+
+SELECT 権限は `20260712000100` 以降も残っているため、**読み取りに新しい関数は要らない**
+（`taste_learning_seq` も同じ所有者 select ポリシーで読める）。
 ただしアカウント設定は現在 `profiles` を読んでおらず（`profiles` を読むのは
 `household-api.ts` の `select("*")` だけ）、既存 select への相乗り先が無い。トグルの初期表示用の
 読み取りは設定画面側に新設する（§6.1）。
@@ -591,6 +634,25 @@ taste_hints_outcome: TasteHintsOutcome   // §5.1 の 8 値のみ
 `src/features/household/household-api.ts` の `select("*")`（初回設定の状態用）だけである。
 設定画面用の読み取りを新設する。SELECT 権限は `20260712000100` 以降も残っているため、
 読み取りに新しい関数は要らない。書き込みだけが `set_taste_learning_enabled` RPC（§3.3）。
+読み取りは `taste_learning_enabled` と `taste_learning_seq` を一緒に読み（`getTasteLearningState`）、
+書き込みは最後に読んだ連番を `p_expected_seq` に渡す。
+
+**トグルの挙動（CAS の柵）**
+
+- 書き込みは timeout（`TASTE_LEARNING_TOGGLE_TIMEOUT_MS`）で abort を試みて打ち切る。
+- `applied: true` なら戻り値を cache へ書き、invalidate して裏取りする。
+- `applied: false`（別端末などが先に変えた）なら戻り値のサーバー値を cache へ書く。要求値と
+  同じなら成功扱い、違えば失敗表示を出す。
+- timeout・abort・その他の書き込み失敗では、応答が無くても commit 済みかもしれない。
+  1. 現在値を 1 回読む（同じ timeout）。要求値と一致すれば commit 済みなので成功扱い。
+  2. 一致しなければ、現在値のまま読んだ連番で**柵**の書き込みを送る。値は変えず連番だけを進めるので、
+     滞留中の古い書き込みが後から届いても連番が合わずサーバーで捨てられる。
+     柵が `applied: true` なら結果を cache へ書き、失敗表示（スイッチはサーバー値）。
+     `applied: false` なら滞留していた書き込みか別端末が先に通っている。返ったサーバー値を cache へ書き、
+     要求値と同じなら成功扱い、違えば失敗表示。
+  3. 読み取りか柵が失敗したら invalidate して裏取りし、失敗表示を出す。
+- 共有同意（`share-consent-settings-section.tsx`）は連番を持たないため、従来どおり複数回の
+  再読ポーリングで同じ問題を扱っている。挙動は変えない。
 
 ```
 好みの学習                                              [ ON ]
@@ -627,7 +689,7 @@ OFFにすると読み取りをやめます。設定と反映の記録は保存�
 
 **新しく保存されるもの**
 
-- `public.profiles.taste_learning_enabled`（boolean 1 列）
+- `public.profiles.taste_learning_enabled`（boolean）と `taste_learning_seq`（比較更新用の連番。bigint）
 - `menus.preference_snapshot.tasteHints = { applied, strength }`（既存 jsonb 列の中）
 - 生成ログの `tasteHintsOutcome`（閉じた列挙。料理名・食材名を含まない）
 
@@ -674,14 +736,14 @@ OFFにすると読み取りをやめます。設定と反映の記録は保存�
 
 | 層 | ファイル | 見るもの |
 | --- | --- | --- |
-| pgTAP | `supabase/tests/database/taste_signals.test.sql` | 他人の menus を読まない／窓の境界 89・90 日と 49・50 件／半減期／`score` の加算と乗算／`derivation_group_id` で数えた強さの 4・5・14・15／**回数はすべて派生グループ単位**（同じ 1 食を 3 回再生成しても使いすぎにならない、`child_friendly` 2 回でも 1 グループなら軸にならない）／同一献立内の重複食材は 1 回／ジャンルは `menus.cuisine_genre` で比率を取り、結果 `any` は分子に入らない／`submission.cuisineGenre = 'any'` 限定／時間帯の境界 20・20.5・40・40.5／`{"reason":...}` と `reason: null` の判別／`dishIngredientIndex` が `score > 0` の料理だけを含む／`set_taste_learning_enabled` が他人の行を更新しない／テーブル単位 UPDATE が依然として拒否される |
+| pgTAP | `supabase/tests/database/taste_signals.test.sql` | 他人の menus を読まない／窓の境界 89・90 日と 49・50 件／半減期／`score` の加算と乗算／`derivation_group_id` で数えた強さの 4・5・14・15／**回数はすべて派生グループ単位**（同じ 1 食を 3 回再生成しても使いすぎにならない、`child_friendly` 2 回でも 1 グループなら軸にならない）／同一献立内の重複食材は 1 回／ジャンルは `menus.cuisine_genre` で比率を取り、結果 `any` は分子に入らない／`submission.cuisineGenre = 'any'` 限定／時間帯の境界 20・20.5・40・40.5／`{"reason":...}` と `reason: null` の判別／`dishIngredientIndex` が `score > 0` の料理だけを含む／`set_taste_learning_enabled` が他人の行を更新しない（他人の連番と一致しても自分の行だけを照合する）／テーブル単位 UPDATE が依然として拒否される（`taste_learning_seq` も直接書けない）／**CAS**: 連番一致で `applied: true` と連番 +1、古い連番は `applied: false` で値も連番も変えず現在値を返す、`p_expected_seq` の null は `22023`、1 引数版が無い |
 | Function | `taste-hints.test.ts` | `reason` 分岐が safeParse より先（`disabled` / `no_history` が `invalid_shape` に潰れない）／タイムアウト・失敗・不正形で null と `outcome`／OFF で RPC を呼ばない／安全フィルタ（アレルゲン別名・カスタム・苦手・avoid）／**idea で `avoidAxes` が空**／表示確認の別名・苦手では料理ごと落とさない／`__proto__` キーで strict 検査をすり抜けない／辞書全件でも予算内に収まる／`sanitizeTasteHints` が対応表で食材を落とし（13 位以下の料理の食材は残す）、制御文字・不可視文字を含む語を落とし、対応表を戻り値から捨てる |
 | Function | `generation-prompt.test.ts` 追記 | 段落とキーの有無／優先順位の文が 1 回だけ／料理名が system 文に現れない／空ヒントでキーごと消える |
 | Function | `generation-prompt-taste-off.test.ts`（新規） | kill-switch off で段落もキーも出ない（既存 2 本と同型） |
 | Function | `generation-service.test.ts` 追記 | `Promise.all` 並列／**fingerprint に載らない**／`preference_snapshot` の記録が確定オブジェクトと一致（切り詰めで空→キーなし）／再生成経路に出ない／`tasteHintsOutcome` |
 | src | `menu-result-api.test.ts` | `tasteHintsApplied` の投影、キー欠落・壊れた形で `false` |
 | src | `menu-hero.test.tsx` | `weak` 非表示、`medium`/`strong` 表示、**作成モデル行と共存**する |
-| src | `taste-learning-api.test.ts` / `taste-learning-settings-section.test.tsx` | 初期表示の `profiles` 読み取り、トグル往復（RPC 経由）と失敗時の復帰 |
+| src | `taste-learning-api.test.ts` / `taste-learning-settings-section.test.tsx` | 初期表示の `profiles` 読み取り（値と連番、strict Zod）、`p_expected_seq` の送信と `{ enabled, seq, applied }` の strict 検査、signal の転送／CAS を持つテスト内の偽サーバーで: 通常成功、連番を運ぶ OFF→ON→OFF 往復、滞留書き込みが柵より先に commit（成功・柵なし）、未 commit の滞留書き込みを柵で捨てる（失敗表示とサーバー値、後着の書き込みが `applied: false`）、別端末による `applied: false`（違う値は失敗表示、同じ値は成功）、柵・再読の失敗で invalidate と失敗表示 |
 | src | `privacy-copy.test.ts` | 「AIへ送る情報」に 90 日・50 献立・停止手段が含まれる |
 | script | `scripts/assert-privacy-logs.mjs` | `taste_hints_outcome` が許可一覧にあり、料理名・食材名がログに出ない |
 
@@ -733,7 +795,7 @@ docker compose --profile test run --rm db-test
 | 透明性 | 結果に 1 行 + アカウント設定に ON/OFF |
 | 提供範囲 | 全員・デフォルト ON |
 | 同意版 | `2026-07-29.v1` 据え置き。送信の増加は設定とプライバシーページの両方に明記 |
-| トグルの保存 | `set_taste_learning_enabled` RPC。テーブル単位 UPDATE は復活させない |
+| トグルの保存 | `set_taste_learning_enabled` RPC（連番つき比較更新。timeout 時は柵の書き込みで古い書き込みを捨てる）。テーブル単位 UPDATE は復活させない |
 | 重みの式 | 減衰は乗算、★ 1.0 と採用 0.3 は加算 |
 | 避ける軸 | `child_unfriendly` のみ。家族モード限定・2 派生グループ以上 |
 | 回数の数え方 | 強さも最低出現回数も `derivation_group_id` 単位 |

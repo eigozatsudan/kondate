@@ -2,18 +2,28 @@
 -- 指紋・quota・安全検証には一切載せない。
 
 alter table public.profiles
-  add column taste_learning_enabled boolean not null default true;
+  add column taste_learning_enabled boolean not null default true,
+  -- 比較更新（CAS）用の連番。書き込みが通るたびに 1 進む。
+  -- abort してもサーバー側の commit は止まらないため、遅れて届いた古い書き込みが
+  -- 利用者の OFF を ON で上書きしうる。連番を照合して古い書き込みを捨てる。
+  -- 期限（時刻）ではなく連番にしたのは、端末の時計ずれで判定が壊れないようにするため。
+  add column taste_learning_seq bigint not null default 0;
 
 -- 20260712000100 でテーブル単位 UPDATE と profiles_update_own を外している。
 -- 復活させると onboarding_status まで書き換え可能に戻るため、関数経由だけを足す。
-create or replace function public.set_taste_learning_enabled(p_enabled boolean)
-returns boolean
+-- 連番も同じ理由でブラウザから直接は書けず、この関数だけが進める。
+create or replace function public.set_taste_learning_enabled(
+  p_enabled boolean,
+  p_expected_seq bigint
+)
+returns jsonb
 language plpgsql
 security definer
 set search_path = ''
 as $function$
 declare
-  v_result boolean;
+  v_enabled boolean;
+  v_seq bigint;
 begin
   -- set_onboarding_status と同じ規約。未認証・行欠落を null で黙らせない。
   -- updated_at は profiles_set_updated_at トリガが入れる
@@ -25,21 +35,42 @@ begin
     raise exception using errcode = '22023', message = 'invalid_taste_learning_enabled';
   end if;
 
+  if p_expected_seq is null then
+    raise exception using errcode = '22023', message = 'invalid_taste_learning_seq';
+  end if;
+
+  -- 呼び出し側が最後に読んだ連番と一致するときだけ書く。timeout 後の画面は
+  -- 同じ値の「柵」書き込みで連番を進めるので、proxy に滞留していた古い書き込みが
+  -- 後から届いても一致せず捨てられる（UI が OFF なのにサーバーが ON に戻る事故を防ぐ）。
   update public.profiles as profile
-  set taste_learning_enabled = p_enabled
+  set taste_learning_enabled = p_enabled,
+    taste_learning_seq = profile.taste_learning_seq + 1
   where profile.user_id = auth.uid()
-  returning profile.taste_learning_enabled into v_result;
+    and profile.taste_learning_seq = p_expected_seq
+  returning profile.taste_learning_enabled, profile.taste_learning_seq
+  into v_enabled, v_seq;
+
+  if found then
+    return pg_catalog.jsonb_build_object('enabled', v_enabled, 'seq', v_seq, 'applied', true);
+  end if;
+
+  -- 連番が合わない: 書かずに現在値を返し、呼び出し側が表示をサーバー値へ合わせる。
+  -- 行そのものが無い場合は従来どおり黙らせず P0002
+  select profile.taste_learning_enabled, profile.taste_learning_seq
+  into v_enabled, v_seq
+  from public.profiles as profile
+  where profile.user_id = auth.uid();
 
   if not found then
     raise exception using errcode = 'P0002', message = 'profile_not_found';
   end if;
 
-  return v_result;
+  return pg_catalog.jsonb_build_object('enabled', v_enabled, 'seq', v_seq, 'applied', false);
 end;
 $function$;
 
-revoke all on function public.set_taste_learning_enabled(boolean) from public, anon;
-grant execute on function public.set_taste_learning_enabled(boolean) to authenticated;
+revoke all on function public.set_taste_learning_enabled(boolean, bigint) from public, anon;
+grant execute on function public.set_taste_learning_enabled(boolean, bigint) to authenticated;
 
 -- 集計。security invoker なので所有者 select ポリシーがそのまま効く。
 -- 窓 90 日・50 件、半減期 30 日。回数はすべて derivation_group_id 単位で数える。

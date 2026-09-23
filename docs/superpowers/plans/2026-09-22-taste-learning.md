@@ -38,13 +38,19 @@
 - Create: `supabase/migrations/20260922120000_taste_learning.sql`
 - Create: `supabase/tests/database/taste_signals.test.sql`
 - Modify: `src/shared/types/database.generated.ts`（`npm run db:types` の成果物。手編集しない）
+- Modify: `supabase/tests/database/rls_inventory.test.sql` と `docs/testing/database-access-matrix.md`（`set_taste_learning_enabled` の関数シグネチャの grant 行）
+- Modify: `src/shared/types/database.test.ts` と `src/features/household/household-onboarding-page.test.tsx`（`ProfileRow` の fixture に `taste_learning_seq` を足す）
 
 **Interfaces:**
 - Consumes: なし
 - Produces:
   - `public.profiles.taste_learning_enabled boolean not null default true`
-  - `public.set_taste_learning_enabled(p_enabled boolean) returns boolean`（`authenticated` に execute）。
-    未認証は `42501 authentication_required`、null は `22023 invalid_taste_learning_enabled`、
+  - `public.profiles.taste_learning_seq bigint not null default 0`（比較更新（CAS）用の連番。関数だけが進める）
+  - `public.set_taste_learning_enabled(p_enabled boolean, p_expected_seq bigint) returns jsonb`（`authenticated` に execute）。
+    連番が `p_expected_seq` と一致したときだけ書いて連番を 1 進め `{"enabled","seq","applied":true}`、
+    一致しなければ書かずに現在値を `{"enabled","seq","applied":false}` で返す。1 引数版は残さない。
+    未認証は `42501 authentication_required`、`p_enabled` の null は `22023 invalid_taste_learning_enabled`、
+    `p_expected_seq` の null は `22023 invalid_taste_learning_seq`、
     行欠落は `P0002 profile_not_found`（`set_onboarding_status` と同じ規約）
   - `public.get_taste_signals(p_now timestamptz default now()) returns jsonb`（`authenticated` に execute）。
     未認証は `42501 authentication_required`。service クライアントで呼ぶと no_history ではなくこの
@@ -76,7 +82,7 @@
 
 ```sql
 begin;
-select plan(52);
+select plan(63);
 
 select tests.create_supabase_user('11111111-1111-4111-8111-111111111111', 'owner@example.invalid');
 select tests.create_supabase_user('22222222-2222-4222-8222-222222222222', 'other@example.invalid');
@@ -196,10 +202,19 @@ select col_not_null('public', 'profiles', 'taste_learning_enabled',
   'taste_learning_enabled is not null');
 select col_default_is('public', 'profiles', 'taste_learning_enabled', 'true',
   'taste_learning_enabled defaults to true');
+select has_column('public', 'profiles', 'taste_learning_seq',
+  'profiles has taste_learning_seq');
+select col_not_null('public', 'profiles', 'taste_learning_seq',
+  'taste_learning_seq is not null');
+select col_default_is('public', 'profiles', 'taste_learning_seq', '0',
+  'taste_learning_seq defaults to 0');
 select has_function('public', 'get_taste_signals', array['timestamptz'],
   'get_taste_signals exists');
-select has_function('public', 'set_taste_learning_enabled', array['boolean'],
+select has_function('public', 'set_taste_learning_enabled', array['boolean', 'bigint'],
   'set_taste_learning_enabled exists');
+-- 1 引数版は残さない。残すと連番の照合を素通りする書き込み口になる
+select hasnt_function('public', 'set_taste_learning_enabled', array['boolean'],
+  'the one-argument setter without a sequence is gone');
 -- 20260712000100 で外したテーブル単位 UPDATE を復活させていない
 select ok(
   not has_table_privilege('authenticated', 'public.profiles', 'UPDATE'),
@@ -211,8 +226,11 @@ select is(pg_temp.signals() ->> 'reason', 'no_history', 'empty history reports n
 
 select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
 set local role authenticated;
-select is(public.set_taste_learning_enabled(false), false,
-  'set_taste_learning_enabled returns the stored value');
+select is(
+  public.set_taste_learning_enabled(false, 0),
+  '{"enabled": false, "seq": 1, "applied": true}'::jsonb,
+  'a matching sequence applies the write and advances the sequence'
+);
 reset role;
 
 -- 分岐順は disabled -> no_history。OFF の利用者は窓が空でも disabled になる
@@ -230,7 +248,7 @@ select set_config('request.jwt.claim.sub', '', true);
 select set_config('request.jwt.claims', '', true);
 set local role authenticated;
 select throws_ok(
-  'select public.set_taste_learning_enabled(true)',
+  'select public.set_taste_learning_enabled(true, 1)',
   '42501', 'authentication_required',
   'the setter rejects an unauthenticated caller'
 );
@@ -244,16 +262,66 @@ reset role;
 select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
 set local role authenticated;
 select throws_ok(
-  'select public.set_taste_learning_enabled(null)',
+  'select public.set_taste_learning_enabled(null, 1)',
   '22023', 'invalid_taste_learning_enabled',
   'the setter rejects null'
+);
+select throws_ok(
+  'select public.set_taste_learning_enabled(true, null)',
+  '22023', 'invalid_taste_learning_seq',
+  'the setter rejects a null sequence'
+);
+-- 遅れて届いた古い書き込み（連番 0 のまま）は捨て、現在値をそのまま返す
+select is(
+  public.set_taste_learning_enabled(true, 0),
+  '{"enabled": false, "seq": 1, "applied": false}'::jsonb,
+  'a stale sequence is not applied and reports the current state'
+);
+reset role;
+select is(
+  (select pg_catalog.jsonb_build_object('enabled', taste_learning_enabled, 'seq', taste_learning_seq)
+   from public.profiles where user_id = '11111111-1111-4111-8111-111111111111'),
+  '{"enabled": false, "seq": 1}'::jsonb,
+  'a stale write leaves the stored value and sequence unchanged'
+);
+
+-- 連番はブラウザから直接書けない（テーブル単位 UPDATE は revoke のまま）
+select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
+set local role authenticated;
+select throws_ok(
+  $$update public.profiles set taste_learning_seq = 99
+    where user_id = '11111111-1111-4111-8111-111111111111'$$,
+  '42501', null,
+  'authenticated cannot update taste_learning_seq directly'
 );
 reset role;
 
 select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
 set local role authenticated;
-select is(public.set_taste_learning_enabled(true), true, 'toggle back on');
+select is(
+  public.set_taste_learning_enabled(true, 1),
+  '{"enabled": true, "seq": 2, "applied": true}'::jsonb,
+  'toggle back on with the latest sequence'
+);
+-- 他人の連番（0）と一致しても、照合するのは自分の行だけ
+select is(
+  public.set_taste_learning_enabled(false, 0),
+  '{"enabled": true, "seq": 2, "applied": false}'::jsonb,
+  'a sequence matching another user row is still checked against the caller row only'
+);
 reset role;
+select is(
+  (select taste_learning_seq from public.profiles
+   where user_id = '11111111-1111-4111-8111-111111111111'),
+  2::bigint,
+  'each applied write advances the stored sequence by one'
+);
+select is(
+  (select pg_catalog.jsonb_build_object('enabled', taste_learning_enabled, 'seq', taste_learning_seq)
+   from public.profiles where user_id = '22222222-2222-4222-8222-222222222222'),
+  '{"enabled": true, "seq": 0}'::jsonb,
+  'the setter never touches another user row or sequence'
+);
 
 -- ============ 派生行は強さを膨らませない ============
 truncate public.menus cascade;
@@ -620,18 +688,28 @@ Expected: FAIL。`column "taste_learning_enabled" does not exist` と
 -- 指紋・quota・安全検証には一切載せない。
 
 alter table public.profiles
-  add column taste_learning_enabled boolean not null default true;
+  add column taste_learning_enabled boolean not null default true,
+  -- 比較更新（CAS）用の連番。書き込みが通るたびに 1 進む。
+  -- abort してもサーバー側の commit は止まらないため、遅れて届いた古い書き込みが
+  -- 利用者の OFF を ON で上書きしうる。連番を照合して古い書き込みを捨てる。
+  -- 期限（時刻）ではなく連番にしたのは、端末の時計ずれで判定が壊れないようにするため。
+  add column taste_learning_seq bigint not null default 0;
 
 -- 20260712000100 でテーブル単位 UPDATE と profiles_update_own を外している。
 -- 復活させると onboarding_status まで書き換え可能に戻るため、関数経由だけを足す。
-create or replace function public.set_taste_learning_enabled(p_enabled boolean)
-returns boolean
+-- 連番も同じ理由でブラウザから直接は書けず、この関数だけが進める。
+create or replace function public.set_taste_learning_enabled(
+  p_enabled boolean,
+  p_expected_seq bigint
+)
+returns jsonb
 language plpgsql
 security definer
 set search_path = ''
 as $function$
 declare
-  v_result boolean;
+  v_enabled boolean;
+  v_seq bigint;
 begin
   -- set_onboarding_status と同じ規約。未認証・行欠落を null で黙らせない。
   -- updated_at は profiles_set_updated_at トリガが入れる
@@ -643,21 +721,42 @@ begin
     raise exception using errcode = '22023', message = 'invalid_taste_learning_enabled';
   end if;
 
+  if p_expected_seq is null then
+    raise exception using errcode = '22023', message = 'invalid_taste_learning_seq';
+  end if;
+
+  -- 呼び出し側が最後に読んだ連番と一致するときだけ書く。timeout 後の画面は
+  -- 同じ値の「柵」書き込みで連番を進めるので、proxy に滞留していた古い書き込みが
+  -- 後から届いても一致せず捨てられる（UI が OFF なのにサーバーが ON に戻る事故を防ぐ）。
   update public.profiles as profile
-  set taste_learning_enabled = p_enabled
+  set taste_learning_enabled = p_enabled,
+    taste_learning_seq = profile.taste_learning_seq + 1
   where profile.user_id = auth.uid()
-  returning profile.taste_learning_enabled into v_result;
+    and profile.taste_learning_seq = p_expected_seq
+  returning profile.taste_learning_enabled, profile.taste_learning_seq
+  into v_enabled, v_seq;
+
+  if found then
+    return pg_catalog.jsonb_build_object('enabled', v_enabled, 'seq', v_seq, 'applied', true);
+  end if;
+
+  -- 連番が合わない: 書かずに現在値を返し、呼び出し側が表示をサーバー値へ合わせる。
+  -- 行そのものが無い場合は従来どおり黙らせず P0002
+  select profile.taste_learning_enabled, profile.taste_learning_seq
+  into v_enabled, v_seq
+  from public.profiles as profile
+  where profile.user_id = auth.uid();
 
   if not found then
     raise exception using errcode = 'P0002', message = 'profile_not_found';
   end if;
 
-  return v_result;
+  return pg_catalog.jsonb_build_object('enabled', v_enabled, 'seq', v_seq, 'applied', false);
 end;
 $function$;
 
-revoke all on function public.set_taste_learning_enabled(boolean) from public, anon;
-grant execute on function public.set_taste_learning_enabled(boolean) to authenticated;
+revoke all on function public.set_taste_learning_enabled(boolean, bigint) from public, anon;
+grant execute on function public.set_taste_learning_enabled(boolean, bigint) to authenticated;
 
 -- 集計。security invoker なので所有者 select ポリシーがそのまま効く。
 -- 窓 90 日・50 件、半減期 30 日。回数はすべて derivation_group_id 単位で数える。
@@ -2023,31 +2122,31 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `src/features/account/taste-learning-copy.ts`
-- Create: `src/features/account/taste-learning-api.ts`（`setTasteLearningEnabled` は N-1 で任意の `{ signal }` を受け、rpc builder の `.abortSignal()` へ橋渡しする）
+- Create: `src/features/account/taste-learning-api.ts`（読み取りは値と連番を返す `getTasteLearningState`。`setTasteLearningEnabled` は期待する連番を渡して `{ enabled, seq, applied }` を返し、任意の `{ signal }` を rpc builder の `.abortSignal()` へ橋渡しする）
 - Test: `src/features/account/taste-learning-api.test.ts`
 - Create: `src/features/account/taste-learning-section.tsx`（スイッチ本体。値の確定を前提にし、見出し・告知文・読み込み/エラー表示は持たない）
 - Test: `src/features/account/taste-learning-section.test.tsx`
-- Create: `src/features/account/taste-learning-settings-section.tsx`（データ配線。`useQuery`/`useMutation` と見出し・告知文・読み込み中/エラー表示を持つ。household 側は薄いラッパーを持たずこれを直接使う。値が未確認の間はスイッチ自体を出さず、一度読めた後の裏取り再読の失敗ではエラー表示・無効化をせず、再読み込み中はボタンをローディング行に差し替え、見出し id は `useId()`、書き込みは世代ガード付きで abort・裏取り invalidate・遅延成功の cache 反映を行う。再読ループは share-consent-settings-section.tsx の再読ループと同形で、cross-reference コメントで対にする）
+- Create: `src/features/account/taste-learning-settings-section.tsx`（データ配線。`useQuery`/`useMutation` と見出し・告知文・読み込み中/エラー表示を持つ。household 側は薄いラッパーを持たずこれを直接使う。値が未確認の間はスイッチ自体を出さず、一度読めた後の裏取り再読の失敗ではエラー表示・無効化をせず、再読み込み中はボタンをローディング行に差し替え、見出し id は `useId()`、書き込みは世代ガード付きで abort・裏取り invalidate を行う。timeout・失敗時は現在値を 1 回読み、要求値でなければ現在値のまま連番だけを進める柵の書き込みを送り、滞留中の古い書き込みをサーバーで捨てさせる。share-consent-settings-section.tsx の再読ポーリングとは cross-reference コメントで対にする）
 - Test: `src/features/account/taste-learning-settings-section.test.tsx`
-- Create: `src/features/account/taste-learning-timing.ts`（`TASTE_LEARNING_TOGGLE_TIMEOUT_MS`/`TASTE_LEARNING_RECONCILE_ATTEMPTS`/`TASTE_LEARNING_RECONCILE_RETRY_DELAY_MS`。share-consent 側の同名の値とわざと同じにし、account 側が privacy のコンポーネントファイルへ依存しないようにする）
+- Create: `src/features/account/taste-learning-timing.ts`（`TASTE_LEARNING_TOGGLE_TIMEOUT_MS`。share-consent 側の同名の値とわざと同じにし、account 側が privacy のコンポーネントファイルへ依存しないようにする）
 - Modify: `src/features/privacy/privacy-copy.ts:41`（`privacySections` の「AIへ送る情報」）
 - Modify: `src/features/privacy/privacy-copy.test.ts`
 - Modify: `src/features/household/household-settings-page.tsx:1777` と `:2539`（`<ShareConsentSettingsSection userId={userId} />` の直後、2 箇所とも）
 - Modify: `src/features/household/household-settings-page.test.tsx`（`TasteLearningSettingsSection` を `ShareConsentSettingsSection` と同様にモックし、家族 CRUD テストを taste-learning RPC に依存させない）
-- Modify: `src/features/auth/async-timeout.ts`（`waitMs` をここへ移して export し、共有同意と好みの学習の再読ポーリングで共用する）
-- Modify: `src/features/privacy/share-consent-settings-section.tsx`（ローカルの `waitMs` を `async-timeout` の共用版へ置き換えるだけ。挙動は変えない。`SHARE_CONSENT_RECONCILE_ATTEMPTS`/`SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS` はすでに export 済みのものを再利用する。再読ループに taste-learning 側との cross-reference コメントを足す）
+- Modify: `src/features/auth/async-timeout.ts`（`waitMs` をここへ移して export する。使うのは共有同意の再読ポーリングだけ）
+- Modify: `src/features/privacy/share-consent-settings-section.tsx`（ローカルの `waitMs` を `async-timeout` の共用版へ置き換えるだけ。挙動は変えない。`SHARE_CONSENT_RECONCILE_ATTEMPTS`/`SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS` はすでに export 済みのものを再利用する。再読ループに、taste-learning 側は CAS の柵で同じ問題を扱っている旨の cross-reference コメントを足す）
 
 **Interfaces:**
-- Consumes: Task 1 の `set_taste_learning_enabled` と `profiles.taste_learning_enabled`
-- Produces: `getTasteLearningEnabled(client, userId)` / `setTasteLearningEnabled(client, enabled, options?: { signal?: AbortSignal })` / `tasteLearningKeys` / `<TasteLearningSection />`（スイッチ本体）/ `<TasteLearningSettingsSection userId />`（設定ページに差し込む配線込みセクション）
+- Consumes: Task 1 の `set_taste_learning_enabled(p_enabled, p_expected_seq)` と `profiles.taste_learning_enabled` / `profiles.taste_learning_seq`
+- Produces: `getTasteLearningState(client, userId): Promise<{ enabled: boolean; seq: number }>` / `setTasteLearningEnabled(client, enabled, expectedSeq, options?: { signal?: AbortSignal }): Promise<{ enabled: boolean; seq: number; applied: boolean }>` / `tasteLearningKeys` / `<TasteLearningSection />`（スイッチ本体）/ `<TasteLearningSettingsSection userId />`（設定ページに差し込む配線込みセクション）
 
 - [x] **Step 1: 失敗するテストを書く**
 
-`src/features/account/taste-learning-api.test.ts`: `getTasteLearningEnabled` / `setTasteLearningEnabled` の成功・エラー・Zod 検証失敗（不正な形の応答）を確認する。
+`src/features/account/taste-learning-api.test.ts`: `getTasteLearningState` / `setTasteLearningEnabled` の成功・エラー・Zod 検証失敗（不正な形の応答。連番の負数・小数・文字列・安全な整数の範囲外・余分なキーを含む）、`p_expected_seq` の送信、`applied: false` の現在値の受け取り、signal の転送を確認する。
 
 `src/features/account/taste-learning-section.test.tsx`: 値が enabled prop にそのまま追従すること（`useState` で最初の値へ固定しないこと）、トグル操作で `onToggle` が呼ばれること、失敗時に `role="alert"` で `tasteLearningCopy.failed` を表示し値が戻ること、失敗後にサーバー値が要求値へ追いついたら失敗表示を下げること、マウント後の prop 変化にスイッチが追従すること。
 
-`src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチ自体が出ないこと（N-2）、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出てスイッチは出ず告知文は消えないこと（N-2）、再読み込み中はボタンを unmount せず disabled とローディング文言へ差し替えること（N-4/R-4）、初回読み込みで値がスイッチに反映されること、一度読み込めた後の裏取り再読の失敗ではスイッチを無効化せず読み込みエラーも出さないこと（N-3）、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること（詰まった裏取り再読に依存しないことを含む、N-6）、ユーザー操作なしのキャッシュ変化にもスイッチが追従すること（N-6）、書き込み失敗時に楽観値を経由してから元の値へ戻ることが観測できること（N-7）、書き込みが abort されると実クライアントと同じく reject すること、その後の再読ポーリングでサーバーの遅延 commit が確認できれば成功扱いにしキャッシュへ反映すること（pending が解けた後も失敗アラートを出さず、一致した時点で再読を打ち切る、R-1）、再読ポーリングが全て変更前の値を返し続けた場合は失敗アラートを出しスイッチをサーバー値へ戻すこと（R-1）、再読がすべて reject した場合は再読間隔を空けて規定回数だけ試し、最後に invalidate でもう一度裏取りすること（R-1）。
+`src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチ自体が出ないこと（N-2）、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出てスイッチは出ず告知文は消えないこと（N-2）、再読み込み中はボタンを unmount せず disabled とローディング文言へ差し替えること（N-4/R-4）、初回読み込みで値がスイッチに反映されること、一度読み込めた後の裏取り再読の失敗ではスイッチを無効化せず読み込みエラーも出さないこと（N-3）、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること（詰まった裏取り再読に依存しないことを含む、N-6）、ユーザー操作なしのキャッシュ変化にもスイッチが追従すること（N-6）、書き込み失敗時に楽観値を経由してから元の値へ戻ることが観測できること（N-7）、書き込みが abort されると実クライアントと同じく reject すること。以下は CAS を持つテスト内の偽サーバー（`{ enabled, seq }`）で順序まで確かめる: 連番を運ぶ OFF→ON→OFF 往復、滞留した書き込みが再読より先に commit していれば成功扱いで柵を送らないこと、未 commit なら柵が通って失敗アラートとサーバー値を出し、後から届いた滞留書き込みが `applied: false` で捨てられ画面とキャッシュが変わらないこと、別端末による `applied: false` で値が違えば失敗アラートと真の値・同じなら成功扱い、柵または再読が失敗したら invalidate して失敗アラートを出すこと。
 
 `src/features/privacy/privacy-copy.test.ts` の既存アサーションを `/設定/u`（既存の「家族設定」でも通ってしまい実質何も検証しない）から `/止められ/u`（「設定でいつでも止められます」の追記そのものを検証する）へ差し替える。
 
@@ -2065,13 +2164,45 @@ Expected: FAIL（実装ファイルが無い/未更新のため import 解決エ
 
 - [x] **Step 3: API を書く**
 
-`src/features/account/taste-learning-api.ts`（実装は当初案のまま。加えて React Query キーを同ファイルへ export）:
+`src/features/account/taste-learning-api.ts`（値と連番を strict Zod で検査する。加えて React Query キーを同ファイルへ export）:
 
 ```ts
 import { z } from "zod";
 import type { BrowserSupabaseClient } from "@/shared/lib/supabase";
 
-const profileRowSchema = z.object({ taste_learning_enabled: z.boolean() }).strict();
+// taste_learning_seq は bigint だが、PostgREST は JSON の数値で返す。
+// 1 操作で 1 しか進まないため安全な整数の範囲を出ることは現実的に無く、
+// 範囲外や小数・負数は壊れた応答として信用しない。
+const tasteLearningSeqSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+
+const profileRowSchema = z
+  .object({
+    taste_learning_enabled: z.boolean(),
+    taste_learning_seq: tasteLearningSeqSchema,
+  })
+  .strict();
+
+const setResultSchema = z
+  .object({
+    enabled: z.boolean(),
+    seq: tasteLearningSeqSchema,
+    applied: z.boolean(),
+  })
+  .strict();
+
+/** サーバーの現在値と、比較更新（CAS）に使う連番。 */
+export type TasteLearningState = {
+  enabled: boolean;
+  seq: number;
+};
+
+/**
+ * set_taste_learning_enabled の結果。applied が false のときは連番が合わず書かれておらず、
+ * enabled / seq はサーバーの現在値を表す。
+ */
+export type TasteLearningSetResult = TasteLearningState & {
+  applied: boolean;
+};
 
 /** timeout 時に in-flight RPC を abort するための任意 signal。 */
 export type TasteLearningRpcOptions = {
@@ -2092,32 +2223,44 @@ async function awaitTasteLearningRpc<T>(
   return await query.abortSignal(signal);
 }
 
-/** 設定画面用の読み取り。household の select("*") とは別に持つ */
-export async function getTasteLearningEnabled(
+/**
+ * 設定画面用の読み取り。household の select("*") とは別に持つ。
+ * 連番も一緒に読み、次の書き込みの期待値にする。
+ */
+export async function getTasteLearningState(
   client: BrowserSupabaseClient,
   userId: string,
-): Promise<boolean> {
+): Promise<TasteLearningState> {
   const { data, error } = await client
     .from("profiles")
-    .select("taste_learning_enabled")
+    .select("taste_learning_enabled, taste_learning_seq")
     .eq("user_id", userId)
     .single();
   if (error !== null) throw new Error("taste_learning_read_failed");
-  return profileRowSchema.parse(data).taste_learning_enabled;
+  const row = profileRowSchema.parse(data);
+  return { enabled: row.taste_learning_enabled, seq: row.taste_learning_seq };
 }
 
-/** 更新は RPC 経由のみ。profiles のテーブル単位 UPDATE は revoke されたまま */
+/**
+ * 更新は RPC 経由のみ。profiles のテーブル単位 UPDATE は revoke されたまま。
+ * expectedSeq は最後に読んだ連番。サーバーは一致したときだけ書き（applied: true）、
+ * 一致しなければ書かずに現在値を返す（applied: false）。
+ */
 export async function setTasteLearningEnabled(
   client: BrowserSupabaseClient,
   enabled: boolean,
+  expectedSeq: number,
   options?: TasteLearningRpcOptions,
-): Promise<boolean> {
+): Promise<TasteLearningSetResult> {
   const { data, error } = await awaitTasteLearningRpc(
-    client.rpc("set_taste_learning_enabled", { p_enabled: enabled }),
+    client.rpc("set_taste_learning_enabled", {
+      p_enabled: enabled,
+      p_expected_seq: expectedSeq,
+    }),
     options?.signal,
   );
   if (error !== null) throw new Error("taste_learning_write_failed");
-  return z.boolean().parse(data);
+  return setResultSchema.parse(data);
 }
 
 /** 好みの学習設定の React Query キー。share-consent-queries と同じ命名規則。 */
@@ -2237,33 +2380,37 @@ export function TasteLearningSection({
 
 - [x] **Step 7: データ配線セクションを書く**
 
-`src/features/account/taste-learning-settings-section.tsx`（`useQuery`/`useMutation` に加え、見出し・告知文・読み込み中/エラー表示を常時持つ。household 側はこれを直接使い、薄いラッパーを household-settings-page.tsx 内に作らない。R-1: 書き込み失敗時は `ShareConsentSettingsSection` と同じ再読ポーリングで裏取りする。R-4: 再読み込みボタンは unmount せず disabled にする）:
+`src/features/account/taste-learning-settings-section.tsx`（`useQuery`/`useMutation` に加え、見出し・告知文・読み込み中/エラー表示を常時持つ。household 側はこれを直接使い、薄いラッパーを household-settings-page.tsx 内に作らない。書き込み失敗時は現在値を 1 回読み、要求値でなければ連番だけを進める柵の書き込みで滞留中の古い書き込みを捨てさせる。R-4: 再読み込みボタンは unmount せず disabled にする）:
 
 ```tsx
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useRef } from "react";
-import { waitMs, withTimeout } from "@/features/auth/async-timeout";
+import { withTimeout } from "@/features/auth/async-timeout";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
-  getTasteLearningEnabled,
+  getTasteLearningState,
   setTasteLearningEnabled,
   tasteLearningKeys,
+  type TasteLearningSetResult,
+  type TasteLearningState,
 } from "./taste-learning-api";
 import { tasteLearningCopy } from "./taste-learning-copy";
 import { TasteLearningSection } from "./taste-learning-section";
-import {
-  TASTE_LEARNING_RECONCILE_ATTEMPTS,
-  TASTE_LEARNING_RECONCILE_RETRY_DELAY_MS,
-  TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
-} from "./taste-learning-timing";
+import { TASTE_LEARNING_TOGGLE_TIMEOUT_MS } from "./taste-learning-timing";
 
 export type TasteLearningSettingsSectionProps = {
   userId: string;
 };
 
+type TasteLearningToggleRequest = {
+  nextEnabled: boolean;
+  /** 画面が最後に読んだ連番。サーバーはこれと一致したときだけ書く。 */
+  expectedSeq: number;
+};
+
 /**
  * 好みの学習トグルの読み書きを設定ページへ配線する。
- * 読み取りは設定画面専用の getTasteLearningEnabled（household の select("*") とは
+ * 読み取りは設定画面専用の getTasteLearningState（household の select("*") とは
  * 別系統）、書き込みは set_taste_learning_enabled RPC のみ。
  * ShareConsentSettingsSection と同様、getBrowserSupabaseClient() を都度取得し、
  * RPC の戻り値をそのまま query cache へ書いてから invalidate して裏取りする。
@@ -2271,16 +2418,18 @@ export type TasteLearningSettingsSectionProps = {
  * または一度も読み込めていない失敗時）はスイッチ自体を出さない — ON がデフォルトのため
  * `?? false` で偽の OFF を見せると誤操作を招く。一度読み込めた後の裏取り再読が失敗しても
  * 値は保持済みなので、スイッチは有効なまま・読み込みエラーは出さない。
- * timeout・書き込み失敗時は abort を試みたうえで、getTasteLearningEnabled を
- * 最大 TASTE_LEARNING_RECONCILE_ATTEMPTS 回、TASTE_LEARNING_RECONCILE_RETRY_DELAY_MS 間隔で
- * 再読する（ShareConsentSettingsSection と同じ再読ポーリング。同形のロジックが
- * share-consent-settings-section.tsx の再読ループにもあるので、片方を直したら
- * もう片方も確認すること）。abort は fetch を打ち切る
- * だけでサーバー側の commit は止まらないため、直後の 1 回だけの再読では commit 前の値を
- * 正と誤認しうる。再読値が要求値と一致すれば成功扱いにして書き込み失敗を出さず、
- * 全て失敗すれば invalidate してサーバー値へ裏取りする。世代ガードは、pending 中は
- * スイッチが disabled のため実際には到達しない防御であり、timeout 後に打たれた次の
- * トグルの結果を古い応答が上書きしないための保険として置いている。
+ *
+ * 書き込みは連番つきの比較更新（CAS）。abort は fetch を打ち切るだけでサーバー側の
+ * commit は止まらず、proxy に滞留した書き込みが画面の再読より後に commit しうる
+ * （OFF と表示したまま、サーバーは ON に戻って料理名が AI へ送られる）。
+ * そこで timeout・書き込み失敗時は、現在値を 1 回読み、要求値と一致すれば成功扱い、
+ * 一致しなければ現在値のまま連番だけを進める「柵」の書き込みを送る。柵が通れば、
+ * 滞留中の古い書き込みは連番が合わずサーバーで捨てられる。期限（時刻）で捨てる方式は
+ * 端末の時計ずれで壊れるため採らない。
+ * share-consent-settings-section.tsx は同じ問題を複数回の再読ポーリングで扱っている
+ * （連番を持たないため）。片方の失敗時の扱いを直したら、もう片方も確認すること。
+ * 世代ガードは、pending 中はスイッチが disabled のため実際には到達しない防御であり、
+ * timeout 後に打たれた次のトグルの結果を古い応答が上書きしないための保険として置いている。
  */
 export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSectionProps) {
   const queryClient = useQueryClient();
@@ -2293,72 +2442,95 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
 
   const tasteLearningQuery = useQuery({
     queryKey: tasteLearningKeys.current(userId),
-    queryFn: () => getTasteLearningEnabled(getBrowserSupabaseClient(), userId),
+    queryFn: () => getTasteLearningState(getBrowserSupabaseClient(), userId),
   });
 
   const tasteLearningMutation = useMutation({
-    mutationFn: async (nextEnabled: boolean) => {
+    mutationFn: async ({ nextEnabled, expectedSeq }: TasteLearningToggleRequest) => {
       const generation = ++mutationGenerationRef.current;
-      const abortController = new AbortController();
-      const abortWrite = (): void => {
-        if (!abortController.signal.aborted) {
-          abortController.abort();
+      const isCurrentGeneration = (): boolean => generation === mutationGenerationRef.current;
+      const queryKey = tasteLearningKeys.current(userId);
+      const applyServerState = (state: TasteLearningState): void => {
+        if (isCurrentGeneration()) {
+          queryClient.setQueryData<TasteLearningState>(queryKey, {
+            enabled: state.enabled,
+            seq: state.seq,
+          });
+        }
+      };
+      const invalidateIfCurrent = (): void => {
+        if (isCurrentGeneration()) {
+          void queryClient.invalidateQueries({ queryKey });
         }
       };
       const client = getBrowserSupabaseClient();
-      const writePromise = setTasteLearningEnabled(client, nextEnabled, {
-        signal: abortController.signal,
-      });
-      try {
-        const result = await withTimeout(
-          writePromise,
+      // 書き込みは abort を試みたうえで timeout で打ち切る（柵の書き込みも同じ扱い）
+      const writeWithTimeout = (enabled: boolean, seq: number): Promise<TasteLearningSetResult> => {
+        const abortController = new AbortController();
+        return withTimeout(
+          setTasteLearningEnabled(client, enabled, seq, { signal: abortController.signal }),
           TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
-          abortWrite,
+          () => {
+            if (!abortController.signal.aborted) {
+              abortController.abort();
+            }
+          },
         );
-        if (generation === mutationGenerationRef.current) {
-          queryClient.setQueryData(tasteLearningKeys.current(userId), result);
-          void queryClient.invalidateQueries({ queryKey: tasteLearningKeys.current(userId) });
-        }
-        return result;
+      };
+
+      let result: TasteLearningSetResult;
+      try {
+        result = await writeWithTimeout(nextEnabled, expectedSeq);
       } catch (error) {
-        // abort は fetch を打ち切るだけでサーバーの commit は止まらないため、
-        // 直後の 1 回だけの再読では commit 前の値を正と誤認しうる。世代ガード付きで
-        // 複数回・間隔を空けて再読し、要求値と一致した時点で成功扱いにする。
-        // 同形の再読ループが share-consent-settings-section.tsx の toggleMutation
-        // catch にもある。片方を直したらもう片方も確認すること。
-        if (generation !== mutationGenerationRef.current) {
+        if (!isCurrentGeneration()) {
           throw error;
         }
-        let sawSuccessfulRead = false;
-        for (let attempt = 0; attempt < TASTE_LEARNING_RECONCILE_ATTEMPTS; attempt += 1) {
-          if (generation !== mutationGenerationRef.current) {
-            throw error;
-          }
-          try {
-            const fresh = await withTimeout(
-              getTasteLearningEnabled(client, userId),
-              TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
-            );
-            sawSuccessfulRead = true;
-            if (generation === mutationGenerationRef.current) {
-              queryClient.setQueryData(tasteLearningKeys.current(userId), fresh);
-            }
-            if (fresh === nextEnabled) {
-              // サーバーは実際には commit していた。再読で確定した値なので成功扱いにする。
-              return fresh;
-            }
-          } catch {
-            // この回の再読失敗。残回数でサーバーを再確認する。
-          }
-          if (attempt < TASTE_LEARNING_RECONCILE_ATTEMPTS - 1) {
-            await waitMs(TASTE_LEARNING_RECONCILE_RETRY_DELAY_MS);
-          }
+        // 書き込みの成否が分からない。現在値を 1 回だけ読む。
+        let current: TasteLearningState;
+        try {
+          current = await withTimeout(
+            getTasteLearningState(client, userId),
+            TASTE_LEARNING_TOGGLE_TIMEOUT_MS,
+          );
+        } catch {
+          invalidateIfCurrent();
+          throw error;
         }
-        if (!sawSuccessfulRead && generation === mutationGenerationRef.current) {
-          // 再読が全部失敗: 保持中のキャッシュ値をそのまま正とはせず、裏取りをやり直す。
-          void queryClient.invalidateQueries({ queryKey: tasteLearningKeys.current(userId) });
+        if (!isCurrentGeneration()) {
+          throw error;
         }
+        applyServerState(current);
+        if (current.enabled === nextEnabled) {
+          // 応答は失ったが、サーバーは要求どおり commit していた
+          return;
+        }
+        // 未 commit の書き込みがまだどこかに滞留しているかもしれない。現在値のまま
+        // 連番だけを進め、それが後から届いても連番が合わず捨てられるようにする。
+        let fence: TasteLearningSetResult;
+        try {
+          fence = await writeWithTimeout(current.enabled, current.seq);
+        } catch {
+          invalidateIfCurrent();
+          throw error;
+        }
+        applyServerState(fence);
+        if (!fence.applied && fence.enabled === nextEnabled) {
+          // 柵より先に、滞留していた書き込み（または別端末の同じ変更）が通っていた
+          return;
+        }
+        // 柵が通った（要求は通らないことが確定）か、別端末が別の値へ変えていた
         throw error;
+      }
+
+      applyServerState(result);
+      if (result.applied) {
+        invalidateIfCurrent();
+        return;
+      }
+      // 連番が合わず書かれなかった: 別端末などが先に変えている。サーバーが既に
+      // 要求値なら結果として望みどおりなので成功扱い、違えば失敗表示を出す。
+      if (result.enabled !== nextEnabled) {
+        throw new Error("taste_learning_conflict");
       }
     },
   });
@@ -2404,10 +2576,10 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
       ) : null}
       {hasData ? (
         <TasteLearningSection
-          enabled={data}
+          enabled={data.enabled}
           describedById={descriptionId}
           onToggle={async (nextEnabled) => {
-            await tasteLearningMutation.mutateAsync(nextEnabled);
+            await tasteLearningMutation.mutateAsync({ nextEnabled, expectedSeq: data.seq });
           }}
         />
       ) : null}

@@ -1,5 +1,5 @@
 begin;
-select plan(52);
+select plan(63);
 
 select tests.create_supabase_user('11111111-1111-4111-8111-111111111111', 'owner@example.invalid');
 select tests.create_supabase_user('22222222-2222-4222-8222-222222222222', 'other@example.invalid');
@@ -119,10 +119,19 @@ select col_not_null('public', 'profiles', 'taste_learning_enabled',
   'taste_learning_enabled is not null');
 select col_default_is('public', 'profiles', 'taste_learning_enabled', 'true',
   'taste_learning_enabled defaults to true');
+select has_column('public', 'profiles', 'taste_learning_seq',
+  'profiles has taste_learning_seq');
+select col_not_null('public', 'profiles', 'taste_learning_seq',
+  'taste_learning_seq is not null');
+select col_default_is('public', 'profiles', 'taste_learning_seq', '0',
+  'taste_learning_seq defaults to 0');
 select has_function('public', 'get_taste_signals', array['timestamptz'],
   'get_taste_signals exists');
-select has_function('public', 'set_taste_learning_enabled', array['boolean'],
+select has_function('public', 'set_taste_learning_enabled', array['boolean', 'bigint'],
   'set_taste_learning_enabled exists');
+-- 1 引数版は残さない。残すと連番の照合を素通りする書き込み口になる
+select hasnt_function('public', 'set_taste_learning_enabled', array['boolean'],
+  'the one-argument setter without a sequence is gone');
 -- 20260712000100 で外したテーブル単位 UPDATE を復活させていない
 select ok(
   not has_table_privilege('authenticated', 'public.profiles', 'UPDATE'),
@@ -134,8 +143,11 @@ select is(pg_temp.signals() ->> 'reason', 'no_history', 'empty history reports n
 
 select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
 set local role authenticated;
-select is(public.set_taste_learning_enabled(false), false,
-  'set_taste_learning_enabled returns the stored value');
+select is(
+  public.set_taste_learning_enabled(false, 0),
+  '{"enabled": false, "seq": 1, "applied": true}'::jsonb,
+  'a matching sequence applies the write and advances the sequence'
+);
 reset role;
 
 -- 分岐順は disabled -> no_history。OFF の利用者は窓が空でも disabled になる
@@ -153,7 +165,7 @@ select set_config('request.jwt.claim.sub', '', true);
 select set_config('request.jwt.claims', '', true);
 set local role authenticated;
 select throws_ok(
-  'select public.set_taste_learning_enabled(true)',
+  'select public.set_taste_learning_enabled(true, 1)',
   '42501', 'authentication_required',
   'the setter rejects an unauthenticated caller'
 );
@@ -167,16 +179,66 @@ reset role;
 select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
 set local role authenticated;
 select throws_ok(
-  'select public.set_taste_learning_enabled(null)',
+  'select public.set_taste_learning_enabled(null, 1)',
   '22023', 'invalid_taste_learning_enabled',
   'the setter rejects null'
+);
+select throws_ok(
+  'select public.set_taste_learning_enabled(true, null)',
+  '22023', 'invalid_taste_learning_seq',
+  'the setter rejects a null sequence'
+);
+-- 遅れて届いた古い書き込み（連番 0 のまま）は捨て、現在値をそのまま返す
+select is(
+  public.set_taste_learning_enabled(true, 0),
+  '{"enabled": false, "seq": 1, "applied": false}'::jsonb,
+  'a stale sequence is not applied and reports the current state'
+);
+reset role;
+select is(
+  (select pg_catalog.jsonb_build_object('enabled', taste_learning_enabled, 'seq', taste_learning_seq)
+   from public.profiles where user_id = '11111111-1111-4111-8111-111111111111'),
+  '{"enabled": false, "seq": 1}'::jsonb,
+  'a stale write leaves the stored value and sequence unchanged'
+);
+
+-- 連番はブラウザから直接書けない（テーブル単位 UPDATE は revoke のまま）
+select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
+set local role authenticated;
+select throws_ok(
+  $$update public.profiles set taste_learning_seq = 99
+    where user_id = '11111111-1111-4111-8111-111111111111'$$,
+  '42501', null,
+  'authenticated cannot update taste_learning_seq directly'
 );
 reset role;
 
 select tests.authenticate_as('11111111-1111-4111-8111-111111111111');
 set local role authenticated;
-select is(public.set_taste_learning_enabled(true), true, 'toggle back on');
+select is(
+  public.set_taste_learning_enabled(true, 1),
+  '{"enabled": true, "seq": 2, "applied": true}'::jsonb,
+  'toggle back on with the latest sequence'
+);
+-- 他人の連番（0）と一致しても、照合するのは自分の行だけ
+select is(
+  public.set_taste_learning_enabled(false, 0),
+  '{"enabled": true, "seq": 2, "applied": false}'::jsonb,
+  'a sequence matching another user row is still checked against the caller row only'
+);
 reset role;
+select is(
+  (select taste_learning_seq from public.profiles
+   where user_id = '11111111-1111-4111-8111-111111111111'),
+  2::bigint,
+  'each applied write advances the stored sequence by one'
+);
+select is(
+  (select pg_catalog.jsonb_build_object('enabled', taste_learning_enabled, 'seq', taste_learning_seq)
+   from public.profiles where user_id = '22222222-2222-4222-8222-222222222222'),
+  '{"enabled": true, "seq": 0}'::jsonb,
+  'the setter never touches another user row or sequence'
+);
 
 -- ============ 派生行は強さを膨らませない ============
 truncate public.menus cascade;

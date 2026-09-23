@@ -65,6 +65,7 @@ function mockProfile(status: OnboardingStatus): ProfileRow {
     created_at: "2026-07-11T00:00:00.000Z",
     updated_at: "2026-07-11T00:00:00.000Z",
     taste_learning_enabled: true,
+    taste_learning_seq: 0,
   };
 }
 
