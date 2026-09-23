@@ -250,10 +250,10 @@ export function sanitizeTasteHints(
       !recentNames.has(normalizeFoodText(dish.dishName)) && !hasControlOrLineBreak(dish.dishName),
   );
 
-  // 最近の料理以外に現れる食材だけを「まだ好き」と扱う。安全フィルタで料理ごと落ちた
-  // 料理の残りの食材（親子丼の鶏肉など）も生き残りに数える。当たった食材自体は
-  // フィルタが対応表と likedIngredients から既に消しているので、ここで拾い直すことはない。likedDishes は 12 件で
+  // 最近の料理以外に現れる食材だけを「まだ好き」と扱う。likedDishes は 12 件で
   // 切れているため、生き残りは上限の無い対応表から直接数える（13 位以下の料理の食材を消さない）。
+  // 安全フィルタで料理ごと落ちた料理の残りの食材（親子丼の鶏肉など）も生き残りに数える。
+  // 当たった食材自体はフィルタが対応表と likedIngredients から既に消しているので拾い直さない。
   // 対応表に載っていない食材は由来が辿れないため保守的に残す。
   const survivingIngredients = new Set<string>();
   const indexedIngredients = new Set<string>();
