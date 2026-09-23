@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId } from "react";
 import { waitMs, withTimeout } from "@/features/auth/async-timeout";
 import { getBrowserSupabaseClient, type BrowserSupabaseClient } from "@/shared/lib/supabase";
@@ -86,6 +86,8 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
   const descriptionId = useId();
   const queryKey = tasteLearningKeys.current(userId);
   const unconfirmedKey = tasteLearningKeys.unconfirmed(userId);
+  const toggleWriteKey = tasteLearningKeys.toggleWrite(userId);
+  const unconfirmedRetryKey = tasteLearningKeys.unconfirmedRetry(userId);
 
   /** 観測したサーバー値の連番で、もう適用されえない書き込みの未確定記録を消す。 */
   const clearSettledUnconfirmed = (state: TasteLearningState): void => {
@@ -145,6 +147,7 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
   const unconfirmed = unconfirmedQuery.data;
 
   const tasteLearningMutation = useMutation({
+    mutationKey: toggleWriteKey,
     mutationFn: async ({ nextEnabled, expectedSeq }: TasteLearningToggleRequest) => {
       const client = getBrowserSupabaseClient();
 
@@ -195,10 +198,17 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
    * 警告は出したまま、もう一度押せる。
    */
   const unconfirmedRetryMutation = useMutation({
+    mutationKey: unconfirmedRetryKey,
     mutationFn: async (record: TasteLearningUnconfirmed) => {
       await settle(getBrowserSupabaseClient(), record.expectedSeq, 1);
     },
   });
+
+  // 走っている書き込み・再試行は、useMutation の isPending（インスタンスごと）ではなく
+  // mutation cache から数える。画面を離れて戻る（再マウント）と isPending は false に戻るが、
+  // 前のインスタンスが送った書き込みは走り続けているため、互いの disabled を失わないようにする。
+  const isToggleWriting = useIsMutating({ mutationKey: toggleWriteKey }) > 0;
+  const isUnconfirmedRetrying = useIsMutating({ mutationKey: unconfirmedRetryKey }) > 0;
 
   const data = tasteLearningQuery.data;
   const hasData = data !== undefined;
@@ -245,7 +255,7 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
           describedById={descriptionId}
           // 未確定の再試行（柵）の間はトグルを止める。同時に書くと柵が連番を奪い、
           // トグルが偽の失敗表示になる（逆方向は再試行ボタン側の disabled で止めている）
-          disabled={unconfirmedRetryMutation.isPending}
+          disabled={isUnconfirmedRetrying}
           onToggle={async (nextEnabled) => {
             await tasteLearningMutation.mutateAsync({ nextEnabled, expectedSeq: data.seq });
           }}
@@ -258,14 +268,12 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
             type="button"
             className="secondary-button min-h-11"
             // トグルの書き込み中に柵を送ると、その書き込みの連番を奪って偽の失敗表示を出すので止める
-            disabled={unconfirmedRetryMutation.isPending || tasteLearningMutation.isPending}
+            disabled={isUnconfirmedRetrying || isToggleWriting}
             onClick={() => {
               unconfirmedRetryMutation.mutate(unconfirmed);
             }}
           >
-            {unconfirmedRetryMutation.isPending
-              ? tasteLearningCopy.loading
-              : tasteLearningCopy.unconfirmedRetry}
+            {isUnconfirmedRetrying ? tasteLearningCopy.loading : tasteLearningCopy.unconfirmedRetry}
           </button>
         </div>
       ) : null}

@@ -88,17 +88,23 @@ describe("TasteLearningSection", () => {
         }),
     );
     render(<TasteLearningSection enabled={true} onToggle={onToggle} />);
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    // live region は最初から置き、中身だけを切り替える（挿入と同時の文言は読み上げられないことがある）
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
 
     await userEvent.click(
       await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel }),
     );
-    expect(await screen.findByRole("status")).toHaveTextContent(tasteLearningCopy.saving);
+    await waitFor(() => {
+      expect(status).toHaveTextContent(tasteLearningCopy.saving);
+    });
+    expect(screen.getByRole("status")).toBe(status);
 
     resolveToggle();
     await waitFor(() => {
-      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(status).toBeEmptyDOMElement();
     });
+    expect(screen.getByRole("status")).toBe(status);
   });
 
   it("follows the enabled prop after mount instead of freezing at the initial value", async () => {

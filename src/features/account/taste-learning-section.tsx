@@ -67,12 +67,12 @@ export function TasteLearningSection({
         {tasteLearningCopy.toggleLabel}
       </label>
       {/* 確定処理は最悪 1 分強かかる（書き込みの timeout 後に読み取りと柵を再試行する）。
-          その間スイッチが無言で止まって見えないよう、短い状態文言を読み上げる */}
-      {pending ? (
-        <p className="type-small" role="status">
-          {tasteLearningCopy.saving}
-        </p>
-      ) : null}
+          その間スイッチが無言で止まって見えないよう、短い状態文言を読み上げる。
+          文言と同時に挿入した live region は支援技術によって読み上げられないので、
+          領域は常に置いて中身だけを切り替える。空の間は sr-only で .stack の gap を作らない */}
+      <p className="type-small empty:sr-only" role="status">
+        {pending ? tasteLearningCopy.saving : ""}
+      </p>
       {showFailed ? (
         <p className="type-small" role="alert">
           {tasteLearningCopy.failed}

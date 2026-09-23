@@ -99,4 +99,10 @@ export const tasteLearningKeys = {
   current: (userId: string) => ["taste-learning", "current", userId] as const,
   /** 確定できなかった書き込みの記録（サーバーへは問い合わせない、画面側だけの状態）。 */
   unconfirmed: (userId: string) => ["taste-learning", "unconfirmed", userId] as const,
+  /**
+   * トグルの書き込みと未確定の再試行（柵）の mutationKey。互いの disabled を
+   * useIsMutating で cache から導き、画面を離れて戻っても走っている方を見失わないようにする。
+   */
+  toggleWrite: (userId: string) => ["taste-learning", "toggle-write", userId] as const,
+  unconfirmedRetry: (userId: string) => ["taste-learning", "unconfirmed-retry", userId] as const,
 };

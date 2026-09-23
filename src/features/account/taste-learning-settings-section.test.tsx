@@ -915,6 +915,80 @@ describe("TasteLearningSettingsSection", () => {
       expect(getSwitch()).toBeEnabled();
     });
 
+    it("keeps the switch disabled across a remount while an unconfirmed retry is still in flight", async () => {
+      // isPending はインスタンスごとなので、再マウントで消えると柵の最中にトグルを書けてしまう（adv A2）
+      const client = makeClient();
+      client.setQueryData(tasteLearningKeys.unconfirmed("user-1"), {
+        requestedEnabled: false,
+        expectedSeq: 0,
+      });
+      const server = createFakeServer({ enabled: true, seq: 0 });
+      wireServer(server);
+      const view = renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+      await waitFor(() => {
+        expect(toggle).toBeChecked();
+      });
+
+      let releaseRead: () => void = () => undefined;
+      getTasteLearningStateMock.mockImplementationOnce(
+        () =>
+          new Promise<TasteLearningState>((resolve) => {
+            releaseRead = () => {
+              resolve(server.read());
+            };
+          }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
+      );
+      await waitFor(() => {
+        expect(getSwitch()).toBeDisabled();
+      });
+
+      view.unmount();
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      expect(
+        await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel }),
+      ).toBeDisabled();
+      expect(screen.getByRole("button", { name: tasteLearningCopy.loading })).toBeDisabled();
+
+      releaseRead();
+      await waitFor(() => {
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      });
+      expect(getSwitch()).toBeEnabled();
+    });
+
+    it("keeps the retry button disabled across a remount while a toggle write is still in flight", async () => {
+      const client = makeClient();
+      client.setQueryData(tasteLearningKeys.unconfirmed("user-1"), {
+        requestedEnabled: false,
+        expectedSeq: 0,
+      });
+      const server = createFakeServer({ enabled: true, seq: 0 });
+      wireServer(server);
+      setTasteLearningEnabledMock.mockReturnValueOnce(new Promise(() => undefined));
+      const view = renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+      await waitFor(() => {
+        expect(toggle).toBeChecked();
+      });
+      await userEvent.click(toggle);
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
+        ).toBeDisabled();
+      });
+
+      view.unmount();
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />, client);
+      await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+      expect(
+        screen.getByRole("button", { name: tasteLearningCopy.unconfirmedRetry }),
+      ).toBeDisabled();
+    });
+
     it("does not let an older write's unconfirmed record overwrite a newer one", async () => {
       // 画面を開き直した後の別の書き込み（連番 1）が先に未確定になっている。
       // この画面の cache はまだ連番 0 のままで、連番 0 の書き込みも未確定に終わる
