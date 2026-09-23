@@ -163,16 +163,19 @@ const CLOSED_GENERATION_ROUTES = new Set(["menu", "dish", "status"]);
  * 学習ヒントの結末の閉じた列挙（taste-hints.ts の TasteHintsOutcome 8 値）。
  * 型だけでは cast/miswire の自由文（料理名など）が JSON に載るため実行時にも閉じる。
  */
-const CLOSED_TASTE_HINTS_OUTCOMES = new Set([
-  "disabled_flag",
-  "disabled_user",
-  "no_history",
-  "timeout",
-  "query_failed",
-  "invalid_shape",
-  "filtered_empty",
-  "applied",
-]);
+const CLOSED_TASTE_HINTS_OUTCOMES = new Set(
+  // 列挙の増減やスペルミスを型で検出するため TasteHintsOutcome の全値をキーに持つ表から作る
+  Object.keys({
+    disabled_flag: true,
+    disabled_user: true,
+    no_history: true,
+    timeout: true,
+    query_failed: true,
+    invalid_shape: true,
+    filtered_empty: true,
+    applied: true,
+  } satisfies Record<TasteHintsOutcome, true>),
+);
 
 /**
  * 必須 level。TS 型だけだと cast/miswire の free-text が JSON に載る。

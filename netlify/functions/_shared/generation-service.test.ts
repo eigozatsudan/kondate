@@ -98,7 +98,8 @@ const {
   loadTasteHintsMock: vi.fn<(typeof import("./taste-hints.js"))["loadTasteHints"]>(() =>
     Promise.resolve({ signals: null, outcome: "no_history" }),
   ),
-  tasteHintsState: { enabled: true },
+  // filterThrows: 安全フィルタが将来のバグで throw した場合の fail-open を確かめる
+  tasteHintsState: { enabled: true, filterThrows: false },
 }));
 
 // 学習ヒントの安全フィルタが実物の expandAvoidNeedles を使うため、検証本体だけを差し替える
@@ -154,6 +155,12 @@ vi.mock("./taste-hints.js", async (importOriginal) => {
       return tasteHintsState.enabled;
     },
     loadTasteHints: loadTasteHintsMock,
+    filterTasteHintsForSafety: (
+      ...args: Parameters<typeof actual.filterTasteHintsForSafety>
+    ): ReturnType<typeof actual.filterTasteHintsForSafety> => {
+      if (tasteHintsState.filterThrows) throw new Error("canary-filter 生姜焼き");
+      return actual.filterTasteHintsForSafety(...args);
+    },
   };
 });
 
@@ -711,6 +718,32 @@ describe("runGeneration", () => {
       expect(serialized).not.toContain("生姜焼き");
       expect(serialized).not.toContain("豚肉");
       expect(serialized).not.toContain("dishIngredientIndex");
+    });
+
+    it("records the non-strong strength as is", async () => {
+      const repository = makeRepository();
+      const generationContext = makeGenerationContext({
+        preferenceSnapshot: { mealType: "dinner" },
+      });
+      await runGeneration(
+        makeDeps({
+          repository,
+          loadExecutionContext: vi.fn(() =>
+            Promise.resolve(
+              makeNewMenuExecutionContext({
+                generationContext,
+                tasteHints: { ...appliedHints, signalStrength: "medium" },
+                tasteHintsOutcome: "applied",
+              }),
+            ),
+          ),
+        }),
+        command,
+      );
+      expect(succeedInput(repository).preferenceSnapshot).toEqual({
+        mealType: "dinner",
+        tasteHints: { applied: true, strength: "medium" },
+      });
     });
 
     it("omits the tasteHints key when the final object is null", async () => {
@@ -2242,6 +2275,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     loadTasteHintsMock.mockReset();
     loadTasteHintsMock.mockResolvedValue({ signals: null, outcome: "no_history" });
     tasteHintsState.enabled = true;
+    tasteHintsState.filterThrows = false;
   });
 
   it("keeps the production integrity resolver wired to the current admin lookup", async () => {
@@ -2415,6 +2449,80 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     expect(execution.generationContext).toBe(generationContext);
     expect(execution.tasteHints).toBeNull();
     expect(execution.tasteHintsOutcome).toBe("query_failed");
+  });
+
+  /**
+   * 本物の loadExecutionContext を runGeneration に通し、prompt に渡った実行文脈・記録・終端ログを
+   * 同じ 1 回の実行から取り出す（spec §5.6: prompt と記録は同じ確定オブジェクトから来る）
+   */
+  async function runNewMenuThroughProductionLoader() {
+    const productionDeps = createGenerationDeps(user, { requestStartedAtMonotonicMs: 0 });
+    const repository = makeRepository();
+    const buildMessages = vi.fn<GenerationDependencies["buildMessages"]>(() => [
+      { role: "user", content: "prompt" },
+    ]);
+    const logTerminalEvent = vi.fn<NonNullable<GenerationDependencies["logTerminalEvent"]>>();
+    const result = await runGeneration(
+      makeDeps({
+        repository,
+        buildMessages,
+        logTerminalEvent,
+        loadExecutionContext: (...args) => productionDeps.loadExecutionContext(...args),
+      }),
+      command,
+    );
+    const prompted = buildMessages.mock.calls[0]?.[0];
+    if (prompted?.kind !== "new_menu") throw new Error("buildMessages not called with new_menu");
+    const succeedInput = repository.succeed.mock.calls[0]?.[0];
+    if (succeedInput === undefined) throw new Error("succeed not called");
+    return { result, prompted, snapshot: succeedInput.preferenceSnapshot, logTerminalEvent };
+  }
+
+  it("fails open as invalid_shape when the taste safety filter throws", async () => {
+    // 未フィルタの signals を prompt へ渡さず null に倒し、生成は続ける
+    loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
+    loadTasteHintsMock.mockResolvedValue({
+      signals: tasteSignals({
+        likedDishes: [{ dishName: "生姜焼き", role: "main" }],
+        likedIngredients: ["豚肉"],
+        signalStrength: "strong",
+      }),
+      outcome: "applied",
+    });
+    tasteHintsState.filterThrows = true;
+
+    const { result, prompted, snapshot, logTerminalEvent } =
+      await runNewMenuThroughProductionLoader();
+
+    expect(result.status).toBe("succeeded");
+    expect(prompted.tasteHints).toBeNull();
+    expect(prompted.tasteHintsOutcome).toBe("invalid_shape");
+    expect(snapshot).not.toHaveProperty("tasteHints");
+    expect(logTerminalEvent).toHaveBeenCalledTimes(1);
+    expect(logTerminalEvent.mock.calls[0]?.[1]).toMatchObject({
+      errorCode: "succeeded",
+      tasteHintsOutcome: "invalid_shape",
+    });
+    // 例外の内容はログへ出さない
+    expect(JSON.stringify(logTerminalEvent.mock.calls)).not.toContain("canary-filter");
+    expect(JSON.stringify(logTerminalEvent.mock.calls)).not.toContain("生姜焼き");
+  });
+
+  it("records the same strength that was sent in the prompt payload", async () => {
+    loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
+    loadTasteHintsMock.mockResolvedValue({
+      signals: tasteSignals({ likedIngredients: ["豚肉"], signalStrength: "weak" }),
+      outcome: "applied",
+    });
+
+    const { result, prompted, snapshot } = await runNewMenuThroughProductionLoader();
+
+    expect(result.status).toBe("succeeded");
+    expect(prompted.tasteHints?.signalStrength).toBe("weak");
+    expect(snapshot).toHaveProperty("tasteHints", {
+      applied: true,
+      strength: prompted.tasteHints?.signalStrength,
+    });
   });
 
   it("applies the sanitized hints and drops the dish-ingredient index", async () => {

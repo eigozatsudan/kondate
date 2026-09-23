@@ -499,15 +499,23 @@ function createBaseGenerationDeps(
       ]);
       // 安全フィルタは generationContext（現行の安全制約と targetMode）が揃ってから掛ける。
       // sanitize の結果が prompt と preference_snapshot の両方の唯一の出所になる（spec §5.6）
-      const tasteHints =
-        taste.signals === null
-          ? null
-          : sanitizeTasteHints(
-              filterTasteHintsForSafety(taste.signals, generationContext),
-              recentDishHints,
-            );
-      const tasteHintsOutcome: TasteHintsOutcome =
-        taste.signals === null ? taste.outcome : tasteHints === null ? "filtered_empty" : "applied";
+      let tasteHints: TasteHints | null = null;
+      let tasteHintsOutcome: TasteHintsOutcome = taste.outcome;
+      if (taste.signals !== null) {
+        try {
+          tasteHints = sanitizeTasteHints(
+            filterTasteHintsForSafety(taste.signals, generationContext),
+            recentDishHints,
+          );
+          tasteHintsOutcome = tasteHints === null ? "filtered_empty" : "applied";
+        } catch {
+          // 学習段落は prompt 専用で fail-open（spec §1）。フィルタや sanitize の例外で生成を止めない。
+          // 未フィルタの signals は決して使わず null に倒す。結末は既存の列挙から invalid_shape
+          // （集計結果をヒントの形にできなかった）を使い、例外の内容はどこにも出さない
+          tasteHints = null;
+          tasteHintsOutcome = "invalid_shape";
+        }
+      }
       return {
         kind: "new_menu",
         command,

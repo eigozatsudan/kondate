@@ -10,6 +10,7 @@ import {
   SAFE_LOG_SERIALIZED_KEYS,
 } from "./logger.js";
 import { HttpError } from "./http.js";
+import type { TasteHintsOutcome } from "./taste-hints.js";
 
 describe("createSafeLogger", () => {
   it("serializes only the approved operational fields", () => {
@@ -456,19 +457,22 @@ describe("logGenerationEvent", () => {
     "invalid_shape",
     "filtered_empty",
     "applied",
-  ] as const)("passes the closed taste outcome %s through createSafeLogger", (outcome) => {
-    const write = vi.fn();
-    createSafeLogger(write)({
-      level: "info",
-      requestId: "req-taste",
-      code: "succeeded",
-      durationMs: 1,
-      tasteHintsOutcome: outcome,
-    });
-    expect(JSON.parse(write.mock.calls[0]![0] as string)).toMatchObject({
-      taste_hints_outcome: outcome,
-    });
-  });
+  ] as const satisfies readonly TasteHintsOutcome[])(
+    "passes the closed taste outcome %s through createSafeLogger",
+    (outcome) => {
+      const write = vi.fn();
+      createSafeLogger(write)({
+        level: "info",
+        requestId: "req-taste",
+        code: "succeeded",
+        durationMs: 1,
+        tasteHintsOutcome: outcome,
+      });
+      expect(JSON.parse(write.mock.calls[0]![0] as string)).toMatchObject({
+        taste_hints_outcome: outcome,
+      });
+    },
+  );
 });
 
 describe("closedErrorCode on all logger sinks", () => {
