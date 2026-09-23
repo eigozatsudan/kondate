@@ -204,6 +204,51 @@ describe("filterTasteHintsForSafety", () => {
     expect(filtered.likedIngredients).toEqual(["ぶり"]);
   });
 
+  it("keeps a liked dish whose index only hits a label-confirmation alias or a dislike", () => {
+    const base = makeCurrentSafetyContext();
+    const member = base.members[0];
+    if (member === undefined) throw new Error("factory member missing");
+    const context = makeGenerationContext({
+      memberPreferences: [
+        {
+          householdMemberId: "55000000-0000-4000-8000-000000000001",
+          anonymousMemberRef: "member_1",
+          portionSize: "regular",
+          spiceLevel: "regular",
+          easePreferences: [],
+          dislikes: ["ねぎ"],
+        },
+      ],
+      safety: makeCurrentSafetyContext({
+        members: [{ ...member, allergyStatus: "registered", allergenIds: ["wheat"] }],
+        allergenDictionary: {
+          version: "jp-caa-2026-04.v1",
+          catalog: [{ id: "wheat", displayName: "小麦", catalogVersion: "jp-caa-2026-04.v1" }],
+          aliases: [
+            {
+              allergenId: "wheat",
+              alias: "醤油",
+              normalizedAlias: "醤油",
+              aliasKind: "processed",
+              requiresLabelConfirmation: true,
+              dictionaryVersion: "jp-caa-2026-04.v1",
+            },
+          ],
+        },
+      }),
+    });
+    const seasoned: TasteSignals = {
+      ...signals,
+      likedDishes: [{ dishName: "肉じゃが", role: "main" }],
+      dishIngredientIndex: [{ dishName: "肉じゃが", ingredients: ["牛肉", "たまねぎ", "醤油"] }],
+    };
+    // 表示確認で済む別名や苦手はハードゲートが弾かないので、料理ごとは落とさない。
+    // 対応表の該当食材は従来どおり落とす
+    const filtered = filterTasteHintsForSafety(seasoned, context);
+    expect(filtered.likedDishes.map((dish) => dish.dishName)).toEqual(["肉じゃが"]);
+    expect(filtered.dishIngredientIndex[0]?.ingredients).toEqual(["牛肉"]);
+  });
+
   it("drops liked foods that hit a custom allergy alias", () => {
     const base = makeCurrentSafetyContext();
     const member = base.members[0];

@@ -134,23 +134,36 @@ export async function loadTasteHints(input: {
   }
 }
 
+type BlockedTerms = {
+  /** 名前と食材の照合に使う全語（苦手・表示確認で済む別名も含む） */
+  all: readonly string[];
+  /**
+   * 対応表経由で料理ごと落とす判定に使う語。ハードゲートが実際に弾く種類だけに絞る:
+   * 避けたい食材（展開後）、自由登録アレルギー、表示確認が不要な辞書の別名と表示名。
+   * 醤油・みそのような表示確認の別名や苦手まで使うと、小麦・大豆アレルギーの家庭で
+   * 和食の好みがほぼ全部消える。
+   */
+  hard: readonly string[];
+};
+
 /**
  * 現行制約の語を集める。household は安全文脈も見る。
  * 避けたい食材は検証側（validate-generated-menu）と同じ expandAvoidNeedles で広げ、
  * 「卵」を避けるのに「たまご焼き」が好みとして残る食い違いを作らない。
  */
-function collectBlockedTerms(context: GenerationContext): readonly string[] {
-  const terms: string[] = context.submission.avoidIngredients.flatMap((avoided) => [
+function collectBlockedTerms(context: GenerationContext): BlockedTerms {
+  const hard: string[] = context.submission.avoidIngredients.flatMap((avoided) => [
     ...expandAvoidNeedles(avoided, context),
   ]);
+  const soft: string[] = [];
   for (const preference of context.memberPreferences) {
-    terms.push(...preference.dislikes);
+    soft.push(...preference.dislikes);
   }
   if (context.targetMode === "household") {
     const allergenIds = new Set<string>();
     for (const member of context.safety.members) {
       for (const custom of member.customAllergies) {
-        terms.push(custom.name, ...custom.aliases);
+        hard.push(custom.name, ...custom.aliases);
       }
       for (const allergenId of member.allergenIds) {
         allergenIds.add(allergenId);
@@ -159,16 +172,18 @@ function collectBlockedTerms(context: GenerationContext): readonly string[] {
     // AllergenDictionary は { version, catalog, aliases }。表示名と alias の両方を語にする
     for (const entry of context.safety.allergenDictionary.catalog) {
       if (allergenIds.has(entry.id)) {
-        terms.push(entry.displayName);
+        hard.push(entry.displayName);
       }
     }
     for (const alias of context.safety.allergenDictionary.aliases) {
-      if (allergenIds.has(alias.allergenId)) {
-        terms.push(alias.alias, alias.normalizedAlias);
-      }
+      if (!allergenIds.has(alias.allergenId)) continue;
+      const bucket = alias.requiresLabelConfirmation ? soft : hard;
+      bucket.push(alias.alias, alias.normalizedAlias);
     }
   }
-  return terms.filter((term) => normalizeFoodText(term) !== "");
+  const usable = (term: string) => normalizeFoodText(term) !== "";
+  const hardTerms = hard.filter(usable);
+  return { all: [...hardTerms, ...soft.filter(usable)], hard: hardTerms };
 }
 
 function hitsBlocked(text: string, blocked: readonly string[]): boolean {
@@ -185,11 +200,11 @@ export function filterTasteHintsForSafety(
   signals: TasteSignals,
   context: GenerationContext,
 ): TasteSignals {
-  const blocked = collectBlockedTerms(context);
-  // 料理名に出ない食材（親子丼の卵など）でも、対応表の食材が当たれば料理ごと落とす
+  const { all: blocked, hard } = collectBlockedTerms(context);
+  // 料理名に出ない食材（親子丼の卵など）でも、対応表の食材がハードな語に当たれば料理ごと落とす
   const blockedDishNames = new Set(
     signals.dishIngredientIndex
-      .filter((entry) => entry.ingredients.some((name) => hitsBlocked(name, blocked)))
+      .filter((entry) => entry.ingredients.some((name) => hitsBlocked(name, hard)))
       .map((entry) => normalizeFoodText(entry.dishName)),
   );
   return {
@@ -235,7 +250,9 @@ export function sanitizeTasteHints(
       !recentNames.has(normalizeFoodText(dish.dishName)) && !hasControlOrLineBreak(dish.dishName),
   );
 
-  // 最近の料理以外に現れる食材だけを「まだ好き」と扱う。likedDishes は 12 件で
+  // 最近の料理以外に現れる食材だけを「まだ好き」と扱う。安全フィルタで料理ごと落ちた
+  // 料理の残りの食材（親子丼の鶏肉など）も生き残りに数える。当たった食材自体は
+  // フィルタが対応表と likedIngredients から既に消しているので、ここで拾い直すことはない。likedDishes は 12 件で
   // 切れているため、生き残りは上限の無い対応表から直接数える（13 位以下の料理の食材を消さない）。
   // 対応表に載っていない食材は由来が辿れないため保守的に残す。
   const survivingIngredients = new Set<string>();
