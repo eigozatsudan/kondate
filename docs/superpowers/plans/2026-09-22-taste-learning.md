@@ -2022,95 +2022,47 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ### Task 4: 設定トグルと告知文（配線より前に置く）
 
 **Files:**
+- Create: `src/features/account/taste-learning-copy.ts`
 - Create: `src/features/account/taste-learning-api.ts`
-- Create: `src/features/account/taste-learning-section.tsx`
+- Test: `src/features/account/taste-learning-api.test.ts`
+- Create: `src/features/account/taste-learning-section.tsx`（スイッチ本体。値の確定を前提にし、見出し・告知文・読み込み/エラー表示は持たない）
 - Test: `src/features/account/taste-learning-section.test.tsx`
+- Create: `src/features/account/taste-learning-settings-section.tsx`（データ配線。`useQuery`/`useMutation` と見出し・告知文・読み込み中/エラー表示を持つ。household 側は薄いラッパーを持たずこれを直接使う）
+- Test: `src/features/account/taste-learning-settings-section.test.tsx`
 - Modify: `src/features/privacy/privacy-copy.ts:41`（`privacySections` の「AIへ送る情報」）
 - Modify: `src/features/privacy/privacy-copy.test.ts`
-- Modify: `src/features/household/household-settings-page.tsx:1776-1779` と `:2536-2540`（2 箇所とも）
+- Modify: `src/features/household/household-settings-page.tsx:1777` と `:2539`（`<ShareConsentSettingsSection userId={userId} />` の直後、2 箇所とも）
+- Modify: `src/features/household/household-settings-page.test.tsx`（`TasteLearningSettingsSection` を `ShareConsentSettingsSection` と同様にモックし、家族 CRUD テストを taste-learning RPC に依存させない）
 
 **Interfaces:**
 - Consumes: Task 1 の `set_taste_learning_enabled` と `profiles.taste_learning_enabled`
-- Produces: `getTasteLearningEnabled(client)` / `setTasteLearningEnabled(client, enabled)` / `<TasteLearningSection />`
+- Produces: `getTasteLearningEnabled(client, userId)` / `setTasteLearningEnabled(client, enabled)` / `tasteLearningKeys` / `<TasteLearningSection />`（スイッチ本体）/ `<TasteLearningSettingsSection userId />`（設定ページに差し込む配線込みセクション）
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
-`src/features/account/taste-learning-section.test.tsx`:
+`src/features/account/taste-learning-api.test.ts`: `getTasteLearningEnabled` / `setTasteLearningEnabled` の成功・エラー・Zod 検証失敗（不正な形の応答）を確認する。
 
-```tsx
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-import { TasteLearningSection } from "./taste-learning-section";
+`src/features/account/taste-learning-section.test.tsx`: 値が enabled prop にそのまま追従すること（`useState` で最初の値へ固定しないこと）、トグル操作で `onToggle` が呼ばれること、失敗時に `role="alert"` で `tasteLearningCopy.failed` を表示し値が戻ること、マウント後の prop 変化にスイッチが追従すること、`disabled` prop でスイッチを無効化できること。
 
-function renderSection(props: Parameters<typeof TasteLearningSection>[0]) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={client}>
-      <TasteLearningSection {...props} />
-    </QueryClientProvider>,
-  );
-}
+`src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチが無効化されること、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出て告知文は消えないこと、初回読み込みで値がスイッチに反映されること、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること、書き込み失敗時にスイッチが元の値へ戻り `role="alert"` を表示すること。
 
-describe("TasteLearningSection", () => {
-  it("shows the stored value and the disclosure copy", async () => {
-    renderSection({ enabled: true, onToggle: vi.fn() });
-    const toggle = await screen.findByRole("switch", { name: "好みの学習" });
-    expect(toggle).toBeChecked();
-    expect(screen.getByText(/料理名と食材名/u)).toBeInTheDocument();
-    expect(screen.getByText(/90日/u)).toBeInTheDocument();
-  });
+`src/features/privacy/privacy-copy.test.ts` の既存アサーションを `/設定/u`（既存の「家族設定」でも通ってしまい実質何も検証しない）から `/止められ/u`（「設定でいつでも止められます」の追記そのものを検証する）へ差し替える。
 
-  it("sends the next value on toggle", async () => {
-    const onToggle = vi.fn().mockResolvedValue(undefined);
-    renderSection({ enabled: true, onToggle });
-    await userEvent.click(await screen.findByRole("switch", { name: "好みの学習" }));
-    await waitFor(() => {
-      expect(onToggle).toHaveBeenCalledWith(false);
-    });
-  });
-
-  it("restores the previous state when the update fails", async () => {
-    const onToggle = vi.fn().mockRejectedValue(new Error("boom"));
-    renderSection({ enabled: true, onToggle });
-    await userEvent.click(await screen.findByRole("switch", { name: "好みの学習" }));
-    await waitFor(() => {
-      expect(screen.getByRole("switch", { name: "好みの学習" })).toBeChecked();
-    });
-    expect(screen.getByRole("status")).toHaveTextContent(/変更できませんでした/u);
-  });
-});
-```
-
-`src/features/privacy/privacy-copy.test.ts` へ追記:
-
-```ts
-it("discloses that liked dish and ingredient names are sent for up to 90 days", () => {
-  const section = privacySections.find((entry) => entry.title === "AIへ送る情報");
-  expect(section).toBeDefined();
-  expect(section?.body).toMatch(/料理名と食材名/u);
-  // overusedIngredients は ★ の付いていない献立も母集団に含むため、
-  // 「お気に入り由来」だけの記述では実際に送る範囲より狭い
-  expect(section?.body).toMatch(/繰り返し指定したメイン食材名/u);
-  expect(section?.body).toMatch(/90日/u);
-  expect(section?.body).toMatch(/設定/u);
-});
-```
-
-- [ ] **Step 2: 落ちることを確認する**
+- [x] **Step 2: 落ちることを確認する**
 
 Run:
 ```bash
 docker compose run --rm --no-deps app npx vitest run \
+  src/features/account/taste-learning-api.test.ts \
   src/features/account/taste-learning-section.test.tsx \
+  src/features/account/taste-learning-settings-section.test.tsx \
   src/features/privacy/privacy-copy.test.ts
 ```
-Expected: FAIL
+Expected: FAIL（実装ファイルが無い/未更新のため import 解決エラーまたはアサーション不一致）
 
-- [ ] **Step 3: API を書く**
+- [x] **Step 3: API を書く**
 
-`src/features/account/taste-learning-api.ts`:
+`src/features/account/taste-learning-api.ts`（実装は当初案のまま。加えて React Query キーを同ファイルへ export）:
 
 ```ts
 import { z } from "zod";
@@ -2141,15 +2093,18 @@ export async function setTasteLearningEnabled(
   if (error !== null) throw new Error("taste_learning_write_failed");
   return z.boolean().parse(data);
 }
+
+/** 好みの学習設定の React Query キー。share-consent-queries と同じ命名規則。 */
+export const tasteLearningKeys = {
+  current: (userId: string) => ["taste-learning", "current", userId] as const,
+};
 ```
 
-- [ ] **Step 4: セクションを書く**
+- [x] **Step 4: 文言をコンポーネントファイルから分離する**
 
-`src/features/account/taste-learning-section.tsx`:
+`src/features/account/taste-learning-copy.ts`（`react-refresh/only-export-components` を避けるため、`tasteLearningCopy` はコンポーネントファイルへ置かない。share-consent の copy が `privacy-copy.ts` にあるのと同じ理由）:
 
-```tsx
-import { useId, useState } from "react";
-
+```ts
 export const tasteLearningCopy = {
   title: "好みの学習",
   toggleLabel: "好みの学習",
@@ -2157,72 +2112,90 @@ export const tasteLearningCopy = {
   sending:
     "献立を作るときに、そこから読み取った料理名と食材名（最長90日・最大50献立）がAIへ送られます。",
   storage: "OFFにすると読み取りをやめます。設定と反映の記録は保存されます。",
+  loading: "読み込み中です…",
+  loadError: "設定を読み込めませんでした。時間をおいてもう一度お試しください",
+  retry: "もう一度読み込む",
   failed: "設定を変更できませんでした。時間をおいてもう一度お試しください",
 } as const;
+```
+
+- [x] **Step 5: スイッチ本体を書く**
+
+`src/features/account/taste-learning-section.tsx`（見出し・告知文・読み込み/エラー表示は持たない。値が確定してから使う想定）:
+
+```tsx
+import { useId, useState } from "react";
+import { tasteLearningCopy } from "./taste-learning-copy";
 
 export type TasteLearningSectionProps = {
+  /** サーバー側の現在値。楽観表示中でなければこの値がそのまま表示される。 */
   enabled: boolean;
   onToggle: (nextEnabled: boolean) => Promise<void>;
+  /** 読み込み中・読み取り失敗時に外側から強制的に操作不能にする。 */
+  disabled?: boolean;
+  describedById?: string;
 };
 
 /**
- * 好みの学習の ON/OFF。読み取りは呼び出し側、書き込みは RPC。
- * 楽観表示はせず、失敗したら元の値へ戻す。
+ * 好みの学習の ON/OFF スイッチ本体。
+ * 表示値は enabled prop に追従する（useState で最初の値を固定しない）ので、
+ * 他タブでの変更や再読み込みも反映される。書き込み中だけローカルの仮値を出し、
+ * 成功時は呼び出し元のキャッシュ更新（enabled prop の変化）に自然に追従し、
+ * 失敗時は pending 解除と同時に enabled prop（変更前のサーバー値）へ戻る。
  */
-export function TasteLearningSection({ enabled, onToggle }: TasteLearningSectionProps) {
-  const [current, setCurrent] = useState(enabled);
+export function TasteLearningSection({
+  enabled,
+  onToggle,
+  disabled = false,
+  describedById,
+}: TasteLearningSectionProps) {
   const [pending, setPending] = useState(false);
+  const [optimisticValue, setOptimisticValue] = useState<boolean | null>(null);
   const [failed, setFailed] = useState(false);
-  const describedById = useId();
+  const toggleId = useId();
+
+  const displayed = pending && optimisticValue !== null ? optimisticValue : enabled;
 
   return (
-    <section className="card stack settings-section" aria-labelledby="taste-learning-title">
-      <h2 id="taste-learning-title" className="settings-section-title">
-        {tasteLearningCopy.title}
-      </h2>
-      <label className="flex items-center gap-2">
+    <div className="stack gap-2">
+      <label className="inline-flex min-h-11 items-center gap-2" htmlFor={toggleId}>
         <input
+          id={toggleId}
           type="checkbox"
           role="switch"
           className="min-h-11 min-w-11"
-          checked={current}
-          aria-checked={current}
+          checked={displayed}
+          aria-checked={displayed}
           aria-describedby={describedById}
-          disabled={pending}
+          disabled={pending || disabled}
           onChange={(event) => {
             const next = event.target.checked;
-            const previous = current;
             setPending(true);
             setFailed(false);
-            setCurrent(next);
+            setOptimisticValue(next);
             void onToggle(next)
               .catch(() => {
-                setCurrent(previous);
                 setFailed(true);
               })
               .finally(() => {
                 setPending(false);
+                setOptimisticValue(null);
               });
           }}
         />
         {tasteLearningCopy.toggleLabel}
       </label>
-      <p id={describedById} className="type-small text-ink/80">
-        {tasteLearningCopy.body}
-        {tasteLearningCopy.sending}
-        {tasteLearningCopy.storage}
-      </p>
       {failed ? (
-        <p className="type-small" role="status">
+        <p className="type-small" role="alert">
           {tasteLearningCopy.failed}
         </p>
       ) : null}
-    </section>
+    </div>
   );
 }
 ```
 
-- [ ] **Step 5: プライバシー文言を追記する**
+- [x] **Step 6: プライバシー文言を追記する**
 
 `src/features/privacy/privacy-copy.ts` の `privacySections`「AIへ送る情報」の `body` 末尾へ次を連結する（既存文はそのまま残す）。
 
@@ -2230,41 +2203,133 @@ export function TasteLearningSection({ enabled, onToggle }: TasteLearningSection
 "また、好みの学習をONにしている場合は、★を付けた献立や選んだ献立から読み取った料理名と食材名、および直近で繰り返し指定したメイン食材名（最長90日・最大50献立）も送ります。設定でいつでも止められます。"
 ```
 
-- [ ] **Step 6: 設定ページへ差し込む**
+- [x] **Step 7: データ配線セクションを書く**
 
-`src/features/household/household-settings-page.tsx` の 2 箇所（`:1776` 付近と `:2536` 付近）で `<ShareConsentSettingsSection userId={userId} />` の直後に置く。読み取りは `useQuery`、書き込みは `useMutation` で `setTasteLearningEnabled` を呼び、成功後に query を invalidate する。**2 箇所とも差し込む**（片方だけだとオンボーディング未完了の導線から設定が消える）。
+`src/features/account/taste-learning-settings-section.tsx`（`useQuery`/`useMutation` に加え、見出し・告知文・読み込み中/エラー表示を常時持つ。household 側はこれを直接使い、薄いラッパーを household-settings-page.tsx 内に作らない）:
 
-- [ ] **Step 7: 通ることを確認する**
+```tsx
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useId } from "react";
+import { withTimeout } from "@/features/auth/async-timeout";
+import { SHARE_CONSENT_TOGGLE_TIMEOUT_MS } from "@/features/privacy/share-consent-settings-section";
+import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import {
+  getTasteLearningEnabled,
+  setTasteLearningEnabled,
+  tasteLearningKeys,
+} from "./taste-learning-api";
+import { tasteLearningCopy } from "./taste-learning-copy";
+import { TasteLearningSection } from "./taste-learning-section";
+
+export type TasteLearningSettingsSectionProps = {
+  userId: string;
+};
+
+/**
+ * 好みの学習トグルの読み書きを設定ページへ配線する。
+ * 読み取りは設定画面専用の getTasteLearningEnabled（household の select("*") とは
+ * 別系統）、書き込みは set_taste_learning_enabled RPC のみ。
+ * ShareConsentSettingsSection と同様、getBrowserSupabaseClient() を都度取得し、
+ * RPC の戻り値をそのまま query cache へ書いてから invalidate して裏取りする。
+ * 見出しと告知文は読み込み中・失敗時も常に表示し、値が未確認のスイッチだけを
+ * 無効化する（初期値 true を偽装表示して誤操作を招かないため）。
+ */
+export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSectionProps) {
+  const queryClient = useQueryClient();
+  const descriptionId = useId();
+  const tasteLearningQuery = useQuery({
+    queryKey: tasteLearningKeys.current(userId),
+    queryFn: () => getTasteLearningEnabled(getBrowserSupabaseClient(), userId),
+  });
+  const tasteLearningMutation = useMutation({
+    mutationFn: (nextEnabled: boolean) =>
+      withTimeout(
+        setTasteLearningEnabled(getBrowserSupabaseClient(), nextEnabled),
+        SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
+      ),
+    onSuccess: (result) => {
+      // RPC の戻り値をそのまま cache へ反映してから裏取りの invalidate をかける
+      queryClient.setQueryData(tasteLearningKeys.current(userId), result);
+      void queryClient.invalidateQueries({ queryKey: tasteLearningKeys.current(userId) });
+    },
+  });
+
+  const isLoading = tasteLearningQuery.isPending;
+  const isError = tasteLearningQuery.isError;
+
+  return (
+    <section className="card stack settings-section" aria-labelledby="taste-learning-title">
+      <h2 id="taste-learning-title" className="settings-section-title">
+        {tasteLearningCopy.title}
+      </h2>
+      <p id={descriptionId} className="type-small text-ink/80">
+        {tasteLearningCopy.body}
+        {tasteLearningCopy.sending}
+        {tasteLearningCopy.storage}
+      </p>
+      {isLoading ? <p role="status">{tasteLearningCopy.loading}</p> : null}
+      {isError ? (
+        <div className="stack gap-2">
+          <p role="alert">{tasteLearningCopy.loadError}</p>
+          <button
+            type="button"
+            className="secondary-button min-h-11"
+            onClick={() => {
+              void tasteLearningQuery.refetch();
+            }}
+          >
+            {tasteLearningCopy.retry}
+          </button>
+        </div>
+      ) : null}
+      <TasteLearningSection
+        enabled={tasteLearningQuery.data ?? false}
+        disabled={isLoading || isError}
+        describedById={descriptionId}
+        onToggle={async (nextEnabled) => {
+          await tasteLearningMutation.mutateAsync(nextEnabled);
+        }}
+      />
+    </section>
+  );
+}
+```
+
+- [x] **Step 8: 設定ページへ差し込む**
+
+`src/features/household/household-settings-page.tsx` の 2 箇所（`:1777` 付近と `:2539` 付近）で `<ShareConsentSettingsSection userId={userId} />` の直後に `<TasteLearningSettingsSection userId={userId} />` を置く（**2 箇所とも**。片方だけだとオンボーディング未完了の導線から設定が消える）。読み書きはすべて `TasteLearningSettingsSection` 内に閉じ、household-settings-page.tsx 側に薄いラッパーは作らない。
+
+`src/features/household/household-settings-page.test.tsx` では `ShareConsentSettingsSection` と同様に `TasteLearningSettingsSection` をモックし、家族 CRUD のテストが taste-learning の RPC/読み取りに依存しないようにする（モック無しだとテスト用クライアント `{ auth: {} }` で読み取りが必ず失敗し、`role="alert"` が複数出て `findByRole("alert")` が衝突する）。
+
+- [x] **Step 9: 通ることを確認する**
 
 Run:
 ```bash
 docker compose run --rm --no-deps app npx vitest run \
-  src/features/account/taste-learning-section.test.tsx \
-  src/features/privacy/privacy-copy.test.ts \
+  src/features/account \
+  src/features/privacy \
   src/features/household
 docker compose run --rm --no-deps app npm run typecheck
 docker compose run --rm --no-deps app npm run lint > /tmp/lint.log 2>&1; \
   grep -nE "error" /tmp/lint.log | head -20 || tail -n 5 /tmp/lint.log
+docker compose run --rm --no-deps app npm run format:check
 ```
 Expected: PASS
 
-- [ ] **Step 8: コミット**
+- [x] **Step 10: コミット**
 
 ```bash
-git add src/features/account/taste-learning-api.ts \
+git add src/features/account/taste-learning-copy.ts \
+  src/features/account/taste-learning-api.ts \
+  src/features/account/taste-learning-api.test.ts \
   src/features/account/taste-learning-section.tsx \
   src/features/account/taste-learning-section.test.tsx \
+  src/features/account/taste-learning-settings-section.tsx \
+  src/features/account/taste-learning-settings-section.test.tsx \
   src/features/privacy/privacy-copy.ts src/features/privacy/privacy-copy.test.ts \
-  src/features/household/household-settings-page.tsx
-git commit -m "feat(settings): 好みの学習のトグルと送信の告知を追加する
-
-更新は set_taste_learning_enabled RPC 経由のみ。読み取りは設定画面用に
-新設する。プライバシーページの「AIへ送る情報」に、料理名と食材名が
-最長90日・最大50献立ぶん送られることと停止手段を書く。
-
-配線より先にこの Task を入れ、初期値 ON のまま切る手段が無い状態を作らない。
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+  src/features/household/household-settings-page.tsx \
+  src/features/household/household-settings-page.test.tsx
+git commit -m "fix(settings): 好みの学習のトグルをサーバー値に追従させ読み取り失敗時も表示する"
 ```
 
 ---

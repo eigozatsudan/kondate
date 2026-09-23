@@ -1,72 +1,69 @@
 import { useId, useState } from "react";
-
-export const tasteLearningCopy = {
-  title: "好みの学習",
-  toggleLabel: "好みの学習",
-  body: "★を付けた献立、「この献立にする」で選んだ献立、再生成の理由、入力したメイン食材から傾向を読み取り、次の提案に反映します。",
-  sending:
-    "献立を作るときに、そこから読み取った料理名と食材名（最長90日・最大50献立）がAIへ送られます。",
-  storage: "OFFにすると読み取りをやめます。設定と反映の記録は保存されます。",
-  failed: "設定を変更できませんでした。時間をおいてもう一度お試しください",
-} as const;
+import { tasteLearningCopy } from "./taste-learning-copy";
 
 export type TasteLearningSectionProps = {
+  /** サーバー側の現在値。楽観表示中でなければこの値がそのまま表示される。 */
   enabled: boolean;
   onToggle: (nextEnabled: boolean) => Promise<void>;
+  /** 読み込み中・読み取り失敗時に外側から強制的に操作不能にする。 */
+  disabled?: boolean;
+  describedById?: string;
 };
 
 /**
- * 好みの学習の ON/OFF。読み取りは呼び出し側、書き込みは RPC。
- * 楽観表示はせず、失敗したら元の値へ戻す。
+ * 好みの学習の ON/OFF スイッチ本体。
+ * 表示値は enabled prop に追従する（useState で最初の値を固定しない）ので、
+ * 他タブでの変更や再読み込みも反映される。書き込み中だけローカルの仮値を出し、
+ * 成功時は呼び出し元のキャッシュ更新（enabled prop の変化）に自然に追従し、
+ * 失敗時は pending 解除と同時に enabled prop（変更前のサーバー値）へ戻る。
  */
-export function TasteLearningSection({ enabled, onToggle }: TasteLearningSectionProps) {
-  const [current, setCurrent] = useState(enabled);
+export function TasteLearningSection({
+  enabled,
+  onToggle,
+  disabled = false,
+  describedById,
+}: TasteLearningSectionProps) {
   const [pending, setPending] = useState(false);
+  const [optimisticValue, setOptimisticValue] = useState<boolean | null>(null);
   const [failed, setFailed] = useState(false);
-  const describedById = useId();
+  const toggleId = useId();
+
+  const displayed = pending && optimisticValue !== null ? optimisticValue : enabled;
 
   return (
-    <section className="card stack settings-section" aria-labelledby="taste-learning-title">
-      <h2 id="taste-learning-title" className="settings-section-title">
-        {tasteLearningCopy.title}
-      </h2>
-      <label className="flex items-center gap-2">
+    <div className="stack gap-2">
+      <label className="inline-flex min-h-11 items-center gap-2" htmlFor={toggleId}>
         <input
+          id={toggleId}
           type="checkbox"
           role="switch"
           className="min-h-11 min-w-11"
-          checked={current}
-          aria-checked={current}
+          checked={displayed}
+          aria-checked={displayed}
           aria-describedby={describedById}
-          disabled={pending}
+          disabled={pending || disabled}
           onChange={(event) => {
             const next = event.target.checked;
-            const previous = current;
             setPending(true);
             setFailed(false);
-            setCurrent(next);
+            setOptimisticValue(next);
             void onToggle(next)
               .catch(() => {
-                setCurrent(previous);
                 setFailed(true);
               })
               .finally(() => {
                 setPending(false);
+                setOptimisticValue(null);
               });
           }}
         />
         {tasteLearningCopy.toggleLabel}
       </label>
-      <p id={describedById} className="type-small text-ink/80">
-        {tasteLearningCopy.body}
-        {tasteLearningCopy.sending}
-        {tasteLearningCopy.storage}
-      </p>
       {failed ? (
-        <p className="type-small" role="status">
+        <p className="type-small" role="alert">
           {tasteLearningCopy.failed}
         </p>
       ) : null}
-    </section>
+    </div>
   );
 }

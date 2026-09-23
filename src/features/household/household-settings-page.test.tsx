@@ -67,6 +67,10 @@ vi.mock("@/features/privacy/share-consent-settings-section", () => ({
     <section aria-label="匿名の緊急候補への協力">共有設定</section>
   ),
 }));
+// 好みの学習 UI は account 専用テストで検証。家族 CRUD は taste-learning RPC に依存させない。
+vi.mock("@/features/account/taste-learning-settings-section", () => ({
+  TasteLearningSettingsSection: () => <section aria-label="好みの学習">好みの学習設定</section>,
+}));
 
 beforeEach(() => {
   navigateMock.mockReset();
