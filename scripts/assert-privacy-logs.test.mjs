@@ -201,4 +201,16 @@ describe("assertPrivacyLogs", () => {
       0,
     );
   });
+
+  it("allows taste_hints_outcome on generation lines", () => {
+    const tasteLine = JSON.stringify({
+      level: "info",
+      code: "succeeded",
+      request_id: "50000000-0000-4000-8000-000000000099",
+      duration_ms: 120,
+      model_id: "mock/kondate-primary:free",
+      taste_hints_outcome: "applied",
+    });
+    assert.equal(assertPrivacyLogs(`${tasteLine}\n`).generationLines, 1);
+  });
 });

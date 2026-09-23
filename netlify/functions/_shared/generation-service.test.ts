@@ -11,6 +11,7 @@ import {
 import { createDishSignature, createMenuSignature } from "../../../shared/safety/deduplicate.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
+import type { TasteHints, TasteSignals } from "../../../shared/contracts/taste-hints.js";
 import { validateGeneratedMenu } from "../../../shared/safety/validate-generated-menu.js";
 import {
   makeGeneratedMenu,
@@ -24,6 +25,7 @@ import { HttpError } from "./http.js";
 import { readOpenRouterMockScenario } from "./openrouter-mock-scenario.js";
 import { OpenRouterCallError, type OpenRouterGenerationResult } from "./openrouter.js";
 import { toRetainedDishPrompt } from "./regeneration-context.js";
+import type { TasteHintsOutcome } from "./taste-hints.js";
 vi.mock("./generation-integrity-context.js", () => ({
   resolveGenerationIntegrityContext: vi.fn(() =>
     Promise.resolve({
@@ -79,6 +81,8 @@ const {
   createUserScopedSupabaseMock,
   loadRecentDishHintsMock,
   diversityHintsState,
+  loadTasteHintsMock,
+  tasteHintsState,
 } = vi.hoisted(() => ({
   getServerEnvMock: vi.fn(),
   loadGenerationContextMock: vi.fn(),
@@ -90,11 +94,19 @@ const {
     Promise.resolve([]),
   ),
   diversityHintsState: { enabled: true },
+  // 学習ヒントのローダだけ差し替える。安全フィルタと sanitize は実物を通す
+  loadTasteHintsMock: vi.fn<(typeof import("./taste-hints.js"))["loadTasteHints"]>(() =>
+    Promise.resolve({ signals: null, outcome: "no_history" }),
+  ),
+  tasteHintsState: { enabled: true },
 }));
 
-vi.mock("../../../shared/safety/validate-generated-menu.js", () => ({
-  validateGeneratedMenu: vi.fn(),
-}));
+// 学習ヒントの安全フィルタが実物の expandAvoidNeedles を使うため、検証本体だけを差し替える
+vi.mock("../../../shared/safety/validate-generated-menu.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../shared/safety/validate-generated-menu.js")>();
+  return { ...actual, validateGeneratedMenu: vi.fn() };
+});
 vi.mock("./generation-materializer.js", () => ({
   materializeAiGeneratedMenu: vi.fn(),
 }));
@@ -134,6 +146,17 @@ vi.mock("./diversity-hints.js", async (importOriginal) => {
   };
 });
 
+vi.mock("./taste-hints.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./taste-hints.js")>();
+  return {
+    ...actual,
+    get TASTE_HINTS_ENABLED() {
+      return tasteHintsState.enabled;
+    },
+    loadTasteHints: loadTasteHintsMock,
+  };
+});
+
 const requestId = "81000000-0000-4000-8000-000000000001";
 const key = "82000000-0000-4000-8000-000000000001";
 const menuId = "83000000-0000-4000-8000-000000000001";
@@ -162,6 +185,7 @@ function makeNewMenuExecutionContext(
     deadlineAtMonotonicMs?: number;
     recentDishHints?: Extract<GenerationExecutionContext, { kind: "new_menu" }>["recentDishHints"];
     tasteHints?: Extract<GenerationExecutionContext, { kind: "new_menu" }>["tasteHints"];
+    tasteHintsOutcome?: TasteHintsOutcome;
   } = {},
 ): Extract<GenerationExecutionContext, { kind: "new_menu" }> {
   const generationContext = overrides.generationContext ?? makeGenerationContext();
@@ -180,6 +204,9 @@ function makeNewMenuExecutionContext(
     regeneration: null,
     recentDishHints: overrides.recentDishHints ?? [],
     tasteHints: overrides.tasteHints ?? null,
+    ...(overrides.tasteHintsOutcome === undefined
+      ? {}
+      : { tasteHintsOutcome: overrides.tasteHintsOutcome }),
   };
 }
 
@@ -632,6 +659,187 @@ describe("runGeneration", () => {
     const payload = JSON.stringify(logTerminalEvent.mock.calls);
     expect(payload).not.toContain("prompt");
     expect(payload).not.toContain("allergy");
+  });
+
+  describe("tasteHints recording and terminal log", () => {
+    const appliedHints: TasteHints = {
+      likedDishes: [{ dishName: "生姜焼き", role: "main" }],
+      likedGenres: ["japanese"],
+      likedIngredients: ["豚肉"],
+      likedTimeBand: "short",
+      overusedIngredients: [],
+      avoidAxes: [],
+      signalStrength: "strong",
+    };
+
+    function succeedInput(
+      repository: ReturnType<typeof makeRepository>,
+    ): Parameters<GenerationDependencies["repository"]["succeed"]>[0] {
+      const input = repository.succeed.mock.calls[0]?.[0];
+      if (input === undefined) throw new Error("succeed not called");
+      return input;
+    }
+
+    it("records { applied, strength } from the final tasteHints object only", async () => {
+      const repository = makeRepository();
+      const generationContext = makeGenerationContext({
+        preferenceSnapshot: { mealType: "dinner" },
+      });
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          loadExecutionContext: vi.fn(() =>
+            Promise.resolve(
+              makeNewMenuExecutionContext({
+                generationContext,
+                tasteHints: appliedHints,
+                tasteHintsOutcome: "applied",
+              }),
+            ),
+          ),
+        }),
+        command,
+      );
+      expect(result.status).toBe("succeeded");
+      const snapshot = succeedInput(repository).preferenceSnapshot;
+      expect(snapshot).toEqual({
+        mealType: "dinner",
+        tasteHints: { applied: true, strength: "strong" },
+      });
+      // 料理名・食材名・対応表は記録へ出さない
+      const serialized = JSON.stringify(snapshot);
+      expect(serialized).not.toContain("生姜焼き");
+      expect(serialized).not.toContain("豚肉");
+      expect(serialized).not.toContain("dishIngredientIndex");
+    });
+
+    it("omits the tasteHints key when the final object is null", async () => {
+      const repository = makeRepository();
+      const generationContext = makeGenerationContext({
+        preferenceSnapshot: { mealType: "dinner" },
+      });
+      await runGeneration(
+        makeDeps({
+          repository,
+          loadExecutionContext: vi.fn(() =>
+            Promise.resolve(
+              makeNewMenuExecutionContext({
+                generationContext,
+                tasteHints: null,
+                tasteHintsOutcome: "filtered_empty",
+              }),
+            ),
+          ),
+        }),
+        command,
+      );
+      const snapshot = succeedInput(repository).preferenceSnapshot;
+      expect(snapshot).toEqual({ mealType: "dinner" });
+      expect(snapshot).not.toHaveProperty("tasteHints");
+    });
+
+    it("never feeds tasteHints into the finalize safety fingerprint", async () => {
+      const generationContext = makeGenerationContext();
+      const runWith = async (tasteHints: TasteHints | null) => {
+        const repository = makeRepository();
+        await runGeneration(
+          makeDeps({
+            repository,
+            loadExecutionContext: vi.fn(() =>
+              Promise.resolve(makeNewMenuExecutionContext({ generationContext, tasteHints })),
+            ),
+          }),
+          command,
+        );
+        return succeedInput(repository).safetyFingerprint;
+      };
+      const withHints = await runWith(appliedHints);
+      const withoutHints = await runWith(null);
+      expect(withHints).toBe(withoutHints);
+    });
+
+    it("logs the closed outcome on the succeeded terminal log", async () => {
+      // 学習ヒントがタイムアウトしても生成自体は成功する。succeeded ログに結末が残ること
+      const logTerminalEvent = vi.fn<NonNullable<GenerationDependencies["logTerminalEvent"]>>();
+      const result = await runGeneration(
+        makeDeps({
+          logTerminalEvent,
+          loadExecutionContext: vi.fn(() =>
+            Promise.resolve(makeNewMenuExecutionContext({ tasteHintsOutcome: "timeout" })),
+          ),
+        }),
+        command,
+      );
+      expect(result.status).toBe("succeeded");
+      expect(logTerminalEvent).toHaveBeenCalledTimes(1);
+      expect(logTerminalEvent).toHaveBeenCalledWith("info", {
+        requestId,
+        errorCode: "succeeded",
+        durationMs: 0,
+        modelId: models[0],
+        tasteHintsOutcome: "timeout",
+      });
+    });
+
+    it("logs the closed outcome on failed and constraint_conflict terminal logs", async () => {
+      const failingLog = vi.fn<NonNullable<GenerationDependencies["logTerminalEvent"]>>();
+      const failed = await runGeneration(
+        makeDeps({
+          logTerminalEvent: failingLog,
+          loadExecutionContext: vi.fn(() =>
+            Promise.resolve(makeNewMenuExecutionContext({ tasteHintsOutcome: "query_failed" })),
+          ),
+          callOpenRouter: vi.fn(() => Promise.reject(new OpenRouterCallError("model_unavailable"))),
+        }),
+        command,
+      );
+      expect(failed).toMatchObject({ status: "failed", error: { code: "model_unavailable" } });
+      expect(failingLog.mock.calls.at(-1)).toEqual([
+        "error",
+        expect.objectContaining({
+          errorCode: "model_unavailable",
+          tasteHintsOutcome: "query_failed",
+        }),
+      ]);
+
+      const conflictLog = vi.fn<NonNullable<GenerationDependencies["logTerminalEvent"]>>();
+      const conflicted = await runGeneration(
+        makeDeps({
+          logTerminalEvent: conflictLog,
+          loadExecutionContext: vi.fn(() =>
+            Promise.resolve(makeNewMenuExecutionContext({ tasteHintsOutcome: "applied" })),
+          ),
+          validatePreflight: () => ({
+            ok: false,
+            terminal: "constraint_conflict",
+            primaryCode: "must_use_conflict",
+            issueCodes: ["must_use_conflict"],
+            conflicts: [
+              {
+                code: "must_use_conflict",
+                message: generationConflictCopy.must_use_conflict,
+                conditionRefs: [],
+              },
+            ],
+          }),
+        }),
+        command,
+      );
+      expect(conflicted.status).toBe("constraint_conflict");
+      expect(conflictLog.mock.calls.at(-1)).toEqual([
+        "warn",
+        expect.objectContaining({
+          errorCode: "constraint_conflict",
+          tasteHintsOutcome: "applied",
+        }),
+      ]);
+    });
+
+    it("omits the outcome when the execution context does not carry one", async () => {
+      const logTerminalEvent = vi.fn<NonNullable<GenerationDependencies["logTerminalEvent"]>>();
+      await runGeneration(makeDeps({ logTerminalEvent }), command);
+      expect(logTerminalEvent.mock.calls[0]?.[1]).not.toHaveProperty("tasteHintsOutcome");
+    });
   });
 
   it("G4: fails model_unavailable before markSent when ensureOpenRouterModelPolicy rejects", async () => {
@@ -2031,6 +2239,9 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     loadRecentDishHintsMock.mockReset();
     loadRecentDishHintsMock.mockResolvedValue([]);
     diversityHintsState.enabled = true;
+    loadTasteHintsMock.mockReset();
+    loadTasteHintsMock.mockResolvedValue({ signals: null, outcome: "no_history" });
+    tasteHintsState.enabled = true;
   });
 
   it("keeps the production integrity resolver wired to the current admin lookup", async () => {
@@ -2084,6 +2295,7 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
       regeneration: null,
       recentDishHints: [...hints],
       tasteHints: null,
+      tasteHintsOutcome: "no_history",
     });
     expect(loadGenerationContextMock).toHaveBeenCalledWith(user, loadRequestId, command.request);
     expect(createUserScopedSupabaseMock).toHaveBeenCalledWith(user.accessToken);
@@ -2110,6 +2322,189 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     if (execution.kind !== "new_menu") throw new Error("expected new_menu");
     expect(execution.recentDishHints).toEqual([]);
     expect(loadRecentDishHintsMock).not.toHaveBeenCalled();
+  });
+
+  /** 学習ヒントの集計結果（sanitize 前）。各テストで必要な軸だけ上書きする */
+  function tasteSignals(overrides: Partial<TasteSignals> = {}): TasteSignals {
+    return {
+      likedDishes: [],
+      likedGenres: [],
+      likedIngredients: [],
+      likedTimeBand: null,
+      overusedIngredients: [],
+      avoidAxes: [],
+      signalStrength: "medium",
+      dishIngredientIndex: [],
+      ...overrides,
+    };
+  }
+
+  async function loadNewMenu(): Promise<Extract<GenerationExecutionContext, { kind: "new_menu" }>> {
+    const deps = createGenerationDeps(user, timing);
+    const execution = await deps.loadExecutionContext(
+      command,
+      loadRequestId,
+      deadlineAtMonotonicMs,
+    );
+    if (execution.kind !== "new_menu") throw new Error("expected new_menu");
+    return execution;
+  }
+
+  it("loads taste signals through the owner-scoped client only, without p_now", async () => {
+    loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
+    const ownerClient = { from: vi.fn(), rpc: vi.fn() };
+    createUserScopedSupabaseMock.mockReturnValueOnce(ownerClient);
+
+    await loadNewMenu();
+
+    expect(createUserScopedSupabaseMock).toHaveBeenCalledWith(user.accessToken);
+    expect(loadTasteHintsMock).toHaveBeenCalledTimes(1);
+    // 引数は ownerClient だけ。service / admin client や p_now を渡さない
+    expect(loadTasteHintsMock.mock.calls[0]?.[0]).toStrictEqual({ ownerClient });
+  });
+
+  it("starts the taste loader in parallel with the generation context load", async () => {
+    let releaseContext: (context: GenerationContext) => void = () => {};
+    loadGenerationContextMock.mockReturnValue(
+      new Promise<GenerationContext>((resolve) => {
+        releaseContext = resolve;
+      }),
+    );
+    const deps = createGenerationDeps(user, timing);
+    const pending = deps.loadExecutionContext(command, loadRequestId, deadlineAtMonotonicMs);
+
+    // generationContext が未解決のうちにローダが走っている（直列化しない）
+    expect(loadTasteHintsMock).toHaveBeenCalledTimes(1);
+    releaseContext(makeGenerationContext());
+    await pending;
+  });
+
+  it("taste flag off: loadTasteHints not called; outcome disabled_flag", async () => {
+    tasteHintsState.enabled = false;
+    loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
+
+    const execution = await loadNewMenu();
+
+    expect(loadTasteHintsMock).not.toHaveBeenCalled();
+    expect(execution.tasteHints).toBeNull();
+    expect(execution.tasteHintsOutcome).toBe("disabled_flag");
+  });
+
+  it.each(["timeout", "query_failed", "invalid_shape", "disabled_user", "no_history"] as const)(
+    "fails open when the taste loader reports %s",
+    async (outcome) => {
+      const generationContext = makeGenerationContext();
+      loadGenerationContextMock.mockResolvedValue(generationContext);
+      loadTasteHintsMock.mockResolvedValue({ signals: null, outcome });
+
+      const execution = await loadNewMenu();
+
+      expect(execution.generationContext).toBe(generationContext);
+      expect(execution.tasteHints).toBeNull();
+      expect(execution.tasteHintsOutcome).toBe(outcome);
+    },
+  );
+
+  it("fails open as query_failed even if the taste loader breaks its never-throw contract", async () => {
+    const generationContext = makeGenerationContext();
+    loadGenerationContextMock.mockResolvedValue(generationContext);
+    loadTasteHintsMock.mockRejectedValue(new Error("canary"));
+
+    const execution = await loadNewMenu();
+
+    expect(execution.generationContext).toBe(generationContext);
+    expect(execution.tasteHints).toBeNull();
+    expect(execution.tasteHintsOutcome).toBe("query_failed");
+  });
+
+  it("applies the sanitized hints and drops the dish-ingredient index", async () => {
+    loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
+    loadTasteHintsMock.mockResolvedValue({
+      signals: tasteSignals({
+        likedDishes: [{ dishName: "生姜焼き", role: "main" }],
+        likedIngredients: ["豚肉"],
+        signalStrength: "strong",
+        dishIngredientIndex: [{ dishName: "生姜焼き", ingredients: ["豚肉"] }],
+      }),
+      outcome: "applied",
+    });
+
+    const execution = await loadNewMenu();
+
+    expect(execution.tasteHintsOutcome).toBe("applied");
+    expect(execution.tasteHints).toEqual({
+      likedDishes: [{ dishName: "生姜焼き", role: "main" }],
+      likedGenres: [],
+      likedIngredients: ["豚肉"],
+      likedTimeBand: null,
+      overusedIngredients: [],
+      avoidAxes: [],
+      signalStrength: "strong",
+    });
+    expect(execution.tasteHints).not.toHaveProperty("dishIngredientIndex");
+  });
+
+  it("records filtered_empty when sanitize removes every liked item", async () => {
+    // sanitize 後に空になるケース: liked はすべて recentDishHints と重なる
+    loadGenerationContextMock.mockResolvedValue(makeGenerationContext());
+    loadRecentDishHintsMock.mockResolvedValue([{ dishName: "肉じゃが", role: "main" }]);
+    loadTasteHintsMock.mockResolvedValue({
+      signals: tasteSignals({
+        likedDishes: [{ dishName: "肉じゃが", role: "main" }],
+        likedIngredients: ["牛肉"],
+        signalStrength: "strong",
+        dishIngredientIndex: [{ dishName: "肉じゃが", ingredients: ["牛肉"] }],
+      }),
+      outcome: "applied",
+    });
+
+    const execution = await loadNewMenu();
+
+    expect(execution.tasteHints).toBeNull();
+    expect(execution.tasteHintsOutcome).toBe("filtered_empty");
+  });
+
+  it("filters taste signals against the loaded generation context (idea drops avoidAxes)", async () => {
+    // targetMode は generationContext が揃って初めて分かる。フィルタがそれを受け取っていること
+    loadGenerationContextMock.mockResolvedValue(
+      makeIdeaGenerationContext({
+        submission: { ...makeIdeaGenerationContext().submission, avoidIngredients: ["鶏肉"] },
+      }),
+    );
+    loadTasteHintsMock.mockResolvedValue({
+      signals: tasteSignals({
+        likedIngredients: ["鶏肉", "玉ねぎ"],
+        avoidAxes: ["child_unfriendly"],
+      }),
+      outcome: "applied",
+    });
+
+    const execution = await loadNewMenu();
+
+    expect(execution.tasteHintsOutcome).toBe("applied");
+    expect(execution.tasteHints?.likedIngredients).toEqual(["玉ねぎ"]);
+    expect(execution.tasteHints?.avoidAxes).toEqual([]);
+  });
+
+  it("never feeds tasteHints into the expected safety fingerprint", async () => {
+    // fingerprint は辞書 digest を含む現行形。学習ヒントの有無で 1 文字も揺れないこと
+    const generationContext = makeGenerationContext();
+    loadGenerationContextMock.mockResolvedValue(generationContext);
+    loadTasteHintsMock.mockResolvedValue({
+      signals: tasteSignals({ likedIngredients: ["豚肉"], signalStrength: "strong" }),
+      outcome: "applied",
+    });
+    const withHints = await loadNewMenu();
+    expect(withHints.tasteHints).not.toBeNull();
+
+    loadTasteHintsMock.mockResolvedValue({ signals: null, outcome: "no_history" });
+    const withoutHints = await loadNewMenu();
+    expect(withoutHints.tasteHints).toBeNull();
+
+    expect(withHints.expectedSafetyFingerprint).toBe(withoutHints.expectedSafetyFingerprint);
+    expect(withHints.expectedSafetyFingerprint).toBe(
+      createCurrentSafetyFingerprint(generationContext.safety),
+    );
   });
 
   it.each([
@@ -2176,6 +2571,8 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     const execution = await deps.loadExecutionContext(regen, loadRequestId, deadlineAtMonotonicMs);
 
     expect(loadGenerationContextMock).not.toHaveBeenCalled();
+    // 再生成経路は学習ヒントを読まない（new_menu 専用）
+    expect(loadTasteHintsMock).not.toHaveBeenCalled();
     expect(createRegenerationLoaderDepsMock).toHaveBeenCalledWith(user, {
       requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
     });

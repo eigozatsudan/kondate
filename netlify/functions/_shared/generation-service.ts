@@ -77,6 +77,15 @@ import {
 } from "./regeneration-context.js";
 import { maybeEnqueueShareJob } from "./share-enqueue.js";
 import { createUserScopedSupabase } from "./supabase-user.js";
+import {
+  filterTasteHintsForSafety,
+  isTasteHintsEnabled,
+  loadTasteHints,
+  sanitizeTasteHints,
+  TASTE_HINTS_ENABLED,
+  type TasteHintsLoadResult,
+  type TasteHintsOutcome,
+} from "./taste-hints.js";
 
 /** L13 フラグを boolean として読む（`true as const` の死枝 lint 回避 + テスト mock 可） */
 function isDiversityHintsEnabled(flag: boolean): boolean {
@@ -136,6 +145,12 @@ export type GenerationExecutionContext =
       recentDishHints: readonly RecentDishHint[];
       /** 学習ヒント。安全フィルタと sanitize 済みの確定形。同じく fingerprint / quota に含めない */
       tasteHints: TasteHints | null;
+      /**
+       * 学習ヒントの結末（閉じた列挙）。終端ログ専用で、記録・prompt には使わない。
+       * 本番の createBaseGenerationDeps は常に入れる。スクリプト用の固定コンテキスト
+       * （品質レビュー・ベンチ）とテストダブルは省略でき、そのときログにキーを出さない。
+       */
+      tasteHintsOutcome?: TasteHintsOutcome;
     })
   | (ExecutionBase & {
       kind: "regenerate_menu";
@@ -465,10 +480,34 @@ function createBaseGenerationDeps(
       const hintsPromise = diversityEnabled
         ? loadRecentDishHints({ ownerClient, userId: user.userId })
         : Promise.resolve([] as const);
-      const [generationContext, recentDishHints] = await Promise.all([
+      // 学習ヒントも L13 と同じ規約: flag off のときは load 自体を呼ばない。
+      // owner-scoped client で呼ぶ（service / admin では get_taste_signals が 42501 になる）。
+      // p_now は渡さず DB の now() に任せる。ローダは throw しない契約だが、
+      // 万一 reject しても生成を止めないよう query_failed へ倒す（fail-open）。
+      const tasteEnabled = isTasteHintsEnabled(TASTE_HINTS_ENABLED);
+      const tastePromise: Promise<TasteHintsLoadResult> = tasteEnabled
+        ? loadTasteHints({ ownerClient }).catch((): TasteHintsLoadResult => ({
+            signals: null,
+            outcome: "query_failed",
+          }))
+        : Promise.resolve({ signals: null, outcome: "disabled_flag" });
+      // 直列化しない。Promise.all の 3 本目として並列に取り、追加の待ちはローダの 200ms で頭打ち
+      const [generationContext, recentDishHints, taste] = await Promise.all([
         loadGenerationContext(user, requestId, command.request),
         hintsPromise,
+        tastePromise,
       ]);
+      // 安全フィルタは generationContext（現行の安全制約と targetMode）が揃ってから掛ける。
+      // sanitize の結果が prompt と preference_snapshot の両方の唯一の出所になる（spec §5.6）
+      const tasteHints =
+        taste.signals === null
+          ? null
+          : sanitizeTasteHints(
+              filterTasteHintsForSafety(taste.signals, generationContext),
+              recentDishHints,
+            );
+      const tasteHintsOutcome: TasteHintsOutcome =
+        taste.signals === null ? taste.outcome : tasteHints === null ? "filtered_empty" : "applied";
       return {
         kind: "new_menu",
         command,
@@ -482,8 +521,8 @@ function createBaseGenerationDeps(
         startedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
         deadlineAtMonotonicMs,
         regeneration: null,
-        // 実値の配線は Task 6。ここでは必須フィールドを型どおり埋めるだけ
-        tasteHints: null,
+        tasteHints,
+        tasteHintsOutcome,
       };
     },
     validatePreflight: validateGenerationPreflight,
@@ -690,7 +729,15 @@ function buildSuccessInput(
   const base = {
     requestId,
     menu,
-    preferenceSnapshot: context.preferenceSnapshot,
+    // 反映の記録は、実際に user ペイロードへ載せた確定オブジェクト（sanitize 後）から導く。
+    // 未適用はキーごと載せない。料理名・食材名は記録せず強さだけを残す（spec §3.2 / §5.6）
+    preferenceSnapshot:
+      execution.kind === "new_menu" && execution.tasteHints !== null
+        ? {
+            ...context.preferenceSnapshot,
+            tasteHints: { applied: true, strength: execution.tasteHints.signalStrength },
+          }
+        : context.preferenceSnapshot,
     safetyFingerprint:
       context.targetMode === "idea"
         ? createIdeaSafetyFingerprint()
@@ -817,6 +864,9 @@ export async function runGeneration(
   }
   // 実際に OpenRouter へ送ったモデルだけを任意で載せる（未送信終端では省略）
   let loggedModelId: string | null = null;
+  // loggedModelId と同じ扱い。実行文脈が確定した時点で入り、成功・失敗・conflict の終端ログ全種が読む。
+  // 学習ヒントがタイムアウトしても生成は成功するため、成功ログだけに足すと結末が欠ける
+  let loggedTasteHintsOutcome: TasteHintsOutcome | undefined;
   const emitTerminalLog = (level: "info" | "warn" | "error", code: string): void => {
     const durationMs = Math.max(
       0,
@@ -828,6 +878,9 @@ export async function runGeneration(
       errorCode: code,
       durationMs,
       modelId: loggedModelId,
+      ...(loggedTasteHintsOutcome === undefined
+        ? {}
+        : { tasteHintsOutcome: loggedTasteHintsOutcome }),
     });
   };
   const fail = async (code: GenerationFailureCode, retryAt: string | null) => {
@@ -909,6 +962,7 @@ export async function runGeneration(
   try {
     const execution = await deps.loadExecutionContext(command, requestId, deadlineAtMonotonicMs);
     const context = execution.generationContext;
+    if (execution.kind === "new_menu") loggedTasteHintsOutcome = execution.tasteHintsOutcome;
     /**
      * HR3: compose は load 時 exclusion snapshot で早期弾き。succeed 直前に再読し、
      * AI 往復中に並行 finalize された sibling との material 衝突を duplicate_output にする。

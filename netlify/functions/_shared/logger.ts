@@ -1,4 +1,5 @@
 import { HttpError } from "./http.js";
+import type { TasteHintsOutcome } from "./taste-hints.js";
 
 /**
  * 運用ログの閉じた形。
@@ -17,6 +18,11 @@ export type SafeLogEvent = {
   code: string;
   durationMs: number;
   modelId?: string;
+  /**
+   * 学習ヒントの結末（閉じた列挙のみ）。料理名・食材名・件数の内訳は載せない。
+   * 型は string で受け、createSafeLogger 側の実行時 Set で閉じる（S3 と同じ扱い）。
+   */
+  tasteHintsOutcome?: string;
   /** 時間メンテのみ — 集計件数。行 ID は出さない。 */
   staleReservationsFinalized?: number;
   generationLedgersDeleted?: number;
@@ -87,6 +93,8 @@ export type SafeGenerationLogEvent = {
   errorCode: string;
   durationMs: number;
   modelId: string | null;
+  /** 学習ヒントの結末。閉じた列挙のみ。料理名・食材名・件数の内訳は出さない */
+  tasteHintsOutcome?: TasteHintsOutcome;
 };
 
 type SafeSink = Record<"info" | "warn" | "error", (line: string) => void>;
@@ -151,6 +159,20 @@ const CLOSED_MEAL_TYPES = new Set(["breakfast", "lunch", "dinner"]);
 const CLOSED_PLANS = new Set(["free", "plus"]);
 const CLOSED_PRICE_INTERVALS = new Set(["month", "year"]);
 const CLOSED_GENERATION_ROUTES = new Set(["menu", "dish", "status"]);
+/**
+ * 学習ヒントの結末の閉じた列挙（taste-hints.ts の TasteHintsOutcome 8 値）。
+ * 型だけでは cast/miswire の自由文（料理名など）が JSON に載るため実行時にも閉じる。
+ */
+const CLOSED_TASTE_HINTS_OUTCOMES = new Set([
+  "disabled_flag",
+  "disabled_user",
+  "no_history",
+  "timeout",
+  "query_failed",
+  "invalid_shape",
+  "filtered_empty",
+  "applied",
+]);
 
 /**
  * 必須 level。TS 型だけだと cast/miswire の free-text が JSON に載る。
@@ -195,6 +217,12 @@ function closedPriceInterval(raw: string): "month" | "year" | undefined {
   return undefined;
 }
 
+/** 学習ヒントの結末。未知・free-text は省略（必須フィールドではない） */
+function closedTasteHintsOutcome(raw: string): string | undefined {
+  if (CLOSED_TASTE_HINTS_OUTCOMES.has(raw)) return raw;
+  return undefined;
+}
+
 function closedGenerationRoute(raw: string): "menu" | "dish" | "status" | undefined {
   if (CLOSED_GENERATION_ROUTES.has(raw)) return raw as "menu" | "dish" | "status";
   return undefined;
@@ -210,6 +238,7 @@ export const SAFE_LOG_SERIALIZED_KEYS = new Set([
   "code",
   "duration_ms",
   "model_id",
+  "taste_hints_outcome",
   "stale_reservations_finalized",
   "generation_ledgers_deleted",
   "shopping_mutations_deleted",
@@ -281,6 +310,11 @@ export const createSafeLogger =
     if (event.modelId !== undefined) {
       const modelId = closedModelId(event.modelId);
       if (modelId !== undefined) record.model_id = modelId;
+    }
+    // この分岐が無いと、許可キー一覧に足しても出力には現れない
+    if (event.tasteHintsOutcome !== undefined) {
+      const outcome = closedTasteHintsOutcome(event.tasteHintsOutcome);
+      if (outcome !== undefined) record.taste_hints_outcome = outcome;
     }
     if (event.staleReservationsFinalized !== undefined) {
       record.stale_reservations_finalized = Math.max(
@@ -481,5 +515,9 @@ export function logGenerationEvent(
     code: event.errorCode,
     durationMs: event.durationMs,
     ...(event.modelId === null ? {} : { modelId: event.modelId }),
+    // createSafeLogger へ渡すフィールドは手で写している。ここへ写さないと出力まで届かない
+    ...(event.tasteHintsOutcome === undefined
+      ? {}
+      : { tasteHintsOutcome: event.tasteHintsOutcome }),
   });
 }

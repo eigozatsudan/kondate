@@ -34,6 +34,8 @@ const allowedLogKeys = new Set([
   "code",
   "duration_ms",
   "model_id",
+  // 学習ヒントの結末（閉じた列挙のみ。料理名・食材名・件数は載せない）
+  "taste_hints_outcome",
   "stale_reservations_finalized",
   "generation_ledgers_deleted",
   "shopping_mutations_deleted",

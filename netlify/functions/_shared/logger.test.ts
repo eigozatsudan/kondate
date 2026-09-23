@@ -399,6 +399,76 @@ describe("logGenerationEvent", () => {
       duration_ms: 12,
     });
   });
+
+  it("serializes tasteHintsOutcome and drops unknown values", () => {
+    const lines: string[] = [];
+    const sink = {
+      info: (line: string) => {
+        lines.push(line);
+      },
+      warn: () => {},
+      error: () => {},
+    };
+
+    logGenerationEvent(
+      "info",
+      {
+        requestId: "req_1",
+        errorCode: "succeeded",
+        durationMs: 1,
+        modelId: null,
+        tasteHintsOutcome: "applied",
+      },
+      sink,
+    );
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({ taste_hints_outcome: "applied" });
+
+    // 型を外れた自由文（料理名など）は閉じた列挙で落とす
+    logGenerationEvent(
+      "info",
+      {
+        requestId: "req_2",
+        errorCode: "succeeded",
+        durationMs: 1,
+        modelId: null,
+        tasteHintsOutcome: "肉じゃが" as never,
+      },
+      sink,
+    );
+    expect(JSON.parse(lines[1] ?? "{}")).not.toHaveProperty("taste_hints_outcome");
+    expect(lines[1]).not.toContain("肉じゃが");
+
+    // 未指定なら出さない（再生成経路など）
+    logGenerationEvent(
+      "info",
+      { requestId: "req_3", errorCode: "succeeded", durationMs: 1, modelId: null },
+      sink,
+    );
+    expect(JSON.parse(lines[2] ?? "{}")).not.toHaveProperty("taste_hints_outcome");
+  });
+
+  it.each([
+    "disabled_flag",
+    "disabled_user",
+    "no_history",
+    "timeout",
+    "query_failed",
+    "invalid_shape",
+    "filtered_empty",
+    "applied",
+  ] as const)("passes the closed taste outcome %s through createSafeLogger", (outcome) => {
+    const write = vi.fn();
+    createSafeLogger(write)({
+      level: "info",
+      requestId: "req-taste",
+      code: "succeeded",
+      durationMs: 1,
+      tasteHintsOutcome: outcome,
+    });
+    expect(JSON.parse(write.mock.calls[0]![0] as string)).toMatchObject({
+      taste_hints_outcome: outcome,
+    });
+  });
 });
 
 describe("closedErrorCode on all logger sinks", () => {
@@ -568,6 +638,7 @@ describe("S1 closed allowed string values", () => {
       jobId: "d1000000-0000-4000-8000-000000000001",
       failureCode: "consent_revoked",
       sourceCounts: { fixture: 1, community: 1 },
+      tasteHintsOutcome: "applied",
     });
     const serializedKeys = new Set(
       Object.keys(JSON.parse(write.mock.calls[0]![0] as string) as Record<string, unknown>),
