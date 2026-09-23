@@ -104,5 +104,12 @@ it("discloses that liked dish and ingredient names are sent for up to 90 days", 
   expect(section?.body).toMatch(/繰り返し指定したメイン食材名/u);
   expect(section?.body).toMatch(/90日/u);
   expect(section?.body).toMatch(/50献立/u);
-  expect(section?.body).toMatch(/止められ/u);
+  expect(section?.body).toMatch(/好みの学習は設定でいつでも止められます/u);
+});
+
+it("discloses that dish names of recent menus are sent to avoid repeats", () => {
+  const section = privacySections.find((entry) => entry.title === "AIへ送る情報");
+  expect(section).toBeDefined();
+  // diversity-hints の RECENT_MENUS_LIMIT（10）と同じ上限を告知する
+  expect(section?.body).toMatch(/直近の献立（最大10献立）の料理名/u);
 });

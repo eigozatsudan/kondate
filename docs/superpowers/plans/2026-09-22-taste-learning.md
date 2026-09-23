@@ -2129,7 +2129,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Create: `src/features/account/taste-learning-settings-section.tsx`（データ配線。`useQuery`/`useMutation` と見出し・告知文・読み込み中/エラー表示を持つ。household 側は薄いラッパーを持たずこれを直接使う。値が未確認の間はスイッチ自体を出さず、一度読めた後の裏取り再読の失敗ではエラー表示・無効化をせず、再読み込み中はボタンをローディング行に差し替え、見出し id は `useId()`、書き込みは世代ガード付きで abort・裏取り invalidate を行う。timeout・失敗時は現在値を 1 回読み、要求値でなければ現在値のまま連番だけを進める柵の書き込みを送り、滞留中の古い書き込みをサーバーで捨てさせる。share-consent-settings-section.tsx の再読ポーリングとは cross-reference コメントで対にする）
 - Test: `src/features/account/taste-learning-settings-section.test.tsx`
 - Create: `src/features/account/taste-learning-timing.ts`（`TASTE_LEARNING_TOGGLE_TIMEOUT_MS`。share-consent 側の同名の値とわざと同じにし、account 側が privacy のコンポーネントファイルへ依存しないようにする）
-- Modify: `src/features/privacy/privacy-copy.ts:41`（`privacySections` の「AIへ送る情報」）
+- Modify: `src/features/privacy/privacy-copy.ts:41`（`privacySections` の「AIへ送る情報」。好みの学習の告知と、直近の献立（最大 10 献立）の料理名の告知）
 - Modify: `src/features/privacy/privacy-copy.test.ts`
 - Modify: `src/features/household/household-settings-page.tsx:1777` と `:2539`（`<ShareConsentSettingsSection userId={userId} />` の直後、2 箇所とも）
 - Modify: `src/features/household/household-settings-page.test.tsx`（`TasteLearningSettingsSection` を `ShareConsentSettingsSection` と同様にモックし、家族 CRUD テストを taste-learning RPC に依存させない）
@@ -2148,7 +2148,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 `src/features/account/taste-learning-settings-section.test.tsx`: 見出しと告知文が読み込み中・失敗時も常に表示されること、読み込み中は `role="status"` の行とともにスイッチ自体が出ないこと（N-2）、読み取り失敗時は `role="alert"` の行と再読み込みボタンが出てスイッチは出ず告知文は消えないこと（N-2）、再読み込み中はボタンを unmount せず disabled とローディング文言へ差し替えること（N-4/R-4）、初回読み込みで値がスイッチに反映されること、一度読み込めた後の裏取り再読の失敗ではスイッチを無効化せず読み込みエラーも出さないこと（N-3）、トグルが RPC 経由でキャッシュを更新しスイッチへ反映されること（詰まった裏取り再読に依存しないことを含む、N-6）、ユーザー操作なしのキャッシュ変化にもスイッチが追従すること（N-6）、書き込み失敗時に楽観値を経由してから元の値へ戻ることが観測できること（N-7）、書き込みが abort されると実クライアントと同じく reject すること。以下は CAS を持つテスト内の偽サーバー（`{ enabled, seq }`）で順序まで確かめる: 連番を運ぶ OFF→ON→OFF 往復、滞留した書き込みが再読より先に commit していれば成功扱いで柵を送らないこと、未 commit なら柵が通って失敗アラートとサーバー値を出し、後から届いた滞留書き込みが `applied: false` で捨てられ画面とキャッシュが変わらないこと、別端末による `applied: false` で値が違えば失敗アラートと真の値・同じなら成功扱い、柵または再読が失敗したら invalidate して失敗アラートを出すこと。
 
-`src/features/privacy/privacy-copy.test.ts` の既存アサーションを `/設定/u`（既存の「家族設定」でも通ってしまい実質何も検証しない）から `/止められ/u`（「設定でいつでも止められます」の追記そのものを検証する）へ差し替える。
+`src/features/privacy/privacy-copy.test.ts` の既存アサーションを `/設定/u`（既存の「家族設定」でも通ってしまい実質何も検証しない）から `/好みの学習は設定でいつでも止められます/u`（停止手段の追記そのものを、止められる対象まで含めて検証する）へ差し替える。加えて、直近の献立の料理名を送ること（`/直近の献立（最大10献立）の料理名/u`）を別のテストで固定する。
 
 - [x] **Step 2: 落ちることを確認する**
 
@@ -2372,10 +2372,18 @@ export function TasteLearningSection({
 
 - [x] **Step 6: プライバシー文言を追記する**
 
-`src/features/privacy/privacy-copy.ts` の `privacySections`「AIへ送る情報」の `body` 末尾へ次を連結する（既存文はそのまま残す）。
+`src/features/privacy/privacy-copy.ts` の `privacySections`「AIへ送る情報」の `body` を次の 2 か所で改める（既存文はそのまま残す。文言は人間承認済み）。
+
+1. 「家族設定を使わないアイデア献立では、家族に関する情報は一切送りません。」の直後へ、既存の `recentDishHints`（上限は `netlify/functions/_shared/diversity-hints.ts` の `RECENT_MENUS_LIMIT` = 10）の告知を挿入する。
 
 ```ts
-"また、好みの学習をONにしている場合は、★を付けた献立や選んだ献立から読み取った料理名と食材名、および直近で繰り返し指定したメイン食材名（最長90日・最大50献立）も送ります。設定でいつでも止められます。"
+"新しい献立を作るときは、同じ料理が続かないよう、直近の献立（最大10献立）の料理名も送ります。"
+```
+
+2. 末尾へ好みの学習の告知を連結する。止められるのは好みの学習だけなので、停止手段の文は主語を明示する。
+
+```ts
+"また、好みの学習をONにしている場合は、★を付けた献立や選んだ献立から読み取った料理名と食材名、および直近で繰り返し指定したメイン食材名（最長90日・最大50献立）も送ります。好みの学習は設定でいつでも止められます。"
 ```
 
 - [x] **Step 7: データ配線セクションを書く**
