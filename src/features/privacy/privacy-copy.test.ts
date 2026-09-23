@@ -94,3 +94,14 @@ it("AP6: settings accept disclosure includes every required share-consent phrase
     expect(shareConsentSettingsCopy.acceptDisclosure).toContain(phrase);
   }
 });
+
+it("discloses that liked dish and ingredient names are sent for up to 90 days", () => {
+  const section = privacySections.find((entry) => entry.title === "AIへ送る情報");
+  expect(section).toBeDefined();
+  expect(section?.body).toMatch(/料理名と食材名/u);
+  // overusedIngredients は ★ の付いていない献立も母集団に含むため、
+  // 「お気に入り由来」だけの記述では実際に送る範囲より狭い
+  expect(section?.body).toMatch(/繰り返し指定したメイン食材名/u);
+  expect(section?.body).toMatch(/90日/u);
+  expect(section?.body).toMatch(/設定/u);
+});

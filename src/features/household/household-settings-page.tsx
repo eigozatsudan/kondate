@@ -13,6 +13,12 @@ import {
 import { useSearchParams } from "react-router";
 import { AccountSettingsSection } from "@/features/account/account-settings-section";
 import { FeedbackSection } from "@/features/account/feedback-section";
+import {
+  getTasteLearningEnabled,
+  setTasteLearningEnabled,
+  tasteLearningKeys,
+} from "@/features/account/taste-learning-api";
+import { TasteLearningSection } from "@/features/account/taste-learning-section";
 import { useAuth } from "@/features/auth/use-auth";
 import { PlanSettingsSection } from "@/features/billing/plan-settings-section";
 import { HomeScreenInstallSection } from "@/features/pwa/home-screen-install-section";
@@ -319,6 +325,39 @@ function createHouseholdSettingsApi(
     removeDislike: (dislikeId) => deleteMemberDislike(client, userId, dislikeId),
     invalidateSafety,
   };
+}
+
+/**
+ * 好みの学習トグルの読み書きを household 設定ページへ配線する。
+ * 読み取りは設定画面専用の getTasteLearningEnabled（household select("*") とは別系統）、
+ * 書き込みは set_taste_learning_enabled RPC のみ。ShareConsentSettingsSection と同様、
+ * getBrowserSupabaseClient() を都度取得し、成功後は query を invalidate して再読させる。
+ * 初回読み込み中・失敗時は静かに何も描かない（初期値 true を偽装表示して誤操作を招かない）。
+ */
+function TasteLearningSettingsSection({ userId }: { userId: string }) {
+  const queryClient = useQueryClient();
+  const tasteLearningQuery = useQuery({
+    queryKey: tasteLearningKeys.current(userId),
+    queryFn: () => getTasteLearningEnabled(getBrowserSupabaseClient(), userId),
+  });
+  const tasteLearningMutation = useMutation({
+    mutationFn: (nextEnabled: boolean) =>
+      setTasteLearningEnabled(getBrowserSupabaseClient(), nextEnabled),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: tasteLearningKeys.current(userId) });
+    },
+  });
+
+  if (tasteLearningQuery.data === undefined) return null;
+
+  return (
+    <TasteLearningSection
+      enabled={tasteLearningQuery.data}
+      onToggle={async (nextEnabled) => {
+        await tasteLearningMutation.mutateAsync(nextEnabled);
+      }}
+    />
+  );
 }
 
 export function HouseholdSettingsPage() {
@@ -1774,6 +1813,8 @@ export function HouseholdSettingsForm({
         />
         {/* 共有同意トグルと提供管理一覧（Task 5）。プランとアカウントの間。 */}
         <ShareConsentSettingsSection userId={userId} />
+        {/* Task 4: 好みの学習トグル。初期値 ON のまま切る手段が無い状態を作らない */}
+        <TasteLearningSettingsSection userId={userId} />
         {/* アカウント操作（ログアウト等）の下にフィードバックを置く */}
         <AccountSettingsSection />
         <FeedbackSection />
@@ -2534,6 +2575,8 @@ export function HouseholdSettingsForm({
       />
       {/* 共有同意トグルと提供管理一覧（Task 5）。プランとアカウントの間。 */}
       <ShareConsentSettingsSection userId={userId} />
+      {/* Task 4: 好みの学習トグル。初期値 ON のまま切る手段が無い状態を作らない */}
+      <TasteLearningSettingsSection userId={userId} />
       {/* Plan 6: アカウント操作は本ページ所有者の下に合成するだけ。家族 CRUD は置換しない。 */}
       <AccountSettingsSection />
       {/* フィードバックはログアウト等のアカウント操作の下へ。日常操作の邪魔にしない。 */}
