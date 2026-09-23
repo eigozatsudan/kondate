@@ -274,8 +274,9 @@ const additionalAliasValues: readonly (readonly [
   ["chicken", "やき鳥", "derived", false],
   ["chicken", "鳥そぼろ", "derived", false],
   // 裸の「もつ」は「日もちする」意の動詞（3日ほどもつ・形をたもつ等）に一致したため一度削除し（I3）、
-  // 具体形を label 確認つきで足した（裸の「もつ」は 20260923160000 で除外文脈つきで戻した）。牛もつ・豚もつは一字の「牛」「豚」で hard 一致が
-  // 先に立つが、一字行を将来見直しても取りこぼさないよう具体形として残す。
+  // 具体形を label 確認つきで足した（裸の「もつ」は 20260923160000 で除外文脈つきで戻した）。
+  // 牛もつ・豚もつは一字の「牛」「豚」で hard 一致が先に立つが、一字行を将来見直しても
+  // 取りこぼさないよう具体形として残す。
   ["pork", "もつ煮", "processed", true],
   ["beef", "もつ煮", "processed", true],
   ["pork", "もつ鍋", "processed", true],
@@ -302,6 +303,20 @@ const additionalAliasValues: readonly (readonly [
   // 等の動詞は EXCLUDED_ALIAS_CONTEXTS で外す。上の もつ煮 等の具体形行は残す。
   ["pork", "もつ", "processed", true],
   ["beef", "もつ", "processed", true],
+  // 2026-09-23 追補（20260923170000）: fix-round-3 レビュー（I3・M5）。
+  // I3: 合い挽き肉の表記ゆれ 相挽き肉・相びき肉・合いひき肉・合ひき肉 が豚・牛のどちらにも
+  // 一致していなかった。既存行（合いびき・合挽・合い挽 等）の部分一致では拾えない形だけを足す。
+  ["pork", "相挽", "derived", false],
+  ["pork", "相びき", "derived", false],
+  ["pork", "合いひき", "derived", false],
+  ["pork", "合ひき", "derived", false],
+  ["beef", "相挽", "derived", false],
+  ["beef", "相びき", "derived", false],
+  ["beef", "合いひき", "derived", false],
+  ["beef", "合ひき", "derived", false],
+  // M5: とり胸肉・地どり が chicken に一致していなかった。とりむね肉 は既存の とりむね で拾える。
+  ["chicken", "とり胸", "derived", false],
+  ["chicken", "地どり", "derived", false],
   // U2-I4: 推奨表示の高頻度残差（衝突レビュー済みの具体形のみ）
   ["yam", "長芋", "direct", false],
   ["yam", "ながいも", "direct", false],
