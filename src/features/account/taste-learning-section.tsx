@@ -23,9 +23,13 @@ export function TasteLearningSection({
   const [pending, setPending] = useState(false);
   const [optimisticValue, setOptimisticValue] = useState<boolean | null>(null);
   const [failed, setFailed] = useState(false);
+  const [requested, setRequested] = useState<boolean | null>(null);
   const toggleId = useId();
 
   const displayed = pending && optimisticValue !== null ? optimisticValue : enabled;
+  // 失敗後の再読み込みなどで、表示値が利用者の求めた値に追いついたら失敗表示を下げる
+  // （出したままだと、もう一度押して自分の変更を取り消させてしまう）。
+  const showFailed = failed && !pending && requested !== enabled;
 
   return (
     <div className="stack gap-2">
@@ -44,6 +48,7 @@ export function TasteLearningSection({
             setPending(true);
             setFailed(false);
             setOptimisticValue(next);
+            setRequested(next);
             void onToggle(next)
               .catch(() => {
                 setFailed(true);
@@ -56,7 +61,7 @@ export function TasteLearningSection({
         />
         {tasteLearningCopy.toggleLabel}
       </label>
-      {failed ? (
+      {showFailed ? (
         <p className="type-small" role="alert">
           {tasteLearningCopy.failed}
         </p>

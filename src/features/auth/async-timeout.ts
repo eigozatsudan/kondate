@@ -38,3 +38,10 @@ export async function withTimeout<T>(
     }
   }
 }
+
+/** 再読ポーリングの間隔待ち（共有同意・好みの学習の設定セクション）。 */
+export function waitMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}

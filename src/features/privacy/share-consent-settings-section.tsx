@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
-import { withTimeout } from "@/features/auth/async-timeout";
+import { waitMs, withTimeout } from "@/features/auth/async-timeout";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { shareConsentSettingsCopy } from "./privacy-copy";
 import {
@@ -32,13 +32,6 @@ export const SHARE_CONSENT_RECONCILE_ATTEMPTS = 3;
 
 /** AP-R1: 再読間隔。即時再読だけだとまだ revoked の窓を閉じられない。 */
 export const SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS = 1_000;
-
-/** R-1 (taste-learning): 好みの学習の設定セクションも同じ再読ポーリングへ再利用する。 */
-export function waitMs(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 export type ShareConsentSettingsSectionProps = {
   userId: string;

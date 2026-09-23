@@ -1,11 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useRef, useState } from "react";
-import { withTimeout } from "@/features/auth/async-timeout";
+import { useId, useRef } from "react";
+import { waitMs, withTimeout } from "@/features/auth/async-timeout";
 import {
   SHARE_CONSENT_RECONCILE_ATTEMPTS,
   SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS,
   SHARE_CONSENT_TOGGLE_TIMEOUT_MS,
-  waitMs,
 } from "@/features/privacy/share-consent-settings-section";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import {
@@ -114,18 +113,10 @@ export function TasteLearningSettingsSection({ userId }: TasteLearningSettingsSe
 
   const data = tasteLearningQuery.data;
   const hasData = data !== undefined;
-  // R-4: 一度読み取りに失敗した後の再読み込みでは、TanStack Query が isPending/isError を
-  // 一時的に「初回読み込み中」相当へ戻すことがある。それに引きずられてエラー表示とボタンを
-  // 丸ごと隠すと、再読み込み中のフォーカスされたボタンが unmount されてしまう（R-4）。
-  // 値が読めるまでは一度出たエラー状態を保持し、読み込み中/エラーの表示を切り替えるだけにする。
-  const [hasLoadErrored, setHasLoadErrored] = useState(false);
-  useEffect(() => {
-    if (tasteLearningQuery.isError) {
-      setHasLoadErrored(true);
-    } else if (hasData) {
-      setHasLoadErrored(false);
-    }
-  }, [tasteLearningQuery.isError, hasData]);
+  // R-4: 値の無いクエリを再読み込みすると TanStack Query は status を pending・error を null へ
+  // 戻すため、isError だけを見るとエラー表示とフォーカス中のボタンが丸ごと消える。
+  // errorUpdateCount は再読み込みでは戻らないので、「一度でも失敗し、まだ値が無い」をここから導く。
+  const hasLoadErrored = tasteLearningQuery.errorUpdateCount > 0;
   const showLoading = !hasData && !hasLoadErrored && tasteLearningQuery.isPending;
   // N-3: 一度読み込めていれば、その後の裏取り再読の失敗はスイッチを止めず読み込みエラーも出さない。
   const showLoadError = !hasData && hasLoadErrored;

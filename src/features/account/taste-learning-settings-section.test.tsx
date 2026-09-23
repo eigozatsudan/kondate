@@ -262,16 +262,27 @@ describe("TasteLearningSettingsSection", () => {
       });
 
       // 2回目の再読でサーバーが実際に commit していた false が確認でき、成功扱いになる。
+      // 書き込み中も楽観値は OFF なので、pending が解けた（スイッチが有効に戻った）ことまで見る。
       await waitFor(() => {
-        expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
+        expect(screen.getByRole("switch", { name: "好みの学習" })).toBeEnabled();
       });
+      expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      // 初回読み取り 1 回 + 裏取り 2 回で打ち切っている（一致後に 3 回目を読まない）
+      expect(getTasteLearningEnabledMock).toHaveBeenCalledTimes(3);
+
+      // 残りの再読間隔を過ぎても失敗表示は出ず、値も戻らない
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS * 3);
+      });
+      expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("shows the failure alert and the server value when every reconciliation re-read fails (R-1)", async () => {
+  it("shows the failure alert and the server value when every reconciliation re-read still returns the old value (R-1)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -311,6 +322,56 @@ describe("TasteLearningSettingsSection", () => {
         expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
       });
       expect(screen.getByRole("switch", { name: "好みの学習" })).toBeChecked();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-checks the server after every reconciliation re-read rejects, spacing re-reads by the retry delay (R-1)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      getTasteLearningEnabledMock.mockResolvedValueOnce(true);
+      setTasteLearningEnabledMock.mockRejectedValue(new Error("boom"));
+      renderWithClient(<TasteLearningSettingsSection userId="user-1" />);
+      const toggle = await screen.findByRole("switch", { name: "好みの学習" });
+      await waitFor(() => {
+        expect(toggle).toBeChecked();
+      });
+
+      // 裏取りの再読はすべて失敗する（通信断など）
+      getTasteLearningEnabledMock.mockRejectedValue(new Error("read failed"));
+
+      await user.click(toggle);
+      // 書き込み失敗の直後に 1 回目の再読（初回読み取りと合わせて 2 回）
+      await waitFor(() => {
+        expect(getTasteLearningEnabledMock).toHaveBeenCalledTimes(2);
+      });
+
+      // 再読間隔が過ぎるまでは次の再読をしない
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS - 100);
+      });
+      expect(getTasteLearningEnabledMock).toHaveBeenCalledTimes(2);
+
+      for (let attempt = 1; attempt < SHARE_CONSENT_RECONCILE_ATTEMPTS; attempt += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SHARE_CONSENT_RECONCILE_RETRY_DELAY_MS + 50);
+        });
+      }
+
+      // 再読 3 回がすべて失敗 → invalidate でサーバーへの裏取りをもう 1 回やり直す
+      await waitFor(() => {
+        expect(getTasteLearningEnabledMock).toHaveBeenCalledTimes(
+          1 + SHARE_CONSENT_RECONCILE_ATTEMPTS + 1,
+        );
+      });
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
+      });
+      // 読み込めていた値は保持し、スイッチは変更前の値へ戻って操作できる
+      expect(screen.getByRole("switch", { name: "好みの学習" })).toBeChecked();
+      expect(screen.getByRole("switch", { name: "好みの学習" })).toBeEnabled();
     } finally {
       vi.useRealTimers();
     }

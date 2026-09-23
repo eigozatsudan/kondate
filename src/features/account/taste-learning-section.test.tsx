@@ -45,6 +45,21 @@ describe("TasteLearningSection", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
   });
 
+  it("hides the failure alert once the server value catches up with the requested value", async () => {
+    const onToggle = vi.fn().mockRejectedValue(new Error("boom"));
+    const { rerender } = render(<TasteLearningSection enabled={true} onToggle={onToggle} />);
+    await userEvent.click(await screen.findByRole("switch", { name: "好みの学習" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/変更できませんでした/u);
+    });
+
+    // 失敗後の再読み込みで、実はサーバーが要求どおり OFF を確定していたと分かった
+    rerender(<TasteLearningSection enabled={false} onToggle={onToggle} />);
+
+    expect(screen.getByRole("switch", { name: "好みの学習" })).not.toBeChecked();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("follows the enabled prop after mount instead of freezing at the initial value", async () => {
     const { rerender } = render(<TasteLearningSection enabled={true} onToggle={vi.fn()} />);
     const toggle = await screen.findByRole("switch", { name: "好みの学習" });
