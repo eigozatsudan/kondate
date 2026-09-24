@@ -11,6 +11,7 @@ import {
   SURFACES_CLOSED_COPY,
   TRIAL_END_WARNING,
 } from "./billing-ui-copy";
+import { formatBillingDate } from "./format-billing-date";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
 import { DeveloperBillingHistory } from "./developer-billing-history";
 import {
@@ -31,18 +32,6 @@ export {
   SURFACES_CLOSED_COPY,
   CHECKOUT_POLL_UNCONFIRMED_COPY,
 } from "./billing-ui-copy";
-
-function formatTrialEnd(iso: string | null): string | null {
-  if (iso === null) return null;
-  try {
-    return new Intl.DateTimeFormat("ja-JP", {
-      timeZone: "Asia/Tokyo",
-      dateStyle: "long",
-    }).format(new Date(iso));
-  } catch {
-    return null;
-  }
-}
 
 function planLabel(data: EntitlementData, options: { trustPlus: boolean }): string {
   // B25: plan 文字列だけでは Plus ラベルにしない（plusEntitled のみ。LP と同型の表示 DiD）
@@ -118,7 +107,7 @@ export function PlanSettingsSection({
   const isPastDue = !error && (data?.status === "past_due" || data?.pastDueGrace === true);
   // B1: incomplete は Checkout 409 が Portal 完了を指示。Checkout フォームではなく Portal CTA を出す
   const isIncomplete = !error && data?.status === "incomplete";
-  const trialEndLabel = formatTrialEnd(data?.trialEnd ?? null);
+  const trialEndLabel = formatBillingDate(data?.trialEnd ?? null);
   // Checkout 成功後の webhook 遅延待ち中・期限後も Portal を出せる（両閉じ回避）
   // B17: COMING_SOON 中は Checkout 経路が無いため、surfaces 開放中は Free 枝でも Portal CTA を出す
   // （DB free + Stripe live の cold 管理導線。サーバ Portal は live 確認で許可 / true Free は 403）

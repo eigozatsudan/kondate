@@ -58,8 +58,51 @@ describe("resolvePlusLandingView", () => {
       surfacesOpen: true,
       trialing: false,
       trialEnd: null,
+      currentPeriodEnd: null,
+      autoRenews: true,
     });
   });
+
+  it("passes the period end through and marks active plus as auto-renewing", () => {
+    const data: EntitlementData = {
+      ...freeOpen,
+      plan: "plus",
+      status: "active",
+      plusEntitled: true,
+      dbPlusEntitled: true,
+      quotaPlan: "plus",
+      currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+    };
+    expect(resolvePlusLandingView({ loading: false, error: false, data })).toMatchObject({
+      kind: "entitled",
+      currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+      autoRenews: true,
+    });
+  });
+
+  it.each([
+    { status: "active" as const, cancelAtPeriodEnd: true },
+    // 期間内に解約済み（canceled）でも期間末までは Plus。更新はされない
+    { status: "canceled" as const, cancelAtPeriodEnd: false },
+  ])(
+    "does not mark plus as auto-renewing ($status, cancelAtPeriodEnd=$cancelAtPeriodEnd)",
+    ({ status, cancelAtPeriodEnd }) => {
+      const data: EntitlementData = {
+        ...freeOpen,
+        plan: "plus",
+        status,
+        plusEntitled: true,
+        dbPlusEntitled: true,
+        quotaPlan: "plus",
+        currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+        cancelAtPeriodEnd,
+      };
+      expect(resolvePlusLandingView({ loading: false, error: false, data })).toMatchObject({
+        kind: "entitled",
+        autoRenews: false,
+      });
+    },
+  );
 
   it("returns incomplete without checkout", () => {
     const data: EntitlementData = { ...freeOpen, status: "incomplete" };

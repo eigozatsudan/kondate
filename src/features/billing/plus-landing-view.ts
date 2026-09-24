@@ -16,6 +16,10 @@ export type PlusLandingView =
       surfacesOpen: boolean;
       trialing: boolean;
       trialEnd: string | null;
+      /** 契約の期間末（表示用）。null なら更新日・終了日を出さない */
+      currentPeriodEnd: string | null;
+      /** 期間末に自動で更新されるか。解約予約（cancelAtPeriodEnd）や解約済み（canceled）は false */
+      autoRenews: boolean;
     }
   | { kind: "incomplete"; surfacesOpen: boolean }
   | { kind: "full"; checkoutEnabled: boolean };
@@ -68,6 +72,9 @@ export function resolvePlusLandingView(input: {
       surfacesOpen: data.productSurfacesOpen,
       trialing: data.status === "trialing",
       trialEnd: data.trialEnd,
+      currentPeriodEnd: data.currentPeriodEnd,
+      // 表示だけの派生。canceled は期間末まで Plus が残るが更新はされない
+      autoRenews: data.status !== "canceled" && !data.cancelAtPeriodEnd,
     };
   }
 

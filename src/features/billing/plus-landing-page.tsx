@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import type { EntitlementData } from "@shared/contracts/billing";
 import { planQuota } from "@shared/contracts/plan-quota";
+import { WEEKLY_PLAN_UI_ENABLED } from "@shared/contracts/weekly-plan";
 import { useAuth } from "@/features/auth/use-auth";
 import { createCheckoutSession, createPortalSession } from "./billing-api";
 import {
@@ -16,6 +17,7 @@ import qualityUrl from "./assets/plus-benefit-quality.webp";
 import { DeveloperBillingHistory } from "./developer-billing-history";
 import flyerUrl from "./assets/plus-benefit-flyer.webp";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
+import { formatBillingDate } from "./format-billing-date";
 import { resolvePlusLandingView } from "./plus-landing-view";
 import { useEntitlement } from "./use-entitlement";
 import "./plus-landing-page.css";
@@ -71,16 +73,59 @@ export type PlusLandingPageProps = {
   onPortal?: () => Promise<void>;
 };
 
-function formatTrialEnd(iso: string | null): string | null {
-  if (iso === null) return null;
-  try {
-    return new Intl.DateTimeFormat("ja-JP", {
-      timeZone: "Asia/Tokyo",
-      dateStyle: "long",
-    }).format(new Date(iso));
-  } catch {
-    return null;
-  }
+/** 利用中の更新日・終了日。日付がなければ何も出さない（推測しない）。 */
+function EntitledPeriodLine({
+  periodEnd,
+  autoRenews,
+}: {
+  periodEnd: string | null;
+  autoRenews: boolean;
+}) {
+  if (periodEnd === null) return null;
+  return autoRenews ? (
+    <p>次回の更新日: {periodEnd}</p>
+  ) : (
+    <p>{periodEnd}に Plus が終了します（自動更新なし）</p>
+  );
+}
+
+/**
+ * 利用中の画面で「Plus でできること」を LP と同じ固定コピーで短く並べる。
+ * 一部機能の停止中（!surfacesOpen）はどの機能が止まっているか画面から分からないため、
+ * 説明だけ残してリンクは出さない。今週の献立のリンクは WEEKLY_PLAN_UI_ENABLED に従う。
+ */
+function EntitledBenefits({ surfacesOpen }: { surfacesOpen: boolean }) {
+  return (
+    <section className="stack gap-2" aria-labelledby="plus-active-benefits-title">
+      <h2 id="plus-active-benefits-title" className="plus-landing__section-title">
+        {PLUS_LP_NEUTRAL_SUB}
+      </h2>
+      <ul className="plus-landing__cards stack gap-3">
+        <li className="plus-landing__card card stack gap-2">
+          <h3 className="plus-landing__card-title">{PLUS_LP_QUOTA_TITLE}</h3>
+          <p>{PLUS_LP_QUOTA_BODY}</p>
+        </li>
+        <li className="plus-landing__card card stack gap-2">
+          <h3 className="plus-landing__card-title">{PLUS_LP_QUALITY_TITLE}</h3>
+          <p>{PLUS_LP_QUALITY_BODY}</p>
+          {surfacesOpen ? (
+            <Link className="secondary-button min-h-11" to="/planner">
+              今日の献立をつくる
+            </Link>
+          ) : null}
+        </li>
+        <li className="plus-landing__card card stack gap-2">
+          <h3 className="plus-landing__card-title">{PLUS_LP_FLYER_TITLE}</h3>
+          <p>{PLUS_LP_FLYER_BODY}</p>
+          {surfacesOpen && WEEKLY_PLAN_UI_ENABLED ? (
+            <Link className="secondary-button min-h-11" to="/weekly">
+              今週の献立をつくる
+            </Link>
+          ) : null}
+        </li>
+      </ul>
+    </section>
+  );
 }
 
 /**
@@ -288,13 +333,20 @@ export function PlusLandingPage({
           <h1>{PLUS_LP_ACTIVE}</h1>
           {view.trialing ? (
             <div className="stack gap-1">
-              {formatTrialEnd(view.trialEnd) !== null ? (
-                <p>無料期間の終了: {formatTrialEnd(view.trialEnd)}</p>
+              {formatBillingDate(view.trialEnd) !== null ? (
+                <p>無料期間の終了: {formatBillingDate(view.trialEnd)}</p>
               ) : null}
               <p>{TRIAL_END_WARNING}</p>
             </div>
-          ) : null}
+          ) : (
+            // お試し中は無料期間の終了を優先し、更新日と二重に出さない
+            <EntitledPeriodLine
+              periodEnd={formatBillingDate(view.currentPeriodEnd)}
+              autoRenews={view.autoRenews}
+            />
+          )}
           {!view.surfacesOpen ? <p role="status">{ENTITLED_KILL_NOTE}</p> : null}
+          <EntitledBenefits surfacesOpen={view.surfacesOpen} />
           {view.surfacesOpen ? (
             <button
               type="button"

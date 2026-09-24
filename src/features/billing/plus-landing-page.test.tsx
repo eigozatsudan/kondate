@@ -4,13 +4,16 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EntitlementData } from "@shared/contracts/billing";
 import { planQuota } from "@shared/contracts/plan-quota";
 import { PAST_DUE_COPY, PORTAL_BUTTON_LABEL, SURFACES_CLOSED_COPY } from "./billing-ui-copy";
 import {
   PLUS_LP_ACTIVE,
   PLUS_LP_CANCEL,
+  PLUS_LP_FLYER_BODY,
+  PLUS_LP_QUALITY_BODY,
+  PLUS_LP_QUOTA_BODY,
   PLUS_LP_COMING_SOON_BADGE,
   PLUS_LP_COMING_SOON_BODY,
   PLUS_LP_FEATURES_TITLE,
@@ -47,6 +50,18 @@ vi.mock("./billing-api", () => ({
   createPortalSession: vi.fn(),
 }));
 
+// 今週の献立 UI フラグを試験ごとに切り替える（getter で import 側から毎回読ませる）
+const weeklyFlag = vi.hoisted(() => ({ enabled: true }));
+vi.mock("@shared/contracts/weekly-plan", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@shared/contracts/weekly-plan")>();
+  return {
+    ...actual,
+    get WEEKLY_PLAN_UI_ENABLED() {
+      return weeklyFlag.enabled;
+    },
+  };
+});
+
 vi.mock("@/features/auth/use-auth", () => ({
   useAuth: () => ({ session: { user: { id: "user-1" } } }),
 }));
@@ -71,6 +86,15 @@ const pastDue: EntitlementData = {
   plusEntitled: true,
   pastDueGrace: true,
   currentPeriodEnd: "2026-08-20T15:00:00.000Z",
+  dbPlusEntitled: true,
+  quotaPlan: "plus",
+};
+
+const plusActive: EntitlementData = {
+  ...freeOpen,
+  plan: "plus",
+  status: "active",
+  plusEntitled: true,
   dbPlusEntitled: true,
   quotaPlan: "plus",
 };
@@ -340,5 +364,113 @@ describe("PlusLandingPage", () => {
   it("shows '今週の献立' as the comparison table row heading", () => {
     renderLp({ entitlement: freeOpen });
     expect(screen.getByRole("rowheader", { name: "今週の献立" })).toBeInTheDocument();
+  });
+});
+
+describe("PlusLandingPage entitled benefits and period", () => {
+  afterEach(() => {
+    weeklyFlag.enabled = true;
+  });
+
+  it("lists the three Plus benefits with links to weekly and planner", () => {
+    renderLp({ entitlement: plusActive });
+    const section = screen.getByRole("region", { name: PLUS_LP_NEUTRAL_SUB });
+    expect(within(section).getByRole("heading", { name: PLUS_LP_QUOTA_TITLE })).toBeVisible();
+    expect(within(section).getByText(PLUS_LP_QUOTA_BODY)).toBeVisible();
+    expect(within(section).getByRole("heading", { name: PLUS_LP_QUALITY_TITLE })).toBeVisible();
+    expect(within(section).getByText(PLUS_LP_QUALITY_BODY)).toBeVisible();
+    expect(within(section).getByRole("heading", { name: PLUS_LP_FLYER_TITLE })).toBeVisible();
+    expect(within(section).getByText(PLUS_LP_FLYER_BODY)).toBeVisible();
+    expect(within(section).getByRole("link", { name: "今週の献立をつくる" })).toHaveAttribute(
+      "href",
+      "/weekly",
+    );
+    expect(within(section).getByRole("link", { name: "今日の献立をつくる" })).toHaveAttribute(
+      "href",
+      "/planner",
+    );
+    // 枠の余裕はリンクなし（リンクは 2 つだけ）
+    expect(within(section).getAllByRole("link")).toHaveLength(2);
+    // 既存の 2 ボタンは残す
+    expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL })).toBeVisible();
+    expect(screen.getByRole("link", { name: PLUS_LP_SETTINGS_LINK })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
+  });
+
+  it("hides the weekly link when the weekly plan UI flag is off", () => {
+    weeklyFlag.enabled = false;
+    renderLp({ entitlement: plusActive });
+    const section = screen.getByRole("region", { name: PLUS_LP_NEUTRAL_SUB });
+    expect(within(section).queryByRole("link", { name: "今週の献立をつくる" })).toBeNull();
+    expect(within(section).getByRole("link", { name: "今日の献立をつくる" })).toHaveAttribute(
+      "href",
+      "/planner",
+    );
+  });
+
+  it("keeps the benefits as text only while some features are stopped", () => {
+    renderLp({ entitlement: { ...plusActive, productSurfacesOpen: false } });
+    expect(screen.getByText("一部機能は現在ご利用いただけません")).toBeVisible();
+    const section = screen.getByRole("region", { name: PLUS_LP_NEUTRAL_SUB });
+    expect(within(section).getByRole("heading", { name: PLUS_LP_FLYER_TITLE })).toBeVisible();
+    expect(within(section).queryAllByRole("link")).toHaveLength(0);
+  });
+
+  it("shows the next renewal date in JST long style", () => {
+    renderLp({
+      entitlement: { ...plusActive, currentPeriodEnd: "2026-10-22T15:00:00.000Z" },
+    });
+    expect(screen.getByText("次回の更新日: 2026年10月23日")).toBeVisible();
+    expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+  });
+
+  it("shows the end date without renewal when cancel_at_period_end is set", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+    });
+    expect(screen.getByText("2026年10月23日に Plus が終了します（自動更新なし）")).toBeVisible();
+    expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+  });
+
+  it("shows the end date without renewal for a canceled subscription still in period", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        status: "canceled",
+        currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+      },
+    });
+    expect(screen.getByText("2026年10月23日に Plus が終了します（自動更新なし）")).toBeVisible();
+    expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])(
+    "shows no period line when currentPeriodEnd is null (cancelAtPeriodEnd=%s)",
+    (cancelAtPeriodEnd) => {
+      renderLp({ entitlement: { ...plusActive, currentPeriodEnd: null, cancelAtPeriodEnd } });
+      expect(screen.getByText(PLUS_LP_ACTIVE)).toBeVisible();
+      expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+    },
+  );
+
+  it("prefers the trial end over the renewal date while trialing", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        status: "trialing",
+        trialEnd: "2026-09-30T15:00:00.000Z",
+        currentPeriodEnd: "2026-09-30T15:00:00.000Z",
+      },
+    });
+    expect(screen.getByText("無料期間の終了: 2026年10月1日")).toBeVisible();
+    expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
   });
 });
