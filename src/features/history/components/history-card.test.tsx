@@ -281,10 +281,16 @@ describe("HistoryCard version badge (UX U5)", () => {
     expect(card.textContent).not.toMatch(/\d+案|別案/u);
   });
 
-  it("says there are alternatives when there are two or more versions", () => {
+  it("shows the total version count including the original when there are two or more", () => {
     renderCard({ ...householdGroup(), versionCount: 3 });
-    expect(screen.getByText("別案あり（3案）")).toBeVisible();
+    expect(screen.getByText("全3案")).toBeVisible();
     expect(screen.queryByText("3案", { exact: true })).toBeNull();
+    expect(screen.getByRole("article").textContent).not.toMatch(/別案/u);
+  });
+
+  it("keeps the total wording natural for ten or more versions", () => {
+    renderCard({ ...householdGroup(), versionCount: 12 });
+    expect(screen.getByText("全12案")).toBeVisible();
   });
 });
 

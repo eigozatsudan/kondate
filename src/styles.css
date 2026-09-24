@@ -1577,7 +1577,8 @@ dialog:not([open]) {
 
 /*
  * 履歴カードの操作（UX U5）。主操作は 1 段目に横幅いっぱい、
- * 詳細／お気に入りは 2 段目に同じ幅で並べる。320px では 1 列に落として横スクロールを出さない。
+ * 詳細／お気に入りは 2 段目に同じ幅で並べる。しきい値 8rem で 360px（カード内 278px）から 2 列、
+ * 320px（カード内 238px）では 1 列に落として横スクロールを出さない。
  */
 .history-card-primary {
   display: grid;
@@ -1589,7 +1590,7 @@ dialog:not([open]) {
 
 .history-card-secondary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
   gap: var(--space-2);
 }
 

@@ -83,9 +83,10 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
                   {representative.title.length > 0 ? representative.title : "献立"}
                 </Link>
               </h2>
-              {/* 1 案だけのときは出さない。「n案」単独では意味が伝わらないため言い換える */}
+              {/* 1 案だけのときは出さない。versionCount は元の案を含む合計なので「全n案」と出す
+                （「別案あり（n案）」だと別案が n 個あると読まれる）。10 案以上でも崩れない */}
               {versionCount > 1 ? (
-                <Badge tone="neutral">{`別案あり（${String(versionCount)}案）`}</Badge>
+                <Badge tone="neutral">{`全${String(versionCount)}案`}</Badge>
               ) : null}
             </div>
             {/* idea/household の権威ある判定元はHistoryGroup.representative.targetMode。

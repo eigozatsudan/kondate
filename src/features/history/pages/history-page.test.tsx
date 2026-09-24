@@ -198,7 +198,7 @@ describe("HistoryPage", () => {
     });
     expect(await screen.findByText("採用した献立")).toBeVisible();
     expect(screen.getByRole("heading", { name: "作った献立" })).toBeVisible();
-    expect(screen.getByText("別案あり（3案）")).toBeVisible();
+    expect(screen.getByText("全3案")).toBeVisible();
     expect(screen.getByText("開くとこの献立の対象家族の設定で再確認します")).toBeVisible();
     expect(screen.queryByText("menu-1")).not.toBeInTheDocument();
   });
