@@ -361,7 +361,9 @@ export function WeeklyPlanFormPage({
             ? "今週の分は使い切りました"
             : `今週はあと ${String(quota.successRemaining)} 回つくれます（週 ${String(quota.successLimit)} 回まで）`}
           <br />
-          <small>うまくいかなかったときのやり直しは、あと {quota.triesRemaining} 回までです</small>
+          <small>
+            うまくいかなかったときのやり直しは、あと {String(quota.triesRemaining)} 回までです
+          </small>
         </p>
       ) : usage.isError ? (
         <div role="alert">

@@ -1044,6 +1044,31 @@ describe("GenerationStatusPanel", () => {
     confirmSpy.mockRestore();
   });
 
+  // U4 修正ラウンド1: 本番で唯一使われる Button 側は onClear に resumeReview: true を
+  // 積んで呼ぶ。GenerationPage 側がこれを見て resume=review 付き遷移を組み立てる契約。
+  it("U4: calls onClear with resumeReview: true from the Button side (production path)", () => {
+    const onClear = vi.fn();
+    render(<GenerationStatusPanel state={failedState} onClear={onClear} />);
+    screen.getByRole("button", { name: "条件を直してやり直す" }).click();
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(onClear).toHaveBeenCalledWith({ resumeReview: true });
+  });
+
+  // 「最初からやり直す」（request_conflict 側）は resumeReview を積まずホーム着地のまま。
+  it("U4: calls onClear without resumeReview from 最初からやり直す (request_conflict)", () => {
+    const onClear = vi.fn();
+    const requestConflictState: GenerationClientState = {
+      phase: "request_conflict",
+      code: "idempotency_payload_mismatch",
+      message: "前回と異なる内容で再送できません。もう一度操作してください",
+      effect: "none",
+    };
+    render(<GenerationStatusPanel state={requestConflictState} onClear={onClear} />);
+    screen.getByRole("button", { name: "最初からやり直す" }).click();
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(onClear).toHaveBeenCalledWith();
+  });
+
   it("G4: requires confirm while generation_in_progress wait is still failed", () => {
     const onClear = vi.fn();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);

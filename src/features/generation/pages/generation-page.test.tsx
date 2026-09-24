@@ -291,8 +291,11 @@ describe("GenerationPage", () => {
 
     await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
 
+    // U4 修正ラウンド1: 本番経路（Button + onClear + Navigate）でも
+    // resume=review 付きで確認画面へ直着地する。
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/planner");
+      expect(router.state.location.search).toBe("?resume=review");
     });
     expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
     resolveStatus?.(processingStatus(KEY_A));
@@ -331,6 +334,7 @@ describe("GenerationPage", () => {
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/planner");
+      expect(router.state.location.search).toBe("?resume=review");
     });
     expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
     resolvePost?.({
@@ -344,7 +348,14 @@ describe("GenerationPage", () => {
     confirmSpy.mockRestore();
   });
 
-  it("still returns to planner after new_menu failure clear", async () => {
+  // U4 修正ラウンド1: 本番で唯一使われる経路（GenerationStatusPanel の Button
+  // → onClear → GenerationPage の handleClear → clearGeneration → Navigate）で
+  // 「条件を直してやり直す」を押すと、U3 の「下書きがあると /planner はホームを
+  // 出す」影響を受けずに resume=review 付きで確認画面へ直着地することを確認する。
+  // <a href> 側（onClear 未指定時のフォールバック）だけを見るテストでは、この
+  // 本番経路の regression（レビュー指摘）を検出できないため、ここでは
+  // renderGenerationPage 経由で実際のボタンクリックを再現する。
+  it("U4: 条件を直してやり直すは resume=review 付きで planner へ直着地する（本番経路）", async () => {
     const user = userEvent.setup();
     const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
     savePendingGeneration(pending);
@@ -360,6 +371,7 @@ describe("GenerationPage", () => {
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/planner");
+      expect(router.state.location.search).toBe("?resume=review");
     });
     expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
   });

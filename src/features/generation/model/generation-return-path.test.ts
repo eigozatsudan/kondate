@@ -74,4 +74,18 @@ describe("generationReturnPath", () => {
     const pending = createPendingGeneration(regenerateDishCommand(), USER_ID, () => new Date());
     expect(generationReturnPath(pending)).toBe(`/menus/${SOURCE_MENU_ID}`);
   });
+
+  it("U4: appends resume=review for new_menu when resumeReview is requested", () => {
+    const pending = createPendingGeneration(newMenuCommand(), USER_ID, () => new Date());
+    expect(generationReturnPath(pending, { resumeReview: true })).toBe("/planner?resume=review");
+  });
+
+  it("U4: appends resume=review when there is no pending and resumeReview is requested", () => {
+    expect(generationReturnPath(null, { resumeReview: true })).toBe("/planner?resume=review");
+  });
+
+  it("U4: ignores resumeReview for regenerate_menu (no such deep link on /menus/:id)", () => {
+    const pending = createPendingGeneration(regenerateMenuCommand(), USER_ID, () => new Date());
+    expect(generationReturnPath(pending, { resumeReview: true })).toBe(`/menus/${SOURCE_MENU_ID}`);
+  });
 });

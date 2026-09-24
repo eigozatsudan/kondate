@@ -23,6 +23,14 @@ import { readPendingGeneration } from "../model/pending-generation";
 // 使うため ref に保持する。menus からの一品再生成失敗後に planner へ落ちると
 // 下書き文脈がなく操作不能になる。
 //
+// U4 修正ラウンド1: GenerationStatusPanel は「条件を直してやり直す」と
+// 「最初からやり直す」の両方を同じ onClear で呼ぶため、どちらが押されたかは
+// onClear(options) の resumeReview で判別する。clearGeneration() は
+// localStorage の pending を同期的に消してしまうので、消える前（クリック時点）
+// に generationReturnPath を options 付きで再計算して returnPathRef へ確定させる。
+// レンダー中の再計算（下の if ブロック）は pending が残っている間だけ走る
+// 「素の戻り先」の追従用で、resumeReview の有無までは持ち越さない。
+//
 // 終端画面の AI 通信試行残数は request-local quota ではなく useUsageToday が正。
 // session の userId をパネルへ渡さないと本番経路で残数領域が描画されない。
 // 緊急献立 RecoveryLinks は idea/household とも常時表示のため targetMode を渡さない。
@@ -51,6 +59,16 @@ export function GenerationPage() {
   if (recovery.state.phase === "idle") {
     return <Navigate to={returnPathRef.current} replace />;
   }
+  // clearGeneration() は pending を同期的に消すため、消える前に options 込みで
+  // 戻り先を確定させてから呼ぶ。「条件を直してやり直す」は resumeReview: true、
+  // 「最初からやり直す」は options なし（=ホーム着地のまま）で渡ってくる。
+  const handleClear = (options?: { resumeReview?: boolean }): void => {
+    if (options?.resumeReview === true) {
+      const pending = userId !== undefined ? readPendingGeneration(userId, new Date()) : null;
+      returnPathRef.current = generationReturnPath(pending, { resumeReview: true });
+    }
+    recovery.clearGeneration();
+  };
   return (
     <main className="page-frame">
       <Stack gap={5}>
@@ -63,20 +81,9 @@ export function GenerationPage() {
           </section>
         ) : null}
         {userId === undefined ? (
-          <GenerationStatusPanel
-            state={recovery.state}
-            onClear={() => {
-              recovery.clearGeneration();
-            }}
-          />
+          <GenerationStatusPanel state={recovery.state} onClear={handleClear} />
         ) : (
-          <GenerationStatusPanel
-            state={recovery.state}
-            userId={userId}
-            onClear={() => {
-              recovery.clearGeneration();
-            }}
-          />
+          <GenerationStatusPanel state={recovery.state} userId={userId} onClear={handleClear} />
         )}
       </Stack>
     </main>

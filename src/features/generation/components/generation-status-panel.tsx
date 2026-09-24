@@ -102,7 +102,11 @@ function confirmProcessingDiscard(): boolean {
  * 終端（failed / constraint_conflict）からの復帰導線。
  * 「条件を直してやり直す」は onClear（pending+machine）で idle へ。
  * idle の遷移先は GenerationPage が pending.kind から決める
- * （new_menu→/planner、regenerate_*→/menus/:sourceMenuId）。
+ * （new_menu→/planner?resume=review、regenerate_*→/menus/:sourceMenuId）。
+ * U4 修正ラウンド1: 本番で唯一使われるのは Button 側（GenerationPage が常に
+ * onClear を渡す）なので、「条件を直してやり直す」だけ resumeReview: true を
+ * 積んで GenerationPage 側に resume=review 付与を指示する。「最初からやり直す”
+ * （request_conflict 側の別 Button）は resumeReview を積まずホーム着地のまま。
  * 緊急献立・履歴は pending のみ消す（machine を idle にすると GenerationPage の
  * Navigate と <a href> が競合するため）。
  * 緊急献立 CTA は household / idea とも常時表示（2026-07-28 設計: idea 個人固定候補パス）。
@@ -116,7 +120,7 @@ function RecoveryLinks({
   onClear,
   requireDiscardConfirm = false,
 }: {
-  onClear?: () => void;
+  onClear?: (options?: { resumeReview?: boolean }) => void;
   requireDiscardConfirm?: boolean;
 }) {
   const guardDiscard = (): boolean => {
@@ -131,7 +135,7 @@ function RecoveryLinks({
           variant="secondary"
           onClick={() => {
             if (!guardDiscard()) return;
-            onClear();
+            onClear({ resumeReview: true });
           }}
         >
           条件を直してやり直す
@@ -365,8 +369,13 @@ export function GenerationStatusPanel({
 }: {
   state: GenerationClientState;
   userId?: string;
-  /** request_conflict から idle へ戻し、planner 再入力へ進ませる */
-  onClear?: () => void;
+  /**
+   * request_conflict / failed / constraint_conflict から idle へ戻し、planner
+   * 再入力へ進ませる。resumeReview: true は「条件を直してやり直す」専用の指示で、
+   * GenerationPage に「揃っていれば確認画面まで戻す」深リンクを付けさせる。
+   * 「最初からやり直す」は resumeReview を積まずホーム着地のまま呼ぶ。
+   */
+  onClear?: (options?: { resumeReview?: boolean }) => void;
 }) {
   // 進捗 hook は phase 分岐より前に 1 回だけ呼ぶ（Rules of Hooks・V-I1）
   const progressActive = state.phase === "submitting" || state.phase === "processing";
@@ -526,7 +535,15 @@ export function GenerationStatusPanel({
         {userId !== undefined ? <TerminalGenerationUsage userId={userId} /> : null}
         <div className="gen-status-actions">
           {onClear !== undefined ? (
-            <Button variant="secondary" onClick={onClear}>
+            // 「最初からやり直す」は resumeReview を積まない（ホーム着地のまま）。
+            // onClick={onClear} だと MouseEvent がそのまま options に渡ってしまうため、
+            // 意図を明示する引数なし呼び出しに包む。
+            <Button
+              variant="secondary"
+              onClick={() => {
+                onClear();
+              }}
+            >
               最初からやり直す
             </Button>
           ) : (

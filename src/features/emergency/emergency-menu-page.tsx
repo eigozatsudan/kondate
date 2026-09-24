@@ -609,6 +609,8 @@ export function EmergencyMenuPage() {
   }
 
   // EMRG-1: 食事帯が未選択なら候補 API を叩かず planner へ戻す
+  // U4 修正ラウンド1（Minor）: 上の下書きなし分岐と同じ「開いた直後の初期表示案内」
+  // という性質のため role="alert" を外し、role の扱いを揃える。
   if (draftReady && mealType === null && !loading && error === null) {
     return (
       <main className="page-frame stack emergency-menu-page">
@@ -616,7 +618,7 @@ export function EmergencyMenuPage() {
           ← 献立画面へ戻る
         </Link>
         <h1>15分緊急献立</h1>
-        <p role="alert">
+        <p>
           食事の時間帯がまだ決まっていません。献立画面で朝・昼・夕を選んでから開き直してください。
         </p>
         <Link className="primary-button min-h-11" to="/planner">
