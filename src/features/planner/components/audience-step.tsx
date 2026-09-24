@@ -185,6 +185,8 @@ export function AudienceStep({
   };
 
   const targetModeErrorId = "audience-target-mode-error";
+  const ideaDescriptionId = "audience-idea-description";
+  const householdDescriptionId = "audience-household-description";
   const membersErrorId = "audience-members-error";
   const servingsErrorId = "audience-servings-error";
   const householdHintId = "audience-household-required-hint";
@@ -282,40 +284,56 @@ export function AudienceStep({
                 role="radiogroup"
                 aria-describedby={modeError != null ? targetModeErrorId : undefined}
               >
-                {/* 設計 L9: idea を上、household を下 */}
-                <label className="wizard-option">
-                  <input
-                    type="radio"
-                    name="audience-mode"
-                    disabled={disabled}
-                    checked={value.targetMode === "idea"}
-                    aria-invalid={modeError != null ? "true" : undefined}
-                    onChange={() => {
-                      setMode("idea");
-                    }}
-                  />
-                  <span>人数だけ指定してアイデアを見る</span>
-                </label>
-                <label className="wizard-option">
-                  <input
-                    type="radio"
-                    name="audience-mode"
-                    disabled={disabled || !hasEligibleMembers}
-                    checked={value.targetMode === "household"}
-                    aria-invalid={modeError != null ? "true" : undefined}
-                    aria-describedby={
-                      !hasEligibleMembers
-                        ? "audience-household-disabled-reason"
-                        : modeError != null
-                          ? targetModeErrorId
-                          : undefined
-                    }
-                    onChange={() => {
-                      setMode("household");
-                    }}
-                  />
-                  <span>家族に合わせて作る</span>
-                </label>
+                {/* 設計 L9: idea を上、household を下。
+                    説明はラベルの外に置き aria-describedby で結ぶ（アクセシブルネームは変えない）。
+                    idea は家族の安全確認をしないため、説明に安全・確認済みと読める語を入れない。 */}
+                <div className="wizard-option-block">
+                  <label className="wizard-option">
+                    <input
+                      type="radio"
+                      name="audience-mode"
+                      disabled={disabled}
+                      checked={value.targetMode === "idea"}
+                      aria-invalid={modeError != null ? "true" : undefined}
+                      aria-describedby={ideaDescriptionId}
+                      onChange={() => {
+                        setMode("idea");
+                      }}
+                    />
+                    <span>人数だけ指定してアイデアを見る</span>
+                  </label>
+                  <p id={ideaDescriptionId} className="wizard-option-description">
+                    家族の登録なしで、人数に合わせた献立の案を見ます。アレルギーなどの家族の条件は使いません。
+                  </p>
+                </div>
+                <div className="wizard-option-block">
+                  <label className="wizard-option">
+                    <input
+                      type="radio"
+                      name="audience-mode"
+                      disabled={disabled || !hasEligibleMembers}
+                      checked={value.targetMode === "household"}
+                      aria-invalid={modeError != null ? "true" : undefined}
+                      aria-describedby={[
+                        householdDescriptionId,
+                        !hasEligibleMembers
+                          ? "audience-household-disabled-reason"
+                          : modeError != null
+                            ? targetModeErrorId
+                            : null,
+                      ]
+                        .filter((id): id is string => id != null)
+                        .join(" ")}
+                      onChange={() => {
+                        setMode("household");
+                      }}
+                    />
+                    <span>家族に合わせて作る</span>
+                  </label>
+                  <p id={householdDescriptionId} className="wizard-option-description">
+                    登録した家族の年齢・アレルギーなどの条件をもとに作ります。
+                  </p>
+                </div>
               </div>
             ) : null}
             {modeError != null && (

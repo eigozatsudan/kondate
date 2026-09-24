@@ -35,7 +35,6 @@ import {
   EMAIL_OTP_GOOGLE_START_FAILED,
   EMAIL_OTP_GOOGLE_STARTING,
   EMAIL_OTP_LOGIN_LEAD,
-  EMAIL_OTP_LOGIN_NOTE,
   EMAIL_OTP_MISMATCH,
   EMAIL_OTP_RESEND_BUTTON,
   EMAIL_OTP_SEND_BUTTON,
@@ -52,13 +51,14 @@ import {
 import { normalizeOtpDigits, OtpDigitField } from "./otp-digit-field";
 import { useAuth } from "./use-auth";
 
-/** 低リテラシー向け：登録とログインが同じ操作であることを明示（MVP 設計の単一画面方針） */
+/**
+ * 低リテラシー向け：登録とログインが同じ操作であることを明示（MVP 設計の単一画面方針）。
+ * メール導線を出すとき（SHOW_EMAIL_LOGIN / ?emailLogin=1 / 復旧導線）の 1 段の説明。
+ */
 export const LOGIN_PAGE_LEAD = EMAIL_OTP_LOGIN_LEAD;
-/** Google のみ表示時（メール導線をいったん隠している間） */
-export const LOGIN_PAGE_NOTE =
-  "新規登録の別画面はありません。下のボタンで進むと、はじめての方はアカウントができます。" as const;
-/** メール導線を出すときの補足（SHOW_EMAIL_LOGIN / ?emailLogin=1 / 復旧導線） */
-export const LOGIN_PAGE_NOTE_WITH_EMAIL = EMAIL_OTP_LOGIN_NOTE;
+/** Google のみ表示時（メール導線をいったん隠している間）の 1 段の説明 */
+export const LOGIN_PAGE_LEAD_GOOGLE_ONLY =
+  "はじめての方も、すでに使っている方も、この画面から進めます。下のボタンで進むと、はじめての方はアカウントが自動でできます（パスワードは不要です）。" as const;
 
 /**
  * ログイン画面のメール導線を表示する。
@@ -759,8 +759,7 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
       <div className="stack gap-2">
         <p className="eyebrow">毎日の献立を、家族に合わせて</p>
         <h1>こんだて日和</h1>
-        <p>{EMAIL_OTP_LOGIN_LEAD}</p>
-        <p className="type-small">{showEmailSection ? EMAIL_OTP_LOGIN_NOTE : LOGIN_PAGE_NOTE}</p>
+        <p>{showEmailSection ? LOGIN_PAGE_LEAD : LOGIN_PAGE_LEAD_GOOGLE_ONLY}</p>
       </div>
       {authErrorCopy !== null && (
         <section className="card stack" role="alert">

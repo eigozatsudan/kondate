@@ -70,6 +70,48 @@ describe("AudienceStep layout and selected safety summary", () => {
     expect(radios[1]).toHaveAccessibleName(/家族に合わせて/);
   });
 
+  it("describes each audience mode with aria-describedby without changing the radio names", () => {
+    renderAudience(
+      <AudienceStep
+        value={{ targetMode: null, targetMemberIds: [], servings: null }}
+        eligibleMembers={[memberA]}
+        onChange={vi.fn()}
+        onNext={vi.fn()}
+      />,
+    );
+    const idea = screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" });
+    const household = screen.getByRole("radio", { name: "家族に合わせて作る" });
+
+    expect(idea).toHaveAccessibleName("人数だけ指定してアイデアを見る");
+    expect(household).toHaveAccessibleName("家族に合わせて作る");
+    expect(idea).toHaveAccessibleDescription(
+      "家族の登録なしで、人数に合わせた献立の案を見ます。アレルギーなどの家族の条件は使いません。",
+    );
+    expect(household).toHaveAccessibleDescription(
+      "登録した家族の年齢・アレルギーなどの条件をもとに作ります。",
+    );
+    // idea は家族の安全確認をしないため、安全・確認済みと読める語を出さない
+    const ideaDescriptionId = idea.getAttribute("aria-describedby") ?? "";
+    const ideaDescription = document.getElementById(ideaDescriptionId)?.textContent ?? "";
+    expect(ideaDescription).not.toMatch(/安全|確認済/u);
+  });
+
+  it("keeps the household disabled reason in the description after the mode description", () => {
+    renderAudience(
+      <AudienceStep
+        value={{ targetMode: null, targetMemberIds: [], servings: null }}
+        eligibleMembers={[]}
+        onChange={vi.fn()}
+        onNext={vi.fn()}
+      />,
+    );
+    const household = screen.getByRole("radio", { name: "家族に合わせて作る" });
+
+    expect(household).toHaveAccessibleDescription(
+      /^登録した家族の年齢・アレルギーなどの条件をもとに作ります。 家族設定がまだないため/u,
+    );
+  });
+
   it("summary lists only selected members under checkboxes", () => {
     renderAudience(
       <AudienceStep

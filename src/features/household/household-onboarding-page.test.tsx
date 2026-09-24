@@ -247,6 +247,19 @@ it("uses 献立を始める as primary CTA when complete members exist without d
   ).not.toBeInTheDocument();
 });
 
+it("explains the unsupported-diet item in the intro when no member exists yet", async () => {
+  const api = baseApi({ listMembers: vi.fn().mockResolvedValue([]) });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  renderOnboarding(<HouseholdOnboardingForm userId="user-1" api={api} onDone={vi.fn()} />, client);
+
+  expect(
+    await screen.findByText(
+      "年齢のめやす、アレルギー、このアプリで献立を作れない事情（離乳食・治療食など）の3項目から始めます。",
+    ),
+  ).toBeVisible();
+});
+
 it("does not call setProgress or navigate when completeMember fails", async () => {
   const user = userEvent.setup();
   const completableDraft: HouseholdMemberRow = {

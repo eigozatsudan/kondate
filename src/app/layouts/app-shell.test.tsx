@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -621,5 +623,17 @@ describe("AppShell heading contract (I2)", () => {
     expect(screen.queryByRole("heading", { name: "ホーム画面に置く" })).not.toBeInTheDocument();
     expect(firstHeading).toHaveAccessibleName("履歴詳細");
     vi.unstubAllGlobals();
+  });
+});
+
+describe("bottom nav label typography", () => {
+  it("uses 13px (0.8125rem) labels while keeping the 56px tap height and single-line labels", () => {
+    const css = readFileSync(resolve("src/styles.css"), "utf8");
+    const navItem = /\.nav-item\s*\{([^}]*)\}/u.exec(css)?.[1] ?? "";
+    const navLabel = /\.nav-item-label\s*\{([^}]*)\}/u.exec(css)?.[1] ?? "";
+
+    expect(navItem).toMatch(/font-size:\s*0\.8125rem;/u);
+    expect(navItem).toMatch(/min-height:\s*56px;/u);
+    expect(navLabel).toMatch(/white-space:\s*nowrap;/u);
   });
 });

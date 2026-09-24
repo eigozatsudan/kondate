@@ -11,7 +11,6 @@ import {
   EMAIL_OTP_GOOGLE_BUTTON,
   EMAIL_OTP_GOOGLE_STARTING,
   EMAIL_OTP_LOGIN_LEAD,
-  EMAIL_OTP_LOGIN_NOTE,
   EMAIL_OTP_MISMATCH,
   EMAIL_OTP_RESEND_BUTTON,
   EMAIL_OTP_SEND_BUTTON,
@@ -19,7 +18,7 @@ import {
   EMAIL_OTP_WAITING_HEADING,
 } from "./email-otp-copy";
 import { ACTIVE_LOGIN_FLOW_STORAGE_KEY, writeActiveLoginFlowId } from "./auth-flow";
-import { LOGIN_PAGE_NOTE, LoginPage } from "./login-page";
+import { LOGIN_PAGE_LEAD_GOOGLE_ONLY, LoginPage } from "./login-page";
 import {
   resetTabLocalResidualRecoveryDisarmForTests,
   SOFT_RESIDUAL_RECOVERY_DISARM_EVENT,
@@ -460,19 +459,25 @@ it("calls verifyEmailOtp once when 6 digits are entered under StrictMode", async
 it("explains that first-time users can register on the same screen with Google and email", () => {
   renderLoginAt("/login", stubGateway());
 
+  expect(
+    screen.getByText(
+      "はじめての方も、すでに使っている方も、この画面から進めます。メールに届く番号か Google で進むと、はじめての方はアカウントが自動でできます（パスワードは不要です）。",
+    ),
+  ).toBeVisible();
   expect(screen.getByText(EMAIL_OTP_LOGIN_LEAD)).toBeVisible();
-  expect(screen.getByText(EMAIL_OTP_LOGIN_NOTE)).toBeVisible();
+  // 説明は 1 段にまとめ、旧来の 2 段目（新規登録の別画面…）を出さない
+  expect(screen.queryByText(/新規登録の別画面はありません/u)).toBeNull();
   expect(screen.getByLabelText("メールアドレス")).toBeVisible();
   expect(screen.getByText("Google アカウントではじめての方も、そのまま使えます。")).toBeVisible();
   expect(screen.getByRole("button", { name: EMAIL_OTP_GOOGLE_BUTTON })).toBeVisible();
   expect(screen.getByRole("button", { name: EMAIL_OTP_SEND_BUTTON })).toBeVisible();
-  expect(screen.queryByText(LOGIN_PAGE_NOTE)).toBeNull();
+  expect(screen.queryByText(LOGIN_PAGE_LEAD_GOOGLE_ONLY)).toBeNull();
 });
 
 it("shows email number form by default without emailLogin query", () => {
   renderLoginAt("/login", stubGateway());
 
-  expect(screen.getByText(EMAIL_OTP_LOGIN_NOTE)).toBeVisible();
+  expect(screen.getByText(EMAIL_OTP_LOGIN_LEAD)).toBeVisible();
   expect(screen.getByRole("button", { name: EMAIL_OTP_SEND_BUTTON })).toBeVisible();
 });
 

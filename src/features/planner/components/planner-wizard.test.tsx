@@ -608,7 +608,10 @@ describe("PlannerWizard audience step のmode不変条件", () => {
     render(<Harness initialStep="audience" eligibleMembers={[]} />);
     const household = screen.getByRole("radio", { name: "家族に合わせて作る" });
     expect(household).toBeDisabled();
-    expect(household).toHaveAttribute("aria-describedby", "audience-household-disabled-reason");
+    expect(household).toHaveAttribute(
+      "aria-describedby",
+      "audience-household-description audience-household-disabled-reason",
+    );
     expect(
       screen.getByText(/家族設定がまだないため、「家族に合わせて作る」は選べません/u),
     ).toBeVisible();

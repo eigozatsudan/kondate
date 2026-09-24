@@ -2018,7 +2018,8 @@ dialog:not([open]) {
   border-top: 3px solid transparent;
   color: var(--muted);
   padding-block: 6px;
-  font-size: 12px;
+  /* 40 代の利用者にも読める 13px。320px 幅では 1 タブ 64px に最長 3 文字（冷蔵庫・買い物、約 39px）が 1 行で収まる */
+  font-size: 0.8125rem;
   font-weight: 700;
   text-decoration: none;
 }

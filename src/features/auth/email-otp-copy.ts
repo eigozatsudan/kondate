@@ -3,13 +3,13 @@
  * Spec §3.1–3.2 / §6 の exact 文字列。類義語や英語コードは出さない。
  */
 
-/** Spec §3.1 リード（現行 login と同じ単一画面方針） */
+/**
+ * Spec §3.1 リードと補足を 1 段にまとめた説明（UX U9）。
+ * 単一画面方針（新規登録の別画面なし）・番号 / Google の両方でアカウントができること・
+ * パスワード不要であることを 2 文で伝える。
+ */
 export const EMAIL_OTP_LOGIN_LEAD =
-  "はじめての方も、すでに使っている方も、この画面から進めます。" as const;
-
-/** Spec §3.1 補足。番号 / Google の両方ではじめての方にアカウントができる */
-export const EMAIL_OTP_LOGIN_NOTE =
-  "新規登録の別画面はありません。番号を受け取るか Google で進むと、はじめての方はアカウントができます。パスワードの設定は不要です。" as const;
+  "はじめての方も、すでに使っている方も、この画面から進めます。メールに届く番号か Google で進むと、はじめての方はアカウントが自動でできます（パスワードは不要です）。" as const;
 
 export const EMAIL_OTP_SEND_BUTTON = "番号をメールで受け取る" as const;
 export const EMAIL_OTP_SENDING = "送信中…" as const;

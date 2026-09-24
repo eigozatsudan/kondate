@@ -20,7 +20,7 @@ export const UNSUPPORTED_DIET_UNCONFIRMED_HELP =
 export const UNSUPPORTED_DIET_STATUS_REQUIRED = "作れない事情があるか選んでください";
 export const UNSUPPORTED_DIET_KINDS_REQUIRED = "該当する事情を選んでください";
 export const UNSUPPORTED_DIET_ONBOARDING_INTRO =
-  "年齢のめやす、アレルギー、作れない事情の3項目から始めます。";
+  "年齢のめやす、アレルギー、このアプリで献立を作れない事情（離乳食・治療食など）の3項目から始めます。";
 export const UNSUPPORTED_DIET_EMPTY_ADD_HELP =
   "「家族を追加」を押すと、登録の前に確認が表示されます。続けたあと、1人目の入力が始まります。呼び名・年齢・アレルギーなどを順に入れられます。";
 

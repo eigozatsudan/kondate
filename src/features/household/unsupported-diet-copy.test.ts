@@ -37,7 +37,9 @@ describe("unsupported-diet-copy", () => {
     expect(UNSUPPORTED_DIET_UNCONFIRMED_HELP).toContain("作れない事情を確認するまで");
     expect(UNSUPPORTED_DIET_STATUS_REQUIRED).toBe("作れない事情があるか選んでください");
     expect(UNSUPPORTED_DIET_KINDS_REQUIRED).toBe("該当する事情を選んでください");
-    expect(UNSUPPORTED_DIET_ONBOARDING_INTRO).toContain("作れない事情の3項目");
+    expect(UNSUPPORTED_DIET_ONBOARDING_INTRO).toBe(
+      "年齢のめやす、アレルギー、このアプリで献立を作れない事情（離乳食・治療食など）の3項目から始めます。",
+    );
     expect(UNSUPPORTED_DIET_EMPTY_ADD_HELP).toContain("登録の前に確認が表示されます");
   });
 
