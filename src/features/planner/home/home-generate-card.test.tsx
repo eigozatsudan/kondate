@@ -65,4 +65,59 @@ describe("HomeGenerateCard", () => {
     await user.click(screen.getByRole("button", { name: "作成中の献立を続ける" }));
     expect(onResumePending).toHaveBeenCalledTimes(1);
   });
+  it("U3: shows resume and restart actions with progress when a draft is in progress", async () => {
+    const user = userEvent.setup();
+    const onStart = vi.fn();
+    const onResumeDraft = vi.fn();
+    const onRestartDraft = vi.fn();
+    render(
+      <HomeGenerateCard
+        remainingToday={2}
+        onStart={onStart}
+        draftProgress={{ answeredSteps: 3, totalSteps: 9 }}
+        onResumeDraft={onResumeDraft}
+        onRestartDraft={onRestartDraft}
+      />,
+    );
+    expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "今日の献立をつくる" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+    expect(onResumeDraft).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "最初から" }));
+    expect(onRestartDraft).toHaveBeenCalledTimes(1);
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("U3: pending resume keeps priority over draft progress", () => {
+    render(
+      <HomeGenerateCard
+        remainingToday={2}
+        onStart={vi.fn()}
+        hasResumablePending
+        onResumePending={vi.fn()}
+        draftProgress={{ answeredSteps: 8, totalSteps: 9 }}
+        onResumeDraft={vi.fn()}
+        onRestartDraft={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "作成中の献立を続ける" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "続きから答える" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/まで答えています/u)).not.toBeInTheDocument();
+  });
+
+  it("U3: disabled stops both draft actions", () => {
+    render(
+      <HomeGenerateCard
+        remainingToday={2}
+        onStart={vi.fn()}
+        draftProgress={{ answeredSteps: 3, totalSteps: 9 }}
+        onResumeDraft={vi.fn()}
+        onRestartDraft={vi.fn()}
+        disabled
+      />,
+    );
+    expect(screen.getByRole("button", { name: "続きから答える" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "最初から" })).toBeDisabled();
+  });
 });

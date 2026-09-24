@@ -2,7 +2,7 @@ import type { JSX, ReactNode } from "react";
 import { PageHeader } from "@/shared/ui/page-header";
 import { Stack } from "@/shared/ui/stack";
 import { HomeExpiringPantry, type HomeExpiringPantryItem } from "./home-expiring-pantry";
-import { HomeGenerateCard } from "./home-generate-card";
+import { HomeGenerateCard, type HomeDraftProgress } from "./home-generate-card";
 import { HomeRecentMenus, type HomeRecentMenuItem } from "./home-recent-menus";
 
 export type PlannerHomeProps = {
@@ -10,6 +10,10 @@ export type PlannerHomeProps = {
   onStartWizard: () => void;
   hasResumablePending?: boolean;
   onResumePending?: () => void;
+  /** U3: 答えかけの下書きの進み具合。pending が無いときだけ今日の献立カードに出る。 */
+  draftProgress?: HomeDraftProgress | null;
+  onResumeDraft?: () => void;
+  onRestartDraft?: () => void;
   recentMenus: readonly HomeRecentMenuItem[];
   recentMenusLoading?: boolean;
   recentMenusError?: boolean;
@@ -37,6 +41,9 @@ export function PlannerHome({
   onStartWizard,
   hasResumablePending = false,
   onResumePending,
+  draftProgress = null,
+  onResumeDraft,
+  onRestartDraft,
   recentMenus,
   recentMenusLoading = false,
   recentMenusError = false,
@@ -61,6 +68,9 @@ export function PlannerHome({
           onStart={onStartWizard}
           hasResumablePending={hasResumablePending}
           {...(onResumePending !== undefined ? { onResumePending } : {})}
+          draftProgress={draftProgress}
+          {...(onResumeDraft !== undefined ? { onResumeDraft } : {})}
+          {...(onRestartDraft !== undefined ? { onRestartDraft } : {})}
           disabled={disabled}
         />
         <HomeExpiringPantry items={expiringItems} disabled={disabled} />

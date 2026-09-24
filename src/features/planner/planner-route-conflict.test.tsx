@@ -146,7 +146,7 @@ function renderRetainedDraft(
     notice_version: "2026-07-29.v1",
   });
   // audience step の incomplete「次へ」等が useAppToast を使うため Provider 必須（P5 再整列）
-  return render(
+  const view = render(
     <MemoryRouter initialEntries={["/planner"]}>
       <QueryClientProvider client={queryClient}>
         <AppToastProvider>
@@ -156,6 +156,18 @@ function renderRetainedDraft(
       </QueryClientProvider>
     </MemoryRouter>,
   );
+  resumeDraftFromHome();
+  return view;
+}
+
+/**
+ * U3: 下書きに進捗があると /planner はまずホームを出し、「続きから答える」で初めて
+ * ウィザードが開く。競合系テストはウィザード上の挙動を見るため、利用者と同じく
+ * ホームの「続きから答える」を押してから進める。ボタンが無ければ何もしない。
+ */
+function resumeDraftFromHome(): void {
+  const resumeDraft = screen.queryByRole("button", { name: "続きから答える" });
+  if (resumeDraft !== null) fireEvent.click(resumeDraft);
 }
 
 function CurrentPath() {
@@ -628,6 +640,7 @@ it("P-R3: ineligible 家族を除いた確認のまま献立を作るは sanitiz
   );
   await act(async () => Promise.resolve());
   await act(async () => Promise.resolve());
+  resumeDraftFromHome();
 
   fireEvent.click(screen.getByRole("button", { name: "献立を作る" }));
   await act(async () => Promise.resolve());
@@ -707,6 +720,7 @@ it("P1: 生成後 empty hydrate の leave は save_generation_draft を呼ばな
   );
   await act(async () => Promise.resolve());
   await act(async () => Promise.resolve());
+  resumeDraftFromHome();
 
   await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
   expect(savePlannerDraftMock).not.toHaveBeenCalled();

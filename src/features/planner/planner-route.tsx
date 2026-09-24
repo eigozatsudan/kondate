@@ -38,12 +38,14 @@ import { WEEKLY_PLAN_UI_ENABLED } from "@shared/contracts/weekly-plan";
 import { FlyerWeeklyPanel } from "@/features/flyer/flyer-weekly-panel";
 import { WeeklyPlanEntryCard } from "@/features/weekly-plan/components/weekly-plan-entry-card";
 import { PlannerWizard } from "./components/planner-wizard";
+import { confirmPlannerReset } from "./confirm-planner-reset";
 import { medicalRequestBlockedMessage } from "./components/review-step";
 import type { HomeExpiringPantryItem } from "./home/home-expiring-pantry";
 import { PlannerHome } from "./home/planner-home";
 import {
   buildPlannerSubmissionFieldErrors,
   firstIncompletePlannerStep,
+  plannerSteps,
   type PlannerFieldName,
   type PlannerStep,
 } from "./model/planner-wizard";
@@ -440,8 +442,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
    * ホーム vs ウィザード。
    * - `?resume=` 付き → 常にウィザード（不変契約 4b の深リンク）
    * - 生成中断（resumable pending）あり → ホーム優先（再開 CTA を最上位に）
-   * - 下書き進捗あり・pending なし → ウィザード復帰
+   * - 下書き進捗あり・pending なし → ホーム（U3: 「続きから答える」「最初から」を出す）
    * - 空下書き・pending なし → ホーム
+   * ホームからは利用者の明示操作（開始 / 続き / 最初から）でだけウィザードを開く。
    */
   const [wizardOpen, setWizardOpen] = useState(false);
   const [baselineRevision, setBaselineRevision] = useState(0);
@@ -573,25 +576,18 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     }
     // ホーム / ウィザードの初期分岐:
     // 1) ?resume= は深リンク契約を最優先してウィザード（privacy 往復など）
-    // 2) 進行中 pending（G-R4: reconcile kept）があるときはホームを優先し再開 CTA を最上位に
-    //    （設計意図: 生成が中断されている場合はそれが最優先で目に入ること）
-    //    完全回答済み下書きは firstIncomplete が必ず "review" になるため、pending を
-    //    見ずに hasDraftProgress だけで分岐するとホームの再開導線に永久に届かない。
-    // 3) 再開対象 pending 無しで下書き進捗があるときだけウィザードへ自動復帰
-    //    （terminal sticky は G-R1 clear 後ここに落ち、新規作成可能な wizard へ）
-    const hasResumeQuery = searchParams.get("resume") !== null;
-    const hasDraftProgress = firstIncomplete !== "meal";
-    setWizardOpen(hasResumeQuery || (hasDraftProgress && !hasResumablePending));
+    // 2) それ以外はすべてホーム。どのボタンを出すかはホーム描画時に決める:
+    //    - 進行中 pending（G-R4: reconcile kept）があれば「作成中の献立を続ける」が最上位
+    //      （設計意図: 生成が中断されている場合はそれが最優先で目に入ること）
+    //    - pending が無く下書き進捗があれば「続きから答える」「最初から」（U3）
+    //    - どちらも無ければ「今日の献立をつくる」
+    // U3 以前は 2) の下書き進捗ありでウィザードへ自動復帰していたが、下の「献立」タブを
+    // 押しても途中の質問が開いてホームへ戻れなかったため、ホームで選ばせる形に変えた。
+    // pending の照合完了（pendingDisplayReady）を待つ条件は残す。照合前に init すると
+    // ホームのボタン構成が「続きから」→「作成中」に後から入れ替わるちらつきが出るため。
+    setWizardOpen(searchParams.get("resume") !== null);
     setInitialized(true);
-  }, [
-    draftQuery.data,
-    hasResumablePending,
-    initialized,
-    pendingDisplayReady,
-    safetyQuery.data,
-    searchParams,
-    userId,
-  ]);
+  }, [draftQuery.data, initialized, pendingDisplayReady, safetyQuery.data, searchParams, userId]);
 
   // value 更新を resume 用 ref へ同期（P6 effect は searchParams 変化時だけ読む）
   useEffect(() => {
@@ -1496,16 +1492,41 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     })
     .slice(0, HOME_EXPIRING_PANTRY_LIMIT);
 
-  // ホーム: 空下書き、または生成中断（pending）優先。?resume= 時はここへ来ない。
+  // ホーム: ?resume= 以外の初期表示。?resume= 時はここへ来ない。
   if (!wizardOpen) {
+    // P5: eligible を渡し、blocked 家族 ID が残っていても review に着地しない
+    // （fatal/pending 通過後なので safetyData は利用可能）
+    const homeResumeStep = firstIncompletePlannerStep(value, new Set(safetyData.eligibleMemberIds));
+    const openWizardAtResumeStep = (): void => {
+      setWizardOpen(true);
+      setStep(homeResumeStep);
+    };
+    // U3: pending が無く下書きに進捗があるときだけ「続きから答える」「最初から」を出す。
+    // pending があるときは従来どおり「作成中の献立を続ける」を優先し、下書きの導線は出さない。
+    // 回答済みの数は「最初の未回答 step の位置」で数える（例: 作る相手が未回答なら 3 問）。
+    // 総数はウィザードの進み具合表示（n / 9）と同じく plannerSteps から計算する。
+    const draftProgress =
+      !hasResumablePending && homeResumeStep !== "meal"
+        ? {
+            answeredSteps: plannerSteps.indexOf(homeResumeStep),
+            totalSteps: plannerSteps.length,
+          }
+        : null;
     return (
       <PlannerHome
         remainingToday={usage.isSuccess ? usage.data.success.remaining : null}
-        onStartWizard={() => {
+        onStartWizard={openWizardAtResumeStep}
+        draftProgress={draftProgress}
+        onResumeDraft={openWizardAtResumeStep}
+        onRestartDraft={() => {
+          // 既存の「入力をリセット」と同じ確認・同じ消去経路（resetPlannerDraft）を使い、
+          // ホーム専用の消去処理は作らない。resetPlannerDraft は生成 submit 中は何もしないため、
+          // そのときはウィザードも開かない（旧下書きのまま 1 問目へ入る状態を作らない）。
+          if (submittingRef.current) return;
+          if (!confirmPlannerReset()) return;
+          resetPlannerDraft();
+          // resetPlannerDraft が step を meal に戻す
           setWizardOpen(true);
-          // P5: eligible を渡し、blocked 家族 ID が残っていても review に着地しない
-          // （fatal/pending 通過後なので safetyData は利用可能）
-          setStep(firstIncompletePlannerStep(value, new Set(safetyData.eligibleMemberIds)));
         }}
         hasResumablePending={hasResumablePending}
         onResumePending={() => {
@@ -1657,8 +1678,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         }}
         onOpenEmergencyMenus={openEmergencyMenus}
         onReset={resetPlannerDraft}
-        // L10-3: チラシ入口。page-frame 内に置き幅・下余白をウィザードと揃える
-        footer={combinedFooter}
+        // U3: 質問に答えている間は入力に集中できるよう、週献立・チラシの footer（Plus 案内）を
+        // 渡さない。ホームでは従来どおり combinedFooter を出す。
         onSubmit={async () => {
           // P8: React 再描画前の二重 click を同期 ref で抑止（idea audience の confirmingRef と同型）
           // P1: 緊急 open / leave-flush 中は generate を受け付けない

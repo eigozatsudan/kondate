@@ -33,6 +33,16 @@ export async function openWizardFromHome(page: Page): Promise<void> {
 }
 
 /**
+ * U3: 答えかけの下書きがあると /planner はウィザードへ直行せずホームを出す。
+ * 利用者と同じくホームの「続きから答える」を押し、下書きの続き（最初の未回答 step）を開く。
+ */
+export async function resumeDraftFromHome(page: Page): Promise<void> {
+  const resumeDraft = page.getByRole("button", { name: "続きから答える" });
+  await expect(resumeDraft).toBeVisible({ timeout: 30_000 });
+  await resumeDraft.click();
+}
+
+/**
  * wizard の「次へ」を押す。
  * fixed bottom-nav にボタンが隠れる退行を検出するため、DOM 直接 click() は使わない。
  * scroll → ナビより上にあること → Playwright actionability click の順で、

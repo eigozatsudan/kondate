@@ -4,6 +4,7 @@ import {
   clickWizardNext,
   openFirstMemberEditor,
   openWizardFromHome,
+  resumeDraftFromHome,
   selectHouseholdAudienceWithMember,
   skipOptionalPlannerSteps,
 } from "../fixtures/history";
@@ -78,6 +79,8 @@ async function savePlannerMeal(
   mainIngredient: "鮭" | "ひき肉" | "鶏肉",
 ): Promise<void> {
   await page.goto("/planner");
+  // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
+  await resumeDraftFromHome(page);
   await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
   for (let i = 0; i < 8; i += 1) {
     // 任意4ページの「戻る」は 350ms 活性化ガードの対象。連打相当の速度では弾かれる。
@@ -460,6 +463,10 @@ test(
     );
 
     await page.reload();
+
+    // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
+
+    await resumeDraftFromHome(page);
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     // PLAN-1: 復元後は attempt 確認が空のため、既選択の期限切れで確認ダイアログが開く。
@@ -492,6 +499,8 @@ test(
       (body) => Array.isArray(body.p_pantry_selections) && body.p_pantry_selections.length === 0,
     );
     await page.reload();
+    // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
+    await resumeDraftFromHome(page);
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
@@ -623,6 +632,10 @@ test(
     });
 
     await page.goto("/planner");
+
+    // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
+
+    await resumeDraftFromHome(page);
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await page.getByRole("checkbox", { name: "キャベツ" }).click();
@@ -642,6 +655,8 @@ test(
     await page.getByRole("button", { name: "キャベツを削除" }).click();
     await expect(page.getByRole("heading", { name: "キャベツ", exact: true })).toHaveCount(0);
     await page.goto("/planner");
+    // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
+    await resumeDraftFromHome(page);
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await expect(page.getByRole("alert")).toContainText("冷蔵庫から削除された食材");
@@ -658,6 +673,10 @@ test(
     await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 
     await page.reload();
+
+    // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
+
+    await resumeDraftFromHome(page);
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await expect(page.getByText("冷蔵庫から削除された食材")).toHaveCount(0);

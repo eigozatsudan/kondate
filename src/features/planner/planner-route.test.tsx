@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, type RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
@@ -438,7 +438,7 @@ type WizardMockProps = {
   /** P4: soft safety/pantry 失敗中は主 CTA を止める */
   blockGenerationForStaleSafety?: boolean;
   onOpenSettings?: () => void;
-  /** A-I-12: combinedFooter（週献立入口カード + チラシ footer）の配線確認用 */
+  /** U3: ウィザードには footer（週献立入口カード + チラシ）を渡さないことの確認用 */
   footer?: React.ReactNode;
 };
 const wizardPropsSpy = vi.hoisted(() => vi.fn());
@@ -677,6 +677,19 @@ import {
   runPlannerLeaveFlush,
 } from "./planner-leave-flush";
 
+/**
+ * U3: 下書きに進捗があると /planner はまずホームを出し、「続きから答える」を押して初めて
+ * ウィザードが開く。ウィザード内の挙動を検証する既存テストは、利用者と同じく
+ * ホームの「続きから答える」を押してから検証する。ボタンが無いとき（空下書き・pending 優先・
+ * ?resume= 直行・pending 照合待ち）は何もしないので、ホーム側の検証はそのまま成り立つ。
+ */
+function renderPlanner(ui: React.ReactElement): RenderResult {
+  const view = render(ui);
+  const resumeDraft = screen.queryByRole("button", { name: "続きから答える" });
+  if (resumeDraft !== null) fireEvent.click(resumeDraft);
+  return view;
+}
+
 function createDeferred<T>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -804,7 +817,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
   it("writes skipped when audience advances with idea and profile is not_started", async () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
@@ -825,7 +838,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
   it("writes skipped when profile is in_progress", async () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "in_progress" });
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
@@ -843,7 +856,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
   it("does not write when profile is complete", async () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "complete" });
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
@@ -857,7 +870,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
   it("does not write when profile is already skipped", async () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "skipped" });
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
@@ -873,7 +886,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     // /planner 直開き等で cache が無い場合は getProfile で権威取得する
     getQueryDataMock.mockReturnValue(undefined);
     getProfileMock.mockResolvedValue({ onboarding_status: "not_started" });
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
@@ -893,7 +906,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue(undefined);
     getProfileMock.mockRejectedValue(new Error("network"));
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
@@ -911,7 +924,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
     setOnboardingStatusMock.mockRejectedValue(new Error("rpc failed"));
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     goToAudienceStepWithIdeaDraft();
 
     await user.click(screen.getByRole("button", { name: "audience idea を確定" }));
@@ -927,7 +940,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
 
   it("does not write skipped on planner mount only", async () => {
     getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
 
     await act(async () => {
       await Promise.resolve();
@@ -947,7 +960,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     };
     getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
     const startGeneration = vi.fn().mockResolvedValue(undefined);
-    render(<PlannerPage startGeneration={startGeneration} />);
+    renderPlanner(<PlannerPage startGeneration={startGeneration} />);
 
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -972,7 +985,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     getQueryDataMock.mockReturnValue(undefined);
     getProfileMock.mockRejectedValue(new Error("network"));
     const startGeneration = vi.fn().mockResolvedValue(undefined);
-    render(<PlannerPage startGeneration={startGeneration} />);
+    renderPlanner(<PlannerPage startGeneration={startGeneration} />);
 
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -995,7 +1008,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     };
     getQueryDataMock.mockReturnValue({ onboarding_status: "complete" });
     const startGeneration = vi.fn().mockResolvedValue(undefined);
-    render(<PlannerPage startGeneration={startGeneration} />);
+    renderPlanner(<PlannerPage startGeneration={startGeneration} />);
 
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -1007,7 +1020,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
 
   it("household のまま review に進んでも onboarding を skipped にしない", async () => {
     const user = userEvent.setup();
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     expect((wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps).draft.targetMode).toBe(
       "household",
     );
@@ -1022,7 +1035,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
     // mock が draft.targetMode を無視すると偽グリーンになるため、mode ゲートを固定する
     const user = userEvent.setup();
     getQueryDataMock.mockReturnValue({ onboarding_status: "not_started" });
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
     expect(props.draft.targetMode).toBe("household");
     act(() => {
@@ -1038,7 +1051,7 @@ describe("idea audience 確定時の onboarding skipped 契約", () => {
 });
 
 it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closure を破棄する", async () => {
-  const view = render(<PlannerPage />);
+  const view = renderPlanner(<PlannerPage />);
   const ownerAAttemptKey = screen.getByLabelText("attempt key").textContent;
 
   await userEvent.click(screen.getByRole("button", { name: "確認を反映" }));
@@ -1054,6 +1067,10 @@ it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closu
   queryState.ownerBPending = false;
   view.rerender(<PlannerPage />);
 
+  // U3: owner B の下書きにも進捗があるため、まずホームが出る（前 owner のウィザードを持ち越さない）
+  const resumeOwnerB = await screen.findByRole("button", { name: "続きから答える" });
+  expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+  fireEvent.click(resumeOwnerB);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("draft memo")).toHaveTextContent("owner B の下書き");
   });
@@ -1074,7 +1091,7 @@ it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closu
 });
 
 it("P2: persistable dirty の document unload 用に session token の keepalive 保存を渡す", () => {
-  render(<PlannerPage />);
+  renderPlanner(<PlannerPage />);
   const latestAutosave = autosaveInputs.at(-1) as {
     saveOnUnload?(next: PlannerDraftInput, revision: number): void;
   };
@@ -1090,18 +1107,19 @@ it("P2: persistable dirty の document unload 用に session token の keepalive
 });
 
 it("owner の冷蔵庫一覧を loaded 状態で planner wizard へ渡す", () => {
-  render(<PlannerPage />);
+  renderPlanner(<PlannerPage />);
 
   expect(screen.getByLabelText("pantry status")).toHaveTextContent("loaded");
   expect(screen.getByLabelText("pantry names")).toHaveTextContent("キャベツ");
-  // A-I-12: ウィザード footer にも combinedFooter（週献立入口カード）が渡る（Free 既定値）
-  expect(screen.getByTestId("weekly-plan-locked")).toBeInTheDocument();
+  // U3: ウィザード表示中は週献立・チラシの footer（Plus 案内）を渡さない（ホームだけに出す）
+  expect(screen.queryByTestId("weekly-plan-locked")).not.toBeInTheDocument();
+  expect(screen.getByTestId("wizard-footer-slot")).toBeEmptyDOMElement();
 });
 
 it("冷蔵庫一覧の取得中は planner wizard を確定表示しない", () => {
   queryState.pantry = { data: undefined, isError: false, isPending: true };
 
-  render(<PlannerPage />);
+  renderPlanner(<PlannerPage />);
 
   expect(screen.getByText("献立条件を読み込み中…")).toBeInTheDocument();
   expect(screen.queryByLabelText("pantry status")).not.toBeInTheDocument();
@@ -1110,7 +1128,7 @@ it("冷蔵庫一覧の取得中は planner wizard を確定表示しない", () 
 it("冷蔵庫一覧の取得失敗を planner route の読み込み失敗として表示する", () => {
   queryState.pantry = { data: undefined, isError: true, isPending: false };
 
-  render(<PlannerPage />);
+  renderPlanner(<PlannerPage />);
 
   expect(screen.getByRole("alert")).toHaveTextContent(
     "献立条件を読み込めませんでした。再読み込みしてください。",
@@ -1121,7 +1139,7 @@ it("冷蔵庫一覧の取得失敗を planner route の読み込み失敗とし�
 it("P3: init 後の pantry 背景 refetch 失敗では wizard を破棄しない", () => {
   // 初回は data ありで初期化。その後 isError でも previous data があれば soft error。
   queryState.pantry = { data: [pantryItem], isError: false, isPending: false };
-  const view = render(<PlannerPage />);
+  const view = renderPlanner(<PlannerPage />);
   expect(screen.getByLabelText("pantry status")).toHaveTextContent("loaded");
 
   queryState.pantry = { data: [pantryItem], isError: true, isPending: false };
@@ -1146,7 +1164,7 @@ it("P3: init 後の pantry 背景 refetch 失敗では wizard を破棄しない
 it("P4: soft safety/pantry 中の生成は onSubmit で止め startGeneration しない", async () => {
   queryState.pantry = { data: [pantryItem], isError: false, isPending: false };
   const startGeneration = vi.fn();
-  const view = render(<PlannerPage startGeneration={startGeneration} />);
+  const view = renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   queryState.pantry = { data: [pantryItem], isError: true, isPending: false };
   view.rerender(<PlannerPage startGeneration={startGeneration} />);
 
@@ -1167,7 +1185,7 @@ it("P4: soft safety/pantry 中の生成は onSubmit で止め startGeneration �
 it("P7: init 後の draft 背景 refetch 失敗は soft banner を出す", () => {
   queryState.draft = draft;
   queryState.draftIsError = false;
-  const view = render(<PlannerPage />);
+  const view = renderPlanner(<PlannerPage />);
   expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
 
   queryState.draftIsError = true;
@@ -1187,7 +1205,7 @@ it("P1: flush 中に eligibility strip すると startGeneration しない", asy
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
   const startGeneration = vi.fn();
   const user = userEvent.setup();
-  const view = render(<PlannerPage startGeneration={startGeneration} />);
+  const view = renderPlanner(<PlannerPage startGeneration={startGeneration} />);
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   await user.click(screen.getByRole("button", { name: "生成" }));
@@ -1227,7 +1245,7 @@ it("P3: flush 中に pantry が消えると post-flush 再検証で startGenerat
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
   const startGeneration = vi.fn();
   const user = userEvent.setup();
-  const view = render(<PlannerPage startGeneration={startGeneration} />);
+  const view = renderPlanner(<PlannerPage startGeneration={startGeneration} />);
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   await user.click(screen.getByRole("button", { name: "生成" }));
@@ -1266,7 +1284,7 @@ it("P6: 生成 submit 中は settings をガードし navigate しない", async
   // isSubmitting 中ガード: 遅延 flush の生成中に settings を呼ぶ
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   await user.click(screen.getByRole("button", { name: "生成" }));
@@ -1290,7 +1308,7 @@ it("P1: 生成 submit 中は emergency をガードし navigate / 二重 flush �
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
   const startGeneration = vi.fn().mockResolvedValue(true);
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   await user.click(screen.getByRole("button", { name: "生成" }));
@@ -1318,7 +1336,7 @@ it("P1: emergency open 中は generate をガードし startGeneration / sticky 
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
   const startGeneration = vi.fn().mockResolvedValue(true);
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   await user.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
@@ -1346,7 +1364,7 @@ it("P3: emergency flush 中に pantry が消えると post-flush 再検証で na
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
   const user = userEvent.setup();
-  const view = render(<PlannerPage startGeneration={vi.fn()} />);
+  const view = renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   await user.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
@@ -1387,7 +1405,7 @@ it("P3: emergency flush 中に pantry が消えると post-flush 再検証で na
 
 it("P1: leave flush の IncompleteDraft は proceed（通信失敗で封鎖しない）", async () => {
   autosaveFlushMode.mode = "incomplete";
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1398,7 +1416,7 @@ it("P1: leave flush の IncompleteDraft は proceed（通信失敗で封鎖し�
 
 it("P1: leave flush の通信失敗は blocked + 通信文言", async () => {
   autosaveFlushMode.mode = "network_error";
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1416,7 +1434,7 @@ it("P7: leave flush 中は home CTA を disabled にする", async () => {
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
-  render(<PlannerRoutePage />);
+  renderPlanner(<PlannerRoutePage />);
   await vi.waitFor(() => {
     expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeEnabled();
   });
@@ -1437,7 +1455,7 @@ it("C5: leave flush 中はホームの冷蔵庫リンクも disabled にする",
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
-  render(<PlannerRoutePage />);
+  renderPlanner(<PlannerRoutePage />);
   const pantryLink = await screen.findByRole("link", { name: "冷蔵庫を見る" });
   expect(pantryLink).not.toHaveAttribute("aria-disabled", "true");
 
@@ -1461,7 +1479,7 @@ it("A-I-12: Free ユーザーのホームには週献立の入口ロックカー
   queryState.draft = null;
   queryState.usagePlusEntitled = false;
 
-  render(<PlannerRoutePage />);
+  renderPlanner(<PlannerRoutePage />);
 
   expect(screen.getByTestId("weekly-plan-locked")).toBeInTheDocument();
 });
@@ -1470,7 +1488,7 @@ it("A-I-12: Plus ユーザーのホームには週献立の作成 CTA を出す"
   queryState.draft = null;
   queryState.usagePlusEntitled = true;
 
-  render(<PlannerRoutePage />);
+  renderPlanner(<PlannerRoutePage />);
 
   expect(screen.getByRole("link", { name: "今週の献立をつくる" })).toBeInTheDocument();
 });
@@ -1480,7 +1498,7 @@ it("P1: home 面でも leave flush 通信失敗を role=alert で表示する", 
   queryState.draft = null;
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
   autosaveFlushMode.mode = "network_error";
-  render(<PlannerRoutePage />);
+  renderPlanner(<PlannerRoutePage />);
   await vi.waitFor(() => {
     expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeInTheDocument();
   });
@@ -1495,7 +1513,7 @@ it("P1: home 面でも leave flush 通信失敗を role=alert で表示する", 
 
 it("P2: leave flush の DraftRevisionConflictError は通信文言を立てない", async () => {
   autosaveFlushMode.mode = "conflict";
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1512,7 +1530,7 @@ it("P1: leave flush 中は generate をガードし startGeneration / 二重 flu
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
   const startGeneration = vi.fn().mockResolvedValue(true);
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1538,7 +1556,7 @@ it("P1: leave flush 中は generate をガードし startGeneration / 二重 flu
 it("P5: leave flush 中は isSaving が true（generate disabled / 編集窓を閉じる）", async () => {
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1561,7 +1579,7 @@ it("P1: leave flush timeout 後はロックを落とし、遅延 proceed で固�
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
   const startGeneration = vi.fn().mockResolvedValue(true);
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1609,7 +1627,7 @@ it("P1: leave flush timeout 後は never-settle の flush に join せず genera
   const hang = new Promise<PlannerDraft>(() => undefined);
   savePlannerDraftMock.mockImplementationOnce(() => hang);
   const startGeneration = vi.fn().mockResolvedValue(true);
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1653,7 +1671,7 @@ it("P9: pendingDisplayReady 前の leave flush は空下書きを正本にしな
     },
   });
   getGenerationStatusMock.mockReturnValue(new Promise(() => undefined));
-  render(<PlannerRoutePage />);
+  renderPlanner(<PlannerRoutePage />);
   expect(screen.getByText("献立条件を読み込み中…")).toBeInTheDocument();
 
   await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
@@ -1669,7 +1687,7 @@ it("P-R1: hydratedDraft は ineligible 家族を除いた sanitize 済み入力�
     targetMemberIds: [eligibleId, ineligibleId],
   };
   queryState.safetyEligibleMemberIds = [eligibleId];
-  render(<PlannerPage />);
+  renderPlanner(<PlannerPage />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1690,7 +1708,7 @@ it("P-R2: lastSaved flush は cache null のとき ghost を戻さない", async
     return { onboarding_status: "not_started" };
   });
   setQueryDataMock.mockClear();
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1710,7 +1728,7 @@ it("P-R2: cache null の lastSaved flush は生成を開始しない", async () 
     return { onboarding_status: "not_started" };
   });
   const startGeneration = vi.fn();
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1735,7 +1753,7 @@ it("P-R2: stale live cache でも refetch が null なら lastSaved を生成に
     return { onboarding_status: "not_started" };
   });
   const startGeneration = vi.fn();
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1761,7 +1779,7 @@ it("P1: 生成後 empty / rev=0 hydrate の leave は undelete しない", async
   queryState.draft = null;
   pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
   autosaveFlushMode.mode = "incomplete";
-  render(<PlannerRoutePage />);
+  renderPlanner(<PlannerRoutePage />);
   await vi.waitFor(() => {
     expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeInTheDocument();
   });
@@ -1773,7 +1791,7 @@ it("P1: 生成後 empty / rev=0 hydrate の leave は undelete しない", async
 it("C6: leave flush timeout は通信失敗と同系統の理由を出す", async () => {
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1806,7 +1824,7 @@ it("P5: leave flush が blocked なら isSaving を解除する", async () => {
         rejectSave = reject;
       }),
   );
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1826,7 +1844,7 @@ it("P5: leave flush が blocked なら isSaving を解除する", async () => {
 it("P1: leave flush 中は emergency / settings をガードする", async () => {
   const deferred = createDeferred<PlannerDraft>();
   savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1853,7 +1871,7 @@ it("P3: 生成 flush の DraftRevisionConflictError は汎用保存失敗文言�
   autosaveFlushMode.mode = "conflict";
   const startGeneration = vi.fn().mockResolvedValue(true);
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   await user.click(screen.getByRole("button", { name: "生成" }));
@@ -1874,7 +1892,7 @@ it("P3: 生成 flush の DraftRevisionConflictError は汎用保存失敗文言�
 
 it("P7: soft safety/pantry 中は緊急 open を止める", async () => {
   queryState.pantry = { data: [pantryItem], isError: false, isPending: false };
-  const view = render(<PlannerPage startGeneration={vi.fn()} />);
+  const view = renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   queryState.pantry = { data: [pantryItem], isError: true, isPending: false };
   view.rerender(<PlannerPage startGeneration={vi.fn()} />);
 
@@ -1891,7 +1909,7 @@ it("P4: autosave saving 中でも settings は flush join で /settings へ進�
   // 旧実装は state===saving で無言 early-return。leave と同型の join を固定する。
   autosaveUiState.state = "saving";
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "家族設定" }));
   await vi.waitFor(() => {
@@ -1903,7 +1921,7 @@ it("P4: autosave saving 中でも settings は flush join で /settings へ進�
 it("P4: autosave saving 中でも privacy は flush join で進む", async () => {
   autosaveUiState.state = "saving";
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "privacy notice" }));
   await vi.waitFor(() => {
@@ -1913,7 +1931,7 @@ it("P4: autosave saving 中でも privacy は flush join で進む", async () =>
 
 it("P4: autosave saving 中は isSaving を true にしない（無言 disable しない）", async () => {
   autosaveUiState.state = "saving";
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
   await vi.waitFor(() => {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   });
@@ -1923,7 +1941,7 @@ it("P4: autosave saving 中は isSaving を true にしない（無言 disable �
 it("P3: openSettings の IncompleteDraft は /settings へ proceed（通信文言で塞がない）", async () => {
   autosaveFlushMode.mode = "incomplete";
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "家族設定" }));
   await vi.waitFor(() => {
@@ -1935,7 +1953,7 @@ it("P3: openSettings の IncompleteDraft は /settings へ proceed（通信文�
 it("P3: openSettings の通信失敗は /settings 非遷移 + 保存失敗文言", async () => {
   autosaveFlushMode.mode = "network_error";
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "家族設定" }));
   await vi.waitFor(() => {
@@ -1957,7 +1975,7 @@ it("P4: emergency open は post-flush で listPantryItems を再読し query cac
   ];
   listPantryItemsMock.mockResolvedValue(freshPantry);
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   listPantryItemsMock.mockClear();
@@ -1981,7 +1999,7 @@ it("P8: privacy 未同意の生成は委譲完了まで再 generate を受け付
     return Promise.resolve({ ...draft, revision: draft.revision + flushCalls });
   });
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   // 1 回目 generate → privacy 委譲のための flush 待ち
@@ -2004,7 +2022,7 @@ it("P8: privacy 未同意の生成は委譲完了まで再 generate を受け付
 it("選択解除後も attempt に残った confirmation は生成 command から落とす (P1)", async () => {
   const user = userEvent.setup();
   const startGeneration = vi.fn();
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   await user.click(screen.getByRole("button", { name: "確認後に選択解除" }));
   expect(screen.getByLabelText("check count")).toHaveTextContent("1");
   await user.click(screen.getByRole("button", { name: "生成" }));
@@ -2016,11 +2034,11 @@ it("選択解除後も attempt に残った confirmation は生成 command か�
 });
 
 it("再読み込み相当の remount では下書きと別管理の attempt key を作り直す", () => {
-  const first = render(<PlannerPage />);
+  const first = renderPlanner(<PlannerPage />);
   const firstKey = screen.getByLabelText("attempt key").textContent;
   first.unmount();
 
-  render(<PlannerPage />);
+  renderPlanner(<PlannerPage />);
 
   expect(screen.getByLabelText("attempt key").textContent).not.toBe(firstKey);
   expect(screen.getByLabelText("check count")).toHaveTextContent("0");
@@ -2029,7 +2047,7 @@ it("再読み込み相当の remount では下書きと別管理の attempt key 
 it("route が更新された exact attempt を生成へ渡し新しい試行ではキーと確認を更新する", async () => {
   const user = userEvent.setup();
   const startGeneration = vi.fn();
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   const firstKey = screen.getByLabelText("attempt key").textContent;
 
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
@@ -2072,7 +2090,7 @@ it("生成成功の完了後だけ attempt を新しいキーと空の確認へ�
       return Promise.resolve(undefined);
     },
   );
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   const firstKey = screen.getByLabelText("attempt key").textContent;
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
 
@@ -2115,7 +2133,7 @@ it("生成開始後に下書き競合が確定したら処理を中止し遅延�
       return deferredGeneration.promise;
     },
   );
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   const firstKey = screen.getByLabelText("attempt key").textContent;
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
 
@@ -2147,7 +2165,7 @@ it.each([
   ["失敗結果", vi.fn().mockResolvedValue(false)],
 ])("%s した生成は再試行用の exact attempt を保つ", async (_name, startGeneration) => {
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   const firstKey = screen.getByLabelText("attempt key").textContent;
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
 
@@ -2162,7 +2180,7 @@ it.each([
 
 it("AI情報未確認では wizard へ hasAcceptedOrDeclinedPrivacy=false を渡す", () => {
   queryState.privacyConsent = null;
-  render(<PlannerPage />);
+  renderPlanner(<PlannerPage />);
   expect(screen.getByLabelText("privacy accepted or declined")).toHaveTextContent("false");
   expect(screen.getByLabelText("privacy consent load failed")).toHaveTextContent("false");
 });
@@ -2170,14 +2188,14 @@ it("AI情報未確認では wizard へ hasAcceptedOrDeclinedPrivacy=false を渡
 it("AP5: privacy 読取 isError は未同意に潰さず privacyConsentLoadFailed=true を渡す", () => {
   queryState.privacyConsent = null;
   queryState.privacyIsError = true;
-  render(<PlannerPage />);
+  renderPlanner(<PlannerPage />);
   expect(screen.getByLabelText("privacy accepted or declined")).toHaveTextContent("false");
   expect(screen.getByLabelText("privacy consent load failed")).toHaveTextContent("true");
 });
 
 it("privacy notice への遷移操作は review resume 付きの returnTo を組み立てる", async () => {
   const user = userEvent.setup();
-  render(<PlannerPage />);
+  renderPlanner(<PlannerPage />);
   await user.click(screen.getByRole("button", { name: "privacy notice" }));
   // flushDraft 完了後に navigate するため waitFor する
   await vi.waitFor(() => {
@@ -2188,7 +2206,7 @@ it("privacy notice への遷移操作は review resume 付きの returnTo を組
 it("P10: privacy の IncompleteDraft は resume=review へ proceed（通信文言で塞がない）", async () => {
   autosaveFlushMode.mode = "incomplete";
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "privacy notice" }));
   await vi.waitFor(() => {
@@ -2200,7 +2218,7 @@ it("P10: privacy の IncompleteDraft は resume=review へ proceed（通信文�
 it("P10: privacy の通信失敗は非遷移 + 保存失敗文言", async () => {
   autosaveFlushMode.mode = "network_error";
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={vi.fn()} />);
+  renderPlanner(<PlannerPage startGeneration={vi.fn()} />);
 
   await user.click(screen.getByRole("button", { name: "privacy notice" }));
   await vi.waitFor(() => {
@@ -2214,7 +2232,7 @@ it("P10: privacy の通信失敗は非遷移 + 保存失敗文言", async () => 
 describe("PlannerRoutePage", () => {
   it("献立を作る操作で pending を保存し POST を待たずに作成状況画面へ移動する", async () => {
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
 
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
@@ -2274,7 +2292,7 @@ describe("PlannerRoutePage", () => {
         }
         return Promise.resolve(queryState.pantry.data ?? []);
       });
-      render(<PlannerRoutePage />);
+      renderPlanner(<PlannerRoutePage />);
       act(() => {
         const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
         props.onDraftChange({
@@ -2318,7 +2336,7 @@ describe("PlannerRoutePage", () => {
     const resolved = { ...pantryItem, expiresOn: "2099-12-31" };
     listPantryItemsMock.mockResolvedValueOnce([pantryItem]).mockResolvedValueOnce([resolved]);
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -2333,7 +2351,7 @@ describe("PlannerRoutePage", () => {
 
   it("P6: 生成成功直後は isSaving を維持し reset しても pending を捨てない", async () => {
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -2361,7 +2379,7 @@ describe("PlannerRoutePage", () => {
       request: { idempotencyKey: "existing" },
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
@@ -2404,7 +2422,7 @@ describe("PlannerRoutePage", () => {
       return Promise.resolve({ pending: otherPending, claimed: false });
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -2421,7 +2439,7 @@ describe("PlannerRoutePage", () => {
 
   it("P3: Free plan では attempt.qualityMode true でも pending に false を載せる", async () => {
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     // usage mock は plan: free。onSubmit + startGeneration の二重 clamp を固定する
     await user.click(screen.getByRole("button", { name: "品質モードONで確認" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
@@ -2451,7 +2469,7 @@ describe("PlannerRoutePage", () => {
       request: { idempotencyKey: "existing" },
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
 
     // reconcile（status GET）完了後にホーム再開 CTA
     expect(await screen.findByText(/作成中の献立があります/u)).toBeInTheDocument();
@@ -2467,7 +2485,7 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
   });
 
-  it("G-R4: terminal pending ではホームに作成中コピーを出さず下書き進捗なら wizard へ", async () => {
+  it("G-R4: terminal pending ではホームに作成中コピーを出さず下書き進捗なら続きから答えられる", async () => {
     // サーバ failed 済み sticky: G-R1 clear → 再開専用 UI を出さない（新規作成可と一致）
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
@@ -2498,18 +2516,21 @@ describe("PlannerRoutePage", () => {
     pendingGenerationMock.clearPendingGeneration.mockImplementation(() => {
       pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
     });
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
 
-    // terminal clear 後は完全回答済み下書き → wizard（ホーム「作成中」は出さない）
-    expect(await screen.findByLabelText("wizard step")).toHaveTextContent("review");
+    // terminal clear 後は完全回答済み下書き → ホームで「続きから答える」（U3。「作成中」は出さない）
+    const resumeDraft = await screen.findByRole("button", { name: "続きから答える" });
     expect(screen.queryByText(/作成中の献立があります/u)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "作成中の献立を続ける" })).not.toBeInTheDocument();
+    expect(screen.getByText("8 / 9 まで答えています")).toBeInTheDocument();
+    fireEvent.click(resumeDraft);
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
     expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalled();
   });
 
   it("P2: 他タブ claim の storage 後は確認に再開注意を出す", async () => {
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     expect(await screen.findByLabelText("wizard step")).toHaveTextContent("review");
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
 
@@ -2538,7 +2559,7 @@ describe("PlannerRoutePage", () => {
 
   it("P2: 再開注意前の generate は旧 sticky を再開しない", async () => {
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     expect(await screen.findByLabelText("wizard step")).toHaveTextContent("review");
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
 
@@ -2579,7 +2600,7 @@ describe("PlannerRoutePage", () => {
       qualityMode: false,
       request: { idempotencyKey: "existing" },
     });
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     // ホーム再開 CTA は出さず、確認 step の wizard を出す
     expect(await screen.findByLabelText("wizard step")).toHaveTextContent("review");
     expect(screen.queryByRole("button", { name: "作成中の献立を続ける" })).not.toBeInTheDocument();
@@ -2591,7 +2612,7 @@ describe("PlannerRoutePage", () => {
     queryState.draft = null;
     queryState.search = "";
     pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
-    const view = render(<PlannerRoutePage />);
+    const view = renderPlanner(<PlannerRoutePage />);
     expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
 
     // 同一 mount のまま search だけ resume 付きへ（SPA 深リンク）
@@ -2612,7 +2633,7 @@ describe("PlannerRoutePage", () => {
       request: { idempotencyKey: "existing" },
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     // pending 優先でホーム着地 → 主 CTA からウィザードへ入る経路を固定する
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     // P2: 確認画面向けに pending 再開注意フラグを渡す（新条件破棄の押下前明示）
@@ -2665,7 +2686,7 @@ describe("PlannerRoutePage", () => {
       return Promise.resolve({ pending: otherPending, claimed: false });
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
@@ -2707,7 +2728,7 @@ describe("PlannerRoutePage", () => {
     pendingGenerationMock.readPendingGeneration.mockReturnValue(null);
     pendingGenerationMock.readPendingGenerationMeta.mockReturnValue(null);
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
@@ -2753,7 +2774,7 @@ describe("PlannerRoutePage", () => {
       return Promise.resolve({ pending: otherPending, claimed: false });
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
@@ -2774,7 +2795,7 @@ describe("PlannerRoutePage", () => {
 
   it("入力をリセットすると進行中 pending も捨てる", async () => {
     const user = userEvent.setup();
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     // 未公開の自 key（body のみ・meta 無し）と一致するときだけ clear する（C7 の対照）
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
@@ -2801,7 +2822,7 @@ describe("PlannerRoutePage", () => {
     // 勝ちタブの attempt key と sticky が一致しても、claim+meta 済みなら
     // 負けタブの /generation?resumed=1 が作成 ID を読むため残す。
     const user = userEvent.setup();
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
@@ -2832,7 +2853,7 @@ describe("PlannerRoutePage", () => {
     // empty は persistable。force-save すると live revision が N+1 になり、
     // 負けタブの pin した draftRevision=N が lookup miss → draft_not_found になる。
     const user = userEvent.setup();
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
@@ -2866,7 +2887,7 @@ describe("PlannerRoutePage", () => {
     // P-R1 は reset 本体だけ止めた。leave の明示 flush は persistable empty を
     // そのまま書くため、負けタブの draftRevision=N pin が外れる。
     const user = userEvent.setup();
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
@@ -2898,7 +2919,7 @@ describe("PlannerRoutePage", () => {
 
   it("P-R5: 公開 sticky 中の reset 後 settings flush は empty を書かない", async () => {
     const user = userEvent.setup();
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     pendingGenerationMock.readPendingGeneration.mockReturnValue({
       ownerUserId: draft.userId,
@@ -2956,7 +2977,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     savePlannerDraftMock.mockClear();
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
@@ -2992,7 +3013,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     act(() => {
       const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
@@ -3031,7 +3052,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -3075,7 +3096,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -3119,7 +3140,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -3155,7 +3176,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     act(() => {
       const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
@@ -3192,7 +3213,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    const view = render(<PlannerRoutePage />);
+    const view = renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
 
     queryState.pantry = { data: [pantryItem], isError: true, isPending: false };
@@ -3224,7 +3245,7 @@ describe("PlannerRoutePage", () => {
       pantrySelections: [{ pantryItemId: expiredItem.id, priority: "prefer_use" }],
     };
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
@@ -3266,7 +3287,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    const view = render(<PlannerRoutePage />);
+    const view = renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
 
     queryState.safetyEligibleMemberIds = [memberA];
@@ -3315,7 +3336,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    const view = render(<PlannerRoutePage />);
+    const view = renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
 
     queryState.safetyEligibleMemberIds = [memberA];
@@ -3374,7 +3395,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     act(() => {
       const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
@@ -3423,7 +3444,7 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     act(() => {
       const props = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
@@ -3472,7 +3493,7 @@ describe("PlannerRoutePage", () => {
     });
     const pantryDeferred = createDeferred<PantryItem[]>();
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     listPantryItemsMock.mockImplementationOnce(() => pantryDeferred.promise);
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
@@ -3528,7 +3549,7 @@ describe("PlannerRoutePage", () => {
       createdAt: existingPending.createdAt,
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(await screen.findByRole("button", { name: "今日の献立をつくる" }));
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
 
@@ -3568,7 +3589,7 @@ describe("PlannerRoutePage", () => {
 
   it("C7: reset does not clear another tab's claimed pending after strip abort", async () => {
     const user = userEvent.setup();
-    render(<PlannerPage />);
+    renderPlanner(<PlannerPage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     const winnerKey = "80000000-0000-4000-8000-000000000099";
     // 勝ちタブ sticky。画面の attempt は負けタブ側の別キーのまま
@@ -3598,7 +3619,7 @@ describe("PlannerRoutePage", () => {
       throw new Error("QuotaExceededError");
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
 
@@ -3620,7 +3641,7 @@ describe("PlannerRoutePage", () => {
       throw new Error("QuotaExceededError");
     });
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
@@ -3647,7 +3668,7 @@ describe("PlannerRoutePage", () => {
       return deferredClaim.promise.then(() => ({ pending: candidate, claimed: true }));
     });
     const user = userEvent.setup();
-    const view = render(<PlannerRoutePage />);
+    const view = renderPlanner(<PlannerRoutePage />);
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
     await vi.waitFor(() => {
@@ -3704,7 +3725,7 @@ describe("PlannerRoutePage", () => {
       });
     });
     const user = userEvent.setup();
-    const view = render(<PlannerRoutePage />);
+    const view = renderPlanner(<PlannerRoutePage />);
     const attemptKey = screen.getByLabelText("attempt key").textContent;
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
@@ -3752,7 +3773,7 @@ describe("PlannerRoutePage", () => {
         }),
     );
     const user = userEvent.setup();
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     await user.click(screen.getByRole("button", { name: "確認を反映" }));
     await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -3771,7 +3792,7 @@ describe("PlannerRoutePage", () => {
   it("P1: blocked 中の再 POP で in-flight flush を捨てず成功後は proceed する", async () => {
     const deferred = createDeferred<PlannerDraft>();
     savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
-    const view = render(<PlannerRoutePage />);
+    const view = renderPlanner(<PlannerRoutePage />);
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
     });
@@ -3794,7 +3815,7 @@ describe("PlannerRoutePage", () => {
   });
 
   it("POP blocker calls proceed when leave flush returns proceed", async () => {
-    const view = render(<PlannerRoutePage />);
+    const view = renderPlanner(<PlannerRoutePage />);
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
     });
@@ -3810,7 +3831,7 @@ describe("PlannerRoutePage", () => {
 
   it("POP blocker calls reset and not proceed when leave flush returns blocked", async () => {
     autosaveFlushMode.mode = "network_error";
-    const view = render(<PlannerRoutePage />);
+    const view = renderPlanner(<PlannerRoutePage />);
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
     });
@@ -3825,7 +3846,7 @@ describe("PlannerRoutePage", () => {
   });
 
   it("does not block PUSH navigations", () => {
-    render(<PlannerRoutePage />);
+    renderPlanner(<PlannerRoutePage />);
     const shouldBlock = blockerHarness.lastShouldBlock;
     expect(shouldBlock).toEqual(expect.any(Function));
     expect(
@@ -3858,7 +3879,7 @@ it("P2: startGeneration が target_mode_required のとき pending を消し専�
     throw new Error("target_mode_required");
   });
   const user = userEvent.setup();
-  render(<PlannerPage startGeneration={startGeneration} />);
+  renderPlanner(<PlannerPage startGeneration={startGeneration} />);
   await user.click(screen.getByRole("button", { name: "確認を反映" }));
   await user.click(screen.getByRole("button", { name: "生成" }));
 
@@ -3869,4 +3890,130 @@ it("P2: startGeneration が target_mode_required のとき pending を消し専�
   });
   expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalled();
   expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+});
+
+describe("U3: 答えかけの下書きがあってもホームを出す", () => {
+  // 作る相手（4 問目）だけ未回答の下書き。firstIncomplete は audience、回答済みは 3 問。
+  const partialDraft: PlannerDraft = { ...draft, targetMemberIds: [], memo: "途中メモ" };
+
+  it("shows home with resume and restart actions when the draft has progress and no pending", () => {
+    queryState.draft = partialDraft;
+
+    render(<PlannerRoutePage />);
+
+    expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "続きから答える" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "最初から" })).toBeInTheDocument();
+    expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "今日の献立をつくる" })).not.toBeInTheDocument();
+  });
+
+  it("opens the wizard at the first incomplete step without losing answers", async () => {
+    queryState.draft = partialDraft;
+    const user = userEvent.setup();
+
+    render(<PlannerRoutePage />);
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    expect(screen.getByLabelText("draft memo")).toHaveTextContent("途中メモ");
+  });
+
+  it("restarts from the first question after confirmation", async () => {
+    queryState.draft = partialDraft;
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    try {
+      render(<PlannerRoutePage />);
+      await user.click(screen.getByRole("button", { name: "最初から" }));
+
+      expect(confirmSpy).toHaveBeenCalledWith(
+        "入力した献立条件をすべて消して最初からやり直します。よろしいですか？",
+      );
+      expect(screen.getByLabelText("wizard step")).toHaveTextContent("meal");
+      expect(screen.getByLabelText("draft memo")).toHaveTextContent("");
+      // 既存リセットと同じく空下書きを強制保存する経路に乗る
+      await vi.waitFor(() => {
+        expect(savePlannerDraftMock).toHaveBeenCalled();
+      });
+      const saved = savePlannerDraftMock.mock.calls.at(-1)?.[2] as PlannerDraftInput;
+      expect(saved.memo).toBe("");
+      expect(saved.mealType).toBeNull();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("keeps the home and the draft when restart confirmation is cancelled", async () => {
+    queryState.draft = partialDraft;
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    try {
+      render(<PlannerRoutePage />);
+      await user.click(screen.getByRole("button", { name: "最初から" }));
+
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+      expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+      expect(savePlannerDraftMock).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole("button", { name: "続きから答える" }));
+      expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+      expect(screen.getByLabelText("draft memo")).toHaveTextContent("途中メモ");
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("still opens the wizard directly for ?resume=review", () => {
+    queryState.search = "resume=review";
+
+    render(<PlannerRoutePage />);
+
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
+    expect(screen.queryByRole("button", { name: "続きから答える" })).not.toBeInTheDocument();
+  });
+
+  it("keeps pending resume as the home priority even with draft progress", async () => {
+    queryState.draft = partialDraft;
+    pendingGenerationMock.readPendingGeneration.mockReturnValue({
+      ownerUserId: draft.userId,
+      commandVersion: "generation-command.v3",
+      kind: "new_menu",
+      qualityMode: false,
+      request: { idempotencyKey: "existing" },
+    });
+
+    render(<PlannerRoutePage />);
+
+    expect(await screen.findByRole("button", { name: "作成中の献立を続ける" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "続きから答える" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+  });
+
+  it("does not render the weekly plan footer while the wizard is shown", async () => {
+    queryState.draft = partialDraft;
+    const user = userEvent.setup();
+
+    render(<PlannerRoutePage />);
+    // ホームでは今までどおり出す
+    expect(screen.getByTestId("weekly-plan-locked")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-plan-locked")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wizard-footer-slot")).toBeEmptyDOMElement();
+  });
+
+  it("shows the unlocked weekly plan entry on the home for Plus users with draft progress", () => {
+    queryState.draft = partialDraft;
+    queryState.usagePlusEntitled = true;
+
+    render(<PlannerRoutePage />);
+
+    expect(screen.getByRole("link", { name: "今週の献立をつくる" })).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-plan-locked")).not.toBeInTheDocument();
+  });
 });

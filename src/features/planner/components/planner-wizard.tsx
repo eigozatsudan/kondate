@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PlannerAttempt } from "../expired-pantry-checks";
 import type { PantryItemsStatus } from "../pantry-selector";
+import { confirmPlannerReset } from "../confirm-planner-reset";
 import type { PantryItem } from "@shared/contracts/pantry";
 import {
   ingredientPreferenceLabel,
@@ -429,12 +430,8 @@ export function PlannerWizard({
           disabled={isSaving || confirmingIdeaAudience}
           onClick={() => {
             // 誤タップで下書きを消さないよう、ブラウザ確認後にだけ route へ委譲する
-            if (
-              typeof window !== "undefined" &&
-              !window.confirm(
-                "入力した献立条件をすべて消して最初からやり直します。よろしいですか？",
-              )
-            ) {
+            // 確認文と手順はホームの「最初から」（U3）と共有する
+            if (!confirmPlannerReset()) {
               return;
             }
             onReset();
