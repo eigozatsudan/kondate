@@ -1561,9 +1561,14 @@ dialog:not([open]) {
 
 /*
  * 既定のマーカーは display: flex で消えたり端末で見え方が変わるため、▸/▾ で開閉を示す。
- * ::-webkit-details-marker は CSS 契約テストが許可リスト外の擬似要素として拒否するので書かない
- * （list-style: none と display: flex で、現行の Chromium・Firefox・Safari の既定マーカーは出ない）。
+ * 現行の Chromium・Firefox・Safari は list-style: none と display: flex で既定マーカーが出ないが、
+ * 旧来の ::-webkit-details-marker 実装の WebKit（古い iOS の Safari）では ▸ と二重に出るため、
+ * ウィザードの開閉と同じく明示的に消す（CSS 契約テストに宣言の完全一致で登録済み）。
  */
+.pantry-details-summary::-webkit-details-marker {
+  display: none;
+}
+
 .pantry-details-summary::before {
   content: "▸";
   flex: 0 0 auto;

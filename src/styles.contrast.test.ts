@@ -535,6 +535,11 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
   ".guided-planner-theme .wizard-details-summary::-webkit-details-marker": {
     display: "none",
   },
+  // 冷蔵庫の食材フォーム「くわしく入力する」。旧 WebKit の既定マーカーと ▸/▾ の二重表示を防ぐ。
+  // 許可リスト外の擬似要素なので、ウィザードと同じく宣言の完全一致で固定する。
+  ".pantry-details-summary::-webkit-details-marker": {
+    display: "none",
+  },
   ".guided-planner-theme .wizard-details-summary::before": {
     content: '"▸"',
     flex: "0 0 auto",
