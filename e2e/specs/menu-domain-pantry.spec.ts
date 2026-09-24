@@ -209,6 +209,8 @@ test("waits for the latest draft save before requesting emergency menus", async 
   // 追加フォームは既定で閉じており、トリガーを押してから入力する
   await page.getByRole("button", { name: "食材を追加" }).click();
   await page.getByRole("textbox", { name: "食材名" }).fill("緊急用豆腐");
+  // 分量・単位・期限の種類・開封状態は「くわしく入力する」の開閉の中にある
+  await page.getByText(/くわしく入力する/u).click();
   await page.getByLabel("分量").fill("1");
   await page.getByLabel("単位").fill("丁");
   await page.getByRole("button", { name: "追加する" }).click();
@@ -433,6 +435,8 @@ test(
     // 追加フォームは既定で閉じており、トリガーを押してから入力する
     await page.getByRole("button", { name: "食材を追加" }).click();
     await page.getByRole("textbox", { name: "食材名" }).fill("キャベツ");
+    // 分量・単位・期限の種類・開封状態は「くわしく入力する」の開閉の中にある
+    await page.getByText(/くわしく入力する/u).click();
     await page.getByLabel("分量").fill("1");
     await page.getByLabel("単位").fill("個");
     await page.getByLabel("期限日").fill("2000-01-01");

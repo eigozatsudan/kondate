@@ -1,4 +1,5 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useForm } from "react-hook-form";
 import {
   expirationTypes,
@@ -40,6 +41,23 @@ const pantryFields: readonly (keyof PantryItemInput)[] = [
   "expirationType",
   "openedState",
 ];
+
+/** 「くわしく入力する」の開閉に収める任意項目。食材名と期限日は常に見せる。 */
+const detailFields: readonly (keyof PantryItemInput)[] = [
+  "quantity",
+  "unit",
+  "expirationType",
+  "openedState",
+];
+
+function hasDetailValue(value: PantryItemInput): boolean {
+  return (
+    value.quantity !== null ||
+    value.unit !== null ||
+    value.expirationType !== null ||
+    value.openedState !== null
+  );
+}
 
 function isPantryField(value: PropertyKey): value is keyof PantryItemInput {
   return pantryFields.some((field) => field === value);
@@ -83,6 +101,8 @@ export function PantryForm({
   // PE14: React の isPending 反映前に enter 連打されると handleSubmit が二重起動し得る。
   // フォーム側でも single-flight して create 二重 insert を抑止する。
   const submitInFlightRef = useRef(false);
+  // 編集時に任意項目の入力済み値があれば、最初から開いて見せる。
+  const [detailsOpen, setDetailsOpen] = useState(() => hasDetailValue(initialValue));
   const submit = form.handleSubmit(async (input) => {
     if (submitInFlightRef.current || saving) return;
     submitInFlightRef.current = true;
@@ -100,7 +120,14 @@ export function PantryForm({
         }
       }
       if (firstInvalidField !== undefined) {
-        form.setFocus(firstInvalidField);
+        const invalidField = firstInvalidField;
+        if (detailFields.includes(invalidField)) {
+          // 閉じた details の中はフォーカスできないため、先に開いて描画を確定させる。
+          flushSync(() => {
+            setDetailsOpen(true);
+          });
+        }
+        form.setFocus(invalidField);
       }
       submitInFlightRef.current = false;
       return;
@@ -147,83 +174,108 @@ export function PantryForm({
             <input autoComplete="off" {...errorAttributes("name")} {...form.register("name")} />
           </label>
           {fieldError("name")}
-          <div className="pantry-field-row">
-            <div>
-              <label className="field">
-                分量
-                <input
-                  type="number"
-                  min="0.001"
-                  step="0.001"
-                  {...errorAttributes("quantity")}
-                  {...form.register("quantity", {
-                    setValueAs: (value: string) => (value === "" ? null : Number(value)),
-                  })}
-                />
-              </label>
-              {fieldError("quantity")}
-            </div>
-            <div>
-              <label className="field">
-                単位
-                <input
-                  autoComplete="off"
-                  {...errorAttributes("unit")}
-                  {...form.register("unit", {
-                    setValueAs: (value: string) => (value === "" ? null : value),
-                  })}
-                />
-              </label>
-              {fieldError("unit")}
-            </div>
-          </div>
           <label className="field">
             期限日
             <input
               type="date"
               {...errorAttributes("expiresOn")}
               {...form.register("expiresOn", {
-                setValueAs: (value: string) =>
-                  value === "" ? null : alignLocalDateInputToJstDay(value, new Date()),
+                setValueAs: (value: string | null) =>
+                  value === "" || value === null
+                    ? null
+                    : alignLocalDateInputToJstDay(value, new Date()),
               })}
             />
           </label>
           <p className="muted">期限日は日本時間で判定します。</p>
           {fieldError("expiresOn")}
-          <label className="field">
-            期限の種類
-            <select
-              {...errorAttributes("expirationType")}
-              {...form.register("expirationType", {
-                setValueAs: (value: string) => (value === "" ? null : value),
-              })}
-            >
-              <option value="">指定なし</option>
-              {expirationTypes.map((value) => (
-                <option key={value} value={value}>
-                  {expirationLabels[value]}
-                </option>
-              ))}
-            </select>
-          </label>
-          {fieldError("expirationType")}
-          <label className="field">
-            開封状態
-            <select
-              {...errorAttributes("openedState")}
-              {...form.register("openedState", {
-                setValueAs: (value: string) => (value === "" ? null : value),
-              })}
-            >
-              <option value="">指定なし</option>
-              {openedStates.map((value) => (
-                <option key={value} value={value}>
-                  {openedLabels[value]}
-                </option>
-              ))}
-            </select>
-          </label>
-          {fieldError("openedState")}
+          {/*
+            任意項目は開閉にまとめ、名前と期限日だけで追加を始められるようにする。
+            開閉の中にある項目がエラーになったときは submit 側で自動的に開く。
+          */}
+          <details
+            className="pantry-details"
+            open={detailsOpen}
+            onToggle={(event) => {
+              setDetailsOpen(event.currentTarget.open);
+            }}
+          >
+            <summary className="pantry-details-summary">
+              くわしく入力する（分量・単位・期限の種類・開封状態）
+            </summary>
+            <div className="pantry-details-body">
+              <Stack gap={4}>
+                <div className="pantry-field-row">
+                  <div>
+                    <label className="field">
+                      分量
+                      <input
+                        type="number"
+                        min="0.001"
+                        step="0.001"
+                        {...errorAttributes("quantity")}
+                        {...form.register("quantity", {
+                          // 未操作のまま送信すると RHF は既定値の null をそのまま渡してくる。
+                          // Number(null) は 0 になり「分量と単位は両方」エラーで名前だけの追加が
+                          // 通らないため、空文字と同じく未入力として扱う。
+                          setValueAs: (value: string | null) =>
+                            value === "" || value === null ? null : Number(value),
+                        })}
+                      />
+                    </label>
+                    {fieldError("quantity")}
+                  </div>
+                  <div>
+                    <label className="field">
+                      単位
+                      <input
+                        autoComplete="off"
+                        {...errorAttributes("unit")}
+                        {...form.register("unit", {
+                          setValueAs: (value: string) => (value === "" ? null : value),
+                        })}
+                      />
+                    </label>
+                    {fieldError("unit")}
+                  </div>
+                </div>
+                <label className="field">
+                  期限の種類
+                  <select
+                    {...errorAttributes("expirationType")}
+                    {...form.register("expirationType", {
+                      setValueAs: (value: string) => (value === "" ? null : value),
+                    })}
+                  >
+                    <option value="">指定なし</option>
+                    {expirationTypes.map((value) => (
+                      <option key={value} value={value}>
+                        {expirationLabels[value]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {fieldError("expirationType")}
+                <label className="field">
+                  開封状態
+                  <select
+                    {...errorAttributes("openedState")}
+                    {...form.register("openedState", {
+                      setValueAs: (value: string) => (value === "" ? null : value),
+                    })}
+                  >
+                    <option value="">指定なし</option>
+                    {openedStates.map((value) => (
+                      <option key={value} value={value}>
+                        {openedLabels[value]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {fieldError("openedState")}
+              </Stack>
+            </div>
+          </details>
           {form.formState.errors.root?.schema !== undefined && (
             <p className="error-message" role="alert" lang="ja">
               {form.formState.errors.root.schema.message}

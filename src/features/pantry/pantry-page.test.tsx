@@ -172,6 +172,7 @@ it("新規登録成功後は一覧へ戻り、失敗時は入力とフォーム�
 
   await user.click(screen.getByRole("button", { name: "食材を追加" }));
   await user.type(screen.getByLabelText("食材名"), "豆腐");
+  await user.click(screen.getByText(/くわしく入力する/u));
   await user.type(screen.getByLabelText("分量"), "1");
   await user.type(screen.getByLabelText("単位"), "丁");
   await user.click(screen.getByRole("button", { name: "追加する" }));
@@ -455,6 +456,7 @@ it.each([
     fail: async (user: ReturnType<typeof userEvent.setup>) => {
       await user.click(screen.getByRole("button", { name: "食材を追加" }));
       await user.type(screen.getByRole("textbox", { name: "食材名" }), "豆腐");
+      await user.click(screen.getByText(/くわしく入力する/u));
       await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
       await user.type(screen.getByRole("textbox", { name: "単位" }), "丁");
       await user.click(screen.getByRole("button", { name: "追加する" }));
@@ -495,6 +497,7 @@ it.each([
     succeed: async (user: ReturnType<typeof userEvent.setup>) => {
       await user.click(screen.getByRole("button", { name: "食材を追加" }));
       await user.type(screen.getByRole("textbox", { name: "食材名" }), "豆腐");
+      await user.click(screen.getByText(/くわしく入力する/u));
       await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
       await user.type(screen.getByRole("textbox", { name: "単位" }), "丁");
       await user.click(screen.getByRole("button", { name: "追加する" }));
@@ -600,6 +603,7 @@ it("accepts an already-expired date on create so pantry CRUD can record leftover
   const onSubmit = vi.fn().mockResolvedValue(undefined);
   render(<PantryForm saving={false} onSubmit={onSubmit} />);
   await user.type(screen.getByRole("textbox", { name: "食材名" }), "キャベツ");
+  await user.click(screen.getByText(/くわしく入力する/u));
   await user.type(screen.getByLabelText("分量"), "1");
   await user.type(screen.getByLabelText("単位"), "個");
   await user.type(screen.getByLabelText("期限日"), "2000-01-01");
@@ -629,6 +633,7 @@ it("shows and associates a Japanese schema error, then focuses the invalid field
   render(<PantryForm saving={false} onSubmit={onSubmit} />);
 
   await user.type(screen.getByRole("textbox", { name: "食材名" }), "牛乳");
+  await user.click(screen.getByText(/くわしく入力する/u));
   await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
   const unit = screen.getByRole("textbox", { name: "単位" });
   await user.type(unit, "あ".repeat(25));
@@ -641,4 +646,135 @@ it("shows and associates a Japanese schema error, then focuses the invalid field
   expect(unit).toHaveAttribute("aria-describedby", error.id);
   expect(error).toHaveAttribute("role", "alert");
   expect(error).toHaveAttribute("lang", "ja");
+});
+
+describe("pantry form optional details disclosure", () => {
+  const detailsSummary = () => screen.getByText(/くわしく入力する/u);
+
+  it("adds an item from its name alone and sends every optional field as unset", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<PantryForm saving={false} onSubmit={onSubmit} />);
+
+    expect(screen.getByRole("textbox", { name: "食材名" })).toBeVisible();
+    expect(screen.getByLabelText("期限日")).toBeVisible();
+    expect(screen.getByText("期限日は日本時間で判定します。")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "分量" })).not.toBeVisible();
+    expect(screen.getByRole("textbox", { name: "単位" })).not.toBeVisible();
+    expect(screen.getByRole("combobox", { name: "期限の種類" })).not.toBeVisible();
+    expect(screen.getByRole("combobox", { name: "開封状態" })).not.toBeVisible();
+
+    await user.type(screen.getByRole("textbox", { name: "食材名" }), "豆腐");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+    expect(onSubmit).toHaveBeenCalledWith({
+      name: "豆腐",
+      quantity: null,
+      unit: null,
+      expiresOn: null,
+      expirationType: null,
+      openedState: null,
+    });
+  });
+
+  it("reveals quantity, unit, expiration type and opened state when opened", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<PantryForm saving={false} onSubmit={onSubmit} />);
+
+    await user.click(detailsSummary());
+
+    expect(screen.getByRole("spinbutton", { name: "分量" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "単位" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "期限の種類" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "開封状態" })).toBeVisible();
+
+    await user.type(screen.getByRole("textbox", { name: "食材名" }), "豆腐");
+    await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
+    await user.type(screen.getByRole("textbox", { name: "単位" }), "丁");
+    await user.selectOptions(screen.getByRole("combobox", { name: "期限の種類" }), "best_before");
+    await user.selectOptions(screen.getByRole("combobox", { name: "開封状態" }), "unopened");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+    expect(onSubmit).toHaveBeenCalledWith({
+      name: "豆腐",
+      quantity: 1,
+      unit: "丁",
+      expiresOn: null,
+      expirationType: "best_before",
+      openedState: "unopened",
+    });
+  });
+
+  it("starts opened when editing an item that already has optional details", () => {
+    render(
+      <PantryForm
+        saving={false}
+        title="牛乳を編集"
+        submitLabel="変更を保存"
+        initialValue={{
+          name: "牛乳",
+          quantity: null,
+          unit: null,
+          expiresOn: null,
+          expirationType: null,
+          openedState: "opened",
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: "開封状態" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "開封状態" })).toHaveValue("opened");
+  });
+
+  it("stays closed when editing an item whose only optional value is its expiry date", () => {
+    render(
+      <PantryForm
+        saving={false}
+        title="牛乳を編集"
+        submitLabel="変更を保存"
+        initialValue={{
+          name: "牛乳",
+          quantity: null,
+          unit: null,
+          expiresOn: "2026-07-10",
+          expirationType: null,
+          openedState: null,
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("期限日")).toHaveValue("2026-07-10");
+    expect(screen.getByRole("spinbutton", { name: "分量" })).not.toBeVisible();
+  });
+
+  it("opens itself and focuses the field when a hidden detail field is invalid", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<PantryForm saving={false} onSubmit={onSubmit} />);
+
+    await user.click(detailsSummary());
+    await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
+    await user.click(detailsSummary());
+    expect(screen.getByRole("spinbutton", { name: "分量" })).not.toBeVisible();
+
+    await user.type(screen.getByRole("textbox", { name: "食材名" }), "牛乳");
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+
+    const error = await screen.findByText("分量と単位は両方入力してください");
+    expect(onSubmit).not.toHaveBeenCalled();
+    const quantity = screen.getByRole("spinbutton", { name: "分量" });
+    expect(quantity).toBeVisible();
+    expect(error).toBeVisible();
+    expect(quantity).toHaveFocus();
+    expect(quantity).toHaveAttribute("aria-describedby", error.id);
+  });
 });
