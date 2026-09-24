@@ -252,6 +252,12 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByText("無料版は本日あと1回まで献立の作成を受け付けます")).toBeVisible();
     // 日次枠の retryAt（翌 JST 0:00）は「明日H:MM」
     expect(screen.getByText(/^再開: 明日/u)).toBeVisible();
+    // U4: onClear が無い直リンク経路（reload 直後など）は、U3 の /planner ホーム化の
+    // 影響を受けないよう resume=review 付きで確認画面に直着地させる。
+    expect(screen.getByRole("link", { name: "条件を直してやり直す" })).toHaveAttribute(
+      "href",
+      "/planner?resume=review",
+    );
     expect(screen.getByRole("link", { name: "15分緊急献立を見る" })).toHaveAttribute(
       "href",
       "/emergency-menus",

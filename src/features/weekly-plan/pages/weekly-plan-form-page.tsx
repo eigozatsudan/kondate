@@ -8,12 +8,7 @@ import {
   PLANNER_INGREDIENT_TEXT_MAX,
   PLANNER_MAIN_INGREDIENT_LIMIT,
 } from "@shared/contracts/planner";
-import {
-  WEEKLY_PLAN_QUOTA_COPY_LABEL,
-  weeklyPlanRequestSchema,
-  weeklyPlanIssueMessages,
-  type WeeklyPlanRequest,
-} from "@shared/contracts/weekly-plan";
+import { weeklyPlanRequestSchema, type WeeklyPlanRequest } from "@shared/contracts/weekly-plan";
 import { detectUnsupportedMedicalRequest } from "@shared/safety-pure/medical-scope";
 import { GenerationProgressMeter } from "@/features/generation/components/generation-status-panel";
 import { useGenerationProgressMessage } from "@/features/generation/hooks/use-generation-progress-message";
@@ -362,8 +357,11 @@ export function WeeklyPlanFormPage({
       <h1>今週の献立</h1>
       {quota !== undefined ? (
         <p>
-          {WEEKLY_PLAN_QUOTA_COPY_LABEL}: 成功 {quota.successRemaining} / {quota.successLimit}
-          、試行 {quota.triesRemaining} / {quota.triesLimit}
+          {quota.successRemaining === 0
+            ? "今週の分は使い切りました"
+            : `今週はあと ${String(quota.successRemaining)} 回つくれます（週 ${String(quota.successLimit)} 回まで）`}
+          <br />
+          <small>うまくいかなかったときのやり直しは、あと {quota.triesRemaining} 回までです</small>
         </p>
       ) : usage.isError ? (
         <div role="alert">
@@ -533,11 +531,11 @@ export function WeeklyPlanFormPage({
           </p>
         ) : null}
       </fieldset>
-      {quotaExhausted ? (
+      {/* successRemaining===0 は上の回数表示ですでに「今週の分は使い切りました」を
+          出しているため、ここでは重複させずやり直し枠の方だけ補足する。 */}
+      {quotaExhausted && quota.successRemaining !== 0 ? (
         <p role="note" className="error">
-          {quota.successRemaining === 0
-            ? weeklyPlanIssueMessages.weekly_plan_weekly_limit
-            : weeklyPlanIssueMessages.weekly_plan_try_limit}
+          うまくいかなかったときのやり直しの回数を使い切りました
         </p>
       ) : null}
       {selectedUnsatisfiable.length > 0 ? (

@@ -1011,8 +1011,11 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     await expect(page).toHaveURL((url) => url.pathname === "/emergency-menus");
     await expect(page.getByRole("heading", { name: "15分緊急献立" })).toBeVisible();
     await expect(
-      page.getByText("献立条件の下書きがありません。献立画面で条件を保存してください。"),
+      page.getByText(
+        "15分緊急献立は、献立の条件（朝・昼・夕など）をもとに候補を出します。先に条件を入力してください。",
+      ),
     ).toBeVisible();
+    await expect(page.getByRole("link", { name: "献立の条件を入力する" })).toBeVisible();
     // idea下書き（家族条件を持たない）を作ってから再訪する。/planner自身の
     // household_members取得は家族安全actionではないため、route listenerを
     // 外さずに記録対象外として扱う（activeRoute = null）。

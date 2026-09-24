@@ -139,7 +139,10 @@ function RecoveryLinks({
       ) : (
         <a
           className="button-link"
-          href="/planner"
+          // U4: U3 で「下書きがあると /planner はホームを出す」ようになったため、
+          // 素の /planner だと確認画面へ 1 発で戻れない。既存の深リンク契約
+          // （下書きが確認まで揃っていれば resume=review が review 固定）に乗せる。
+          href="/planner?resume=review"
           onClick={(event) => {
             if (!guardDiscard()) {
               event.preventDefault();

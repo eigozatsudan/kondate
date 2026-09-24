@@ -112,7 +112,13 @@ describe("WeeklyPlanFormPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(screen.getByText(/成功 2 \/ 2、試行 6 \/ 6/)).toBeInTheDocument();
+    expect(screen.getByText("今週はあと 2 回つくれます（週 2 回まで）")).toBeInTheDocument();
+    expect(
+      screen.getByText("うまくいかなかったときのやり直しは、あと 6 回までです"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/成功/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/試行 /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/チラシ献立と共通/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
     await waitFor(() => {
       expect(postWeeklyPlanMock).toHaveBeenCalledTimes(1);
@@ -164,10 +170,31 @@ describe("WeeklyPlanFormPage", () => {
     });
     renderPage();
     expect(screen.getByRole("button", { name: "今週の献立をつくる" })).toBeDisabled();
-    expect(screen.getByText(/作成上限に達しています/)).toBeInTheDocument();
+    expect(screen.getByText("今週の分は使い切りました")).toBeInTheDocument();
+    expect(screen.queryByText(/チラシ献立と共通/)).not.toBeInTheDocument();
     expect(
       screen.getByText(/週次枠は2026年8月3日（月）から新しい週になります/),
     ).toBeInTheDocument();
+  });
+
+  it("shows the retry-quota-only exhausted note when only tries remaining is 0", () => {
+    useUsageTodayMock.mockReturnValue({
+      data: {
+        ...availableUsageTodayFixture,
+        flyerWeekly: {
+          ...availableUsageTodayFixture.flyerWeekly,
+          triesRemaining: 0,
+        },
+      },
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    expect(
+      screen.getByText("うまくいかなかったときのやり直しの回数を使い切りました"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("今週の分は使い切りました")).not.toBeInTheDocument();
   });
 
   it("blocks while usage is loading and offers retry after a read failure", async () => {

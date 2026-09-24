@@ -161,8 +161,17 @@ it("下書きがない直接アクセスでは候補を取得せず献立画面�
 
   renderWithRouter(<EmergencyMenuPage />);
 
-  expect(screen.getByRole("alert")).toHaveTextContent("献立条件の下書きがありません");
+  expect(
+    screen.getByText(
+      "15分緊急献立は、献立の条件（朝・昼・夕など）をもとに候補を出します。先に条件を入力してください。",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toHaveAttribute("href", "/planner");
+  expect(screen.getByRole("link", { name: "献立の条件を入力する" })).toHaveAttribute(
+    "href",
+    "/planner",
+  );
   expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
 });
 

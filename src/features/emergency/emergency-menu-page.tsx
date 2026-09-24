@@ -590,13 +590,20 @@ export function EmergencyMenuPage() {
   }, [pendingExpiredItem]);
 
   if (draftQuery.isSuccess && draftQuery.data === null) {
+    // U4: 開いた直後に必ず出る案内であり、動的なエラーではないため role="alert"
+    // （SR に割り込み通知）は使わない。行き止まりにしないよう主導線ボタンを添える。
     return (
       <main className="page-frame stack emergency-menu-page">
         <Link className="emergency-back-link" to="/planner" aria-label="献立画面へ戻る">
           ← 献立画面へ戻る
         </Link>
         <h1>15分緊急献立</h1>
-        <p role="alert">献立条件の下書きがありません。献立画面で条件を保存してください。</p>
+        <p>
+          15分緊急献立は、献立の条件（朝・昼・夕など）をもとに候補を出します。先に条件を入力してください。
+        </p>
+        <Link className="primary-button min-h-11" to="/planner">
+          献立の条件を入力する
+        </Link>
       </main>
     );
   }
