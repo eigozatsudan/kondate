@@ -252,8 +252,12 @@ describe("GenerationStatusPanel", () => {
     expect(screen.getByText("無料版は本日あと1回まで献立の作成を受け付けます")).toBeVisible();
     // 日次枠の retryAt（翌 JST 0:00）は「明日H:MM」
     expect(screen.getByText(/^再開: 明日/u)).toBeVisible();
-    // U4: onClear が無い直リンク経路（reload 直後など）は、U3 の /planner ホーム化の
-    // 影響を受けないよう resume=review 付きで確認画面に直着地させる。
+    // U4: この <a href> は onClear 未指定時のフォールバックで、本番では
+    // 到達しない（本番の唯一の呼び出し元 GenerationPage は常に onClear を
+    // 渡すため、実際に押されるのは Button 側。そちらの resumeReview 経路は
+    // generation-page.test.tsx で GenerationPage ごと固定している）。
+    // ここでは onClear を渡さずレンダーした場合でも resume=review 付きに
+    // 揃っていることだけを確認する。
     expect(screen.getByRole("link", { name: "条件を直してやり直す" })).toHaveAttribute(
       "href",
       "/planner?resume=review",

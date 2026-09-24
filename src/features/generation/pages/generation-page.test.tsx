@@ -9,6 +9,7 @@ import type { GenerationCommand, GenerationStatusData } from "@shared/contracts/
 import {
   clearPendingGeneration,
   createPendingGeneration,
+  readPendingGeneration,
   savePendingGeneration,
 } from "../model/pending-generation";
 import { GenerationPage } from "./generation-page";
@@ -85,6 +86,22 @@ function makeRegenerateDishCommand(idempotencyKey: string): GenerationCommand {
       idempotencyKey,
       sourceMenuId: SOURCE_MENU_ID,
       dishId: DISH_ID,
+      changeReason: "different_flavor",
+      changeReasonCustom: null,
+      privacyNoticeVersion: "2026-07-29.v1",
+      expiredPantryConfirmations: [],
+    },
+  };
+}
+
+function makeRegenerateMenuCommand(idempotencyKey: string): GenerationCommand {
+  return {
+    commandVersion: "generation-command.v3",
+    kind: "regenerate_menu",
+    qualityMode: false,
+    request: {
+      idempotencyKey,
+      sourceMenuId: SOURCE_MENU_ID,
       changeReason: "different_flavor",
       changeReasonCustom: null,
       privacyNoticeVersion: "2026-07-29.v1",
@@ -261,6 +278,73 @@ describe("GenerationPage", () => {
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(`/menus/${SOURCE_MENU_ID}`);
+    });
+    expect(await screen.findByRole("heading", { name: "献立結果" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "プランナー" })).not.toBeInTheDocument();
+  });
+
+  // U4 修正ラウンド2: 業務エラーの合成 failed（POST が閉じたサーバ code で
+  // 拒否され、失敗画面が出る前に pending がすでに消えている経路）から
+  // 「条件を直してやり直す」を押しても、regenerate_dish の文脈を失わず
+  // 元の /menus/:id に戻ることを確認する。ラウンド1の実装は resumeReview 時に
+  // pending を読み直しており、この経路では pending が null に見えるため
+  // /planner?resume=review へ誤って上書きしていた（レビュー Critical）。
+  it("U4: 業務エラーで pending が消えたあとの regenerate_dish は条件を直してやり直すで /menus/:id に戻る（本番経路）", async () => {
+    const user = userEvent.setup();
+    const pending = createPendingGeneration(
+      makeRegenerateDishCommand(KEY_A),
+      USER_ID,
+      () => new Date(),
+    );
+    savePendingGeneration(pending);
+    mockStatus.mockResolvedValue({ status: "not_started", idempotencyKey: KEY_A, quota });
+    // "replace_dish_not_found" は POST_ERROR_STATUS_RECOVERABLE_FAILURE_CODES に
+    // 含まれない閉じた業務 code なので、use-generation-recovery が
+    // clearPendingGeneration() を呼んでから合成 failed を dispatch する
+    // （失敗画面が出た時点で pending はもう存在しない）。
+    mockPost.mockRejectedValue(new Error("replace_dish_not_found"));
+
+    const router = renderGenerationPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
+    });
+    // 前提確認: この時点で pending はすでに消えている。
+    expect(readPendingGeneration(USER_ID, new Date())).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(`/menus/${SOURCE_MENU_ID}`);
+      expect(router.state.location.search).toBe("");
+    });
+    expect(await screen.findByRole("heading", { name: "献立結果" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "プランナー" })).not.toBeInTheDocument();
+  });
+
+  it("U4: 業務エラーで pending が消えたあとの regenerate_menu は条件を直してやり直すで /menus/:id に戻る（本番経路）", async () => {
+    const user = userEvent.setup();
+    const pending = createPendingGeneration(
+      makeRegenerateMenuCommand(KEY_A),
+      USER_ID,
+      () => new Date(),
+    );
+    savePendingGeneration(pending);
+    mockStatus.mockResolvedValue({ status: "not_started", idempotencyKey: KEY_A, quota });
+    mockPost.mockRejectedValue(new Error("source_menu_not_found"));
+
+    const router = renderGenerationPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
+    });
+    expect(readPendingGeneration(USER_ID, new Date())).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(`/menus/${SOURCE_MENU_ID}`);
+      expect(router.state.location.search).toBe("");
     });
     expect(await screen.findByRole("heading", { name: "献立結果" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "プランナー" })).not.toBeInTheDocument();
