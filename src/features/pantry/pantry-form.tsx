@@ -59,6 +59,24 @@ function hasDetailValue(value: PantryItemInput): boolean {
   );
 }
 
+/**
+ * RHF の setValueAs には、DOM からの文字列だけでなく既定値（null）や編集時の数値もそのまま渡る。
+ * 型を string と書くと Number(null) = 0 のような取り違えを見落とすため、実際に来る値で受ける。
+ */
+type RawFieldValue = string | number | null | undefined;
+
+function blankToNull(value: RawFieldValue): string | null {
+  if (value === "" || value === null || value === undefined) return null;
+  return String(value);
+}
+
+function quantityFromField(value: RawFieldValue): number | null {
+  // 未操作のまま送信すると既定値の null が渡る。Number(null) は 0 になり
+  // 「分量と単位は両方」エラーで名前だけの追加が通らないため、未入力として扱う。
+  if (value === "" || value === null || value === undefined) return null;
+  return typeof value === "number" ? value : Number(value);
+}
+
 function isPantryField(value: PropertyKey): value is keyof PantryItemInput {
   return pantryFields.some((field) => field === value);
 }
@@ -110,24 +128,26 @@ export function PantryForm({
     const parsed = pantryItemInputSchema.safeParse(input);
     if (!parsed.success) {
       let firstInvalidField: keyof PantryItemInput | undefined;
+      let hasDetailError = false;
       for (const issue of parsed.error.issues) {
         const field = issue.path[0];
         if (field !== undefined && isPantryField(field)) {
           firstInvalidField ??= field;
+          if (detailFields.includes(field)) hasDetailError = true;
           form.setError(field, { message: japaneseValidationMessage(field, issue.message) });
         } else {
           form.setError("root.schema", { message: "入力内容を確認してください" });
         }
       }
+      // 最初のエラーが開閉の外（食材名など）でも、開閉の中にエラーがあれば開いて見せる。
+      // 閉じた details の中はフォーカスできないため、先に開いて描画を確定させる。
+      if (hasDetailError) {
+        flushSync(() => {
+          setDetailsOpen(true);
+        });
+      }
       if (firstInvalidField !== undefined) {
-        const invalidField = firstInvalidField;
-        if (detailFields.includes(invalidField)) {
-          // 閉じた details の中はフォーカスできないため、先に開いて描画を確定させる。
-          flushSync(() => {
-            setDetailsOpen(true);
-          });
-        }
-        form.setFocus(invalidField);
+        form.setFocus(firstInvalidField);
       }
       submitInFlightRef.current = false;
       return;
@@ -180,10 +200,10 @@ export function PantryForm({
               type="date"
               {...errorAttributes("expiresOn")}
               {...form.register("expiresOn", {
-                setValueAs: (value: string | null) =>
-                  value === "" || value === null
-                    ? null
-                    : alignLocalDateInputToJstDay(value, new Date()),
+                setValueAs: (value: RawFieldValue) => {
+                  const date = blankToNull(value);
+                  return date === null ? null : alignLocalDateInputToJstDay(date, new Date());
+                },
               })}
             />
           </label>
@@ -192,10 +212,19 @@ export function PantryForm({
           {/*
             任意項目は開閉にまとめ、名前と期限日だけで追加を始められるようにする。
             開閉の中にある項目がエラーになったときは submit 側で自動的に開く。
+            ブラウザ標準の制約検証（分量の min/step や途中までの数値入力）は onSubmit より前に
+            止まるため、invalid イベントでも開く。閉じたままだとブラウザは項目へフォーカスできず、
+            吹き出しも出ないので、押しても何も起きないように見えてしまう。
           */}
           <details
             className="pantry-details"
             open={detailsOpen}
+            onInvalid={() => {
+              if (detailsOpen) return;
+              flushSync(() => {
+                setDetailsOpen(true);
+              });
+            }}
             onToggle={(event) => {
               setDetailsOpen(event.currentTarget.open);
             }}
@@ -215,11 +244,7 @@ export function PantryForm({
                         step="0.001"
                         {...errorAttributes("quantity")}
                         {...form.register("quantity", {
-                          // 未操作のまま送信すると RHF は既定値の null をそのまま渡してくる。
-                          // Number(null) は 0 になり「分量と単位は両方」エラーで名前だけの追加が
-                          // 通らないため、空文字と同じく未入力として扱う。
-                          setValueAs: (value: string | null) =>
-                            value === "" || value === null ? null : Number(value),
+                          setValueAs: quantityFromField,
                         })}
                       />
                     </label>
@@ -232,7 +257,7 @@ export function PantryForm({
                         autoComplete="off"
                         {...errorAttributes("unit")}
                         {...form.register("unit", {
-                          setValueAs: (value: string) => (value === "" ? null : value),
+                          setValueAs: blankToNull,
                         })}
                       />
                     </label>
@@ -244,7 +269,7 @@ export function PantryForm({
                   <select
                     {...errorAttributes("expirationType")}
                     {...form.register("expirationType", {
-                      setValueAs: (value: string) => (value === "" ? null : value),
+                      setValueAs: blankToNull,
                     })}
                   >
                     <option value="">指定なし</option>
@@ -261,7 +286,7 @@ export function PantryForm({
                   <select
                     {...errorAttributes("openedState")}
                     {...form.register("openedState", {
-                      setValueAs: (value: string) => (value === "" ? null : value),
+                      setValueAs: blankToNull,
                     })}
                   >
                     <option value="">指定なし</option>

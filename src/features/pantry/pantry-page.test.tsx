@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -776,5 +776,92 @@ describe("pantry form optional details disclosure", () => {
     expect(error).toBeVisible();
     expect(quantity).toHaveFocus();
     expect(quantity).toHaveAttribute("aria-describedby", error.id);
+  });
+
+  it("opens itself when browser constraint validation rejects a hidden detail field", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<PantryForm saving={false} onSubmit={onSubmit} />);
+
+    await user.type(screen.getByRole("textbox", { name: "食材名" }), "牛乳");
+    await user.click(detailsSummary());
+    const quantity = screen.getByRole("spinbutton", { name: "分量" });
+    // min="0.001" に反する値。ブラウザ標準の検証が onSubmit より前に止める。
+    await user.type(quantity, "0");
+    await user.type(screen.getByRole("textbox", { name: "単位" }), "本");
+    await user.click(detailsSummary());
+    expect(quantity).not.toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+
+    expect(quantity).not.toBeValid();
+    expect(quantity).toBeVisible();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("opens on an invalid event from a detail field but not from an always-visible field", () => {
+    render(<PantryForm saving={false} onSubmit={vi.fn()} />);
+    const quantity = screen.getByRole("spinbutton", { name: "分量" });
+
+    fireEvent.invalid(screen.getByLabelText("期限日"));
+    expect(quantity).not.toBeVisible();
+
+    fireEvent.invalid(quantity);
+    expect(quantity).toBeVisible();
+  });
+
+  it("opens for a detail error even when the first error is the item name", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<PantryForm saving={false} onSubmit={onSubmit} />);
+
+    await user.click(detailsSummary());
+    await user.type(screen.getByRole("spinbutton", { name: "分量" }), "1");
+    await user.click(detailsSummary());
+
+    await user.click(screen.getByRole("button", { name: "追加する" }));
+
+    const detailError = await screen.findByText("分量と単位は両方入力してください");
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(detailError).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "分量" })).toBeVisible();
+    // フォーカスは従来どおり最初のエラー（食材名）へ当てる
+    expect(screen.getByRole("textbox", { name: "食材名" })).toHaveFocus();
+  });
+
+  it("round-trips a decimal quantity unchanged when saving an edit", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PantryForm
+        saving={false}
+        title="牛乳を編集"
+        submitLabel="変更を保存"
+        initialValue={{
+          name: "牛乳",
+          quantity: 0.5,
+          unit: "本",
+          expiresOn: null,
+          expirationType: null,
+          openedState: null,
+        }}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByRole("spinbutton", { name: "分量" })).toHaveValue(0.5);
+    await user.click(screen.getByRole("button", { name: "変更を保存" }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+    expect(onSubmit).toHaveBeenCalledWith({
+      name: "牛乳",
+      quantity: 0.5,
+      unit: "本",
+      expiresOn: null,
+      expirationType: null,
+      openedState: null,
+    });
   });
 });
