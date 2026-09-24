@@ -17,7 +17,7 @@ import qualityUrl from "./assets/plus-benefit-quality.webp";
 import { DeveloperBillingHistory } from "./developer-billing-history";
 import flyerUrl from "./assets/plus-benefit-flyer.webp";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
-import { formatBillingDate } from "./format-billing-date";
+import { formatUpcomingBillingDate } from "./format-billing-date";
 import { resolvePlusLandingView } from "./plus-landing-view";
 import { useEntitlement } from "./use-entitlement";
 import "./plus-landing-page.css";
@@ -71,7 +71,7 @@ export type PlusLandingPageProps = {
   entitlementError?: boolean;
   onCheckout?: (interval: "month" | "year") => Promise<void>;
   onPortal?: () => Promise<void>;
-  /** 更新日の表示判定に使う現在時刻（テストで固定する。省略時は描画時の時刻） */
+  /** 更新日・無料期間の終了の表示判定に使う現在時刻（テストで固定する。省略時は描画時の時刻） */
   now?: Date;
 };
 
@@ -88,15 +88,27 @@ function EntitledPeriodLine({
   autoRenews: boolean;
   now: Date;
 }) {
-  if (periodEndIso === null) return null;
-  const periodEndMs = Date.parse(periodEndIso);
-  if (Number.isNaN(periodEndMs) || periodEndMs <= now.getTime()) return null;
-  const periodEnd = formatBillingDate(periodEndIso);
+  const periodEnd = formatUpcomingBillingDate(periodEndIso, now);
   if (periodEnd === null) return null;
   return autoRenews ? (
     <p>次回の更新日: {periodEnd}</p>
   ) : (
     <p>{periodEnd}に Plus が終了します（自動更新なし）</p>
+  );
+}
+
+/**
+ * お試し中の無料期間の終了。更新日と同じく、終了日が現在時刻以前なら日付は出さない。
+ * 注意（TRIAL_END_WARNING）は日付に依存しない一般的な文なので、日付が出ないときも残す
+ * （trialEnd が null のときの既存の表示と同じ形）。
+ */
+function TrialEndLines({ trialEndIso, now }: { trialEndIso: string | null; now: Date }) {
+  const trialEnd = formatUpcomingBillingDate(trialEndIso, now);
+  return (
+    <div className="stack gap-1">
+      {trialEnd !== null ? <p>無料期間の終了: {trialEnd}</p> : null}
+      <p>{TRIAL_END_WARNING}</p>
+    </div>
   );
 }
 
@@ -344,12 +356,7 @@ export function PlusLandingPage({
         <div className="stack gap-3">
           <h1>{PLUS_LP_ACTIVE}</h1>
           {view.trialing ? (
-            <div className="stack gap-1">
-              {formatBillingDate(view.trialEnd) !== null ? (
-                <p>無料期間の終了: {formatBillingDate(view.trialEnd)}</p>
-              ) : null}
-              <p>{TRIAL_END_WARNING}</p>
-            </div>
+            <TrialEndLines trialEndIso={view.trialEnd} now={now} />
           ) : (
             // お試し中は無料期間の終了を優先し、更新日と二重に出さない
             <EntitledPeriodLine

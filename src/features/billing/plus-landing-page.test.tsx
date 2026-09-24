@@ -7,7 +7,12 @@ import { RouterProvider } from "react-router/dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EntitlementData } from "@shared/contracts/billing";
 import { planQuota } from "@shared/contracts/plan-quota";
-import { PAST_DUE_COPY, PORTAL_BUTTON_LABEL, SURFACES_CLOSED_COPY } from "./billing-ui-copy";
+import {
+  PAST_DUE_COPY,
+  PORTAL_BUTTON_LABEL,
+  SURFACES_CLOSED_COPY,
+  TRIAL_END_WARNING,
+} from "./billing-ui-copy";
 import {
   PLUS_LP_ACTIVE,
   PLUS_LP_CANCEL,
@@ -513,6 +518,28 @@ describe("PlusLandingPage entitled benefits and period", () => {
     }
   });
 
+  it("shows a future trial end date while trialing", () => {
+    renderLp({
+      entitlement: { ...plusActive, status: "trialing", trialEnd: "2026-09-30T15:00:00.000Z" },
+      now: FIXED_NOW,
+    });
+    expect(screen.getByText("無料期間の終了: 2026年10月1日")).toBeVisible();
+    expect(screen.getByText(TRIAL_END_WARNING)).toBeVisible();
+  });
+
+  it.each([
+    { label: "in the past", trialEnd: "2026-09-20T15:00:00.000Z" },
+    { label: "equal to now", trialEnd: FIXED_NOW.toISOString() },
+  ])("hides a trial end date $label but keeps the warning", ({ trialEnd }) => {
+    // webhook が遅れて trialing のまま古い trialEnd が残っても、過去日を断言しない
+    renderLp({
+      entitlement: { ...plusActive, status: "trialing", trialEnd },
+      now: FIXED_NOW,
+    });
+    expect(screen.queryByText(/無料期間の終了/u)).not.toBeInTheDocument();
+    expect(screen.getByText(TRIAL_END_WARNING)).toBeVisible();
+  });
+
   it("prefers the trial end over the renewal date while trialing", () => {
     renderLp({
       entitlement: {
@@ -521,6 +548,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
         trialEnd: "2026-09-30T15:00:00.000Z",
         currentPeriodEnd: "2026-09-30T15:00:00.000Z",
       },
+      now: FIXED_NOW,
     });
     expect(screen.getByText("無料期間の終了: 2026年10月1日")).toBeVisible();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();

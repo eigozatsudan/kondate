@@ -14,3 +14,14 @@ export function formatBillingDate(iso: string | null): string | null {
     return null;
   }
 }
+
+/**
+ * これから来る日時だけを整形する。現在時刻以前（同時刻を含む）や解釈できない値は null。
+ * webhook の遅れで古い期間末・無料期間の終了が残っていても、過去の日付を断言しないために使う。
+ */
+export function formatUpcomingBillingDate(iso: string | null, now: Date): string | null {
+  if (iso === null) return null;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms) || ms <= now.getTime()) return null;
+  return formatBillingDate(iso);
+}
