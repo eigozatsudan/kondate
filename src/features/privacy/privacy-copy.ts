@@ -86,10 +86,12 @@ export const shareConsentSection = {
 
 /**
  * 同意の説明文を「。」ごとの文に分ける（設定画面で箇条書きにするため）。
- * 文言は一字も変えない: 分けた文を連結すると元の文と完全に一致する。
+ * 文言は一字も変えない: どんな入力でも、分けた文を連結すると元の文と完全に一致する。
+ * 「。」までを 1 文とし（先頭や連続の「。」も単独の 1 文として残す）、
+ * 末尾の「。」の無い残りも 1 文にする。空の文は出さない（空文字なら空配列）。
  */
 export function splitConsentSentences(text: string): string[] {
-  return text.match(/[^。]+。?/gu) ?? [text];
+  return text.match(/[^。]*。|[^。]+$/gu) ?? [];
 }
 
 /**

@@ -1622,6 +1622,12 @@ dialog:not([open]) {
   font-weight: 400;
 }
 
+/* 保存中などで押せないときは、他の無効な操作（.choice-card:disabled 等）と同じ見た目にする */
+.household-member-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
 .household-editor {
   border-top: 2px solid var(--border);
   padding-top: 20px;

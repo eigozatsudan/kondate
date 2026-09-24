@@ -319,9 +319,14 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
   expect(screen.getAllByText(/選んでください|確認してください|入力内容/).length).toBeGreaterThan(0);
   expect(screen.getByRole("alert")).toBeVisible();
 
-  await user.click(
-    await screen.findByRole("checkbox", { name: UNSUPPORTED_DIET_KIND_LABELS.weaning_food }),
-  );
+  const weaningFood = await screen.findByRole("checkbox", {
+    name: UNSUPPORTED_DIET_KIND_LABELS.weaning_food,
+  });
+  // 入力欄用の .field（min-height 48px・padding）に入れず、チェックの横並びラベルで 44px を確保する
+  expect(weaningFood.closest(".field")).toBeNull();
+  expect(weaningFood.closest("label")).toHaveClass("control-label");
+  expect(weaningFood.closest("fieldset")).toHaveClass("control-group");
+  await user.click(weaningFood);
 
   expect(updateDraft).toHaveBeenNthCalledWith(
     2,

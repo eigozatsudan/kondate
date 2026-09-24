@@ -1629,23 +1629,23 @@ export function HouseholdOnboardingForm({
         <p className="type-small">{UNSUPPORTED_DIET_STATUS_HELP}</p>
 
         {draft.unsupported_diet_status === "present" && (
-          <fieldset ref={unsupportedDietKindsRef}>
+          <fieldset ref={unsupportedDietKindsRef} className="control-group">
             <legend>{UNSUPPORTED_DIET_KINDS_LEGEND}</legend>
+            {/* 入力欄用の .field に入れると .field input の min-height・padding で縦長になるので、
+                家族設定ページと同じチェックの横並びラベル（.control-label）にする */}
             {unsupportedDietKinds.map((kind) => (
-              <label key={kind} className="field">
-                <span>
-                  <input
-                    type="checkbox"
-                    checked={draft.unsupported_diet_kinds.includes(kind)}
-                    onChange={(event) => {
-                      const next = event.target.checked
-                        ? [...draft.unsupported_diet_kinds, kind]
-                        : draft.unsupported_diet_kinds.filter((item) => item !== kind);
-                      void save({ unsupported_diet_kinds: next });
-                    }}
-                  />
-                  {UNSUPPORTED_DIET_KIND_LABELS[kind]}
-                </span>
+              <label key={kind} className="control-label">
+                <input
+                  type="checkbox"
+                  checked={draft.unsupported_diet_kinds.includes(kind)}
+                  onChange={(event) => {
+                    const next = event.target.checked
+                      ? [...draft.unsupported_diet_kinds, kind]
+                      : draft.unsupported_diet_kinds.filter((item) => item !== kind);
+                    void save({ unsupported_diet_kinds: next });
+                  }}
+                />
+                {UNSUPPORTED_DIET_KIND_LABELS[kind]}
               </label>
             ))}
             <p className="type-small">{UNSUPPORTED_DIET_PRESENT_HELP}</p>

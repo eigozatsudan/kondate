@@ -130,3 +130,34 @@ it("U6: splits settings consent copy into bullet sentences without dropping a ch
     shareConsentRequiredPhrases.map((phrase) => (phrase.endsWith("。") ? phrase : `${phrase}。`)),
   );
 });
+
+it("U6: never drops or reorders a character for any input, and emits no empty items", () => {
+  const edgeCases = [
+    "",
+    "。",
+    "。。",
+    "。あ。",
+    "あ。。い",
+    "あい",
+    "あ。い",
+    "。。あ。。",
+    "あ。い。う",
+  ];
+  // 「あ」「。」「い」の 0〜6 文字の全組み合わせで、連結が元の文字列と完全一致することを確かめる
+  const alphabet = ["あ", "。", "い"];
+  const generated: string[] = [""];
+  let frontier = [""];
+  for (let length = 1; length <= 6; length += 1) {
+    frontier = frontier.flatMap((prefix) => alphabet.map((char) => `${prefix}${char}`));
+    generated.push(...frontier);
+  }
+  for (const text of [...edgeCases, ...generated]) {
+    const sentences = splitConsentSentences(text);
+    expect(sentences.join("")).toBe(text);
+    expect(sentences.every((sentence) => sentence.length > 0)).toBe(true);
+  }
+  expect(splitConsentSentences("")).toEqual([]);
+  expect(splitConsentSentences("。")).toEqual(["。"]);
+  expect(splitConsentSentences("あ。。い")).toEqual(["あ。", "。", "い"]);
+  expect(splitConsentSentences("。あ")).toEqual(["。", "あ"]);
+});

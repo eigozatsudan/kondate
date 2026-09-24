@@ -91,6 +91,18 @@ function queryResidualNotice(): HTMLElement | null {
   );
 }
 
+/**
+ * 残存説明が出ていないことを、要素や role を問わず画面全体の文字で確かめる。
+ * 全文だけでなく、箇条書きに分けた各文も一つも出ていないこと。
+ */
+function expectResidualNoticeAbsent(): void {
+  const pageText = document.body.textContent;
+  expect(pageText).not.toContain(shareConsentSettingsCopy.residualRetentionNotice);
+  for (const sentence of splitConsentSentences(shareConsentSettingsCopy.residualRetentionNotice)) {
+    expect(pageText).not.toContain(sentence);
+  }
+}
+
 function getResidualNotice(): HTMLElement {
   const notice = queryResidualNotice();
   if (notice === null) throw new Error("residual retention notice not found");
@@ -141,7 +153,8 @@ describe("ShareConsentSettingsSection", () => {
       ...splitConsentSentences(shareConsentSettingsCopy.acceptDisclosure),
       ...splitConsentSentences(shareConsentSettingsCopy.residualRetentionNotice),
     ];
-    expect(items).toEqual(expect.arrayContaining(expected));
+    // 順序も固定する（help → 同意の必須事項 → 残存説明の読み順のまま）
+    expect(items).toEqual(expected);
     // 長い段落のままの説明は残さない
     for (const paragraph of within(section).queryAllByText(/./u, { selector: "p" })) {
       expect(paragraph.textContent).not.toBe(shareConsentSettingsCopy.help);
@@ -177,7 +190,7 @@ describe("ShareConsentSettingsSection", () => {
     expect(
       screen.getByRole("switch", { name: shareConsentSettingsCopy.toggleLabel }),
     ).toHaveAttribute("aria-checked", "true");
-    expect(queryResidualNotice()).not.toBeInTheDocument();
+    expectResidualNoticeAbsent();
   });
 
   it("revokes on toggle off and keeps residual copy visible", async () => {
