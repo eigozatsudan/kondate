@@ -85,7 +85,7 @@ describe("AudienceStep layout and selected safety summary", () => {
     expect(idea).toHaveAccessibleName("人数だけ指定してアイデアを見る");
     expect(household).toHaveAccessibleName("家族に合わせて作る");
     expect(idea).toHaveAccessibleDescription(
-      "家族の登録なしで、人数に合わせた献立の案を見ます。アレルギーなどの家族の条件は使いません。",
+      "登録した家族のアレルギーなどの条件は使わず、人数に合わせた献立の案を見ます。",
     );
     expect(household).toHaveAccessibleDescription(
       "登録した家族の年齢・アレルギーなどの条件をもとに作ります。",
@@ -94,6 +94,32 @@ describe("AudienceStep layout and selected safety summary", () => {
     const ideaDescriptionId = idea.getAttribute("aria-describedby") ?? "";
     const ideaDescription = document.getElementById(ideaDescriptionId)?.textContent ?? "";
     expect(ideaDescription).not.toMatch(/安全|確認済/u);
+  });
+
+  it("keeps the mode error id after the household description when the mode is missing", async () => {
+    const user = userEvent.setup();
+    renderAudience(
+      <AudienceStep
+        value={{ targetMode: null, targetMemberIds: [], servings: null }}
+        eligibleMembers={[memberA]}
+        onChange={vi.fn()}
+        onNext={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+
+    const household = screen.getByRole("radio", { name: "家族に合わせて作る" });
+    expect(household).toHaveAttribute(
+      "aria-describedby",
+      "audience-household-description audience-target-mode-error",
+    );
+    expect(household).toHaveAccessibleDescription(
+      "登録した家族の年齢・アレルギーなどの条件をもとに作ります。 作る相手の選び方を選んでください",
+    );
+    expect(screen.getByRole("radio", { name: "人数だけ指定してアイデアを見る" })).toHaveAttribute(
+      "aria-describedby",
+      "audience-idea-description",
+    );
   });
 
   it("keeps the household disabled reason in the description after the mode description", () => {

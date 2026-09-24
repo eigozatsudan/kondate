@@ -255,7 +255,7 @@ it("explains the unsupported-diet item in the intro when no member exists yet", 
 
   expect(
     await screen.findByText(
-      "年齢のめやす、アレルギー、このアプリで献立を作れない事情（離乳食・治療食など）の3項目から始めます。",
+      "年齢のめやす、アレルギー、このアプリで献立を作れない事情（離乳食・飲み込みの不安・治療食など）の3項目から始めます。",
     ),
   ).toBeVisible();
 });

@@ -303,7 +303,7 @@ export function AudienceStep({
                     <span>人数だけ指定してアイデアを見る</span>
                   </label>
                   <p id={ideaDescriptionId} className="wizard-option-description">
-                    家族の登録なしで、人数に合わせた献立の案を見ます。アレルギーなどの家族の条件は使いません。
+                    登録した家族のアレルギーなどの条件は使わず、人数に合わせた献立の案を見ます。
                   </p>
                 </div>
                 <div className="wizard-option-block">
