@@ -7,23 +7,44 @@ import { plannerSteps, type PlannerStep } from "./model/planner-wizard";
  * - `review`: 下書きが確認まで揃っていれば確認画面、揃っていなければ最初の未回答の質問を開く。
  * - 上記以外の既存値（`audience` など）: 最初の未回答の質問を開く。
  *
- * 追加（UX フォローアップ B-1 / B-3）:
- * - `start`: 別の画面から「質問を始める」深リンク。最初の未回答の質問を開く。
- *   端末の戻るでホームへ戻れるよう、開いたあと自分の履歴エントリをホーム（`/planner`）に
- *   置き換え、その上にウィザードの印（`home`）を積む。
- * - `home`: ホームのボタン（続きから・最初から・今日の献立をつくる）でウィザードを開いたときに
- *   積む履歴エントリの印。同じ画面の中ではボタンが開く質問を決める。戻る・進むで同じ画面の
- *   このエントリへ来たときは「続きから」と同じ質問で開き直す。再読み込みや別の画面から
- *   戻って新しく開いたときはホームを出し、URL を `/planner` に置き換える
- *   （生成画面などから戻ったときに、確認や空の 1 問目へいきなり入らないため）。
+ * 追加（UX フォローアップ B-1）:
+ * - `start`: 別の画面（緊急献立など）から、ホームを経由せず最初の未回答の質問を開く深リンク。
+ *   扱いは `audience` などと同じ（最初の未回答の質問）。名前で用途を示すために分けた。
+ *   開いている間は URL に残す（`review` と同じく、再読み込みでもウィザードのまま）。
+ *
+ * 端末の戻るは履歴エントリで表さない。ウィザードが開いている間の戻る（POP）は
+ * PlannerRoutePage の useBlocker が止め、ウィザードを閉じてホームを出す。そのとき
+ * `?resume=` 付きの URL は `/planner` に置き換え、ホームと URL を一致させる。
+ *
+ * `?resume=` の深リンクは履歴 entry ごとに一度だけ効く。同じ画面の読み込み中（JS の
+ * セッション）に一度ウィザードを開くのに使った entry へ、別画面（生成・結果・privacy など）
+ * から戻る操作で戻ってきたときは、ウィザードを開き直さずホームを出して `/planner` に置き換える
+ * （開き直すと、戻るたびに質問が出て「ホームへ戻る」ための戻るが 1 回増えるため）。
+ * 再読み込みでは覚えが消えるので、再読み込みした `?resume=` はこれまでどおりウィザードを開く。
  */
 export const PLANNER_RESUME_START = "start";
-export const PLANNER_RESUME_HOME = "home";
+
+// 一度ウィザードを開くのに使った `?resume=` の履歴 entry（location.key）。
+// location.key は entry ごとの乱数で個人情報を含まない。モジュール内だけに置き、保存しない。
+const usedResumeEntryKeys = new Set<string>();
+
+/** `?resume=` の entry でウィザードを開いたことを覚える */
+export function markPlannerResumeEntryUsed(locationKey: string): void {
+  usedResumeEntryKeys.add(locationKey);
+}
+
+/** テスト用: 使用済み entry の覚えを消す（モジュールの状態がテスト間で残るため） */
+export function resetPlannerResumeEntriesForTests(): void {
+  usedResumeEntryKeys.clear();
+}
+
+/** この `?resume=` の entry が、すでにウィザードを開くのに使われたか */
+export function isPlannerResumeEntryUsed(locationKey: string): boolean {
+  return usedResumeEntryKeys.has(locationKey);
+}
 
 /** B-1: 緊急献立などから、ホームを経由せず最初の未回答の質問を開くリンク先 */
 export const PLANNER_START_QUESTIONS_PATH = `/planner?resume=${PLANNER_RESUME_START}`;
-/** B-3: ホームからウィザードを開いたときに積む履歴エントリ */
-export const PLANNER_WIZARD_HOME_ENTRY_PATH = `/planner?resume=${PLANNER_RESUME_HOME}`;
 
 /**
  * B-2: 利用者が最後に開いていた質問の step 名だけを覚える（回答の中身や個人情報は入れない）。

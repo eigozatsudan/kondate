@@ -80,6 +80,9 @@ async function savePlannerMeal(
 ): Promise<void> {
   await page.goto("/planner");
   // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
+  // M-7: 「続きから答える」は同じタブで最後に開いていた質問を開く（B-2）。この spec の
+  // resumeDraftFromHome 呼び出しはすべて、直前のウィザード操作が確認（review）で終わって
+  // いる（本関数自身も skipOptionalPlannerSteps で確認まで進めて終わる）前提で「9. 確認」を期待する。
   await resumeDraftFromHome(page);
   await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
   for (let i = 0; i < 8; i += 1) {
@@ -292,7 +295,7 @@ test("waits for the latest draft save before requesting emergency menus", async 
     { pantryItemId: selectedPantryItemId, priority: "prefer_use" },
   ]);
   expect(emergencyRequests).toHaveLength(0);
-  // B-3: ホームから開いたウィザードは /planner?resume=home に居る。pathname で留まりを見る
+  // B-3: ウィザードは履歴を積まず /planner に居る。pathname で留まりを見る
   await expect(page).toHaveURL((url) => url.pathname === "/planner");
 
   releaseSave?.();

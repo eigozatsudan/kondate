@@ -1019,11 +1019,12 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     // household_members取得は家族安全actionではないため、route listenerを
     // 外さずに記録対象外として扱う（activeRoute = null）。
     activeRoute = null;
-    // B-1: 「献立の条件を入力する」はホームを経由せず最初の質問を開き、戻るでホームへ戻る
+    // B-1: 「献立の条件を入力する」はホームを経由せず最初の質問を開く（/planner?resume=start）。
+    // B-3: 戻るは遷移を取り消してウィザードを閉じ、URL を /planner へ置き換えてホームを出す。
     await page.getByRole("link", { name: "献立の条件を入力する" }).click();
     await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({ timeout: 30_000 });
     await expect(page).toHaveURL(
-      (url) => url.pathname === "/planner" && url.search === "?resume=home",
+      (url) => url.pathname === "/planner" && url.search === "?resume=start",
     );
     await page.goBack();
     await expect(page).toHaveURL((url) => url.pathname === "/planner" && url.search === "");

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type RefObject } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   NavigationType,
@@ -30,6 +30,7 @@ import {
   createPendingGeneration,
   readPendingGeneration,
 } from "@/features/generation/model/pending-generation";
+import { markGenerationOpenedFromPlanner } from "@/features/generation/model/generation-planner-entry";
 import { reconcileTerminalPendingGeneration } from "@/features/generation/model/reconcile-terminal-pending";
 import {
   readPendingGenerationMeta,
@@ -81,9 +82,8 @@ import {
   runPlannerLeaveFlush,
 } from "./planner-leave-flush";
 import {
-  PLANNER_RESUME_HOME,
-  PLANNER_RESUME_START,
-  PLANNER_WIZARD_HOME_ENTRY_PATH,
+  isPlannerResumeEntryUsed,
+  markPlannerResumeEntryUsed,
   readPlannerLastStep,
   resolvePlannerContinueStep,
   writePlannerLastStep,
@@ -204,17 +204,28 @@ async function loadPlannerSafetyData(userId: string): Promise<PlannerSafetyData>
   };
 }
 
-export type PlannerPageProps = {
-  startGeneration?: (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal) => unknown;
+/**
+ * B-3: 端末の戻る（POP）でウィザードを閉じるための口。PlannerRoutePage の useBlocker が
+ * 同期で「ウィザードが開いているか」を読み、止めた POP をウィザードを閉じる操作に置き換える。
+ */
+export type PlannerWizardBackControl = {
+  isWizardOpen: () => boolean;
+  closeWizardForBack: () => void;
 };
 
-export function PlannerPage({ startGeneration }: PlannerPageProps = {}) {
+export type PlannerPageProps = {
+  startGeneration?: (draft: PlannerDraft, attempt: PlannerAttempt, signal: AbortSignal) => unknown;
+  wizardBackControlRef?: RefObject<PlannerWizardBackControl | null>;
+};
+
+export function PlannerPage({ startGeneration, wizardBackControlRef }: PlannerPageProps = {}) {
   const userId = useAuth().session?.user.id;
   return (
     <PlannerPageForOwner
       key={userId ?? "missing"}
       userId={userId}
       startGeneration={startGeneration}
+      wizardBackControlRef={wizardBackControlRef}
     />
   );
 }
@@ -233,10 +244,24 @@ export function PlannerRoutePage() {
   // unmount enqueue は失敗を swallow するため、POP だけ block して leave-flush を await する。
   // 下ナビ click 後の navigate・生成成功の /generation・settings/emergency/privacy は
   // PUSH/REPLACE かつ既に flush 済み（または専用経路）なので block しない。
+  //
+  // B-3: ウィザードが開いている間の POP は pathname に関係なく止め、遷移を取り消して
+  // ウィザードを閉じ、ホームを出す（ウィザード用の履歴エントリは積まない）。
+  // react-router 8.3 の router は、blocker が POP を止めると history.go(-delta) で URL を
+  // 止める前の場所へ戻し（その popstate は内部で読み捨てる）、state.location は変えない。
+  // reset() は blocker を idle に戻すだけで遷移しないので、履歴も URL も増減しない。
+  // ホーム（ウィザードが閉じている）での戻るは従来どおり pathname が変わるときだけ止め、
+  // leave flush してから離れる。
+  const wizardBackControlRef = useRef<PlannerWizardBackControl | null>(null);
+  const blockedForWizardRef = useRef(false);
   const blocker = useBlocker(({ historyAction, currentLocation, nextLocation }) => {
-    return (
-      historyAction === NavigationType.Pop && currentLocation.pathname !== nextLocation.pathname
-    );
+    if (historyAction !== NavigationType.Pop) return false;
+    if (wizardBackControlRef.current?.isWizardOpen() === true) {
+      blockedForWizardRef.current = true;
+      return true;
+    }
+    blockedForWizardRef.current = false;
+    return currentLocation.pathname !== nextLocation.pathname;
   });
   // react-router 8.3 は blocked 中の再 POP で blocker 参照だけを差し替える。
   // proceed/reset は最新を使い、identity 変化では in-flight flush を cancelled にしない。
@@ -244,6 +269,14 @@ export function PlannerRoutePage() {
   blockerRef.current = blocker;
   useEffect(() => {
     if (blocker.state !== "blocked") return;
+    if (blockedForWizardRef.current) {
+      // 戻るをウィザードを閉じる操作に置き換える。遷移はしない（未保存の回答は route の
+      // state と autosave に残る）。
+      blockedForWizardRef.current = false;
+      wizardBackControlRef.current?.closeWizardForBack();
+      blockerRef.current.reset?.();
+      return;
+    }
     // cleanup が await 中に立つ。let だと静的解析が常に false と見なす。
     const cancelled = { current: false };
     void (async () => {
@@ -286,6 +319,7 @@ export function PlannerRoutePage() {
         if (outcome === "kept") {
           if (signal.aborted) return false;
           // 新規条件は送っていない。review の pending 注意文 + /generation?resumed=1 で明示する
+          markGenerationOpenedFromPlanner();
           void navigate("/generation?resumed=1");
           return "resumed";
         }
@@ -354,6 +388,7 @@ export function PlannerRoutePage() {
         // await 後に AbortSignal.aborted を直読すると、直前の early return で
         // 常に false と畳まれ no-unnecessary-condition になる。関数経由で再読する。
         if (isAbortSignalAborted(signal) || !winnerReady) return false;
+        markGenerationOpenedFromPlanner();
         void navigate("/generation?resumed=1");
         return "resumed";
       }
@@ -380,20 +415,28 @@ export function PlannerRoutePage() {
       if (isAbortSignalAborted(signal)) {
         return false;
       }
+      markGenerationOpenedFromPlanner();
       void navigate("/generation");
       return true;
     },
     [navigate, planCode, qualityAvailable, userId],
   );
-  return <PlannerPage startGeneration={startGeneration} />;
+  return (
+    <PlannerPage startGeneration={startGeneration} wizardBackControlRef={wizardBackControlRef} />
+  );
 }
 
 type PlannerPageForOwnerProps = {
   userId: string | undefined;
   startGeneration: PlannerPageProps["startGeneration"];
+  wizardBackControlRef: PlannerPageProps["wizardBackControlRef"];
 };
 
-function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerProps) {
+function PlannerPageForOwner({
+  userId,
+  startGeneration,
+  wizardBackControlRef,
+}: PlannerPageForOwnerProps) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
@@ -563,13 +606,18 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   // P6: post-init の ?resume= 反応で最新 value を読む（search 変更時だけ step を触る）
   const valueForResumeRef = useRef(emptyDraft);
-  // B-3: ホームのボタンがウィザードを開き、印（?resume=home）を積んだ直後。
-  // 開く質問はボタン側で決めてあるので、P6 effect は step を触らない。
-  const homeOpenPendingRef = useRef(false);
-  // B-3: 新しく開いた ?resume=home を /planner へ置き換えている途中（P6 effect で開かない）。
-  const homeEntryNormalizingRef = useRef(false);
-  // B-1: ?resume=start を /planner へ置き換えた後に、ウィザードの印を積む予定。
-  const startEntryPushPendingRef = useRef(false);
+
+  // B-3: ?resume= の深リンクは entry ごとに一度だけ効く（planner-resume.ts の契約）。
+  // mount 時点で「使用済みの ?resume= entry へ戻ってきた」かを一度だけ判定する
+  // （init effect で覚えを書くので、StrictMode の effect 二重実行で判定が変わらないよう state に持つ）。
+  const locationKey = useLocation().key;
+  const locationKeyRef = useRef(locationKey);
+  locationKeyRef.current = locationKey;
+  const [arrivedAtUsedResumeEntry] = useState(
+    () => searchParams.get("resume") !== null && isPlannerResumeEntryUsed(locationKey),
+  );
+  // いまウィザードを開くのに使っている ?resume= entry。P6 の再実行（safety 取得など）では開き直してよい
+  const openedResumeEntryKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     // G-R4: sticky pending の terminal/in-flight 照合が終わるまで init しない
@@ -591,8 +639,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // privacy 往復後の resume=review は、下書きが確認まで揃っているときだけ step を固定する
     // （本命は openPrivacyNotice の flush+cache。resume は二重の安全策）。
     const firstIncomplete = firstIncompletePlannerStep(sanitized);
-    const initialResume = searchParams.get("resume");
-    if (initialResume === "review" && firstIncomplete === "review") {
+    if (searchParams.get("resume") === "review" && firstIncomplete === "review") {
       setStep("review");
     } else {
       setStep(firstIncomplete);
@@ -608,28 +655,21 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // 押しても途中の質問が開いてホームへ戻れなかったため、ホームで選ばせる形に変えた。
     // pending の照合完了（pendingDisplayReady）を待つ条件は残す。照合前に init すると
     // ホームのボタン構成が「続きから」→「作成中」に後から入れ替わるちらつきが出るため。
-    // B-3: ?resume=home はホームのボタンで開いたウィザードの履歴エントリの印。新しく開いた
-    //   （再読み込み・生成画面などから戻った）ときはホームを出し、URL を /planner に置き換える。
-    //   生成画面から戻っただけで確認画面や空の 1 問目へいきなり入らないようにするため。
-    // B-1: ?resume=start は別の画面から質問を始める深リンク。最初の未回答の質問を開いたうえで、
-    //   このエントリをホーム（/planner）に置き換え、その上にウィザードの印を積む
-    //   （続きは下の location.key effect）。端末の戻るでホームへ戻れるようにするため。
-    if (initialResume === PLANNER_RESUME_HOME) {
-      homeEntryNormalizingRef.current = true;
-      setWizardOpen(false);
-      void navigate("/planner", { replace: true });
-    } else {
-      setWizardOpen(initialResume !== null);
-      if (initialResume === PLANNER_RESUME_START) {
-        startEntryPushPendingRef.current = true;
-        void navigate("/planner", { replace: true });
-      }
+    // B-1 の ?resume=start も 1) に入る（最初の未回答の質問。緊急献立から直接質問へ）。
+    // B-3: 使用済みの ?resume= entry へ戻ってきたときは 2) と同じくホーム（URL の置き換えは
+    // 初期化後に走る下の P6 effect が担う）。
+    const opensFromResume = searchParams.get("resume") !== null && !arrivedAtUsedResumeEntry;
+    if (opensFromResume) {
+      markPlannerResumeEntryUsed(locationKey);
+      openedResumeEntryKeyRef.current = locationKey;
     }
+    setWizardOpen(opensFromResume);
     setInitialized(true);
   }, [
+    arrivedAtUsedResumeEntry,
     draftQuery.data,
     initialized,
-    navigate,
+    locationKey,
     pendingDisplayReady,
     safetyQuery.data,
     searchParams,
@@ -646,42 +686,28 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // searchParams オブジェクト参照ではなく get("resume") 結果に依存し、毎 render の再実行を避ける。
   // P5: eligible を渡し、strip 前でも blocked ID のまま review に着地しない。
   const resumeQuery = searchParams.get("resume");
-  // B-3: ?resume=home は URL が変わったときだけ扱う（安全データの再取得で質問を動かさない）
-  const previousResumeQueryRef = useRef<string | null>(null);
   useEffect(() => {
     if (!initialized) return;
-    const resumeQueryChanged = previousResumeQueryRef.current !== resumeQuery;
-    previousResumeQueryRef.current = resumeQuery;
     if (resumeQuery === null) return;
+    const entryKey = locationKeyRef.current;
+    if (entryKey !== openedResumeEntryKeyRef.current && isPlannerResumeEntryUsed(entryKey)) {
+      // B-3: 使用済みの ?resume= entry へ戻ってきた。開き直さずホームを出し、URL を合わせる
+      setWizardOpen(false);
+      void navigate("/planner", { replace: true });
+      return;
+    }
+    markPlannerResumeEntryUsed(entryKey);
+    openedResumeEntryKeyRef.current = entryKey;
     const eligible =
       safetyQuery.data !== undefined ? new Set(safetyQuery.data.eligibleMemberIds) : undefined;
     const firstIncomplete = firstIncompletePlannerStep(valueForResumeRef.current, eligible);
-    if (resumeQuery === PLANNER_RESUME_HOME) {
-      if (!resumeQueryChanged) return;
-      // ホームのボタンで開いた直後: 質問はボタンが決め済み、ウィザードも開いている
-      if (homeOpenPendingRef.current) {
-        homeOpenPendingRef.current = false;
-        return;
-      }
-      // 新しく開いた印は init がホームを出して置き換える
-      if (homeEntryNormalizingRef.current) return;
-      // 同じ画面で戻る・進むによってこのエントリへ来た: 「続きから」と同じ質問で開き直す
-      setStep(
-        resolvePlannerContinueStep(
-          firstIncomplete,
-          userId === undefined ? null : readPlannerLastStep(userId),
-        ),
-      );
-      setWizardOpen(true);
-      return;
-    }
     if (resumeQuery === "review" && firstIncomplete === "review") {
       setStep("review");
     } else {
       setStep(firstIncomplete);
     }
     setWizardOpen(true);
-  }, [initialized, resumeQuery, safetyQuery.data, userId]);
+  }, [initialized, navigate, resumeQuery, safetyQuery.data]);
 
   // B-2: 開いている質問の step 名だけを覚える（「続きから答える」の戻り先）。
   useEffect(() => {
@@ -704,33 +730,50 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // - I-2: pathname が変わらないため AppShell の遷移フォーカスが走らない。質問画面から実際に
   //   ホームへ入れ替えたときだけ、シェルにホームの h1 へのフォーカスと先頭スクロールを頼む
   //   （ホームのままタブを押したときは画面が変わらないので頼まない）。
-  const locationKey = useLocation().key;
   const lastLocationKeyRef = useRef(locationKey);
   const requestPageHeadingFocus = useRequestPageHeadingFocus();
   useEffect(() => {
     if (lastLocationKeyRef.current === locationKey) return;
     lastLocationKeyRef.current = locationKey;
-    // 印の処理は、同じ遷移で先に走る P6 effect が済ませている。遷移 1 回で使い切る。
-    homeOpenPendingRef.current = false;
-    homeEntryNormalizingRef.current = false;
-    const pushStartEntry = startEntryPushPendingRef.current;
-    startEntryPushPendingRef.current = false;
     if (!initialized) return;
     if (resumeQuery !== null) return;
-    // B-1: ?resume=start を /planner（ホーム）へ置き換え終えたので、ウィザードの印を積む。
-    // ウィザードは開いたままにし、ホームを一瞬出したりフォーカスを動かしたりしない。
-    if (pushStartEntry) {
-      if (wizardOpen) {
-        homeOpenPendingRef.current = true;
-        void navigate(PLANNER_WIZARD_HOME_ENTRY_PATH);
-      }
-      return;
-    }
     if (submittingRef.current || emergencyOpeningRef.current || leaveInFlightRef.current) return;
     if (!wizardOpen) return;
     setWizardOpen(false);
     requestPageHeadingFocus();
-  }, [initialized, locationKey, navigate, resumeQuery, wizardOpen, requestPageHeadingFocus]);
+  }, [initialized, locationKey, resumeQuery, wizardOpen, requestPageHeadingFocus]);
+
+  // B-3: 端末の戻る（PlannerRoutePage の useBlocker が止めた POP）でウィザードを閉じる。
+  // blocker は同期で開閉を読むため、描画ごとに最新の値を ref に写す。
+  const wizardOpenRef = useRef(wizardOpen);
+  wizardOpenRef.current = wizardOpen;
+  const resumeQueryRef = useRef(resumeQuery);
+  resumeQueryRef.current = resumeQuery;
+  useEffect(() => {
+    if (wizardBackControlRef === undefined) return;
+    wizardBackControlRef.current = {
+      isWizardOpen: () => wizardOpenRef.current,
+      closeWizardForBack: () => {
+        // 生成 submit・緊急献立への移動・leave-flush の途中は、直後に別画面へ移るので
+        // 画面を切り替えない（戻るは取り消されたまま、何も起きない）。献立タブと同じ条件。
+        if (submittingRef.current || emergencyOpeningRef.current || leaveInFlightRef.current) {
+          return;
+        }
+        if (!wizardOpenRef.current) return;
+        wizardOpenRef.current = false;
+        setWizardOpen(false);
+        requestPageHeadingFocus();
+        // ?resume= で開いていたときは URL をホーム（/planner）に置き換え、画面と一致させる。
+        // replace なので履歴は増えず、再読み込みでウィザードが開き直ることもない。
+        if (resumeQueryRef.current !== null) {
+          void navigate("/planner", { replace: true });
+        }
+      },
+    };
+    return () => {
+      wizardBackControlRef.current = null;
+    };
+  }, [navigate, requestPageHeadingFocus, wizardBackControlRef]);
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
@@ -1612,7 +1655,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     .slice(0, HOME_EXPIRING_PANTRY_LIMIT);
 
   // ホーム: ?resume= 以外の初期表示。?resume= 時はここへ来ない
-  // （例外: 新しく開いた ?resume=home は /planner へ置き換えるまでの間だけホームを出す）。
+  // （例外: ?resume= で開いたウィザードを端末の戻るで閉じ、/planner へ置き換えるまでの間）。
   if (!wizardOpen) {
     // P5: eligible を渡し、blocked 家族 ID が残っていても review に着地しない
     // （fatal/pending 通過後なので safetyData は利用可能）
@@ -1623,15 +1666,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
       homeResumeStep,
       userId === undefined ? null : readPlannerLastStep(userId),
     );
-    // B-3: ホームからウィザードを開くときは履歴に印（?resume=home）を積み、端末の戻るで
-    // ホームへ戻れるようにする（戻ると上の location.key effect がホームへ戻す）。
-    // 質問ごとには積まない: 質問の移動はウィザードの「戻る」「次へ」が担い、戻るで 1 問ずつ
-    // さかのぼると、ホームやプランナーの外へ出るまでに何度も押す必要があるため。
+    // B-3: ホームからは履歴エントリを積まずにウィザードを開く。端末の戻るは
+    // PlannerRoutePage の useBlocker が止めてホームへ戻す（closeWizardForBack）。
     const openWizardFromHome = (nextStep: PlannerStep): void => {
-      homeOpenPendingRef.current = true;
       setStep(nextStep);
       setWizardOpen(true);
-      void navigate(PLANNER_WIZARD_HOME_ENTRY_PATH);
     };
     // U3: pending が無く下書きに進捗があるときだけ「続きから答える」「最初から」を出す。
     // pending があるときは従来どおり「作成中の献立を続ける」を優先し、下書きの導線は出さない。
@@ -1673,7 +1712,11 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         onResumePending={() => {
           // 既存 C2 再開と同経路（pending を壊さず generation へ）。
           // P1: 下ナビ leave と同型。dirty 未 flush のまま generation へ出ない。
-          void navigateAfterPlannerLeaveFlush(navigate, "/generation?resumed=1");
+          // B-3: planner から開いた /generation として印を付ける（flush 後の遷移直前）
+          void navigateAfterPlannerLeaveFlush((to) => {
+            markGenerationOpenedFromPlanner();
+            return navigate(to);
+          }, "/generation?resumed=1");
         }}
         recentMenus={recentMenus}
         recentMenusLoading={historyQuery.isPending}

@@ -288,6 +288,9 @@ export function AppShell() {
               <Link
                 key={item.to}
                 to={item.to}
+                // B-3: /planner 上（?resume= 付きを含む）での献立タブは履歴を積まず置き換える。
+                // replace でも location.key は変わるので、planner 側のウィザードを閉じる処理は走る。
+                replace={item.to === "/planner" && location.pathname === "/planner"}
                 // P2: /planner から他タブへ出るとき route の flush を await。失敗時は stay + submissionError。
                 // planner-route 未 mount（他 section）は handler null → 即 proceed。
                 onClick={(event) => {

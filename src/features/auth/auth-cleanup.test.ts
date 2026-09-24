@@ -34,6 +34,8 @@ function seedOwnedKeys(storage: Storage): void {
     "kondate:expired-pantry-confirm:v1:user-1",
     '{"dayKey":"2026-07-11","checks":[]}',
   );
+  // B-2: planner の「最後に開いていた質問」もログアウトで消す
+  storage.setItem("kondate:planner-last-step:v1:user-1", "cuisine");
   // AP1: feedback 曖昧 fingerprint（free-form 本文を含む）。ログアウト/削除で消す
   storage.setItem(
     "kondate:feedback:ambiguous-fingerprint",
@@ -82,6 +84,7 @@ describe("clearLocalAuthAndDrafts", () => {
       expect(storage.getItem("kondate:shopping:list:abc")).toBeNull();
       expect(storage.getItem("kondate:flyer:sticky:v1:user-1")).toBeNull();
       expect(storage.getItem("kondate:expired-pantry-confirm:v1:user-1")).toBeNull();
+      expect(storage.getItem("kondate:planner-last-step:v1:user-1")).toBeNull();
       expect(storage.getItem("kondate:feedback:ambiguous-fingerprint")).toBeNull();
       expect(storage.getItem(householdSafetyRevisionStorageKey)).toBeNull();
       expect(storage.getItem("kondate:preferences")).toBe("keep-me");

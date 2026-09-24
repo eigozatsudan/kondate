@@ -1,7 +1,7 @@
 import type { UnsupportedDietKind } from "@shared/contracts/domain";
 
 // 設計 r2 §6 確定文言。UI・schema・オンボーディングが単一ソースとして参照する。
-// リテラル再導出禁止 — 文言変更は設計改訂経由のみ。
+// リテラル再導出禁止 — 文言変更は設計改訂（または人間承認の UX レビュー改訂。下記 U9 がその例）経由のみ。
 // 改訂: 2026-09-24 の UX レビュー（U9、人間承認）で UNSUPPORTED_DIET_ONBOARDING_INTRO の導入文を変更した。
 // 設計 r2（docs/archive/superpowers/specs/2026-07-31-unsupported-diet-copy-clarity-design.md §6）は
 // アーカイブのため編集せず、この承認済みの改訂を正とする（アーカイブの旧文言へ戻さない）。

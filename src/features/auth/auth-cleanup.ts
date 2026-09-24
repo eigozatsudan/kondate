@@ -135,6 +135,8 @@ function isOwnedBrowserStorageKey(key: string): boolean {
     key.startsWith("kondate:flyer:") ||
     // PE8: 期限切れ pantry の当日確認（緊急導線・直接 URL 共有）
     key.startsWith("kondate:expired-pantry-confirm:") ||
+    // B-2: planner の「最後に開いていた質問」（タブ単位の sessionStorage）
+    key.startsWith("kondate:planner-last-step:") ||
     // AP1: feedback 曖昧失敗 fingerprint（free-form 本文を含む）。ログアウト/削除後は sticky 不要
     key.startsWith("kondate:feedback:") ||
     key === householdSafetyRevisionStorageKey ||
@@ -171,6 +173,7 @@ function clearOwnedBrowserStorage(): void {
         key.startsWith("kondate:shopping:") ||
         key.startsWith("kondate:flyer:") ||
         key.startsWith("kondate:expired-pantry-confirm:") ||
+        key.startsWith("kondate:planner-last-step:") ||
         // AP1: ログアウト/削除成功時に free-form fingerprint 残差を消す
         key.startsWith("kondate:feedback:") ||
         key === householdSafetyRevisionStorageKey ||

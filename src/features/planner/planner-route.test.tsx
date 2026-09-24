@@ -689,6 +689,7 @@ import {
   resetPlannerLeaveNavigateFlightForTests,
   runPlannerLeaveFlush,
 } from "./planner-leave-flush";
+import { resetPlannerResumeEntriesForTests } from "./planner-resume";
 
 /**
  * U3: 下書きに進捗があると /planner はまずホームを出し、「続きから答える」を押して初めて
@@ -752,6 +753,8 @@ beforeEach(() => {
   queryState.usagePlusEntitled = false;
   queryState.usageRemaining = 1;
   queryState.locationKey = "default";
+  // B-3: 使用済み ?resume= entry の覚え（モジュール状態）をテスト間で持ち越さない
+  resetPlannerResumeEntriesForTests();
   // flush 後の saved にクライアント入力（pantrySelections 等）を残す（P1 exact-set 検証用）
   savePlannerDraftMock.mockImplementation(
     (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
@@ -2577,10 +2580,7 @@ describe("PlannerRoutePage", () => {
     await vi.waitFor(() => {
       expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
     });
-    // B-3: ホームの「続きから答える」で積む履歴の印（?resume=home）以外には遷移しない
-    expect(
-      navigateMock.mock.calls.filter(([to]: unknown[]) => to !== "/planner?resume=home"),
-    ).toEqual([]);
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 
   it("P2: 再開注意前の generate は旧 sticky を再開しない", async () => {
