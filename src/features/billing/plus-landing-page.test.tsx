@@ -367,6 +367,9 @@ describe("PlusLandingPage", () => {
   });
 });
 
+// 更新日の表示は現在時刻と比べるため、時計を固定する（2026-09-24 09:00 JST）
+const FIXED_NOW = new Date("2026-09-24T00:00:00.000Z");
+
 describe("PlusLandingPage entitled benefits and period", () => {
   afterEach(() => {
     weeklyFlag.enabled = true;
@@ -421,6 +424,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
   it("shows the next renewal date in JST long style", () => {
     renderLp({
       entitlement: { ...plusActive, currentPeriodEnd: "2026-10-22T15:00:00.000Z" },
+      now: FIXED_NOW,
     });
     expect(screen.getByText("次回の更新日: 2026年10月23日")).toBeVisible();
     expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
@@ -433,6 +437,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
         currentPeriodEnd: "2026-10-22T15:00:00.000Z",
         cancelAtPeriodEnd: true,
       },
+      now: FIXED_NOW,
     });
     expect(screen.getByText("2026年10月23日に Plus が終了します（自動更新なし）")).toBeVisible();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
@@ -445,6 +450,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
         status: "canceled",
         currentPeriodEnd: "2026-10-22T15:00:00.000Z",
       },
+      now: FIXED_NOW,
     });
     expect(screen.getByText("2026年10月23日に Plus が終了します（自動更新なし）")).toBeVisible();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
@@ -459,6 +465,53 @@ describe("PlusLandingPage entitled benefits and period", () => {
       expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
     },
   );
+
+  it.each([false, true])(
+    "hides a period end that is already in the past (cancelAtPeriodEnd=%s)",
+    (cancelAtPeriodEnd) => {
+      // webhook が遅れて期間末が古いまま残っても、過去の日付を断言しない
+      renderLp({
+        entitlement: {
+          ...plusActive,
+          currentPeriodEnd: "2026-09-23T15:00:00.000Z",
+          cancelAtPeriodEnd,
+        },
+        now: FIXED_NOW,
+      });
+      expect(screen.getByText(PLUS_LP_ACTIVE)).toBeVisible();
+      expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+    },
+  );
+
+  it("hides a period end equal to now", () => {
+    renderLp({
+      entitlement: { ...plusActive, currentPeriodEnd: FIXED_NOW.toISOString() },
+      now: FIXED_NOW,
+    });
+    expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+  });
+
+  it("places payment management above the benefit cards and settings below them", () => {
+    renderLp({
+      entitlement: { ...plusActive, currentPeriodEnd: "2026-10-22T15:00:00.000Z" },
+      now: FIXED_NOW,
+    });
+    const heading = screen.getByRole("heading", { level: 1, name: PLUS_LP_ACTIVE });
+    const period = screen.getByText("次回の更新日: 2026年10月23日");
+    const portal = screen.getByRole("button", { name: PORTAL_BUTTON_LABEL });
+    const benefits = screen.getByRole("region", { name: PLUS_LP_NEUTRAL_SUB });
+    const settings = screen.getByRole("link", { name: PLUS_LP_SETTINGS_LINK });
+    const ordered = [heading, period, portal, benefits, settings];
+    for (let i = 0; i < ordered.length - 1; i += 1) {
+      const current = ordered[i];
+      const next = ordered[i + 1];
+      if (current === undefined || next === undefined) throw new Error("missing element");
+      expect(current.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    }
+  });
 
   it("prefers the trial end over the renewal date while trialing", () => {
     renderLp({

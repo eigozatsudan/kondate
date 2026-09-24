@@ -71,16 +71,27 @@ export type PlusLandingPageProps = {
   entitlementError?: boolean;
   onCheckout?: (interval: "month" | "year") => Promise<void>;
   onPortal?: () => Promise<void>;
+  /** 更新日の表示判定に使う現在時刻（テストで固定する。省略時は描画時の時刻） */
+  now?: Date;
 };
 
-/** 利用中の更新日・終了日。日付がなければ何も出さない（推測しない）。 */
+/**
+ * 利用中の更新日・終了日。日付がなければ何も出さない（推測しない）。
+ * 期間末が現在時刻以前なら出さない（webhook の遅れで古い期間末が残っても過去日を断言しない）。
+ */
 function EntitledPeriodLine({
-  periodEnd,
+  periodEndIso,
   autoRenews,
+  now,
 }: {
-  periodEnd: string | null;
+  periodEndIso: string | null;
   autoRenews: boolean;
+  now: Date;
 }) {
+  if (periodEndIso === null) return null;
+  const periodEndMs = Date.parse(periodEndIso);
+  if (Number.isNaN(periodEndMs) || periodEndMs <= now.getTime()) return null;
+  const periodEnd = formatBillingDate(periodEndIso);
   if (periodEnd === null) return null;
   return autoRenews ? (
     <p>次回の更新日: {periodEnd}</p>
@@ -140,6 +151,7 @@ export function PlusLandingPage({
   entitlementError,
   onCheckout,
   onPortal,
+  now = new Date(),
 }: PlusLandingPageProps = {}) {
   const auth = useAuth();
   const userId = injectedUserId ?? auth.session?.user.id ?? "";
@@ -341,12 +353,13 @@ export function PlusLandingPage({
           ) : (
             // お試し中は無料期間の終了を優先し、更新日と二重に出さない
             <EntitledPeriodLine
-              periodEnd={formatBillingDate(view.currentPeriodEnd)}
+              periodEndIso={view.currentPeriodEnd}
               autoRenews={view.autoRenews}
+              now={now}
             />
           )}
           {!view.surfacesOpen ? <p role="status">{ENTITLED_KILL_NOTE}</p> : null}
-          <EntitledBenefits surfacesOpen={view.surfacesOpen} />
+          {/* 320px でも管理ボタンがカードに押し出されないよう、できることより上に置く */}
           {view.surfacesOpen ? (
             <button
               type="button"
@@ -359,6 +372,7 @@ export function PlusLandingPage({
               {PORTAL_BUTTON_LABEL}
             </button>
           ) : null}
+          <EntitledBenefits surfacesOpen={view.surfacesOpen} />
           <Link className="secondary-button min-h-11" to="/settings">
             {PLUS_LP_SETTINGS_LINK}
           </Link>
