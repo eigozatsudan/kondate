@@ -114,8 +114,9 @@ describe("WeeklyPlanFormPage", () => {
 
     expect(screen.getByText("今週はあと 2 回つくれます（週 2 回まで）")).toBeInTheDocument();
     expect(
-      screen.getByText("うまくいかなかったときのやり直しは、あと 6 回までです"),
+      screen.getByText("うまくいかなかった分も含めて、今週はあと 6 回まで試せます"),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/やり直し/)).not.toBeInTheDocument();
     expect(screen.queryByText(/成功/)).not.toBeInTheDocument();
     expect(screen.queryByText(/試行 /)).not.toBeInTheDocument();
     expect(screen.queryByText(/チラシ献立と共通/)).not.toBeInTheDocument();
@@ -177,7 +178,7 @@ describe("WeeklyPlanFormPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the retry-quota-only exhausted note when only tries remaining is 0", () => {
+  it("shows the tries-only exhausted note when only tries remaining is 0", () => {
     useUsageTodayMock.mockReturnValue({
       data: {
         ...availableUsageTodayFixture,
@@ -191,9 +192,7 @@ describe("WeeklyPlanFormPage", () => {
       refetch: vi.fn(),
     });
     renderPage();
-    expect(
-      screen.getByText("うまくいかなかったときのやり直しの回数を使い切りました"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("今週試せる回数を使い切りました")).toBeInTheDocument();
     expect(screen.queryByText("今週の分は使い切りました")).not.toBeInTheDocument();
   });
 

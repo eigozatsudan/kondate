@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate, useNavigation } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
@@ -13,6 +13,7 @@ import {
   shouldInterceptPlannerLeaveClick,
 } from "@/features/planner/planner-leave-flush";
 import { HomeScreenInstallCard } from "@/features/pwa/home-screen-install-card";
+import { PageHeadingFocusContext } from "@/shared/ui/page-heading-focus";
 
 /** パスから配色セクションを決める。ルーティング定義は変えずに面の色だけを切り替える。 */
 function sectionForPath(pathname: string): string {
@@ -169,13 +170,31 @@ export function AppShell() {
   // navigation.loading 中は旧面の h1 を最終扱いせず、idle 後に出現を待つ。
   // L6: カードがこの pathname で新たに出たときだけ h2 をページ h1 より先に見る。
   // L-R1: 既出カードが残った再遷移では main h1。遅延 h1 は既存 observer を切らない。
+  // I-2: 同じ pathname のまま画面が入れ替わったとき（献立タブで質問からホームへ戻る）は
+  // pathname が変わらずこの effect が走らないため、route 側から requestPageHeadingFocus で
+  // 世代を進めてもらい、同じ処理でページ h1 へフォーカスし直す。location.key を deps に
+  // 足すと、ウィザード内の query 変更やホームでのタブ再押下でもフォーカスが動くため使わない。
   const installCardSeenRef = useRef(false);
   const focusedPathRef = useRef<string | null>(null);
   const focusedNewCardOnPathRef = useRef(false);
+  const [headingFocusRequest, setHeadingFocusRequest] = useState(0);
+  const handledHeadingFocusRequestRef = useRef(0);
+  const requestPageHeadingFocus = useCallback(() => {
+    setHeadingFocusRequest((request) => request + 1);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     let observer: MutationObserver | null = null;
     let frame = 0;
+
+    if (handledHeadingFocusRequestRef.current !== headingFocusRequest) {
+      handledHeadingFocusRequestRef.current = headingFocusRequest;
+      // 同一 pathname の再実行扱い（旧 DOM の種別を引き継ぐ）にせず、新しい画面として h1 を選ぶ。
+      // 既出の案内カードは installCardSeenRef により選ばれないので、ページ h1 に着地する。
+      focusedPathRef.current = null;
+      // h1 は preventScroll で focus するため、前の画面のスクロール位置をここで先頭へ戻す。
+      window.scrollTo(0, 0);
+    }
 
     function focusHeading(heading: HTMLElement): void {
       if (!heading.hasAttribute("tabindex")) {
@@ -244,64 +263,66 @@ export function AppShell() {
       window.cancelAnimationFrame(frame);
       observer?.disconnect();
     };
-  }, [location.pathname, navigation.state]);
+  }, [location.pathname, navigation.state, headingFocusRequest]);
 
   return (
-    <div className="app-section" data-section={section}>
-      {/* 720px 以上のみ表示。ナビラベルは変更せず、現在セクションを細いバーで示す。 */}
-      <div className="desktop-section-bar" aria-hidden="true">
-        {sectionTitles[section] ?? sectionTitles.other}
-      </div>
-      {/* 本体画面の初回案内。設定は常設節があるのでカード側で pathname を見る。 */}
-      <HomeScreenInstallCard />
-      <Outlet />
-      <nav className="bottom-nav" aria-label="メインメニュー" aria-busy={navLeaving || undefined}>
-        {/* L9: leave-flush 中は aria-busy と対の polite status（何を待つかを SR に伝える） */}
-        {navLeaving ? (
-          <p role="status" aria-live="polite" className="sr-only">
-            保存しています…
-          </p>
-        ) : null}
-        {items.map((item) => {
-          const active = isBottomNavItemActive(item.to, location.pathname);
-          return (
-            <Link
-              key={item.to}
-              to={item.to}
-              // P2: /planner から他タブへ出るとき route の flush を await。失敗時は stay + submissionError。
-              // planner-route 未 mount（他 section）は handler null → 即 proceed。
-              onClick={(event) => {
-                if (location.pathname !== "/planner") return;
-                if (item.to === "/planner") return;
-                // 修飾キー・中クリックは既定の新規タブ等を妨げない（同一タブ離脱だけ flush）
-                if (!shouldInterceptPlannerLeaveClick(event)) return;
-                // 既定の Link 遷移を止め、flush 成功後にだけ navigate する
-                event.preventDefault();
-                if (navLeavingRef.current) return;
-                navLeavingRef.current = true;
-                setNavLeaving(true);
-                void (async () => {
-                  try {
-                    const result = await runPlannerLeaveFlush();
-                    if (result === "proceed") {
-                      void navigate(item.to);
+    <PageHeadingFocusContext.Provider value={requestPageHeadingFocus}>
+      <div className="app-section" data-section={section}>
+        {/* 720px 以上のみ表示。ナビラベルは変更せず、現在セクションを細いバーで示す。 */}
+        <div className="desktop-section-bar" aria-hidden="true">
+          {sectionTitles[section] ?? sectionTitles.other}
+        </div>
+        {/* 本体画面の初回案内。設定は常設節があるのでカード側で pathname を見る。 */}
+        <HomeScreenInstallCard />
+        <Outlet />
+        <nav className="bottom-nav" aria-label="メインメニュー" aria-busy={navLeaving || undefined}>
+          {/* L9: leave-flush 中は aria-busy と対の polite status（何を待つかを SR に伝える） */}
+          {navLeaving ? (
+            <p role="status" aria-live="polite" className="sr-only">
+              保存しています…
+            </p>
+          ) : null}
+          {items.map((item) => {
+            const active = isBottomNavItemActive(item.to, location.pathname);
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                // P2: /planner から他タブへ出るとき route の flush を await。失敗時は stay + submissionError。
+                // planner-route 未 mount（他 section）は handler null → 即 proceed。
+                onClick={(event) => {
+                  if (location.pathname !== "/planner") return;
+                  if (item.to === "/planner") return;
+                  // 修飾キー・中クリックは既定の新規タブ等を妨げない（同一タブ離脱だけ flush）
+                  if (!shouldInterceptPlannerLeaveClick(event)) return;
+                  // 既定の Link 遷移を止め、flush 成功後にだけ navigate する
+                  event.preventDefault();
+                  if (navLeavingRef.current) return;
+                  navLeavingRef.current = true;
+                  setNavLeaving(true);
+                  void (async () => {
+                    try {
+                      const result = await runPlannerLeaveFlush();
+                      if (result === "proceed") {
+                        void navigate(item.to);
+                      }
+                    } finally {
+                      navLeavingRef.current = false;
+                      setNavLeaving(false);
                     }
-                  } finally {
-                    navLeavingRef.current = false;
-                    setNavLeaving(false);
-                  }
-                })();
-              }}
-              // L2: class と aria-current を同一述語で連動（NavLink の match では section パスを拾えない）
-              className={active ? "nav-item nav-item-active" : "nav-item"}
-              aria-current={active ? "page" : undefined}
-            >
-              <NavIcon name={item.icon} />
-              <span className="nav-item-label">{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
-    </div>
+                  })();
+                }}
+                // L2: class と aria-current を同一述語で連動（NavLink の match では section パスを拾えない）
+                className={active ? "nav-item nav-item-active" : "nav-item"}
+                aria-current={active ? "page" : undefined}
+              >
+                <NavIcon name={item.icon} />
+                <span className="nav-item-label">{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+    </PageHeadingFocusContext.Provider>
   );
 }

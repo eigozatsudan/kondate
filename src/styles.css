@@ -1277,7 +1277,10 @@ dialog:not([open]) {
  * 四角・丸は 20px の見た目に留め、44×44 のタップ領域は包む label 側
  * （.control-label / min-h-11 など）で確保する。入力そのものを 44px にすると
  * 空の大きな四角が入力欄のように見えるため。
- * 要素セレクタ input は contrast ガードの保護規則に掛かるので属性セレクタで書く。
+ * 献立ウィザードの選択肢（.guided-planner-theme .wizard-option input）にも意図して
+ * 同じ見た目を当てる。そのため styles.contrast.test.ts の保護規則として、この節の
+ * [type=…] の規則（下のスイッチを含む）を許可リストと完全一致の宣言で固定している。
+ * 宣言を変えるときはテスト側の登録も合わせて更新すること。
  */
 [type="checkbox"],
 [type="radio"] {

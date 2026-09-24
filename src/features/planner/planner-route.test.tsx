@@ -8,6 +8,7 @@ import type { PlannerAttempt } from "./expired-pantry-checks";
 // P6 は JST 当日 confirmation のみ有効。固定過去日だと submit 再検証で落ちる
 const TEST_CHECKED_AT = new Date().toISOString();
 import type { PlannerFieldName, PlannerStep } from "./model/planner-wizard";
+import { PageHeadingFocusContext } from "@/shared/ui/page-heading-focus";
 
 const draft: PlannerDraft = {
   id: "71000000-0000-4000-8000-000000000001",
@@ -4095,6 +4096,54 @@ describe("U3 修正: 質問中に献立タブを押したらホームへ戻る",
     view.rerender(<PlannerRoutePage />);
 
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("meal");
+  });
+
+  it("asks the shell to refocus the page heading only when the tab closes an open wizard", async () => {
+    queryState.draft = partialDraft;
+    const requestFocus = vi.fn();
+    const withShellFocus = () => (
+      <PageHeadingFocusContext.Provider value={requestFocus}>
+        <PlannerRoutePage />
+      </PageHeadingFocusContext.Provider>
+    );
+    const user = userEvent.setup();
+    const view = render(withShellFocus());
+    // 初回表示ではシェルの pathname フォーカスに任せ、ここからは頼まない
+    expect(requestFocus).not.toHaveBeenCalled();
+
+    // ホームのまま献立タブを押しても、画面は変わらないのでフォーカスを動かさない
+    queryState.locationKey = "tab-home";
+    view.rerender(withShellFocus());
+    expect(requestFocus).not.toHaveBeenCalled();
+
+    // ウィザード内の遷移でも頼まない
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    expect(requestFocus).not.toHaveBeenCalled();
+
+    // 質問中に献立タブ: ホームへ戻し、ホームの見出しへのフォーカスを 1 回だけ頼む
+    queryState.locationKey = "tab-1";
+    view.rerender(withShellFocus());
+    expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+    expect(requestFocus).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask for heading focus when a later navigation opens the wizard via ?resume=", () => {
+    queryState.draft = null;
+    const requestFocus = vi.fn();
+    const withShellFocus = () => (
+      <PageHeadingFocusContext.Provider value={requestFocus}>
+        <PlannerRoutePage />
+      </PageHeadingFocusContext.Provider>
+    );
+    const view = render(withShellFocus());
+
+    queryState.search = "resume=review";
+    queryState.locationKey = "deep-link";
+    view.rerender(withShellFocus());
+
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("meal");
+    expect(requestFocus).not.toHaveBeenCalled();
   });
 
   it("does not flip the screen while a leave flush is in flight", async () => {

@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import { registerPlannerLeaveFlush } from "@/features/planner/planner-leave-flush";
 import { PWA_INSTALL_TIP_DISMISSED_KEY } from "@/features/pwa/install-tip-storage";
+import { useRequestPageHeadingFocus } from "@/shared/ui/page-heading-focus";
 import { AppShell } from "./app-shell";
 
 vi.mock("@/shared/lib/supabase", () => ({
@@ -473,6 +474,77 @@ describe("AppShell route focus (L2)", () => {
     await waitFor(() => {
       expect(pantryHeading).toHaveFocus();
     });
+  });
+});
+
+describe("AppShell heading refocus on the same pathname (I-2)", () => {
+  /** 献立タブでウィザードを閉じてホームへ戻す planner-route を、同じ pathname のまま模す。 */
+  function SwappingPlannerPage() {
+    const requestFocus = useRequestPageHeadingFocus();
+    const [home, setHome] = useState(false);
+    if (home) {
+      return (
+        <main className="page-frame">
+          <h1>今日の献立</h1>
+        </main>
+      );
+    }
+    return (
+      <main className="page-frame">
+        <h1>質問</h1>
+        <button
+          type="button"
+          onClick={() => {
+            setHome(true);
+            requestFocus();
+          }}
+        >
+          ホームへ入れ替え
+        </button>
+      </main>
+    );
+  }
+
+  it("focuses the new page heading and scrolls to top when a route requests it", async () => {
+    const scrollTo = vi.fn();
+    vi.stubGlobal("scrollTo", scrollTo);
+    const user = userEvent.setup();
+    renderAppShellAt("/planner", [{ path: "/planner", element: <SwappingPlannerPage /> }]);
+    await waitForShellFocusFrame();
+    scrollTo.mockClear();
+
+    const swap = screen.getByRole("button", { name: "ホームへ入れ替え" });
+    swap.focus();
+    await user.click(swap);
+    await waitForShellFocusFrame();
+
+    const homeHeading = screen.getByRole("heading", { name: "今日の献立" });
+    await waitFor(() => {
+      expect(homeHeading).toHaveFocus();
+    });
+    expect(homeHeading).toHaveAttribute("tabindex", "-1");
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("does not move focus on a same-pathname tab press without a request", async () => {
+    const user = userEvent.setup();
+    renderAppShellAt("/planner", [
+      {
+        path: "/planner",
+        element: (
+          <main className="page-frame">
+            <h1>献立ホーム</h1>
+          </main>
+        ),
+      },
+    ]);
+    await waitForShellFocusFrame();
+    const tab = screen.getByRole("link", { name: /献立/u });
+    tab.focus();
+    await user.click(tab);
+    await waitForShellFocusFrame();
+
+    expect(tab).toHaveFocus();
   });
 });
 

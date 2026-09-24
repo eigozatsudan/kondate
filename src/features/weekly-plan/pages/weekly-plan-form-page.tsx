@@ -361,8 +361,10 @@ export function WeeklyPlanFormPage({
             ? "今週の分は使い切りました"
             : `今週はあと ${String(quota.successRemaining)} 回つくれます（週 ${String(quota.successLimit)} 回まで）`}
           <br />
+          {/* triesRemaining は AI へ送った回数（成功した回も含む）で減る週次の枠。
+              「失敗したときだけ減る」と読めないよう、うまくいかなかった分も含むと書く。 */}
           <small>
-            うまくいかなかったときのやり直しは、あと {String(quota.triesRemaining)} 回までです
+            うまくいかなかった分も含めて、今週はあと {String(quota.triesRemaining)} 回まで試せます
           </small>
         </p>
       ) : usage.isError ? (
@@ -534,10 +536,10 @@ export function WeeklyPlanFormPage({
         ) : null}
       </fieldset>
       {/* successRemaining===0 は上の回数表示ですでに「今週の分は使い切りました」を
-          出しているため、ここでは重複させずやり直し枠の方だけ補足する。 */}
+          出しているため、ここでは重複させず試せる回数（triesRemaining）の方だけ補足する。 */}
       {quotaExhausted && quota.successRemaining !== 0 ? (
         <p role="note" className="error">
-          うまくいかなかったときのやり直しの回数を使い切りました
+          今週試せる回数を使い切りました
         </p>
       ) : null}
       {selectedUnsatisfiable.length > 0 ? (

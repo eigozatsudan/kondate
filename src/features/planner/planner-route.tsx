@@ -21,6 +21,7 @@ import { getProfile, setOnboardingStatus } from "@/features/household/household-
 import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { useRequestPageHeadingFocus } from "@/shared/ui/page-heading-focus";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import { expiryNotice } from "@/features/pantry/pantry-page";
 import {
@@ -631,16 +632,22 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   //   （ホームを出すだけで unmount しない。ホームの「続きから答える」で同じ値に戻れる）。
   // - 生成 submit・緊急献立への移動・leave-flush の途中は画面を切り替えない
   //   （それぞれ直後に別画面へ遷移する途中で、ホームを一瞬挟むと操作が二重になり得るため）。
+  // - I-2: pathname が変わらないため AppShell の遷移フォーカスが走らない。質問画面から実際に
+  //   ホームへ入れ替えたときだけ、シェルにホームの h1 へのフォーカスと先頭スクロールを頼む
+  //   （ホームのままタブを押したときは画面が変わらないので頼まない）。
   const locationKey = useLocation().key;
   const lastLocationKeyRef = useRef(locationKey);
+  const requestPageHeadingFocus = useRequestPageHeadingFocus();
   useEffect(() => {
     if (lastLocationKeyRef.current === locationKey) return;
     lastLocationKeyRef.current = locationKey;
     if (!initialized) return;
     if (resumeQuery !== null) return;
     if (submittingRef.current || emergencyOpeningRef.current || leaveInFlightRef.current) return;
+    if (!wizardOpen) return;
     setWizardOpen(false);
-  }, [initialized, locationKey, resumeQuery]);
+    requestPageHeadingFocus();
+  }, [initialized, locationKey, resumeQuery, wizardOpen, requestPageHeadingFocus]);
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
