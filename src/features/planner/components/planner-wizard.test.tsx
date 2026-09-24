@@ -450,7 +450,7 @@ describe("PlannerWizard progress indicator(U2)", () => {
 
   it("進捗バーは装飾として aria-hidden にする", () => {
     const { container } = render(<Harness initialStep="meal" />);
-    const bar = container.querySelector(".wizard-progress-bar");
+    const bar = container.querySelector(".progress-track");
     expect(bar).not.toBeNull();
     expect(bar).toHaveAttribute("aria-hidden", "true");
   });

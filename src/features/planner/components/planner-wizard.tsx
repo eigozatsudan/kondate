@@ -55,6 +55,13 @@ const optionalPlannerSteps: ReadonlySet<(typeof plannerSteps)[number]> = new Set
  * 進捗バーは視覚だけの補助のためaria-hiddenにし、支援技術へは
  * テキスト「n / 9」（任意stepは「・任意」を付与）だけを読み上げさせる
  * （brief: バー/テキストのどちらか一方に統一する方針のうちテキスト側を採用）。
+ *
+ * レビュー修正ラウンド1: 独自の `.wizard-progress-*` を新設せず、
+ * 既存の `.progress-indicator` / `.progress-track` / `.progress-value` /
+ * `.progress-value-rect`（styles.css・styles.contrast.test.ts に既存の契約）
+ * を流用する。動的な幅は CSP（style-src 'self'、inline style 不可）のため
+ * `style={{ width }}` を使わず、SVG rect の `width` 属性（style ではなく
+ * プレゼンテーション属性）で表現する。
  */
 function PlannerProgress({ step }: { step: (typeof plannerSteps)[number] }) {
   const total = plannerSteps.length;
@@ -62,13 +69,21 @@ function PlannerProgress({ step }: { step: (typeof plannerSteps)[number] }) {
   const percent = (position / total) * 100;
   const isOptional = optionalPlannerSteps.has(step);
   return (
-    <div className="wizard-progress">
-      <p className="wizard-progress-label">
+    <div className="progress-indicator">
+      <p>
         {position} / {total}
         {isOptional ? "・任意" : ""}
       </p>
-      <div className="wizard-progress-bar" aria-hidden="true">
-        <div className="wizard-progress-bar-fill" style={{ width: `${String(percent)}%` }} />
+      <div className="progress-track" aria-hidden="true">
+        <svg className="progress-value" width="100%" height="100%" preserveAspectRatio="none">
+          <rect
+            className="progress-value-rect"
+            x="0"
+            y="0"
+            width={`${String(percent)}%`}
+            height="100%"
+          />
+        </svg>
       </div>
     </div>
   );
@@ -425,7 +440,9 @@ export function PlannerWizard({
             onReset();
           }}
         >
-          {/* 破壊的操作なので下線リンクではなく実体のあるボタンにする。矢印は装飾で、
+          {/* U2: 画面上部の目立つ位置からstep本体の後ろへ移し、枠・塗りのない
+              文字ボタン相当の見た目にした（破壊的操作を主操作と同格に見せない）。
+              タップ領域は44×44 CSS pxをpaddingで確保している。矢印は装飾で、
               ラベルが操作内容を担うため支援技術からは隠す。 */}
           <svg
             className="wizard-reset-icon"
@@ -473,8 +490,8 @@ export function PlannerWizard({
           suppressValidationToast={autosaveState === "error"}
           {...editReturnActionLabels}
         />
-        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
+        {resetChrome}
         {footer}
       </main>
     );
@@ -503,8 +520,8 @@ export function PlannerWizard({
           pantryItemsStatus={pantryItemsStatus}
           {...editReturnActionLabels}
         />
-        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
+        {resetChrome}
         {footer}
       </main>
     );
@@ -531,8 +548,8 @@ export function PlannerWizard({
           suppressValidationToast={autosaveState === "error"}
           {...editReturnActionLabels}
         />
-        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
+        {resetChrome}
         {footer}
       </main>
     );
@@ -607,8 +624,8 @@ export function PlannerWizard({
           {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
           {...editReturnActionLabels}
         />
-        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
+        {resetChrome}
         {footer}
       </main>
     );
@@ -650,8 +667,8 @@ export function PlannerWizard({
           {...(returnToReviewAfterEdit ? {} : { onSkipRest: skipRestOfOptionalSteps })}
           {...editReturnActionLabels}
         />
-        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
+        {resetChrome}
         {footer}
       </main>
     );
@@ -689,8 +706,8 @@ export function PlannerWizard({
           errorMessage={fieldErrors.budgetPreference ?? null}
           {...editReturnActionLabels}
         />
-        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
+        {resetChrome}
         {footer}
       </main>
     );
@@ -739,8 +756,8 @@ export function PlannerWizard({
           description="材料の量や、買い足しの範囲の目安です。調味料の基本（塩・しょうゆ・油など）はどの選択でも使えます。"
           {...editReturnActionLabels}
         />
-        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
+        {resetChrome}
         {footer}
       </main>
     );
@@ -777,8 +794,8 @@ export function PlannerWizard({
           disabled={isSaving}
           {...editReturnActionLabels}
         />
-        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
+        {resetChrome}
         {footer}
       </main>
     );

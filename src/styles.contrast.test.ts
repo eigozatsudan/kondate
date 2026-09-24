@@ -300,7 +300,8 @@ const allowedProtectedSelectors = new Set([
   ".guided-planner-theme .wizard-review-item dt",
   ".guided-planner-theme .wizard-review-item dd",
   ".guided-planner-theme .wizard-reset-row",
-  // 入力のリセットを下線リンクから実体のあるボタンへ変更したときの4件。
+  // 入力のリセット。当初は下線リンクから実体のあるボタンへ変更した4件だったが、
+  // U2で画面下部への移動と文字ボタン相当（枠・塗りなし）への変更を反映済み。
   ".guided-planner-theme .wizard-reset-button",
   ".guided-planner-theme .wizard-reset-button:hover:not(:disabled)",
   ".guided-planner-theme .wizard-reset-button:disabled",
@@ -484,10 +485,13 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
     "min-width": "0",
     "overflow-wrap": "anywhere",
   },
+  // U2レビュー修正ラウンド1: 画面上部からstep本体の後ろへ移し、中央寄せ＋
+  // 主操作からの余白(margin-top)を足した控えめな配置に変えた意図的な更新。
   ".guided-planner-theme .wizard-reset-row": {
     display: "flex",
     "min-width": "0",
-    "justify-content": "flex-end",
+    "justify-content": "center",
+    "margin-top": "8px",
   },
   ".guided-planner-theme .wizard-disabled-reason": {
     margin: "0",
@@ -600,21 +604,27 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
   ".wizard-skip-row": { display: "flex", "min-width": "0" },
   ".wizard-skip-row > *": { "min-width": "0" },
   ".wizard-action": { "min-height": "44px" },
+  // U2レビュー修正ラウンド1: 枠・塗りのある実体ボタンから、枠なし・背景透明の
+  // 文字ボタン相当へ変更。文字色トークン(--muted / --primary-strong)自体は
+  // 変えていないため、既存で確認済みのコントラストはそのまま維持している。
+  // タップ領域はmin-height/min-width 44pxとpaddingで確保する。
   ".guided-planner-theme .wizard-reset-button": {
     display: "inline-flex",
+    "box-sizing": "border-box",
     "min-height": "44px",
+    "min-width": "44px",
     cursor: "pointer",
     "align-items": "center",
-    gap: "8px",
-    border: "1px solid var(--border-strong)",
+    gap: "6px",
+    border: "none",
     "border-radius": "999px",
     color: "var(--muted)",
-    background: "var(--surface)",
-    padding: "8px 16px",
-    "font-weight": "700",
+    background: "transparent",
+    padding: "10px 14px",
+    "font-size": "0.8125rem",
+    "font-weight": "600",
   },
   ".guided-planner-theme .wizard-reset-button:hover:not(:disabled)": {
-    "border-color": "var(--primary-strong)",
     color: "var(--primary-strong)",
     background: "var(--notice)",
   },
@@ -624,8 +634,8 @@ const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, stri
   },
   ".guided-planner-theme .wizard-reset-icon": {
     flex: "0 0 auto",
-    width: "18px",
-    height: "18px",
+    width: "16px",
+    height: "16px",
   },
   ".choice-card": {
     display: "grid",

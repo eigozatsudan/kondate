@@ -324,44 +324,25 @@
  * U2: 画面上部の一番目立つ位置から、step本体の後ろ（カード下）へ移す。
  * 自動保存トースト（右上fixed）と重ならなくなるうえ、破壊的操作を
  * 主要な質問導線から視覚的に切り離せる。
+ * margin-top: レビュー修正ラウンド1（3-M1）。review stepでは直前が
+ * 「献立を作る」primary buttonのため、.stackのgap（16px）だけでは
+ * 誤タップ時に確認なしで隣接して見えてしまう。8px足して主操作からの
+ * 距離を広げる。
  */
 .guided-planner-theme .wizard-reset-row {
   display: flex;
   min-width: 0;
   justify-content: center;
+  margin-top: 8px;
 }
 
 /*
- * U2: 進み具合表示。総数・現在位置はplannerStepsから算出するため、
- * ここでは見た目（余白・バー太さ）だけを持つ。
+ * U2 進み具合表示: 独自クラスを新設せず、既存の進捗バー部品
+ * （.progress-indicator/.progress-track/.progress-value/.progress-value-rect、
+ * このすぐ下に定義済み）をそのまま使う。レビュー修正ラウンド1（1-M1/2-C1）:
+ * 新設した .wizard-progress-* は styles.contrast.test.ts の保護対象
+ * セレクタ許可リストに無く、見た目の契約が二重管理になっていたため撤去した。
  */
-.guided-planner-theme .wizard-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.guided-planner-theme .wizard-progress-label {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.8125rem;
-  font-weight: 700;
-}
-
-.guided-planner-theme .wizard-progress-bar {
-  overflow: hidden;
-  width: 100%;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--border);
-}
-
-.guided-planner-theme .wizard-progress-bar-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--primary-strong);
-  transition: width 0.2s ease;
-}
 
 /*
  * 下書き autosave の右上浮遊トースト。
