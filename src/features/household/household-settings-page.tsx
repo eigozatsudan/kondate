@@ -1862,8 +1862,9 @@ export function HouseholdSettingsForm({
                   >
                     編集
                   </button>
+                  {/* 編集が主な操作。削除は確認ダイアログを挟むので、枠なしの控えめな文字ボタンにする */}
                   <button
-                    className="secondary-button min-h-11"
+                    className="text-button household-member-delete min-h-11"
                     type="button"
                     disabled={
                       saving ||

@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { SwitchStateText } from "@/shared/ui/switch-state-text";
 import { tasteLearningCopy } from "./taste-learning-copy";
 
 export type TasteLearningSectionProps = {
@@ -39,12 +40,11 @@ export function TasteLearningSection({
 
   return (
     <div className="stack gap-2">
-      <label className="inline-flex min-h-11 items-center gap-2" htmlFor={toggleId}>
+      <label className="inline-flex min-h-11 items-center gap-3" htmlFor={toggleId}>
         <input
           id={toggleId}
           type="checkbox"
           role="switch"
-          className="min-h-11 min-w-11"
           checked={displayed}
           aria-describedby={describedById}
           disabled={pending || disabled}
@@ -65,6 +65,7 @@ export function TasteLearningSection({
           }}
         />
         {tasteLearningCopy.toggleLabel}
+        <SwitchStateText checked={displayed} />
       </label>
       {/* 確定処理は最悪 1 分強かかる（書き込みの timeout 後に読み取りと柵を再試行する）。
           その間スイッチが無言で止まって見えないよう、短い状態文言を読み上げる。

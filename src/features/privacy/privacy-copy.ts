@@ -85,6 +85,14 @@ export const shareConsentSection = {
 } as const;
 
 /**
+ * 同意の説明文を「。」ごとの文に分ける（設定画面で箇条書きにするため）。
+ * 文言は一字も変えない: 分けた文を連結すると元の文と完全に一致する。
+ */
+export function splitConsentSentences(text: string): string[] {
+  return text.match(/[^。]+。?/gu) ?? [text];
+}
+
+/**
  * 設定ページの共有同意トグル・提供管理一覧用コピー。
  * オフ時は「既提供分は残る」を再表示する（設計 §7.2）。
  */

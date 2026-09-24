@@ -1272,6 +1272,131 @@ dialog:not([open]) {
 }
 
 /*
+ * チェックボックスとラジオの見た目（U6）。
+ * ブラウザ既定の青ではなく、主ボタンと同じテラコッタ（--primary）で塗る。
+ * 四角・丸は 20px の見た目に留め、44×44 のタップ領域は包む label 側
+ * （.control-label / min-h-11 など）で確保する。入力そのものを 44px にすると
+ * 空の大きな四角が入力欄のように見えるため。
+ * 要素セレクタ input は contrast ガードの保護規則に掛かるので属性セレクタで書く。
+ */
+[type="checkbox"],
+[type="radio"] {
+  accent-color: var(--primary);
+}
+
+[type="checkbox"]:not([role="switch"]),
+[type="radio"] {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+/*
+ * role="switch" のチェックボックスはオン／オフのトグルの見た目にする（U6）。
+ * オン＝ブランド色（--primary）、オフ＝中立の灰色（--border-strong、白地 3:1 以上）。
+ * 状態はつまみの左右の位置でも示し、色だけに頼らない。横の「オン／オフ」の文字は
+ * .switch-state-text（aria-hidden）。読み上げは switch の checked 状態に任せる。
+ */
+[type="checkbox"][role="switch"] {
+  position: relative;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 26px;
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  cursor: pointer;
+  appearance: none;
+  transition: background-color var(--motion-fast) var(--motion-ease);
+}
+
+[type="checkbox"][role="switch"]::before {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  content: "";
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+
+[type="checkbox"][role="switch"]:checked {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+[type="checkbox"][role="switch"]:checked::before {
+  transform: translateX(18px);
+}
+
+/* 共有設定の再読が未確定（aria-checked="mixed"）の間は、つまみを中央に置く */
+[type="checkbox"][role="switch"]:indeterminate::before {
+  transform: translateX(9px);
+}
+
+[type="checkbox"][role="switch"]:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+[type="checkbox"][role="switch"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [type="checkbox"][role="switch"],
+  [type="checkbox"][role="switch"]::before {
+    transition: none;
+  }
+}
+
+/*
+ * 強制カラー（Windows のハイコントラスト等）では背景色が上書きされ、
+ * appearance: none のつまみが地に溶けるので、システム色で描き直す。
+ */
+@media (forced-colors: active) {
+  [type="checkbox"][role="switch"] {
+    border-color: CanvasText;
+    background: Canvas;
+    forced-color-adjust: none;
+  }
+
+  [type="checkbox"][role="switch"]::before {
+    background: CanvasText;
+  }
+
+  [type="checkbox"][role="switch"]:checked {
+    border-color: Highlight;
+    background: Highlight;
+  }
+
+  [type="checkbox"][role="switch"]:checked::before {
+    background: HighlightText;
+  }
+}
+
+/* スイッチ横の「オン／オフ」。見た目の補助なので控えめに（aria-hidden） */
+.switch-state-text {
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-weight: 700;
+}
+
+/* 匿名協力の同意説明を文ごとに並べる箇条書き。文言は分けるだけで変えない */
+.consent-point-list {
+  display: grid;
+  margin: 0;
+  padding-left: var(--space-5);
+  gap: var(--space-1);
+  list-style: disc;
+}
+
+/*
  * チェック／ラジオ＋文言の横並びラベル。
  * 素の label はブラウザ既定で密着するため、フォームの複数選択に付与する。
  * （要素セレクタ input を直接書くと contrast ガードの保護規則に掛かる）
@@ -1485,6 +1610,16 @@ dialog:not([open]) {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/*
+ * 家族の行の「削除」。主な操作の「編集」（.secondary-button）より控えめにするため、
+ * 枠なしの文字ボタン（.text-button）を墨の弱い色・通常の太さで出す。
+ * 44×44 のタップ領域は button の最小サイズで確保する。確認ダイアログは従来どおり。
+ */
+.household-member-delete {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .household-editor {

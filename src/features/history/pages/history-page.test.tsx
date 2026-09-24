@@ -261,7 +261,9 @@ describe("HistoryPage", () => {
     expect(screen.getByText("通常の献立")).toBeVisible();
 
     const filter = screen.getByRole("switch", { name: "お気に入りだけを表示" });
-    expect(filter.className).toMatch(/min-h-11/);
+    // 44px のタップ領域は label 側で持ち、スイッチ本体は見た目の大きさに留める
+    expect(filter.className).not.toMatch(/min-[hw]-11/u);
+    expect(filter.closest("label")).toHaveClass("min-h-11");
     expect(filter).toHaveAttribute("aria-checked", "false");
     await user.click(filter);
 

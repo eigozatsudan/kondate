@@ -1,10 +1,21 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { tasteLearningCopy } from "./taste-learning-copy";
 import { TasteLearningSection } from "./taste-learning-section";
 
 describe("TasteLearningSection", () => {
+  it("U6: keeps the tap target on the label and shows the state as hidden text", async () => {
+    render(<TasteLearningSection enabled={true} onToggle={vi.fn()} />);
+    const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });
+    expect(toggle.className).not.toMatch(/min-[hw]-11/u);
+    const label = toggle.closest("label");
+    expect(label).toHaveClass("min-h-11");
+    // 状態の文字は見た目の補助。読み上げは switch の checked に任せる
+    const state = within(label ?? document.body).getByText("オン");
+    expect(state).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("shows the stored value", async () => {
     render(<TasteLearningSection enabled={true} onToggle={vi.fn()} />);
     const toggle = await screen.findByRole("switch", { name: tasteLearningCopy.toggleLabel });

@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { waitMs, withTimeout } from "@/features/auth/async-timeout";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
-import { shareConsentSettingsCopy } from "./privacy-copy";
+import { SwitchStateText } from "@/shared/ui/switch-state-text";
+import { shareConsentSettingsCopy, splitConsentSentences } from "./privacy-copy";
 import {
   getMyShareConsent,
   hasCurrentShareConsent,
@@ -56,6 +57,17 @@ function formatSharedOn(sharedOn: string): string {
   } catch {
     return sharedOn;
   }
+}
+
+/** 同意の説明を文ごとの短い箇条書きで見せる。文言は分けるだけで変えない。 */
+function ConsentPointList({ text }: { text: string }) {
+  return (
+    <ul className="consent-point-list type-small">
+      {splitConsentSentences(text).map((sentence, index) => (
+        <li key={`${String(index)}:${sentence}`}>{sentence}</li>
+      ))}
+    </ul>
+  );
 }
 
 /**
@@ -294,9 +306,11 @@ export function ShareConsentSettingsSection({
         {shareConsentSettingsCopy.title}
       </h2>
 
-      <p className="type-small">{shareConsentSettingsCopy.help}</p>
+      {/* 同意の説明は規約のような長い段落だと読まれないので、文ごとの箇条書きにする。
+          文言は一字も変えない（splitConsentSentences は連結すると元の文に戻る） */}
+      <ConsentPointList text={shareConsentSettingsCopy.help} />
       {/* AP6: オフ時だけ必須同意フレーズを見せ、設定トグルだけで見ずに accept しない */}
-      {!enabled ? <p className="type-small">{shareConsentSettingsCopy.acceptDisclosure}</p> : null}
+      {!enabled ? <ConsentPointList text={shareConsentSettingsCopy.acceptDisclosure} /> : null}
 
       {consentLoading && consent === null ? (
         <p role="status">{shareConsentSettingsCopy.consentLoading}</p>
@@ -307,13 +321,12 @@ export function ShareConsentSettingsSection({
 
       {consent !== null || !consentLoading || consentReconcileUnconfirmed ? (
         <div className="stack gap-2">
-          <label className="inline-flex min-h-11 items-center gap-2" htmlFor={toggleId}>
+          <label className="inline-flex min-h-11 items-center gap-3" htmlFor={toggleId}>
             <input
               id={toggleId}
               ref={toggleInputRef}
               type="checkbox"
               role="switch"
-              className="min-h-11 min-w-11"
               checked={consentReconcileUnconfirmed ? false : enabled}
               aria-checked={consentReconcileUnconfirmed ? "mixed" : enabled}
               aria-describedby={showResidual ? residualId : undefined}
@@ -327,12 +340,14 @@ export function ShareConsentSettingsSection({
               }}
             />
             {shareConsentSettingsCopy.toggleLabel}
+            {/* 未確定（mixed）の間はオン／オフのどちらとも言えないので出さない */}
+            {consentReconcileUnconfirmed ? null : <SwitchStateText checked={enabled} />}
           </label>
           {/* オフ時（およびオフ操作中）に既提供分の残存を再表示（§7.2） */}
           {showResidual ? (
-            <p id={residualId} className="type-small" role="status">
-              {shareConsentSettingsCopy.residualRetentionNotice}
-            </p>
+            <div id={residualId} className="type-small" role="status">
+              <ConsentPointList text={shareConsentSettingsCopy.residualRetentionNotice} />
+            </div>
           ) : null}
           {consentReconcileUnconfirmed ? (
             <div className="stack gap-2">

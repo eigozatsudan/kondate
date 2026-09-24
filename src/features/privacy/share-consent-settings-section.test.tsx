@@ -1,10 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { shareConsentVersion } from "@shared/contracts/share-consent";
-import { shareConsentRequiredPhrases, shareConsentSettingsCopy } from "./privacy-copy";
+import {
+  shareConsentRequiredPhrases,
+  shareConsentSettingsCopy,
+  splitConsentSentences,
+} from "./privacy-copy";
 import type { ShareConsentState, SharedEmergencyRecipeListItem } from "./share-consent-api";
 import {
   SHARE_CONSENT_RECONCILE_ATTEMPTS,
@@ -78,6 +82,21 @@ function renderSection(props: Partial<ComponentProps<typeof ShareConsentSettings
   );
 }
 
+/** 既提供分の残存説明（箇条書きに分けた live region）を全文一致で探す */
+function queryResidualNotice(): HTMLElement | null {
+  return screen.queryByText(
+    (_content, element) =>
+      element?.getAttribute("role") === "status" &&
+      element.textContent === shareConsentSettingsCopy.residualRetentionNotice,
+  );
+}
+
+function getResidualNotice(): HTMLElement {
+  const notice = queryResidualNotice();
+  if (notice === null) throw new Error("residual retention notice not found");
+  return notice;
+}
+
 describe("ShareConsentSettingsSection", () => {
   beforeEach(() => {
     getMyShareConsentMock.mockReset();
@@ -93,7 +112,7 @@ describe("ShareConsentSettingsSection", () => {
       name: shareConsentSettingsCopy.toggleLabel,
     });
     expect(toggle).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByText(shareConsentSettingsCopy.residualRetentionNotice)).toBeVisible();
+    expect(getResidualNotice()).toBeVisible();
     expect(shareConsentSettingsCopy.residualRetentionNotice).toContain("既提供分は残");
   });
 
@@ -108,12 +127,49 @@ describe("ShareConsentSettingsSection", () => {
     }
   });
 
+  it("U6: shows the consent explanation as bullet points with every original sentence", () => {
+    renderSection({ consent: emptyConsent });
+    const section = screen
+      .getByRole("heading", { name: shareConsentSettingsCopy.title })
+      .closest("section");
+    if (section === null) throw new Error("section not found");
+    const items = within(section)
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    const expected = [
+      ...splitConsentSentences(shareConsentSettingsCopy.help),
+      ...splitConsentSentences(shareConsentSettingsCopy.acceptDisclosure),
+      ...splitConsentSentences(shareConsentSettingsCopy.residualRetentionNotice),
+    ];
+    expect(items).toEqual(expect.arrayContaining(expected));
+    // 長い段落のままの説明は残さない
+    for (const paragraph of within(section).queryAllByText(/./u, { selector: "p" })) {
+      expect(paragraph.textContent).not.toBe(shareConsentSettingsCopy.help);
+      expect(paragraph.textContent).not.toBe(shareConsentSettingsCopy.acceptDisclosure);
+    }
+    // 残存説明は live region と aria-describedby の参照先のまま、全文を保つ
+    const notice = getResidualNotice();
+    const toggle = screen.getByRole("switch", { name: shareConsentSettingsCopy.toggleLabel });
+    expect(toggle).toHaveAttribute("aria-describedby", notice.id);
+    // 箇条書きの項目の間には読み上げ用の空白が入るだけで、文言は変わらない
+    expect(toggle).toHaveAccessibleDescription(
+      splitConsentSentences(shareConsentSettingsCopy.residualRetentionNotice).join(" "),
+    );
+  });
+
+  it("U6: keeps the tap target on the label instead of an enlarged switch box", () => {
+    renderSection({ consent: acceptedConsent });
+    const toggle = screen.getByRole("switch", { name: shareConsentSettingsCopy.toggleLabel });
+    expect(toggle.className).not.toMatch(/min-[hw]-11/u);
+    expect(toggle.closest("label")).toHaveClass("min-h-11");
+  });
+
   it("shows residual retention notice when consent is revoked", () => {
     renderSection({ consent: revokedConsent });
     expect(
       screen.getByRole("switch", { name: shareConsentSettingsCopy.toggleLabel }),
     ).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByText(shareConsentSettingsCopy.residualRetentionNotice)).toBeVisible();
+    expect(getResidualNotice()).toBeVisible();
   });
 
   it("renders toggle on when current consent is valid and hides residual while on", () => {
@@ -121,9 +177,7 @@ describe("ShareConsentSettingsSection", () => {
     expect(
       screen.getByRole("switch", { name: shareConsentSettingsCopy.toggleLabel }),
     ).toHaveAttribute("aria-checked", "true");
-    expect(
-      screen.queryByText(shareConsentSettingsCopy.residualRetentionNotice),
-    ).not.toBeInTheDocument();
+    expect(queryResidualNotice()).not.toBeInTheDocument();
   });
 
   it("revokes on toggle off and keeps residual copy visible", async () => {
@@ -160,7 +214,7 @@ describe("ShareConsentSettingsSection", () => {
         />
       </QueryClientProvider>,
     );
-    expect(screen.getByText(shareConsentSettingsCopy.residualRetentionNotice)).toBeVisible();
+    expect(getResidualNotice()).toBeVisible();
   });
 
   it("reaccepts on toggle on with injected handler", async () => {

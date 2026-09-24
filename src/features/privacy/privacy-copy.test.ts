@@ -11,6 +11,7 @@ import {
   shareConsentSection,
   shareConsentSettingsCopy,
   shareInFlightSendNote,
+  splitConsentSentences,
 } from "./privacy-copy";
 
 it("locks the six required share-consent phrases for UI copy", () => {
@@ -112,4 +113,20 @@ it("discloses that dish names of recent menus are sent to avoid repeats", () => 
   expect(section).toBeDefined();
   // diversity-hints の RECENT_MENUS_LIMIT（10）と同じ上限を告知する
   expect(section?.body).toMatch(/直近の献立（最大10献立）の料理名/u);
+});
+
+it("U6: splits settings consent copy into bullet sentences without dropping a character", () => {
+  // 同意の説明は分割して箇条書きにするだけ。連結すると元の文と完全に一致しなければならない
+  for (const text of [
+    shareConsentSettingsCopy.help,
+    shareConsentSettingsCopy.acceptDisclosure,
+    shareConsentSettingsCopy.residualRetentionNotice,
+  ]) {
+    const sentences = splitConsentSentences(text);
+    expect(sentences.length).toBeGreaterThan(1);
+    expect(sentences.join("")).toBe(text);
+  }
+  expect(splitConsentSentences(shareConsentSettingsCopy.acceptDisclosure)).toEqual(
+    shareConsentRequiredPhrases.map((phrase) => (phrase.endsWith("。") ? phrase : `${phrase}。`)),
+  );
 });

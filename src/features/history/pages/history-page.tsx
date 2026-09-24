@@ -15,6 +15,7 @@ import { Skeleton } from "@/shared/ui/feedback";
 import { PageHeader } from "@/shared/ui/page-header";
 import { Inset, Stack } from "@/shared/ui/stack";
 import { Surface } from "@/shared/ui/surface";
+import { SwitchStateText } from "@/shared/ui/switch-state-text";
 import type { HistoryGroup } from "../model/group-history";
 import { HistoryCard } from "../components/history-card";
 import { useHistoryGroups } from "../hooks/use-history";
@@ -239,11 +240,10 @@ export function HistoryPageContent({
           retrying={weeklyPlanRetrying}
           onRetry={onWeeklyPlanRetry}
         />
-        <label className="history-filter-label">
+        <label className="history-filter-label min-h-11">
           <input
             type="checkbox"
             role="switch"
-            className="min-h-11 min-w-11"
             checked={favoritesOnly}
             aria-checked={favoritesOnly}
             onChange={(event) => {
@@ -251,6 +251,7 @@ export function HistoryPageContent({
             }}
           />
           お気に入りだけを表示
+          <SwitchStateText checked={favoritesOnly} />
         </label>
         {showShoppingDeadEnd ? (
           <Surface as="section" tone="notice">

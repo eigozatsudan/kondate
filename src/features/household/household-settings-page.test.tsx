@@ -249,6 +249,16 @@ it("登録済み一覧と追加・編集領域を分け、同名・未設定で�
   // 一覧の各行に編集と削除が並ぶ
   expect(screen.getByRole("button", { name: "1人目の大人を削除" })).toBeVisible();
   expect(screen.getByRole("button", { name: "2人目の名前未設定を削除" })).toBeVisible();
+  // 編集が主な操作。削除は枠なしの控えめな文字ボタンにし、行内の順序（編集→削除）は変えない
+  const firstEdit = screen.getByRole("button", { name: "1人目の大人を編集" });
+  const firstDelete = screen.getByRole("button", { name: "1人目の大人を削除" });
+  expect(firstEdit).toHaveClass("secondary-button");
+  expect(firstDelete).toHaveClass("text-button", "household-member-delete", "min-h-11");
+  expect(firstDelete).not.toHaveClass("secondary-button");
+  expect(firstDelete.textContent).toBe("削除");
+  expect(firstEdit.compareDocumentPosition(firstDelete) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
 
   const secondButton = screen.getByRole("button", { name: "2人目の名前未設定を編集" });
   expect(screen.getByRole("button", { name: "3人目の名前未設定を編集" })).toBeVisible();
