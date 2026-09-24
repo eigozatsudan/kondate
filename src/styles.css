@@ -1575,6 +1575,46 @@ dialog:not([open]) {
   gap: 8px;
 }
 
+/*
+ * 履歴カードの操作（UX U5）。主操作は 1 段目に横幅いっぱい、
+ * 詳細／お気に入りは 2 段目に同じ幅で並べる。320px では 1 列に落として横スクロールを出さない。
+ */
+.history-card-primary {
+  display: grid;
+}
+
+.history-card-primary .button-link {
+  width: 100%;
+}
+
+.history-card-secondary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
+  gap: var(--space-2);
+}
+
+.history-card-secondary .button-link,
+.history-card-secondary .ui-btn {
+  width: 100%;
+  min-width: 0;
+  padding-inline: var(--space-3);
+}
+
+/* 削除は右下の控えめなテキストボタン。44px のタップ領域は .ui-btn の min サイズで確保する */
+.history-card-delete {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.history-card-delete .ui-btn {
+  padding-inline: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-small);
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .history-card-heading {
   display: flex;
   flex-wrap: wrap;

@@ -16,8 +16,12 @@ type HistoryCardProps = {
 
 /**
  * 派生グループ1件分の履歴カード。
- * - 代表タイトルと「詳細を見る」で /menus/:id へ遷移（詳細の安全再検査は結果画面側）
- * - 44px タッチターゲットの詳細／お気に入り／削除
+ * - 代表タイトルと「詳細を見る」で /history/:id（履歴詳細）へ遷移する。
+ *   履歴詳細は /menus/:id と同じ menu-detail 共通 body（現行安全の再検証・買い物・
+ *   別案切替）を持ち、見出しだけ「献立の詳細」になる（UX U5）。
+ *   買い物 intent（for=shopping）は従来どおり menusPathForShopping を使う。
+ * - 主操作（household は買い物、idea は詳細）を 1 段目、詳細／お気に入りを 2 段目、
+ *   削除は右下の控えめな ghost ボタンに分ける（44px タッチターゲットは維持）
  * - 削除は native dialog で確認し、失敗時はカードを残して再試行可能
  * menu-detail と同じ語彙（Surface / Stack / Button / Badge）で組む。
  */
@@ -33,7 +37,8 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
   const deletePending = deleteGroup.isPending;
   const menuPath = shoppingIntent
     ? menusPathForShopping(representative.id)
-    : `/menus/${representative.id}`;
+    : `/history/${representative.id}`;
+  const isHousehold = representative.targetMode === "household";
 
   const openDeleteDialog = () => {
     setDeleteError(null);
@@ -78,14 +83,15 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
                   {representative.title.length > 0 ? representative.title : "献立"}
                 </Link>
               </h2>
-              <Badge tone="neutral">{versionCount}案</Badge>
+              {/* 1 案だけのときは出さない。「n案」単独では意味が伝わらないため言い換える */}
+              {versionCount > 1 ? (
+                <Badge tone="neutral">{`別案あり（${String(versionCount)}案）`}</Badge>
+              ) : null}
             </div>
             {/* idea/household の権威ある判定元はHistoryGroup.representative.targetMode。
               idea カードには家族安全確認済みと誤解させる表現を一切出さない
-              （brief step 12）。 */}
-            <Badge tone={representative.targetMode === "idea" ? "neutral" : "warning"}>
-              {representative.targetMode === "idea" ? "アイデア" : "家族に合わせた献立"}
-            </Badge>
+              （brief step 12）。household も注意喚起ではないため warning ではなく neutral にする。 */}
+            <Badge tone="neutral">{isHousehold ? "家族に合わせた献立" : "アイデア"}</Badge>
             <p className="type-small">
               {new Intl.DateTimeFormat("ja-JP", {
                 timeZone: "Asia/Tokyo",
@@ -93,36 +99,56 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
                 timeStyle: "short",
               }).format(new Date(representative.createdAt))}
             </p>
-            {/* 再検証は作成時の対象メンバーだけ。世帯全員と読める「現在の家族設定」は使わない。 */}
+            {/* 再検証は作成時の対象メンバーだけ。世帯全員と読める「現在の家族設定」は使わない。
+              安全に関わる説明なので消さず、文言も変えない（補足として type-small で小さく薄く出す）。 */}
             <p className="type-small">
               {representative.targetMode === "idea"
                 ? "開いても家族条件は確認しません"
                 : "開くとこの献立の対象家族の設定で再確認します"}
             </p>
           </Stack>
-          <div className="history-card-actions">
-            {representative.targetMode === "household" ? (
-              <Link
-                to={menusPathForShopping(representative.id)}
-                className="button-link button-link--primary min-h-11 min-w-11"
+          {/* 主操作と副操作は 1 つのまとまりとして詰めて並べる */}
+          <Stack gap={2}>
+            <div className="history-card-primary">
+              {isHousehold ? (
+                <Link
+                  to={menusPathForShopping(representative.id)}
+                  className="button-link button-link--primary min-h-11 min-w-11"
+                >
+                  買い物リストを作る
+                </Link>
+              ) : (
+                <Link to={menuPath} className="button-link button-link--primary min-h-11 min-w-11">
+                  詳細を見る
+                </Link>
+              )}
+            </div>
+            <div className="history-card-secondary">
+              {isHousehold ? (
+                <Link to={menuPath} className="button-link min-h-11 min-w-11">
+                  詳細を見る
+                </Link>
+              ) : null}
+              <Button
+                variant="secondary"
+                aria-pressed={representative.isFavorite}
+                aria-label={representative.isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
+                disabled={favoritePending}
+                onClick={onToggleFavorite}
               >
-                買い物リストを作る
-              </Link>
-            ) : null}
-            <Link to={menuPath} className="button-link min-h-11 min-w-11">
-              詳細を見る
-            </Link>
+                {representative.isFavorite ? "★ お気に入り" : "☆ お気に入り"}
+              </Button>
+            </div>
+          </Stack>
+          {toggleFavorite.isError && (
+            <p role="alert" className="error-message">
+              お気に入りを更新できませんでした
+            </p>
+          )}
+          {/* 削除は主操作と同じ強さに並べない。枠なしの小さめテキストボタンで右下へ分ける */}
+          <div className="history-card-delete">
             <Button
-              variant="secondary"
-              aria-pressed={representative.isFavorite}
-              aria-label={representative.isFavorite ? "お気に入りを外す" : "お気に入りに追加"}
-              disabled={favoritePending}
-              onClick={onToggleFavorite}
-            >
-              {representative.isFavorite ? "★ お気に入り" : "☆ お気に入り"}
-            </Button>
-            <Button
-              variant="secondary"
+              variant="ghost"
               aria-label="この履歴を削除"
               disabled={deletePending}
               onClick={openDeleteDialog}
@@ -130,11 +156,6 @@ export function HistoryCard({ group, shoppingIntent = false }: HistoryCardProps)
               削除
             </Button>
           </div>
-          {toggleFavorite.isError && (
-            <p role="alert" className="error-message">
-              お気に入りを更新できませんでした
-            </p>
-          )}
         </Stack>
         {/*
         dialog 本体に .stack（display:grid）を付けない。

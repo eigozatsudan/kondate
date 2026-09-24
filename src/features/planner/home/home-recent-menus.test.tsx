@@ -16,7 +16,7 @@ function renderWithRouter(ui: ReactElement, initialPath = "/planner") {
     [
       { path: "/planner", element: ui },
       {
-        path: "/menus/:menuId",
+        path: "/history/:menuId",
         element: <h1>献立詳細</h1>,
       },
     ],
@@ -26,7 +26,7 @@ function renderWithRouter(ui: ReactElement, initialPath = "/planner") {
 }
 
 describe("HomeRecentMenus", () => {
-  it("renders recent menu links by accessible name", () => {
+  it("renders recent menu links to the history detail route by accessible name", () => {
     renderWithRouter(
       <HomeRecentMenus
         menus={[
@@ -39,7 +39,7 @@ describe("HomeRecentMenus", () => {
     expect(screen.getByRole("list", { name: "直近の献立一覧" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "鶏肉のさっぱり煮" })).toHaveAttribute(
       "href",
-      "/menus/11111111-1111-4111-8111-111111111111",
+      "/history/11111111-1111-4111-8111-111111111111",
     );
     expect(screen.getByRole("link", { name: "鮭のムニエル" })).toBeInTheDocument();
   });

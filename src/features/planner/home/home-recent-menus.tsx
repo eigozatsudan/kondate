@@ -27,7 +27,8 @@ export type HomeRecentMenusProps = {
 
 /**
  * 直近の献立一覧。表示専用。
- * 1 タップで /menus/:id へ戻れる導線だけを持つ（削除・お気に入りは履歴タブ側）。
+ * 1 タップで /history/:id（履歴詳細、見出し「献立の詳細」）へ戻れる導線だけを持つ
+ * （削除・お気に入りは履歴タブ側）。見返しの導線なので生成直後の /menus/:id は使わない（UX U5）。
  * P1: 各 Link は leave-flush を await してから遷移（下ナビと同型。失敗は stay）。
  */
 export function HomeRecentMenus({
@@ -82,7 +83,7 @@ export function HomeRecentMenus({
           {!loading && !error && menus.length > 0 ? (
             <Stack as="ul" gap={2} aria-label="直近の献立一覧">
               {menus.map((menu) => {
-                const to = `/menus/${menu.id}`;
+                const to = `/history/${menu.id}`;
                 return (
                   <li key={menu.id} className="home-recent-item">
                     <Link

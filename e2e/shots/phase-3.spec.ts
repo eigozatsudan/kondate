@@ -15,7 +15,8 @@ test("household menu detail and history", async ({ completedOnboardingPage: page
   await shot(page, DIR, "history-list");
 
   await page.getByRole("link", { name: "詳細を見る" }).first().click();
-  await expect(page).toHaveURL(/\/menus\/[0-9a-f-]{36}/iu, { timeout: 30_000 });
+  // 履歴カードの「詳細を見る」は履歴詳細（/history/:id、見出し「献立の詳細」）へ着地する（UX U5）
+  await expect(page).toHaveURL(/\/history\/[0-9a-f-]{36}/iu, { timeout: 30_000 });
   await expect(page.getByRole("heading", { name: "全体の段取り" })).toBeVisible({
     timeout: 30_000,
   });

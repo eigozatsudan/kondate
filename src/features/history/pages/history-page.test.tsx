@@ -113,6 +113,7 @@ function renderHistoryPage(props: {
         ),
       },
       { path: "/menus/:menuId", element: <h1>献立結果</h1> },
+      { path: "/history/:menuId", element: <h1>献立の詳細</h1> },
       { path: "/planner", element: <h1>プランナー</h1> },
       { path: "/shopping", element: <h1>買い物</h1> },
       { path: "/weekly/:weeklyPlanId", element: <h1>今週の献立</h1> },
@@ -197,7 +198,7 @@ describe("HistoryPage", () => {
     });
     expect(await screen.findByText("採用した献立")).toBeVisible();
     expect(screen.getByRole("heading", { name: "作った献立" })).toBeVisible();
-    expect(screen.getByText("3案")).toBeVisible();
+    expect(screen.getByText("別案あり（3案）")).toBeVisible();
     expect(screen.getByText("開くとこの献立の対象家族の設定で再確認します")).toBeVisible();
     expect(screen.queryByText("menu-1")).not.toBeInTheDocument();
   });
@@ -468,10 +469,10 @@ describe("HistoryPage", () => {
     });
   });
 
-  it("links the representative title to the menu result route", async () => {
+  it("links the representative title to the history detail route", async () => {
     renderHistoryPage({ groups: [sampleGroup] });
     const link = await screen.findByRole("link", { name: "採用した献立" });
-    expect(link).toHaveAttribute("href", "/menus/menu-2");
+    expect(link).toHaveAttribute("href", "/history/menu-2");
   });
 
   it("shows shopping banner when shoppingIntent", () => {

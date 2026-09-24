@@ -244,7 +244,9 @@ test(
     await expect(page.getByRole("heading", { name: "作った献立" })).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.getByText("2案", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("別案あり（2案）", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
 
     // E2E3: 新案を採用し、既存リストとの差分 reconcile まで通す（source には戻らない）
     await page.goto(`/menus/${alternateMenuId}`);
