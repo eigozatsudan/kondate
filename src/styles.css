@@ -320,10 +320,47 @@
   padding-inline: 8px;
 }
 
+/*
+ * U2: 画面上部の一番目立つ位置から、step本体の後ろ（カード下）へ移す。
+ * 自動保存トースト（右上fixed）と重ならなくなるうえ、破壊的操作を
+ * 主要な質問導線から視覚的に切り離せる。
+ */
 .guided-planner-theme .wizard-reset-row {
   display: flex;
   min-width: 0;
-  justify-content: flex-end;
+  justify-content: center;
+}
+
+/*
+ * U2: 進み具合表示。総数・現在位置はplannerStepsから算出するため、
+ * ここでは見た目（余白・バー太さ）だけを持つ。
+ */
+.guided-planner-theme .wizard-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.guided-planner-theme .wizard-progress-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.guided-planner-theme .wizard-progress-bar {
+  overflow: hidden;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.guided-planner-theme .wizard-progress-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary-strong);
+  transition: width 0.2s ease;
 }
 
 /*
@@ -489,26 +526,29 @@
 }
 
 /*
- * 入力のリセット。下書きを全消去する破壊的操作なので、下線リンク（.text-button）
- * ではなく輪郭のある実体のボタンにする。主操作（次へ・献立を作る）と競合しないよう
- * 塗りは持たせず、枠と控えめな文字色で「押せるが主役ではない」ことを示す。
+ * 入力のリセット。下書きを全消去する破壊的操作だが、U2でカード下の
+ * 控えめな位置へ移したのに合わせ、枠・塗りを持たない文字ボタン相当の
+ * 見た目にする（主操作や進み具合と同格に見せない）。タップ領域だけは
+ * paddingで44×44 CSS pxを確保し、見た目の小ささと両立させる。
  */
 .guided-planner-theme .wizard-reset-button {
   display: inline-flex;
+  box-sizing: border-box;
   min-height: 44px;
+  min-width: 44px;
   cursor: pointer;
   align-items: center;
-  gap: 8px;
-  border: 1px solid var(--border-strong);
+  gap: 6px;
+  border: none;
   border-radius: 999px;
   color: var(--muted);
-  background: var(--surface);
-  padding: 8px 16px;
-  font-weight: 700;
+  background: transparent;
+  padding: 10px 14px;
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 
 .guided-planner-theme .wizard-reset-button:hover:not(:disabled) {
-  border-color: var(--primary-strong);
   color: var(--primary-strong);
   background: var(--notice);
 }
@@ -520,8 +560,8 @@
 
 .guided-planner-theme .wizard-reset-icon {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .guided-planner-theme .wizard-disabled-reason {

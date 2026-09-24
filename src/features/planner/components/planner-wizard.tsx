@@ -40,6 +40,40 @@ function buildReviewFieldErrors(
   return result;
 }
 
+// 4問（timeLimit〜novelty）は回答を省略しても先へ進める（skipRestOfOptionalSteps参照）。
+// 進み具合表示で「任意」を添えるのはこの集合だけで、質問順は plannerSteps を唯一の正とする。
+const optionalPlannerSteps: ReadonlySet<(typeof plannerSteps)[number]> = new Set([
+  "timeLimit",
+  "budget",
+  "ingredientPreference",
+  "novelty",
+]);
+
+/**
+ * 各stepの上部に出す進み具合（U2）。
+ * 「n / 9」はplannerStepsの実長から算出し、総数・現在位置を直書きしない。
+ * 進捗バーは視覚だけの補助のためaria-hiddenにし、支援技術へは
+ * テキスト「n / 9」（任意stepは「・任意」を付与）だけを読み上げさせる
+ * （brief: バー/テキストのどちらか一方に統一する方針のうちテキスト側を採用）。
+ */
+function PlannerProgress({ step }: { step: (typeof plannerSteps)[number] }) {
+  const total = plannerSteps.length;
+  const position = plannerSteps.indexOf(step) + 1;
+  const percent = (position / total) * 100;
+  const isOptional = optionalPlannerSteps.has(step);
+  return (
+    <div className="wizard-progress">
+      <p className="wizard-progress-label">
+        {position} / {total}
+        {isOptional ? "・任意" : ""}
+      </p>
+      <div className="wizard-progress-bar" aria-hidden="true">
+        <div className="wizard-progress-bar-fill" style={{ width: `${String(percent)}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export type PlannerWizardExtraProps = {
   pantryItems: readonly PantryItem[];
   pantryItemsStatus: PantryItemsStatus;
@@ -418,7 +452,7 @@ export function PlannerWizard({
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         {autosaveChrome}
-        {resetChrome}
+        <PlannerProgress step={step} />
         <MealStep
           value={draft.mealType}
           onChange={(mealType) => {
@@ -439,6 +473,7 @@ export function PlannerWizard({
           suppressValidationToast={autosaveState === "error"}
           {...editReturnActionLabels}
         />
+        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
         {footer}
       </main>
@@ -449,7 +484,7 @@ export function PlannerWizard({
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         {autosaveChrome}
-        {resetChrome}
+        <PlannerProgress step={step} />
         <IngredientStep
           value={draft.mainIngredients}
           onChange={(mainIngredients) => {
@@ -468,6 +503,7 @@ export function PlannerWizard({
           pantryItemsStatus={pantryItemsStatus}
           {...editReturnActionLabels}
         />
+        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
         {footer}
       </main>
@@ -478,7 +514,7 @@ export function PlannerWizard({
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         {autosaveChrome}
-        {resetChrome}
+        <PlannerProgress step={step} />
         <CuisineStep
           value={draft.cuisineGenre}
           onChange={(cuisineGenre) => {
@@ -495,6 +531,7 @@ export function PlannerWizard({
           suppressValidationToast={autosaveState === "error"}
           {...editReturnActionLabels}
         />
+        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
         {footer}
       </main>
@@ -505,7 +542,7 @@ export function PlannerWizard({
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         {autosaveChrome}
-        {resetChrome}
+        <PlannerProgress step={step} />
         <AudienceStep
           value={{
             targetMode: draft.targetMode,
@@ -570,6 +607,7 @@ export function PlannerWizard({
           {...(onOpenSettings !== undefined ? { onOpenSettings } : {})}
           {...editReturnActionLabels}
         />
+        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
         {footer}
       </main>
@@ -580,7 +618,7 @@ export function PlannerWizard({
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         {autosaveChrome}
-        {resetChrome}
+        <PlannerProgress step={step} />
         <OptionalChoiceStep
           key={step}
           id="planner-time-limit"
@@ -612,6 +650,7 @@ export function PlannerWizard({
           {...(returnToReviewAfterEdit ? {} : { onSkipRest: skipRestOfOptionalSteps })}
           {...editReturnActionLabels}
         />
+        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
         {footer}
       </main>
@@ -622,7 +661,7 @@ export function PlannerWizard({
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         {autosaveChrome}
-        {resetChrome}
+        <PlannerProgress step={step} />
         <OptionalChoiceStep
           key={step}
           id="planner-budget"
@@ -650,6 +689,7 @@ export function PlannerWizard({
           errorMessage={fieldErrors.budgetPreference ?? null}
           {...editReturnActionLabels}
         />
+        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
         {footer}
       </main>
@@ -660,7 +700,7 @@ export function PlannerWizard({
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         {autosaveChrome}
-        {resetChrome}
+        <PlannerProgress step={step} />
         <OptionalChoiceStep
           key={step}
           id="planner-ingredient-preference"
@@ -699,6 +739,7 @@ export function PlannerWizard({
           description="材料の量や、買い足しの範囲の目安です。調味料の基本（塩・しょうゆ・油など）はどの選択でも使えます。"
           {...editReturnActionLabels}
         />
+        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
         {footer}
       </main>
@@ -709,7 +750,7 @@ export function PlannerWizard({
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         {autosaveChrome}
-        {resetChrome}
+        <PlannerProgress step={step} />
         <OptionalChoiceStep
           key={step}
           id="planner-novelty-preference"
@@ -736,6 +777,7 @@ export function PlannerWizard({
           disabled={isSaving}
           {...editReturnActionLabels}
         />
+        {resetChrome}
         {error !== null && <p role="alert">{error}</p>}
         {footer}
       </main>
@@ -747,7 +789,7 @@ export function PlannerWizard({
       <main ref={containerRef} className="page-frame stack guided-planner-theme">
         {conflictChrome}
         {autosaveChrome}
-        {resetChrome}
+        <PlannerProgress step={step} />
         <ReviewStep
           value={draft}
           onChange={(next) => {
@@ -791,6 +833,7 @@ export function PlannerWizard({
             void onSubmit();
           }}
         />
+        {resetChrome}
         {footer}
       </main>
     );

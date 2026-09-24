@@ -421,6 +421,39 @@ describe("PlannerWizard 固定順とnavigation", () => {
     expect(onReset).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
   });
+
+  it("入力をリセットは step 本体の後ろ（DOM順）にある(U2)", () => {
+    render(<Harness onReset={vi.fn()} />);
+    const heading = screen.getByRole("heading", { name: "1. 食事" });
+    const resetButton = screen.getByRole("button", { name: "入力をリセット" });
+    expect(heading.compareDocumentPosition(resetButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+});
+
+describe("PlannerWizard progress indicator(U2)", () => {
+  it("最初の質問stepで 1 / 9 を出す", () => {
+    render(<Harness initialStep="meal" />);
+    expect(screen.getByText("1 / 9")).toBeInTheDocument();
+  });
+
+  it("任意の質問stepでは番号と「任意」を添える", () => {
+    renderAtTimeLimit();
+    expect(screen.getByText("5 / 9・任意")).toBeInTheDocument();
+  });
+
+  it("最後の確認stepで 9 / 9 を出す", () => {
+    renderWizardAtReviewWithDraft();
+    expect(screen.getByText("9 / 9")).toBeInTheDocument();
+  });
+
+  it("進捗バーは装飾として aria-hidden にする", () => {
+    const { container } = render(<Harness initialStep="meal" />);
+    const bar = container.querySelector(".wizard-progress-bar");
+    expect(bar).not.toBeNull();
+    expect(bar).toHaveAttribute("aria-hidden", "true");
+  });
 });
 
 describe("PlannerWizard optional condition steps", () => {
