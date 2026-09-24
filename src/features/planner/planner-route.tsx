@@ -80,6 +80,14 @@ import {
   registerPlannerLeaveFlush,
   runPlannerLeaveFlush,
 } from "./planner-leave-flush";
+import {
+  PLANNER_RESUME_HOME,
+  PLANNER_RESUME_START,
+  PLANNER_WIZARD_HOME_ENTRY_PATH,
+  readPlannerLastStep,
+  resolvePlannerContinueStep,
+  writePlannerLastStep,
+} from "./planner-resume";
 import { useDraftAutosave } from "./use-draft-autosave";
 
 /** ホームに載せる直近献立の件数上限（詰め込みすぎない）。 */
@@ -555,6 +563,13 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
 
   // P6: post-init の ?resume= 反応で最新 value を読む（search 変更時だけ step を触る）
   const valueForResumeRef = useRef(emptyDraft);
+  // B-3: ホームのボタンがウィザードを開き、印（?resume=home）を積んだ直後。
+  // 開く質問はボタン側で決めてあるので、P6 effect は step を触らない。
+  const homeOpenPendingRef = useRef(false);
+  // B-3: 新しく開いた ?resume=home を /planner へ置き換えている途中（P6 effect で開かない）。
+  const homeEntryNormalizingRef = useRef(false);
+  // B-1: ?resume=start を /planner へ置き換えた後に、ウィザードの印を積む予定。
+  const startEntryPushPendingRef = useRef(false);
 
   useEffect(() => {
     // G-R4: sticky pending の terminal/in-flight 照合が終わるまで init しない
@@ -576,7 +591,8 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // privacy 往復後の resume=review は、下書きが確認まで揃っているときだけ step を固定する
     // （本命は openPrivacyNotice の flush+cache。resume は二重の安全策）。
     const firstIncomplete = firstIncompletePlannerStep(sanitized);
-    if (searchParams.get("resume") === "review" && firstIncomplete === "review") {
+    const initialResume = searchParams.get("resume");
+    if (initialResume === "review" && firstIncomplete === "review") {
       setStep("review");
     } else {
       setStep(firstIncomplete);
@@ -592,9 +608,33 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     // 押しても途中の質問が開いてホームへ戻れなかったため、ホームで選ばせる形に変えた。
     // pending の照合完了（pendingDisplayReady）を待つ条件は残す。照合前に init すると
     // ホームのボタン構成が「続きから」→「作成中」に後から入れ替わるちらつきが出るため。
-    setWizardOpen(searchParams.get("resume") !== null);
+    // B-3: ?resume=home はホームのボタンで開いたウィザードの履歴エントリの印。新しく開いた
+    //   （再読み込み・生成画面などから戻った）ときはホームを出し、URL を /planner に置き換える。
+    //   生成画面から戻っただけで確認画面や空の 1 問目へいきなり入らないようにするため。
+    // B-1: ?resume=start は別の画面から質問を始める深リンク。最初の未回答の質問を開いたうえで、
+    //   このエントリをホーム（/planner）に置き換え、その上にウィザードの印を積む
+    //   （続きは下の location.key effect）。端末の戻るでホームへ戻れるようにするため。
+    if (initialResume === PLANNER_RESUME_HOME) {
+      homeEntryNormalizingRef.current = true;
+      setWizardOpen(false);
+      void navigate("/planner", { replace: true });
+    } else {
+      setWizardOpen(initialResume !== null);
+      if (initialResume === PLANNER_RESUME_START) {
+        startEntryPushPendingRef.current = true;
+        void navigate("/planner", { replace: true });
+      }
+    }
     setInitialized(true);
-  }, [draftQuery.data, initialized, pendingDisplayReady, safetyQuery.data, searchParams, userId]);
+  }, [
+    draftQuery.data,
+    initialized,
+    navigate,
+    pendingDisplayReady,
+    safetyQuery.data,
+    searchParams,
+    userId,
+  ]);
 
   // value 更新を resume 用 ref へ同期（P6 effect は searchParams 変化時だけ読む）
   useEffect(() => {
@@ -606,19 +646,48 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   // searchParams オブジェクト参照ではなく get("resume") 結果に依存し、毎 render の再実行を避ける。
   // P5: eligible を渡し、strip 前でも blocked ID のまま review に着地しない。
   const resumeQuery = searchParams.get("resume");
+  // B-3: ?resume=home は URL が変わったときだけ扱う（安全データの再取得で質問を動かさない）
+  const previousResumeQueryRef = useRef<string | null>(null);
   useEffect(() => {
     if (!initialized) return;
+    const resumeQueryChanged = previousResumeQueryRef.current !== resumeQuery;
+    previousResumeQueryRef.current = resumeQuery;
     if (resumeQuery === null) return;
     const eligible =
       safetyQuery.data !== undefined ? new Set(safetyQuery.data.eligibleMemberIds) : undefined;
     const firstIncomplete = firstIncompletePlannerStep(valueForResumeRef.current, eligible);
+    if (resumeQuery === PLANNER_RESUME_HOME) {
+      if (!resumeQueryChanged) return;
+      // ホームのボタンで開いた直後: 質問はボタンが決め済み、ウィザードも開いている
+      if (homeOpenPendingRef.current) {
+        homeOpenPendingRef.current = false;
+        return;
+      }
+      // 新しく開いた印は init がホームを出して置き換える
+      if (homeEntryNormalizingRef.current) return;
+      // 同じ画面で戻る・進むによってこのエントリへ来た: 「続きから」と同じ質問で開き直す
+      setStep(
+        resolvePlannerContinueStep(
+          firstIncomplete,
+          userId === undefined ? null : readPlannerLastStep(userId),
+        ),
+      );
+      setWizardOpen(true);
+      return;
+    }
     if (resumeQuery === "review" && firstIncomplete === "review") {
       setStep("review");
     } else {
       setStep(firstIncomplete);
     }
     setWizardOpen(true);
-  }, [initialized, resumeQuery, safetyQuery.data]);
+  }, [initialized, resumeQuery, safetyQuery.data, userId]);
+
+  // B-2: 開いている質問の step 名だけを覚える（「続きから答える」の戻り先）。
+  useEffect(() => {
+    if (!wizardOpen || userId === undefined) return;
+    writePlannerLastStep(userId, step);
+  }, [step, userId, wizardOpen]);
 
   // U3 修正ラウンド 1: /planner でウィザードを開いたまま下の「献立」タブを押したらホームへ戻す。
   // 同じ /planner への遷移では route が再 mount されず init effect も走らないため、
@@ -641,13 +710,27 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
   useEffect(() => {
     if (lastLocationKeyRef.current === locationKey) return;
     lastLocationKeyRef.current = locationKey;
+    // 印の処理は、同じ遷移で先に走る P6 effect が済ませている。遷移 1 回で使い切る。
+    homeOpenPendingRef.current = false;
+    homeEntryNormalizingRef.current = false;
+    const pushStartEntry = startEntryPushPendingRef.current;
+    startEntryPushPendingRef.current = false;
     if (!initialized) return;
     if (resumeQuery !== null) return;
+    // B-1: ?resume=start を /planner（ホーム）へ置き換え終えたので、ウィザードの印を積む。
+    // ウィザードは開いたままにし、ホームを一瞬出したりフォーカスを動かしたりしない。
+    if (pushStartEntry) {
+      if (wizardOpen) {
+        homeOpenPendingRef.current = true;
+        void navigate(PLANNER_WIZARD_HOME_ENTRY_PATH);
+      }
+      return;
+    }
     if (submittingRef.current || emergencyOpeningRef.current || leaveInFlightRef.current) return;
     if (!wizardOpen) return;
     setWizardOpen(false);
     requestPageHeadingFocus();
-  }, [initialized, locationKey, resumeQuery, wizardOpen, requestPageHeadingFocus]);
+  }, [initialized, locationKey, navigate, resumeQuery, wizardOpen, requestPageHeadingFocus]);
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
@@ -1528,14 +1611,27 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     })
     .slice(0, HOME_EXPIRING_PANTRY_LIMIT);
 
-  // ホーム: ?resume= 以外の初期表示。?resume= 時はここへ来ない。
+  // ホーム: ?resume= 以外の初期表示。?resume= 時はここへ来ない
+  // （例外: 新しく開いた ?resume=home は /planner へ置き換えるまでの間だけホームを出す）。
   if (!wizardOpen) {
     // P5: eligible を渡し、blocked 家族 ID が残っていても review に着地しない
     // （fatal/pending 通過後なので safetyData は利用可能）
     const homeResumeStep = firstIncompletePlannerStep(value, new Set(safetyData.eligibleMemberIds));
-    const openWizardAtResumeStep = (): void => {
+    // B-2: 「続きから答える」は最後に開いていた質問（任意の質問を含む）へ戻る。
+    // 覚えが無い・無効・未回答の必須質問より先のときは最初の未回答の質問。
+    const continueStep = resolvePlannerContinueStep(
+      homeResumeStep,
+      userId === undefined ? null : readPlannerLastStep(userId),
+    );
+    // B-3: ホームからウィザードを開くときは履歴に印（?resume=home）を積み、端末の戻るで
+    // ホームへ戻れるようにする（戻ると上の location.key effect がホームへ戻す）。
+    // 質問ごとには積まない: 質問の移動はウィザードの「戻る」「次へ」が担い、戻るで 1 問ずつ
+    // さかのぼると、ホームやプランナーの外へ出るまでに何度も押す必要があるため。
+    const openWizardFromHome = (nextStep: PlannerStep): void => {
+      homeOpenPendingRef.current = true;
+      setStep(nextStep);
       setWizardOpen(true);
-      setStep(homeResumeStep);
+      void navigate(PLANNER_WIZARD_HOME_ENTRY_PATH);
     };
     // U3: pending が無く下書きに進捗があるときだけ「続きから答える」「最初から」を出す。
     // pending があるときは従来どおり「作成中の献立を続ける」を優先し、下書きの導線は出さない。
@@ -1549,14 +1645,20 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
             // 続きが確認画面のときは任意の質問を見ていなくても 8 になるので、件数ではなく
             // 「必須はすべて答えた」と伝える（M-5）
             readyForReview: homeResumeStep === "review",
+            // B-2: 必須がそろっていても、答えかけの質問へ戻るときは確認画面とは言わない
+            continuesAtQuestion: continueStep !== "review",
           }
         : null;
     return (
       <PlannerHome
         remainingToday={usage.isSuccess ? usage.data.success.remaining : null}
-        onStartWizard={openWizardAtResumeStep}
+        onStartWizard={() => {
+          openWizardFromHome(homeResumeStep);
+        }}
         draftProgress={draftProgress}
-        onResumeDraft={openWizardAtResumeStep}
+        onResumeDraft={() => {
+          openWizardFromHome(continueStep);
+        }}
         onRestartDraft={() => {
           // 既存の「入力をリセット」と同じ確認・同じ消去経路（resetPlannerDraft）を使い、
           // ホーム専用の消去処理は作らない。resetPlannerDraft は生成 submit 中は何もしないため、
@@ -1565,7 +1667,7 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
           if (!confirmPlannerReset()) return;
           resetPlannerDraft();
           // resetPlannerDraft が step を meal に戻す
-          setWizardOpen(true);
+          openWizardFromHome("meal");
         }}
         hasResumablePending={hasResumablePending}
         onResumePending={() => {

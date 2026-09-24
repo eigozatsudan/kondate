@@ -2577,7 +2577,10 @@ describe("PlannerRoutePage", () => {
     await vi.waitFor(() => {
       expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("true");
     });
-    expect(navigateMock).not.toHaveBeenCalled();
+    // B-3: ホームの「続きから答える」で積む履歴の印（?resume=home）以外には遷移しない
+    expect(
+      navigateMock.mock.calls.filter(([to]: unknown[]) => to !== "/planner?resume=home"),
+    ).toEqual([]);
   });
 
   it("P2: 再開注意前の generate は旧 sticky を再開しない", async () => {

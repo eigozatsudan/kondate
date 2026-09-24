@@ -292,7 +292,8 @@ test("waits for the latest draft save before requesting emergency menus", async 
     { pantryItemId: selectedPantryItemId, priority: "prefer_use" },
   ]);
   expect(emergencyRequests).toHaveLength(0);
-  await expect(page).toHaveURL(/\/planner$/u);
+  // B-3: ホームから開いたウィザードは /planner?resume=home に居る。pathname で留まりを見る
+  await expect(page).toHaveURL((url) => url.pathname === "/planner");
 
   releaseSave?.();
   // E2E-I1: 製品の review CTA「AIを使わない緊急献立を見る」経由で flush→navigate する。

@@ -37,6 +37,11 @@ export type HomeDraftProgress = {
    * 「8 / 9 まで答えています」は事実と合わないため、件数ではなく状態の文言を出す（U3 修正 M-5）。
    */
   readyForReview: boolean;
+  /**
+   * B-2: 「続きから答える」が確認画面ではなく質問（答えかけの任意の質問など）を開くとき true。
+   * readyForReview でも「確認画面から続けられます」と言うと着地先と食い違うため、文言を変える。
+   */
+  continuesAtQuestion?: boolean;
 };
 
 /**
@@ -100,7 +105,9 @@ export function HomeGenerateCard({
                   「あと n 回」と続けて読み上げが割り込むのを避ける（U3 修正 M-1）。 */}
               <p className="home-pending-notice">
                 {draftProgress.readyForReview
-                  ? "必須の質問はすべて答えています。確認画面から続けられます。"
+                  ? draftProgress.continuesAtQuestion === true
+                    ? "必須の質問はすべて答えています。答えかけの質問から続けられます。"
+                    : "必須の質問はすべて答えています。確認画面から続けられます。"
                   : `${String(draftProgress.answeredSteps)} / ${String(draftProgress.totalSteps)} まで答えています`}
               </p>
               <Button variant="primary" size="large" disabled={disabled} onClick={onResumeDraft}>

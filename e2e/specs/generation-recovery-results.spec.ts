@@ -1015,11 +1015,19 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
         "15分緊急献立は、献立の条件（朝・昼・夕など）をもとに候補を出します。先に条件を入力してください。",
       ),
     ).toBeVisible();
-    await expect(page.getByRole("link", { name: "献立の条件を入力する" })).toBeVisible();
     // idea下書き（家族条件を持たない）を作ってから再訪する。/planner自身の
     // household_members取得は家族安全actionではないため、route listenerを
     // 外さずに記録対象外として扱う（activeRoute = null）。
     activeRoute = null;
+    // B-1: 「献立の条件を入力する」はホームを経由せず最初の質問を開き、戻るでホームへ戻る
+    await page.getByRole("link", { name: "献立の条件を入力する" }).click();
+    await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({ timeout: 30_000 });
+    await expect(page).toHaveURL(
+      (url) => url.pathname === "/planner" && url.search === "?resume=home",
+    );
+    await page.goBack();
+    await expect(page).toHaveURL((url) => url.pathname === "/planner" && url.search === "");
+    await expect(page.getByRole("button", { name: "今日の献立をつくる" })).toBeVisible();
     await openWizardFromHome(page);
     await page.getByRole("radio", { name: "夕食" }).check();
     await clickWizardNext(page);

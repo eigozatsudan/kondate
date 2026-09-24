@@ -18,6 +18,7 @@ import {
   persistSessionExpiredPantryConfirmation,
 } from "@/features/planner/expired-pantry-checks";
 import { getPlannerDraft, plannerKeys } from "@/features/planner/planner-api";
+import { PLANNER_START_QUESTIONS_PATH } from "@/features/planner/planner-resume";
 import {
   householdKeys,
   householdSafetyChangedEvent,
@@ -601,7 +602,8 @@ export function EmergencyMenuPage() {
         <p>
           15分緊急献立は、献立の条件（朝・昼・夕など）をもとに候補を出します。先に条件を入力してください。
         </p>
-        <Link className="primary-button min-h-11" to="/planner">
+        {/* B-1: ホームを経由せず、最初の未回答の質問を直接開く（戻るとプランナーのホーム） */}
+        <Link className="primary-button min-h-11" to={PLANNER_START_QUESTIONS_PATH}>
           献立の条件を入力する
         </Link>
       </main>

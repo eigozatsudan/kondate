@@ -168,9 +168,10 @@ it("下書きがない直接アクセスでは候補を取得せず献立画面�
   ).toBeVisible();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toHaveAttribute("href", "/planner");
+  // B-1: ホームを経由せず、最初の未回答の質問を開く深リンク（?resume=start）
   expect(screen.getByRole("link", { name: "献立の条件を入力する" })).toHaveAttribute(
     "href",
-    "/planner",
+    "/planner?resume=start",
   );
   expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
 });

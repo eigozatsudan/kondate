@@ -18,23 +18,34 @@ export { expect };
 
 /**
  * 素の /planner（ホーム）からウィザード第1ステップ（1. 食事）を開く。
- * Phase 4 以降、空下書きの /planner はホーム表示のため、wizard 直行の fixture は
- * このヘルパ経由で主 CTA を踏む。下書き復帰で既にウィザードならクリックをスキップする。
+ * U3 以降、素の /planner は下書きの有無にかかわらず必ずホームを出す。空下書き（新規ユーザー、
+ * または生成成功で下書きが消えた後）の前提で、ホームの主 CTA「今日の献立をつくる」を踏む。
+ * 答えかけの下書きがあるとこの CTA は出ず「続きから答える」になるため、30 秒待たずに
+ * 原因の分かるエラーで止める（下書きの続きは resumeDraftFromHome を使う）。
+ * B-3: ホームから開いたウィザードは履歴に印（/planner?resume=home）を積む。
  */
 export async function openWizardFromHome(page: Page): Promise<void> {
   await page.goto("/planner");
-  const mealHeading = page.getByRole("heading", { name: "1. 食事" });
   const homeStart = page.getByRole("button", { name: "今日の献立をつくる" });
-  await expect(homeStart.or(mealHeading).first()).toBeVisible({ timeout: 30_000 });
-  if (await homeStart.isVisible()) {
-    await homeStart.click();
+  const resumeDraft = page.getByRole("button", { name: "続きから答える" });
+  await expect(homeStart.or(resumeDraft).first()).toBeVisible({ timeout: 30_000 });
+  if (await resumeDraft.isVisible()) {
+    throw new Error(
+      "openWizardFromHome は空の下書きが前提です。答えかけの下書きには resumeDraftFromHome を使ってください。",
+    );
   }
-  await expect(mealHeading).toBeVisible({ timeout: 15_000 });
+  await homeStart.click();
+  await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({ timeout: 15_000 });
+  await expect(page).toHaveURL(
+    (url) => url.pathname === "/planner" && url.search === "?resume=home",
+  );
 }
 
 /**
  * U3: 答えかけの下書きがあると /planner はウィザードへ直行せずホームを出す。
- * 利用者と同じくホームの「続きから答える」を押し、下書きの続き（最初の未回答 step）を開く。
+ * 利用者と同じくホームの「続きから答える」を押し、下書きの続きを開く。
+ * B-2: 開くのは同じタブで最後に開いていた質問（覚えが無い・無効なら最初の未回答の質問）。
+ * B-3: 履歴に印（/planner?resume=home）を積むので、端末の戻るでホームへ戻る。
  */
 export async function resumeDraftFromHome(page: Page): Promise<void> {
   const resumeDraft = page.getByRole("button", { name: "続きから答える" });

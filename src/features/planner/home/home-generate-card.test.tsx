@@ -106,6 +106,27 @@ describe("HomeGenerateCard", () => {
     expect(screen.queryByText(/まで答えています/u)).not.toBeInTheDocument();
   });
 
+  it("B-2: says the resume target is a question, not the review, when an answer was left open", () => {
+    render(
+      <HomeGenerateCard
+        remainingToday={2}
+        onStart={vi.fn()}
+        draftProgress={{
+          answeredSteps: 8,
+          totalSteps: 9,
+          readyForReview: true,
+          continuesAtQuestion: true,
+        }}
+        onResumeDraft={vi.fn()}
+        onRestartDraft={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("必須の質問はすべて答えています。答えかけの質問から続けられます。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/確認画面から続けられます/u)).not.toBeInTheDocument();
+  });
+
   it("U3: disabled stops both draft actions", () => {
     render(
       <HomeGenerateCard
