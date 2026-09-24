@@ -463,9 +463,7 @@ test(
     );
 
     await page.reload();
-
     // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
-
     await resumeDraftFromHome(page);
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
@@ -632,9 +630,7 @@ test(
     });
 
     await page.goto("/planner");
-
     // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
-
     await resumeDraftFromHome(page);
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
@@ -673,9 +669,7 @@ test(
     await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 
     await page.reload();
-
     // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
-
     await resumeDraftFromHome(page);
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);

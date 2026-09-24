@@ -31,6 +31,12 @@ export type HomeGenerateCardProps = {
 export type HomeDraftProgress = {
   answeredSteps: number;
   totalSteps: number;
+  /**
+   * 必須の質問（食事〜作る相手）がすべて埋まり、続きが確認画面になるとき true。
+   * このとき answeredSteps は任意の質問（5〜8）を開いていなくても 8 になり、
+   * 「8 / 9 まで答えています」は事実と合わないため、件数ではなく状態の文言を出す（U3 修正 M-5）。
+   */
+  readyForReview: boolean;
 };
 
 /**
@@ -90,8 +96,12 @@ export function HomeGenerateCard({
             onResumeDraft !== undefined &&
             onRestartDraft !== undefined ? (
             <Stack gap={3}>
-              <p className="home-pending-notice" role="status">
-                {`${String(draftProgress.answeredSteps)} / ${String(draftProgress.totalSteps)} まで答えています`}
+              {/* 開いた時点で決まっている静的な説明なので live region（role=status）にしない。
+                  「あと n 回」と続けて読み上げが割り込むのを避ける（U3 修正 M-1）。 */}
+              <p className="home-pending-notice">
+                {draftProgress.readyForReview
+                  ? "必須の質問はすべて答えています。確認画面から続けられます。"
+                  : `${String(draftProgress.answeredSteps)} / ${String(draftProgress.totalSteps)} まで答えています`}
               </p>
               <Button variant="primary" size="large" disabled={disabled} onClick={onResumeDraft}>
                 続きから答える

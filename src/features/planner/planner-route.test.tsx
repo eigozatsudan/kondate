@@ -63,6 +63,10 @@ const queryState = vi.hoisted(() => ({
   search: "",
   /** A-I-12: 週献立入口カード（footer 配線）の Plus/Free 切り替え検証用 */
   usagePlusEntitled: false,
+  /** U3/P9: ホームの「最初から」停止を見るための本日の成功残数 */
+  usageRemaining: 1,
+  /** U3 修正: 同じ /planner への遷移（献立タブ）で変わる location.key の mock 用 */
+  locationKey: "default",
 }));
 
 const ownerBId = "72000000-0000-4000-8000-000000000002";
@@ -184,6 +188,14 @@ vi.mock("react-router", async (importOriginal) => {
     useNavigate: () => navigateMock,
     // Router 未 wrap の unit でも resume query を読めるようにする
     useSearchParams: () => [new URLSearchParams(queryState.search), vi.fn()],
+    // U3 修正: 献立タブで同じ /planner へ遷移したことを key の変化で再現する
+    useLocation: () => ({
+      pathname: "/planner",
+      search: queryState.search === "" ? "" : `?${queryState.search}`,
+      hash: "",
+      state: null,
+      key: queryState.locationKey,
+    }),
     // P5: data router 必須の useBlocker を差し替え。既存 PlannerRoutePage テストが throw しない。
     useBlocker: (
       shouldBlock: (args: {
@@ -244,7 +256,7 @@ vi.mock("@tanstack/react-query", () => ({
         data: {
           plan: "free" as const,
           plusEntitled: queryState.usagePlusEntitled,
-          success: { consumed: 0, limit: 1, remaining: 1 },
+          success: { consumed: 0, limit: 1, remaining: queryState.usageRemaining },
           attempts: { sent: 0, limit: 6, remaining: 6 },
           shortWindow: { sent: 0, limit: 4, remaining: 4, retryAt: null },
           quality: {
@@ -682,11 +694,16 @@ import {
  * ウィザードが開く。ウィザード内の挙動を検証する既存テストは、利用者と同じく
  * ホームの「続きから答える」を押してから検証する。ボタンが無いとき（空下書き・pending 優先・
  * ?resume= 直行・pending 照合待ち）は何もしないので、ホーム側の検証はそのまま成り立つ。
+ * 押したときは、実際にウィザードが開いたことをここで確かめる（押したのに開かない退行を
+ * 後続の否定 assertion が素通りしないようにする。M-2）。
  */
 function renderPlanner(ui: React.ReactElement): RenderResult {
   const view = render(ui);
   const resumeDraft = screen.queryByRole("button", { name: "続きから答える" });
-  if (resumeDraft !== null) fireEvent.click(resumeDraft);
+  if (resumeDraft !== null) {
+    fireEvent.click(resumeDraft);
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+  }
   return view;
 }
 
@@ -732,6 +749,8 @@ beforeEach(() => {
   queryState.privacyIsError = false;
   queryState.search = "";
   queryState.usagePlusEntitled = false;
+  queryState.usageRemaining = 1;
+  queryState.locationKey = "default";
   // flush 後の saved にクライアント入力（pantrySelections 等）を残す（P1 exact-set 検証用）
   savePlannerDraftMock.mockImplementation(
     (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
@@ -2522,7 +2541,10 @@ describe("PlannerRoutePage", () => {
     const resumeDraft = await screen.findByRole("button", { name: "続きから答える" });
     expect(screen.queryByText(/作成中の献立があります/u)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "作成中の献立を続ける" })).not.toBeInTheDocument();
-    expect(screen.getByText("8 / 9 まで答えています")).toBeInTheDocument();
+    // M-5: 続きが確認画面のときは「8 / 9」ではなく必須回答済みの文言
+    expect(
+      screen.getByText("必須の質問はすべて答えています。確認画面から続けられます。"),
+    ).toBeInTheDocument();
     fireEvent.click(resumeDraft);
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
@@ -4015,5 +4037,104 @@ describe("U3: 答えかけの下書きがあってもホームを出す", () => 
 
     expect(screen.getByRole("link", { name: "今週の献立をつくる" })).toBeInTheDocument();
     expect(screen.queryByTestId("weekly-plan-locked")).not.toBeInTheDocument();
+  });
+});
+
+describe("U3 修正: 質問中に献立タブを押したらホームへ戻る", () => {
+  const partialDraft: PlannerDraft = { ...draft, targetMemberIds: [], memo: "途中メモ" };
+
+  it("returns to the home when the same /planner is navigated again, keeping unsaved answers", async () => {
+    queryState.draft = partialDraft;
+    const user = userEvent.setup();
+    const view = render(<PlannerRoutePage />);
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+
+    // 保存前（debounce 中）の入力を模す。route の state にだけある値
+    const latest = wizardPropsSpy.mock.calls.at(-1)?.[0] as WizardMockProps;
+    act(() => {
+      latest.onDraftChange({ ...latest.draft, memo: "未保存のメモ" });
+    });
+    expect(screen.getByLabelText("draft memo")).toHaveTextContent("未保存のメモ");
+
+    // 下の「献立」タブ: 同じ /planner への遷移で key だけが変わる
+    queryState.locationKey = "tab-1";
+    view.rerender(<PlannerRoutePage />);
+
+    expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "続きから答える" })).toBeInTheDocument();
+    expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+    // ホームでは週献立の footer が戻る
+    expect(screen.getByTestId("weekly-plan-locked")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    expect(screen.getByLabelText("draft memo")).toHaveTextContent("未保存のメモ");
+  });
+
+  it("also returns to the home from a wizard opened by ?resume= when the tab drops the query", () => {
+    queryState.search = "resume=review";
+    const view = render(<PlannerRoutePage />);
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
+
+    queryState.search = "";
+    queryState.locationKey = "tab-1";
+    view.rerender(<PlannerRoutePage />);
+
+    expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "続きから答える" })).toBeInTheDocument();
+  });
+
+  it("keeps opening the wizard when a later navigation carries ?resume= (P6)", () => {
+    queryState.draft = null;
+    const view = render(<PlannerRoutePage />);
+    expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+
+    queryState.search = "resume=review";
+    queryState.locationKey = "deep-link";
+    view.rerender(<PlannerRoutePage />);
+
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("meal");
+  });
+
+  it("does not flip the screen while a leave flush is in flight", async () => {
+    queryState.draft = partialDraft;
+    const deferred = createDeferred<PlannerDraft>();
+    savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+    const user = userEvent.setup();
+    const view = render(<PlannerRoutePage />);
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+
+    const leavePromise = runPlannerLeaveFlush();
+    queryState.locationKey = "tab-1";
+    view.rerender(<PlannerRoutePage />);
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+
+    deferred.resolve({ ...partialDraft, revision: 4 });
+    await expect(leavePromise).resolves.toBe("proceed");
+  });
+});
+
+describe("U3 修正: ホームの続きからの分岐を固定する", () => {
+  it("strips an ineligible member at init and resumes at audience from the home (P5)", async () => {
+    // 下書きの家族は現行 eligibility に居ない → sanitize で外れ、作る相手が未回答扱い
+    queryState.safetyEligibleMemberIds = [];
+    const user = userEvent.setup();
+
+    render(<PlannerRoutePage />);
+
+    expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+  });
+
+  it("with no generations left today, keeps resume enabled and disables restart (P9)", () => {
+    queryState.draft = { ...draft, targetMemberIds: [] };
+    queryState.usageRemaining = 0;
+
+    render(<PlannerRoutePage />);
+
+    expect(screen.getByRole("button", { name: "続きから答える" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "最初から" })).toBeDisabled();
   });
 });

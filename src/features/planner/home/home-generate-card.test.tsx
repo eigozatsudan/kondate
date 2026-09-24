@@ -74,7 +74,7 @@ describe("HomeGenerateCard", () => {
       <HomeGenerateCard
         remainingToday={2}
         onStart={onStart}
-        draftProgress={{ answeredSteps: 3, totalSteps: 9 }}
+        draftProgress={{ answeredSteps: 3, totalSteps: 9, readyForReview: false }}
         onResumeDraft={onResumeDraft}
         onRestartDraft={onRestartDraft}
       />,
@@ -95,7 +95,7 @@ describe("HomeGenerateCard", () => {
         onStart={vi.fn()}
         hasResumablePending
         onResumePending={vi.fn()}
-        draftProgress={{ answeredSteps: 8, totalSteps: 9 }}
+        draftProgress={{ answeredSteps: 8, totalSteps: 9, readyForReview: true }}
         onResumeDraft={vi.fn()}
         onRestartDraft={vi.fn()}
       />,
@@ -111,7 +111,7 @@ describe("HomeGenerateCard", () => {
       <HomeGenerateCard
         remainingToday={2}
         onStart={vi.fn()}
-        draftProgress={{ answeredSteps: 3, totalSteps: 9 }}
+        draftProgress={{ answeredSteps: 3, totalSteps: 9, readyForReview: false }}
         onResumeDraft={vi.fn()}
         onRestartDraft={vi.fn()}
         disabled
@@ -119,5 +119,55 @@ describe("HomeGenerateCard", () => {
     );
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "最初から" })).toBeDisabled();
+  });
+  it("U3: progress line is static text, not a live region", () => {
+    render(
+      <HomeGenerateCard
+        remainingToday={null}
+        onStart={vi.fn()}
+        draftProgress={{ answeredSteps: 3, totalSteps: 9, readyForReview: false }}
+        onResumeDraft={vi.fn()}
+        onRestartDraft={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("3 / 9 まで答えています")).not.toHaveAttribute("role");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("U3: says all required questions are answered instead of 8 / 9 when resuming at review", () => {
+    render(
+      <HomeGenerateCard
+        remainingToday={2}
+        onStart={vi.fn()}
+        draftProgress={{ answeredSteps: 8, totalSteps: 9, readyForReview: true }}
+        onResumeDraft={vi.fn()}
+        onRestartDraft={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("必須の質問はすべて答えています。確認画面から続けられます。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/8 \/ 9/u)).not.toBeInTheDocument();
+  });
+
+  it("U3/P9: remainingToday===0 keeps resume enabled and disables restart", async () => {
+    const user = userEvent.setup();
+    const onResumeDraft = vi.fn();
+    const onRestartDraft = vi.fn();
+    render(
+      <HomeGenerateCard
+        remainingToday={0}
+        onStart={vi.fn()}
+        draftProgress={{ answeredSteps: 3, totalSteps: 9, readyForReview: false }}
+        onResumeDraft={onResumeDraft}
+        onRestartDraft={onRestartDraft}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "続きから答える" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "最初から" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "最初から" }));
+    expect(onRestartDraft).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+    expect(onResumeDraft).toHaveBeenCalledTimes(1);
   });
 });

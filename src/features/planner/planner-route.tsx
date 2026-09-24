@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { NavigationType, useBlocker, useNavigate, useSearchParams } from "react-router";
+import {
+  NavigationType,
+  useBlocker,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router";
 import type { PantryItem } from "@shared/contracts/pantry";
 import {
   collectPlannerRequestText,
@@ -612,6 +618,29 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
     }
     setWizardOpen(true);
   }, [initialized, resumeQuery, safetyQuery.data]);
+
+  // U3 修正ラウンド 1: /planner でウィザードを開いたまま下の「献立」タブを押したらホームへ戻す。
+  // 同じ /planner への遷移では route が再 mount されず init effect も走らないため、
+  // wizardOpen を false に戻す経路がここ以外に無い。react-router の Link は同じ場所への
+  // 遷移でも新しい location.key を作るので、key の変化を「献立タブが押された」合図として使う。
+  // - ?resume= 付きへの変化は上の P6 effect がウィザードを開く担当なので、ここでは触らない
+  //   （深リンク契約 4b を崩さない）。
+  // - ?resume= で開いたウィザードでタブを押した場合も、URL から query が消えるのでホームへ戻す。
+  //   URL と画面を一致させ、「献立タブ = ホーム」を例外なく保つため。
+  // - 下書きの値・autosave・競合状態は route の state のまま残るので、未保存の入力も失われない
+  //   （ホームを出すだけで unmount しない。ホームの「続きから答える」で同じ値に戻れる）。
+  // - 生成 submit・緊急献立への移動・leave-flush の途中は画面を切り替えない
+  //   （それぞれ直後に別画面へ遷移する途中で、ホームを一瞬挟むと操作が二重になり得るため）。
+  const locationKey = useLocation().key;
+  const lastLocationKeyRef = useRef(locationKey);
+  useEffect(() => {
+    if (lastLocationKeyRef.current === locationKey) return;
+    lastLocationKeyRef.current = locationKey;
+    if (!initialized) return;
+    if (resumeQuery !== null) return;
+    if (submittingRef.current || emergencyOpeningRef.current || leaveInFlightRef.current) return;
+    setWizardOpen(false);
+  }, [initialized, locationKey, resumeQuery]);
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
@@ -1510,6 +1539,9 @@ function PlannerPageForOwner({ userId, startGeneration }: PlannerPageForOwnerPro
         ? {
             answeredSteps: plannerSteps.indexOf(homeResumeStep),
             totalSteps: plannerSteps.length,
+            // 続きが確認画面のときは任意の質問を見ていなくても 8 になるので、件数ではなく
+            // 「必須はすべて答えた」と伝える（M-5）
+            readyForReview: homeResumeStep === "review",
           }
         : null;
     return (
