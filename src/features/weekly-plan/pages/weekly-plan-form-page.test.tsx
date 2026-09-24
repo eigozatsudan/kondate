@@ -116,6 +116,7 @@ describe("WeeklyPlanFormPage", () => {
     expect(
       screen.getByText("うまくいかなかった分も含めて、今週はあと 6 回まで試せます"),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/使い切りました/)).not.toBeInTheDocument();
     expect(screen.queryByText(/やり直し/)).not.toBeInTheDocument();
     expect(screen.queryByText(/成功/)).not.toBeInTheDocument();
     expect(screen.queryByText(/試行 /)).not.toBeInTheDocument();
@@ -172,6 +173,9 @@ describe("WeeklyPlanFormPage", () => {
     renderPage();
     expect(screen.getByRole("button", { name: "今週の献立をつくる" })).toBeDisabled();
     expect(screen.getByText("今週の分は使い切りました")).toBeInTheDocument();
+    // 成功枠が尽きたら試せる回数の行は出さない（押せないのに「試せます」と並べない）
+    expect(screen.queryByText(/試せます/)).not.toBeInTheDocument();
+    expect(screen.queryByText("今週試せる回数を使い切りました")).not.toBeInTheDocument();
     expect(screen.queryByText(/チラシ献立と共通/)).not.toBeInTheDocument();
     expect(
       screen.getByText(/週次枠は2026年8月3日（月）から新しい週になります/),
@@ -192,8 +196,15 @@ describe("WeeklyPlanFormPage", () => {
       refetch: vi.fn(),
     });
     renderPage();
-    expect(screen.getByText("今週試せる回数を使い切りました")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "今週の献立をつくる" })).toBeDisabled();
+    // 使い切りの文は 1 回だけ。「あと n 回つくれます」「あと 0 回まで試せます」と並べない
+    expect(screen.getAllByText("今週試せる回数を使い切りました")).toHaveLength(1);
+    expect(screen.queryByText(/つくれます/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/試せます/)).not.toBeInTheDocument();
     expect(screen.queryByText("今週の分は使い切りました")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/週次枠は2026年8月3日（月）から新しい週になります/),
+    ).toBeInTheDocument();
   });
 
   it("blocks while usage is loading and offers retry after a read failure", async () => {

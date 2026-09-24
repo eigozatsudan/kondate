@@ -356,16 +356,26 @@ export function WeeklyPlanFormPage({
     <main className="page-frame stack guided-planner-theme">
       <h1>今週の献立</h1>
       {quota !== undefined ? (
+        // 成功枠・試せる回数のどちらかが尽きたら使い切りの 1 文だけを出し、
+        // 「あと n 回つくれます」「あと n 回まで試せます」と矛盾して並べない。
+        // 試せる回数の使い切りも、成功枠と同じくこの回数表示の位置で伝える。
         <p>
-          {quota.successRemaining === 0
-            ? "今週の分は使い切りました"
-            : `今週はあと ${String(quota.successRemaining)} 回つくれます（週 ${String(quota.successLimit)} 回まで）`}
-          <br />
-          {/* triesRemaining は AI へ送った回数（成功した回も含む）で減る週次の枠。
-              「失敗したときだけ減る」と読めないよう、うまくいかなかった分も含むと書く。 */}
-          <small>
-            うまくいかなかった分も含めて、今週はあと {String(quota.triesRemaining)} 回まで試せます
-          </small>
+          {quota.successRemaining === 0 ? (
+            "今週の分は使い切りました"
+          ) : quota.triesRemaining === 0 ? (
+            "今週試せる回数を使い切りました"
+          ) : (
+            <>
+              {`今週はあと ${String(quota.successRemaining)} 回つくれます（週 ${String(quota.successLimit)} 回まで）`}
+              <br />
+              {/* triesRemaining は AI へ送った回数（成功した回も含む）で減る週次の枠。
+                  「失敗したときだけ減る」と読めないよう、うまくいかなかった分も含むと書く。 */}
+              <small>
+                うまくいかなかった分も含めて、今週はあと {String(quota.triesRemaining)}{" "}
+                回まで試せます
+              </small>
+            </>
+          )}
         </p>
       ) : usage.isError ? (
         <div role="alert">
@@ -535,13 +545,6 @@ export function WeeklyPlanFormPage({
           </p>
         ) : null}
       </fieldset>
-      {/* successRemaining===0 は上の回数表示ですでに「今週の分は使い切りました」を
-          出しているため、ここでは重複させず試せる回数（triesRemaining）の方だけ補足する。 */}
-      {quotaExhausted && quota.successRemaining !== 0 ? (
-        <p role="note" className="error">
-          今週試せる回数を使い切りました
-        </p>
-      ) : null}
       {selectedUnsatisfiable.length > 0 ? (
         <p role="note">警告がある家族のチェックを外してから作成してください。</p>
       ) : null}

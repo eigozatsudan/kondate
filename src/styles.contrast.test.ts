@@ -838,6 +838,13 @@ function rawMediaRuleDeclarations(source: string, condition: string, selector: s
   return found;
 }
 
+/** 条件付き規則のためだけに許可したセレクタ。top-level に現れたら宣言が固定されないので検出する。 */
+const conditionalOnlySelectors = new Set(
+  conditionalTaskRules
+    .map((expected) => expected.selector)
+    .filter((selector) => taskRuleDeclarations[selector] === undefined),
+);
+
 function isRegisteredConditionalRule(rule: CssRule, source: string): boolean {
   const atRule = rule.atRules.length === 1 ? rule.atRules[0] : undefined;
   if (atRule === undefined || atRule.type !== "media") return false;
@@ -1060,7 +1067,8 @@ function unexpectedProtectedSelectors(source: string, requireEveryTaskRule = fal
       if (Array.from(rule.declarations.values()).some((value) => value.endsWith(" !important"))) {
         return true;
       }
-      if (rule.atRules.length === 0) return false;
+      // 条件付き専用の許可は条件付き照合でのみ有効。top-level では通さない。
+      if (rule.atRules.length === 0) return conditionalOnlySelectors.has(rule.selector);
       if (isRegisteredConditionalRule(rule, source)) return false;
       const reducedMotionException =
         rule.selector === ".wizard-transition" &&
@@ -1749,6 +1757,33 @@ describe("guided planner theme", () => {
       '[type="checkbox"][role="switch"]:disabled',
       '[type="checkbox"][role="switch"], [type="checkbox"][role="switch"]::before',
     ]);
+  });
+
+  it("rejects a top-level rule for a selector allowed only inside a registered media rule", () => {
+    // 条件付き規則のためだけに許可したセレクタは、top-level では宣言を固定していない。
+    // 許可リストにあることだけで通さず、top-level に現れたら検出する。
+    const fixture = `
+      [type="checkbox"][role="switch"], [type="checkbox"][role="switch"]::before {
+        background: transparent; border-color: transparent; width: 60px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        [type="checkbox"][role="switch"], [type="checkbox"][role="switch"]::before {
+          transition: none;
+        }
+      }
+    `;
+
+    expect(unexpectedProtectedSelectors(fixture)).toEqual([
+      '[type="checkbox"][role="switch"], [type="checkbox"][role="switch"]::before',
+    ]);
+    expect(
+      unexpectedProtectedSelectors(
+        `${cssWithoutImports}
+      [type="checkbox"][role="switch"], [type="checkbox"][role="switch"]::before { width: 60px; }
+    `,
+        true,
+      ),
+    ).toEqual(['[type="checkbox"][role="switch"], [type="checkbox"][role="switch"]::before']);
   });
 
   it("rejects protected overrides in every conditional context", () => {

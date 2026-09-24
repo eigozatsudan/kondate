@@ -4150,17 +4150,26 @@ describe("U3 修正: 質問中に献立タブを押したらホームへ戻る",
     queryState.draft = partialDraft;
     const deferred = createDeferred<PlannerDraft>();
     savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+    const requestFocus = vi.fn();
+    const withShellFocus = () => (
+      <PageHeadingFocusContext.Provider value={requestFocus}>
+        <PlannerRoutePage />
+      </PageHeadingFocusContext.Provider>
+    );
     const user = userEvent.setup();
-    const view = render(<PlannerRoutePage />);
+    const view = render(withShellFocus());
     await user.click(screen.getByRole("button", { name: "続きから答える" }));
 
     const leavePromise = runPlannerLeaveFlush();
     queryState.locationKey = "tab-1";
-    view.rerender(<PlannerRoutePage />);
+    view.rerender(withShellFocus());
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    // 画面を切り替えないので、ホームの見出しへのフォーカスも頼まない
+    expect(requestFocus).not.toHaveBeenCalled();
 
     deferred.resolve({ ...partialDraft, revision: 4 });
     await expect(leavePromise).resolves.toBe("proceed");
+    expect(requestFocus).not.toHaveBeenCalled();
   });
 });
 

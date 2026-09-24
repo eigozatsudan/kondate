@@ -526,6 +526,38 @@ describe("AppShell heading refocus on the same pathname (I-2)", () => {
     expect(scrollTo).toHaveBeenCalledWith(0, 0);
   });
 
+  it("does not scroll to top on initial render or ordinary pathname navigation", async () => {
+    const scrollTo = vi.fn();
+    vi.stubGlobal("scrollTo", scrollTo);
+    const user = userEvent.setup();
+    renderAppShellAt("/planner", [
+      {
+        path: "/planner",
+        element: (
+          <main className="page-frame">
+            <h1>献立ホーム</h1>
+          </main>
+        ),
+      },
+      {
+        path: "/pantry",
+        element: (
+          <main className="page-frame">
+            <h1>冷蔵庫</h1>
+          </main>
+        ),
+      },
+    ]);
+    await waitForShellFocusFrame();
+    await user.click(screen.getByRole("link", { name: /冷蔵庫/u }));
+    const pantryHeading = await screen.findByRole("heading", { name: "冷蔵庫" });
+    await waitFor(() => {
+      expect(pantryHeading).toHaveFocus();
+    });
+    // 先頭へのスクロールは同じ pathname での入れ替え依頼のときだけ
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
   it("does not move focus on a same-pathname tab press without a request", async () => {
     const user = userEvent.setup();
     renderAppShellAt("/planner", [
