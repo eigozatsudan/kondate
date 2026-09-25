@@ -1,7 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { EXHAUSTED_TODAY_COPY, HomeGenerateCard } from "./home-generate-card";
+import {
+  DRAFT_CONFLICT_HOME_COPY,
+  EXHAUSTED_TODAY_COPY,
+  HomeGenerateCard,
+} from "./home-generate-card";
 
 describe("HomeGenerateCard", () => {
   it("renders the primary generation entry point", () => {
@@ -250,5 +254,30 @@ describe("HomeGenerateCard", () => {
     );
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "最初から答え直す" })).toBeDisabled();
+  });
+
+  // R3 修正レビュー m-1: 競合と枠 0 が重なったら、止めたボタンの説明に両方の理由を入れる
+  it("describes both the draft conflict and the exhausted quota on the restart action", () => {
+    render(
+      <HomeGenerateCard
+        remainingToday={0}
+        onStart={vi.fn()}
+        draftProgress={{
+          answeredRequiredQuestions: 3,
+          requiredQuestions: 4,
+          readyForReview: false,
+        }}
+        onResumeDraft={vi.fn()}
+        onRestartDraft={vi.fn()}
+        restartDisabled
+      />,
+    );
+    const restart = screen.getByRole("button", { name: "最初から答え直す" });
+    expect(restart).toBeDisabled();
+    expect(restart).toHaveAccessibleDescription(
+      `${DRAFT_CONFLICT_HOME_COPY} ${EXHAUSTED_TODAY_COPY}`,
+    );
+    expect(screen.getByText(DRAFT_CONFLICT_HOME_COPY)).toBeVisible();
+    expect(screen.getByText(EXHAUSTED_TODAY_COPY)).toBeVisible();
   });
 });

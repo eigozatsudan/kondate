@@ -481,7 +481,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
       now: FIXED_NOW,
     });
     expect(screen.getByText("次回の更新日: 2026年10月23日")).toBeVisible();
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
   });
 
   it("shows the end date without renewal when cancel_at_period_end is set", () => {
@@ -493,8 +493,25 @@ describe("PlusLandingPage entitled benefits and period", () => {
       },
       now: FIXED_NOW,
     });
-    expect(screen.getByText("2026年10月22日まで Plus を使えます（自動更新なし）")).toBeVisible();
+    expect(
+      screen.getByText("2026年10月23日 00:00 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+  });
+
+  // UX 残り R3 M-2（ユーザー決定）: 期間末は申込の時刻にそろうので、日中に終わるなら時刻まで示す
+  it("shows the JST time of day when the period ends during the day", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        currentPeriodEnd: "2026-10-23T05:32:11.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      now: FIXED_NOW,
+    });
+    expect(
+      screen.getByText("2026年10月23日 14:32 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
   });
 
   it("shows the end date without renewal for a canceled subscription still in period", () => {
@@ -506,7 +523,9 @@ describe("PlusLandingPage entitled benefits and period", () => {
       },
       now: FIXED_NOW,
     });
-    expect(screen.getByText("2026年10月22日まで Plus を使えます（自動更新なし）")).toBeVisible();
+    expect(
+      screen.getByText("2026年10月23日 00:00 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
   });
 
@@ -516,7 +535,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
       renderLp({ entitlement: { ...plusActive, currentPeriodEnd: null, cancelAtPeriodEnd } });
       expect(screen.getByText(PLUS_LP_ACTIVE)).toBeVisible();
       expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
-      expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+      expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
     },
   );
 
@@ -534,7 +553,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
       });
       expect(screen.getByText(PLUS_LP_ACTIVE)).toBeVisible();
       expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
-      expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+      expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
     },
   );
 
@@ -600,7 +619,9 @@ describe("PlusLandingPage entitled benefits and period", () => {
       },
       now: FIXED_NOW,
     });
-    expect(screen.getByText("2026年9月30日まで Plus を使えます（自動更新なし）")).toBeVisible();
+    expect(
+      screen.getByText("2026年10月1日 00:00 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
     expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
     expect(screen.queryByText(/無料期間の終了/u)).not.toBeInTheDocument();
   });
@@ -631,7 +652,9 @@ describe("PlusLandingPage entitled benefits and period", () => {
       },
       now: FIXED_NOW,
     });
-    expect(screen.getByText("2026年10月10日まで Plus を使えます（自動更新なし）")).toBeVisible();
+    expect(
+      screen.getByText("2026年10月11日 00:00 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
   });
 
@@ -646,7 +669,9 @@ describe("PlusLandingPage entitled benefits and period", () => {
       },
       now: FIXED_NOW,
     });
-    expect(screen.getByText("2026年9月30日まで Plus を使えます（自動更新なし）")).toBeVisible();
+    expect(
+      screen.getByText("2026年10月1日 00:00 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
     expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
   });
 
@@ -662,7 +687,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
     });
     expect(screen.getByText("無料期間の終了: 2026年10月1日")).toBeVisible();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
   });
 
   // UX 残り R2 修正 I-2: 境界（利用中は期間末、お試し中は無料期間の終了）より後の cancelAt は、
@@ -678,7 +703,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
       now: FIXED_NOW,
     });
     expect(screen.getByText("次回の更新日: 2026年10月23日")).toBeVisible();
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
   });
 
   it("keeps the trial charge warning when cancel_at is after the trial end", () => {
@@ -694,7 +719,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
     });
     expect(screen.getByText("無料期間の終了: 2026年10月1日")).toBeVisible();
     expect(screen.getByText(TRIAL_END_WARNING)).toBeVisible();
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
   });
 
   it("shows no period line when cancel_at is already in the past", () => {
@@ -707,7 +732,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
       },
       now: FIXED_NOW,
     });
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
   });
 
@@ -725,7 +750,7 @@ describe("PlusLandingPage entitled benefits and period", () => {
     });
     expect(screen.getByText(TRIAL_CANCEL_SCHEDULED_COPY)).toBeVisible();
     expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/無料期間の終了/u)).not.toBeInTheDocument();
   });
 });

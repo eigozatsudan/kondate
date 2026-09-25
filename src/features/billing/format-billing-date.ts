@@ -27,15 +27,33 @@ export function formatUpcomingBillingDate(iso: string | null, now: Date): string
 }
 
 /**
- * これから来る終了の日時を、使える最後の日として整形する（「X日まで」の X）。
- * 期間末は「その時刻から使えない」境界なので、1ms 前の JST の日付にする。
- * 例: 2026-10-22T15:00Z（10/23 0:00 JST）は「2026年10月22日」。
- * 「X日に終了します」だと X 日も使えると読まれうるため（最終レビュー B Minor 3）。
- * 現在時刻以前（同時刻を含む）や解釈できない値は null。
+ * 課金の日時を JST の「2026年10月23日 14:32」形式（24 時間表記の HH:MM）にする。
+ * 終了の瞬間を示すために使う（UX 残り R3 M-2 でユーザーが決めた形）。日付の部分は
+ * formatBillingDate と同じ書式。null や解釈できない値は null。
  */
-export function formatUpcomingBillingLastDay(iso: string | null, now: Date): string | null {
+export function formatBillingDateTime(iso: string | null): string | null {
+  const date = formatBillingDate(iso);
+  if (iso === null || date === null) return null;
+  try {
+    const time = new Intl.DateTimeFormat("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(new Date(iso));
+    return `${date} ${time}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * これから来る終了の日時を「日付 時刻」で整形する。現在時刻以前（同時刻を含む）や
+ * 解釈できない値は null（過去の日時を断言しない。formatUpcomingBillingDate と同じ扱い）。
+ */
+export function formatUpcomingBillingDateTime(iso: string | null, now: Date): string | null {
   if (iso === null) return null;
   const ms = Date.parse(iso);
   if (Number.isNaN(ms) || ms <= now.getTime()) return null;
-  return formatBillingDate(new Date(ms - 1).toISOString());
+  return formatBillingDateTime(iso);
 }

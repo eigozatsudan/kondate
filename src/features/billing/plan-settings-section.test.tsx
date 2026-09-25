@@ -225,7 +225,9 @@ describe("PlanSettingsSection", () => {
       entitlement: { ...trialingEntitlement, cancelAtPeriodEnd: true },
       now: new Date("2026-08-01T00:00:00.000Z"),
     });
-    expect(screen.getByText("2026年8月5日まで Plus を使えます（自動更新なし）")).toBeVisible();
+    expect(
+      screen.getByText("2026年8月6日 00:00 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
     expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
   });
 
@@ -255,7 +257,20 @@ describe("PlanSettingsSection", () => {
       entitlement: { ...activeEntitlement, cancelAt: "2026-10-10T15:00:00.000Z" },
       now: settingsNow,
     });
-    expect(screen.getByText("2026年10月10日まで Plus を使えます（自動更新なし）")).toBeVisible();
+    expect(
+      screen.getByText("2026年10月11日 00:00 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
+  });
+
+  // UX 残り R3 M-2（ユーザー決定）: 日中に終わるときは、その時刻まで示す
+  it("shows the JST time of day when cancel_at falls during the day", () => {
+    renderPlan({
+      entitlement: { ...activeEntitlement, cancelAt: "2026-10-10T05:32:11.000Z" },
+      now: settingsNow,
+    });
+    expect(
+      screen.getByText("2026年10月10日 14:32 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
   });
 
   it("shows the period end as the Plus end when cancel_at_period_end is set", () => {
@@ -263,12 +278,14 @@ describe("PlanSettingsSection", () => {
       entitlement: { ...activeEntitlement, cancelAtPeriodEnd: true },
       now: settingsNow,
     });
-    expect(screen.getByText("2026年10月22日まで Plus を使えます（自動更新なし）")).toBeVisible();
+    expect(
+      screen.getByText("2026年10月23日 00:00 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
   });
 
   it("does not add a period line for an auto-renewing plan", () => {
     renderPlan({ entitlement: activeEntitlement, now: settingsNow });
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
   });
 
@@ -277,7 +294,9 @@ describe("PlanSettingsSection", () => {
       entitlement: { ...trialingEntitlement, cancelAt: "2026-08-05T15:00:00.000Z" },
       now: new Date("2026-08-01T00:00:00.000Z"),
     });
-    expect(screen.getByText("2026年8月5日まで Plus を使えます（自動更新なし）")).toBeVisible();
+    expect(
+      screen.getByText("2026年8月6日 00:00 に Plus が終了します（自動更新なし）"),
+    ).toBeVisible();
     expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
   });
 
@@ -289,7 +308,7 @@ describe("PlanSettingsSection", () => {
     });
     expect(screen.getByText(TRIAL_CANCEL_SCHEDULED_COPY)).toBeVisible();
     expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/無料期間の終了/u)).not.toBeInTheDocument();
   });
 
@@ -301,7 +320,7 @@ describe("PlanSettingsSection", () => {
     });
     expect(screen.getByText("無料期間の終了: 2026年8月6日")).toBeVisible();
     expect(screen.getByText(TRIAL_END_WARNING)).toBeVisible();
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
   });
 
   it("does not show a Plus end when cancel_at is after the current period end", () => {
@@ -309,7 +328,7 @@ describe("PlanSettingsSection", () => {
       entitlement: { ...activeEntitlement, cancelAt: "2026-12-09T15:00:00.000Z" },
       now: settingsNow,
     });
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
   });
 
   it("shows no end date when cancel_at is already in the past", () => {
@@ -317,7 +336,7 @@ describe("PlanSettingsSection", () => {
       entitlement: { ...activeEntitlement, cancelAt: "2026-09-01T15:00:00.000Z" },
       now: settingsNow,
     });
-    expect(screen.queryByText(/まで Plus を使えます/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/に Plus が終了します/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
   });
 

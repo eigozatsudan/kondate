@@ -1,5 +1,5 @@
 import { TRIAL_CANCEL_SCHEDULED_COPY, TRIAL_END_WARNING } from "./billing-ui-copy";
-import { formatUpcomingBillingDate, formatUpcomingBillingLastDay } from "./format-billing-date";
+import { formatUpcomingBillingDate, formatUpcomingBillingDateTime } from "./format-billing-date";
 
 /**
  * Plus LP（/plus）と設定のプラン欄で共有する、期間の表示行。
@@ -24,9 +24,10 @@ export function EntitledPeriodLine({
     const periodEnd = formatUpcomingBillingDate(periodEndIso, now);
     return periodEnd === null ? null : <p>次回の更新日: {periodEnd}</p>;
   }
-  // 最終レビュー B Minor 3: 終了は「使える最後の日まで」で言う（期間末の日は使えない）
-  const lastDay = formatUpcomingBillingLastDay(periodEndIso, now);
-  return lastDay === null ? null : <p>{lastDay}まで Plus を使えます（自動更新なし）</p>;
+  // 最終レビュー B Minor 3・R3 レビュー M-2: 期間末は申込の時刻にそろい日中のこともあるので、
+  // 日付だけでは終わる瞬間が伝わらない。日付と時刻（JST）で終了の瞬間を示す（ユーザー決定）。
+  const endsAt = formatUpcomingBillingDateTime(periodEndIso, now);
+  return endsAt === null ? null : <p>{endsAt} に Plus が終了します（自動更新なし）</p>;
 }
 
 /**
@@ -34,7 +35,7 @@ export function EntitledPeriodLine({
  * - 自動で有料に切り替わる人: 注意（TRIAL_END_WARNING）は日付に依存しない一般的な文なので、
  *   日付が出ないときも残す（trialEnd が null のときの既存の表示と同じ形）。
  * - 解約を予約した人（autoRenews=false）: 料金はかからないので課金の注意は出さず、終了する旨を出す。
- *   日付が分かれば利用中の解約予約と同じ「{最後の日}まで Plus を使えます（自動更新なし）」、
+ *   日時が分かれば利用中の解約予約と同じ「{日付 時刻} に Plus が終了します（自動更新なし）」、
  *   分からなければ日付なしの TRIAL_CANCEL_SCHEDULED_COPY。
  */
 export function TrialEndLines({
@@ -47,9 +48,9 @@ export function TrialEndLines({
   now: Date;
 }) {
   if (!autoRenews) {
-    const lastDay = formatUpcomingBillingLastDay(trialEndIso, now);
-    return lastDay !== null ? (
-      <p>{lastDay}まで Plus を使えます（自動更新なし）</p>
+    const endsAt = formatUpcomingBillingDateTime(trialEndIso, now);
+    return endsAt !== null ? (
+      <p>{endsAt} に Plus が終了します（自動更新なし）</p>
     ) : (
       <p>{TRIAL_CANCEL_SCHEDULED_COPY}</p>
     );
