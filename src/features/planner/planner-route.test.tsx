@@ -9,6 +9,7 @@ import type { PlannerAttempt } from "./expired-pantry-checks";
 const TEST_CHECKED_AT = new Date().toISOString();
 import type { PlannerFieldName, PlannerStep } from "./model/planner-wizard";
 import { PageHeadingFocusContext } from "@/shared/ui/page-heading-focus";
+import { DRAFT_CONFLICT_HOME_COPY } from "./home/home-generate-card";
 
 const draft: PlannerDraft = {
   id: "71000000-0000-4000-8000-000000000001",
@@ -4363,6 +4364,11 @@ describe("R3: ウィザードを閉じない条件を 3 経路でそろえる", 
     await act(async () => latestAutosave.onConflict());
     expect(screen.getByRole("button", { name: "最初から答え直す" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeEnabled();
+    // R3 レビュー M-1: ホームにも理由を出し、止めたボタンの説明につなぐ
+    expect(screen.getByText(DRAFT_CONFLICT_HOME_COPY)).toBeVisible();
+    expect(screen.getByRole("button", { name: "最初から答え直す" })).toHaveAccessibleDescription(
+      DRAFT_CONFLICT_HOME_COPY,
+    );
   });
 
   it("keeps the wizard and explains why when the tab is pressed during a generation submit (U3 m-2)", async () => {
@@ -4481,13 +4487,16 @@ describe("R3: ホームで autosave の失敗を見せる（U3 m-4）", () => {
     expect(screen.queryByRole("button", { name: "保存を再試行" })).not.toBeInTheDocument();
   });
 
-  it("leaves the failure to the conflict notice while a conflict is unresolved", async () => {
+  it("replaces the retry banner with the home conflict reason while a conflict is unresolved", async () => {
     queryState.draft = partialDraft;
     autosaveUiState.state = "error";
     render(<PlannerRoutePage />);
     const latestAutosave = autosaveInputs.at(-1) as { onConflict(): Promise<void> };
     await act(async () => latestAutosave.onConflict());
     expect(screen.queryByText(failed)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存を再試行" })).not.toBeInTheDocument();
+    // 保存できていないことと、確かめる導線はホームのカードが伝える（R3 レビュー M-1）
+    expect(screen.getByText(DRAFT_CONFLICT_HOME_COPY)).toBeVisible();
   });
 });
 
@@ -4502,6 +4511,18 @@ describe("U3 修正: ホームの続きからの分岐を固定する", () => {
     expect(screen.getByText("必須の質問 4 問のうち 3 問に答えています")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "続きから答える" }));
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+  });
+
+  // R3 レビュー M-3: 途中の質問だけを外した下書きでも、答えた数をそのまま言う
+  it("counts the answered required questions when an earlier one is skipped", async () => {
+    queryState.draft = { ...draft, mainIngredients: [] };
+    const user = userEvent.setup();
+
+    render(<PlannerRoutePage />);
+
+    expect(screen.getByText("必須の質問 4 問のうち 3 問に答えています")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("ingredients");
   });
 
   it("with no generations left today, keeps resume enabled and disables restart (P9)", () => {

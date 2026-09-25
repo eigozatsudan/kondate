@@ -143,16 +143,23 @@ it("U6: never drops or reorders a character for any input, and emits no empty it
     "。。あ。。",
     "あ。い。う",
   ];
-  // 「あ」「。」「い」「改行」「絵文字（サロゲートペア）」の 0〜5 文字の全組み合わせで、
-  // 連結が元の文字列と完全一致することを確かめる（U6 修正レビュー Minor 1: 改行と
-  // サロゲートペアでの退行も検出する）
-  const alphabet = ["あ", "。", "い", "\n", "😀"];
-  const generated: string[] = [""];
-  let frontier = [""];
-  for (let length = 1; length <= 5; length += 1) {
-    frontier = frontier.flatMap((prefix) => alphabet.map((char) => `${prefix}${char}`));
-    generated.push(...frontier);
-  }
+  const allStrings = (alphabet: readonly string[], maxLength: number): string[] => {
+    const generated: string[] = [""];
+    let frontier = [""];
+    for (let length = 1; length <= maxLength; length += 1) {
+      frontier = frontier.flatMap((prefix) => alphabet.map((char) => `${prefix}${char}`));
+      generated.push(...frontier);
+    }
+    return generated;
+  };
+  // 「あ」「。」「い」の 0〜6 文字の全組み合わせ（U6 修正で固定した深さ。「あ。。い。。」のように
+  // 区切りの連続が 2 か所ある長さ 6 の並びまで見る。R3 レビュー M-4）と、
+  // 改行・絵文字（サロゲートペア）を足した 0〜5 文字の全組み合わせ（U6 修正レビュー Minor 1）で、
+  // 連結が元の文字列と完全一致することを確かめる
+  const generated = [
+    ...allStrings(["あ", "。", "い"], 6),
+    ...allStrings(["あ", "。", "い", "\n", "😀"], 5),
+  ];
   for (const text of [...edgeCases, ...generated]) {
     const sentences = splitConsentSentences(text);
     expect(sentences.join("")).toBe(text);

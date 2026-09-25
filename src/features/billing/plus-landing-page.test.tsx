@@ -23,11 +23,13 @@ import {
   PLUS_LP_COMING_SOON_BADGE,
   PLUS_LP_COMING_SOON_BODY,
   PLUS_LP_FEATURES_TITLE,
+  PLUS_LP_FEATURES_TITLE_WITHOUT_WEEKLY,
   PLUS_LP_FLYER_TITLE,
   PLUS_LP_H1,
   PLUS_LP_INCOMPLETE,
   PLUS_LP_LEAD,
   PLUS_LP_LEAD_BODY,
+  PLUS_LP_LEAD_BODY_WITHOUT_WEEKLY,
   PLUS_LP_NEUTRAL_SUB,
   PLUS_LP_QUALITY_TITLE,
   PLUS_LP_QUOTA_TITLE,
@@ -433,6 +435,17 @@ describe("PlusLandingPage entitled benefits and period", () => {
         "無料のまま使える機能はそのまま残ります。Plus で増えるのは、次の 2 点です。",
       ),
     ).toBeVisible();
+    // R3 レビュー I-1: 見出しの数・カードの枚数・リードを、止めている週献立に合わせてそろえる
+    expect(
+      screen.getByRole("heading", { level: 2, name: PLUS_LP_FEATURES_TITLE_WITHOUT_WEEKLY }),
+    ).toBeVisible();
+    expect(screen.queryByRole("heading", { name: PLUS_LP_FEATURES_TITLE })).toBeNull();
+    // カードの中にも箇条書きがあるので、直下の li（カード）だけを数える
+    expect(
+      screen.getByRole("list", { name: "Plus のメリット" }).querySelectorAll(":scope > li"),
+    ).toHaveLength(2);
+    expect(screen.getByText(PLUS_LP_LEAD_BODY_WITHOUT_WEEKLY)).toBeVisible();
+    expect(screen.queryByText(/1週間分/u)).toBeNull();
   });
 
   it("keeps the weekly plan card and comparison row on the full LP when the flag is on", () => {
@@ -446,6 +459,12 @@ describe("PlusLandingPage entitled benefits and period", () => {
         "無料のまま使える機能はそのまま残ります。Plus で増えるのは、次の 3 点です。",
       ),
     ).toBeVisible();
+    expect(screen.getByRole("heading", { level: 2, name: PLUS_LP_FEATURES_TITLE })).toBeVisible();
+    // カードの中にも箇条書きがあるので、直下の li（カード）だけを数える
+    expect(
+      screen.getByRole("list", { name: "Plus のメリット" }).querySelectorAll(":scope > li"),
+    ).toHaveLength(3);
+    expect(screen.getByText(PLUS_LP_LEAD_BODY)).toBeVisible();
   });
 
   it("keeps the benefits as text only while some features are stopped", () => {

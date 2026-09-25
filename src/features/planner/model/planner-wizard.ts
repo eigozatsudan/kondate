@@ -64,6 +64,24 @@ export function firstIncompletePlannerStep(
 }
 
 /**
+ * 必須の質問（食事・メイン食材・ジャンル・作る相手）のうち、答えてある数。
+ * firstIncompletePlannerStep は「最初の未回答の位置」なので、途中の質問だけを外した下書き
+ * （例: メイン食材だけ空）では答えた数より小さくなる。ホームの「4 問のうち N 問」は件数で
+ * 言うため、質問ごとに数える（R3 レビュー M-3）。判定の条件は firstIncompletePlannerStep と同じ。
+ */
+export function countAnsweredRequiredPlannerQuestions(
+  draft: PlannerDraftInput,
+  eligibleMemberIds?: ReadonlySet<string>,
+): number {
+  return [
+    draft.mealType !== null,
+    draft.mainIngredients.length > 0,
+    draft.cuisineGenre !== null,
+    isAudienceComplete(draft, eligibleMemberIds),
+  ].filter(Boolean).length;
+}
+
+/**
  * audience（対象家族/人数）の回答が完成しているかどうかを判定する。
  * shared/contracts/planner.tsのrefineTargetAndServingsが強制する不変条件
  * （household: 対象1人以上・servings未指定 / idea: 対象0人・servings必須）

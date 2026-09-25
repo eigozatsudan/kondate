@@ -25,9 +25,10 @@ export type HomeGenerateCardProps = {
   /** U3: 確認のうえ下書きを消して 1 問目から始める。確認・消去は route 側が持つ。 */
   onRestartDraft?: () => void;
   /**
-   * 「最初から答え直す」だけを止めるとき（下書きの保存が競合している間など）。
-   * 競合の案内と解決はウィザードにしか無いため、ホームから消去を走らせず「続きから答える」で
-   * ウィザードの案内へ進ませる（U3 修正レビュー m-1）。
+   * 下書きの保存が別の画面の更新と競合している間 true。「最初から答え直す」だけを止める。
+   * 競合の解決はウィザードにしか無いため、ホームから消去を走らせず「続きから答える」で
+   * ウィザードの案内へ進ませる（U3 修正レビュー m-1）。ホームにも理由を短く出し、
+   * 止めたボタンの説明につなぐ（R3 レビュー M-1）。
    */
   restartDisabled?: boolean;
   /** 保存・遷移中など主 CTA を止めるとき。 */
@@ -54,6 +55,13 @@ export type HomeDraftProgress = {
 };
 
 const EXHAUSTED_TODAY_DESCRIPTION_ID = "home-generate-exhausted";
+const DRAFT_CONFLICT_DESCRIPTION_ID = "home-generate-draft-conflict";
+/**
+ * 下書きの保存が競合している間にホームで出す理由（R3 レビュー M-1）。競合中は保存失敗の
+ * バナーを出さないので、答えかけの内容がまだ保存されていないこともここで伝える。
+ */
+export const DRAFT_CONFLICT_HOME_COPY =
+  "答えかけの条件が別の画面で更新されたため、まだ保存できていません。「続きから答える」で内容を確かめてください。確かめるまでは最初から答え直せません。" as const;
 /** 残り 0 回で新規開始を止めるときの理由（「続きから答える」と作成中の再開は止めない） */
 export const EXHAUSTED_TODAY_COPY =
   "今日つくれる回数を使い切ったため、新しく始めることはできません。" as const;
@@ -87,6 +95,11 @@ export function HomeGenerateCard({
   // 最終レビュー A M-4: 残り 0 回で新規開始のボタンを止めるときは、押せない理由を文で示し、
   // 止めたボタンの説明（aria-describedby）にもつなぐ。
   const exhaustedDescription = exhaustedToday ? EXHAUSTED_TODAY_DESCRIPTION_ID : undefined;
+  // 競合中の「最初から答え直す」は、競合の理由も説明につなぐ（枠 0 の理由と両方あれば両方）
+  const restartDescription =
+    [restartDisabled ? DRAFT_CONFLICT_DESCRIPTION_ID : undefined, exhaustedDescription]
+      .filter((id): id is string => id !== undefined)
+      .join(" ") || undefined;
   return (
     <Surface as="section" tone="plain" aria-labelledby="home-generate-heading">
       <Inset pad={5}>
@@ -142,11 +155,16 @@ export function HomeGenerateCard({
               <Button
                 variant="secondary"
                 disabled={startDisabled || restartDisabled}
-                aria-describedby={exhaustedDescription}
+                aria-describedby={restartDescription}
                 onClick={onRestartDraft}
               >
                 最初から答え直す
               </Button>
+              {restartDisabled ? (
+                <p id={DRAFT_CONFLICT_DESCRIPTION_ID} className="type-small">
+                  {DRAFT_CONFLICT_HOME_COPY}
+                </p>
+              ) : null}
             </Stack>
           ) : (
             <Button

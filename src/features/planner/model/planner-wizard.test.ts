@@ -2,6 +2,7 @@ import { describe, expect, it, test } from "vitest";
 import type { PlannerDraftInput } from "@shared/contracts/planner";
 import {
   buildPlannerSubmissionFieldErrors,
+  countAnsweredRequiredPlannerQuestions,
   firstIncompletePlannerStep,
   isAudienceComplete,
   mapPlannerIssuePathToField,
@@ -30,6 +31,34 @@ const completeQuestionAnswers: PlannerDraftInput = {
   memo: "",
   pantrySelections: [],
 };
+
+// R3 レビュー M-3: 最初の未回答の位置ではなく、答えてある必須の質問の数
+describe("countAnsweredRequiredPlannerQuestions", () => {
+  it("counts every answered required question even when an earlier one is skipped", () => {
+    // 食事・ジャンル・作る相手に答え、メイン食材だけを外した下書き（位置では 1 問）
+    const skipped = { ...completeQuestionAnswers, mainIngredients: [] };
+    expect(firstIncompletePlannerStep(skipped)).toBe("ingredients");
+    expect(countAnsweredRequiredPlannerQuestions(skipped)).toBe(3);
+  });
+
+  it("counts 0 for an empty draft and 4 for a complete one", () => {
+    expect(countAnsweredRequiredPlannerQuestions(completeQuestionAnswers)).toBe(4);
+    expect(
+      countAnsweredRequiredPlannerQuestions({
+        ...completeQuestionAnswers,
+        mealType: null,
+        mainIngredients: [],
+        cuisineGenre: null,
+        targetMode: null,
+        targetMemberIds: [],
+      }),
+    ).toBe(0);
+  });
+
+  it("does not count a household audience whose members are no longer eligible", () => {
+    expect(countAnsweredRequiredPlannerQuestions(completeQuestionAnswers, new Set())).toBe(3);
+  });
+});
 
 describe("firstIncompletePlannerStep", () => {
   it("returns meal when mealType is unanswered", () => {

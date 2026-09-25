@@ -22,11 +22,19 @@ export const PLUS_LP_H1 = "こんだて日和 Plus" as const;
 export const PLUS_LP_LEAD = "献立づくりに、余裕を。" as const;
 export const PLUS_LP_LEAD_BODY =
   "無料プランでも毎日の一食は十分使えます。Plus は、作成回数に余裕を持たせたり、より丁寧な献立を試したり、家族の条件から1週間分の献立の骨組みをつくったりしたい方向けです。" as const;
+/**
+ * 週献立を止めている（WEEKLY_PLAN_UI_ENABLED=false）間のリード本文。止めた機能を Plus の用途として勧めない
+ * （最終レビュー B Minor 4、R3 レビュー I-1）。
+ */
+export const PLUS_LP_LEAD_BODY_WITHOUT_WEEKLY =
+  "無料プランでも毎日の一食は十分使えます。Plus は、作成回数に余裕を持たせたり、より丁寧な献立を試したりしたい方向けです。" as const;
 export const PLUS_LP_LEAD_SUB =
   "月額・年額のどちらかを選び、画面の案内に沿ってお支払いへ進めます。難しい設定は不要です。" as const;
 export const PLUS_LP_TRIAL = "はじめての方は 7 日間お試し（カード登録あり）" as const;
 export const PLUS_LP_NEUTRAL_SUB = "Plus でできること" as const;
 export const PLUS_LP_FEATURES_TITLE = "Plus の 3 つのメリット" as const;
+/** 週献立を止めている間の見出し。カードの枚数と「次の n 点」にそろえる（R3 レビュー I-1） */
+export const PLUS_LP_FEATURES_TITLE_WITHOUT_WEEKLY = "Plus の 2 つのメリット" as const;
 export const PLUS_LP_ACTIVE = "こんだて日和 Plus をご利用中です" as const;
 export const PLUS_LP_INCOMPLETE =
   "お支払いの手続きが完了していません。設定から続きをご確認ください。" as const;
@@ -386,7 +394,9 @@ export function PlusLandingPage({
             />
             <h1>{PLUS_LP_H1}</h1>
             <p className="plus-landing__lead">{PLUS_LP_LEAD}</p>
-            <p className="plus-landing__lead-body">{PLUS_LP_LEAD_BODY}</p>
+            <p className="plus-landing__lead-body">
+              {WEEKLY_PLAN_UI_ENABLED ? PLUS_LP_LEAD_BODY : PLUS_LP_LEAD_BODY_WITHOUT_WEEKLY}
+            </p>
             <p className="plus-landing__lead-sub">{PLUS_LP_LEAD_SUB}</p>
             {view.checkoutEnabled && !PLUS_LP_UPGRADE_COMING_SOON ? (
               <p className="plus-landing__trial">{PLUS_LP_TRIAL}</p>
@@ -397,7 +407,9 @@ export function PlusLandingPage({
 
           <section className="stack gap-3" aria-labelledby="plus-features-title">
             <h2 id="plus-features-title" className="plus-landing__section-title">
-              {PLUS_LP_FEATURES_TITLE}
+              {WEEKLY_PLAN_UI_ENABLED
+                ? PLUS_LP_FEATURES_TITLE
+                : PLUS_LP_FEATURES_TITLE_WITHOUT_WEEKLY}
             </h2>
             <ul className="plus-landing__cards stack gap-3" aria-label="Plus のメリット">
               <li className="plus-landing__card card stack gap-2">

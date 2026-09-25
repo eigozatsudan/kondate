@@ -62,6 +62,7 @@ import type { HomeExpiringPantryItem } from "./home/home-expiring-pantry";
 import { PlannerHome } from "./home/planner-home";
 import {
   buildPlannerSubmissionFieldErrors,
+  countAnsweredRequiredPlannerQuestions,
   firstIncompletePlannerStep,
   plannerSteps,
   type PlannerFieldName,
@@ -1777,13 +1778,17 @@ function PlannerPageForOwner({
     };
     // U3: pending が無く下書きに進捗があるときだけ「続きから答える」「最初から」を出す。
     // pending があるときは従来どおり「作成中の献立を続ける」を優先し、下書きの導線は出さない。
-    // 回答済みの数は「最初の未回答 step の位置」で数える（例: 作る相手が未回答なら 3 問）。
+    // 回答済みの数は必須の質問ごとに数える（例: 作る相手だけ未回答なら 3 問）。
     const draftProgress =
       !hasResumablePending && homeResumeStep !== "meal"
         ? {
-            // 最終レビュー A M-8: 必須の質問（食事〜作る相手）だけで数える。homeResumeStep は
-            // 必須の質問か確認画面なので、その位置がそのまま答えた必須の質問の数になる。
-            answeredRequiredQuestions: plannerSteps.indexOf(homeResumeStep),
+            // 最終レビュー A M-8: 必須の質問（食事〜作る相手）だけで数える。
+            // R3 レビュー M-3: 最初の未回答の位置ではなく、質問ごとに答えてある数を数える
+            // （途中の質問だけを外した下書きで、答えた数より少なく言わない）。
+            answeredRequiredQuestions: countAnsweredRequiredPlannerQuestions(
+              value,
+              new Set(safetyData.eligibleMemberIds),
+            ),
             requiredQuestions: plannerSteps.indexOf("audience") + 1,
             // 続きが確認画面のときは任意の質問を見ていなくても 8 になるので、件数ではなく
             // 「必須はすべて答えた」と伝える（M-5）
@@ -1812,8 +1817,9 @@ function PlannerPageForOwner({
           // resetPlannerDraft が step を meal に戻す
           openWizardFromHome("meal");
         }}
-        // U3 修正レビュー m-1: 競合中は「最初から答え直す」を止める。競合の案内と解決は
+        // U3 修正レビュー m-1: 競合中は「最初から答え直す」を止める。競合の解決は
         // ウィザードにしか無いので、「続きから答える」で案内へ進んでもらう。
+        // 止めた理由はカードが短く出す（R3 レビュー M-1）。
         restartDisabled={hasDraftConflict}
         hasResumablePending={hasResumablePending}
         onResumePending={() => {
@@ -1862,7 +1868,8 @@ function PlannerPageForOwner({
             {/* U3 修正レビュー m-4: 献立タブでホームへ戻ったあとに debounce の保存が失敗すると、
                 ウィザードの保存トーストが無いので何も見えず、そのままアプリを閉じると変更が
                 サーバに残らない。ホームでも失敗を知らせ、ウィザードと同じ flush で再試行させる。
-                競合はウィザードの案内に任せる（leave flush がウィザードを開く）。 */}
+                競合中は再試行しても同じ競合になるので出さず、カードの競合の理由
+                （「続きから答える」で確かめる）に任せる（R3 レビュー M-1）。 */}
             {autosave.state === "error" && !hasDraftConflict ? (
               <div className="home-soft-banner stack">
                 <p role="alert">{HOME_AUTOSAVE_FAILED_MESSAGE}</p>
