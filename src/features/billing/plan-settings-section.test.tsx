@@ -281,6 +281,34 @@ describe("PlanSettingsSection", () => {
     expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
   });
 
+  // UX 残り R2 修正 I-2: 境界より後の cancelAt は終了予定として扱わない（/plus と同じ判定関数）
+  it("keeps the trial charge warning when cancel_at is after the trial end", () => {
+    renderPlan({
+      entitlement: { ...trialingEntitlement, cancelAt: "2026-11-14T15:00:00.000Z" },
+      now: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    expect(screen.getByText("無料期間の終了: 2026年8月6日")).toBeVisible();
+    expect(screen.getByText(TRIAL_END_WARNING)).toBeVisible();
+    expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+  });
+
+  it("does not show a Plus end when cancel_at is after the current period end", () => {
+    renderPlan({
+      entitlement: { ...activeEntitlement, cancelAt: "2026-12-09T15:00:00.000Z" },
+      now: settingsNow,
+    });
+    expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+  });
+
+  it("shows no end date when cancel_at is already in the past", () => {
+    renderPlan({
+      entitlement: { ...activeEntitlement, cancelAt: "2026-09-01T15:00:00.000Z" },
+      now: settingsNow,
+    });
+    expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+  });
+
   it("shows past_due payment update path to portal", async () => {
     const onPortal = vi.fn(() => Promise.resolve());
     const user = userEvent.setup();

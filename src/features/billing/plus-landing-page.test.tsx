@@ -616,4 +616,50 @@ describe("PlusLandingPage entitled benefits and period", () => {
     expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
   });
+
+  // UX 残り R2 修正 I-2: 境界（利用中は期間末、お試し中は無料期間の終了）より後の cancelAt は、
+  // その前に更新・課金が起きるので終了予定として扱わず、従来の表示を出す
+  it("keeps the renewal date when cancel_at is after the current period end", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+        cancelAtPeriodEnd: false,
+        cancelAt: "2026-12-09T15:00:00.000Z",
+      },
+      now: FIXED_NOW,
+    });
+    expect(screen.getByText("次回の更新日: 2026年10月23日")).toBeVisible();
+    expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+  });
+
+  it("keeps the trial charge warning when cancel_at is after the trial end", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        status: "trialing",
+        trialEnd: "2026-09-30T15:00:00.000Z",
+        cancelAtPeriodEnd: false,
+        cancelAt: "2026-11-14T15:00:00.000Z",
+      },
+      now: FIXED_NOW,
+    });
+    expect(screen.getByText("無料期間の終了: 2026年10月1日")).toBeVisible();
+    expect(screen.getByText(TRIAL_END_WARNING)).toBeVisible();
+    expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+  });
+
+  it("shows no period line when cancel_at is already in the past", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+        cancelAtPeriodEnd: false,
+        cancelAt: "2026-09-01T15:00:00.000Z",
+      },
+      now: FIXED_NOW,
+    });
+    expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+  });
 });

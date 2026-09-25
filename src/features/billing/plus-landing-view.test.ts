@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EntitlementData } from "@shared/contracts/billing";
-import { resolvePlusLandingView } from "./plus-landing-view";
+import { billingAutoRenews, resolvePlusLandingView, scheduledCancelAt } from "./plus-landing-view";
 
 const freeOpen: EntitlementData = {
   plan: "free",
@@ -217,4 +217,57 @@ it("returns error even when stale entitled data is present (B6)", () => {
     quotaPlan: "plus",
   };
   expect(resolvePlusLandingView({ loading: false, error: true, data }).kind).toBe("error");
+});
+
+// UX 残り R2 修正 I-2: cancelAt は境界（お試し中は trialEnd、それ以外は currentPeriodEnd）以前のときだけ
+// 終了予定として扱う。境界より後なら、その前に更新・課金が起きる
+describe("scheduledCancelAt boundary", () => {
+  const active: EntitlementData = {
+    ...freeOpen,
+    plan: "plus",
+    status: "active",
+    plusEntitled: true,
+    dbPlusEntitled: true,
+    quotaPlan: "plus",
+    currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+  };
+  const trialing: EntitlementData = {
+    ...active,
+    status: "trialing",
+    trialEnd: "2026-09-30T15:00:00.000Z",
+  };
+
+  it.each([
+    { label: "before the period end", cancelAt: "2026-10-10T15:00:00.000Z" },
+    { label: "equal to the period end", cancelAt: "2026-10-22T15:00:00.000Z" },
+    { label: "in the past", cancelAt: "2026-09-01T15:00:00.000Z" },
+  ])("treats cancelAt $label as the scheduled end while active", ({ cancelAt }) => {
+    const data = { ...active, cancelAt };
+    expect(scheduledCancelAt(data)).toBe(cancelAt);
+    expect(billingAutoRenews(data)).toBe(false);
+  });
+
+  it("ignores cancelAt after the period end while active", () => {
+    const data = { ...active, cancelAt: "2026-12-09T15:00:00.000Z" };
+    expect(scheduledCancelAt(data)).toBeNull();
+    expect(billingAutoRenews(data)).toBe(true);
+  });
+
+  it("uses the trial end as the boundary while trialing", () => {
+    expect(scheduledCancelAt({ ...trialing, cancelAt: "2026-09-30T15:00:00.000Z" })).toBe(
+      "2026-09-30T15:00:00.000Z",
+    );
+    // 期間末（10/22）より前でも、無料期間の終了（9/30）より後なら課金が先に起きる
+    const afterTrial = { ...trialing, cancelAt: "2026-10-10T15:00:00.000Z" };
+    expect(scheduledCancelAt(afterTrial)).toBeNull();
+    expect(billingAutoRenews(afterTrial)).toBe(true);
+  });
+
+  it("does not treat cancelAt as scheduled when the boundary is unknown", () => {
+    const data = { ...active, currentPeriodEnd: null, cancelAt: "2026-10-10T15:00:00.000Z" };
+    expect(scheduledCancelAt(data)).toBeNull();
+    expect(billingAutoRenews(data)).toBe(true);
+    // cancelAtPeriodEnd は境界に関わらず従来どおり
+    expect(billingAutoRenews({ ...data, cancelAtPeriodEnd: true })).toBe(false);
+  });
 });

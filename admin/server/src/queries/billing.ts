@@ -27,6 +27,16 @@ export async function getBilling(
     `,
   );
 
+  // UX 残り R2 修正 M-2: Stripe は cancel_at だけで解約予約を表すことがあり、そのとき
+  // cancel_at_period_end は false のまま。上の件数に入らないので、別に数える
+  const cancelAtCount = await client.query<{ c: number }>(
+    `
+    select count(*)::int as c
+    from private.billing_subscriptions
+    where cancel_at is not null
+    `,
+  );
+
   const pastDueCount = await client.query<{ c: number }>(
     `
     select count(*)::int as c
@@ -53,6 +63,7 @@ export async function getBilling(
     current_period_end: Date | string;
     trial_end: Date | string | null;
     cancel_at_period_end: boolean;
+    cancel_at: Date | string | null;
     past_due_since: Date | string | null;
   }>(
     `
@@ -62,6 +73,7 @@ export async function getBilling(
       current_period_end,
       trial_end,
       cancel_at_period_end,
+      cancel_at,
       past_due_since
     from private.billing_subscriptions
     order by current_period_end desc nulls last, user_id asc
@@ -76,6 +88,7 @@ export async function getBilling(
       count: r.count,
     })),
     cancelAtPeriodEndCount: cancelCount.rows[0]?.c ?? 0,
+    cancelAtScheduledCount: cancelAtCount.rows[0]?.c ?? 0,
     pastDueCount: pastDueCount.rows[0]?.c ?? 0,
     webhookEventTypeCounts: webhookTypes.rows.map((r) => ({
       eventType: r.event_type,
@@ -87,6 +100,7 @@ export async function getBilling(
       currentPeriodEnd: formatIso(r.current_period_end),
       trialEnd: formatIso(r.trial_end),
       cancelAtPeriodEnd: r.cancel_at_period_end,
+      cancelAt: formatIso(r.cancel_at),
       pastDueSince: formatIso(r.past_due_since),
     })),
   });

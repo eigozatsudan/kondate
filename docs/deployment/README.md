@@ -432,12 +432,22 @@ docker compose --profile deploy run --rm supabase-cli db push --include-all
 - **フロント/Functions**: Netlify の直前デプロイへ publish を戻す。
 - **DB**: 破壊的 reverse はしない。前方修正マイグレーションで直す。
 
+#### 解約予定日 cancel_at（`20260925120000_billing_cancel_at.sql` / `20260925130000_billing_cancel_at_omit_null.sql`）
+
+この 2 本は、§5.2 の通常の順とは逆に、**Functions を先にデプロイし、migration を後に適用する**。
+
+- `get_billing_entitlement_for_user` は、解約予定（`cancel_at`）がある行だけ `cancel_at` キーを返す。予定の無い行の JSON は以前と同じキー集合（`20260925130000` で null のキーを出さないようにした）。
+- 以前の Functions は RPC を strict に解析するので、`cancel_at` キーを未知キーとして 503（`billing_entitlement_unavailable`）にする。migration を先に当てると、配備のずれの間、**解約予約中の利用者**だけ entitlement・献立の生成と再生成・週間献立・チラシ・使用量が 503 になる。
+- 新しい Functions は `cancel_at` を省略可能として受けるので、旧 DB でも動く。Webhook が送る `cancel_at` は、旧 DB の SQL がキーを名前で読むだけなので無視される。
+- ロールバック: Functions を以前のデプロイへ戻すと同じ 503 が起きる。戻すなら、前方修正の migration（`cancel_at` を返さない関数の再定義）と組にする。
+- 既存の行の `cancel_at` は null から始まる。migration より前に解約予定を入れた利用者は、次の Webhook まで更新日が出る。すぐ直すなら [課金 reconcile ランブック](../runbooks/billing-reconcile.md) の「cancel_at の再投影」を使う。
+
 ### 5.3 推奨リリース順（要約）
 
 ```text
 1. 候補 SHA を固定（clean worktree）
 2. ローカル / CI ゲート（format・lint・typecheck・vitest・pgTAP・e2e・build）
-3. Supabase: 未適用 migration を db push（必要時のみ）
+3. Supabase: 未適用 migration を db push（必要時のみ。cancel_at の 2 本は §5.2 の注記どおり 5 の後）
 4. 保護 runner: preflight:production（サーバ秘密はビルドに載せない。両 HMAC 必須）
 5. Netlify: production デプロイ（`USER_DAILY_AI_LIMIT=1` は新コードと同時。ENV 先行禁止）
 6. verify:production-deploy → smoke:production → verify:production-deploy

@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { entitlementDataSchema } from "../../../shared/contracts/billing.js";
 import billingEntitlement from "../billing-entitlement.js";
-import { loadEntitlement } from "../_shared/billing-entitlement.js";
+import {
+  BillingEntitlementUnavailableError,
+  loadEntitlement,
+} from "../_shared/billing-entitlement.js";
 
 const { getUser, rpc, getServerEnv } = vi.hoisted(() => ({
   getUser: vi.fn(),
@@ -141,5 +144,40 @@ describe("entitlement RPC cancel_at (UX 残り R2 項目 6)", () => {
 
   it("treats a projection without cancel_at (no row / older RPC) as not scheduled", async () => {
     expect(await loadEntitlement(otherId)).toMatchObject({ cancelAt: null });
+  });
+
+  // R2 修正 M-3: 行はあるが予約の無い形（"cancel_at": null）も受け付け、wire には cancelAt を出さない
+  it("accepts an explicit null cancel_at and keeps it off the wire", async () => {
+    getServerEnv.mockReturnValue({ billingEnabled: true, developerPlusUserIds: [] });
+    rpc.mockResolvedValue({
+      data: {
+        ...freeProjection,
+        plan: "plus",
+        status: "active",
+        plus_entitled: true,
+        db_plus_entitled: true,
+        current_period_end: "2026-08-01T00:00:00.000Z",
+        kill_source_status: null,
+        cancel_at: null,
+      },
+      error: null,
+    });
+    expect(await loadEntitlement(otherId)).toMatchObject({ cancelAt: null });
+    const response = await billingEntitlement(request());
+    const body = z.object({ data: z.record(z.string(), z.unknown()) }).parse(await response.json());
+    expect(body.data).not.toHaveProperty("cancelAt");
+  });
+
+  // R2 修正 I-1: RPC の解析は strict で、未知キーは 503 になる。R2 以前の Function にとって
+  // cancel_at は未知キーなので、DB は予約の無い行で cancel_at キーを出してはいけない
+  // （pgTAP "unscheduled row keeps the pre-R2 RPC key set" と対）。ここでは strict であることを固定する
+  it("rejects an RPC projection with an unknown key (strict parse)", async () => {
+    rpc.mockResolvedValue({
+      data: { ...freeProjection, kill_source_status: null, unknown_future_key: null },
+      error: null,
+    });
+    await expect(loadEntitlement(otherId)).rejects.toBeInstanceOf(
+      BillingEntitlementUnavailableError,
+    );
   });
 });

@@ -131,6 +131,8 @@ export const billingSubscriptionRowSchema = z.object({
   currentPeriodEnd: z.string().nullable(),
   trialEnd: z.string().nullable(),
   cancelAtPeriodEnd: z.boolean(),
+  /** Stripe の cancel_at（解約予定の日時）。予定が無ければ null */
+  cancelAt: z.string().nullable(),
   pastDueSince: z.string().nullable(),
 });
 
@@ -143,6 +145,8 @@ export const billingResponseSchema = z.object({
   generatedAt: z.string(),
   statusCounts: z.array(statusCountSchema),
   cancelAtPeriodEndCount: z.number().int().nonnegative(),
+  /** cancel_at が入っている行の件数（cancel_at_period_end=false の解約予約も含む） */
+  cancelAtScheduledCount: z.number().int().nonnegative(),
   pastDueCount: z.number().int().nonnegative(),
   webhookEventTypeCounts: z.array(eventTypeCountSchema),
   subscriptions: z.array(billingSubscriptionRowSchema),

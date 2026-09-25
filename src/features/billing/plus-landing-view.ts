@@ -20,11 +20,11 @@ export type PlusLandingView =
       currentPeriodEnd: string | null;
       /**
        * cancel_at による解約予定の日時（UX 残り R2 項目 6）。あれば終了日として期間末・無料期間の
-       * 終了より優先して出す。解約済み（canceled）では使わない。
+       * 終了より優先して出す。解約済み（canceled）や境界より後の cancelAt では null（scheduledCancelAt）。
        */
       scheduledEnd: string | null;
       /**
-       * 期間末に自動で更新されるか。解約予約（cancelAtPeriodEnd または cancelAt）や
+       * 期間末に自動で更新されるか。解約予約（cancelAtPeriodEnd または境界以前の cancelAt）や
        * 解約済み（canceled）は false
        */
       autoRenews: boolean;
@@ -32,20 +32,36 @@ export type PlusLandingView =
   | { kind: "incomplete"; surfacesOpen: boolean }
   | { kind: "full"; checkoutEnabled: boolean };
 
-type BillingPeriodFields = Pick<EntitlementData, "status" | "cancelAtPeriodEnd" | "cancelAt">;
+type BillingPeriodFields = Pick<
+  EntitlementData,
+  "status" | "cancelAtPeriodEnd" | "cancelAt" | "trialEnd" | "currentPeriodEnd"
+>;
 
 /**
  * cancel_at による解約予定の日時。表示専用（UX 残り R2 項目 6）。
- * 解約済み（canceled）の Plus は期間末（entitlement の根拠）までなので、残った cancelAt は使わない。
+ * - 解約済み（canceled）の Plus は期間末（entitlement の根拠）までなので、残った cancelAt は使わない。
+ * - 終了予定として扱うのは、cancelAt が境界（お試し中は trialEnd、それ以外は currentPeriodEnd）以前の
+ *   ときだけ（R2 修正 I-2）。Stripe は境界より後の cancel_at も許し、その場合は境界で更新・課金が
+ *   起きるので、「自動更新なし」とせず従来の更新日・課金の注意を出す。
+ * - 境界が null（日付が分からない）のときも終了予定として扱わない。課金される人から課金の注意を
+ *   消すほうが、課金されない人に注意を残すより害が大きいため、課金される側に倒す。
+ * - 過去の cancelAt は境界以前なので終了予定として扱う（日付は表示部品が過去日として隠す）。
  */
 export function scheduledCancelAt(data: BillingPeriodFields): string | null {
   if (data.status === "canceled") return null;
-  return data.cancelAt ?? null;
+  const cancelAt = data.cancelAt ?? null;
+  if (cancelAt === null) return null;
+  const boundary = data.status === "trialing" ? data.trialEnd : data.currentPeriodEnd;
+  if (boundary === null) return null;
+  const cancelAtMs = Date.parse(cancelAt);
+  const boundaryMs = Date.parse(boundary);
+  if (Number.isNaN(cancelAtMs) || Number.isNaN(boundaryMs)) return null;
+  return cancelAtMs <= boundaryMs ? cancelAt : null;
 }
 
 /**
  * 期間末に自動で更新されるか（表示だけの派生。課金の状態判定は API が持つ）。
- * Stripe は解約予約を cancel_at_period_end と cancel_at のどちらでも表すので、両方を見る。
+ * Stripe は解約予約を cancel_at_period_end と cancel_at のどちらでも表すので、両方を見る（cancel_at は境界以前のときだけ）。
  */
 export function billingAutoRenews(data: BillingPeriodFields): boolean {
   return data.status !== "canceled" && !data.cancelAtPeriodEnd && scheduledCancelAt(data) === null;

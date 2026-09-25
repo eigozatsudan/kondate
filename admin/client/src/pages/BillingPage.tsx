@@ -23,6 +23,7 @@ export function BillingPage() {
         <>
           <div className="grid gap-3 sm:grid-cols-3">
             <Stat label="cancel_at_period_end" value={q.data.cancelAtPeriodEndCount} />
+            <Stat label="cancel_at あり" value={q.data.cancelAtScheduledCount} />
             <Stat label="past_due" value={q.data.pastDueCount} />
             <Stat
               label="status 種別数"
@@ -79,6 +80,11 @@ export function BillingPage() {
                   key: "c",
                   header: "cancel_eop",
                   render: (r) => (r.cancelAtPeriodEnd ? "yes" : "no"),
+                },
+                {
+                  key: "ca",
+                  header: "cancel_at",
+                  render: (r) => r.cancelAt ?? "—",
                 },
                 {
                   key: "p",

@@ -18,10 +18,21 @@ kill 期間が長い・イベント欠落が疑われる・再有効化前の差
 2. Stripe で対象 customer の subscriptions を list（status=all）。
 3. 各 live / 終端 sub について、投影 payload を組み立て `upsert_billing_subscription_from_stripe` を実行する。
    - payload キーは `process_billing_stripe_event` と同じ subscription 投影キー
+   - `cancel_at`（解約予定の日時、ISO-Z。予定が無ければ null）も必ず入れる。手動投影は強制適用なので、入れ忘れると保存済みの終了予定日が null で消える
    - `user_id` は `get_billing_customer_by_stripe_id` で解決
 4. `get_billing_entitlement_for_user` で差分を確認する（`plus_entitled` / `status` / period）。
 5. メトリクス: unmapped 件数・stale 多発・dual-sub cancel ログを確認。
 6. 差分が許容範囲になったら **最後に** `BILLING_ENABLED=true` を戻す。
+
+## cancel_at の再投影（`20260925120000` 適用後に一度）
+
+migration は既存の行の `cancel_at` を埋めない（null = 予定なし）。適用前に Customer Portal や Dashboard で `cancel_at` だけの解約予約をした利用者は、次の Webhook が届くまで /plus と設定に更新日が出続ける。すぐ直すときは次の手順を使う。
+
+1. Stripe で、`cancel_at` が入っていて status が live（trialing / active / past_due）の subscription を探す（Dashboard の「キャンセル予定」、または API の list を `cancel_at` で絞る）。
+2. 見つけた subscription ごとに、上の「手順」3 と同じく最新の状態を retrieve し、`cancel_at` を含む投影 payload で `upsert_billing_subscription_from_stripe` を実行する。
+3. `get_billing_entitlement_for_user` の結果に `cancel_at` が入り、`plus_entitled` と `status` が変わっていないことを確かめる。
+
+該当が無ければ何もしなくてよい。Webhook は常に retrieve した最新の値を投影するので、次のイベントでも同じ状態になる。
 
 ## 禁止
 
