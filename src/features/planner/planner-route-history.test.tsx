@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
-import { createMemoryRouter } from "react-router";
+import { createBrowserRouter, createMemoryRouter, type RouteObject } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
@@ -120,10 +120,30 @@ const mealOnlyDraft: PlannerDraft = {
 
 type TestRouter = ReturnType<typeof createMemoryRouter>;
 
+/**
+ * jsdom の window.history の上に、アプリと同じ createBrowserRouter を作る。entry は
+ * react-router が push するときと同じ形の state（usr・key・idx）で積み、最後の entry から始める。
+ * jsdom の history.go は popstate を非同期に配るので、POP の結果は waitFor で待つ。
+ */
+let browserEntrySeq = 0;
+function createBrowserRouterAt(routes: RouteObject[], initialEntries: string[]): TestRouter {
+  initialEntries.forEach((entry, idx) => {
+    browserEntrySeq += 1;
+    const state = { usr: null, key: `entry${String(browserEntrySeq)}`, idx };
+    if (idx === 0) window.history.replaceState(state, "", entry);
+    else window.history.pushState(state, "", entry);
+  });
+  const router = createBrowserRouter(routes);
+  browserRouters.push(router);
+  return router;
+}
+const browserRouters: TestRouter[] = [];
+
 function renderPlanner(
   draft: PlannerDraft | null,
   initialEntries: string[],
   requestPageHeadingFocus: () => void = vi.fn(),
+  routerKind: "memory" | "browser" = "memory",
 ): TestRouter {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
@@ -152,13 +172,14 @@ function renderPlanner(
     user_id: userId,
     notice_version: "2026-07-29.v1",
   });
-  const router = createMemoryRouter(
-    [
-      { path: "/planner", element: <PlannerRoutePage /> },
-      { path: "*", element: <p>プランナーの外</p> },
-    ],
-    { initialEntries, initialIndex: initialEntries.length - 1 },
-  );
+  const routes = [
+    { path: "/planner", element: <PlannerRoutePage /> },
+    { path: "*", element: <p>プランナーの外</p> },
+  ];
+  const router =
+    routerKind === "memory"
+      ? createMemoryRouter(routes, { initialEntries, initialIndex: initialEntries.length - 1 })
+      : createBrowserRouterAt(routes, initialEntries);
   render(
     <QueryClientProvider client={queryClient}>
       <AppToastProvider>
@@ -227,6 +248,9 @@ beforeEach(() => {
 afterEach(() => {
   registerPlannerLeaveFlush(null);
   resetPlannerLeaveNavigateFlightForTests();
+  // browser router の popstate の購読を外し、次のテストへ history.state.idx を持ち越さない
+  for (const router of browserRouters.splice(0)) router.dispose();
+  window.history.replaceState(null, "", "/");
 });
 
 describe("B-2: 続きから答える は最後に開いていた質問へ戻る", () => {
@@ -420,11 +444,12 @@ describe("B-1: ?resume=start は最初の未回答の質問を直接開き、戻
 
   it("returns to the emergency page in two backs after the CTA was tapped twice", async () => {
     // 描画の遅い端末での二度タップ: 古い Link が 2 回 push し、?resume=start の entry が 2 つ積まれる
-    const router = renderPlanner(mealOnlyDraft, [
-      "/emergency-menus",
-      "/planner?resume=start",
-      "/planner?resume=start",
-    ]);
+    const requestFocus = vi.fn();
+    const router = renderPlanner(
+      mealOnlyDraft,
+      ["/emergency-menus", "/planner?resume=start", "/planner?resume=start"],
+      requestFocus,
+    );
     expect(await screen.findByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
     await waitFor(() => {
       expect(currentUrl(router)).toBe("/planner");
@@ -437,6 +462,9 @@ describe("B-1: ?resume=start は最初の未回答の質問を直接開き、戻
     });
     expectHome();
     expect(screen.queryByRole("heading", { name: "2. メイン食材" })).not.toBeInTheDocument();
+    // 同じ pathname のまま質問をホームへ入れ替えるので、シェルの pathname のフォーカスは走らない。
+    // ホームの見出しへのフォーカスを 1 回だけ頼む（R1 M-2）
+    expect(requestFocus).toHaveBeenCalledTimes(1);
 
     await pressBack(router);
     await expectLeftPlannerTo(router, "/emergency-menus");
@@ -445,5 +473,62 @@ describe("B-1: ?resume=start は最初の未回答の質問を直接開き、戻
   it("opens the meal question when there is no draft yet", async () => {
     renderPlanner(null, ["/emergency-menus", "/planner?resume=start"]);
     expect(await screen.findByRole("heading", { name: "1. 食事" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * UX 残り R1 項目 3: アプリと同じ createBrowserRouter（jsdom の window.history）で、
+ * history.state.idx から POP の向きを見分ける。memory router には idx が無いので、ここでだけ確かめる。
+ */
+describe("R1-3: ブラウザの進むはウィザードを閉じずに進む", () => {
+  /** 端末の戻る・進む。jsdom の popstate は非同期なので、行き先の URL に着くまで待つ */
+  async function goBrowser(router: TestRouter, delta: number, expectedUrl: string): Promise<void> {
+    await act(async () => {
+      await router.navigate(delta);
+    });
+    await waitFor(() => {
+      expect(currentUrl(router)).toBe(expectedUrl);
+    });
+    await settle();
+  }
+
+  it("still closes the wizard on back with the browser history, then leaves on the next back", async () => {
+    const requestFocus = vi.fn();
+    const router = renderPlanner(completeDraft, ["/history", "/planner"], requestFocus, "browser");
+    await click("続きから答える");
+    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await waitFor(() => {
+      expectHome();
+    });
+    // 止めた戻るは go(+1) で URL を戻す。/planner に留まる
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/planner");
+    });
+    expect(currentUrl(router)).toBe("/planner");
+    expect(requestFocus).toHaveBeenCalledTimes(1);
+
+    await goBrowser(router, -1, "/history");
+    expect(await screen.findByText("プランナーの外")).toBeInTheDocument();
+  });
+
+  it("moves forward to the next screen instead of closing the wizard", async () => {
+    const router = renderPlanner(
+      completeDraft,
+      ["/history", "/planner", "/pantry"],
+      vi.fn(),
+      "browser",
+    );
+    expect(await screen.findByText("プランナーの外")).toBeInTheDocument();
+    await goBrowser(router, -1, "/planner");
+    await click("続きから答える");
+    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+
+    await goBrowser(router, 1, "/pantry");
+    expect(await screen.findByText("プランナーの外")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/pantry");
   });
 });

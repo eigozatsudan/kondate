@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Navigate, useSearchParams } from "react-router";
+import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router";
+import { readHistoryIndex } from "@/shared/lib/history-index";
 import { useAuth } from "@/features/auth/use-auth";
 import { Stack } from "@/shared/ui/stack";
 import { GenerationStatusPanel } from "../components/generation-status-panel";
 import { useGenerationRecovery } from "../hooks/use-generation-recovery";
+import { isGenerationOpenedFromPlanner } from "../model/generation-opened-from-planner";
 import { generationReturnPath } from "../model/generation-return-path";
 import { readPendingGeneration } from "../model/pending-generation";
 
@@ -41,13 +43,37 @@ import { readPendingGeneration } from "../model/pending-generation";
 // 終端画面の AI 通信試行残数は request-local quota ではなく useUsageToday が正。
 // session の userId をパネルへ渡さないと本番経路で残数領域が描画されない。
 // 緊急献立 RecoveryLinks は idea/household とも常時表示のため targetMode を渡さない。
+//
+// UX 残り R1 項目 1: 戻り先が素の /planner で、この /generation が planner から push された
+// entry（location.state に印がある）なら、idle で `<Navigate replace>` せず 1 つ戻る。
+// 置き換えると履歴が [外, /planner, /planner] になり、ホームで戻るが 1 回空振りするため。
+// - 印は entry に付くので、sessionStorage の印のような古い印の取り違えが起きない。
+// - タブの最初の entry（history.state.idx が 0）では戻る先がアプリの外なので、従来どおり置き換える。
+// - 「条件を直してやり直す」（?resume=review）と regenerate_*（/menus/:id）は従来どおり置き換える。
+//   前者は置き換えた ?resume=review をマウント時に消費してウィザードを開くので、戻る 1 回目で
+//   直前の /planner（ホーム）へ移り、空振りしない。
+// - 残る /generation の entry は「進む」の先に残る。進むで着いても idle なら同じくすぐ戻る。
 const PLAIN_PLANNER_PATH = "/planner";
+
+/** idle になった /generation から、直前の /planner の entry へ 1 回だけ戻る */
+function BackToOpeningPlanner() {
+  const navigate = useNavigate();
+  // StrictMode の effect の二重実行や、戻りが反映されるまでの再描画で 2 回戻らないようにする
+  const wentBackRef = useRef(false);
+  useEffect(() => {
+    if (wentBackRef.current) return;
+    wentBackRef.current = true;
+    void navigate(-1);
+  }, [navigate]);
+  return <p role="status">読み込んでいます</p>;
+}
 
 export function GenerationPage() {
   const recovery = useGenerationRecovery();
   const auth = useAuth();
   const userId = auth.session?.user.id;
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   // マウント時の query だけを正とする（replace で消しても案内は残す）
   const [showResumedNotice] = useState(() => searchParams.get("resumed") === "1");
   const [checked, setChecked] = useState(false);
@@ -66,6 +92,14 @@ export function GenerationPage() {
     return <p role="status">読み込んでいます</p>;
   }
   if (recovery.state.phase === "idle") {
+    const historyIndex = readHistoryIndex();
+    if (
+      returnPathRef.current === PLAIN_PLANNER_PATH &&
+      isGenerationOpenedFromPlanner(location.state) &&
+      historyIndex !== 0
+    ) {
+      return <BackToOpeningPlanner />;
+    }
     return <Navigate to={returnPathRef.current} replace />;
   }
   // clearGeneration() は pending を同期的に消すため、消える前に options を見て

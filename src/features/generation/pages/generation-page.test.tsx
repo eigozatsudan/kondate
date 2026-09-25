@@ -1,6 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -12,6 +12,7 @@ import {
   readPendingGeneration,
   savePendingGeneration,
 } from "../model/pending-generation";
+import { GENERATION_OPENED_FROM_PLANNER_STATE } from "../model/generation-opened-from-planner";
 import { GenerationPage } from "./generation-page";
 
 // --- モック定義 ---------------------------------------------------------
@@ -137,14 +138,21 @@ function failedStatus(idempotencyKey: string): Extract<GenerationStatusData, { s
   };
 }
 
-function renderGenerationPage(initialEntry = "/generation") {
+type GenerationTestEntry = string | { pathname: string; state: unknown };
+
+function renderGenerationPage(
+  initialEntry: GenerationTestEntry = "/generation",
+  earlierEntries: GenerationTestEntry[] = [],
+) {
+  const initialEntries = [...earlierEntries, initialEntry];
   const router = createMemoryRouter(
     [
       { path: "/generation", element: <GenerationPage /> },
       { path: "/planner", element: <h1>プランナー</h1> },
       { path: "/menus/:menuId", element: <h1>献立結果</h1> },
+      { path: "*", element: <h1>外の画面</h1> },
     ],
-    { initialEntries: [initialEntry] },
+    { initialEntries, initialIndex: initialEntries.length - 1 },
   );
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -458,5 +466,101 @@ describe("GenerationPage", () => {
       expect(router.state.location.search).toBe("?resume=review");
     });
     expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
+  });
+  // UX 残り R1 項目 1: planner が push した /generation（entry に印がある）が idle になったら、
+  // /planner を 2 つ並べず 1 つ戻る。生成・結果から戻ったあとに戻るが 1 回空振りしないこと。
+  describe("returning to the planner entry it was opened from", () => {
+    const fromPlanner = { pathname: "/generation", state: GENERATION_OPENED_FROM_PLANNER_STATE };
+
+    async function pressBack(router: ReturnType<typeof renderGenerationPage>): Promise<void> {
+      await act(async () => {
+        await router.navigate(-1);
+      });
+    }
+
+    it("goes back to the planner entry instead of duplicating /planner when idle", async () => {
+      const router = renderGenerationPage(fromPlanner, ["/history", "/planner"]);
+      expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
+      expect(router.state.location.pathname).toBe("/planner");
+      expect(router.state.historyAction).toBe("POP");
+
+      await pressBack(router);
+      expect(router.state.location.pathname).toBe("/history");
+      expect(await screen.findByRole("heading", { name: "外の画面" })).toBeVisible();
+    });
+
+    it("leaves the planner in one back after returning from the result screen", async () => {
+      const router = renderGenerationPage(`/menus/${SOURCE_MENU_ID}?recovered=1`, [
+        "/history",
+        "/planner",
+        fromPlanner,
+      ]);
+      expect(await screen.findByRole("heading", { name: "献立結果" })).toBeVisible();
+
+      // 結果で戻ると /generation に着き、idle なのでそのまま /planner の entry へ戻る
+      await pressBack(router);
+      expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
+      expect(router.state.location.pathname).toBe("/planner");
+
+      await pressBack(router);
+      expect(router.state.location.pathname).toBe("/history");
+      expect(await screen.findByRole("heading", { name: "外の画面" })).toBeVisible();
+    });
+
+    it("replaces instead of going back when the marked entry is the first entry of the tab", async () => {
+      // ブラウザ履歴で idx が 0（タブの最初の entry）なら、1 つ戻るとアプリの外へ出てしまう
+      window.history.replaceState({ idx: 0 }, "");
+      try {
+        const router = renderGenerationPage(fromPlanner);
+        expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
+        expect(router.state.historyAction).toBe("REPLACE");
+      } finally {
+        window.history.replaceState(null, "");
+      }
+    });
+
+    it("still replaces /generation with /planner when the entry has no planner mark", async () => {
+      const router = renderGenerationPage("/generation", ["/history"]);
+      expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
+      expect(router.state.historyAction).toBe("REPLACE");
+
+      await pressBack(router);
+      expect(router.state.location.pathname).toBe("/history");
+    });
+
+    it("keeps replacing with ?resume=review for 条件を直してやり直す even with the planner mark", async () => {
+      const user = userEvent.setup();
+      const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
+      savePendingGeneration(pending);
+      mockStatus.mockResolvedValue(failedStatus(KEY_A));
+      const router = renderGenerationPage(fromPlanner, ["/history", "/planner"]);
+
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
+      });
+      await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
+
+      await waitFor(() => {
+        expect(router.state.location.search).toBe("?resume=review");
+      });
+      expect(router.state.location.pathname).toBe("/planner");
+      expect(router.state.historyAction).toBe("REPLACE");
+    });
+
+    it("keeps the device back from the in-progress screen landing on the planner entry", async () => {
+      const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
+      savePendingGeneration(pending);
+      mockStatus.mockResolvedValue(processingStatus(KEY_A));
+      const router = renderGenerationPage(fromPlanner, ["/history", "/planner"]);
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
+      });
+
+      // 端末の戻るで作成中の画面から planner へ戻るのは従来どおり
+      await pressBack(router);
+      expect(router.state.location.pathname).toBe("/planner");
+      await pressBack(router);
+      expect(router.state.location.pathname).toBe("/history");
+    });
   });
 });

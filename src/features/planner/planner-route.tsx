@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useReducer, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   NavigationType,
@@ -22,6 +30,7 @@ import { getProfile, setOnboardingStatus } from "@/features/household/household-
 import { householdKeys } from "@/features/household/household-queries";
 import { useAuth } from "@/features/auth/use-auth";
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
+import { readHistoryIndex } from "@/shared/lib/history-index";
 import { useRequestPageHeadingFocus } from "@/shared/ui/page-heading-focus";
 import { listPantryItems, pantryKeys } from "@/features/pantry/pantry-api";
 import { expiryNotice } from "@/features/pantry/pantry-page";
@@ -31,6 +40,7 @@ import {
   createPendingGeneration,
   readPendingGeneration,
 } from "@/features/generation/model/pending-generation";
+import { GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS } from "@/features/generation/model/generation-opened-from-planner";
 import { reconcileTerminalPendingGeneration } from "@/features/generation/model/reconcile-terminal-pending";
 import {
   readPendingGenerationMeta,
@@ -246,6 +256,9 @@ export function PlannerPage({
 //  POST 完了まで画面が切り替わらず、成功時に pending が消えて /generation が
 //  idle→planner へ落ちるレースも起きる）。
 // PlannerPage 自体はテスト向けに startGeneration を注入可能な薄いラッパーのまま変更しない。
+// R1-1: /generation へは entry に「planner から来た」印（location.state）を付けて push する。
+// GenerationPage は idle になったとき、この印を見て /planner を重ねず 1 つ戻る
+// （generation-opened-from-planner.ts）。
 export function PlannerRoutePage() {
   const userId = useAuth().session?.user.id;
   const navigate = useNavigate();
@@ -267,15 +280,33 @@ export function PlannerRoutePage() {
   // （?resume= はマウント時に消費済みで、ウィザード中の URL は常に /planner）。
   // ホーム（ウィザードが閉じている）での戻るは従来どおり pathname が変わるときだけ止め、
   // leave flush してから離れる。
-  // - 述語には delta（向き）が渡らないため、ウィザード中の「進む」も同じく止めて閉じる
-  //   （回答は state と autosave に残る。進む先へはホームからもう一度進めば行ける）。
+  // - R1-3: 述語には delta（向き）が渡らない。react-router 8.3 のブラウザ履歴は popstate の時点で
+  //   移った先の entry の history.state.idx を読み、直前の idx との差を delta にする
+  //   （lib/router/history.js の handlePop）。述語が呼ばれるのはその直後で、window.history.state は
+  //   まだ移った先のもの。そこで、いま表示している entry の idx（location が変わるたびに写す）と
+  //   比べて向きを見分け、「進む」ならウィザードを閉じずに、ホームと同じく leave flush してから進む。
+  //   idx が読めない（memory router など）ときは向きが分からないので、従来どおり閉じる側に倒す。
+  // - pathname が同じ /planner への進むは止めずに通り、key の effect がウィザードを閉じる
+  //   （移った先の entry のホームを出す）。
   // - タブの最初の entry が /planner のときの戻るは document ごと移るので blocker に届かず、
   //   アプリの外へ出る（ウィザード用の entry を積まない以上、作業前と同じ挙動として受け入れる）。
   const wizardBackControlRef = useRef<PlannerWizardBackControl | null>(null);
+  const currentLocationKey = useLocation().key;
+  const currentHistoryIndexRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    currentHistoryIndexRef.current = readHistoryIndex();
+  }, [currentLocationKey]);
+  const blockedPopIsForwardRef = useRef(false);
   const blocker = useBlocker(({ historyAction, currentLocation, nextLocation }) => {
-    return (
-      historyAction === NavigationType.Pop && currentLocation.pathname !== nextLocation.pathname
-    );
+    const shouldBlock =
+      historyAction === NavigationType.Pop && currentLocation.pathname !== nextLocation.pathname;
+    if (shouldBlock) {
+      const currentIndex = currentHistoryIndexRef.current;
+      const nextIndex = readHistoryIndex();
+      blockedPopIsForwardRef.current =
+        currentIndex !== null && nextIndex !== null && nextIndex > currentIndex;
+    }
+    return shouldBlock;
   });
   // react-router 8.3 は blocked 中の再 POP で blocker 参照だけを差し替える。
   // proceed/reset は最新を使い、identity 変化では in-flight flush を cancelled にしない。
@@ -285,7 +316,8 @@ export function PlannerRoutePage() {
     if (blocker.state !== "blocked") return;
     // 外へ出る POP のうち、ウィザードが開いているものは閉じる操作に置き換える
     // （開閉はコミット済みの wizardOpen を effect で写した値。述語の中では状態を読み書きしない）。
-    if (wizardBackControlRef.current?.isWizardOpen() === true) {
+    // R1-3: 「進む」は閉じる操作に置き換えず、下の leave flush を通って進む先へ移る。
+    if (!blockedPopIsForwardRef.current && wizardBackControlRef.current?.isWizardOpen() === true) {
       // 戻るをウィザードを閉じる操作に置き換える。遷移はしない（未保存の回答は route の
       // state と autosave に残る）。
       wizardBackControlRef.current.closeWizardForBack();
@@ -334,7 +366,7 @@ export function PlannerRoutePage() {
         if (outcome === "kept") {
           if (signal.aborted) return false;
           // 新規条件は送っていない。review の pending 注意文 + /generation?resumed=1 で明示する
-          void navigate("/generation?resumed=1");
+          void navigate("/generation?resumed=1", GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS);
           return "resumed";
         }
         // P4: cleared / none。他タブが terminal + draft soft-delete したあとに
@@ -402,7 +434,7 @@ export function PlannerRoutePage() {
         // await 後に AbortSignal.aborted を直読すると、直前の early return で
         // 常に false と畳まれ no-unnecessary-condition になる。関数経由で再読する。
         if (isAbortSignalAborted(signal) || !winnerReady) return false;
-        void navigate("/generation?resumed=1");
+        void navigate("/generation?resumed=1", GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS);
         return "resumed";
       }
       const pending = claim.pending;
@@ -428,7 +460,7 @@ export function PlannerRoutePage() {
       if (isAbortSignalAborted(signal)) {
         return false;
       }
-      void navigate("/generation");
+      void navigate("/generation", GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS);
       return true;
     },
     [navigate, planCode, qualityAvailable, userId],
@@ -672,11 +704,6 @@ function PlannerPageForOwner({
     valueForResumeRef.current = value;
   }, [value]);
 
-  // P6: 既に mount 済みの /planner でも ?resume= 後付けでウィザードを開く（不変契約 4b の同一インスタンス）。
-  // init effect は initialized 後 no-op のため、resume 文字列変化専用の経路を持つ。
-  // searchParams オブジェクト参照ではなく get("resume") 結果に依存し、毎 render の再実行を避ける。
-  // P5: eligible を渡し、strip 前でも blocked ID のまま review に着地しない。
-  //
   const locationKey = useLocation().key;
   const requestPageHeadingFocus = useRequestPageHeadingFocus();
   // B-3: blocker と ?resume= の処理は同期で開閉を読むため、コミット済みの wizardOpen を effect で
@@ -686,6 +713,11 @@ function PlannerPageForOwner({
     wizardOpenRef.current = wizardOpen;
   }, [wizardOpen]);
 
+  // P6: 既に mount 済みの /planner でも ?resume= 後付けでウィザードを開く（不変契約 4b の同一インスタンス）。
+  // init effect は initialized 後 no-op のため、resume 文字列変化専用の経路を持つ。
+  // searchParams オブジェクト参照ではなく get("resume") 結果に依存し、毎 render の再実行を避ける。
+  // P5: eligible を渡し、strip 前でも blocked ID のまま review に着地しない。
+  //
   // B-3: ?resume= はここで一度だけ読んで消費する。開く step を state に決めてウィザードを開いたら、
   // URL を /planner へ置き換える（マウント直後の init 経由でも、mount 済みでの後付けでも同じ）。
   // - 履歴に ?resume= 付きの entry を残さないので、生成・結果・privacy などから戻ってきても
@@ -717,7 +749,16 @@ function PlannerPageForOwner({
       resumeHandlingRef.current =
         !atMount && navigationType === NavigationType.Pop ? "close" : "open";
       void navigate("/planner", { replace: true });
-      if (resumeHandlingRef.current === "close" && wizardOpenRef.current) {
+      // R1 M-1: 閉じるのは key の effect・端末の戻る（closeWizardForBack）と同じ条件のときだけ。
+      // 生成 submit・緊急献立への移動・leave flush の途中は、直後に別画面へ移るので画面を切り替えない
+      // （置き換えは行う。URL に ?resume= を残さないため）。
+      if (
+        resumeHandlingRef.current === "close" &&
+        wizardOpenRef.current &&
+        !submittingRef.current &&
+        !emergencyOpeningRef.current &&
+        !leaveInFlightRef.current
+      ) {
         wizardOpenRef.current = false;
         setWizardOpen(false);
         requestPageHeadingFocus();
@@ -1741,7 +1782,10 @@ function PlannerPageForOwner({
         onResumePending={() => {
           // 既存 C2 再開と同経路（pending を壊さず generation へ）。
           // P1: 下ナビ leave と同型。dirty 未 flush のまま generation へ出ない。
-          void navigateAfterPlannerLeaveFlush(navigate, "/generation?resumed=1");
+          void navigateAfterPlannerLeaveFlush(
+            (to) => navigate(to, GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS),
+            "/generation?resumed=1",
+          );
         }}
         recentMenus={recentMenus}
         recentMenusLoading={historyQuery.isPending}

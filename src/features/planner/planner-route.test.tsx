@@ -68,7 +68,14 @@ const queryState = vi.hoisted(() => ({
   usageRemaining: 1,
   /** U3 修正: 同じ /planner への遷移（献立タブ）で変わる location.key の mock 用 */
   locationKey: "default",
+  /** R1 M-1: 戻る・進む（POP）で ?resume= 付きの entry に着いたことを再現する */
+  navigationType: initialNavigationType(),
 }));
+
+/** queryState.navigationType を 3 種のどれでも入れ直せる型で始める（既定は PUSH） */
+function initialNavigationType(): "POP" | "PUSH" | "REPLACE" {
+  return "PUSH";
+}
 
 const ownerBId = "72000000-0000-4000-8000-000000000002";
 const ownerBDraft: PlannerDraft = {
@@ -197,8 +204,8 @@ vi.mock("react-router", async (importOriginal) => {
       state: null,
       key: queryState.locationKey,
     }),
-    // B-3: Router 未 wrap の unit では遷移の種類を PUSH とみなす（?resume= の後付けはウィザードを開く）
-    useNavigationType: () => "PUSH",
+    // B-3: Router 未 wrap の unit では既定で遷移の種類を PUSH とみなす（?resume= の後付けはウィザードを開く）
+    useNavigationType: () => queryState.navigationType,
     // P5: data router 必須の useBlocker を差し替え。既存 PlannerRoutePage テストが throw しない。
     useBlocker: (
       shouldBlock: (args: {
@@ -684,6 +691,7 @@ vi.mock("@/features/generation/model/pending-generation-meta", async (importOrig
   };
 });
 
+import { GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS } from "@/features/generation/model/generation-opened-from-planner";
 import { PlannerPage, PlannerRoutePage } from "./planner-route";
 import {
   PLANNER_LEAVE_FLUSH_TIMEOUT_MS,
@@ -761,6 +769,7 @@ beforeEach(() => {
   queryState.usagePlusEntitled = false;
   queryState.usageRemaining = 1;
   queryState.locationKey = "default";
+  queryState.navigationType = "PUSH";
   // flush 後の saved にクライアント入力（pantrySelections 等）を残す（P1 exact-set 検証用）
   savePlannerDraftMock.mockImplementation(
     (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
@@ -2303,7 +2312,10 @@ describe("PlannerRoutePage", () => {
       createdAt: "2026-07-11T00:00:00.000Z",
     });
     // POST 完了を待たず、保存直後に遷移する（再生成経路と同型）
-    expect(navigateMock).toHaveBeenCalledWith("/generation");
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/generation",
+      GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+    );
   });
 
   it("P3: startGeneration は pantry 再読後の JST 当日以外 confirmation を載せない", async () => {
@@ -2385,7 +2397,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(pendingGenerationMock.savePendingGeneration).toHaveBeenCalled();
     // navigate は fire-and-forget。commit 前に isSaving が落ちると reset で sticky が消える
@@ -2414,7 +2429,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
     expect(screen.getByRole("button", { name: "入力をリセット" })).toBeDisabled();
@@ -2456,7 +2474,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(screen.getByLabelText("wizard saving")).toHaveTextContent("true");
     expect(screen.getByRole("button", { name: "入力をリセット" })).toBeDisabled();
@@ -2507,7 +2528,10 @@ describe("PlannerRoutePage", () => {
     expect(screen.queryByLabelText("attempt key")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "作成中の献立を続ける" }));
-    expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/generation?resumed=1",
+      GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+    );
     // ホーム再開は pending を触らず generation へ渡す（C2 と同経路）
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     // G-R4 display reconcile の GET 失敗 keep では clear しない（G1）
@@ -2606,8 +2630,8 @@ describe("PlannerRoutePage", () => {
 
     await user.click(screen.getByRole("button", { name: "生成" }));
 
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
 
@@ -2617,7 +2641,10 @@ describe("PlannerRoutePage", () => {
 
     await user.click(screen.getByRole("button", { name: "生成" }));
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
   });
@@ -2677,7 +2704,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
@@ -2724,13 +2754,16 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(pendingGenerationMock.claimPendingGeneration).toHaveBeenCalled();
     // 負けタブは meta を書かず・clear しない（勝者 sticky を壊さない）
     expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
     // return false → startNewAttempt しない
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
   });
@@ -2771,8 +2804,8 @@ describe("PlannerRoutePage", () => {
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
     });
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -2817,8 +2850,8 @@ describe("PlannerRoutePage", () => {
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
     });
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "献立の作成を開始できませんでした。もう一度お試しください。",
@@ -3016,7 +3049,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(savePlannerDraftMock).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
@@ -3054,7 +3090,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(screen.queryByText(/離乳食、飲み込み・嚥下/u)).not.toBeInTheDocument();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
@@ -3089,7 +3128,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(navigateMock).not.toHaveBeenCalledWith("/privacy?returnTo=%2Fplanner%3Fresume%3Dreview");
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
@@ -3133,7 +3175,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(
       screen.queryByText(
@@ -3177,7 +3222,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(
       screen.queryByText("冷蔵庫から削除された食材の選択を解除してから献立を作ってください。"),
@@ -3217,7 +3265,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
   });
@@ -3256,7 +3307,10 @@ describe("PlannerRoutePage", () => {
 
     await user.click(screen.getByRole("button", { name: "生成" }));
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(
       screen.queryByText(
@@ -3285,8 +3339,8 @@ describe("PlannerRoutePage", () => {
         "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
       );
     });
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
   });
 
@@ -3333,7 +3387,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(savePlannerDraftMock).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
@@ -3391,7 +3448,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(savePlannerDraftMock).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
@@ -3440,7 +3500,10 @@ describe("PlannerRoutePage", () => {
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     await vi.waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith("/generation?resumed=1");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/generation?resumed=1",
+        GENERATION_OPENED_FROM_PLANNER_NAVIGATE_OPTIONS,
+      );
     });
     expect(savePlannerDraftMock).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
@@ -3551,8 +3614,8 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
   });
 
   it("P4: startGeneration の reconcile が cleared なら pin で新規 sticky を書かない", async () => {
@@ -3615,8 +3678,8 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
   });
 
   it("C7: reset does not clear another tab's claimed pending after strip abort", async () => {
@@ -3662,7 +3725,7 @@ describe("PlannerRoutePage", () => {
         "献立条件を保存できなかったため、生成を開始しませんでした。",
       );
     });
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByLabelText("check count")).toHaveTextContent("1");
   });
@@ -3685,7 +3748,7 @@ describe("PlannerRoutePage", () => {
     });
     expect(pendingGenerationMock.savePendingGeneration).toHaveBeenCalled();
     expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     // resume 導線は pending 無し（sticky にならない）
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
@@ -3721,7 +3784,7 @@ describe("PlannerRoutePage", () => {
       expect(pendingGenerationMock.savePendingGenerationMeta).toHaveBeenCalled();
     });
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
   });
 
   it("P2: claim+meta 済みのあと strip abort しても reset は同一 key の共有 pending を消さない", async () => {
@@ -3817,7 +3880,7 @@ describe("PlannerRoutePage", () => {
     // mode 判定は savePending 前 / onSubmit 再検証。sticky pending を作らない
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation");
+    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
   });
 
@@ -4203,6 +4266,57 @@ describe("U3 修正: 質問中に献立タブを押したらホームへ戻る",
     deferred.resolve({ ...partialDraft, revision: 4 });
     await expect(leavePromise).resolves.toBe("proceed");
     expect(requestFocus).not.toHaveBeenCalled();
+  });
+
+  // R1 M-1: 戻るで残っていた ?resume= の entry に着いたとき（「close」の分岐）も、key の effect や
+  // 端末の戻るで閉じる経路と同じく、leave flush の途中は画面を切り替えない。置き換えは行う。
+  it("does not flip the screen when a POP lands on a leftover ?resume= entry during a leave flush", async () => {
+    queryState.draft = partialDraft;
+    const deferred = createDeferred<PlannerDraft>();
+    savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+    const requestFocus = vi.fn();
+    const withShellFocus = () => (
+      <PageHeadingFocusContext.Provider value={requestFocus}>
+        <PlannerRoutePage />
+      </PageHeadingFocusContext.Provider>
+    );
+    const user = userEvent.setup();
+    const view = render(withShellFocus());
+    await user.click(screen.getByRole("button", { name: "続きから答える" }));
+
+    const leavePromise = runPlannerLeaveFlush();
+    queryState.search = "resume=start";
+    queryState.locationKey = "leftover-resume-entry";
+    queryState.navigationType = "POP";
+    view.rerender(withShellFocus());
+    expect(navigateMock).toHaveBeenCalledWith("/planner", { replace: true });
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    expect(requestFocus).not.toHaveBeenCalled();
+
+    deferred.resolve({ ...partialDraft, revision: 4 });
+    await expect(leavePromise).resolves.toBe("proceed");
+    expect(requestFocus).not.toHaveBeenCalled();
+  });
+
+  it("closes the wizard and asks for heading focus once when a POP lands on a leftover ?resume= entry", () => {
+    queryState.draft = partialDraft;
+    const requestFocus = vi.fn();
+    const withShellFocus = () => (
+      <PageHeadingFocusContext.Provider value={requestFocus}>
+        <PlannerRoutePage />
+      </PageHeadingFocusContext.Provider>
+    );
+    const view = render(withShellFocus());
+    fireEvent.click(screen.getByRole("button", { name: "続きから答える" }));
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+
+    queryState.search = "resume=start";
+    queryState.locationKey = "leftover-resume-entry";
+    queryState.navigationType = "POP";
+    view.rerender(withShellFocus());
+    expect(navigateMock).toHaveBeenCalledWith("/planner", { replace: true });
+    expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
+    expect(requestFocus).toHaveBeenCalledTimes(1);
   });
 });
 

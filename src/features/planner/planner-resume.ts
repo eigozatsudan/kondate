@@ -21,6 +21,10 @@ import { plannerSteps, type PlannerStep } from "./model/planner-wizard";
  * - 端末の戻るは履歴エントリで表さない。ウィザードが開いている間にプランナーの外へ出る戻る（POP）は
  *   PlannerRoutePage の useBlocker が止め、ウィザードを閉じてホームを出す。直前の `/planner` へ戻る
  *   POP は止めずに通し、location.key の変化でウィザードを閉じる。どちらも URL は触らない。
+ * - ブラウザの「進む」でプランナーの外へ移る POP は、history.state.idx で向きを見分け、ウィザードを
+ *   閉じずに進む（leave flush はホームと同じく行う）。idx が読めないときは戻ると同じく閉じる。
+ * - タブの最初の entry が `/planner` のときは、ウィザード中の戻るでアプリの外へ出る（entry を積まない
+ *   ことの trade-off として受け入れている）。
  */
 export const PLANNER_RESUME_START = "start";
 
