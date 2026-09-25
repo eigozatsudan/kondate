@@ -249,6 +249,16 @@ export function PlannerPage({
   );
 }
 
+/** 生成の送信中に画面を離れようとした（下ナビ・端末の戻る・献立タブ）ときの理由 */
+const LEAVE_BLOCKED_BY_SUBMIT_MESSAGE =
+  "献立の作成処理中のため、移動できませんでした。完了後にもう一度お試しください。";
+/** privacy・家族設定・緊急献立へ移る途中に画面を離れようとしたときの理由 */
+const LEAVE_BLOCKED_BY_OTHER_OPERATION_MESSAGE =
+  "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。";
+/** ホームにいる間に下書きの自動保存が失敗したときの案内（U3 修正レビュー m-4） */
+const HOME_AUTOSAVE_FAILED_MESSAGE =
+  "答えかけの条件を保存できませんでした。通信を確認して、もう一度お試しください。";
+
 // ルーターが実際にマウントする献立ページ。
 // 「献立を作る」では pending を保存してすぐ /generation へ移る。
 // POST は GenerationPage の useGenerationRecovery が recover して行う
@@ -733,6 +743,36 @@ function PlannerPageForOwner({
   //   止めた POP が reset されて留まったときは、この effect が走り直して消費する。
   // - 1 つの ?resume= につき、開くか閉じるかを 1 回だけ決め、置き換えも 1 回だけ要求する
   //   （resumeHandlingRef）。置き換えが反映されるまでに safety の再取得などで走り直しても重ねない。
+  // R3（U3 修正レビュー m-1・m-2・m-6、R1 M-5）: ウィザードを閉じてホームへ切り替えてよいかを、
+  // 献立タブ（key の effect）・端末の戻る（closeWizardForBack）・戻るで残った ?resume= の entry
+  // （P6 の close）の 3 経路で同じ条件にそろえる。閉じない条件は leave flush と同じ。
+  // - leave flush の途中: その leave flush が移動か理由の表示を担うので、何も足さない。
+  // - 下書きの保存が競合している間: 競合の案内がウィザードにしか無いので閉じない
+  //   （ホームへ切り替えると案内が消え、ホームの「最初から答え直す」で競合中に消去が走る）。
+  //   案内は画面に出ているので、文言は足さない。
+  // - 生成 submit・privacy・家族設定・緊急献立へ移る途中: 直後に別画面へ移るので閉じない。
+  //   押した操作が黙って消えないよう、leave flush と同じ理由の文言を出す。
+  // true なら閉じない。参照するのは ref と setState だけなので、依存は無い。
+  const wizardCloseBlocked = useCallback((): boolean => {
+    if (leaveInFlightRef.current || hasDraftConflictRef.current) return true;
+    if (submittingRef.current) {
+      setSubmissionError(LEAVE_BLOCKED_BY_SUBMIT_MESSAGE);
+      return true;
+    }
+    if (
+      emergencyOpeningRef.current ||
+      privacyOpeningRef.current ||
+      settingsOpeningRef.current ||
+      isOpeningEmergencyMenusRef.current ||
+      isOpeningPrivacyRef.current ||
+      isOpeningSettingsRef.current
+    ) {
+      setSubmissionError(LEAVE_BLOCKED_BY_OTHER_OPERATION_MESSAGE);
+      return true;
+    }
+    return false;
+  }, []);
+
   const resumeQuery = searchParams.get("resume");
   const navigationType = useNavigationType();
   const resumeHandlingRef = useRef<"open" | "close" | null>(null);
@@ -752,13 +792,7 @@ function PlannerPageForOwner({
       // R1 M-1: 閉じるのは key の effect・端末の戻る（closeWizardForBack）と同じ条件のときだけ。
       // 生成 submit・緊急献立への移動・leave flush の途中は、直後に別画面へ移るので画面を切り替えない
       // （置き換えは行う。URL に ?resume= を残さないため）。
-      if (
-        resumeHandlingRef.current === "close" &&
-        wizardOpenRef.current &&
-        !submittingRef.current &&
-        !emergencyOpeningRef.current &&
-        !leaveInFlightRef.current
-      ) {
+      if (resumeHandlingRef.current === "close" && wizardOpenRef.current && !wizardCloseBlocked()) {
         wizardOpenRef.current = false;
         setWizardOpen(false);
         requestPageHeadingFocus();
@@ -782,6 +816,7 @@ function PlannerPageForOwner({
     requestPageHeadingFocus,
     resumeQuery,
     safetyQuery.data,
+    wizardCloseBlocked,
   ]);
 
   // B-2: 開いている質問の step 名だけを覚える（「続きから答える」の戻り先）。
@@ -805,6 +840,7 @@ function PlannerPageForOwner({
   // - I-2: pathname が変わらないため AppShell の遷移フォーカスが走らない。質問画面から実際に
   //   ホームへ入れ替えたときだけ、シェルにホームの h1 へのフォーカスと先頭スクロールを頼む
   //   （ホームのままタブを押したときは画面が変わらないので頼まない）。
+  // - R3: 閉じない条件（競合中・privacy/家族設定への移動中を含む）は wizardCloseBlocked にまとめた。
   const lastLocationKeyRef = useRef(locationKey);
   const lastResumeQueryRef = useRef(resumeQuery);
   useEffect(() => {
@@ -816,11 +852,18 @@ function PlannerPageForOwner({
     if (!initialized) return;
     if (resumeQuery !== null) return;
     if (consumedResume) return;
-    if (submittingRef.current || emergencyOpeningRef.current || leaveInFlightRef.current) return;
     if (!wizardOpen) return;
+    if (wizardCloseBlocked()) return;
     setWizardOpen(false);
     requestPageHeadingFocus();
-  }, [initialized, locationKey, resumeQuery, wizardOpen, requestPageHeadingFocus]);
+  }, [
+    initialized,
+    locationKey,
+    resumeQuery,
+    wizardOpen,
+    requestPageHeadingFocus,
+    wizardCloseBlocked,
+  ]);
 
   // B-3: 端末の戻る（PlannerRoutePage の useBlocker が止めた POP）でウィザードを閉じる。
   useEffect(() => {
@@ -830,10 +873,8 @@ function PlannerPageForOwner({
       closeWizardForBack: () => {
         // 生成 submit・緊急献立への移動・leave-flush の途中は、直後に別画面へ移るので
         // 画面を切り替えない（戻るは取り消されたまま、何も起きない）。献立タブと同じ条件。
-        if (submittingRef.current || emergencyOpeningRef.current || leaveInFlightRef.current) {
-          return;
-        }
         if (!wizardOpenRef.current) return;
+        if (wizardCloseBlocked()) return;
         // 続けて届いた POP が、閉じた結果のコミット前に再びウィザード扱いされないよう先に落とす
         wizardOpenRef.current = false;
         setWizardOpen(false);
@@ -844,7 +885,7 @@ function PlannerPageForOwner({
     return () => {
       wizardBackControlRef.current = null;
     };
-  }, [requestPageHeadingFocus, wizardBackControlRef]);
+  }, [requestPageHeadingFocus, wizardBackControlRef, wizardCloseBlocked]);
 
   // Plan 2: 家族の利用可否が後から変わった場合も、無効メンバーを下書きに残さない。
   // idea は家族 ID を持たないため触らない。household が 0 件になっても idea へ自動降格しない。
@@ -1512,17 +1553,13 @@ function PlannerPageForOwner({
           isOpeningSettingsRef.current
         ) {
           if (mountedRef.current) {
-            setSubmissionError(
-              "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
-            );
+            setSubmissionError(LEAVE_BLOCKED_BY_OTHER_OPERATION_MESSAGE);
           }
           return "blocked";
         }
         if (submittingRef.current) {
           if (mountedRef.current) {
-            setSubmissionError(
-              "献立の作成処理中のため、移動できませんでした。完了後にもう一度お試しください。",
-            );
+            setSubmissionError(LEAVE_BLOCKED_BY_SUBMIT_MESSAGE);
           }
           return "blocked";
         }
@@ -1563,9 +1600,7 @@ function PlannerPageForOwner({
           // P1: flush 成功後も generate/openers が await 中に武装していないか再確認
           if (otherOpInFlightAfterFlush()) {
             if (mountedRef.current) {
-              setSubmissionError(
-                "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
-              );
+              setSubmissionError(LEAVE_BLOCKED_BY_OTHER_OPERATION_MESSAGE);
             }
             releaseLeaveUnlessProceeding(false);
             return "blocked";
@@ -1581,9 +1616,7 @@ function PlannerPageForOwner({
           if (error instanceof IncompleteDraftSaveError) {
             if (otherOpInFlightAfterFlush()) {
               if (mountedRef.current) {
-                setSubmissionError(
-                  "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。",
-                );
+                setSubmissionError(LEAVE_BLOCKED_BY_OTHER_OPERATION_MESSAGE);
               }
               releaseLeaveUnlessProceeding(false);
               return "blocked";
@@ -1745,12 +1778,13 @@ function PlannerPageForOwner({
     // U3: pending が無く下書きに進捗があるときだけ「続きから答える」「最初から」を出す。
     // pending があるときは従来どおり「作成中の献立を続ける」を優先し、下書きの導線は出さない。
     // 回答済みの数は「最初の未回答 step の位置」で数える（例: 作る相手が未回答なら 3 問）。
-    // 総数はウィザードの進み具合表示（n / 9）と同じく plannerSteps から計算する。
     const draftProgress =
       !hasResumablePending && homeResumeStep !== "meal"
         ? {
-            answeredSteps: plannerSteps.indexOf(homeResumeStep),
-            totalSteps: plannerSteps.length,
+            // 最終レビュー A M-8: 必須の質問（食事〜作る相手）だけで数える。homeResumeStep は
+            // 必須の質問か確認画面なので、その位置がそのまま答えた必須の質問の数になる。
+            answeredRequiredQuestions: plannerSteps.indexOf(homeResumeStep),
+            requiredQuestions: plannerSteps.indexOf("audience") + 1,
             // 続きが確認画面のときは任意の質問を見ていなくても 8 になるので、件数ではなく
             // 「必須はすべて答えた」と伝える（M-5）
             readyForReview: homeResumeStep === "review",
@@ -1778,6 +1812,9 @@ function PlannerPageForOwner({
           // resetPlannerDraft が step を meal に戻す
           openWizardFromHome("meal");
         }}
+        // U3 修正レビュー m-1: 競合中は「最初から答え直す」を止める。競合の案内と解決は
+        // ウィザードにしか無いので、「続きから答える」で案内へ進んでもらう。
+        restartDisabled={hasDraftConflict}
         hasResumablePending={hasResumablePending}
         onResumePending={() => {
           // 既存 C2 再開と同経路（pending を壊さず generation へ）。
@@ -1805,22 +1842,44 @@ function PlannerPageForOwner({
           isOpeningSettings
         }
         banner={
-          backgroundRefetchErrorMessage !== null ? (
-            <div className="home-soft-banner stack">
-              <p role="status">{backgroundRefetchErrorMessage}</p>
-              <button
-                className="secondary-button min-h-11"
-                type="button"
-                onClick={() => {
-                  if (safetyQuery.isError) void safetyQuery.refetch();
-                  if (pantryQuery.isError) void pantryQuery.refetch();
-                  if (draftQuery.isError) void draftQuery.refetch();
-                }}
-              >
-                再試行
-              </button>
-            </div>
-          ) : null
+          <>
+            {backgroundRefetchErrorMessage !== null ? (
+              <div className="home-soft-banner stack">
+                <p role="status">{backgroundRefetchErrorMessage}</p>
+                <button
+                  className="secondary-button min-h-11"
+                  type="button"
+                  onClick={() => {
+                    if (safetyQuery.isError) void safetyQuery.refetch();
+                    if (pantryQuery.isError) void pantryQuery.refetch();
+                    if (draftQuery.isError) void draftQuery.refetch();
+                  }}
+                >
+                  再試行
+                </button>
+              </div>
+            ) : null}
+            {/* U3 修正レビュー m-4: 献立タブでホームへ戻ったあとに debounce の保存が失敗すると、
+                ウィザードの保存トーストが無いので何も見えず、そのままアプリを閉じると変更が
+                サーバに残らない。ホームでも失敗を知らせ、ウィザードと同じ flush で再試行させる。
+                競合はウィザードの案内に任せる（leave flush がウィザードを開く）。 */}
+            {autosave.state === "error" && !hasDraftConflict ? (
+              <div className="home-soft-banner stack">
+                <p role="alert">{HOME_AUTOSAVE_FAILED_MESSAGE}</p>
+                <button
+                  className="secondary-button min-h-11"
+                  type="button"
+                  onClick={() => {
+                    void autosave.flush().catch(() => {
+                      // flush 失敗は state=error のまま。もう一度押せる
+                    });
+                  }}
+                >
+                  保存を再試行
+                </button>
+              </div>
+            ) : null}
+          </>
         }
       />
     );

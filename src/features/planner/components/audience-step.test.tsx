@@ -85,7 +85,7 @@ describe("AudienceStep layout and selected safety summary", () => {
     expect(idea).toHaveAccessibleName("人数だけ指定してアイデアを見る");
     expect(household).toHaveAccessibleName("家族に合わせて作る");
     expect(idea).toHaveAccessibleDescription(
-      "登録した家族のアレルギーなどの条件は使わず、人数に合わせた献立の案を見ます。",
+      "家族の条件（アレルギーなど）は使わず、人数に合わせた献立の案を見ます。",
     );
     expect(household).toHaveAccessibleDescription(
       "登録した家族の年齢・アレルギーなどの条件をもとに作ります。",

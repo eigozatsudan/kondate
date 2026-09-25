@@ -15,6 +15,7 @@ import {
   savePendingGeneration,
   type PendingGeneration,
 } from "./pending-generation";
+import { pendingGenerationReturnSurfaceKey } from "./pending-generation-return-surface";
 
 const requireAccessTokenMock = vi.hoisted(() => vi.fn());
 
@@ -168,7 +169,9 @@ describe("pending generation storage", () => {
     const storage = memoryStorage(JSON.stringify(storedPending()));
     const result = readPendingGeneration(USER_ID, new Date(Date.parse(STARTED_AT) + age), storage);
     expect(result !== null).toBe(kept);
-    expect(storage.removeItem).toHaveBeenCalledTimes(kept ? 0 : 1);
+    // 期限切れでは本体と作り直しの入口の記録（R2a B-1）の 2 キーを消す
+    expect(storage.removeItem).toHaveBeenCalledTimes(kept ? 0 : 2);
+    if (!kept) expect(storage.removeItem).toHaveBeenCalledWith(KEY);
   });
 
   it("best-effort removes legacy v2 pending key on v3 read", () => {
@@ -213,10 +216,19 @@ describe("pending generation storage", () => {
     ["corrupt", "{"],
     ["invalid", JSON.stringify({ ...storedPending(), extra: true })],
     ["future", JSON.stringify(storedPending({ createdAt: "2026-07-11T00:00:01.000Z" }))],
+    ["expired", JSON.stringify(storedPending({ createdAt: "2026-07-10T00:00:00.000Z" }))],
   ])("deletes %s records and returns null", (_case, raw) => {
     const storage = memoryStorage(raw);
     expect(readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)).toBeNull();
     expect(storage.removeItem).toHaveBeenCalledWith(KEY);
+    // R2a B-1: 作り直しの入口の記録も一緒に消す（pending と同じ寿命）
+    expect(storage.removeItem).toHaveBeenCalledWith(pendingGenerationReturnSurfaceKey);
+  });
+
+  it("keeps the return-surface record while the pending is still valid", () => {
+    const storage = memoryStorage(JSON.stringify(storedPending()));
+    expect(readPendingGeneration(USER_ID, new Date(STARTED_AT), storage)).not.toBeNull();
+    expect(storage.removeItem).not.toHaveBeenCalledWith(pendingGenerationReturnSurfaceKey);
   });
 
   // F1: 旧 privacy 欠落 / 旧 version の再生成 pending は互換受理せず clear する

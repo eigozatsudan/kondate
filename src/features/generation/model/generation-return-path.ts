@@ -18,6 +18,13 @@ import type { GenerationReturnSurface } from "./pending-generation-return-surfac
  * /history/:id へ戻し、下タブの現在地が「献立」に変わらないようにする。省略や "menus" は従来どおり
  * /menus/:id（記録の無い既存の pending もこちら）。new_menu には効かない。
  */
+/**
+ * new_menu（と pending 無し）の戻り先。GenerationPage は ref の値がこれと同じかどうかで
+ * 「条件を直してやり直す」の resume=review 付与と、planner へ 1 つ戻る分岐を判定するため、
+ * 同じ定数を使う（U4 修正ラウンド2 レビュー Minor 1: 別ファイルの同じ文字列に暗黙に頼らない）。
+ */
+export const PLANNER_RETURN_PATH = "/planner";
+
 export function generationReturnPath(
   pending: PendingGeneration | null,
   options?: { resumeReview?: boolean; returnSurface?: GenerationReturnSurface },
@@ -27,5 +34,7 @@ export function generationReturnPath(
       ? `/history/${pending.request.sourceMenuId}`
       : `/menus/${pending.request.sourceMenuId}`;
   }
-  return options?.resumeReview === true ? "/planner?resume=review" : "/planner";
+  return options?.resumeReview === true
+    ? `${PLANNER_RETURN_PATH}?resume=review`
+    : PLANNER_RETURN_PATH;
 }

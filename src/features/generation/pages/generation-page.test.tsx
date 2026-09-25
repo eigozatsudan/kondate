@@ -197,7 +197,7 @@ beforeEach(() => {
 });
 
 describe("GenerationPage", () => {
-  it("復旧確認が終わる前に /planner へリダイレクトしない", async () => {
+  it("does not redirect to /planner before the recovery check finishes", async () => {
     const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
     savePendingGeneration(pending);
     mockStatus.mockResolvedValue(processingStatus(KEY_A));
@@ -220,7 +220,7 @@ describe("GenerationPage", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it("復旧すべき保存内容が無いときは /planner へ遷移する", async () => {
+  it("navigates to /planner when there is nothing to recover", async () => {
     const router = renderGenerationPage();
 
     await waitFor(() => {
@@ -353,7 +353,7 @@ describe("GenerationPage", () => {
   // 元の /menus/:id に戻ることを確認する。ラウンド1の実装は resumeReview 時に
   // pending を読み直しており、この経路では pending が null に見えるため
   // /planner?resume=review へ誤って上書きしていた（レビュー Critical）。
-  it("U4: 業務エラーで pending が消えたあとの regenerate_dish は条件を直してやり直すで /menus/:id に戻る（本番経路）", async () => {
+  it("U4: returns regenerate_dish to /menus/:id on 条件を直してやり直す after a business error cleared the pending (production path)", async () => {
     const user = userEvent.setup();
     const pending = createPendingGeneration(
       makeRegenerateDishCommand(KEY_A),
@@ -386,7 +386,7 @@ describe("GenerationPage", () => {
     expect(screen.queryByRole("heading", { name: "プランナー" })).not.toBeInTheDocument();
   });
 
-  it("U4: 業務エラーで pending が消えたあとの regenerate_menu は条件を直してやり直すで /menus/:id に戻る（本番経路）", async () => {
+  it("U4: returns regenerate_menu to /menus/:id on 条件を直してやり直す after a business error cleared the pending (production path)", async () => {
     const user = userEvent.setup();
     const pending = createPendingGeneration(
       makeRegenerateMenuCommand(KEY_A),
@@ -503,7 +503,7 @@ describe("GenerationPage", () => {
   // <a href> 側（onClear 未指定時のフォールバック）だけを見るテストでは、この
   // 本番経路の regression（レビュー指摘）を検出できないため、ここでは
   // renderGenerationPage 経由で実際のボタンクリックを再現する。
-  it("U4: 条件を直してやり直すは resume=review 付きで planner へ直着地する（本番経路）", async () => {
+  it("U4: lands on the planner with resume=review on 条件を直してやり直す (production path)", async () => {
     const user = userEvent.setup();
     const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
     savePendingGeneration(pending);

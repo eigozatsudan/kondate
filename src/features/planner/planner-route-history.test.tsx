@@ -5,9 +5,11 @@ import { createBrowserRouter, createMemoryRouter, type RouteObject } from "react
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlannerDraft, PlannerDraftInput } from "@shared/contracts/planner";
+import { AppShell } from "@/app/layouts/app-shell";
 import { householdKeys } from "@/features/household/household-queries";
 import { pantryKeys } from "@/features/pantry/pantry-api";
 import { privacyKeys } from "@/features/privacy/privacy-queries";
+import { PWA_INSTALL_TIP_DISMISSED_KEY } from "@/features/pwa/install-tip-storage";
 import { AppToastProvider } from "@/shared/ui/app-toast";
 import { PageHeadingFocusContext } from "@/shared/ui/page-heading-focus";
 import { plannerKeys } from "./planner-api";
@@ -139,12 +141,8 @@ function createBrowserRouterAt(routes: RouteObject[], initialEntries: string[]):
 }
 const browserRouters: TestRouter[] = [];
 
-function renderPlanner(
-  draft: PlannerDraft | null,
-  initialEntries: string[],
-  requestPageHeadingFocus: () => void = vi.fn(),
-  routerKind: "memory" | "browser" = "memory",
-): TestRouter {
+/** 下書き・家族・冷蔵庫・privacy をキャッシュに入れ、API の mock を下書きに合わせる */
+function createSeededQueryClient(draft: PlannerDraft | null): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
@@ -172,6 +170,16 @@ function renderPlanner(
     user_id: userId,
     notice_version: "2026-07-29.v1",
   });
+  return queryClient;
+}
+
+function renderPlanner(
+  draft: PlannerDraft | null,
+  initialEntries: string[],
+  requestPageHeadingFocus: () => void = vi.fn(),
+  routerKind: "memory" | "browser" = "memory",
+): TestRouter {
+  const queryClient = createSeededQueryClient(draft);
   const routes = [
     { path: "/planner", element: <PlannerRoutePage /> },
     { path: "*", element: <p>プランナーの外</p> },
@@ -283,7 +291,7 @@ describe("B-2: 続きから答える は最後に開いていた質問へ戻る"
   it("falls back to the first unanswered question when the remembered step is ahead of it", async () => {
     sessionStorage.setItem(plannerLastStepSessionKey(userId), "budget");
     renderPlanner(mealOnlyDraft, ["/planner"]);
-    expect(await screen.findByText("1 / 9 まで答えています")).toBeInTheDocument();
+    expect(await screen.findByText("必須の質問 4 問のうち 1 問に答えています")).toBeInTheDocument();
     await click("続きから答える");
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
   });
@@ -324,10 +332,10 @@ describe("B-3: ウィザードが開いている間の戻るはホームへ、�
     await expectLeftPlannerTo(router, "/history");
   });
 
-  it("does the same for 最初から", async () => {
+  it("does the same for 最初から答え直す", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const router = renderPlanner(completeDraft, ["/history", "/planner"]);
-    await click("最初から");
+    await click("最初から答え直す");
     expect(screen.getByRole("heading", { name: "1. 食事" })).toBeInTheDocument();
     await pressBack(router);
     expectHome();
@@ -530,5 +538,120 @@ describe("R1-3: ブラウザの進むはウィザードを閉じずに進む", (
     await goBrowser(router, 1, "/pantry");
     expect(await screen.findByText("プランナーの外")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/pantry");
+  });
+
+  // R1 M-3: 進むも、止めてから leave flush で未保存の回答を保存し、保存が終わってから進む
+  it("saves an unsaved answer with the leave flush before moving forward", async () => {
+    const router = renderPlanner(
+      completeDraft,
+      ["/history", "/planner", "/pantry"],
+      vi.fn(),
+      "browser",
+    );
+    expect(await screen.findByText("プランナーの外")).toBeInTheDocument();
+    await goBrowser(router, -1, "/planner");
+    await click("続きから答える");
+    const summary = screen.getByText("追加条件");
+    const details = summary.closest("details");
+    if (details !== null && !details.hasAttribute("open")) fireEvent.click(summary);
+    let resolveSave: ((value: PlannerDraft) => void) | undefined;
+    savePlannerDraftMock.mockImplementation(
+      () =>
+        new Promise<PlannerDraft>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    fireEvent.change(screen.getByLabelText("自由メモ"), { target: { value: "進む前の入力" } });
+
+    await act(async () => {
+      await router.navigate(1);
+    });
+    await waitFor(() => {
+      expect(savePlannerDraftMock).toHaveBeenCalledWith(
+        {},
+        userId,
+        expect.objectContaining({ memo: "進む前の入力" }),
+        1,
+      );
+    });
+    // 保存が終わるまでは /planner に留まる
+    await settle();
+    expect(currentUrl(router)).toBe("/planner");
+    expect(savePlannerDraftMock).toHaveBeenCalledTimes(1);
+
+    await act(() => {
+      resolveSave?.({ ...completeDraft, memo: "進む前の入力", revision: 2 });
+      return Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(currentUrl(router)).toBe("/pantry");
+    });
+    expect(await screen.findByText("プランナーの外")).toBeInTheDocument();
+  });
+});
+
+/**
+ * R3（U3 修正レビュー m-5、最終レビュー A M-1、final-fix M-4(2)、final-fix2 m-2）:
+ * 実物の AppShell（下タブの Link と PageHeadingFocusContext の provider）と PlannerRoutePage を
+ * 同じ data router でつなぐ。どちらも相手を模さないので、次のずれを検出できる。
+ * - 同じ場所への Link が新しい location.key を作らなくなる（react-router の挙動の変化）
+ * - planner-route が AppShell の外へ移る、provider と consumer の配線がずれる
+ */
+describe("R3: 実物の AppShell の献立タブで質問からホームへ戻る", () => {
+  function renderPlannerInShell(draft: PlannerDraft | null): TestRouter {
+    window.localStorage.setItem(PWA_INSTALL_TIP_DISMISSED_KEY, "1");
+    const queryClient = createSeededQueryClient(draft);
+    const router = createMemoryRouter(
+      [
+        {
+          element: <AppShell />,
+          children: [
+            { path: "/planner", element: <PlannerRoutePage /> },
+            { path: "*", element: <h1>プランナーの外</h1> },
+          ],
+        },
+      ],
+      { initialEntries: ["/history", "/planner"], initialIndex: 1 },
+    );
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.appendChild(root);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AppToastProvider>
+          <StrictMode>
+            <RouterProvider router={router} />
+          </StrictMode>
+        </AppToastProvider>
+      </QueryClientProvider>,
+      { container: root },
+    );
+    return router;
+  }
+
+  afterEach(() => {
+    document.getElementById("root")?.remove();
+    window.localStorage.removeItem(PWA_INSTALL_TIP_DISMISSED_KEY);
+    vi.unstubAllGlobals();
+  });
+
+  it("closes the wizard, focuses the home heading and scrolls to top", async () => {
+    const scrollTo = vi.fn();
+    vi.stubGlobal("scrollTo", scrollTo);
+    const router = renderPlannerInShell(completeDraft);
+    await click("続きから答える");
+    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    scrollTo.mockClear();
+
+    fireEvent.click(screen.getByRole("link", { name: "献立" }));
+    await settle();
+
+    const homeHeading = await screen.findByRole("heading", { name: "今日の献立", level: 1 });
+    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
+    expect(currentUrl(router)).toBe("/planner");
+    await waitFor(() => {
+      expect(document.activeElement).toBe(homeHeading);
+    });
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
   });
 });

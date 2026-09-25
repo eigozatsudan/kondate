@@ -363,7 +363,9 @@ export function WeeklyPlanFormPage({
           {quota.successRemaining === 0 ? (
             "今週の分は使い切りました"
           ) : quota.triesRemaining === 0 ? (
-            "今週試せる回数を使い切りました"
+            // 最終修正2 レビュー m-1: 成功枠が残っているのに作れない理由を 1 文で添える
+            // （試せる回数はうまくいかなかった回も数える）。「つくれます」とは並べない。
+            "今週試せる回数を使い切りました。うまくいかなかった回も数えるため、つくれる回数が残っていても今週はもう作れません。"
           ) : (
             <>
               {`今週はあと ${String(quota.successRemaining)} 回つくれます（週 ${String(quota.successLimit)} 回まで）`}

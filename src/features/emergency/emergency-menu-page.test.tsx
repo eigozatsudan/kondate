@@ -176,6 +176,56 @@ it("下書きがない直接アクセスでは候補を取得せず献立画面�
   expect(useQueryMock.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ enabled: false }));
 });
 
+it("R3: links straight to the meal question when the draft has no meal type yet (A M-3)", () => {
+  useQueryMock
+    .mockReturnValueOnce({
+      data: {
+        id: "draft-1",
+        userId: "72000000-0000-4000-8000-000000000001",
+        mealType: null,
+        mainIngredients: [],
+        cuisineGenre: null,
+        targetMode: "idea",
+        targetMemberIds: [],
+        servings: 2,
+        timeLimitMinutes: null,
+        budgetPreference: null,
+        ingredientPreference: null,
+        avoidIngredients: [],
+        memo: "",
+        pantrySelections: [],
+        revision: 1,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        updatedAt: "2026-07-11T00:00:00.000Z",
+      },
+      isSuccess: true,
+      isFetching: false,
+      isError: false,
+    })
+    .mockReturnValue({
+      data: undefined,
+      isSuccess: false,
+      isFetching: false,
+      isError: false,
+    });
+
+  renderWithRouter(<EmergencyMenuPage />);
+
+  expect(
+    screen.getByText(
+      "食事の時間帯がまだ決まっていません。献立の条件で朝・昼・夕を選んでから開き直してください。",
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole("link", { name: "食事の時間帯を選ぶ" })).toHaveAttribute(
+    "href",
+    "/planner?resume=start",
+  );
+  // 戻る導線は 1 つだけ（素の /planner）
+  expect(screen.getAllByRole("link", { name: "献立画面へ戻る" })).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "献立画面へ戻る" })).toHaveAttribute("href", "/planner");
+  expect(getEmergencyMenusMock).not.toHaveBeenCalled();
+});
+
 // Step 10: 下書きなし・idea下書きのいずれでも対象家族が0人なら、緊急献立APIを呼ばず
 // 家族不在を説明して家族設定への任意導線を示す。household safety の再検証も発生させない。
 it("下書きなしで対象家族が0人の場合は緊急献立APIを呼ばず献立画面への導線を表示する", () => {

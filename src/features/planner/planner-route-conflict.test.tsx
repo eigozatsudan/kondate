@@ -163,11 +163,14 @@ function renderRetainedDraft(
 /**
  * U3: 下書きに進捗があると /planner はまずホームを出し、「続きから答える」で初めて
  * ウィザードが開く。競合系テストはウィザード上の挙動を見るため、利用者と同じく
- * ホームの「続きから答える」を押してから進める。ボタンが無ければ何もしない。
+ * ホームの「続きから答える」を押してから進める。
+ * 最終レビュー A M-6: どの競合テストも進捗のある下書きから始めるので、ボタンは必須にする。
+ * 無いまま黙って進むと、ホーム上でたまたま通るアサーションがウィザードの検証の代わりになるため。
+ * 押したあとは、ウィザードの質問（見出しが「数字. 」で始まる h2）が出たことも確かめる。
  */
 function resumeDraftFromHome(): void {
-  const resumeDraft = screen.queryByRole("button", { name: "続きから答える" });
-  if (resumeDraft !== null) fireEvent.click(resumeDraft);
+  fireEvent.click(screen.getByRole("button", { name: "続きから答える" }));
+  expect(screen.getByRole("heading", { name: /^\d+\. / })).toBeInTheDocument();
 }
 
 function CurrentPath() {
@@ -720,7 +723,9 @@ it("P1: 生成後 empty hydrate の leave は save_generation_draft を呼ばな
   );
   await act(async () => Promise.resolve());
   await act(async () => Promise.resolve());
-  resumeDraftFromHome();
+  // 下書きが無いので「続きから答える」は出ず、ホームの新規開始だけが出る（A M-6: 呼び分ける）
+  expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "続きから答える" })).not.toBeInTheDocument();
 
   await expect(runPlannerLeaveFlush()).resolves.toBe("proceed");
   expect(savePlannerDraftMock).not.toHaveBeenCalled();

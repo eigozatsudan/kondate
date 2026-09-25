@@ -718,6 +718,25 @@ function renderPlanner(ui: React.ReactElement): RenderResult {
   return view;
 }
 
+/**
+ * R1 M-4: /generation へ遷移していないことを、第 1 引数（行き先）だけで確かめる。
+ * `not.toHaveBeenCalledWith("/generation", expect.anything())` は、expect.anything() が undefined に
+ * 一致しないため、印を付け忘れた引数 1 つの navigate("/generation") を見逃す。逆に引数 1 つの形では
+ * 印付きの呼び出しを見逃すので、引数の数に依らない形にする。
+ */
+function expectNoGenerationNavigate(): void {
+  const generationCalls = navigateMock.mock.calls.filter(
+    ([to]) => typeof to === "string" && to.startsWith("/generation"),
+  );
+  expect(generationCalls).toEqual([]);
+}
+
+/** resumed 再開は期待どおりで、新しい生成（素の /generation）へは進んでいないことを、引数の数に依らず確かめる */
+function expectNoPlainGenerationNavigate(): void {
+  const plainCalls = navigateMock.mock.calls.filter(([to]) => to === "/generation");
+  expect(plainCalls).toEqual([]);
+}
+
 /** 下の「献立」タブ（同じ /planner で key だけ変わる）でウィザードを閉じ、ホームを出す */
 function closeWizardToHomeByTab(view: RenderResult): void {
   queryState.locationKey = "tab-home-before-pop";
@@ -2630,8 +2649,7 @@ describe("PlannerRoutePage", () => {
 
     await user.click(screen.getByRole("button", { name: "生成" }));
 
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expectNoGenerationNavigate();
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
 
@@ -2763,7 +2781,7 @@ describe("PlannerRoutePage", () => {
     // 負けタブは meta を書かず・clear しない（勝者 sticky を壊さない）
     expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expectNoPlainGenerationNavigate();
     // return false → startNewAttempt しない
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
   });
@@ -2804,8 +2822,7 @@ describe("PlannerRoutePage", () => {
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
     });
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expectNoGenerationNavigate();
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -2850,8 +2867,7 @@ describe("PlannerRoutePage", () => {
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard saving")).toHaveTextContent("false");
     });
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expectNoGenerationNavigate();
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "献立の作成を開始できませんでした。もう一度お試しください。",
@@ -3339,8 +3355,7 @@ describe("PlannerRoutePage", () => {
         "期限切れの食材が選ばれています。冷蔵庫の食材で確認してから献立を作ってください。",
       );
     });
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
+    expectNoGenerationNavigate();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
   });
 
@@ -3614,8 +3629,7 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
+    expectNoGenerationNavigate();
   });
 
   it("P4: startGeneration の reconcile が cleared なら pin で新規 sticky を書かない", async () => {
@@ -3678,8 +3692,7 @@ describe("PlannerRoutePage", () => {
     expect(pendingGenerationMock.createPendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.claimPendingGeneration).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation?resumed=1", expect.anything());
+    expectNoGenerationNavigate();
   });
 
   it("C7: reset does not clear another tab's claimed pending after strip abort", async () => {
@@ -3725,7 +3738,7 @@ describe("PlannerRoutePage", () => {
         "献立条件を保存できなかったため、生成を開始しませんでした。",
       );
     });
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expectNoGenerationNavigate();
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     expect(screen.getByLabelText("check count")).toHaveTextContent("1");
   });
@@ -3748,7 +3761,7 @@ describe("PlannerRoutePage", () => {
     });
     expect(pendingGenerationMock.savePendingGeneration).toHaveBeenCalled();
     expect(pendingGenerationMock.clearPendingGeneration).toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expectNoGenerationNavigate();
     expect(screen.getByLabelText("attempt key")).toHaveTextContent(attemptKey);
     // resume 導線は pending 無し（sticky にならない）
     expect(screen.getByLabelText("has resumable pending")).toHaveTextContent("false");
@@ -3784,7 +3797,7 @@ describe("PlannerRoutePage", () => {
       expect(pendingGenerationMock.savePendingGenerationMeta).toHaveBeenCalled();
     });
     expect(pendingGenerationMock.clearPendingGeneration).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expectNoGenerationNavigate();
   });
 
   it("P2: claim+meta 済みのあと strip abort しても reset は同一 key の共有 pending を消さない", async () => {
@@ -3880,7 +3893,7 @@ describe("PlannerRoutePage", () => {
     // mode 判定は savePending 前 / onSubmit 再検証。sticky pending を作らない
     expect(pendingGenerationMock.savePendingGeneration).not.toHaveBeenCalled();
     expect(pendingGenerationMock.savePendingGenerationMeta).not.toHaveBeenCalled();
-    expect(navigateMock).not.toHaveBeenCalledWith("/generation", expect.anything());
+    expectNoGenerationNavigate();
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
   });
 
@@ -4002,8 +4015,8 @@ describe("U3: 答えかけの下書きがあってもホームを出す", () => 
 
     expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "最初から" })).toBeInTheDocument();
-    expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "最初から答え直す" })).toBeInTheDocument();
+    expect(screen.getByText("必須の質問 4 問のうち 3 問に答えています")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "今日の献立をつくる" })).not.toBeInTheDocument();
   });
 
@@ -4024,7 +4037,7 @@ describe("U3: 答えかけの下書きがあってもホームを出す", () => 
     const user = userEvent.setup();
     try {
       render(<PlannerRoutePage />);
-      await user.click(screen.getByRole("button", { name: "最初から" }));
+      await user.click(screen.getByRole("button", { name: "最初から答え直す" }));
 
       expect(confirmSpy).toHaveBeenCalledWith(
         "入力した献立条件をすべて消して最初からやり直します。よろしいですか？",
@@ -4049,11 +4062,11 @@ describe("U3: 答えかけの下書きがあってもホームを出す", () => 
     const user = userEvent.setup();
     try {
       render(<PlannerRoutePage />);
-      await user.click(screen.getByRole("button", { name: "最初から" }));
+      await user.click(screen.getByRole("button", { name: "最初から答え直す" }));
 
       expect(confirmSpy).toHaveBeenCalledTimes(1);
       expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
-      expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+      expect(screen.getByText("必須の質問 4 問のうち 3 問に答えています")).toBeInTheDocument();
       expect(savePlannerDraftMock).not.toHaveBeenCalled();
 
       await user.click(screen.getByRole("button", { name: "続きから答える" }));
@@ -4140,7 +4153,7 @@ describe("U3 修正: 質問中に献立タブを押したらホームへ戻る",
 
     expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeInTheDocument();
-    expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+    expect(screen.getByText("必須の質問 4 問のうち 3 問に答えています")).toBeInTheDocument();
     // ホームでは週献立の footer が戻る
     expect(screen.getByTestId("weekly-plan-locked")).toBeInTheDocument();
 
@@ -4320,6 +4333,164 @@ describe("U3 修正: 質問中に献立タブを押したらホームへ戻る",
   });
 });
 
+describe("R3: ウィザードを閉じない条件を 3 経路でそろえる", () => {
+  const partialDraft: PlannerDraft = { ...draft, targetMemberIds: [], memo: "途中メモ" };
+  const submitBlocked =
+    "献立の作成処理中のため、移動できませんでした。完了後にもう一度お試しください。";
+  const otherBlocked =
+    "別の操作の処理中のため、移動できませんでした。完了後にもう一度お試しください。";
+
+  it("keeps the wizard and its conflict notice when the tab is pressed during a draft conflict (U3 m-1)", async () => {
+    queryState.draft = partialDraft;
+    const view = renderPlanner(<PlannerRoutePage />);
+    const latestAutosave = autosaveInputs.at(-1) as { onConflict(): Promise<void> };
+    await act(async () => latestAutosave.onConflict());
+    expect(screen.getByLabelText("has draft conflict")).toHaveTextContent("true");
+
+    queryState.locationKey = "tab-1";
+    view.rerender(<PlannerRoutePage />);
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    expect(screen.getByLabelText("has draft conflict")).toHaveTextContent("true");
+    // 競合の案内はウィザードに出ているので、理由の文言は足さない
+    expect(screen.queryByText(submitBlocked)).not.toBeInTheDocument();
+    expect(screen.queryByText(otherBlocked)).not.toBeInTheDocument();
+  });
+
+  it("disables only the home restart while a draft conflict is unresolved (U3 m-1)", async () => {
+    queryState.draft = partialDraft;
+    render(<PlannerRoutePage />);
+    const latestAutosave = autosaveInputs.at(-1) as { onConflict(): Promise<void> };
+    await act(async () => latestAutosave.onConflict());
+    expect(screen.getByRole("button", { name: "最初から答え直す" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "続きから答える" })).toBeEnabled();
+  });
+
+  it("keeps the wizard and explains why when the tab is pressed during a generation submit (U3 m-2)", async () => {
+    const startGeneration = vi.fn(() => new Promise<void>(() => undefined));
+    const user = userEvent.setup();
+    const view = renderPlanner(<PlannerPage startGeneration={startGeneration} />);
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+    await vi.waitFor(() => {
+      expect(startGeneration).toHaveBeenCalledTimes(1);
+    });
+
+    queryState.locationKey = "tab-1";
+    view.rerender(<PlannerPage startGeneration={startGeneration} />);
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+    expect(screen.getByLabelText("wizard error")).toHaveTextContent(submitBlocked);
+  });
+
+  it.each([
+    ["privacy notice", "/privacy?returnTo=%2Fplanner%3Fresume%3Dreview"],
+    ["家族設定", "/settings"],
+  ])(
+    "keeps the wizard and explains why when the tab is pressed while %s is opening (U3 m-6)",
+    async (buttonName, destination) => {
+      const deferred = createDeferred<PlannerDraft>();
+      savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+      const user = userEvent.setup();
+      const view = renderPlanner(<PlannerRoutePage />);
+      await user.click(screen.getByRole("button", { name: buttonName }));
+      expect(navigateMock).not.toHaveBeenCalledWith(destination);
+
+      queryState.locationKey = "tab-1";
+      view.rerender(<PlannerRoutePage />);
+      expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+      expect(screen.getByLabelText("wizard error")).toHaveTextContent(otherBlocked);
+
+      deferred.resolve({ ...draft, revision: 4 });
+      await vi.waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith(destination);
+      });
+    },
+  );
+
+  // R1 M-5: 戻るで残った ?resume= の entry に着いたとき（P6 の close）も、同じ条件で閉じない
+  it("does not close on a leftover ?resume= POP during a generation submit", async () => {
+    const startGeneration = vi.fn(() => new Promise<void>(() => undefined));
+    const user = userEvent.setup();
+    const view = renderPlanner(<PlannerPage startGeneration={startGeneration} />);
+    await user.click(screen.getByRole("button", { name: "確認を反映" }));
+    await user.click(screen.getByRole("button", { name: "生成" }));
+    await vi.waitFor(() => {
+      expect(startGeneration).toHaveBeenCalledTimes(1);
+    });
+
+    queryState.search = "resume=start";
+    queryState.locationKey = "leftover-resume-entry";
+    queryState.navigationType = "POP";
+    view.rerender(<PlannerPage startGeneration={startGeneration} />);
+    expect(navigateMock).toHaveBeenCalledWith("/planner", { replace: true });
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+    expect(screen.getByLabelText("wizard error")).toHaveTextContent(submitBlocked);
+  });
+
+  it("does not close on a leftover ?resume= POP while the emergency menus are opening", async () => {
+    const deferred = createDeferred<PlannerDraft>();
+    savePlannerDraftMock.mockImplementationOnce(() => deferred.promise);
+    const user = userEvent.setup();
+    const view = renderPlanner(<PlannerRoutePage />);
+    await user.click(screen.getByRole("button", { name: "AIを使わない緊急献立を見る" }));
+
+    queryState.search = "resume=start";
+    queryState.locationKey = "leftover-resume-entry";
+    queryState.navigationType = "POP";
+    view.rerender(<PlannerRoutePage />);
+    expect(navigateMock).toHaveBeenCalledWith("/planner", { replace: true });
+    expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
+    expect(screen.getByLabelText("wizard error")).toHaveTextContent(otherBlocked);
+  });
+
+  it("does not close on a leftover ?resume= POP during a draft conflict", async () => {
+    queryState.draft = partialDraft;
+    const view = renderPlanner(<PlannerRoutePage />);
+    const latestAutosave = autosaveInputs.at(-1) as { onConflict(): Promise<void> };
+    await act(async () => latestAutosave.onConflict());
+
+    queryState.search = "resume=start";
+    queryState.locationKey = "leftover-resume-entry";
+    queryState.navigationType = "POP";
+    view.rerender(<PlannerRoutePage />);
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
+    expect(screen.getByLabelText("has draft conflict")).toHaveTextContent("true");
+  });
+});
+
+describe("R3: ホームで autosave の失敗を見せる（U3 m-4）", () => {
+  const partialDraft: PlannerDraft = { ...draft, targetMemberIds: [], memo: "途中メモ" };
+  const failed = "答えかけの条件を保存できませんでした。通信を確認して、もう一度お試しください。";
+
+  it("shows the failure with a retry on the home, and not while saving normally", async () => {
+    queryState.draft = partialDraft;
+    autosaveUiState.state = "error";
+    const user = userEvent.setup();
+    const view = render(<PlannerRoutePage />);
+    expect(screen.getByRole("button", { name: "続きから答える" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(failed);
+
+    const flushCallsBefore = savePlannerDraftMock.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "保存を再試行" }));
+    await vi.waitFor(() => {
+      expect(savePlannerDraftMock.mock.calls.length).toBeGreaterThan(flushCallsBefore);
+    });
+
+    autosaveUiState.state = "saved";
+    view.rerender(<PlannerRoutePage />);
+    expect(screen.queryByText(failed)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存を再試行" })).not.toBeInTheDocument();
+  });
+
+  it("leaves the failure to the conflict notice while a conflict is unresolved", async () => {
+    queryState.draft = partialDraft;
+    autosaveUiState.state = "error";
+    render(<PlannerRoutePage />);
+    const latestAutosave = autosaveInputs.at(-1) as { onConflict(): Promise<void> };
+    await act(async () => latestAutosave.onConflict());
+    expect(screen.queryByText(failed)).not.toBeInTheDocument();
+  });
+});
+
 describe("U3 修正: ホームの続きからの分岐を固定する", () => {
   it("strips an ineligible member at init and resumes at audience from the home (P5)", async () => {
     // 下書きの家族は現行 eligibility に居ない → sanitize で外れ、作る相手が未回答扱い
@@ -4328,7 +4499,7 @@ describe("U3 修正: ホームの続きからの分岐を固定する", () => {
 
     render(<PlannerRoutePage />);
 
-    expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+    expect(screen.getByText("必須の質問 4 問のうち 3 問に答えています")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "続きから答える" }));
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("audience");
   });
@@ -4340,6 +4511,6 @@ describe("U3 修正: ホームの続きからの分岐を固定する", () => {
     render(<PlannerRoutePage />);
 
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "最初から" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "最初から答え直す" })).toBeDisabled();
   });
 });

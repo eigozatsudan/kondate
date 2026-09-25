@@ -6,7 +6,7 @@ import { Stack } from "@/shared/ui/stack";
 import { GenerationStatusPanel } from "../components/generation-status-panel";
 import { useGenerationRecovery } from "../hooks/use-generation-recovery";
 import { isGenerationOpenedFromPlanner } from "../model/generation-opened-from-planner";
-import { generationReturnPath } from "../model/generation-return-path";
+import { generationReturnPath, PLANNER_RETURN_PATH } from "../model/generation-return-path";
 import { readPendingGeneration } from "../model/pending-generation";
 import { readPendingGenerationReturnSurface } from "../model/pending-generation-return-surface";
 
@@ -54,8 +54,13 @@ import { readPendingGenerationReturnSurface } from "../model/pending-generation-
 // - 「条件を直してやり直す」（?resume=review）と regenerate_*（/menus/:id）は従来どおり置き換える。
 //   前者は置き換えた ?resume=review をマウント時に消費してウィザードを開くので、戻る 1 回目で
 //   直前の /planner（ホーム）へ移り、空振りしない。
+//   ただし、そこ（R'）からもう一度作って結果まで進んだ場合は、結果からの戻るで R'（ホーム）に着き、
+//   次の戻るで同じ /planner の P へ移るだけなので、空振りが 1 回残る（[外, P, R', G2, 結果]）。
+//   「条件を直してやり直す」を繰り返すと /planner が並ぶ数だけ増える。消すには R' を P へ戻す
+//   非同期の go と replace の組が要り、以前に撤去した型の競合を抱え直すので受け入れている（R1 M-1）。
 // - 残る /generation の entry は「進む」の先に残る。進むで着いても idle なら同じくすぐ戻る。
-const PLAIN_PLANNER_PATH = "/planner";
+// 素の /planner は generationReturnPath の new_menu の戻り先と同じ定数を使う（U4 修正2 Minor 1）。
+const PLAIN_PLANNER_PATH = PLANNER_RETURN_PATH;
 
 /** idle になった /generation から、直前の /planner の entry へ 1 回だけ戻る */
 function BackToOpeningPlanner() {

@@ -812,7 +812,8 @@ export function LoginPage({ gateway }: { gateway?: AuthGateway }) {
       >
         {googlePending ? EMAIL_OTP_GOOGLE_STARTING : EMAIL_OTP_GOOGLE_BUTTON}
       </button>
-      <p className="type-small">Google アカウントではじめての方も、そのまま使えます。</p>
+      {/* U9 レビュー Minor 4(b): 「Google でもはじめての方はそのまま使える」ことはリードの 1 段に
+          まとめたので、ボタンの下で同じ内容を繰り返さない */}
       {googleError && (
         <p className="error-message" role="alert">
           {EMAIL_OTP_GOOGLE_START_FAILED}

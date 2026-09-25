@@ -468,7 +468,8 @@ it("explains that first-time users can register on the same screen with Google a
   // 説明は 1 段にまとめ、旧来の 2 段目（新規登録の別画面…）を出さない
   expect(screen.queryByText(/新規登録の別画面はありません/u)).toBeNull();
   expect(screen.getByLabelText("メールアドレス")).toBeVisible();
-  expect(screen.getByText("Google アカウントではじめての方も、そのまま使えます。")).toBeVisible();
+  // リードと同じ内容の補足をボタンの下で繰り返さない（U9 Minor 4(b)）
+  expect(screen.queryByText("Google アカウントではじめての方も、そのまま使えます。")).toBeNull();
   expect(screen.getByRole("button", { name: EMAIL_OTP_GOOGLE_BUTTON })).toBeVisible();
   expect(screen.getByRole("button", { name: EMAIL_OTP_SEND_BUTTON })).toBeVisible();
   expect(screen.queryByText(LOGIN_PAGE_LEAD_GOOGLE_ONLY)).toBeNull();

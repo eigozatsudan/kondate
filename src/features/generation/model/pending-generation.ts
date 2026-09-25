@@ -140,6 +140,9 @@ export function readPendingGeneration(
     } catch {
       // UIと認証の後始末を継続するため削除失敗を吸収する。
     }
+    // UX 残り R2a レビュー B-1: 期限切れ・他ユーザー・壊れた pending を黙って消す経路でも、
+    // 作り直しの入口の記録を pending と同じ寿命にする（明示の clear 経路と同じ）
+    clearPendingGenerationReturnSurface(storage);
     return null;
   }
 }

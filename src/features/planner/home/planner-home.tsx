@@ -14,6 +14,8 @@ export type PlannerHomeProps = {
   draftProgress?: HomeDraftProgress | null;
   onResumeDraft?: () => void;
   onRestartDraft?: () => void;
+  /** 「最初から答え直す」だけを止める（下書きの保存が競合している間など） */
+  restartDisabled?: boolean;
   recentMenus: readonly HomeRecentMenuItem[];
   recentMenusLoading?: boolean;
   recentMenusError?: boolean;
@@ -44,6 +46,7 @@ export function PlannerHome({
   draftProgress = null,
   onResumeDraft,
   onRestartDraft,
+  restartDisabled = false,
   recentMenus,
   recentMenusLoading = false,
   recentMenusError = false,
@@ -71,6 +74,7 @@ export function PlannerHome({
           draftProgress={draftProgress}
           {...(onResumeDraft !== undefined ? { onResumeDraft } : {})}
           {...(onRestartDraft !== undefined ? { onRestartDraft } : {})}
+          restartDisabled={restartDisabled}
           disabled={disabled}
         />
         <HomeExpiringPantry items={expiringItems} disabled={disabled} />

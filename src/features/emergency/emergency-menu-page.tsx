@@ -621,10 +621,12 @@ export function EmergencyMenuPage() {
         </Link>
         <h1>15分緊急献立</h1>
         <p>
-          食事の時間帯がまだ決まっていません。献立画面で朝・昼・夕を選んでから開き直してください。
+          食事の時間帯がまだ決まっていません。献立の条件で朝・昼・夕を選んでから開き直してください。
         </p>
-        <Link className="primary-button min-h-11" to="/planner">
-          献立画面へ戻る
+        {/* 最終レビュー A M-3 の残り: 下書きなしの分岐と同じく、ホームを経由せず最初の未回答の
+            質問（ここでは 1. 食事）を直接開く。戻る導線は上の「献立画面へ戻る」が担う */}
+        <Link className="primary-button min-h-11" to={PLANNER_START_QUESTIONS_PATH}>
+          食事の時間帯を選ぶ
         </Link>
       </main>
     );

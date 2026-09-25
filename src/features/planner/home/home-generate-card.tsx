@@ -24,17 +24,26 @@ export type HomeGenerateCardProps = {
   onResumeDraft?: () => void;
   /** U3: 確認のうえ下書きを消して 1 問目から始める。確認・消去は route 側が持つ。 */
   onRestartDraft?: () => void;
+  /**
+   * 「最初から答え直す」だけを止めるとき（下書きの保存が競合している間など）。
+   * 競合の案内と解決はウィザードにしか無いため、ホームから消去を走らせず「続きから答える」で
+   * ウィザードの案内へ進ませる（U3 修正レビュー m-1）。
+   */
+  restartDisabled?: boolean;
   /** 保存・遷移中など主 CTA を止めるとき。 */
   disabled?: boolean;
 };
 
 export type HomeDraftProgress = {
-  answeredSteps: number;
-  totalSteps: number;
+  /** 答えた必須の質問の数（食事・メイン食材・ジャンル・作る相手のうち、順に答えた数） */
+  answeredRequiredQuestions: number;
+  /** 必須の質問の数（plannerSteps の作る相手までの数。route が計算する） */
+  requiredQuestions: number;
   /**
    * 必須の質問（食事〜作る相手）がすべて埋まり、続きが確認画面になるとき true。
-   * このとき answeredSteps は任意の質問（5〜8）を開いていなくても 8 になり、
-   * 「8 / 9 まで答えています」は事実と合わないため、件数ではなく状態の文言を出す（U3 修正 M-5）。
+   * 件数ではなく状態の文言を出す（U3 修正 M-5）。
+   * 以前は「3 / 9 まで答えています」と確認画面を含む 9 を分母にしていたが、任意の質問と
+   * 確認画面まで数えると残りの量を多く見せるため、必須の質問だけで数える（最終レビュー A M-8）。
    */
   readyForReview: boolean;
   /**
@@ -43,6 +52,11 @@ export type HomeDraftProgress = {
    */
   continuesAtQuestion?: boolean;
 };
+
+const EXHAUSTED_TODAY_DESCRIPTION_ID = "home-generate-exhausted";
+/** 残り 0 回で新規開始を止めるときの理由（「続きから答える」と作成中の再開は止めない） */
+export const EXHAUSTED_TODAY_COPY =
+  "今日つくれる回数を使い切ったため、新しく始めることはできません。" as const;
 
 /**
  * ホームの生成導線。表示専用。
@@ -64,10 +78,15 @@ export function HomeGenerateCard({
   draftProgress = null,
   onResumeDraft,
   onRestartDraft,
+  restartDisabled = false,
   disabled = false,
 }: HomeGenerateCardProps): JSX.Element {
   // 成功残 0 のときだけ新規開始を止める。null は C-I12 と同型で fail-open。
-  const startDisabled = disabled || remainingToday === 0;
+  const exhaustedToday = remainingToday === 0;
+  const startDisabled = disabled || exhaustedToday;
+  // 最終レビュー A M-4: 残り 0 回で新規開始のボタンを止めるときは、押せない理由を文で示し、
+  // 止めたボタンの説明（aria-describedby）にもつなぐ。
+  const exhaustedDescription = exhaustedToday ? EXHAUSTED_TODAY_DESCRIPTION_ID : undefined;
   return (
     <Surface as="section" tone="plain" aria-labelledby="home-generate-heading">
       <Inset pad={5}>
@@ -93,7 +112,12 @@ export function HomeGenerateCard({
               <Button variant="primary" size="large" disabled={disabled} onClick={onResumePending}>
                 作成中の献立を続ける
               </Button>
-              <Button variant="secondary" disabled={startDisabled} onClick={onStart}>
+              <Button
+                variant="secondary"
+                disabled={startDisabled}
+                aria-describedby={exhaustedDescription}
+                onClick={onStart}
+              >
                 今日の献立をつくる
               </Button>
             </Stack>
@@ -108,20 +132,38 @@ export function HomeGenerateCard({
                   ? draftProgress.continuesAtQuestion === true
                     ? "必須の質問はすべて答えています。答えかけの質問から続けられます。"
                     : "必須の質問はすべて答えています。確認画面から続けられます。"
-                  : `${String(draftProgress.answeredSteps)} / ${String(draftProgress.totalSteps)} まで答えています`}
+                  : `必須の質問 ${String(draftProgress.requiredQuestions)} 問のうち ${String(draftProgress.answeredRequiredQuestions)} 問に答えています`}
               </p>
               <Button variant="primary" size="large" disabled={disabled} onClick={onResumeDraft}>
                 続きから答える
               </Button>
-              <Button variant="secondary" disabled={startDisabled} onClick={onRestartDraft}>
-                最初から
+              {/* 最終レビュー A M-4: 「最初から」だけでは何をやり直すのか読み上げで分からないため、
+                  ボタン名に「答え直す」まで入れる */}
+              <Button
+                variant="secondary"
+                disabled={startDisabled || restartDisabled}
+                aria-describedby={exhaustedDescription}
+                onClick={onRestartDraft}
+              >
+                最初から答え直す
               </Button>
             </Stack>
           ) : (
-            <Button variant="primary" size="large" disabled={startDisabled} onClick={onStart}>
+            <Button
+              variant="primary"
+              size="large"
+              disabled={startDisabled}
+              aria-describedby={exhaustedDescription}
+              onClick={onStart}
+            >
               今日の献立をつくる
             </Button>
           )}
+          {exhaustedToday ? (
+            <p id={EXHAUSTED_TODAY_DESCRIPTION_ID} className="type-small">
+              {EXHAUSTED_TODAY_COPY}
+            </p>
+          ) : null}
         </Stack>
       </Inset>
     </Surface>

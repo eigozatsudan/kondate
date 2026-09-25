@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { HomeGenerateCard } from "./home-generate-card";
+import { EXHAUSTED_TODAY_COPY, HomeGenerateCard } from "./home-generate-card";
 
 describe("HomeGenerateCard", () => {
   it("renders the primary generation entry point", () => {
@@ -74,16 +74,20 @@ describe("HomeGenerateCard", () => {
       <HomeGenerateCard
         remainingToday={2}
         onStart={onStart}
-        draftProgress={{ answeredSteps: 3, totalSteps: 9, readyForReview: false }}
+        draftProgress={{
+          answeredRequiredQuestions: 3,
+          requiredQuestions: 4,
+          readyForReview: false,
+        }}
         onResumeDraft={onResumeDraft}
         onRestartDraft={onRestartDraft}
       />,
     );
-    expect(screen.getByText("3 / 9 まで答えています")).toBeInTheDocument();
+    expect(screen.getByText("必須の質問 4 問のうち 3 問に答えています")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "今日の献立をつくる" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "続きから答える" }));
     expect(onResumeDraft).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole("button", { name: "最初から" }));
+    await user.click(screen.getByRole("button", { name: "最初から答え直す" }));
     expect(onRestartDraft).toHaveBeenCalledTimes(1);
     expect(onStart).not.toHaveBeenCalled();
   });
@@ -95,7 +99,7 @@ describe("HomeGenerateCard", () => {
         onStart={vi.fn()}
         hasResumablePending
         onResumePending={vi.fn()}
-        draftProgress={{ answeredSteps: 8, totalSteps: 9, readyForReview: true }}
+        draftProgress={{ answeredRequiredQuestions: 4, requiredQuestions: 4, readyForReview: true }}
         onResumeDraft={vi.fn()}
         onRestartDraft={vi.fn()}
       />,
@@ -103,7 +107,7 @@ describe("HomeGenerateCard", () => {
     expect(screen.getByRole("button", { name: "作成中の献立を続ける" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "続きから答える" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/まで答えています/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/問に答えています/u)).not.toBeInTheDocument();
   });
 
   it("B-2: says the resume target is a question, not the review, when an answer was left open", () => {
@@ -112,8 +116,8 @@ describe("HomeGenerateCard", () => {
         remainingToday={2}
         onStart={vi.fn()}
         draftProgress={{
-          answeredSteps: 8,
-          totalSteps: 9,
+          answeredRequiredQuestions: 4,
+          requiredQuestions: 4,
           readyForReview: true,
           continuesAtQuestion: true,
         }}
@@ -132,26 +136,36 @@ describe("HomeGenerateCard", () => {
       <HomeGenerateCard
         remainingToday={2}
         onStart={vi.fn()}
-        draftProgress={{ answeredSteps: 3, totalSteps: 9, readyForReview: false }}
+        draftProgress={{
+          answeredRequiredQuestions: 3,
+          requiredQuestions: 4,
+          readyForReview: false,
+        }}
         onResumeDraft={vi.fn()}
         onRestartDraft={vi.fn()}
         disabled
       />,
     );
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "最初から" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "最初から答え直す" })).toBeDisabled();
   });
   it("U3: progress line is static text, not a live region", () => {
     render(
       <HomeGenerateCard
         remainingToday={null}
         onStart={vi.fn()}
-        draftProgress={{ answeredSteps: 3, totalSteps: 9, readyForReview: false }}
+        draftProgress={{
+          answeredRequiredQuestions: 3,
+          requiredQuestions: 4,
+          readyForReview: false,
+        }}
         onResumeDraft={vi.fn()}
         onRestartDraft={vi.fn()}
       />,
     );
-    expect(screen.getByText("3 / 9 まで答えています")).not.toHaveAttribute("role");
+    expect(screen.getByText("必須の質問 4 問のうち 3 問に答えています")).not.toHaveAttribute(
+      "role",
+    );
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
@@ -160,7 +174,7 @@ describe("HomeGenerateCard", () => {
       <HomeGenerateCard
         remainingToday={2}
         onStart={vi.fn()}
-        draftProgress={{ answeredSteps: 8, totalSteps: 9, readyForReview: true }}
+        draftProgress={{ answeredRequiredQuestions: 4, requiredQuestions: 4, readyForReview: true }}
         onResumeDraft={vi.fn()}
         onRestartDraft={vi.fn()}
       />,
@@ -179,16 +193,62 @@ describe("HomeGenerateCard", () => {
       <HomeGenerateCard
         remainingToday={0}
         onStart={vi.fn()}
-        draftProgress={{ answeredSteps: 3, totalSteps: 9, readyForReview: false }}
+        draftProgress={{
+          answeredRequiredQuestions: 3,
+          requiredQuestions: 4,
+          readyForReview: false,
+        }}
         onResumeDraft={onResumeDraft}
         onRestartDraft={onRestartDraft}
       />,
     );
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "最初から" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "最初から" }));
+    expect(screen.getByRole("button", { name: "最初から答え直す" })).toBeDisabled();
+    // 最終レビュー A M-4: 押せない理由を文で出し、止めたボタンの説明にもつなぐ
+    expect(screen.getByText(EXHAUSTED_TODAY_COPY)).toBeVisible();
+    expect(screen.getByRole("button", { name: "最初から答え直す" })).toHaveAccessibleDescription(
+      EXHAUSTED_TODAY_COPY,
+    );
+    expect(screen.getByRole("button", { name: "続きから答える" })).not.toHaveAccessibleDescription(
+      EXHAUSTED_TODAY_COPY,
+    );
+    await user.click(screen.getByRole("button", { name: "最初から答え直す" }));
     expect(onRestartDraft).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "続きから答える" }));
     expect(onResumeDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("A M-4: explains why a fresh start is disabled when no generations are left today", () => {
+    render(<HomeGenerateCard remainingToday={0} onStart={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "今日の献立をつくる" })).toHaveAccessibleDescription(
+      EXHAUSTED_TODAY_COPY,
+    );
+  });
+
+  it("A M-4: shows no exhausted reason while generations remain or the count is unknown", () => {
+    const { rerender } = render(<HomeGenerateCard remainingToday={1} onStart={vi.fn()} />);
+    expect(screen.queryByText(EXHAUSTED_TODAY_COPY)).not.toBeInTheDocument();
+    rerender(<HomeGenerateCard remainingToday={null} onStart={vi.fn()} />);
+    expect(screen.queryByText(EXHAUSTED_TODAY_COPY)).not.toBeInTheDocument();
+  });
+
+  it("U3 m-1: restartDisabled stops only the restart action", () => {
+    render(
+      <HomeGenerateCard
+        remainingToday={2}
+        onStart={vi.fn()}
+        draftProgress={{
+          answeredRequiredQuestions: 3,
+          requiredQuestions: 4,
+          readyForReview: false,
+        }}
+        onResumeDraft={vi.fn()}
+        onRestartDraft={vi.fn()}
+        restartDisabled
+      />,
+    );
+    expect(screen.getByRole("button", { name: "続きから答える" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "最初から答え直す" })).toBeDisabled();
   });
 });

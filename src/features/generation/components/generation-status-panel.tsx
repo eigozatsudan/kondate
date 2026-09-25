@@ -105,7 +105,7 @@ function confirmProcessingDiscard(): boolean {
  * （new_menu→/planner?resume=review、regenerate_*→/menus/:sourceMenuId）。
  * U4 修正ラウンド1: 本番で唯一使われるのは Button 側（GenerationPage が常に
  * onClear を渡す）なので、「条件を直してやり直す」だけ resumeReview: true を
- * 積んで GenerationPage 側に resume=review 付与を指示する。「最初からやり直す”
+ * 積んで GenerationPage 側に resume=review 付与を指示する。「最初からやり直す」
  * （request_conflict 側の別 Button）は resumeReview を積まずホーム着地のまま。
  * 緊急献立・履歴は pending のみ消す（machine を idle にすると GenerationPage の
  * Navigate と <a href> が競合するため）。
