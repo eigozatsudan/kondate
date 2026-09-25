@@ -16,9 +16,15 @@ export function historyPathForShopping(): string {
   return "/history?for=shopping";
 }
 
-/** 買い物導線用の献立結果 path（menuId + for=shopping） */
-export function menusPathForShopping(menuId: string): string {
-  return `/menus/${menuId}?for=shopping`;
+/**
+ * 買い物導線用の履歴詳細 path（menuId + for=shopping）。
+ * UX 残り R2 項目 1: 履歴から開く買い物導線は、生成直後の結果画面（/menus/:id、見出し
+ * 「献立ができました」、苦手の soft gap あり）ではなく、「詳細を見る」と同じ履歴詳細に着地させる。
+ * 同じ献立がどちらのボタンから開いても同じ見出し・同じ注意になる。/history/:id も
+ * for=shopping で買い物シートを自動で開く（useShoppingCreateIntent を共有）。
+ */
+export function historyDetailPathForShopping(menuId: string): string {
+  return `/history/${menuId}?for=shopping`;
 }
 
 /**

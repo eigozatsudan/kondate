@@ -1471,6 +1471,19 @@ describe("HistoryDetailPage safety gate", () => {
     expect(await screen.findByRole("heading", { name: "買い物リストを作る" })).toBeVisible();
   });
 
+  // UX 残り R2 項目 1: 履歴カードの「買い物リストを作る」の着地先。「詳細を見る」と同じ見出しで、
+  // soft gap（作成時スナップショットの苦手）も取りにいかない。
+  it("keeps the history heading and skips preference gaps on the shopping entry", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+    renderHistoryDetail({
+      path: `/history/${MENU_ID}?for=shopping`,
+      revalidation: { phase: "checked", result: validRevalidation },
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "献立の詳細" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "献立ができました" })).not.toBeInTheDocument();
+    expect(getMenuResultMock).toHaveBeenCalledWith(MENU_ID);
+  });
+
   it("uses non-removed itemCount on create sheet", async () => {
     shoppingApi.fetchActiveShoppingList.mockResolvedValue({
       ...activeShoppingList,

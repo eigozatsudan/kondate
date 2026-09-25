@@ -1368,6 +1368,15 @@ describe("color token contrast", () => {
     expect(contrast(token("danger"), token("surface"))).toBeGreaterThanOrEqual(4.5);
   });
 
+  it("keeps the accent badge readable and bound to existing tokens", () => {
+    // UX 残り R2 項目 3: 履歴カードの「家族に合わせた献立」バッジ。既存トークンだけで組む。
+    expect(contrast(token("primary-strong"), token("selection"))).toBeGreaterThanOrEqual(4.5);
+    expectEffectiveDeclarations(".ui-badge--accent", {
+      background: "var(--selection)",
+      color: "var(--primary-strong)",
+    });
+  });
+
   it("keeps pantry-accent text readable on card surfaces", () => {
     expect(contrast(token("pantry"), token("surface"))).toBeGreaterThanOrEqual(4.5);
   });

@@ -88,4 +88,30 @@ describe("generationReturnPath", () => {
     const pending = createPendingGeneration(regenerateMenuCommand(), USER_ID, () => new Date());
     expect(generationReturnPath(pending, { resumeReview: true })).toBe(`/menus/${SOURCE_MENU_ID}`);
   });
+
+  it("R2: returns the source history path for regenerate_menu opened from history", () => {
+    const pending = createPendingGeneration(regenerateMenuCommand(), USER_ID, () => new Date());
+    expect(generationReturnPath(pending, { returnSurface: "history" })).toBe(
+      `/history/${SOURCE_MENU_ID}`,
+    );
+  });
+
+  it("R2: returns the source history path for regenerate_dish opened from history", () => {
+    const pending = createPendingGeneration(regenerateDishCommand(), USER_ID, () => new Date());
+    expect(generationReturnPath(pending, { returnSurface: "history" })).toBe(
+      `/history/${SOURCE_MENU_ID}`,
+    );
+  });
+
+  it("R2: keeps the menus path when the entry surface is menus", () => {
+    const pending = createPendingGeneration(regenerateMenuCommand(), USER_ID, () => new Date());
+    expect(generationReturnPath(pending, { returnSurface: "menus" })).toBe(
+      `/menus/${SOURCE_MENU_ID}`,
+    );
+  });
+
+  it("R2: ignores the history surface for new_menu", () => {
+    const pending = createPendingGeneration(newMenuCommand(), USER_ID, () => new Date());
+    expect(generationReturnPath(pending, { returnSurface: "history" })).toBe("/planner");
+  });
 });

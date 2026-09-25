@@ -73,10 +73,15 @@ export function EmptyState({ title, body, titleId, action }: EmptyStateProps): J
   );
 }
 
-export type BadgeTone = "neutral" | "warning" | "danger";
+/**
+ * accent は注意ではない「種類の目印」（UX 残り R2 項目 3。履歴カードの家族向けバッジ）。
+ * warning は注意に、成功の緑は「確認済み」に読めるので、種類の区別には使わない。
+ */
+export type BadgeTone = "neutral" | "accent" | "warning" | "danger";
 
 const badgeToneClass: Record<BadgeTone, string> = {
   neutral: "ui-badge--neutral",
+  accent: "ui-badge--accent",
   warning: "ui-badge--warning",
   danger: "ui-badge--danger",
 };

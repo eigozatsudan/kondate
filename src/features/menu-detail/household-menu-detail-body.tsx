@@ -171,6 +171,7 @@ export function HouseholdMenuDetailBody({
     phase: revalidation.phase,
     result: revalidation.result,
     isSoftRechecking,
+    returnSurface: surface.regenerationReturnSurface,
     ...(usingInjectedRevalidation
       ? {}
       : {

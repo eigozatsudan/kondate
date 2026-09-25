@@ -5,19 +5,14 @@ import { planQuota } from "@shared/contracts/plan-quota";
 import { WEEKLY_PLAN_UI_ENABLED } from "@shared/contracts/weekly-plan";
 import { useAuth } from "@/features/auth/use-auth";
 import { createCheckoutSession, createPortalSession } from "./billing-api";
-import {
-  PAST_DUE_COPY,
-  PORTAL_BUTTON_LABEL,
-  SURFACES_CLOSED_COPY,
-  TRIAL_END_WARNING,
-} from "./billing-ui-copy";
+import { PAST_DUE_COPY, PORTAL_BUTTON_LABEL, SURFACES_CLOSED_COPY } from "./billing-ui-copy";
+import { EntitledPeriodLine, TrialEndLines } from "./billing-period-lines";
 import heroUrl from "./assets/plus-hero.webp";
 import quotaUrl from "./assets/plus-benefit-quota.webp";
 import qualityUrl from "./assets/plus-benefit-quality.webp";
 import { DeveloperBillingHistory } from "./developer-billing-history";
 import flyerUrl from "./assets/plus-benefit-flyer.webp";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
-import { formatUpcomingBillingDate } from "./format-billing-date";
 import { resolvePlusLandingView } from "./plus-landing-view";
 import { useEntitlement } from "./use-entitlement";
 import "./plus-landing-page.css";
@@ -74,43 +69,6 @@ export type PlusLandingPageProps = {
   /** 更新日・無料期間の終了の表示判定に使う現在時刻（テストで固定する。省略時は描画時の時刻） */
   now?: Date;
 };
-
-/**
- * 利用中の更新日・終了日。日付がなければ何も出さない（推測しない）。
- * 期間末が現在時刻以前なら出さない（webhook の遅れで古い期間末が残っても過去日を断言しない）。
- */
-function EntitledPeriodLine({
-  periodEndIso,
-  autoRenews,
-  now,
-}: {
-  periodEndIso: string | null;
-  autoRenews: boolean;
-  now: Date;
-}) {
-  const periodEnd = formatUpcomingBillingDate(periodEndIso, now);
-  if (periodEnd === null) return null;
-  return autoRenews ? (
-    <p>次回の更新日: {periodEnd}</p>
-  ) : (
-    <p>{periodEnd}に Plus が終了します（自動更新なし）</p>
-  );
-}
-
-/**
- * お試し中の無料期間の終了。更新日と同じく、終了日が現在時刻以前なら日付は出さない。
- * 注意（TRIAL_END_WARNING）は日付に依存しない一般的な文なので、日付が出ないときも残す
- * （trialEnd が null のときの既存の表示と同じ形）。
- */
-function TrialEndLines({ trialEndIso, now }: { trialEndIso: string | null; now: Date }) {
-  const trialEnd = formatUpcomingBillingDate(trialEndIso, now);
-  return (
-    <div className="stack gap-1">
-      {trialEnd !== null ? <p>無料期間の終了: {trialEnd}</p> : null}
-      <p>{TRIAL_END_WARNING}</p>
-    </div>
-  );
-}
 
 /**
  * 利用中の画面で「Plus でできること」を LP と同じ固定コピーで短く並べる。
@@ -356,7 +314,7 @@ export function PlusLandingPage({
         <div className="stack gap-3">
           <h1>{PLUS_LP_ACTIVE}</h1>
           {view.trialing ? (
-            <TrialEndLines trialEndIso={view.trialEnd} now={now} />
+            <TrialEndLines trialEndIso={view.trialEnd} autoRenews={view.autoRenews} now={now} />
           ) : (
             // お試し中は無料期間の終了を優先し、更新日と二重に出さない
             <EntitledPeriodLine

@@ -13,6 +13,7 @@ import {
   savePendingGeneration,
 } from "../model/pending-generation";
 import { GENERATION_OPENED_FROM_PLANNER_STATE } from "../model/generation-opened-from-planner";
+import { savePendingGenerationReturnSurface } from "../model/pending-generation-return-surface";
 import { GenerationPage } from "./generation-page";
 
 // --- モック定義 ---------------------------------------------------------
@@ -150,6 +151,7 @@ function renderGenerationPage(
       { path: "/generation", element: <GenerationPage /> },
       { path: "/planner", element: <h1>プランナー</h1> },
       { path: "/menus/:menuId", element: <h1>献立結果</h1> },
+      { path: "/history/:menuId", element: <h1>履歴の献立</h1> },
       { path: "*", element: <h1>外の画面</h1> },
     ],
     { initialEntries, initialIndex: initialEntries.length - 1 },
@@ -289,6 +291,60 @@ describe("GenerationPage", () => {
     });
     expect(await screen.findByRole("heading", { name: "献立結果" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "プランナー" })).not.toBeInTheDocument();
+  });
+
+  // UX 残り R2 項目 2: 履歴詳細から作り直して失敗したら、下タブが「献立」に変わらないよう
+  // 入口の /history/:sourceMenuId へ戻す。
+  it("R2: returns to the source history page when the regeneration started from history", async () => {
+    const user = userEvent.setup();
+    const pending = createPendingGeneration(
+      makeRegenerateDishCommand(KEY_A),
+      USER_ID,
+      () => new Date(),
+    );
+    savePendingGeneration(pending);
+    savePendingGenerationReturnSurface(KEY_A, "history");
+    mockStatus.mockResolvedValue(failedStatus(KEY_A));
+
+    const router = renderGenerationPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
+    });
+
+    await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(`/history/${SOURCE_MENU_ID}`);
+    });
+    expect(await screen.findByRole("heading", { name: "履歴の献立" })).toBeVisible();
+  });
+
+  it("R2: keeps the history return path after a business error already cleared pending", async () => {
+    const user = userEvent.setup();
+    const pending = createPendingGeneration(
+      makeRegenerateDishCommand(KEY_A),
+      USER_ID,
+      () => new Date(),
+    );
+    savePendingGeneration(pending);
+    savePendingGenerationReturnSurface(KEY_A, "history");
+    mockStatus.mockResolvedValue({ status: "not_started", idempotencyKey: KEY_A, quota });
+    mockPost.mockRejectedValue(new Error("replace_dish_not_found"));
+
+    const router = renderGenerationPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "献立を作成できませんでした" })).toBeVisible();
+    });
+    expect(readPendingGeneration(USER_ID, new Date())).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "条件を直してやり直す" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(`/history/${SOURCE_MENU_ID}`);
+      expect(router.state.location.search).toBe("");
+    });
   });
 
   // U4 修正ラウンド2: 業務エラーの合成 failed（POST が閉じたサーバ code で

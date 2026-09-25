@@ -68,6 +68,13 @@ describe("Badge", () => {
     expect(badge.getAttribute("style")).toBeNull();
   });
 
+  it("maps the accent tone to its own class", () => {
+    render(<Badge tone="accent">家族に合わせた献立</Badge>);
+    const badge = screen.getByText("家族に合わせた献立");
+    expect(badge.className).toContain("ui-badge--accent");
+    expect(badge.className).not.toContain("ui-badge--neutral");
+  });
+
   it("defaults to the neutral tone", () => {
     render(<Badge>未開封</Badge>);
     expect(screen.getByText("未開封").className).toContain("ui-badge--neutral");

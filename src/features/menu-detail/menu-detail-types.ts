@@ -1,4 +1,5 @@
 import { FLYER_WEEKLY_UI_ENABLED } from "@shared/contracts/flyer-weekly";
+import type { GenerationReturnSurface } from "@/features/generation/model/pending-generation-return-surface";
 import type { RevalidationResult } from "@/features/history/api/revalidation-api";
 import type { RevalidationPhaseName } from "@/features/history/hooks/use-menu-revalidation";
 
@@ -43,6 +44,11 @@ export type MenuDetailSurface = {
    * （人間の決定、UX U1）。安全表示ではないため不変契約1の対象外。
    */
   resultHeading: string;
+  /**
+   * 作り直しが失敗して「条件を直してやり直す」を押したときに戻る画面（UX 残り R2 項目 2）。
+   * 履歴詳細から始めたら履歴詳細へ戻し、下タブの現在地を変えない。
+   */
+  regenerationReturnSurface: GenerationReturnSurface;
 };
 
 /** 生成直後結果画面（/menus/:menuId） */
@@ -52,6 +58,7 @@ export const generationMenuDetailSurface: MenuDetailSurface = {
   showFlyerUpsell: FLYER_WEEKLY_UI_ENABLED,
   ideaAcceptedPrimaryLabel: "作った献立を見る",
   resultHeading: "献立ができました",
+  regenerationReturnSurface: "menus",
 };
 
 /** 履歴詳細画面（/history/:menuId） */
@@ -60,6 +67,7 @@ export const historyMenuDetailSurface: MenuDetailSurface = {
   showFlyerUpsell: false,
   ideaAcceptedPrimaryLabel: "履歴一覧に戻る",
   resultHeading: "献立の詳細",
+  regenerationReturnSurface: "history",
 };
 
 /** 後方互換エイリアス（既存テストの type import 用） */

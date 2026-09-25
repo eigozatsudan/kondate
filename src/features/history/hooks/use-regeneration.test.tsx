@@ -11,6 +11,10 @@ import {
   savePendingGeneration,
 } from "@/features/generation/model/pending-generation";
 import { generationEndpointFor } from "@/features/generation/api/generation-api";
+import {
+  readPendingGenerationReturnSurface,
+  savePendingGenerationReturnSurface,
+} from "@/features/generation/model/pending-generation-return-surface";
 import type { RevalidationResult } from "../api/revalidation-api";
 import { useRegeneration } from "./use-regeneration";
 
@@ -199,6 +203,73 @@ describe("useRegeneration", () => {
     expect(command.request.privacyNoticeVersion).toBe("2026-07-29.v1");
     expect(command.request.expiredPantryConfirmations).toEqual([]);
     expect(navigateMock).toHaveBeenCalledWith("/generation");
+  });
+
+  it("R2: records the history entry surface for the new regenerate pending", async () => {
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "household",
+          menuId: MENU_ID,
+          phase: "checked",
+          result: validRevalidation,
+          returnSurface: "history",
+        }),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
+    });
+
+    const pending = readPendingGeneration(USER_ID, new Date());
+    expect(readPendingGenerationReturnSurface(pending)).toBe("history");
+  });
+
+  it("R2: records the history entry surface for idea dish regeneration too", async () => {
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "idea",
+          menuId: MENU_ID,
+          phase: null,
+          result: null,
+          returnSurface: "history",
+        }),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.startDish(DISH_ID, {
+        changeReason: "simpler",
+        changeReasonCustom: null,
+      });
+    });
+
+    const pending = readPendingGeneration(USER_ID, new Date());
+    expect(readPendingGenerationReturnSurface(pending)).toBe("history");
+  });
+
+  it("R2: drops an older history record when regenerating from the menus surface", async () => {
+    savePendingGenerationReturnSurface("10000000-0000-4000-8000-0000000000ff", "history");
+    const { result } = renderHook(
+      () =>
+        useRegeneration({
+          targetMode: "household",
+          menuId: MENU_ID,
+          phase: "checked",
+          result: validRevalidation,
+        }),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.startWhole({ changeReason: "simpler", changeReasonCustom: null });
+    });
+
+    const pending = readPendingGeneration(USER_ID, new Date());
+    expect(readPendingGenerationReturnSurface(pending)).toBe("menus");
+    expect(localStorage.getItem("kondate:generation:v3:return-surface")).toBeNull();
   });
 
   it("persists regenerate_dish pending with dishId and navigates to /generation", async () => {

@@ -9,6 +9,7 @@ import {
   type GenerationCommand,
 } from "@shared/contracts/generation";
 import { clearPendingGenerationMeta } from "./pending-generation-meta";
+import { clearPendingGenerationReturnSurface } from "./pending-generation-return-surface";
 
 // storage key は v3 cutover に合わせる（旧 v2 pending は読まず best-effort 削除）
 const key = "kondate:generation:v3";
@@ -335,4 +336,6 @@ export function clearPendingGeneration(
   }
   // RecoveryLinks / clearGeneration / 結果離脱を含む全 clear 経路で meta も必ず落とす
   clearPendingGenerationMeta(storage);
+  // 作り直しの入口の記録（UX 残り R2 項目 2）も pending と同じ寿命にする
+  clearPendingGenerationReturnSurface(storage);
 }

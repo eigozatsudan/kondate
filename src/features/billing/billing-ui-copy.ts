@@ -1,6 +1,12 @@
 /** 課金 UI 固定コピー（設定・Plus LP で共有。文字列は 1 字も変えない）。 */
 export const TRIAL_END_WARNING =
   "無料期間が終わると、登録したお支払い方法に料金がかかります" as const;
+/**
+ * お試し中に解約を予約した人向け（UX 残り R2 項目 5）。終了日が分からない・過去のときに出す。
+ * 日付が分かるときは「{日付}に Plus が終了します（自動更新なし）」（利用中の解約予約と同じ形）を出す。
+ */
+export const TRIAL_CANCEL_SCHEDULED_COPY =
+  "無料期間が終わると Plus は終了します（自動更新なし）" as const;
 export const YEARLY_CONFIRM_COPY =
   "1 年分まとめてのお支払いです。途中解約しても残り期間の返金はありません（法令に従う場合を除く）" as const;
 export const PORTAL_BUTTON_LABEL = "お支払い・解約の管理" as const;

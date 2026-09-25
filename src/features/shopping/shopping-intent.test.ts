@@ -17,7 +17,7 @@ import {
   isShoppingSheetExpected,
   markShoppingResumeSuppress,
   markShoppingSheetAutoOpened,
-  menusPathForShopping,
+  historyDetailPathForShopping,
   resetResumeSuppressDocumentBootForTests,
   scheduleIntentClear,
   scheduleResumeSuppressClear,
@@ -128,7 +128,7 @@ describe("shouldKeepShoppingCommandSticky (SHOP1)", () => {
 describe("shopping-intent paths", () => {
   it("builds history and menus paths with for=shopping only", () => {
     expect(historyPathForShopping()).toBe("/history?for=shopping");
-    expect(menusPathForShopping(MENU)).toBe(`/menus/${MENU}?for=shopping`);
+    expect(historyDetailPathForShopping(MENU)).toBe(`/history/${MENU}?for=shopping`);
     expect(hasShoppingIntent(new URLSearchParams("for=shopping"))).toBe(true);
     expect(hasShoppingIntent(new URLSearchParams("for=other"))).toBe(false);
   });

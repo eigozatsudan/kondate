@@ -14,6 +14,7 @@ import {
   TRIAL_END_WARNING,
   YEARLY_CONFIRM_COPY,
 } from "./plan-settings-section";
+import { TRIAL_CANCEL_SCHEDULED_COPY } from "./billing-ui-copy";
 import { ENTITLEMENT_SUCCESS_POLL_DEADLINE_MS } from "./use-entitlement";
 import {
   PLUS_LP_COMING_SOON_BADGE,
@@ -202,6 +203,39 @@ describe("PlanSettingsSection", () => {
     expect(screen.getByText(/無料期間が終わると/)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Plus をはじめる" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: PORTAL_BUTTON_LABEL })).toBeVisible();
+  });
+
+  // UX 残り R2 項目 4: /plus と同じく、無料期間の終了日は未来のときだけ出す。
+  // trialingEntitlement.trialEnd は 2026-08-05T15:00Z（JST 8/6 0:00）なので、前後の時刻で固定する。
+  it("shows a future trial end date in the plan section", () => {
+    renderPlan({ entitlement: trialingEntitlement, now: new Date("2026-08-01T00:00:00.000Z") });
+    expect(screen.getByText("無料期間の終了: 2026年8月6日")).toBeVisible();
+    expect(screen.getByText(TRIAL_END_WARNING)).toBeVisible();
+  });
+
+  it("hides a past trial end date in the plan section but keeps the warning", () => {
+    renderPlan({ entitlement: trialingEntitlement, now: new Date("2026-09-24T00:00:00.000Z") });
+    expect(screen.queryByText(/無料期間の終了/u)).not.toBeInTheDocument();
+    expect(screen.getByText(TRIAL_END_WARNING)).toBeVisible();
+  });
+
+  // UX 残り R2 項目 5: お試し中に解約を予約した人には課金の注意を出さず、終了する旨を出す
+  it("shows the Plus end instead of the charge warning for a cancelled trial", () => {
+    renderPlan({
+      entitlement: { ...trialingEntitlement, cancelAtPeriodEnd: true },
+      now: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    expect(screen.getByText("2026年8月6日に Plus が終了します（自動更新なし）")).toBeVisible();
+    expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
+  });
+
+  it("shows the dateless end notice for a cancelled trial with a past trial end", () => {
+    renderPlan({
+      entitlement: { ...trialingEntitlement, cancelAtPeriodEnd: true },
+      now: new Date("2026-09-24T00:00:00.000Z"),
+    });
+    expect(screen.getByText(TRIAL_CANCEL_SCHEDULED_COPY)).toBeVisible();
+    expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
   });
 
   it("shows past_due payment update path to portal", async () => {

@@ -3396,6 +3396,12 @@ h1.ui-page-header__title {
   color: var(--muted);
 }
 
+/* 種類の目印（注意ではない）。既存トークンのみ: --primary-strong on --selection は約 5.2:1 */
+.ui-badge--accent {
+  background: var(--selection);
+  color: var(--primary-strong);
+}
+
 .ui-badge--warning {
   background: var(--notice);
   color: var(--warning);

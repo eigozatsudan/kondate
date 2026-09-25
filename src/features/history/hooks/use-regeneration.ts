@@ -8,6 +8,10 @@ import {
   readPendingGeneration,
   savePendingGeneration,
 } from "@/features/generation/model/pending-generation";
+import {
+  savePendingGenerationReturnSurface,
+  type GenerationReturnSurface,
+} from "@/features/generation/model/pending-generation-return-surface";
 import { reconcileTerminalPendingGeneration } from "@/features/generation/model/reconcile-terminal-pending";
 import { isRevalidationActionable, type RevalidationResult } from "../api/revalidation-api";
 import type { RevalidationPhaseName } from "./use-menu-revalidation";
@@ -27,7 +31,7 @@ export type RegenerationStartResult = { kind: "started" } | { kind: "resumed_exi
  * idea は家族 revalidation を受け取らず、owner・pending・quota 制御だけを共有する。
  * mode/servings/member IDs は wire に載せず、server が snapshot から複製する。
  */
-export type UseRegenerationInput =
+export type UseRegenerationInput = (
   | {
       targetMode: "household";
       menuId: string;
@@ -48,7 +52,14 @@ export type UseRegenerationInput =
       menuId: string;
       phase: null;
       result: null;
-    };
+    }
+) & {
+  /**
+   * 作り直しを始めた画面（UX 残り R2 項目 2）。失敗して「条件を直してやり直す」を押したときの
+   * 戻り先に使う。省略時は "menus"（従来どおり /menus/:id へ戻す）。
+   */
+  returnSurface?: GenerationReturnSurface;
+};
 
 /**
  * 再生成コマンドを PendingGeneration として永続化し、/generation へ遷移する。
@@ -60,6 +71,7 @@ export function useRegeneration(input: UseRegenerationInput) {
   const userId = useAuth().session?.user.id;
   const navigate = useNavigate();
   const { menuId, targetMode } = input;
+  const returnSurface = input.returnSurface ?? "menus";
 
   const canRegenerate =
     targetMode === "idea"
@@ -123,10 +135,12 @@ export function useRegeneration(input: UseRegenerationInput) {
         userId,
       );
       savePendingGeneration(pending);
+      // pending と同じ idempotencyKey で入口を記録する（新しく作った pending のときだけ）
+      savePendingGenerationReturnSurface(pending.request.idempotencyKey, returnSurface);
       void navigate("/generation");
       return { kind: "started" };
     },
-    [menuId, navigate, readCanRegenerate, userId],
+    [menuId, navigate, readCanRegenerate, returnSurface, userId],
   );
 
   const startDish = useCallback(
@@ -167,10 +181,12 @@ export function useRegeneration(input: UseRegenerationInput) {
         userId,
       );
       savePendingGeneration(pending);
+      // pending と同じ idempotencyKey で入口を記録する（新しく作った pending のときだけ）
+      savePendingGenerationReturnSurface(pending.request.idempotencyKey, returnSurface);
       void navigate("/generation");
       return Promise.resolve({ kind: "started" });
     },
-    [menuId, navigate, readCanRegenerate, userId],
+    [menuId, navigate, readCanRegenerate, returnSurface, userId],
   );
 
   return { canRegenerate, startWhole, startDish };

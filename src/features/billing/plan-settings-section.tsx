@@ -9,9 +9,8 @@ import {
   PORTAL_BUTTON_LABEL,
   STRIPE_REDIRECT_NOTICE,
   SURFACES_CLOSED_COPY,
-  TRIAL_END_WARNING,
 } from "./billing-ui-copy";
-import { formatBillingDate } from "./format-billing-date";
+import { TrialEndLines } from "./billing-period-lines";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
 import { DeveloperBillingHistory } from "./developer-billing-history";
 import {
@@ -58,6 +57,8 @@ export type PlanSettingsSectionProps = {
   entitlementError?: boolean;
   onCheckout?: (interval: "month" | "year") => Promise<void>;
   onPortal?: () => Promise<void>;
+  /** 無料期間の終了の表示判定に使う現在時刻（テストで固定する。省略時は描画時の時刻） */
+  now?: Date;
 };
 
 /**
@@ -74,6 +75,7 @@ export function PlanSettingsSection({
   entitlementError,
   onCheckout,
   onPortal,
+  now = new Date(),
 }: PlanSettingsSectionProps) {
   // interval / yearConfirmed は form 内完結。親は pending と API 結果エラーのみ持つ。
   const [pending, setPending] = useState(false);
@@ -107,7 +109,6 @@ export function PlanSettingsSection({
   const isPastDue = !error && (data?.status === "past_due" || data?.pastDueGrace === true);
   // B1: incomplete は Checkout 409 が Portal 完了を指示。Checkout フォームではなく Portal CTA を出す
   const isIncomplete = !error && data?.status === "incomplete";
-  const trialEndLabel = formatBillingDate(data?.trialEnd ?? null);
   // Checkout 成功後の webhook 遅延待ち中・期限後も Portal を出せる（両閉じ回避）
   // B17: COMING_SOON 中は Checkout 経路が無いため、surfaces 開放中は Free 枝でも Portal CTA を出す
   // （DB free + Stripe live の cold 管理導線。サーバ Portal は live 確認で許可 / true Free は 403）
@@ -184,11 +185,14 @@ export function PlanSettingsSection({
           ) : null}
           {!surfacesOpen && !developerPlus ? <p role="status">{SURFACES_CLOSED_COPY}</p> : null}
 
+          {/* UX 残り R2 項目 4・5: /plus と同じ部品。過去の終了日は出さず、解約予約済みなら
+            課金の注意の代わりに終了する旨を出す */}
           {isTrialing ? (
-            <div className="stack gap-1">
-              {trialEndLabel !== null ? <p>無料期間の終了: {trialEndLabel}</p> : null}
-              <p>{TRIAL_END_WARNING}</p>
-            </div>
+            <TrialEndLines
+              trialEndIso={data.trialEnd}
+              autoRenews={!data.cancelAtPeriodEnd}
+              now={now}
+            />
           ) : null}
 
           {isPastDue ? (

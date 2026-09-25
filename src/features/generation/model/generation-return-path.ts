@@ -1,4 +1,5 @@
 import type { PendingGeneration } from "./pending-generation";
+import type { GenerationReturnSurface } from "./pending-generation-return-surface";
 
 /**
  * 生成終端（失敗・条件競合）から idle に戻るときの遷移先。
@@ -12,13 +13,19 @@ import type { PendingGeneration } from "./pending-generation";
  * firstIncomplete）を足す。regenerate_* は /menus/:id へ戻すため対象外
  * （その画面に resume クエリの契約はない）。「最初からやり直す」は options を
  * 渡さずに呼び、ホーム着地のままにする。
+ *
+ * UX 残り R2 項目 2: options.returnSurface は作り直しを始めた画面。履歴詳細から始めたときは
+ * /history/:id へ戻し、下タブの現在地が「献立」に変わらないようにする。省略や "menus" は従来どおり
+ * /menus/:id（記録の無い既存の pending もこちら）。new_menu には効かない。
  */
 export function generationReturnPath(
   pending: PendingGeneration | null,
-  options?: { resumeReview?: boolean },
+  options?: { resumeReview?: boolean; returnSurface?: GenerationReturnSurface },
 ): string {
   if (pending?.kind === "regenerate_menu" || pending?.kind === "regenerate_dish") {
-    return `/menus/${pending.request.sourceMenuId}`;
+    return options?.returnSurface === "history"
+      ? `/history/${pending.request.sourceMenuId}`
+      : `/menus/${pending.request.sourceMenuId}`;
   }
   return options?.resumeReview === true ? "/planner?resume=review" : "/planner";
 }

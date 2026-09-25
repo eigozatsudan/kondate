@@ -117,6 +117,7 @@ export function IdeaMenuDetailBody({
     menuId,
     phase: null,
     result: null,
+    returnSurface: surface.regenerationReturnSurface,
   });
   const accept = useAcceptMenuVersion();
   const favorite = useToggleFavorite();

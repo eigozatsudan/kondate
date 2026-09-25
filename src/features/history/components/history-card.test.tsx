@@ -6,7 +6,7 @@ import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import type { HistoryGroup } from "../model/group-history";
-import { menusPathForShopping } from "@/features/shopping/shopping-intent";
+import { historyDetailPathForShopping } from "@/features/shopping/shopping-intent";
 import { HistoryCard } from "./history-card";
 
 const api = vi.hoisted(() => ({
@@ -134,7 +134,7 @@ describe("HistoryCard shopping CTA", () => {
   it("shows shopping CTA for household only", () => {
     renderCard(householdGroup());
     const cta = screen.getByRole("link", { name: "買い物リストを作る" });
-    expect(cta).toHaveAttribute("href", menusPathForShopping("menu-household"));
+    expect(cta).toHaveAttribute("href", historyDetailPathForShopping("menu-household"));
     expect(cta).toHaveClass("min-h-11");
   });
 
@@ -155,7 +155,7 @@ describe("HistoryCard shopping CTA", () => {
     renderCard(householdGroup(), true);
     expect(screen.getByRole("link", { name: "家族の献立" })).toHaveAttribute(
       "href",
-      menusPathForShopping("menu-household"),
+      historyDetailPathForShopping("menu-household"),
     );
   });
 });
@@ -183,7 +183,7 @@ describe("HistoryCard detail CTA", () => {
     renderCard(householdGroup(), true);
     expect(screen.getByRole("link", { name: "詳細を見る" })).toHaveAttribute(
       "href",
-      menusPathForShopping("menu-household"),
+      historyDetailPathForShopping("menu-household"),
     );
   });
 });
@@ -307,10 +307,18 @@ describe("HistoryCard supplementary copy (UX U5)", () => {
     expect(screen.getByText("開いても家族条件は確認しません")).toHaveClass("type-small");
   });
 
-  it("shows the household badge in a calm neutral tone rather than a warning", () => {
+  it("shows the household badge in the accent tone rather than a warning", () => {
     renderCard(householdGroup());
     const badge = screen.getByText("家族に合わせた献立");
+    expect(badge).toHaveClass("ui-badge--accent");
+    expect(badge).not.toHaveClass("ui-badge--warning");
+  });
+
+  it("shows the idea badge in the neutral tone so the two kinds differ by colour alone", () => {
+    renderCard(ideaGroup());
+    const badge = screen.getByText("アイデア");
     expect(badge).toHaveClass("ui-badge--neutral");
+    expect(badge).not.toHaveClass("ui-badge--accent");
     expect(badge).not.toHaveClass("ui-badge--warning");
   });
 });

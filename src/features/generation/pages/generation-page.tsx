@@ -8,6 +8,7 @@ import { useGenerationRecovery } from "../hooks/use-generation-recovery";
 import { isGenerationOpenedFromPlanner } from "../model/generation-opened-from-planner";
 import { generationReturnPath } from "../model/generation-return-path";
 import { readPendingGeneration } from "../model/pending-generation";
+import { readPendingGenerationReturnSurface } from "../model/pending-generation-return-surface";
 
 // 献立生成の作成状況を表示する画面。直接の入口ではなく、planner からの生成開始や
 // 中断からの復旧（マウント時・オンライン復帰時・認証復帰時）で表示される。
@@ -21,7 +22,8 @@ import { readPendingGeneration } from "../model/pending-generation";
 // パッシブエフェクトで checked を true にしてから idle 判定を行う。
 //
 // idle の戻り先は pending の kind で決める（new_menu→/planner か
-// /planner?resume=review、regenerate_*→/menus/:sourceMenuId）。clear で
+// /planner?resume=review、regenerate_*→/menus/:sourceMenuId。履歴詳細から始めた
+// regenerate_* は /history/:sourceMenuId、UX 残り R2 項目 2）。clear で
 // pending が消えたあとも直前の戻り先を使うため ref に保持する。menus からの
 // 一品再生成失敗後に planner へ落ちると下書き文脈がなく操作不能になる。
 //
@@ -82,7 +84,10 @@ export function GenerationPage() {
   if (userId !== undefined) {
     const pending = readPendingGeneration(userId, new Date());
     if (pending !== null) {
-      returnPathRef.current = generationReturnPath(pending);
+      // UX 残り R2 項目 2: 履歴詳細から始めた作り直しは /history/:id へ戻す（記録が無ければ /menus/:id）
+      returnPathRef.current = generationReturnPath(pending, {
+        returnSurface: readPendingGenerationReturnSurface(pending),
+      });
     }
   }
   useEffect(() => {

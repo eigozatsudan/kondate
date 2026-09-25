@@ -11,6 +11,7 @@ import {
   PAST_DUE_COPY,
   PORTAL_BUTTON_LABEL,
   SURFACES_CLOSED_COPY,
+  TRIAL_CANCEL_SCHEDULED_COPY,
   TRIAL_END_WARNING,
 } from "./billing-ui-copy";
 import {
@@ -538,6 +539,37 @@ describe("PlusLandingPage entitled benefits and period", () => {
     });
     expect(screen.queryByText(/無料期間の終了/u)).not.toBeInTheDocument();
     expect(screen.getByText(TRIAL_END_WARNING)).toBeVisible();
+  });
+
+  // UX 残り R2 項目 5: お試し中に解約を予約した人には「料金がかかります」を出さず、終了する旨を出す
+  it("shows the trial end as the Plus end date when cancellation is scheduled during the trial", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        status: "trialing",
+        trialEnd: "2026-09-30T15:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      now: FIXED_NOW,
+    });
+    expect(screen.getByText("2026年10月1日に Plus が終了します（自動更新なし）")).toBeVisible();
+    expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
+    expect(screen.queryByText(/無料期間の終了/u)).not.toBeInTheDocument();
+  });
+
+  it("keeps the end notice without a date when a cancelled trial has a past trial end", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        status: "trialing",
+        trialEnd: "2026-09-20T15:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      now: FIXED_NOW,
+    });
+    expect(screen.getByText(TRIAL_CANCEL_SCHEDULED_COPY)).toBeVisible();
+    expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
+    expect(screen.queryByText(/2026年9月21日/u)).not.toBeInTheDocument();
   });
 
   it("prefers the trial end over the renewal date while trialing", () => {
