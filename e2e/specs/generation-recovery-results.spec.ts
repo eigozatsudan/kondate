@@ -98,9 +98,8 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   // returnTo=/planner?resume=review で review step へ戻る。
   // openPrivacyNotice は flushDraft + setQueryData 済み。本番はフル reload しないため
   // SPA 復帰だけで「9. 確認」を維持することを主張する（巻き戻りは製品退行）。
-  await expect(page).toHaveURL(
-    (url) => url.pathname === "/planner" && url.searchParams.get("resume") === "review",
-  );
+  // B-3: returnTo の /planner?resume=review はマウント時に消費され、URL は /planner に置き換わる
+  await expect(page).toHaveURL((url) => url.pathname === "/planner");
   await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 }
@@ -1020,15 +1019,17 @@ test.describe("5-route smoke matrix for a skipped user with zero household membe
     // 外さずに記録対象外として扱う（activeRoute = null）。
     activeRoute = null;
     // B-1: 「献立の条件を入力する」はホームを経由せず最初の質問を開く（/planner?resume=start）。
-    // B-3: 戻るは遷移を取り消してウィザードを閉じ、URL を /planner へ置き換えてホームを出す。
+    // B-3: ?resume= はマウント時に消費され、ウィザードを開いたまま URL は /planner に置き換わる。
+    // 戻るは遷移を取り消してウィザードを閉じ（URL はそのまま）、もう一度戻ると緊急献立へ戻る。
     await page.getByRole("link", { name: "献立の条件を入力する" }).click();
     await expect(page.getByRole("heading", { name: "1. 食事" })).toBeVisible({ timeout: 30_000 });
-    await expect(page).toHaveURL(
-      (url) => url.pathname === "/planner" && url.search === "?resume=start",
-    );
-    await page.goBack();
     await expect(page).toHaveURL((url) => url.pathname === "/planner" && url.search === "");
+    await page.goBack();
     await expect(page.getByRole("button", { name: "今日の献立をつくる" })).toBeVisible();
+    await expect(page).toHaveURL((url) => url.pathname === "/planner" && url.search === "");
+    await page.goBack();
+    await expect(page).toHaveURL((url) => url.pathname === "/emergency-menus");
+    await expect(page.getByRole("heading", { name: "15分緊急献立" })).toBeVisible();
     await openWizardFromHome(page);
     await page.getByRole("radio", { name: "夕食" }).check();
     await clickWizardNext(page);

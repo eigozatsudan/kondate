@@ -14,16 +14,18 @@ import {
   registerPlannerLeaveFlush,
   resetPlannerLeaveNavigateFlightForTests,
 } from "./planner-leave-flush";
-import { plannerLastStepSessionKey, resetPlannerResumeEntriesForTests } from "./planner-resume";
+import { plannerLastStepSessionKey } from "./planner-resume";
 
 /**
  * UX フォローアップ B: 実物の data router（createMemoryRouter + PlannerRoutePage の useBlocker）で
  * 履歴を並べ、端末の戻る（router.navigate(-1) = POP）を再現する。
  * - ウィザード用の履歴エントリは積まない。ウィザードが開いている間の戻るは blocker で止め、
  *   ウィザードを閉じてホームを出す。ホームでの戻るは止めない（外へ出るときは leave flush）。
+ * - ?resume= はマウント時に一度だけ読み、URL を /planner へ置き換えて消す（開く step は state）
  * - B-1: ?resume=start は最初の未回答の質問を直接開き、戻るでホーム、もう一度でもとの画面へ
  * - B-2: 「続きから答える」は最後に開いていた質問へ戻る
- * - 献立タブ（AppShell）は /planner に居るとき replace で遷移する。ここでは同じ replace で再現する
+ * - 献立タブ（AppShell の Link）は、同じ URL（/planner）への遷移を react-router が既定で replace
+ *   する。ここでは同じ replace で再現する
  */
 
 const userId = "73000000-0000-4000-8000-000000000001";
@@ -216,7 +218,6 @@ async function expectLeftPlannerTo(router: TestRouter, url: string): Promise<voi
 
 beforeEach(() => {
   vi.clearAllMocks();
-  resetPlannerResumeEntriesForTests();
 });
 
 afterEach(() => {
@@ -306,7 +307,7 @@ describe("B-3: ウィザードが開いている間の戻るはホームへ、�
     await expectLeftPlannerTo(router, "/history");
   });
 
-  it("does not reopen the wizard on back after the planner tab returned to the home (I-2)", async () => {
+  it("does not reopen the wizard on back after the planner tab returned to the home", async () => {
     const router = renderPlanner(completeDraft, ["/history", "/planner"]);
     await click("続きから答える");
     await pressPlannerTab(router);
@@ -315,7 +316,7 @@ describe("B-3: ウィザードが開いている間の戻るはホームへ、�
     await expectLeftPlannerTo(router, "/history");
   });
 
-  it("does not add entries when the resume button is pressed twice (M-4)", async () => {
+  it("does not add entries when the resume button is pressed twice", async () => {
     const router = renderPlanner(completeDraft, ["/history", "/planner"]);
     await settle();
     const resume = screen.getByRole("button", { name: "続きから答える" });
@@ -326,51 +327,6 @@ describe("B-3: ウィザードが開いている間の戻るはホームへ、�
     expectHome();
     await pressBack(router);
     await expectLeftPlannerTo(router, "/history");
-  });
-
-  it("leaves on the first back from a home that came after another planner entry (C-1 / I-1)", async () => {
-    // 生成・結果画面から戻った後や再読み込みで、新しく開いたホーム。前にプランナーの印が無い
-    const router = renderPlanner(completeDraft, ["/history", "/generation", "/planner"]);
-    await settle();
-    expectHome();
-    await click("続きから答える");
-    await pressBack(router);
-    expectHome();
-    await pressBack(router);
-    await expectLeftPlannerTo(router, "/generation");
-  });
-
-  it("leaves on the first back from a home opened after a results page (C-1 / I-1)", async () => {
-    const router = renderPlanner(completeDraft, ["/history", "/menus/menu-1", "/planner"]);
-    await settle();
-    expectHome();
-    await click("続きから答える");
-    await pressBack(router);
-    expectHome();
-    await pressBack(router);
-    await expectLeftPlannerTo(router, "/menus/menu-1");
-  });
-
-  it("shows the home, not the wizard, when back from generation results returns to a used ?resume= entry (C-1)", async () => {
-    const router = renderPlanner(mealOnlyDraft, ["/emergency-menus", "/planner?resume=start"]);
-    expect(await screen.findByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
-    // 質問から生成へ進み、結果画面まで行ってから端末の戻るで戻ってくる
-    // （/generation は planner 由来の entry なので GenerationPage が 1 つ戻る。ここでは戻るで代用）
-    await act(async () => {
-      await router.navigate("/generation");
-    });
-    await act(async () => {
-      await router.navigate("/menus/menu-1");
-    });
-    await pressBack(router);
-    await pressBack(router);
-    await waitFor(() => {
-      expect(currentUrl(router)).toBe("/planner");
-    });
-    expectHome();
-    expect(screen.queryByRole("heading", { name: "2. メイン食材" })).not.toBeInTheDocument();
-    await pressBack(router);
-    await expectLeftPlannerTo(router, "/emergency-menus");
   });
 
   it("keeps an unsaved answer when back closes the wizard, and autosave still saves it", async () => {
@@ -405,10 +361,14 @@ describe("B-3: ウィザードが開いている間の戻るはホームへ、�
     }
   });
 
-  it("closes the ?resume=review wizard on back and normalizes the URL to the home", async () => {
+  it("consumes ?resume=review on mount: replaces the URL with /planner and opens the review screen", async () => {
     const router = renderPlanner(completeDraft, ["/privacy", "/planner?resume=review"]);
     expect(await screen.findByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
-    expect(currentUrl(router)).toBe("/planner?resume=review");
+    // 開いたままでも URL には ?resume= を残さない（戻るの最中に URL を置き換えないため）
+    await waitFor(() => {
+      expect(currentUrl(router)).toBe("/planner");
+    });
+    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
     await pressBack(router);
     expectHome();
     expect(currentUrl(router)).toBe("/planner");
@@ -421,6 +381,10 @@ describe("B-1: ?resume=start は最初の未回答の質問を直接開き、戻
   it("opens the first unanswered question, returns to the home, then to the emergency page", async () => {
     const router = renderPlanner(mealOnlyDraft, ["/emergency-menus", "/planner?resume=start"]);
     expect(await screen.findByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(currentUrl(router)).toBe("/planner");
+    });
+    expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
 
     await pressBack(router);
     expectHome();

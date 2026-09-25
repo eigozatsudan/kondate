@@ -28,7 +28,7 @@ test("home default", async ({ completedOnboardingPage: page }) => {
  *
  * 完全回答済み下書き（firstIncomplete === "review"）が残っていても、resumable pending
  * があるときはホームを優先し、HomeGenerateCard の「作成中の献立を続ける」を最上位に出す。
- * （?resume= 付きの深リンクはウィザードのまま — 不変契約 4b）
+ * （?resume= 付きの深リンクはウィザードを開く — 不変契約 4b。?resume= はマウント時に消費され URL は /planner になる）
  */
 test("planner after an interrupted generation", async ({ completedOnboardingPage: page }) => {
   await advanceToReviewWithHousehold(page);

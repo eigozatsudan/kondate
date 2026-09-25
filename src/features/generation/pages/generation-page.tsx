@@ -1,13 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router";
+import { Navigate, useSearchParams } from "react-router";
 import { useAuth } from "@/features/auth/use-auth";
 import { Stack } from "@/shared/ui/stack";
 import { GenerationStatusPanel } from "../components/generation-status-panel";
 import { useGenerationRecovery } from "../hooks/use-generation-recovery";
-import {
-  claimGenerationPlannerEntry,
-  isGenerationPlannerEntry,
-} from "../model/generation-planner-entry";
 import { generationReturnPath } from "../model/generation-return-path";
 import { readPendingGeneration } from "../model/pending-generation";
 
@@ -45,11 +41,6 @@ import { readPendingGeneration } from "../model/pending-generation";
 // 終端画面の AI 通信試行残数は request-local quota ではなく useUsageToday が正。
 // session の userId をパネルへ渡さないと本番経路で残数領域が描画されない。
 // 緊急献立 RecoveryLinks は idea/household とも常時表示のため targetMode を渡さない。
-//
-// B-3 修正（C-1/I-1）: planner から push で開いた /generation（generation-planner-entry の印）
-// が idle で素の /planner へ戻るときは、置き換えではなく 1 つ戻る。結果画面から端末の戻るで
-// ここへ来たときに /planner を重複させず、次の戻るが空振りしないようにするため。
-// review 付き（「条件を直してやり直す」）や /menus/:id への戻りは従来どおり置き換える。
 const PLAIN_PLANNER_PATH = "/planner";
 
 export function GenerationPage() {
@@ -60,13 +51,6 @@ export function GenerationPage() {
   // マウント時の query だけを正とする（replace で消しても案内は残す）
   const [showResumedNotice] = useState(() => searchParams.get("resumed") === "1");
   const [checked, setChecked] = useState(false);
-  const locationKey = useLocation().key;
-  const navigate = useNavigate();
-  const [openedFromPlanner] = useState(() => {
-    claimGenerationPlannerEntry(locationKey);
-    return isGenerationPlannerEntry(locationKey);
-  });
-  const leftToPlannerEntryRef = useRef(false);
   // clear 後も idle 遷移先を保持する（pending は clear で先に消える）
   const returnPathRef = useRef(PLAIN_PLANNER_PATH);
   if (userId !== undefined) {
@@ -78,21 +62,7 @@ export function GenerationPage() {
   useEffect(() => {
     setChecked(true);
   }, []);
-  const backToPlannerEntry =
-    checked &&
-    recovery.state.phase === "idle" &&
-    openedFromPlanner &&
-    returnPathRef.current === PLAIN_PLANNER_PATH;
-  useEffect(() => {
-    if (!backToPlannerEntry || leftToPlannerEntryRef.current) return;
-    // StrictMode の effect 二重実行でも 1 回だけ戻る
-    leftToPlannerEntryRef.current = true;
-    void navigate(-1);
-  }, [backToPlannerEntry, navigate]);
   if (!checked) {
-    return <p role="status">読み込んでいます</p>;
-  }
-  if (backToPlannerEntry) {
     return <p role="status">読み込んでいます</p>;
   }
   if (recovery.state.phase === "idle") {

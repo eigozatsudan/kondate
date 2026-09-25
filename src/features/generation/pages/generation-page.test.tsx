@@ -1,6 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -12,7 +12,6 @@ import {
   readPendingGeneration,
   savePendingGeneration,
 } from "../model/pending-generation";
-import { markGenerationOpenedFromPlanner } from "../model/generation-planner-entry";
 import { GenerationPage } from "./generation-page";
 
 // --- モック定義 ---------------------------------------------------------
@@ -138,15 +137,14 @@ function failedStatus(idempotencyKey: string): Extract<GenerationStatusData, { s
   };
 }
 
-function renderGenerationPage(initialEntry: string | string[] = "/generation") {
+function renderGenerationPage(initialEntry = "/generation") {
   const router = createMemoryRouter(
     [
       { path: "/generation", element: <GenerationPage /> },
       { path: "/planner", element: <h1>プランナー</h1> },
       { path: "/menus/:menuId", element: <h1>献立結果</h1> },
-      { path: "/start", element: <h1>開始前の画面</h1> },
     ],
-    { initialEntries: Array.isArray(initialEntry) ? initialEntry : [initialEntry] },
+    { initialEntries: [initialEntry] },
   );
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -219,40 +217,6 @@ describe("GenerationPage", () => {
       expect(router.state.location.pathname).toBe("/planner");
     });
     expect(await screen.findByRole("heading", { name: "プランナー" })).toBeVisible();
-  });
-
-  it("B-3: returns to the planner entry instead of stacking another /planner after results", async () => {
-    sessionStorage.clear();
-    const pending = createPendingGeneration(makeCommand(KEY_A), USER_ID, () => new Date());
-    savePendingGeneration(pending);
-    mockStatus.mockResolvedValue(processingStatus(KEY_A));
-    // 履歴: [/start, /planner] の /planner から生成を始める（planner が印を付けて push）
-    const router = renderGenerationPage(["/start", "/planner"]);
-    markGenerationOpenedFromPlanner();
-    await act(async () => {
-      await router.navigate("/generation");
-    });
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "献立を作っています" })).toBeVisible();
-    });
-    // 結果画面へ進み、作成状況が片付いたあとで端末の戻るを押す
-    await act(async () => {
-      await router.navigate("/menus/menu-1");
-    });
-    clearPendingGeneration();
-    await act(async () => {
-      await router.navigate(-1);
-    });
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/planner");
-    });
-    // /generation が /planner に置き換わっていれば、もう 1 回戻っても /planner のまま（空の戻る）
-    await act(async () => {
-      await router.navigate(-1);
-    });
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/start");
-    });
   });
 
   it("wires session userId so terminal failure shows live usage today", async () => {

@@ -689,7 +689,6 @@ import {
   resetPlannerLeaveNavigateFlightForTests,
   runPlannerLeaveFlush,
 } from "./planner-leave-flush";
-import { resetPlannerResumeEntriesForTests } from "./planner-resume";
 
 /**
  * U3: 下書きに進捗があると /planner はまずホームを出し、「続きから答える」を押して初めて
@@ -707,6 +706,13 @@ function renderPlanner(ui: React.ReactElement): RenderResult {
     expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
   }
   return view;
+}
+
+/** 下の「献立」タブ（同じ /planner で key だけ変わる）でウィザードを閉じ、ホームを出す */
+function closeWizardToHomeByTab(view: RenderResult): void {
+  queryState.locationKey = "tab-home-before-pop";
+  view.rerender(<PlannerRoutePage />);
+  expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
 }
 
 function createDeferred<T>(): {
@@ -753,8 +759,6 @@ beforeEach(() => {
   queryState.usagePlusEntitled = false;
   queryState.usageRemaining = 1;
   queryState.locationKey = "default";
-  // B-3: 使用済み ?resume= entry の覚え（モジュール状態）をテスト間で持ち越さない
-  resetPlannerResumeEntriesForTests();
   // flush 後の saved にクライアント入力（pantrySelections 等）を残す（P1 exact-set 検証用）
   savePlannerDraftMock.mockImplementation(
     (_client: unknown, _userId: string, next: PlannerDraftInput, revision: number) =>
@@ -3822,6 +3826,8 @@ describe("PlannerRoutePage", () => {
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
     });
+    // B-3: ウィザード中の POP は閉じる操作になる。leave flush はホームからの POP で起きる
+    closeWizardToHomeByTab(view);
 
     blockerHarness.state = "blocked";
     view.rerender(<PlannerRoutePage />);
@@ -3845,6 +3851,7 @@ describe("PlannerRoutePage", () => {
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
     });
+    closeWizardToHomeByTab(view);
 
     blockerHarness.state = "blocked";
     view.rerender(<PlannerRoutePage />);
@@ -3861,6 +3868,7 @@ describe("PlannerRoutePage", () => {
     await vi.waitFor(() => {
       expect(screen.getByLabelText("wizard step")).toBeInTheDocument();
     });
+    closeWizardToHomeByTab(view);
 
     blockerHarness.state = "blocked";
     view.rerender(<PlannerRoutePage />);
@@ -4076,15 +4084,22 @@ describe("U3 修正: 質問中に献立タブを押したらホームへ戻る",
     expect(screen.getByLabelText("draft memo")).toHaveTextContent("未保存のメモ");
   });
 
-  it("also returns to the home from a wizard opened by ?resume= when the tab drops the query", () => {
+  it("keeps the wizard open when ?resume= is consumed into /planner, and the tab then returns home", () => {
     queryState.search = "resume=review";
     const view = render(<PlannerRoutePage />);
     expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
+    // B-3: ?resume= は開いた時点で /planner へ置き換えて消費する
+    expect(navigateMock).toHaveBeenCalledWith("/planner", { replace: true });
 
+    // 置き換えの反映（?resume= 付き → /planner、key が変わる）ではウィザードを閉じない
     queryState.search = "";
+    queryState.locationKey = "consumed";
+    view.rerender(<PlannerRoutePage />);
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
+
+    // そのあとの献立タブ（同じ /planner、key だけ変わる）でホームへ戻る
     queryState.locationKey = "tab-1";
     view.rerender(<PlannerRoutePage />);
-
     expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeInTheDocument();
   });

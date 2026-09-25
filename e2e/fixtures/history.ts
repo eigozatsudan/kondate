@@ -498,9 +498,8 @@ export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2
     await expect(page).toHaveURL((url) => url.pathname === "/privacy");
     await page.getByRole("checkbox", { name: /説明を確認しました/u }).check();
     await page.getByRole("button", { name: "確認して進む" }).click();
-    await expect(page).toHaveURL(
-      (url) => url.pathname === "/planner" && url.searchParams.get("resume") === "review",
-    );
+    // B-3: returnTo の /planner?resume=review はマウント時に消費され、URL は /planner に置き換わる
+    await expect(page).toHaveURL((url) => url.pathname === "/planner");
     await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({
       timeout: 15_000,
     });

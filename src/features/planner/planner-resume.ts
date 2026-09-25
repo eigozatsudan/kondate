@@ -10,38 +10,16 @@ import { plannerSteps, type PlannerStep } from "./model/planner-wizard";
  * 追加（UX フォローアップ B-1）:
  * - `start`: 別の画面（緊急献立など）から、ホームを経由せず最初の未回答の質問を開く深リンク。
  *   扱いは `audience` などと同じ（最初の未回答の質問）。名前で用途を示すために分けた。
- *   開いている間は URL に残す（`review` と同じく、再読み込みでもウィザードのまま）。
  *
- * 端末の戻るは履歴エントリで表さない。ウィザードが開いている間の戻る（POP）は
- * PlannerRoutePage の useBlocker が止め、ウィザードを閉じてホームを出す。そのとき
- * `?resume=` 付きの URL は `/planner` に置き換え、ホームと URL を一致させる。
- *
- * `?resume=` の深リンクは履歴 entry ごとに一度だけ効く。同じ画面の読み込み中（JS の
- * セッション）に一度ウィザードを開くのに使った entry へ、別画面（生成・結果・privacy など）
- * から戻る操作で戻ってきたときは、ウィザードを開き直さずホームを出して `/planner` に置き換える
- * （開き直すと、戻るたびに質問が出て「ホームへ戻る」ための戻るが 1 回増えるため）。
- * 再読み込みでは覚えが消えるので、再読み込みした `?resume=` はこれまでどおりウィザードを開く。
+ * `?resume=` はマウント時（mount 済みなら付いた時）に一度だけ読んで消す。開く step を決めて
+ * ウィザードを開いたら、URL を `/planner` へ replace する（開いている step は state で持つ）。
+ * - 履歴に `?resume=` 付きの entry は残らない。再読み込みや、privacy・生成・結果などから
+ *   端末の戻るで戻ったときはホームになる。ホームの「続きから答える」と、最後に開いていた
+ *   step の記憶（下の B-2）で 1 手で戻れる。
+ * - 端末の戻るは履歴エントリで表さない。ウィザードが開いている間の戻る（POP）は
+ *   PlannerRoutePage の useBlocker が止め、ウィザードを閉じてホームを出す。URL は触らない。
  */
 export const PLANNER_RESUME_START = "start";
-
-// 一度ウィザードを開くのに使った `?resume=` の履歴 entry（location.key）。
-// location.key は entry ごとの乱数で個人情報を含まない。モジュール内だけに置き、保存しない。
-const usedResumeEntryKeys = new Set<string>();
-
-/** `?resume=` の entry でウィザードを開いたことを覚える */
-export function markPlannerResumeEntryUsed(locationKey: string): void {
-  usedResumeEntryKeys.add(locationKey);
-}
-
-/** テスト用: 使用済み entry の覚えを消す（モジュールの状態がテスト間で残るため） */
-export function resetPlannerResumeEntriesForTests(): void {
-  usedResumeEntryKeys.clear();
-}
-
-/** この `?resume=` の entry が、すでにウィザードを開くのに使われたか */
-export function isPlannerResumeEntryUsed(locationKey: string): boolean {
-  return usedResumeEntryKeys.has(locationKey);
-}
 
 /** B-1: 緊急献立などから、ホームを経由せず最初の未回答の質問を開くリンク先 */
 export const PLANNER_START_QUESTIONS_PATH = `/planner?resume=${PLANNER_RESUME_START}`;

@@ -141,7 +141,6 @@ function renderAppShellAt(
     </QueryClientProvider>,
     { container: ensureAppRoot() },
   );
-  return router;
 }
 
 describe("AppShell section tinting", () => {
@@ -578,29 +577,6 @@ describe("AppShell heading refocus on the same pathname (I-2)", () => {
     await waitForShellFocusFrame();
 
     expect(tab).toHaveFocus();
-  });
-
-  it("replaces the history entry when the planner tab is pressed on /planner", async () => {
-    const user = userEvent.setup();
-    const router = renderAppShellAt("/history");
-    // 同じ URL への Link は react-router が既定で replace する。?resume= 付きの /planner
-    // （確認画面への deep link 等）から押したときも積まないことを見る。
-    await act(async () => {
-      await router.navigate("/planner?resume=review");
-    });
-    const tab = screen.getByRole("link", { name: /献立/u });
-    await user.click(tab);
-    await waitFor(() => {
-      expect(router.state.location.search).toBe("");
-    });
-    await user.click(tab);
-    // B-3: 献立タブは /planner 上では履歴を積まない。1 回の戻るで献立の外（/history）へ出る
-    await act(async () => {
-      await router.navigate(-1);
-    });
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/history");
-    });
   });
 });
 
