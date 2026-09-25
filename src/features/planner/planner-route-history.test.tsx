@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -162,7 +163,10 @@ function renderPlanner(
     <QueryClientProvider client={queryClient}>
       <AppToastProvider>
         <PageHeadingFocusContext.Provider value={requestPageHeadingFocus}>
-          <RouterProvider router={router} />
+          {/* アプリ（main.tsx）と同じく StrictMode で包む（effect の二重実行でも同じ結果になること） */}
+          <StrictMode>
+            <RouterProvider router={router} />
+          </StrictMode>
         </PageHeadingFocusContext.Provider>
       </AppToastProvider>
     </QueryClientProvider>,
@@ -361,19 +365,39 @@ describe("B-3: ウィザードが開いている間の戻るはホームへ、�
     }
   });
 
-  it("consumes ?resume=review on mount: replaces the URL with /planner and opens the review screen", async () => {
-    const router = renderPlanner(completeDraft, ["/privacy", "/planner?resume=review"]);
+  // privacy の「確認して進む」は returnTo（/planner?resume=review）へ replace で戻り、生成の
+  // 「条件を直してやり直す」も /generation を /planner?resume=review へ置き換える。どちらも直前の
+  // entry はウィザードを開いたホーム（/planner）なので、実際の履歴は [外, /planner, ?resume=review]。
+  it.each([
+    ["privacy の確認から returnTo へ戻ったあと", "/history"],
+    ["生成の「条件を直してやり直す」のあと", "/menus/menu-1"],
+  ])("consumes ?resume=review on mount and leaves in two backs (%s)", async (_label, outside) => {
+    const router = renderPlanner(completeDraft, [outside, "/planner", "/planner?resume=review"]);
     expect(await screen.findByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
-    // 開いたままでも URL には ?resume= を残さない（戻るの最中に URL を置き換えないため）
+    // 開いたままでも URL には ?resume= を残さない
     await waitFor(() => {
       expect(currentUrl(router)).toBe("/planner");
     });
     expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    // 戻る 1 回目: 直前の /planner（同じ pathname）へ移り、ウィザードを閉じてホーム
     await pressBack(router);
     expectHome();
     expect(currentUrl(router)).toBe("/planner");
+    // 戻る 2 回目: 空振りせずプランナーの外へ（592ab27a と同じ回数）
     await pressBack(router);
-    await expectLeftPlannerTo(router, "/privacy");
+    await expectLeftPlannerTo(router, outside);
+  });
+
+  it("returns to the home with the planner tab after ?resume= was consumed, then leaves", async () => {
+    const router = renderPlanner(completeDraft, ["/history", "/planner?resume=review"]);
+    expect(await screen.findByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(currentUrl(router)).toBe("/planner");
+    });
+    await pressPlannerTab(router);
+    expectHome();
+    await pressBack(router);
+    await expectLeftPlannerTo(router, "/history");
   });
 });
 
@@ -389,6 +413,30 @@ describe("B-1: ?resume=start は最初の未回答の質問を直接開き、戻
     await pressBack(router);
     expectHome();
     expect(currentUrl(router)).toBe("/planner");
+
+    await pressBack(router);
+    await expectLeftPlannerTo(router, "/emergency-menus");
+  });
+
+  it("returns to the emergency page in two backs after the CTA was tapped twice", async () => {
+    // 描画の遅い端末での二度タップ: 古い Link が 2 回 push し、?resume=start の entry が 2 つ積まれる
+    const router = renderPlanner(mealOnlyDraft, [
+      "/emergency-menus",
+      "/planner?resume=start",
+      "/planner?resume=start",
+    ]);
+    expect(await screen.findByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(currentUrl(router)).toBe("/planner");
+    });
+
+    // 戻る 1 回目: 残っていた ?resume=start の entry に着く。開き直さずホームにして /planner へ置き換える
+    await pressBack(router);
+    await waitFor(() => {
+      expect(currentUrl(router)).toBe("/planner");
+    });
+    expectHome();
+    expect(screen.queryByRole("heading", { name: "2. メイン食材" })).not.toBeInTheDocument();
 
     await pressBack(router);
     await expectLeftPlannerTo(router, "/emergency-menus");

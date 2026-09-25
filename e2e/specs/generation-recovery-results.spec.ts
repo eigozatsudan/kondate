@@ -98,8 +98,8 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   // returnTo=/planner?resume=review で review step へ戻る。
   // openPrivacyNotice は flushDraft + setQueryData 済み。本番はフル reload しないため
   // SPA 復帰だけで「9. 確認」を維持することを主張する（巻き戻りは製品退行）。
-  // B-3: returnTo の /planner?resume=review はマウント時に消費され、URL は /planner に置き換わる
-  await expect(page).toHaveURL((url) => url.pathname === "/planner");
+  // B-3: returnTo の /planner?resume=review はマウント時に消費され、URL は /planner（?resume= 無し）に置き換わる
+  await expect(page).toHaveURL((url) => url.pathname === "/planner" && url.search === "");
   await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 }

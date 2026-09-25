@@ -16,8 +16,11 @@ import { plannerSteps, type PlannerStep } from "./model/planner-wizard";
  * - 履歴に `?resume=` 付きの entry は残らない。再読み込みや、privacy・生成・結果などから
  *   端末の戻るで戻ったときはホームになる。ホームの「続きから答える」と、最後に開いていた
  *   step の記憶（下の B-2）で 1 手で戻れる。
- * - 端末の戻るは履歴エントリで表さない。ウィザードが開いている間の戻る（POP）は
- *   PlannerRoutePage の useBlocker が止め、ウィザードを閉じてホームを出す。URL は触らない。
+ * - mount 済みの planner で、戻る / 進む（POP）で `?resume=` 付きの entry に着いたとき（二度タップで
+ *   残った entry など）は、ウィザードを開かず閉じて `/planner` へ置き換えるだけにする。
+ * - 端末の戻るは履歴エントリで表さない。ウィザードが開いている間にプランナーの外へ出る戻る（POP）は
+ *   PlannerRoutePage の useBlocker が止め、ウィザードを閉じてホームを出す。直前の `/planner` へ戻る
+ *   POP は止めずに通し、location.key の変化でウィザードを閉じる。どちらも URL は触らない。
  */
 export const PLANNER_RESUME_START = "start";
 

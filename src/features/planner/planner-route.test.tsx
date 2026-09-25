@@ -197,6 +197,8 @@ vi.mock("react-router", async (importOriginal) => {
       state: null,
       key: queryState.locationKey,
     }),
+    // B-3: Router 未 wrap の unit では遷移の種類を PUSH とみなす（?resume= の後付けはウィザードを開く）
+    useNavigationType: () => "PUSH",
     // P5: data router 必須の useBlocker を差し替え。既存 PlannerRoutePage テストが throw しない。
     useBlocker: (
       shouldBlock: (args: {
@@ -4102,6 +4104,19 @@ describe("U3 修正: 質問中に献立タブを押したらホームへ戻る",
     view.rerender(<PlannerRoutePage />);
     expect(screen.queryByLabelText("wizard step")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "続きから答える" })).toBeInTheDocument();
+  });
+
+  it("does not consume ?resume= while the route blocker holds a POP, and consumes once released", () => {
+    // 読み込み中に押された戻る（leave flush → proceed）を、消費の replace で無効にしない（M-1）
+    queryState.search = "resume=review";
+    const view = render(<PlannerPage backNavigationPending />);
+    expect(navigateMock).not.toHaveBeenCalledWith("/planner", { replace: true });
+
+    // 止めた POP が reset されて留まったときは、そこで消費する
+    view.rerender(<PlannerPage backNavigationPending={false} />);
+    expect(navigateMock).toHaveBeenCalledWith("/planner", { replace: true });
+    expect(navigateMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("wizard step")).toHaveTextContent("review");
   });
 
   it("keeps opening the wizard when a later navigation carries ?resume= (P6)", () => {
