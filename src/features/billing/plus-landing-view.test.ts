@@ -59,6 +59,7 @@ describe("resolvePlusLandingView", () => {
       trialing: false,
       trialEnd: null,
       currentPeriodEnd: null,
+      scheduledEnd: null,
       autoRenews: true,
     });
   });
@@ -103,6 +104,46 @@ describe("resolvePlusLandingView", () => {
       });
     },
   );
+
+  // UX 残り R2 項目 6: cancel_at だけで解約予約が来る（cancelAtPeriodEnd は false のまま）
+  it("treats a scheduled cancelAt as not auto-renewing and exposes it as the end", () => {
+    const data: EntitlementData = {
+      ...freeOpen,
+      plan: "plus",
+      status: "active",
+      plusEntitled: true,
+      dbPlusEntitled: true,
+      quotaPlan: "plus",
+      currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+      cancelAtPeriodEnd: false,
+      cancelAt: "2026-10-10T15:00:00.000Z",
+    };
+    expect(resolvePlusLandingView({ loading: false, error: false, data })).toMatchObject({
+      kind: "entitled",
+      currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+      scheduledEnd: "2026-10-10T15:00:00.000Z",
+      autoRenews: false,
+    });
+  });
+
+  it("ignores a leftover cancelAt once the subscription is canceled", () => {
+    // 解約済みの Plus は期間末（entitlement の根拠）まで。残った cancelAt の日付は使わない
+    const data: EntitlementData = {
+      ...freeOpen,
+      plan: "plus",
+      status: "canceled",
+      plusEntitled: true,
+      dbPlusEntitled: true,
+      quotaPlan: "plus",
+      currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+      cancelAt: "2026-12-01T15:00:00.000Z",
+    };
+    expect(resolvePlusLandingView({ loading: false, error: false, data })).toMatchObject({
+      kind: "entitled",
+      scheduledEnd: null,
+      autoRenews: false,
+    });
+  });
 
   it("returns incomplete without checkout", () => {
     const data: EntitlementData = { ...freeOpen, status: "incomplete" };

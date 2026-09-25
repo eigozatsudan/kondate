@@ -80,6 +80,27 @@ describe("billing contracts", () => {
     expect(entitlementDataSchema.safeParse({ ...base, trialEnd: "soon" }).success).toBe(false);
   });
 
+  // UX 残り R2 項目 6: 解約予定の日時。null のときはキーごと省く（古い画面の strict parse を壊さない）
+  it("accepts an optional ISO cancelAt and rejects broken or null values", () => {
+    const base = {
+      plan: "plus" as const,
+      status: "active" as const,
+      plusEntitled: true,
+      pastDueGrace: false,
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+      trialEnd: null,
+      dbPlusEntitled: true,
+      productSurfacesOpen: true,
+      quotaPlan: "plus" as const,
+    };
+    expect(entitlementDataSchema.safeParse(base).success).toBe(true);
+    const withCancelAt = { ...base, cancelAt: "2026-08-01T00:00:00.000Z" };
+    expect(entitlementDataSchema.parse(withCancelAt)).toEqual(withCancelAt);
+    expect(entitlementDataSchema.safeParse({ ...base, cancelAt: "soon" }).success).toBe(false);
+    expect(entitlementDataSchema.safeParse({ ...base, cancelAt: null }).success).toBe(false);
+  });
+
   it("pins STRIPE_API_VERSION to the design-locked dahlia string", () => {
     expect(STRIPE_API_VERSION).toBe("2026-06-24.dahlia");
   });

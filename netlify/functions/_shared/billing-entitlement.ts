@@ -21,6 +21,8 @@ export type Entitlement = {
   pastDueGrace: boolean;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  /** RPC の cancel_at（解約予定の日時）。表示専用で権益の判定には使わない。省略は null と同じ */
+  cancelAt?: string | null;
   trialEnd: string | null;
   dbPlusEntitled: boolean;
   /** 認証済み ID とサーバー allowlist の照合結果。Stripe 投影や metadata は使わない。 */
@@ -162,6 +164,8 @@ export function toEntitlementData(
   // B15: restore と apply を同じ時計で見る（終端ちょうどで plan と plusEntitled が割れない）
   const restored = restoreKillMaskedEntitlement(entitlement, billingEnabled, now);
   const quotaPlan = applyQuotaPlan(entitlement, billingEnabled, now);
+  // UX 残り R2 項目 6: 予定が無い・壊れているときはキーごと省く（契約のコメント参照）
+  const cancelAt = closeEntitlementIsoDate(restored.cancelAt ?? null);
   // B10: 日時 wire を entitlementDataSchema で閉じる。壊れた string は null にして 200 を落とさない。
   return entitlementDataSchema.parse({
     plan: restored.plan,
@@ -170,6 +174,7 @@ export function toEntitlementData(
     pastDueGrace: restored.pastDueGrace,
     currentPeriodEnd: closeEntitlementIsoDate(restored.currentPeriodEnd),
     cancelAtPeriodEnd: restored.cancelAtPeriodEnd,
+    ...(cancelAt !== null ? { cancelAt } : {}),
     trialEnd: closeEntitlementIsoDate(restored.trialEnd),
     dbPlusEntitled: entitlement.dbPlusEntitled,
     productSurfacesOpen: productSurfacesOpen(billingEnabled),
@@ -202,6 +207,8 @@ const entitlementRpcSchema = z
     // B10: RPC 受理は任意 string。GET wire は toEntitlementData が ISO+offset に閉じる。
     current_period_end: z.string().nullable(),
     cancel_at_period_end: z.boolean(),
+    // UX 残り R2 項目 6: 行ありのときだけ載る。行無しや migration 前の RPC では欠ける
+    cancel_at: z.string().nullable().optional(),
     trial_end: z.string().nullable(),
     db_plus_entitled: z.boolean(),
     past_due_since: z.string().nullable().optional(),
@@ -246,6 +253,7 @@ export async function loadEntitlement(userId: string): Promise<Entitlement> {
       pastDueGrace: parsed.data.past_due_grace,
       currentPeriodEnd: parsed.data.current_period_end,
       cancelAtPeriodEnd: parsed.data.cancel_at_period_end,
+      cancelAt: parsed.data.cancel_at ?? null,
       trialEnd: parsed.data.trial_end,
       dbPlusEntitled: parsed.data.db_plus_entitled,
       pastDueSince: parsed.data.past_due_since ?? null,

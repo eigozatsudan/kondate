@@ -83,6 +83,14 @@ export const entitlementDataSchema = z
     // 日時 wire を ISO-8601（offset 必須）に閉じる（S18）。URL は runtime DiD 維持。
     currentPeriodEnd: z.iso.datetime({ offset: true }).nullable(),
     cancelAtPeriodEnd: z.boolean(),
+    /**
+     * 解約予定の日時（Stripe subscription.cancel_at。UX 残り R2 項目 6）。表示専用で、
+     * entitled や status の判定には使わない。Customer Portal などは解約予約を cancel_at だけで
+     * 表し、cancelAtPeriodEnd は false のまま来ることがある。
+     * 予定が無いときはキーごと省く（null は送らない）。strict な古い画面が、予定の無い大多数の
+     * 利用者の応答まで「未知のキー」で落とさないようにするため（developerPlus と同じ扱い）。
+     */
+    cancelAt: z.iso.datetime({ offset: true }).optional(),
     trialEnd: z.iso.datetime({ offset: true }).nullable(),
     dbPlusEntitled: z.boolean(),
     productSurfacesOpen: z.boolean(),

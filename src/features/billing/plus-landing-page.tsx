@@ -314,11 +314,16 @@ export function PlusLandingPage({
         <div className="stack gap-3">
           <h1>{PLUS_LP_ACTIVE}</h1>
           {view.trialing ? (
-            <TrialEndLines trialEndIso={view.trialEnd} autoRenews={view.autoRenews} now={now} />
+            // cancel_at の解約予定があれば、その日時を終了日として優先する（UX 残り R2 項目 6）
+            <TrialEndLines
+              trialEndIso={view.scheduledEnd ?? view.trialEnd}
+              autoRenews={view.autoRenews}
+              now={now}
+            />
           ) : (
             // お試し中は無料期間の終了を優先し、更新日と二重に出さない
             <EntitledPeriodLine
-              periodEndIso={view.currentPeriodEnd}
+              periodEndIso={view.scheduledEnd ?? view.currentPeriodEnd}
               autoRenews={view.autoRenews}
               now={now}
             />

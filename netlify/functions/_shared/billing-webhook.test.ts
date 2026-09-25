@@ -612,6 +612,68 @@ describe("handleBillingWebhook", () => {
     expect(payload.clear_past_due_since).toBe(true);
   });
 
+  // UX 残り R2 項目 6: Customer Portal や新しい API は解約予約を cancel_at（日時）だけで表し、
+  // cancel_at_period_end は false のまま来ることがある。日時をそのまま投影する。
+  it("projects cancel_at when only cancel_at is set (cancel_at_period_end false)", async () => {
+    const cancelAt = 1_722_592_000;
+    const sub = makeSubscription({ cancel_at: cancelAt, cancel_at_period_end: false });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", sub, { id: "evt_cancel_at_only" }),
+    );
+    retrieve.mockResolvedValue(sub);
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const payload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(payload.cancel_at).toBe(new Date(cancelAt * 1000).toISOString());
+    // 課金の状態判定に使う cancel_at_period_end と status は Stripe の値のまま変えない
+    expect(payload.cancel_at_period_end).toBe(false);
+    expect(payload.status).toBe("active");
+  });
+
+  it("projects cancel_at as null when no cancellation is scheduled", async () => {
+    const sub = makeSubscription({ cancel_at: null });
+    constructEvent.mockReturnValue(
+      makeEvent("customer.subscription.updated", sub, { id: "evt_no_cancel_at" }),
+    );
+    retrieve.mockResolvedValue(sub);
+    await handleBillingWebhook(signedRequest(), deps());
+    const payload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(payload).toHaveProperty("cancel_at", null);
+  });
+
+  it("projects cancel_at on the invoice path too", async () => {
+    const cancelAt = 1_722_592_000;
+    const invoice = {
+      id: "in_cancel_at",
+      object: "invoice",
+      customer: CUSTOMER_ID,
+      subscription: SUB_ID,
+    } as unknown as Stripe.Invoice;
+    constructEvent.mockReturnValue(
+      makeEvent("invoice.paid", invoice, { id: "evt_invoice_cancel_at" }),
+    );
+    retrieve.mockResolvedValue(
+      makeSubscription({ status: "active", cancel_at: cancelAt, cancel_at_period_end: false }),
+    );
+    const response = await handleBillingWebhook(signedRequest(), deps());
+    expect(response.status).toBe(200);
+    const payload = (
+      rpc.mock.calls.find(([n]) => n === "process_billing_stripe_event")![1] as {
+        p_payload: Record<string, unknown>;
+      }
+    ).p_payload;
+    expect(payload.cancel_at).toBe(new Date(cancelAt * 1000).toISOString());
+    expect(payload.cancel_at_period_end).toBe(false);
+  });
+
   it("inserts billing_trial_history on first trialing|active using server identity_key (A7)", async () => {
     constructEvent.mockReturnValue(
       makeEvent("customer.subscription.created", makeSubscription({ status: "trialing" }), {
@@ -2582,6 +2644,7 @@ describe("guardSubscriptionProjection B1/B7", () => {
     stripe_price_id: "price_m",
     status: "active",
     cancel_at_period_end: false,
+    cancel_at: null,
     current_period_start: "2026-07-01T00:00:00.000Z",
     current_period_end: "2026-08-01T00:00:00.000Z",
     trial_end: null,
@@ -2623,6 +2686,23 @@ describe("guardSubscriptionProjection B1/B7", () => {
     expect(guardSubscriptionProjection(base, { billingEnabled: true, stripe }).status).toBe(
       "active",
     );
+  });
+});
+
+describe("projectionFromSubscription cancel_at", () => {
+  it("keeps cancel_at as ISO without folding it into cancel_at_period_end", () => {
+    const projection = projectionFromSubscription(
+      makeSubscription({ cancel_at: 1_722_592_000, cancel_at_period_end: false }),
+    );
+    expect(projection?.cancel_at).toBe(new Date(1_722_592_000 * 1000).toISOString());
+    expect(projection?.cancel_at_period_end).toBe(false);
+  });
+
+  it("treats a missing cancel_at as null", () => {
+    const sub = makeSubscription();
+    // 古い fixture / mock のように cancel_at キー自体が無い形
+    expect("cancel_at" in sub).toBe(false);
+    expect(projectionFromSubscription(sub)?.cancel_at).toBeNull();
   });
 });
 

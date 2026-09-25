@@ -238,6 +238,49 @@ describe("PlanSettingsSection", () => {
     expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
   });
 
+  // UX 残り R2 項目 6: 設定のプラン欄でも、解約予約があれば終了予定日を出す（/plus と同じ判定）
+  const activeEntitlement: EntitlementData = {
+    ...freeEntitlement,
+    plan: "plus",
+    status: "active",
+    plusEntitled: true,
+    currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+    dbPlusEntitled: true,
+    quotaPlan: "plus",
+  };
+  const settingsNow = new Date("2026-09-24T00:00:00.000Z");
+
+  it("shows the cancel_at date as the Plus end in the plan section", () => {
+    renderPlan({
+      entitlement: { ...activeEntitlement, cancelAt: "2026-10-10T15:00:00.000Z" },
+      now: settingsNow,
+    });
+    expect(screen.getByText("2026年10月11日に Plus が終了します（自動更新なし）")).toBeVisible();
+  });
+
+  it("shows the period end as the Plus end when cancel_at_period_end is set", () => {
+    renderPlan({
+      entitlement: { ...activeEntitlement, cancelAtPeriodEnd: true },
+      now: settingsNow,
+    });
+    expect(screen.getByText("2026年10月23日に Plus が終了します（自動更新なし）")).toBeVisible();
+  });
+
+  it("does not add a period line for an auto-renewing plan", () => {
+    renderPlan({ entitlement: activeEntitlement, now: settingsNow });
+    expect(screen.queryByText(/Plus が終了します/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+  });
+
+  it("shows the cancel_at date for a trial cancelled via cancel_at", () => {
+    renderPlan({
+      entitlement: { ...trialingEntitlement, cancelAt: "2026-08-05T15:00:00.000Z" },
+      now: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    expect(screen.getByText("2026年8月6日に Plus が終了します（自動更新なし）")).toBeVisible();
+    expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
+  });
+
   it("shows past_due payment update path to portal", async () => {
     const onPortal = vi.fn(() => Promise.resolve());
     const user = userEvent.setup();

@@ -2,7 +2,7 @@
 -- Task 2: private billing 表 + SECURITY DEFINER RPC（A6 / lock / process 冪等・stale・crash-safe）
 
 begin;
-select plan(143);
+select plan(151);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -81,6 +81,10 @@ select tests.create_supabase_user(
 select tests.create_supabase_user(
   'f2000000-0000-4000-8000-000000000013'::uuid,
   'billing-br6-unknown-unpaid@example.invalid'
+);
+select tests.create_supabase_user(
+  'f2000000-0000-4000-8000-000000000014'::uuid,
+  'billing-r2-cancel-at@example.invalid'
 );
 
 -- ---------------------------------------------------------------------------
@@ -1799,6 +1803,97 @@ select is(
   ) ->> 'plus_entitled')::boolean,
   false,
   'B-R6 unknown-price unpaid stays not entitled'
+);
+
+-- ---------------------------------------------------------------------------
+-- UX 残り R2 項目 6: cancel_at（解約予定の日時）は表示専用の投影。判定は変えない
+-- ---------------------------------------------------------------------------
+select has_column(
+  'private', 'billing_subscriptions', 'cancel_at',
+  'R2-6 billing_subscriptions has cancel_at'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_r2_cancel_at_only',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 9000,
+    'user_id', 'f2000000-0000-4000-8000-000000000014',
+    'stripe_subscription_id', 'sub_r2_cancel_at',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'active',
+    'cancel_at_period_end', false,
+    'cancel_at', '2026-07-25T00:00:00.000Z',
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true,
+    'kill_source_status', null
+  )) ->> 'outcome',
+  'applied',
+  'R2-6 cancel_at-only update applies'
+);
+
+select is(
+  (select cancel_at from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000014'::uuid),
+  '2026-07-25 00:00:00+00'::timestamptz,
+  'R2-6 cancel_at is stored'
+);
+
+select is(
+  public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000014'::uuid,
+    '2026-07-15 00:00:00+00'::timestamptz
+  ) ->> 'cancel_at',
+  '2026-07-25T00:00:00.000Z',
+  'R2-6 entitlement exposes cancel_at as ISO-Z'
+);
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000014'::uuid,
+    '2026-07-15 00:00:00+00'::timestamptz
+  ) ->> 'plus_entitled')::boolean,
+  true,
+  'R2-6 cancel_at does not change entitlement'
+);
+
+select is(
+  (public.get_billing_entitlement_for_user(
+    'f2000000-0000-4000-8000-000000000014'::uuid,
+    '2026-07-15 00:00:00+00'::timestamptz
+  ) ->> 'cancel_at_period_end')::boolean,
+  false,
+  'R2-6 cancel_at is not folded into cancel_at_period_end'
+);
+
+-- 旧 Function（キー欠落）や予約取り消し（null）は「予定なし」
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_r2_cancel_at_removed',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 9100,
+    'user_id', 'f2000000-0000-4000-8000-000000000014',
+    'stripe_subscription_id', 'sub_r2_cancel_at',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'active',
+    'cancel_at_period_end', false,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true,
+    'kill_source_status', null
+  )) ->> 'outcome',
+  'applied',
+  'R2-6 update without cancel_at applies'
+);
+
+select is(
+  (select cancel_at from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000014'::uuid),
+  null::timestamptz,
+  'R2-6 missing cancel_at clears the stored value'
 );
 
 -- 禁止: insert_billing_webhook_event を public に export しない

@@ -572,6 +572,36 @@ describe("PlusLandingPage entitled benefits and period", () => {
     expect(screen.queryByText(/2026年9月21日/u)).not.toBeInTheDocument();
   });
 
+  // UX 残り R2 項目 6: Customer Portal などが cancel_at だけで解約予約を表したとき
+  it("shows the cancel_at date as the Plus end instead of the renewal date", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        currentPeriodEnd: "2026-10-22T15:00:00.000Z",
+        cancelAtPeriodEnd: false,
+        cancelAt: "2026-10-10T15:00:00.000Z",
+      },
+      now: FIXED_NOW,
+    });
+    expect(screen.getByText("2026年10月11日に Plus が終了します（自動更新なし）")).toBeVisible();
+    expect(screen.queryByText(/次回の更新日/u)).not.toBeInTheDocument();
+  });
+
+  it("shows the cancel_at date for a trial cancelled via cancel_at", () => {
+    renderLp({
+      entitlement: {
+        ...plusActive,
+        status: "trialing",
+        trialEnd: "2026-09-30T15:00:00.000Z",
+        cancelAtPeriodEnd: false,
+        cancelAt: "2026-09-30T15:00:00.000Z",
+      },
+      now: FIXED_NOW,
+    });
+    expect(screen.getByText("2026年10月1日に Plus が終了します（自動更新なし）")).toBeVisible();
+    expect(screen.queryByText(TRIAL_END_WARNING)).not.toBeInTheDocument();
+  });
+
   it("prefers the trial end over the renewal date while trialing", () => {
     renderLp({
       entitlement: {

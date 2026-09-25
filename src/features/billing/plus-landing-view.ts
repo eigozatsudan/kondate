@@ -18,11 +18,38 @@ export type PlusLandingView =
       trialEnd: string | null;
       /** 契約の期間末（表示用）。null なら更新日・終了日を出さない */
       currentPeriodEnd: string | null;
-      /** 期間末に自動で更新されるか。解約予約（cancelAtPeriodEnd）や解約済み（canceled）は false */
+      /**
+       * cancel_at による解約予定の日時（UX 残り R2 項目 6）。あれば終了日として期間末・無料期間の
+       * 終了より優先して出す。解約済み（canceled）では使わない。
+       */
+      scheduledEnd: string | null;
+      /**
+       * 期間末に自動で更新されるか。解約予約（cancelAtPeriodEnd または cancelAt）や
+       * 解約済み（canceled）は false
+       */
       autoRenews: boolean;
     }
   | { kind: "incomplete"; surfacesOpen: boolean }
   | { kind: "full"; checkoutEnabled: boolean };
+
+type BillingPeriodFields = Pick<EntitlementData, "status" | "cancelAtPeriodEnd" | "cancelAt">;
+
+/**
+ * cancel_at による解約予定の日時。表示専用（UX 残り R2 項目 6）。
+ * 解約済み（canceled）の Plus は期間末（entitlement の根拠）までなので、残った cancelAt は使わない。
+ */
+export function scheduledCancelAt(data: BillingPeriodFields): string | null {
+  if (data.status === "canceled") return null;
+  return data.cancelAt ?? null;
+}
+
+/**
+ * 期間末に自動で更新されるか（表示だけの派生。課金の状態判定は API が持つ）。
+ * Stripe は解約予約を cancel_at_period_end と cancel_at のどちらでも表すので、両方を見る。
+ */
+export function billingAutoRenews(data: BillingPeriodFields): boolean {
+  return data.status !== "canceled" && !data.cancelAtPeriodEnd && scheduledCancelAt(data) === null;
+}
 
 function isCheckoutBlockedStatus(status: EntitlementData["status"]): boolean {
   return (CHECKOUT_BLOCKED_STATUSES as readonly string[]).includes(status);
@@ -73,8 +100,9 @@ export function resolvePlusLandingView(input: {
       trialing: data.status === "trialing",
       trialEnd: data.trialEnd,
       currentPeriodEnd: data.currentPeriodEnd,
+      scheduledEnd: scheduledCancelAt(data),
       // 表示だけの派生。canceled は期間末まで Plus が残るが更新はされない
-      autoRenews: data.status !== "canceled" && !data.cancelAtPeriodEnd,
+      autoRenews: billingAutoRenews(data),
     };
   }
 

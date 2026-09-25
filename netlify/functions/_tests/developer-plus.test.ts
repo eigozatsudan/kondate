@@ -113,3 +113,33 @@ describe("developer Plus authenticated entitlement", () => {
     });
   });
 });
+
+describe("entitlement RPC cancel_at (UX 残り R2 項目 6)", () => {
+  it("maps cancel_at from the RPC projection", async () => {
+    getServerEnv.mockReturnValue({ billingEnabled: true, developerPlusUserIds: [] });
+    rpc.mockResolvedValue({
+      data: {
+        ...freeProjection,
+        plan: "plus",
+        status: "active",
+        plus_entitled: true,
+        db_plus_entitled: true,
+        current_period_end: "2026-08-01T00:00:00.000Z",
+        cancel_at: "2026-07-25T00:00:00.000Z",
+      },
+      error: null,
+    });
+    expect(await loadEntitlement(otherId)).toMatchObject({
+      cancelAt: "2026-07-25T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    });
+    const response = await billingEntitlement(request());
+    expect(await response.json()).toMatchObject({
+      data: { cancelAt: "2026-07-25T00:00:00.000Z", cancelAtPeriodEnd: false },
+    });
+  });
+
+  it("treats a projection without cancel_at (no row / older RPC) as not scheduled", async () => {
+    expect(await loadEntitlement(otherId)).toMatchObject({ cancelAt: null });
+  });
+});

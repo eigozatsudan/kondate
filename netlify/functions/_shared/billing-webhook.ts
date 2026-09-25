@@ -30,6 +30,12 @@ export type SubscriptionProjection = {
   stripe_price_id: string;
   status: string;
   cancel_at_period_end: boolean;
+  /**
+   * 解約予定の日時（ISO-Z）。表示専用（UX 残り R2 項目 6）。
+   * Customer Portal や新しい API は解約予約を cancel_at だけで表し、cancel_at_period_end は
+   * false のまま来ることがある。課金の状態判定（entitled・status 遷移）には使わない。
+   */
+  cancel_at: string | null;
   current_period_start: string;
   current_period_end: string;
   trial_end: string | null;
@@ -327,6 +333,7 @@ function failClosedUnknownDeletedProjection(
     ...base,
     status: "incomplete_expired",
     cancel_at_period_end: false,
+    cancel_at: null,
     trial_end: null,
   };
 }
@@ -351,6 +358,8 @@ export function projectionFromSubscription(
     stripe_price_id: priceId,
     status: sub.status,
     cancel_at_period_end: sub.cancel_at_period_end,
+    // Stripe 型は number | null。古い mock などでキーが無いときも null にそろえる
+    cancel_at: unixToIsoZ(sub.cancel_at),
     current_period_start: periodStart,
     current_period_end: periodEnd,
     trial_end: unixToIsoZ(sub.trial_end),
@@ -921,6 +930,7 @@ async function handleSubscriptionEvent(
     stripe_price_id: projection.stripe_price_id,
     status: projectedStatus,
     cancel_at_period_end: projection.cancel_at_period_end,
+    cancel_at: projection.cancel_at,
     current_period_start: projection.current_period_start,
     current_period_end: projection.current_period_end,
     trial_end: projection.trial_end,
@@ -1233,6 +1243,7 @@ async function handleInvoiceEvent(
     stripe_price_id: projection.stripe_price_id,
     status,
     cancel_at_period_end: projection.cancel_at_period_end,
+    cancel_at: projection.cancel_at,
     current_period_start: projection.current_period_start,
     current_period_end: projection.current_period_end,
     trial_end: projection.trial_end,

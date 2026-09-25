@@ -10,7 +10,8 @@ import {
   STRIPE_REDIRECT_NOTICE,
   SURFACES_CLOSED_COPY,
 } from "./billing-ui-copy";
-import { TrialEndLines } from "./billing-period-lines";
+import { EntitledPeriodLine, TrialEndLines } from "./billing-period-lines";
+import { billingAutoRenews, scheduledCancelAt } from "./plus-landing-view";
 import { CheckoutIntervalForm } from "./checkout-interval-form";
 import { DeveloperBillingHistory } from "./developer-billing-history";
 import {
@@ -189,8 +190,17 @@ export function PlanSettingsSection({
             課金の注意の代わりに終了する旨を出す */}
           {isTrialing ? (
             <TrialEndLines
-              trialEndIso={data.trialEnd}
-              autoRenews={!data.cancelAtPeriodEnd}
+              trialEndIso={scheduledCancelAt(data) ?? data.trialEnd}
+              autoRenews={billingAutoRenews(data)}
+              now={now}
+            />
+          ) : null}
+          {/* UX 残り R2 項目 6: 解約予約（cancel_at_period_end / cancel_at）や解約済みなら終了予定日を
+            出す。自動更新の人には従来どおり日付を足さない。お試し中は上の行が同じ役目を持つ */}
+          {entitled && !developerPlus && !isTrialing && !isPastDue && !billingAutoRenews(data) ? (
+            <EntitledPeriodLine
+              periodEndIso={scheduledCancelAt(data) ?? data.currentPeriodEnd}
+              autoRenews={false}
               now={now}
             />
           ) : null}

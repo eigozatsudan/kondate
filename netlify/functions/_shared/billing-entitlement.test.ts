@@ -327,6 +327,33 @@ describe("toEntitlementData / productSurfacesOpen (A3)", () => {
   });
 });
 
+describe("toEntitlementData cancelAt (UX 残り R2 項目 6)", () => {
+  it("puts a scheduled cancel_at on the wire as cancelAt", () => {
+    const data = toEntitlementData(
+      { ...baseEntitlement, cancelAt: "2026-07-25T00:00:00.000Z" },
+      true,
+    );
+    expect(data.cancelAt).toBe("2026-07-25T00:00:00.000Z");
+    // 課金の状態判定は変えない
+    expect(data.cancelAtPeriodEnd).toBe(false);
+    expect(data.plusEntitled).toBe(true);
+    expect(entitlementDataSchema.parse(data)).toEqual(data);
+  });
+
+  it("omits cancelAt when nothing is scheduled so older strict clients keep parsing", () => {
+    expect("cancelAt" in toEntitlementData(baseEntitlement, true)).toBe(false);
+    expect("cancelAt" in toEntitlementData({ ...baseEntitlement, cancelAt: null }, true)).toBe(
+      false,
+    );
+  });
+
+  it("omits a broken cancelAt instead of failing the response (B10)", () => {
+    const data = toEntitlementData({ ...baseEntitlement, cancelAt: "soon" }, true);
+    expect("cancelAt" in data).toBe(false);
+    expect(data.plusEntitled).toBe(true);
+  });
+});
+
 describe("restoreKillMaskedEntitlement (B2)", () => {
   const killMasked: Entitlement = {
     plan: "free",
