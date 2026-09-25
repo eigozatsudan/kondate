@@ -73,7 +73,7 @@ export type PlusLandingPageProps = {
 /**
  * 利用中の画面で「Plus でできること」を LP と同じ固定コピーで短く並べる。
  * 一部機能の停止中（!surfacesOpen）はどの機能が止まっているか画面から分からないため、
- * 説明だけ残してリンクは出さない。今週の献立のリンクは WEEKLY_PLAN_UI_ENABLED に従う。
+ * 説明だけ残してリンクは出さない。今週の献立はカードごと WEEKLY_PLAN_UI_ENABLED に従う。
  */
 function EntitledBenefits({ surfacesOpen }: { surfacesOpen: boolean }) {
   return (
@@ -95,15 +95,18 @@ function EntitledBenefits({ surfacesOpen }: { surfacesOpen: boolean }) {
             </Link>
           ) : null}
         </li>
-        <li className="plus-landing__card card stack gap-2">
-          <h3 className="plus-landing__card-title">{PLUS_LP_FLYER_TITLE}</h3>
-          <p>{PLUS_LP_FLYER_BODY}</p>
-          {surfacesOpen && WEEKLY_PLAN_UI_ENABLED ? (
-            <Link className="secondary-button min-h-11" to="/weekly">
-              今週の献立をつくる
-            </Link>
-          ) : null}
-        </li>
+        {/* 最終レビュー B Minor 4: 週献立を止めている間は、使えない機能を「できること」に並べない */}
+        {WEEKLY_PLAN_UI_ENABLED ? (
+          <li className="plus-landing__card card stack gap-2">
+            <h3 className="plus-landing__card-title">{PLUS_LP_FLYER_TITLE}</h3>
+            <p>{PLUS_LP_FLYER_BODY}</p>
+            {surfacesOpen ? (
+              <Link className="secondary-button min-h-11" to="/weekly">
+                今週の献立をつくる
+              </Link>
+            ) : null}
+          </li>
+        ) : null}
       </ul>
     </section>
   );
@@ -435,25 +438,27 @@ export function PlusLandingPage({
                   <li>使える回数には上限があります（使い切ると通常の作成になります）</li>
                 </ul>
               </li>
-              <li className="plus-landing__card card stack gap-2">
-                <div className="plus-landing__card-header">
-                  <img
-                    src={flyerUrl}
-                    alt=""
-                    width={160}
-                    height={160}
-                    className="plus-landing__card-img"
-                    decoding="async"
-                  />
-                  <h3 className="plus-landing__card-title">{PLUS_LP_FLYER_TITLE}</h3>
-                </div>
-                <p>{PLUS_LP_FLYER_BODY}</p>
-                <ul className="plus-landing__points">
-                  <li>家族の条件を選ぶだけで7日分の主菜候補が出ます</li>
-                  <li>気になる日をタップして日次の献立づくりへ進めます</li>
-                  <li>週あたりの作成回数には上限があります</li>
-                </ul>
-              </li>
+              {WEEKLY_PLAN_UI_ENABLED ? (
+                <li className="plus-landing__card card stack gap-2">
+                  <div className="plus-landing__card-header">
+                    <img
+                      src={flyerUrl}
+                      alt=""
+                      width={160}
+                      height={160}
+                      className="plus-landing__card-img"
+                      decoding="async"
+                    />
+                    <h3 className="plus-landing__card-title">{PLUS_LP_FLYER_TITLE}</h3>
+                  </div>
+                  <p>{PLUS_LP_FLYER_BODY}</p>
+                  <ul className="plus-landing__points">
+                    <li>家族の条件を選ぶだけで7日分の主菜候補が出ます</li>
+                    <li>気になる日をタップして日次の献立づくりへ進めます</li>
+                    <li>週あたりの作成回数には上限があります</li>
+                  </ul>
+                </li>
+              ) : null}
             </ul>
           </section>
 
@@ -462,7 +467,8 @@ export function PlusLandingPage({
               Free との違い
             </h2>
             <p className="type-small">
-              無料のまま使える機能はそのまま残ります。Plus で増えるのは、次の 3 点です。
+              無料のまま使える機能はそのまま残ります。Plus で増えるのは、次の{" "}
+              {WEEKLY_PLAN_UI_ENABLED ? 3 : 2} 点です。
             </p>
             {/* 数字 assert は testid 配下で絞る（R-C3）。裸の 1/5 は planQuota から組み立て */}
             <table className="plus-landing__compare" data-testid="plus-compare">
@@ -484,11 +490,13 @@ export function PlusLandingPage({
                   <td>なし</td>
                   <td>あり（回数に限りあり）</td>
                 </tr>
-                <tr>
-                  <th scope="row">今週の献立</th>
-                  <td>なし</td>
-                  <td>あり</td>
-                </tr>
+                {WEEKLY_PLAN_UI_ENABLED ? (
+                  <tr>
+                    <th scope="row">今週の献立</th>
+                    <td>なし</td>
+                    <td>あり</td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </section>

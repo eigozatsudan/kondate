@@ -2,7 +2,7 @@
 -- Task 2: private billing 表 + SECURITY DEFINER RPC（A6 / lock / process 冪等・stale・crash-safe）
 
 begin;
-select plan(157);
+select plan(163);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -1975,6 +1975,92 @@ select is(
     where user_id = 'f2000000-0000-4000-8000-000000000014'::uuid),
   null::timestamptz,
   'R2-fix M-3 same-second cancel_at does not overwrite'
+);
+
+-- R3（R2 修正レビュー Minor-3）: 逆の向き。保存済みの予約（値）を、古い event・同じ秒の event の
+-- null で消さない（新しい予約を消さない）
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_r3_cancel_at_newer',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 9200,
+    'user_id', 'f2000000-0000-4000-8000-000000000014',
+    'stripe_subscription_id', 'sub_r2_cancel_at',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'active',
+    'cancel_at_period_end', false,
+    'cancel_at', '2026-07-25T00:00:00.000Z',
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true,
+    'kill_source_status', null
+  )) ->> 'outcome',
+  'applied',
+  'R3 newer event with cancel_at applies'
+);
+
+select is(
+  (select cancel_at from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000014'::uuid),
+  '2026-07-25 00:00:00+00'::timestamptz,
+  'R3 newer cancel_at is stored'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_r3_cancel_at_stale_null',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 9150,
+    'user_id', 'f2000000-0000-4000-8000-000000000014',
+    'stripe_subscription_id', 'sub_r2_cancel_at',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'active',
+    'cancel_at_period_end', false,
+    'cancel_at', null,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true,
+    'kill_source_status', null
+  )) ->> 'outcome',
+  'stale_ignored',
+  'R3 older event without cancel_at is stale_ignored'
+);
+
+select is(
+  (select cancel_at from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000014'::uuid),
+  '2026-07-25 00:00:00+00'::timestamptz,
+  'R3 stale null does not erase the stored cancel_at'
+);
+
+select is(
+  public.process_billing_stripe_event(jsonb_build_object(
+    'stripe_event_id', 'evt_r3_cancel_at_same_second_null',
+    'event_type', 'customer.subscription.updated',
+    'stripe_event_created', 9200,
+    'user_id', 'f2000000-0000-4000-8000-000000000014',
+    'stripe_subscription_id', 'sub_r2_cancel_at',
+    'stripe_price_id', 'price_plus_m',
+    'status', 'active',
+    'cancel_at_period_end', false,
+    'cancel_at', null,
+    'current_period_start', '2026-07-01T00:00:00.000Z',
+    'current_period_end', '2026-08-01T00:00:00.000Z',
+    'trial_end', null,
+    'clear_past_due_since', true,
+    'kill_source_status', null
+  )) ->> 'outcome',
+  'same_second_skip',
+  'R3 same-second event without cancel_at is skipped'
+);
+
+select is(
+  (select cancel_at from private.billing_subscriptions
+    where user_id = 'f2000000-0000-4000-8000-000000000014'::uuid),
+  '2026-07-25 00:00:00+00'::timestamptz,
+  'R3 same-second null does not erase the stored cancel_at'
 );
 
 -- 禁止: insert_billing_webhook_event を public に export しない

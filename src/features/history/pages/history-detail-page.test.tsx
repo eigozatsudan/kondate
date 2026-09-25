@@ -478,6 +478,21 @@ describe("HistoryDetailPage heading (UX U1)", () => {
     expect(screen.queryByRole("heading", { level: 1, name: "献立ができました" })).toBeNull();
   });
 
+  // 最終レビュー B Minor 6: /menus と同じく、gate を開いたあとに免責文を 1 回だけ出す
+  it("shows the label disclaimer exactly once after the household gate opens", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+    renderHistoryDetail({ revalidate: () => Promise.resolve(validRevalidation) });
+    expect(await screen.findByRole("heading", { level: 1, name: "献立の詳細" })).toBeVisible();
+    // gate が開くと「この献立にする」が押せるようになる
+    expect(await screen.findByRole("button", { name: "この献立にする" })).toBeEnabled();
+    expect(screen.queryByText("この献立の対象家族の設定で確認しています")).toBeNull();
+    expect(
+      screen.getAllByText(
+        "加工品は原材料表示の確認が必要です。表示確認の記録やAI生成レシピだけでは、アレルギー対応や食べて安全であることを保証するものではありません。",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("uses 献立の詳細 as the heading for an idea history detail (I-2)", async () => {
     getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
     renderHistoryDetail();

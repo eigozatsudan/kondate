@@ -28,6 +28,13 @@ kill 期間が長い・イベント欠落が疑われる・再有効化前の差
 
 migration は既存の行の `cancel_at` を埋めない（null = 予定なし）。適用前に Customer Portal や Dashboard で `cancel_at` だけの解約予約をした利用者は、次の Webhook が届くまで /plus と設定に更新日が出続ける。すぐ直すときは次の手順を使う。
 
+この投影も強制適用（`p_force_apply=true`）なので、順序のガードを通らず、status・period・`kill_source_status` を含む既存の値を上書きする。表示だけの列を埋める作業でも課金の状態に触れるので、次を守る（R2 修正レビュー Minor-2）。
+
+- 本体の「手順」と同じく、**kill のまま**（`BILLING_ENABLED=false`）で作業するのを原則にする。
+- kill にできないときは、retrieve から実行までを 1 件ずつ短く続け、その間に届いた Webhook を上書きしないようにする。実行後は、Stripe の最新の status・period と `get_billing_entitlement_for_user` を突き合わせ、ずれていればもう一度 retrieve して投影し直す。
+- 急がないなら、手動で投影せず次の Webhook（更新や請求のイベント）を待つ方が安全。
+- `stripe_event_created` には、retrieve した時刻（Unix 秒）を入れる。強制適用では保存済みの `last_stripe_event_created` と大きい方が残るので、それより前に作られたイベントが遅れて届いても、手動で投影した新しい状態を古い状態で上書きしない。
+
 1. Stripe で、`cancel_at` が入っていて status が live（trialing / active / past_due）の subscription を探す（Dashboard の「キャンセル予定」、または API の list を `cancel_at` で絞る）。
 2. 見つけた subscription ごとに、上の「手順」3 と同じく最新の状態を retrieve し、`cancel_at` を含む投影 payload で `upsert_billing_subscription_from_stripe` を実行する。
 3. `get_billing_entitlement_for_user` の結果に `cancel_at` が入り、`plus_entitled` と `status` が変わっていないことを確かめる。

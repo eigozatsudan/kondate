@@ -441,13 +441,14 @@ docker compose --profile deploy run --rm supabase-cli db push --include-all
 - 新しい Functions は `cancel_at` を省略可能として受けるので、旧 DB でも動く。Webhook が送る `cancel_at` は、旧 DB の SQL がキーを名前で読むだけなので無視される。
 - ロールバック: Functions を以前のデプロイへ戻すと同じ 503 が起きる。戻すなら、前方修正の migration（`cancel_at` を返さない関数の再定義）と組にする。
 - 既存の行の `cancel_at` は null から始まる。migration より前に解約予定を入れた利用者は、次の Webhook まで更新日が出る。すぐ直すなら [課金 reconcile ランブック](../runbooks/billing-reconcile.md) の「cancel_at の再投影」を使う。
+- **前提: 本番に、この 2 本より前の未適用 migration が残っていないこと。** `db push --include-all` は未適用のものをすべて当てるので、残っていれば Functions を先にすると、新しい Function がまだ無い列や関数を呼び、配備のずれの間は全員の該当機能が失敗する。残っているときは、先にそれらを通常の順（migration が先）で別のリリースとして出し、cancel_at の 2 本だけが残る状態にしてから Functions を先にする（R2 修正レビュー Minor-1）。
 
 ### 5.3 推奨リリース順（要約）
 
 ```text
 1. 候補 SHA を固定（clean worktree）
 2. ローカル / CI ゲート（format・lint・typecheck・vitest・pgTAP・e2e・build）
-3. Supabase: 未適用 migration を db push（必要時のみ。cancel_at の 2 本は §5.2 の注記どおり 5 の後）
+3. Supabase: 未適用 migration を db push（必要時のみ。cancel_at の 2 本は §5.2 の注記どおり 5 の後。ほかの未適用 migration が残っていれば、先に通常の順で別リリースにする）
 4. 保護 runner: preflight:production（サーバ秘密はビルドに載せない。両 HMAC 必須）
 5. Netlify: production デプロイ（`USER_DAILY_AI_LIMIT=1` は新コードと同時。ENV 先行禁止）
 6. verify:production-deploy → smoke:production → verify:production-deploy
