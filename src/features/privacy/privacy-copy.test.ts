@@ -143,11 +143,13 @@ it("U6: never drops or reorders a character for any input, and emits no empty it
     "。。あ。。",
     "あ。い。う",
   ];
-  // 「あ」「。」「い」の 0〜6 文字の全組み合わせで、連結が元の文字列と完全一致することを確かめる
-  const alphabet = ["あ", "。", "い"];
+  // 「あ」「。」「い」「改行」「絵文字（サロゲートペア）」の 0〜5 文字の全組み合わせで、
+  // 連結が元の文字列と完全一致することを確かめる（U6 修正レビュー Minor 1: 改行と
+  // サロゲートペアでの退行も検出する）
+  const alphabet = ["あ", "。", "い", "\n", "😀"];
   const generated: string[] = [""];
   let frontier = [""];
-  for (let length = 1; length <= 6; length += 1) {
+  for (let length = 1; length <= 5; length += 1) {
     frontier = frontier.flatMap((prefix) => alphabet.map((char) => `${prefix}${char}`));
     generated.push(...frontier);
   }
@@ -160,4 +162,8 @@ it("U6: never drops or reorders a character for any input, and emits no empty it
   expect(splitConsentSentences("。")).toEqual(["。"]);
   expect(splitConsentSentences("あ。。い")).toEqual(["あ。", "。", "い"]);
   expect(splitConsentSentences("。あ")).toEqual(["。", "あ"]);
+  // 改行は文の区切りにしない。絵文字はコードポイントの途中で分けない
+  expect(splitConsentSentences("あ\n。い")).toEqual(["あ\n。", "い"]);
+  expect(splitConsentSentences("あ。\n")).toEqual(["あ。", "\n"]);
+  expect(splitConsentSentences("😀。😀")).toEqual(["😀。", "😀"]);
 });

@@ -527,6 +527,12 @@ describe("ShareConsentSettingsSection", () => {
       });
       expect(switchAfter).toHaveAttribute("aria-checked", "mixed");
       expect(switchAfter).toBeDisabled();
+      // C M-4(a): 未確定の間は「オン／オフ」のどちらの文字も出さない（サーバは ON かもしれない）
+      const switchLabel = switchAfter.closest("label");
+      expect(switchLabel).not.toBeNull();
+      if (switchLabel !== null) {
+        expect(within(switchLabel).queryByText(/^オ[ンフ]$/u)).toBeNull();
+      }
       expect(await screen.findByText(shareConsentSettingsCopy.reconcileUnconfirmed)).toBeVisible();
       expect(
         screen.getByRole("button", { name: shareConsentSettingsCopy.reconcileRetry }),

@@ -265,9 +265,17 @@ describe("HistoryPage", () => {
     expect(filter.className).not.toMatch(/min-[hw]-11/u);
     expect(filter.closest("label")).toHaveClass("min-h-11");
     expect(filter).toHaveAttribute("aria-checked", "false");
+    // C M-4(b): 横の状態の文字は見た目の補助。switch の状態と一緒に変わり、読み上げには入れない
+    const filterLabel = filter.closest("label");
+    expect(filterLabel).not.toBeNull();
+    const stateText = () =>
+      filterLabel === null ? null : within(filterLabel).getByText(/^オ[ンフ]$/u);
+    expect(stateText()).toHaveTextContent("オフ");
+    expect(stateText()).toHaveAttribute("aria-hidden", "true");
     await user.click(filter);
 
     expect(filter).toHaveAttribute("aria-checked", "true");
+    expect(stateText()).toHaveTextContent("オン");
     expect(screen.getByText("採用した献立")).toBeVisible();
     expect(screen.queryByText("通常の献立")).not.toBeInTheDocument();
   });

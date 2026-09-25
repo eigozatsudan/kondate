@@ -680,6 +680,24 @@ describe("pantry form optional details disclosure", () => {
     });
   });
 
+  it("shows the open/closed marker without putting it into the summary's spoken text (C M-2)", async () => {
+    const user = userEvent.setup();
+    render(<PantryForm saving={false} onSubmit={vi.fn()} />);
+    const summary = detailsSummary();
+    const marker = summary.querySelector('[aria-hidden="true"]');
+    expect(marker).toHaveTextContent("▸");
+    // 読み上げに使う文字（aria-hidden を除いた部分）には記号を入れない
+    const spoken = Array.from(summary.childNodes)
+      .filter((node) => !(node instanceof Element && node.getAttribute("aria-hidden") === "true"))
+      .map((node) => node.textContent ?? "")
+      .join("")
+      .trim();
+    expect(spoken).toBe("くわしく入力する（分量・単位・期限の種類・開封状態）");
+
+    await user.click(summary);
+    expect(marker).toHaveTextContent("▾");
+  });
+
   it("reveals quantity, unit, expiration type and opened state when opened", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -797,6 +815,11 @@ describe("pantry form optional details disclosure", () => {
     expect(quantity).not.toBeValid();
     expect(quantity).toBeVisible();
     expect(onSubmit).not.toHaveBeenCalled();
+    // U7 修正レビュー I2: 0 は zod の positive() にも反するため、zod 経路（setError → aria-invalid と
+    // 日本語のエラー文）で開いたのではなく、ブラウザ標準の検証（invalid イベント → details の
+    // onInvalid）で開いたことを区別する。標準の検証が送信を止めると React の submit は走らない。
+    expect(quantity).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("分量を正しく入力してください")).not.toBeInTheDocument();
   });
 
   it("opens on an invalid event from a detail field but not from an always-visible field", () => {

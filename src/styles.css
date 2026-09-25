@@ -1135,6 +1135,9 @@ textarea:focus-visible {
   margin-inline: auto;
   /*
    * 下余白は固定ナビ（.nav-item min-height 56px）の直上まで寄せる。
+   * ただしラベルは body の line-height を継ぐので、ナビの実寸は約 60px になる
+   * （56px + 8px の余白で、まだ約 4px 余る）。これ以上詰めるときは 56px ではなく
+   * 実寸を前提にする（U9 レビュー Minor 1）。
    * 以前の 96px はナビ高さ以上の空きができ、main と nav のあいだが
    * 途切れて見えた。safe-area はナビ側にも足すので、ここでも同じ分を確保する。
    */
@@ -1381,6 +1384,23 @@ dialog:not([open]) {
   [type="checkbox"][role="switch"]:checked::before {
     background: HighlightText;
   }
+
+  /*
+   * 無効は opacity だけだと強制カラーで区別しにくいので、システムの無効色 GrayText で描く
+   * （オン／オフはつまみの位置で分かる）。フォーカス枠はシステムの強調色にする（U6 M7・C M-3）。
+   */
+  [type="checkbox"][role="switch"]:disabled {
+    border-color: GrayText;
+    background: Canvas;
+  }
+
+  [type="checkbox"][role="switch"]:disabled::before {
+    background: GrayText;
+  }
+
+  [type="checkbox"][role="switch"]:focus-visible {
+    outline-color: Highlight;
+  }
 }
 
 /* スイッチ横の「オン／オフ」。見た目の補助なので控えめに（aria-hidden） */
@@ -1569,13 +1589,12 @@ dialog:not([open]) {
   display: none;
 }
 
-.pantry-details-summary::before {
-  content: "▸";
+/*
+ * ▸/▾ は summary 内の aria-hidden の span で出す（最終レビュー C M-2）。::before の content は
+ * Chromium・WebKit で summary の読み上げ名に入り、「右向き三角 くわしく入力する」と読まれるため。
+ */
+.pantry-details-marker {
   flex: 0 0 auto;
-}
-
-.pantry-details[open] > .pantry-details-summary::before {
-  content: "▾";
 }
 
 .pantry-details-body {

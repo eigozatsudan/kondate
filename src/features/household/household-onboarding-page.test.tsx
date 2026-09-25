@@ -335,10 +335,16 @@ it("saves an incomplete unsupported diet draft before requiring a kind at comple
   const weaningFood = await screen.findByRole("checkbox", {
     name: UNSUPPORTED_DIET_KIND_LABELS.weaning_food,
   });
-  // 入力欄用の .field（min-height 48px・padding）に入れず、チェックの横並びラベルで 44px を確保する
-  expect(weaningFood.closest(".field")).toBeNull();
-  expect(weaningFood.closest("label")).toHaveClass("control-label");
-  expect(weaningFood.closest("fieldset")).toHaveClass("control-group");
+  // 入力欄用の .field（min-height 48px・padding）に入れず、チェックの横並びラベルで 44px を確保する。
+  // U6 修正レビュー Minor 2: weaning_food だけでなく、すべての事情の選択肢で同じ構造であること
+  const kindLabels = Object.values(UNSUPPORTED_DIET_KIND_LABELS);
+  expect(kindLabels.length).toBeGreaterThan(1);
+  for (const label of kindLabels) {
+    const kindCheckbox = screen.getByRole("checkbox", { name: label });
+    expect(kindCheckbox.closest(".field")).toBeNull();
+    expect(kindCheckbox.closest("label")).toHaveClass("control-label");
+    expect(kindCheckbox.closest("fieldset")).toHaveClass("control-group");
+  }
   await user.click(weaningFood);
 
   expect(updateDraft).toHaveBeenNthCalledWith(

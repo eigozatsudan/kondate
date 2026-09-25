@@ -93,13 +93,20 @@ function cssRules(source: string): CssRule[] {
             priority === "important" ? `${value} !important` : value,
           );
         }
+        const selector = styleRule.selectorText.replace(/\s+/g, " ").trim();
         result.push({
-          selector: styleRule.selectorText.replace(/\s+/g, " ").trim(),
+          selector,
           declarations: parsedDeclarations,
           atRules,
           sourceOrder,
         });
         sourceOrder += 1;
+        // 最終修正レビュー M-3: CSS nesting の子規則（`.a { [type="radio"] { … } }`）も取り出す。
+        // 親の規則を「nesting」の文脈として持たせるので、条件付きの許可（@media 1 段だけ）にも
+        // top-level の許可にも当たらず、保護規則に触れていれば検出される。
+        if ("cssRules" in styleRule && styleRule.cssRules.length > 0) {
+          collect(styleRule.cssRules, [...atRules, { type: "nesting", condition: selector }]);
+        }
       } else if ("cssRules" in rule) {
         const groupingRule = rule as CSSGroupingRule;
         const type = /^@([\w-]+)/u.exec(rule.cssText.trim())?.[1]?.toLowerCase() ?? "unknown";
@@ -381,6 +388,8 @@ const allowedProtectedSelectors = new Set([
   '[type="checkbox"][role="switch"]:focus-visible',
   '[type="checkbox"][role="switch"]:disabled',
   '[type="checkbox"][role="switch"], [type="checkbox"][role="switch"]::before',
+  // R3（U6 M7・C M-3）: 強制カラーでの無効のつまみ。条件付き規則としてだけ許可する。
+  '[type="checkbox"][role="switch"]:disabled::before',
 ]);
 
 const taskRuleDeclarations: Readonly<Record<string, Readonly<Record<string, string>>>> = {
@@ -808,6 +817,22 @@ const conditionalTaskRules: readonly ConditionalTaskRule[] = [
     selector: '[type="checkbox"][role="switch"]:checked::before',
     declarations: { background: "HighlightText" },
   },
+  // R3（U6 M7・C M-3）: 強制カラーでは無効を GrayText、フォーカス枠を Highlight で描く。
+  {
+    condition: "(forced-colors: active)",
+    selector: '[type="checkbox"][role="switch"]:disabled',
+    declarations: { "border-color": "GrayText", background: "Canvas" },
+  },
+  {
+    condition: "(forced-colors: active)",
+    selector: '[type="checkbox"][role="switch"]:disabled::before',
+    declarations: { background: "GrayText" },
+  },
+  {
+    condition: "(forced-colors: active)",
+    selector: '[type="checkbox"][role="switch"]:focus-visible',
+    declarations: { "outline-color": "Highlight" },
+  },
 ];
 
 /**
@@ -843,6 +868,71 @@ function rawMediaRuleDeclarations(source: string, condition: string, selector: s
   return found;
 }
 
+/**
+ * 最終修正レビュー M-2: top-level の規則も、ソース上の宣言テキストを取り出す。
+ * jsdom が捨てる値（Canvas などのシステム色）を登録済みの規則に足しても、CSSOM 同士の比較では
+ * 変化が見えないため。@ 規則の中身と、入れ子の子規則は数えない（子規則は別に検出する）。
+ */
+function rawTopLevelRuleDeclarations(source: string, selector: string): string[][] {
+  const text = source.replace(/\/\*[\s\S]*?\*\//gu, "");
+  const found: string[][] = [];
+  let index = 0;
+  while (index < text.length) {
+    const open = text.indexOf("{", index);
+    if (open === -1) break;
+    const prelude = text.slice(index, open);
+    // 直前の `;` で終わる @import などは prelude から外す
+    const statementStart = prelude.lastIndexOf(";") + 1;
+    const head = prelude.slice(statementStart).replace(/\s+/gu, " ").trim();
+    let depth = 1;
+    let cursor = open + 1;
+    while (cursor < text.length && depth > 0) {
+      if (text[cursor] === "{") depth += 1;
+      if (text[cursor] === "}") depth -= 1;
+      cursor += 1;
+    }
+    if (!head.startsWith("@") && head === selector) {
+      const body = text.slice(open + 1, cursor - 1);
+      // 子規則（nesting）は取り除き、宣言だけを並べる
+      const withoutNested = body.replace(/[^{};]*\{[^{}]*\}/gu, "");
+      found.push(
+        withoutNested
+          .split(";")
+          .map((declaration) => declaration.replace(/\s+/gu, " ").trim())
+          .filter((declaration) => declaration !== ""),
+      );
+    }
+    index = cursor;
+  }
+  return found;
+}
+
+/** 登録した宣言と、ソース上のすべての同じセレクタの block が完全一致するか */
+function rawBlocksMatch(
+  rawBlocks: readonly string[][],
+  expected: Readonly<Record<string, string>>,
+): boolean {
+  const expectedRaw = Object.entries(expected)
+    .map(([property, value]) => `${property}: ${value}`)
+    .sort();
+  return (
+    rawBlocks.length > 0 &&
+    rawBlocks.every(
+      (declarations) =>
+        declarations.length === expectedRaw.length &&
+        [...declarations].sort().every((declaration, index) => declaration === expectedRaw[index]),
+    )
+  );
+}
+
+/** [type=…] の top-level 登録規則は、ソース上の宣言も完全一致で照合する */
+function topLevelRawMatches(source: string, selector: string): boolean {
+  if (!/\[\s*type/iu.test(selector)) return true;
+  const expected = taskRuleDeclarations[selector];
+  if (expected === undefined) return true;
+  return rawBlocksMatch(rawTopLevelRuleDeclarations(source, selector), expected);
+}
+
 /** 条件付き規則のためだけに許可したセレクタ。top-level に現れたら宣言が固定されないので検出する。 */
 const conditionalOnlySelectors = new Set(
   conditionalTaskRules
@@ -858,19 +948,9 @@ function isRegisteredConditionalRule(rule: CssRule, source: string): boolean {
       return false;
     }
     if (!hasExactDeclarations(rule.declarations, expected.declarations)) return false;
-    const expectedRaw = Object.entries(expected.declarations)
-      .map(([property, value]) => `${property}: ${value}`)
-      .sort();
-    const rawBlocks = rawMediaRuleDeclarations(source, expected.condition, expected.selector);
-    return (
-      rawBlocks.length > 0 &&
-      rawBlocks.every(
-        (declarations) =>
-          declarations.length === expectedRaw.length &&
-          [...declarations]
-            .sort()
-            .every((declaration, index) => declaration === expectedRaw[index]),
-      )
+    return rawBlocksMatch(
+      rawMediaRuleDeclarations(source, expected.condition, expected.selector),
+      expected.declarations,
     );
   });
 }
@@ -1037,14 +1117,28 @@ function hasRequiredDeclarations(
   return true;
 }
 
-function touchesProtectedContract(selector: string): boolean {
+/** CSS のエスケープ（`\\79 ` や `\\y`）をほどく。`[t\\ype=radio]` も `[type=radio]` と同じに扱う */
+function unescapeCssIdentifiers(selector: string): string {
+  return selector
+    .replace(/\\([0-9a-f]{1,6})\s?/giu, (_match, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\(.)/gu, "$1");
+}
+
+function touchesProtectedContract(rawSelector: string): boolean {
+  if (protectedSelectorFragments.some((fragment) => rawSelector.includes(fragment))) return true;
+  const selector = unescapeCssIdentifiers(rawSelector);
   if (protectedSelectorFragments.some((fragment) => selector.includes(fragment))) return true;
   // 要素名 input を書かずに [type="radio"] などの属性セレクタだけで書いた規則も、
   // 保護対象のウィザード選択肢（.guided-planner-theme .wizard-option input）に届く。
   // 要素セレクタと同じく保護規則として扱い、許可リストと完全一致の宣言で固定させる。
   // HTML の属性名は大文字小文字を区別しないため i で照合し、[type] の存在判定も含める。
-  if (/\[\s*type\s*(?:[~|^$*]?=|\])/iu.test(selector)) return true;
-  return /(?:^|[\s>+~,(])(?:body|button|a|input|select|textarea)(?=$|[\s>+~,.#:[\]()])/u.test(
+  // 最終修正レビュー M-1: 名前空間付き（`[*|type=…]`・`[|type=…]`・`[svg|type=…]`）も HTML の
+  // input に届くので同じに扱う。
+  if (/\[\s*(?:(?:[\w-]*|\*)\|)?type\s*(?:[~|^$*]?=|\])/iu.test(selector)) return true;
+  // HTML の要素名も大文字小文字を区別しない（`INPUT` も input に当たる）
+  return /(?:^|[\s>+~,(|])(?:body|button|a|input|select|textarea)(?=$|[\s>+~,.#:[\]()])/iu.test(
     selector,
   );
 }
@@ -1064,7 +1158,9 @@ function unexpectedProtectedSelectors(source: string, requireEveryTaskRule = fal
           rule.atRules[0].condition === "(prefers-reduced-motion: reduce)" &&
           hasExactDeclarations(rule.declarations, { animation: "none" });
         const topLevelContract =
-          rule.atRules.length === 0 && hasExactDeclarations(rule.declarations, taskDeclarations);
+          rule.atRules.length === 0 &&
+          hasExactDeclarations(rule.declarations, taskDeclarations) &&
+          topLevelRawMatches(source, rule.selector);
         return (
           !reducedMotionException && !topLevelContract && !isRegisteredConditionalRule(rule, source)
         );
@@ -1176,6 +1272,12 @@ function representativeElements(): Element[] {
         <div class="progress-indicator"><div class="progress-track"><div class="progress-value"></div></div></div>
         <div class="inline-notice inline-notice-error"><strong class="inline-notice-title">注意</strong><div class="inline-notice-body">本文</div></div>
         <div class="review-row"><p class="review-row-label">項目</p><p class="review-row-value">値</p></div>
+        <!-- 最終修正レビュー M-1: :checked などの状態擬似クラスだけで書いた規則も、ウィザードの
+             選択肢のラジオ・チェックボックスに届くことを element.matches で拾う -->
+        <div class="wizard-option-list">
+          <label class="wizard-option"><input type="radio" name="r" checked><span>候補</span></label>
+          <label class="wizard-option"><input type="checkbox" checked><span>候補</span></label>
+        </div>
       </div>
       <footer class="wizard-actions"><button class="wizard-action primary-button">次へ</button></footer>
     </section>
@@ -1208,7 +1310,9 @@ function unexpectedRepresentativeOverrides(source: string): string[] {
         if (reducedMotionException) return false;
         if (isRegisteredConditionalRule(rule, source)) return false;
         return (
-          rule.atRules.length !== 0 || !hasExactDeclarations(rule.declarations, taskDeclarations)
+          rule.atRules.length !== 0 ||
+          !hasExactDeclarations(rule.declarations, taskDeclarations) ||
+          !topLevelRawMatches(source, rule.selector)
         );
       }
       const globalDeclarations = globalRuleDeclarations[rule.selector];
@@ -1737,6 +1841,96 @@ describe("guided planner theme", () => {
       ':is([TYPE="radio"])',
       "[type]",
     ]);
+  });
+
+  it("treats namespaced, escaped, and upper-case input selectors as protected (final-fix M-1)", () => {
+    const fixture = `
+      [*|type="radio"] { width: 44px; height: 44px; accent-color: #1f6feb; }
+      [|type=radio] { margin: 4px; }
+      [t\\ype="radio"] { margin: 4px; }
+      [\\74 ype="checkbox"] { margin: 4px; }
+      INPUT { width: 44px; }
+      .unrelated [data-type="radio"] { margin: 0; }
+    `;
+
+    expect(unexpectedProtectedSelectors(fixture)).toEqual([
+      '[*|type="radio"]',
+      "[|type=radio]",
+      '[t\\ype="radio"]',
+      '[\\74 ype="checkbox"]',
+      "INPUT",
+    ]);
+  });
+
+  it("detects state pseudo-class rules that reach the wizard options (final-fix M-1)", () => {
+    const fixture = `
+      :checked { accent-color: blue; }
+      :default { outline: 2px solid blue; }
+      .unrelated:checked { margin: 0; }
+    `;
+
+    expect(unexpectedRepresentativeOverrides(fixture)).toEqual([":checked", ":default"]);
+  });
+
+  it("compares registered [type=…] top-level rules with their source text (final-fix M-2)", () => {
+    // jsdom は Canvas などのシステム色を宣言ごと捨てるので、CSSOM だけでは差が見えない
+    const registered = `
+      [type="checkbox"][role="switch"]:checked {
+        border-color: var(--primary);
+        background: var(--primary);
+      }
+    `;
+    const withDroppedSystemColor = `
+      [type="checkbox"][role="switch"]:checked {
+        border-color: var(--primary);
+        background: var(--primary);
+        background: Canvas;
+      }
+    `;
+
+    expect(unexpectedProtectedSelectors(registered)).toEqual([]);
+    expect(unexpectedProtectedSelectors(withDroppedSystemColor)).toEqual([
+      '[type="checkbox"][role="switch"]:checked',
+    ]);
+    expect(unexpectedRepresentativeOverrides(withDroppedSystemColor)).toEqual([
+      '[type="checkbox"][role="switch"]:checked',
+    ]);
+  });
+
+  it("detects protected rules inside @layer, @container, and CSS nesting (final-fix M-3)", () => {
+    const layer = `@layer x { [type="radio"] { width: 44px; } }`;
+    const container = `@container (min-width: 1px) { .guided-planner-theme .primary-button { color: transparent; } }`;
+    const nesting = `.app-shell { [type="radio"] { width: 44px; } }`;
+    const nestingWithAmpersand = `.app-shell { & .primary-button { color: transparent; } }`;
+
+    expect(unexpectedProtectedSelectors(layer)).toEqual(['[type="radio"]']);
+    expect(unexpectedProtectedSelectors(container)).toEqual([
+      ".guided-planner-theme .primary-button",
+    ]);
+    expect(unexpectedProtectedSelectors(nesting)).toEqual(['& [type="radio"]']);
+    expect(unexpectedProtectedSelectors(nestingWithAmpersand)).toEqual(["& .primary-button"]);
+  });
+
+  it("registers the forced-colors disabled and focus rules for the switch exactly (U6 M7, C M-3)", () => {
+    const loosened = `
+      @media (forced-colors: active) {
+        [type="checkbox"][role="switch"]:disabled { border-color: GrayText; }
+        [type="checkbox"][role="switch"]:disabled::before { background: CanvasText; }
+        [type="checkbox"][role="switch"]:focus-visible { outline-color: Highlight; outline-width: 0; }
+      }
+    `;
+
+    expect(unexpectedProtectedSelectors(loosened)).toEqual([
+      '[type="checkbox"][role="switch"]:disabled',
+      '[type="checkbox"][role="switch"]:disabled::before',
+      '[type="checkbox"][role="switch"]:focus-visible',
+    ]);
+    // 条件付き専用の :disabled::before は top-level では通さない
+    expect(
+      unexpectedProtectedSelectors(
+        `[type="checkbox"][role="switch"]:disabled::before { background: GrayText; }`,
+      ),
+    ).toEqual(['[type="checkbox"][role="switch"]:disabled::before']);
   });
 
   it("fixes the U6 checkbox, radio, and switch rules to their exact declarations", () => {

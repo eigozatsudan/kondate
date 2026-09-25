@@ -230,6 +230,10 @@ export function PantryForm({
             }}
           >
             <summary className="pantry-details-summary">
+              {/* 開閉の記号は見た目だけ。読み上げ名に入れない（最終レビュー C M-2） */}
+              <span className="pantry-details-marker" aria-hidden="true">
+                {detailsOpen ? "▾" : "▸"}
+              </span>
               くわしく入力する（分量・単位・期限の種類・開封状態）
             </summary>
             <div className="pantry-details-body">
