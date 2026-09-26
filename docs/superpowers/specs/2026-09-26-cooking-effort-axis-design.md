@@ -22,8 +22,8 @@ system プロンプトへ【手間】段落を載せ、揚げ物・蒸し物な�
 ひねり軸との違いは次の 2 点だけである。
 
 1. **再生成（`regenerate_menu` / `regenerate_dish`）にも効く。** 段落は new_menu の system 組み立てと、
-   再生成が使う base の system 組み立ての両方に載せる。値は共用の `preferences` payload に載せる
-   （§4.3）。作り直した結果に揚げ物が出ると、この軸を選んだ意味が失われるためである。
+   再生成が使う base の system 組み立ての両方に載せる。段落を載せるときは、値も共用の `preferences`
+   payload に載せる（§4.3）。作り直した結果に揚げ物が出ると、この軸を選んだ意味が失われるためである。
 2. **全役割（main / side / soup / staple）にかかる。** ひねりは main 限定だったが、手間は献立全体の
    負担で決まる。週献立は出力が主菜だけなので、主菜にかかる。
 
@@ -246,8 +246,10 @@ system 文に 1 回だけ載る既存の規約（学習が載る版では多様�
 `generation-prompt.ts` の組み立ては次の 3 経路に分かれており、すべてに手を入れる。
 
 - **payload**: `buildBaseGenerationMessages` の idea 分岐と household 分岐は、それぞれ別の `preferences`
-  オブジェクトを組み立てている。`PromptPreferences` 型に `effortPreference` を足せば両方で必須になるので、
-  両方に `effortPreference: context.submission.effortPreference` を足す。この base は new_menu と
+  オブジェクトを組み立てている。`PromptPreferences` 型に任意キー `effortPreference?: "easy"` を足し、
+  段落を載せるとき（下の判定が真のとき）だけ、両方の分岐で `effortPreference: "easy"` を載せる。
+  `standard` / 未指定 / kill-switch off ではキーごと出さない（ひねりの `noveltyExcludedDishes` と同じ扱い）。
+  こうすると kill-switch で値も消え、既存の payload を検査するテストも変わらない。この base は new_menu と
   再生成の両方で使われるため、再生成にも値が載る。
 - **再生成の system**: `buildSystemPrompt` は現在 `targetMode` しか受け取らない。段落を載せるかどうかを
   判断できるよう、引数に `effortEnabled: boolean`（または submission）を足す。呼び出しは
@@ -257,11 +259,13 @@ system 文に 1 回だけ載る既存の規約（学習が載る版では多様�
   そのため、こちらにも `effortEnabled` を足し、段落を novelty の後、`GENERATION_SYSTEM_PROMPT_SEASON` の直前に
   置く。
 - **判定**: `effortPreference === "easy"` かつ kill-switch が on のときだけ真とする。1 関数
-  （例: `shouldIncludeEffortParagraph(submission)`）にまとめ、上の呼び出し元すべてから使う。
+  `shouldIncludeEffortHints(flag, effortPreference)` にまとめ、上の呼び出し元すべてから使う。`flag` には
+  呼び出し側で import した `EFFORT_HINTS_ENABLED` を渡す（`isTasteHintsEnabled` と同型。モジュール内で
+  定数を直接読むと、*-off テストの mock が効かない）。
 - **repair 経路**: repair は system を組み直さず、初回のメッセージをそのまま使う。初回に段落が入っていれば
   repair にも残るので、repair 側には何もしない。
-- **週献立**: `weekly-plan-prompt.ts` の `preferences` に `effortPreference` を足し、`easy` かつ kill-switch
-  が on のときだけ system 文へ `WEEKLY_EFFORT_SENTENCE` を足す。位置は priorityIngredients の文
+- **週献立**: `weekly-plan-prompt.ts` では、`easy` かつ kill-switch が on のときだけ、`preferences` へ
+  `effortPreference: "easy"` を載せ、system 文へ `WEEKLY_EFFORT_SENTENCE` を足す。位置は priorityIngredients の文
   （「preferences.priorityIngredients に挙げた食材は…取り入れてください。」）の直後、allergen の文の前とする。
 
 ### 4.4 触らないもの
@@ -323,8 +327,8 @@ radio 2 択（「標準」／「手間のかかる料理は避ける」、`name=
 | --- | --- |
 | 契約 (`planner.test.ts`, `weekly-plan.test.ts`) | キー欠損を null に読む。`easy` / `standard` / null を受け付ける。enum 外の値を拒否する（リクエスト契約） |
 | 型 overlay (`src/shared/types/database.test.ts`) | `p_effort_preference: null` を渡せる。キー union に含まれる |
-| プロンプト (`generation-prompt.test.ts`, `regeneration-prompt.test.ts`) | `easy` のときだけ【手間】段落と payload 値が載る。null / `standard` では段落が無い。idea / household の両分岐、`regenerate_menu` / `regenerate_dish` にも載る。段落が SEASON の直前（new_menu では novelty の後）にある。【家庭キッチン】より優先する旨の文を含む。優先順位の文が「手間」を含む |
-| kill-switch (`generation-prompt-effort-off.test.ts` 新設) | flag off なら `easy` でも段落が載らない（`generation-prompt-novelty-off.test.ts` と同型） |
+| プロンプト (`generation-prompt.test.ts`, `regeneration-prompt.test.ts`) | `easy` のときだけ【手間】段落と payload 値が載る。null / `standard` では段落も payload のキーも無い。idea / household の両分岐、`regenerate_menu` にも載る（`regenerate_dish` は同じ base builder を通るため `regenerate_menu` で代表させる。`regenerate_dish` の組み立てには実データの promptDto が要る）。段落が SEASON の直前（new_menu では novelty の後）にある。【家庭キッチン】より優先する旨の文を含む。優先順位の文が「手間」を含む |
+| kill-switch (`generation-prompt-effort-off.test.ts` 新設) | flag off なら `easy` でも段落も payload 値も載らない（`generation-prompt-novelty-off.test.ts` と同型） |
 | 週献立プロンプト (`weekly-plan-prompt.test.ts`) | `easy` のときだけ `WEEKLY_EFFORT_SENTENCE` と payload 値が載る。文に「生地」「包む」を含む |
 | 週献立サービス (`weekly-plan-service` のテスト) | snapshot 書き込み・`buildResultFromRow`・replay・成功レスポンスで値が落ちない。導入前 snapshot（キー無し）と範囲外値は `catch(null)` で null になり、GET が 500 にならない |
 | ウィザード (`planner-wizard.test.tsx`, `model/planner-wizard.test.ts`) | 段の順序、前後遷移、確認画面からの編集往復、スキップで `effortPreference` が null になること、確認画面の戻るが novelty のままであること |
@@ -399,6 +403,5 @@ snapshot RPC の戻り値にある未知キー `effort_preference` で parse に
 
 - リリース 2 の Functions を戻すときは、**リリース 1 の配備まで**に限る。それより前へ戻すと、新 DB の
   `effort_preference` キーで new_menu が失敗する。DB は破壊的に戻さず、前方修正で直す（README の既定どおり）。
-- 不具合時は `EFFORT_HINTS_ENABLED` を false にすると、段落と週献立の 1 文が消える。payload の
-  `effortPreference` 値は残るため、モデルが値から意図を汲む余地はあり、完全な無効化ではない。
-  完全に止める必要が出た場合は、flag off のとき payload へ null を載せる変更を別途行う。UI は残る。
+- 不具合時は `EFFORT_HINTS_ENABLED` を false にすると、段落・週献立の 1 文・payload の値がすべて消える。
+  UI は残る。
