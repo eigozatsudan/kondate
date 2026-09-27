@@ -575,8 +575,8 @@ function buildBaseGenerationMessages(
  * 再生成: base + regeneration_constraints。多様性マーカーも recentDishHints キーも付けない。
  * 手間段落は base 側で載る。
  * seasonContext はサーバー時計のみ（クライアント注入不可）。
- * buildBaseGenerationMessages は hints 引数を取らない（locked）。手間は hints ではなく判定済みの
- * boolean だけを渡す。
+ * buildBaseGenerationMessages は多様性 hints（recentDishHints など）の引数を取らない。例外は手間で、
+ * 再生成の system と payload にも載せる必要があるため、ここで判定した boolean（effortEnabled）だけを渡す。
  */
 export function buildGenerationMessages(
   context: GenerationExecutionContext,

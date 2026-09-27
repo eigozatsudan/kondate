@@ -372,7 +372,7 @@ radio 2 択（「標準」／「手間のかかる料理は避ける」、`name=
 | プロンプト (`generation-prompt.test.ts`) | `easy` のときだけ【手間】段落と payload 値が載る。null / `standard` では段落も payload のキーも無い。idea / household の両分岐、`regenerate_menu` にも載る。再生成の通し（保存済み `preference_snapshot.submission` → `regeneration-adapter` の `buildCurrentContext` → `loadRegenerationExecutionContext` → プロンプト）は `regeneration-context.test.ts` で `regenerate_menu` と `regenerate_dish` の両方を名指しで確かめる。段落が SEASON の直前（new_menu では novelty の後）にある。【家庭キッチン】より優先する旨の文、メイン食材・使い切り・memo が優先する旨の文、安全のための下処理が優先する旨の文を含む。優先順位の文が「手間」を含む |
 | kill-switch (`generation-prompt-effort-off.test.ts`、`weekly-plan-prompt-effort-off.test.ts` 新設) | flag off なら `easy` でも段落も payload 値も載らない。new_menu・`regenerate_menu`・週献立のそれぞれで固定する（`generation-prompt-novelty-off.test.ts` と同型） |
 | 週献立プロンプト (`weekly-plan-prompt.test.ts`) | `easy` のときだけ `WEEKLY_EFFORT_SENTENCE` と payload 値が載る。文に「生地」「包む」、安全優先の文を含む |
-| 週献立サービス (`weekly-plan-service` のテスト) | snapshot 書き込み・`buildResultFromRow`・replay・成功レスポンスで値が落ちない。導入前 snapshot（キー無し）と範囲外値は `catch(null)` で null になり、GET が 500 にならない |
+| 週献立サービス (`weekly-plan-service` のテスト) | snapshot 書き込み・`buildResultFromRow`・replay・成功レスポンスで値が落ちない。導入前 snapshot（キー無し）と範囲外値は `catch(null)` で null になり、GET が 500 にならない。値が null のとき、成功レスポンスと GET の応答から `effortPreference` キーごと落ち、保存される snapshot には null のまま残ること（§3.5、`weekly-plan-service.pipeline.test.ts`。replay も同じ `runWeeklyPlan` の出口で落とす） |
 | ウィザード (`planner-wizard.test.tsx`, `model/planner-wizard.test.ts`) | 段の順序、前後遷移、確認画面からの編集往復、スキップで `effortPreference` が null になること、確認画面の戻るが novelty のままであること |
 | 下書き保存 (`use-draft-autosave` のテスト) | 手間だけを選んだ下書きが空扱いされず保存される |
 | 確認画面・週献立フォーム | 行や fieldset の表示と、選択が送信 payload に載ること |

@@ -275,15 +275,25 @@ describe("loadGenerationContext", () => {
 
   it("rejects an unknown effort_preference value", async () => {
     arrangeLoader({ snapshotData: [{ ...snapshot, effort_preference: "wild" }] });
-    await expect(
-      loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
-    ).rejects.toMatchObject({ code: "invalid_request" });
-    // strict の未知キー拒否（unrecognized_keys）ではなく、effort_preference の enum で落ちていることを固定する。
-    // invalid_request だけだと、列の宣言が消えても strict で同じく落ちて空洞になる
-    const rejected = snapshotRowSchema.safeParse({ ...snapshot, effort_preference: "wild" });
-    expect(rejected.error?.issues).toEqual([
-      expect.objectContaining({ code: "invalid_value", path: ["effort_preference"] }),
-    ]);
+    const parseSpy = vi.spyOn(snapshotRowSchema, "safeParse");
+    try {
+      await expect(
+        loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
+      ).rejects.toMatchObject({ code: "invalid_request" });
+      // strict の未知キー拒否（unrecognized_keys）ではなく、effort_preference の enum で落ちていることを固定する。
+      // invalid_request だけだと、列の宣言が消えても strict で同じく落ちて空洞になる。
+      // スキーマを別に parse するのではなく、ローダーが実際に呼んだ parse の結果を見る
+      expect(parseSpy).toHaveBeenCalledTimes(1);
+      const rejected = parseSpy.mock.results[0]?.value as ReturnType<
+        typeof snapshotRowSchema.safeParse
+      >;
+      expect(rejected.success).toBe(false);
+      expect(rejected.error?.issues).toEqual([
+        expect.objectContaining({ code: "invalid_value", path: ["effort_preference"] }),
+      ]);
+    } finally {
+      parseSpy.mockRestore();
+    }
   });
 
   it("maps every effort preference value from the snapshot row", async () => {
