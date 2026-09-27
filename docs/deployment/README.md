@@ -447,19 +447,29 @@ docker compose --profile deploy run --rm supabase-cli db push --include-all
 
 この migration は 2 回に分けて出す。
 
-1. **リリース 1（読みの拡張だけ。migration なし）**: 新しい形を受け取るだけのコミット（`feat(planner): 手間軸 effortPreference を読みの側だけ先に受け取れるようにする`）までを Netlify へ出す。snapshot 行・planner の契約・週献立の契約が `effortPreference` を任意キーとして受ける。migration は当てない。
-2. **リリース 2（§5.2 の通常の順）**: migration を当て、適用を確認してから Netlify を出す。
+1. **リリース 1（読みの拡張だけ。migration なし）**: 新しい形を受け取るだけのコミット **`db418a2d`**（件名 `feat(planner): 手間軸 effortPreference を読みの側だけ先に受け取れるようにする`）までを Netlify へ出す。snapshot 行・planner の契約・週献立の契約が `effortPreference` を任意キーとして受ける。**migration は当てない（`db push` しない）。**
+2. **待ち時間（少なくとも 24 時間）**: リリース 1 の配信後、利用者の開いたままのタブがリリース 1 以降の画面へ入れ替わるまで、**少なくとも 24 時間置いてから**リリース 2 へ進む。リリース 1 より前の画面は契約が strict で `effortPreference` を知らないため、リリース 2 の応答を受けると parse に失敗する。週献立の結果は、手間が null のときキーごと返さないので（`weekly-plan-service.ts` の `toWeeklyPlanResponseData`）影響を「手間のかかる料理は避ける」を選んだ週献立だけに減らしてあるが、その週献立の結果表示と、日次の献立の作り直し（保存済みの `preference_snapshot.submission` は null でも `effortPreference` キーを持つ）は古いタブで失敗する。
+3. **リリース 2（§5.2 の通常の順）**: migration を当て、適用を確認してから Netlify を出す。
 
-**local `main` はリリース 1 の後のコミットも既に積んでいるため、この 2 リリースは同一ブランチの `git push` 1 回では分けられない。** 本 README は production branch 名を固定していない（§4.3「2. production branch を決める」— 運用者が決めた名前に読み替える）ので、以下は `<本番デプロイ対象のブランチ>` をその名前に置き換えて読む。
+migration の適用は、次の項目で確認する（コマンドは §8 の `supabase-cli migration list` を使う。それ以外は運用者が普段使っている SQL の実行手段で確かめる）。
 
-- **Git 連携（継続デプロイ）の場合**: `git push origin <release-1 のコミット>:<本番デプロイ対象のブランチ>` でリリース 1 のコミットだけを production branch の先端にし、デプロイと動作確認を終える。その後 migration を当てて確認し、最後に `git push origin <release-2 の先端>:<本番デプロイ対象のブランチ>` で残りを出す。
-- **CLI 直デプロイ（§5.1 の `netlify-cli deploy --build --prod`）の場合**: リリース 1 のコミットへ worktree を合わせて（`git checkout <release-1 のコミット>`）から `deploy --build --prod` を実行し、デプロイと動作確認を終える。その後 migration を当てて確認し、最後にリリース 2 の先端（例えば `main`）へ戻して再度 `deploy --build --prod` する。
+- `migration list` で `20260927120000` が本番側（Remote）に適用済みとして出る。
+- `public.generation_drafts` と `private.generation_draft_submission_versions` に `effort_preference` 列がある。
+- `public.save_generation_draft` が 15 引数版の 1 つだけである（14 引数版が残っていない）。
+- PostgREST が新しい列と関数を認識している（スキーマキャッシュが新しい定義を読んでいる）。認識していないと、リリース 2 の画面の下書き読み込みと保存が失敗する。
+
+**リリース 1 と 2 のコミットが同じブランチに並んでいる場合は、この 2 リリースは同一ブランチの `git push` 1 回では分けられない。** 本 README は production branch 名を固定していない（§4.3「2. production branch を決める」— 運用者が決めた名前に読み替える）ので、以下は `<本番デプロイ対象のブランチ>` をその名前に置き換えて読む。
+
+- **Git 連携（継続デプロイ）の場合**: `git push origin db418a2d:<本番デプロイ対象のブランチ>` でリリース 1 のコミットだけを production branch の先端にし、デプロイと動作確認を終える。24 時間以上置いてから migration を当てて確認し、最後に `git push origin <release-2 の先端>:<本番デプロイ対象のブランチ>` で残りを出す。
+- **CLI 直デプロイ（§5.1 の `netlify-cli deploy --build --prod`）の場合**: リリース 1 のコミットへ worktree を合わせて（`git checkout db418a2d`）から `deploy --build --prod` を実行し、デプロイと動作確認を終える。24 時間以上置いてから migration を当てて確認し、最後にリリース 2 の先端（例えば `main`）へ戻して再度 `deploy --build --prod` する。
+- どちらのリリースでも、§5.3 の preflight（`preflight:production`）と配信後の確認（`verify:production-deploy` → `smoke:production` → `verify:production-deploy`）をそれぞれ回す。
 - どちらの方法でも、リリース 1 だけを出した状態と migration 未適用の状態が揃うまでは、リリース 2 のコミットを production 側へ進めない。
 - 以前の Functions は snapshot RPC の戻り値を strict に解析する。リリース 1 を飛ばして migration を当てると、Netlify を出すまでの間、全員の新規献立生成が `invalid_request` になる。
 - **リリース 2 の画面が migration より先に本番へ出た場合、下書きの保存だけでなく読み込みも壊れる。** `getPlannerDraft`（`src/features/planner/planner-api.ts`）は `effort_preference` 列を明示的に select するため、その列が無い DB に対しては PostgREST が未知列エラーを返す。下書きの保存が失敗するだけでなく、下書きの読み込み自体が失敗して planner 全体が全員分壊れる。**Git 連携の自動デプロイが有効なら、リリース 2 のコミットを push する前に一時停止する。** migration の適用を確認してから再開・デプロイする。
-- 旧ブラウザは `p_effort_preference` を送らないが、引数が `default null` なので下書き保存は通る。ただし切り替え中に旧画面のタブから保存すると、手間の選択は null に戻る（利用者が選び直せば済むので許容している）。
+- 旧ブラウザは `p_effort_preference` を送らないが、引数が `default null` なので下書き保存は通る。ただし**リリース 2 より前の画面のタブが残っている間**にそのタブから保存すると、手間の選択は null に戻る（利用者が選び直せば済むので許容している）。
 - 週献立の snapshot は jsonb で、行の読みは strict ではないので影響しない。
 - ロールバック: リリース 2 を戻すのは**リリース 1 の配備まで**に限る。リリース 1 まで戻すと手間の指定は無視されるが、リリース 2 の間に作られた献立・週献立・下書きはそのまま読め、作り直しもできる。それより前へ戻すと、new_menu が失敗し、リリース 2 の間に作られた献立の作り直しも 422 になる。DB は破壊的に戻さない。
+- 止め方: kill-switch の `EFFORT_HINTS_ENABLED`（`netlify/functions/_shared/effort-hints.ts`）は env ではなく定数なので、false にするにはコードを変えて再デプロイする必要がある。急いで止めるなら、Netlify でリリース 1（`db418a2d`）のデプロイを publish し直すのが最速である（DB は戻さない）。
 - **前提: 本番に、この migration より前の未適用 migration が残っていないこと。** 残っていれば、先にそれらを通常の順で別のリリースとして出す。
 
 ### 5.3 推奨リリース順（要約）
@@ -467,7 +477,7 @@ docker compose --profile deploy run --rm supabase-cli db push --include-all
 ```text
 1. 候補 SHA を固定（clean worktree）
 2. ローカル / CI ゲート（format・lint・typecheck・vitest・pgTAP・e2e・build）
-3. Supabase: 未適用 migration を db push（必要時のみ。cancel_at の 2 本は §5.2 の注記どおり 5 の後。effort_preference は §5.2 の注記どおりリリース 1・2 の 2 回に分けて push/デプロイする。ほかの未適用 migration が残っていれば、先に通常の順で別リリースにする）
+3. Supabase: 未適用 migration を db push（必要時のみ。cancel_at の 2 本は §5.2 の注記どおり 5 の後。effort_preference は §5.2 の注記どおりリリース 1・2 の 2 回に分けて出す。リリース 1 では migration を当てない（db push しない）で 4〜7 だけを回し、24 時間以上置いてからリリース 2 で db push → 適用確認 → 4〜7 を回す。ほかの未適用 migration が残っていれば、先に通常の順で別リリースにする）
 4. 保護 runner: preflight:production（サーバ秘密はビルドに載せない。両 HMAC 必須）
 5. Netlify: production デプロイ（`USER_DAILY_AI_LIMIT=1` は新コードと同時。ENV 先行禁止）
 6. verify:production-deploy → smoke:production → verify:production-deploy

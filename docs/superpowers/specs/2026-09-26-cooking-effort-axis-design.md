@@ -446,16 +446,26 @@ snapshot RPC の戻り値にある未知キー `effort_preference` で parse に
    値が null でも全件 `preference_snapshot.submission` に `effortPreference` キーを持つ。契約が strict のまま
    だと、戻した後はそれらの献立の作り直しが 422 になり、画面でも作り直しと対象変更が消える。週献立でも、
    リリース 2 の画面を開いたままのタブの送信と、sessionStorage の試行メタデータが strict parse で落ちる。
-2. **リリース 2（通常の順）**: migration を適用し、続けて Netlify（フロントと Functions）を出す。
+   リリース 1 はコミット `db418a2d` で、件名だけでなく SHA で特定する。リリース 1 では migration を当てない
+   （`db push` しない）。preflight と配信後の確認（README §5.3 の 4〜7）はリリース 1・2 のそれぞれで回す。
+2. **待ち時間**: リリース 1 の配信後、既存のタブがリリース 1 以降の画面へ入れ替わるまで、**少なくとも 24 時間**
+   置いてからリリース 2 へ進む（人間の決定）。リリース 1 より前の画面は契約が strict で `effortPreference` を
+   知らず、リリース 2 の応答で parse に失敗する。週献立の応答は null のときキーを出さない（§3.5）ので、影響は
+   `easy` を選んだ週献立の結果表示に減らしてある。日次の献立の作り直しは、保存済みの
+   `preference_snapshot.submission` が null でもキーを持つため残る（保存形は変えない）。
+3. **リリース 2（通常の順）**: migration を適用し、続けて Netlify（フロントと Functions）を出す。
    - migration 後・Netlify 配備前の間も、リリース 1 の Function は新しいキーを読める。
    - 旧ブラウザは `p_effort_preference` を送らないが、`default null` により 15 引数版に解決される（§3.2 の 3）。
    - 週献立の snapshot 行は jsonb で、行 schema は strict ではない。ずれの影響は無い。
    - **migration の適用を確認してから Netlify を出す。** Git 連携の自動デプロイが有効なら、リリース 2 の
      push の前に一時停止する。migration より先に画面が出ると、`p_effort_preference` 付きの呼び出しに合う
      関数が DB に無く、下書き保存が全員失敗する。
-   - 配備の切り替え中に旧画面のタブや別の端末が下書きを保存すると、`p_effort_preference` を送らないため
-     `default null` で手間の選択が null に戻る。切り替え中の一時的な事象で、利用者が選び直せば済むため
-     許容する（既存値を保つ分岐は入れない）。
+   - migration の適用は、`migration list` での適用済み表示、両テーブルの `effort_preference` 列、
+     `save_generation_draft` が 15 引数版の 1 つだけであること、PostgREST が新しい定義を認識していることで
+     確かめる（README §5.2 の注記に列挙する）。
+   - **リリース 2 より前の画面のタブが残っている間**に、そのタブや別の端末が下書きを保存すると、
+     `p_effort_preference` を送らないため `default null` で手間の選択が null に戻る。利用者が選び直せば
+     済むため許容する（既存値を保つ分岐は入れない）。
 
 同じ release に入れる単位は次のとおりである。
 
@@ -473,4 +483,5 @@ snapshot RPC の戻り値にある未知キー `effort_preference` で parse に
   `effort_preference` キーで new_menu が失敗し、リリース 2 で作った献立の作り直しも 422 になる。DB は破壊的に
   戻さず、前方修正で直す（README の既定どおり）。
 - 不具合時は `EFFORT_HINTS_ENABLED` を false にすると、段落・週献立の 1 文・payload の値がすべて消える。
-  UI は残る。
+  UI は残る。ただし env ではなく定数なので、切るにはコードを変えて再デプロイする必要がある。急ぐなら、
+  Netlify でリリース 1（`db418a2d`）のデプロイを publish し直すのが最速である（DB は戻さない）。
