@@ -443,6 +443,20 @@ docker compose --profile deploy run --rm supabase-cli db push --include-all
 - 既存の行の `cancel_at` は null から始まる。migration より前に解約予定を入れた利用者は、次の Webhook まで更新日が出る。すぐ直すなら [課金 reconcile ランブック](../runbooks/billing-reconcile.md) の「cancel_at の再投影」を使う。
 - **前提: 本番に、この 2 本より前の未適用 migration が残っていないこと。** `db push --include-all` は未適用のものをすべて当てるので、残っていれば Functions を先にすると、新しい Function がまだ無い列や関数を呼び、配備のずれの間は全員の該当機能が失敗する。残っているときは、先にそれらを通常の順（migration が先）で別のリリースとして出し、cancel_at の 2 本だけが残る状態にしてから Functions を先にする（R2 修正レビュー Minor-1）。
 
+#### 調理の手間 effort_preference（`20260927120000_effort_preference.sql`）
+
+この migration は 2 回に分けて出す。
+
+1. **リリース 1（読みの拡張だけ。migration なし）**: 新しい形を受け取るだけのコミット（`feat(planner): 手間軸 effortPreference を読みの側だけ先に受け取れるようにする`）までを Netlify へ出す。snapshot 行・planner の契約・週献立の契約が `effortPreference` を任意キーとして受ける。migration は当てない。
+2. **リリース 2（§5.2 の通常の順）**: migration を当て、適用を確認してから Netlify を出す。
+
+- 以前の Functions は snapshot RPC の戻り値を strict に解析する。リリース 1 を飛ばして migration を当てると、Netlify を出すまでの間、全員の新規献立生成が `invalid_request` になる。
+- **Git 連携の自動デプロイが有効なら、リリース 2 のコミットを push する前に一時停止する。** migration より先に画面が出ると、`p_effort_preference` 付きの呼び出しに合う関数が DB に無く、全員の下書き保存が失敗する。migration の適用を確認してから再開・デプロイする。
+- 旧ブラウザは `p_effort_preference` を送らないが、引数が `default null` なので下書き保存は通る。ただし切り替え中に旧画面のタブから保存すると、手間の選択は null に戻る（利用者が選び直せば済むので許容している）。
+- 週献立の snapshot は jsonb で、行の読みは strict ではないので影響しない。
+- ロールバック: リリース 2 を戻すのは**リリース 1 の配備まで**に限る。リリース 1 まで戻すと手間の指定は無視されるが、リリース 2 の間に作られた献立・週献立・下書きはそのまま読め、作り直しもできる。それより前へ戻すと、new_menu が失敗し、リリース 2 の間に作られた献立の作り直しも 422 になる。DB は破壊的に戻さない。
+- **前提: 本番に、この migration より前の未適用 migration が残っていないこと。** 残っていれば、先にそれらを通常の順で別のリリースとして出す。
+
 ### 5.3 推奨リリース順（要約）
 
 ```text
