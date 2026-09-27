@@ -80,6 +80,69 @@ it("手間だけを選んだ下書きも空扱いにせず保存する", async (
   expect(save.mock.calls[0]?.[0]).toMatchObject({ effortPreference: "easy" });
 });
 
+it("手間だけがサーバ行と違う clean flush は短絡せず save する", async () => {
+  // canonical 入力（toDraftInputFields）が effortPreference を落とすと default(null) で差が消え、
+  // lastSaved 短絡で手間だけの編集が保存されない。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const edited = { ...reviewDraft, effortPreference: "easy" as const };
+  const serverRow = saved(reviewDraft, 4);
+  const refreshLiveDraft = vi.fn().mockResolvedValue(serverRow);
+  const { result } = renderHook(() =>
+    useDraftAutosave({
+      value: edited,
+      enabled: true,
+      baselineRevision: 4,
+      resetToken: 0,
+      save,
+      hydratedDraft: saved(edited, 4),
+      refreshLiveDraft,
+    }),
+  );
+
+  let flushed: PlannerDraft | undefined;
+  await act(async () => {
+    flushed = await result.current.flush();
+  });
+  expect(refreshLiveDraft).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(edited, 4);
+  expect(flushed?.effortPreference).toBe("easy");
+  expect(flushed?.revision).toBe(5);
+});
+
+it("手間だけの下書きは空扱いにせず clean flush で save する", async () => {
+  // isEmptyPersistableInput が effortPreference を見ないと、手間だけの下書きを
+  // undelete 防止の empty と誤認して書かない。
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const effortOnly = { ...base, effortPreference: "easy" as const };
+  const refreshLiveDraft = vi.fn().mockResolvedValue(saved(base, 4));
+  const { result } = renderHook(() =>
+    useDraftAutosave({
+      value: effortOnly,
+      enabled: true,
+      baselineRevision: 4,
+      resetToken: 0,
+      save,
+      hydratedDraft: saved(effortOnly, 4),
+      refreshLiveDraft,
+    }),
+  );
+
+  let flushed: PlannerDraft | undefined;
+  await act(async () => {
+    flushed = await result.current.flush();
+  });
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith(effortOnly, 4);
+  expect(flushed?.effortPreference).toBe("easy");
+});
+
 it("600ms debounce の保存を直列化し DB revision を 1→2→3 と引き継ぐ", async () => {
   vi.useFakeTimers();
   const save = vi.fn((value: PlannerDraftInput, revision: number) =>
