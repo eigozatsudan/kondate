@@ -266,7 +266,7 @@ describe("normalizeAudienceForModeChange", () => {
   );
 });
 
-test("inserts the four optional condition steps between audience and review", () => {
+test("inserts the five optional condition steps between audience and review", () => {
   expect([...plannerSteps]).toEqual([
     "meal",
     "ingredients",

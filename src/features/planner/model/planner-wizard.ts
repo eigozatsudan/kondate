@@ -20,7 +20,8 @@ export const plannerSteps = [
 export type PlannerStep = (typeof plannerSteps)[number];
 
 /**
- * PlannerDraftInputの11フィールドをUI上のfield単位へ対応させた名前。
+ * PlannerDraftInputの14フィールドのうち、noveltyPreference・effortPreferenceを除く
+ * 12フィールドをUI上のfield単位へ対応させた名前。
  * targetMode/targetMemberIds/servingsはaudience stepにまとめて表示するが、
  * field-local errorは実際に問題がある入力ごとに個別に出すため、
  * 3つを1つの名前へ集約しない（brief: 「additionalConditionsへの一括集約は行わない」）。

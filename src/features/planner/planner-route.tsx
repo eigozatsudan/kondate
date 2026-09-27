@@ -1792,8 +1792,8 @@ function PlannerPageForOwner({
               new Set(safetyData.eligibleMemberIds),
             ),
             requiredQuestions: plannerSteps.indexOf("audience") + 1,
-            // 続きが確認画面のときは任意の質問を見ていなくても 8 になるので、件数ではなく
-            // 「必須はすべて答えた」と伝える（M-5）
+            // 続きが確認画面のときは任意の質問を見ていなくても plannerSteps.indexOf("review")（9）に
+            // なるので、件数ではなく「必須はすべて答えた」と伝える（M-5）
             readyForReview: homeResumeStep === "review",
             // B-2: 必須がそろっていても、答えかけの質問へ戻るときは確認画面とは言わない
             continuesAtQuestion: continueStep !== "review",
