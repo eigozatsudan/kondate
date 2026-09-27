@@ -38,6 +38,16 @@ describe("weeklyPlanRequestSchema", () => {
     expect(weeklyPlanRequestSchema.safeParse(base).success).toBe(true);
   });
 
+  it("accepts effortPreference values and its absence, and rejects unknown values", () => {
+    expect(weeklyPlanRequestSchema.safeParse(base).success).toBe(true);
+    for (const effortPreference of ["standard", "easy", null] as const) {
+      expect(weeklyPlanRequestSchema.safeParse({ ...base, effortPreference }).success).toBe(true);
+    }
+    expect(weeklyPlanRequestSchema.safeParse({ ...base, effortPreference: "wild" }).success).toBe(
+      false,
+    );
+  });
+
   it("defaults priorityIngredients to [] when the key is absent (保持メタデータ再送の互換)", () => {
     const result = weeklyPlanRequestSchema.safeParse(base);
     expect(result.success).toBe(true);
@@ -107,6 +117,13 @@ describe("weeklyPlanResultSchema", () => {
 
   it("accepts the base shape", () => {
     expect(weeklyPlanResultSchema.safeParse(baseResult).success).toBe(true);
+  });
+
+  it("accepts effortPreference on the result and its absence", () => {
+    expect(weeklyPlanResultSchema.safeParse(baseResult).success).toBe(true);
+    expect(
+      weeklyPlanResultSchema.safeParse({ ...baseResult, effortPreference: "easy" }).success,
+    ).toBe(true);
   });
 
   it("echoes priorityIngredients through the result", () => {

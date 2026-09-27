@@ -249,6 +249,34 @@ describe("loadGenerationContext", () => {
     }
   });
 
+  it("loads a snapshot row that carries effort_preference (post-migration DB)", async () => {
+    for (const value of ["standard", "easy", null] as const) {
+      arrangeLoader({ snapshotData: [{ ...snapshot, effort_preference: value }] });
+      await expect(
+        loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
+      ).resolves.toBeDefined();
+    }
+  });
+
+  it("loads a snapshot row without effort_preference (pre-migration DB)", async () => {
+    const { effort_preference: _omitted, ...legacyRow } = {
+      ...snapshot,
+      effort_preference: null,
+    };
+    void _omitted;
+    arrangeLoader({ snapshotData: [legacyRow] });
+    await expect(
+      loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
+    ).resolves.toBeDefined();
+  });
+
+  it("rejects an unknown effort_preference value", async () => {
+    arrangeLoader({ snapshotData: [{ ...snapshot, effort_preference: "wild" }] });
+    await expect(
+      loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+  });
+
   it("keeps free-form memo out of safetySnapshot while preferenceSnapshot retains it (A-I4)", async () => {
     const memo = "家族の太郎は乳製品に注意";
     arrangeLoader({

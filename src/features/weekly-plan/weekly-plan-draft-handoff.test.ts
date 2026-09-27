@@ -194,7 +194,9 @@ describe("draftNeedsOverwriteConfirmation", () => {
     ],
   } as const satisfies PlannerDraftInput;
 
-  for (const key of Object.keys(differingNonEmptyValues) as (keyof PlannerDraftInput)[]) {
+  for (const key of Object.keys(
+    differingNonEmptyValues,
+  ) as (keyof typeof differingNonEmptyValues)[]) {
     it(`returns true when the non-empty ${key} differs`, () => {
       const existing = emptyDraft();
       Object.assign(existing, { [key]: differingNonEmptyValues[key] });

@@ -15,6 +15,12 @@ export const ingredientPreferences = ["more", "less", "selected_only", "auto"] a
  * null を残すのは導入前 snapshot の互換読み込みのためだけ。
  */
 export const noveltyPreferences = ["standard", "twist"] as const;
+/**
+ * 調理の手間。standard=指定どおり / easy=手間のかかる料理は避ける。
+ * null は未指定で、挙動は standard と同一（プロンプト段落なし）。
+ * null を残すのは導入前 snapshot の互換読み込みのためだけ。
+ */
+export const effortPreferences = ["standard", "easy"] as const;
 export const targetModes = ["household", "idea"] as const;
 export type TargetMode = (typeof targetModes)[number];
 
@@ -100,6 +106,8 @@ const draftShape = {
   // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
   // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
   noveltyPreference: z.enum(noveltyPreferences).nullable().default(null),
+  // リリース 1 は受け取るだけ（spec §7.1）。リリース 2 で nullable().default(null) に置き換える
+  effortPreference: z.enum(effortPreferences).nullable().optional(),
   avoidIngredients: z
     .array(boundedCanonicalText(1, PLANNER_INGREDIENT_TEXT_MAX))
     .max(PLANNER_AVOID_INGREDIENT_LIMIT),
@@ -137,6 +145,8 @@ const submissionCommonShape = {
   // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
   // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
   noveltyPreference: z.enum(noveltyPreferences).nullable().default(null),
+  // リリース 1 は受け取るだけ（spec §7.1）。リリース 2 で nullable().default(null) に置き換える
+  effortPreference: z.enum(effortPreferences).nullable().optional(),
   avoidIngredients: z
     .array(boundedCanonicalText(1, PLANNER_INGREDIENT_TEXT_MAX))
     .max(PLANNER_AVOID_INGREDIENT_LIMIT),
@@ -166,6 +176,7 @@ export const plannerSubmissionSchema = z.discriminatedUnion("targetMode", [
 export type BudgetPreference = (typeof budgetPreferences)[number];
 export type IngredientPreference = (typeof ingredientPreferences)[number];
 export type NoveltyPreference = (typeof noveltyPreferences)[number];
+export type EffortPreference = (typeof effortPreferences)[number];
 export type PlannerDraftInput = z.infer<typeof plannerDraftInputSchema>;
 export type PlannerDraft = z.infer<typeof plannerDraftSchema>;
 export type PlannerSubmission = z.infer<typeof plannerSubmissionSchema>;

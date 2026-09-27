@@ -156,6 +156,41 @@ describe("planner contracts", () => {
     });
   });
 
+  it("accepts declared effort preference values and rejects unknown ones", () => {
+    for (const effortPreference of ["standard", "easy", null] as const) {
+      expect(plannerDraftInputSchema.parse({ ...incompleteDraft, effortPreference })).toMatchObject(
+        { effortPreference },
+      );
+      expect(
+        plannerSubmissionSchema.parse({
+          ...validBase,
+          effortPreference,
+          targetMode: "household" as const,
+          targetMemberIds: [memberId],
+          servings: null,
+        }),
+      ).toMatchObject({ effortPreference });
+    }
+    expect(
+      plannerDraftInputSchema.safeParse({
+        ...incompleteDraft,
+        effortPreference: "wild",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("still accepts a draft and a submission without effortPreference", () => {
+    expect(plannerDraftInputSchema.safeParse(incompleteDraft).success).toBe(true);
+    expect(
+      plannerSubmissionSchema.safeParse({
+        ...validBase,
+        targetMode: "household" as const,
+        targetMemberIds: [memberId],
+        servings: null,
+      }).success,
+    ).toBe(true);
+  });
+
   it("requires the three basic choices and one target for submission", () => {
     expect(plannerSubmissionSchema.safeParse(incompleteDraft).success).toBe(false);
     expect(

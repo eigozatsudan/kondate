@@ -74,6 +74,9 @@ const snapshotRowSchema = z
     budget_preference: z.enum(["economy", "standard"]).nullable(),
     ingredient_preference: z.enum(["more", "less", "selected_only", "auto"]).nullable(),
     novelty_preference: z.enum(["standard", "twist"]).nullable(),
+    // 配備ずれ対策（spec §7.1）: migration 前の DB はこのキーを返さない。
+    // strict のまま任意キーで受け、旧 DB でも新 DB でも new_menu を落とさない。
+    effort_preference: z.enum(["standard", "easy"]).nullable().optional(),
     avoid_ingredients: z.array(z.string()),
     memo: z.string(),
     pantry_selections: z.array(pantrySelectionDraftSchema),
