@@ -6,6 +6,7 @@ import {
   regenerateDishRequestSchema,
   type GenerationStatusData,
 } from "../../shared/contracts/generation.js";
+import { GENERATION_REQUEST_HARD_DEADLINE_MS } from "../../shared/contracts/function-budget.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
 import {
   createGenerationDeps,
@@ -13,6 +14,7 @@ import {
   runGeneration,
 } from "./_shared/generation-service.js";
 import { handleError, methodNotAllowed, parseJson } from "./_shared/http.js";
+import { runWithRequestDeadline } from "./_shared/request-deadline.js";
 import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
 import { handleGenerationHttpError, logGenerationHttpBoundary } from "./_shared/logger.js";
 
@@ -58,6 +60,17 @@ function logTerminalStatusIfNeeded(
  */
 export default async function generateDish(request: Request): Promise<Response> {
   const requestStartedAtMonotonicMs = performance.now();
+  // 26s 予算の外側に hard deadline を張り、止まった Supabase HTTP で実効 30s 無ログ切断にしない
+  return await runWithRequestDeadline(
+    requestStartedAtMonotonicMs + GENERATION_REQUEST_HARD_DEADLINE_MS,
+    () => handleGenerateDish(request, requestStartedAtMonotonicMs),
+  );
+}
+
+async function handleGenerateDish(
+  request: Request,
+  requestStartedAtMonotonicMs: number,
+): Promise<Response> {
   let correlationId: string = randomUUID();
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
   try {

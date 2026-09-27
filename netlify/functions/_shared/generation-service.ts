@@ -215,6 +215,11 @@ export type GenerationDependencies = {
    * テストはこれを差し替えて呼び出しを検証する。
    */
   logTerminalEvent?: typeof logGenerationEvent;
+  /**
+   * 送信後フェーズの経過ログ（phase_sent / phase_attempt_*）。未指定時は出さない。
+   * 終端ログ前に切られたとき、OpenRouter 待ちか後段 DB かを切り分ける。
+   */
+  logPhaseEvent?: typeof logGenerationEvent;
 };
 
 const generationFailureCodeSchema = z.enum(generationFailureCodes);
@@ -556,6 +561,7 @@ function createBaseGenerationDeps(
     requestStartedAtMonotonicMs: timing.requestStartedAtMonotonicMs,
     functionTotalBudgetMs: env.openRouter.functionTotalBudgetMs,
     uuid: randomUUID,
+    logPhaseEvent: logGenerationEvent,
   };
 }
 
@@ -899,6 +905,14 @@ export async function runGeneration(
         : { tasteHintsOutcome: loggedTasteHintsOutcome }),
     });
   };
+  const emitPhaseLog = (code: string, modelId: string | null): void => {
+    deps.logPhaseEvent?.("info", {
+      requestId,
+      errorCode: code,
+      durationMs: Math.max(0, Math.trunc(deps.monotonicNow() - deps.requestStartedAtMonotonicMs)),
+      modelId,
+    });
+  };
   const fail = async (code: GenerationFailureCode, retryAt: string | null) => {
     try {
       await deps.repository.fail(requestId, code, retryAt);
@@ -1104,6 +1118,7 @@ export async function runGeneration(
       if (!sent.sent) {
         return "terminal";
       }
+      emitPhaseLog("phase_sent", null);
       // G2 residual-intentional: markSent 後に chat 予算が尽きたら OpenRouter 未呼出でも
       // fail（attempt 非返却）。送信予約＝消費の契約。枠返却はしない。
       // G5 経路: markSent RPC 所要後に chat 上限を再 snapshot。
@@ -1122,6 +1137,10 @@ export async function runGeneration(
           mode: wireMode,
         });
       } catch (error) {
+        emitPhaseLog(
+          `phase_attempt_${error instanceof OpenRouterCallError ? error.code : "error"}`,
+          null,
+        );
         if (
           error instanceof OpenRouterCallError &&
           error.code === "invalid_ai_response" &&
@@ -1132,6 +1151,10 @@ export async function runGeneration(
         }
         throw error;
       }
+      emitPhaseLog(
+        "phase_attempt_returned",
+        deps.models.includes(result.modelId) ? result.modelId : null,
+      );
       if (!deps.models.includes(result.modelId)) {
         throw new OpenRouterCallError("invalid_ai_response");
       }

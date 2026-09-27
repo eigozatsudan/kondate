@@ -43,6 +43,13 @@ export const FUNCTION_TOTAL_BUDGET_MS = functionTotalFromShared;
  */
 export const OPENROUTER_TIMEOUT_MS = openRouterTimeoutFromShared;
 
+/**
+ * 生成 Function のリクエスト hard deadline（ハンドラ開始からの ms）。
+ * これを超えた Supabase HTTP は abort し、実効 30s で無ログ切断される前に応答を返す
+ * （2026-09-27 本番: 送信後の DB RPC が返らず 30000ms 切断・台帳は 180s stale 掃除まで processing）。
+ */
+export const GENERATION_REQUEST_HARD_DEADLINE_MS = NETLIFY_SYNC_FUNCTION_LIMIT_MS - 1_500;
+
 /** 最終化用に送信前に残す最小余裕（ms）。generation-service と一致。 */
 export const FINALIZE_RESERVE_MS = 2_000;
 

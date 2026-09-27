@@ -24,7 +24,10 @@ it("creates a non-persisting user client with the publishable key and bearer tok
     "https://abcdefghijklmnopqrst.supabase.co",
     "publishable-key",
     {
-      global: { headers: { Authorization: "Bearer access-token" } },
+      global: {
+        headers: { Authorization: "Bearer access-token" },
+        fetch: expect.any(Function) as unknown,
+      },
       auth: {
         autoRefreshToken: false,
         detectSessionInUrl: false,

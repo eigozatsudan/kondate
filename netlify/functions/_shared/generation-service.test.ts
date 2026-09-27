@@ -669,6 +669,56 @@ describe("runGeneration", () => {
     expect(payload).not.toContain("allergy");
   });
 
+  it("logs phase events after markSent and when the attempt returns", async () => {
+    const logPhaseEvent = vi.fn<NonNullable<GenerationDependencies["logPhaseEvent"]>>();
+    let now = 0;
+    const repository = makeRepository();
+    repository.markSent.mockImplementation(() => {
+      now = 7_000;
+      return Promise.resolve({ ...record("processing"), sent: true as const, code: null });
+    });
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
+      now = 19_000;
+      return Promise.resolve({
+        mode: "full_menu" as const,
+        output: scenarios.success,
+        modelId: models[0],
+      });
+    });
+    await runGeneration(
+      makeDeps({ logPhaseEvent, repository, callOpenRouter, monotonicNow: () => now }),
+      command,
+    );
+    expect(logPhaseEvent.mock.calls).toEqual([
+      ["info", { requestId, errorCode: "phase_sent", durationMs: 7_000, modelId: null }],
+      [
+        "info",
+        {
+          requestId,
+          errorCode: "phase_attempt_returned",
+          durationMs: 19_000,
+          modelId: models[0],
+        },
+      ],
+    ]);
+  });
+
+  it("logs the attempt failure code as a phase event before finalizing", async () => {
+    const logPhaseEvent = vi.fn<NonNullable<GenerationDependencies["logPhaseEvent"]>>();
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
+      Promise.reject(new OpenRouterCallError("generation_timeout")),
+    );
+    const repository = makeRepository();
+    await runGeneration(makeDeps({ logPhaseEvent, repository, callOpenRouter }), command);
+    expect(logPhaseEvent.mock.calls.map(([, event]) => event.errorCode)).toEqual([
+      "phase_sent",
+      "phase_attempt_generation_timeout",
+    ]);
+    // 台帳 fail より前に出す（fail RPC で止まっても試行の結末は残る）
+    const lastPhaseOrder = logPhaseEvent.mock.invocationCallOrder.at(-1) ?? Infinity;
+    expect(lastPhaseOrder).toBeLessThan(repository.fail.mock.invocationCallOrder[0] ?? -1);
+  });
+
   describe("tasteHints recording and terminal log", () => {
     const appliedHints: TasteHints = {
       likedDishes: [{ dishName: "生姜焼き", role: "main" }],
