@@ -169,6 +169,15 @@ const invalidMemo = {
 
 void invalidMemo;
 
+const invalidEffortPreferenceUndefined = {
+  ...invalidMemo,
+  p_memo: "",
+  // @ts-expect-error p_effort_preferenceはnullか値であり、明示undefinedは許可しない
+  p_effort_preference: undefined,
+} satisfies SaveDraftArgs;
+
+void invalidEffortPreferenceUndefined;
+
 type GeneratedSaveDraft = GeneratedDatabase["public"]["Functions"]["save_generation_draft"];
 type AppSaveDraft = Database["public"]["Functions"]["save_generation_draft"];
 type NullableDraftArg =

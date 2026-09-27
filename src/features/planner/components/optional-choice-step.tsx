@@ -5,7 +5,7 @@ import { Surface } from "@/shared/ui/surface";
 
 /**
  * ページ遷移直後の誤タップを弾く猶予（設計 P-03）。
- * 5〜8ページ目は .wizard-actions のボタンが同じ座標に並ぶため、連打の2発目が
+ * 5〜9ページ目は .wizard-actions のボタンが同じ座標に並ぶため、連打の2発目が
  * 次ページの同位置ボタンへ落ちる。mount からこの間のボタン押下は無視する。
  *
  * 5ページ目だけ「以降は指定なしでスキップ」が .wizard-actions の1行上に出るので、
@@ -77,7 +77,7 @@ export function OptionalChoiceStep({
   /** ボタン押下の可否。mount 直後の連打は次ページのボタンへの誤爆なので落とす。 */
   const blocked = (): boolean => disabled || Date.now() - mountedAt.current < activationGuardMs;
 
-  // エラー時も説明は残す。7ページ目の調味料の注記は、直そうとしている本人にこそ要る。
+  // エラー時も説明は残す。8ページ目の調味料の注記は、直そうとしている本人にこそ要る。
   const describedByIds = [
     ...(description !== undefined ? [descriptionId] : []),
     ...(errorMessage != null ? [errorId] : []),
