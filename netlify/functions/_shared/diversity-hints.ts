@@ -19,7 +19,7 @@ export const DIVERSITY_PARAGRAPH =
   DIVERSITY_SYSTEM_MARKER +
   "優先順位は次のとおりです。" +
   "1)アレルギー・必須安全・must_use・品数・時間、" +
-  "2)利用者のpreferences（メイン食材・避けたい等）、" +
+  "2)利用者のpreferences（メイン食材・避けたい・手間等）、" +
   "3)最近の料理に近くないこと（ヒント）、" +
   "4)季節。" +
   "可能ならrecentDishHintsの料理名・役割が近い案は避けてください。" +

@@ -12,6 +12,11 @@ import {
   DIVERSITY_PARAGRAPH_WITH_TASTE,
   type RecentDishHint,
 } from "./diversity-hints.js";
+import {
+  EFFORT_HINTS_ENABLED,
+  EFFORT_PARAGRAPH,
+  shouldIncludeEffortHints,
+} from "./effort-hints.js";
 import type { GenerationExecutionContext } from "./generation-service.js";
 import {
   HOUSEHOLD_KITCHEN_PARAGRAPH,
@@ -36,6 +41,8 @@ export type PromptPreferences = {
   ingredientPreference: GenerationContext["submission"]["ingredientPreference"];
   avoidIngredients: readonly string[];
   memo: string;
+  /** easy かつ kill-switch on のときだけ載せる。standard / 未指定 / off ではキーごと出さない */
+  effortPreference?: "easy";
   /** idea のみ人数をプロンプトへ載せる。household は対象メンバー数で決まる */
   servings?: number;
 };
@@ -266,14 +273,19 @@ export const GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA =
   "preferences.servingsは家族人数の目安であり、adaptationsを省略する理由にしない。";
 
 /**
- * buildBase 用: 多様性なしの system（CORE + SEASON + mode extra）。
+ * buildBase 用: 多様性なしの system（CORE + 手間? + SEASON + mode extra）。
  * キッチン soft は CORE 共通組み立てで載せ、再生成・repair も同じ方針（L7/L12）。
  * recentDishHints 引数は持たない（locked）。
  */
-function buildSystemPrompt(targetMode: GenerationContext["targetMode"]): string {
+function buildSystemPrompt(
+  targetMode: GenerationContext["targetMode"],
+  effortEnabled: boolean,
+): string {
   // 実行時に kill-switch を読む（静的 CORE スナップショットだけでは flag off が再生成に効かない）
   const coreBody = buildGenerationSystemPromptCoreBody(readHouseholdKitchenPromptEnabledFlag());
-  const core = `${coreBody}${GENERATION_SYSTEM_PROMPT_SEASON}`;
+  // 手間段落は再生成でも載せる（spec §4.3）。位置は SEASON の直前
+  const effort = effortEnabled ? EFFORT_PARAGRAPH : "";
+  const core = `${coreBody}${effort}${GENERATION_SYSTEM_PROMPT_SEASON}`;
   if (targetMode === "idea") {
     return `${core}${GENERATION_SYSTEM_PROMPT_IDEA_EXTRA}`;
   }
@@ -282,13 +294,14 @@ function buildSystemPrompt(targetMode: GenerationContext["targetMode"]): string 
 
 /**
  * new_menu 用 system 合成:
- * CORE_BODY(キッチン flag) + (flag on なら DIVERSITY) + (flag on なら TASTE) + SEASON + mode extra
+ * CORE_BODY(キッチン flag) + (flag on なら DIVERSITY) + (flag on なら TASTE) + ひねり? + 手間? + SEASON + mode extra
  */
 function buildNewMenuSystemPrompt(
   targetMode: GenerationContext["targetMode"],
   diversityEnabled: boolean,
   noveltyEnabled: boolean,
   tasteEnabled: boolean,
+  effortEnabled: boolean,
 ): string {
   // 再生成と同じ CORE builder。new_menu 専用スロットにだけキッチンを置くのは禁止（L12）
   const coreBody = buildGenerationSystemPromptCoreBody(readHouseholdKitchenPromptEnabledFlag());
@@ -300,11 +313,12 @@ function buildNewMenuSystemPrompt(
     : "";
   const taste = tasteEnabled ? TASTE_PARAGRAPH : "";
   const novelty = noveltyEnabled ? NOVELTY_PARAGRAPH : "";
+  const effort = effortEnabled ? EFFORT_PARAGRAPH : "";
   const modeExtra =
     targetMode === "idea"
       ? GENERATION_SYSTEM_PROMPT_IDEA_EXTRA
       : GENERATION_SYSTEM_PROMPT_HOUSEHOLD_EXTRA;
-  return `${coreBody}${diversity}${taste}${novelty}${GENERATION_SYSTEM_PROMPT_SEASON}${modeExtra}`;
+  return `${coreBody}${diversity}${taste}${novelty}${effort}${GENERATION_SYSTEM_PROMPT_SEASON}${modeExtra}`;
 }
 
 /**
@@ -420,6 +434,11 @@ function buildBaseGenerationMessages(
   options: BuildGenerationMessagesOptions = {},
 ): readonly OpenRouterMessage[] {
   const seasonContext = getJstSeasonContext(options.now ?? new Date());
+  const effortEnabled = shouldIncludeEffortHints(
+    EFFORT_HINTS_ENABLED,
+    context.submission.effortPreference,
+  );
+  const effortPreferenceEntry = effortEnabled ? { effortPreference: "easy" as const } : {};
   if (context.targetMode === "idea") {
     // idea: members / allergies / ageBands / adaptations 要求を一切載せない
     const preferences = {
@@ -431,6 +450,7 @@ function buildBaseGenerationMessages(
       ingredientPreference: context.submission.ingredientPreference,
       avoidIngredients: [...context.submission.avoidIngredients],
       memo: context.submission.memo,
+      ...effortPreferenceEntry,
       servings: context.submission.servings,
     } satisfies PromptPreferences;
     const payload: GenerationPromptDto = {
@@ -444,7 +464,7 @@ function buildBaseGenerationMessages(
     return [
       {
         role: "system",
-        content: buildSystemPrompt("idea"),
+        content: buildSystemPrompt("idea", effortEnabled),
       },
       {
         role: "user",
@@ -522,6 +542,7 @@ function buildBaseGenerationMessages(
     ingredientPreference: context.submission.ingredientPreference,
     avoidIngredients: [...context.submission.avoidIngredients],
     memo: context.submission.memo,
+    ...effortPreferenceEntry,
   } satisfies PromptPreferences;
   const payload: GenerationPromptDto = {
     preferences,
@@ -537,7 +558,7 @@ function buildBaseGenerationMessages(
   return [
     {
       role: "system",
-      content: buildSystemPrompt(context.targetMode),
+      content: buildSystemPrompt(context.targetMode, effortEnabled),
     },
     {
       role: "user",
@@ -548,9 +569,10 @@ function buildBaseGenerationMessages(
 
 /**
  * 実行コンテキスト全体からメッセージを構築する。
- * new_menu: CORE_BODY + 多様性?(学習onなら差し替え) + 学習? + ひねり? + SEASON + idea? と
+ * new_menu: CORE_BODY + 多様性?(学習onなら差し替え) + 学習? + ひねり? + 手間? + SEASON + idea? と
  * user に recentDishHints を常時配列で載せる。
  * 再生成: base + regeneration_constraints。多様性マーカーも recentDishHints キーも付けない。
+ * 手間段落は base 側で載る。
  * seasonContext はサーバー時計のみ（クライアント注入不可）。
  * buildBaseGenerationMessages は hints 引数を取らない（locked）。
  */
@@ -585,6 +607,10 @@ export function buildGenerationMessages(
       diversityEnabled,
       noveltyEnabled,
       tasteEnabled,
+      shouldIncludeEffortHints(
+        EFFORT_HINTS_ENABLED,
+        context.generationContext.submission.effortPreference,
+      ),
     );
     const userMessage = base.find((message) => message.role === "user");
     const basePayload =

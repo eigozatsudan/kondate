@@ -16,6 +16,7 @@ import {
   type RecentDishHint,
 } from "./diversity-hints.js";
 import { NOVELTY_SYSTEM_MARKER } from "./novelty-hints.js";
+import { EFFORT_PARAGRAPH, EFFORT_SYSTEM_MARKER } from "./effort-hints.js";
 import { TASTE_PARAGRAPH, TASTE_SYSTEM_MARKER } from "./taste-hints.js";
 import {
   GENERATION_SYSTEM_PROMPT_CORE,
@@ -911,6 +912,147 @@ describe("novelty hints", () => {
       expect(message.content).not.toContain("noveltyExcludedDishes");
       expect(message.content).not.toContain("noveltyPreference");
     }
+  });
+});
+
+describe("effort hints", () => {
+  function contextWith(
+    effortPreference: GenerationContext["submission"]["effortPreference"],
+    noveltyPreference: GenerationContext["submission"]["noveltyPreference"] = null,
+  ): GenerationContext {
+    const base = makeGenerationContext();
+    return {
+      ...base,
+      submission: {
+        ...base.submission,
+        effortPreference,
+        noveltyPreference,
+        mainIngredients: ["豚肉"],
+      },
+    };
+  }
+
+  function regenerateMenuExecutionFor(
+    context: GenerationContext,
+  ): Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> {
+    const sourceMenu = makeValidatedMenu();
+    return {
+      kind: "regenerate_menu",
+      command: {
+        commandVersion: "generation-command.v3",
+        kind: "regenerate_menu",
+        qualityMode: false,
+        request: {
+          idempotencyKey: "56000000-0000-4000-8000-000000000001",
+          sourceMenuId: sourceMenu.menuId,
+          changeReason: "simpler",
+          changeReasonCustom: null,
+          privacyNoticeVersion: "2026-07-29.v1",
+          expiredPantryConfirmations: [],
+        },
+      },
+      requestId: "81000000-0000-4000-8000-000000000001",
+      generationContext: context,
+      expectedSafetyFingerprint:
+        context.targetMode === "idea" ? "idea" : createCurrentSafetyFingerprint(context.safety),
+      startedAtMonotonicMs: 0,
+      deadlineAtMonotonicMs: 50_000,
+      regeneration: {
+        sourceMenuId: sourceMenu.menuId,
+        sourceMenu,
+        derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+        replaceDishId: null,
+        retainedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+        excludedDishIds: [],
+        sourceSafetyFingerprint: "source-fp",
+        sourcePreferenceSnapshot: {},
+        existingDerivationMenus: [],
+        artifacts: {
+          retainedDishes: [],
+          sourceDishToReplace: null,
+          promptDto: null,
+          retainedRefMap: new Map(),
+        },
+      },
+    };
+  }
+
+  function preferencesOf(
+    messages: ReturnType<typeof buildGenerationMessages>,
+  ): Record<string, unknown> {
+    return userPayload(messages).preferences as Record<string, unknown>;
+  }
+
+  it("adds the effort paragraph and payload value when easy is selected (new_menu household)", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(contextWith("easy")));
+    expect(systemText(messages)).toContain(EFFORT_PARAGRAPH);
+    expect(preferencesOf(messages).effortPreference).toBe("easy");
+  });
+
+  it("adds the effort paragraph for idea mode too", () => {
+    const base = makeIdeaGenerationContext();
+    const messages = buildGenerationMessages(
+      asNewMenuExecution({ ...base, submission: { ...base.submission, effortPreference: "easy" } }),
+    );
+    expect(systemText(messages)).toContain(EFFORT_PARAGRAPH);
+    expect(preferencesOf(messages).effortPreference).toBe("easy");
+  });
+
+  it("omits the paragraph and the key when the axis is standard or unset", () => {
+    for (const effortPreference of ["standard", null] as const) {
+      const messages = buildGenerationMessages(asNewMenuExecution(contextWith(effortPreference)));
+      expect(systemText(messages)).not.toContain(EFFORT_SYSTEM_MARKER);
+      expect(
+        Object.prototype.hasOwnProperty.call(preferencesOf(messages), "effortPreference"),
+      ).toBe(false);
+    }
+  });
+
+  it("keeps the paragraph and value on regenerate_menu (shared base builder)", () => {
+    const messages = buildGenerationMessages(regenerateMenuExecutionFor(contextWith("easy")));
+    expect(systemText(messages)).toContain(EFFORT_PARAGRAPH);
+    expect(preferencesOf(messages).effortPreference).toBe("easy");
+  });
+
+  it("places the effort paragraph right before the season block, after novelty", () => {
+    const messages = buildGenerationMessages(asNewMenuExecution(contextWith("easy", "twist")));
+    const system = systemText(messages);
+    const noveltyIndex = system.indexOf(NOVELTY_SYSTEM_MARKER);
+    const effortIndex = system.indexOf(EFFORT_SYSTEM_MARKER);
+    const seasonIndex = system.indexOf(GENERATION_SYSTEM_PROMPT_SEASON);
+    expect(noveltyIndex).toBeGreaterThanOrEqual(0);
+    expect(effortIndex).toBeGreaterThan(noveltyIndex);
+    expect(seasonIndex).toBe(effortIndex + EFFORT_PARAGRAPH.length);
+  });
+
+  it("places the effort paragraph right before the season block on regeneration", () => {
+    const messages = buildGenerationMessages(regenerateMenuExecutionFor(contextWith("easy")));
+    const system = systemText(messages);
+    const effortIndex = system.indexOf(EFFORT_SYSTEM_MARKER);
+    expect(effortIndex).toBeGreaterThanOrEqual(0);
+    expect(system.indexOf(GENERATION_SYSTEM_PROMPT_SEASON)).toBe(
+      effortIndex + EFFORT_PARAGRAPH.length,
+    );
+  });
+
+  it("states that effort overrides the kitchen paragraph and novelty's cooking-method twist", () => {
+    expect(EFFORT_PARAGRAPH).toContain("【家庭キッチン】より優先");
+    expect(EFFORT_PARAGRAPH).toContain("蒸し物そのものを選ばない");
+    expect(EFFORT_PARAGRAPH).toContain("【ひねり】");
+    // メイン食材・使い切り・memo は検証で落ちるため、手間より優先させる
+    expect(EFFORT_PARAGRAPH).toContain(
+      "preferences.mainIngredients、使い切りに選ばれた食材、memoの指示は本段落より優先します。",
+    );
+    // 【家庭キッチン】の「十分に煮る」等の下処理を「長時間の煮込みを避ける」で削らせない
+    expect(EFFORT_PARAGRAPH).toContain("安全のための下処理（十分な加熱など）が常に優先です。");
+    for (const example of ["揚げ物", "蒸し物", "生地", "包む"]) {
+      expect(EFFORT_PARAGRAPH).toContain(example);
+    }
+  });
+
+  it("names effort in the priority sentence (diversity and taste variants)", () => {
+    expect(DIVERSITY_PARAGRAPH).toContain("（メイン食材・避けたい・手間等）");
+    expect(TASTE_PARAGRAPH).toContain("（メイン食材・避けたい・手間等）");
   });
 });
 

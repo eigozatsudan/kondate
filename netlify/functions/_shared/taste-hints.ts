@@ -33,7 +33,7 @@ export const TASTE_PARAGRAPH =
   TASTE_SYSTEM_MARKER +
   "優先順位は次のとおりです。" +
   "1)アレルギー・必須安全・must_use・品数・時間、" +
-  "2)当日のpreferences（メイン食材・避けたい等）、" +
+  "2)当日のpreferences（メイン食材・避けたい・手間等）、" +
   "3)tasteHintsが示す好みのスタイル、" +
   "4)最近の料理に近くないこと（recentDishHints）、" +
   "5)季節。" +
