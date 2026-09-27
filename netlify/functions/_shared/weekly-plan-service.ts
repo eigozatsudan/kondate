@@ -17,7 +17,7 @@ import { issueMessages } from "../../../shared/contracts/generation.js";
 import { effortPreferences, type EffortPreference } from "../../../shared/contracts/planner.js";
 import {
   FINALIZE_RESERVE_MS,
-  OPENROUTER_TIMEOUT_MS,
+  REQUIRED_SEND_BUDGET_MS,
 } from "../../../shared/contracts/function-budget.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import { foodTextContainsAlias } from "../../../shared/safety/allergens.js";
@@ -137,9 +137,6 @@ const intentRowSchema = z.object({
   }),
   safety_fingerprint: z.string(),
 });
-
-/** mark 前に必要な最小残り予算。flyer-weekly-service.ts と同じ式。 */
-const REQUIRED_SEND_BUDGET_MS = OPENROUTER_TIMEOUT_MS + FINALIZE_RESERVE_MS;
 
 function inspectionUnavailable(): HttpError {
   return new HttpError(500, "safety_context_failed", "現在の安全条件を読み込めませんでした");

@@ -8,10 +8,12 @@
  * プラットフォーム実効 30s・finalize 余裕・クライアント headroom は本ファイルの導出定数。
  *
  * 算術（Netlify Free 実効 30s に合わせて再ロック。repair はほぼ入らないトレードオフを許容）:
- * - REQUIRED_SEND = OPENROUTER_TIMEOUT + FINALIZE_RESERVE = 20s + 2s = 22s
- * - 送信前の準備（認証・予約・context 読み込み・Models 政策確認）は 26 − 22 = 4s 以内でないと
+ * - REQUIRED_SEND = MIN_OPENROUTER_ATTEMPT + FINALIZE_RESERVE = 12s + 2s = 14s
+ * - 送信前の準備（認証・予約・context 読み込み・Models 政策確認）は 26 − 14 = 12s 以内でないと
  *   pre-send ゲートで送らずに generation_timeout（attempt は焼かない）
- * - primary 1 回で最大 20s 使うと残り 6s（< 22s）のため repair は予算上ほぼ入らない（canRepair() が false）
+ * - 試行上限は min(20s, 残り − 2s)。準備が 4s を超えた分だけ試行が 20s から縮む
+ *   （2026-09-27 本番: 冷起動の準備 5.8s が旧 22s ゲートで送信前 timeout になったため緩和）
+ * - primary 1 回で最大 20s 使うと残り 6s（< 14s）のため、repair は primary が速く失敗したときだけ入る
  * - 26s 総予算 + finalize 2s ≤ 26s、+ client headroom 3s = 29s < 実効 30s
  */
 
@@ -43,6 +45,15 @@ export const OPENROUTER_TIMEOUT_MS = openRouterTimeoutFromShared;
 
 /** 最終化用に送信前に残す最小余裕（ms）。generation-service と一致。 */
 export const FINALIZE_RESERVE_MS = 2_000;
+
+/**
+ * 送信を許す OpenRouter 1 試行の最小上限（ms）。
+ * これ未満しか残らないときは送らずに generation_timeout（attempt は焼かない）。
+ */
+export const MIN_OPENROUTER_ATTEMPT_MS = 12_000;
+
+/** markSent 前に必要な最小残り予算（ms）。最小試行 + finalize 予約から導出する。 */
+export const REQUIRED_SEND_BUDGET_MS = MIN_OPENROUTER_ATTEMPT_MS + FINALIZE_RESERVE_MS;
 
 /**
  * 生成 POST のクライアント abort を総予算からどれだけ外側に置くか（ms）。

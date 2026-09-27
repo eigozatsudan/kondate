@@ -63,6 +63,7 @@ import {
   generationResponse,
   getGenerationFailureCopy,
   projectProviderConflicts,
+  MIN_OPENROUTER_ATTEMPT_MS,
   REQUIRED_SEND_BUDGET_MS,
   runGeneration,
   toGenerationStatus,
@@ -1493,7 +1494,41 @@ describe("runGeneration", () => {
     it("exports the release-locked budget constants", () => {
       expect(ATTEMPT_TIMEOUT_MS).toBe(20_000);
       expect(FINALIZE_RESERVE_MS).toBe(2_000);
-      expect(REQUIRED_SEND_BUDGET_MS).toBe(22_000);
+      expect(MIN_OPENROUTER_ATTEMPT_MS).toBe(12_000);
+      expect(REQUIRED_SEND_BUDGET_MS).toBe(14_000);
+    });
+
+    it("sends with a shortened timeout when cold-start preparation used 5.8s of the budget", async () => {
+      // 2026-09-27 本番: 準備に 5.8s かかり、旧 22s ゲートでは送らずに generation_timeout になった
+      const repository = makeRepository();
+      let nowMs = 0;
+      const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() =>
+        Promise.resolve({
+          mode: "full_menu" as const,
+          output: scenarios.success,
+          modelId: models[0],
+        }),
+      );
+      const result = await runGeneration(
+        makeDeps({
+          repository,
+          callOpenRouter,
+          requestStartedAtMonotonicMs: 0,
+          functionTotalBudgetMs: 26_000,
+          openRouterTimeoutMs: 20_000,
+          monotonicNow: () => nowMs,
+          loadExecutionContext: vi.fn(() => {
+            nowMs = 5_800;
+            return Promise.resolve(makeNewMenuExecutionContext());
+          }),
+        }),
+        command,
+      );
+      expect(result.status).toBe("succeeded");
+      expect(repository.failBeforeSend).not.toHaveBeenCalled();
+      expect(callOpenRouter.mock.calls[0]?.[0].timeoutMs).toBe(
+        26_000 - 5_800 - FINALIZE_RESERVE_MS,
+      );
     });
 
     it("fails before markSent when remaining is below REQUIRED_SEND_BUDGET_MS", async () => {
@@ -1554,8 +1589,7 @@ describe("runGeneration", () => {
       expect(repository.markSent).toHaveBeenCalledTimes(1);
       expect(callOpenRouter).toHaveBeenCalledTimes(1);
       const timeoutMs = callOpenRouter.mock.calls[0]?.[0].timeoutMs;
-      expect(timeoutMs).toBeGreaterThan(0);
-      expect(timeoutMs).toBeLessThanOrEqual(ATTEMPT_TIMEOUT_MS);
+      expect(timeoutMs).toBe(MIN_OPENROUTER_ATTEMPT_MS);
     });
 
     it("never repairs after a provider generation_timeout", async () => {
@@ -1653,7 +1687,7 @@ describe("runGeneration", () => {
 
     it("R2: allows markSent when slow ensure still leaves REQUIRED_SEND budget", async () => {
       // ensure が 4s 進んでも remaining が REQUIRED 以上なら markSent し、
-      // attemptTimeout は markSent 後の再 snapshot（現行定数では ATTEMPT 上限）を使う。
+      // attemptTimeout は markSent 後の再 snapshot（remaining − FINALIZE）を使う。
       const repository = makeRepository();
       let nowMs = 0;
       const ensureOpenRouterModelPolicy = vi
@@ -1690,8 +1724,8 @@ describe("runGeneration", () => {
       expect(ensureOpenRouterModelPolicy).toHaveBeenCalledTimes(1);
       expect(repository.markSent).toHaveBeenCalledTimes(1);
       expect(callOpenRouter).toHaveBeenCalledTimes(1);
-      // remaining after markSent === REQUIRED → timeout = ATTEMPT
-      expect(callOpenRouter.mock.calls[0]?.[0].timeoutMs).toBe(ATTEMPT_TIMEOUT_MS);
+      // remaining after markSent === REQUIRED → timeout = MIN_OPENROUTER_ATTEMPT_MS
+      expect(callOpenRouter.mock.calls[0]?.[0].timeoutMs).toBe(MIN_OPENROUTER_ATTEMPT_MS);
     });
 
     it("G5: recomputes OpenRouter timeout after slow markSent so finalize reserve is kept", async () => {

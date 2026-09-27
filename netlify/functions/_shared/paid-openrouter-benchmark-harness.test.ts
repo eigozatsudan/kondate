@@ -478,12 +478,12 @@ describe("runPaidBenchmarkUnit", () => {
     },
   );
 
-  it("enforces the 22s pre-send boundary through runGeneration", async () => {
-    // 総予算 26s − REQUIRED_SEND 22s = 4s。4_001 で残 < 22s → 送信前中止
+  it("enforces the 14s pre-send boundary through runGeneration", async () => {
+    // 総予算 26s − REQUIRED_SEND 14s = 12s。12_001 で残 < 14s → 送信前中止
     let calls = 0;
     const now = () => {
       calls += 1;
-      return calls === 1 ? 0 : 4_001;
+      return calls === 1 ? 0 : 12_001;
     };
     const blocked = await runWithSteps([], { now });
     expect(blocked.result.failureCodes).toEqual(["generation_timeout"]);
@@ -492,7 +492,7 @@ describe("runPaidBenchmarkUnit", () => {
     calls = 0;
     const boundaryNow = () => {
       calls += 1;
-      return calls === 1 ? 0 : 4_000;
+      return calls === 1 ? 0 : 12_000;
     };
     const allowed = await runWithSteps(
       [{ kind: "output", model: primaryModel, output: validIdeaOutput() }],
@@ -502,10 +502,10 @@ describe("runPaidBenchmarkUnit", () => {
     expect(allowed.requests).toHaveLength(1);
   });
 
-  it("enforces the independent 22s pre-repair boundary", async () => {
+  it("enforces the independent 14s pre-repair boundary", async () => {
     for (const [elapsedMs, expectedOk, expectedRequests] of [
-      [4_000, true, 2],
-      [4_001, false, 1],
+      [12_000, true, 2],
+      [12_001, false, 1],
     ] as const) {
       let nowMs = 0;
       const { result, requests } = await runWithSteps(

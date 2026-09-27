@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   FINALIZE_RESERVE_MS as SHARED_FINALIZE_RESERVE_MS,
+  MIN_OPENROUTER_ATTEMPT_MS as SHARED_MIN_OPENROUTER_ATTEMPT_MS,
   OPENROUTER_TIMEOUT_MS,
+  REQUIRED_SEND_BUDGET_MS as SHARED_REQUIRED_SEND_BUDGET_MS,
 } from "../../../shared/contracts/function-budget.js";
 import {
   generationConflictCodes,
@@ -97,8 +99,10 @@ function isDiversityHintsEnabled(flag: boolean): boolean {
 export const ATTEMPT_TIMEOUT_MS = OPENROUTER_TIMEOUT_MS;
 /** 最終化用に確保する残り予算（ms） */
 export const FINALIZE_RESERVE_MS = SHARED_FINALIZE_RESERVE_MS;
-/** markSent 前に必要な最小残り予算（試行上限 + finalize 予約） */
-export const REQUIRED_SEND_BUDGET_MS = ATTEMPT_TIMEOUT_MS + FINALIZE_RESERVE_MS;
+/** 送信を許す 1 試行の最小上限（ms）。試行上限は残り予算に合わせてここまで縮む */
+export const MIN_OPENROUTER_ATTEMPT_MS = SHARED_MIN_OPENROUTER_ATTEMPT_MS;
+/** markSent 前に必要な最小残り予算（最小試行 + finalize 予約） */
+export const REQUIRED_SEND_BUDGET_MS = SHARED_REQUIRED_SEND_BUDGET_MS;
 
 /** 全 kind 共通の実行コンテキスト基底（Plan 4 が再生成経路で再利用） */
 type ExecutionBase = {
@@ -1066,7 +1070,7 @@ export async function runGeneration(
       excludedModelIds: readonly string[] = [],
       messages: readonly OpenRouterMessage[] = originalMessages,
     ): Promise<OpenRouterGenerationResult | "terminal"> => {
-      // 1 回目・repair の 2 回目を含め、毎回 markSent 直前に 20s+2s を再確認する。
+      // 1 回目・repair の 2 回目を含め、毎回 markSent 直前に 12s+2s を再確認する。
       // canRepair/外側ゲート通過後に時間が進んでも、部分 timeout で markSent しない。
       if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
         await deps.repository.failBeforeSend(requestId, "generation_timeout");
@@ -1183,7 +1187,7 @@ export async function runGeneration(
       firstWasDuplicate = output.duplicate === true;
     }
 
-    // repair は canRepair（20s+2s 残）のときだけ。timeout 経路はここへ来ない
+    // repair は canRepair（12s+2s 残）のときだけ。timeout 経路はここへ来ない
     // 重複も 1 回だけ repair を通し、再重複なら duplicate_output（成功消費なし）
     // G5 residual-intentional: repair は 2 本目 markSent（attempt 二重消費）。invalid 連発で
     // Free attempt 枠が success に届かない相互作用は仕様どおりの溶融残差。枠返却しない。

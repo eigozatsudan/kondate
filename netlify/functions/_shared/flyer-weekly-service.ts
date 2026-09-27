@@ -14,7 +14,7 @@ import {
 } from "../../../shared/contracts/flyer-weekly.js";
 import {
   FINALIZE_RESERVE_MS,
-  OPENROUTER_TIMEOUT_MS,
+  REQUIRED_SEND_BUDGET_MS,
 } from "../../../shared/contracts/function-budget.js";
 import { issueMessages } from "../../../shared/contracts/generation.js";
 import {
@@ -114,9 +114,6 @@ export type FlyerWeeklyAuthUser = {
   /** privacy_consents を user-scoped で読むための JWT */
   accessToken: string;
 };
-
-/** mark 前に必要な最小残り予算（試行上限 + finalize 予約）。generation-service と同型。 */
-const REQUIRED_SEND_BUDGET_MS = OPENROUTER_TIMEOUT_MS + FINALIZE_RESERVE_MS;
 
 const flyerConsentRowSchema = z
   .object({

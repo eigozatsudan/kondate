@@ -101,13 +101,15 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 | プラットフォーム実効上限 | **実測 約30s**（公式 doc は 60s） | Netlify Free 同期 Function（2026-09-27 本番 502 at 30.8s） |
 | `FUNCTION_TOTAL_BUDGET_MS` | **26s** | 切断前 headroom 4s（応答返却・finalize） |
 | `OPENROUTER_TIMEOUT_MS` | **20s** | primary 1 回 + finalize 2s ≤ 26s。repair は予算上ほぼ入らない |
-| pre-send / pre-repair ゲート | **22s** 残（20+2） | REQUIRED_SEND = OPENROUTER_TIMEOUT + FINALIZE_RESERVE |
+| pre-send / pre-repair ゲート | **14s** 残（12+2） | REQUIRED_SEND = MIN_OPENROUTER_ATTEMPT + FINALIZE_RESERVE。試行上限は min(20s, 残り − 2s) |
 | `AI_PROCESSING_STALE_SECONDS` | 180 | 切断残骸の掃除猶予（予算より長いのは意図的） |
 
-送信前の準備（認証・予約・context 読み込み・Models 政策確認）に使える猶予は 26 − 22 = **4s 以内**。
-超えると pre-send ゲートで送らずに `generation_timeout`（attempt は焼かない）。primary 1 回で最大 20s
-使うと残りは 22s 未満になるため、**repair はほぼ予算に入らない**（`canRepair()` が false）。これは
-人間が了承済みのトレードオフ（Netlify Free では repair 品質改善より 502 回避を優先）。
+送信前の準備（認証・予約・context 読み込み・Models 政策確認）に使える猶予は 26 − 14 = **12s 以内**。
+超えると pre-send ゲートで送らずに `generation_timeout`（attempt は焼かない）。準備が 4s を超えた分だけ
+試行上限が 20s から縮む（最小 12s）。旧 22s ゲートでは冷起動の準備 5.8s で送信前 timeout になった
+（2026-09-27 本番）ため緩和した。primary 1 回で最大 20s 使うと残りは 14s 未満になるため、
+**repair は primary が速く失敗したときだけ入る**（`canRepair()`）。これは人間が了承済みのトレードオフ
+（Netlify Free では repair 品質改善より 502 回避を優先）。
 26s 総予算 + クライアント headroom 3s = 29s（`GENERATION_POST_CLIENT_TIMEOUT_MS`）は実効 30s の内側。
 
 ローカル E2E（`tools/e2e-function-server.mjs`）は Netlify 切断を再現しないが、**同じ 20s/26s env ロック**を使う。
