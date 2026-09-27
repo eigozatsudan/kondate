@@ -3,6 +3,7 @@ import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerpri
 import { HttpError } from "./http.js";
 import type { AdminSupabaseClient } from "./supabase-admin.js";
 import type { WeeklyPlanDeps } from "./weekly-plan-service.js";
+import { weeklyPlanResultSchema } from "../../../shared/contracts/weekly-plan.js";
 
 const getServerEnvMock = vi.fn();
 const loadEntitlementMock = vi.fn();
@@ -621,7 +622,7 @@ describe("replayStashedWeeklyPlan — persists the validated fingerprint when re
     // true のままだと同一リソースについて POST は true・直後の GET は false（buildResultFromRow
     // が保存指紋 == 現行指紋で false を返す）という反転が起きる。
     expect(result.staleSafety).toBe(false);
-    expect(result.effortPreference).toBeNull();
+    expect(result).not.toHaveProperty("effortPreference");
   });
 
   it("restores effortPreference from the stashed intent snapshot", async () => {
@@ -1398,6 +1399,76 @@ describe("runWeeklyPlan — ordering and quota", () => {
 
     const result = await runWeeklyPlan(baseDeps(), sampleRequest());
 
+    expect(result.effortPreference).toBe("easy");
+  });
+
+  it("rebuilds from the intent with effortPreference easy on a succeeded lookup hit without a stored row", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "56565656-5656-4565-8565-565656565656",
+            idempotency_key: "k1",
+            status: "succeeded",
+            week_start: "2026-09-07",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "56565656-5656-4565-8565-565656565656",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+                effortPreference: "easy",
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    let weeklyPlansCalls = 0;
+    let capturedInsertPayload: Record<string, unknown> | undefined;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        weeklyPlansCalls += 1;
+        // 1 回目は request_id での行の引き当て（行なし）、2 回目は intent から作り直した行の insert
+        if (weeklyPlansCalls === 1) return thenableQuery({ data: null, error: null });
+        const query = thenableQuery({
+          data: { id: "57575757-5757-4575-8575-575757575757" },
+          error: null,
+        });
+        query.insert = vi.fn((payload: Record<string, unknown>) => {
+          capturedInsertPayload = payload;
+          return query;
+        });
+        return query;
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    // 再送のリクエスト自体は null。intent 側の値（作成時の選択）が正になる
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(rpcNames()).toContain("get_weekly_plan_intent");
+    expect(capturedInsertPayload).toMatchObject({
+      preference_snapshot: { effortPreference: "easy" },
+    });
+    expect(result.weeklyPlanId).toBe("57575757-5757-4575-8575-575757575757");
     expect(result.effortPreference).toBe("easy");
   });
 
@@ -2240,10 +2311,21 @@ describe("getWeeklyPlan", () => {
     expect(result.effortPreference).toBe("easy");
   });
 
-  it("reads a pre-feature snapshot without effortPreference as null", async () => {
+  it("omits effortPreference on GET for a pre-feature snapshot (read as null)", async () => {
     const admin = adminReturningWeeklyPlanSnapshot(preFeatureSnapshot);
     const result = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-    expect(result.effortPreference).toBeNull();
+    // null はキーごと出さない（D1）。新しい SPA は .default(null) で null として読む
+    expect(result).not.toHaveProperty("effortPreference");
+    expect(weeklyPlanResultSchema.parse(result).effortPreference).toBeNull();
+  });
+
+  it("omits effortPreference on GET when the saved snapshot has an explicit null", async () => {
+    const admin = adminReturningWeeklyPlanSnapshot({
+      ...preFeatureSnapshot,
+      effortPreference: null,
+    });
+    const result = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(result).not.toHaveProperty("effortPreference");
   });
 
   it("degrades an out-of-range effortPreference in the snapshot to null instead of failing", async () => {
@@ -2252,7 +2334,7 @@ describe("getWeeklyPlan", () => {
       effortPreference: "wild",
     });
     const result = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-    expect(result.effortPreference).toBeNull();
+    expect(result).not.toHaveProperty("effortPreference");
   });
 });
 
@@ -2413,7 +2495,7 @@ describe("runWeeklyPlan — priorityIngredients（優先食材）", () => {
     expect(result.priorityIngredients).toEqual(["鶏むね肉", "キャベツ"]);
   });
 
-  it("persists effortPreference into the intent snapshot and the inserted row, and echoes it", async () => {
+  async function runSuccessWithEffort(effortPreference: "easy" | "standard" | null) {
     rpcMock.mockImplementation((name: string) => {
       if (name === "lookup_flyer_weekly")
         return Promise.resolve({ data: { kind: "miss" }, error: null });
@@ -2463,10 +2545,15 @@ describe("runWeeklyPlan — priorityIngredients（優先食材）", () => {
 
     const result = await runWeeklyPlan(baseDeps({ openRouterSender: sender }), {
       ...sampleRequest(),
-      effortPreference: "easy",
+      effortPreference,
     });
-
     expect(sender).toHaveBeenCalledTimes(1);
+    return { result, capturedInsertPayload };
+  }
+
+  it("persists effortPreference into the intent snapshot and the inserted row, and echoes it", async () => {
+    const { result, capturedInsertPayload } = await runSuccessWithEffort("easy");
+
     expect(rpcArgsFor("put_weekly_plan_intent")).toMatchObject({
       p_snapshot: { effortPreference: "easy" },
     });
@@ -2475,6 +2562,22 @@ describe("runWeeklyPlan — priorityIngredients（優先食材）", () => {
       preference_snapshot: { effortPreference: "easy" },
     });
     expect(result.effortPreference).toBe("easy");
+  });
+
+  it("omits the effortPreference key from the success response when it is null, but still stores null", async () => {
+    const { result, capturedInsertPayload } = await runSuccessWithEffort(null);
+
+    // 保存する行と intent は従来どおり null キーを持つ（保存形は変えない）
+    expect(rpcArgsFor("put_weekly_plan_intent")).toMatchObject({
+      p_snapshot: { effortPreference: null },
+    });
+    expect(capturedInsertPayload).toMatchObject({
+      preference_snapshot: { effortPreference: null },
+    });
+    // 応答ではキーごと出さない。リリース 1 より前の strict な SPA が未知キーで落ちないようにする（D1）
+    expect(result).not.toHaveProperty("effortPreference");
+    // 新しい SPA は .default(null) で欠落を null として読める
+    expect(weeklyPlanResultSchema.parse(result).effortPreference).toBeNull();
   });
 });
 

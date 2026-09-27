@@ -765,7 +765,39 @@ async function replayStashedWeeklyPlan(
   });
 }
 
+/**
+ * ブラウザへ返す週献立の応答形。effortPreference が null のときはキーごと出さない（D1）。
+ * リリース 1 より前の SPA は weeklyPlanResultSchema が strict で effortPreference を知らず、
+ * 未知キーで parse に失敗する。null を省けば、その失敗を easy / standard を選んだ場合だけに減らせる。
+ * 新しい SPA は .default(null) なので、欠落を null として読める。
+ */
+export type WeeklyPlanResponseData = Omit<WeeklyPlanResult, "effortPreference"> & {
+  effortPreference?: EffortPreference;
+};
+
+/**
+ * weeklyPlanResultSchema.parse の後に、null の effortPreference だけを落とす。
+ * parse は .default(null) で null キーを戻すため、必ず parse 済みの値に対して使う。
+ * 保存する行・intent の jsonb は変えない（応答の形だけを変える）。
+ */
+export function toWeeklyPlanResponseData(result: WeeklyPlanResult): WeeklyPlanResponseData {
+  const { effortPreference, ...rest } = result;
+  return effortPreference === null ? rest : { ...rest, effortPreference };
+}
+
+/**
+ * POST /api/weekly-plan の本体。成功・succeeded lookup / reserve の再生（行あり・intent からの作り直し）・
+ * stash の再生・同時実行の回収のどの経路の結果も、ここで 1 回だけ toWeeklyPlanResponseData を通す。
+ * 経路ごとに呼ぶと新しい return を足したときに漏れるため、出口を 1 つにしている。
+ */
 export async function runWeeklyPlan(
+  deps: WeeklyPlanDeps,
+  request: WeeklyPlanRequest,
+): Promise<WeeklyPlanResponseData> {
+  return toWeeklyPlanResponseData(await runWeeklyPlanResult(deps, request));
+}
+
+async function runWeeklyPlanResult(
   deps: WeeklyPlanDeps,
   request: WeeklyPlanRequest,
 ): Promise<WeeklyPlanResult> {
@@ -1207,7 +1239,7 @@ export async function getWeeklyPlan(
   admin: AdminSupabaseClient,
   userId: string,
   weeklyPlanId: string,
-): Promise<WeeklyPlanResult> {
+): Promise<WeeklyPlanResponseData> {
   const { data: rowRaw, error } = await admin
     .from("weekly_plans")
     .select("id, week_start, preference_snapshot, safety_fingerprint, days")
@@ -1221,5 +1253,6 @@ export async function getWeeklyPlan(
     throw new HttpError(404, "not_found", "見つかりませんでした");
   }
   const row = weeklyPlanRowSchema.parse(rowRaw);
-  return buildResultFromRow(admin, userId, row);
+  // POST と同じ応答形にする（null の effortPreference はキーごと出さない。D1）
+  return toWeeklyPlanResponseData(await buildResultFromRow(admin, userId, row));
 }

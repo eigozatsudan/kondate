@@ -164,6 +164,14 @@ UI から書き込まれない。それでも enum に残すのは `noveltyPrefe
   sessionStorage に保持された試行メタデータの再送を落とさないためである。
 - **レスポンス契約**: `noveltyPreference` をエコーしている strict schema にも同じフィールドを足す。
   デプロイや rollback をまたいでも旧 Function のレスポンスを落とさないよう、`.default(null)` を付ける。
+- **応答では null を省く（人間の決定）**: ブラウザへ返す週献立の応答（POST の成功・succeeded の再生・
+  stash / intent からの作り直し・GET のすべて）では、`effortPreference` が null のときキーそのものを出さず、
+  `easy` / `standard` のときだけ出す。リリース 1 より前の SPA の strict な `weeklyPlanResultSchema` が
+  未知キーで落ちるのを、手間を選んだ場合だけに減らすためである。新しい SPA は `.default(null)` なので
+  欠落を null として読める。サーバ側では `weeklyPlanResultSchema.parse` の後にキーを落とす（parse すると
+  default で null キーが戻るため）。実装は `weekly-plan-service.ts` の `toWeeklyPlanResponseData` 1 つで、
+  exported の `runWeeklyPlan` と `getWeeklyPlan` の出口で 1 回ずつ通す。保存される行と intent の jsonb は
+  変えない（null キーを持ったまま）。
 - リクエストとレスポンスの両契約も、planner と同じくリリース 1 で `.nullable().optional()` として先に入れ、
   リリース 2 で `.nullable().default(null)` に置き換える（§7.1）。リリース 1 の Function は受け取った値を
   写さずに捨てる。
