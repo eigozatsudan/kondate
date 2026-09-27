@@ -46,7 +46,7 @@ export const FINALIZE_RESERVE_MS = 2_000;
 
 /**
  * 生成 POST のクライアント abort を総予算からどれだけ外側に置くか（ms）。
- * サーバ 55s と platform 60s の間に置き、hang 中に status poll へ戻れない窓を閉じる。
+ * サーバ 26s と実効 platform 30s（Netlify Free 実測）の間に置き、hang 中に status poll へ戻れない窓を閉じる。
  */
 export const GENERATION_CLIENT_TIMEOUT_HEADROOM_MS = 3_000;
 
