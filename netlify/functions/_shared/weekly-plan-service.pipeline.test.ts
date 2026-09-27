@@ -89,6 +89,7 @@ function sampleRequest() {
     cuisineGenre: "japanese" as const,
     budgetPreference: null,
     noveltyPreference: null,
+    effortPreference: null,
     priorityIngredients: [] as string[],
   };
 }
@@ -620,6 +621,77 @@ describe("replayStashedWeeklyPlan — persists the validated fingerprint when re
     // true のままだと同一リソースについて POST は true・直後の GET は false（buildResultFromRow
     // が保存指紋 == 現行指紋で false を返す）という反転が起きる。
     expect(result.staleSafety).toBe(false);
+    expect(result.effortPreference).toBeNull();
+  });
+
+  it("restores effortPreference from the stashed intent snapshot", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "25252525-2525-4252-8252-252525252525",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "25252525-2525-4252-8252-252525252525",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+                effortPreference: "easy",
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    let capturedInsertPayload: Record<string, unknown> | undefined;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        const query = thenableQuery({
+          data: { id: "26262626-2626-4262-8262-262626262626" },
+          error: null,
+        });
+        query.insert = vi.fn((payload: Record<string, unknown>) => {
+          capturedInsertPayload = payload;
+          return query;
+        });
+        return query;
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    // 再送のリクエスト自体は null。intent 側の値（作成時の選択）が正になる
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(capturedInsertPayload).toMatchObject({
+      preference_snapshot: { effortPreference: "easy" },
+    });
+    expect(result.effortPreference).toBe("easy");
   });
 
   it("keeps staleSafety: true and persists the intent's fingerprint when the stash re-assert fails (N-I-10 契約は変えない)", async () => {
@@ -1282,6 +1354,51 @@ describe("runWeeklyPlan — ordering and quota", () => {
 
     expect(rpcNames()).not.toContain("reserve_flyer_weekly");
     expect(result.weeklyPlanId).toBe("55555555-5555-4555-8555-555555555555");
+  });
+
+  it("echoes effortPreference from the stored row on a succeeded lookup hit", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "55555555-5555-4555-8555-555555555555",
+            idempotency_key: "k1",
+            status: "succeeded",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    fromMock.mockImplementation((table: string) => {
+      if (table === "weekly_plans") {
+        return thenableQuery({
+          data: {
+            id: "55555555-5555-4555-8555-555555555555",
+            week_start: "2026-09-07",
+            preference_snapshot: {
+              targetMemberIds: [sampleMemberId],
+              cuisineGenre: "japanese",
+              budgetPreference: null,
+              noveltyPreference: null,
+              effortPreference: "easy",
+            },
+            safety_fingerprint: "a".repeat(64),
+            days: sampleAiMenu().days,
+          },
+          error: null,
+        });
+      }
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(result.effortPreference).toBe("easy");
   });
 
   it("throws weekly_plan_weekly_limit (429) mapped from flyer_weekly_limit and burns no attempt", async () => {
@@ -2080,6 +2197,63 @@ describe("getWeeklyPlan", () => {
 
     expect(result.priorityIngredients).toEqual([]);
   });
+
+  function adminReturningWeeklyPlanSnapshot(
+    preferenceSnapshot: Record<string, unknown>,
+  ): AdminSupabaseClient {
+    return {
+      from: vi.fn((table: string) => {
+        if (table === "weekly_plans") {
+          return thenableQuery({
+            data: {
+              id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              week_start: "2026-09-07",
+              preference_snapshot: preferenceSnapshot,
+              safety_fingerprint: "a".repeat(64),
+              days: sampleAiMenu().days,
+            },
+            error: null,
+          });
+        }
+        if (table === "household_members") {
+          return thenableQuery({ data: [], error: null });
+        }
+        throw new Error(`unexpected table: ${table}`);
+      }),
+    } as unknown as AdminSupabaseClient;
+  }
+
+  const preFeatureSnapshot = {
+    targetMemberIds: [sampleMemberId],
+    cuisineGenre: "japanese",
+    budgetPreference: null,
+    noveltyPreference: null,
+    priorityIngredients: [],
+  };
+
+  it("reads a saved effortPreference back on GET", async () => {
+    const admin = adminReturningWeeklyPlanSnapshot({
+      ...preFeatureSnapshot,
+      effortPreference: "easy",
+    });
+    const result = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(result.effortPreference).toBe("easy");
+  });
+
+  it("reads a pre-feature snapshot without effortPreference as null", async () => {
+    const admin = adminReturningWeeklyPlanSnapshot(preFeatureSnapshot);
+    const result = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(result.effortPreference).toBeNull();
+  });
+
+  it("degrades an out-of-range effortPreference in the snapshot to null instead of failing", async () => {
+    const admin = adminReturningWeeklyPlanSnapshot({
+      ...preFeatureSnapshot,
+      effortPreference: "wild",
+    });
+    const result = await getWeeklyPlan(admin, "u1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(result.effortPreference).toBeNull();
+  });
 });
 
 describe("runWeeklyPlan — priorityIngredients（優先食材）", () => {
@@ -2237,6 +2411,70 @@ describe("runWeeklyPlan — priorityIngredients（優先食材）", () => {
       preference_snapshot: { priorityIngredients: ["鶏むね肉", "キャベツ"] },
     });
     expect(result.priorityIngredients).toEqual(["鶏むね肉", "キャベツ"]);
+  });
+
+  it("persists effortPreference into the intent snapshot and the inserted row, and echoes it", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "33333333-3333-4333-8333-333333333333",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: false,
+            week_start: "2026-09-07",
+          },
+          error: null,
+        });
+      }
+      if (name === "put_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      if (name === "mark_flyer_weekly_sent")
+        return Promise.resolve({ data: { sent: true }, error: null });
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    let capturedInsertPayload: Record<string, unknown> | undefined;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        const query = thenableQuery({
+          data: { id: "44444444-4444-4444-8444-444444444444" },
+          error: null,
+        });
+        query.insert = vi.fn((payload: Record<string, unknown>) => {
+          capturedInsertPayload = payload;
+          return query;
+        });
+        return query;
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+    const sender = vi.fn().mockResolvedValue({
+      mode: "flyer_weekly",
+      output: sampleAiMenu(),
+      modelId: "m1",
+    });
+
+    const result = await runWeeklyPlan(baseDeps({ openRouterSender: sender }), {
+      ...sampleRequest(),
+      effortPreference: "easy",
+    });
+
+    expect(sender).toHaveBeenCalledTimes(1);
+    expect(rpcArgsFor("put_weekly_plan_intent")).toMatchObject({
+      p_snapshot: { effortPreference: "easy" },
+    });
+    // insertWeeklyPlanRow はフィールドごとのリテラルで組み立てるため、足し忘れを型で検出できない
+    expect(capturedInsertPayload).toMatchObject({
+      preference_snapshot: { effortPreference: "easy" },
+    });
+    expect(result.effortPreference).toBe("easy");
   });
 });
 

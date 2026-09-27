@@ -48,6 +48,17 @@ describe("weeklyPlanRequestSchema", () => {
     );
   });
 
+  it("defaults a missing effortPreference to null and rejects unknown values on the request", () => {
+    // base は effortPreference を持たない（導入前に保持された試行メタデータを模擬）
+    expect(weeklyPlanRequestSchema.parse(base).effortPreference).toBeNull();
+    expect(
+      weeklyPlanRequestSchema.parse({ ...base, effortPreference: "easy" }).effortPreference,
+    ).toBe("easy");
+    expect(weeklyPlanRequestSchema.safeParse({ ...base, effortPreference: "wild" }).success).toBe(
+      false,
+    );
+  });
+
   it("defaults priorityIngredients to [] when the key is absent (保持メタデータ再送の互換)", () => {
     const result = weeklyPlanRequestSchema.safeParse(base);
     expect(result.success).toBe(true);
@@ -158,6 +169,12 @@ describe("weeklyPlanResultSchema", () => {
       expect(result.data.budgetPreference).toBe("economy");
       expect(result.data.noveltyPreference).toBe("twist");
     }
+  });
+
+  it("carries effortPreference through on the result and defaults it to null when absent", () => {
+    const withValue = weeklyPlanResultSchema.parse({ ...baseResult, effortPreference: "easy" });
+    expect(withValue.effortPreference).toBe("easy");
+    expect(weeklyPlanResultSchema.parse(baseResult).effortPreference).toBeNull();
   });
 
   it("requires exactly 7 unique days", () => {

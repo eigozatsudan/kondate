@@ -14,6 +14,7 @@ import {
   type WeeklyPlanResult,
 } from "../../../shared/contracts/weekly-plan.js";
 import { issueMessages } from "../../../shared/contracts/generation.js";
+import { effortPreferences, type EffortPreference } from "../../../shared/contracts/planner.js";
 import {
   FINALIZE_RESERVE_MS,
   OPENROUTER_TIMEOUT_MS,
@@ -113,6 +114,8 @@ const weeklyPlanRowSchema = z.object({
     cuisineGenre: z.string(),
     budgetPreference: z.string().nullable(),
     noveltyPreference: z.string().nullable(),
+    // catch(null): 導入前の行/intent はこのキーを持たない。範囲外の値でも GET を恒久的な 500 にしない
+    effortPreference: z.enum(effortPreferences).nullable().catch(null),
     // catch([]): 導入前に保存された行/intent の snapshot はこのキーを持たない。
     // また snapshot は表示用エコーのみに使うため、万一範囲外の値が混入しても
     // [] に落として結果全体の parse を失敗させない（GET の恒久的 500 を防ぐ）。
@@ -128,6 +131,8 @@ const intentRowSchema = z.object({
     cuisineGenre: z.string(),
     budgetPreference: z.string().nullable(),
     noveltyPreference: z.string().nullable(),
+    // catch(null): 導入前の行/intent はこのキーを持たない。範囲外の値でも GET を恒久的な 500 にしない
+    effortPreference: z.enum(effortPreferences).nullable().catch(null),
     priorityIngredients: weeklyPlanPriorityIngredientsSchema.catch([]),
   }),
   safety_fingerprint: z.string(),
@@ -353,6 +358,7 @@ type WeeklyPlanSnapshot = {
   cuisineGenre: string;
   budgetPreference: string | null;
   noveltyPreference: string | null;
+  effortPreference: EffortPreference | null;
   priorityIngredients: readonly string[];
 };
 
@@ -362,6 +368,7 @@ function snapshotFromRequest(request: WeeklyPlanRequest): WeeklyPlanSnapshot {
     cuisineGenre: request.cuisineGenre,
     budgetPreference: request.budgetPreference,
     noveltyPreference: request.noveltyPreference,
+    effortPreference: request.effortPreference,
     priorityIngredients: [...request.priorityIngredients],
   };
 }
@@ -432,6 +439,7 @@ async function buildResultFromRow(
     cuisineGenre: snapshot.cuisineGenre,
     budgetPreference: snapshot.budgetPreference,
     noveltyPreference: snapshot.noveltyPreference,
+    effortPreference: snapshot.effortPreference,
     priorityIngredients: snapshot.priorityIngredients,
     partialHousehold,
     staleSafety,
@@ -521,6 +529,7 @@ async function insertWeeklyPlanRow(
         cuisineGenre: snapshot.cuisineGenre,
         budgetPreference: snapshot.budgetPreference,
         noveltyPreference: snapshot.noveltyPreference,
+        effortPreference: snapshot.effortPreference,
         priorityIngredients: [...snapshot.priorityIngredients],
       },
       safety_fingerprint: fingerprint,
@@ -631,6 +640,7 @@ async function replaySucceededWeeklyPlan(
     cuisineGenre: intent.data.preference_snapshot.cuisineGenre,
     budgetPreference: intent.data.preference_snapshot.budgetPreference,
     noveltyPreference: intent.data.preference_snapshot.noveltyPreference,
+    effortPreference: intent.data.preference_snapshot.effortPreference,
     priorityIngredients: intent.data.preference_snapshot.priorityIngredients,
     partialHousehold,
     staleSafety,
@@ -748,6 +758,7 @@ async function replayStashedWeeklyPlan(
     cuisineGenre: intent.data.preference_snapshot.cuisineGenre,
     budgetPreference: intent.data.preference_snapshot.budgetPreference,
     noveltyPreference: intent.data.preference_snapshot.noveltyPreference,
+    effortPreference: intent.data.preference_snapshot.effortPreference,
     priorityIngredients: intent.data.preference_snapshot.priorityIngredients,
     partialHousehold,
     staleSafety,
@@ -1182,6 +1193,7 @@ export async function runWeeklyPlan(
     cuisineGenre: snapshot.cuisineGenre,
     budgetPreference: snapshot.budgetPreference,
     noveltyPreference: snapshot.noveltyPreference,
+    effortPreference: snapshot.effortPreference,
     priorityIngredients: snapshot.priorityIngredients,
     partialHousehold,
     staleSafety: false,

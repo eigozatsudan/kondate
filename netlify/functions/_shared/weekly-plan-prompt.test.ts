@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildWeeklyPlanMessages } from "./weekly-plan-prompt.js";
+import { WEEKLY_EFFORT_SENTENCE } from "./effort-hints.js";
 import { weeklyFlyerMenuResponseFormat } from "../../../shared/contracts/flyer-weekly.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import type { WeeklyPlanRequest } from "../../../shared/contracts/weekly-plan.js";
@@ -35,6 +36,7 @@ const sampleRequest: WeeklyPlanRequest = {
   cuisineGenre: "japanese",
   budgetPreference: null,
   noveltyPreference: null,
+  effortPreference: null,
   priorityIngredients: [],
 };
 
@@ -71,6 +73,46 @@ describe("buildWeeklyPlanMessages", () => {
       preferences: { priorityIngredients: string[] };
     };
     expect(payload.preferences.priorityIngredients).toEqual(["鶏むね肉", "キャベツ"]);
+  });
+
+  it("adds the weekly effort sentence and payload value only when easy is selected", () => {
+    const easy = buildWeeklyPlanMessages(
+      { ...sampleRequest, effortPreference: "easy" },
+      sampleSafety(),
+    );
+    const easySystem = typeof easy[0]?.content === "string" ? easy[0].content : "";
+    expect(easySystem).toContain(WEEKLY_EFFORT_SENTENCE);
+    expect(WEEKLY_EFFORT_SENTENCE).toContain("生地");
+    expect(WEEKLY_EFFORT_SENTENCE).toContain("包む");
+    expect(WEEKLY_EFFORT_SENTENCE).toContain("安全条件・アレルギーと十分な加熱が常に優先です。");
+    const easyUser = typeof easy[1]?.content === "string" ? easy[1].content : "";
+    const easyPayload = JSON.parse(easyUser.replace(/<\/?kondate_weekly_plan_input>/gu, "")) as {
+      preferences: Record<string, unknown>;
+    };
+    expect(easyPayload.preferences.effortPreference).toBe("easy");
+
+    for (const effortPreference of ["standard", null] as const) {
+      const messages = buildWeeklyPlanMessages(
+        { ...sampleRequest, effortPreference },
+        sampleSafety(),
+      );
+      const system = typeof messages[0]?.content === "string" ? messages[0].content : "";
+      expect(system).not.toContain(WEEKLY_EFFORT_SENTENCE);
+      const user = typeof messages[1]?.content === "string" ? messages[1].content : "";
+      expect(user).not.toContain("effortPreference");
+    }
+  });
+
+  it("places the weekly effort sentence right after the priorityIngredients sentence", () => {
+    const messages = buildWeeklyPlanMessages(
+      { ...sampleRequest, effortPreference: "easy" },
+      sampleSafety(),
+    );
+    const system = typeof messages[0]?.content === "string" ? messages[0].content : "";
+    const priorityEnd =
+      system.indexOf("7日の献立に優先的に取り入れてください。") +
+      "7日の献立に優先的に取り入れてください。".length;
+    expect(system.indexOf(WEEKLY_EFFORT_SENTENCE)).toBe(priorityEnd);
   });
 
   it("instructs the model to prioritize priorityIngredients within safety limits", () => {

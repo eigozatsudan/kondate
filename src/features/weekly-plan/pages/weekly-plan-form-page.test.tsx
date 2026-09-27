@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -133,6 +133,7 @@ describe("WeeklyPlanFormPage", () => {
       cuisineGenre: "any",
       budgetPreference: null,
       noveltyPreference: null,
+      effortPreference: null,
     });
     expect(body.idempotencyKey).toEqual(expect.any(String));
     expect(sessionStorage.getItem("weekly-plan-idempotency-key")).toBe(body.idempotencyKey);
@@ -560,9 +561,25 @@ describe("WeeklyPlanFormPage", () => {
 
   it("presents one standard choice for each nullable preference", async () => {
     renderPage();
-    expect(screen.getAllByRole("radio", { name: "標準" })).toHaveLength(2);
+    expect(screen.getAllByRole("radio", { name: "標準" })).toHaveLength(3);
     expect(screen.queryByRole("radio", { name: "標準を指定" })).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole("radio", { name: "標準" })[0]!);
+  });
+
+  it("submits effortPreference easy when 手間のかかる料理は避ける is picked", async () => {
+    postWeeklyPlanMock.mockResolvedValue({
+      weeklyPlanId: "33333333-3333-4333-8333-333333333333",
+    });
+    const user = userEvent.setup();
+    renderPage();
+    const effortGroup = screen.getByRole("group", { name: "調理の手間" });
+    await user.click(within(effortGroup).getByRole("radio", { name: "手間のかかる料理は避ける" }));
+    await user.click(screen.getByRole("button", { name: "今週の献立をつくる" }));
+    await waitFor(() => {
+      expect(postWeeklyPlanMock).toHaveBeenCalledTimes(1);
+    });
+    const [, body] = postWeeklyPlanMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(body).toMatchObject({ effortPreference: "easy", noveltyPreference: null });
   });
 
   it("shows the shared progress indicator and meter while creating", async () => {

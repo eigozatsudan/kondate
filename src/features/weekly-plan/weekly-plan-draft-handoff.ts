@@ -22,7 +22,11 @@ export function buildPlannerDraftInputFromWeeklyPlanDay(
   day: WeeklyFlyerDay,
   plan: Pick<
     WeeklyPlanResult,
-    "targetMemberIds" | "cuisineGenre" | "budgetPreference" | "noveltyPreference"
+    | "targetMemberIds"
+    | "cuisineGenre"
+    | "budgetPreference"
+    | "noveltyPreference"
+    | "effortPreference"
   >,
   currentCompleteMemberIds: readonly string[],
 ): WeeklyPlanDraftHandoffOutcome {
@@ -53,8 +57,7 @@ export function buildPlannerDraftInputFromWeeklyPlanDay(
       // ingredientPreference: 週献立の入力に対応する項目が無いため今回のスコープ外。null のまま。
       ingredientPreference: null,
       noveltyPreference: plan.noveltyPreference,
-      // effortPreference: 週献立からの引き継ぎは Task 4 で plan.effortPreference に置き換える。
-      effortPreference: null,
+      effortPreference: plan.effortPreference,
       avoidIngredients: [],
       memo: truncateCodePoints(`主菜: ${day.mainName}`, PLANNER_MEMO_TEXT_MAX),
       pantrySelections: [],

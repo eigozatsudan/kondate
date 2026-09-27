@@ -4,6 +4,7 @@ import { z } from "zod";
 import { cuisineGenres } from "@shared/contracts/domain";
 import {
   budgetPreferences,
+  effortPreferences,
   noveltyPreferences,
   PLANNER_INGREDIENT_TEXT_MAX,
   PLANNER_MAIN_INGREDIENT_LIMIT,
@@ -23,6 +24,7 @@ import {
 } from "@/features/planner/model/main-ingredient-options";
 import {
   cuisineGenreLabels,
+  effortPreferenceLabels,
   noveltyPreferenceLabels,
 } from "@/features/planner/model/planner-labels";
 import type { PlannerSafetyMember } from "@/features/planner/planner-safety-member";
@@ -140,6 +142,9 @@ export function WeeklyPlanFormPage({
   >(null);
   const [noveltyPreference, setNoveltyPreference] = useState<
     (typeof noveltyPreferences)[number] | null
+  >(null);
+  const [effortPreference, setEffortPreference] = useState<
+    (typeof effortPreferences)[number] | null
   >(null);
   const [priorityIngredients, setPriorityIngredients] = useState<readonly string[]>([]);
   const [priorityIngredientInput, setPriorityIngredientInput] = useState("");
@@ -317,6 +322,7 @@ export function WeeklyPlanFormPage({
       cuisineGenre,
       budgetPreference,
       noveltyPreference,
+      effortPreference,
       priorityIngredients: [...priorityIngredients],
     };
     const pending: RequestMetadata = {
@@ -474,6 +480,25 @@ export function WeeklyPlanFormPage({
               }}
             />
             {preference === null ? "標準" : noveltyPreferenceLabels.twist}
+          </label>
+        ))}
+      </fieldset>
+      <fieldset className="stack">
+        <legend>調理の手間</legend>
+        {([null, "easy"] as const).map((preference) => (
+          <label key={preference ?? "default"} className="wizard-option min-h-11">
+            <input
+              type="radio"
+              name="weekly-effort"
+              checked={
+                preference === null ? effortPreference !== "easy" : effortPreference === "easy"
+              }
+              disabled={requestActive}
+              onChange={() => {
+                setEffortPreference(preference);
+              }}
+            />
+            {preference === null ? "標準" : effortPreferenceLabels.easy}
           </label>
         ))}
       </fieldset>

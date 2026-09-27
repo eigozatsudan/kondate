@@ -27,6 +27,7 @@ const sampleResult = {
   cuisineGenre: "japanese",
   budgetPreference: null,
   noveltyPreference: null,
+  effortPreference: null,
   priorityIngredients: [],
   partialHousehold: false,
   staleSafety: false,
@@ -51,6 +52,7 @@ describe("postWeeklyPlan", () => {
       cuisineGenre: "japanese",
       budgetPreference: null,
       noveltyPreference: null,
+      effortPreference: null,
       priorityIngredients: [],
     });
     const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
@@ -77,6 +79,7 @@ describe("postWeeklyPlan", () => {
       cuisineGenre: "japanese",
       budgetPreference: null,
       noveltyPreference: null,
+      effortPreference: null,
       priorityIngredients: [],
     });
     await expect(promise).rejects.toBeInstanceOf(WeeklyPlanApiError);
@@ -123,6 +126,7 @@ describe("POST/GET actually wire AbortSignal.timeout to the intended ceiling (I-
       cuisineGenre: "japanese",
       budgetPreference: null,
       noveltyPreference: null,
+      effortPreference: null,
       priorityIngredients: [],
     });
 

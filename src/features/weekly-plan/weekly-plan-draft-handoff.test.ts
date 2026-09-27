@@ -26,6 +26,7 @@ const samplePlan = {
   cuisineGenre: "japanese" as const,
   budgetPreference: null,
   noveltyPreference: null,
+  effortPreference: null,
 };
 
 describe("buildPlannerDraftInputFromWeeklyPlanDay", () => {
@@ -69,6 +70,16 @@ describe("buildPlannerDraftInputFromWeeklyPlanDay", () => {
 
     expect(outcome.input.budgetPreference).toBe("economy");
     expect(outcome.input.noveltyPreference).toBe("twist");
+  });
+
+  it("carries effortPreference through to the planner draft", () => {
+    const outcome = buildPlannerDraftInputFromWeeklyPlanDay(
+      sampleDay,
+      { ...samplePlan, effortPreference: "easy" as const },
+      [MEMBER_ONE_ID, MEMBER_TWO_ID],
+    );
+    if ("error" in outcome) throw new Error("expected success");
+    expect(outcome.input.effortPreference).toBe("easy");
   });
 
   it("keeps only target members in the current complete household", () => {

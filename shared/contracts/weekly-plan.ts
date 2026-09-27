@@ -42,8 +42,9 @@ export const weeklyPlanRequestSchema = z
     cuisineGenre: z.enum(cuisineGenres),
     budgetPreference: z.enum(budgetPreferences).nullable(),
     noveltyPreference: z.enum(noveltyPreferences).nullable(),
-    // リリース 1 は受け取るだけ（spec §7.1）。リリース 2 で nullable().default(null) に置き換える
-    effortPreference: z.enum(effortPreferences).nullable().optional(),
+    // default(null): 導入前に保持された試行メタデータ（sessionStorage 再送）が
+    // このキーを持たなくても、欠損を「未指定」として読み再送を失敗させない。範囲外は拒否する。
+    effortPreference: z.enum(effortPreferences).nullable().default(null),
     // default([]): 導入前に保持された試行メタデータ（sessionStorage 再送）が
     // このキーを持たなくても、欠損を「未指定」として読み再送を失敗させない。
     priorityIngredients: weeklyPlanPriorityIngredientsSchema.default([]),
@@ -91,8 +92,9 @@ export const weeklyPlanResultSchema = z
     // 従来この strict スキーマに宣言が無く黙って捨てられていた）。
     budgetPreference: z.enum(budgetPreferences).nullable(),
     noveltyPreference: z.enum(noveltyPreferences).nullable(),
-    // リリース 1 は受け取るだけ（spec §7.1）。リリース 2 で nullable().default(null) に置き換える
-    effortPreference: z.enum(effortPreferences).nullable().optional(),
+    // default(null): additive field。デプロイ/rollback またぎでこのキーを返さない
+    // 旧 Function のレスポンスを新クライアントが strict parse で落とさないようにする。
+    effortPreference: z.enum(effortPreferences).nullable().default(null),
     // 作成時に選んだ優先食材を snapshot 由来でエコーする（結果画面での表示・確認用）。
     // 導入前に保存された行は snapshot 側の default([]) で空配列として読まれる。
     // default([]): additive field。デプロイ/rollback またぎでこのキーを返さない
