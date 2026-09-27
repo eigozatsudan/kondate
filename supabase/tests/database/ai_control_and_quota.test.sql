@@ -3624,6 +3624,53 @@ select is(
   'easy',
   'reserve copies effort preference into the submission snapshot');
 
+-- 手間軸: draft の effort_preference が null なら snapshot も null のまま（既定値で埋めない）
+do $effort_snapshot_null$
+declare
+  -- live 未使用の専用 UUID 帯（f5〜fa は使用済み）
+  v_owner constant uuid := '10000000-0000-4000-8000-0000000000fb';
+  v_idempotency constant uuid := '30000000-0000-4000-8000-0000000000fb';
+  v_draft public.generation_drafts;
+begin
+  insert into auth.users(
+    id,instance_id,aud,role,email,encrypted_password,
+    raw_app_meta_data,raw_user_meta_data,created_at,updated_at
+  ) values(
+    v_owner,'00000000-0000-0000-0000-000000000000','authenticated',
+    'authenticated','effort-snapshot-null@example.invalid','','{}','{}',now(),now()
+  );
+  perform set_config('request.jwt.claim.sub', v_owner::text, true);
+
+  v_draft := public.save_generation_draft(
+    0::bigint,'dinner',array['豚肉'],'japanese',
+    'idea',array[]::uuid[],2::smallint,30::smallint,'standard',null,
+    array[]::text[],'','[]'::jsonb,null,null
+  );
+  perform public.reserve_ai_generation(
+    v_owner,v_idempotency,
+    'new_menu',v_draft.id,v_draft.revision,null,null,null,
+    'generation-command.v3',repeat('f',64),
+    jsonb_build_object(
+      'kind','new_menu',
+      'target_mode','idea',
+      'servings',2,
+      'target_member_ids','[]'::jsonb,
+      'source_menu_version',null
+    ),
+    -- 上の easy ブロック（2026-07-16）と同じ理由で、近い未使用日を選ぶ
+    tests.quota_identity_key(v_owner), 1, 6, 4, 20, false, false, 180,'2026-07-17 03:00:00+00'
+  );
+end
+$effort_snapshot_null$;
+
+select ok(
+  (select count(*) = 1 and bool_and(snapshot.effort_preference is null)
+     from private.ai_generation_requests request
+     cross join lateral public.get_ai_generation_submission_snapshot(
+       request.id, request.user_id) snapshot
+    where request.idempotency_key = '30000000-0000-4000-8000-0000000000fb'),
+  'reserve keeps a null effort preference null in the submission snapshot');
+
 
 select pass('idea finalize success stores null versions, fixed fingerprint, empty family children');
 select pass('idea finalize rejects non-empty targets, non-null versions, servings/fingerprint/snapshot/family rows without terminal menu or quota pollution');

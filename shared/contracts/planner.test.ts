@@ -175,12 +175,16 @@ describe("planner contracts", () => {
         }),
       ).toMatchObject({ effortPreference });
     }
-    expect(
-      plannerDraftInputSchema.safeParse({
-        ...incompleteDraft,
-        effortPreference: "wild",
-      }).success,
-    ).toBe(false);
+    // strict の未知キー拒否（unrecognized_keys）ではなく、effortPreference の enum で落ちていることを固定する。
+    // success=false だけだと、フィールドの宣言が消えても strict で同じく落ちて空洞になる
+    const rejected = plannerDraftInputSchema.safeParse({
+      ...incompleteDraft,
+      effortPreference: "wild",
+    });
+    expect(rejected.success).toBe(false);
+    expect(rejected.error?.issues).toEqual([
+      expect.objectContaining({ code: "invalid_value", path: ["effortPreference"] }),
+    ]);
   });
 
   it("requires the three basic choices and one target for submission", () => {

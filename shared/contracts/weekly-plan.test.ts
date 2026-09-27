@@ -43,9 +43,12 @@ describe("weeklyPlanRequestSchema", () => {
     for (const effortPreference of ["standard", "easy", null] as const) {
       expect(weeklyPlanRequestSchema.safeParse({ ...base, effortPreference }).success).toBe(true);
     }
-    expect(weeklyPlanRequestSchema.safeParse({ ...base, effortPreference: "wild" }).success).toBe(
-      false,
-    );
+    // strict の未知キー拒否ではなく、effortPreference の enum で落ちていることを固定する
+    const rejected = weeklyPlanRequestSchema.safeParse({ ...base, effortPreference: "wild" });
+    expect(rejected.success).toBe(false);
+    expect(rejected.error?.issues).toEqual([
+      expect.objectContaining({ code: "invalid_value", path: ["effortPreference"] }),
+    ]);
   });
 
   it("defaults a missing effortPreference to null and rejects unknown values on the request", () => {
@@ -54,9 +57,10 @@ describe("weeklyPlanRequestSchema", () => {
     expect(
       weeklyPlanRequestSchema.parse({ ...base, effortPreference: "easy" }).effortPreference,
     ).toBe("easy");
-    expect(weeklyPlanRequestSchema.safeParse({ ...base, effortPreference: "wild" }).success).toBe(
-      false,
-    );
+    const rejected = weeklyPlanRequestSchema.safeParse({ ...base, effortPreference: "wild" });
+    expect(rejected.error?.issues).toEqual([
+      expect.objectContaining({ code: "invalid_value", path: ["effortPreference"] }),
+    ]);
   });
 
   it("defaults priorityIngredients to [] when the key is absent (保持メタデータ再送の互換)", () => {

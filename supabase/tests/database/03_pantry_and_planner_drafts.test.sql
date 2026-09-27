@@ -1,5 +1,5 @@
 begin;
-select plan(53);
+select plan(55);
 
 select has_table('public', 'pantry_items', 'pantry item table exists');
 select has_table('public', 'generation_drafts', 'generation draft table exists');
@@ -225,6 +225,24 @@ select public.save_generation_draft(6,'dinner',array['豚肉'],'japanese','idea'
   array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,'twist');
 select is((select effort_preference from public.generation_drafts), null,
   'a 14-argument save resolves to the default null effort preference');
+
+-- 手間軸の列 check: RPC の 22023 検査を通らない直接書き込みでも範囲外の値は 23514 で落ちる
+reset role;
+select throws_ok(
+  $$update public.generation_drafts set effort_preference = 'wild'$$,
+  '23514', null, 'generation_drafts rejects an out-of-range effort preference written directly'
+);
+select throws_ok(
+  $$insert into private.generation_draft_submission_versions (
+      draft_id, user_id, draft_revision, meal_type, main_ingredients, cuisine_genre,
+      target_member_ids, target_mode, servings, avoid_ingredients, memo, pantry_selections,
+      effort_preference
+    ) values (
+      gen_random_uuid(), '10000000-0000-0000-0000-000000000001', 1, 'dinner', array['豚肉'],
+      'japanese', array[]::uuid[], 'idea', 2, array[]::text[], '', '[]'::jsonb, 'wild'
+    )$$,
+  '23514', null, 'submission snapshot rejects an out-of-range effort preference written directly'
+);
 
 -- has_function(15 型) は 14 引数版の残留を検出しないため overload 数を直接数える
 select is(

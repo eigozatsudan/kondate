@@ -60,7 +60,12 @@ export type GenerationPreflightResult =
       conflicts: readonly GenerationPreflightConflict[];
     };
 
-const snapshotRowSchema = z
+/**
+ * get_ai_generation_submission_snapshot の 1 行。
+ * export はテストで issue の path / code（範囲外の値が strict の未知キーでなく enum で落ちること）を
+ * 確かめるためだけに行う。読み込み経路は loadGenerationContext の safeParse だけ。
+ */
+export const snapshotRowSchema = z
   .object({
     draft_id: z.uuid(),
     draft_revision: z.number().int().positive(),
