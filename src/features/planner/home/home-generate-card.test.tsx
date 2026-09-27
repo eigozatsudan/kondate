@@ -173,7 +173,7 @@ describe("HomeGenerateCard", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
-  it("U3: says all required questions are answered instead of 8 / 9 when resuming at review", () => {
+  it("U3: says all required questions are answered instead of 9 / 10 when resuming at review", () => {
     render(
       <HomeGenerateCard
         remainingToday={2}
@@ -186,7 +186,7 @@ describe("HomeGenerateCard", () => {
     expect(
       screen.getByText("必須の質問はすべて答えています。確認画面から続けられます。"),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/8 \/ 9/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/9 \/ 10/u)).not.toBeInTheDocument();
   });
 
   it("U3/P9: remainingToday===0 keeps resume enabled and disables restart", async () => {

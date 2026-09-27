@@ -358,8 +358,8 @@ describe("PlannerWizard 固定順とnavigation", () => {
     await user.click(screen.getByRole("button", { name: "次へ" }));
 
     expect(screen.getByRole("heading", { name: "5. 調理時間" })).toBeInTheDocument();
-    // 追加条件4ページは選択では進まない。既定の「指定なし」のまま「次へ」で送る。
-    for (const heading of ["6. 予算", "7. 材料の使い方", "8. 献立の雰囲気"]) {
+    // 追加条件5ページは選択では進まない。既定の「指定なし」のまま「次へ」で送る。
+    for (const heading of ["6. 調理の手間", "7. 予算", "8. 材料の使い方", "9. 献立の雰囲気"]) {
       await passActivationGuard();
       await user.click(screen.getByRole("button", { name: "次へ" }));
       expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
@@ -367,10 +367,10 @@ describe("PlannerWizard 固定順とnavigation", () => {
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "次へ" }));
 
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
 
-    for (let i = 0; i < 8; i += 1) {
-      // 任意4ページの「戻る」も 350ms ガードの対象。連打で2ページ戻らせない。
+    for (let i = 0; i < 9; i += 1) {
+      // 任意5ページの「戻る」も 350ms ガードの対象。連打で2ページ戻らせない。
       await passActivationGuard();
       await user.click(screen.getByRole("button", { name: "戻る" }));
     }
@@ -434,19 +434,19 @@ describe("PlannerWizard 固定順とnavigation", () => {
 });
 
 describe("PlannerWizard progress indicator(U2)", () => {
-  it("最初の質問stepで 1 / 9 を出す", () => {
+  it("最初の質問stepで 1 / 10 を出す", () => {
     render(<Harness initialStep="meal" />);
-    expect(screen.getByText("1 / 9")).toBeInTheDocument();
+    expect(screen.getByText("1 / 10")).toBeInTheDocument();
   });
 
   it("任意の質問stepでは番号と「任意」を添える", () => {
     renderAtTimeLimit();
-    expect(screen.getByText("5 / 9・任意")).toBeInTheDocument();
+    expect(screen.getByText("5 / 10・任意")).toBeInTheDocument();
   });
 
-  it("最後の確認stepで 9 / 9 を出す", () => {
+  it("最後の確認stepで 10 / 10 を出す", () => {
     renderWizardAtReviewWithDraft();
-    expect(screen.getByText("9 / 9")).toBeInTheDocument();
+    expect(screen.getByText("10 / 10")).toBeInTheDocument();
   });
 
   it("進捗バーは装飾として aria-hidden にする", () => {
@@ -486,28 +486,33 @@ describe("PlannerWizard optional condition steps", () => {
     expect(await screen.findByRole("heading", { name: "5. 調理時間" })).toBeInTheDocument();
   });
 
-  it("walks the four optional steps into the review step and keeps the picks", async () => {
+  it("walks the five optional steps into the review step and keeps the picks", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { latestDraft } = renderAtTimeLimit();
     await user.click(optionLabel("15分以内"));
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "次へ" }));
-    expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "6. 調理の手間" })).toBeInTheDocument();
+    await user.click(optionLabel("手間のかかる料理は避ける"));
+    await passActivationGuard();
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(screen.getByRole("heading", { name: "7. 予算" })).toBeInTheDocument();
     await user.click(optionLabel("節約優先"));
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "次へ" }));
-    expect(screen.getByRole("heading", { name: "7. 材料の使い方" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "8. 材料の使い方" })).toBeInTheDocument();
     await user.click(optionLabel("多め"));
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "次へ" }));
-    expect(screen.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "9. 献立の雰囲気" })).toBeInTheDocument();
     await user.click(optionLabel("いつもと違う主菜に（調理法や組み合わせを変える）"));
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "次へ" }));
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
     expect(latestDraft()).toMatchObject({
       timeLimitMinutes: 15,
+      effortPreference: "easy",
       budgetPreference: "economy",
       ingredientPreference: "more",
       noveltyPreference: "twist",
@@ -524,15 +529,16 @@ describe("PlannerWizard optional condition steps", () => {
     expect(latestDraft().timeLimitMinutes).not.toBe("");
   });
 
-  it("skips the rest of the optional steps with all four fields null", async () => {
+  it("skips the rest of the optional steps with all five fields null", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const { latestDraft } = renderAtTimeLimit();
+    const { latestDraft } = renderAtTimeLimit({ effortPreference: "easy" });
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "以降は指定なしでスキップ" }));
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
     expect(latestDraft()).toMatchObject({
       timeLimitMinutes: null,
+      effortPreference: null,
       budgetPreference: null,
       ingredientPreference: null,
       noveltyPreference: null,
@@ -545,10 +551,10 @@ describe("PlannerWizard optional condition steps", () => {
     renderAtTimeLimit();
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "次へ" }));
-    expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "6. 調理の手間" })).toBeInTheDocument();
     // 6ページ目 mount 直後の初回 click は 350ms ガードで落ちる（同座標の連打）
     await user.click(screen.getByRole("button", { name: "次へ" }));
-    expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "6. 調理の手間" })).toBeInTheDocument();
   });
 
   it("returns to review when the audience is edited from the review screen (household)", async () => {
@@ -557,7 +563,7 @@ describe("PlannerWizard optional condition steps", () => {
     await user.click(screen.getByRole("button", { name: "対象を変更" }));
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "確認に戻る" }));
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
   });
 
   it("returns to review when the audience is edited from the review screen (idea)", async () => {
@@ -578,7 +584,7 @@ describe("PlannerWizard optional condition steps", () => {
     );
     await user.click(screen.getByRole("button", { name: "対象を変更" }));
     await user.click(screen.getByRole("button", { name: "確認に戻る" }));
-    expect(await screen.findByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
   });
 });
 
@@ -758,7 +764,7 @@ describe("PlannerWizard idea audience onIdeaAudienceConfirmed", () => {
       expect(onIdeaAudienceConfirmed).toHaveBeenCalled();
     });
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "10. 確認" })).not.toBeInTheDocument();
   });
 
   it("does not call onIdeaAudienceConfirmed for household audience next", async () => {
@@ -915,7 +921,7 @@ describe("PlannerWizard idea audience onIdeaAudienceConfirmed", () => {
 
     // 旧 wizard クロージャの goToStep("review") が発火していない
     expect(steps).not.toContain("review");
-    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "10. 確認" })).not.toBeInTheDocument();
   });
 });
 
@@ -958,18 +964,52 @@ describe("PlannerWizard review step", () => {
     await user.click(optionLabel("30分以内"));
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "確認に戻る" }));
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
+  });
+
+  test("goes back from effort to timeLimit and forward to budget", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<Harness initialStep="effort" initialDraft={reviewDraft} />);
+    expect(screen.getByRole("heading", { name: "6. 調理の手間" })).toBeInTheDocument();
+    await passActivationGuard();
+    await user.click(screen.getByRole("button", { name: "戻る" }));
+    expect(screen.getByRole("heading", { name: "5. 調理時間" })).toBeInTheDocument();
+    await passActivationGuard();
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(screen.getByRole("heading", { name: "6. 調理の手間" })).toBeInTheDocument();
+    await passActivationGuard();
+    await user.click(screen.getByRole("button", { name: "次へ" }));
+    expect(screen.getByRole("heading", { name: "7. 予算" })).toBeInTheDocument();
+  });
+
+  test("returns to review after editing effort from 変更, and review's 戻る still goes to novelty", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<Harness initialStep="review" initialDraft={reviewDraft} />);
+    await user.click(screen.getByRole("button", { name: "調理の手間を変更" }));
+    expect(screen.getByRole("heading", { name: "6. 調理の手間" })).toBeInTheDocument();
+    await user.click(optionLabel("手間のかかる料理は避ける"));
+    await passActivationGuard();
+    await user.click(screen.getByRole("button", { name: "確認に戻る" }));
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
+    expect(screen.getByText("手間のかかる料理は避ける")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "戻る" }));
+    expect(screen.getByRole("heading", { name: "9. 献立の雰囲気" })).toBeInTheDocument();
   });
 
   test("shows the optional condition answers as review summary rows", () => {
     renderWizardAtReviewWithDraft({
       timeLimitMinutes: 30,
+      effortPreference: "easy",
       budgetPreference: "economy",
       ingredientPreference: "more",
       noveltyPreference: "twist",
     });
     expect(screen.getByText("調理時間")).toBeInTheDocument();
     expect(screen.getByText("30分以内")).toBeInTheDocument();
+    expect(screen.getByText("調理の手間")).toBeInTheDocument();
+    expect(screen.getByText("手間のかかる料理は避ける")).toBeInTheDocument();
     expect(screen.getByText("予算")).toBeInTheDocument();
     expect(screen.getByText("節約優先")).toBeInTheDocument();
     expect(screen.getByText("材料の使い方")).toBeInTheDocument();
@@ -983,11 +1023,12 @@ describe("PlannerWizard review step", () => {
   test("shows 指定なし for unanswered optional conditions", () => {
     renderWizardAtReviewWithDraft({
       timeLimitMinutes: null,
+      effortPreference: null,
       budgetPreference: null,
       ingredientPreference: null,
       noveltyPreference: null,
     });
-    expect(screen.getAllByText("指定なし")).toHaveLength(4);
+    expect(screen.getAllByText("指定なし")).toHaveLength(5);
   });
 
   test("no longer renders the optional condition radios on the review screen", () => {
@@ -1003,7 +1044,7 @@ describe("PlannerWizard review step", () => {
     const user = userEvent.setup();
     renderWizardAtReviewWithDraft({});
     await user.click(screen.getByRole("button", { name: "予算を変更" }));
-    expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "7. 予算" })).toBeInTheDocument();
   });
 
   test("keeps avoid / memo / pantry inside the additional conditions details", () => {
@@ -1026,21 +1067,21 @@ describe("PlannerWizard review step", () => {
 
     // 1ページずつ戻る（順送り用の戻る。編集モードではない）
     await user.click(screen.getByRole("button", { name: "戻る" }));
-    expect(screen.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "9. 献立の雰囲気" })).toBeInTheDocument();
 
     await user.click(optionLabel("いつもの"));
     await passActivationGuard();
     await user.click(screen.getByRole("button", { name: "次へ" }));
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "メイン食材を変更" }));
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "鶏肉を外す" })).toBeVisible();
 
-    // 確認からの変更中は「確認に戻る」と表示し、3.ジャンルではなく 9.確認 へ戻る
+    // 確認からの変更中は「確認に戻る」と表示し、3.ジャンルではなく 10.確認 へ戻る
     expect(screen.queryByRole("button", { name: "次へ" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "確認に戻る" }));
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
     expect(screen.getByText("鶏肉")).toBeVisible();
   });
 
@@ -1061,17 +1102,17 @@ describe("PlannerWizard review step", () => {
     expect(screen.getByRole("radio", { name: "夕食" })).toBeChecked();
     // 食事 step には編集中止用の「やめる」が出る
     await user.click(screen.getByRole("button", { name: "やめる" }));
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "ジャンルを変更" }));
     expect(screen.getByRole("heading", { name: "3. ジャンル" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "確認に戻る" }));
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "対象を変更" }));
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "確認に戻る" }));
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
   });
 
   it("P2: 確認からの「やめる」は audience 未完成なら review に戻さない", async () => {
@@ -1095,7 +1136,7 @@ describe("PlannerWizard review step", () => {
 
     await user.click(screen.getByRole("button", { name: "やめる" }));
     // incomplete のまま review へ戻らない（P2）
-    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "10. 確認" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "4. 作る相手" })).toBeInTheDocument();
   });
 
@@ -1121,7 +1162,7 @@ describe("PlannerWizard review step", () => {
 
     await user.click(screen.getByRole("button", { name: "やめる" }));
     // 空 ingredients のまま review へ戻らない（P2）
-    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "10. 確認" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "2. メイン食材" })).toBeInTheDocument();
   });
 
@@ -1722,7 +1763,7 @@ describe("PlannerWizard review step", () => {
 
   it("保存失敗時は現在stepを維持する", () => {
     render(<Harness initialStep="review" error="献立条件を保存できませんでした。" />);
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
     expect(screen.getByText("献立条件を保存できませんでした。")).toBeInTheDocument();
   });
 

@@ -266,11 +266,11 @@ describe("B-2: 続きから答える は最後に開いていた質問へ戻る"
   it("reopens the optional question that was open, not the review screen", async () => {
     const router = renderPlanner(completeDraft, ["/planner"]);
     await click("続きから答える");
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
 
-    // 確認画面から 1 つ戻って任意の質問（8. 献立の雰囲気）を見ている途中でタブを押す
+    // 確認画面から 1 つ戻って任意の質問（9. 献立の雰囲気）を見ている途中でタブを押す
     await click("戻る");
-    expect(screen.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "9. 献立の雰囲気" })).toBeInTheDocument();
     await pressPlannerTab(router);
     expectHome();
     expect(
@@ -278,14 +278,14 @@ describe("B-2: 続きから答える は最後に開いていた質問へ戻る"
     ).toBeInTheDocument();
 
     await click("続きから答える");
-    expect(screen.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "9. 献立の雰囲気" })).toBeInTheDocument();
   });
 
   it("remembers only the step name per user across remounts", async () => {
     sessionStorage.setItem(plannerLastStepSessionKey(userId), "budget");
     renderPlanner(completeDraft, ["/planner"]);
     await click("続きから答える");
-    expect(screen.getByRole("heading", { name: "6. 予算" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "7. 予算" })).toBeInTheDocument();
     expect(sessionStorage.getItem(plannerLastStepSessionKey(userId))).toBe("budget");
   });
 
@@ -301,7 +301,7 @@ describe("B-2: 続きから答える は最後に開いていた質問へ戻る"
     sessionStorage.setItem(plannerLastStepSessionKey(userId), "not-a-step");
     renderPlanner(completeDraft, ["/planner"]);
     await click("続きから答える");
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
   });
 });
 
@@ -311,7 +311,7 @@ describe("B-3: ウィザードが開いている間の戻るはホームへ、�
     const router = renderPlanner(completeDraft, ["/history", "/planner"], requestFocus);
     await click("続きから答える");
     expect(currentUrl(router)).toBe("/planner");
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
 
     await pressBack(router);
     expect(currentUrl(router)).toBe("/planner");
@@ -406,12 +406,12 @@ describe("B-3: ウィザードが開いている間の戻るはホームへ、�
     ["生成の「条件を直してやり直す」のあと", "/menus/menu-1"],
   ])("consumes ?resume=review on mount and leaves in two backs (%s)", async (_label, outside) => {
     const router = renderPlanner(completeDraft, [outside, "/planner", "/planner?resume=review"]);
-    expect(await screen.findByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
     // 開いたままでも URL には ?resume= を残さない
     await waitFor(() => {
       expect(currentUrl(router)).toBe("/planner");
     });
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
     // 戻る 1 回目: 直前の /planner（同じ pathname）へ移り、ウィザードを閉じてホーム
     await pressBack(router);
     expectHome();
@@ -423,7 +423,7 @@ describe("B-3: ウィザードが開いている間の戻るはホームへ、�
 
   it("returns to the home with the planner tab after ?resume= was consumed, then leaves", async () => {
     const router = renderPlanner(completeDraft, ["/history", "/planner?resume=review"]);
-    expect(await screen.findByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
     await waitFor(() => {
       expect(currentUrl(router)).toBe("/planner");
     });
@@ -505,7 +505,7 @@ describe("R1-3: ブラウザの進むはウィザードを閉じずに進む", (
     const requestFocus = vi.fn();
     const router = renderPlanner(completeDraft, ["/history", "/planner"], requestFocus, "browser");
     await click("続きから答える");
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
 
     await act(async () => {
       await router.navigate(-1);
@@ -534,7 +534,7 @@ describe("R1-3: ブラウザの進むはウィザードを閉じずに進む", (
     expect(await screen.findByText("プランナーの外")).toBeInTheDocument();
     await goBrowser(router, -1, "/planner");
     await click("続きから答える");
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
 
     await goBrowser(router, 1, "/pantry");
     expect(await screen.findByText("プランナーの外")).toBeInTheDocument();
@@ -641,14 +641,14 @@ describe("R3: 実物の AppShell の献立タブで質問からホームへ戻�
     vi.stubGlobal("scrollTo", scrollTo);
     const router = renderPlannerInShell(completeDraft);
     await click("続きから答える");
-    expect(screen.getByRole("heading", { name: "9. 確認" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "10. 確認" })).toBeInTheDocument();
     scrollTo.mockClear();
 
     fireEvent.click(screen.getByRole("link", { name: "献立" }));
     await settle();
 
     const homeHeading = await screen.findByRole("heading", { name: "今日の献立", level: 1 });
-    expect(screen.queryByRole("heading", { name: "9. 確認" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "10. 確認" })).not.toBeInTheDocument();
     expect(currentUrl(router)).toBe("/planner");
     await waitFor(() => {
       expect(document.activeElement).toBe(homeHeading);

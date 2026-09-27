@@ -2,7 +2,7 @@ import type { PlannerDraftInput, TargetMode } from "@shared/contracts/planner";
 
 /**
  * ウィザードのstep順序。質問順（meal→ingredients→cuisine→audience）のあとに
- * 任意の追加条件4問（timeLimit→budget→ingredientPreference→novelty）を挟み、
+ * 任意の追加条件5問（timeLimit→effort→budget→ingredientPreference→novelty）を挟み、
  * reviewを続けた固定配列。UI・resume判定・focus順の唯一の正とする。
  */
 export const plannerSteps = [
@@ -11,6 +11,7 @@ export const plannerSteps = [
   "cuisine",
   "audience",
   "timeLimit",
+  "effort",
   "budget",
   "ingredientPreference",
   "novelty",

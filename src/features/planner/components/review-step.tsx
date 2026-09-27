@@ -30,6 +30,7 @@ import { CURRENT_SAFETY_DISCLAIMER, CurrentSafetySummary } from "../current-safe
 import { HOUSEHOLD_SELECTED_SAFETY_HELPER_COPY } from "../household-safety-helper-copy";
 import {
   cuisineGenreLabel,
+  effortPreferenceLabel,
   ingredientPreferenceLabel,
   mealLabel,
   noveltyPreferenceLabel,
@@ -367,7 +368,7 @@ export function ReviewStep({
         <Inset pad={5}>
           <Stack gap={5}>
             <h2 id="review-step-title" tabIndex={-1} ref={headingRef}>
-              9. 確認
+              10. 確認
             </h2>
             {/*
         household では選択 0 人でも補助文を常時出す（サマリー無しでも安全ブロック領域に単独表示）。
@@ -495,6 +496,24 @@ export function ReviewStep({
                       aria-label="調理時間を変更"
                       onClick={() => {
                         onEditStep("timeLimit");
+                      }}
+                    >
+                      変更
+                    </Button>
+                  )}
+                </dd>
+              </div>
+              <div className="wizard-review-item">
+                <dt>調理の手間</dt>
+                <dd className="review-answer-cell">
+                  <span>{effortPreferenceLabel(value.effortPreference)}</span>
+                  {onEditStep !== undefined && (
+                    <Button
+                      variant="ghost"
+                      disabled={disabled}
+                      aria-label="調理の手間を変更"
+                      onClick={() => {
+                        onEditStep("effort");
                       }}
                     >
                       変更

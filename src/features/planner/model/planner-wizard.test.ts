@@ -273,6 +273,7 @@ test("inserts the four optional condition steps between audience and review", ()
     "cuisine",
     "audience",
     "timeLimit",
+    "effort",
     "budget",
     "ingredientPreference",
     "novelty",

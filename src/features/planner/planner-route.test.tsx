@@ -2596,7 +2596,7 @@ describe("PlannerRoutePage", () => {
     const resumeDraft = await screen.findByRole("button", { name: "続きから答える" });
     expect(screen.queryByText(/作成中の献立があります/u)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "作成中の献立を続ける" })).not.toBeInTheDocument();
-    // M-5: 続きが確認画面のときは「8 / 9」ではなく必須回答済みの文言
+    // M-5: 続きが確認画面のときは「9 / 10」ではなく必須回答済みの文言
     expect(
       screen.getByText("必須の質問はすべて答えています。確認画面から続けられます。"),
     ).toBeInTheDocument();

@@ -82,11 +82,11 @@ async function savePlannerMeal(
   // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
   // M-7: 「続きから答える」は同じタブで最後に開いていた質問を開く（B-2）。この spec の
   // resumeDraftFromHome 呼び出しはすべて、直前のウィザード操作が確認（review）で終わって
-  // いる（本関数自身も skipOptionalPlannerSteps で確認まで進めて終わる）前提で「9. 確認」を期待する。
+  // いる（本関数自身も skipOptionalPlannerSteps で確認まで進めて終わる）前提で「10. 確認」を期待する。
   await resumeDraftFromHome(page);
-  await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
-  for (let i = 0; i < 8; i += 1) {
-    // 任意4ページの「戻る」は 350ms 活性化ガードの対象。連打相当の速度では弾かれる。
+  await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
+  for (let i = 0; i < 9; i += 1) {
+    // 任意5ページの「戻る」は 350ms 活性化ガードの対象。連打相当の速度では弾かれる。
     await page.waitForTimeout(350);
     await page.getByRole("button", { name: "戻る" }).click();
   }
@@ -284,7 +284,7 @@ test("waits for the latest draft save before requesting emergency menus", async 
   }
   await expect(emergencyCheckbox).toBeChecked();
   await page.getByRole("button", { name: "確認に戻る" }).click();
-  await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
   await openReviewOptionalDetails(page);
   await page.getByRole("checkbox", { name: "緊急用豆腐" }).check();
   const savedBody = await observedSave;
@@ -473,7 +473,7 @@ test(
     await page.reload();
     // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
     await resumeDraftFromHome(page);
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     // PLAN-1: 復元後は attempt 確認が空のため、既選択の期限切れで確認ダイアログが開く。
     // dialog 閉鎖後は details が閉じていることがあるため再 open してから checked を見る。
@@ -507,7 +507,7 @@ test(
     await page.reload();
     // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
     await resumeDraftFromHome(page);
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await expect(page.getByRole("checkbox", { name: "キャベツ" })).not.toBeChecked();
     await expect(page.getByLabel("キャベツの使い方")).toHaveCount(0);
@@ -640,7 +640,7 @@ test(
     await page.goto("/planner");
     // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
     await resumeDraftFromHome(page);
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await page.getByRole("checkbox", { name: "キャベツ" }).click();
     await expect(page.getByRole("alertdialog")).toContainText("アプリは食べられるか判断しません");
@@ -661,7 +661,7 @@ test(
     await page.goto("/planner");
     // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
     await resumeDraftFromHome(page);
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await expect(page.getByRole("alert")).toContainText("冷蔵庫から削除された食材");
     await expect(page.getByRole("button", { name: "献立を作る" })).toBeDisabled();
@@ -679,7 +679,7 @@ test(
     await page.reload();
     // U3: 下書きがあってもまずホームが出るため「続きから答える」で確認へ戻る
     await resumeDraftFromHome(page);
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
     await openReviewOptionalDetails(page);
     await expect(page.getByText("冷蔵庫から削除された食材")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();

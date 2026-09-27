@@ -71,7 +71,7 @@ test(
     await expect(page.getByRole("checkbox", { name: /家族1/u })).toBeChecked();
     await clickWizardNext(page);
 
-    // 任意4ページはカード選択では進まない。選んでから「次へ」で送る。
+    // 任意5ページはカード選択では進まない。選んでから「次へ」で送る。
     // heading 可視直後の「次へ」は 350ms 活性化ガードに食われるので待つ。
     // ここだけスキップせず、選択が保持されたまま送られることも同時に主張する。
     await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
@@ -79,17 +79,34 @@ test(
     await page.waitForTimeout(350);
     await clickWizardNext(page);
 
-    await expect(page.getByRole("heading", { name: "6. 予算" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "6. 調理の手間" })).toBeVisible();
+    // 手間 easy の保存応答は「手間のかかる料理は避ける」click の直前に待ち始める（ひねりと同型）
+    const effortSaved = page.waitForResponse((response) => {
+      if (!new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft")) {
+        return false;
+      }
+      const postData = response.request().postData();
+      return postData !== null && postData.includes('"p_effort_preference":"easy"');
+    });
+    await page
+      .locator("label.wizard-option")
+      .filter({ hasText: "手間のかかる料理は避ける" })
+      .click();
+    await effortSaved;
+    await page.waitForTimeout(350);
+    await clickWizardNext(page);
+
+    await expect(page.getByRole("heading", { name: "7. 予算" })).toBeVisible();
     await page.locator("label.wizard-option").filter({ hasText: "節約優先" }).click();
     await page.waitForTimeout(350);
     await clickWizardNext(page);
 
-    await expect(page.getByRole("heading", { name: "7. 材料の使い方" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "8. 材料の使い方" })).toBeVisible();
     await page.locator("label.wizard-option").filter({ hasText: "多め" }).click();
     await page.waitForTimeout(350);
     await clickWizardNext(page);
 
-    await expect(page.getByRole("heading", { name: "8. 献立の雰囲気" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "9. 献立の雰囲気" })).toBeVisible();
     // P-T6-WAIT: twist 保存の waitForResponse は「ひねりたい」click の直前に置く。
     const noveltySaved = page.waitForResponse((response) => {
       if (!new URL(response.url()).pathname.endsWith("/rest/v1/rpc/save_generation_draft")) {
@@ -106,7 +123,7 @@ test(
     await page.waitForTimeout(350);
     await clickWizardNext(page);
 
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
     // privacy は fixture 済み。CTA が出ていたら契約退行なので落とし、黙ってスキップしない。
     await expect(page.getByRole("button", { name: "AI情報の説明を見る" })).toHaveCount(0);
     // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で test から truncate 禁止）
@@ -358,7 +375,7 @@ test(
     // B-3: returnTo の /planner?resume=review はマウント時に消費され、URL は /planner（?resume= 無し）に置き換わる
     await expect(page).toHaveURL((url) => url.pathname === "/planner" && url.search === "");
     // reload なしで確認 step を維持（draft cache 巻き戻りの製品退行を検出する）
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible({
       timeout: 15_000,
     });
     // 共有 AI 枠は suite/project 境界の shell のみ（並列 worker 下で test から truncate 禁止）

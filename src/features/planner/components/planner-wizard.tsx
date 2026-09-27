@@ -4,6 +4,8 @@ import type { PantryItemsStatus } from "../pantry-selector";
 import { confirmPlannerReset } from "../confirm-planner-reset";
 import type { PantryItem } from "@shared/contracts/pantry";
 import {
+  effortPreferenceLabel,
+  effortPreferenceLabels,
   ingredientPreferenceLabel,
   ingredientPreferenceLabels,
   noveltyPreferenceLabel,
@@ -41,10 +43,11 @@ function buildReviewFieldErrors(
   return result;
 }
 
-// 4問（timeLimit〜novelty）は回答を省略しても先へ進める（skipRestOfOptionalSteps参照）。
+// 5問（timeLimit〜novelty）は回答を省略しても先へ進める（skipRestOfOptionalSteps参照）。
 // 進み具合表示で「任意」を添えるのはこの集合だけで、質問順は plannerSteps を唯一の正とする。
 const optionalPlannerSteps: ReadonlySet<(typeof plannerSteps)[number]> = new Set([
   "timeLimit",
+  "effort",
   "budget",
   "ingredientPreference",
   "novelty",
@@ -52,9 +55,9 @@ const optionalPlannerSteps: ReadonlySet<(typeof plannerSteps)[number]> = new Set
 
 /**
  * 各stepの上部に出す進み具合（U2）。
- * 「n / 9」はplannerStepsの実長から算出し、総数・現在位置を直書きしない。
+ * 「n / 10」はplannerStepsの実長から算出し、総数・現在位置を直書きしない。
  * 進捗バーは視覚だけの補助のためaria-hiddenにし、支援技術へは
- * テキスト「n / 9」（任意stepは「・任意」を付与）だけを読み上げさせる
+ * テキスト「n / 10」（任意stepは「・任意」を付与）だけを読み上げさせる
  * （brief: バー/テキストのどちらか一方に統一する方針のうちテキスト側を採用）。
  *
  * レビュー修正ラウンド1: 独自の `.wizard-progress-*` を新設せず、
@@ -654,7 +657,7 @@ export function PlannerWizard({
             });
           }}
           onNext={() => {
-            advanceFromEditOr("budget");
+            advanceFromEditOr("effort");
           }}
           onBack={() => {
             backFromEditOr("audience");
@@ -663,6 +666,42 @@ export function PlannerWizard({
           errorMessage={fieldErrors.timeLimitMinutes ?? null}
           description="選んだ内容はあとから確認画面で変えられます。"
           {...(returnToReviewAfterEdit ? {} : { onSkipRest: skipRestOfOptionalSteps })}
+          {...editReturnActionLabels}
+        />
+        {error !== null && <p role="alert">{error}</p>}
+        {resetChrome}
+        {footer}
+      </main>
+    );
+  }
+  if (step === "effort") {
+    return (
+      <main ref={containerRef} className="page-frame stack guided-planner-theme">
+        {conflictChrome}
+        {autosaveChrome}
+        <PlannerProgress step={step} />
+        <OptionalChoiceStep
+          key={step}
+          id="planner-effort-preference"
+          title="6. 調理の手間"
+          value={draft.effortPreference === "easy" ? "easy" : ""}
+          options={[
+            { value: "", label: effortPreferenceLabel(null) },
+            { value: "easy", label: effortPreferenceLabels.easy },
+          ]}
+          onSelect={(selected) => {
+            onDraftChange({
+              ...draft,
+              effortPreference: selected === "easy" ? "easy" : null,
+            });
+          }}
+          onNext={() => {
+            advanceFromEditOr("budget");
+          }}
+          onBack={() => {
+            backFromEditOr("timeLimit");
+          }}
+          disabled={isSaving}
           {...editReturnActionLabels}
         />
         {error !== null && <p role="alert">{error}</p>}
@@ -680,7 +719,7 @@ export function PlannerWizard({
         <OptionalChoiceStep
           key={step}
           id="planner-budget"
-          title="6. 予算"
+          title="7. 予算"
           value={draft.budgetPreference ?? ""}
           options={[
             { value: "", label: "指定なし" },
@@ -698,7 +737,7 @@ export function PlannerWizard({
             advanceFromEditOr("ingredientPreference");
           }}
           onBack={() => {
-            backFromEditOr("timeLimit");
+            backFromEditOr("effort");
           }}
           disabled={isSaving}
           errorMessage={fieldErrors.budgetPreference ?? null}
@@ -719,7 +758,7 @@ export function PlannerWizard({
         <OptionalChoiceStep
           key={step}
           id="planner-ingredient-preference"
-          title="7. 材料の使い方"
+          title="8. 材料の使い方"
           value={draft.ingredientPreference ?? ""}
           options={[
             { value: "", label: ingredientPreferenceLabel(null) },
@@ -769,7 +808,7 @@ export function PlannerWizard({
         <OptionalChoiceStep
           key={step}
           id="planner-novelty-preference"
-          title="8. 献立の雰囲気"
+          title="9. 献立の雰囲気"
           value={draft.noveltyPreference ?? ""}
           options={[
             { value: "", label: noveltyPreferenceLabel(null) },

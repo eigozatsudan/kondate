@@ -92,7 +92,7 @@ const ensurePrivacyThenGenerate = async (
     await page.getByRole("button", { name: "確認して進む" }).click();
     // B-3: returnTo の /planner?resume=review はマウント時に消費され、URL は /planner（?resume= 無し）に置き換わる
     await expect(page).toHaveURL((url) => url.pathname === "/planner" && url.search === "");
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible({
       timeout: 15_000,
     });
   }
@@ -145,20 +145,20 @@ const answerAudienceAndReview = async (page: Page, mode: "household" | "idea") =
   }
   await clickWizardNext(page);
 
-  // 任意4ページは既定の「指定なし」のまま「次へ」で送る。狭幅では 戻る/スキップ/次へ が並ぶ。
+  // 任意5ページは既定の「指定なし」のまま「次へ」で送る。狭幅では 戻る/スキップ/次へ が並ぶ。
   await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
   await assertStepFits(page, { 以降は指定なしでスキップ: 1, 戻る: 1, 次へ: 1 });
   await page.waitForTimeout(350);
   await clickWizardNext(page);
 
-  for (const title of ["6. 予算", "7. 材料の使い方", "8. 献立の雰囲気"]) {
+  for (const title of ["6. 調理の手間", "7. 予算", "8. 材料の使い方", "9. 献立の雰囲気"]) {
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     await assertStepFits(page, { 戻る: 1, 次へ: 1 });
     await page.waitForTimeout(350);
     await clickWizardNext(page);
   }
 
-  await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
   if (mode === "idea") {
     await expect(page.getByText("家族の年齢・アレルギーは確認されません")).toBeVisible();
   }

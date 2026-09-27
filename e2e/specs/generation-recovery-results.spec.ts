@@ -88,7 +88,7 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
   await clickWizardNext(page);
 
   await skipOptionalPlannerSteps(page);
-  // 9. 確認（review）。privacy 未確認でも生成は有効で、説明は secondary ボタンで出す。
+  // 10. 確認（review）。privacy 未確認でも生成は有効で、説明は secondary ボタンで出す。
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
   await page.getByRole("button", { name: "AI情報の説明を見る" }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/privacy");
@@ -97,10 +97,10 @@ async function completeIdeaPlannerToReview(page: Page, servings: number): Promis
 
   // returnTo=/planner?resume=review で review step へ戻る。
   // openPrivacyNotice は flushDraft + setQueryData 済み。本番はフル reload しないため
-  // SPA 復帰だけで「9. 確認」を維持することを主張する（巻き戻りは製品退行）。
+  // SPA 復帰だけで「10. 確認」を維持することを主張する（巻き戻りは製品退行）。
   // B-3: returnTo の /planner?resume=review はマウント時に消費され、URL は /planner（?resume= 無し）に置き換わる
   await expect(page).toHaveURL((url) => url.pathname === "/planner" && url.search === "");
-  await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "献立を作る" })).toBeEnabled();
 }
 
@@ -437,7 +437,7 @@ test("dual-tab generate claims one pending and the loser resumes the same sticky
   const peer = await context.newPage();
   try {
     await peer.goto("/planner?resume=review");
-    await expect(peer.getByRole("heading", { name: "9. 確認" })).toBeVisible({
+    await expect(peer.getByRole("heading", { name: "10. 確認" })).toBeVisible({
       timeout: 30_000,
     });
     await expect(peer.getByRole("button", { name: "献立を作る" })).toBeEnabled({
@@ -1282,7 +1282,7 @@ test.describe("wizard accessibility and layout contracts", () => {
     await page.getByRole("button", { name: "次へ" }).focus();
     await activateFocusedWithKeyboard(page);
 
-    // 任意4ページは既定の「指定なし」のまま「次へ」で送る。44px はスキップ/戻る/次へを測る。
+    // 任意5ページは既定の「指定なし」のまま「次へ」で送る。44px はスキップ/戻る/次へを測る。
     await expect(page.getByRole("heading", { name: "5. 調理時間" })).toBeVisible();
     await expectNoHorizontalScroll(page);
     await expectMajorActionAtLeast44(page, "以降は指定なしでスキップ");
@@ -1292,7 +1292,7 @@ test.describe("wizard accessibility and layout contracts", () => {
     await page.getByRole("button", { name: "次へ" }).focus();
     await activateFocusedWithKeyboard(page);
 
-    for (const title of ["6. 予算", "7. 材料の使い方", "8. 献立の雰囲気"]) {
+    for (const title of ["6. 調理の手間", "7. 予算", "8. 材料の使い方", "9. 献立の雰囲気"]) {
       await expect(page.getByRole("heading", { name: title })).toBeVisible();
       await expectNoHorizontalScroll(page);
       await expectMajorActionAtLeast44(page, "戻る");
@@ -1302,8 +1302,8 @@ test.describe("wizard accessibility and layout contracts", () => {
       await activateFocusedWithKeyboard(page);
     }
 
-    // --- 9. 確認 ---
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+    // --- 10. 確認 ---
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
     await expectNoHorizontalScroll(page);
     await expectMajorActionAtLeast44(page, "戻る");
     await expectMajorActionAtLeast44(page, "献立を作る");
@@ -1414,8 +1414,14 @@ test.describe("wizard accessibility and layout contracts", () => {
       'audience primary "次へ"',
     );
     await page.keyboard.press("Enter");
-    // 任意4ページも heading は tabIndex=-1 で Tab 順外。radio を経由して「次へ」へ Tab する。
-    for (const title of ["5. 調理時間", "6. 予算", "7. 材料の使い方", "8. 献立の雰囲気"]) {
+    // 任意5ページも heading は tabIndex=-1 で Tab 順外。radio を経由して「次へ」へ Tab する。
+    for (const title of [
+      "5. 調理時間",
+      "6. 調理の手間",
+      "7. 予算",
+      "8. 材料の使い方",
+      "9. 献立の雰囲気",
+    ]) {
       await expect(page.getByRole("heading", { name: title })).toBeFocused();
       await page.waitForTimeout(350);
       await tabUntil(
@@ -1431,9 +1437,9 @@ test.describe("wizard accessibility and layout contracts", () => {
       );
       await page.keyboard.press("Enter");
     }
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeFocused();
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeFocused();
 
-    // --- 9. 確認: Tab で AI 説明または生成操作へ到達 ---
+    // --- 10. 確認: Tab で AI 説明または生成操作へ到達 ---
     await tabUntil(
       page,
       (focus) =>

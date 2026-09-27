@@ -568,12 +568,13 @@ describe("wizard step accessibility", () => {
     { step: "cuisine" as const, heading: "3. ジャンル", primary: "次へ" },
     { step: "audience" as const, heading: "4. 作る相手", primary: "次へ" },
     { step: "timeLimit" as const, heading: "5. 調理時間", primary: "以降は指定なしでスキップ" },
-    { step: "budget" as const, heading: "6. 予算", primary: "戻る" },
-    { step: "ingredientPreference" as const, heading: "7. 材料の使い方", primary: "戻る" },
-    { step: "novelty" as const, heading: "8. 献立の雰囲気", primary: "戻る" },
+    { step: "effort" as const, heading: "6. 調理の手間", primary: "戻る" },
+    { step: "budget" as const, heading: "7. 予算", primary: "戻る" },
+    { step: "ingredientPreference" as const, heading: "8. 材料の使い方", primary: "戻る" },
+    { step: "novelty" as const, heading: "9. 献立の雰囲気", primary: "戻る" },
     {
       step: "review" as const,
-      heading: "9. 確認",
+      heading: "10. 確認",
       primary: "献立を作る",
       draft: {
         ...emptyDraft,

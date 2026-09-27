@@ -89,7 +89,7 @@ export async function clickWizardNext(page: Page): Promise<void> {
 }
 
 /**
- * 5. 調理時間 の「以降は指定なしでスキップ」で追加条件4ページを飛ばし、9. 確認 まで進める。
+ * 5. 調理時間 の「以降は指定なしでスキップ」で追加条件5ページを飛ばし、10. 確認 まで進める。
  * 任意 step に「次へ」は無いので clickWizardNext は使えない。
  * スキップボタンも 350ms の活性化ガードの対象なので、heading 可視後に待ってから押す。
  */
@@ -99,7 +99,7 @@ export async function skipOptionalPlannerSteps(page: Page): Promise<void> {
   await expect(skip).toBeEnabled({ timeout: 15_000 });
   await page.waitForTimeout(350);
   await skip.click();
-  await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible();
 }
 
 /**
@@ -500,7 +500,7 @@ export async function seedGeneratedIdeaMenu(page: Page, servings: 1 | 2 | 20 = 2
     await page.getByRole("button", { name: "確認して進む" }).click();
     // B-3: returnTo の /planner?resume=review はマウント時に消費され、URL は /planner（?resume= 無し）に置き換わる
     await expect(page).toHaveURL((url) => url.pathname === "/planner" && url.search === "");
-    await expect(page.getByRole("heading", { name: "9. 確認" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "10. 確認" })).toBeVisible({
       timeout: 15_000,
     });
   }
