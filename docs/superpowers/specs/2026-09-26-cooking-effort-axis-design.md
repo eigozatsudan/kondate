@@ -78,6 +78,12 @@ effortPreference: z.enum(effortPreferences).nullable().default(null),
 `.default(null)` は必須である。導入前の下書き JSON と `preference_snapshot` にはこのキーが無く、
 `.default(null)` が無いと履歴からの条件引き継ぎと再生成が 422 になる。`noveltyPreference` と同じ扱いにする。
 
+ただし上の形はリリース 2 の最終形である。リリース 1 では、`effortPreferences` と `EffortPreference` を先に
+export し、両 shape へ `effortPreference: z.enum(effortPreferences).nullable().optional()` を足す（受け取る
+だけで、どこにも写さない）。`.optional()` なので出力型では任意キーになり、既存のリテラルは変えずに済む。
+リリース 2 で `.nullable().default(null)` に置き換える。理由は §7.1（リリース 1 まで戻しても、リリース 2 で
+作った献立を読めるようにするため）。
+
 UI の選択肢は「指定なし（null）」と「手間のかかる料理は避ける（easy）」の 2 つだけである。`standard` は
 UI から書き込まれない。それでも enum に残すのは `noveltyPreferences` と形を揃え、将来「指定どおり」を
 明示する余地を残すためである。サーバーは `standard` を受け取れば null と同じに扱う。
@@ -158,6 +164,9 @@ UI から書き込まれない。それでも enum に残すのは `noveltyPrefe
   sessionStorage に保持された試行メタデータの再送を落とさないためである。
 - **レスポンス契約**: `noveltyPreference` をエコーしている strict schema にも同じフィールドを足す。
   デプロイや rollback をまたいでも旧 Function のレスポンスを落とさないよう、`.default(null)` を付ける。
+- リクエストとレスポンスの両契約も、planner と同じくリリース 1 で `.nullable().optional()` として先に入れ、
+  リリース 2 で `.nullable().default(null)` に置き換える（§7.1）。リリース 1 の Function は受け取った値を
+  写さずに捨てる。
 - **snapshot 行**（`netlify/functions/_shared/weekly-plan-service.ts` の `weeklyPlanRowSchema` /
   `intentRowSchema`）: `preference_snapshot` に
   `effortPreference: z.enum(effortPreferences).nullable().catch(null)` を足す。導入前の行と intent には
@@ -205,12 +214,15 @@ export const EFFORT_PARAGRAPH =
   "置き換えるのではなく、蒸し物そのものを選ばないでください。" +
   "【ひねり】で別の加熱法や組み合わせを選ぶ場合も、避ける例の調理法は選ばないでください。" +
   "焼く・炒める・短時間で煮る・和える・電子レンジで済む料理に寄せてください。" +
-  "安全条件・アレルギーが常に優先です。" +
+  "preferences.mainIngredients、使い切りに選ばれた食材、memoの指示は本段落より優先します。" +
+  "それらの食材は必ず使い、そのうえで手順が簡単な料理にしてください。" +
+  "安全条件・アレルギー、安全のための下処理（十分な加熱など）が常に優先です。" +
   "寄せきれなくてもoutcome=successで構いません。手間の方針だけではconstraint_conflictにしないでください。";
 
 export const WEEKLY_EFFORT_SENTENCE =
   "preferences.effortPreferenceがeasyのため、7日分の主菜で手間のかかる料理を避けてください。" +
   `避ける例: ${EFFORT_AVOID_EXAMPLES}。` +
+  "安全条件・アレルギーと十分な加熱が常に優先です。" +
   "寄せきれなくても7日分の出力を続けてください。";
 ```
 
@@ -225,7 +237,10 @@ export const WEEKLY_EFFORT_SENTENCE =
 - 【ひねり】（`twist`）と同時に選ばれたとき、ひねりの「別の加熱法で」より手間の回避が優先すること。
   ひねり段落は main の「最も一般的な調理法」を避けるよう指示しており（`novelty-hints.ts`）、無指定だと
   揚げ物・蒸し物へ誘導されうる。
-- 安全条件が優先であること。
+- 指定されたメイン食材・使い切りの食材・memo の指示が手間より優先すること。これらは検証（メイン食材の
+  採用、`must_use` の欠落）で落ちるため、手間を理由に外すと試行予算を無駄に使う。
+- 安全条件と、安全のための下処理（十分な加熱）が優先であること。【家庭キッチン】の下処理（十分に煮る等）と
+  「長時間の煮込みを避ける」がぶつかったときに、加熱を削らせないためである。日次・週献立の両方に入れる。
 - fail-open（`outcome=success` 可・`constraint_conflict` 禁止、週献立は出力継続）であること。
 
 ### 4.2 優先順位の文への追加
@@ -285,7 +300,8 @@ quota、`diversity-hints` / `novelty-hints` の除外リスト、【家庭キッ
 - 段数を書いているコメントも直す。`model/planner-wizard.ts` 冒頭の「任意の追加条件4問
   （timeLimit→budget→ingredientPreference→novelty）」、`planner-wizard.tsx` の `optionalPlannerSteps` 直上の
   「4問（timeLimit〜novelty）」、進み具合のコメントの「n / 9」、`skipRestOfOptionalSteps` 付近の
-  「4フィールド」である。
+  「4フィールド」、`optional-choice-step.tsx` の「任意4項目」、`e2e/fixtures/history.ts` の「追加条件4ページ」、
+  `weekly-plan-draft-handoff.ts` の「13キー」である。
 - 部品は既存の `OptionalChoiceStep` をそのまま使う。選択肢は「指定なし（""）」と
   「手間のかかる料理は避ける（"easy"）」の 2 つで、`onSelect` は `"easy"` 以外を null にする。
 - 遷移: `timeLimit` の次へ → `effort`、`effort` の次へ → `budget`、`budget` の戻る → `effort`、
@@ -295,8 +311,11 @@ quota、`diversity-hints` / `novelty-hints` の除外リスト、【家庭キッ
   そのままにする。
 - `skipRestOfOptionalSteps` は現在 4 フィールドを明示的に null にしている。`effortPreference: null` を
   足して 5 フィールドにする。
-- 下書きの初期値（`planner-wizard.tsx`、`audience-step.tsx`、`planner-route.tsx` で
+- 下書きの初期値（`planner-route.tsx` の `emptyDraft` など、`audience-step.tsx`、`planner-route.tsx` で
   `noveltyPreference: null` を置いている全箇所）に `effortPreference: null` を足す。
+- キーの並びは、契約の shape・`mapPlannerDraft`・`toDraftInputFields`・初期値のリテラルのすべてで
+  `noveltyPreference` の直後に揃える。autosave は `JSON.stringify` で下書きの差を判定しているため、
+  並びがずれると変更が無くても保存が走る。
 - 下書きの保存と読み戻し（`planner-api.ts`、`planner-route.tsx`）と、履歴からの条件引き継ぎ
   （`model/draft-from-menu.ts`）に同じフィールドを通す。
 - `use-draft-autosave.ts` では `toDraftInputFields` だけでなく `isEmptyPersistableInput` にも
@@ -313,6 +332,7 @@ quota、`diversity-hints` / `novelty-hints` の除外リスト、【家庭キッ
 radio 2 択（「標準」／「手間のかかる料理は避ける」、`name="weekly-effort"`、`min-h-11`、
 `requestActive` 中は disabled）である。null 側のラベルは、同じフォームの予算・目新しさに合わせて「標準」と
 する（献立ウィザードの「指定なし」とは意図的に揃えない）。送信 payload に `effortPreference` を載せる。
+保存済みの試行メタデータからフォームの選択を復元することはしない（予算・目新しさと同じ。対象外）。
 
 ### 5.4 共通制約
 
@@ -325,11 +345,11 @@ radio 2 択（「標準」／「手間のかかる料理は避ける」、`name=
 
 | 層 | 固定する内容 |
 | --- | --- |
-| 契約 (`planner.test.ts`, `weekly-plan.test.ts`) | キー欠損を null に読む。`easy` / `standard` / null を受け付ける。enum 外の値を拒否する（リクエスト契約） |
+| 契約 (`planner.test.ts`, `weekly-plan.test.ts`) | リリース 1: キーがあっても無くても受け付け、enum 外は拒否する。リリース 2: キー欠損を null に読む。`easy` / `standard` / null を受け付ける。enum 外の値を拒否する（リクエスト契約） |
 | 型 overlay (`src/shared/types/database.test.ts`) | `p_effort_preference: null` を渡せる。キー union に含まれる |
-| プロンプト (`generation-prompt.test.ts`, `regeneration-prompt.test.ts`) | `easy` のときだけ【手間】段落と payload 値が載る。null / `standard` では段落も payload のキーも無い。idea / household の両分岐、`regenerate_menu` にも載る（`regenerate_dish` は同じ base builder を通るため `regenerate_menu` で代表させる。`regenerate_dish` の組み立てには実データの promptDto が要る）。段落が SEASON の直前（new_menu では novelty の後）にある。【家庭キッチン】より優先する旨の文を含む。優先順位の文が「手間」を含む |
-| kill-switch (`generation-prompt-effort-off.test.ts` 新設) | flag off なら `easy` でも段落も payload 値も載らない（`generation-prompt-novelty-off.test.ts` と同型） |
-| 週献立プロンプト (`weekly-plan-prompt.test.ts`) | `easy` のときだけ `WEEKLY_EFFORT_SENTENCE` と payload 値が載る。文に「生地」「包む」を含む |
+| プロンプト (`generation-prompt.test.ts`) | `easy` のときだけ【手間】段落と payload 値が載る。null / `standard` では段落も payload のキーも無い。idea / household の両分岐、`regenerate_menu` にも載る（`regenerate_dish` は同じ base builder を通るため `regenerate_menu` で代表させる。`regenerate_dish` の組み立てには実データの promptDto が要る）。段落が SEASON の直前（new_menu では novelty の後）にある。【家庭キッチン】より優先する旨の文、メイン食材・使い切り・memo が優先する旨の文、安全のための下処理が優先する旨の文を含む。優先順位の文が「手間」を含む |
+| kill-switch (`generation-prompt-effort-off.test.ts`、`weekly-plan-prompt-effort-off.test.ts` 新設) | flag off なら `easy` でも段落も payload 値も載らない。new_menu・`regenerate_menu`・週献立のそれぞれで固定する（`generation-prompt-novelty-off.test.ts` と同型） |
+| 週献立プロンプト (`weekly-plan-prompt.test.ts`) | `easy` のときだけ `WEEKLY_EFFORT_SENTENCE` と payload 値が載る。文に「生地」「包む」、安全優先の文を含む |
 | 週献立サービス (`weekly-plan-service` のテスト) | snapshot 書き込み・`buildResultFromRow`・replay・成功レスポンスで値が落ちない。導入前 snapshot（キー無し）と範囲外値は `catch(null)` で null になり、GET が 500 にならない |
 | ウィザード (`planner-wizard.test.tsx`, `model/planner-wizard.test.ts`) | 段の順序、前後遷移、確認画面からの編集往復、スキップで `effortPreference` が null になること、確認画面の戻るが novelty のままであること |
 | 下書き保存 (`use-draft-autosave` のテスト) | 手間だけを選んだ下書きが空扱いされず保存される |
@@ -344,6 +364,9 @@ radio 2 択（「標準」／「手間のかかる料理は避ける」、`name=
 段の追加とシグネチャ変更で、次の既存テストはそのままでは落ちるか、意味を失う。同じ commit で更新する。
 
 - **pgTAP**
+  - `03_pantry_and_planner_drafts.test.sql` 冒頭の `has_function('public','save_generation_draft', array[...14 型...])`
+    は、14 引数版が DROP されると落ちる。15 型へ直す（overload 数の assert のコメント「has_function(14 型)」も
+    15 型に直す）。
   - `03a_pantry_and_planner_drafts_hardening.test.sql`: 同じ 14 型の `to_regprocedure` 権限チェックは、
     14 引数版が DROP されると null になり落ちる。15 型へ直す。14 引数の呼び出しは `default null` で解決される
     ため、そのままでよい。
@@ -358,6 +381,13 @@ radio 2 択（「標準」／「手間のかかる料理は避ける」、`name=
   - `e2e/specs/full-journey.spec.ts`、`e2e/specs/mobile-accessibility.spec.ts`、
     `e2e/specs/generation-recovery-results.spec.ts`
   - `src/app/accessibility.test.tsx`、`components/planner-wizard.test.tsx`
+- **「戻る」を段の数だけ繰り返すループ**: `planner-wizard.test.tsx` と `e2e/specs/menu-domain-pantry.spec.ts`
+  の `for (let i = 0; i < 8; ...)` は、確認画面から 1 段目まで戻る回数なので 9 に直す。上の grep では
+  見つからない。
+- **parse 後の submission や引き継ぎ結果を `toEqual` で全体比較するテスト**: `.default(null)` でキーが増えるため、
+  型では検出されず実行時に落ちる。`src/features/generation/api/menu-result-api.test.ts`（fixture の
+  submission）、`src/features/weekly-plan/weekly-plan-draft-handoff.test.ts`（「13 keys」の全体比較と、
+  全キーの差分判定ループ）など。
 - **進み具合の分母（9 → 10）と段の番号**
   - `planner-wizard.test.tsx`: 「1 / 9」「5 / 9・任意」「9 / 9」など。
   - `model/planner-wizard.test.ts`: `plannerSteps` の完全一致。
@@ -384,24 +414,41 @@ snapshot RPC の戻り値にある未知キー `effort_preference` で parse に
 
 そこで 2 回に分けて出す。
 
-1. **リリース 1（Functions だけ）**: `snapshotRowSchema` に `effort_preference` を `.optional()` で足し、
-   欠損を null に読む変更だけを出す。migration、UI、プロンプトは含めない。旧 DB でも新 DB でも動く。
+1. **リリース 1（読みの拡張だけ。migration なし）**: 新しい形を「受け取るだけ」の変更を出す。
+   - `snapshotRowSchema` に `effort_preference` を `.optional()` で足す（旧 DB でも新 DB でも new_menu が動く）。
+   - planner の draft / submission 契約と、週献立のリクエスト / レスポンス契約に `effortPreference` を
+     `.nullable().optional()` で足す（§3.1、§3.5）。値はどこにも写さない。
+   - migration、UI、プロンプトは含めない。
+
+   契約まで先に広げるのは、リリース 2 から**リリース 1 へ戻したとき**のためである。リリース 2 で作った献立は、
+   値が null でも全件 `preference_snapshot.submission` に `effortPreference` キーを持つ。契約が strict のまま
+   だと、戻した後はそれらの献立の作り直しが 422 になり、画面でも作り直しと対象変更が消える。週献立でも、
+   リリース 2 の画面を開いたままのタブの送信と、sessionStorage の試行メタデータが strict parse で落ちる。
 2. **リリース 2（通常の順）**: migration を適用し、続けて Netlify（フロントと Functions）を出す。
    - migration 後・Netlify 配備前の間も、リリース 1 の Function は新しいキーを読める。
    - 旧ブラウザは `p_effort_preference` を送らないが、`default null` により 15 引数版に解決される（§3.2 の 3）。
    - 週献立の snapshot 行は jsonb で、行 schema は strict ではない。ずれの影響は無い。
+   - **migration の適用を確認してから Netlify を出す。** Git 連携の自動デプロイが有効なら、リリース 2 の
+     push の前に一時停止する。migration より先に画面が出ると、`p_effort_preference` 付きの呼び出しに合う
+     関数が DB に無く、下書き保存が全員失敗する。
+   - 配備の切り替え中に旧画面のタブや別の端末が下書きを保存すると、`p_effort_preference` を送らないため
+     `default null` で手間の選択が null に戻る。切り替え中の一時的な事象で、利用者が選び直せば済むため
+     許容する（既存値を保つ分岐は入れない）。
 
 同じ release に入れる単位は次のとおりである。
 
 - migration、契約更新、型 overlay、pgTAP の追随は同じ commit に入れる（ひねり軸 spec の教訓。片方だけでは
   下書き保存か `db:test` が壊れる）。
-- リリース 1 の変更は、リリース 2 より前の独立した commit にする。
+- リリース 1 の変更は、リリース 2 より前の独立した commit にする。リリース 2 の commit で契約の
+  `.optional()` を `.default(null)` に置き換える。
 - 配備の手順は、リリース 2 と同じ変更で `docs/deployment/README.md` §5.2 に `cancel_at` と同じ形の注記として
   追記する。
 
 ### 7.2 戻し方
 
-- リリース 2 の Functions を戻すときは、**リリース 1 の配備まで**に限る。それより前へ戻すと、新 DB の
-  `effort_preference` キーで new_menu が失敗する。DB は破壊的に戻さず、前方修正で直す（README の既定どおり）。
+- リリース 2 を戻すときは、**リリース 1 の配備まで**に限る。リリース 1 まで戻すと手間の指定は無視されるが、
+  リリース 2 で作った献立・週献立・下書きはそのまま読め、作り直しもできる。それより前へ戻すと、新 DB の
+  `effort_preference` キーで new_menu が失敗し、リリース 2 で作った献立の作り直しも 422 になる。DB は破壊的に
+  戻さず、前方修正で直す（README の既定どおり）。
 - 不具合時は `EFFORT_HINTS_ENABLED` を false にすると、段落・週献立の 1 文・payload の値がすべて消える。
   UI は残る。

@@ -4,7 +4,7 @@
 
 **Goal:** 献立生成・再生成・週献立に、揚げ物や蒸し物など手間のかかる料理を避けるよう AI へ頼む任意の切り替え `effortPreference` を足す。
 
-**Architecture:** `noveltyPreference`（ひねり）と同じ経路をなぞる。planner 契約 → `generation_drafts` / submission snapshot（migration 1 本）→ Function の snapshot 読み → system 段落（prompt 専用・fail-open）→ ウィザード / 確認画面 / 週献立フォーム。strict な snapshot 読みの配備ずれを避けるため、Task 1 を独立したリリース 1 として先に出す。
+**Architecture:** `noveltyPreference`（ひねり）と同じ経路をなぞる。planner 契約 → `generation_drafts` / submission snapshot（migration 1 本）→ Function の snapshot 読み → system 段落（prompt 専用・fail-open）→ ウィザード / 確認画面 / 週献立フォーム。strict な読み（snapshot 行・planner 契約・週献立契約）の配備ずれとロールバックに備え、新しい形を受け取るだけの Task 1 を独立したリリース 1 として先に出す。
 
 **Tech Stack:** TypeScript strict / Zod / React 19 / React Router 8 / Vitest / Supabase Postgres + pgTAP / Netlify Functions / Playwright
 
@@ -30,7 +30,7 @@
 
 ## Review Focus
 
-1. **配備ずれの間の new_menu**: DB の snapshot 戻り値に `effort_preference` が有っても無くても、生成が 400 にならないこと（Task 1 のテストで固定）。
+1. **配備ずれとロールバック**: DB の snapshot 戻り値に `effort_preference` が有っても無くても生成が 400 にならず、リリース 1 の契約が `effortPreference` 付きの submission・週献立リクエスト・レスポンスを受け取れること（Task 1 のテストで固定）。
 2. **手間だけを選んだ下書き**: 他の項目が空で、手間だけを選んだ下書きも保存されること（Task 2 の autosave テストで固定）。
 3. **週献立の保存と再表示**: POST で `easy` を選ぶと、insert される行にも残り、GET でも `easy` が返ること（Task 4 のテストで固定）。
 4. **ひねりと手間の同時選択**: 両方の段落が載り、手間の段落に「避ける例の調理法は選ばない」の文が入ること（Task 3 のテストで固定）。
@@ -43,35 +43,46 @@
 | ファイル | 責務 | Task |
 | --- | --- | --- |
 | `netlify/functions/_shared/generation-context.ts` | snapshot 行の読み。`effort_preference` を任意キーで受ける | 1, 2 |
-| `shared/contracts/planner.ts` | `effortPreferences` と draft / submission のフィールド | 2 |
+| `shared/contracts/planner.ts` | `effortPreferences` と draft / submission のフィールド（Task 1 は任意キー、Task 2 で default(null)） | 1, 2 |
 | `supabase/migrations/20260927120000_effort_preference.sql` | 列 2 本、`save_generation_draft` 15 引数化、reserve の写し、snapshot 取得関数 | 2 |
 | `src/shared/types/database.ts` | 生成型の overlay（`p_effort_preference` を null 許容） | 2 |
 | `src/features/planner/{planner-api,use-draft-autosave}.ts`、`model/draft-from-menu.ts`、`model/planner-labels.ts` | 下書きの読み書き、引き継ぎ、ラベル | 2 |
 | `netlify/functions/_shared/effort-hints.ts`（新規） | kill-switch、段落、週献立の 1 文 | 3 |
 | `netlify/functions/_shared/generation-prompt.ts` | payload と system 段落の組み立て | 3 |
 | `netlify/functions/_shared/{taste,diversity}-hints.ts` | 優先順位の文 | 3 |
-| `shared/contracts/weekly-plan.ts`、`netlify/functions/_shared/weekly-plan-{service,prompt}.ts` | 週献立の契約・保存・プロンプト | 4 |
+| `shared/contracts/weekly-plan.ts` | 週献立の契約（Task 1 は任意キー、Task 4 で default(null)） | 1, 4 |
+| `netlify/functions/_shared/weekly-plan-{service,prompt}.ts` | 週献立の保存・プロンプト | 4 |
 | `src/features/weekly-plan/pages/weekly-plan-form-page.tsx`、`weekly-plan-draft-handoff.ts` | 週献立フォームと下書きへの引き継ぎ | 4 |
 | `src/features/planner/model/planner-wizard.ts`、`components/{planner-wizard,review-step}.tsx` | ウィザードの段、確認画面の行 | 5 |
 | `docs/deployment/README.md` | 2 回に分けた配備の注記 | 6 |
 
 ---
 
-### Task 1: snapshot 読みを `effort_preference` の有無に寛容にする（リリース 1）
+### Task 1: 新しい形を「受け取るだけ」にする（リリース 1）
 
-この Task だけを先に本番へ出す（spec §7.1）。migration、UI、プロンプトは含めない。
+この Task だけを先に本番へ出す（spec §7.1）。migration、UI、プロンプトは含めない。受け取った値はどこにも写さない。
+
+目的は 2 つある。
+
+- migration の前後どちらの DB でも new_menu を落とさない（snapshot 行の読み）。
+- リリース 2 からこのリリースへ戻したとき、リリース 2 で作った献立・週献立の送信・試行メタデータを読めるようにする（planner と週献立の契約）。
 
 **Files:**
 - Modify: `netlify/functions/_shared/generation-context.ts:63-82`
-- Test: `netlify/functions/_shared/generation-context.test.ts`
+- Modify: `shared/contracts/planner.ts`（`noveltyPreferences` の直後、`draftShape`、`submissionCommonShape`、型の export）
+- Modify: `shared/contracts/weekly-plan.ts:39-49`（リクエスト）、`:87-106`（レスポンス）
+- Test: `netlify/functions/_shared/generation-context.test.ts`、`shared/contracts/planner.test.ts`、`shared/contracts/weekly-plan.test.ts`
 
 **Interfaces:**
 - Consumes: なし
-- Produces: `snapshotRowSchema` が `effort_preference?: "standard" | "easy" | null` を受ける（Task 2 が `mapSnapshot` で使う）
+- Produces:
+  - `shared/contracts/planner.ts`: `export const effortPreferences = ["standard", "easy"] as const;`、`export type EffortPreference`。draft / submission の `effortPreference?: EffortPreference | null`（任意キー。Task 2 で必須の `EffortPreference | null` に変える）
+  - `shared/contracts/weekly-plan.ts`: リクエスト / レスポンスの `effortPreference?: EffortPreference | null`（任意キー。Task 4 で必須に変える）
+  - `snapshotRowSchema` が `effort_preference?: "standard" | "easy" | null` を受ける（Task 2 が `mapSnapshot` で使う）
 
 - [ ] **Step 1: 失敗するテストを書く**
 
-`generation-context.test.ts` の `it("maps every novelty preference value from the snapshot row", ...)` の直後に追加する。
+`netlify/functions/_shared/generation-context.test.ts` の `it("maps every novelty preference value from the snapshot row", ...)` の直後に追加する。2 つ目のテストは、Task 2 で共有の `snapshot` にキーが加わった後も「キーの無い行」を検証し続けるよう、キーを明示的に取り除く。
 
 ```ts
   it("loads a snapshot row that carries effort_preference (post-migration DB)", async () => {
@@ -84,7 +95,12 @@
   });
 
   it("loads a snapshot row without effort_preference (pre-migration DB)", async () => {
-    arrangeLoader({ snapshotData: [snapshot] });
+    const { effort_preference: _omitted, ...legacyRow } = {
+      ...snapshot,
+      effort_preference: null,
+    };
+    void _omitted;
+    arrangeLoader({ snapshotData: [legacyRow] });
     await expect(
       loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
     ).resolves.toBeDefined();
@@ -98,68 +114,7 @@
   });
 ```
 
-- [ ] **Step 2: 失敗を確認する**
-
-Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-context.test.ts`
-Expected: 1 つ目のテストが `invalid_request` で FAIL（strict schema が未知キーを拒否する）。2 つ目と 3 つ目は PASS。
-
-- [ ] **Step 3: 最小の実装**
-
-`snapshotRowSchema` の `novelty_preference` の行の直後に追加する。
-
-```ts
-    novelty_preference: z.enum(["standard", "twist"]).nullable(),
-    // 配備ずれ対策（spec §7.1）: migration 前の DB はこのキーを返さない。
-    // strict のまま任意キーで受け、旧 DB でも新 DB でも new_menu を落とさない。
-    effort_preference: z.enum(["standard", "easy"]).nullable().optional(),
-```
-
-`mapSnapshot` はこの Task では変えない（契約にまだフィールドが無いため）。
-
-- [ ] **Step 4: 通ることを確認する**
-
-Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-context.test.ts`
-Expected: PASS
-
-Run: `docker compose run --rm --no-deps app npm run typecheck`、`... npm run lint`、`... npm run format:check`
-Expected: いずれもエラーなし
-
-- [ ] **Step 5: コミット**
-
-```bash
-git add netlify/functions/_shared/generation-context.ts netlify/functions/_shared/generation-context.test.ts
-git commit -m "feat(generation): snapshot の effort_preference を有無どちらでも読めるようにする" -m "手間軸の migration より先に出すリリース 1。strict な snapshot 読みが未知キーで new_menu を落とす配備ずれを避ける。" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_014unHywzrdUis3WSG9mHdbv"
-```
-
----
-
-### Task 2: 契約・DB・下書きの往復に `effortPreference` を通す
-
-契約へフィールドを足すと、出力型が必須キーになるため、型が要求する箇所はすべてこの Task で直す。migration・型 overlay・pgTAP の追随は同じコミットに入れる（spec §7.1）。
-
-**Files:**
-- Modify: `shared/contracts/planner.ts`
-- Create: `supabase/migrations/20260927120000_effort_preference.sql`
-- Regenerate: `src/shared/types/database.generated.ts`（`db:types`）
-- Modify: `src/shared/types/database.ts`、`src/shared/types/database.test.ts`
-- Modify: `netlify/functions/_shared/generation-context.ts`（`mapSnapshot`）
-- Modify: `netlify/functions/_shared/revalidation-adapter.ts:136,754`、`shared/emergency/filter-emergency-menus.ts:146`、`netlify/functions/_shared/generation-quality-review-entry.ts`、`netlify/functions/_shared/paid-openrouter-benchmark-harness.ts`、`shared/testing/factories.ts`
-- Modify: `src/features/planner/planner-api.ts`、`src/features/planner/use-draft-autosave.ts`、`src/features/planner/model/draft-from-menu.ts`、`src/features/planner/model/planner-labels.ts`
-- Modify: `src/features/planner/components/planner-wizard.tsx`（初期値と `skipRestOfOptionalSteps` だけ。段の追加は Task 5）、`src/features/planner/components/audience-step.tsx:169`、`src/features/planner/planner-route.tsx:127,154,2045`
-- Modify (pgTAP): `supabase/tests/database/03_pantry_and_planner_drafts.test.sql`、`03a_pantry_and_planner_drafts_hardening.test.sql`、`ai_control_and_quota.test.sql`、`rls_inventory.test.sql`
-- Test: `shared/contracts/planner.test.ts`、`netlify/functions/_shared/generation-context.test.ts`、`src/features/planner/use-draft-autosave.test.tsx`、`src/features/planner/model/draft-from-menu.test.ts`、`src/features/planner/planner-api.test.ts`
-
-**Interfaces:**
-- Consumes: Task 1 の `snapshotRowSchema.effort_preference`（optional）
-- Produces:
-  - `shared/contracts/planner.ts`: `export const effortPreferences = ["standard", "easy"] as const;`、`export type EffortPreference = (typeof effortPreferences)[number];`、`PlannerDraftInput` / `PlannerDraft` / `PlannerSubmission` の `effortPreference: EffortPreference | null`
-  - `src/features/planner/model/planner-labels.ts`: `effortPreferenceLabels: Readonly<Record<EffortPreference, string>>`、`effortPreferenceLabel(value: EffortPreference | null): string`
-  - DB: `public.save_generation_draft(..., p_novelty_preference text, p_effort_preference text default null)`、`get_ai_generation_submission_snapshot` の戻り値 `effort_preference text`
-
-- [ ] **Step 1: 契約の失敗テストを書く**
-
-`shared/contracts/planner.test.ts` の既存 fixture（22 行目と 35 行目の `noveltyPreference: null,`）の直後に `effortPreference: null,` を足す。`it("accepts declared novelty preference values ...")` の直後に次を追加する。
+`shared/contracts/planner.test.ts` の `it("defaults missing noveltyPreference to null ...")` の直後に追加する。
 
 ```ts
   it("accepts declared effort preference values and rejects unknown ones", () => {
@@ -184,16 +139,63 @@ Claude-Session: https://claude.ai/code/session_014unHywzrdUis3WSG9mHdbv"
       }).success,
     ).toBe(false);
   });
+
+  it("still accepts a draft and a submission without effortPreference", () => {
+    expect(plannerDraftInputSchema.safeParse(incompleteDraft).success).toBe(true);
+    expect(
+      plannerSubmissionSchema.safeParse({
+        ...validBase,
+        targetMode: "household" as const,
+        targetMemberIds: [memberId],
+        servings: null,
+      }).success,
+    ).toBe(true);
+  });
 ```
 
-既存の `it("defaults missing noveltyPreference to null on draft and submission (pre-feature snapshots)", ...)` は、キーを列挙して `draftWithoutKey` / `submissionWithoutKey` を組み立てている。ここには `effortPreference` を**足さず**、2 つの `toMatchObject({ noveltyPreference: null })` を `toMatchObject({ noveltyPreference: null, effortPreference: null })` にする。テスト名は `"defaults missing noveltyPreference and effortPreference to null on draft and submission (pre-feature snapshots)"` にする。
+`shared/contracts/weekly-plan.test.ts` の `describe("weeklyPlanRequestSchema", ...)` の中（`base` がある場所）に追加する。
+
+```ts
+  it("accepts effortPreference values and its absence, and rejects unknown values", () => {
+    expect(weeklyPlanRequestSchema.safeParse(base).success).toBe(true);
+    for (const effortPreference of ["standard", "easy", null] as const) {
+      expect(weeklyPlanRequestSchema.safeParse({ ...base, effortPreference }).success).toBe(true);
+    }
+    expect(
+      weeklyPlanRequestSchema.safeParse({ ...base, effortPreference: "wild" }).success,
+    ).toBe(false);
+  });
+```
+
+`describe("weeklyPlanResultSchema", ...)` の中（`baseResult` がある場所）に追加する。
+
+```ts
+  it("accepts effortPreference on the result and its absence", () => {
+    expect(weeklyPlanResultSchema.safeParse(baseResult).success).toBe(true);
+    expect(
+      weeklyPlanResultSchema.safeParse({ ...baseResult, effortPreference: "easy" }).success,
+    ).toBe(true);
+  });
+```
+
+`base` と `baseResult` には `effortPreference` を足さない（キーの無い形の検証を残すため）。
 
 - [ ] **Step 2: 失敗を確認する**
 
-Run: `docker compose run --rm --no-deps app npx vitest run shared/contracts/planner.test.ts`
-Expected: FAIL（`effortPreference` が strict schema の未知キー）
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-context.test.ts shared/contracts/planner.test.ts shared/contracts/weekly-plan.test.ts`
+Expected: キーを持つ入力を渡すテストが FAIL する（strict schema が未知キーを拒否する）。キーの無い入力と `"wild"` の拒否のテストは PASS。
 
-- [ ] **Step 3: 契約を実装する**
+- [ ] **Step 3: 最小の実装**
+
+`netlify/functions/_shared/generation-context.ts` の `snapshotRowSchema` の `novelty_preference` の行の直後に追加する。
+
+```ts
+    // 配備ずれ対策（spec §7.1）: migration 前の DB はこのキーを返さない。
+    // strict のまま任意キーで受け、旧 DB でも新 DB でも new_menu を落とさない。
+    effort_preference: z.enum(["standard", "easy"]).nullable().optional(),
+```
+
+`mapSnapshot` はこの Task では変えない。
 
 `shared/contracts/planner.ts` の `noveltyPreferences` の直後に追加する。
 
@@ -209,15 +211,94 @@ export const effortPreferences = ["standard", "easy"] as const;
 `draftShape` と `submissionCommonShape` の `noveltyPreference` の行の直後に、それぞれ追加する。
 
 ```ts
-  // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
-  // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
-  effortPreference: z.enum(effortPreferences).nullable().default(null),
+  // リリース 1 は受け取るだけ（spec §7.1）。リリース 2 で nullable().default(null) に置き換える
+  effortPreference: z.enum(effortPreferences).nullable().optional(),
 ```
 
 型の export 群（`NoveltyPreference` の直後）に追加する。
 
 ```ts
 export type EffortPreference = (typeof effortPreferences)[number];
+```
+
+`shared/contracts/weekly-plan.ts` の import に `effortPreferences` を足し、`weeklyPlanRequestSchema` と `weeklyPlanResultSchema` の `noveltyPreference: ...,` の直後に、それぞれ追加する。
+
+```ts
+    // リリース 1 は受け取るだけ（spec §7.1）。リリース 2 で nullable().default(null) に置き換える
+    effortPreference: z.enum(effortPreferences).nullable().optional(),
+```
+
+- [ ] **Step 4: 通ることを確認する**
+
+Run: `docker compose run --rm --no-deps app npx vitest run netlify/functions/_shared/generation-context.test.ts shared/contracts/planner.test.ts shared/contracts/weekly-plan.test.ts`
+Expected: PASS
+
+Run（1 つずつ）:
+
+```bash
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run format:check
+```
+
+Expected: いずれもエラーなし。出力型では任意キーなので、既存のリテラルは変えずに型が通る。
+
+- [ ] **Step 5: コミット**
+
+```bash
+git add netlify/functions/_shared/generation-context.ts netlify/functions/_shared/generation-context.test.ts shared/contracts/planner.ts shared/contracts/planner.test.ts shared/contracts/weekly-plan.ts shared/contracts/weekly-plan.test.ts
+git commit -m "feat(planner): 手間軸 effortPreference を読みの側だけ先に受け取れるようにする" -m "手間軸の migration より先に出すリリース 1。snapshot 行・planner 契約・週献立の契約で effortPreference を任意キーとして受け、どこにも写さない。リリース 2 から戻しても、その間に作った献立と週献立の送信を strict parse で落とさない。" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014unHywzrdUis3WSG9mHdbv"
+```
+
+---
+
+### Task 2: 契約・DB・下書きの往復に `effortPreference` を通す
+
+契約のフィールドを `.default(null)` に変えると出力型が必須キーになるため、型が要求する箇所はすべてこの Task で直す。migration・型 overlay・pgTAP の追随は同じコミットに入れる（spec §7.1）。
+
+**Files:**
+- Modify: `shared/contracts/planner.ts`
+- Create: `supabase/migrations/20260927120000_effort_preference.sql`
+- Regenerate: `src/shared/types/database.generated.ts`（`db:types`）
+- Modify: `src/shared/types/database.ts`、`src/shared/types/database.test.ts`
+- Modify: `netlify/functions/_shared/generation-context.ts`（`mapSnapshot`）
+- Modify: `netlify/functions/_shared/revalidation-adapter.ts:136,754`、`shared/emergency/filter-emergency-menus.ts:146`、`netlify/functions/_shared/generation-quality-review-entry.ts`、`netlify/functions/_shared/paid-openrouter-benchmark-harness.ts`、`shared/testing/factories.ts`
+- Modify: `src/features/planner/planner-api.ts`、`src/features/planner/use-draft-autosave.ts`、`src/features/planner/model/draft-from-menu.ts`、`src/features/planner/model/planner-labels.ts`
+- Modify: `src/features/planner/components/planner-wizard.tsx`（初期値と `skipRestOfOptionalSteps` だけ。段の追加は Task 5）、`src/features/planner/components/audience-step.tsx:169`、`src/features/planner/planner-route.tsx:127,154,2045`
+- Modify (pgTAP): `supabase/tests/database/03_pantry_and_planner_drafts.test.sql`、`03a_pantry_and_planner_drafts_hardening.test.sql`、`ai_control_and_quota.test.sql`、`rls_inventory.test.sql`
+- Modify: `src/features/weekly-plan/weekly-plan-draft-handoff.ts`（型を通すための `effortPreference: null` とコメントだけ。値の引き継ぎは Task 4）
+- Test: `shared/contracts/planner.test.ts`、`netlify/functions/_shared/generation-context.test.ts`、`src/features/planner/use-draft-autosave.test.tsx`、`src/features/planner/model/draft-from-menu.test.ts`、`src/features/planner/planner-api.test.ts`
+- Test（追随）: `src/features/generation/api/menu-result-api.test.ts`、`src/features/weekly-plan/weekly-plan-draft-handoff.test.ts`、ほか typecheck と Step 14 で落ちる fixture（`src/app/accessibility.test.tsx`、`src/features/history/*`、`src/features/generation/*` など）
+
+**Interfaces:**
+- Consumes: Task 1 の `snapshotRowSchema.effort_preference`（optional）、`effortPreferences`、`EffortPreference`
+- Produces:
+  - `shared/contracts/planner.ts`: `PlannerDraftInput` / `PlannerDraft` / `PlannerSubmission` の `effortPreference: EffortPreference | null`（必須キー）
+  - `src/features/planner/model/planner-labels.ts`: `effortPreferenceLabels: Readonly<Record<EffortPreference, string>>`、`effortPreferenceLabel(value: EffortPreference | null): string`
+  - DB: `public.save_generation_draft(..., p_novelty_preference text, p_effort_preference text default null)`、`get_ai_generation_submission_snapshot` の戻り値 `effort_preference text`
+
+- [ ] **Step 1: 契約の失敗テストを書く**
+
+`shared/contracts/planner.test.ts` の既存 fixture（22 行目と 35 行目の `noveltyPreference: null,`）の直後に `effortPreference: null,` を足す。
+
+既存の `it("defaults missing noveltyPreference to null on draft and submission (pre-feature snapshots)", ...)` は、キーを列挙して `draftWithoutKey` / `submissionWithoutKey` を組み立てている。ここには `effortPreference` を**足さず**、2 つの `toMatchObject({ noveltyPreference: null })` を `toMatchObject({ noveltyPreference: null, effortPreference: null })` にする。テスト名は `"defaults missing noveltyPreference and effortPreference to null on draft and submission (pre-feature snapshots)"` にする。
+
+Task 1 で足した `it("still accepts a draft and a submission without effortPreference", ...)` は、上のテストと重複するので削除する。
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `docker compose run --rm --no-deps app npx vitest run shared/contracts/planner.test.ts`
+Expected: FAIL（Task 1 の `.optional()` ではキー欠損が `undefined` のままで、`effortPreference: null` に一致しない）
+
+- [ ] **Step 3: 契約を実装する**
+
+`shared/contracts/planner.ts` の `draftShape` と `submissionCommonShape` で、Task 1 が足した行（コメントを含む 2 行）を、それぞれ次に置き換える。
+
+```ts
+  // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
+  // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
+  effortPreference: z.enum(effortPreferences).nullable().default(null),
 ```
 
 - [ ] **Step 4: 契約テストが通ることを確認する**
@@ -366,6 +447,8 @@ grant execute on function public.get_ai_generation_submission_snapshot(uuid, uui
     'submission snapshot stores effort preference');
   ```
 
+- 45〜46 行目の `has_function('public','save_generation_draft', array[...])` の型配列の末尾 `'text']` を `'text','text']` にする（15 型）。14 引数版は DROP されるので、直さないとこの assert が落ちる。
+- overload 数を数える assert の直前のコメント「has_function(14 型) は 13 引数版の残留を検出しないため」を「has_function(15 型) は 14 引数版の残留を検出しないため」にする。
 - 「ひねり軸」のブロック（198〜207 行目）の直後、overload 数を数える assert の前に追加する。
 
   ```sql
@@ -430,7 +513,9 @@ begin
       'target_member_ids','[]'::jsonb,
       'source_menu_version',null
     ),
-    tests.quota_identity_key(v_owner), 1, 6, 4, 20, false, false, 180,'2026-07-11 03:00:00+00'
+    -- 日付はこのファイルで未使用の日にする。novelty ブロックと同じ 2026-07-11 にすると、
+    -- 後続の同日のグローバル上限（20）の assert へ予約が 1 件加算される
+    tests.quota_identity_key(v_owner), 1, 6, 4, 20, false, false, 180,'2026-08-05 03:00:00+00'
   );
 end
 $effort_snapshot$;
@@ -445,14 +530,18 @@ select is(
   'reserve copies effort preference into the submission snapshot');
 ```
 
-`'0000000000fa'` が同ファイル内で既に使われていないことを `grep -n "0000000000fa" supabase/tests/database/ai_control_and_quota.test.sql` で確かめる。使われていれば、未使用の値に変える。
+`'0000000000fa'` と `2026-08-05` が同ファイルで未使用であることは確認済み（`grep -n "0000000000fa\|2026-08-05" supabase/tests/database/ai_control_and_quota.test.sql` がヒットしない）。
 
 このファイルは `no_plan()` なので plan 数の更新は不要である。
 
-Run（スタック起動済みで）: `docker compose up -d --wait && docker compose --profile test run --rm db-test > /tmp/claude-db-test.log 2>&1; grep -nE "not ok|Failed|FAIL" /tmp/claude-db-test.log | head -40`
-`db-test` サービスは `migrate` に依存し、実行のたびに migration を当てる。RED を見るため、この実行の間だけ Step 5 の migration を退避する（リポジトリ外の一時ディレクトリへ `mv` し、実行後に戻す）。
+`db-test` サービスは `migrate` に依存し、実行のたびに migration を当てる。RED を見るため、この実行の間だけ Step 5 の migration をリポジトリ外の一時ディレクトリへ `mv` し、実行後に戻す。コマンドは 1 つずつ実行する。
 
-Expected: 手間軸の assert と 03a の `to_regprocedure`、rls_inventory の署名が FAIL する。出力が大きいときは、この Step と Step 8 の実行を人間に頼み、要約を貼ってもらう（CLAUDE.md の方針）。
+```bash
+docker compose up -d --wait
+docker compose --profile test run --rm db-test > /tmp/claude-db-test.log 2>&1 ; grep -nE "not ok|Failed|FAIL" /tmp/claude-db-test.log || tail -n 40 /tmp/claude-db-test.log
+```
+
+Expected: 手間軸の assert、03 の `has_function`、03a の `to_regprocedure`、rls_inventory の署名が FAIL する。出力が大きいときは、この Step と Step 8 の実行を人間に頼み、要約を貼ってもらう（CLAUDE.md の方針）。
 
 - [ ] **Step 7: migration を当て、型を再生成する**
 
@@ -466,7 +555,7 @@ Expected: `database.generated.ts` の `save_generation_draft` の Args に `p_ef
 
 - [ ] **Step 8: pgTAP が通ることを確認する**
 
-Run: `docker compose --profile test run --rm db-test > /tmp/claude-db-test.log 2>&1; grep -nE "not ok|Failed|FAIL" /tmp/claude-db-test.log | head -40 || tail -n 20 /tmp/claude-db-test.log`
+Run: `docker compose --profile test run --rm db-test > /tmp/claude-db-test.log 2>&1 ; grep -nE "not ok|Failed|FAIL" /tmp/claude-db-test.log || tail -n 20 /tmp/claude-db-test.log`
 Expected: 失敗なし。`get_ai_generation_submission_snapshot` の既存の権限・definer の assert（`ai_control_and_quota.test.sql` 1571〜1586 行目付近）も通る。
 
 - [ ] **Step 9: 型 overlay を直す**
@@ -476,6 +565,8 @@ Expected: 失敗なし。`get_ai_generation_submission_snapshot` の既存の権
 ```ts
   p_effort_preference: GeneratedSaveDraftArgs["p_effort_preference"] | null;
 ```
+
+overlay の `p_effort_preference` は必須キーになり、生成型の任意キー（`p_effort_preference?:`）と食い違うが、意図どおりである。ブラウザの保存は常に全引数を送り、送り忘れを型で検出するためである（`p_novelty_preference` と同じ扱い）。
 
 `src/shared/types/database.test.ts` の `p_novelty_preference: null,` の 2 か所（130、161 行目）の直後に `p_effort_preference: null,` を足し、180 行目付近の `NullableDraftArg` union に `| "p_effort_preference"` を足す。
 
@@ -595,6 +686,8 @@ Expected: 追加したテストが FAIL
 
 `src/features/planner/model/draft-from-menu.ts` の `noveltyPreference: submission.noveltyPreference,` の直後に `effortPreference: submission.effortPreference,` を足す。
 
+**キーの並び:** この Step で足すキーは、どこでも `noveltyPreference` の直後に置く（契約の shape、`mapPlannerDraft`、`toDraftInputFields`、初期値のリテラル）。autosave は `JSON.stringify` で下書きの差を判定する（`use-draft-autosave.ts` の `persistenceFingerprint`）ため、並びがずれると変更が無くても保存が走る。
+
 `src/features/planner/components/planner-wizard.tsx` の `skipRestOfOptionalSteps` を次にする（コメントの「4フィールド」も直す）。
 
 ```ts
@@ -640,28 +733,52 @@ export function effortPreferenceLabel(value: EffortPreference | null): string {
 grep -rn "noveltyPreference" src shared netlify --include=*.ts --include=*.tsx | grep -v "\.test\."
 ```
 
-対象は少なくとも次のとおりである。`planner-route.tsx`（127、154、2045 行目付近）、`audience-step.tsx`（169 行目）、`planner-wizard.tsx`（338 行目付近の初期値。`skipRestOfOptionalSteps` は上で済み）、`revalidation-adapter.ts`（136、754 行目）、`shared/emergency/filter-emergency-menus.ts`（146 行目）、`generation-quality-review-entry.ts`、`paid-openrouter-benchmark-harness.ts`、`shared/testing/factories.ts`。週献立（`weekly-plan-*`、`weekly-plan-draft-handoff.ts`）は Task 4 で扱うが、`weekly-plan-draft-handoff.ts` は `PlannerDraftInput` を返すため型エラーになる。ここでは `effortPreference: null,` を足して型を通し、Task 4 で `plan.effortPreference` へ置き換える。
+対象は少なくとも次のとおりである。`planner-route.tsx`（127 行目付近の下書きの初期値 `emptyDraft`、154、2045 行目付近）、`audience-step.tsx`（169 行目）、`revalidation-adapter.ts`（136、754 行目）、`shared/emergency/filter-emergency-menus.ts`（146 行目）、`generation-quality-review-entry.ts`、`paid-openrouter-benchmark-harness.ts`、`shared/testing/factories.ts`。週献立（`weekly-plan-*`、`weekly-plan-draft-handoff.ts`）は Task 4 で扱うが、`weekly-plan-draft-handoff.ts` は `PlannerDraftInput` を返すため型エラーになる。ここでは `effortPreference: null,` を足して型を通し、Task 4 で `plan.effortPreference` へ置き換える。同ファイルの `draftNeedsOverwriteConfirmation` の JSDoc「引き継ぎ候補が持つ13キー」は「14キー」に直す。
 
-- [ ] **Step 13: 型が要求するテスト fixture を直す**
+- [ ] **Step 13: 型と実行時の比較が要求するテスト fixture を直す**
 
-Run: `docker compose run --rm --no-deps app npm run typecheck > /tmp/claude-tc.log 2>&1; grep -nE "error TS" /tmp/claude-tc.log | head -60`
+Run: `docker compose run --rm --no-deps app npm run typecheck > /tmp/claude-tc.log 2>&1 ; grep -nE "error TS" /tmp/claude-tc.log || tail -n 20 /tmp/claude-tc.log`
 
-出たエラーのうち、テストの fixture（`noveltyPreference: null,` を持つオブジェクト）が `effortPreference` 不足で落ちているものに、`noveltyPreference` の行の直後へ `effortPreference: null,` を足す。対象になりうるファイルは `grep -rln noveltyPreference src shared netlify --include=*.test.ts --include=*.test.tsx` で一覧できる。週献立の fixture は Task 4 で契約を変えるまでは型エラーにならないので、ここでは触らない。エラーが 0 になるまで繰り返す。
+出たエラーのうち、テストの fixture（`noveltyPreference: null,` を持つオブジェクト）が `effortPreference` 不足で落ちているものに、`noveltyPreference` の行の直後へ `effortPreference: null,` を足す。対象になりうるファイルは `grep -rln noveltyPreference src shared netlify --include=*.test.ts --include=*.test.tsx` で一覧できる。週献立の契約の fixture は Task 4 で契約を変えるまでは型エラーにならないので、ここでは触らない。エラーが 0 になるまで繰り返す。
+
+次のものは型では検出されず、実行時に落ちる（parse 後や引き継ぎ後の値に `effortPreference: null` が増え、`toEqual` の全体比較が合わなくなる）。明示的に直す。
+
+- `src/features/generation/api/menu-result-api.test.ts`: 72 行目付近と 785 行目付近の fixture の `noveltyPreference: null,` の直後に `effortPreference: null,` を足す（410 行目の `toEqual(HOUSEHOLD_PREFERENCE_SNAPSHOT.submission)` などが対象）。
+- `src/features/weekly-plan/weekly-plan-draft-handoff.test.ts`:
+  - `it("fills all 13 PlannerDraftInput keys with schema-valid values", ...)` の名前を `"fills all 14 PlannerDraftInput keys with schema-valid values"` にし、期待値の `noveltyPreference: null,` の直後に `effortPreference: null,` を足す。
+  - `differingNonEmptyValues` の `noveltyPreference: "twist",` の直後に `effortPreference: "easy",` を足す（`null` にすると、全キーを回すループの effortPreference のケースが「差がある」にならず落ちる）。
+  - `emptyDraft()` の `noveltyPreference: null,` の直後に `effortPreference: null,` を足す。
+
+このほか、Step 14 で `toEqual` の不一致が出たテストは、同じく期待値か fixture の `noveltyPreference` の直後に `effortPreference: null,` を足して直す。
 
 - [ ] **Step 14: 通ることを確認する**
 
-Run: `docker compose run --rm --no-deps app npx vitest run shared/contracts/planner.test.ts src/shared/types/database.test.ts src/features/planner netlify/functions/_shared/generation-context.test.ts netlify/functions/_shared/regeneration-adapter.test.ts > /tmp/claude-vt.log 2>&1; grep -nE "FAIL|✗|Error" /tmp/claude-vt.log | head -40 || tail -n 15 /tmp/claude-vt.log`
+契約の出力が変わるので、submission や下書きを扱う範囲を広く回す。
+
+Run: `docker compose run --rm --no-deps app npx vitest run shared src/shared src/app src/features/planner src/features/generation src/features/history src/features/menu-detail src/features/weekly-plan netlify/functions > /tmp/claude-vt.log 2>&1 ; grep -nE "FAIL|✗" /tmp/claude-vt.log || tail -n 15 /tmp/claude-vt.log`
 Expected: PASS
 
-Run: `docker compose run --rm --no-deps app npm run typecheck`、`... npm run lint`、`... npm run format:check`
+Run（1 つずつ）:
+
+```bash
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run format:check
+```
+
 Expected: いずれもエラーなし
 
 - [ ] **Step 15: コミット**
 
 ```bash
-git add shared/contracts/planner.ts shared/contracts/planner.test.ts supabase/migrations/20260927120000_effort_preference.sql supabase/tests/database src/shared/types netlify/functions/_shared src/features/planner shared/emergency shared/testing
-git status --short   # 意図しないファイルが入っていないか確かめる
-git commit -m "feat(planner): 手間軸 effortPreference を契約・下書き・snapshot 経路へ通す" -m "save_generation_draft を 15 引数（p_effort_preference default null）にし、reserve は create or replace で写しを足す。snapshot 取得関数は DROP→CREATE 後に revoke/grant を戻す。手間だけを選んだ下書きも保存する。" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+git status --short
+```
+
+一覧に、この Task で触ったもの以外（`infra/supabase/**`、`package-lock.json` など）が無いことを確かめてから add する。`src/shared/types/database.generated.ts` は `db:types` の出力なので含めてよい。
+
+```bash
+git add shared src netlify supabase
+git commit -m "feat(planner): 手間軸 effortPreference を契約・下書き・snapshot 経路へ通す" -m "save_generation_draft を 15 引数（p_effort_preference default null）にし、reserve は create or replace で写しを足す。snapshot 取得関数は DROP→CREATE 後に revoke/grant を戻す。契約は default(null) に切り替え、手間だけを選んだ下書きも保存する。" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_014unHywzrdUis3WSG9mHdbv"
 ```
 
@@ -808,6 +925,12 @@ describe("effort hints", () => {
     expect(EFFORT_PARAGRAPH).toContain("【家庭キッチン】より優先");
     expect(EFFORT_PARAGRAPH).toContain("蒸し物そのものを選ばない");
     expect(EFFORT_PARAGRAPH).toContain("【ひねり】");
+    // メイン食材・使い切り・memo は検証で落ちるため、手間より優先させる
+    expect(EFFORT_PARAGRAPH).toContain(
+      "preferences.mainIngredients、使い切りに選ばれた食材、memoの指示は本段落より優先します。",
+    );
+    // 【家庭キッチン】の「十分に煮る」等の下処理を「長時間の煮込みを避ける」で削らせない
+    expect(EFFORT_PARAGRAPH).toContain("安全のための下処理（十分な加熱など）が常に優先です。");
     for (const example of ["揚げ物", "蒸し物", "生地", "包む"]) {
       expect(EFFORT_PARAGRAPH).toContain(example);
     }
@@ -830,7 +953,10 @@ describe("effort hints", () => {
  * EFFORT_HINTS_ENABLED を mock するため専用ファイルにする（novelty-off と同型）。
  */
 import { describe, expect, it, vi } from "vitest";
-import { makeGenerationContext } from "../../../shared/testing/factories.js";
+import {
+  makeGenerationContext,
+  makeValidatedMenu,
+} from "../../../shared/testing/factories.js";
 import { createCurrentSafetyFingerprint } from "../../../shared/safety/fingerprint.js";
 import type { GenerationContext } from "../../../shared/safety/generation-context.js";
 
@@ -879,20 +1005,70 @@ function asNewMenuExecution(
   };
 }
 
+function regenerateMenuExecution(
+  context: GenerationContext,
+): Extract<GenerationExecutionContext, { kind: "regenerate_menu" }> {
+  const sourceMenu = makeValidatedMenu();
+  return {
+    kind: "regenerate_menu",
+    command: {
+      commandVersion: "generation-command.v3",
+      kind: "regenerate_menu",
+      qualityMode: false,
+      request: {
+        idempotencyKey: "56000000-0000-4000-8000-000000000001",
+        sourceMenuId: sourceMenu.menuId,
+        changeReason: "simpler",
+        changeReasonCustom: null,
+        privacyNoticeVersion: "2026-07-29.v1",
+        expiredPantryConfirmations: [],
+      },
+    },
+    requestId: "81000000-0000-4000-8000-000000000001",
+    generationContext: context,
+    expectedSafetyFingerprint: createCurrentSafetyFingerprint(context.safety),
+    startedAtMonotonicMs: 0,
+    deadlineAtMonotonicMs: 50_000,
+    regeneration: {
+      sourceMenuId: sourceMenu.menuId,
+      sourceMenu,
+      derivationGroupId: "a1000000-0000-4000-8000-000000000001",
+      replaceDishId: null,
+      retainedDishIds: sourceMenu.dishes.map((dish) => dish.id),
+      excludedDishIds: [],
+      sourceSafetyFingerprint: "source-fp",
+      sourcePreferenceSnapshot: {},
+      existingDerivationMenus: [],
+      artifacts: {
+        retainedDishes: [],
+        sourceDishToReplace: null,
+        promptDto: null,
+        retainedRefMap: new Map(),
+      },
+    },
+  };
+}
+
+function easyContext(): GenerationContext {
+  const base = makeGenerationContext();
+  return { ...base, submission: { ...base.submission, effortPreference: "easy" } };
+}
+
+function expectNoEffort(messages: ReturnType<typeof buildGenerationMessages>): void {
+  for (const message of messages) {
+    const content = typeof message.content === "string" ? message.content : "";
+    expect(content).not.toContain(EFFORT_SYSTEM_MARKER);
+    expect(content).not.toContain("effortPreference");
+  }
+}
+
 describe("buildGenerationMessages effort off", () => {
-  it("drops both the paragraph and the payload value even when easy is selected", () => {
-    const base = makeGenerationContext();
-    const context: GenerationContext = {
-      ...base,
-      submission: { ...base.submission, effortPreference: "easy" },
-    };
-    const messages = buildGenerationMessages(asNewMenuExecution(context));
-    const systemMessage = messages.find((message) => message.role === "system");
-    const system = typeof systemMessage?.content === "string" ? systemMessage.content : "";
-    expect(system).not.toContain(EFFORT_SYSTEM_MARKER);
-    const userMessage = messages.find((message) => message.role === "user");
-    const userContent = typeof userMessage?.content === "string" ? userMessage.content : "";
-    expect(userContent).not.toContain("effortPreference");
+  it("drops both the paragraph and the payload value on new_menu even when easy is selected", () => {
+    expectNoEffort(buildGenerationMessages(asNewMenuExecution(easyContext())));
+  });
+
+  it("drops both the paragraph and the payload value on regenerate_menu too", () => {
+    expectNoEffort(buildGenerationMessages(regenerateMenuExecution(easyContext())));
   });
 });
 ```
@@ -929,13 +1105,16 @@ export const EFFORT_PARAGRAPH =
   "蒸し物は、ふた付きフライパンや電子レンジで蒸す手順に置き換えるのではなく、蒸し物そのものを選ばないでください。" +
   "【ひねり】で別の加熱法や組み合わせを選ぶ場合も、避ける例の調理法は選ばないでください。" +
   "焼く・炒める・短時間で煮る・和える・電子レンジで済む料理に寄せてください。" +
-  "安全条件・アレルギーが常に優先です。" +
+  "preferences.mainIngredients、使い切りに選ばれた食材、memoの指示は本段落より優先します。" +
+  "それらの食材は必ず使い、そのうえで手順が簡単な料理にしてください。" +
+  "安全条件・アレルギー、安全のための下処理（十分な加熱など）が常に優先です。" +
   "寄せきれなくてもoutcome=successで構いません。手間の方針だけではconstraint_conflictにしないでください。";
 
 /** 週献立の system 文へ足す 1 文。週献立の出力は主菜だけなので主菜に限る */
 export const WEEKLY_EFFORT_SENTENCE =
   "preferences.effortPreferenceがeasyのため、7日分の主菜で手間のかかる料理を避けてください。" +
   `避ける例: ${EFFORT_AVOID_EXAMPLES}。` +
+  "安全条件・アレルギーと十分な加熱が常に優先です。" +
   "寄せきれなくても7日分の出力を続けてください。";
 
 /**
@@ -1056,14 +1235,15 @@ Claude-Session: https://claude.ai/code/session_014unHywzrdUis3WSG9mHdbv"
 - Modify: `netlify/functions/_shared/weekly-plan-prompt.ts`
 - Modify: `src/features/weekly-plan/pages/weekly-plan-form-page.tsx`、`src/features/weekly-plan/weekly-plan-draft-handoff.ts`
 - Test: `shared/contracts/weekly-plan.test.ts`、`netlify/functions/_shared/weekly-plan-service.pipeline.test.ts`、`netlify/functions/_shared/weekly-plan-prompt.test.ts`、`src/features/weekly-plan/weekly-plan-draft-handoff.test.ts`、`src/features/weekly-plan/pages/weekly-plan-form-page.test.tsx`
+- Create (Test): `netlify/functions/_shared/weekly-plan-prompt-effort-off.test.ts`
 
 **Interfaces:**
-- Consumes: Task 2 の `effortPreferences` / `EffortPreference`、`effortPreferenceLabels`。Task 3 の `WEEKLY_EFFORT_SENTENCE`、`shouldIncludeEffortHints`
-- Produces: `WeeklyPlanRequest.effortPreference: EffortPreference | null`、`WeeklyPlanResult.effortPreference: EffortPreference | null`
+- Consumes: Task 1 の `effortPreferences` / `EffortPreference` と週献立契約の任意キー、Task 2 の `effortPreferenceLabels`。Task 3 の `WEEKLY_EFFORT_SENTENCE`、`shouldIncludeEffortHints`
+- Produces: `WeeklyPlanRequest.effortPreference: EffortPreference | null`、`WeeklyPlanResult.effortPreference: EffortPreference | null`（必須キー）
 
 - [ ] **Step 1: 契約の失敗テストを書く**
 
-`shared/contracts/weekly-plan.test.ts` に 2 つ追加する。
+Task 1 の受け取りテスト（キーの有無と enum 外の拒否）は残し、`shared/contracts/weekly-plan.test.ts` に 2 つ追加する。Task 1 の `.optional()` ではキー欠損が `undefined` のままなので、どちらも RED になる。
 
 ```ts
   it("defaults a missing effortPreference to null and rejects unknown values on the request", () => {
@@ -1159,6 +1339,131 @@ Claude-Session: https://claude.ai/code/session_014unHywzrdUis3WSG9mHdbv"
   });
 ```
 
+- 再送の 2 経路（intent からの復元と、成功済みの行からの復元）で値が落ちないことを固定する。
+  - `it("stores currentFingerprint (not the intent's) when the stash re-assert succeeds", ...)` の末尾に `expect(result.effortPreference).toBeNull();` を足す（intent の snapshot はキーを持たない。導入前の intent が null に読まれることの固定になる）。
+  - 同テストの直後に追加する。
+
+```ts
+  it("restores effortPreference from the stashed intent snapshot", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly")
+        return Promise.resolve({ data: { kind: "miss" }, error: null });
+      if (name === "reserve_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "25252525-2525-4252-8252-252525252525",
+            idempotency_key: "k1",
+            status: "processing",
+            replayed: true,
+            week_start: "2026-09-07",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      if (name === "get_weekly_plan_intent") {
+        return Promise.resolve({
+          data: [
+            {
+              request_id: "25252525-2525-4252-8252-252525252525",
+              user_id: "u1",
+              preference_snapshot: {
+                targetMemberIds: [sampleMemberId],
+                cuisineGenre: "japanese",
+                budgetPreference: null,
+                noveltyPreference: null,
+                effortPreference: "easy",
+              },
+              safety_fingerprint: "a".repeat(64),
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === "finalize_flyer_weekly_success")
+        return Promise.resolve({ data: {}, error: null });
+      if (name === "delete_weekly_plan_intent") return Promise.resolve({ data: null, error: null });
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+
+    let capturedInsertPayload: Record<string, unknown> | undefined;
+    fromMock.mockImplementation((table: string) => {
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      if (table === "weekly_plans") {
+        const query = thenableQuery({
+          data: { id: "26262626-2626-4262-8262-262626262626" },
+          error: null,
+        });
+        query.insert = vi.fn((payload: Record<string, unknown>) => {
+          capturedInsertPayload = payload;
+          return query;
+        });
+        return query;
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    // 再送のリクエスト自体は null。intent 側の値（作成時の選択）が正になる
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(capturedInsertPayload).toMatchObject({
+      preference_snapshot: { effortPreference: "easy" },
+    });
+    expect(result.effortPreference).toBe("easy");
+  });
+```
+
+  - `it("checks lookup before the Plus gate (succeeded lookup hit needs no reserve call)", ...)` の直後に追加する。
+
+```ts
+  it("echoes effortPreference from the stored row on a succeeded lookup hit", async () => {
+    rpcMock.mockImplementation((name: string) => {
+      if (name === "lookup_flyer_weekly") {
+        return Promise.resolve({
+          data: {
+            request_id: "55555555-5555-4555-8555-555555555555",
+            idempotency_key: "k1",
+            status: "succeeded",
+            result: sampleAiMenu(),
+          },
+          error: null,
+        });
+      }
+      throw new Error(`unexpected rpc: ${name}`);
+    });
+    fromMock.mockImplementation((table: string) => {
+      if (table === "weekly_plans") {
+        return thenableQuery({
+          data: {
+            id: "55555555-5555-4555-8555-555555555555",
+            week_start: "2026-09-07",
+            preference_snapshot: {
+              targetMemberIds: [sampleMemberId],
+              cuisineGenre: "japanese",
+              budgetPreference: null,
+              noveltyPreference: null,
+              effortPreference: "easy",
+            },
+            safety_fingerprint: "a".repeat(64),
+            days: sampleAiMenu().days,
+          },
+          error: null,
+        });
+      }
+      if (table === "household_members") {
+        return thenableQuery({ data: [{ id: sampleMemberId }], error: null });
+      }
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    const result = await runWeeklyPlan(baseDeps(), sampleRequest());
+
+    expect(result.effortPreference).toBe("easy");
+  });
+```
+
 - `describe("getWeeklyPlan", ...)` の `it("degrades out-of-bounds priorityIngredients ...")` の直後に追加する。行の組み立ては同テストと同一で、`preference_snapshot` だけを引数で変える。
 
 ```ts
@@ -1227,6 +1532,7 @@ POST で insert した値と GET で返す値は、上の insert の検査と「
     expect(easySystem).toContain(WEEKLY_EFFORT_SENTENCE);
     expect(WEEKLY_EFFORT_SENTENCE).toContain("生地");
     expect(WEEKLY_EFFORT_SENTENCE).toContain("包む");
+    expect(WEEKLY_EFFORT_SENTENCE).toContain("安全条件・アレルギーと十分な加熱が常に優先です。");
     const easyUser = typeof easy[1]?.content === "string" ? easy[1].content : "";
     const easyPayload = JSON.parse(easyUser.replace(/<\/?kondate_weekly_plan_input>/gu, "")) as {
       preferences: Record<string, unknown>;
@@ -1251,18 +1557,90 @@ POST で insert した値と GET で返す値は、上の insert の検査と「
   });
 ```
 
+`netlify/functions/_shared/weekly-plan-prompt-effort-off.test.ts` を作る（週献立の kill-switch off。`generation-prompt-effort-off.test.ts` と同型）。
+
+```ts
+/**
+ * 手間 kill-switch off 時の週献立 prompt。
+ * EFFORT_HINTS_ENABLED を mock するため専用ファイルにする。
+ */
+import { describe, expect, it, vi } from "vitest";
+import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
+import type { WeeklyPlanRequest } from "../../../shared/contracts/weekly-plan.js";
+
+const effortState = vi.hoisted(() => ({ enabled: false }));
+
+vi.mock("./effort-hints.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./effort-hints.js")>();
+  return {
+    ...actual,
+    get EFFORT_HINTS_ENABLED() {
+      return effortState.enabled;
+    },
+  };
+});
+
+import { WEEKLY_EFFORT_SENTENCE } from "./effort-hints.js";
+import { buildWeeklyPlanMessages } from "./weekly-plan-prompt.js";
+
+const safety: CurrentSafetyContext = {
+  dictionaryVersion: "v1",
+  foodRuleVersion: "v1",
+  requestText: "",
+  members: [
+    {
+      householdMemberId: "m1",
+      anonymousRef: "member_1",
+      ageBand: "adult",
+      allergyStatus: "none",
+      allergenIds: [],
+      hasUnmappedCustomAllergy: false,
+      customAllergies: [],
+      requiredSafetyConstraints: [],
+      unsupportedDietStatus: "none",
+      unsupportedDietKinds: [],
+    },
+  ],
+  allergenDictionary: { version: "test", catalog: [], aliases: [] },
+  foodSafetyRules: [],
+};
+
+const request: WeeklyPlanRequest = {
+  idempotencyKey: "11111111-1111-4111-8111-111111111111",
+  targetMemberIds: ["m1"],
+  cuisineGenre: "japanese",
+  budgetPreference: null,
+  noveltyPreference: null,
+  effortPreference: "easy",
+  priorityIngredients: [],
+};
+
+describe("buildWeeklyPlanMessages effort off", () => {
+  it("drops both the sentence and the payload value even when easy is selected", () => {
+    for (const message of buildWeeklyPlanMessages(request, safety)) {
+      const content = typeof message.content === "string" ? message.content : "";
+      expect(content).not.toContain(WEEKLY_EFFORT_SENTENCE);
+      expect(content).not.toContain("effortPreference");
+    }
+  });
+});
+```
+
 - [ ] **Step 4: 引き継ぎとフォームの失敗テストを書く**
 
-`src/features/weekly-plan/weekly-plan-draft-handoff.test.ts` の `it("carries budgetPreference/noveltyPreference through when non-null", ...)` の直後に追加する（`plan` fixture は同テストと同じものを使う）。
+`src/features/weekly-plan/weekly-plan-draft-handoff.test.ts`:
+
+- `samplePlan` の `noveltyPreference: null,` の直後に `effortPreference: null,` を足す（Step 9 で `Pick` に `"effortPreference"` を足すと必須になる）。
+- `it("carries budgetPreference/noveltyPreference through when non-null", ...)` の直後に追加する。
 
 ```ts
   it("carries effortPreference through to the planner draft", () => {
     const outcome = buildPlannerDraftInputFromWeeklyPlanDay(
-      day,
-      { ...plan, effortPreference: "easy" as const },
-      [memberId],
+      sampleDay,
+      { ...samplePlan, effortPreference: "easy" as const },
+      [MEMBER_ONE_ID, MEMBER_TWO_ID],
     );
-    if (!("input" in outcome)) throw new Error("expected input");
+    if ("error" in outcome) throw new Error("expected success");
     expect(outcome.input.effortPreference).toBe("easy");
   });
 ```
@@ -1296,12 +1674,12 @@ POST で insert した値と GET で返す値は、上の insert の検査と「
 
 - [ ] **Step 5: 失敗を確認する**
 
-Run: `docker compose run --rm --no-deps app npx vitest run shared/contracts/weekly-plan.test.ts netlify/functions/_shared/weekly-plan-service.pipeline.test.ts netlify/functions/_shared/weekly-plan-prompt.test.ts src/features/weekly-plan`
-Expected: 追加したテストが FAIL
+Run: `docker compose run --rm --no-deps app npx vitest run shared/contracts/weekly-plan.test.ts netlify/functions/_shared/weekly-plan-service.pipeline.test.ts netlify/functions/_shared/weekly-plan-prompt.test.ts netlify/functions/_shared/weekly-plan-prompt-effort-off.test.ts src/features/weekly-plan`
+Expected: 追加したテストが FAIL。ただし `weekly-plan-prompt-effort-off.test.ts` は実装前から PASS する（実装前は何も載らないため。実装後も off で消えることの固定として残す）。
 
 - [ ] **Step 6: 契約を実装する**
 
-`shared/contracts/weekly-plan.ts`: import に `effortPreferences` を足す。`weeklyPlanRequestSchema` の `noveltyPreference: ...,` の直後に追加する。
+`shared/contracts/weekly-plan.ts` の `weeklyPlanRequestSchema` で、Task 1 が足した行（コメントを含む 2 行）を次に置き換える。
 
 ```ts
     // default(null): 導入前に保持された試行メタデータ（sessionStorage 再送）が
@@ -1309,7 +1687,7 @@ Expected: 追加したテストが FAIL
     effortPreference: z.enum(effortPreferences).nullable().default(null),
 ```
 
-レスポンス schema（90 行目付近）の `noveltyPreference: ...,` の直後に追加する。
+レスポンス schema（90 行目付近）で、Task 1 が足した行（コメントを含む 2 行）を次に置き換える。
 
 ```ts
     // default(null): additive field。デプロイ/rollback またぎでこのキーを返さない
@@ -1321,7 +1699,11 @@ Expected: 追加したテストが FAIL
 
 `netlify/functions/_shared/weekly-plan-service.ts`:
 
-- import に `effortPreferences, type EffortPreference` を `../../../shared/contracts/planner.js` から足す。
+- このファイルにはまだ planner 契約の import が無い。`import { issueMessages } from "../../../shared/contracts/generation.js";`（16 行目）の直後に新しい import 行を足す。
+
+  ```ts
+  import { effortPreferences, type EffortPreference } from "../../../shared/contracts/planner.js";
+  ```
 - `weeklyPlanRowSchema` と `intentRowSchema` の `preference_snapshot` の `noveltyPreference: z.string().nullable(),` の直後に、それぞれ追加する。
 
   ```ts
@@ -1416,16 +1798,23 @@ Run: `docker compose run --rm --no-deps app npm run typecheck > /tmp/claude-tc.l
 
 - [ ] **Step 11: 通ることを確認する**
 
-Run: `docker compose run --rm --no-deps app npx vitest run shared/contracts/weekly-plan.test.ts netlify/functions/_shared/weekly-plan-service.pipeline.test.ts netlify/functions/_shared/weekly-plan-service.test.ts netlify/functions/_shared/weekly-plan-prompt.test.ts netlify/functions/_tests/weekly-plan-idempotency.test.ts src/features/weekly-plan > /tmp/claude-vt.log 2>&1; grep -nE "FAIL|✗" /tmp/claude-vt.log | head -40 || tail -n 15 /tmp/claude-vt.log`
+Run: `docker compose run --rm --no-deps app npx vitest run shared src/features/weekly-plan src/features/planner netlify/functions > /tmp/claude-vt.log 2>&1 ; grep -nE "FAIL|✗" /tmp/claude-vt.log || tail -n 15 /tmp/claude-vt.log`
 Expected: PASS
 
-Run: `docker compose run --rm --no-deps app npm run typecheck`、`... npm run lint`、`... npm run format:check`
+Run（1 つずつ）:
+
+```bash
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run format:check
+```
+
 Expected: いずれもエラーなし
 
 - [ ] **Step 12: コミット**
 
 ```bash
-git add shared/contracts/weekly-plan.ts shared/contracts/weekly-plan.test.ts netlify/functions/_shared/weekly-plan-service.ts netlify/functions/_shared/weekly-plan-service.pipeline.test.ts netlify/functions/_shared/weekly-plan-prompt.ts netlify/functions/_shared/weekly-plan-prompt.test.ts netlify/functions/_tests src/features/weekly-plan
+git add shared/contracts/weekly-plan.ts shared/contracts/weekly-plan.test.ts netlify/functions/_shared/weekly-plan-service.ts netlify/functions/_shared/weekly-plan-service.pipeline.test.ts netlify/functions/_shared/weekly-plan-prompt.ts netlify/functions/_shared/weekly-plan-prompt.test.ts netlify/functions/_shared/weekly-plan-prompt-effort-off.test.ts netlify/functions/_tests src/features/weekly-plan
 git status --short
 git commit -m "feat(weekly-plan): 週献立に手間の切り替えを通す" -m "リクエスト・snapshot・insert・replay・応答の全経路に effortPreference を写し、easy のときだけ週献立の system へ 1 文を足す。導入前と範囲外の snapshot は null に落とす。" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_014unHywzrdUis3WSG9mHdbv"
@@ -1603,6 +1992,8 @@ Expected: FAIL
 
 確認画面の「戻る」（`goToStep("novelty")`）は変えない。
 
+手間の段には `errorMessage` を渡さない。budget や novelty の段と形は揃わないが、`effortPreference` は `PlannerFieldName`（送信時のフィールドエラーの対象）に含まれず、エラーが出ることが無いためである。
+
 `src/features/planner/components/review-step.tsx`:
 
 - import に `effortPreferenceLabel` を足す。
@@ -1650,14 +2041,21 @@ grep -rnE "/ 9|[0-9]+\. (調理時間|予算|材料の使い方|献立の雰囲�
 - 見出しの番号: 「6. 予算」→「7. 予算」、「7. 材料の使い方」→「8. 材料の使い方」、「8. 献立の雰囲気」→「9. 献立の雰囲気」、「9. 確認」→「10. 確認」。「5. 調理時間」は変えない。
 - 進み具合: 「n / 9」→「n / 10」。調理時間より後の段は位置が 1 つずつ後ろへずれる（予算は 7 / 10、材料の使い方は 8 / 10、献立の雰囲気は 9 / 10）。確認画面を示す「9 / 9」は「10 / 10」にする。`home-generate-card.test.tsx` と `planner-route.test.tsx` の「8 / 9」を否定する assert は「9 / 10」にする。
 - **段を順にたどるテスト**では、見出しの書き換えに加えて「5. 調理時間」の直後に「6. 調理の手間」を挿入する。
-  - 配列で回しているもの（`for (const title of ["6. 予算", ...])`）は、配列の先頭に `"6. 調理の手間"` を足し、残りを振り直す。対象: `e2e/specs/mobile-accessibility.spec.ts:154`、`e2e/specs/generation-recovery-results.spec.ts:1295,1418`、`src/features/planner/components/planner-wizard.test.tsx:361`。
+  - 配列で回しているもの（`for (const title of ["6. 予算", ...])`、`planner-wizard.test.tsx` はループ変数が `heading`）は、「5. 調理時間」の直後の位置に `"6. 調理の手間"` を入れ、残りを振り直す。
+    - 配列が「6. 予算」から始まるもの（先頭に入れる）: `e2e/specs/mobile-accessibility.spec.ts:154`、`e2e/specs/generation-recovery-results.spec.ts:1295`、`src/features/planner/components/planner-wizard.test.tsx:361`。
+    - 配列が「5. 調理時間」から始まるもの（2 番目に入れる）: `e2e/specs/generation-recovery-results.spec.ts:1418`。結果は `["5. 調理時間", "6. 調理の手間", "7. 予算", "8. 材料の使い方", "9. 献立の雰囲気"]`。
   - `it.each` の表（`src/app/accessibility.test.tsx:565-572`）は、`timeLimit` の行の直後に `{ step: "effort" as const, heading: "6. 調理の手間", primary: "戻る" },` を足す。`primary` は budget / ingredientPreference / novelty の行と同じ「戻る」。後続の行の見出しは Step 5 の規則で振り直す。
   - `e2e/specs/full-journey.spec.ts` は Step 6 で扱う。
-- 「任意4ページ」「追加条件4ページ」などのコメントは「任意5ページ」に直す。
+- **次の段が「6. 予算」から「6. 調理の手間」に変わるテスト**: `planner-wizard.test.tsx:541-551` の `it("ignores the first 次へ click on a newly mounted optional step", ...)` は、調理時間から「次へ」で進んだ先を検査している。機械的に「7. 予算」へ直すのは誤りで、2 か所とも `"6. 調理の手間"` にする（コメントの「6ページ目」はそのまま正しい）。
+- **確認画面から 1 段目まで「戻る」を繰り返すループ**: `src/features/planner/components/planner-wizard.test.tsx:371` と `e2e/specs/menu-domain-pantry.spec.ts:88` の `for (let i = 0; i < 8; i += 1)` を `i < 9` にする。上の grep では見つからないので、`grep -rn "i < 8" src e2e` でも確かめる。
+- 段数を書いたコメントを直す。
+  - 「任意4ページ」「追加条件4ページ」→「任意5ページ」「追加条件5ページ」（テストと e2e のコメント、`e2e/fixtures/history.ts:92`）。
+  - `src/features/planner/model/planner-wizard.ts:5` の「任意の追加条件4問（timeLimit→budget→ingredientPreference→novelty）」→「任意の追加条件5問（timeLimit→effort→budget→ingredientPreference→novelty）」（Step 3 で済んでいれば不要）。
+  - `src/features/planner/components/optional-choice-step.tsx:12` の「任意4項目」→「任意5項目」。
 
 直したら次を実行する。
 
-Run: `docker compose run --rm --no-deps app npx vitest run src/features/planner src/app/accessibility.test.tsx src/features/history > /tmp/claude-vt.log 2>&1; grep -nE "FAIL|✗" /tmp/claude-vt.log | head -40 || tail -n 15 /tmp/claude-vt.log`
+Run: `docker compose run --rm --no-deps app npx vitest run src > /tmp/claude-vt.log 2>&1 ; grep -nE "FAIL|✗" /tmp/claude-vt.log || tail -n 15 /tmp/claude-vt.log`
 Expected: PASS
 
 - [ ] **Step 6: e2e を直す**
@@ -1722,28 +2120,38 @@ Claude-Session: https://claude.ai/code/session_014unHywzrdUis3WSG9mHdbv"
 
 この migration は 2 回に分けて出す。
 
-1. **リリース 1（Functions だけ）**: snapshot の読みに `effort_preference` を任意キーで足したコミット（`feat(generation): snapshot の effort_preference を有無どちらでも読めるようにする`）までを Netlify へ出す。migration は当てない。
-2. **リリース 2（§5.2 の通常の順）**: migration を当て、続けて Netlify を出す。
+1. **リリース 1（読みの拡張だけ。migration なし）**: 新しい形を受け取るだけのコミット（`feat(planner): 手間軸 effortPreference を読みの側だけ先に受け取れるようにする`）までを Netlify へ出す。snapshot 行・planner の契約・週献立の契約が `effortPreference` を任意キーとして受ける。migration は当てない。
+2. **リリース 2（§5.2 の通常の順）**: migration を当て、適用を確認してから Netlify を出す。
 
 - 以前の Functions は snapshot RPC の戻り値を strict に解析する。リリース 1 を飛ばして migration を当てると、Netlify を出すまでの間、全員の新規献立生成が `invalid_request` になる。
-- 旧ブラウザは `p_effort_preference` を送らないが、引数が `default null` なので下書き保存は通る。
+- **Git 連携の自動デプロイが有効なら、リリース 2 のコミットを push する前に一時停止する。** migration より先に画面が出ると、`p_effort_preference` 付きの呼び出しに合う関数が DB に無く、全員の下書き保存が失敗する。migration の適用を確認してから再開・デプロイする。
+- 旧ブラウザは `p_effort_preference` を送らないが、引数が `default null` なので下書き保存は通る。ただし切り替え中に旧画面のタブから保存すると、手間の選択は null に戻る（利用者が選び直せば済むので許容している）。
 - 週献立の snapshot は jsonb で、行の読みは strict ではないので影響しない。
-- ロールバック: リリース 2 の Functions を戻すのは**リリース 1 の配備まで**に限る。それより前へ戻すと、new_menu が失敗する。また、リリース 1 まで戻した場合でも、リリース 2 の間に作られた献立（保存済みの条件に `effortPreference` を含む）は、作り直し（再生成）が 422 になる。DB は破壊的に戻さない。
+- ロールバック: リリース 2 を戻すのは**リリース 1 の配備まで**に限る。リリース 1 まで戻すと手間の指定は無視されるが、リリース 2 の間に作られた献立・週献立・下書きはそのまま読め、作り直しもできる。それより前へ戻すと、new_menu が失敗し、リリース 2 の間に作られた献立の作り直しも 422 になる。DB は破壊的に戻さない。
 - **前提: 本番に、この migration より前の未適用 migration が残っていないこと。** 残っていれば、先にそれらを通常の順で別のリリースとして出す。
 ```
 
 - [ ] **Step 2: 最終確認**
 
-次を実行する。`db:test` と e2e は出力が大きいので、人間に実行してもらい、要約を貼ってもらう。
+AGENTS.md §8 の検証フローを、この順番で 1 つずつ実行する（`&&` でつながない）。出力が大きいもの（全体の vitest、`reset-local-db`、`db-test`、e2e）は、ログへ流して要約だけを見るか、人間に実行してもらい要約を貼ってもらう。
 
 ```bash
-docker compose run --rm --no-deps app npm run typecheck
-docker compose run --rm --no-deps app npm run lint
 docker compose run --rm --no-deps app npm run format:check
-docker compose run --rm --no-deps app npm test -- --run > /tmp/claude-all.log 2>&1; grep -nE "FAIL|Test Files|Tests " /tmp/claude-all.log | tail -20
-docker compose --profile test run --rm db-test      # 人間に依頼
-./scripts/run-e2e.sh                                  # 人間に依頼
-docker compose run --rm app npm run db:types && git diff --exit-code src/shared/types/database.generated.ts
+docker compose run --rm --no-deps app npm run lint
+docker compose run --rm --no-deps app npm run typecheck
+docker compose run --rm --no-deps app npx vitest run > /tmp/claude-all.log 2>&1 ; grep -nE "FAIL|Test Files|Tests " /tmp/claude-all.log || tail -n 20 /tmp/claude-all.log
+./scripts/reset-local-db.sh
+docker compose --profile test run --rm db-test
+./scripts/run-e2e.sh
+docker compose run --rm --no-deps app npm run build
+git diff --check
+```
+
+生成型が migration と一致していることも確かめる（1 つずつ実行する）。
+
+```bash
+docker compose run --rm app npm run db:types
+git diff --exit-code src/shared/types/database.generated.ts
 ```
 
 Expected: すべて PASS。`database.generated.ts` の差分なし。
@@ -1752,6 +2160,6 @@ Expected: すべて PASS。`database.generated.ts` の差分なし。
 
 ```bash
 git add docs/deployment/README.md
-git commit -m "docs(deploy): 手間軸の migration を 2 回に分けて出す手順を書く" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+git commit -m "docs(deploy): 手間軸の migration を 2 回に分けて出す手順を書く" -m "リリース 1 で読みの側を先に広げ、リリース 2 は migration の適用を確かめてから Netlify を出す。自動デプロイの一時停止とロールバックの範囲も書く。" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_014unHywzrdUis3WSG9mHdbv"
 ```
