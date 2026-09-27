@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NETLIFY_SYNC_FUNCTION_LIMIT_MS } from "@shared/contracts/function-budget";
 import { householdSafetyRevisionStorageKey } from "@/features/household/household-queries";
 import {
   ACCOUNT_DELETE_CLIENT_TIMEOUT_MS,
@@ -101,6 +102,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+it("AP1: keeps the DELETE client timeout inside the platform's effective sync limit", () => {
+  // S12: function-budget からの導出値であり、Netlify Free 実効上限の内側であること自体を固定する
+  expect(ACCOUNT_DELETE_CLIENT_TIMEOUT_MS).toBeLessThan(NETLIFY_SYNC_FUNCTION_LIMIT_MS);
 });
 
 describe("AccountSettingsSection", () => {

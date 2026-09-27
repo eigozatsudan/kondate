@@ -209,11 +209,11 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 | 品質モード（上位モデル）       | 不可               | 3 / JST 日 **かつ** 20 / JST 暦月                   |
 | チラシ→1 週間献立              | 入口のみ（locked） | 成功 **2** / JST 暦週（試行枠 **6**。成功枠と独立） |
 
-| 項目                               | 値（全プラン共通の安全弁）                                                                                                                                                 |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 外部 AI 送信 / アプリ全体 / JST 日 | ローカル既定 **20**、本番運用推奨 **80**、製品 max **500**（`GLOBAL_DAILY_AI_LIMIT`。**上限の正本は ENV のみ**。SQL は範囲拒否しない）                                     |
-| 1 試行タイムアウト                 | 24 秒（`OPENROUTER_TIMEOUT_MS`。primary + 最大 1 repair が 55s 総予算内に収まる）                                                                                          |
-| Function 総予算                    | 55 秒（`FUNCTION_TOTAL_BUDGET_MS`。Netlify 同期 60s 硬上限の内側。正本: `shared/contracts/function-budget.ts` / [docs/deployment/netlify.md](docs/deployment/netlify.md)） |
+| 項目                               | 値（全プラン共通の安全弁）                                                                                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 外部 AI 送信 / アプリ全体 / JST 日 | ローカル既定 **20**、本番運用推奨 **80**、製品 max **500**（`GLOBAL_DAILY_AI_LIMIT`。**上限の正本は ENV のみ**。SQL は範囲拒否しない）                                          |
+| 1 試行タイムアウト                 | 20 秒（`OPENROUTER_TIMEOUT_MS`。primary 1 回が 26s 総予算内に収まる上限。repair は予算上ほぼ入らない）                                                                          |
+| Function 総予算                    | 26 秒（`FUNCTION_TOTAL_BUDGET_MS`。Netlify Free の実効 30s 上限の内側。正本: `shared/contracts/function-budget.ts` / [docs/deployment/netlify.md](docs/deployment/netlify.md)） |
 
 #### グローバル日次枠を上げる（運用・製品 max）
 
@@ -269,7 +269,7 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 | 認証        | `x-share-worker-cron-secret` または `Authorization: Bearer` が env `SHARE_WORKER_CRON_SECRET`（16 文字以上）と一致 |
 | 定期実行    | GitHub Actions `share-generalize-worker.yml`（毎時）など。**Netlify `@hourly` schedule は使わない**                |
 | GitHub 秘密 | `SHARE_GENERALIZE_WORKER_URL` + `SHARE_WORKER_CRON_SECRET`（Netlify と同値）                                       |
-| 1 起動      | claim **1** 件（Pass1+Pass2 が Netlify 60s 壁に収まるように）                                                      |
+| 1 起動      | claim **1** 件（Pass1+Pass2 各 20s。最悪 2×20s=40s で Netlify Free 実効 30s 壁を超えうる。要フォローアップ）       |
 
 ローカル診断例:
 

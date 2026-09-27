@@ -1,5 +1,9 @@
 import { useRef, useState } from "react";
 import { deleteAccountEnvelopeSchema } from "@shared/contracts/account";
+import {
+  FUNCTION_TOTAL_BUDGET_MS,
+  GENERATION_CLIENT_TIMEOUT_HEADROOM_MS,
+} from "@shared/contracts/function-budget";
 import { withTimeout } from "@/features/auth/async-timeout";
 import {
   clearLocalAuthAndDrafts,
@@ -25,9 +29,11 @@ export const AUTH_SESSION_PROBE_TIMEOUT_MS = SIGN_OUT_TIMEOUT_MS;
 
 /**
  * AP1: DELETE /api/account 本体のクライアント上限。
- * Function 総予算 55s / platform 60s の内側に置き、never-settle で「削除しています」固着を防ぐ。
+ * Function 総予算（26s）+ クライアント headroom（3s）から導出（S12: リテラルミラー禁止）。
+ * platform 実効 30s の内側に置き、never-settle で「削除しています」固着を防ぐ。
  */
-export const ACCOUNT_DELETE_CLIENT_TIMEOUT_MS = 58_000;
+export const ACCOUNT_DELETE_CLIENT_TIMEOUT_MS =
+  FUNCTION_TOTAL_BUDGET_MS + GENERATION_CLIENT_TIMEOUT_HEADROOM_MS;
 
 function mapDeleteError(
   code: string | undefined,
