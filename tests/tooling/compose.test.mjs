@@ -338,8 +338,8 @@ test("provides the complete locked generation environment to the app service", a
     'USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4"',
     'USER_SHORT_WINDOW_SECONDS: "600"',
     'GLOBAL_DAILY_AI_LIMIT: "20"',
-    'OPENROUTER_TIMEOUT_MS: "24000"',
-    'FUNCTION_TOTAL_BUDGET_MS: "55000"',
+    'OPENROUTER_TIMEOUT_MS: "20000"',
+    'FUNCTION_TOTAL_BUDGET_MS: "26000"',
     'AI_PROCESSING_STALE_SECONDS: "180"',
     "AI_QUOTA_DISABLED: ${AI_QUOTA_DISABLED:-false}",
   ]) {

@@ -61,7 +61,7 @@ export const MAX_STRIPE_SUBSCRIPTION_LIST_PAGES = 10;
 
 /**
  * AP13: billing cancel（list + cancel ループ）の壁時計上限。
- * Function 総予算と同一（platform 60s の内側）。超過時は Auth 削除前に fail-closed。
+ * Function 総予算と同一（platform 実効 30s の内側）。超過時は Auth 削除前に fail-closed。
  * リテラルミラー禁止 — function-budget 正本から re-export。
  */
 export const ACCOUNT_DELETE_BILLING_CANCEL_BUDGET_MS = FUNCTION_TOTAL_BUDGET_MS;

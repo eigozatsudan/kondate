@@ -54,7 +54,7 @@ function logTerminalStatusIfNeeded(
 
 /**
  * POST /api/generations/dish — 料理単位の再生成。
- * 入口時刻を method/auth/body より先に一度だけ取得し、55s 総予算の起点とする。
+ * 入口時刻を method/auth/body より先に一度だけ取得し、26s 総予算の起点とする。
  */
 export default async function generateDish(request: Request): Promise<Response> {
   const requestStartedAtMonotonicMs = performance.now();

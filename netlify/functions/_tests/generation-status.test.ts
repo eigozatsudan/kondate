@@ -83,7 +83,7 @@ describe("GET /api/generations/:idempotencyKey/status", () => {
       rateLimit: { windowLimit: 40, windowSize: 180, aggregateBy: ["ip"] },
     });
     // processing poll は use-generation-recovery の 2s。通常 1 クライアントは
-    // Function 総予算（または platform 60s）で終端し、初回 GET + 2s 間隔でも 40 未満。
+    // Function 総予算（または platform 実効 30s）で終端し、初回 GET + 2s 間隔でも 40 未満。
     const processingPollIntervalMs = 2_000;
     const pollsDuring = (durationMs: number): number =>
       1 + Math.floor(durationMs / processingPollIntervalMs);

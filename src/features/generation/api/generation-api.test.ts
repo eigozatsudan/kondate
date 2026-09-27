@@ -163,9 +163,9 @@ describe("generation API", () => {
     });
     // G8/S12: function-budget 正本から導出した POST 専用 AbortSignal
     expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBe(58_000);
-    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeLessThanOrEqual(60_000);
-    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeGreaterThan(55_000);
+    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBe(29_000);
+    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeLessThanOrEqual(30_000);
+    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeGreaterThan(26_000);
   });
 
   it("G8: aborts a hung POST when the client timeout fires", async () => {
@@ -251,7 +251,7 @@ describe("generation API", () => {
     // G18: hung GET が statusInFlight を永久占有しないよう POST と同系の AbortSignal
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(GENERATION_STATUS_CLIENT_TIMEOUT_MS).toBe(GENERATION_POST_CLIENT_TIMEOUT_MS);
-    expect(GENERATION_STATUS_CLIENT_TIMEOUT_MS).toBe(58_000);
+    expect(GENERATION_STATUS_CLIENT_TIMEOUT_MS).toBe(29_000);
   });
 
   it("G18: aborts a hung status GET when the client timeout fires", async () => {

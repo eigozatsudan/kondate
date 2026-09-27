@@ -137,9 +137,9 @@ values.set("OPENROUTER_PLUS_MODELS", "mock/kondate-primary:free,mock/kondate-rep
 // 空 = flyer は OPENROUTER_PLUS_MODELS にフォールバック（env.ts / Q1）
 values.set("OPENROUTER_FLYER_MODELS", "");
 values.set("OPENROUTER_BASE_URL", "http://openrouter-mock:8787/api/v1");
-// リリース固定（shared/contracts/function-budget.ts と compose と一致）
-values.set("OPENROUTER_TIMEOUT_MS", "24000");
-values.set("FUNCTION_TOTAL_BUDGET_MS", "55000");
+// リリース固定（shared/contracts/function-budget.ts と compose と一致。Netlify Free 実効 30s に合わせ再ロック）
+values.set("OPENROUTER_TIMEOUT_MS", "20000");
+values.set("FUNCTION_TOTAL_BUDGET_MS", "26000");
 values.set("AI_PROCESSING_STALE_SECONDS", "180");
 values.set("BILLING_ENABLED", "false");
 values.set("STRIPE_API_VERSION", "2026-06-24.dahlia");

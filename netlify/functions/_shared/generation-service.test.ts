@@ -207,7 +207,7 @@ function makeNewMenuExecutionContext(
         ? "idea-fingerprint"
         : createCurrentSafetyFingerprint(generationContext.safety)),
     startedAtMonotonicMs: overrides.startedAtMonotonicMs ?? 0,
-    deadlineAtMonotonicMs: overrides.deadlineAtMonotonicMs ?? 55_000,
+    deadlineAtMonotonicMs: overrides.deadlineAtMonotonicMs ?? 26_000,
     regeneration: null,
     recentDishHints: overrides.recentDishHints ?? [],
     tasteHints: overrides.tasteHints ?? null,
@@ -317,9 +317,9 @@ function makeDeps(
     ensureOpenRouterModelPolicy: vi.fn(() => Promise.resolve()),
     now: () => new Date("2026-07-11T00:00:00.000Z"),
     monotonicNow: () => 0,
-    openRouterTimeoutMs: 24_000,
+    openRouterTimeoutMs: 20_000,
     requestStartedAtMonotonicMs: 0,
-    functionTotalBudgetMs: 55_000,
+    functionTotalBudgetMs: 26_000,
     uuid: () => "86000000-0000-4000-8000-000000000001",
     logTerminalEvent: vi.fn(),
     ...overrides,
@@ -1489,11 +1489,11 @@ describe("runGeneration", () => {
     });
   });
 
-  describe("55-second deadline and pre-send budget", () => {
+  describe("26-second deadline and pre-send budget", () => {
     it("exports the release-locked budget constants", () => {
-      expect(ATTEMPT_TIMEOUT_MS).toBe(24_000);
+      expect(ATTEMPT_TIMEOUT_MS).toBe(20_000);
       expect(FINALIZE_RESERVE_MS).toBe(2_000);
-      expect(REQUIRED_SEND_BUDGET_MS).toBe(26_000);
+      expect(REQUIRED_SEND_BUDGET_MS).toBe(22_000);
     });
 
     it("fails before markSent when remaining is below REQUIRED_SEND_BUDGET_MS", async () => {
@@ -1506,10 +1506,10 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
+          functionTotalBudgetMs: 26_000,
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
-            nowMs = 55_000 - (REQUIRED_SEND_BUDGET_MS - 1);
+            nowMs = 26_000 - (REQUIRED_SEND_BUDGET_MS - 1);
             return Promise.resolve(makeNewMenuExecutionContext());
           }),
         }),
@@ -1540,10 +1540,10 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
+          functionTotalBudgetMs: 26_000,
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
-            nowMs = 55_000 - REQUIRED_SEND_BUDGET_MS;
+            nowMs = 26_000 - REQUIRED_SEND_BUDGET_MS;
             return Promise.resolve(makeNewMenuExecutionContext());
           }),
         }),
@@ -1584,7 +1584,7 @@ describe("runGeneration", () => {
       let nowMs = 0;
       repository.reserveRepair.mockImplementation(() => {
         // reserve 成功直後に共有予算が削られ、2 回目 markSent 前の再検査で落ちる。
-        nowMs = 55_000 - (REQUIRED_SEND_BUDGET_MS - 1);
+        nowMs = 26_000 - (REQUIRED_SEND_BUDGET_MS - 1);
         return Promise.resolve({ reserved: true, retry_at: null });
       });
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>().mockResolvedValue({
@@ -1597,7 +1597,7 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
+          functionTotalBudgetMs: 26_000,
           monotonicNow: () => nowMs,
         }),
         command,
@@ -1631,11 +1631,11 @@ describe("runGeneration", () => {
           callOpenRouter,
           ensureOpenRouterModelPolicy,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
+          functionTotalBudgetMs: 26_000,
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
             // ゲート通過直後: remaining === REQUIRED（ensure 前は markSent 可）
-            nowMs = 55_000 - REQUIRED_SEND_BUDGET_MS;
+            nowMs = 26_000 - REQUIRED_SEND_BUDGET_MS;
             return Promise.resolve(makeNewMenuExecutionContext());
           }),
         }),
@@ -1675,12 +1675,12 @@ describe("runGeneration", () => {
           callOpenRouter,
           ensureOpenRouterModelPolicy,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
-          openRouterTimeoutMs: 24_000,
+          functionTotalBudgetMs: 26_000,
+          openRouterTimeoutMs: 20_000,
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
             // ensure 後も REQUIRED を満たす: 前 remaining = REQUIRED + 4_000
-            nowMs = 55_000 - (REQUIRED_SEND_BUDGET_MS + 4_000);
+            nowMs = 26_000 - (REQUIRED_SEND_BUDGET_MS + 4_000);
             return Promise.resolve(makeNewMenuExecutionContext());
           }),
         }),
@@ -1713,16 +1713,16 @@ describe("runGeneration", () => {
           modelId: models[0],
         }),
       );
-      // deadline 55s。markSent 直前 now=28s → remaining 27s → pre gate 通過。
-      // markSent 後 now=31s → remaining 24s → timeout = 24_000 − FINALIZE = 22_000。
-      const markSentAtMs = 55_000 - (ATTEMPT_TIMEOUT_MS + FINALIZE_RESERVE_MS + 1_000);
+      // deadline 26s。markSent 直前 now=3s → remaining 23s → pre gate 通過。
+      // markSent 後 now=6s → remaining 20s → timeout = 20_000 − FINALIZE = 18_000。
+      const markSentAtMs = 26_000 - (ATTEMPT_TIMEOUT_MS + FINALIZE_RESERVE_MS + 1_000);
       const result = await runGeneration(
         makeDeps({
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
-          openRouterTimeoutMs: 24_000,
+          functionTotalBudgetMs: 26_000,
+          openRouterTimeoutMs: 20_000,
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
             nowMs = markSentAtMs;
@@ -1734,8 +1734,8 @@ describe("runGeneration", () => {
       expect(result.status).toBe("succeeded");
       expect(repository.markSent).toHaveBeenCalledTimes(1);
       expect(callOpenRouter).toHaveBeenCalledTimes(1);
-      // remaining after markSent = 55_000 - (markSentAtMs + 3_000) = 24_000
-      // timeout = 24_000 - FINALIZE_RESERVE = 22_000
+      // remaining after markSent = 26_000 - (markSentAtMs + 3_000) = 20_000
+      // timeout = 20_000 - FINALIZE_RESERVE = 18_000
       expect(callOpenRouter.mock.calls[0]?.[0].timeoutMs).toBe(
         ATTEMPT_TIMEOUT_MS - FINALIZE_RESERVE_MS,
       );
@@ -1748,7 +1748,7 @@ describe("runGeneration", () => {
       let nowMs = 0;
       repository.markSent = vi.fn(() => {
         // remaining を FINALIZE 以下へ（chat timeout 0）
-        nowMs = 55_000 - FINALIZE_RESERVE_MS;
+        nowMs = 26_000 - FINALIZE_RESERVE_MS;
         return Promise.resolve({
           ...record("processing"),
           sent: true as const,
@@ -1761,12 +1761,12 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
-          openRouterTimeoutMs: 24_000,
+          functionTotalBudgetMs: 26_000,
+          openRouterTimeoutMs: 20_000,
           monotonicNow: () => nowMs,
           loadExecutionContext: vi.fn(() => {
             // pre-mark: remaining = REQUIRED 以上
-            nowMs = 55_000 - REQUIRED_SEND_BUDGET_MS;
+            nowMs = 26_000 - REQUIRED_SEND_BUDGET_MS;
             return Promise.resolve(makeNewMenuExecutionContext());
           }),
         }),
@@ -1799,7 +1799,7 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
+          functionTotalBudgetMs: 26_000,
           monotonicNow: () => nowMs,
         }),
         command,
@@ -1833,7 +1833,7 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
+          functionTotalBudgetMs: 26_000,
           monotonicNow: () => {
             if (nowMs < 149_999) return nowMs;
             // 1 回目: outer abortIfDeadlineExceeded（残り 1ms → 通過）
@@ -1861,8 +1861,8 @@ describe("runGeneration", () => {
       const repository = makeRepository();
       let nowMs = 0;
       const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>(() => {
-        // 総予算 55s 内に残し、succeed 入口では remaining > 0 にする
-        nowMs = 54_000;
+        // 総予算 26s 内に残し、succeed 入口では remaining > 0 にする
+        nowMs = 25_000;
         return Promise.resolve({
           mode: "full_menu" as const,
           output: scenarios.success,
@@ -1881,7 +1881,7 @@ describe("runGeneration", () => {
           repository,
           callOpenRouter,
           requestStartedAtMonotonicMs: 0,
-          functionTotalBudgetMs: 55_000,
+          functionTotalBudgetMs: 26_000,
           monotonicNow: () => nowMs,
         }),
         command,
@@ -2247,8 +2247,8 @@ describe("runGeneration", () => {
         baseUrl: "http://openrouter-mock:8787/api/v1",
         models: [...models],
         plusModels: ["plus-model"],
-        timeoutMs: 24_000,
-        functionTotalBudgetMs: 55_000,
+        timeoutMs: 20_000,
+        functionTotalBudgetMs: 26_000,
       },
     });
     const repository = makeRepository();
@@ -2280,8 +2280,8 @@ describe("createGenerationDeps loadExecutionContext contract", () => {
     getServerEnvMock.mockReturnValue({
       openRouter: {
         models: [...models],
-        timeoutMs: 24_000,
-        functionTotalBudgetMs: 55_000,
+        timeoutMs: 20_000,
+        functionTotalBudgetMs: 26_000,
       },
     });
     createGenerationRepositoryMock.mockReturnValue({

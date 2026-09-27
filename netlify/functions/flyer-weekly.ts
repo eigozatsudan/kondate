@@ -87,7 +87,7 @@ export async function readFlyerRequestBodyWithLimit(
  */
 export default async function flyerWeekly(request: Request): Promise<Response> {
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
-  // 総予算 55s の起点。multipart / sharp / OpenRouter 全体をこの時刻から測る。
+  // 総予算 26s の起点。multipart / sharp / OpenRouter 全体をこの時刻から測る。
   const requestStartedAtMonotonicMs = performance.now();
   try {
     const user = await requireUserWithEmail(request);

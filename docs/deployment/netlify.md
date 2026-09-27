@@ -48,8 +48,8 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 | `USER_SHORT_WINDOW_SECONDS` | `600` |
 | `GLOBAL_DAILY_AI_LIMIT` | 1..製品 max（現状 **500**、`planQuota.globalDailyAiLimitProductMax`）。**ENV のみが正本**（SQL 範囲拒否なし）。運用値の引き上げは Netlify env だけ。製品 max を超える運用は定数 + preflight ミラーを先に上げる。ローカル既定 20、本番運用推奨 80 |
 | `AUTH_CONTINUATION_TTL_SECONDS` | `300` |
-| `OPENROUTER_TIMEOUT_MS` | `24000`（primary+repair が 55s 総予算内に収まる試行上限） |
-| `FUNCTION_TOTAL_BUDGET_MS` | `55000`（プラットフォーム 60s 硬上限の内側。headroom 5s） |
+| `OPENROUTER_TIMEOUT_MS` | `20000`（primary が 26s 総予算内に収まる試行上限。repair はほぼ入らない） |
+| `FUNCTION_TOTAL_BUDGET_MS` | `26000`（Netlify Free 実効 30s 上限の内側。headroom 4s） |
 | `AI_PROCESSING_STALE_SECONDS` | `180` |
 | `BILLING_ENABLED` | `"true"` / `"false"` のみ。未設定は false。Checkout/Portal と通常契約の Plus 機能を停止。開発者の無料 Plus は停止しない |
 | `DEVELOPER_PLUS_USER_IDS` | server only。開発者の Supabase ユーザー UUID をカンマ区切りで指定。未設定・空は付与なし。不正項目がある設定は起動拒否 |
@@ -87,20 +87,30 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 
 ### 同期 Function のプラットフォーム上限（ロック済み再整合）
 
-Netlify の同期 Function 実行上限は公式どおり **60 秒固定・非設定**（Background は 15 分だが本プロダクトは同期のみ・背景継続禁止）。
-`netlify.toml` / `export const config` で 60 秒超へ引き上げる手段は無い。
+公式ドキュメントは同期 Function 実行上限を **60 秒固定・非設定**と書く（Background は 15 分だが
+本プロダクトは同期のみ・背景継続禁止）。しかし本番 Netlify **Free** プランの実効上限は約 **30 秒**
+であることを実測した: 2026-09-27 本番で `POST /api/generations/menu` が 30,769ms で 502（text/plain、
+関数ログなし）になり、Netlify のプラットフォームが約 30 秒で関数を切った（行は processing のまま残り、
+180 秒後に `generation_timeout`/503 化）。公式 doc の 60s とは食い違う。
+`netlify.toml` / `export const config` で実行時間を引き上げる手段は無い。
 
-アプリ予算はプラットフォーム内側に再ロックする（正本: `shared/contracts/function-budget.ts`）:
+アプリ予算は Free の実効 30 秒の内側に再ロックする（正本: `shared/contracts/function-budget.ts`）:
 
 | 項目 | 値 | 理由 |
 | --- | --- | --- |
-| プラットフォーム硬上限 | 60s | Netlify 同期 Function |
-| `FUNCTION_TOTAL_BUDGET_MS` | **55s** | 切断前 headroom 5s（応答返却・finalize） |
-| `OPENROUTER_TIMEOUT_MS` | **24s** | primary + 最大 1 repair（各 24s）+ finalize 2s ≤ 55s |
-| pre-send / pre-repair ゲート | **26s** 残（24+2） | 旧 62s ゲートを 24s 試行に再計算 |
+| プラットフォーム実効上限 | **実測 約30s**（公式 doc は 60s） | Netlify Free 同期 Function（2026-09-27 本番 502 at 30.8s） |
+| `FUNCTION_TOTAL_BUDGET_MS` | **26s** | 切断前 headroom 4s（応答返却・finalize） |
+| `OPENROUTER_TIMEOUT_MS` | **20s** | primary 1 回 + finalize 2s ≤ 26s。repair は予算上ほぼ入らない |
+| pre-send / pre-repair ゲート | **22s** 残（20+2） | REQUIRED_SEND = OPENROUTER_TIMEOUT + FINALIZE_RESERVE |
 | `AI_PROCESSING_STALE_SECONDS` | 180 | 切断残骸の掃除猶予（予算より長いのは意図的） |
 
-ローカル E2E（`tools/e2e-function-server.mjs`）は Netlify 切断を再現しないが、**同じ 24s/55s env ロック**を使う。
+送信前の準備（認証・予約・context 読み込み・Models 政策確認）に使える猶予は 26 − 22 = **4s 以内**。
+超えると pre-send ゲートで送らずに `generation_timeout`（attempt は焼かない）。primary 1 回で最大 20s
+使うと残りは 22s 未満になるため、**repair はほぼ予算に入らない**（`canRepair()` が false）。これは
+人間が了承済みのトレードオフ（Netlify Free では repair 品質改善より 502 回避を優先）。
+26s 総予算 + クライアント headroom 3s = 29s（`GENERATION_POST_CLIENT_TIMEOUT_MS`）は実効 30s の内側。
+
+ローカル E2E（`tools/e2e-function-server.mjs`）は Netlify 切断を再現しないが、**同じ 20s/26s env ロック**を使う。
 
 `GENERATION_REQUEST_HMAC_KEY`・`QUOTA_IDENTITY_HMAC_KEY`・`SUPABASE_MAINTENANCE_DB_URL`・
 `AUTH_CONTINUATION_ENCRYPTION_KEY` は:

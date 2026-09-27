@@ -136,7 +136,7 @@ export type FlyerWeeklyDeps = {
   now?: () => Date;
   /** handler 入口の performance.now()。未指定時は本関数入口で計測する。 */
   requestStartedAtMonotonicMs?: number;
-  /** 総予算 ms。既定はリリース固定 55s。 */
+  /** 総予算 ms。既定はリリース固定 26s。 */
   functionTotalBudgetMs?: number;
   /** テスト用の単調時計。 */
   monotonicNow?: () => number;

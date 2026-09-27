@@ -272,7 +272,8 @@ describe("share-generalize-worker auth / path", () => {
     );
     expect(response.status).toBe(204);
     expect(claimShareGeneralizationJobs).toHaveBeenCalledTimes(1);
-    // 2×24s OpenRouter が Netlify 60s 壁に収まるよう 1 件 claim
+    // 2×20s OpenRouter を Netlify 実効 30s 壁の内側へ抑えるため 1 件 claim
+    // （それでも最悪 40s > 30s。関連コメント: share-generalize-worker.ts の要フォローアップ注記）
     expect(claimShareGeneralizationJobs).toHaveBeenCalledWith(
       expect.objectContaining({ limit: 1 }),
     );

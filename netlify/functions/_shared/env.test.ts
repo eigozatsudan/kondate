@@ -33,8 +33,8 @@ const validServerEnv = {
   USER_DAILY_EXTERNAL_CALL_LIMIT: "6",
   USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT: "4",
   USER_SHORT_WINDOW_SECONDS: "600",
-  OPENROUTER_TIMEOUT_MS: "24000",
-  FUNCTION_TOTAL_BUDGET_MS: "55000",
+  OPENROUTER_TIMEOUT_MS: "20000",
+  FUNCTION_TOTAL_BUDGET_MS: "26000",
   AI_PROCESSING_STALE_SECONDS: "180",
 };
 
@@ -130,8 +130,8 @@ describe("parseOpenRouterModels", () => {
       userShortWindowSeconds: releaseQuota.userShortWindowSeconds,
       // 未設定時の schema default は製品 max（compose ローカル既定 20 は env で明示）
       globalDailyLimit: GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX,
-      timeoutMs: 24_000,
-      functionTotalBudgetMs: 55_000,
+      timeoutMs: 20_000,
+      functionTotalBudgetMs: 26_000,
       staleAfterSeconds: 180,
     });
     // 二重正本ドリフト防止: generation-service 定数と env ロックを同一値に保つ
@@ -389,10 +389,10 @@ describe("parseOpenRouterModels", () => {
   });
 
   it.each([
-    ["OPENROUTER_TIMEOUT_MS", 24_000, "timeoutMs", 24_000],
-    ["OPENROUTER_TIMEOUT_MS", "24000", "timeoutMs", 24_000],
-    ["FUNCTION_TOTAL_BUDGET_MS", 55_000, "functionTotalBudgetMs", 55_000],
-    ["FUNCTION_TOTAL_BUDGET_MS", "55000", "functionTotalBudgetMs", 55_000],
+    ["OPENROUTER_TIMEOUT_MS", 20_000, "timeoutMs", 20_000],
+    ["OPENROUTER_TIMEOUT_MS", "20000", "timeoutMs", 20_000],
+    ["FUNCTION_TOTAL_BUDGET_MS", 26_000, "functionTotalBudgetMs", 26_000],
+    ["FUNCTION_TOTAL_BUDGET_MS", "26000", "functionTotalBudgetMs", 26_000],
     ["AI_PROCESSING_STALE_SECONDS", 180, "staleAfterSeconds", 180],
     ["AI_PROCESSING_STALE_SECONDS", "180", "staleAfterSeconds", 180],
   ] as const)("accepts exact deadline lock %s=%s", (key, value, openRouterKey, expected) => {
@@ -403,33 +403,34 @@ describe("parseOpenRouterModels", () => {
   it("fails closed when release-locked number/text pair disagree (S1)", () => {
     // 定数だけ改訂して text を旧値のままにする経路を構築時に拒否する
     expect(() => {
-      assertReleaseLockedIntegerPair(50_000, "55000");
+      assertReleaseLockedIntegerPair(24_000, "26000");
     }).toThrow(/release_locked_integer_mismatch/);
     expect(() => {
-      assertReleaseLockedIntegerPair(55_000, "55000");
+      assertReleaseLockedIntegerPair(26_000, "26000");
     }).not.toThrow();
     expect(() => {
-      assertReleaseLockedIntegerPair(24_000, "24000");
+      assertReleaseLockedIntegerPair(20_000, "20000");
     }).not.toThrow();
   });
 
   it.each([
     ["OPENROUTER_TIMEOUT_MS", undefined],
-    ["OPENROUTER_TIMEOUT_MS", "23999"],
-    ["OPENROUTER_TIMEOUT_MS", "24001"],
-    ["OPENROUTER_TIMEOUT_MS", "20000"],
+    ["OPENROUTER_TIMEOUT_MS", "19999"],
+    ["OPENROUTER_TIMEOUT_MS", "20001"],
+    ["OPENROUTER_TIMEOUT_MS", "24000"],
     ["OPENROUTER_TIMEOUT_MS", "0"],
     ["OPENROUTER_TIMEOUT_MS", "-1"],
-    ["OPENROUTER_TIMEOUT_MS", "24000.5"],
+    ["OPENROUTER_TIMEOUT_MS", "20000.5"],
     ["OPENROUTER_TIMEOUT_MS", ""],
-    ["OPENROUTER_TIMEOUT_MS", "024000"],
+    ["OPENROUTER_TIMEOUT_MS", "020000"],
     ["FUNCTION_TOTAL_BUDGET_MS", undefined],
-    ["FUNCTION_TOTAL_BUDGET_MS", "54000"],
-    ["FUNCTION_TOTAL_BUDGET_MS", "54999"],
-    ["FUNCTION_TOTAL_BUDGET_MS", "55001"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "25000"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "25999"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "26001"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "55000"],
     ["FUNCTION_TOTAL_BUDGET_MS", "0"],
     ["FUNCTION_TOTAL_BUDGET_MS", "-1"],
-    ["FUNCTION_TOTAL_BUDGET_MS", "55000.1"],
+    ["FUNCTION_TOTAL_BUDGET_MS", "26000.1"],
     ["FUNCTION_TOTAL_BUDGET_MS", ""],
     ["AI_PROCESSING_STALE_SECONDS", undefined],
     ["AI_PROCESSING_STALE_SECONDS", "179"],

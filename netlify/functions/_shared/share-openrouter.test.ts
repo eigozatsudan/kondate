@@ -61,7 +61,7 @@ describe("share-openrouter", () => {
         apiKey: "secret",
         baseUrl: "https://openrouter.ai/api/v1",
         models: ["share/model-a"],
-        timeoutMs: 24_000,
+        timeoutMs: 20_000,
         fetchImpl,
       },
     );
@@ -78,7 +78,7 @@ describe("share-openrouter", () => {
         apiKey: "secret",
         baseUrl: "https://openrouter.ai/api/v1",
         models: ["share/model-a"],
-        timeoutMs: 24_000,
+        timeoutMs: 20_000,
         fetchImpl,
       },
     );
@@ -111,7 +111,7 @@ describe("share-openrouter", () => {
         apiKey: "secret",
         baseUrl: "https://openrouter.ai/api/v1",
         models: ["share/model-b"],
-        timeoutMs: 24_000,
+        timeoutMs: 20_000,
         fetchImpl,
       },
     );

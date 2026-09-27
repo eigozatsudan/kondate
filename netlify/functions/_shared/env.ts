@@ -126,13 +126,13 @@ const rawServerEnvSchema = continuationServerEnvSchema.extend({
   // SQL は p_global_limit の範囲拒否をしない（ENV のみが正本）。
   GLOBAL_DAILY_AI_LIMIT: globalDailyLimit(GLOBAL_DAILY_AI_LIMIT_PRODUCT_MAX),
   // 締切3値はリリース固定。未設定の silent default を禁止し、近傍値も拒否する
-  // Netlify 同期 60s 硬上限: 試行 24s（primary+repair）/ 総 55s（platform headroom 5s）
+  // Netlify Free 実効 30s 上限（公式 doc の 60s とは食い違う）: 試行 20s / 総 26s（headroom 4s）
   OPENROUTER_TIMEOUT_MS: releaseLockedInteger(OPENROUTER_TIMEOUT_MS, OPENROUTER_TIMEOUT_MS_ENV),
   FUNCTION_TOTAL_BUDGET_MS: releaseLockedInteger(
     FUNCTION_TOTAL_BUDGET_MS,
     FUNCTION_TOTAL_BUDGET_MS_ENV,
   ),
-  // G1 residual-intentional: processing 孤児解放までの秒数。55s/60s 実行上限より長いのは
+  // G1 residual-intentional: processing 孤児解放までの秒数。26s/30s 実行上限より長いのは
   // 意図的ロック（cleanup は期限前に解放しない）。値の短縮は設計改訂が必要。
   AI_PROCESSING_STALE_SECONDS: releaseLockedInteger(
     AI_PROCESSING_STALE_SECONDS,

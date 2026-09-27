@@ -134,7 +134,7 @@ export function postGeneration(
     {
       method: "POST",
       body: JSON.stringify(command),
-      // サーバ 55s / platform 60s と独立に待つと G1 孤児窓中に破棄しやすい（G8）
+      // サーバ 26s / platform 実効 30s と独立に待つと G1 孤児窓中に破棄しやすい（G8）
       signal: AbortSignal.timeout(timeoutMs),
     },
     command.request.idempotencyKey,

@@ -200,7 +200,7 @@ export type GenerationDependencies = {
    */
   openRouterMockScenario?: string;
   now(): Date;
-  /** 単調時計。認証・予約も同じ 55s 総予算を消費する */
+  /** 単調時計。認証・予約も同じ 26s 総予算を消費する */
   monotonicNow(): number;
   openRouterTimeoutMs: number;
   requestStartedAtMonotonicMs: number;
@@ -848,7 +848,7 @@ export async function runGeneration(
   if (reserved.status !== "processing" || reserved.replayed === true) {
     // G1 residual-intentional: processing 中の同一 key 再 POST は replay のみで
     // load/OpenRouter を再開しない。孤児は AI_PROCESSING_STALE_SECONDS=180 まで占有
-    //（アプリ 55s / platform 60s より長いのはロック残差。stale 値は緩めない）。
+    //（アプリ 26s / platform 実効 30s より長いのはロック残差。stale 値は緩めない）。
     // generation_in_progress は台帳行を増やさない合成 failed。status(key) は
     // not_started になるため、reserve payload を GenerationStatusData へ写す。
     // 他 active 行の request_id は運用相関の誤認源なので sentinel に置換する（G6/G13）。
@@ -1066,7 +1066,7 @@ export async function runGeneration(
       excludedModelIds: readonly string[] = [],
       messages: readonly OpenRouterMessage[] = originalMessages,
     ): Promise<OpenRouterGenerationResult | "terminal"> => {
-      // 1 回目・repair の 2 回目を含め、毎回 markSent 直前に 24s+2s を再確認する。
+      // 1 回目・repair の 2 回目を含め、毎回 markSent 直前に 20s+2s を再確認する。
       // canRepair/外側ゲート通過後に時間が進んでも、部分 timeout で markSent しない。
       if (remainingMs() < REQUIRED_SEND_BUDGET_MS) {
         await deps.repository.failBeforeSend(requestId, "generation_timeout");
@@ -1183,7 +1183,7 @@ export async function runGeneration(
       firstWasDuplicate = output.duplicate === true;
     }
 
-    // repair は canRepair（24s+2s 残）のときだけ。timeout 経路はここへ来ない
+    // repair は canRepair（20s+2s 残）のときだけ。timeout 経路はここへ来ない
     // 重複も 1 回だけ repair を通し、再重複なら duplicate_output（成功消費なし）
     // G5 residual-intentional: repair は 2 本目 markSent（attempt 二重消費）。invalid 連発で
     // Free attempt 枠が success に届かない相互作用は仕様どおりの溶融残差。枠返却しない。

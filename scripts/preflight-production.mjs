@@ -304,7 +304,7 @@ export function validateProductionEnv(env) {
   requirePositiveIntegerString(env, "USER_SHORT_WINDOW_SECONDS", FREE_SHORT_WINDOW_SECONDS);
   requirePositiveIntegerString(env, "AUTH_CONTINUATION_TTL_SECONDS", 300);
   requirePositiveIntegerString(env, "VITE_AUTH_CONTINUATION_TTL_MS", 300_000);
-  // Netlify 同期 60s 硬上限に合わせたリリース固定（function-budget ← plan-quota-constants）
+  // Netlify Free 実効 30s 上限に合わせたリリース固定（function-budget ← plan-quota-constants）
   requirePositiveIntegerString(env, "OPENROUTER_TIMEOUT_MS", OPENROUTER_TIMEOUT_MS);
   requirePositiveIntegerString(env, "FUNCTION_TOTAL_BUDGET_MS", FUNCTION_TOTAL_BUDGET_MS);
   requirePositiveIntegerString(env, "AI_PROCESSING_STALE_SECONDS", AI_PROCESSING_STALE_SECONDS);

@@ -130,8 +130,8 @@ beforeEach(() => {
       plusModels: ["m1"],
       flyerModels: [],
       globalDailyLimit: 20,
-      timeoutMs: 24_000,
-      functionTotalBudgetMs: 55_000,
+      timeoutMs: 20_000,
+      functionTotalBudgetMs: 26_000,
       staleAfterSeconds: 180,
     },
   });

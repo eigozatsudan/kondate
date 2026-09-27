@@ -273,7 +273,7 @@ docker compose --profile deploy run --rm netlify-cli link --id "$NETLIFY_SITE_ID
 | `GENERATION_REQUEST_HMAC_KEY` | canonical base64・32 バイト。ローカル/サンプル禁止（Functions のみ） |
 | `QUOTA_IDENTITY_HMAC_KEY` | 同上。**生成 HMAC と別鍵**（Functions のみ） |
 | `SUPABASE_MAINTENANCE_DB_URL` | least-privilege LOGIN の TLS URL（Functions のみ。[supabase.md](./supabase.md)） |
-| 枠・予算系 | `USER_DAILY_AI_LIMIT=1`、`USER_DAILY_EXTERNAL_CALL_LIMIT=6`、`USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT=4`、`USER_SHORT_WINDOW_SECONDS=600`、`GLOBAL_DAILY_AI_LIMIT`（本番推奨 80）、`OPENROUTER_TIMEOUT_MS=24000`、`FUNCTION_TOTAL_BUDGET_MS=55000`、`AI_PROCESSING_STALE_SECONDS=180` |
+| 枠・予算系 | `USER_DAILY_AI_LIMIT=1`、`USER_DAILY_EXTERNAL_CALL_LIMIT=6`、`USER_SHORT_WINDOW_EXTERNAL_CALL_LIMIT=4`、`USER_SHORT_WINDOW_SECONDS=600`、`GLOBAL_DAILY_AI_LIMIT`（本番推奨 80）、`OPENROUTER_TIMEOUT_MS=20000`、`FUNCTION_TOTAL_BUDGET_MS=26000`（Netlify Free 実効 30s 上限。詳細: [netlify.md](netlify.md)）、`AI_PROCESSING_STALE_SECONDS=180` |
 | OpenRouter | 有料 allowlist + `OPENROUTER_API_KEY` + `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1` |
 | Stripe（Plus 時） | [netlify.md](./netlify.md) の Billing 行。Webhook: `https://<origin>/api/billing/webhook` |
 

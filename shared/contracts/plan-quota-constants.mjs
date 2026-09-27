@@ -25,13 +25,20 @@ export const FREE_SHORT_WINDOW_LIMIT_ENV = "4";
 export const FREE_SHORT_WINDOW_SECONDS = 600;
 export const FREE_SHORT_WINDOW_SECONDS_ENV = "600";
 
-/** OpenRouter 1 試行上限 ms（OPENROUTER_TIMEOUT_MS）。function-budget と同値。 */
-export const OPENROUTER_TIMEOUT_MS = 24_000;
-export const OPENROUTER_TIMEOUT_MS_ENV = "24000";
+/**
+ * OpenRouter 1 試行上限 ms（OPENROUTER_TIMEOUT_MS）。function-budget と同値。
+ * Netlify Free の実効 30s 上限（2026-09-27 本番 502 at 30.8s、ログなし。公式 doc の 60s とは食い違う）
+ * に合わせて 20s に再ロック。
+ */
+export const OPENROUTER_TIMEOUT_MS = 20_000;
+export const OPENROUTER_TIMEOUT_MS_ENV = "20000";
 
-/** Function 総予算 ms（FUNCTION_TOTAL_BUDGET_MS）。function-budget と同値。 */
-export const FUNCTION_TOTAL_BUDGET_MS = 55_000;
-export const FUNCTION_TOTAL_BUDGET_MS_ENV = "55000";
+/**
+ * Function 総予算 ms（FUNCTION_TOTAL_BUDGET_MS）。function-budget と同値。
+ * Netlify Free の実効 30s 上限に合わせて 26s に再ロック（26s + client headroom 3s = 29s < 実効 30s）。
+ */
+export const FUNCTION_TOTAL_BUDGET_MS = 26_000;
+export const FUNCTION_TOTAL_BUDGET_MS_ENV = "26000";
 
 /** processing 孤児解放までの秒（AI_PROCESSING_STALE_SECONDS）。generation / flyer reserve が同一値を渡す。 */
 export const AI_PROCESSING_STALE_SECONDS = 180;

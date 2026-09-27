@@ -544,7 +544,8 @@ export default async function shareGeneralizeWorker(request?: Request): Promise<
 
   try {
     const admin = getSupabaseAdmin();
-    // 1 job = Pass1+Pass2 各 OPENROUTER_TIMEOUT(24s)。2 件 claim すると 2×48s で Netlify 60s 壁を超える
+    // 1 job = Pass1+Pass2 各 OPENROUTER_TIMEOUT(20s)。1 件でも最悪 2×20s=40s で Netlify Free
+    // 実効 30s 壁を超えうる（2026-09-27 再ロックで悪化。要フォローアップ、本 Task の対象外）
     const jobs = await claimShareGeneralizationJobs({ admin, limit: 1 });
     safeLog({
       level: "info",
