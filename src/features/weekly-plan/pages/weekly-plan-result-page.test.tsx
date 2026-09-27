@@ -180,6 +180,28 @@ describe("WeeklyPlanResultPage", () => {
     expect(input.mealType).toBe("dinner");
   });
 
+  it("carries the weekly plan's effort preference into the saved day draft", async () => {
+    // 週献立で「手間のかかる料理は避ける」を選んだ結果から日の献立を作ると、下書きにも手間が載る
+    getWeeklyPlanByIdMock.mockResolvedValue({ ...samplePlan, effortPreference: "easy" });
+    getPlannerDraftMock.mockResolvedValue(null);
+    saveMock.mockResolvedValue(savedDraft());
+
+    renderPage({ userId: uuidUserId });
+    const buttons = await screen.findAllByRole("button", { name: "この日の献立を作る" });
+    await userEvent.click(buttons[2]!);
+
+    await waitFor(() => {
+      expect(saveMock).toHaveBeenCalledTimes(1);
+    });
+    const [, , input] = saveMock.mock.calls[0] as [
+      unknown,
+      string,
+      { effortPreference: string | null; mainIngredients: string[] },
+    ];
+    expect(input.effortPreference).toBe("easy");
+    expect(input.mainIngredients).toEqual(["具材3"]);
+  });
+
   it("shows the partialHousehold notice when true", async () => {
     getWeeklyPlanByIdMock.mockResolvedValue({ ...samplePlan, partialHousehold: true });
     renderPage();

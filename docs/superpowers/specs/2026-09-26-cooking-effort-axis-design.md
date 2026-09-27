@@ -369,7 +369,7 @@ radio 2 択（「標準」／「手間のかかる料理は避ける」、`name=
 | --- | --- |
 | 契約 (`planner.test.ts`, `weekly-plan.test.ts`) | リリース 1: キーがあっても無くても受け付け、enum 外は拒否する。リリース 2: キー欠損を null に読む。`easy` / `standard` / null を受け付ける。enum 外の値を拒否する（リクエスト契約） |
 | 型 overlay (`src/shared/types/database.test.ts`) | `p_effort_preference: null` を渡せる。キー union に含まれる |
-| プロンプト (`generation-prompt.test.ts`) | `easy` のときだけ【手間】段落と payload 値が載る。null / `standard` では段落も payload のキーも無い。idea / household の両分岐、`regenerate_menu` にも載る（`regenerate_dish` は同じ base builder を通るため `regenerate_menu` で代表させる。`regenerate_dish` の組み立てには実データの promptDto が要る）。段落が SEASON の直前（new_menu では novelty の後）にある。【家庭キッチン】より優先する旨の文、メイン食材・使い切り・memo が優先する旨の文、安全のための下処理が優先する旨の文を含む。優先順位の文が「手間」を含む |
+| プロンプト (`generation-prompt.test.ts`) | `easy` のときだけ【手間】段落と payload 値が載る。null / `standard` では段落も payload のキーも無い。idea / household の両分岐、`regenerate_menu` にも載る。再生成の通し（保存済み `preference_snapshot.submission` → `regeneration-adapter` の `buildCurrentContext` → `loadRegenerationExecutionContext` → プロンプト）は `regeneration-context.test.ts` で `regenerate_menu` と `regenerate_dish` の両方を名指しで確かめる。段落が SEASON の直前（new_menu では novelty の後）にある。【家庭キッチン】より優先する旨の文、メイン食材・使い切り・memo が優先する旨の文、安全のための下処理が優先する旨の文を含む。優先順位の文が「手間」を含む |
 | kill-switch (`generation-prompt-effort-off.test.ts`、`weekly-plan-prompt-effort-off.test.ts` 新設) | flag off なら `easy` でも段落も payload 値も載らない。new_menu・`regenerate_menu`・週献立のそれぞれで固定する（`generation-prompt-novelty-off.test.ts` と同型） |
 | 週献立プロンプト (`weekly-plan-prompt.test.ts`) | `easy` のときだけ `WEEKLY_EFFORT_SENTENCE` と payload 値が載る。文に「生地」「包む」、安全優先の文を含む |
 | 週献立サービス (`weekly-plan-service` のテスト) | snapshot 書き込み・`buildResultFromRow`・replay・成功レスポンスで値が落ちない。導入前 snapshot（キー無し）と範囲外値は `catch(null)` で null になり、GET が 500 にならない |

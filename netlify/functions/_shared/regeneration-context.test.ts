@@ -90,6 +90,9 @@ import {
   toRetainedDishPrompt,
   type LoaderDeps,
 } from "./regeneration-context.js";
+import { createRegenerationLoaderDeps } from "./regeneration-adapter.js";
+import { buildGenerationMessages } from "./generation-prompt.js";
+import { EFFORT_PARAGRAPH, EFFORT_SYSTEM_MARKER } from "./effort-hints.js";
 
 const user = {
   userId: "85000000-0000-4000-8000-000000000001",
@@ -849,6 +852,121 @@ describe("loadRegenerationExecutionContext", () => {
     expect(householdDeps.buildCurrentContext).toHaveBeenCalledWith(
       expect.objectContaining({ authorityTargetMode: "household" }),
     );
+  });
+});
+
+describe("effort preference carry-over through regeneration (stored snapshot → adapter → prompt)", () => {
+  // 元の献立の preference_snapshot.submission にある手間（easy）が、実物の regeneration-adapter の
+  // buildCurrentContext を通って再生成プロンプトまで届くことを通しで確かめる。
+  // idea 経路は現行 safety や在庫の DB 読みを使わないため、adapter をそのまま差し込める。
+  const ideaSource = (effortPreference: "easy" | null): StoredMenuAggregate =>
+    makeStoredMenu({
+      menu: makeValidatedMenu(),
+      targetMode: "idea",
+      targetMemberIds: [],
+      targetMembers: [],
+      preferenceSnapshot: {
+        submission: {
+          mealType: "breakfast",
+          mainIngredients: ["ごはん"],
+          cuisineGenre: "japanese",
+          targetMode: "idea",
+          targetMemberIds: [],
+          servings: 2,
+          timeLimitMinutes: 15,
+          budgetPreference: "standard",
+          ingredientPreference: null,
+          noveltyPreference: null,
+          effortPreference,
+          avoidIngredients: [],
+          memo: "",
+          pantrySelections: [],
+        },
+        memberPreferences: [],
+      },
+    });
+
+  function arrangeIdeaSnapshot(kind: "regenerate_menu" | "regenerate_dish") {
+    snapshotRpc.mockImplementation((...rpcArgs: unknown[]) => {
+      const args = rpcArgs[1] as { p_request_id: string; p_user_id: string };
+      return Promise.resolve({
+        data: [
+          {
+            request_id: args.p_request_id,
+            user_id: args.p_user_id,
+            kind,
+            source_menu_id: "52000000-0000-4000-8000-000000000001",
+            source_menu_version: 1,
+            replace_dish_id: kind === "regenerate_dish" ? dish2Id : null,
+            target_mode: "idea",
+            servings: 2,
+            target_member_ids: [],
+            created_at: "2026-07-11T00:00:00.000Z",
+          },
+        ],
+        error: null,
+      });
+    });
+  }
+
+  function depsWithRealAdapter(source: StoredMenuAggregate): LoaderDeps {
+    const adapter = createRegenerationLoaderDeps(user, { requestStartedAtMonotonicMs: 1_000 });
+    return {
+      ...makeLoaderDeps(source),
+      buildCurrentContext: (input) => adapter.buildCurrentContext(input),
+    };
+  }
+
+  function systemAndPreferences(messages: ReturnType<typeof buildGenerationMessages>) {
+    const system = messages.find((message) => message.role === "system")?.content;
+    const user = messages.find(
+      (message) =>
+        message.role === "user" &&
+        typeof message.content === "string" &&
+        message.content.startsWith("<kondate_input_data>"),
+    )?.content;
+    const payload = JSON.parse(
+      typeof user === "string" ? user.replace(/<\/?kondate_input_data>/gu, "") : "{}",
+    ) as { preferences: Record<string, unknown> };
+    return { system: typeof system === "string" ? system : "", preferences: payload.preferences };
+  }
+
+  it.each(["regenerate_menu", "regenerate_dish"] as const)(
+    "carries the stored easy effort into the %s prompt",
+    async (kind) => {
+      arrangeIdeaSnapshot(kind);
+      const context = await loadRegenerationExecutionContext(
+        depsWithRealAdapter(ideaSource("easy")),
+        user,
+        kind === "regenerate_menu" ? menuCommand : dishCommand,
+        "91000000-0000-4000-8000-000000000001",
+        50_000,
+      );
+      expect(context.kind).toBe(kind);
+      expect(context.generationContext.submission.effortPreference).toBe("easy");
+      // 再生成成功で保存される preference_snapshot にも手間が残る（次の再生成へ引き継がれる）
+      expect(context.generationContext.preferenceSnapshot.submission).toMatchObject({
+        effortPreference: "easy",
+      });
+
+      const { system, preferences } = systemAndPreferences(buildGenerationMessages(context));
+      expect(system).toContain(EFFORT_PARAGRAPH);
+      expect(preferences.effortPreference).toBe("easy");
+    },
+  );
+
+  it("does not add the effort paragraph to regenerate_dish when the stored effort is null", async () => {
+    arrangeIdeaSnapshot("regenerate_dish");
+    const context = await loadRegenerationExecutionContext(
+      depsWithRealAdapter(ideaSource(null)),
+      user,
+      dishCommand,
+      "91000000-0000-4000-8000-000000000001",
+      50_000,
+    );
+    const { system, preferences } = systemAndPreferences(buildGenerationMessages(context));
+    expect(system).not.toContain(EFFORT_SYSTEM_MARKER);
+    expect(Object.prototype.hasOwnProperty.call(preferences, "effortPreference")).toBe(false);
   });
 });
 

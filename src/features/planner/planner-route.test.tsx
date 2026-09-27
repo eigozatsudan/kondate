@@ -486,6 +486,7 @@ vi.mock("./components/planner-wizard", () => ({
           {props.pantryItems.map((item) => item.name).join("・")}
         </output>
         <output aria-label="draft memo">{props.draft.memo}</output>
+        <output aria-label="draft effort">{String(props.draft.effortPreference)}</output>
         <output aria-label="attempt key">{props.attempt.idempotencyKey}</output>
         <output aria-label="check count">{props.attempt.expiredPantryChecks.length}</output>
         <output aria-label="privacy accepted or declined">
@@ -1146,6 +1147,27 @@ it("同一 mount の owner 変更で前 owner の表示・attempt・保存 closu
     ownerBId,
     expect.objectContaining({ memo: "owner B の下書き" }),
     8,
+  );
+});
+
+it("restores an easy effort preference from the saved draft into the wizard and the autosave value", async () => {
+  // toPlannerDraftInput が effortPreference を写し忘れると、復元した下書きの手間が null に戻り、
+  // 次の自動保存で easy が消える（手間だけを選んだ下書きでも気づきにくい）
+  queryState.draft = { ...draft, effortPreference: "easy" };
+  renderPlanner(<PlannerPage />);
+
+  expect(screen.getByLabelText("draft effort")).toHaveTextContent("easy");
+  const latestAutosave = autosaveInputs.at(-1) as {
+    value: PlannerDraftInput;
+    save(next: PlannerDraftInput, revision: number): Promise<PlannerDraft>;
+  };
+  expect(latestAutosave.value.effortPreference).toBe("easy");
+  await latestAutosave.save(latestAutosave.value, 3);
+  expect(savePlannerDraftMock).toHaveBeenLastCalledWith(
+    {},
+    draft.userId,
+    expect.objectContaining({ effortPreference: "easy" }),
+    3,
   );
 });
 
