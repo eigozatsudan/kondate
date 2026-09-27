@@ -328,11 +328,12 @@ export function PlannerWizard({
     ? { nextLabel: "確認に戻る", backLabel: "やめる" }
     : {};
 
-  /** 5ページ目の「以降は指定なしでスキップ」。4フィールドだけを null にして確認へ直行する。 */
+  /** 5ページ目の「以降は指定なしでスキップ」。任意5フィールドだけを null にして確認へ直行する。 */
   const skipRestOfOptionalSteps = (): void => {
     onDraftChange({
       ...draft,
       timeLimitMinutes: null,
+      effortPreference: null,
       budgetPreference: null,
       ingredientPreference: null,
       noveltyPreference: null,

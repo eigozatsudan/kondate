@@ -167,6 +167,7 @@ export function AudienceStep({
     budgetPreference: null,
     ingredientPreference: null,
     noveltyPreference: null,
+    effortPreference: null,
     avoidIngredients: [],
     memo: "",
     pantrySelections: [],

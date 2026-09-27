@@ -144,6 +144,7 @@ export function emergencyGenerationContext(
       budgetPreference: "standard",
       ingredientPreference: null,
       noveltyPreference: null,
+      effortPreference: null,
       avoidIngredients: [],
       memo: "",
       pantrySelections: [],

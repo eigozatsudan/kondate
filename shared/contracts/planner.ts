@@ -106,8 +106,9 @@ const draftShape = {
   // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
   // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
   noveltyPreference: z.enum(noveltyPreferences).nullable().default(null),
-  // リリース 1 は受け取るだけ（spec §7.1）。リリース 2 で nullable().default(null) に置き換える
-  effortPreference: z.enum(effortPreferences).nullable().optional(),
+  // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
+  // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
+  effortPreference: z.enum(effortPreferences).nullable().default(null),
   avoidIngredients: z
     .array(boundedCanonicalText(1, PLANNER_INGREDIENT_TEXT_MAX))
     .max(PLANNER_AVOID_INGREDIENT_LIMIT),
@@ -145,8 +146,9 @@ const submissionCommonShape = {
   // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
   // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
   noveltyPreference: z.enum(noveltyPreferences).nullable().default(null),
-  // リリース 1 は受け取るだけ（spec §7.1）。リリース 2 で nullable().default(null) に置き換える
-  effortPreference: z.enum(effortPreferences).nullable().optional(),
+  // default(null): 導入前の preference_snapshot / 下書き JSON にキーが無くても
+  // 再生成・条件引き継ぎが 422 にならないよう欠損を未指定として読む。
+  effortPreference: z.enum(effortPreferences).nullable().default(null),
   avoidIngredients: z
     .array(boundedCanonicalText(1, PLANNER_INGREDIENT_TEXT_MAX))
     .max(PLANNER_AVOID_INGREDIENT_LIMIT),

@@ -36,6 +36,7 @@ export function mapPlannerDraft(row: Tables<"generation_drafts">): PlannerDraft 
     budgetPreference: row.budget_preference,
     ingredientPreference: row.ingredient_preference,
     noveltyPreference: row.novelty_preference,
+    effortPreference: row.effort_preference,
     avoidIngredients: row.avoid_ingredients,
     memo: row.memo,
     pantrySelections: row.pantry_selections,
@@ -54,7 +55,7 @@ export async function getPlannerDraft(
   const { data, error } = await client
     .from("generation_drafts")
     .select(
-      "id,user_id,meal_type,main_ingredients,cuisine_genre,target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,ingredient_preference,novelty_preference,avoid_ingredients,memo,pantry_selections,revision,created_at,updated_at,deleted_at",
+      "id,user_id,meal_type,main_ingredients,cuisine_genre,target_mode,target_member_ids,servings,time_limit_minutes,budget_preference,ingredient_preference,novelty_preference,effort_preference,avoid_ingredients,memo,pantry_selections,revision,created_at,updated_at,deleted_at",
     )
     .eq("user_id", userId)
     .maybeSingle();
@@ -78,6 +79,7 @@ function buildSaveGenerationDraftArgs(
     p_budget_preference: input.budgetPreference,
     p_ingredient_preference: input.ingredientPreference,
     p_novelty_preference: input.noveltyPreference,
+    p_effort_preference: input.effortPreference,
     p_avoid_ingredients: input.avoidIngredients,
     p_memo: input.memo,
     p_pantry_selections: input.pantrySelections,

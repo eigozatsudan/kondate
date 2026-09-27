@@ -1,5 +1,5 @@
 begin;
-select plan(48);
+select plan(53);
 
 select has_table('public', 'pantry_items', 'pantry item table exists');
 select has_table('public', 'generation_drafts', 'generation draft table exists');
@@ -19,6 +19,10 @@ select has_column('public', 'generation_drafts', 'novelty_preference',
   'generation drafts store the novelty preference');
 select has_column('private', 'generation_draft_submission_versions', 'novelty_preference',
   'submission snapshot stores novelty preference');
+select has_column('public', 'generation_drafts', 'effort_preference',
+  'generation drafts store the effort preference');
+select has_column('private', 'generation_draft_submission_versions', 'effort_preference',
+  'submission snapshot stores effort preference');
 select has_column('public', 'generation_drafts', 'deleted_at',
   'generation draft has a deletion tombstone');
 select is(
@@ -43,7 +47,7 @@ select ok((select count(*)=1 from pg_publication_tables
       where oid='public.generation_drafts'::regclass),
   'generation drafts publish full-row cross-device target changes');
 select has_function('public','save_generation_draft',
-  array['bigint','text','text[]','text','text','uuid[]','smallint','smallint','text','text','text[]','text','jsonb','text']);
+  array['bigint','text','text[]','text','text','uuid[]','smallint','smallint','text','text','text[]','text','jsonb','text','text']);
 
 insert into auth.users (id, instance_id, aud, role, email)
 values
@@ -206,7 +210,23 @@ select throws_ok(
     array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,'wild')$$,
   '22023', 'invalid_draft_save', 'save rejects an unknown novelty value');
 
--- has_function(14 型) は 13 引数版の残留を検出しないため overload 数を直接数える
+-- 手間軸: 15 引数保存で永続化され、未知値は 22023 で拒否され、14 引数呼び出しは null で解決される
+select public.save_generation_draft(5,'dinner',array['豚肉'],'japanese','idea',
+  array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,'twist','easy');
+select is((select effort_preference from public.generation_drafts), 'easy',
+  'save persists effort preference');
+
+select throws_ok(
+  $$select public.save_generation_draft(6,'dinner',array['豚肉'],'japanese','idea',
+    array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,'twist','wild')$$,
+  '22023', 'invalid_draft_save', 'save rejects an unknown effort value');
+
+select public.save_generation_draft(6,'dinner',array['豚肉'],'japanese','idea',
+  array[]::uuid[],2::smallint,30::smallint,'standard',null,array[]::text[],'','[]'::jsonb,'twist');
+select is((select effort_preference from public.generation_drafts), null,
+  'a 14-argument save resolves to the default null effort preference');
+
+-- has_function(15 型) は 14 引数版の残留を検出しないため overload 数を直接数える
 select is(
   (select count(*)::integer
      from pg_catalog.pg_proc p

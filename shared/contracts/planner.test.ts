@@ -20,6 +20,7 @@ const incompleteDraft = {
   budgetPreference: null,
   ingredientPreference: null,
   noveltyPreference: null,
+  effortPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],
@@ -33,6 +34,7 @@ const validBase = {
   budgetPreference: null,
   ingredientPreference: null,
   noveltyPreference: null,
+  effortPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],
@@ -117,7 +119,7 @@ describe("planner contracts", () => {
     ).toBe(false);
   });
 
-  it("defaults missing noveltyPreference to null on draft and submission (pre-feature snapshots)", () => {
+  it("defaults missing noveltyPreference and effortPreference to null on draft and submission (pre-feature snapshots)", () => {
     // キーごと落とす（null を明示しない導入前 snapshot を模擬）
     const draftWithoutKey = {
       mealType: incompleteDraft.mealType,
@@ -135,6 +137,7 @@ describe("planner contracts", () => {
     };
     expect(plannerDraftInputSchema.parse(draftWithoutKey)).toMatchObject({
       noveltyPreference: null,
+      effortPreference: null,
     });
 
     const submissionWithoutKey = {
@@ -153,6 +156,7 @@ describe("planner contracts", () => {
     };
     expect(plannerSubmissionSchema.parse(submissionWithoutKey)).toMatchObject({
       noveltyPreference: null,
+      effortPreference: null,
     });
   });
 
@@ -177,18 +181,6 @@ describe("planner contracts", () => {
         effortPreference: "wild",
       }).success,
     ).toBe(false);
-  });
-
-  it("still accepts a draft and a submission without effortPreference", () => {
-    expect(plannerDraftInputSchema.safeParse(incompleteDraft).success).toBe(true);
-    expect(
-      plannerSubmissionSchema.safeParse({
-        ...validBase,
-        targetMode: "household" as const,
-        targetMemberIds: [memberId],
-        servings: null,
-      }).success,
-    ).toBe(true);
   });
 
   it("requires the three basic choices and one target for submission", () => {

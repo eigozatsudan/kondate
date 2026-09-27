@@ -607,6 +607,7 @@ export type Database = {
           cuisine_genre: string
           draft_id: string
           draft_revision: number
+          effort_preference: string | null
           ingredient_preference: string | null
           main_ingredients: string[]
           meal_type: string
@@ -626,6 +627,7 @@ export type Database = {
           cuisine_genre: string
           draft_id: string
           draft_revision: number
+          effort_preference?: string | null
           ingredient_preference?: string | null
           main_ingredients: string[]
           meal_type: string
@@ -645,6 +647,7 @@ export type Database = {
           cuisine_genre?: string
           draft_id?: string
           draft_revision?: number
+          effort_preference?: string | null
           ingredient_preference?: string | null
           main_ingredients?: string[]
           meal_type?: string
@@ -1331,6 +1334,7 @@ export type Database = {
           created_at: string
           cuisine_genre: string | null
           deleted_at: string | null
+          effort_preference: string | null
           id: string
           ingredient_preference: string | null
           main_ingredients: string[]
@@ -1352,6 +1356,7 @@ export type Database = {
           created_at?: string
           cuisine_genre?: string | null
           deleted_at?: string | null
+          effort_preference?: string | null
           id?: string
           ingredient_preference?: string | null
           main_ingredients?: string[]
@@ -1373,6 +1378,7 @@ export type Database = {
           created_at?: string
           cuisine_genre?: string | null
           deleted_at?: string | null
+          effort_preference?: string | null
           id?: string
           ingredient_preference?: string | null
           main_ingredients?: string[]
@@ -3017,6 +3023,7 @@ export type Database = {
           cuisine_genre: string
           draft_id: string
           draft_revision: number
+          effort_preference: string
           ingredient_preference: string
           main_ingredients: string[]
           meal_type: string
@@ -3291,6 +3298,7 @@ export type Database = {
           p_avoid_ingredients: string[]
           p_budget_preference: string
           p_cuisine_genre: string
+          p_effort_preference?: string
           p_expected_revision: number
           p_ingredient_preference: string
           p_main_ingredients: string[]
@@ -3309,6 +3317,7 @@ export type Database = {
           created_at: string
           cuisine_genre: string | null
           deleted_at: string | null
+          effort_preference: string | null
           id: string
           ingredient_preference: string | null
           main_ingredients: string[]

@@ -29,7 +29,7 @@ const samplePlan = {
 };
 
 describe("buildPlannerDraftInputFromWeeklyPlanDay", () => {
-  it("fills all 13 PlannerDraftInput keys with schema-valid values", () => {
+  it("fills all 14 PlannerDraftInput keys with schema-valid values", () => {
     const outcome = buildPlannerDraftInputFromWeeklyPlanDay(sampleDay, samplePlan, [
       MEMBER_ONE_ID,
       MEMBER_TWO_ID,
@@ -47,6 +47,7 @@ describe("buildPlannerDraftInputFromWeeklyPlanDay", () => {
       budgetPreference: null,
       ingredientPreference: null,
       noveltyPreference: null,
+      effortPreference: null,
       avoidIngredients: [],
       memo: "主菜: 鶏の照り焼き",
       pantrySelections: [],
@@ -184,6 +185,7 @@ describe("draftNeedsOverwriteConfirmation", () => {
     budgetPreference: "economy",
     ingredientPreference: "more",
     noveltyPreference: "twist",
+    effortPreference: "easy",
     avoidIngredients: ["卵"],
     memo: "別のメモ",
     pantrySelections: [
@@ -237,6 +239,7 @@ function emptyDraft(): PlannerDraftInput {
     budgetPreference: null,
     ingredientPreference: null,
     noveltyPreference: null,
+    effortPreference: null,
     avoidIngredients: [],
     memo: "",
     pantrySelections: [],

@@ -83,9 +83,9 @@ select ok(
   'PUBLIC has no execute grant on private draft helpers'
 );
 select ok(
-  coalesce(has_function_privilege('authenticated', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text,text[],text,jsonb,text)'), 'EXECUTE'), false)
-  and not coalesce(has_function_privilege('anon', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text,text[],text,jsonb,text)'), 'EXECUTE'), false)
-  and not coalesce(has_function_privilege('service_role', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text,text[],text,jsonb,text)'), 'EXECUTE'), false),
+  coalesce(has_function_privilege('authenticated', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text,text[],text,jsonb,text,text)'), 'EXECUTE'), false)
+  and not coalesce(has_function_privilege('anon', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text,text[],text,jsonb,text,text)'), 'EXECUTE'), false)
+  and not coalesce(has_function_privilege('service_role', to_regprocedure('public.save_generation_draft(bigint,text,text[],text,text,uuid[],smallint,smallint,text,text,text[],text,jsonb,text,text)'), 'EXECUTE'), false),
   'only authenticated can execute the save RPC'
 );
 select ok(

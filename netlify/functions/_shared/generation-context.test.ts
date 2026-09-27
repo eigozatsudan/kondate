@@ -64,6 +64,7 @@ const snapshot = {
   budget_preference: null,
   ingredient_preference: null,
   novelty_preference: null,
+  effort_preference: null,
   avoid_ingredients: [],
   memo: "",
   pantry_selections: [],
@@ -223,6 +224,7 @@ describe("loadGenerationContext", () => {
       budgetPreference: null,
       ingredientPreference: null,
       noveltyPreference: null,
+      effortPreference: null,
       avoidIngredients: [],
       memo: "",
       pantrySelections: [],
@@ -275,6 +277,32 @@ describe("loadGenerationContext", () => {
     await expect(
       loadGenerationContext({ userId, accessToken: "access-token" }, requestId, request, now),
     ).rejects.toMatchObject({ code: "invalid_request" });
+  });
+
+  it("maps every effort preference value from the snapshot row", async () => {
+    for (const value of ["standard", "easy", null] as const) {
+      arrangeLoader({ snapshotData: [{ ...snapshot, effort_preference: value }] });
+      const context = await loadGenerationContext(
+        { userId, accessToken: "access-token" },
+        requestId,
+        request,
+        now,
+      );
+      expect(context.submission.effortPreference).toBe(value);
+    }
+  });
+
+  it("maps a missing effort_preference to null", async () => {
+    const { effort_preference: _omitted, ...withoutKey } = snapshot;
+    void _omitted;
+    arrangeLoader({ snapshotData: [withoutKey] });
+    const context = await loadGenerationContext(
+      { userId, accessToken: "access-token" },
+      requestId,
+      request,
+      now,
+    );
+    expect(context.submission.effortPreference).toBeNull();
   });
 
   it("keeps free-form memo out of safetySnapshot while preferenceSnapshot retains it (A-I4)", async () => {

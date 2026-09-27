@@ -13,6 +13,7 @@ const ideaSubmission: Extract<PlannerSubmission, { targetMode: "idea" }> = {
   budgetPreference: "economy",
   ingredientPreference: null,
   noveltyPreference: null,
+  effortPreference: null,
   avoidIngredients: ["セロリ"],
   memo: "さっぱりめに",
   pantrySelections: [
@@ -34,6 +35,7 @@ const householdSubmission: Extract<PlannerSubmission, { targetMode: "household" 
   budgetPreference: "standard",
   ingredientPreference: null,
   noveltyPreference: null,
+  effortPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],
@@ -53,6 +55,7 @@ describe("createPlannerDraftFromMenu", () => {
       budgetPreference: "economy",
       ingredientPreference: null,
       noveltyPreference: null,
+      effortPreference: null,
       avoidIngredients: ["セロリ"],
       memo: "さっぱりめに",
       pantrySelections: [
@@ -82,6 +85,12 @@ describe("createPlannerDraftFromMenu", () => {
 
   it("carries a missing novelty preference over as null", () => {
     expect(createPlannerDraftFromMenu(ideaSubmission)).toMatchObject({ noveltyPreference: null });
+  });
+
+  it("carries the effort preference over from a past menu", () => {
+    expect(
+      createPlannerDraftFromMenu({ ...ideaSubmission, effortPreference: "easy" }),
+    ).toMatchObject({ effortPreference: "easy" });
   });
 
   it("does not mutate the source submission arrays", () => {

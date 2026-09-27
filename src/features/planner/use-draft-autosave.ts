@@ -75,6 +75,7 @@ function toDraftInputFields(value: PlannerDraftInput | PlannerDraft): PlannerDra
     budgetPreference: value.budgetPreference,
     ingredientPreference: value.ingredientPreference,
     noveltyPreference: value.noveltyPreference,
+    effortPreference: value.effortPreference,
     avoidIngredients: value.avoidIngredients,
     memo: value.memo,
     pantrySelections: value.pantrySelections,
@@ -141,6 +142,7 @@ function isEmptyPersistableInput(value: PlannerDraftInput): boolean {
     fields.budgetPreference === null &&
     fields.ingredientPreference === null &&
     fields.noveltyPreference === null &&
+    fields.effortPreference === null &&
     fields.avoidIngredients.length === 0 &&
     fields.memo === "" &&
     fields.pantrySelections.length === 0

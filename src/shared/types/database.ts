@@ -25,7 +25,8 @@ type NullableDraftArgs =
   | "p_time_limit_minutes"
   | "p_budget_preference"
   | "p_ingredient_preference"
-  | "p_novelty_preference";
+  | "p_novelty_preference"
+  | "p_effort_preference";
 
 type SaveDraftArgs = Omit<GeneratedSaveDraftArgs, NullableDraftArgs> & {
   p_meal_type: GeneratedSaveDraftArgs["p_meal_type"] | null;
@@ -36,6 +37,7 @@ type SaveDraftArgs = Omit<GeneratedSaveDraftArgs, NullableDraftArgs> & {
   p_budget_preference: GeneratedSaveDraftArgs["p_budget_preference"] | null;
   p_ingredient_preference: GeneratedSaveDraftArgs["p_ingredient_preference"] | null;
   p_novelty_preference: GeneratedSaveDraftArgs["p_novelty_preference"] | null;
+  p_effort_preference: GeneratedSaveDraftArgs["p_effort_preference"] | null;
 };
 
 // Postgres Meta は nullable 引数を非 null として生成するため、overlay で復元する

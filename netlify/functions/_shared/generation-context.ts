@@ -224,6 +224,8 @@ function mapSnapshot(row: z.infer<typeof snapshotRowSchema>) {
     budgetPreference: row.budget_preference,
     ingredientPreference: row.ingredient_preference,
     noveltyPreference: row.novelty_preference,
+    // Task 1 で任意キー化（配備ずれ対策）。欠損は未指定として読む
+    effortPreference: row.effort_preference ?? null,
     avoidIngredients: row.avoid_ingredients,
     memo: row.memo,
     pantrySelections: row.pantry_selections,

@@ -53,6 +53,8 @@ export function buildPlannerDraftInputFromWeeklyPlanDay(
       // ingredientPreference: 週献立の入力に対応する項目が無いため今回のスコープ外。null のまま。
       ingredientPreference: null,
       noveltyPreference: plan.noveltyPreference,
+      // effortPreference: 週献立からの引き継ぎは Task 4 で plan.effortPreference に置き換える。
+      effortPreference: null,
       avoidIngredients: [],
       memo: truncateCodePoints(`主菜: ${day.mainName}`, PLANNER_MEMO_TEXT_MAX),
       pantrySelections: [],
@@ -61,7 +63,7 @@ export function buildPlannerDraftInputFromWeeklyPlanDay(
 }
 
 /**
- * 引き継ぎ候補が持つ13キーだけを対象にし、永続化された下書きのメタデータは比較しない。
+ * 引き継ぎ候補が持つ14キーだけを対象にし、永続化された下書きのメタデータは比較しない。
  * 既存側の空値は利用者が入力した内容ではないため、候補との差があっても確認を求めない。
  */
 export function draftNeedsOverwriteConfirmation(

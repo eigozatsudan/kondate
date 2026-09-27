@@ -47,6 +47,7 @@ const incompleteTargetDraft = {
   budget_preference: null,
   ingredient_preference: null,
   novelty_preference: null,
+  effort_preference: null,
   avoid_ingredients: [],
   memo: "",
   pantry_selections: [],
@@ -80,6 +81,22 @@ describe("planner draft API", () => {
     });
     await expect(getPlannerDraft(client, incompleteTargetDraft.user_id)).resolves.toMatchObject({
       noveltyPreference: "twist",
+    });
+  });
+
+  it("selects the effort preference column from generation_drafts", async () => {
+    const { client, select } = clientWithDraftRow(incompleteTargetDraft);
+    await getPlannerDraft(client, incompleteTargetDraft.user_id);
+    expect(select).toHaveBeenCalledWith(expect.stringContaining("effort_preference"));
+  });
+
+  it("returns the effort preference from a fetched draft row", async () => {
+    const { client } = clientWithDraftRow({
+      ...incompleteTargetDraft,
+      effort_preference: "easy",
+    });
+    await expect(getPlannerDraft(client, incompleteTargetDraft.user_id)).resolves.toMatchObject({
+      effortPreference: "easy",
     });
   });
 
@@ -120,6 +137,7 @@ describe("planner draft API", () => {
           budgetPreference: null,
           ingredientPreference: null,
           noveltyPreference: null,
+          effortPreference: null,
           avoidIngredients: [],
           memo: "",
           pantrySelections: [],
@@ -146,6 +164,7 @@ describe("planner draft API", () => {
         budgetPreference: null,
         ingredientPreference: null,
         noveltyPreference: null,
+        effortPreference: "easy",
         avoidIngredients: [],
         memo: "野菜多め",
         pantrySelections: [],
@@ -182,6 +201,7 @@ describe("planner draft API", () => {
       p_budget_preference: null,
       p_ingredient_preference: null,
       p_novelty_preference: null,
+      p_effort_preference: "easy",
       p_avoid_ingredients: [],
       p_memo: "野菜多め",
       p_pantry_selections: [],

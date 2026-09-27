@@ -15,6 +15,7 @@ const base: PlannerDraftInput = {
   budgetPreference: null,
   ingredientPreference: null,
   noveltyPreference: null,
+  effortPreference: null,
   avoidIngredients: [],
   memo: "",
   pantrySelections: [],
@@ -59,6 +60,24 @@ it("ひねりだけを選んだ下書きも空扱いにせず保存する", asyn
 
   expect(save).toHaveBeenCalledTimes(1);
   expect(save.mock.calls[0]?.[0]).toMatchObject({ noveltyPreference: "twist" });
+});
+
+it("手間だけを選んだ下書きも空扱いにせず保存する", async () => {
+  vi.useFakeTimers();
+  const save = vi.fn((value: PlannerDraftInput, revision: number) =>
+    Promise.resolve(saved(value, revision + 1)),
+  );
+  const { rerender } = renderHook(
+    ({ value }) =>
+      useDraftAutosave({ value, enabled: true, baselineRevision: 1, resetToken: 0, save }),
+    { initialProps: { value: base } },
+  );
+
+  rerender({ value: { ...base, effortPreference: "easy" as const } });
+  await act(async () => vi.advanceTimersByTimeAsync(600));
+
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save.mock.calls[0]?.[0]).toMatchObject({ effortPreference: "easy" });
 });
 
 it("600ms debounce の保存を直列化し DB revision を 1→2→3 と引き継ぐ", async () => {

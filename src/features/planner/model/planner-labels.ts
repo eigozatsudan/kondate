@@ -1,5 +1,9 @@
 import type { CuisineGenre, MealType } from "@shared/contracts/domain";
-import type { IngredientPreference, NoveltyPreference } from "@shared/contracts/planner";
+import type {
+  EffortPreference,
+  IngredientPreference,
+  NoveltyPreference,
+} from "@shared/contracts/planner";
 
 /** 食事の英語コード → 利用者向け日本語。確認画面・質問stepで共有する。 */
 export const mealLabels: Readonly<Record<MealType, string>> = {
@@ -36,6 +40,15 @@ export const noveltyPreferenceLabels: Readonly<Record<NoveltyPreference, string>
   twist: "いつもと違う主菜に（調理法や組み合わせを変える）",
 } as const;
 
+/**
+ * 調理の手間 → 利用者向け日本語。確認画面の任意条件で共有する。
+ * easy は手間のかかる料理を避けるソフト目安。揚げ物等が出ないことの保証ではない。
+ */
+export const effortPreferenceLabels: Readonly<Record<EffortPreference, string>> = {
+  standard: "指定なし",
+  easy: "手間のかかる料理は避ける",
+} as const;
+
 export function mealLabel(value: MealType | null): string {
   if (value === null) return "未選択";
   return mealLabels[value];
@@ -54,4 +67,9 @@ export function ingredientPreferenceLabel(value: IngredientPreference | null): s
 export function noveltyPreferenceLabel(value: NoveltyPreference | null): string {
   if (value === null) return "指定なし";
   return noveltyPreferenceLabels[value];
+}
+
+export function effortPreferenceLabel(value: EffortPreference | null): string {
+  if (value === null) return "指定なし";
+  return effortPreferenceLabels[value];
 }

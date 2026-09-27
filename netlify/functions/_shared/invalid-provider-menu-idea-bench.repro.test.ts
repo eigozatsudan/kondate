@@ -27,6 +27,7 @@ function ideaBenchContext(): IdeaGenerationContext {
       budgetPreference: "standard",
       ingredientPreference: null,
       noveltyPreference: null,
+      effortPreference: null,
       avoidIngredients: [],
       memo: "",
       pantrySelections: [],
