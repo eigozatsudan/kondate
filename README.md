@@ -263,13 +263,13 @@ docker compose run --rm --no-deps app node scripts/benchmark-paid-openrouter-mod
 
 共有一般化は **secret 付き HTTP** だけです（maintenance-cleanup と同型）。
 
-| 項目        | 値                                                                                                                 |
-| ----------- | ------------------------------------------------------------------------------------------------------------------ |
-| path        | `POST /api/share-generalize-worker`                                                                                |
-| 認証        | `x-share-worker-cron-secret` または `Authorization: Bearer` が env `SHARE_WORKER_CRON_SECRET`（16 文字以上）と一致 |
-| 定期実行    | GitHub Actions `share-generalize-worker.yml`（毎時）など。**Netlify `@hourly` schedule は使わない**                |
-| GitHub 秘密 | `SHARE_GENERALIZE_WORKER_URL` + `SHARE_WORKER_CRON_SECRET`（Netlify と同値）                                       |
-| 1 起動      | claim **1** 件（Pass1+Pass2 各 20s。最悪 2×20s=40s で Netlify Free 実効 30s 壁を超えうる。要フォローアップ）       |
+| 項目        | 値                                                                                                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| path        | `POST /api/share-generalize-worker`                                                                                                                                            |
+| 認証        | `x-share-worker-cron-secret` または `Authorization: Bearer` が env `SHARE_WORKER_CRON_SECRET`（16 文字以上）と一致                                                             |
+| 定期実行    | GitHub Actions `share-generalize-worker.yml`（毎時）など。**Netlify `@hourly` schedule は使わない**                                                                            |
+| GitHub 秘密 | `SHARE_GENERALIZE_WORKER_URL` + `SHARE_WORKER_CRON_SECRET`（Netlify と同値）                                                                                                   |
+| 1 起動      | claim **1** 件（Pass1+Pass2 の OpenRouter timeout は Function 総予算 26s から動的配分。足りなければ送らず `openrouter_failed` で即終端し、Netlify Free 実効 30s 壁を超えない） |
 
 ローカル診断例:
 

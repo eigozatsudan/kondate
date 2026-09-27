@@ -24,6 +24,18 @@ export type SharePassSender = (input: {
 }) => Promise<ShareOpenRouterPassResult>;
 
 /**
+ * Function 総予算不足で「この Pass を送らなかった」ことを表す専用 Error。
+ * 実際に OpenRouter へ到達していないため、pipeline はこれだけ AI call 台帳に加算しない
+ * （それ以外の例外は従来どおり 1 回分を計上する）。
+ */
+export class ShareBudgetExhaustedError extends Error {
+  constructor() {
+    super("share_budget_exhausted");
+    this.name = "ShareBudgetExhaustedError";
+  }
+}
+
+/**
  * AI call 台帳。
  * 本番 7d は finish/publish の p_ai_call_count に集約して public RPC 経由で
  * private.share_increment_ai_calls が加算される。
@@ -298,9 +310,12 @@ export async function runShareGeneralizeAiPipeline(
     }
     currentMenu = merged1;
   } catch (error) {
-    // 呼出後の失敗も 1 計上（ネットワーク到達後の invalid 等）
-    if (error instanceof OpenRouterCallError || error instanceof Error) {
-      await recordOneAiCall(input.recordAiCallLedger, ai);
+    // 予算不足で送らなかった Pass は台帳に計上しない（実際に OpenRouter へ到達していない）
+    if (!(error instanceof ShareBudgetExhaustedError)) {
+      // 呼出後の失敗も 1 計上（ネットワーク到達後の invalid 等）
+      if (error instanceof OpenRouterCallError || error instanceof Error) {
+        await recordOneAiCall(input.recordAiCallLedger, ai);
+      }
     }
     return {
       ok: false,
@@ -332,8 +347,11 @@ export async function runShareGeneralizeAiPipeline(
     }
     currentMenu = merged2;
   } catch (error) {
-    if (error instanceof OpenRouterCallError || error instanceof Error) {
-      await recordOneAiCall(input.recordAiCallLedger, ai);
+    // 予算不足で送らなかった Pass は台帳に計上しない（実際に OpenRouter へ到達していない）
+    if (!(error instanceof ShareBudgetExhaustedError)) {
+      if (error instanceof OpenRouterCallError || error instanceof Error) {
+        await recordOneAiCall(input.recordAiCallLedger, ai);
+      }
     }
     return {
       ok: false,

@@ -8,6 +8,7 @@ import { OpenRouterCallError } from "./openrouter.js";
 import {
   mergeShareFreeTextAndRestoreLock,
   runShareGeneralizeAiPipeline,
+  ShareBudgetExhaustedError,
   type SharePassSender,
 } from "./share-generalize-pipeline.js";
 import {
@@ -323,6 +324,61 @@ describe("runShareGeneralizeAiPipeline", () => {
       pass2Model: null,
     });
     expect(ledger).toHaveBeenCalledTimes(2);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("ShareBudgetExhaustedError on Pass1 does not record ledger and fails openrouter_failed", async () => {
+    const menu = makeValidatedMenu();
+    const ledger = vi.fn();
+    const publish = vi.fn();
+    const sendPass = makeSender(() => {
+      throw new ShareBudgetExhaustedError();
+    });
+
+    const result = await runShareGeneralizeAiPipeline({
+      menu,
+      sendPass,
+      recordAiCallLedger: ledger,
+      publish,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "openrouter_failed",
+      aiCallCount: 0,
+      pass1Model: null,
+      pass2Model: null,
+    });
+    expect(ledger).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("ShareBudgetExhaustedError on Pass2 keeps Pass1's ledger entry but does not add another", async () => {
+    const menu = makeValidatedMenu();
+    const ledger = vi.fn();
+    const publish = vi.fn();
+    const sendPass = makeSender((pass, current) => {
+      if (pass === "pass1") {
+        return { modelId: "model-p1", patch: identityPatch(current) };
+      }
+      throw new ShareBudgetExhaustedError();
+    });
+
+    const result = await runShareGeneralizeAiPipeline({
+      menu,
+      sendPass,
+      recordAiCallLedger: ledger,
+      publish,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "openrouter_failed",
+      aiCallCount: 1,
+      pass1Model: "model-p1",
+      pass2Model: null,
+    });
+    expect(ledger).toHaveBeenCalledTimes(1);
     expect(publish).not.toHaveBeenCalled();
   });
 });

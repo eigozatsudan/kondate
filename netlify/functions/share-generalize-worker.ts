@@ -8,7 +8,10 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "@netlify/functions";
 import { z } from "zod";
-import { OPENROUTER_TIMEOUT_MS } from "../../shared/contracts/function-budget.js";
+import {
+  FUNCTION_TOTAL_BUDGET_MS,
+  OPENROUTER_TIMEOUT_MS,
+} from "../../shared/contracts/function-budget.js";
 import type { ValidatedMenu } from "../../shared/contracts/generation.js";
 import { isCurrentShareConsent } from "../../shared/contracts/share-consent.js";
 import {
@@ -29,9 +32,14 @@ import { safeLog } from "./_shared/logger.js";
 import { claimShareGeneralizationJobs, type ShareClaimedJob } from "./_shared/share-claim.js";
 import {
   runShareGeneralizeAiPipeline,
+  ShareBudgetExhaustedError,
   type SharePassSender,
 } from "./_shared/share-generalize-pipeline.js";
-import { sendShareGeneralizationPassFromEnv } from "./_shared/share-openrouter.js";
+import {
+  sendShareGeneralizationPassFromEnv,
+  type ShareOpenRouterPassResult,
+  type SharePassKind,
+} from "./_shared/share-openrouter.js";
 import {
   captureShareIngredientGraphLock,
   menuHitsShareDenylist,
@@ -50,6 +58,67 @@ export const SHARE_WORKER_CRON_SECRET_HEADER = "x-share-worker-cron-secret";
 const MIN_SECRET_LENGTH = 16;
 
 const REQUEST_ID = "share-worker";
+
+/**
+ * 各 Pass 送信後、gate・publish metadata 計算・publish/finish RPC のために
+ * Function 総予算から確保しておく余裕（ms）。この余裕分は OpenRouter timeout の
+ * 配分対象から外す。
+ */
+export const SHARE_POST_PASS_RESERVE_MS = 3_000;
+
+/**
+ * この値未満まで縮んだ Pass timeout は「送っても間に合わない」とみなし、
+ * OpenRouter を呼ばずに ShareBudgetExhaustedError で即座に fail-closed する
+ * （lease 切れ・reaper 回収を待たない）。
+ */
+export const SHARE_MIN_PASS_TIMEOUT_MS = 5_000;
+
+/**
+ * Pass 送信の raw 形（timeoutMs 込み）。pipeline が扱う SharePassSender（pass, menu のみ）とは別で、
+ * budget-aware ラッパー（wrapSharePassSenderWithBudget）が計算した timeoutMs をここに渡す。
+ * ProcessShareGeneralizationJobDeps.sendPass はこの形（テストで timeoutMs を検証できる）。
+ */
+export type SharePassSenderWithTimeout = (input: {
+  pass: SharePassKind;
+  menu: ValidatedMenu;
+  timeoutMs: number;
+}) => Promise<ShareOpenRouterPassResult>;
+
+/**
+ * Function 総予算の残り時間から、次に送る Pass の OpenRouter timeout を算出する。
+ * Pass1 送信時は残り Pass 数 2、Pass2 送信時は 1 で等分し、post-pass の余裕を先に引く。
+ * OPENROUTER_TIMEOUT_MS を上限にする（Pass2 は残り全部を使ってもこれで頭打ち）。
+ */
+export function computeSharePassTimeoutMs(input: {
+  deadlineAtMonotonicMs: number;
+  now: () => number;
+  remainingPasses: 1 | 2;
+}): number {
+  const remaining = input.deadlineAtMonotonicMs - input.now();
+  const usable = remaining - SHARE_POST_PASS_RESERVE_MS;
+  const perPass = Math.floor(usable / input.remainingPasses);
+  return Math.min(OPENROUTER_TIMEOUT_MS, perPass);
+}
+
+/**
+ * sendPass を budget-aware にラップする。呼出のたびに残り予算から timeout を計算し、
+ * SHARE_MIN_PASS_TIMEOUT_MS 未満なら OpenRouter を呼ばず ShareBudgetExhaustedError を投げる
+ * （AI 回数に数えない。実際に送信して失敗した Pass のみ従来どおり計上する）。
+ */
+function wrapSharePassSenderWithBudget(
+  sendPass: SharePassSenderWithTimeout,
+  deadlineAtMonotonicMs: number,
+  now: () => number,
+): SharePassSender {
+  return async (input) => {
+    const remainingPasses: 1 | 2 = input.pass === "pass1" ? 2 : 1;
+    const timeoutMs = computeSharePassTimeoutMs({ deadlineAtMonotonicMs, now, remainingPasses });
+    if (timeoutMs < SHARE_MIN_PASS_TIMEOUT_MS) {
+      throw new ShareBudgetExhaustedError();
+    }
+    return sendPass({ ...input, timeoutMs });
+  };
+}
 
 /** Functions 現行辞書（catalog + aliases）を publish metadata 用に閉じる */
 export function buildSharePublishAllergenCatalog(): SharePublishAllergenCatalog {
@@ -162,11 +231,19 @@ export type ProcessShareGeneralizationJobDeps = {
     userId: string;
     menuId: string;
   }) => Promise<ValidatedMenu | null>;
-  sendPass: SharePassSender;
+  sendPass: SharePassSenderWithTimeout;
   /** カノニカル再採番。省略時は randomUUID */
   idFactory?: () => string;
   /** publish metadata 用アレルゲン辞書。省略時は Functions 現行フル */
   allergenCatalog?: SharePublishAllergenCatalog;
+  /**
+   * Function 総予算の締め切り（handler 冒頭の started 起点、monotonic ms）。
+   * Pass ごとの timeout 配分の基準にする。省略時はこの job 処理開始時点を起点に
+   * FUNCTION_TOTAL_BUDGET_MS を丸ごと使う（テスト互換のフォールバック）。
+   */
+  deadlineAtMonotonicMs?: number;
+  /** テスト時計注入用。省略時は performance.now */
+  now?: () => number;
 };
 
 /**
@@ -196,13 +273,17 @@ export async function defaultLoadSourceMenu(input: {
   }
 }
 
-/** 本番 Pass 送信（OpenRouter env）。テストでは sendPass を差し替える。 */
-export function defaultSharePassSender(): SharePassSender {
-  return async ({ pass, menu }) =>
+/**
+ * 本番 Pass 送信（OpenRouter env）。テストでは sendPass を差し替える。
+ * timeoutMs は budget-aware ラッパー（wrapSharePassSenderWithBudget）が
+ * Function 総予算の残りから計算して渡す。
+ */
+export function defaultSharePassSender(): SharePassSenderWithTimeout {
+  return async ({ pass, menu, timeoutMs }) =>
     sendShareGeneralizationPassFromEnv({
       pass,
       menu,
-      timeoutMs: OPENROUTER_TIMEOUT_MS,
+      timeoutMs,
     });
 }
 
@@ -247,6 +328,13 @@ export async function processShareGeneralizationJob(
   deps: ProcessShareGeneralizationJobDeps,
 ): Promise<void> {
   const jobStarted = performance.now();
+  const now = deps.now ?? (() => performance.now());
+  const deadlineAtMonotonicMs = deps.deadlineAtMonotonicMs ?? jobStarted + FUNCTION_TOTAL_BUDGET_MS;
+  const budgetAwareSendPass = wrapSharePassSenderWithBudget(
+    deps.sendPass,
+    deadlineAtMonotonicMs,
+    now,
+  );
   let aiCallCount = 0;
   let pass1Model: string | null = null;
   let pass2Model: string | null = null;
@@ -396,7 +484,7 @@ export async function processShareGeneralizationJob(
     const aiResult = await runShareGeneralizeAiPipeline({
       menu: canonical.menu,
       lockedGraph,
-      sendPass: deps.sendPass,
+      sendPass: budgetAwareSendPass,
       recordAiCallLedger: (delta) => {
         aiCallCount += delta;
       },
@@ -544,8 +632,11 @@ export default async function shareGeneralizeWorker(request?: Request): Promise<
 
   try {
     const admin = getSupabaseAdmin();
-    // 1 job = Pass1+Pass2 各 OPENROUTER_TIMEOUT(20s)。1 件でも最悪 2×20s=40s で Netlify Free
-    // 実効 30s 壁を超えうる（2026-09-27 再ロックで悪化。要フォローアップ、本 Task の対象外）
+    // 1 job = Pass1+Pass2。各 Pass の OpenRouter timeout はこの started 起点の
+    // Function 総予算（FUNCTION_TOTAL_BUDGET_MS）から動的に配分する
+    // （wrapSharePassSenderWithBudget / SHARE_POST_PASS_RESERVE_MS）。
+    // 配分後の timeout が SHARE_MIN_PASS_TIMEOUT_MS 未満になる Pass は送らず、
+    // ShareBudgetExhaustedError で openrouter_failed 即終端する（lease 切れを待たない）。
     const jobs = await claimShareGeneralizationJobs({ admin, limit: 1 });
     safeLog({
       level: "info",
@@ -562,6 +653,7 @@ export default async function shareGeneralizeWorker(request?: Request): Promise<
           admin,
           loadSourceMenu: defaultLoadSourceMenu,
           sendPass,
+          deadlineAtMonotonicMs: started + FUNCTION_TOTAL_BUDGET_MS,
         });
       } catch {
         // PE4: process が finish 失敗で rethrow した場合の最終防衛。

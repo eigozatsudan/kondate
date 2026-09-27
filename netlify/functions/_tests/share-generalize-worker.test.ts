@@ -3,6 +3,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  FUNCTION_TOTAL_BUDGET_MS,
+  OPENROUTER_TIMEOUT_MS,
+} from "../../../shared/contracts/function-budget.js";
 import type { ValidatedMenu } from "../../../shared/contracts/generation.js";
 import { shareConsentVersion } from "../../../shared/contracts/share-consent.js";
 import { makeValidatedMenu } from "../../../shared/testing/factories.js";
@@ -995,6 +999,127 @@ describe("processShareGeneralizationJob pipeline", () => {
       candidate_count: 0,
     });
     expect(JSON.stringify(parsed)).not.toContain("肉じゃが");
+  });
+});
+
+describe("processShareGeneralizationJob Function 総予算からの Pass timeout 配分", () => {
+  const SHARE_POST_PASS_RESERVE_MS = 3_000;
+
+  it("allocates floor((remaining-reserve)/2) to Pass1 and min(20000, remaining-reserve) to Pass2", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const { admin } = createRpcAdmin();
+    const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
+    // Pass1 呼出時点で 1000ms 経過、Pass2 呼出時点で 2000ms 経過を模す
+    const now = vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(2000);
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+      deadlineAtMonotonicMs: FUNCTION_TOTAL_BUDGET_MS,
+      now,
+    });
+
+    expect(sendPass).toHaveBeenCalledTimes(2);
+    const pass1TimeoutMs = (sendPass.mock.calls[0]![0] as { pass: string; timeoutMs: number })
+      .timeoutMs;
+    const pass2TimeoutMs = (sendPass.mock.calls[1]![0] as { pass: string; timeoutMs: number })
+      .timeoutMs;
+    expect(pass1TimeoutMs).toBe(
+      Math.floor((FUNCTION_TOTAL_BUDGET_MS - 1000 - SHARE_POST_PASS_RESERVE_MS) / 2),
+    );
+    expect(pass2TimeoutMs).toBe(
+      Math.min(OPENROUTER_TIMEOUT_MS, FUNCTION_TOTAL_BUDGET_MS - 2000 - SHARE_POST_PASS_RESERVE_MS),
+    );
+  });
+
+  it("fails openrouter_failed without calling Pass2 when remaining budget after Pass1 is below the minimum", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const { admin, finish, publish } = createRpcAdmin();
+    const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
+    // Pass1 呼出時点で 1000ms 経過（送信は行う）。Pass2 呼出時点で 22000ms 経過
+    // → remaining 4000 - reserve 3000 = 1000 (< 5000) で送らない
+    const now = vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(22_000);
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+      deadlineAtMonotonicMs: FUNCTION_TOTAL_BUDGET_MS,
+      now,
+    });
+
+    expect(sendPass).toHaveBeenCalledTimes(1);
+    expect(sendPass.mock.calls[0]![0].pass).toBe("pass1");
+    expect(publish).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "failed",
+        p_code: "openrouter_failed",
+        p_ai_call_count: 1,
+      }),
+    );
+  });
+
+  it("fails openrouter_failed without calling Pass1 when budget is already insufficient at start (e.g. 19s elapsed by claim/load)", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const { admin, finish, publish } = createRpcAdmin();
+    const sendPass = vi.fn(makePassSender((_pass, menu) => identityPatch(menu)));
+    const now = vi.fn().mockReturnValue(19_000);
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+      deadlineAtMonotonicMs: FUNCTION_TOTAL_BUDGET_MS,
+      now,
+    });
+
+    expect(sendPass).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "failed",
+        p_code: "openrouter_failed",
+        p_ai_call_count: 0,
+      }),
+    );
+  });
+
+  it("regression: a normal sendPass exception is still counted in the AI ledger", async () => {
+    const source = makeValidatedMenu({ menuId: SOURCE_MENU_ID });
+    const { admin, finish, publish } = createRpcAdmin();
+    const sendPass: ProcessShareGeneralizationJobDeps["sendPass"] = vi.fn(() =>
+      Promise.reject(new Error("network_blip")),
+    );
+    // 十分な予算（経過 0ms）なので budget exhaustion ではなく、通常の例外経路を通る
+    const now = vi.fn().mockReturnValue(0);
+
+    await processShareGeneralizationJob(makeClaimedJob(), {
+      admin,
+      loadSourceMenu: () => Promise.resolve(source),
+      sendPass,
+      idFactory: createIdFactory(),
+      allergenCatalog: buildSharePublishAllergenCatalog(),
+      deadlineAtMonotonicMs: FUNCTION_TOTAL_BUDGET_MS,
+      now,
+    });
+
+    expect(sendPass).toHaveBeenCalledTimes(1);
+    expect(publish).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        p_status: "failed",
+        p_code: "openrouter_failed",
+        p_ai_call_count: 1,
+      }),
+    );
   });
 });
 
