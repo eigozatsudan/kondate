@@ -428,16 +428,17 @@ export type BuildGenerationMessagesOptions = {
   now?: Date;
 };
 
-/** Plan 3 本体: 新規献立の base プロンプトのみを構築する */
+/**
+ * Plan 3 本体: 新規献立の base プロンプトのみを構築する。
+ * effortEnabled は呼び出し元（buildGenerationMessages）で 1 回だけ判定した結果を受け取り、
+ * system（段落）と payload（effortPreference キー）の両方に同じ値を使う。
+ */
 function buildBaseGenerationMessages(
   context: GenerationContext,
+  effortEnabled: boolean,
   options: BuildGenerationMessagesOptions = {},
 ): readonly OpenRouterMessage[] {
   const seasonContext = getJstSeasonContext(options.now ?? new Date());
-  const effortEnabled = shouldIncludeEffortHints(
-    EFFORT_HINTS_ENABLED,
-    context.submission.effortPreference,
-  );
   const effortPreferenceEntry = effortEnabled ? { effortPreference: "easy" as const } : {};
   if (context.targetMode === "idea") {
     // idea: members / allergies / ageBands / adaptations 要求を一切載せない
@@ -574,13 +575,20 @@ function buildBaseGenerationMessages(
  * 再生成: base + regeneration_constraints。多様性マーカーも recentDishHints キーも付けない。
  * 手間段落は base 側で載る。
  * seasonContext はサーバー時計のみ（クライアント注入不可）。
- * buildBaseGenerationMessages は hints 引数を取らない（locked）。
+ * buildBaseGenerationMessages は hints 引数を取らない（locked）。手間は hints ではなく判定済みの
+ * boolean だけを渡す。
  */
 export function buildGenerationMessages(
   context: GenerationExecutionContext,
   options: BuildGenerationMessagesOptions = {},
 ): readonly OpenRouterMessage[] {
-  const base = buildBaseGenerationMessages(context.generationContext, options);
+  // 手間を載せるかはここで 1 回だけ判定し、base（再生成の system と payload）と new_menu の system の
+  // 両方へ同じ値を渡す。flag は import した定数を渡し、*-effort-off テストの vi.mock を効かせる
+  const effortEnabled = shouldIncludeEffortHints(
+    EFFORT_HINTS_ENABLED,
+    context.generationContext.submission.effortPreference,
+  );
+  const base = buildBaseGenerationMessages(context.generationContext, effortEnabled, options);
   if (context.kind === "new_menu") {
     // L13 kill-switch: `true as const` は型上常に true だが、テスト mock / 運用 off で分岐する
     const diversityEnabled = readDiversityHintsEnabledFlag();
@@ -607,10 +615,7 @@ export function buildGenerationMessages(
       diversityEnabled,
       noveltyEnabled,
       tasteEnabled,
-      shouldIncludeEffortHints(
-        EFFORT_HINTS_ENABLED,
-        context.generationContext.submission.effortPreference,
-      ),
+      effortEnabled,
     );
     const userMessage = base.find((message) => message.role === "user");
     const basePayload =

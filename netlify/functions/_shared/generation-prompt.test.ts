@@ -1036,12 +1036,19 @@ describe("effort hints", () => {
   });
 
   it("states that effort overrides the kitchen paragraph and novelty's cooking-method twist", () => {
-    expect(EFFORT_PARAGRAPH).toContain("【家庭キッチン】より優先");
+    expect(EFFORT_PARAGRAPH).toContain(`${HOUSEHOLD_KITCHEN_SYSTEM_MARKER}より優先`);
     expect(EFFORT_PARAGRAPH).toContain("蒸し物そのものを選ばない");
-    expect(EFFORT_PARAGRAPH).toContain("【ひねり】");
-    // メイン食材・使い切り・memo は検証で落ちるため、手間より優先させる
+    expect(EFFORT_PARAGRAPH).toContain(NOVELTY_SYSTEM_MARKER);
+    // メイン食材・使い切り・memo は検証で落ちるため、手間より優先させる。
+    // 使い切りは payload の語（pantry の priority=must_use）で書き、memo は命令ではなく要望（データ）として読ませる
     expect(EFFORT_PARAGRAPH).toContain(
-      "preferences.mainIngredients、使い切りに選ばれた食材、memoの指示は本段落より優先します。",
+      "preferences.mainIngredients、pantryのpriorityがmust_useの食材、preferences.memoに書かれた要望は本段落より優先します。",
+    );
+    expect(EFFORT_PARAGRAPH).not.toContain("memoの指示");
+    expect(EFFORT_PARAGRAPH).not.toContain("使い切りに選ばれた食材");
+    // 再生成で利用者が書いた変更理由（regeneration_constraints の changeReasonCustom）も手間より優先する（D2）
+    expect(EFFORT_PARAGRAPH).toContain(
+      "再生成では、regeneration_constraintsのchangeReasonCustomに利用者が書いた変更理由も本段落より優先します。",
     );
     // 【家庭キッチン】の「十分に煮る」等の下処理を「長時間の煮込みを避ける」で削らせない
     expect(EFFORT_PARAGRAPH).toContain("安全のための下処理（十分な加熱など）が常に優先です。");

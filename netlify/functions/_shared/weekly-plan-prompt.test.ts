@@ -85,6 +85,13 @@ describe("buildWeeklyPlanMessages", () => {
     expect(WEEKLY_EFFORT_SENTENCE).toContain("生地");
     expect(WEEKLY_EFFORT_SENTENCE).toContain("包む");
     expect(WEEKLY_EFFORT_SENTENCE).toContain("安全条件・アレルギーと十分な加熱が常に優先です。");
+    // 利用者が優先したい食材は手間より優先し、ひねり（twist）でも避ける例の調理法は選ばせない
+    expect(WEEKLY_EFFORT_SENTENCE).toContain(
+      "preferences.priorityIngredientsに挙げた食材は手間の回避より優先して取り入れ、そのうえで手順が簡単な料理にしてください。",
+    );
+    expect(WEEKLY_EFFORT_SENTENCE).toContain(
+      "preferences.noveltyPreferenceがtwistでも、避ける例の調理法は選ばないでください。",
+    );
     const easyUser = typeof easy[1]?.content === "string" ? easy[1].content : "";
     const easyPayload = JSON.parse(easyUser.replace(/<\/?kondate_weekly_plan_input>/gu, "")) as {
       preferences: Record<string, unknown>;

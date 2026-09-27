@@ -12,7 +12,11 @@ import type { OpenRouterMessage } from "./openrouter.js";
 import type { CurrentSafetyContext } from "../../../shared/safety/context.js";
 import type { WeeklyPlanRequest } from "../../../shared/contracts/weekly-plan.js";
 
-function serializeWeeklyPlanPayload(request: WeeklyPlanRequest, safety: CurrentSafetyContext) {
+function serializeWeeklyPlanPayload(
+  request: WeeklyPlanRequest,
+  safety: CurrentSafetyContext,
+  effortEnabled: boolean,
+) {
   const membersById = new Map(safety.members.map((member) => [member.householdMemberId, member]));
   const members = request.targetMemberIds.map((id) => {
     const member = membersById.get(id);
@@ -25,9 +29,7 @@ function serializeWeeklyPlanPayload(request: WeeklyPlanRequest, safety: CurrentS
       budgetPreference: request.budgetPreference,
       noveltyPreference: request.noveltyPreference,
       // easy かつ kill-switch on のときだけ載せる（日次と同じ規約）
-      ...(shouldIncludeEffortHints(EFFORT_HINTS_ENABLED, request.effortPreference)
-        ? { effortPreference: "easy" as const }
-        : {}),
+      ...(effortEnabled ? { effortPreference: "easy" as const } : {}),
       // 利用者が優先して使いたい食材（自由入力）。安全条件が常に優先。
       priorityIngredients: request.priorityIngredients,
     },
@@ -43,6 +45,9 @@ export function buildWeeklyPlanMessages(
   request: WeeklyPlanRequest,
   safety: CurrentSafetyContext,
 ): OpenRouterMessage[] {
+  // 手間を載せるかは 1 回だけ判定し、system の 1 文と payload のキーの両方へ同じ値を使う。
+  // flag は import した定数を渡し、*-effort-off テストの vi.mock を効かせる
+  const effortEnabled = shouldIncludeEffortHints(EFFORT_HINTS_ENABLED, request.effortPreference);
   return [
     {
       role: "system",
@@ -52,9 +57,7 @@ export function buildWeeklyPlanMessages(
         "days は dayIndex 1..7 を一意に含み、各日 mainName と ingredients（食材名の配列）を必ず入れてください。" +
         "preferences.priorityIngredients に挙げた食材は、安全条件に抵触しない範囲で" +
         "7日の献立に優先的に取り入れてください。" +
-        (shouldIncludeEffortHints(EFFORT_HINTS_ENABLED, request.effortPreference)
-          ? WEEKLY_EFFORT_SENTENCE
-          : "") +
+        (effortEnabled ? WEEKLY_EFFORT_SENTENCE : "") +
         "membersのallergenIds・customAllergies（name/aliases）・requiredSafetyConstraintsに" +
         "抵触する食材は一切使わないでください。氏名・呼び名は入力にありません。" +
         "「安全です」「アレルギー対応済み」等の保証表現は一切使わないでください。" +
@@ -62,7 +65,7 @@ export function buildWeeklyPlanMessages(
     },
     {
       role: "user",
-      content: `<kondate_weekly_plan_input>\n${serializeWeeklyPlanPayload(request, safety)}\n</kondate_weekly_plan_input>`,
+      content: `<kondate_weekly_plan_input>\n${serializeWeeklyPlanPayload(request, safety, effortEnabled)}\n</kondate_weekly_plan_input>`,
     },
   ];
 }
