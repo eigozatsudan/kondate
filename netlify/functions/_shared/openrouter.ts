@@ -312,6 +312,34 @@ const maxRetryAfterSeconds = 86_400;
 export const OPENROUTER_MAX_BODY_BYTES = 1 * 1024 * 1024;
 
 /**
+ * transport が signal を無視しても、呼び出し元は送信締切で必ず待機を終える。
+ * 遅れて失敗した operation も race が受け止め、listener は全経路で除去する。
+ */
+async function awaitWithAbort<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return operation();
+  if (signal.aborted) throw new OpenRouterCallError("generation_timeout");
+  let rejectAbort!: (reason: OpenRouterCallError) => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = (): void => {
+    rejectAbort(new OpenRouterCallError("generation_timeout"));
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => {
+        if (signal.aborted) throw new OpenRouterCallError("generation_timeout");
+        return operation();
+      }),
+      aborted,
+    ]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
  * byte cap後のcancelはbest-effort cleanupとして扱い、失敗でcap分類を失わない。
  * 永続pendingでも送信Abortを優先して抜け、登録したlistenerを全経路で除去する。
  */
@@ -357,7 +385,7 @@ export async function readResponseBodyWithByteCap(
   signal?: AbortSignal,
 ): Promise<string> {
   if (response.body === null) {
-    const text = await response.text();
+    const text = await awaitWithAbort(() => response.text(), signal);
     if (new TextEncoder().encode(text).byteLength > maxBytes) {
       throw new OpenRouterCallError("invalid_ai_response");
     }
@@ -368,7 +396,7 @@ export async function readResponseBodyWithByteCap(
   let total = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await awaitWithAbort(() => reader.read(), signal);
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
@@ -380,8 +408,13 @@ export async function readResponseBodyWithByteCap(
       chunks.push(value);
     }
   } catch (error) {
-    if (error instanceof OpenRouterCallError) throw error;
+    if (error instanceof OpenRouterCallError && error.code === "generation_timeout") {
+      // cleanup 自体が停止しても締切応答を妨げない。遅い失敗も吸収する。
+      void reader.cancel().catch(() => {});
+    }
     throw error;
+  } finally {
+    reader.releaseLock();
   }
   const merged = new Uint8Array(total);
   let offset = 0;
@@ -487,29 +520,33 @@ async function sendMenuGenerationWithRuntime(
 
     let response: Response;
     try {
-      response = await fetchImpl(`${runtime.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${runtime.apiKey}`,
-          "Content-Type": "application/json",
-          ...(testScenario && isExactLocalMockBaseUrl(runtime.baseUrl)
-            ? { "X-Kondate-Mock-Scenario": testScenario }
-            : {}),
-        },
-        // temperature は送らない。
-        // Models API の supported_parameters に temperature が無いモデル（例: openai/gpt-5.6-luna）では、
-        // provider.require_parameters: true と temperature の併用が 404
-        // 「No endpoints found that can handle the requested parameters」になる。
-        // require_parameters と strict response_format は維持し、決定性は schema / prompt 側で担保する。
-        body: JSON.stringify({
-          models,
-          messages: input.messages,
-          response_format: responseFormat,
-          provider: { require_parameters: true },
-          stream: false,
-        }),
-        signal: controller.signal,
-      });
+      response = await awaitWithAbort(
+        () =>
+          fetchImpl(`${runtime.baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${runtime.apiKey}`,
+              "Content-Type": "application/json",
+              ...(testScenario && isExactLocalMockBaseUrl(runtime.baseUrl)
+                ? { "X-Kondate-Mock-Scenario": testScenario }
+                : {}),
+            },
+            // temperature は送らない。
+            // Models API の supported_parameters に temperature が無いモデル（例: openai/gpt-5.6-luna）では、
+            // provider.require_parameters: true と temperature の併用が 404
+            // 「No endpoints found that can handle the requested parameters」になる。
+            // require_parameters と strict response_format は維持し、決定性は schema / prompt 側で担保する。
+            body: JSON.stringify({
+              models,
+              messages: input.messages,
+              response_format: responseFormat,
+              provider: { require_parameters: true },
+              stream: false,
+            }),
+            signal: controller.signal,
+          }),
+        controller.signal,
+      );
     } catch {
       if (controller.signal.aborted) {
         throw new OpenRouterCallError("generation_timeout");

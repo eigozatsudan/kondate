@@ -329,7 +329,8 @@ test("recovers a persisted result when handler completes but response is dropped
   await page.reload();
   // recovery hookがGET statusでsucceeded結果を取得し、結果画面を表示する
   try {
-    await expect(page).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/);
+    // 並列実行時の復旧通信・再試行にも、他の復旧テストと同じ待機余裕を確保する。
+    await expect(page).toHaveURL(/\/menus\/[0-9a-f-]+\?recovered=1$/, { timeout: 30_000 });
     // reload後の誤ったnot_started判定が同じkeyを再POSTしてもserverの冪等性で
     // 成功し得るため、結果表示より先にcontext全体のPOST総数を直接検証する。
     expect(generationPostCount).toBe(1);

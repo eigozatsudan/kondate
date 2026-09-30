@@ -447,6 +447,126 @@ it("maps a signal-aware fetch timeout to generation_timeout and clears its timer
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("settles a fetch that ignores abort and handles its later rejection", async () => {
+  vi.useFakeTimers();
+  let rejectFetch!: (reason: unknown) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockImplementation(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          rejectFetch = reject;
+        }),
+    ),
+  );
+  const pending = sendMenuGeneration({ messages: [], timeoutMs: 10 }).catch(
+    (error: unknown) => error,
+  );
+  const watchdog = new Promise<string>((resolve) => {
+    setTimeout(() => {
+      resolve("still_pending");
+    }, 11);
+  });
+  const outcome = Promise.race([pending, watchdog]);
+  await vi.advanceTimersByTimeAsync(11);
+  expect(await outcome).toEqual(new OpenRouterCallError("generation_timeout"));
+  rejectFetch(new Error("late transport failure"));
+  await Promise.resolve();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("handles a body operation that aborts synchronously and throws", async () => {
+  const controller = new AbortController();
+  const response = new Response(null);
+  vi.spyOn(response, "text").mockImplementation(() => {
+    controller.abort();
+    throw new Error("synchronous transport failure");
+  });
+  await expect(readResponseBodyWithByteCap(response, 100, controller.signal)).rejects.toEqual(
+    new OpenRouterCallError("generation_timeout"),
+  );
+});
+
+it("removes body abort listeners and releases the reader after success or failure", async () => {
+  for (const fails of [false, true]) {
+    const controller = new AbortController();
+    const add = vi.spyOn(controller.signal, "addEventListener");
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        if (fails) stream.error(new Error("read failed"));
+        else stream.close();
+      },
+    });
+    await readResponseBodyWithByteCap(new Response(body), 100, controller.signal).catch(() => {});
+    expect(body.locked).toBe(false);
+    for (const [type, listener] of add.mock.calls) {
+      expect(remove).toHaveBeenCalledWith(type, listener);
+    }
+  }
+});
+
+it.each([false, true])("settles stalled body reads after partial body %s", async (partial) => {
+  vi.useFakeTimers();
+  const cancel = vi.fn(() => new Promise<void>(() => {}));
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (partial) controller.enqueue(new TextEncoder().encode('{"model":'));
+    },
+    cancel,
+  });
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(body)));
+  const pending = sendMenuGeneration({ messages: [], timeoutMs: 10 }).catch(
+    (error: unknown) => error,
+  );
+  const watchdog = new Promise<string>((resolve) => {
+    setTimeout(() => {
+      resolve("still_pending");
+    }, 11);
+  });
+  const outcome = Promise.race([pending, watchdog]);
+  await vi.advanceTimersByTimeAsync(11);
+  expect(await outcome).toEqual(new OpenRouterCallError("generation_timeout"));
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(body.locked).toBe(false);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("rejects an already aborted body read before reading text", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const response = new Response(null);
+  const text = vi.spyOn(response, "text");
+  await expect(readResponseBodyWithByteCap(response, 100, controller.signal)).rejects.toEqual(
+    new OpenRouterCallError("generation_timeout"),
+  );
+  expect(text).not.toHaveBeenCalled();
+});
+
+it("settles stalled null-body text reads and removes the abort listener", async () => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  const add = vi.spyOn(controller.signal, "addEventListener");
+  const remove = vi.spyOn(controller.signal, "removeEventListener");
+  const response = new Response(null);
+  vi.spyOn(response, "text").mockImplementation(() => new Promise<string>(() => {}));
+  const pending = readResponseBodyWithByteCap(response, 100, controller.signal).catch(
+    (error: unknown) => error,
+  );
+  setTimeout(() => {
+    controller.abort();
+  }, 10);
+  const watchdog = new Promise<string>((resolve) => {
+    setTimeout(() => {
+      resolve("still_pending");
+    }, 11);
+  });
+  const outcome = Promise.race([pending, watchdog]);
+  await vi.advanceTimersByTimeAsync(11);
+  expect(await outcome).toEqual(new OpenRouterCallError("generation_timeout"));
+  expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0]?.[1]);
+});
+
 it("maps a network rejection to model_unavailable without leaking its detail", async () => {
   const fetchImpl = vi
     .fn<typeof fetch>()

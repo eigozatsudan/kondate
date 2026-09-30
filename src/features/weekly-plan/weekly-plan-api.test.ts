@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   FUNCTION_TOTAL_BUDGET_MS,
+  GENERATION_CLIENT_TIMEOUT_HEADROOM_MS,
   GENERATION_POST_CLIENT_TIMEOUT_MS,
 } from "@shared/contracts/function-budget";
 import {
@@ -88,21 +89,18 @@ describe("postWeeklyPlan", () => {
 });
 
 describe("POST abort timeout must stay outside the server budget (P2 fix B)", () => {
-  it("uses a POST abort ceiling larger than the GET ceiling and the server's total budget", () => {
-    // 数値リテラルでは書かない。POST は GENERATION_POST_CLIENT_TIMEOUT_MS
-    // （FUNCTION_TOTAL_BUDGET_MS + headroom, shared/contracts/function-budget.ts 由来）を
-    // 使うべきで、GET 用の WEEKLY_PLAN_CLIENT_TIMEOUT_MS（30s 固定）より短くなってはいけない。
-    // これが崩れると、サーバが finalize/insert を完了しているのに POST が先に abort し、
-    // クライアント側だけ失敗扱いになる（Plus の週次成功枠は限られているため実害が出る）。
-    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeGreaterThan(WEEKLY_PLAN_CLIENT_TIMEOUT_MS);
+  it("derives the POST abort ceiling from the server budget plus client headroom", () => {
+    // POST はサーバ総予算の外側に共有契約の余裕を残し、最終化中の早期 abort を防ぐ。
+    // GET の上限は独立した通信予算なので、POST との大小関係は契約に含めない。
+    expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBe(
+      FUNCTION_TOTAL_BUDGET_MS + GENERATION_CLIENT_TIMEOUT_HEADROOM_MS,
+    );
     expect(GENERATION_POST_CLIENT_TIMEOUT_MS).toBeGreaterThan(FUNCTION_TOTAL_BUDGET_MS);
   });
 });
 
 describe("POST/GET actually wire AbortSignal.timeout to the intended ceiling (I-3)", () => {
-  // I-3: 上の定数比較テストは GENERATION_POST_CLIENT_TIMEOUT_MS > WEEKLY_PLAN_CLIENT_TIMEOUT_MS
-  // という定数同士の関係しか見ておらず、postWeeklyPlan / getWeeklyPlanById が実際にどちらを
-  // fetch の signal に渡しているかは検証していなかった（配線ミスがあっても検出できない）。
+  // 定数の導出だけでなく、POST / GET がそれぞれ契約どおりの上限を signal に渡すことも確認する。
   // AbortSignal は組み込みオブジェクトなので vi.spyOn は禁止対象外
   // （ESM 名前空間スパイのみ禁止。built-in へのスパイは許可）。
   afterEach(() => {
