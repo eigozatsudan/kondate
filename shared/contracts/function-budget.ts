@@ -74,3 +74,10 @@ export const GENERATION_CLIENT_TIMEOUT_HEADROOM_MS = 3_000;
  */
 export const GENERATION_POST_CLIENT_TIMEOUT_MS =
   FUNCTION_TOTAL_BUDGET_MS + GENERATION_CLIENT_TIMEOUT_HEADROOM_MS;
+
+/** 背景献立は受付時刻から計測し、180 秒の孤児回収より前に終端化する。 */
+export const MENU_BACKGROUND_TOTAL_BUDGET_MS = 120_000;
+/** 低速なモデルでも完了を待てる背景専用の試行上限。同期の 20 秒は変えない。 */
+export const MENU_BACKGROUND_ATTEMPT_TIMEOUT_MS = 90_000;
+/** 総予算後の失敗保存を許す HTTP 余裕。 */
+export const MENU_BACKGROUND_HARD_DEADLINE_MS = MENU_BACKGROUND_TOTAL_BUDGET_MS + 5_000;

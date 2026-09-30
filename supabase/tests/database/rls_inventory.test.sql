@@ -307,6 +307,8 @@ select is_empty(
   ('public.publish_shared_emergency_recipe(p_job_id uuid, p_payload jsonb, p_meal_type text, p_total_elapsed integer, p_standard_allergen_ids text[], p_eligible_age_bands text[], p_ai_call_count integer, p_pass1_model text, p_pass2_model text)', 'service_role', 'EXECUTE'),
   ('public.list_active_shared_emergency_recipes(p_meal_type text, p_limit integer, p_salt text)', 'service_role', 'EXECUTE'),
   ('public.reap_stale_share_jobs(p_now timestamp with time zone, p_limit integer)', 'service_role', 'EXECUTE'),
+  ('public.register_menu_background_dispatch(p_user_id uuid, p_request_id uuid, p_token uuid)', 'service_role', 'EXECUTE'),
+  ('public.claim_menu_background_dispatch(p_user_id uuid, p_request_id uuid, p_token uuid)', 'service_role', 'EXECUTE'),
   ('public.share_app_ai_budget_remaining()', 'service_role', 'EXECUTE')
     ),
     live as (

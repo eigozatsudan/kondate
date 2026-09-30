@@ -300,3 +300,5 @@ SELECT column grants follow table-level SELECT. Only INSERT/UPDATE/DELETE column
 - Plan 7 objects of special interest: `private.generation_regeneration_snapshots` (service-only ledger), `private.idea_safety_fingerprint()`, `private.is_valid_generation_target_member_ids(...)` (no browser EXECUTE), and current signatures of `save_generation_draft`, `reserve_ai_generation`, `get_ai_generation_submission_snapshot`, `finalize_ai_generation_success`, `apply_shopping_draft`, `apply_shopping_reconciliation`, `set_onboarding_status`.
 - Symmetric pgTAP comparisons live in `rls_inventory.test.sql` (`plan(8)`).
 
+
+献立背景生成の `register_menu_background_dispatch(uuid,uuid,uuid)` / `claim_menu_background_dispatch(uuid,uuid,uuid)` は `service_role` のみ EXECUTE。`PUBLIC` / `anon` / `authenticated` の権限は付与しない。private 台帳の既存 ACL と owner の照合を維持する。

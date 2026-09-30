@@ -15,6 +15,7 @@ import {
 import { planQuota } from "@shared/contracts/plan-quota";
 import {
   getGenerationStatus,
+  GenerationStatusRateLimitError,
   postGeneration,
   readLiveGenerationDraftPin,
 } from "../api/generation-api";
@@ -81,6 +82,8 @@ const OFFLINE_RETRY_MAX_MS = 60_000;
  * POST IP 40/180s を超えないよう 5s（36/180s）。cancel RPC は足さない。
  */
 export const GENERATION_IN_PROGRESS_RETRY_MS = 5_000;
+/** 単一タブでも 120 秒の背景処理で GET 40/180 秒を超えない間隔。 */
+export const GENERATION_STATUS_POLL_MS = 5_000;
 
 /**
  * ok:false 端末失敗を GenerationStatusData failed に載せ替え（issueMessages 正本）。
@@ -277,6 +280,7 @@ export function useGenerationRecovery(
   const lifecycleRef = useRef<GenerationLifecycleToken | null>(seedInitialToken);
   const statusInFlightRef = useRef<InFlightRecord | null>(null);
   const submitInFlightRef = useRef<InFlightRecord | null>(null);
+  const statusThrottleRef = useRef<{ key: string; nextAt: number } | null>(null);
   const skipInitialEffectRunRef = useRef(isSeeded);
 
   const storedMatches = useCallback(
@@ -472,7 +476,18 @@ export function useGenerationRecovery(
     if (current?.token === token) return current.promise;
     const operation = Promise.resolve().then(async () => {
       try {
+        const throttle = statusThrottleRef.current;
+        if (throttle?.key === idempotencyKey && throttle.nextAt > Date.now()) {
+          await new Promise<void>((resolve) =>
+            window.setTimeout(resolve, throttle.nextAt - Date.now()),
+          );
+          if (!isActiveToken(token)) return;
+        }
         const data = await getGenerationStatus(idempotencyKey);
+        statusThrottleRef.current =
+          data.status === "processing"
+            ? { key: idempotencyKey, nextAt: Date.now() + GENERATION_STATUS_POLL_MS }
+            : null;
         // 他タブが先に結果着地して pending を消しても、同一 lifecycle の
         // processing / succeeded は回収する。not_started 再POST は pending 必須。
         if (data.status === "succeeded" || data.status === "processing") {
@@ -487,6 +502,13 @@ export function useGenerationRecovery(
       } catch (error) {
         if (!isCurrent(token)) return;
         // GET は surface "get": 閉じたサーバ code は offline（pending 維持）。業務 code のみ failed。
+        if (error instanceof GenerationStatusRateLimitError) {
+          // 複数タブや同一 IP の別利用者による 429 でも復旧を打ち切らない。
+          statusThrottleRef.current = {
+            key: idempotencyKey,
+            nextAt: Date.now() + error.retryAfterMs,
+          };
+        }
         const classified = classifyGenerationClientError(error, "get");
         if (classified.kind === "auth") {
           clearPendingGeneration();
@@ -615,7 +637,7 @@ export function useGenerationRecovery(
       // （visibility 復帰時の即時 retry は下の listener が担当）
       const timer = window.setTimeout(() => {
         void retryStatus();
-      }, 2_000);
+      }, GENERATION_STATUS_POLL_MS);
       return () => {
         window.clearTimeout(timer);
       };

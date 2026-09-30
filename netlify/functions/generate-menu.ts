@@ -1,43 +1,22 @@
 import type { Config } from "@netlify/functions";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
-import {
-  generationCommandVersionV3,
-  newMenuGenerationRequestSchema,
-  regenerateMenuRequestSchema,
-  type GenerationStatusData,
-} from "../../shared/contracts/generation.js";
+import type { GenerationStatusData } from "../../shared/contracts/generation.js";
 import { GENERATION_REQUEST_HARD_DEADLINE_MS } from "../../shared/contracts/function-budget.js";
 import { requireUserWithEmail } from "./_shared/auth.js";
 import {
   createGenerationDeps,
   generationResponse,
-  runGeneration,
+  reserveGeneration,
+  toGenerationStatus,
+  toReservedGenerationStatus,
 } from "./_shared/generation-service.js";
 import { handleError, methodNotAllowed, parseJson } from "./_shared/http.js";
 import { runWithRequestDeadline } from "./_shared/request-deadline.js";
 import { readLocalMockScenario } from "./_shared/local-mock-scenario.js";
 import { handleGenerationHttpError, logGenerationHttpBoundary } from "./_shared/logger.js";
 
-/** 新規献立と献立全体再生成を同一 POST で受け付ける（v3 commandVersion + qualityMode + kind 必須） */
-const menuEndpointBodySchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      commandVersion: z.literal(generationCommandVersionV3),
-      kind: z.literal("new_menu"),
-      qualityMode: z.boolean(),
-      request: newMenuGenerationRequestSchema,
-    })
-    .strict(),
-  z
-    .object({
-      commandVersion: z.literal(generationCommandVersionV3),
-      kind: z.literal("regenerate_menu"),
-      qualityMode: z.boolean(),
-      request: regenerateMenuRequestSchema,
-    })
-    .strict(),
-]);
+import { menuEndpointBodySchema } from "./_shared/menu-generation-command.js";
+import { dispatchMenuGeneration } from "./_shared/menu-background.js";
 
 /** failed / constraint_conflict のみ HTTP 境界ログ（成功・processing は出さない） */
 function logTerminalStatusIfNeeded(
@@ -87,13 +66,21 @@ async function handleGenerateMenu(
     const command = await parseJson(request, menuEndpointBodySchema);
     correlationId = command.request.idempotencyKey;
     const localTestScenario = readLocalMockScenario(request);
-    const result = await runGeneration(
-      createGenerationDeps(user, {
-        requestStartedAtMonotonicMs,
-        ...(localTestScenario === undefined ? {} : { localTestScenario }),
-      }),
-      command,
-    );
+    const deps = createGenerationDeps(user, {
+      requestStartedAtMonotonicMs,
+      ...(localTestScenario === undefined ? {} : { localTestScenario }),
+    });
+    const reserved = await reserveGeneration(deps, command);
+    const result =
+      reserved.status === "failed" && reserved.failure_code === "generation_in_progress"
+        ? toReservedGenerationStatus(reserved, command.request.idempotencyKey)
+        : toGenerationStatus(
+            await deps.repository.status(command.request.idempotencyKey),
+            command.request.idempotencyKey,
+          );
+    if (result.status === "processing") {
+      await dispatchMenuGeneration(user, command, result.requestId, localTestScenario);
+    }
     const response = generationResponse(result);
     logTerminalStatusIfNeeded(result, response, requestStartedAtMonotonicMs);
     return response;

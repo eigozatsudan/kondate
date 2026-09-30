@@ -669,6 +669,59 @@ describe("runGeneration", () => {
     expect(payload).not.toContain("allergy");
   });
 
+  it("allows background execution to finish beyond the synchronous attempt cap", async () => {
+    let now = 0;
+    const callOpenRouter = vi.fn<GenerationDependencies["callOpenRouter"]>((input) => {
+      expect(input.timeoutMs).toBe(90_000);
+      now = 45_000;
+      return Promise.resolve({ mode: "full_menu", output: scenarios.success, modelId: models[0] });
+    });
+    const result = await runGeneration(
+      makeDeps({
+        callOpenRouter,
+        monotonicNow: () => now,
+        openRouterTimeoutMs: 90_000,
+        functionTotalBudgetMs: 120_000,
+      }),
+      command,
+      { attemptTimeoutMs: 90_000 },
+    );
+    expect(result.status).toBe("succeeded");
+  });
+
+  it("uses the background attempt timeout for the Plus sender too", async () => {
+    getServerEnvMock.mockReturnValue({
+      openRouter: {
+        apiKey: "key",
+        baseUrl: "http://openrouter-mock:8787/api/v1",
+        plusModels: ["mock/quality"],
+      },
+    });
+    createOpenRouterGenerationSenderMock.mockReturnValue(
+      vi.fn(() =>
+        Promise.resolve({ mode: "full_menu", output: scenarios.success, modelId: "mock/quality" }),
+      ),
+    );
+    await runGeneration(
+      makeDeps({ openRouterTimeoutMs: 90_000, functionTotalBudgetMs: 120_000 }),
+      { ...command, qualityMode: true },
+      { attemptTimeoutMs: 90_000 },
+    );
+    expect(createOpenRouterGenerationSenderMock).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 90_000 }),
+    );
+  });
+
+  it("executes a trusted claimed reservation without a second lookup or quota reserve", async () => {
+    const repository = makeRepository();
+    const reservation = { ...record("processing"), replayed: true };
+    const result = await runGeneration(makeDeps({ repository }), command, { reservation });
+    expect(result.status).toBe("succeeded");
+    expect(repository.lookup).not.toHaveBeenCalled();
+    expect(repository.reserveNew).not.toHaveBeenCalled();
+    expect(repository.markSent).toHaveBeenCalledTimes(1);
+  });
+
   it("logs phase events after markSent and when the attempt returns", async () => {
     const logPhaseEvent = vi.fn<NonNullable<GenerationDependencies["logPhaseEvent"]>>();
     let now = 0;

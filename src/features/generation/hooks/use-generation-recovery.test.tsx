@@ -2,6 +2,7 @@ import type { Session } from "@supabase/supabase-js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { GenerationStatusRateLimitError } from "../api/generation-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthSessionProbeTimeoutError } from "@/features/auth/session";
 import type { GenerationCommand, GenerationStatusData } from "@shared/contracts/generation";
@@ -59,7 +60,8 @@ vi.mock("react-router", async (importOriginal) => {
   const original = await importOriginal<typeof import("react-router")>();
   return { ...original, useNavigate: () => navigateMock };
 });
-vi.mock("../api/generation-api", () => ({
+vi.mock("../api/generation-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/generation-api")>()),
   postGeneration: mockPost,
   getGenerationStatus: mockStatus,
   readLiveGenerationDraftPin: mockReadLiveDraftPin,
@@ -519,7 +521,7 @@ describe("useGenerationRecovery", () => {
       });
       expect(recovery.result.current.state.phase).toBe("processing");
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(2_000);
+        await vi.advanceTimersByTimeAsync(5_000);
       });
       expect(recovery.result.current.state.phase).toBe("succeeded");
       expect(navigateMock).toHaveBeenCalledWith(`/menus/${succeededA.menuId}?recovered=1`);
@@ -719,6 +721,69 @@ describe("useGenerationRecovery", () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps 180 seconds of background polling below the IP request limit", async () => {
+    vi.useFakeTimers();
+    try {
+      mockStatus.mockResolvedValue(processingA);
+      const recovery = renderRecoveryAt(processingState, pendingA);
+      await act(async () => {
+        await recovery.result.current.retryStatus();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(180_000);
+      });
+      expect(mockStatus.mock.calls.length).toBeLessThanOrEqual(37);
+      expect(mockPost).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("coalesces early manual and online retries until the next polling slot", async () => {
+    vi.useFakeTimers();
+    try {
+      mockStatus.mockResolvedValue(processingA);
+      const recovery = renderRecoveryAt(processingState, pendingA);
+      await act(async () => {
+        await recovery.result.current.retryStatus();
+      });
+      act(() => {
+        void recovery.result.current.retryStatus();
+        window.dispatchEvent(new Event("online"));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_999);
+      });
+      expect(mockStatus).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(mockStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retains pending and recovers after a proxy rate limit", async () => {
+    vi.useFakeTimers();
+    try {
+      mockStatus
+        .mockRejectedValueOnce(new GenerationStatusRateLimitError(30_000))
+        .mockResolvedValue(succeededA);
+      const recovery = renderRecoveryAt(processingState, pendingA);
+      await act(async () => {
+        await recovery.result.current.retryStatus();
+      });
+      expect(mockClearPending).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(navigateMock).toHaveBeenCalledWith(`/menus/${succeededA.menuId}?recovered=1`);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("G14: processing poll retries status even when document.hidden", async () => {
     vi.useFakeTimers();
     Object.defineProperty(document, "hidden", {
@@ -735,7 +800,7 @@ describe("useGenerationRecovery", () => {
       });
       mockStatus.mockClear();
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(2_000);
+        await vi.advanceTimersByTimeAsync(5_000);
         await flushPromises();
       });
       expect(mockStatus).toHaveBeenCalled();

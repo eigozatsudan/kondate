@@ -1273,6 +1273,23 @@ describe("ensureOpenRouterRuntimeModelPolicy", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("bounds model metadata fetch even when the transport ignores abort", async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    try {
+      const operation = ensureOpenRouterRuntimeModelPolicy({
+        baseUrl: OFFICIAL_OPENROUTER_BASE_URL,
+        models: ["vendor/a"],
+        fetchImpl: vi.fn(() => new Promise<Response>(() => {})),
+      });
+      const rejected = expect(operation).rejects.toMatchObject({ code: "model_unavailable" });
+      controller.abort();
+      await rejected;
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it("fetches Models API once and caches success for process life", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

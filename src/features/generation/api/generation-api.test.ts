@@ -6,6 +6,7 @@ import {
   GENERATION_STATUS_CLIENT_TIMEOUT_MS,
   generationEndpointFor,
   getGenerationStatus,
+  GenerationStatusRateLimitError,
   postGeneration,
   readLiveGenerationDraftPin,
 } from "./generation-api";
@@ -292,4 +293,30 @@ describe("generation API", () => {
     expect(requireAccessTokenMock).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+});
+
+it("keeps proxy 429 outside terminal errors even when its body is HTML", async () => {
+  const fetchImpl = vi.fn<typeof fetch>(() =>
+    Promise.resolve(
+      new Response("rate limited", { status: 429, headers: { "retry-after": "60" } }),
+    ),
+  );
+  await expect(getGenerationStatus(IDEMPOTENCY_KEY, { fetchImpl })).rejects.toEqual(
+    new GenerationStatusRateLimitError(60_000),
+  );
+});
+
+it("preserves the canonical failed quota DTO on a status GET 429", async () => {
+  const failed: GenerationStatusData = {
+    status: "failed",
+    idempotencyKey: IDEMPOTENCY_KEY,
+    requestId: "50000000-0000-4000-8000-000000000001",
+    completedAt: "2026-07-11T00:00:00.000Z",
+    quota: { ...quota, limitKind: "user" },
+    error: { code: "user_daily_limit", message: "本日の上限です", retryable: false },
+  };
+  const fetchImpl = vi.fn<typeof fetch>(() =>
+    Promise.resolve(Response.json({ ok: true, data: failed }, { status: 429 })),
+  );
+  await expect(getGenerationStatus(IDEMPOTENCY_KEY, { fetchImpl })).resolves.toEqual(failed);
 });

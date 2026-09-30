@@ -212,7 +212,7 @@ const parseJsonMaxBytes = 65_536;
  * SC5: Content-Length 欠落・過小申告でもストリーム累積で上限超過を読取完了前に拒否する。
  * 宣言が上限超なら従来どおり先読み 413。flyer の累積拒否と同型。
  */
-async function readJsonTextWithLimit(request: Request, maxBytes: number): Promise<string> {
+export async function readJsonTextWithLimit(request: Request, maxBytes: number): Promise<string> {
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (Number.isFinite(declared) && declared > maxBytes) {
     throw new HttpError(413, "request_too_large", "入力が大きすぎます");

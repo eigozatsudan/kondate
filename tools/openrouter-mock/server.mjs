@@ -395,7 +395,7 @@ async function handleRequest(request, response) {
         : weeklyPlanMode && (scenario === "success" || scenario === undefined)
           ? "weekly-plan-success"
           : scenario;
-  const key = resolvedScenario;
+  const key = resolvedScenario === "slow-background-success" ? "success" : resolvedScenario;
   // idea-servings-N（1..20）は静的 scenarios に無い人数でも合成する。
   // ブラウザ手動操作は X-Kondate-Mock-Scenario を付けないため、default success も
   // idea プロンプトなら同じ変換を当てる（家族向け子行を落とす・人数一致）。
@@ -432,6 +432,10 @@ async function handleRequest(request, response) {
   }
   if (!dishMode && !weeklyPlanMode) {
     fixture = toMenuGenerationWireResponse(fixture);
+  }
+  if (scenario === "slow-background-success") {
+    // 同期 20 秒では完了できないモデル応答を、背景 worker の実経路で検証する。
+    await new Promise((resolve) => setTimeout(resolve, 25_000));
   }
   const content = typeof fixture === "string" ? fixture : JSON.stringify(fixture);
   jsonResponse(response, 200, {

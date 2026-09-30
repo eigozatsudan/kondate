@@ -70,8 +70,8 @@ export default async function generationStatus(
 }
 
 // G16: status GET も menu/dish POST と同型の IP rateLimit（40/180s）。数値は緩めない。
-// 通常 1 クライアントの processing 2s poll は Function 総予算（26s）で 13 回、
-// platform 実効 30s でも 15 回のため 40 に届かない。終端後は poll 停止。
+// 通常 1 クライアントの processing 5s poll は Function 総予算（120s）で 24 回、
+// 180s stale 回収まで継続しても 36 回と初回照会で 40 に届かない。終端後は poll 停止。
 // 同一 IP の多キー並列・長時間洪水は 429（stale cleanup RPC 抑止）。quota は未変更。
 export const config: Config = {
   path: "/api/generations/:idempotencyKey/status",

@@ -161,3 +161,11 @@ docker compose up -d --force-recreate --no-deps app
 [docs/deployment/netlify.md](../deployment/netlify.md) の「`maintenance-cleanup` Function」。
 DB LOGIN の用意は [docs/deployment/supabase.md](../deployment/supabase.md)。
 （secret 付き HTTP + 外部 cron。本 runbook は OpenRouter 運用専用のため詳細は deployment 側。）
+
+## 献立全体の背景処理の切り分け
+
+献立 POST の 202 は受付成功を示し、生成結果は status GET で確認する。背景 worker の `phase_sent` / `phase_attempt_returned` / `phase_attempt_generation_timeout` は受付からの経過時間である。総 120 秒、各試行 90 秒を上限にし、同期 dish / weekly / flyer の予算とモデル設定は変更していない。
+
+worker への直アクセスは内部署名がないため Auth/DB を実行しない。署名は Bearer と本文にも束縛し、125 秒以上の遅延を拒否する。platform の 60 秒再試行は署名期限内なら検証可能だが、180 秒再試行は拒否する。恒久的な 4xx は正常終了、一時障害だけ再試行するため、署名・Bearer・token の内容を診断ログへ追加しない。
+
+dispatch の応答が失われても受理されている可能性があるため、別キーで再受付しない。同キー再 POST は登録済み token を用いて未 claim の worker だけを再起動できる。claim 後の AI 送信は一度に限定し、クラッシュした処理は既存 180 秒の stale 回収で終端化する。token・JWT・prompt・生応答を運用ログへ貼らない。

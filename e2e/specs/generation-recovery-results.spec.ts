@@ -210,6 +210,39 @@ async function expectScrollableTablistContent(tablist: Locator): Promise<void> {
   }
 }
 
+test("background worker completes a menu beyond the synchronous AI deadline", async ({
+  authenticatedPage,
+}) => {
+  const page = authenticatedPage;
+  await completeIdeaPlannerToReview(page, 2);
+  await setMockScenario(page, "slow-background-success");
+  let postCount = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/generations/menu")
+      postCount += 1;
+  });
+  const acceptedAt = Date.now();
+  const accepted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/generations/menu",
+  );
+  await page.getByRole("button", { name: "献立を作る", exact: true }).click();
+  const response = await accepted;
+  expect(response.status()).toBe(202);
+  expect(Date.now() - acceptedAt).toBeLessThan(20_000);
+  const body: unknown = await response.json();
+  expect(
+    z
+      .object({ ok: z.literal(true), data: z.object({ status: z.literal("processing") }) })
+      .parse(body).data.status,
+  ).toBe("processing");
+  await expect(page).toHaveURL((url) => /^\/menus\/[0-9a-f-]{36}$/u.test(url.pathname), {
+    timeout: 90_000,
+  });
+  expect(postCount).toBe(1);
+});
+
 test(
   "resends the same key after the first POST is aborted before server acceptance (connectionreset, no handler completion)",
   {
@@ -739,15 +772,15 @@ for (const servings of [1, 20] as const) {
     } catch {
       generationResult = null;
     }
-    const succeededResponse = z
+    const acceptedResponse = z
       .object({
         ok: z.literal(true),
-        data: z.looseObject({ status: z.literal("succeeded") }),
+        data: z.looseObject({ status: z.literal("processing") }),
       })
       .safeParse(generationResult);
-    if (!generationResponse.ok() || !succeededResponse.success) {
+    if (generationResponse.status() !== 202 || !acceptedResponse.success) {
       throw new Error(
-        `献立生成POSTが成功終端になりませんでした（HTTP ${String(generationResponse.status())}）: ${generationResponseBody}`,
+        `献立生成POSTが受付状態になりませんでした（HTTP ${String(generationResponse.status())}）: ${generationResponseBody}`,
       );
     }
     await assertIdeaResultBoundary(page, servings);

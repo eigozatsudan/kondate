@@ -160,7 +160,12 @@ export default defineConfig({
       ignored: ["**/playwright-report/**", "**/test-results/**"],
     },
     ...(isE2eFunctionServer
-      ? { proxy: { "/api": { target: "http://127.0.0.1:5174", changeOrigin: true } } }
+      ? {
+          proxy: {
+            "/api": { target: "http://127.0.0.1:5174", changeOrigin: true },
+            "/.netlify/functions": { target: "http://127.0.0.1:5174", changeOrigin: true },
+          },
+        }
       : {}),
   },
   // fontsource の unicode-range スライスは 4KiB 未満が多く、既定の

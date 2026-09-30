@@ -255,12 +255,18 @@ export async function ensureOpenRouterRuntimeModelPolicy(input: {
       headers.Authorization = `Bearer ${input.apiKey}`;
     }
 
+    const metadataSignal = AbortSignal.timeout(OPENROUTER_MODELS_API_TIMEOUT_MS);
     let response: Response;
     try {
-      response = await fetchImpl(OFFICIAL_OPENROUTER_MODELS_URL, {
-        headers,
-        signal: AbortSignal.timeout(OPENROUTER_MODELS_API_TIMEOUT_MS),
-      });
+      // transport が abort を無視しても背景の受付予算を占有し続けない。
+      response = await awaitWithAbort(
+        () =>
+          fetchImpl(OFFICIAL_OPENROUTER_MODELS_URL, {
+            headers,
+            signal: metadataSignal,
+          }),
+        metadataSignal,
+      );
     } catch {
       // transport 詳細は閉じる（verify の openrouter_models_unavailable と同趣旨）
       throw new OpenRouterCallError("model_unavailable");
@@ -271,7 +277,7 @@ export async function ensureOpenRouterRuntimeModelPolicy(input: {
 
     let body: unknown;
     try {
-      body = (await response.json()) as unknown;
+      body = await awaitWithAbort(() => response.json(), metadataSignal);
     } catch {
       throw new OpenRouterCallError("model_unavailable");
     }
@@ -315,7 +321,10 @@ export const OPENROUTER_MAX_BODY_BYTES = 1 * 1024 * 1024;
  * transport が signal を無視しても、呼び出し元は送信締切で必ず待機を終える。
  * 遅れて失敗した operation も race が受け止め、listener は全経路で除去する。
  */
-async function awaitWithAbort<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function awaitWithAbort<T>(
+  operation: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   if (signal === undefined) return operation();
   if (signal.aborted) throw new OpenRouterCallError("generation_timeout");
   let rejectAbort!: (reason: OpenRouterCallError) => void;

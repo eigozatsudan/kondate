@@ -11,6 +11,7 @@ export const functionModulePaths = [
   "/netlify/functions/auth-continuation-claim.ts",
   "/netlify/functions/emergency-menus.ts",
   "/netlify/functions/generate-menu.ts",
+  "/netlify/functions/menu-generation-background.ts",
   "/netlify/functions/generate-dish.ts",
   "/netlify/functions/generation-status.ts",
   "/netlify/functions/revalidate-menu.ts",
@@ -90,10 +91,14 @@ async function writeResponse(response, nodeResponse) {
 
 export async function createE2eFunctionServer({ loadModule, logger }) {
   const modules = await Promise.all(functionModulePaths.map(loadModule));
-  const routes = modules.map((module) => ({
+  const routes = modules.map((module, index) => ({
     handler: module.default,
     method: module.config.method,
-    matchers: createMatchers(module.config.path),
+    background: module.config.background === true,
+    matchers: createMatchers(
+      module.config.path ??
+        `/.netlify/functions/${functionModulePaths[index].split("/").at(-1).replace(/\.ts$/u, "")}`,
+    ),
   }));
   return createServer(async (nodeRequest, nodeResponse) => {
     const url = new URL(
@@ -128,6 +133,22 @@ export async function createE2eFunctionServer({ loadModule, logger }) {
     try {
       const shouldDropResponse =
         nodeRequest.headers["x-kondate-e2e-drop-response"] === "after-handler";
+      if (route.background) {
+        // Netlify と同様、受付応答と独立した worker を起動する。例外本文はログに出さない。
+        // Node は応答終了時に未読の incoming body を破棄するため、独立実行前に
+        // Netlify の受信済みイベントと同様のメモリ上の Request へ写す。
+        const backgroundRequest = new Request(request.url, {
+          method: request.method,
+          headers: request.headers,
+          body: await request.arrayBuffer(),
+        });
+        void route
+          .handler(backgroundRequest, { params })
+          .catch(() => logger.error({ code: "e2e_background_handler_failed" }));
+        nodeResponse.writeHead(202);
+        nodeResponse.end();
+        return;
+      }
       const functionResponse = await route.handler(request, { params });
       if (shouldDropResponse) {
         // handlerのDB副作用を完了させた後、client responseだけを失わせるE2E専用seam。

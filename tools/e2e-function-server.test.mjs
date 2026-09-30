@@ -60,6 +60,10 @@ const routes = new Map([
     },
   ],
   [
+    "/netlify/functions/menu-generation-background.ts",
+    { config: { background: true }, default: async () => {} },
+  ],
+  [
     "/netlify/functions/generation-status.ts",
     {
       config: { path: "/api/generations/:idempotencyKey/status", method: "GET" },
@@ -387,4 +391,39 @@ test("closes the HTTP server and Vite middleware server exactly once", async () 
 
   assert.equal(viteCloseCount, 1);
   await assert.rejects(fetch("http://127.0.0.1:5174/api/auth/continuations"));
+});
+
+test("background execution retains the request body after its immediate 202", async () => {
+  let resolveBody;
+  let rejectBody;
+  const completion = new Promise((resolve, reject) => {
+    resolveBody = resolve;
+    rejectBody = reject;
+  });
+  await withServer(
+    async (path) => {
+      const module = routes.get(path);
+      if (path !== "/netlify/functions/menu-generation-background.ts") return module;
+      return {
+        ...module,
+        default: async (request) => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          try {
+            resolveBody(await request.json());
+          } catch (error) {
+            rejectBody(error);
+          }
+        },
+      };
+    },
+    async (origin) => {
+      const response = await fetch(`${origin}/.netlify/functions/menu-generation-background`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ command: "preserved" }),
+      });
+      assert.equal(response.status, 202);
+      assert.deepEqual(await completion, { command: "preserved" });
+    },
+  );
 });

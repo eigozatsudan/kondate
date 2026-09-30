@@ -348,6 +348,19 @@ export function projectProviderConflicts(
 /** generation_in_progress 合成失敗用。他行 request_id をクライアントへ載せない（G13）。 */
 const SYNTHETIC_IN_PROGRESS_REQUEST_ID = "00000000-0000-4000-8000-000000000098";
 
+/** 別 request の active 行を合成拒否へ投影するときは相関 ID を公開しない。 */
+export function toReservedGenerationStatus(
+  record: QuotaRequestRecord,
+  key: string,
+): GenerationStatusData {
+  return toGenerationStatus(
+    record.status === "failed" && record.failure_code === "generation_in_progress"
+      ? { ...record, request_id: SYNTHETIC_IN_PROGRESS_REQUEST_ID }
+      : record,
+    key,
+  );
+}
+
 export function toGenerationStatus(
   record: QuotaRequestRecord,
   idempotencyKey: string,
@@ -803,9 +816,30 @@ function unwrapStatusHydration(error: unknown): unknown {
   return error instanceof StatusHydrationError ? error.cause : error;
 }
 
+/** 受付だけを行い、既存キーは保存済み HMAC で照合する。AI 副作用は含めない。 */
+export async function reserveGeneration(
+  deps: GenerationDependencies,
+  command: GenerationCommand,
+): Promise<QuotaRequestRecord> {
+  const lookup = await deps.repository.lookup(command.request.idempotencyKey);
+  if (lookup.kind === "hit") return deps.repository.replayExisting(command, lookup);
+  const resolve =
+    deps.resolveIntegrityContext ??
+    ((input: GenerationCommand) =>
+      resolveGenerationIntegrityContext(getSupabaseAdmin(), deps.user.userId, input));
+  return deps.repository.reserveNew(command, await resolve(command));
+}
+
+/** 背景 worker だけが原子的 claim 後の照合済み予約を渡す。同期呼出の既定値は維持する。 */
+export type GenerationExecutionOptions = {
+  reservation?: QuotaRequestRecord;
+  attemptTimeoutMs?: number;
+};
+
 export async function runGeneration(
   inputDeps: GenerationDependencies,
   command: GenerationCommand,
+  options: GenerationExecutionOptions = {},
 ): Promise<GenerationStatusData> {
   const key = command.request.idempotencyKey;
   // 品質モードは Plus リストのみ（repair も command.qualityMode / スナップショット継承）。
@@ -822,7 +856,7 @@ export async function runGeneration(
         apiKey: envForModels.openRouter.apiKey,
         baseUrl: envForModels.openRouter.baseUrl,
         models: envForModels.openRouter.plusModels,
-        timeoutMs: envForModels.openRouter.timeoutMs,
+        timeoutMs: inputDeps.openRouterTimeoutMs,
       })
     : null;
   const callOpenRouter: GenerationDependencies["callOpenRouter"] =
@@ -838,16 +872,7 @@ export async function runGeneration(
   };
   // 品質リスト空の 503 は Plus 利用者だけ（Free / kill は repository の 403 quality_mode_requires_plus を先に返す）
   // 空チェック自体は reserveNew 後・OpenRouter 直前で行い、Free 経路で 503 が CTA を潰さないようにする。
-  const resolveIntegrity =
-    deps.resolveIntegrityContext ??
-    ((input: GenerationCommand) =>
-      resolveGenerationIntegrityContext(getSupabaseAdmin(), deps.user.userId, input));
-  // ledger-first: hit は保存済み integrity だけで replay し、live draft/menu を読まない
-  const lookup = await deps.repository.lookup(key);
-  const reserved =
-    lookup.kind === "hit"
-      ? await deps.repository.replayExisting(command, lookup)
-      : await deps.repository.reserveNew(command, await resolveIntegrity(command));
+  const reserved = options.reservation ?? (await reserveGeneration(deps, command));
   const hydrate = async () => {
     try {
       return toGenerationStatus(await deps.repository.status(key), key);
@@ -855,7 +880,10 @@ export async function runGeneration(
       throw new StatusHydrationError(error);
     }
   };
-  if (reserved.status !== "processing" || reserved.replayed === true) {
+  if (
+    reserved.status !== "processing" ||
+    (reserved.replayed === true && options.reservation === undefined)
+  ) {
     // G1 residual-intentional: processing 中の同一 key 再 POST は replay のみで
     // load/OpenRouter を再開しない。孤児は AI_PROCESSING_STALE_SECONDS=180 まで占有
     //（アプリ 26s / platform 実効 30s より長いのはロック残差。stale 値は緩めない）。
@@ -933,7 +961,7 @@ export async function runGeneration(
   const remainingMs = () => deadlineAtMonotonicMs - deps.monotonicNow();
   const timeoutForAttempt = () =>
     Math.min(
-      ATTEMPT_TIMEOUT_MS,
+      options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS,
       deps.openRouterTimeoutMs,
       Math.max(0, remainingMs() - FINALIZE_RESERVE_MS),
     );

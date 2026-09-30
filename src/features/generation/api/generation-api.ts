@@ -52,6 +52,13 @@ const generationEnvelopeSchema = z.discriminatedUnion("ok", [
     .strict(),
 ]);
 
+/** IP 制限は業務失敗と区別し、pending を保持して時間をおいて回収する。 */
+export class GenerationStatusRateLimitError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super("generation_status_rate_limited");
+  }
+}
+
 async function call(
   url: string,
   init: RequestInit,
@@ -68,7 +75,25 @@ async function call(
       "Content-Type": "application/json",
     },
   });
-  const envelope = generationEnvelopeSchema.parse(await response.json());
+  const rateLimitError = () => {
+    const seconds = Number(response.headers.get("retry-after"));
+    return new GenerationStatusRateLimitError(
+      Number.isFinite(seconds) && seconds > 0
+        ? Math.min(180_000, Math.max(5_000, seconds * 1000))
+        : 30_000,
+    );
+  };
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch (error) {
+    if (response.status === 429 && init.method === "GET") throw rateLimitError();
+    throw error;
+  }
+  const parsed = generationEnvelopeSchema.safeParse(raw);
+  if (response.status === 429 && init.method === "GET" && (!parsed.success || !parsed.data.ok))
+    throw rateLimitError();
+  const envelope = generationEnvelopeSchema.parse(raw);
   if (!envelope.ok) {
     throw new Error(envelope.error.code);
   }

@@ -88,7 +88,7 @@ Auth の Site URL / Google / **Custom SMTP** は [supabase.md](./supabase.md) �
 ### 同期 Function のプラットフォーム上限（ロック済み再整合）
 
 公式ドキュメントは同期 Function 実行上限を **60 秒固定・非設定**と書く（Background は 15 分だが
-本プロダクトは同期のみ・背景継続禁止）。しかし本番 Netlify **Free** プランの実効上限は約 **30 秒**
+献立全体以外の既存経路は同期のまま）。しかし本番 Netlify **Free** プランの実効上限は約 **30 秒**
 であることを実測した: 2026-09-27 本番で `POST /api/generations/menu` が 30,769ms で 502（text/plain、
 関数ログなし）になり、Netlify のプラットフォームが約 30 秒で関数を切った（行は processing のまま残り、
 180 秒後に `generation_timeout`/503 化）。公式 doc の 60s とは食い違う。
@@ -280,3 +280,19 @@ secret なしのプローブは **env の有無に関わらず 401** になる�
 解除は対象 UUID を削除して再デプロイする。空・未設定なら誰にも付与しない。不正な項目が混ざると全体を拒否する。反映後の次のサーバー権益確認から適用され、画面のプラン情報は再読み込みで更新できる。
 
 無料付与は Stripe 契約の作成・解約・返金を行わない。既存の有料契約があれば請求は継続するため、必要な解約は通常の契約管理手順で行う。`BILLING_ENABLED=false` 中は Checkout/Portal は停止するが、開発者の Plus 利用は継続する。Plus の利用枠・安全検査・アプリ全体の AI 上限は通常の Plus と同じ。アプリの利用料が無料でも、運営側の AI API 利用費は発生する。DB 障害時は無料付与でも従来どおり利用を停止する。
+
+### 献立全体の背景生成（2026-09-30）
+
+`new_menu` / `regenerate_menu` は同期 POST で認証・HMAC 照合・quota 予約を行い、既存 JSON の `processing` を 202 で返す。`menu-generation-background` は Netlify Background Function として独立して実行し、ブラウザは status GET から完了を取得する。GPT-6 Luna と `OPENROUTER_MODELS` は変更しない。
+
+背景用予算は台帳の受付時刻から総 120 秒・1 試行 90 秒（キュー遅延込み）。dish / weekly / flyer の同期 26 秒・試行 20 秒、quota・180 秒 stale・RLS は従来値を維持する。claim 後のクラッシュは再送しない。dispatch 応答消失時は processing を保持し、同じキーの再送または stale 回収を使う。
+
+リリースは `20260930101402_menu_background_claim.sql` を先に DB へ適用し、Functions とブラウザを同じリリースで反映する。追加 RPC の実行権限は service_role のみ。JWT・command・prompt は DB に保存しない。新しい環境変数や secret は不要。`SERVER_SITE_ORIGIN` は worker を呼べる信頼済み本番 origin と一致させる。
+
+ローカル E2E も即時 202 の独立 worker を実行する。status poll は 5 秒以上、IP 制限の 429 は待機して再取得する。背景機能は [Netlify 公式資料](https://docs.netlify.com/build/functions/background-functions/) の上限内で使用する。
+
+worker は POST 限定、入口で IP ごとに 180 秒 / 5000 回を制限する。この値は共通送信元 IP を使う正当な内部 dispatch の運用余裕であり、global quota から導く上限ではない。通常 API の 40 回 / 180 秒は変更しない。domain 集約は使用しない。
+
+内部 dispatch は既存 `GENERATION_REQUEST_HMAC_KEY` を用途分離した HMAC で署名し、Bearer・method/path・時刻・raw JSON 本文を束縛する。署名の欠落・改ざん・未来時刻・125 秒以上経過は Auth/DB 前に拒否する。本文読取の待機も 5 秒に制限する。恒久的な入力・認証の 4xx 拒否は正常終了し、platform の失敗再試行を増幅させない。一時的な network / DB / 503 障害は再試行対象だが、一度だけの claim は維持する。新しい secret は不要で、署名・Bearer・token はログ・DB・status DTO へ保存しない。
+
+通常開発の installed `@netlify/vite-plugin` は `@netlify/dev` の Functions handler を使い、背景 suffix と `config.background` の認識を確認した。通常開発 SDK の独立した即時 202 の実行挙動は静的確認だけでは未検証であり、独自 E2E worker の成功と区別する。

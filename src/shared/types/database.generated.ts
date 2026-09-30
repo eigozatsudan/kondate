@@ -33,6 +33,8 @@ export type Database = {
       ai_generation_requests: {
         Row: {
           actual_model_ids: string[]
+          background_claimed_at: string | null
+          background_dispatch_token: string | null
           change_reason: string | null
           completed_at: string | null
           completed_menu_id: string | null
@@ -71,6 +73,8 @@ export type Database = {
         }
         Insert: {
           actual_model_ids?: string[]
+          background_claimed_at?: string | null
+          background_dispatch_token?: string | null
           change_reason?: string | null
           completed_at?: string | null
           completed_menu_id?: string | null
@@ -109,6 +113,8 @@ export type Database = {
         }
         Update: {
           actual_model_ids?: string[]
+          background_claimed_at?: string | null
+          background_dispatch_token?: string | null
           change_reason?: string | null
           completed_at?: string | null
           completed_menu_id?: string | null
@@ -2777,6 +2783,10 @@ export type Database = {
           return_to: string
         }[]
       }
+      claim_menu_background_dispatch: {
+        Args: { p_request_id: string; p_token: string; p_user_id: string }
+        Returns: boolean
+      }
       claim_share_generalization_jobs: {
         Args: { p_limit: number }
         Returns: Json
@@ -3219,6 +3229,10 @@ export type Database = {
           p_user_id: string
           p_warnings: Json
         }
+        Returns: Json
+      }
+      register_menu_background_dispatch: {
+        Args: { p_request_id: string; p_token: string; p_user_id: string }
         Returns: Json
       }
       release_account_delete_lock: {
