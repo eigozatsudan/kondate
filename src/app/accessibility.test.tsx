@@ -85,6 +85,22 @@ vi.mock("@/features/shopping/api/shopping-api", async (importOriginal) => {
   return { ...original, ...shoppingApiMocks };
 });
 
+const listHouseholdMembersMock = vi.hoisted(() => vi.fn());
+const listMemberDislikesMock = vi.hoisted(() => vi.fn());
+const addMemberDislikeMock = vi.hoisted(() => vi.fn());
+const deleteMemberDislikeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/features/household/household-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/household/household-api")>();
+  return {
+    ...original,
+    listHouseholdMembers: listHouseholdMembersMock,
+    listMemberDislikes: listMemberDislikesMock,
+    addMemberDislike: addMemberDislikeMock,
+    deleteMemberDislike: deleteMemberDislikeMock,
+  };
+});
+
 vi.mock("@/shared/lib/supabase", () => ({
   getBrowserSupabaseClient: () => ({
     auth: {
@@ -176,6 +192,14 @@ function ensureAppRoot(): HTMLElement {
 
 beforeEach(() => {
   getMenuResultMock.mockReset();
+  listHouseholdMembersMock.mockReset();
+  listHouseholdMembersMock.mockResolvedValue([]);
+  listMemberDislikesMock.mockReset();
+  listMemberDislikesMock.mockResolvedValue([]);
+  addMemberDislikeMock.mockReset();
+  addMemberDislikeMock.mockResolvedValue({ id: "created" });
+  deleteMemberDislikeMock.mockReset();
+  deleteMemberDislikeMock.mockResolvedValue(undefined);
   getGenerationStatusMock.mockReset();
   getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
   getUsageTodayMock.mockReset();

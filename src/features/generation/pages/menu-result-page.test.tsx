@@ -109,6 +109,22 @@ vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
   };
 });
 
+const listHouseholdMembersMock = vi.hoisted(() => vi.fn());
+const listMemberDislikesMock = vi.hoisted(() => vi.fn());
+const addMemberDislikeMock = vi.hoisted(() => vi.fn());
+const deleteMemberDislikeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/features/household/household-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/household/household-api")>();
+  return {
+    ...original,
+    listHouseholdMembers: listHouseholdMembersMock,
+    listMemberDislikes: listMemberDislikesMock,
+    addMemberDislike: addMemberDislikeMock,
+    deleteMemberDislike: deleteMemberDislikeMock,
+  };
+});
+
 const VALID_MENU_ID = "30000000-0000-4000-8000-000000000001";
 const USER_A_ID = "31000000-0000-4000-8000-000000000001";
 const USER_B_ID = "31000000-0000-4000-8000-000000000002";
@@ -235,6 +251,14 @@ beforeEach(() => {
   // 後続テストの query を paused にする。各 it の先頭で戻す。
   onlineManager.setOnline(true);
   vi.clearAllMocks();
+  listHouseholdMembersMock.mockReset();
+  listHouseholdMembersMock.mockResolvedValue([]);
+  listMemberDislikesMock.mockReset();
+  listMemberDislikesMock.mockResolvedValue([]);
+  addMemberDislikeMock.mockReset();
+  addMemberDislikeMock.mockResolvedValue({ id: "created" });
+  deleteMemberDislikeMock.mockReset();
+  deleteMemberDislikeMock.mockResolvedValue(undefined);
   sessionStorage.clear();
   localStorage.clear();
   getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
@@ -1170,6 +1194,18 @@ describe("MenuResultPage", () => {
         "true",
       );
     });
+  });
+
+  it("shows the dislike button on a household generation result when a member is complete", async () => {
+    // このファイルの beforeEach は献立本文を置かない。材料まで描く既定が無いので、
+    // 履歴詳細と同じ household フィクスチャをこのテストだけに足す。
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+    listHouseholdMembersMock.mockResolvedValue([
+      { id: "member-a", status: "complete", display_name: "はな" },
+    ]);
+    listMemberDislikesMock.mockResolvedValue([]);
+    renderPage(`/menus/${VALID_MENU_ID}`);
+    expect(await screen.findByRole("button", { name: "しょうゆを苦手に登録" })).toBeVisible();
   });
 });
 

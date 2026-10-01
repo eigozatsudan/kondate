@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { MenuResultViewModel } from "@shared/contracts/menu-result";
@@ -34,6 +34,19 @@ import {
   hasMissingPantrySelectionsForRegeneration,
   listExpiredPantryForRegeneration,
 } from "@/features/history/model/expired-pantry-for-regen";
+import {
+  addMemberDislike,
+  deleteMemberDislike,
+  listHouseholdMembers,
+  listMemberDislikes,
+  type HouseholdMemberRow,
+  type MemberDislikeRow,
+} from "@/features/household/household-api";
+import { dislikeIdentity } from "@/features/household/member-dislike-identity";
+import {
+  householdKeys,
+  invalidateHouseholdSafetyDependents,
+} from "@/features/household/household-queries";
 import {
   createPantryItem,
   deletePantryItem,
@@ -80,8 +93,69 @@ import {
 import { getBrowserSupabaseClient } from "@/shared/lib/supabase";
 import { Button } from "@/shared/ui/button";
 import { Stack } from "@/shared/ui/stack";
+import { IngredientDislikeDialog } from "./ingredient-dislike-dialog";
 import { type MenuDetailRevalidationView, type MenuDetailSurface } from "./menu-detail-types";
+import {
+  saveIngredientDislikes,
+  type DislikeBaselineRow,
+  type SaveIngredientDislikesInput,
+  type SaveIngredientDislikesResult,
+} from "./save-ingredient-dislikes";
 import { usageViewFromQuery } from "./usage-view-from-query";
+
+const NO_HOUSEHOLD_MEMBERS: readonly HouseholdMemberRow[] = [];
+const NO_DISLIKE_ROWS: readonly DislikeBaselineRow[] = [];
+
+/** 設定画面の表示名関数は移さない。空白だけは未設定と同じにする。 */
+function memberDisplayName(displayName: string | null): string {
+  return displayName?.trim() || "名前未設定";
+}
+
+/**
+ * 登録完了の全員の苦手が成功したときだけヒントと baseline の元を返す。
+ * 1人でも pending または error ならヒントは出さない。
+ * メンバー取得失敗で登録完了が0人のときは failed にしない（ダイアログは家族側のエラーだけ出す）。
+ */
+function collectCompleteDislikes(
+  members: readonly HouseholdMemberRow[],
+  queries: readonly {
+    isError: boolean;
+    isSuccess: boolean;
+    data: MemberDislikeRow[] | undefined;
+  }[],
+): {
+  failed: boolean;
+  ready: boolean;
+  rows: readonly DislikeBaselineRow[];
+  registered: { displayName: string; identities: string[] }[] | undefined;
+} {
+  const failed = members.length > 0 && queries.some((query) => query.isError);
+  if (members.length === 0 || queries.length !== members.length || failed) {
+    return { failed, ready: false, rows: NO_DISLIKE_ROWS, registered: undefined };
+  }
+  if (!queries.every((query) => query.isSuccess)) {
+    return { failed: false, ready: false, rows: NO_DISLIKE_ROWS, registered: undefined };
+  }
+  const rows: DislikeBaselineRow[] = [];
+  const registered: { displayName: string; identities: string[] }[] = [];
+  for (const [index, member] of members.entries()) {
+    const data = queries.at(index)?.data;
+    if (data === undefined) {
+      return { failed: false, ready: false, rows: NO_DISLIKE_ROWS, registered: undefined };
+    }
+    const identities: string[] = [];
+    for (const row of data) {
+      identities.push(dislikeIdentity(row.ingredient_name));
+      rows.push({
+        id: row.id,
+        memberId: row.member_id,
+        ingredientName: row.ingredient_name,
+      });
+    }
+    registered.push({ displayName: memberDisplayName(member.display_name), identities });
+  }
+  return { failed: false, ready: true, rows, registered };
+}
 
 export type HouseholdMenuDetailBodyProps = {
   result: MenuResultViewModel;
@@ -140,6 +214,28 @@ export function HouseholdMenuDetailBody({
     queryFn: () => listPantryItems(getBrowserSupabaseClient(), userId ?? ""),
     enabled: userId !== undefined,
   });
+  // 一括 API は無い。登録完了の人ごとに苦手を取る。userId が無いときは問い合わせない。
+  const membersQuery = useQuery({
+    queryKey: householdKeys.members(userId ?? "missing"),
+    queryFn: () => listHouseholdMembers(getBrowserSupabaseClient(), userId ?? ""),
+    enabled: userId !== undefined,
+  });
+  const completeMembers = useMemo(
+    () =>
+      (membersQuery.data ?? NO_HOUSEHOLD_MEMBERS).filter((member) => member.status === "complete"),
+    [membersQuery.data],
+  );
+  const dislikeQueries = useQueries({
+    queries: completeMembers.map((member) => ({
+      queryKey: householdKeys.dislikes(userId ?? "missing", member.id),
+      queryFn: (): Promise<MemberDislikeRow[]> => {
+        if (userId === undefined) return Promise.resolve([]);
+        return listMemberDislikes(getBrowserSupabaseClient(), userId, member.id);
+      },
+      enabled: userId !== undefined,
+    })),
+  });
+  const dislikeViews = collectCompleteDislikes(completeMembers, dislikeQueries);
   const expiredPantryItems = useMemo(
     () =>
       listExpiredPantryForRegeneration(result.sourceSubmission, pantryQuery.data ?? [], new Date()),
@@ -184,6 +280,13 @@ export function HouseholdMenuDetailBody({
   const siblingVersions = versionsQuery.data ?? [];
   const { confirmedSingle, versionsFailed } = derivationVersionUiState(versionsQuery);
   const [sheetMode, setSheetMode] = useState<"whole" | "dish" | null>(null);
+  // 再確認で MenuResult が外れてもダイアログを残すため、gateOpen の外に持つ。
+  const [dislikeTarget, setDislikeTarget] = useState<{ id: string; name: string } | null>(null);
+  const [dislikeBaseline, setDislikeBaseline] = useState<readonly DislikeBaselineRow[]>([]);
+  // 0 は開いたときの一覧がまだ無い。ready の最初の1回だけ baseline を採用する。
+  const [dislikeEpoch, setDislikeEpoch] = useState(0);
+  // 再確認バナーとは別要素。確認中へ進んでも消さない。
+  const [dislikeNotice, setDislikeNotice] = useState<string | null>(null);
   const [postCookOpen, setPostCookOpen] = useState(false);
   const [selectedDishId, setSelectedDishId] = useState<string | null>(null);
   /** 採用成功後は買い物リスト作成を主操作に昇格。is_selected も hydrate。 */
@@ -198,6 +301,14 @@ export function HouseholdMenuDetailBody({
   useEffect(() => {
     setAccepted(result.isSelected);
   }, [menuId, result.isSelected]);
+
+  // epoch が 0 のときだけ、最初に ready になった一覧を baseline にする。
+  // その後の query 更新（他タブの追加など）では置き換えない。進められるのはダイアログの reconcile だけ。
+  useEffect(() => {
+    if (dislikeTarget === null || dislikeEpoch !== 0 || !dislikeViews.ready) return;
+    setDislikeBaseline(dislikeViews.rows);
+    setDislikeEpoch(1);
+  }, [dislikeEpoch, dislikeTarget, dislikeViews.ready, dislikeViews.rows]);
 
   // gateOpen: 本文表示（soft 飛行中も直前 checked を維持 = focus 点滅防止）
   // HR2: preference_changed はレシピ調理を許さないので本文も閉じる。
@@ -735,6 +846,63 @@ export function HouseholdMenuDetailBody({
     }
   };
 
+  const openIngredientDislike = (ingredient: { id: string; name: string }): void => {
+    if (userId === undefined) return;
+    setDislikeTarget(ingredient);
+    if (dislikeViews.ready) {
+      setDislikeBaseline(dislikeViews.rows);
+      setDislikeEpoch((epoch) => epoch + 1);
+    } else {
+      setDislikeEpoch(0);
+    }
+  };
+  const closeIngredientDislike = (): void => {
+    setDislikeTarget(null);
+    setDislikeEpoch(0);
+    setDislikeBaseline([]);
+  };
+  const saveDislikes = (
+    input: SaveIngredientDislikesInput,
+  ): Promise<SaveIngredientDislikesResult> => {
+    if (userId === undefined) return Promise.resolve({ kind: "no_diff" });
+    const client = getBrowserSupabaseClient();
+    return saveIngredientDislikes(
+      {
+        addMemberDislike: (memberId, ingredientName) =>
+          addMemberDislike(client, userId, memberId, ingredientName),
+        deleteMemberDislike: (dislikeId) => deleteMemberDislike(client, userId, dislikeId),
+        listMemberDislikes: async (memberId) => {
+          const rows = await listMemberDislikes(client, userId, memberId);
+          return rows.map((row) => ({
+            id: row.id,
+            memberId: row.member_id,
+            ingredientName: row.ingredient_name,
+          }));
+        },
+      },
+      input,
+      () => invalidateHouseholdSafetyDependents(queryClient, userId),
+    );
+  };
+  const dialogMembers = completeMembers.map((member) => ({
+    id: member.id,
+    displayName: memberDisplayName(member.display_name),
+  }));
+  // 取得中と登録完了0人はボタンを出さない。失敗、または登録完了が1人以上のときだけ出す。
+  const showIngredientDislike =
+    userId !== undefined &&
+    (membersQuery.isError || (membersQuery.isSuccess && completeMembers.length > 0));
+  const registeredDislikes = dislikeViews.registered;
+  // ボタンを出す条件に userId があるので、ここで重ねて見ない。
+  const ingredientDislikeProps = showIngredientDislike
+    ? {
+        onRegisterIngredientDislike: openIngredientDislike,
+        ...(registeredDislikes !== undefined ? { registeredDislikes } : {}),
+      }
+    : {};
+  const dislikesFailed = dislikeViews.failed;
+  const dislikesReady = dislikeViews.ready;
+
   // 横はみ出し抑止と guided-planner 互換は .menu-detail-page 意味クラスへ退避。
   return (
     <main className="page-frame guided-planner-theme menu-detail-page">
@@ -820,6 +988,7 @@ export function HouseholdMenuDetailBody({
                 regenerateSelectedDishDisabled={
                   dishIdForRegen === null || !pantryGateReady || !actionsEnabled
                 }
+                {...ingredientDislikeProps}
               />
             ) : (
               <MenuResult
@@ -841,6 +1010,7 @@ export function HouseholdMenuDetailBody({
                 regenerateSelectedDishDisabled={
                   dishIdForRegen === null || !pantryGateReady || !actionsEnabled
                 }
+                {...ingredientDislikeProps}
               />
             )}
             {acceptError !== null && <p role="alert">{acceptError}</p>}
@@ -1096,6 +1266,27 @@ export function HouseholdMenuDetailBody({
             />
           )}
 
+        {dislikeNotice !== null ? <p role="status">{dislikeNotice}</p> : null}
+        {dislikeTarget !== null && userId !== undefined ? (
+          <IngredientDislikeDialog
+            ingredientName={dislikeTarget.name}
+            triggerId={`ingredient-dislike-trigger-${dislikeTarget.id}`}
+            members={dialogMembers}
+            membersStatus={
+              membersQuery.isError ? "error" : membersQuery.isSuccess ? "ready" : "pending"
+            }
+            dislikesStatus={dislikesFailed ? "error" : dislikesReady ? "ready" : "pending"}
+            baseline={dislikeBaseline}
+            baselineEpoch={dislikeEpoch}
+            save={saveDislikes}
+            onClose={closeIngredientDislike}
+            onComplete={setDislikeNotice}
+            onBaselineReconciled={(baseline) => {
+              setDislikeBaseline(baseline);
+              setDislikeEpoch((epoch) => epoch + 1);
+            }}
+          />
+        ) : null}
         {sheetMode !== null && (
           <RegenerationSheet
             targetMode="household"

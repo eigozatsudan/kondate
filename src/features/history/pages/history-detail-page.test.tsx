@@ -13,7 +13,9 @@ import {
 import { makeMenuResultViewModel } from "@shared/testing/factories";
 import { AuthContext, type AuthContextValue } from "@/features/auth/auth-context";
 import { MenuResultPage } from "@/features/generation/pages/menu-result-page";
+import type { HouseholdMemberRow } from "@/features/household/household-api";
 import {
+  householdKeys,
   householdSafetyChangedEvent,
   householdSafetyRevisionKey,
 } from "@/features/household/household-queries";
@@ -106,6 +108,33 @@ vi.mock("@/features/pantry/pantry-api", async (importOriginal) => {
     deletePantryItem: deletePantryItemMock,
     updatePantryItem: updatePantryItemMock,
     createPantryItem: createPantryItemMock,
+  };
+});
+const listHouseholdMembersMock = vi.hoisted(() => vi.fn());
+const listMemberDislikesMock = vi.hoisted(() => vi.fn());
+const addMemberDislikeMock = vi.hoisted(() => vi.fn());
+const deleteMemberDislikeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/features/household/household-api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/household/household-api")>();
+  return {
+    ...original,
+    listHouseholdMembers: listHouseholdMembersMock,
+    listMemberDislikes: listMemberDislikesMock,
+    addMemberDislike: addMemberDislikeMock,
+    deleteMemberDislike: deleteMemberDislikeMock,
+  };
+});
+
+const invalidateHouseholdSafetyDependentsMock = vi.hoisted(() =>
+  vi.fn(() => Promise.resolve(undefined)),
+);
+
+vi.mock("@/features/household/household-queries", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/features/household/household-queries")>();
+  return {
+    ...original,
+    invalidateHouseholdSafetyDependents: invalidateHouseholdSafetyDependentsMock,
   };
 });
 vi.mock("@/shared/lib/supabase", () => ({
@@ -383,6 +412,16 @@ function fireSafetySignal(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listHouseholdMembersMock.mockReset();
+  listHouseholdMembersMock.mockResolvedValue([]);
+  listMemberDislikesMock.mockReset();
+  listMemberDislikesMock.mockResolvedValue([]);
+  addMemberDislikeMock.mockReset();
+  addMemberDislikeMock.mockResolvedValue({ id: "created" });
+  deleteMemberDislikeMock.mockReset();
+  deleteMemberDislikeMock.mockResolvedValue(undefined);
+  invalidateHouseholdSafetyDependentsMock.mockReset();
+  invalidateHouseholdSafetyDependentsMock.mockResolvedValue(undefined);
   sessionStorage.clear();
   getGenerationStatusMock.mockRejectedValue(new Error("status_not_stubbed"));
   // jsdom 向け native dialog ポリフィル（再生成理由ダイアログ用）
@@ -1979,5 +2018,207 @@ describe("MenuResultPage shared revalidation gate", () => {
     expect(
       screen.getByRole("button", { name: "本人が商品の原材料表示を確認しました" }),
     ).toBeVisible();
+  });
+});
+
+function dislikeMember(
+  overrides: Partial<HouseholdMemberRow> & Pick<HouseholdMemberRow, "id">,
+): HouseholdMemberRow {
+  return {
+    user_id: USER_ID,
+    status: "complete",
+    display_name: null,
+    age_band: "adult",
+    portion_size: "standard",
+    spice_level: "standard",
+    ease_preferences: [],
+    required_safety_constraints: [],
+    allergy_status: "none",
+    unsupported_diet_status: "absent",
+    unsupported_diet_kinds: [],
+    sort_order: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+    id: overrides.id,
+  };
+}
+
+const hanaMember = dislikeMember({ id: "member-a", display_name: "はな", sort_order: 0 });
+const unsetNameMember = dislikeMember({
+  id: "member-b",
+  display_name: "   ",
+  sort_order: 1,
+  created_at: "2026-01-02T00:00:00Z",
+});
+const draftMember = dislikeMember({
+  id: "member-draft",
+  status: "draft",
+  display_name: "下書き",
+  sort_order: 2,
+  created_at: "2026-01-03T00:00:00Z",
+});
+const completeMembers = [hanaMember, unsetNameMember, draftMember];
+
+async function openSoyDislike(): Promise<void> {
+  await userEvent.click(await screen.findByRole("button", { name: "しょうゆを苦手に登録" }));
+  expect(await screen.findByRole("dialog", { name: "苦手な食べ物" })).toBeVisible();
+}
+
+describe("HistoryDetailPage ingredient dislikes", () => {
+  it("hides the dislike button when no member has completed setup", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "household" }));
+    renderHistoryDetail();
+    expect(await screen.findByRole("heading", { name: "材料" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /を苦手に登録$/u })).not.toBeInTheDocument();
+  });
+
+  it("hides the dislike button on an idea menu", async () => {
+    getMenuResultMock.mockResolvedValue(makeMenuResultViewModel({ targetMode: "idea" }));
+    listHouseholdMembersMock.mockResolvedValue(completeMembers);
+    renderHistoryDetail();
+    expect(await screen.findByRole("heading", { name: "材料" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /を苦手に登録$/u })).not.toBeInTheDocument();
+  });
+
+  it("adds and deletes dislikes for complete members and invalidates after a commit", async () => {
+    listHouseholdMembersMock.mockResolvedValue(completeMembers);
+    listMemberDislikesMock.mockImplementation(
+      (_client: unknown, _userId: string, memberId: string) => {
+        if (memberId === "member-a") {
+          return Promise.resolve([
+            {
+              id: "row-a",
+              member_id: "member-a",
+              user_id: USER_ID,
+              ingredient_name: "しょうゆ",
+              created_at: "2026-01-01T00:00:00Z",
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      },
+    );
+    renderHistoryDetail();
+    await openSoyDislike();
+    expect(screen.getByRole("checkbox", { name: "はな" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "名前未設定" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "下書き" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "しょうゆを苦手に登録" }).parentElement,
+    ).toHaveTextContent("はな");
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "はな" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "名前未設定" }));
+    await userEvent.click(screen.getByRole("button", { name: "保存する" }));
+
+    expect(deleteMemberDislikeMock).toHaveBeenCalledWith(expect.anything(), USER_ID, "row-a");
+    expect(addMemberDislikeMock).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      "member-b",
+      "しょうゆ",
+    );
+    expect(invalidateHouseholdSafetyDependentsMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: "苦手な食べ物" })).not.toBeInTheDocument();
+    expect(screen.getByText("苦手を更新しました")).toHaveAttribute("role", "status");
+  });
+
+  it("does not invalidate when an add fails before any commit, and refetches without classifying the error", async () => {
+    listHouseholdMembersMock.mockResolvedValue(completeMembers);
+    listMemberDislikesMock.mockResolvedValue([]);
+    addMemberDislikeMock.mockRejectedValue(
+      new Error("苦手食材は1〜80文字で重複なく登録してください"),
+    );
+    renderHistoryDetail();
+    await openSoyDislike();
+    await userEvent.click(screen.getByRole("checkbox", { name: "はな" }));
+    await userEvent.click(screen.getByRole("button", { name: "保存する" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "苦手食材は1〜80文字で重複なく登録してください",
+    );
+    expect(listMemberDislikesMock).toHaveBeenCalled();
+    expect(invalidateHouseholdSafetyDependentsMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "苦手な食べ物" })).toBeVisible();
+  });
+
+  it("does not delete a dislike another tab adds after the dialog opens", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    listHouseholdMembersMock.mockResolvedValue(completeMembers);
+    listMemberDislikesMock.mockResolvedValue([]);
+    renderHistoryDetail({ queryClient });
+    await openSoyDislike();
+    queryClient.setQueryData(householdKeys.dislikes(USER_ID, "member-b"), [
+      {
+        id: "late-row",
+        member_id: "member-b",
+        user_id: USER_ID,
+        ingredient_name: "しょうゆ",
+        created_at: "2026-01-04T00:00:00Z",
+      },
+    ]);
+    await userEvent.click(screen.getByRole("checkbox", { name: "はな" }));
+    await userEvent.click(screen.getByRole("button", { name: "保存する" }));
+    expect(deleteMemberDislikeMock).not.toHaveBeenCalled();
+    expect(addMemberDislikeMock).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      "member-a",
+      "しょうゆ",
+    );
+  });
+
+  it("counts a delete of a missing id as a commit", async () => {
+    listHouseholdMembersMock.mockResolvedValue([hanaMember]);
+    listMemberDislikesMock.mockResolvedValue([
+      {
+        id: "gone",
+        member_id: "member-a",
+        user_id: USER_ID,
+        ingredient_name: "しょうゆ",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    deleteMemberDislikeMock.mockResolvedValue(undefined);
+    renderHistoryDetail();
+    await openSoyDislike();
+    await userEvent.click(screen.getByRole("checkbox", { name: "はな" }));
+    await userEvent.click(screen.getByRole("button", { name: "保存する" }));
+    expect(deleteMemberDislikeMock).toHaveBeenCalledWith(expect.anything(), USER_ID, "gone");
+    expect(invalidateHouseholdSafetyDependentsMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("しょうゆの苦手を外しました")).toHaveAttribute("role", "status");
+  });
+
+  it("closes the dialog and shows only the refresh failure sentence when invalidate throws", async () => {
+    listHouseholdMembersMock.mockResolvedValue([hanaMember]);
+    listMemberDislikesMock.mockResolvedValue([]);
+    invalidateHouseholdSafetyDependentsMock.mockRejectedValue(new Error("cache"));
+    renderHistoryDetail();
+    await openSoyDislike();
+    await userEvent.click(screen.getByRole("checkbox", { name: "はな" }));
+    await userEvent.click(screen.getByRole("button", { name: "保存する" }));
+    expect(screen.queryByRole("dialog", { name: "苦手な食べ物" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "家族設定を保存しました。画面の再確認に失敗したため、献立・履歴を開き直すか再読み込みしてください。",
+      ),
+    ).toHaveAttribute("role", "status");
+    expect(screen.queryByText("しょうゆを苦手に覚えました")).not.toBeInTheDocument();
+  });
+
+  it("keeps the dislike dialog mounted when revalidation hides the recipe", async () => {
+    listHouseholdMembersMock.mockResolvedValue([hanaMember]);
+    listMemberDislikesMock.mockResolvedValue([]);
+    renderHistoryDetail();
+    await openSoyDislike();
+    revalidateMenuMock.mockResolvedValue({
+      ...validRevalidation,
+      changedDetails: ["preference_changed"],
+    });
+    for (const handler of channelHandlers.dislikes) handler();
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "材料" })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("dialog", { name: "苦手な食べ物" })).toBeVisible();
   });
 });
