@@ -159,7 +159,7 @@ export function IngredientDislikeDialog({
           <h2 id={titleId} className="history-dialog-title">
             苦手な食べ物
           </h2>
-          <label>
+          <label className="field">
             食べ物の名前
             <input
               value={name}
