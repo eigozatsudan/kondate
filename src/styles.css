@@ -2412,6 +2412,21 @@ dialog:not([open]) {
   text-align: right;
 }
 
+.menu-result-ingredient-dislike {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  margin-top: var(--space-2);
+  gap: var(--space-1);
+}
+
+.menu-result-ingredient-dislike .type-small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .menu-result-label-chip {
   display: inline-block;
   margin-left: var(--space-2);

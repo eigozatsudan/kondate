@@ -1,7 +1,8 @@
-import type { KeyboardEvent } from "react";
+import type { JSX, KeyboardEvent } from "react";
 import type { ValidatedMenu } from "@shared/contracts/generation";
 import { MENU_LABEL_CONFIRMATION_RECORD_NOTICE } from "@/features/generation/components/idea-menu-safety-notice";
 import type { MenuResultLabelWarning } from "@/features/generation/components/menu-result";
+import { dislikeIdentity } from "@/features/household/member-dislike-identity";
 import { Button } from "@/shared/ui/button";
 import { Badge } from "@/shared/ui/feedback";
 import { Inset, Stack } from "@/shared/ui/stack";
@@ -38,7 +39,30 @@ export type MenuDishesProps = {
   confirmingId: string | null;
   busy: boolean;
   onConfirmLabel: (confirmationId: string) => void;
+  /**
+   * 材料を苦手として登録する。household かつ親が渡したときだけ出す。
+   * idea は家族の苦手を使わないため、渡されても描かない。
+   */
+  onRegisterIngredientDislike?: (ingredient: { id: string; name: string }) => void;
+  /**
+   * 登録完了の人の表示名と、その人の苦手の同一性。
+   * 読み込み中と失敗のときは親が渡さない（ヒントを出さない）。
+   */
+  registeredDislikes?: readonly { displayName: string; identities: readonly string[] }[];
 };
+
+function registeredHint(
+  ingredientName: string,
+  registered: MenuDishesProps["registeredDislikes"],
+): JSX.Element | null {
+  if (registered === undefined) return null;
+  const identity = dislikeIdentity(ingredientName);
+  const names = registered
+    .filter((member) => member.identities.includes(identity))
+    .map((member) => member.displayName);
+  if (names.length === 0) return null;
+  return <p className="type-small">{names.join("・")}</p>;
+}
 
 /**
  * 品目タブ列と選択中料理の詳細（材料・作り方・取り分け・ラベル確認）。
@@ -61,6 +85,8 @@ export function MenuDishes({
   confirmingId,
   busy,
   onConfirmLabel,
+  onRegisterIngredientDislike,
+  registeredDislikes,
 }: MenuDishesProps) {
   return (
     <>
@@ -119,10 +145,25 @@ export function MenuDishes({
             <ul className="menu-result-ingredient-list">
               {selected.ingredients.map((item) => (
                 <li key={item.id} className="menu-result-ingredient-row">
-                  <span className="menu-result-ingredient-name">
+                  <div className="menu-result-ingredient-name">
                     {item.name}
                     {item.labelConfirmationRequired && <Badge tone="warning">ラベル確認</Badge>}
-                  </span>
+                    {mode === "household" && onRegisterIngredientDislike !== undefined && (
+                      <div className="menu-result-ingredient-dislike">
+                        <Button
+                          id={`ingredient-dislike-trigger-${item.id}`}
+                          variant="secondary"
+                          aria-label={`${item.name}を苦手に登録`}
+                          onClick={() => {
+                            onRegisterIngredientDislike({ id: item.id, name: item.name });
+                          }}
+                        >
+                          苦手
+                        </Button>
+                        {registeredHint(item.name, registeredDislikes)}
+                      </div>
+                    )}
+                  </div>
                   <span className="menu-result-ingredient-amount">
                     {amount(item.quantityValue, item.unit, item.quantityText)}
                   </span>

@@ -586,3 +586,26 @@ it("defaults mode from result.targetMode when the prop is omitted", () => {
   expect(screen.queryByRole("heading", { name: "家族向けの取り分け" })).toBeNull();
   expect(screen.queryByRole("region", { name: "原材料表示の確認" })).toBeNull();
 });
+
+it("forwards the dislike action only for household results", () => {
+  const onRegisterIngredientDislike = vi.fn();
+  const household = makeMenuResultViewModel({ targetMode: "household" });
+  const { rerender } = render(
+    <MenuResult
+      heading={DEFAULT_HEADING}
+      result={household}
+      onRegisterIngredientDislike={onRegisterIngredientDislike}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "しょうゆを苦手に登録" })).toBeVisible();
+
+  rerender(
+    <MenuResult
+      heading={DEFAULT_HEADING}
+      result={makeMenuResultViewModel({ targetMode: "idea" })}
+      mode="idea"
+      onRegisterIngredientDislike={onRegisterIngredientDislike}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: /を苦手に登録$/u })).not.toBeInTheDocument();
+});

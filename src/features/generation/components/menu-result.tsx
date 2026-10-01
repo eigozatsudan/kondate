@@ -65,6 +65,8 @@ export function MenuResult({
   postCookOpen = false,
   onPostCookClose,
   heading,
+  onRegisterIngredientDislike,
+  registeredDislikes,
 }: {
   result: MenuResultViewModel;
   actions?: MenuResultActions;
@@ -104,6 +106,16 @@ export function MenuResult({
    * レビュー I-2: 既定値へ黙って戻ると配線漏れがテストに出ないため、必須にする。
    */
   heading: string;
+  /**
+   * 材料を苦手として登録する。household かつ親が渡したときだけ出す。
+   * idea は家族の苦手を使わないため、渡されても描かない。
+   */
+  onRegisterIngredientDislike?: (ingredient: { id: string; name: string }) => void;
+  /**
+   * 登録完了の人の表示名と、その人の苦手の同一性。
+   * 読み込み中と失敗のときは親が渡さない（ヒントを出さない）。
+   */
+  registeredDislikes?: readonly { displayName: string; identities: readonly string[] }[];
 }) {
   // 省略時は result.targetMode を正とする（既定 "household" による idea 誤表示を防ぐ）。
   const mode = modeProp ?? result.targetMode;
@@ -393,6 +405,12 @@ export function MenuResult({
         onConfirmLabel={(confirmationId) => {
           void handleConfirmLabel(confirmationId);
         }}
+        {...(mode === "household" && onRegisterIngredientDislike !== undefined
+          ? {
+              onRegisterIngredientDislike,
+              ...(registeredDislikes !== undefined ? { registeredDislikes } : {}),
+            }
+          : {})}
       />
 
       <section aria-labelledby="pantry-heading" className="menu-result-card">
